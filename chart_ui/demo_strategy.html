@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Demo: Strategy & Navigation</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body {
+            margin: 0;
+            background: #1e222d;
+            color: #d1d4dc;
+            font-family: sans-serif;
+        }
+
+        #toolbar {
+            background: #2a2e39;
+            padding: 10px;
+            display: flex;
+            gap: 10px;
+            border-bottom: 1px solid #3a3e49;
+            align-items: center;
+        }
+
+        button {
+            background: #3a3e49;
+            color: #d1d4dc;
+            border: 1px solid #4a4e59;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #4a4e59;
+        }
+
+        #chart {
+            width: 100%;
+            height: calc(100vh - 60px);
+            position: relative;
+        }
+
+        .stat-box {
+            background: #3a3e49;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="toolbar">
+        <button onclick="runStrategy()">▶ Run Strategy</button>
+        <button onclick="jumpToDate('2025-10-01')">📅 Jump to Oct 2025</button>
+        <button onclick="jumpToDate('2025-11-01')">📅 Jump to Nov 2025</button>
+        <div class="stat-box" id="pnl">PnL: $0.00</div>
+        <div class="stat-box" id="trades">Trades: 0</div>
+    </div>
+    <div id="chart"></div>
+    <script>
+        // 1. Initialize Chart
+        const chart = window.LightweightCharts.createChart(document.getElementById('chart'), {
+            width: window.innerWidth,
+            height: window.innerHeight - 60,
+            layout: { background: { color: '#1e222d' }, textColor: '#d1d4dc' },
+            grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
+            timeScale: { timeVisible: true, rightOffset: 5 },
+        });
+
+        // 2. Add Series
+        const mainSeries = chart.addSeries(window.LightweightCharts.CandlestickSeries, {
+            upColor: '#26a69a', downColor: '#ef5350',
+            wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+        });
+
+        // Add Volume Series (Overlay)
+        const volumeSeries = chart.addSeries(window.LightweightCharts.HistogramSeries, {
+            color: '#26a69a',
+            priceFormat: { type: 'volume' },
+            priceScaleId: '', // Overlay on main chart
+            scaleMargins: { top: 0.8, bottom: 0 },
+        });
+
+        let allData = [];
+
+        // 3. Load Data
+        fetch('http://localhost:8000/api/ohlc/1h?limit=5000')
+            .then(r => r.json())
+            .then(data => {
+                if (data.data && data.data.length > 0) {
+                    allData = data.data;
+                    mainSeries.setData(allData);
+
+                    // Fake volume data for demo
+                    const volumeData = allData.map(d => ({
+                        time: d.time,
+                        value: Math.random() * 10000 + 5000,
+                        color: (d.close > d.open) ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
+                    }));
+                    volumeSeries.setData(volumeData);
+
+                    chart.timeScale().fitContent();
+                }
+            });
+
+        // 4. Strategy Logic (Simple Moving Average Crossover)
+        function runStrategy() {
+            const markers = [];
+            let pnl = 0;
+            let trades = 0;
+            let position = 0; // 0: flat, 1: long
+            let entryPrice = 0;
+
+            // Simple strategy: Buy if Close > Open (Green Candle), Sell if Close < Open (Red Candle)
+            // (Very dumb strategy just for visualization)
+
+            for (let i = 1; i < allData.length; i++) {
+                const prev = allData[i - 1];
+                const curr = allData[i];
+
+                // Buy Signal
+                if (position === 0 && curr.close > curr.open && prev.close < prev.open) {
+                    position = 1;
+                    entryPrice = curr.close;
+                    markers.push({
+                        time: curr.time,
+                        position: 'belowBar',
+                        color: '#2196F3',
+                        shape: 'arrowUp',
+                        text: 'Buy @ ' + curr.close
+                    });
+                }
+                // Sell Signal
+                else if (position === 1 && curr.close < curr.open) {
+                    position = 0;
+                    const profit = curr.close - entryPrice;
+                    pnl += profit * 50; // $50 per point (ES)
+                    trades++;
+                    markers.push({
+                        time: curr.time,
+                        position: 'aboveBar',
+                        color: '#E91E63',
+                        shape: 'arrowDown',
+                        text: 'Sell (PnL: $' + (profit * 50).toFixed(0) + ')'
+                    });
+                }
+            }
+
+            mainSeries.setMarkers(markers);
+            document.getElementById('pnl').textContent = 'PnL: $' + pnl.toFixed(2);
+            document.getElementById('pnl').style.color = pnl >= 0 ? '#26a69a' : '#ef5350';
+            document.getElementById('trades').textContent = 'Trades: ' + trades;
+        }
+
+        // 5. Navigation Logic
+        function jumpToDate(dateStr) {
+            const targetDate = new Date(dateStr).getTime() / 1000;
+            const targetIndex = allData.findIndex(d => d.time >= targetDate);
+
+            if (targetIndex !== -1) {
+                // Calculate range to show (e.g., 100 bars)
+                const range = 100;
+                const from = Math.max(0, targetIndex - range / 2);
+                const to = Math.min(allData.length - 1, targetIndex + range / 2);
+
+                chart.timeScale().setVisibleLogicalRange({ from, to });
+            } else {
+                alert('Date not found in loaded data');
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            chart.applyOptions({ width: window.innerWidth, height: window.innerHeight - 60 });
+        });
+    </script>
+</body>
+
+</html>

@@ -333,11 +333,14 @@ def run_enhanced_downloader():
     wait = WebDriverWait(driver, 20)
     
     # Enter Bar Replay Mode first
-    # Check if we are already in replay mode to avoid restarting it
+    # Check if we are already in replay mode
     try:
-        # If the "Jump to real-time" button exists, we are in replay mode
-        if len(driver.find_elements(By.CSS_SELECTOR, "button[data-name='jump-to-realtime']")) > 0:
-            print("Already in Bar Replay mode.")
+        # If the "Jump to real-time" button exists, click it to ensure we start at the end
+        jump_btns = driver.find_elements(By.CSS_SELECTOR, "button[data-name='jump-to-realtime']")
+        if len(jump_btns) > 0:
+            print("Already in Bar Replay mode. Jumping to Real-time...")
+            jump_btns[0].click()
+            time.sleep(2)
         else:
             enter_replay_mode(driver)
     except:
@@ -382,7 +385,8 @@ def run_enhanced_downloader():
         
         # 1. Scroll Back to load data around the target date
         # This ensures we have a full buffer of data before exporting
-        scroll_back(driver, iterations=15)
+        # scroll_back(driver, iterations=15) # DISABLED: Alt+Shift+Left jumps to beginning, causing gaps.
+        time.sleep(2)
         
         # 2. Export Data (Current View)
         success = perform_export(driver, wait)

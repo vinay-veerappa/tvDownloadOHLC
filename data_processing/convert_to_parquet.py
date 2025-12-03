@@ -18,8 +18,14 @@ def convert_csv_to_parquet():
     data_dir = Path("data")
     data_dir.mkdir(exist_ok=True)
     
-    # Keep only OHLCV columns
+    # Keep only OHLCV columns (and Volume if present)
     ohlc_columns = ['open', 'high', 'low', 'close']
+    if 'volume' in df.columns:
+        ohlc_columns.append('volume')
+    if 'vol' in df.columns: # Sometimes named 'vol'
+        df.rename(columns={'vol': 'volume'}, inplace=True)
+        if 'volume' not in ohlc_columns: ohlc_columns.append('volume')
+        
     df = df[ohlc_columns]
     
     print(f"Total bars: {len(df):,}")
@@ -42,12 +48,16 @@ def convert_csv_to_parquet():
     
     print("\nCreating aggregated timeframes...")
     for name, freq in timeframes.items():
-        agg_df = df.resample(freq).agg({
+        agg_dict = {
             'open': 'first',
             'high': 'max',
             'low': 'min',
             'close': 'last'
-        }).dropna()
+        }
+        if 'volume' in df.columns:
+            agg_dict['volume'] = 'sum'
+            
+        agg_df = df.resample(freq).agg(agg_dict).dropna()
         
         output_file = data_dir / f"ES_{name}.parquet"
         agg_df.to_parquet(output_file, compression='snappy')

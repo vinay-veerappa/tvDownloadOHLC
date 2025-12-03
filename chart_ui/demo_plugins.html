@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Demo: Drawing Tools (v5.0)</title>
+    <!-- Upgrade to v5.0 -->
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body {
+            margin: 0;
+            background: #1e222d;
+            color: #d1d4dc;
+            font-family: sans-serif;
+        }
+
+        #toolbar {
+            background: #2a2e39;
+            padding: 10px;
+            display: flex;
+            gap: 10px;
+            border-bottom: 1px solid #3a3e49;
+            align-items: center;
+        }
+
+        button {
+            background: #3a3e49;
+            color: #d1d4dc;
+            border: 1px solid #4a4e59;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #4a4e59;
+        }
+
+        button.active {
+            background: #2962FF;
+            border-color: #2962FF;
+        }
+
+        #chart {
+            width: 100%;
+            height: calc(100vh - 60px);
+            position: relative;
+        }
+
+        #status {
+            font-size: 12px;
+            color: #888;
+            margin-left: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="toolbar">
+        <button id="btn-line" onclick="setTool('line')">📏 Price Line</button>
+        <button id="btn-ray" onclick="setTool('ray')">➡️ Ray (Demo)</button>
+        <button onclick="clearDrawings()">🗑 Clear</button>
+        <div id="status">Loading data...</div>
+    </div>
+    <div id="chart"></div>
+    <script>
+        // Check if library loaded
+        if (!window.LightweightCharts) {
+            document.getElementById('status').textContent = 'Error: Library not loaded. Check internet connection.';
+            throw new Error('LightweightCharts not found');
+        }
+
+        // 1. Initialize Chart
+        const chart = window.LightweightCharts.createChart(document.getElementById('chart'), {
+            width: window.innerWidth,
+            height: window.innerHeight - 60,
+            layout: { background: { color: '#1e222d' }, textColor: '#d1d4dc' },
+            grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
+            timeScale: { timeVisible: true, rightOffset: 5 },
+            crosshair: { mode: window.LightweightCharts.CrosshairMode.Normal }
+        });
+
+        // 2. Create Series (v5.0 Syntax: addSeries instead of addCandlestickSeries)
+        const series = chart.addSeries(window.LightweightCharts.CandlestickSeries, {
+            upColor: '#26a69a', downColor: '#ef5350',
+            wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+        });
+
+        let currentTool = null;
+        let drawings = [];
+
+        // 3. Load Data
+        fetch('http://localhost:8000/api/ohlc/1h?limit=1000')
+            .then(r => r.json())
+            .then(data => {
+                if (data.data && data.data.length > 0) {
+                    series.setData(data.data);
+                    chart.timeScale().fitContent();
+                    document.getElementById('status').textContent = `${data.data.length} bars loaded. Select a tool.`;
+                } else {
+                    document.getElementById('status').textContent = 'No data found.';
+                }
+            })
+            .catch(e => {
+                document.getElementById('status').textContent = 'Error loading data: ' + e.message;
+            });
+
+        // 4. Tool Logic
+        function setTool(tool) {
+            currentTool = tool;
+            document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            if (tool === 'line') document.getElementById('btn-line').classList.add('active');
+            if (tool === 'ray') document.getElementById('btn-ray').classList.add('active');
+            document.getElementById('status').textContent = `Tool: ${tool} - Click on chart`;
+        }
+
+        function clearDrawings() {
+            drawings.forEach(d => series.removePriceLine(d));
+            drawings = [];
+            document.getElementById('status').textContent = 'Drawings cleared';
+        }
+
+        // 5. Interaction Logic
+        chart.subscribeClick((param) => {
+            if (!currentTool || !param.point || !param.time) return;
+
+            const price = series.coordinateToPrice(param.point.y);
+
+            if (currentTool === 'line') {
+                const line = series.createPriceLine({
+                    price: price,
+                    color: '#2962FF',
+                    lineWidth: 2,
+                    lineStyle: 2,
+                    axisLabelVisible: true,
+                    title: 'Level',
+                });
+                drawings.push(line);
+                document.getElementById('status').textContent = `Placed line at ${price.toFixed(2)}`;
+            }
+            else if (currentTool === 'ray') {
+                const line = series.createPriceLine({
+                    price: price,
+                    color: '#D500F9',
+                    lineWidth: 2,
+                    lineStyle: 0,
+                    axisLabelVisible: true,
+                    title: 'Ray Start',
+                });
+                drawings.push(line);
+                document.getElementById('status').textContent = 'Diagonal lines require a custom overlay plugin';
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            chart.applyOptions({ width: window.innerWidth, height: window.innerHeight - 60 });
+        });
+    </script>
+</body>
+
+</html>
