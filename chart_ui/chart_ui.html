@@ -202,24 +202,6 @@
         });
 
         // Main Series (Candlestick) - v5 Syntax
-        const series = chart.addSeries(window.LightweightCharts.CandlestickSeries, {
-            upColor: '#26a69a', downColor: '#ef5350',
-            wickUpColor: '#26a69a', wickDownColor: '#ef5350'
-        });
-
-        // Volume Series
-        const volumeSeries = chart.addSeries(window.LightweightCharts.HistogramSeries, {
-            color: '#26a69a',
-            priceFormat: { type: 'volume' },
-            priceScaleId: '', // Overlay
-            scaleMargins: { top: 0.8, bottom: 0 }
-        });
-
-        // PDH/PDL Lines
-        let pdhLine = null;
-        let pdlLine = null;
-
-        // --- Data Loading ---
         async function loadTickers() {
             try {
                 const response = await fetch('http://localhost:8000/api/tickers');
@@ -250,19 +232,6 @@
             try {
                 const response = await fetch(`http://localhost:8000/api/ohlc/${timeframe}?limit=20000&ticker=${currentTicker}`);
                 const result = await response.json();
-
-                if (!result.data || !Array.isArray(result.data)) {
-                    throw new Error('Invalid data format');
-                }
-
-                allData = result.data; // Store for navigation
-                series.setData(allData);
-                volumeSeries.setData(allData); // Uses 'value' and 'color' from API
-
-                // Calculate PDH/PDL
-                calculatePDHPDL(allData);
-
-                chart.timeScale().fitContent();
                 document.getElementById('status').textContent = `${currentTicker} - ${allData.length.toLocaleString()} bars`;
 
                 // Re-run strategy if active
