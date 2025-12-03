@@ -1,57 +1,115 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <meta charset="UTF-8">
     <title>ES Chart Pro (v5.0)</title>
-    <!-- Lightweight Charts v5.0 -->
+
+    <!-- Load library globally -->
     <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+
+    <!-- Load Plugin Scripts (Modules) -->
+    <!-- Note: We load these as modules but they attach to window -->
+    <script type="module" src="trendline_plugin.js"></script>
+    <script type="module" src="rectangle_plugin.js"></script>
+    <script type="module" src="fibonacci_plugin.js"></script>
+    <script type="module" src="vertical_line_plugin.js"></script>
+    <script type="module" src="anchored_text_plugin.js"></script>
+
+    <!-- Load Indicator Manager -->
     <script src="indicator_manager.js"></script>
-    <script src="trendline_plugin.js"></script>
-    <script src="rectangle_plugin.js"></script>
-    <script src="fibonacci_plugin.js"></script>
-    <script src="vertical_line_plugin.js"></script>
-    <script src="anchored_text_plugin.js"></script>
+
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #1e222d; color: #d1d4dc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-        
-        /* Header & Toolbar */
-        #header { background: #2a2e39; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #363c4e; }
-        .toolbar-group { display: flex; gap: 8px; align-items: center; }
-        .divider { width: 1px; height: 24px; background: #4a4e59; margin: 0 5px; }
-        
-        /* Controls */
-        select, input, button { background: #3a3e49; color: #d1d4dc; border: 1px solid #4a4e59; padding: 6px 10px; border-radius: 4px; font-size: 13px; outline: none; cursor: pointer; }
-        select:hover, input:hover, button:hover { background: #4a4e59; border-color: #5a5e69; }
-        button.active { background: #2962FF; border-color: #2962FF; color: white; }
-        
-        /* Chart Container */
-        #chart { width: 100%; height: calc(100vh - 54px); position: relative; }
-        
-        /* Status Bar */
-        #status { font-size: 12px; color: #888; }
-        
-        /* Date Picker specific */
-        input[type="date"] { padding: 5px; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #1e222d;
+            color: #d1d4dc;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+
+        #toolbar {
+            height: 54px;
+            background: #2a2e39;
+            border-bottom: 1px solid #363c4e;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            gap: 16px;
+        }
+
+        .toolbar-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        button,
+        select,
+        input {
+            background: #1e222d;
+            color: #d1d4dc;
+            border: 1px solid #363c4e;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        button:hover,
+        select:hover {
+            border-color: #50566e;
+        }
+
+        button.active {
+            background: #2962FF;
+            border-color: #2962FF;
+            color: white;
+        }
+
+        .divider {
+            width: 1px;
+            height: 24px;
+            background: #363c4e;
+            margin: 0 8px;
+        }
+
+        #status {
+            font-size: 12px;
+            color: #787b86;
+            margin-left: auto;
+        }
     </style>
 </head>
+
 <body>
-    <div id="header">
+    <div id="toolbar">
         <div class="toolbar-group">
-            <span style="font-weight:bold; color:#fff; margin-right:10px">ES Futures</span>
-            
+            <h3>ES Chart Pro</h3>
+            <div class="divider"></div>
+
+            <!-- Ticker Selection -->
+            <select id="tickerSelect" onchange="changeTicker()">
+                <option value="ES1" selected>ES1</option>
+            </select>
+
             <!-- Timeframe -->
             <select id="timeframe">
                 <option value="1m">1 Min</option>
                 <option value="5m">5 Min</option>
                 <option value="15m">15 Min</option>
                 <option value="1h" selected>1 Hour</option>
-                <option value="4h">4 Hour</option>
+                <option value="4h">4 Hours</option>
                 <option value="1D">1 Day</option>
             </select>
-            
+
             <div class="divider"></div>
-            
+
             <!-- Drawing Tools -->
             <button id="btn-line" onclick="setTool('line')" title="Draw Price Line">📏 Line</button>
             <button id="btn-ray" onclick="setTool('ray')" title="Draw Trend Line">📉 Trend</button>
@@ -60,9 +118,9 @@
             <button id="btn-vert" onclick="setTool('vert')" title="Draw Vertical Line">│ Vert</button>
             <button id="btn-text" onclick="addWatermark()" title="Add Watermark">T Text</button>
             <button onclick="clearDrawings()" title="Clear All Drawings">🗑</button>
-            
+
             <div class="divider"></div>
-            
+
             <!-- Indicators & Strategy -->
             <select id="indicatorSelect" onchange="addIndicatorFromMenu(this)">
                 <option value="" disabled selected>+ Indicators</option>
@@ -76,14 +134,14 @@
             </select>
             <button id="strategyBtn" onclick="toggleStrategy()">⚡ Strategy</button>
         </div>
-        
+
         <div class="toolbar-group">
             <!-- Navigation -->
             <input type="date" id="datePicker">
             <button onclick="jumpToDate()">Go</button>
-            
+
             <div class="divider"></div>
-            
+
             <!-- Timezone -->
             <select id="timezone">
                 <option value="America/New_York" selected>NY (EST)</option>
@@ -92,32 +150,33 @@
                 <option value="UTC">UTC</option>
                 <option value="Europe/London">London</option>
             </select>
-            
+
             <div class="divider"></div>
             <div id="status">Loading...</div>
         </div>
     </div>
-    
+
     <div id="chart-container" style="display: flex; flex-direction: column; height: calc(100vh - 54px);">
         <div id="chart" style="flex: 1; min-height: 400px;"></div>
         <div id="indicator-container" style="flex: 0 0 auto;"></div>
     </div>
-    
+
     <script>
         // --- Configuration ---
         let currentTimezone = 'America/New_York';
         let currentTimeframe = '1h';
+        let currentTicker = 'ES1';
         let currentTool = null;
         let drawings = []; // Stores primitives
-        let strategyLines = []; 
+        let strategyLines = [];
         let isStrategyActive = false;
-        let allData = []; 
+        let allData = [];
         let indicatorManager = null;
-        
+
         // Drawing State
         let activeDrawing = null;
         let startPoint = null; // { time, price }
-        
+
         // --- Chart Initialization (v5.0) ---
         if (!window.LightweightCharts) {
             document.getElementById('status').textContent = 'Error: Library not loaded.';
@@ -131,7 +190,7 @@
             timeScale: { timeVisible: true, rightOffset: 5 },
             crosshair: { mode: window.LightweightCharts.CrosshairMode.Normal },
             localization: {
-                timeFormatter: function(timestamp) {
+                timeFormatter: function (timestamp) {
                     const date = new Date(timestamp * 1000);
                     return date.toLocaleString('en-US', {
                         timeZone: currentTimezone,
@@ -141,13 +200,13 @@
                 }
             }
         });
-        
+
         // Main Series (Candlestick) - v5 Syntax
         const series = chart.addSeries(window.LightweightCharts.CandlestickSeries, {
             upColor: '#26a69a', downColor: '#ef5350',
             wickUpColor: '#26a69a', wickDownColor: '#ef5350'
         });
-        
+
         // Volume Series
         const volumeSeries = chart.addSeries(window.LightweightCharts.HistogramSeries, {
             color: '#26a69a',
@@ -155,59 +214,91 @@
             priceScaleId: '', // Overlay
             scaleMargins: { top: 0.8, bottom: 0 }
         });
-        
+
         // PDH/PDL Lines
         let pdhLine = null;
         let pdlLine = null;
 
         // --- Data Loading ---
-        async function loadData(timeframe) {
-            document.getElementById('status').textContent = 'Loading...';
+        async function loadTickers() {
             try {
-                const response = await fetch('http://localhost:8000/api/ohlc/' + timeframe + '?limit=20000');
+                const response = await fetch('http://localhost:8000/api/tickers');
                 const result = await response.json();
-                
+
+                const select = document.getElementById('tickerSelect');
+                select.innerHTML = '';
+
+                result.tickers.forEach(ticker => {
+                    const option = document.createElement('option');
+                    option.value = ticker;
+                    option.textContent = ticker;
+                    if (ticker === currentTicker) option.selected = true;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Failed to load tickers:', error);
+            }
+        }
+
+        function changeTicker() {
+            currentTicker = document.getElementById('tickerSelect').value;
+            loadData(currentTimeframe);
+        }
+
+        async function loadData(timeframe) {
+            document.getElementById('status').textContent = `Loading ${currentTicker}...`;
+            try {
+                const response = await fetch(`http://localhost:8000/api/ohlc/${timeframe}?limit=20000&ticker=${currentTicker}`);
+                const result = await response.json();
+
                 if (!result.data || !Array.isArray(result.data)) {
                     throw new Error('Invalid data format');
                 }
-                
+
                 allData = result.data; // Store for navigation
                 series.setData(allData);
                 volumeSeries.setData(allData); // Uses 'value' and 'color' from API
-                
+
                 // Calculate PDH/PDL
                 calculatePDHPDL(allData);
-                
+
                 chart.timeScale().fitContent();
-                document.getElementById('status').textContent = `${allData.length.toLocaleString()} bars`;
-                
+                document.getElementById('status').textContent = `${currentTicker} - ${allData.length.toLocaleString()} bars`;
+
                 // Re-run strategy if active
                 if (isStrategyActive) runStrategy();
-                
+
+                // Reload indicators if any (optional, but good practice)
+                if (indicatorManager) {
+                    // We might want to clear and reload, or just let them stay if they are compatible
+                    // For now, let's clear them to avoid mismatch
+                    indicatorManager.removeAll();
+                }
+
             } catch (error) {
                 console.error(error);
                 document.getElementById('status').textContent = 'Error: ' + error.message;
             }
         }
-        
+
         function calculatePDHPDL(data) {
             if (data.length === 0) return;
-            
+
             const lastBar = data[data.length - 1];
             const lastDate = new Date(lastBar.time * 1000);
             lastDate.setHours(0, 0, 0, 0);
             const todayStart = Math.floor(lastDate.getTime() / 1000);
             const yesterdayStart = todayStart - 86400;
-            
+
             const yesterdayBars = data.filter(bar => bar.time >= yesterdayStart && bar.time < todayStart);
-            
+
             if (pdhLine) series.removePriceLine(pdhLine);
             if (pdlLine) series.removePriceLine(pdlLine);
-            
+
             if (yesterdayBars.length > 0) {
                 const pdh = Math.max(...yesterdayBars.map(b => b.high));
                 const pdl = Math.min(...yesterdayBars.map(b => b.low));
-                
+
                 pdhLine = series.createPriceLine({
                     price: pdh, color: '#2962FF', lineWidth: 2, lineStyle: 2,
                     axisLabelVisible: true, title: 'PDH'
@@ -224,7 +315,7 @@
             currentTool = (currentTool === tool) ? null : tool; // Toggle
             activeDrawing = null;
             startPoint = null;
-            
+
             // Update UI
             document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
             if (currentTool === 'line') document.getElementById('btn-line').classList.add('active');
@@ -232,9 +323,9 @@
             if (currentTool === 'rect') document.getElementById('btn-rect').classList.add('active');
             if (currentTool === 'fib') document.getElementById('btn-fib').classList.add('active');
             if (currentTool === 'vert') document.getElementById('btn-vert').classList.add('active');
-            
+
             document.body.style.cursor = currentTool ? 'crosshair' : 'default';
-            
+
             // Disable chart scrolling while drawing? No, better to keep it.
             chart.applyOptions({ handleScroll: !currentTool, handleScale: !currentTool });
         }
@@ -243,7 +334,7 @@
             // Remove primitives
             drawings.forEach(d => {
                 if (d.detach) d.detach(); // If primitive
-                if (series.removePriceLine) try { series.removePriceLine(d); } catch(e){} // If price line
+                if (series.removePriceLine) try { series.removePriceLine(d); } catch (e) { } // If price line
             });
             drawings = [];
             setTool(null);
@@ -251,10 +342,10 @@
 
         chart.subscribeClick((param) => {
             if (!currentTool || !param.point || !param.time) return;
-            
+
             const price = series.coordinateToPrice(param.point.y);
             const time = param.time;
-            
+
             if (currentTool === 'line') {
                 // Horizontal Line (Simple)
                 const line = series.createPriceLine({
@@ -263,13 +354,13 @@
                 });
                 drawings.push(line);
                 setTool(null);
-            } 
+            }
             else if (currentTool === 'ray') {
                 // Trend Line (Diagonal) - 2 Click Process
                 if (!startPoint) {
                     // First Click
                     startPoint = { time, price };
-                    
+
                     // Create initial primitive (0 length)
                     if (window.TrendLine) {
                         const tl = new window.TrendLine(chart, series, startPoint, startPoint, { lineColor: '#D500F9', lineWidth: 2 });
@@ -292,12 +383,12 @@
                 if (!startPoint) {
                     // First Click
                     startPoint = { time, price };
-                    
+
                     // Create initial primitive
                     if (window.Rectangle) {
-                        const rect = new window.Rectangle(chart, series, startPoint, startPoint, { 
-                            color: 'rgba(33, 150, 243, 0.2)', 
-                            borderColor: '#2196F3' 
+                        const rect = new window.Rectangle(chart, series, startPoint, startPoint, {
+                            color: 'rgba(33, 150, 243, 0.2)',
+                            borderColor: '#2196F3'
                         });
                         series.attachPrimitive(rect);
                         activeDrawing = rect;
@@ -318,11 +409,11 @@
                 if (!startPoint) {
                     // First Click
                     startPoint = { time, price };
-                    
-                    // Create initial primitive
+
                     if (window.FibonacciRetracement) {
-                        const fib = new window.FibonacciRetracement(chart, series, startPoint, startPoint, { 
-                            lineColor: '#787b86' 
+                        const fib = new window.FibonacciRetracement(chart, series, startPoint, startPoint, {
+                            lineColor: '#2962FF',
+                            labelColor: '#2962FF'
                         });
                         series.attachPrimitive(fib);
                         activeDrawing = fib;
@@ -339,12 +430,11 @@
                 }
             }
             else if (currentTool === 'vert') {
-                // Vertical Line - 1 Click Process
+                // Vertical Line (Simple)
                 if (window.VertLine) {
-                    const vl = new window.VertLine(chart, series, time, { 
-                        color: '#2962FF', 
-                        labelText: new Date(time * 1000).toLocaleDateString(),
-                        showLabel: true
+                    const vl = new window.VertLine(chart, series, time, {
+                        color: '#00C853',
+                        width: 2
                     });
                     series.attachPrimitive(vl);
                     drawings.push(vl);
@@ -352,19 +442,19 @@
                 }
             }
         });
-        
+
         // Mouse Move for Dragging
         document.getElementById('chart').addEventListener('mousemove', (e) => {
             if ((currentTool === 'ray' || currentTool === 'rect' || currentTool === 'fib') && activeDrawing && startPoint) {
                 // We need to convert mouse X/Y to Time/Price
-                
+
                 const rect = document.getElementById('chart').getBoundingClientRect();
                 const x = e.clientX - rect.left;
                 const y = e.clientY - rect.top;
-                
+
                 const time = chart.timeScale().coordinateToTime(x);
                 const price = series.coordinateToPrice(y);
-                
+
                 if (time && price) {
                     activeDrawing.updateEnd({ time, price });
                 }
@@ -375,15 +465,15 @@
         function jumpToDate() {
             const dateStr = document.getElementById('datePicker').value;
             if (!dateStr) return;
-            
+
             const targetDate = new Date(dateStr).getTime() / 1000;
             // Find closest bar
             const targetIndex = allData.findIndex(d => d.time >= targetDate);
-            
+
             if (targetIndex !== -1) {
                 const range = 100; // Show 100 bars
-                const from = Math.max(0, targetIndex - range/2);
-                const to = Math.min(allData.length - 1, targetIndex + range/2);
+                const from = Math.max(0, targetIndex - range / 2);
+                const to = Math.min(allData.length - 1, targetIndex + range / 2);
                 chart.timeScale().setVisibleLogicalRange({ from, to });
             } else {
                 alert('Date not found in loaded data');
@@ -394,7 +484,7 @@
         function toggleStrategy() {
             isStrategyActive = !isStrategyActive;
             const btn = document.getElementById('strategyBtn');
-            
+
             if (isStrategyActive) {
                 btn.classList.add('active');
                 runStrategy();
@@ -405,17 +495,17 @@
                 strategyLines = [];
             }
         }
-        
+
         function runStrategy() {
             // Simple SMA Crossover Logic for Demo
             // v5.0 Workaround: Use PriceLines instead of Markers (since markers are now a plugin)
-            
+
             let position = 0;
-            
+
             for (let i = 1; i < allData.length; i++) {
-                const prev = allData[i-1];
+                const prev = allData[i - 1];
                 const curr = allData[i];
-                
+
                 // Green Candle = Buy, Red Candle = Sell (Simple Visual Test)
                 if (position === 0 && curr.close > curr.open && prev.close < prev.open) {
                     position = 1;
@@ -439,18 +529,18 @@
         window.addEventListener('resize', () => {
             chart.applyOptions({ width: window.innerWidth, height: window.innerHeight - 54 });
         });
-        
+
         document.getElementById('timeframe').addEventListener('change', (e) => {
             currentTimeframe = e.target.value;
             loadData(e.target.value);
         });
-        
+
         document.getElementById('timezone').addEventListener('change', (e) => {
             currentTimezone = e.target.value;
             // Force redraw by updating options
             chart.applyOptions({
                 localization: {
-                    timeFormatter: function(timestamp) {
+                    timeFormatter: function (timestamp) {
                         const date = new Date(timestamp * 1000);
                         return date.toLocaleString('en-US', {
                             timeZone: currentTimezone,
@@ -461,15 +551,15 @@
                 }
             });
         });
-        
+
         async function addIndicatorFromMenu(select) {
             const type = select.value;
             select.value = ""; // Reset
-            
+
             if (!indicatorManager) {
                 indicatorManager = new window.IndicatorManager(chart, series, 'indicator-container');
             }
-            
+
             let params = {};
             if (type === 'sma') params = { period: 20 };
             if (type === 'ema') params = { period: 50 };
@@ -478,14 +568,14 @@
             if (type === 'rsi') params = { period: 14 };
             if (type === 'macd') params = { fast: 12, slow: 26, signal: 9 };
             if (type === 'atr') params = { period: 14 };
-            
-            await indicatorManager.addIndicator(type, currentTimeframe, params);
+
+            await indicatorManager.addIndicator(type, currentTimeframe, params, currentTicker);
         }
-        
+
         function addWatermark() {
             if (window.AnchoredText) {
                 const text = new window.AnchoredText({
-                    text: 'ES Futures ' + currentTimeframe,
+                    text: currentTicker + ' ' + currentTimeframe,
                     vertAlign: 'top',
                     horzAlign: 'right',
                     color: 'rgba(255, 255, 255, 0.5)',
@@ -497,7 +587,11 @@
         }
 
         // Initial Load
-        loadData('1h');
+        (async () => {
+            await loadTickers();
+            loadData('1h');
+        })();
     </script>
 </body>
+
 </html>
