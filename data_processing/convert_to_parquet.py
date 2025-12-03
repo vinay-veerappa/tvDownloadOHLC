@@ -7,7 +7,7 @@ def convert_csv_to_parquet():
     
     # Read the CSV
     print("Loading CSV data...")
-    df = pd.read_csv("ES_1m_continuous.csv")
+    df = pd.read_csv(os.path.join("data", "ES_1m_continuous.csv"))
     
     # Parse datetime
     df['datetime'] = pd.to_datetime(df['datetime'])

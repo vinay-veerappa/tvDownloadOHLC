@@ -5,30 +5,19 @@ import time
 
 def stitch_and_validate():
     # Path to downloads
-    downloads_path = os.path.join(os.getcwd(), "downloads_es_futures")
+    downloads_path = os.path.join(os.getcwd(), "data", "downloads_es_futures")
     pattern = os.path.join(downloads_path, "*.csv")
     
     files = glob.glob(pattern)
     
-    # Filter for files created in the last 24 hours
-    # This avoids picking up old/failed runs
-    current_time = time.time()
-    time_window = 86400 # 24 hours
-    
-    recent_files = []
-    for f in files:
-        if os.path.getctime(f) > current_time - time_window:
-            recent_files.append(f)
-            
     print(f"Found {len(files)} total files matching pattern.")
-    print(f"Found {len(recent_files)} recent files (last 24 hours).")
     
-    if not recent_files:
-        print("No recent files found.")
+    if not files:
+        print("No files found.")
         return
 
     dfs = []
-    for f in recent_files:
+    for f in files:
         try:
             df = pd.read_csv(f)
             # Normalize column names
@@ -69,7 +58,8 @@ def stitch_and_validate():
     print(f"Actual rows: {len(full_df)}")
     
     # Save stitched
-    output_file = "stitched_es_data.csv"
+    # Save stitched
+    output_file = os.path.join("data", "ES_1m_continuous.csv")
     full_df.to_csv(output_file)
     print(f"Saved stitched data to {output_file}")
     print(full_df.head())

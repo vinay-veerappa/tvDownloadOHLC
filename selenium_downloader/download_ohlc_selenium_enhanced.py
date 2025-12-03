@@ -8,6 +8,9 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+import argparse
+import glob
+from datetime import datetime, timedelta
 
 def connect_driver():
     print("Connecting to existing Chrome instance on port 9222...")
@@ -24,12 +27,11 @@ def connect_driver():
         print("Please close other TradingView tabs.")
     
     # Set download directory
-    download_dir = os.path.join(os.getcwd(), "downloads_es_futures")
+    download_dir = os.path.join(os.getcwd(), "data", "downloads_es_futures")
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
     print(f"Target Download Directory: {download_dir}")
     
-    # Send CDP command to set download behavior
     driver.execute_cdp_cmd("Page.setDownloadBehavior", {
         "behavior": "allow",
         "downloadPath": download_dir
@@ -37,7 +39,110 @@ def connect_driver():
     
     return driver
 
-def scroll_back(driver, iterations=5):
+def get_data_bounds(download_dir, parquet_file=None):
+    """
+    Scans all CSV files in the download directory AND an optional Parquet file
+    to find the global minimum (oldest) and maximum (newest) timestamps.
+    """
+    min_dates = []
+    max_dates = []
+    
+    # 1. Check Parquet File
+    if parquet_file and os.path.exists(parquet_file):
+        print(f"Reading bounds from Parquet: {parquet_file}")
+        try:
+            # Try to read just the time column if we can guess it, otherwise read all
+            # We'll assume 'time' or first column.
+            df_p = pd.read_parquet(parquet_file)
+            
+            time_col = None
+            # Heuristic: Check common names or first column
+            possible_names = ['time', 'Time', 'date', 'Date', 'datetime', 'timestamp']
+            for name in possible_names:
+                if name in df_p.columns:
+                    time_col = name
+                    break
+            
+            if not time_col and len(df_p.columns) > 0:
+                # Fallback to first column if it looks like time
+                time_col = df_p.columns[0]
+            
+            if time_col:
+                print(f"Using column '{time_col}' from Parquet.")
+                if pd.api.types.is_numeric_dtype(df_p[time_col]):
+                    times = pd.to_datetime(df_p[time_col], unit='s')
+                else:
+                    times = pd.to_datetime(df_p[time_col])
+                
+                if not times.empty:
+                    min_dates.append(times.min())
+                    max_dates.append(times.max())
+            elif isinstance(df_p.index, pd.DatetimeIndex):
+                 print("Using DatetimeIndex from Parquet.")
+                 if not df_p.index.empty:
+                    min_dates.append(df_p.index.min())
+                    max_dates.append(df_p.index.max())
+            else:
+                print("Could not identify time column in Parquet.")
+                
+        except Exception as e:
+            print(f"Error reading Parquet: {e}")
+
+    # 2. Check CSV files
+    files = glob.glob(os.path.join(download_dir, "*.csv"))
+    if files:
+        print(f"Scanning {len(files)} CSV files for data bounds...")
+        for f in files:
+            try:
+                df = pd.read_csv(f)
+                if df.empty:
+                    continue
+                    
+                time_col = df.columns[0]
+                if pd.api.types.is_numeric_dtype(df[time_col]):
+                    times = pd.to_datetime(df[time_col], unit='s')
+                else:
+                    times = pd.to_datetime(df[time_col])
+                
+                min_dates.append(times.min())
+                max_dates.append(times.max())
+            except Exception as e:
+                continue
+            
+    if not min_dates:
+        return None, None
+        
+    global_min = min(min_dates)
+    global_max = max(max_dates)
+    print(f"Global Data Bounds: Oldest={global_min}, Newest={global_max}")
+    return global_min, global_max
+
+def switch_ticker(driver, ticker):
+    print(f"Switching to ticker: {ticker}...")
+    actions = ActionChains(driver)
+    # Ensure chart is focused
+    try:
+        driver.find_element(By.CSS_SELECTOR, "canvas").click()
+    except:
+        pass
+    
+    actions.send_keys(ticker).perform()
+    time.sleep(1)
+    actions.send_keys(Keys.ENTER).perform()
+    time.sleep(5) # Wait for load
+
+def jump_to_start(driver):
+    print("Jumping to start of data (Alt+Shift+Left)...")
+    actions = ActionChains(driver)
+    # Ensure chart is focused
+    try:
+        driver.find_element(By.CSS_SELECTOR, "canvas").click()
+    except:
+        pass
+    actions.key_down(Keys.ALT).key_down(Keys.SHIFT).send_keys(Keys.LEFT).key_up(Keys.SHIFT).key_up(Keys.ALT).perform()
+    time.sleep(5)
+
+def scroll_back(driver, iterations=2):
     print(f"Scrolling back {iterations} times...")
     actions = ActionChains(driver)
     
@@ -271,7 +376,7 @@ from datetime import datetime, timedelta
 
 def get_latest_csv():
     # Look in our custom download folder
-    downloads_path = os.path.join(os.getcwd(), "downloads_es_futures")
+    downloads_path = os.path.join(os.getcwd(), "data", "downloads_es_futures")
     list_of_files = glob.glob(os.path.join(downloads_path, "*.csv")) 
     if not list_of_files:
         return None
@@ -328,9 +433,13 @@ def enter_replay_mode(driver):
     except Exception as e:
         print(f"Error entering Bar Replay mode: {e}")
 
-def run_enhanced_downloader():
+def run_enhanced_downloader(args):
     driver = connect_driver()
     wait = WebDriverWait(driver, 20)
+    
+    # Switch ticker if requested
+    if args.ticker:
+        switch_ticker(driver, args.ticker)
     
     # Enter Bar Replay Mode first
     # Check if we are already in replay mode
@@ -346,115 +455,169 @@ def run_enhanced_downloader():
     except:
         enter_replay_mode(driver)
     
-    # Main Loop
-    # Target: 3 months ago (90 days)
-    target_date = datetime.now() - timedelta(days=90)
-    print(f"Target Date: {target_date}")
+    # Determine bounds
+    download_dir = os.path.join(os.getcwd(), "data", "downloads_es_futures")
+    global_min, global_max = get_data_bounds(download_dir, args.parquet_file)
     
-    # Check latest file to determine start point
-    # DISABLE RESUMPTION to force gap filling from Dec -> Nov
-    # latest_csv = get_latest_csv()
-    # if latest_csv:
-    #     print(f"Found existing data: {latest_csv}")
-    #     try:
-    #         df = pd.read_csv(latest_csv)
-    #         time_col = df.columns[0]
-    #         if pd.api.types.is_numeric_dtype(df[time_col]):
-    #             df['parsed_time'] = pd.to_datetime(df[time_col], unit='s')
-    #         else:
-    #             df['parsed_time'] = pd.to_datetime(df[time_col])
-    #         
-    #         oldest_dt = df['parsed_time'].min()
-    #         print(f"Resuming from: {oldest_dt}")
-    #         
-    #         # Go to this date immediately to resume
-    #         next_target = oldest_dt - timedelta(minutes=1)
-    #         target_str = next_target.strftime("%Y-%m-%d %H:%M")
-    #         go_to_date(driver, target_str)
-    #         
-    #     except Exception as e:
-    #         print(f"Error reading existing file: {e}. Starting fresh.")
+    # Define tasks
+    tasks = []
     
-    max_iterations = 20 # Cover approx 3 months
-    iteration = 0
-    last_oldest_time = None
-    
-    while iteration < max_iterations:
-        iteration += 1
-        print(f"\n--- Iteration {iteration}/{max_iterations} ---")
-        
-        # 1. Scroll Back to load data around the target date
-        # This ensures we have a full buffer of data before exporting
-        # scroll_back(driver, iterations=15) # DISABLED: Alt+Shift+Left jumps to beginning, causing gaps.
-        time.sleep(2)
-        
-        # 2. Export Data (Current View)
-        success = perform_export(driver, wait)
-        if not success:
-            print("Stopping due to export failure.")
-            break
-        # 2. Find and Analyze Downloaded File
-        try:
-            time.sleep(5) # Wait for file to close
-        except KeyboardInterrupt:
-            print("User interrupted during wait. Saving progress...")
-            break
-            
-        csv_file = get_latest_csv()
-        if not csv_file:
-            print("No CSV found!")
-            break
-            
-        print(f"Downloaded: {csv_file}")
-        
-        # RENAME FILE to prevent overwriting
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            new_filename = f"ES1_1m_{timestamp}_{iteration}.csv"
-            new_path = os.path.join(os.path.dirname(csv_file), new_filename)
-            os.rename(csv_file, new_path)
-            print(f"Renamed to: {new_filename}")
-            csv_file = new_path # Update reference for reading
-        except Exception as e:
-            print(f"Error renaming file: {e}")
-
-        # 3. Read Data to find the next target date
-        try:
-            df = pd.read_csv(csv_file)
-            time_col = df.columns[0] 
-            
-            if pd.api.types.is_numeric_dtype(df[time_col]):
-                df['parsed_time'] = pd.to_datetime(df[time_col], unit='s')
+    # Task 1: Fill Gap (Forward/Recent)
+    if args.check_gap:
+        if global_max:
+            # Check if gap exists (e.g., > 1 hour)
+            now = datetime.now()
+            if (now - global_max) > timedelta(hours=1):
+                print(f"Gap detected: {global_max} -> {now}")
+                tasks.append({
+                    "type": "gap",
+                    "start_date": now,
+                    "stop_date": global_max
+                })
             else:
-                df['parsed_time'] = pd.to_datetime(df[time_col])
-                
-            oldest_dt = df['parsed_time'].min()
-            print(f"Oldest data in file: {oldest_dt}")
-            
-            # Check if we reached the target
-            if oldest_dt < target_date:
-                print(f"Reached target date {target_date}! Stopping.")
-                break
-            
-            if last_oldest_time and oldest_dt >= last_oldest_time:
-                print(f"Data not getting older. Current: {oldest_dt}, Last: {last_oldest_time}")
-                print("Stopping to prevent infinite loop.")
-                break
-            
-            last_oldest_time = oldest_dt
-            
-            # 3. Calculate Next Target Date
-            next_target = oldest_dt - timedelta(minutes=1)
-            target_str = next_target.strftime("%Y-%m-%d %H:%M")
-            
-            # 4. Go To Date
-            go_to_date(driver, target_str)
-            
-        except Exception as e:
-            print(f"Error analyzing CSV: {e}")
-            break
+                print("No significant gap detected.")
+        else:
+            print("No existing data to check gap against. Starting fresh download.")
+            tasks.append({
+                "type": "gap", # Treat as gap fill from Now
+                "start_date": datetime.now(),
+                "stop_date": datetime.now() - timedelta(days=30*args.months) # Default fallback
+            })
+
+    # Task 2: Resume History (Backward)
+    if args.resume or (not args.check_gap and not args.resume): # Default if nothing specified? Or just resume.
+        # If user didn't specify anything, maybe just resume history?
+        # Let's assume if --resume is passed OR no specific mode is passed, we do history.
+        # But if --check-gap is passed alone, we only do gap.
+        if args.resume or not args.check_gap:
+            start_point = global_min if global_min else datetime.now()
+            target_date = start_point - timedelta(days=30*args.months)
+            print(f"Resuming history download from {start_point} to {target_date}")
+            tasks.append({
+                "type": "history",
+                "start_date": start_point,
+                "stop_date": target_date
+            })
+
+    if not tasks:
+        print("No tasks to perform.")
+        return
+
+    for task in tasks:
+        print(f"\n--- Starting Task: {task['type'].upper()} ---")
+        print(f"Start: {task['start_date']}")
+        print(f"Stop: {task['stop_date']}")
         
-        time.sleep(5)
+        current_pointer = task['start_date']
+        stop_limit = task['stop_date']
+        
+        # Initial positioning
+        if task['type'] == 'gap':
+            # For gap, we start at Now (Realtime)
+            # Ensure we are at realtime
+            try:
+                jump_btns = driver.find_elements(By.CSS_SELECTOR, "button[data-name='jump-to-realtime']")
+                if jump_btns:
+                    jump_btns[0].click()
+            except:
+                pass
+        else:
+            # For history, go to the start point
+            go_to_date(driver, current_pointer.strftime("%Y-%m-%d %H:%M"))
+            
+        # Optional: Use Alt+Shift+Left if requested or to ensure we are at the edge
+        if args.use_shortcuts:
+            jump_to_start(driver)
+
+        max_iterations = args.iterations if args.iterations else 100 # Safety limit
+        iteration = 0
+        last_oldest_time = None
+        
+        while iteration < max_iterations:
+            iteration += 1
+            print(f"\n--- Iteration {iteration}/{max_iterations} ({task['type']}) ---")
+            
+            # 1. Export
+            success = perform_export(driver, wait)
+            if not success:
+                print("Export failed. Retrying once...")
+                time.sleep(2)
+                success = perform_export(driver, wait)
+                if not success:
+                    print("Export failed again. Stopping task.")
+                    break
+            
+            # 2. Process File
+            try:
+                time.sleep(3) # Wait for download
+                csv_file = get_latest_csv()
+                if not csv_file:
+                    print("No CSV found.")
+                    break
+                    
+                # Rename
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                new_filename = f"ES1_1m_{timestamp}_{task['type']}_{iteration}.csv"
+                new_path = os.path.join(os.path.dirname(csv_file), new_filename)
+                try:
+                    os.rename(csv_file, new_path)
+                    print(f"Saved: {new_filename}")
+                    csv_file = new_path
+                except:
+                    pass
+                
+                # Analyze
+                df = pd.read_csv(csv_file)
+                time_col = df.columns[0]
+                if pd.api.types.is_numeric_dtype(df[time_col]):
+                    df['parsed_time'] = pd.to_datetime(df[time_col], unit='s')
+                else:
+                    df['parsed_time'] = pd.to_datetime(df[time_col])
+                
+                file_min = df['parsed_time'].min()
+                file_max = df['parsed_time'].max()
+                print(f"File Range: {file_min} <-> {file_max}")
+                
+                # Check completion conditions
+                if task['type'] == 'gap':
+                    # We are downloading backwards from Now.
+                    # We stop if file_min <= stop_limit (overlap with old data)
+                    if file_min <= stop_limit:
+                        print(f"Gap filled! (File min {file_min} <= Stop limit {stop_limit})")
+                        break
+                else:
+                    # History
+                    # We stop if file_min <= stop_limit
+                    if file_min <= stop_limit:
+                        print(f"Target history reached! (File min {file_min} <= Stop limit {stop_limit})")
+                        break
+                
+                # Check for progress
+                if last_oldest_time and file_min >= last_oldest_time:
+                    print("Data not getting older. Stopping to avoid loop.")
+                    break
+                last_oldest_time = file_min
+                
+                # Move to next chunk
+                next_target = file_min - timedelta(minutes=1)
+                go_to_date(driver, next_target.strftime("%Y-%m-%d %H:%M"))
+                
+            except Exception as e:
+                print(f"Error processing file: {e}")
+                break
+                
+            time.sleep(2)
 
 if __name__ == "__main__":
-    run_enhanced_downloader()
+    parser = argparse.ArgumentParser(description="Enhanced OHLC Downloader")
+    parser.add_argument("--resume", action="store_true", help="Resume downloading history from the oldest existing data")
+    parser.add_argument("--check-gap", action="store_true", help="Check for gap between Now and latest data, and fill it")
+    parser.add_argument("--months", type=int, default=3, help="Number of months of history to download (default: 3)")
+    parser.add_argument("--iterations", type=int, help="Override number of iterations")
+    parser.add_argument("--ticker", type=str, help="Ticker symbol to switch to (e.g., ES1!)")
+    parser.add_argument("--use-shortcuts", action="store_true", help="Use Alt+Shift+Left to jump to start")
+    parser.add_argument("--parquet-file", type=str, help="Path to existing Parquet file to use for data bounds")
+    
+    args = parser.parse_args()
+    
+    run_enhanced_downloader(args)
