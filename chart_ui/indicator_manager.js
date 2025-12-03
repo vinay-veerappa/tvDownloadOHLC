@@ -12,7 +12,7 @@ class IndicatorManager {
         this.colorIndex = 0;
     }
 
-    async addIndicator(name, timeframe, params = {}) {
+    async addIndicator(name, timeframe, params = {}, ticker = 'ES1') {
         const key = `${name}_${JSON.stringify(params)}`;
 
         if (this.indicators.has(key)) {
@@ -24,6 +24,7 @@ class IndicatorManager {
             // Build query string
             const queryParams = new URLSearchParams({
                 limit: '20000',
+                ticker: ticker,
                 ...params
             });
 

@@ -112,6 +112,21 @@ async def get_js_file(filename: str):
         return FileResponse(js_path, media_type="application/javascript")
     raise HTTPException(status_code=404, detail=f"JavaScript file {filename}.js not found")
 
+@app.get("/api/tickers")
+async def get_tickers():
+    """Get list of available tickers"""
+    tickers = set()
+    # Scan for any parquet files
+    for file in DATA_DIR.glob("*_*.parquet"):
+        # Filename format: TICKER_TIMEFRAME.parquet
+        # e.g. ES1_1m.parquet -> ES1
+        if "_" in file.stem:
+            parts = file.stem.split("_")
+            if len(parts) >= 2:
+                tickers.add(parts[0])
+    
+    return {"tickers": sorted(list(tickers))}
+
 @app.get("/api/timeframes")
 async def get_timeframes(ticker: str = "ES1"):
     """Get available timeframes"""
