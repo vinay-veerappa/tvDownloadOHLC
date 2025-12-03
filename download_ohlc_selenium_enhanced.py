@@ -170,35 +170,58 @@ def perform_export(driver, wait):
 
 def go_to_date(driver, date_str):
     print(f"Going to date: {date_str}...")
-    actions = ActionChains(driver)
     
-    # Press Alt+G
-    actions.key_down(Keys.ALT).send_keys('g').key_up(Keys.ALT).perform()
-    time.sleep(2)
-    
-    # Check if modal appeared. If not, try clicking the calendar icon.
+    # 1. Find "Select date..." in Replay Toolbar
+    print("Looking for Replay 'Select date' option...")
     try:
-        # Calendar icon usually has class 'icon-wNyKS1Qc' or similar, or aria-label 'Go to'
-        # Let's look for the button we found earlier
-        buttons = driver.find_elements(By.CSS_SELECTOR, "button")
-        for btn in buttons:
-            txt = btn.get_attribute("aria-label") or btn.get_attribute("title") or btn.text
-            if txt and "Go to" in txt:
-                print(f"FOUND GO TO BUTTON: {txt}")
-                # Try standard click
-                try:
-                    btn.click()
-                except:
-                    # Try ActionChains
-                    ActionChains(driver).move_to_element(btn).click().perform()
-                time.sleep(1)
-                break
-    except:
-        pass
+        # Try finding the dropdown trigger using data-qa-id
+        trigger = None
+        trigger_selectors = [
+            (By.CSS_SELECTOR, "[data-qa-id='select-date-bar-mode-menu']"),
+            (By.CSS_SELECTOR, "button[data-qa-id='select-date-bar-mode-menu']"),
+            (By.CSS_SELECTOR, "div[class*='selectDateBar__button']")
+        ]
+        
+        for by, val in trigger_selectors:
+            try:
+                trigger = driver.find_element(by, val)
+                if trigger.is_displayed():
+                    print(f"Found trigger: {val}")
+                    trigger.click()
+                    time.sleep(1)
+                    break
+            except:
+                continue
+                
+        if not trigger:
+            print("Could not find dropdown trigger. Trying Alt+G fallback...")
+            ActionChains(driver).key_down(Keys.ALT).send_keys('g').key_up(Keys.ALT).perform()
+            time.sleep(2)
+        else:
+            # Look for "Select date..." in the open menu
+            print("Looking for 'Select date' using class selector...")
+            try:
+                # Find ALL elements with 'selectDateBar' in class
+                elements = driver.find_elements(By.CSS_SELECTOR, "[class*='selectDateBar']")
+                found = False
+                for el in elements:
+                    if "Select date" in el.text:
+                        print("MATCH FOUND! Clicking...")
+                        el.click()
+                        found = True
+                        time.sleep(2)
+                        break
+                if not found:
+                    print("No element with 'Select date' text found.")
+            except Exception as e:
+                print(f"Error searching classes: {e}")
 
-    # The dialog should appear. We need to find the input field.
+    except Exception as e:
+        print(f"Error finding replay menu: {e}")
+
+    # 2. Handle Date Input
     try:
-        # Common selectors for the Go To Date input
+        wait = WebDriverWait(driver, 5)
         input_selectors = [
             (By.CSS_SELECTOR, "input[data-role='date-input']"),
             (By.CSS_SELECTOR, "div[data-name='date-input'] input"),
@@ -206,9 +229,6 @@ def go_to_date(driver, date_str):
             (By.XPATH, "//input[@placeholder='YYYY-MM-DD']"), 
             (By.XPATH, "//div[contains(@class, 'dialog')]//input") 
         ]
-        
-        # We need to wait for the modal
-        wait = WebDriverWait(driver, 5)
         
         date_input = None
         for by, val in input_selectors:
@@ -220,35 +240,29 @@ def go_to_date(driver, date_str):
                 continue
                 
         if date_input:
-            # Clear using Backspace loop (more robust than clear())
-            # Click to focus
+            # Clear input
             date_input.click()
             time.sleep(0.5)
+            date_input.send_keys(Keys.CONTROL, "a")
+            time.sleep(0.1)
+            date_input.send_keys(Keys.DELETE)
+            time.sleep(0.1)
             
-            # Send Backspace 15 times to clear existing date
-            for _ in range(15):
-                date_input.send_keys(Keys.BACK_SPACE)
-                time.sleep(0.1)
-                
-            # Type date character by character
+            # Type date
             for char in list(date_str):
                 date_input.send_keys(char)
                 time.sleep(0.1)
                 
             date_input.send_keys(Keys.ENTER)
             print("Date entered.")
-            time.sleep(5) # Wait for load
+            time.sleep(5) 
             return True
         else:
-            print("Could not find date input in modal. Trying blind typing...")
-            # Blind typing fallback
-            actions.send_keys(date_str).send_keys(Keys.ENTER).perform()
-            time.sleep(5)
-            return True
+            print("Could not find date input.")
+            return False
             
     except Exception as e:
         print(f"Failed to go to date: {e}")
-        actions.send_keys(Keys.ESCAPE).perform()
         return False
 
 import glob
@@ -264,16 +278,69 @@ def get_latest_csv():
     latest_file = max(list_of_files, key=os.path.getctime)
     return latest_file
 
+def enter_replay_mode(driver):
+    print("Attempting to enter Bar Replay mode...")
+    try:
+        # 1. Click Bar Replay Button
+        replay_selectors = [
+            (By.ID, "header-toolbar-replay"),
+            (By.CSS_SELECTOR, "button[aria-label='Bar Replay']"),
+            (By.CSS_SELECTOR, "button[data-name='replay-mode']")
+        ]
+        
+        replay_btn = None
+        for by, val in replay_selectors:
+            try:
+                replay_btn = driver.find_element(by, val)
+                if replay_btn.is_displayed():
+                    replay_btn.click()
+                    print(f"Clicked Bar Replay button using {val}")
+                    time.sleep(1)
+                    break
+            except:
+                continue
+                
+        if not replay_btn:
+            print("Could not find Bar Replay button. Assuming already in mode or hidden.")
+            
+        # 2. Handle 'Start new' dialog if it appears
+        time.sleep(1)
+        try:
+            start_new_selectors = [
+                (By.XPATH, "//button[contains(text(), 'Start new')]"),
+                (By.CSS_SELECTOR, "button[data-name='start-new-replay']"),
+                (By.XPATH, "//div[contains(@class, 'dialog')]//button[contains(., 'Start new')]")
+            ]
+            
+            for by, val in start_new_selectors:
+                try:
+                    btn = driver.find_element(by, val)
+                    if btn.is_displayed():
+                        btn.click()
+                        print(f"Clicked 'Start new' button using {val}")
+                        time.sleep(1)
+                        break
+                except:
+                    continue
+        except:
+            pass # Dialog might not appear
+            
+    except Exception as e:
+        print(f"Error entering Bar Replay mode: {e}")
+
 def run_enhanced_downloader():
     driver = connect_driver()
     wait = WebDriverWait(driver, 20)
+    
+    # Enter Bar Replay Mode first
+    enter_replay_mode(driver)
     
     # Main Loop
     # Target: 2 months ago
     target_date = datetime.now() - timedelta(days=60)
     print(f"Target Date: {target_date}")
     
-    max_iterations = 50 # Safety limit
+    max_iterations = 3 # User requested next 3 sets
     iteration = 0
     last_oldest_time = None
     
