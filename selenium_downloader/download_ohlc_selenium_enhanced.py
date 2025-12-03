@@ -242,20 +242,20 @@ def go_to_date(driver, date_str):
         if date_input:
             # Clear input
             date_input.click()
-            time.sleep(0.5)
+            time.sleep(0.2)
             date_input.send_keys(Keys.CONTROL, "a")
-            time.sleep(0.1)
+            time.sleep(0.05)
             date_input.send_keys(Keys.DELETE)
-            time.sleep(0.1)
+            time.sleep(0.05)
             
             # Type date
             for char in list(date_str):
                 date_input.send_keys(char)
-                time.sleep(0.1)
+                time.sleep(0.05) # Reduced from 0.1
                 
             date_input.send_keys(Keys.ENTER)
             print("Date entered.")
-            time.sleep(5) 
+            time.sleep(2) # Reduced from 5
             return True
         else:
             print("Could not find date input.")
@@ -333,14 +333,46 @@ def run_enhanced_downloader():
     wait = WebDriverWait(driver, 20)
     
     # Enter Bar Replay Mode first
-    enter_replay_mode(driver)
+    # Check if we are already in replay mode to avoid restarting it
+    try:
+        # If the "Jump to real-time" button exists, we are in replay mode
+        if len(driver.find_elements(By.CSS_SELECTOR, "button[data-name='jump-to-realtime']")) > 0:
+            print("Already in Bar Replay mode.")
+        else:
+            enter_replay_mode(driver)
+    except:
+        enter_replay_mode(driver)
     
     # Main Loop
-    # Target: 2 months ago
-    target_date = datetime.now() - timedelta(days=60)
+    # Target: 3 months ago (90 days)
+    target_date = datetime.now() - timedelta(days=90)
     print(f"Target Date: {target_date}")
     
-    max_iterations = 3 # User requested next 3 sets
+    # Check latest file to determine start point
+    # DISABLE RESUMPTION to force gap filling from Dec -> Nov
+    # latest_csv = get_latest_csv()
+    # if latest_csv:
+    #     print(f"Found existing data: {latest_csv}")
+    #     try:
+    #         df = pd.read_csv(latest_csv)
+    #         time_col = df.columns[0]
+    #         if pd.api.types.is_numeric_dtype(df[time_col]):
+    #             df['parsed_time'] = pd.to_datetime(df[time_col], unit='s')
+    #         else:
+    #             df['parsed_time'] = pd.to_datetime(df[time_col])
+    #         
+    #         oldest_dt = df['parsed_time'].min()
+    #         print(f"Resuming from: {oldest_dt}")
+    #         
+    #         # Go to this date immediately to resume
+    #         next_target = oldest_dt - timedelta(minutes=1)
+    #         target_str = next_target.strftime("%Y-%m-%d %H:%M")
+    #         go_to_date(driver, target_str)
+    #         
+    #     except Exception as e:
+    #         print(f"Error reading existing file: {e}. Starting fresh.")
+    
+    max_iterations = 20 # Cover approx 3 months
     iteration = 0
     last_oldest_time = None
     
@@ -350,22 +382,39 @@ def run_enhanced_downloader():
         
         # 1. Scroll Back to load data around the target date
         # This ensures we have a full buffer of data before exporting
-        scroll_back(driver, iterations=5)
+        scroll_back(driver, iterations=15)
         
         # 2. Export Data (Current View)
         success = perform_export(driver, wait)
         if not success:
             print("Stopping due to export failure.")
             break
-            
         # 2. Find and Analyze Downloaded File
-        time.sleep(5) # Wait for file to close
-        csv_file = get_latest_csv()
-        if not csv_file:
-            print("No CSV found.")
+        try:
+            time.sleep(5) # Wait for file to close
+        except KeyboardInterrupt:
+            print("User interrupted during wait. Saving progress...")
             break
             
-        print(f"Analyzed file: {csv_file}")
+        csv_file = get_latest_csv()
+        if not csv_file:
+            print("No CSV found!")
+            break
+            
+        print(f"Downloaded: {csv_file}")
+        
+        # RENAME FILE to prevent overwriting
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            new_filename = f"ES1_1m_{timestamp}_{iteration}.csv"
+            new_path = os.path.join(os.path.dirname(csv_file), new_filename)
+            os.rename(csv_file, new_path)
+            print(f"Renamed to: {new_filename}")
+            csv_file = new_path # Update reference for reading
+        except Exception as e:
+            print(f"Error renaming file: {e}")
+
+        # 3. Read Data to find the next target date
         try:
             df = pd.read_csv(csv_file)
             time_col = df.columns[0] 
@@ -384,7 +433,8 @@ def run_enhanced_downloader():
                 break
             
             if last_oldest_time and oldest_dt >= last_oldest_time:
-                print("Data not getting older. Stopping.")
+                print(f"Data not getting older. Current: {oldest_dt}, Last: {last_oldest_time}")
+                print("Stopping to prevent infinite loop.")
                 break
             
             last_oldest_time = oldest_dt
