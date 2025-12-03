@@ -61,10 +61,6 @@ def get_data_bounds(download_dir, parquet_file=None):
                     time_col = name
                     break
             
-            if not time_col and len(df_p.columns) > 0:
-                # Fallback to first column if it looks like time
-                time_col = df_p.columns[0]
-            
             if time_col:
                 print(f"Using column '{time_col}' from Parquet.")
                 if pd.api.types.is_numeric_dtype(df_p[time_col]):
@@ -80,6 +76,23 @@ def get_data_bounds(download_dir, parquet_file=None):
                  if not df_p.index.empty:
                     min_dates.append(df_p.index.min())
                     max_dates.append(df_p.index.max())
+            elif len(df_p.columns) > 0:
+                # Fallback to first column if it looks like time
+                time_col = df_p.columns[0]
+                print(f"Fallback: Using first column '{time_col}' from Parquet.")
+                if pd.api.types.is_numeric_dtype(df_p[time_col]):
+                     # Check if values look like timestamps (e.g. > 1980)
+                     # If values are small (like price 20000), it's not a timestamp
+                     if df_p[time_col].mean() > 315360000: # > 1980
+                        times = pd.to_datetime(df_p[time_col], unit='s')
+                        min_dates.append(times.min())
+                        max_dates.append(times.max())
+                     else:
+                        print(f"Column '{time_col}' does not look like a timestamp (mean={df_p[time_col].mean()}). Ignoring.")
+                else:
+                    times = pd.to_datetime(df_p[time_col])
+                    min_dates.append(times.min())
+                    max_dates.append(times.max())
             else:
                 print("Could not identify time column in Parquet.")
                 
@@ -403,7 +416,20 @@ def enter_replay_mode(driver):
                 continue
                 
         if not replay_btn:
-            print("Could not find Bar Replay button. Assuming already in mode or hidden.")
+            print("Replay button not found in main toolbar. Checking overflow menu...")
+            try:
+                more_btn = driver.find_element(By.CSS_SELECTOR, "div[data-name='header-toolbar-more'] button")
+                more_btn.click()
+                time.sleep(1)
+                # Now look for replay in the menu
+                # Note: Menu items might have different selectors
+                replay_menu_item = driver.find_element(By.XPATH, "//div[contains(text(), 'Bar Replay')]")
+                replay_menu_item.click()
+                print("Clicked Bar Replay from overflow menu.")
+                time.sleep(1)
+            except Exception as e:
+                print(f"Could not find Bar Replay in overflow menu: {e}")
+                print("Assuming already in mode or hidden.")
             
         # 2. Handle 'Start new' dialog if it appears
         time.sleep(1)
