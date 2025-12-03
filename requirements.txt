@@ -1,0 +1,4 @@
+git+https://github.com/rongardF/tvdatafeed.git
+pandas
+selenium
+webdriver-manager

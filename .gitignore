@@ -1,0 +1,8 @@
+chrome_profile/
+__pycache__/
+*.csv
+*.png
+*.html
+downloads_es_futures/
+.venv/
+credentials.json
