@@ -1,0 +1,205 @@
+html_content = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ES Chart</title>
+    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="indicator_manager.js"></script>
+    <style>
+        * { margin: 0; padding: 0; }
+        body { background: #1e222d; color: #d1d4dc; font-family: sans-serif; }
+        #header { background: #2a2e39; padding: 15px; display: flex; justify-content: space-between; }
+        select { background: #3a3e49; color: #d1d4dc; border: 1px solid #4a4e59; padding: 8px; border-radius: 4px; }
+        #chart { width: 100%; height: calc(100vh - 50px); }
+        #status { padding: 5px 10px; background: #3a3e49; border-radius: 4px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <div>ES Futures</div>
+        <div style="display:flex;gap:10px">
+            <select id="timeframe">
+                <option value="1m">1 Min</option>
+                <option value="5m">5 Min</option>
+                <option value="15m">15 Min</option>
+                <option value="1h" selected>1 Hour</option>
+                <option value="4h">4 Hour</option>
+                <option value="1D">1 Day</option>
+            </select>
+            <select id="timezone">
+                <option value="America/New_York" selected>NY (EST)</option>
+                <option value="America/Chicago">Chicago (CST)</option>
+                <option value="America/Los_Angeles">LA (PST)</option>
+                <option value="UTC">UTC</option>
+                <option value="Europe/London">London</option>
+            </select>
+            <button id="indicatorBtn">+ Indicators</button>
+            <div id="status">Loading...</div>
+        </div>
+    </div>
+    <div id="chart"></div>
+    <script>
+        let currentTimezone = 'America/New_York';
+        
+        const chart = window.LightweightCharts.createChart(document.getElementById('chart'), {
+            width: window.innerWidth,
+            height: window.innerHeight - 50,
+            layout: { background: { color: '#1e222d' }, textColor: '#d1d4dc' },
+            grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
+            timeScale: { 
+                timeVisible: true,
+                secondsVisible: false
+            },
+            localization: {
+                timeFormatter: function(timestamp) {
+                    const date = new Date(timestamp * 1000);
+                    return date.toLocaleString('en-US', {
+                        timeZone: currentTimezone,
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false
+                    });
+                }
+            }
+        });
+        
+        const series = chart.addCandlestickSeries({
+            upColor: '#26a69a',
+            downColor: '#ef5350',
+            wickUpColor: '#26a69a',
+            wickDownColor: '#ef5350'
+        });
+        
+        // Track price lines
+        let pdhLine = null;
+        let pdlLine = null;
+        
+        // Initialize Indicator Manager
+        let indicatorManager = null;
+        let currentTimeframe = '1h';
+        
+        window.addEventListener('resize', function() {
+            chart.applyOptions({
+                width: window.innerWidth,
+                height: window.innerHeight - 50
+            });
+        });
+        
+        async function loadData(timeframe) {
+            document.getElementById('status').textContent = 'Loading...';
+            try {
+                const response = await fetch('http://localhost:8000/api/ohlc/' + timeframe + '?limit=20000');
+                const result = await response.json();
+                series.setData(result.data);
+                
+                // Calculate PDH and PDL (Previous Daily High/Low)
+                if (result.data.length > 0) {
+                    // Get last bar time
+                    const lastBar = result.data[result.data.length - 1];
+                    const lastTime = lastBar.time;
+                    
+                    // Find start of today (last day in data)
+                    const lastDate = new Date(lastTime * 1000);
+                    lastDate.setHours(0, 0, 0, 0);
+                    const todayStart = Math.floor(lastDate.getTime() / 1000);
+                    
+                    // Get yesterday's start
+                    const yesterdayStart = todayStart - 86400;
+                    
+                    // Find all bars from yesterday
+                    const yesterdayBars = result.data.filter(bar => 
+                        bar.time >= yesterdayStart && bar.time < todayStart
+                    );
+                    
+                    if (yesterdayBars.length > 0) {
+                        // Calculate PDH and PDL
+                        const pdh = Math.max(...yesterdayBars.map(b => b.high));
+                        const pdl = Math.min(...yesterdayBars.map(b => b.low));
+                        
+                        // Remove old price lines
+                        if (pdhLine) series.removePriceLine(pdhLine);
+                        if (pdlLine) series.removePriceLine(pdlLine);
+                        
+                        // Add PDH line
+                        pdhLine = series.createPriceLine({
+                            price: pdh,
+                            color: '#2962FF',
+                            lineWidth: 2,
+                            lineStyle: 2, // Dashed
+                            axisLabelVisible: true,
+                            title: 'PDH',
+                        });
+                        
+                        // Add PDL line
+                        pdlLine = series.createPriceLine({
+                            price: pdl,
+                            color: '#FF6D00',
+                            lineWidth: 2,
+                            lineStyle: 2, // Dashed
+                            axisLabelVisible: true,
+                            title: 'PDL',
+                        });
+                    }
+                }
+                
+                chart.timeScale().fitContent();
+                document.getElementById('status').textContent = result.bars.toLocaleString() + ' bars';
+            } catch (error) {
+                document.getElementById('status').textContent = 'Error: ' + error.message;
+            }
+        }
+        
+        // Indicator button - add some common indicators
+        document.getElementById('indicatorBtn').addEventListener('click', async function() {
+            if (!indicatorManager) {
+                indicatorManager = new window.IndicatorManager(chart, series);
+            }
+            
+            // Demo: Add SMA(20) and EMA(50)
+            await indicatorManager.addIndicator('sma', currentTimeframe, { period: 20 });
+            await indicatorManager.addIndicator('ema', currentTimeframe, { period: 50 });
+            
+            document.getElementById('status').textContent = 'Added: SMA(20), EMA(50)';
+            
+            // You can add more indicators via browser console:
+            // indicatorManager.addIndicator('bb', '1h', { period: 20, std_dev: 2 });
+        });
+        
+        document.getElementById('timeframe').addEventListener('change', function(e) {
+            currentTimeframe = e.target.value;
+            loadData(e.target.value);
+        });
+        
+        // Timezone change handler
+        document.getElementById('timezone').addEventListener('change', function(e) {
+            currentTimezone = e.target.value;
+            chart.applyOptions({
+                localization: {
+                    timeFormatter: function(timestamp) {
+                        const date = new Date(timestamp * 1000);
+                        return date.toLocaleString('en-US', {
+                            timeZone: currentTimezone,
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false
+                        });
+                    }
+                }
+            });
+            // Force redraw
+            chart.timeScale().scrollToPosition(0, false);
+        });
+        
+        loadData('1h');
+    </script>
+</body>
+</html>"""
+
+with open('chart_ui.html', 'w', encoding='utf-8') as f:
+    f.write(html_content)
+    
+print("Created chart_ui.html")
