@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Plugin Test Page</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #1e222d;
+            color: #d1d4dc;
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+
+        #controls {
+            background: #2a2e39;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+
+        button {
+            background: #3a3e49;
+            color: #d1d4dc;
+            border: 1px solid #4a4e59;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+
+        button:hover {
+            background: #4a4e59;
+        }
+
+        button.success {
+            background: #26a69a;
+            border-color: #26a69a;
+        }
+
+        button.error {
+            background: #ef5350;
+            border-color: #ef5350;
+        }
+
+        #chart {
+            width: 100%;
+            height: 500px;
+            background: #131722;
+        }
+
+        #log {
+            background: #131722;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid #4a4e59;
+            padding-left: 10px;
+        }
+
+        .log-success {
+            border-left-color: #26a69a;
+            color: #26a69a;
+        }
+
+        .log-error {
+            border-left-color: #ef5350;
+            color: #ef5350;
+        }
+
+        .log-info {
+            border-left-color: #2962FF;
+            color: #2962FF;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🧪 Plugin Integration Test</h1>
+    <p style="margin: 10px 0; color: #888;">Testing dynamic module loading for lightweight-charts plugins</p>
+
+    <div id="controls">
+        <h3>Test Plugins:</h3>
+        <button onclick="testTooltip()">Load Tooltip Plugin</button>
+        <button onclick="testVolumeProfile()">Load Volume Profile</button>
+        <button onclick="testMovingAverage()">Load Moving Average</button>
+        <button onclick="testDeltaTooltip()">Load Delta Tooltip</button>
+        <button onclick="clearLog()">Clear Log</button>
+    </div>
+
+    <div id="chart"></div>
+
+    <div id="log">
+        <div class="log-entry log-info">📋 Console ready. Click buttons above to test plugin loading.</div>
+    </div>
+
+    <script type="module">
+        // Global references
+        window.chart = null;
+        window.series = null;
+        window.loadedPlugins = [];
+
+        // Logging function
+        window.log = function (message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            const time = new Date().toLocaleTimeString();
+            entry.textContent = `[${time}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(`[${type.toUpperCase()}]`, message);
+        };
+
+        window.clearLog = function () {
+            document.getElementById('log').innerHTML = '<div class="log-entry log-info">📋 Log cleared.</div>';
+        };
+
+        // Initialize chart with sample data
+        function initChart() {
+            window.log('Initializing chart...', 'info');
+
+            const chartElement = document.getElementById('chart');
+            window.chart = window.LightweightCharts.createChart(chartElement, {
+                autoSize: true,
+                layout: { background: { color: '#131722' }, textColor: '#d1d4dc' },
+                grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
+                crosshair: { mode: window.LightweightCharts.CrosshairMode.Normal },
+            });
+
+            window.series = window.chart.addSeries(window.LightweightCharts.CandlestickSeries, {
+                upColor: '#26a69a',
+                downColor: '#ef5350',
+                wickUpColor: '#26a69a',
+                wickDownColor: '#ef5350'
+            });
+
+            // Generate sample OHLC data
+            const data = [];
+            let timestamp = Math.floor(Date.now() / 1000) - 86400 * 30; // 30 days ago
+            let basePrice = 100;
+
+            for (let i = 0; i < 200; i++) {
+                const open = basePrice + (Math.random() - 0.5) * 2;
+                const close = open + (Math.random() - 0.5) * 3;
+                const high = Math.max(open, close) + Math.random() * 2;
+                const low = Math.min(open, close) - Math.random() * 2;
+
+                data.push({
+                    time: timestamp,
+                    open: parseFloat(open.toFixed(2)),
+                    high: parseFloat(high.toFixed(2)),
+                    low: parseFloat(low.toFixed(2)),
+                    close: parseFloat(close.toFixed(2))
+                });
+
+                timestamp += 900; // 15 minutes
+                basePrice = close;
+            }
+
+            window.series.setData(data);
+            window.chart.timeScale().fitContent();
+
+            window.log(`✓ Chart initialized with ${data.length} sample bars`, 'success');
+        }
+
+        // Test plugin loading functions
+        window.testTooltip = async function () {
+            window.log('Attempting to load tooltip.js...', 'info');
+            try {
+                const module = await import('./tooltip.js');
+                window.log('✓ Module loaded successfully!', 'success');
+                window.log(`Exports: ${Object.keys(module).join(', ')}`, 'info');
+
+                // Try to instantiate
+                const TooltipPrimitive = module.TooltipPrimitive;
+                if (TooltipPrimitive) {
+                    const tooltip = new TooltipPrimitive({
+                        lineColor: '#2962FF',
+                        title: 'Test Chart'
+                    });
+                    window.series.attachPrimitive(tooltip);
+                    window.loadedPlugins.push({ name: 'Tooltip', instance: tooltip });
+                    window.log('✓ Tooltip plugin attached to chart!', 'success');
+                    window.log('→ Hover over the chart to see the tooltip', 'info');
+                } else {
+                    window.log('⚠ TooltipPrimitive not found in module', 'error');
+                }
+            } catch (error) {
+                window.log(`✗ Error loading tooltip: ${error.message}`, 'error');
+                console.error('Full error:', error);
+            }
+        };
+
+        window.testVolumeProfile = async function () {
+            window.log('Attempting to load volume-profile.js...', 'info');
+            try {
+                const module = await import('./volume-profile.js');
+                window.log('✓ Module loaded successfully!', 'success');
+                window.log(`Exports: ${Object.keys(module).join(', ')}`, 'info');
+            } catch (error) {
+                window.log(`✗ Error: ${error.message}`, 'error');
+                console.error('Full error:', error);
+            }
+        };
+
+        window.testMovingAverage = async function () {
+            window.log('Attempting to load moving-average.js...', 'info');
+            try {
+                const module = await import('./moving-average.js');
+                window.log('✓ Module loaded successfully!', 'success');
+                window.log(`Exports: ${Object.keys(module).join(', ')}`, 'info');
+
+                // Try to apply indicator
+                const applyMovingAverage = module.applyMovingAverageIndicator;
+                if (applyMovingAverage) {
+                    const maSeries = applyMovingAverage(window.series, {
+                        length: 20,
+                        source: 'close'
+                    });
+                    window.loadedPlugins.push({ name: 'MA(20)', series: maSeries });
+                    maSeries.applyOptions({ color: '#2962FF', lineWidth: 2 });
+                    window.log('✓ Moving Average (20) added to chart!', 'success');
+                } else {
+                    window.log('⚠ applyMovingAverageIndicator not found in module', 'error');
+                }
+            } catch (error) {
+                window.log(`✗ Error: ${error.message}`, 'error');
+                console.error('Full error:', error);
+            }
+        };
+
+        window.testDeltaTooltip = async function () {
+            window.log('Attempting to load delta-tooltip.js...', 'info');
+            try {
+                const module = await import('./delta-tooltip.js');
+                window.log('✓ Module loaded successfully!', 'success');
+                window.log(`Exports: ${Object.keys(module).join(', ')}`, 'info');
+            } catch (error) {
+                window.log(`✗ Error: ${error.message}`, 'error');
+                console.error('Full error:', error);
+            }
+        };
+
+        // Initialize on load
+        if (!window.LightweightCharts) {
+            window.log('✗ LightweightCharts library not loaded!', 'error');
+        } else {
+            initChart();
+        }
+    </script>
+</body>
+
+</html>
