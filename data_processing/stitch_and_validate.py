@@ -6,7 +6,7 @@ import argparse
 
 def stitch_and_validate(ticker):
     # Clean ticker name to match downloader convention
-    ticker_clean = ticker.replace("!", "").replace(" ", "_")
+    ticker_clean = ticker.upper().replace("!", "").replace(" ", "_")
     
     # Path to downloads
     downloads_path = os.path.join(os.getcwd(), "data", f"downloads_{ticker_clean}")

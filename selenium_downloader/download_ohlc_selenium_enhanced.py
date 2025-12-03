@@ -438,7 +438,7 @@ def run_enhanced_downloader(args):
     wait = WebDriverWait(driver, 20)
     
     # Determine ticker - use provided or default to ES1!
-    ticker = args.ticker if args.ticker else "ES1!"
+    ticker = args.ticker.upper() if args.ticker else "ES1!"
     # Clean ticker for file/folder naming (remove special chars)
     ticker_clean = ticker.replace("!", "").replace("^", "").replace("/", "_")
     print(f"Target ticker: {ticker} (cleaned: {ticker_clean})")
