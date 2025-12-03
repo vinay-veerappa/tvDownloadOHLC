@@ -29,6 +29,12 @@ tradingview-selenium-data/
 *.png
 *.html
 !chart_ui/chart_ui.html
+!chart_ui/demo_plugins.html
+!chart_ui/demo_strategy.html
+!chart_ui/demo_rectangle.html
 
 # Credentials
 credentials.json
+
+# Temp
+temp_repo/

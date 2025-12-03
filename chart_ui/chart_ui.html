@@ -2,22 +2,45 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>ES Chart</title>
-    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+    <title>ES Chart Pro (v5.0)</title>
+    <!-- Lightweight Charts v5.0 -->
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="indicator_manager.js"></script>
+    <script src="trendline_plugin.js"></script>
+    <script src="rectangle_plugin.js"></script>
+    <script src="fibonacci_plugin.js"></script>
+    <script src="vertical_line_plugin.js"></script>
+    <script src="anchored_text_plugin.js"></script>
     <style>
-        * { margin: 0; padding: 0; }
-        body { background: #1e222d; color: #d1d4dc; font-family: sans-serif; }
-        #header { background: #2a2e39; padding: 15px; display: flex; justify-content: space-between; }
-        select { background: #3a3e49; color: #d1d4dc; border: 1px solid #4a4e59; padding: 8px; border-radius: 4px; }
-        #chart { width: 100%; height: calc(100vh - 50px); }
-        #status { padding: 5px 10px; background: #3a3e49; border-radius: 4px; font-size: 12px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #1e222d; color: #d1d4dc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        
+        /* Header & Toolbar */
+        #header { background: #2a2e39; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #363c4e; }
+        .toolbar-group { display: flex; gap: 8px; align-items: center; }
+        .divider { width: 1px; height: 24px; background: #4a4e59; margin: 0 5px; }
+        
+        /* Controls */
+        select, input, button { background: #3a3e49; color: #d1d4dc; border: 1px solid #4a4e59; padding: 6px 10px; border-radius: 4px; font-size: 13px; outline: none; cursor: pointer; }
+        select:hover, input:hover, button:hover { background: #4a4e59; border-color: #5a5e69; }
+        button.active { background: #2962FF; border-color: #2962FF; color: white; }
+        
+        /* Chart Container */
+        #chart { width: 100%; height: calc(100vh - 54px); position: relative; }
+        
+        /* Status Bar */
+        #status { font-size: 12px; color: #888; }
+        
+        /* Date Picker specific */
+        input[type="date"] { padding: 5px; }
     </style>
 </head>
 <body>
     <div id="header">
-        <div>ES Futures</div>
-        <div style="display:flex;gap:10px">
+        <div class="toolbar-group">
+            <span style="font-weight:bold; color:#fff; margin-right:10px">ES Futures</span>
+            
+            <!-- Timeframe -->
             <select id="timeframe">
                 <option value="1m">1 Min</option>
                 <option value="5m">5 Min</option>
@@ -26,6 +49,42 @@
                 <option value="4h">4 Hour</option>
                 <option value="1D">1 Day</option>
             </select>
+            
+            <div class="divider"></div>
+            
+            <!-- Drawing Tools -->
+            <button id="btn-line" onclick="setTool('line')" title="Draw Price Line">📏 Line</button>
+            <button id="btn-ray" onclick="setTool('ray')" title="Draw Trend Line">📉 Trend</button>
+            <button id="btn-rect" onclick="setTool('rect')" title="Draw Rectangle">▭ Rect</button>
+            <button id="btn-fib" onclick="setTool('fib')" title="Draw Fibonacci">🔢 Fib</button>
+            <button id="btn-vert" onclick="setTool('vert')" title="Draw Vertical Line">│ Vert</button>
+            <button id="btn-text" onclick="addWatermark()" title="Add Watermark">T Text</button>
+            <button onclick="clearDrawings()" title="Clear All Drawings">🗑</button>
+            
+            <div class="divider"></div>
+            
+            <!-- Indicators & Strategy -->
+            <select id="indicatorSelect" onchange="addIndicatorFromMenu(this)">
+                <option value="" disabled selected>+ Indicators</option>
+                <option value="sma">SMA (20)</option>
+                <option value="ema">EMA (50)</option>
+                <option value="vwap">VWAP</option>
+                <option value="bb">Bollinger Bands</option>
+                <option value="rsi">RSI (14)</option>
+                <option value="macd">MACD (12, 26, 9)</option>
+                <option value="atr">ATR (14)</option>
+            </select>
+            <button id="strategyBtn" onclick="toggleStrategy()">⚡ Strategy</button>
+        </div>
+        
+        <div class="toolbar-group">
+            <!-- Navigation -->
+            <input type="date" id="datePicker">
+            <button onclick="jumpToDate()">Go</button>
+            
+            <div class="divider"></div>
+            
+            <!-- Timezone -->
             <select id="timezone">
                 <option value="America/New_York" selected>NY (EST)</option>
                 <option value="America/Chicago">Chicago (CST)</option>
@@ -33,60 +92,75 @@
                 <option value="UTC">UTC</option>
                 <option value="Europe/London">London</option>
             </select>
-            <button id="indicatorBtn">+ Indicators</button>
+            
+            <div class="divider"></div>
             <div id="status">Loading...</div>
         </div>
     </div>
-    <div id="chart"></div>
+    
+    <div id="chart-container" style="display: flex; flex-direction: column; height: calc(100vh - 54px);">
+        <div id="chart" style="flex: 1; min-height: 400px;"></div>
+        <div id="indicator-container" style="flex: 0 0 auto;"></div>
+    </div>
+    
     <script>
+        // --- Configuration ---
         let currentTimezone = 'America/New_York';
+        let currentTimeframe = '1h';
+        let currentTool = null;
+        let drawings = []; // Stores primitives
+        let strategyLines = []; 
+        let isStrategyActive = false;
+        let allData = []; 
+        let indicatorManager = null;
         
+        // Drawing State
+        let activeDrawing = null;
+        let startPoint = null; // { time, price }
+        
+        // --- Chart Initialization (v5.0) ---
+        if (!window.LightweightCharts) {
+            document.getElementById('status').textContent = 'Error: Library not loaded.';
+            throw new Error('LightweightCharts not found');
+        }
+
         const chart = window.LightweightCharts.createChart(document.getElementById('chart'), {
-            width: window.innerWidth,
-            height: window.innerHeight - 50,
+            autoSize: true,
             layout: { background: { color: '#1e222d' }, textColor: '#d1d4dc' },
             grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
-            timeScale: { 
-                timeVisible: true,
-                secondsVisible: false
-            },
+            timeScale: { timeVisible: true, rightOffset: 5 },
+            crosshair: { mode: window.LightweightCharts.CrosshairMode.Normal },
             localization: {
                 timeFormatter: function(timestamp) {
                     const date = new Date(timestamp * 1000);
                     return date.toLocaleString('en-US', {
                         timeZone: currentTimezone,
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false
+                        month: 'short', day: 'numeric',
+                        hour: '2-digit', minute: '2-digit', hour12: false
                     });
                 }
             }
         });
         
-        const series = chart.addCandlestickSeries({
-            upColor: '#26a69a',
-            downColor: '#ef5350',
-            wickUpColor: '#26a69a',
-            wickDownColor: '#ef5350'
+        // Main Series (Candlestick) - v5 Syntax
+        const series = chart.addSeries(window.LightweightCharts.CandlestickSeries, {
+            upColor: '#26a69a', downColor: '#ef5350',
+            wickUpColor: '#26a69a', wickDownColor: '#ef5350'
         });
         
-        // Track price lines
+        // Volume Series
+        const volumeSeries = chart.addSeries(window.LightweightCharts.HistogramSeries, {
+            color: '#26a69a',
+            priceFormat: { type: 'volume' },
+            priceScaleId: '', // Overlay
+            scaleMargins: { top: 0.8, bottom: 0 }
+        });
+        
+        // PDH/PDL Lines
         let pdhLine = null;
         let pdlLine = null;
-        
-        // Initialize Indicator Manager
-        let indicatorManager = null;
-        let currentTimeframe = '1h';
-        
-        window.addEventListener('resize', function() {
-            chart.applyOptions({
-                width: window.innerWidth,
-                height: window.innerHeight - 50
-            });
-        });
-        
+
+        // --- Data Loading ---
         async function loadData(timeframe) {
             document.getElementById('status').textContent = 'Loading...';
             try {
@@ -94,113 +168,335 @@
                 const result = await response.json();
                 
                 if (!result.data || !Array.isArray(result.data)) {
-                    console.error('Invalid data format:', result);
-                    document.getElementById('status').textContent = 'Error: Invalid data received';
-                    return;
+                    throw new Error('Invalid data format');
                 }
                 
-                series.setData(result.data);
+                allData = result.data; // Store for navigation
+                series.setData(allData);
+                volumeSeries.setData(allData); // Uses 'value' and 'color' from API
                 
-                // Calculate PDH and PDL (Previous Daily High/Low)
-                if (result.data.length > 0) {
-                    // Get last bar time
-                    const lastBar = result.data[result.data.length - 1];
-                    const lastTime = lastBar.time;
-                    
-                    // Find start of today (last day in data)
-                    const lastDate = new Date(lastTime * 1000);
-                    lastDate.setHours(0, 0, 0, 0);
-                    const todayStart = Math.floor(lastDate.getTime() / 1000);
-                    
-                    // Get yesterday's start
-                    const yesterdayStart = todayStart - 86400;
-                    
-                    // Find all bars from yesterday
-                    const yesterdayBars = result.data.filter(bar => 
-                        bar.time >= yesterdayStart && bar.time < todayStart
-                    );
-                    
-                    if (yesterdayBars.length > 0) {
-                        // Calculate PDH and PDL
-                        const pdh = Math.max(...yesterdayBars.map(b => b.high));
-                        const pdl = Math.min(...yesterdayBars.map(b => b.low));
-                        
-                        // Remove old price lines
-                        if (pdhLine) series.removePriceLine(pdhLine);
-                        if (pdlLine) series.removePriceLine(pdlLine);
-                        
-                        // Add PDH line
-                        pdhLine = series.createPriceLine({
-                            price: pdh,
-                            color: '#2962FF',
-                            lineWidth: 2,
-                            lineStyle: 2, // Dashed
-                            axisLabelVisible: true,
-                            title: 'PDH',
-                        });
-                        
-                        // Add PDL line
-                        pdlLine = series.createPriceLine({
-                            price: pdl,
-                            color: '#FF6D00',
-                            lineWidth: 2,
-                            lineStyle: 2, // Dashed
-                            axisLabelVisible: true,
-                            title: 'PDL',
-                        });
-                    }
-                }
+                // Calculate PDH/PDL
+                calculatePDHPDL(allData);
                 
                 chart.timeScale().fitContent();
-                document.getElementById('status').textContent = result.bars.toLocaleString() + ' bars';
+                document.getElementById('status').textContent = `${allData.length.toLocaleString()} bars`;
+                
+                // Re-run strategy if active
+                if (isStrategyActive) runStrategy();
+                
             } catch (error) {
+                console.error(error);
                 document.getElementById('status').textContent = 'Error: ' + error.message;
             }
         }
         
-        // Indicator button - add some common indicators
-        document.getElementById('indicatorBtn').addEventListener('click', async function() {
-            if (!indicatorManager) {
-                indicatorManager = new window.IndicatorManager(chart, series);
+        function calculatePDHPDL(data) {
+            if (data.length === 0) return;
+            
+            const lastBar = data[data.length - 1];
+            const lastDate = new Date(lastBar.time * 1000);
+            lastDate.setHours(0, 0, 0, 0);
+            const todayStart = Math.floor(lastDate.getTime() / 1000);
+            const yesterdayStart = todayStart - 86400;
+            
+            const yesterdayBars = data.filter(bar => bar.time >= yesterdayStart && bar.time < todayStart);
+            
+            if (pdhLine) series.removePriceLine(pdhLine);
+            if (pdlLine) series.removePriceLine(pdlLine);
+            
+            if (yesterdayBars.length > 0) {
+                const pdh = Math.max(...yesterdayBars.map(b => b.high));
+                const pdl = Math.min(...yesterdayBars.map(b => b.low));
+                
+                pdhLine = series.createPriceLine({
+                    price: pdh, color: '#2962FF', lineWidth: 2, lineStyle: 2,
+                    axisLabelVisible: true, title: 'PDH'
+                });
+                pdlLine = series.createPriceLine({
+                    price: pdl, color: '#FF6D00', lineWidth: 2, lineStyle: 2,
+                    axisLabelVisible: true, title: 'PDL'
+                });
             }
+        }
+
+        // --- Drawing Tools ---
+        function setTool(tool) {
+            currentTool = (currentTool === tool) ? null : tool; // Toggle
+            activeDrawing = null;
+            startPoint = null;
             
-            // Demo: Add SMA(20) and EMA(50)
-            await indicatorManager.addIndicator('sma', currentTimeframe, { period: 20 });
-            await indicatorManager.addIndicator('ema', currentTimeframe, { period: 50 });
+            // Update UI
+            document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            if (currentTool === 'line') document.getElementById('btn-line').classList.add('active');
+            if (currentTool === 'ray') document.getElementById('btn-ray').classList.add('active');
+            if (currentTool === 'rect') document.getElementById('btn-rect').classList.add('active');
+            if (currentTool === 'fib') document.getElementById('btn-fib').classList.add('active');
+            if (currentTool === 'vert') document.getElementById('btn-vert').classList.add('active');
             
-            document.getElementById('status').textContent = 'Added: SMA(20), EMA(50)';
+            document.body.style.cursor = currentTool ? 'crosshair' : 'default';
             
-            // You can add more indicators via browser console:
-            // indicatorManager.addIndicator('bb', '1h', { period: 20, std_dev: 2 });
+            // Disable chart scrolling while drawing? No, better to keep it.
+            chart.applyOptions({ handleScroll: !currentTool, handleScale: !currentTool });
+        }
+
+        function clearDrawings() {
+            // Remove primitives
+            drawings.forEach(d => {
+                if (d.detach) d.detach(); // If primitive
+                if (series.removePriceLine) try { series.removePriceLine(d); } catch(e){} // If price line
+            });
+            drawings = [];
+            setTool(null);
+        }
+
+        chart.subscribeClick((param) => {
+            if (!currentTool || !param.point || !param.time) return;
+            
+            const price = series.coordinateToPrice(param.point.y);
+            const time = param.time;
+            
+            if (currentTool === 'line') {
+                // Horizontal Line (Simple)
+                const line = series.createPriceLine({
+                    price: price, color: '#2962FF', lineWidth: 2, lineStyle: 0,
+                    axisLabelVisible: true, title: 'Line'
+                });
+                drawings.push(line);
+                setTool(null);
+            } 
+            else if (currentTool === 'ray') {
+                // Trend Line (Diagonal) - 2 Click Process
+                if (!startPoint) {
+                    // First Click
+                    startPoint = { time, price };
+                    
+                    // Create initial primitive (0 length)
+                    if (window.TrendLine) {
+                        const tl = new window.TrendLine(chart, series, startPoint, startPoint, { lineColor: '#D500F9', lineWidth: 2 });
+                        series.attachPrimitive(tl);
+                        activeDrawing = tl;
+                        drawings.push(tl);
+                    }
+                } else {
+                    // Second Click - Finish
+                    if (activeDrawing) {
+                        activeDrawing.updateEnd({ time, price });
+                        activeDrawing = null;
+                        startPoint = null;
+                        setTool(null);
+                    }
+                }
+            }
+            else if (currentTool === 'rect') {
+                // Rectangle - 2 Click Process
+                if (!startPoint) {
+                    // First Click
+                    startPoint = { time, price };
+                    
+                    // Create initial primitive
+                    if (window.Rectangle) {
+                        const rect = new window.Rectangle(chart, series, startPoint, startPoint, { 
+                            color: 'rgba(33, 150, 243, 0.2)', 
+                            borderColor: '#2196F3' 
+                        });
+                        series.attachPrimitive(rect);
+                        activeDrawing = rect;
+                        drawings.push(rect);
+                    }
+                } else {
+                    // Second Click - Finish
+                    if (activeDrawing) {
+                        activeDrawing.updateEnd({ time, price });
+                        activeDrawing = null;
+                        startPoint = null;
+                        setTool(null);
+                    }
+                }
+            }
+            else if (currentTool === 'fib') {
+                // Fibonacci - 2 Click Process
+                if (!startPoint) {
+                    // First Click
+                    startPoint = { time, price };
+                    
+                    // Create initial primitive
+                    if (window.FibonacciRetracement) {
+                        const fib = new window.FibonacciRetracement(chart, series, startPoint, startPoint, { 
+                            lineColor: '#787b86' 
+                        });
+                        series.attachPrimitive(fib);
+                        activeDrawing = fib;
+                        drawings.push(fib);
+                    }
+                } else {
+                    // Second Click - Finish
+                    if (activeDrawing) {
+                        activeDrawing.updateEnd({ time, price });
+                        activeDrawing = null;
+                        startPoint = null;
+                        setTool(null);
+                    }
+                }
+            }
+            else if (currentTool === 'vert') {
+                // Vertical Line - 1 Click Process
+                if (window.VertLine) {
+                    const vl = new window.VertLine(chart, series, time, { 
+                        color: '#2962FF', 
+                        labelText: new Date(time * 1000).toLocaleDateString(),
+                        showLabel: true
+                    });
+                    series.attachPrimitive(vl);
+                    drawings.push(vl);
+                    setTool(null); // Finish immediately
+                }
+            }
         });
         
-        document.getElementById('timeframe').addEventListener('change', function(e) {
+        // Mouse Move for Dragging
+        document.getElementById('chart').addEventListener('mousemove', (e) => {
+            if ((currentTool === 'ray' || currentTool === 'rect' || currentTool === 'fib') && activeDrawing && startPoint) {
+                // We need to convert mouse X/Y to Time/Price
+                
+                const rect = document.getElementById('chart').getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                const time = chart.timeScale().coordinateToTime(x);
+                const price = series.coordinateToPrice(y);
+                
+                if (time && price) {
+                    activeDrawing.updateEnd({ time, price });
+                }
+            }
+        });
+
+        // --- Navigation ---
+        function jumpToDate() {
+            const dateStr = document.getElementById('datePicker').value;
+            if (!dateStr) return;
+            
+            const targetDate = new Date(dateStr).getTime() / 1000;
+            // Find closest bar
+            const targetIndex = allData.findIndex(d => d.time >= targetDate);
+            
+            if (targetIndex !== -1) {
+                const range = 100; // Show 100 bars
+                const from = Math.max(0, targetIndex - range/2);
+                const to = Math.min(allData.length - 1, targetIndex + range/2);
+                chart.timeScale().setVisibleLogicalRange({ from, to });
+            } else {
+                alert('Date not found in loaded data');
+            }
+        }
+
+        // --- Strategy (Demo) ---
+        function toggleStrategy() {
+            isStrategyActive = !isStrategyActive;
+            const btn = document.getElementById('strategyBtn');
+            
+            if (isStrategyActive) {
+                btn.classList.add('active');
+                runStrategy();
+            } else {
+                btn.classList.remove('active');
+                // Clear strategy lines
+                strategyLines.forEach(l => series.removePriceLine(l));
+                strategyLines = [];
+            }
+        }
+        
+        function runStrategy() {
+            // Simple SMA Crossover Logic for Demo
+            // v5.0 Workaround: Use PriceLines instead of Markers (since markers are now a plugin)
+            
+            let position = 0;
+            
+            for (let i = 1; i < allData.length; i++) {
+                const prev = allData[i-1];
+                const curr = allData[i];
+                
+                // Green Candle = Buy, Red Candle = Sell (Simple Visual Test)
+                if (position === 0 && curr.close > curr.open && prev.close < prev.open) {
+                    position = 1;
+                    const line = series.createPriceLine({
+                        price: curr.close, color: '#2196F3', lineWidth: 1, lineStyle: 0,
+                        axisLabelVisible: true, title: 'BUY'
+                    });
+                    strategyLines.push(line);
+                } else if (position === 1 && curr.close < curr.open) {
+                    position = 0;
+                    const line = series.createPriceLine({
+                        price: curr.close, color: '#E91E63', lineWidth: 1, lineStyle: 0,
+                        axisLabelVisible: true, title: 'SELL'
+                    });
+                    strategyLines.push(line);
+                }
+            }
+        }
+
+        // --- Event Listeners ---
+        window.addEventListener('resize', () => {
+            chart.applyOptions({ width: window.innerWidth, height: window.innerHeight - 54 });
+        });
+        
+        document.getElementById('timeframe').addEventListener('change', (e) => {
             currentTimeframe = e.target.value;
             loadData(e.target.value);
         });
         
-        // Timezone change handler
-        document.getElementById('timezone').addEventListener('change', function(e) {
+        document.getElementById('timezone').addEventListener('change', (e) => {
             currentTimezone = e.target.value;
+            // Force redraw by updating options
             chart.applyOptions({
                 localization: {
                     timeFormatter: function(timestamp) {
                         const date = new Date(timestamp * 1000);
                         return date.toLocaleString('en-US', {
                             timeZone: currentTimezone,
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            hour12: false
+                            month: 'short', day: 'numeric',
+                            hour: '2-digit', minute: '2-digit', hour12: false
                         });
                     }
                 }
             });
-            // Force redraw
-            chart.timeScale().scrollToPosition(0, false);
         });
         
+        async function addIndicatorFromMenu(select) {
+            const type = select.value;
+            select.value = ""; // Reset
+            
+            if (!indicatorManager) {
+                indicatorManager = new window.IndicatorManager(chart, series, 'indicator-container');
+            }
+            
+            let params = {};
+            if (type === 'sma') params = { period: 20 };
+            if (type === 'ema') params = { period: 50 };
+            if (type === 'bb') params = { period: 20, stdDev: 2 };
+            if (type === 'vwap') params = {};
+            if (type === 'rsi') params = { period: 14 };
+            if (type === 'macd') params = { fast: 12, slow: 26, signal: 9 };
+            if (type === 'atr') params = { period: 14 };
+            
+            await indicatorManager.addIndicator(type, currentTimeframe, params);
+        }
+        
+        function addWatermark() {
+            if (window.AnchoredText) {
+                const text = new window.AnchoredText({
+                    text: 'ES Futures ' + currentTimeframe,
+                    vertAlign: 'top',
+                    horzAlign: 'right',
+                    color: 'rgba(255, 255, 255, 0.5)',
+                    font: 'bold 24px Arial'
+                });
+                series.attachPrimitive(text);
+                drawings.push(text);
+            }
+        }
+
+        // Initial Load
         loadData('1h');
     </script>
 </body>

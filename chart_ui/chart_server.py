@@ -36,6 +36,62 @@ async def get_indicator_manager():
     js_path = os.path.join(os.getcwd(), "indicator_manager.js")
     return FileResponse(js_path, media_type="application/javascript")
 
+@app.get("/demo-plugins")
+async def get_demo_plugins():
+    """Serve Drawing Tools demo"""
+    import os
+    demo_path = os.path.join(os.getcwd(), "demo_plugins.html")
+    return FileResponse(demo_path)
+
+@app.get("/demo-strategy")
+async def get_demo_strategy():
+    """Serve Strategy demo"""
+    import os
+    demo_path = os.path.join(os.getcwd(), "demo_strategy.html")
+    return FileResponse(demo_path)
+
+@app.get("/demo-rectangle")
+async def get_demo_rectangle():
+    """Serve Rectangle demo"""
+    import os
+    demo_path = os.path.join(os.getcwd(), "demo_rectangle.html")
+    return FileResponse(demo_path)
+
+@app.get("/trendline_plugin.js")
+async def get_trendline_plugin():
+    """Serve TrendLine Plugin"""
+    import os
+    plugin_path = os.path.join(os.getcwd(), "trendline_plugin.js")
+    return FileResponse(plugin_path)
+
+@app.get("/rectangle_plugin.js")
+async def get_rectangle_plugin():
+    """Serve Rectangle Plugin"""
+    import os
+    plugin_path = os.path.join(os.getcwd(), "rectangle_plugin.js")
+    return FileResponse(plugin_path)
+
+@app.get("/fibonacci_plugin.js")
+async def get_fibonacci_plugin():
+    """Serve Fibonacci Plugin"""
+    import os
+    plugin_path = os.path.join(os.getcwd(), "fibonacci_plugin.js")
+    return FileResponse(plugin_path)
+
+@app.get("/vertical_line_plugin.js")
+async def get_vertical_line_plugin():
+    """Serve Vertical Line Plugin"""
+    import os
+    plugin_path = os.path.join(os.getcwd(), "vertical_line_plugin.js")
+    return FileResponse(plugin_path)
+
+@app.get("/anchored_text_plugin.js")
+async def get_anchored_text_plugin():
+    """Serve Anchored Text Plugin"""
+    import os
+    plugin_path = os.path.join(os.getcwd(), "anchored_text_plugin.js")
+    return FileResponse(plugin_path)
+
 @app.get("/api/timeframes")
 async def get_timeframes():
     """Get available timeframes"""
@@ -102,13 +158,20 @@ async def get_ohlc(
     # Convert to format for lightweight-charts
     data = []
     for idx, row in df.iterrows():
-        data.append({
+        item = {
             "time": int(idx.timestamp()),  # Unix timestamp
             "open": float(row['open']),
             "high": float(row['high']),
             "low": float(row['low']),
             "close": float(row['close'])
-        })
+        }
+        if 'volume' in row:
+            item['value'] = float(row['volume']) # For HistogramSeries
+            item['volume'] = float(row['volume']) # For reference
+            # Color based on price change
+            item['color'] = '#26a69a' if row['close'] >= row['open'] else '#ef5350'
+            
+        data.append(item)
     
     return {
         "timeframe": timeframe,
@@ -195,7 +258,17 @@ async def get_indicator(
     # Match indicator values with timestamps
     # Note: some indicators have warm-up period, so values array is shorter
     result_data = []
-    offset = len(data_list) - len(indicator_values.get('values', indicator_values.get('macd', [])))
+    # Determine length of result to calculate offset
+    if 'values' in indicator_values:
+        result_len = len(indicator_values['values'])
+    elif 'macd' in indicator_values:
+        result_len = len(indicator_values['macd'])
+    elif 'upper' in indicator_values: # Bollinger Bands
+        result_len = len(indicator_values['upper'])
+    else:
+        result_len = 0
+        
+    offset = len(data_list) - result_len
     
     if 'values' in indicator_values:
         # Single line indicator (SMA, EMA, RSI, VWAP, ATR)
