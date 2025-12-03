@@ -7,8 +7,12 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
 from indicators import calculate_indicator
+import mimetypes
 
-app = FastAPI(title="ES Futures Data API")
+# Ensure JS files are served with correct MIME type
+mimetypes.add_type('application/javascript', '.js')
+
+app = FastAPI(title="Futures Data API")
 
 # Enable CORS for frontend
 app.add_middleware(
@@ -109,25 +113,30 @@ async def get_js_file(filename: str):
     raise HTTPException(status_code=404, detail=f"JavaScript file {filename}.js not found")
 
 @app.get("/api/timeframes")
-async def get_timeframes():
+async def get_timeframes(ticker: str = "ES1"):
     """Get available timeframes"""
     timeframes = []
-    for file in DATA_DIR.glob("ES_*.parquet"):
-        tf = file.stem.replace("ES_", "")
+    # Clean ticker for file matching
+    ticker_clean = ticker.replace("!", "").replace(" ", "_")
+    
+    for file in DATA_DIR.glob(f"{ticker_clean}_*.parquet"):
+        tf = file.stem.replace(f"{ticker_clean}_", "")
         timeframes.append(tf)
     return {"timeframes": sorted(timeframes)}
 
 @app.get("/api/range/{timeframe}")
-async def get_date_range(timeframe: str):
+async def get_date_range(timeframe: str, ticker: str = "ES1"):
     """Get the available date range for a timeframe"""
-    parquet_file = DATA_DIR / f"ES_{timeframe}.parquet"
+    ticker_clean = ticker.replace("!", "").replace(" ", "_")
+    parquet_file = DATA_DIR / f"{ticker_clean}_{timeframe}.parquet"
     
     if not parquet_file.exists():
-        raise HTTPException(status_code=404, detail=f"Timeframe {timeframe} not found")
+        raise HTTPException(status_code=404, detail=f"Timeframe {timeframe} not found for {ticker}")
     
     df = pd.read_parquet(parquet_file)
     
     return {
+        "ticker": ticker,
         "timeframe": timeframe,
         "start": df.index.min().isoformat(),
         "end": df.index.max().isoformat(),
@@ -139,7 +148,8 @@ async def get_ohlc(
     timeframe: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
-    limit: int = 10000
+    limit: int = 10000,
+    ticker: str = "ES1"
 ):
     """
     Get OHLC data for a specific timeframe and date range
@@ -148,12 +158,14 @@ async def get_ohlc(
     - timeframe: 1m, 5m, 15m, 1h, 4h, 1D
     - start: ISO datetime string (optional)
     - end: ISO datetime string (optional)
-    - limit: Maximum number of bars to return (default: 10000)
+    - limit: Max bars to return
+    - ticker: Ticker symbol (default: ES1)
     """
-    parquet_file = DATA_DIR / f"ES_{timeframe}.parquet"
+    ticker_clean = ticker.replace("!", "").replace(" ", "_")
+    parquet_file = DATA_DIR / f"{ticker_clean}_{timeframe}.parquet"
     
     if not parquet_file.exists():
-        raise HTTPException(status_code=404, detail=f"Timeframe {timeframe} not found")
+        raise HTTPException(status_code=404, detail=f"Data not found for {ticker} {timeframe}")
     
     # Load data
     df = pd.read_parquet(parquet_file)
@@ -206,24 +218,17 @@ async def get_indicator(
     std_dev: Optional[float] = Query(None),
     fast: Optional[int] = Query(None),
     slow: Optional[int] = Query(None),
-    signal: Optional[int] = Query(None)
+    signal: Optional[int] = Query(None),
+    ticker: str = "ES1"
 ):
     """
     Calculate indicator values for a timeframe
-    
-    Available indicators:
-    - sma: Simple Moving Average (period)
-    - ema: Exponential Moving Average (period)
-    - bb: Bollinger Bands (period, std_dev)
-    - rsi: Relative Strength Index (period)
-    - macd: MACD (fast, slow, signal)
-    - vwap: Volume Weighted Average Price
-    - atr: Average True Range (period)
     """
-    parquet_file = DATA_DIR / f"ES_{timeframe}.parquet"
+    ticker_clean = ticker.replace("!", "").replace(" ", "_")
+    parquet_file = DATA_DIR / f"{ticker_clean}_{timeframe}.parquet"
     
     if not parquet_file.exists():
-        raise HTTPException(status_code=404, detail=f"Timeframe {timeframe} not found")
+        raise HTTPException(status_code=404, detail=f"Timeframe {timeframe} not found for {ticker}")
     
     # Load data
     df = pd.read_parquet(parquet_file)
@@ -272,7 +277,6 @@ async def get_indicator(
         raise HTTPException(status_code=400, detail=str(e))
     
     # Match indicator values with timestamps
-    # Note: some indicators have warm-up period, so values array is shorter
     result_data = []
     # Determine length of result to calculate offset
     if 'values' in indicator_values:
@@ -311,6 +315,6 @@ async def get_indicator(
 
 if __name__ == "__main__":
     import uvicorn
-    print("Starting ES Futures Chart Server...")
+    print("Starting Futures Chart Server...")
     print("Open http://localhost:8000 in your browser")
     uvicorn.run(app, host="0.0.0.0", port=8000)

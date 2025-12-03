@@ -1,13 +1,23 @@
 import pandas as pd
 import os
+import argparse
 from pathlib import Path
 
-def convert_csv_to_parquet():
-    """Convert ES_1m_continuous.csv to Parquet format with timeframe aggregations"""
+def convert_csv_to_parquet(ticker):
+    """Convert {ticker}_1m_continuous.csv to Parquet format with timeframe aggregations"""
+    
+    # Clean ticker name
+    ticker_clean = ticker.replace("!", "").replace(" ", "_")
     
     # Read the CSV
-    print("Loading CSV data...")
-    df = pd.read_csv(os.path.join("data", "ES_1m_continuous.csv"))
+    csv_path = os.path.join("data", f"{ticker_clean}_1m_continuous.csv")
+    print(f"Loading CSV data from: {csv_path}")
+    
+    if not os.path.exists(csv_path):
+        print(f"Error: Input file {csv_path} not found.")
+        return
+
+    df = pd.read_csv(csv_path)
     
     # Parse datetime
     df['datetime'] = pd.to_datetime(df['datetime'])
@@ -29,10 +39,11 @@ def convert_csv_to_parquet():
     df = df[ohlc_columns]
     
     print(f"Total bars: {len(df):,}")
-    print(f"Date range: {df.index.min()} to {df.index.max()}")
+    if not df.empty:
+        print(f"Date range: {df.index.min()} to {df.index.max()}")
     
     # Save 1-minute data
-    parquet_file = data_dir / "ES_1m.parquet"
+    parquet_file = data_dir / f"{ticker_clean}_1m.parquet"
     df.to_parquet(parquet_file, compression='snappy')
     print(f"\n✓ Saved 1m data: {parquet_file}")
     print(f"  Size: {os.path.getsize(parquet_file) / 1024 / 1024:.2f} MB")
@@ -59,7 +70,7 @@ def convert_csv_to_parquet():
             
         agg_df = df.resample(freq).agg(agg_dict).dropna()
         
-        output_file = data_dir / f"ES_{name}.parquet"
+        output_file = data_dir / f"{ticker_clean}_{name}.parquet"
         agg_df.to_parquet(output_file, compression='snappy')
         
         print(f"✓ Saved {name} data: {output_file}")
@@ -69,4 +80,8 @@ def convert_csv_to_parquet():
     print(f"\nAll data stored in: {data_dir.absolute()}")
 
 if __name__ == "__main__":
-    convert_csv_to_parquet()
+    parser = argparse.ArgumentParser(description="Convert stitched CSV to Parquet for a specific ticker.")
+    parser.add_argument("--ticker", type=str, default="ES1!", help="Ticker symbol (e.g., ES1!, NQ1!)")
+    args = parser.parse_args()
+    
+    convert_csv_to_parquet(args.ticker)
