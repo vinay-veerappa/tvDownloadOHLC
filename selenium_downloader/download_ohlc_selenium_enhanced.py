@@ -12,7 +12,7 @@ import argparse
 import glob
 from datetime import datetime, timedelta
 
-def connect_driver():
+def connect_driver(download_dir):
     print("Connecting to existing Chrome instance on port 9222...")
     chrome_options = Options()
     chrome_options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
@@ -26,8 +26,6 @@ def connect_driver():
         print("WARNING: Multiple tabs detected. This might cause 'Multiple Session' errors.")
         print("Please close other TradingView tabs.")
     
-    # Set download directory
-    download_dir = os.path.join(os.getcwd(), "data", "downloads_es_futures")
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
     print(f"Target Download Directory: {download_dir}")
@@ -374,10 +372,9 @@ import glob
 import os
 from datetime import datetime, timedelta
 
-def get_latest_csv():
+def get_latest_csv(download_dir):
     # Look in our custom download folder
-    downloads_path = os.path.join(os.getcwd(), "data", "downloads_es_futures")
-    list_of_files = glob.glob(os.path.join(downloads_path, "*.csv")) 
+    list_of_files = glob.glob(os.path.join(download_dir, "*.csv")) 
     if not list_of_files:
         return None
     latest_file = max(list_of_files, key=os.path.getctime)
@@ -434,14 +431,20 @@ def enter_replay_mode(driver):
         print(f"Error entering Bar Replay mode: {e}")
 
 def run_enhanced_downloader(args):
-    driver = connect_driver()
-    wait = WebDriverWait(driver, 20)
-    
     # Determine ticker - use provided or default to ES1!
     ticker = args.ticker.upper() if args.ticker else "ES1!"
     # Clean ticker for file/folder naming (remove special chars)
     ticker_clean = ticker.replace("!", "").replace("^", "").replace("/", "_")
     print(f"Target ticker: {ticker} (cleaned: {ticker_clean})")
+    
+    # Determine bounds - use ticker-specific directory
+    download_dir = os.path.join(os.getcwd(), "data", f"downloads_{ticker_clean}")
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
+        print(f"Created download directory: {download_dir}")
+
+    driver = connect_driver(download_dir)
+    wait = WebDriverWait(driver, 20)
     
     # Switch ticker if specified
     if args.ticker:
@@ -461,11 +464,6 @@ def run_enhanced_downloader(args):
     except:
         enter_replay_mode(driver)
     
-    # Determine bounds - use ticker-specific directory
-    download_dir = os.path.join(os.getcwd(), "data", f"downloads_{ticker_clean.lower()}")
-    if not os.path.exists(download_dir):
-        os.makedirs(download_dir)
-        print(f"Created download directory: {download_dir}")
     global_min, global_max = get_data_bounds(download_dir, args.parquet_file)
     
     # Define tasks
@@ -564,7 +562,7 @@ def run_enhanced_downloader(args):
             # 2. Process File
             try:
                 time.sleep(3) # Wait for download
-                csv_file = get_latest_csv()
+                csv_file = get_latest_csv(download_dir)
                 if not csv_file:
                     print("No CSV found.")
                     break
