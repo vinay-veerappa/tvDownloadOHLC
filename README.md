@@ -85,15 +85,14 @@ python chart_server.py
 
 ## 📊 Chart Options
 
-### Main Chart (Lightweight Charts)
+### Main Chart (Lightweight Charts v5.0)
 - **URL**: `http://localhost:8000`
-- **Features**: Custom indicators, PDH/PDL, timezone support
-- **Indicators**: Click "+ Indicators" button
-
-### Demo Chart (KLineChart)
-- **URL**: `http://localhost:8000/demo`
-- **Features**: Built-in drawing tools, Fibonacci, shapes
-- **FREE**: MIT License
+- **Features**: 
+    - **Volume Support**: Histogram overlay
+    - **Drawing Tools**: Trend Line, Rectangle, Fibonacci, Vertical Line, Anchored Text
+    - **Indicators**: SMA, EMA, VWAP, Bollinger Bands, RSI, MACD, ATR (Multi-pane support)
+    - **Plugins**: Custom ported plugins (Vert, Text)
+- **Indicators**: Select from dropdown menu
 
 ## 🔧 Key Scripts
 
