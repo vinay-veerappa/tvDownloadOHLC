@@ -3,6 +3,8 @@ import os
 import argparse
 from pathlib import Path
 
+import merge_tv_ohlc
+
 def convert_csv_to_parquet(ticker):
     """Convert {ticker}_1m_continuous.csv to Parquet format with timeframe aggregations"""
     
@@ -45,6 +47,10 @@ def convert_csv_to_parquet(ticker):
     # Save 1-minute data
     parquet_file = data_dir / f"{ticker_clean}_1m.parquet"
     df.to_parquet(parquet_file, compression='snappy')
+    
+    # Merge history for 1m
+    merge_tv_ohlc.merge_history(ticker_clean, "1m", str(parquet_file))
+    
     print(f"\n✓ Saved 1m data: {parquet_file}")
     print(f"  Size: {os.path.getsize(parquet_file) / 1024 / 1024:.2f} MB")
     
@@ -72,6 +78,9 @@ def convert_csv_to_parquet(ticker):
         
         output_file = data_dir / f"{ticker_clean}_{name}.parquet"
         agg_df.to_parquet(output_file, compression='snappy')
+        
+        # Merge history for aggregated timeframe
+        merge_tv_ohlc.merge_history(ticker_clean, name, str(output_file))
         
         print(f"✓ Saved {name} data: {output_file}")
         print(f"  Bars: {len(agg_df):,}, Size: {os.path.getsize(output_file) / 1024 / 1024:.2f} MB")
