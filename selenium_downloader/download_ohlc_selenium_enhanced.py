@@ -537,11 +537,16 @@ def run_enhanced_downloader(args):
             iteration += 1
             print(f"\n--- Iteration {iteration}/{max_iterations} ({task['type']}) ---")
             
+            # Jump to start to load maximum historical data
+            time.sleep(6)
+            jump_to_start(driver)
+            time.sleep(2)
+            
             # 1. Export
             success = perform_export(driver, wait)
             if not success:
                 print("Export failed. Retrying once...")
-                time.sleep(2)
+                time.sleep(1)
                 success = perform_export(driver, wait)
                 if not success:
                     print("Export failed again. Stopping task.")
