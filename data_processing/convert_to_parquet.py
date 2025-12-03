@@ -7,7 +7,7 @@ def convert_csv_to_parquet(ticker):
     """Convert {ticker}_1m_continuous.csv to Parquet format with timeframe aggregations"""
     
     # Clean ticker name
-    ticker_clean = ticker.replace("!", "").replace(" ", "_")
+    ticker_clean = ticker.upper().replace("!", "").replace(" ", "_")
     
     # Read the CSV
     csv_path = os.path.join("data", f"{ticker_clean}_1m_continuous.csv")

@@ -117,7 +117,7 @@ async def get_timeframes(ticker: str = "ES1"):
     """Get available timeframes"""
     timeframes = []
     # Clean ticker for file matching
-    ticker_clean = ticker.replace("!", "").replace(" ", "_")
+    ticker_clean = ticker.upper().replace("!", "").replace(" ", "_")
     
     for file in DATA_DIR.glob(f"{ticker_clean}_*.parquet"):
         tf = file.stem.replace(f"{ticker_clean}_", "")
@@ -127,7 +127,7 @@ async def get_timeframes(ticker: str = "ES1"):
 @app.get("/api/range/{timeframe}")
 async def get_date_range(timeframe: str, ticker: str = "ES1"):
     """Get the available date range for a timeframe"""
-    ticker_clean = ticker.replace("!", "").replace(" ", "_")
+    ticker_clean = ticker.upper().replace("!", "").replace(" ", "_")
     parquet_file = DATA_DIR / f"{ticker_clean}_{timeframe}.parquet"
     
     if not parquet_file.exists():
@@ -136,7 +136,7 @@ async def get_date_range(timeframe: str, ticker: str = "ES1"):
     df = pd.read_parquet(parquet_file)
     
     return {
-        "ticker": ticker,
+        "ticker": ticker.upper(),
         "timeframe": timeframe,
         "start": df.index.min().isoformat(),
         "end": df.index.max().isoformat(),
@@ -161,7 +161,7 @@ async def get_ohlc(
     - limit: Max bars to return
     - ticker: Ticker symbol (default: ES1)
     """
-    ticker_clean = ticker.replace("!", "").replace(" ", "_")
+    ticker_clean = ticker.upper().replace("!", "").replace(" ", "_")
     parquet_file = DATA_DIR / f"{ticker_clean}_{timeframe}.parquet"
     
     if not parquet_file.exists():
@@ -224,7 +224,7 @@ async def get_indicator(
     """
     Calculate indicator values for a timeframe
     """
-    ticker_clean = ticker.replace("!", "").replace(" ", "_")
+    ticker_clean = ticker.upper().replace("!", "").replace(" ", "_")
     parquet_file = DATA_DIR / f"{ticker_clean}_{timeframe}.parquet"
     
     if not parquet_file.exists():
