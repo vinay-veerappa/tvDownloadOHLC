@@ -19,8 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Data directory
-DATA_DIR = Path("data")
+# Data directory (in parent folder)
+DATA_DIR = Path(__file__).parent.parent / "data"
 
 @app.get("/")
 async def root():
@@ -35,13 +35,6 @@ async def get_indicator_manager():
     import os
     js_path = os.path.join(os.getcwd(), "indicator_manager.js")
     return FileResponse(js_path, media_type="application/javascript")
-
-@app.get("/demo")
-async def get_demo():
-    """Serve KLineChart demo"""
-    import os
-    demo_path = os.path.join(os.getcwd(), "demo_klinechart.html")
-    return FileResponse(demo_path)
 
 @app.get("/api/timeframes")
 async def get_timeframes():

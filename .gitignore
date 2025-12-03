@@ -1,8 +1,34 @@
-chrome_profile/
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Data
+downloads_es_futures/
+data/
+backup/
+old_data/
+debug_files/
 *.csv
+*.parquet
+
+# Chrome
+chrome_profile/
+tradingview-selenium-data/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+*.txt
 *.png
 *.html
-downloads_es_futures/
-.venv/
+!chart_ui/chart_ui.html
+
+# Credentials
 credentials.json
