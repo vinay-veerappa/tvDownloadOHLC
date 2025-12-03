@@ -1,4 +1,4 @@
-import { MismatchDirection as c, LineSeries as f } from "lightweight-charts";
+const { MismatchDirection: c, LineSeries: f } = window.LightweightCharts;
 const m = {
   interval: 60 * 60 * 24,
   clearTimeout: 3e3

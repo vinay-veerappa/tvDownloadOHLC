@@ -1,4 +1,4 @@
-import { BaselineSeries as V } from "lightweight-charts";
+const { BaselineSeries: V } = window.LightweightCharts;
 class X {
   numbers;
   cache;

@@ -1,4 +1,4 @@
-import { MismatchDirection as a } from "lightweight-charts";
+const { MismatchDirection: a } = window.LightweightCharts;
 function c(r) {
   return Math.floor(r * 0.5);
 }

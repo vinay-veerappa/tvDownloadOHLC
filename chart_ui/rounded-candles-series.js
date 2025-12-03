@@ -1,4 +1,4 @@
-import { customSeriesDefaultOptions as g } from "lightweight-charts";
+const { customSeriesDefaultOptions: g } = window.LightweightCharts;
 function _(i, t) {
   if (i >= 2.5 && i <= 4)
     return Math.floor(3 * t);

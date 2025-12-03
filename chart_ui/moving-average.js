@@ -1,4 +1,4 @@
-import { LineSeries as f } from "lightweight-charts";
+const { LineSeries: f } = window.LightweightCharts;
 function l(r) {
   for (const e of r)
     if (typeof e.time != "number")
