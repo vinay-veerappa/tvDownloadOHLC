@@ -202,6 +202,19 @@
         });
 
         // Main Series (Candlestick) - v5 Syntax
+        const series = chart.addSeries(window.LightweightCharts.CandlestickSeries, {
+            upColor: '#26a69a', downColor: '#ef5350',
+            wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+        });
+
+        // Volume Series - DISABLED per user request
+        // const volumeSeries = ...
+
+        // PDH/PDL Lines
+        let pdhLine = null;
+        let pdlLine = null;
+
+        // --- Data Loading ---
         async function loadTickers() {
             try {
                 const response = await fetch('http://localhost:8000/api/tickers');
@@ -232,6 +245,19 @@
             try {
                 const response = await fetch(`http://localhost:8000/api/ohlc/${timeframe}?limit=20000&ticker=${currentTicker}`);
                 const result = await response.json();
+
+                if (!result.data || !Array.isArray(result.data)) {
+                    throw new Error('Invalid data format');
+                }
+
+                allData = result.data; // Store for navigation
+                series.setData(allData);
+                // volumeSeries.setData(allData); // DISABLED
+
+                // Calculate PDH/PDL
+                calculatePDHPDL(allData);
+
+                chart.timeScale().fitContent();
                 document.getElementById('status').textContent = `${currentTicker} - ${allData.length.toLocaleString()} bars`;
 
                 // Re-run strategy if active
@@ -239,8 +265,6 @@
 
                 // Reload indicators if any (optional, but good practice)
                 if (indicatorManager) {
-                    // We might want to clear and reload, or just let them stay if they are compatible
-                    // For now, let's clear them to avoid mismatch
                     indicatorManager.removeAll();
                 }
 
@@ -453,113 +477,74 @@
         function toggleStrategy() {
             isStrategyActive = !isStrategyActive;
             const btn = document.getElementById('strategyBtn');
+            btn.style.background = isStrategyActive ? '#2962FF' : '#1e222d';
+            btn.style.color = isStrategyActive ? 'white' : '#d1d4dc';
 
             if (isStrategyActive) {
-                btn.classList.add('active');
                 runStrategy();
             } else {
-                btn.classList.remove('active');
-                // Clear strategy lines
-                strategyLines.forEach(l => series.removePriceLine(l));
-                strategyLines = [];
+                clearStrategy();
             }
         }
 
         function runStrategy() {
-            // Simple SMA Crossover Logic for Demo
-            // v5.0 Workaround: Use PriceLines instead of Markers (since markers are now a plugin)
+            clearStrategy();
+            // Simple Moving Average Crossover Strategy (SMA 20 vs SMA 50)
+            // This is just a visualization, not a real backtest engine here
 
-            let position = 0;
+            // We need to calculate SMAs first. 
+            // For simplicity, let's just mark where Price > SMA 20 (Bullish) and Price < SMA 20 (Bearish)
+            // Or just random markers for demo if we don't have indicators calculated in JS.
 
-            for (let i = 1; i < allData.length; i++) {
-                const prev = allData[i - 1];
-                const curr = allData[i];
+            // Better: Let's use the loaded data to find simple patterns
+            // e.g. 3 consecutive green candles
 
-                // Green Candle = Buy, Red Candle = Sell (Simple Visual Test)
-                if (position === 0 && curr.close > curr.open && prev.close < prev.open) {
-                    position = 1;
+            for (let i = 3; i < allData.length; i++) {
+                const c1 = allData[i];
+                const c2 = allData[i - 1];
+                const c3 = allData[i - 2];
+
+                // 3 Green Soldiers
+                if (c1.close > c1.open && c2.close > c2.open && c3.close > c3.open) {
                     const line = series.createPriceLine({
-                        price: curr.close, color: '#2196F3', lineWidth: 1, lineStyle: 0,
-                        axisLabelVisible: true, title: 'BUY'
-                    });
-                    strategyLines.push(line);
-                } else if (position === 1 && curr.close < curr.open) {
-                    position = 0;
-                    const line = series.createPriceLine({
-                        price: curr.close, color: '#E91E63', lineWidth: 1, lineStyle: 0,
-                        axisLabelVisible: true, title: 'SELL'
+                        price: c1.low,
+                        color: '#00E676',
+                        lineWidth: 1,
+                        lineStyle: 2,
+                        axisLabelVisible: false,
+                        title: 'Buy'
                     });
                     strategyLines.push(line);
                 }
             }
         }
 
-        // --- Event Listeners ---
-        window.addEventListener('resize', () => {
-            chart.applyOptions({ width: window.innerWidth, height: window.innerHeight - 54 });
-        });
-
-        document.getElementById('timeframe').addEventListener('change', (e) => {
-            currentTimeframe = e.target.value;
-            loadData(e.target.value);
-        });
-
-        document.getElementById('timezone').addEventListener('change', (e) => {
-            currentTimezone = e.target.value;
-            // Force redraw by updating options
-            chart.applyOptions({
-                localization: {
-                    timeFormatter: function (timestamp) {
-                        const date = new Date(timestamp * 1000);
-                        return date.toLocaleString('en-US', {
-                            timeZone: currentTimezone,
-                            month: 'short', day: 'numeric',
-                            hour: '2-digit', minute: '2-digit', hour12: false
-                        });
-                    }
-                }
-            });
-        });
-
-        async function addIndicatorFromMenu(select) {
-            const type = select.value;
-            select.value = ""; // Reset
-
-            if (!indicatorManager) {
-                indicatorManager = new window.IndicatorManager(chart, series, 'indicator-container');
-            }
-
-            let params = {};
-            if (type === 'sma') params = { period: 20 };
-            if (type === 'ema') params = { period: 50 };
-            if (type === 'bb') params = { period: 20, stdDev: 2 };
-            if (type === 'vwap') params = {};
-            if (type === 'rsi') params = { period: 14 };
-            if (type === 'macd') params = { fast: 12, slow: 26, signal: 9 };
-            if (type === 'atr') params = { period: 14 };
-
-            await indicatorManager.addIndicator(type, currentTimeframe, params, currentTicker);
+        function clearStrategy() {
+            strategyLines.forEach(l => series.removePriceLine(l));
+            strategyLines = [];
         }
 
+        // --- Watermark ---
         function addWatermark() {
             if (window.AnchoredText) {
-                const text = new window.AnchoredText({
-                    text: currentTicker + ' ' + currentTimeframe,
-                    vertAlign: 'top',
-                    horzAlign: 'right',
-                    color: 'rgba(255, 255, 255, 0.5)',
-                    font: 'bold 24px Arial'
-                });
+                // Default to center of visible range or last bar
+                const lastBar = allData[allData.length - 1];
+                if (!lastBar) return;
+
+                const text = new window.AnchoredText(chart, series,
+                    { time: lastBar.time, price: lastBar.close },
+                    { text: "Watermark", color: "rgba(255, 255, 255, 0.5)", fontSize: 48 }
+                );
                 series.attachPrimitive(text);
                 drawings.push(text);
             }
         }
 
-        // Initial Load
-        (async () => {
-            await loadTickers();
-            loadData('1h');
-        })();
+        // --- Initialization ---
+        loadTickers().then(() => {
+            loadData(currentTimeframe);
+        });
+
     </script>
 </body>
 
