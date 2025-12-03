@@ -437,7 +437,13 @@ def run_enhanced_downloader(args):
     driver = connect_driver()
     wait = WebDriverWait(driver, 20)
     
-    # Switch ticker if requested
+    # Determine ticker - use provided or default to ES1!
+    ticker = args.ticker if args.ticker else "ES1!"
+    # Clean ticker for file/folder naming (remove special chars)
+    ticker_clean = ticker.replace("!", "").replace("^", "").replace("/", "_")
+    print(f"Target ticker: {ticker} (cleaned: {ticker_clean})")
+    
+    # Switch ticker if specified
     if args.ticker:
         switch_ticker(driver, args.ticker)
     
@@ -455,8 +461,11 @@ def run_enhanced_downloader(args):
     except:
         enter_replay_mode(driver)
     
-    # Determine bounds
-    download_dir = os.path.join(os.getcwd(), "data", "downloads_es_futures")
+    # Determine bounds - use ticker-specific directory
+    download_dir = os.path.join(os.getcwd(), "data", f"downloads_{ticker_clean.lower()}")
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
+        print(f"Created download directory: {download_dir}")
     global_min, global_max = get_data_bounds(download_dir, args.parquet_file)
     
     # Define tasks
@@ -560,9 +569,9 @@ def run_enhanced_downloader(args):
                     print("No CSV found.")
                     break
                     
-                # Rename
+                # Rename with ticker info
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                new_filename = f"ES1_1m_{timestamp}_{task['type']}_{iteration}.csv"
+                new_filename = f"{ticker_clean}_1m_{timestamp}_{task['type']}_{iteration}.csv"
                 new_path = os.path.join(os.path.dirname(csv_file), new_filename)
                 try:
                     os.rename(csv_file, new_path)
