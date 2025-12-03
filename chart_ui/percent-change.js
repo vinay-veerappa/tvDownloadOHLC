@@ -1,4 +1,4 @@
-import { LineSeries as u } from "lightweight-charts";
+const { LineSeries: u } = window.LightweightCharts;
 function _(t, o) {
   if (t.length === 0)
     return [];

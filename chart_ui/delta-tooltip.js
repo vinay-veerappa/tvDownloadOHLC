@@ -1,4 +1,4 @@
-import { isUTCTimestamp as E, isBusinessDay as D, CrosshairMode as y, ColorType as B } from "lightweight-charts";
+const { isUTCTimestamp: E, isBusinessDay: D, CrosshairMode: y, ColorType: B } = window.LightweightCharts;
 class L {
   _listeners = [];
   subscribe(t, e, i) {

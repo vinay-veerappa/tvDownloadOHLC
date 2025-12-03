@@ -1,4 +1,4 @@
-import { customSeriesDefaultOptions as v } from "lightweight-charts";
+const { customSeriesDefaultOptions: v } = window.LightweightCharts;
 const R = {
   ...v,
   lineColor: "rgb(40,98,255)",

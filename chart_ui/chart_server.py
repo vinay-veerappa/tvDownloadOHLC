@@ -92,6 +92,22 @@ async def get_anchored_text_plugin():
     plugin_path = os.path.join(os.getcwd(), "anchored_text_plugin.js")
     return FileResponse(plugin_path)
 
+@app.get("/test_plugins.html")
+async def get_test_plugins():
+    """Serve Plugin Test Page"""
+    import os
+    test_path = os.path.join(os.getcwd(), "test_plugins.html")
+    return FileResponse(test_path)
+
+@app.get("/{filename}.js")
+async def get_js_file(filename: str):
+    """Serve any JavaScript file from the chart_ui directory"""
+    import os
+    js_path = os.path.join(os.getcwd(), f"{filename}.js")
+    if os.path.exists(js_path):
+        return FileResponse(js_path, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail=f"JavaScript file {filename}.js not found")
+
 @app.get("/api/timeframes")
 async def get_timeframes():
     """Get available timeframes"""

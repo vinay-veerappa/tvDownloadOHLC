@@ -1,4 +1,4 @@
-import { customSeriesDefaultOptions as P } from "lightweight-charts";
+const { customSeriesDefaultOptions: P } = window.LightweightCharts;
 const w = {
   ...P,
   whiskerColor: "rgba(106, 27, 154, 1)",

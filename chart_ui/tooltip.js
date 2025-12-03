@@ -1,4 +1,4 @@
-import { isUTCTimestamp as u, isBusinessDay as m, CrosshairMode as f } from "lightweight-charts";
+const { isUTCTimestamp: u, isBusinessDay: m, CrosshairMode: f } = window.LightweightCharts;
 const v = {
   title: "",
   followMode: "tracking",

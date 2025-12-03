@@ -1,4 +1,4 @@
-import { customSeriesDefaultOptions as f } from "lightweight-charts";
+const { customSeriesDefaultOptions: f } = window.LightweightCharts;
 const p = {
   ...f,
   lastValueVisible: !1,

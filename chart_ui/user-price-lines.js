@@ -1,4 +1,4 @@
-import { CrosshairMode as u, LineStyle as p } from "lightweight-charts";
+const { CrosshairMode: u, LineStyle: p } = window.LightweightCharts;
 function d(s) {
   if (s === void 0)
     throw new Error("Value is undefined");

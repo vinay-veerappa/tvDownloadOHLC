@@ -1,4 +1,4 @@
-import { isBusinessDay as d } from "lightweight-charts";
+const { isBusinessDay: d } = window.LightweightCharts;
 function o(s) {
   if (s === void 0)
     throw new Error("Value is undefined");

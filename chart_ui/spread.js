@@ -1,4 +1,4 @@
-import { LineSeries as f } from "lightweight-charts";
+const { LineSeries: f } = window.LightweightCharts;
 class m {
   numbers;
   cache;

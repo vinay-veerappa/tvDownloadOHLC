@@ -1,4 +1,4 @@
-import { CrosshairMode as n } from "lightweight-charts";
+const { CrosshairMode: n } = window.LightweightCharts;
 function h(e) {
   return Math.floor(e * 0.5);
 }

@@ -1,4 +1,4 @@
-import { customSeriesDefaultOptions as y } from "lightweight-charts";
+const { customSeriesDefaultOptions: y } = window.LightweightCharts;
 const b = {
   ...y,
   colors: [
