@@ -14,7 +14,9 @@ TIMEFRAME_MAP = {
     "15": "15m",
     "60": "1h",
     "240": "4h",
-    "1D": "1D"
+    "1D": "1D",
+    "1W": "1W",
+    "W": "1W"
 }
 
 # Mapping from filename ticker to standard ticker
@@ -31,6 +33,9 @@ TICKER_MAP = {
 
 def parse_filename(filename):
     # Example: CME_MINI_ES1!, 60_8c471.csv
+    # Example: CME_MINI_ES1!, 1W.csv
+    # Example: CME_MINI_NQ1!, 60 (1).csv
+    
     # Split by comma
     parts = filename.split(',')
     if len(parts) < 2:
@@ -39,10 +44,13 @@ def parse_filename(filename):
     raw_ticker = parts[0].strip()
     remainder = parts[1].strip()
     
-    # Remainder: 60_8c471.csv
-    # Split by underscore
+    # Clean remainder
+    remainder = remainder.replace('.csv', '')
+    remainder = re.sub(r'\s*\(\d+\)', '', remainder) # Remove (1) etc
+    
+    # Split by underscore (if exists, for hash)
     tf_parts = remainder.split('_')
-    raw_tf = tf_parts[0]
+    raw_tf = tf_parts[0].strip()
     
     ticker = TICKER_MAP.get(raw_ticker)
     if not ticker:
