@@ -277,7 +277,21 @@
             </select>
 
             <div class="divider"></div>
-            <div id="status">Loading...</div>
+            <!-- Plugin Manager -->
+        <div id="plugin-manager" style="position: absolute; top: 60px; right: 10px; background: rgba(42, 46, 57, 0.95); border: 1px solid #4a4e59; border-radius: 4px; padding: 10px; width: 250px; max-height: 400px; overflow-y: auto; display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid #4a4e59; padding-bottom: 8px;">
+                <h3 style="margin: 0; font-size: 14px; color: #d1d4dc;">Active Plugins</h3>
+                <button onclick="clearAllPlugins()" style="background: #d32f2f; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 11px;">Clear All</button>
+            </div>
+            <div id="plugin-list">
+                <div style="color: #888; font-size: 12px; padding: 10px; text-align: center;">No plugins loaded</div>
+            </div>
+        </div>
+        <button id="toggle-plugin-manager" onclick="togglePluginManager()" style="position: absolute; top: 65px; right: 10px; background: #2962FF; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; z-index: 100;">
+            📋 Plugins (<span id="plugin-count">0</span>)
+        </button>
+
+        <div id="status">Loading...</div>
         </div>
     </div>
 
@@ -309,17 +323,19 @@
                     const PrimitiveClass = module[Object.keys(module)[0]];
                     const primitive = new PrimitiveClass();
                     window.chartSeries.attachPrimitive(primitive);
-                    window.activePlugins.push({ name: moduleName, instance: primitive });
+                    window.activePlugins.push({ name: moduleName, displayName: displayName, instance: primitive });
                     console.log(`✅ Plugin '${displayName}' loaded and attached`);
                     alert(`${displayName} enabled!`);
+                    updatePluginList();
                 }
                 else if (type === 'indicator') {
                     // For moving-average, etc.
                     const indicatorFn = module[Object.keys(module)[0]];
                     const indicatorSeries = indicatorFn(window.chartSeries, { length: 20 });
-                    window.activePlugins.push({ name: moduleName, series: indicatorSeries });
+                    window.activePlugins.push({ name: moduleName, displayName: displayName, series: indicatorSeries });
                     console.log(`✅ Indicator '${displayName}' loaded and applied`);
                     alert(`${displayName} added!`);
+                    updatePluginList();
                 }
                 
             } catch (error) {
@@ -328,6 +344,98 @@
             }
         }
         window.loadAndApplyPlugin = loadAndApplyPlugin; // Expose globally
+
+        // Plugin Management Functions
+        function updatePluginList() {
+            const listDiv = document.getElementById('plugin-list');
+            const countSpan = document.getElementById('plugin-count');
+            
+            if (window.activePlugins.length === 0) {
+                listDiv.innerHTML = '<div style="color: #888; font-size: 12px; padding: 10px; text-align: center;">No plugins loaded</div>';
+                countSpan.textContent = '0';
+                return;
+            }
+            
+            countSpan.textContent = window.activePlugins.length.toString();
+            
+            let html = '';
+            window.activePlugins.forEach((plugin, index) => {
+                html += `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px; margin: 2px 0; background: #1e222d; border-radius: 3px;">
+                        <span style="color: #d1d4dc; font-size: 12px;">${plugin.displayName || plugin.name}</span>
+                        <button onclick="removePlugin(${index})" style="background: #ef5350; color: white; border: none; padding: 2px 6px; border-radius: 2px; cursor: pointer; font-size: 10px;">✕</button>
+                    </div>
+                `;
+            });
+            listDiv.innerHTML = html;
+        }
+        window.updatePluginList = updatePluginList;
+        
+        function removePlugin(index) {
+            if (index < 0 || index >= window.activePlugins.length) return;
+            
+            const plugin = window.activePlugins[index];
+            
+            try {
+                // Remove primitive
+                if (plugin.instance && plugin.instance.detach) {
+                    plugin.instance.detach();
+                }
+                // Remove indicator series
+                if (plugin.series && window.chart.removeSeries) {
+                    window.chart.removeSeries(plugin.series);
+                }
+                
+                window.activePlugins.splice(index, 1);
+                window.pluginModules.delete(plugin.name);
+                
+                updatePluginList();
+                console.log(`✅ Removed plugin: ${plugin.displayName || plugin.name}`);
+            } catch (error) {
+                console.error(`Error removing plugin:`, error);
+                alert(`Error removing plugin: ${error.message}`);
+            }
+        }
+        window.removePlugin = removePlugin;
+        
+        function clearAllPlugins() {
+            if (window.activePlugins.length === 0) {
+                alert('No plugins to remove');
+                return;
+            }
+            
+            if (!confirm(`Remove all ${window.activePlugins.length} plugins?`)) {
+                return;
+            }
+            
+            // Remove all in reverse order
+            for (let i = window.activePlugins.length - 1; i >= 0; i--) {
+                const plugin = window.activePlugins[i];
+                try {
+                    if (plugin.instance && plugin.instance.detach) {
+                        plugin.instance.detach();
+                    }
+                    if (plugin.series && window.chart.removeSeries) {
+                        window.chart.removeSeries(plugin.series);
+                    }
+                } catch (error) {
+                    console.error(`Error removing ${plugin.name}:`, error);
+                }
+            }
+            
+            window.activePlugins = [];
+            window.pluginModules.clear();
+            updatePluginList();
+            console.log('✅ All plugins removed');
+        }
+        window.clearAllPlugins = clearAllPlugins;
+        
+        function togglePluginManager() {
+            const manager = document.getElementById('plugin-manager');
+            manager.style.display = manager.style.display === 'none' ? 'block' : 'none';
+        }
+        window.togglePluginManager = togglePluginManager;
+
 
         // Wait for LightweightCharts ES module to load
         function initChart() {
