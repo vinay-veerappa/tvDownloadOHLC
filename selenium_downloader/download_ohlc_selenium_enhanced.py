@@ -26,14 +26,35 @@ def connect_driver(download_dir):
         print("WARNING: Multiple tabs detected. This might cause 'Multiple Session' errors.")
         print("Please close other TradingView tabs.")
     
+    # Find the correct tab
+    found_tab = False
+    for handle in handles:
+        try:
+            driver.switch_to.window(handle)
+            title = driver.title
+            url = driver.current_url
+            print(f"Checking tab: {title} ({url})")
+            if "TradingView" in title or "chart" in url.lower():
+                print(f"Locked onto TradingView tab: {handle}")
+                found_tab = True
+                break
+        except:
+            continue
+            
+    if not found_tab:
+        print("WARNING: Could not identify a TradingView tab. Using current default.")
+    
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
     print(f"Target Download Directory: {download_dir}")
     
-    driver.execute_cdp_cmd("Page.setDownloadBehavior", {
-        "behavior": "allow",
-        "downloadPath": download_dir
-    })
+    try:
+        driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+            "behavior": "allow",
+            "downloadPath": download_dir
+        })
+    except Exception as e:
+        print(f"Warning: Failed to set download behavior via CDP: {e}")
     
     return driver
 
@@ -128,29 +149,72 @@ def get_data_bounds(download_dir, parquet_file=None):
     print(f"Global Data Bounds: Oldest={global_min}, Newest={global_max}")
     return global_min, global_max
 
+def safe_action_perform(driver, action_builder_func, retries=3):
+    """
+    Helper to safely perform ActionChains with retries.
+    """
+    last_err = None
+    for i in range(retries):
+        try:
+            # 1. Try to ensure we are on the right window/frame
+            # If we have multiple handles, make sure we are on the one with 'TradingView'
+            try:
+                if "TradingView" not in driver.title:
+                    # Try to find it again
+                    for handle in driver.window_handles:
+                        driver.switch_to.window(handle)
+                        if "TradingView" in driver.title:
+                            break
+            except:
+                pass
+
+            # 2. Reset to default content just in case
+            try:
+                driver.switch_to.default_content()
+            except:
+                pass
+                
+            actions = action_builder_func(driver)
+            actions.perform()
+            return True
+        except Exception as e:
+            last_err = e
+            print(f"Action failed (attempt {i+1}/{retries}): {e}")
+            time.sleep(2)
+    
+    print(f"Action failed after {retries} attempts: {last_err}")
+    return False
+
 def switch_ticker(driver, ticker):
     print(f"Switching to ticker: {ticker}...")
-    actions = ActionChains(driver)
-    # Ensure chart is focused
-    try:
-        driver.find_element(By.CSS_SELECTOR, "canvas").click()
-    except:
-        pass
     
-    actions.send_keys(ticker).perform()
-    time.sleep(1)
-    actions.send_keys(Keys.ENTER).perform()
-    time.sleep(5) # Wait for load
+    def build_switch_action(d):
+        actions = ActionChains(d)
+        try:
+            d.find_element(By.CSS_SELECTOR, "canvas").click()
+        except:
+            pass
+        actions.send_keys(ticker)
+        return actions
+
+    if safe_action_perform(driver, build_switch_action):
+        time.sleep(1)
+        ActionChains(driver).send_keys(Keys.ENTER).perform()
+        time.sleep(5) # Wait for load
 
 def jump_to_start(driver):
     print("Jumping to start of data (Alt+Shift+Left)...")
-    actions = ActionChains(driver)
-    # Ensure chart is focused
-    try:
-        driver.find_element(By.CSS_SELECTOR, "canvas").click()
-    except:
-        pass
-    actions.key_down(Keys.ALT).key_down(Keys.SHIFT).send_keys(Keys.LEFT).key_up(Keys.SHIFT).key_up(Keys.ALT).perform()
+    
+    def build_jump_action(d):
+        actions = ActionChains(d)
+        try:
+            d.find_element(By.CSS_SELECTOR, "canvas").click()
+        except:
+            pass
+        actions.key_down(Keys.ALT).key_down(Keys.SHIFT).send_keys(Keys.LEFT).key_up(Keys.SHIFT).key_up(Keys.ALT)
+        return actions
+        
+    safe_action_perform(driver, build_jump_action)
     time.sleep(5)
 
 def scroll_back(driver, iterations=2):
@@ -168,7 +232,10 @@ def scroll_back(driver, iterations=2):
         
     # Use Alt + Shift + Left Arrow to jump to the oldest bar
     # Send it ONCE, then wait for load
-    actions.key_down(Keys.ALT).key_down(Keys.SHIFT).send_keys(Keys.LEFT).key_up(Keys.SHIFT).key_up(Keys.ALT).perform()
+    def build_scroll_action(d):
+        return ActionChains(d).key_down(Keys.ALT).key_down(Keys.SHIFT).send_keys(Keys.LEFT).key_up(Keys.SHIFT).key_up(Keys.ALT)
+    
+    safe_action_perform(driver, build_scroll_action)
     print("Sent Alt+Shift+Left. Waiting for data load...")
     time.sleep(5) # Wait 5 seconds for data to load
         
@@ -311,7 +378,9 @@ def go_to_date(driver, date_str):
                 
         if not trigger:
             print("Could not find dropdown trigger. Trying Alt+G fallback...")
-            ActionChains(driver).key_down(Keys.ALT).send_keys('g').key_up(Keys.ALT).perform()
+            def build_alt_g(d):
+                return ActionChains(d).key_down(Keys.ALT).send_keys('g').key_up(Keys.ALT)
+            safe_action_perform(driver, build_alt_g)
             time.sleep(2)
         else:
             # Look for "Select date..." in the open menu
