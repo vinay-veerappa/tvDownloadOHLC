@@ -104,6 +104,14 @@ async def get_js_file(filename: str):
         return FileResponse(js_path, media_type="application/javascript")
     raise HTTPException(status_code=404, detail=f"JavaScript file {filename}.js not found")
 
+@app.get("/plugins/{filename}.js")
+async def get_plugin_file(filename: str):
+    """Serve JavaScript files from the plugins directory"""
+    plugin_path = BASE_DIR / "plugins" / f"{filename}.js"
+    if plugin_path.exists():
+        return FileResponse(plugin_path, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail=f"Plugin file {filename}.js not found")
+
 @app.get("/api/tickers")
 async def get_tickers():
     """Get list of available tickers"""
