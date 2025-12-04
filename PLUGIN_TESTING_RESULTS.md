@@ -8,7 +8,7 @@
 
 ---
 
-## ✅ Fully Working Plugins (5)
+## ✅ Fully Working Plugins (7)
 
 ### Indicators
 1. **Moving Average** ✅
@@ -27,7 +27,7 @@
    - Status: Working
    - Load time: Fast
    - Display: Works correctly
-   - Console: Shows data array logs (20000 items)
+   - Console: Shows data array logs (20000 items) - cosmetic only
    - Notes: No issues
 
 4. **Weighted Close** ✅
@@ -42,17 +42,52 @@
    - Display: Works correctly
    - Notes: No issues
 
+6. **Median Price** ✅
+   - Status: Working
+   - Load time: Fast
+   - Display: Works correctly
+   - Notes: No issues
+
 ### Primitives
-6. **Crosshair Tooltip** ✅ (tested earlier)
+7. **Crosshair Tooltip** ✅ (tested earlier)
    - Status: Working
    - Display: Shows OHLC values on hover
    - Notes: No issues
 
 ---
 
-## ❌ Plugins Requiring Special Initialization (2)
+## ❌ Plugins Requiring Special Initialization (3)
 
-### 1. Correlation ❌
+### 1. Anchored Text ❌
+**Error**: `TypeError: Cannot read properties of undefined (reading 'font')`  
+**Location**: `anchored-text.js:9:27`  
+**Root Cause**: Requires **configuration object** with text and styling options  
+**Current Behavior**: 
+- Plugin loads (shows "enabled" alert)
+- Immediately crashes on every render frame
+- Repeating error in console
+
+**Required Options**:
+```javascript
+{
+    text: 'Your text here',
+    font: 'bold 24px Arial',
+    vertAlign: 'top',    // or 'middle', 'bottom'
+    horzAlign: 'right',  // or 'left', 'center'
+    color: 'rgba(255, 255, 255, 0.5)'
+}
+```
+
+**Required Fix**: 
+- Need UI to collect text and styling options
+- Modify loadAndApplyPlugin to accept and pass options parameter
+- Example: Prompt user for text, then create with config
+
+**Workaround**: Remove from menu until configuration UI added
+
+---
+
+### 2. Correlation ❌
 **Error**: `TypeError: this._secondarySeries.subscribeDataChanged is not a function`  
 **Location**: `correlation.js:94:206`  
 **Root Cause**: Requires a **secondary series** for correlation analysis  
@@ -103,9 +138,53 @@
 
 ## 📊 Success Rate
 
-**Tested**: 8 plugins  
-**Working**: 6 (75%)  
-**Requiring Special Setup**: 2 (25%)
+**Tested**: 10 plugins  
+**Working (no config needed)**: 7 (70%)  
+**Requiring Configuration**: 1 (10%)  
+**Requiring Dual-Series**: 2 (20%)
+
+---
+
+## 🔍 Plugin Categories Discovered
+
+### Category 1: Simple Plugins (70%) ✅
+**Work immediately with zero configuration**
+- Moving Average, Momentum, Average Price, Weighted Close
+- Percent Change, Median Price
+- Crosshair Tooltip
+
+**Characteristics**:
+- No constructor parameters needed
+- Attach and work immediately
+- Our current `loadAndApplyPlugin()` handles perfectly
+
+---
+
+### Category 2: Configuration-Required Plugins (10%) ⚠️
+**Need user input or configuration object**
+- Anchored Text (needs text, font, position, color)
+- Volume Profile (likely needs configuration)
+- Session Highlighting (needs session times)
+
+**Characteristics**:
+- Require options object in constructor
+- Need UI to collect user input
+- Current system can't handle without modification
+
+**Solution Needed**: Add configuration prompt or UI
+
+---
+
+### Category 3: Dual-Series Plugins (20%) ⚠️
+**Need two data series to operate**
+- Correlation, Product, Ratio, Spread
+
+**Characteristics**:
+- Need to compare/combine two instruments
+- Require architectural enhancement
+- Can't work with single series
+
+**Solution Needed**: Multi-series architecture
 
 ---
 
