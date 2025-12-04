@@ -354,6 +354,17 @@ def perform_export(driver, wait):
 def go_to_date(driver, date_str):
     print(f"Going to date: {date_str}...")
     
+    # Ensure we are in Bar Replay mode first, as "Go To" behaves differently otherwise
+    try:
+        # Check if "Jump to real-time" button exists (indicator of Replay Mode)
+        jump_btns = driver.find_elements(By.CSS_SELECTOR, "button[data-name='jump-to-realtime']")
+        if not jump_btns:
+            print("Not in Bar Replay mode. Entering now...")
+            enter_replay_mode(driver)
+            time.sleep(2)
+    except:
+        pass
+
     # 1. Find "Select date..." in Replay Toolbar
     print("Looking for Replay 'Select date' option...")
     try:
@@ -433,14 +444,17 @@ def go_to_date(driver, date_str):
             date_input.send_keys(Keys.DELETE)
             time.sleep(0.05)
             
-            # Type date
-            for char in list(date_str):
+            # Type date - Use YYYY-MM-DD only to be safe
+            date_only = date_str.split(" ")[0]
+            print(f"Typing date: {date_only} (stripped time for compatibility)")
+            
+            for char in list(date_only):
                 date_input.send_keys(char)
-                time.sleep(0.05) # Reduced from 0.1
+                time.sleep(0.05)
                 
             date_input.send_keys(Keys.ENTER)
-            print("Date entered.")
-            time.sleep(2) # Reduced from 5
+            print("Date entered. Waiting for chart update...")
+            time.sleep(5) # Give it time to load
             return True
         else:
             print("Could not find date input.")
