@@ -34,6 +34,12 @@ tvDownloadOHLC/
 ├── downloads_es_futures/         # Raw CSV downloads
 │   └── ES1_1m_*.csv
 │
+scripts/                      # Utility scripts
+│   ├── setup/                    # Setup & refactoring scripts
+│   ├── analysis/                 # Data analysis scripts
+│   ├── tvdata/                   # TradingView data scripts
+│   └── tests/                    # Test scripts
+│
 ├── backup/                       # Backup files
 │
 ├── credentials.json              # TradingView credentials
