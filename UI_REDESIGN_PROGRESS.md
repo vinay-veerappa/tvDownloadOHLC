@@ -1,6 +1,6 @@
 # UI Redesign Progress
 
-**Date**: 2025-12-04 10:45 PST
+**Date**: 2025-12-04 10:55 PST
 **Goal**: Implement TradingView-inspired UI
 
 ---
@@ -10,8 +10,8 @@
 | Phase | Description | Status | Notes |
 |-------|-------------|--------|-------|
 | **1** | **Left Sidebar** | ✅ Complete | Drawing tools moved to sidebar. |
-| **2** | **Indicators Modal** | 🔄 Next | Unified modal for plugins/indicators. |
-| **3** | **Chart Legend** | ❌ Pending | Active items display. |
+| **2** | **Indicators Modal** | ✅ Complete | Unified modal for plugins/indicators. |
+| **3** | **Chart Legend** | 🔄 Next | Active items display. |
 | **4** | **Drawing Selection** | ❌ Pending | Select/Delete workflow. |
 
 ---
@@ -24,11 +24,18 @@
 - Updated `css/main.css` for layout adjustment.
 - Verified functionality: Tools work, layout is correct.
 
-### 🔄 Phase 2: Indicators Modal (Next)
-- Create `css/modal.css`.
-- Create `js/ui.js` for modal logic.
-- Define available plugins/indicators configuration.
-- Implement modal HTML and interaction.
+### ✅ Phase 2: Indicators Modal (Completed)
+- Created `css/modal.css`.
+- Created `js/ui.js` with modal logic and item configuration.
+- Updated `chart_ui.html` to add modal HTML and new "Indicators" button.
+- Updated `js/main.js` to setup modal listeners.
+- Verified functionality: Modal opens, items can be added.
+
+### 🔄 Phase 3: Chart Legend (Next)
+- Create `css/legend.css`.
+- Update `chart_ui.html` to add legend container.
+- Update `js/plugins.js` (or `ui.js`) to render active items to the legend.
+- Implement removal logic.
 
 ---
 
