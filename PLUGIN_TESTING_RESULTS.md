@@ -56,7 +56,7 @@
 
 ---
 
-## ❌ Plugins Requiring Special Initialization (3)
+## ❌ Plugins Requiring Special Initialization (4)
 
 ### 1. Anchored Text ❌
 **Error**: `TypeError: Cannot read properties of undefined (reading 'font')`  
@@ -87,7 +87,35 @@
 
 ---
 
-### 2. Correlation ❌
+### 2. Vertical Line ❌
+**Error**: `TypeError: Cannot read properties of undefined (reading 'timeScale')`  
+**Location**: `vertical-line.js:39:35`  
+**Root Cause**: Requires **chart reference** and **time coordinate**  
+**Current Behavior**: 
+- Plugin loads (shows "enabled" alert)
+- Crashes when trying to access chart.timeScale()
+- Error on first update cycle
+
+**Required Options**:
+```javascript
+{
+    chart: chartReference,  // Need to pass window.chart
+    time: 1701734400,      // Unix timestamp for line position
+    color: 'rgba(255, 0, 0, 0.5)',
+    width: 1
+}
+```
+
+**Required Fix**: 
+- Modify loadAndApplyPlugin to pass chart reference
+- Add UI to select time coordinate (or use current crosshair position)
+- Pass complete configuration object
+
+**Workaround**: Remove from menu until configuration UI added
+
+---
+
+### 3. Correlation ❌
 **Error**: `TypeError: this._secondarySeries.subscribeDataChanged is not a function`  
 **Location**: `correlation.js:94:206`  
 **Root Cause**: Requires a **secondary series** for correlation analysis  
@@ -105,7 +133,7 @@
 
 ---
 
-### 2. Product ❌
+### 4. Product ❌
 **Error**: `TypeError: this._secondarySeries.subscribeDataChanged is not a function`  
 **Location**: `product.js:83:206`  
 **Root Cause**: Requires a **secondary series** for multiplication  
@@ -138,10 +166,10 @@
 
 ## 📊 Success Rate
 
-**Tested**: 10 plugins  
-**Working (no config needed)**: 7 (70%)  
-**Requiring Configuration**: 1 (10%)  
-**Requiring Dual-Series**: 2 (20%)
+**Tested**: 11 plugins  
+**Working (no config needed)**: 7 (64%)  
+**Requiring Configuration**: 2 (18%)  
+**Requiring Dual-Series**: 2 (18%)
 
 ---
 
