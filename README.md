@@ -37,11 +37,13 @@ tvDownloadOHLC/
 ├── backup/                       # Backup files
 │
 ├── credentials.json              # TradingView credentials
+docs/                         # Documentation
+│   ├── USER_GUIDE.md             # User Guide for Chart UI
+│   ├── PLUGIN_INTEGRATION_GUIDE.md
+│   └── ... (other docs)
+│
+├── credentials.json              # TradingView credentials
 ├── requirements.txt              # Python dependencies
-├── INDICATORS.md                 # Indicator system docs
-├── CHART_COMPARISON.md           # Chart library comparison
-├── DATA_COVERAGE_REPORT.md       # Data coverage analysis
-├── DATA_GAPS_REPORT.md           # Detailed data gaps analysis
 └── README.md                     # This file
 ```
 
@@ -99,11 +101,13 @@ python chart_server.py
 - **Frontend**: `chart_ui/chart_ui.html` - Lightweight Charts UI
 
 ## 📝 Documentation
+All documentation is located in the `docs/` directory.
 
-- **Indicators**: See `INDICATORS.md` for adding custom indicators
-- **Chart Comparison**: See `CHART_COMPARISON.md` for library options
-- **Data Coverage**: See `DATA_COVERAGE_REPORT.md` for available data ranges
-- **Data Gaps**: See `DATA_GAPS_REPORT.md` for detailed gap analysis
+- **User Guide**: See `docs/USER_GUIDE.md` for how to use the chart UI.
+- **Indicators**: See `docs/INDICATORS.md` for adding custom indicators.
+- **Plugins**: See `docs/PLUGIN_INTEGRATION_GUIDE.md` for plugin system details.
+- **Data Coverage**: See `docs/DATA_COVERAGE_REPORT.md` for available data ranges.
+- **Data Gaps**: See `docs/DATA_GAPS_REPORT.md` for detailed gap analysis.
 
 ## 🛠 Dependencies
 
