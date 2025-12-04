@@ -1,17 +1,7 @@
 import { state } from './state.js';
 
-export async function addIndicatorFromMenu(select) {
-    const type = select.value;
-    select.value = ""; // Reset
-
+export async function addIndicator(type) {
     if (!state.indicatorManager) {
-        // Need to import IndicatorManager dynamically or assume it's loaded
-        // Since IndicatorManager is a class in indicator_manager.js (not a module yet), 
-        // we rely on it being loaded via script tag or we should modularize it.
-        // For now, let's assume it's available on window or we import it.
-
-        // Better: Modularize IndicatorManager. But it's a separate file.
-        // Let's assume window.IndicatorManager exists for now (from script tag).
         if (window.IndicatorManager) {
             state.indicatorManager = new window.IndicatorManager(window.chart, window.chartSeries, 'indicator-container');
         } else {
@@ -30,6 +20,13 @@ export async function addIndicatorFromMenu(select) {
     if (type === 'atr') params = { period: 14 };
 
     await state.indicatorManager.addIndicator(type, state.currentTimeframe, params, state.currentTicker);
+}
+
+// Legacy wrapper for old dropdown if needed (will be removed)
+export async function addIndicatorFromMenu(select) {
+    const type = select.value;
+    select.value = "";
+    await addIndicator(type);
 }
 
 export function addWatermark() {
