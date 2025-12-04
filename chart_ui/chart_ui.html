@@ -198,436 +198,35 @@
     </div>
 
     <script>
-        // --- Configuration ---
-        let currentTimezone = 'America/New_York';
-        let currentTimeframe = '1h';
-        let currentTicker = 'ES1';
-        let currentTool = null;
-        let drawings = []; // Stores primitives
-        let strategyLines = [];
-        let isStrategyActive = false;
-        let allData = [];
-        let indicatorManager = null;
+        // Wait for LightweightCharts ES module to load
+        function initChart() {
+            // --- Configuration ---
+            let currentTimezone = 'America/New_York';
+            let currentTimeframe = '1h';
+            let currentTicker = 'ES1';
+            let currentTool = null;
+            let drawings = []; // Stores primitives
+            let strategyLines = [];
+            let isStrategyActive = false;
+            let allData = [];
+            let indicatorManager = null;
 
-        // Drawing State
-        let activeDrawing = null;
-        let startPoint = null; // { time, price }
+            // Drawing State
+            let activeDrawing = null;
+            let startPoint = null; // { time, price }
 
-        // --- Chart Initialization (v5.0) ---
-        if (!window.LightweightCharts) {
-            document.getElementById('status').textContent = 'Error: Library not loaded.';
-            throw new Error('LightweightCharts not found');
-        }
-
-        const chart = window.LightweightCharts.createChart(document.getElementById('chart'), {
-            autoSize: true,
-            layout: { background: { color: '#1e222d' }, textColor: '#d1d4dc' },
-            grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
-            timeScale: { timeVisible: true, rightOffset: 5 },
-            crosshair: { mode: window.LightweightCharts.CrosshairMode.Normal },
-            localization: {
-                timeFormatter: function (timestamp) {
-                    const date = new Date(timestamp * 1000);
-                    return date.toLocaleString('en-US', {
-                        timeZone: currentTimezone,
-                        month: 'short', day: 'numeric',
-                        hour: '2-digit', minute: '2-digit', hour12: false
-                    });
-                }
-            }
-        });
-
-        // Main Series (Candlestick) - v5 Syntax
-        const series = chart.addSeries(window.LightweightCharts.CandlestickSeries, {
-            upColor: '#26a69a', downColor: '#ef5350',
-            wickUpColor: '#26a69a', wickDownColor: '#ef5350'
-        });
-
-
-        // PDH/PDL Lines
-        let pdhLine = null;
-        let pdlLine = null;
-
-        // --- Data Loading ---
-        async function loadTickers() {
-            try {
-                const response = await fetch('/api/tickers');
-                const result = await response.json();
-                const tickerSelect = document.getElementById('ticker');
-                const current = currentTicker;
-
-                // Clear existing options
-                tickerSelect.innerHTML = '';
-
-                if (result.tickers && result.tickers.length > 0) {
-                    result.tickers.forEach(t => {
-                        const option = document.createElement('option');
-                        option.value = t;
-                        option.text = t;
-                        if (t === current) option.selected = true;
-                        tickerSelect.appendChild(option);
-                    });
-
-                    // If current ticker is not in the list, switch to the first available one
-                    if (!result.tickers.includes(current)) {
-                        currentTicker = result.tickers[0];
-                        tickerSelect.value = currentTicker;
-                        loadData(currentTimeframe);
-                    }
-                }
-
-                // Also load timeframes for this ticker
-                loadTimeframes(currentTicker);
-
-            } catch (error) {
-                console.error('Error loading tickers:', error);
-            }
-        }
-
-        async function loadTimeframes(ticker) {
-            try {
-                const response = await fetch(`/api/timeframes?ticker=${ticker}`);
-                const result = await response.json();
-                const select = document.getElementById('more-timeframes');
-
-                // Default options
-                const defaults = ['1m', '5m', '15m', '30m', '1h', '4h', '1D', '1W'];
-                const allOptions = new Set([...defaults, ...result.timeframes]);
-
-                select.innerHTML = '<option value="" disabled selected>▼</option>';
-                Array.from(allOptions).sort().forEach(tf => {
-                    const option = document.createElement('option');
-                    option.value = tf;
-                    option.text = tf;
-                    select.appendChild(option);
-                });
-            } catch (e) {
-                console.error(e);
-            }
-        }
-
-        function changeTimeframe(tf) {
-            if (!tf) return;
-            currentTimeframe = tf;
-
-            // Update buttons
-            document.querySelectorAll('#tf-buttons button').forEach(b => {
-                if (b.dataset.tf === tf) b.classList.add('active');
-                else b.classList.remove('active');
-            });
-
-            // Update custom input if it's a custom value
-            const customInput = document.getElementById('custom-tf');
-            const isStandard = ['1m', '5m', '15m', '1h', '4h', '1D'].includes(tf);
-            if (!isStandard) {
-                customInput.value = tf;
-                customInput.classList.add('active');
-            } else {
-                customInput.value = '';
-                customInput.classList.remove('active');
+            // --- Chart Initialization (v5.0) ---
+            if (!window.LightweightCharts) {
+                document.getElementById('status').textContent = 'Error: Library not loaded.';
+                throw new Error('LightweightCharts not found');
             }
 
-            // Reset dropdown
-            document.getElementById('more-timeframes').value = "";
-
-            loadData(tf);
-        }
-
-        async function loadData(timeframe) {
-            document.getElementById('status').textContent = 'Loading...';
-            try {
-                const response = await fetch(`http://localhost:8000/api/ohlc/${timeframe}?limit=20000&ticker=${currentTicker}`);
-                const result = await response.json();
-
-                if (!result.data || !Array.isArray(result.data)) {
-                    throw new Error('Invalid data format');
-                }
-
-                allData = result.data; // Store for navigation
-                series.setData(allData);
-                // volumeSeries.setData(allData);
-
-                // Calculate PDH/PDL
-                calculatePDHPDL(allData);
-
-                chart.timeScale().fitContent();
-                document.getElementById('status').textContent = `${allData.length.toLocaleString()} bars`;
-
-                // Re-run strategy if active
-                if (isStrategyActive) runStrategy();
-
-            } catch (error) {
-                console.error(error);
-                document.getElementById('status').textContent = 'Error: ' + error.message;
-            }
-        }
-
-        function calculatePDHPDL(data) {
-            if (data.length === 0) return;
-
-            const lastBar = data[data.length - 1];
-            const lastDate = new Date(lastBar.time * 1000);
-            lastDate.setHours(0, 0, 0, 0);
-            const todayStart = Math.floor(lastDate.getTime() / 1000);
-            const yesterdayStart = todayStart - 86400;
-
-            const yesterdayBars = data.filter(bar => bar.time >= yesterdayStart && bar.time < todayStart);
-
-            if (pdhLine) series.removePriceLine(pdhLine);
-            if (pdlLine) series.removePriceLine(pdlLine);
-
-            if (yesterdayBars.length > 0) {
-                const pdh = Math.max(...yesterdayBars.map(b => b.high));
-                const pdl = Math.min(...yesterdayBars.map(b => b.low));
-
-                pdhLine = series.createPriceLine({
-                    price: pdh, color: '#2962FF', lineWidth: 2, lineStyle: 2,
-                    axisLabelVisible: true, title: 'PDH'
-                });
-                pdlLine = series.createPriceLine({
-                    price: pdl, color: '#FF6D00', lineWidth: 2, lineStyle: 2,
-                    axisLabelVisible: true, title: 'PDL'
-                });
-            }
-        }
-
-        // --- Drawing Tools ---
-        function setTool(tool) {
-            currentTool = (currentTool === tool) ? null : tool; // Toggle
-            activeDrawing = null;
-            startPoint = null;
-
-            // Update UI
-            document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-            if (currentTool === 'line') document.getElementById('btn-line').classList.add('active');
-            if (currentTool === 'ray') document.getElementById('btn-ray').classList.add('active');
-            if (currentTool === 'rect') document.getElementById('btn-rect').classList.add('active');
-            if (currentTool === 'fib') document.getElementById('btn-fib').classList.add('active');
-            if (currentTool === 'vert') document.getElementById('btn-vert').classList.add('active');
-
-            // Re-highlight active timeframe button
-            changeTimeframe(currentTimeframe); // Hack to restore active class if cleared
-
-            document.body.style.cursor = currentTool ? 'crosshair' : 'default';
-
-            // Disable chart scrolling while drawing? No, better to keep it.
-            chart.applyOptions({ handleScroll: !currentTool, handleScale: !currentTool });
-        }
-
-        function clearDrawings() {
-            // Remove primitives
-            drawings.forEach(d => {
-                if (d.detach) d.detach(); // If primitive
-                if (series.removePriceLine) try { series.removePriceLine(d); } catch (e) { } // If price line
-            });
-            drawings = [];
-            setTool(null);
-        }
-
-        chart.subscribeClick((param) => {
-            if (!currentTool || !param.point || !param.time) return;
-
-            const price = series.coordinateToPrice(param.point.y);
-            const time = param.time;
-
-            if (currentTool === 'line') {
-                // Horizontal Line (Simple)
-                const line = series.createPriceLine({
-                    price: price, color: '#2962FF', lineWidth: 2, lineStyle: 0,
-                    axisLabelVisible: true, title: 'Line'
-                });
-                drawings.push(line);
-                setTool(null);
-            }
-            else if (currentTool === 'ray') {
-                // Trend Line (Diagonal) - 2 Click Process
-                if (!startPoint) {
-                    // First Click
-                    startPoint = { time, price };
-
-                    // Create initial primitive (0 length)
-                    if (window.TrendLine) {
-                        const tl = new window.TrendLine(chart, series, startPoint, startPoint, { lineColor: '#D500F9', lineWidth: 2 });
-                        series.attachPrimitive(tl);
-                        activeDrawing = tl;
-                        drawings.push(tl);
-                    }
-                } else {
-                    // Second Click - Finish
-                    if (activeDrawing) {
-                        activeDrawing.updateEnd({ time, price });
-                        activeDrawing = null;
-                        startPoint = null;
-                        setTool(null);
-                    }
-                }
-            }
-            else if (currentTool === 'rect') {
-                // Rectangle - 2 Click Process
-                if (!startPoint) {
-                    // First Click
-                    startPoint = { time, price };
-
-                    // Create initial primitive
-                    if (window.Rectangle) {
-                        const rect = new window.Rectangle(chart, series, startPoint, startPoint, {
-                            color: 'rgba(33, 150, 243, 0.2)',
-                            borderColor: '#2196F3'
-                        });
-                        series.attachPrimitive(rect);
-                        activeDrawing = rect;
-                        drawings.push(rect);
-                    }
-                } else {
-                    // Second Click - Finish
-                    if (activeDrawing) {
-                        activeDrawing.updateEnd({ time, price });
-                        activeDrawing = null;
-                        startPoint = null;
-                        setTool(null);
-                    }
-                }
-            }
-            else if (currentTool === 'fib') {
-                // Fibonacci - 2 Click Process
-                if (!startPoint) {
-                    // First Click
-                    startPoint = { time, price };
-
-                    // Create initial primitive
-                    if (window.FibonacciRetracement) {
-                        const fib = new window.FibonacciRetracement(chart, series, startPoint, startPoint, {
-                            lineColor: '#787b86'
-                        });
-                        series.attachPrimitive(fib);
-                        activeDrawing = fib;
-                        drawings.push(fib);
-                    }
-                } else {
-                    // Second Click - Finish
-                    if (activeDrawing) {
-                        activeDrawing.updateEnd({ time, price });
-                        activeDrawing = null;
-                        startPoint = null;
-                        setTool(null);
-                    }
-                }
-            }
-            else if (currentTool === 'vert') {
-                // Vertical Line - 1 Click Process
-                if (window.VertLine) {
-                    const vl = new window.VertLine(chart, series, time, {
-                        color: '#2962FF',
-                        labelText: new Date(time * 1000).toLocaleDateString(),
-                        showLabel: true
-                    });
-                    series.attachPrimitive(vl);
-                    drawings.push(vl);
-                    setTool(null); // Finish immediately
-                }
-            }
-        });
-
-        // Mouse Move for Dragging
-        document.getElementById('chart').addEventListener('mousemove', (e) => {
-            if ((currentTool === 'ray' || currentTool === 'rect' || currentTool === 'fib') && activeDrawing && startPoint) {
-                // We need to convert mouse X/Y to Time/Price
-
-                const rect = document.getElementById('chart').getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const y = e.clientY - rect.top;
-
-                const time = chart.timeScale().coordinateToTime(x);
-                const price = series.coordinateToPrice(y);
-
-                if (time && price) {
-                    activeDrawing.updateEnd({ time, price });
-                }
-            }
-        });
-
-        // --- Navigation ---
-        function jumpToDate() {
-            const dateStr = document.getElementById('datePicker').value;
-            if (!dateStr) return;
-
-            const targetDate = new Date(dateStr).getTime() / 1000;
-            // Find closest bar
-            const targetIndex = allData.findIndex(d => d.time >= targetDate);
-
-            if (targetIndex !== -1) {
-                const range = 100; // Show 100 bars
-                const from = Math.max(0, targetIndex - range / 2);
-                const to = Math.min(allData.length - 1, targetIndex + range / 2);
-                chart.timeScale().setVisibleLogicalRange({ from, to });
-            } else {
-                alert('Date not found in loaded data');
-            }
-        }
-
-        // --- Strategy (Demo) ---
-        function toggleStrategy() {
-            isStrategyActive = !isStrategyActive;
-            const btn = document.getElementById('strategyBtn');
-
-            if (isStrategyActive) {
-                btn.classList.add('active');
-                runStrategy();
-            } else {
-                btn.classList.remove('active');
-                // Clear strategy lines
-                strategyLines.forEach(l => series.removePriceLine(l));
-                strategyLines = [];
-            }
-        }
-
-        function runStrategy() {
-            // Simple SMA Crossover Logic for Demo
-            // v5.0 Workaround: Use PriceLines instead of Markers (since markers are now a plugin)
-
-            let position = 0;
-
-            for (let i = 1; i < allData.length; i++) {
-                const prev = allData[i - 1];
-                const curr = allData[i];
-
-                // Green Candle = Buy, Red Candle = Sell (Simple Visual Test)
-                if (position === 0 && curr.close > curr.open && prev.close < prev.open) {
-                    position = 1;
-                    const line = series.createPriceLine({
-                        price: curr.close, color: '#2196F3', lineWidth: 1, lineStyle: 0,
-                        axisLabelVisible: true, title: 'BUY'
-                    });
-                    strategyLines.push(line);
-                } else if (position === 1 && curr.close < curr.open) {
-                    position = 0;
-                    const line = series.createPriceLine({
-                        price: curr.close, color: '#E91E63', lineWidth: 1, lineStyle: 0,
-                        axisLabelVisible: true, title: 'SELL'
-                    });
-                    strategyLines.push(line);
-                }
-            }
-        }
-
-        // --- Event Listeners ---
-        window.addEventListener('resize', () => {
-            chart.applyOptions({ width: window.innerWidth, height: window.innerHeight - 54 });
-        });
-
-        document.getElementById('ticker').addEventListener('change', (e) => {
-            currentTicker = e.target.value;
-            loadTimeframes(currentTicker); // Update available timeframes
-            loadData(currentTimeframe);
-            // Clear indicators? Or reload them? For now, just reload data.
-            // Ideally we should clear indicators or reload them for new ticker.
-            if (indicatorManager) indicatorManager.removeAll();
-        });
-
-        document.getElementById('timezone').addEventListener('change', (e) => {
-            currentTimezone = e.target.value;
-            // Force redraw by updating options
-            chart.applyOptions({
+            const chart = window.LightweightCharts.createChart(document.getElementById('chart'), {
+                autoSize: true,
+                layout: { background: { color: '#1e222d' }, textColor: '#d1d4dc' },
+                grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
+                timeScale: { timeVisible: true, rightOffset: 5 },
+                crosshair: { mode: window.LightweightCharts.CrosshairMode.Normal },
                 localization: {
                     timeFormatter: function (timestamp) {
                         const date = new Date(timestamp * 1000);
@@ -639,46 +238,456 @@
                     }
                 }
             });
-        });
 
-        async function addIndicatorFromMenu(select) {
-            const type = select.value;
-            select.value = ""; // Reset
+            // Main Series (Candlestick) - v5 Syntax
+            const series = chart.addSeries(window.LightweightCharts.CandlestickSeries, {
+                upColor: '#26a69a', downColor: '#ef5350',
+                wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+            });
 
-            if (!indicatorManager) {
-                indicatorManager = new window.IndicatorManager(chart, series, 'indicator-container');
+
+            // PDH/PDL Lines
+            let pdhLine = null;
+            let pdlLine = null;
+
+            // --- Data Loading ---
+            async function loadTickers() {
+                try {
+                    const response = await fetch('/api/tickers');
+                    const result = await response.json();
+                    const tickerSelect = document.getElementById('ticker');
+                    const current = currentTicker;
+
+                    // Clear existing options
+                    tickerSelect.innerHTML = '';
+
+                    if (result.tickers && result.tickers.length > 0) {
+                        result.tickers.forEach(t => {
+                            const option = document.createElement('option');
+                            option.value = t;
+                            option.text = t;
+                            if (t === current) option.selected = true;
+                            tickerSelect.appendChild(option);
+                        });
+
+                        // If current ticker is not in the list, switch to the first available one
+                        if (!result.tickers.includes(current)) {
+                            currentTicker = result.tickers[0];
+                            tickerSelect.value = currentTicker;
+                            loadData(currentTimeframe);
+                        }
+                    }
+
+                    // Also load timeframes for this ticker
+                    loadTimeframes(currentTicker);
+
+                } catch (error) {
+                    console.error('Error loading tickers:', error);
+                }
             }
 
-            let params = {};
-            if (type === 'sma') params = { period: 20 };
-            if (type === 'ema') params = { period: 50 };
-            if (type === 'bb') params = { period: 20, stdDev: 2 };
-            if (type === 'vwap') params = {};
-            if (type === 'rsi') params = { period: 14 };
-            if (type === 'macd') params = { fast: 12, slow: 26, signal: 9 };
-            if (type === 'atr') params = { period: 14 };
+            async function loadTimeframes(ticker) {
+                try {
+                    const response = await fetch(`/api/timeframes?ticker=${ticker}`);
+                    const result = await response.json();
+                    const select = document.getElementById('more-timeframes');
 
-            await indicatorManager.addIndicator(type, currentTimeframe, params, currentTicker);
-        }
+                    // Default options
+                    const defaults = ['1m', '5m', '15m', '30m', '1h', '4h', '1D', '1W'];
+                    const allOptions = new Set([...defaults, ...result.timeframes]);
 
-        function addWatermark() {
-            if (window.AnchoredText) {
-                const text = new window.AnchoredText({
-                    text: 'ES Futures ' + currentTimeframe,
-                    vertAlign: 'top',
-                    horzAlign: 'right',
-                    color: 'rgba(255, 255, 255, 0.5)',
-                    font: 'bold 24px Arial'
+                    select.innerHTML = '<option value="" disabled selected>▼</option>';
+                    Array.from(allOptions).sort().forEach(tf => {
+                        const option = document.createElement('option');
+                        option.value = tf;
+                        option.text = tf;
+                        select.appendChild(option);
+                    });
+                } catch (e) {
+                    console.error(e);
+                }
+            }
+
+            function changeTimeframe(tf) {
+                if (!tf) return;
+                currentTimeframe = tf;
+
+                // Update buttons
+                document.querySelectorAll('#tf-buttons button').forEach(b => {
+                    if (b.dataset.tf === tf) b.classList.add('active');
+                    else b.classList.remove('active');
                 });
-                series.attachPrimitive(text);
-                drawings.push(text);
+
+                // Update custom input if it's a custom value
+                const customInput = document.getElementById('custom-tf');
+                const isStandard = ['1m', '5m', '15m', '1h', '4h', '1D'].includes(tf);
+                if (!isStandard) {
+                    customInput.value = tf;
+                    customInput.classList.add('active');
+                } else {
+                    customInput.value = '';
+                    customInput.classList.remove('active');
+                }
+
+                // Reset dropdown
+                document.getElementById('more-timeframes').value = "";
+
+                loadData(tf);
             }
+
+            async function loadData(timeframe) {
+                document.getElementById('status').textContent = 'Loading...';
+                try {
+                    const response = await fetch(`http://localhost:8000/api/ohlc/${timeframe}?limit=20000&ticker=${currentTicker}`);
+                    const result = await response.json();
+
+                    if (!result.data || !Array.isArray(result.data)) {
+                        throw new Error('Invalid data format');
+                    }
+
+                    allData = result.data; // Store for navigation
+                    series.setData(allData);
+                    // volumeSeries.setData(allData);
+
+                    // Calculate PDH/PDL
+                    calculatePDHPDL(allData);
+
+                    chart.timeScale().fitContent();
+                    document.getElementById('status').textContent = `${allData.length.toLocaleString()} bars`;
+
+                    // Re-run strategy if active
+                    if (isStrategyActive) runStrategy();
+
+                } catch (error) {
+                    console.error(error);
+                    document.getElementById('status').textContent = 'Error: ' + error.message;
+                }
+            }
+
+            function calculatePDHPDL(data) {
+                if (data.length === 0) return;
+
+                const lastBar = data[data.length - 1];
+                const lastDate = new Date(lastBar.time * 1000);
+                lastDate.setHours(0, 0, 0, 0);
+                const todayStart = Math.floor(lastDate.getTime() / 1000);
+                const yesterdayStart = todayStart - 86400;
+
+                const yesterdayBars = data.filter(bar => bar.time >= yesterdayStart && bar.time < todayStart);
+
+                if (pdhLine) series.removePriceLine(pdhLine);
+                if (pdlLine) series.removePriceLine(pdlLine);
+
+                if (yesterdayBars.length > 0) {
+                    const pdh = Math.max(...yesterdayBars.map(b => b.high));
+                    const pdl = Math.min(...yesterdayBars.map(b => b.low));
+
+                    pdhLine = series.createPriceLine({
+                        price: pdh, color: '#2962FF', lineWidth: 2, lineStyle: 2,
+                        axisLabelVisible: true, title: 'PDH'
+                    });
+                    pdlLine = series.createPriceLine({
+                        price: pdl, color: '#FF6D00', lineWidth: 2, lineStyle: 2,
+                        axisLabelVisible: true, title: 'PDL'
+                    });
+                }
+            }
+
+            // --- Drawing Tools ---
+            function setTool(tool) {
+                currentTool = (currentTool === tool) ? null : tool; // Toggle
+                activeDrawing = null;
+                startPoint = null;
+
+                // Update UI
+                document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+                if (currentTool === 'line') document.getElementById('btn-line').classList.add('active');
+                if (currentTool === 'ray') document.getElementById('btn-ray').classList.add('active');
+                if (currentTool === 'rect') document.getElementById('btn-rect').classList.add('active');
+                if (currentTool === 'fib') document.getElementById('btn-fib').classList.add('active');
+                if (currentTool === 'vert') document.getElementById('btn-vert').classList.add('active');
+
+                // Re-highlight active timeframe button
+                changeTimeframe(currentTimeframe); // Hack to restore active class if cleared
+
+                document.body.style.cursor = currentTool ? 'crosshair' : 'default';
+
+                // Disable chart scrolling while drawing? No, better to keep it.
+                chart.applyOptions({ handleScroll: !currentTool, handleScale: !currentTool });
+            }
+
+            function clearDrawings() {
+                // Remove primitives
+                drawings.forEach(d => {
+                    if (d.detach) d.detach(); // If primitive
+                    if (series.removePriceLine) try { series.removePriceLine(d); } catch (e) { } // If price line
+                });
+                drawings = [];
+                setTool(null);
+            }
+
+            chart.subscribeClick((param) => {
+                if (!currentTool || !param.point || !param.time) return;
+
+                const price = series.coordinateToPrice(param.point.y);
+                const time = param.time;
+
+                if (currentTool === 'line') {
+                    // Horizontal Line (Simple)
+                    const line = series.createPriceLine({
+                        price: price, color: '#2962FF', lineWidth: 2, lineStyle: 0,
+                        axisLabelVisible: true, title: 'Line'
+                    });
+                    drawings.push(line);
+                    setTool(null);
+                }
+                else if (currentTool === 'ray') {
+                    // Trend Line (Diagonal) - 2 Click Process
+                    if (!startPoint) {
+                        // First Click
+                        startPoint = { time, price };
+
+                        // Create initial primitive (0 length)
+                        if (window.TrendLine) {
+                            const tl = new window.TrendLine(chart, series, startPoint, startPoint, { lineColor: '#D500F9', lineWidth: 2 });
+                            series.attachPrimitive(tl);
+                            activeDrawing = tl;
+                            drawings.push(tl);
+                        }
+                    } else {
+                        // Second Click - Finish
+                        if (activeDrawing) {
+                            activeDrawing.updateEnd({ time, price });
+                            activeDrawing = null;
+                            startPoint = null;
+                            setTool(null);
+                        }
+                    }
+                }
+                else if (currentTool === 'rect') {
+                    // Rectangle - 2 Click Process
+                    if (!startPoint) {
+                        // First Click
+                        startPoint = { time, price };
+
+                        // Create initial primitive
+                        if (window.Rectangle) {
+                            const rect = new window.Rectangle(chart, series, startPoint, startPoint, {
+                                color: 'rgba(33, 150, 243, 0.2)',
+                                borderColor: '#2196F3'
+                            });
+                            series.attachPrimitive(rect);
+                            activeDrawing = rect;
+                            drawings.push(rect);
+                        }
+                    } else {
+                        // Second Click - Finish
+                        if (activeDrawing) {
+                            activeDrawing.updateEnd({ time, price });
+                            activeDrawing = null;
+                            startPoint = null;
+                            setTool(null);
+                        }
+                    }
+                }
+                else if (currentTool === 'fib') {
+                    // Fibonacci - 2 Click Process
+                    if (!startPoint) {
+                        // First Click
+                        startPoint = { time, price };
+
+                        // Create initial primitive
+                        if (window.FibonacciRetracement) {
+                            const fib = new window.FibonacciRetracement(chart, series, startPoint, startPoint, {
+                                lineColor: '#787b86'
+                            });
+                            series.attachPrimitive(fib);
+                            activeDrawing = fib;
+                            drawings.push(fib);
+                        }
+                    } else {
+                        // Second Click - Finish
+                        if (activeDrawing) {
+                            activeDrawing.updateEnd({ time, price });
+                            activeDrawing = null;
+                            startPoint = null;
+                            setTool(null);
+                        }
+                    }
+                }
+                else if (currentTool === 'vert') {
+                    // Vertical Line - 1 Click Process
+                    if (window.VertLine) {
+                        const vl = new window.VertLine(chart, series, time, {
+                            color: '#2962FF',
+                            labelText: new Date(time * 1000).toLocaleDateString(),
+                            showLabel: true
+                        });
+                        series.attachPrimitive(vl);
+                        drawings.push(vl);
+                        setTool(null); // Finish immediately
+                    }
+                }
+            });
+
+            // Mouse Move for Dragging
+            document.getElementById('chart').addEventListener('mousemove', (e) => {
+                if ((currentTool === 'ray' || currentTool === 'rect' || currentTool === 'fib') && activeDrawing && startPoint) {
+                    // We need to convert mouse X/Y to Time/Price
+
+                    const rect = document.getElementById('chart').getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+
+                    const time = chart.timeScale().coordinateToTime(x);
+                    const price = series.coordinateToPrice(y);
+
+                    if (time && price) {
+                        activeDrawing.updateEnd({ time, price });
+                    }
+                }
+            });
+
+            // --- Navigation ---
+            function jumpToDate() {
+                const dateStr = document.getElementById('datePicker').value;
+                if (!dateStr) return;
+
+                const targetDate = new Date(dateStr).getTime() / 1000;
+                // Find closest bar
+                const targetIndex = allData.findIndex(d => d.time >= targetDate);
+
+                if (targetIndex !== -1) {
+                    const range = 100; // Show 100 bars
+                    const from = Math.max(0, targetIndex - range / 2);
+                    const to = Math.min(allData.length - 1, targetIndex + range / 2);
+                    chart.timeScale().setVisibleLogicalRange({ from, to });
+                } else {
+                    alert('Date not found in loaded data');
+                }
+            }
+
+            // --- Strategy (Demo) ---
+            function toggleStrategy() {
+                isStrategyActive = !isStrategyActive;
+                const btn = document.getElementById('strategyBtn');
+
+                if (isStrategyActive) {
+                    btn.classList.add('active');
+                    runStrategy();
+                } else {
+                    btn.classList.remove('active');
+                    // Clear strategy lines
+                    strategyLines.forEach(l => series.removePriceLine(l));
+                    strategyLines = [];
+                }
+            }
+
+            function runStrategy() {
+                // Simple SMA Crossover Logic for Demo
+                // v5.0 Workaround: Use PriceLines instead of Markers (since markers are now a plugin)
+
+                let position = 0;
+
+                for (let i = 1; i < allData.length; i++) {
+                    const prev = allData[i - 1];
+                    const curr = allData[i];
+
+                    // Green Candle = Buy, Red Candle = Sell (Simple Visual Test)
+                    if (position === 0 && curr.close > curr.open && prev.close < prev.open) {
+                        position = 1;
+                        const line = series.createPriceLine({
+                            price: curr.close, color: '#2196F3', lineWidth: 1, lineStyle: 0,
+                            axisLabelVisible: true, title: 'BUY'
+                        });
+                        strategyLines.push(line);
+                    } else if (position === 1 && curr.close < curr.open) {
+                        position = 0;
+                        const line = series.createPriceLine({
+                            price: curr.close, color: '#E91E63', lineWidth: 1, lineStyle: 0,
+                            axisLabelVisible: true, title: 'SELL'
+                        });
+                        strategyLines.push(line);
+                    }
+                }
+            }
+
+            // --- Event Listeners ---
+            window.addEventListener('resize', () => {
+                chart.applyOptions({ width: window.innerWidth, height: window.innerHeight - 54 });
+            });
+
+            document.getElementById('ticker').addEventListener('change', (e) => {
+                currentTicker = e.target.value;
+                loadTimeframes(currentTicker); // Update available timeframes
+                loadData(currentTimeframe);
+                // Clear indicators? Or reload them? For now, just reload data.
+                // Ideally we should clear indicators or reload them for new ticker.
+                if (indicatorManager) indicatorManager.removeAll();
+            });
+
+            document.getElementById('timezone').addEventListener('change', (e) => {
+                currentTimezone = e.target.value;
+                // Force redraw by updating options
+                chart.applyOptions({
+                    localization: {
+                        timeFormatter: function (timestamp) {
+                            const date = new Date(timestamp * 1000);
+                            return date.toLocaleString('en-US', {
+                                timeZone: currentTimezone,
+                                month: 'short', day: 'numeric',
+                                hour: '2-digit', minute: '2-digit', hour12: false
+                            });
+                        }
+                    }
+                });
+            });
+
+            async function addIndicatorFromMenu(select) {
+                const type = select.value;
+                select.value = ""; // Reset
+
+                if (!indicatorManager) {
+                    indicatorManager = new window.IndicatorManager(chart, series, 'indicator-container');
+                }
+
+                let params = {};
+                if (type === 'sma') params = { period: 20 };
+                if (type === 'ema') params = { period: 50 };
+                if (type === 'bb') params = { period: 20, stdDev: 2 };
+                if (type === 'vwap') params = {};
+                if (type === 'rsi') params = { period: 14 };
+                if (type === 'macd') params = { fast: 12, slow: 26, signal: 9 };
+                if (type === 'atr') params = { period: 14 };
+
+                await indicatorManager.addIndicator(type, currentTimeframe, params, currentTicker);
+            }
+
+            function addWatermark() {
+                if (window.AnchoredText) {
+                    const text = new window.AnchoredText({
+                        text: 'ES Futures ' + currentTimeframe,
+                        vertAlign: 'top',
+                        horzAlign: 'right',
+                        color: 'rgba(255, 255, 255, 0.5)',
+                        font: 'bold 24px Arial'
+                    });
+                    series.attachPrimitive(text);
+                    drawings.push(text);
+                }
+            }
+
+            // Initial Load
+            loadTickers();
+            loadData('1h');
         }
 
-        // Initial Load
-        // Initial Load
-        loadTickers();
-        loadData('1h');
+        // Start initialization when library is ready
+        if (window.LightweightCharts) {
+            initChart();
+        } else {
+            window.addEventListener('lightweightChartsReady', initChart);
+        }
     </script>
 </body>
 
