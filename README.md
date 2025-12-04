@@ -15,37 +15,21 @@ tvDownloadOHLC/
 ├── data_processing/              # Data processing & conversion
 │   ├── process_market_data.py    # Stitch & validate CSVs
 │   ├── stitch_and_validate.py    # Validation utilities
-│   └── convert_to_parquet.py     # CSV → Parquet converter
+│   ├── convert_to_parquet.py     # CSV → Parquet converter
+│   └── merge_tv_ohlc.py          # Merge historical data
 │
 ├── chart_ui/                     # Chart visualization
 │   ├── chart_server.py           # FastAPI backend
 │   ├── chart_ui.html             # Main chart interface
-│   ├── demo_klinechart.html      # KLineChart demo
+│   ├── timeframe_utils.py        # Timeframe parsing & resampling
 │   ├── indicators.py             # Indicator library
 │   ├── indicator_manager.js      # Frontend indicator manager
-│   ├── create_html.py            # HTML generator
-│   └── visualize_data.py         # Plotly chart (legacy)
-│
-├── tvdata_scripts/               # TvDatafeed experiments
-│   ├── download_ohlc_lib.py      # TvDatafeed downloader
-│   ├── download_ohlc_hack.py     # CDP message injection
-│   ├── inspect_tv.py             # Library inspector
-│   └── inspect_tv_source.py      # Source inspector
-│
-├── test_scripts/                 # Debug & test scripts
-│   ├── test_go_to_date.py        # Date navigation tests
-│   ├── test_export_only.py       # Export functionality test
-│   ├── find_menu_items.py        # UI element finder
-│   ├── find_replay_btn.py        # Replay button finder
-│   └── inspect_page.py           # Page inspector
+│   └── *_plugin.js               # Chart plugins (TrendLine, Rect, etc.)
 │
 ├── data/                         # Parquet data storage
-│   ├── ES_1m.parquet
-│   ├── ES_5m.parquet
-│   ├── ES_15m.parquet
-│   ├── ES_1h.parquet
-│   ├── ES_4h.parquet
-│   └── ES_1D.parquet
+│   ├── ES1_1m.parquet
+│   ├── ES1_1D.parquet
+│   └── ... (other tickers/timeframes)
 │
 ├── downloads_es_futures/         # Raw CSV downloads
 │   └── ES1_1m_*.csv
@@ -56,6 +40,8 @@ tvDownloadOHLC/
 ├── requirements.txt              # Python dependencies
 ├── INDICATORS.md                 # Indicator system docs
 ├── CHART_COMPARISON.md           # Chart library comparison
+├── DATA_COVERAGE_REPORT.md       # Data coverage analysis
+├── DATA_GAPS_REPORT.md           # Detailed data gaps analysis
 └── README.md                     # This file
 ```
 
@@ -88,7 +74,8 @@ python chart_server.py
 ### Main Chart (Lightweight Charts v5.0)
 - **URL**: `http://localhost:8000`
 - **Features**: 
-    - **Multi-Ticker**: Support for ES1, NQ1, etc.
+    - **Multi-Ticker**: Support for ES1, NQ1, CL1, GC1, etc.
+    - **Dynamic Timeframes**: 1m, 5m, 15m, 1h, 4h, 1D, 1W + Custom (e.g., 10m, 2D)
     - **Volume Support**: Histogram overlay
     - **Drawing Tools**: Trend Line, Rectangle, Fibonacci, Vertical Line, Anchored Text
     - **Indicators**: SMA, EMA, VWAP, Bollinger Bands, RSI, MACD, ATR (Multi-pane support)
@@ -104,16 +91,19 @@ python chart_server.py
 
 ### Data Processing
 - **Stitch**: `data_processing/process_market_data.py` - Combines CSVs
-- **Convert**: `data_processing/convert_to_parquet.py` - Creates timeframes
+- **Convert**: `data_processing/convert_to_parquet.py` - Creates timeframes & merges history
+- **Merge**: `data_processing/merge_tv_ohlc.py` - Merges old historical data with new downloads
 
 ### Chart Server
-- **Backend**: `chart_ui/chart_server.py` - FastAPI + indicator API
+- **Backend**: `chart_ui/chart_server.py` - FastAPI + indicator API + server-side resampling
 - **Frontend**: `chart_ui/chart_ui.html` - Lightweight Charts UI
 
 ## 📝 Documentation
 
 - **Indicators**: See `INDICATORS.md` for adding custom indicators
 - **Chart Comparison**: See `CHART_COMPARISON.md` for library options
+- **Data Coverage**: See `DATA_COVERAGE_REPORT.md` for available data ranges
+- **Data Gaps**: See `DATA_GAPS_REPORT.md` for detailed gap analysis
 
 ## 🛠 Dependencies
 
@@ -132,11 +122,11 @@ TradingView → Selenium → CSV → Parquet → FastAPI → Chart UI
                 ↓
           ES_1m_continuous.csv
                 ↓
-          convert_to_parquet.py
+          convert_to_parquet.py (merges with TV_OHLC)
                 ↓
             data/*.parquet
                 ↓
-          chart_server.py (API)
+          chart_server.py (API + Resampling)
                 ↓
           Browser (localhost:8000)
 ```
@@ -144,10 +134,11 @@ TradingView → Selenium → CSV → Parquet → FastAPI → Chart UI
 ## 🎯 Next Steps
 
 1. ✅ Organized codebase
-2. ⏳ Choose chart library (KLineChart vs Lightweight Charts)
-3. ⏳ Implement strategy testing
-4. ⏳ Add more custom indicators
-5. ⏳ Build backtesting engine
+2. ✅ Dynamic timeframe UI
+3. ✅ Server-side resampling
+4. ⏳ Implement strategy testing
+5. ⏳ Add more custom indicators
+6. ⏳ Build backtesting engine
 
 ## 📦 Git Workflow
 
@@ -173,6 +164,7 @@ Store TradingView credentials in `credentials.json`:
 - **Data Size**: ~100K bars = ~10MB Parquet
 - **Chart Load**: <2 seconds for 20K bars
 - **Indicator Calc**: <500ms for most indicators
+- **Resampling**: On-the-fly for custom timeframes
 
 ## 📞 Support
 

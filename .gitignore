@@ -26,6 +26,8 @@ tradingview-selenium-data/
 # Logs
 *.log
 *.txt
+!requirements.txt
+!gaps_report.txt
 *.png
 *.html
 !chart_ui/chart_ui.html
