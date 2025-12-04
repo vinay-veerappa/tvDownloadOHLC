@@ -323,5 +323,6 @@ class V {
   }
 }
 export {
-  V as RectangleDrawingTool
+  V as RectangleDrawingTool,
+  p as Rectangle
 };
