@@ -1,12 +1,19 @@
 import { state } from './state.js';
 import { changeTimeframe } from './data_loader.js';
+import { UserPriceLines } from '../plugins/user-price-lines.js';
 
-console.log("Drawings module loaded (v6 - HitTest Fixes)");
+console.log("Drawings module loaded (v7 - Price Line Tool)");
 
 export function setTool(tool) {
     state.currentTool = (state.currentTool === tool) ? null : tool; // Toggle
     state.activeDrawing = null;
     state.startPoint = null;
+
+    // Handle UserPriceLines cleanup
+    if (state.userPriceLinesTool && state.currentTool !== 'price_line') {
+        state.userPriceLinesTool.remove();
+        state.userPriceLinesTool = null;
+    }
 
     // Update UI
     document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
@@ -15,6 +22,17 @@ export function setTool(tool) {
     if (state.currentTool === 'rect') document.getElementById('btn-rect').classList.add('active');
     if (state.currentTool === 'fib') document.getElementById('btn-fib').classList.add('active');
     if (state.currentTool === 'vert') document.getElementById('btn-vert').classList.add('active');
+    if (state.currentTool === 'price_line') document.getElementById('btn-price-line').classList.add('active');
+
+    // Initialize UserPriceLines if selected
+    if (state.currentTool === 'price_line') {
+        if (!state.userPriceLinesTool) {
+            state.userPriceLinesTool = new UserPriceLines(window.chart, window.chartSeries, {
+                color: '#2962FF',
+                hoverColor: '#E91E63'
+            });
+        }
+    }
 
     // Re-highlight active timeframe button
     changeTimeframe(state.currentTimeframe);
