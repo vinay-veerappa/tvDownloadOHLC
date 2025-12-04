@@ -1,10 +1,10 @@
 import { setupChart } from './chart_setup.js';
-import { loadTickers, loadData, changeTimeframe, jumpToDate } from './data_loader.js';
+import { loadTickers, loadData, changeTimeframe, jumpToDate, loadTimeframes } from './data_loader.js';
 import { setTool, clearDrawings, setupDrawingHandlers } from './drawings.js';
 import { toggleStrategy, runStrategy } from './strategy.js';
 import { loadAndApplyPlugin, updatePluginList, removePlugin, clearAllPlugins, togglePluginManager } from './plugins.js';
 import { addIndicator, addWatermark } from './indicators.js';
-import { setupModalListeners } from './ui.js';
+import { setupModalListeners, renderLegend } from './ui.js';
 import { state } from './state.js';
 
 // Initialize Application
@@ -36,9 +36,43 @@ function initApp() {
     window.clearAllPlugins = clearAllPlugins;
     window.togglePluginManager = togglePluginManager;
 
-    // 4. Initial Data Load
+    // Indicator removal
+    window.removeIndicator = (name, params) => {
+        if (state.indicatorManager) {
+            state.indicatorManager.removeIndicator(name, params);
+            renderLegend();
+        }
+    };
+
+    // 5. Event Listeners
+    document.getElementById('ticker').addEventListener('change', (e) => {
+        state.currentTicker = e.target.value;
+        loadTimeframes(state.currentTicker);
+        loadData(state.currentTimeframe);
+        renderLegend();
+    });
+
+    document.getElementById('timezone').addEventListener('change', (e) => {
+        state.currentTimezone = e.target.value;
+        window.chart.applyOptions({
+            localization: {
+                timeFormatter: function (timestamp) {
+                    const date = new Date(timestamp * 1000);
+                    return date.toLocaleString('en-US', {
+                        timeZone: state.currentTimezone,
+                        month: 'short', day: 'numeric',
+                        hour: '2-digit', minute: '2-digit', hour12: false
+                    });
+                }
+            }
+        });
+        renderLegend();
+    });
+
+    // 6. Initial Data Load
     loadTickers();
     loadData('1h');
+    renderLegend();
 
     console.log('✅ App Initialized');
 }

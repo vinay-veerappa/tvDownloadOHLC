@@ -1,5 +1,6 @@
 import { state } from './state.js';
 import { runStrategy } from './strategy.js';
+import { renderLegend } from './ui.js';
 
 export async function loadTickers() {
     try {
@@ -83,6 +84,7 @@ export function changeTimeframe(tf) {
     document.getElementById('more-timeframes').value = "";
 
     loadData(tf);
+    renderLegend(); // Update legend header
 }
 
 export async function loadData(timeframe) {
