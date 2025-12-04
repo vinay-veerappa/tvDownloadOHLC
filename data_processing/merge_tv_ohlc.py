@@ -73,7 +73,7 @@ def parse_filename(filename):
 
 def get_history_files(ticker, timeframe):
     """Finds history files for a given ticker and timeframe."""
-    files = glob.glob(os.path.join(TV_OHLC_DIR, "*.csv"))
+    files = glob.glob(os.path.join(TV_OHLC_DIR, "**", "*.csv"), recursive=True)
     matches = []
     for f in files:
         basename = os.path.basename(f)
@@ -152,7 +152,7 @@ def merge_history(ticker, timeframe, parquet_path):
 
 def merge_all():
     print("Scanning TV_OHLC directory...")
-    files = glob.glob(os.path.join(TV_OHLC_DIR, "*.csv"))
+    files = glob.glob(os.path.join(TV_OHLC_DIR, "**", "*.csv"), recursive=True)
     
     # Group files by (ticker, timeframe)
     groups = {}

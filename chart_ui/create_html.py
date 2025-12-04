@@ -38,7 +38,11 @@ html_content = """<!DOCTYPE html>
 <body>
     <div id="header">
         <div class="toolbar-group">
-            <span style="font-weight:bold; color:#fff; margin-right:10px">ES Futures</span>
+            <!-- Ticker -->
+            <select id="ticker">
+                <option value="ES1" selected>ES1</option>
+                <option value="NQ1">NQ1</option>
+            </select>
             
             <!-- Timeframe -->
             <select id="timeframe">
@@ -107,6 +111,7 @@ html_content = """<!DOCTYPE html>
         // --- Configuration ---
         let currentTimezone = 'America/New_York';
         let currentTimeframe = '1h';
+        let currentTicker = 'ES1';
         let currentTool = null;
         let drawings = []; // Stores primitives
         let strategyLines = []; 
@@ -164,7 +169,7 @@ html_content = """<!DOCTYPE html>
         async function loadData(timeframe) {
             document.getElementById('status').textContent = 'Loading...';
             try {
-                const response = await fetch('http://localhost:8000/api/ohlc/' + timeframe + '?limit=20000');
+                const response = await fetch(`http://localhost:8000/api/ohlc/${timeframe}?limit=20000&ticker=${currentTicker}`);
                 const result = await response.json();
                 
                 if (!result.data || !Array.isArray(result.data)) {
@@ -445,6 +450,14 @@ html_content = """<!DOCTYPE html>
             loadData(e.target.value);
         });
         
+        document.getElementById('ticker').addEventListener('change', (e) => {
+            currentTicker = e.target.value;
+            loadData(currentTimeframe);
+            // Clear indicators? Or reload them? For now, just reload data.
+            // Ideally we should clear indicators or reload them for new ticker.
+            if (indicatorManager) indicatorManager.removeAll();
+        });
+        
         document.getElementById('timezone').addEventListener('change', (e) => {
             currentTimezone = e.target.value;
             // Force redraw by updating options
@@ -479,7 +492,7 @@ html_content = """<!DOCTYPE html>
             if (type === 'macd') params = { fast: 12, slow: 26, signal: 9 };
             if (type === 'atr') params = { period: 14 };
             
-            await indicatorManager.addIndicator(type, currentTimeframe, params);
+            await indicatorManager.addIndicator(type, currentTimeframe, params, currentTicker);
         }
         
         function addWatermark() {
