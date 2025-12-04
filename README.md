@@ -88,6 +88,7 @@ python chart_server.py
 ### Main Chart (Lightweight Charts v5.0)
 - **URL**: `http://localhost:8000`
 - **Features**: 
+    - **Multi-Ticker**: Support for ES1, NQ1, etc.
     - **Volume Support**: Histogram overlay
     - **Drawing Tools**: Trend Line, Rectangle, Fibonacci, Vertical Line, Anchored Text
     - **Indicators**: SMA, EMA, VWAP, Bollinger Bands, RSI, MACD, ATR (Multi-pane support)
