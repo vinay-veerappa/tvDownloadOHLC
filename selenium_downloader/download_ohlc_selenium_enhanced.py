@@ -356,11 +356,17 @@ def go_to_date(driver, date_str):
     
     # Ensure we are in Bar Replay mode first, as "Go To" behaves differently otherwise
     try:
-        # Check if "Jump to real-time" button exists (indicator of Replay Mode)
-        jump_btns = driver.find_elements(By.CSS_SELECTOR, "button[data-name='jump-to-realtime']")
-        if not jump_btns:
+        if not is_in_replay_mode(driver):
             print("Not in Bar Replay mode. Entering now...")
             enter_replay_mode(driver)
+            # Wait for Replay mode to actually activate
+            try:
+                WebDriverWait(driver, 10).until(
+                    lambda d: is_in_replay_mode(d)
+                )
+                print("Replay mode activated.")
+            except:
+                print("Warning: Timed out waiting for Replay mode confirmation.")
             time.sleep(2)
     except:
         pass
@@ -476,7 +482,26 @@ def get_latest_csv(download_dir):
     latest_file = max(list_of_files, key=os.path.getctime)
     return latest_file
 
+def is_in_replay_mode(driver):
+    """Check if Replay mode is active by looking for the 'Jump to real-time' button OR the 'Select Date' button."""
+    try:
+        # Check 1: Jump to Realtime button
+        if len(driver.find_elements(By.CSS_SELECTOR, "button[data-name='jump-to-realtime']")) > 0:
+            return True
+        # Check 2: Select Date button (The calendar icon in replay toolbar)
+        if len(driver.find_elements(By.CSS_SELECTOR, "[data-qa-id='select-date-bar-mode-menu']")) > 0:
+            return True
+        # Check 3: Check for the Replay Toolbar container itself (often has specific classes)
+        # This is harder to pin down, but the buttons above are usually reliable.
+        return False
+    except:
+        return False
+
 def enter_replay_mode(driver):
+    if is_in_replay_mode(driver):
+        print("Already in Bar Replay mode.")
+        return
+
     print("Attempting to enter Bar Replay mode...")
     try:
         # 1. Click Bar Replay Button
@@ -486,58 +511,127 @@ def enter_replay_mode(driver):
             (By.CSS_SELECTOR, "button[data-name='replay-mode']")
         ]
         
-        replay_btn = None
+        clicked = False
         for by, val in replay_selectors:
             try:
                 replay_btn = driver.find_element(by, val)
                 if replay_btn.is_displayed():
                     replay_btn.click()
                     print(f"Clicked Bar Replay button using {val}")
+                    clicked = True
                     time.sleep(1)
                     break
             except:
                 continue
                 
-        if not replay_btn:
+        if not clicked:
             print("Replay button not found in main toolbar. Checking overflow menu...")
             try:
                 more_btn = driver.find_element(By.CSS_SELECTOR, "div[data-name='header-toolbar-more'] button")
                 more_btn.click()
                 time.sleep(1)
-                # Now look for replay in the menu
-                # Note: Menu items might have different selectors
                 replay_menu_item = driver.find_element(By.XPATH, "//div[contains(text(), 'Bar Replay')]")
                 replay_menu_item.click()
                 print("Clicked Bar Replay from overflow menu.")
                 time.sleep(1)
             except Exception as e:
                 print(f"Could not find Bar Replay in overflow menu: {e}")
-                print("Assuming already in mode or hidden.")
-            
-        # 2. Handle 'Start new' dialog if it appears
-        time.sleep(1)
-        try:
-            start_new_selectors = [
+                return # Cannot proceed
+
+        # 2. Handle 'Start new' / 'Continue' dialog if it appears
+        # We loop briefly to check for dialogs OR if the mode activated
+        print("Checking for Replay dialogs or activation...")
+        start_time = time.time()
+        while time.time() - start_time < 5:
+            # Check if mode is already active
+            if is_in_replay_mode(driver):
+                print("Replay mode activated!")
+                return
+
+            # Check for dialogs
+            dialog_selectors = [
                 (By.XPATH, "//button[contains(text(), 'Start new')]"),
                 (By.CSS_SELECTOR, "button[data-name='start-new-replay']"),
-                (By.XPATH, "//div[contains(@class, 'dialog')]//button[contains(., 'Start new')]")
+                (By.XPATH, "//div[contains(@class, 'dialog')]//button[contains(., 'Start new')]"),
+                (By.XPATH, "//button[contains(text(), 'Continue')]"),
+                (By.CSS_SELECTOR, "button[data-name='continue-replay']")
             ]
             
-            for by, val in start_new_selectors:
+            dialog_handled = False
+            for by, val in dialog_selectors:
                 try:
-                    btn = driver.find_element(by, val)
-                    if btn.is_displayed():
-                        btn.click()
-                        print(f"Clicked 'Start new' button using {val}")
-                        time.sleep(1)
-                        break
+                    btns = driver.find_elements(by, val)
+                    for btn in btns:
+                        if btn.is_displayed() and btn.is_enabled():
+                            btn.click()
+                            print(f"Clicked Replay dialog button using {val}")
+                            dialog_handled = True
+                            time.sleep(1)
+                            break
+                    if dialog_handled: break
                 except:
-                    continue
-        except:
-            pass # Dialog might not appear
+                    pass
+            
+            if dialog_handled:
+                # If we clicked a dialog, give it a moment and check success
+                time.sleep(1)
+                continue
+                
+            time.sleep(0.5)
+            
+        # Final check
+        if is_in_replay_mode(driver):
+            print("Replay mode verified active.")
+        else:
+            print("Warning: Replay mode might not be active (timed out waiting).")
             
     except Exception as e:
         print(f"Error entering Bar Replay mode: {e}")
+            
+    except Exception as e:
+        print(f"Error entering Bar Replay mode: {e}")
+
+def normalize_timeframe(tf):
+    """Normalize timeframe string to standard format (e.g., '5' -> '5m')."""
+    if tf.isdigit():
+        return f"{tf}m"
+    return tf
+
+def get_tv_timeframe_input(tf):
+    """Convert standardized timeframe to TradingView input (e.g., '5m' -> '5')."""
+    if tf.endswith('m'):
+        return tf[:-1] # Remove 'm' for minutes
+    return tf
+
+def set_timeframe(driver, timeframe):
+    # Convert to TradingView input format
+    tv_input = get_tv_timeframe_input(timeframe)
+    print(f"Setting timeframe to: {timeframe} (Input: {tv_input})...")
+    
+    def build_tf_action(d):
+        actions = ActionChains(d)
+        try:
+            d.find_element(By.CSS_SELECTOR, "canvas").click()
+        except:
+            pass
+        # Type the timeframe
+        actions.send_keys(tv_input).perform()
+        time.sleep(1)
+        actions.send_keys(Keys.ENTER)
+        return actions
+
+    for i in range(3):
+        try:
+            ActionChains(driver).send_keys(tv_input).perform()
+            time.sleep(0.5)
+            ActionChains(driver).send_keys(Keys.ENTER).perform()
+            print("Timeframe submitted.")
+            time.sleep(3) # Wait for reload
+            return True
+        except Exception as e:
+            print(f"Error setting timeframe: {e}")
+            time.sleep(1)
+    return False
 
 def run_enhanced_downloader(args):
     # Determine ticker - use provided or default to ES1!
@@ -545,6 +639,11 @@ def run_enhanced_downloader(args):
     # Clean ticker for file/folder naming (remove special chars)
     ticker_clean = ticker.replace("!", "").replace("^", "").replace("/", "_")
     print(f"Target ticker: {ticker} (cleaned: {ticker_clean})")
+    
+    # Normalize timeframe for filenames (e.g. '5' -> '5m')
+    raw_tf = args.timeframe if args.timeframe else "1m"
+    tf = normalize_timeframe(raw_tf)
+    print(f"Target Timeframe: {tf}")
     
     # Determine bounds - use ticker-specific directory
     download_dir = os.path.join(os.getcwd(), "data", f"downloads_{ticker_clean}")
@@ -558,18 +657,17 @@ def run_enhanced_downloader(args):
     # Switch ticker if specified
     if args.ticker:
         switch_ticker(driver, args.ticker)
+        
+    # Set timeframe
+    set_timeframe(driver, tf)
     
     # Enter Bar Replay Mode first
     # Check if we are already in replay mode
     try:
-        # If the "Jump to real-time" button exists, click it to ensure we start at the end
-        jump_btns = driver.find_elements(By.CSS_SELECTOR, "button[data-name='jump-to-realtime']")
-        if len(jump_btns) > 0:
-            print("Already in Bar Replay mode. Jumping to Real-time...")
-            jump_btns[0].click()
-            time.sleep(2)
+        if not is_in_replay_mode(driver):
+             enter_replay_mode(driver)
         else:
-            enter_replay_mode(driver)
+             print("Already in Bar Replay mode.")
     except:
         enter_replay_mode(driver)
     
@@ -680,7 +778,8 @@ def run_enhanced_downloader(args):
                     
                 # Rename with ticker info
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                new_filename = f"{ticker_clean}_1m_{timestamp}_{task['type']}_{iteration}.csv"
+                # Use the requested timeframe in the filename
+                new_filename = f"{ticker_clean}_{tf}_{timestamp}_{task['type']}_{iteration}.csv"
                 new_path = os.path.join(os.path.dirname(csv_file), new_filename)
                 try:
                     os.rename(csv_file, new_path)
@@ -700,6 +799,21 @@ def run_enhanced_downloader(args):
                 file_min = df['parsed_time'].min()
                 file_max = df['parsed_time'].max()
                 print(f"File Range: {file_min} <-> {file_max}")
+
+                # VALIDATION: Check if we accidentally downloaded future/current data instead of history
+                # If we are in history mode, file_max should be <= current_pointer (roughly)
+                if task['type'] == 'history':
+                    # Allow some buffer (e.g. 1 day)
+                    if file_max > (current_pointer + timedelta(days=1)):
+                        print(f"ERROR: Downloaded data ({file_max}) is newer than target ({current_pointer}).")
+                        print("The chart likely reset to Realtime. Stopping task to prevent bad data.")
+                        # Delete the bad file
+                        try:
+                            os.remove(csv_file)
+                            print("Deleted invalid file.")
+                        except:
+                            pass
+                        break
                 
                 # Check completion conditions
                 if task['type'] == 'gap':
@@ -722,6 +836,8 @@ def run_enhanced_downloader(args):
                 last_oldest_time = file_min
                 
                 # Move to next chunk
+                # For 1m data, we step back 1 minute. For other timeframes, this might need adjustment,
+                # but 1 minute is safe as it just sets the "view end" to slightly before the current data start.
                 next_target = file_min - timedelta(minutes=1)
                 go_to_date(driver, next_target.strftime("%Y-%m-%d %H:%M"))
                 
@@ -738,6 +854,7 @@ if __name__ == "__main__":
     parser.add_argument("--months", type=int, default=3, help="Number of months of history to download (default: 3)")
     parser.add_argument("--iterations", type=int, help="Override number of iterations")
     parser.add_argument("--ticker", type=str, help="Ticker symbol to switch to (e.g., ES1!)")
+    parser.add_argument("--timeframe", type=str, default="1m", help="Timeframe to download (e.g., 1m, 5m, 1h). Default: 1m")
     parser.add_argument("--use-shortcuts", action="store_true", help="Use Alt+Shift+Left to jump to start")
     parser.add_argument("--parquet-file", type=str, help="Path to existing Parquet file to use for data bounds")
     
