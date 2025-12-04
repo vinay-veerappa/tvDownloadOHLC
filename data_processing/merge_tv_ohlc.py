@@ -96,6 +96,9 @@ def merge_history(ticker, timeframe, parquet_path):
     for f in history_files:
         try:
             df = pd.read_csv(f)
+            # Normalize columns to lowercase
+            df.columns = [c.lower() for c in df.columns]
+            
             if 'time' not in df.columns:
                 print(f"  Warning: 'time' column missing in {os.path.basename(f)}")
                 continue
