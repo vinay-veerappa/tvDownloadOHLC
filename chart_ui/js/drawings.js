@@ -388,11 +388,19 @@ function updatePropertiesPanel(drawing) {
     const colorInput = document.getElementById('prop-color');
     const widthInput = document.getElementById('prop-width');
 
-    if (!drawing || !drawing.options) return;
+    if (!drawing) return;
+
+    // Get options - handle both options() method and _options property
+    let opts;
+    if (typeof drawing.options === 'function') {
+        opts = drawing.options();
+    } else if (drawing._options) {
+        opts = drawing._options;
+    } else {
+        return; // No options available
+    }
 
     panel.style.display = 'flex';
-
-    const opts = drawing.options();
 
     // Color - handle different property names
     let color = opts.color || opts.lineColor || opts.fillColor || opts.labelColor || '#2962FF';
