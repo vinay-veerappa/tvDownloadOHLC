@@ -174,11 +174,12 @@ class B {
   }
   _onClick(t) {
     const i = this._getMousePrice(t), e = this._distanceFromRightScale(t);
-    i === null || e === null || e > n || !this._series || this._series.createPriceLine({
+    const line = this._series.createPriceLine({
       price: i,
       color: this._options.color,
       lineStyle: p.Dashed
     });
+    window.dispatchEvent(new CustomEvent('drawing-created', { detail: { drawing: line, type: 'price_line' } }));
   }
   _onMouseMove(t) {
     const i = this._getMousePrice(t), e = this._distanceFromRightScale(t);

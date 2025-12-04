@@ -393,6 +393,11 @@ class L {
   removeAlert(t) {
     this._alerts.has(t) && (this._alerts.delete(t), this._alertRemoved.fire(t), this._alertsChanged.fire());
   }
+  clearAll() {
+    this._alerts.forEach((v, k) => this._alertRemoved.fire(k));
+    this._alerts.clear();
+    this._alertsChanged.fire();
+  }
   alerts() {
     return this._alertsArray;
   }
@@ -402,7 +407,7 @@ class L {
   }
   _getNewId() {
     let t = Math.round(Math.random() * 1e6).toString(16);
-    for (; this._alerts.has(t); )
+    for (; this._alerts.has(t);)
       t = Math.round(Math.random() * 1e6).toString(16);
     return t;
   }
