@@ -4,8 +4,20 @@
 <head>
     <meta charset="UTF-8">
     <title>ES Chart Pro (v5.0)</title>
-    <!-- Lightweight Charts v5.0 -->
-    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <!-- Import Map for ES6 Module Plugins -->
+    <script type="importmap">
+    {
+        "imports": {
+            "lightweight-charts": "https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.mjs"
+        }
+    }
+    </script>
+    <!-- Lightweight Charts v5.0 - ES Module with global exposure -->
+    <script type="module">
+        import * as LightweightCharts from 'lightweight-charts';
+        window.LightweightCharts = LightweightCharts;
+        window.dispatchEvent(new Event('lightweightChartsReady'));
+    </script>
     <script src="indicator_manager.js"></script>
     <script src="trendline_plugin.js"></script>
     <script src="rectangle_plugin.js"></script>
