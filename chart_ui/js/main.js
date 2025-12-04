@@ -3,7 +3,8 @@ import { loadTickers, loadData, changeTimeframe, jumpToDate } from './data_loade
 import { setTool, clearDrawings, setupDrawingHandlers } from './drawings.js';
 import { toggleStrategy, runStrategy } from './strategy.js';
 import { loadAndApplyPlugin, updatePluginList, removePlugin, clearAllPlugins, togglePluginManager } from './plugins.js';
-import { addIndicatorFromMenu, addWatermark } from './indicators.js';
+import { addIndicator, addWatermark } from './indicators.js';
+import { setupModalListeners } from './ui.js';
 import { state } from './state.js';
 
 // Initialize Application
@@ -16,13 +17,16 @@ function initApp() {
     // 2. Setup Drawing Handlers
     setupDrawingHandlers();
 
-    // 3. Expose Functions Globally (for HTML onclick handlers)
+    // 3. Setup UI Listeners
+    setupModalListeners();
+
+    // 4. Expose Functions Globally (for HTML onclick handlers)
     window.changeTimeframe = changeTimeframe;
     window.setTool = setTool;
     window.clearDrawings = clearDrawings;
     window.jumpToDate = jumpToDate;
     window.toggleStrategy = toggleStrategy;
-    window.addIndicatorFromMenu = addIndicatorFromMenu;
+    window.addIndicator = addIndicator;
     window.addWatermark = addWatermark;
 
     // Plugin functions

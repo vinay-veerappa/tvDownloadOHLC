@@ -28,6 +28,7 @@
     <link rel="stylesheet" href="css/main.css">
     <link rel="stylesheet" href="css/toolbar.css">
     <link rel="stylesheet" href="css/sidebar.css">
+    <link rel="stylesheet" href="css/modal.css">
     </style>
 </head>
 
@@ -81,56 +82,15 @@
 
             <!-- Drawing Tools Moved to Sidebar -->
 
-            <!-- Enhanced Plugins Menu -->
-            <div class="menu-dropdown">
-                <button>🧩 Plugins</button>
-                <div class="menu-content">
-                    <div class="menu-category">Tooltips</div>
-                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('tooltip', 'Tooltip', 'primitive');">Crosshair Tooltip</a>
-                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('delta-tooltip', 'Delta Tooltip', 'primitive');">Delta Tooltip</a>
-                    
-                    <div class="menu-category">Visual</div>
-                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('volume-profile', 'Volume Profile', 'primitive');">Volume Profile</a>
-                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('session-highlighting', 'Session Highlighting', 'primitive');">Session Highlighting</a>
-                    
-                    <div class="menu-category">Drawing Tools</div>
-                    
-                    <div class="menu-category">Price Lines</div>
-                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('user-price-lines', 'Price Lines', 'primitive');">User Price Lines</a>
-                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('user-price-alerts', 'Price Alerts', 'primitive');">Price Alerts</a>
-                </div>
-            </div>
+            
 
-            <!-- Enhanced Indicators Menu -->
-            <div class="menu-dropdown">
-                <button>📊 Plugin Indicators</button>
-                <div class="menu-content">
-                    <div class="menu-category">Trend</div>
-                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('moving-average', 'Moving Average', 'indicator');">Moving Average</a>
-                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('momentum', 'Momentum', 'indicator');">Momentum</a>
-                    
-                    <div class="menu-category">Price Analysis</div>
-                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('average-price', 'Average Price', 'indicator');">Average Price</a>
-                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('median-price', 'Median Price', 'indicator');">Median Price</a>
-                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('weighted-close', 'Weighted Close', 'indicator');">Weighted Close</a>
-                    
-                    <div class="menu-category">Mathematical</div>
-                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('percent-change', 'Percent Change', 'indicator');">Percent Change</a>
-                </div>
-            </div>
+            
 
+            
             <!-- Indicators & Strategy -->
-            <select id="indicatorSelect" onchange="addIndicatorFromMenu(this)">
-                <option value="" disabled selected>+ Indicators</option>
-                <option value="sma">SMA (20)</option>
-                <option value="ema">EMA (50)</option>
-                <option value="vwap">VWAP</option>
-                <option value="bb">Bollinger Bands</option>
-                <option value="rsi">RSI (14)</option>
-                <option value="macd">MACD (12, 26, 9)</option>
-                <option value="atr">ATR (14)</option>
-            </select>
+            <button onclick="openIndicatorsModal()">📊 Indicators</button>
             <button id="strategyBtn" onclick="toggleStrategy()">⚡ Strategy</button>
+
         </div>
 
         <div class="toolbar-group">
@@ -171,6 +131,30 @@
     <div id="chart-container">
         <div id="chart"></div>
         <div id="indicator-container" style="flex: 0 0 auto;"></div>
+    </div>
+
+    
+    <!-- Indicators Modal -->
+    <div id="indicators-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">Indicators & Plugins</div>
+                <button class="modal-close" onclick="closeIndicatorsModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-sidebar" id="modal-categories">
+                    <!-- Categories populated by JS -->
+                </div>
+                <div class="modal-main">
+                    <div class="search-container">
+                        <input type="text" id="indicator-search" class="search-input" placeholder="Search indicators...">
+                    </div>
+                    <div class="items-grid" id="modal-items">
+                        <!-- Items populated by JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Main Application Module -->
