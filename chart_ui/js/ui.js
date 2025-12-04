@@ -1,5 +1,6 @@
 import { loadAndApplyPlugin } from './plugins.js';
 import { addIndicator } from './indicators.js';
+import { state } from './state.js';
 
 // Configuration of available items
 const availableItems = [
@@ -34,6 +35,55 @@ const availableItems = [
 ];
 
 let currentCategory = 'All';
+
+export function renderLegend() {
+    const container = document.getElementById('chart-legend');
+    if (!container) return;
+
+    // Header (Ticker Info)
+    const tz = state.currentTimezone ? state.currentTimezone.split('/')[1].replace('_', ' ') : 'NY';
+
+    const headerHtml = `
+        <div class="legend-header">
+            <span class="legend-ticker">${state.currentTicker}</span>
+            <span class="legend-meta">• ${state.currentTimeframe} • ${tz}</span>
+        </div>
+    `;
+
+    // Items (Plugins & Indicators)
+    let itemsHtml = '<div class="legend-items">';
+
+    // 1. Active Plugins
+    if (state.activePlugins.length > 0) {
+        state.activePlugins.forEach((plugin, index) => {
+            itemsHtml += `
+                <div class="legend-item">
+                    <span class="legend-item-name">${plugin.displayName || plugin.name}</span>
+                    <button class="legend-remove-btn" onclick="window.removePlugin(${index})">✕</button>
+                </div>
+            `;
+        });
+    }
+
+    // 2. Indicator Manager Indicators
+    if (state.indicatorManager && state.indicatorManager.indicators.size > 0) {
+        state.indicatorManager.indicators.forEach((indicator, key) => {
+            const displayName = indicator.name.toUpperCase() + (indicator.params.period ? ` (${indicator.params.period})` : '');
+            const paramsStr = JSON.stringify(indicator.params).replace(/"/g, "&quot;");
+
+            itemsHtml += `
+                <div class="legend-item">
+                    <span class="legend-item-name">${displayName}</span>
+                    <button class="legend-remove-btn" onclick="window.removeIndicator('${indicator.name}', ${paramsStr})">✕</button>
+                </div>
+            `;
+        });
+    }
+
+    itemsHtml += '</div>';
+
+    container.innerHTML = headerHtml + itemsHtml;
+}
 
 export function openIndicatorsModal() {
     const modal = document.getElementById('indicators-modal');
@@ -103,9 +153,10 @@ export async function addItem(id) {
     if (item.type === 'indicator') {
         await addIndicator(item.id);
         alert(`Added ${item.name}`);
+        renderLegend(); // Update legend
     } else if (item.type === 'plugin') {
         await loadAndApplyPlugin(item.module, item.name, item.pluginType);
-        // loadAndApplyPlugin handles alerts
+        // loadAndApplyPlugin handles alerts and renderLegend
     }
 }
 

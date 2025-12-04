@@ -1,4 +1,5 @@
 import { state } from './state.js';
+import { renderLegend } from './ui.js';
 
 export async function loadAndApplyPlugin(moduleName, displayName, type = 'primitive') {
     if (state.pluginModules.has(moduleName)) {
@@ -20,7 +21,7 @@ export async function loadAndApplyPlugin(moduleName, displayName, type = 'primit
             state.activePlugins.push({ name: moduleName, displayName: displayName, instance: primitive });
             console.log(`✅ Plugin '${displayName}' loaded and attached`);
             alert(`${displayName} enabled!`);
-            updatePluginList();
+            renderLegend();
         }
         else if (type === 'indicator') {
             // For moving-average, etc.
@@ -29,7 +30,7 @@ export async function loadAndApplyPlugin(moduleName, displayName, type = 'primit
             state.activePlugins.push({ name: moduleName, displayName: displayName, series: indicatorSeries });
             console.log(`✅ Indicator '${displayName}' loaded and applied`);
             alert(`${displayName} added!`);
-            updatePluginList();
+            renderLegend();
         }
 
     } catch (error) {
@@ -38,29 +39,7 @@ export async function loadAndApplyPlugin(moduleName, displayName, type = 'primit
     }
 }
 
-export function updatePluginList() {
-    const listDiv = document.getElementById('plugin-list');
-    const countSpan = document.getElementById('plugin-count');
-
-    if (state.activePlugins.length === 0) {
-        listDiv.innerHTML = '<div style="color: #888; font-size: 12px; padding: 10px; text-align: center;">No plugins loaded</div>';
-        countSpan.textContent = '0';
-        return;
-    }
-
-    countSpan.textContent = state.activePlugins.length.toString();
-
-    let html = '';
-    state.activePlugins.forEach((plugin, index) => {
-        html += `
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px; margin: 2px 0; background: #1e222d; border-radius: 3px;">
-                <span style="color: #d1d4dc; font-size: 12px;">${plugin.displayName || plugin.name}</span>
-                <button onclick="removePlugin(${index})" style="background: #ef5350; color: white; border: none; padding: 2px 6px; border-radius: 2px; cursor: pointer; font-size: 10px;">✕</button>
-            </div>
-        `;
-    });
-    listDiv.innerHTML = html;
-}
+export const updatePluginList = renderLegend;
 
 export function removePlugin(index) {
     if (index < 0 || index >= state.activePlugins.length) return;

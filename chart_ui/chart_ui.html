@@ -29,10 +29,17 @@
     <link rel="stylesheet" href="css/toolbar.css">
     <link rel="stylesheet" href="css/sidebar.css">
     <link rel="stylesheet" href="css/modal.css">
+    <link rel="stylesheet" href="css/legend.css">
     </style>
 </head>
 
 <body>
+    
+    <!-- Chart Legend -->
+    <div id="chart-legend" class="chart-legend">
+        <!-- Populated by JS -->
+    </div>
+
     <!-- Left Sidebar -->
     <div id="drawing-sidebar">
         <button class="tool-btn" id="btn-line" onclick="setTool('line')" title="Line">📏</button>
@@ -111,18 +118,9 @@
 
             <div class="divider"></div>
             <!-- Plugin Manager -->
-        <div id="plugin-manager" style="position: absolute; top: 60px; right: 10px; background: rgba(42, 46, 57, 0.95); border: 1px solid #4a4e59; border-radius: 4px; padding: 10px; width: 250px; max-height: 400px; overflow-y: auto; display: none;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid #4a4e59; padding-bottom: 8px;">
-                <h3 style="margin: 0; font-size: 14px; color: #d1d4dc;">Active Plugins</h3>
-                <button onclick="clearAllPlugins()" style="background: #d32f2f; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 11px;">Clear All</button>
-            </div>
-            <div id="plugin-list">
-                <div style="color: #888; font-size: 12px; padding: 10px; text-align: center;">No plugins loaded</div>
-            </div>
+        
         </div>
-        <button id="toggle-plugin-manager" onclick="togglePluginManager()" style="position: absolute; top: 65px; right: 10px; background: #2962FF; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; z-index: 100;">
-            📋 Plugins (<span id="plugin-count">0</span>)
-        </button>
+        
 
         <div id="status">Loading...</div>
         </div>
