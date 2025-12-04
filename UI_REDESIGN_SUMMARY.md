@@ -31,9 +31,16 @@ The application has been successfully redesigned to mimic the TradingView interf
 - **Visual Feedback**: Selected drawings are highlighted (thicker lines).
 - **Deletion**: Selected drawings can be deleted using the `Delete` or `Backspace` key.
 
+### 6. Drawing Tool Enhancements
+- **Robustness**: Fixed critical `TypeError` crashes in Rectangle and Fibonacci tools by implementing strict null checks for coordinate conversions.
+- **Fibonacci Tool**: Fully implemented the Fibonacci Retracement tool logic, ensuring it draws correctly and interacts safely with the chart.
+- **New Tool**: Added a "Price Line" tool (using `UserPriceLines` plugin) to the sidebar, allowing users to easily add horizontal price lines.
+- **Icon Update**: Redesigned the "Price Line" icon to a modern, bold "+" sign for better visibility and aesthetics.
+
 ## Technical Details
 - **Hit Testing**: Custom hit testing logic was implemented in `drawings.js` to enable selection of Lightweight Charts primitives.
-- **Global Exposure**: Key classes (`TrendLine`, `Rectangle`, `VertLine`) and functions were exposed to `window` to ensure compatibility between modules.
+- **Safety Checks**: Added comprehensive validation in `hitTest` and drawing tool `update` methods to prevent crashes when data points are incomplete.
+- **Global Exposure**: Key classes (`TrendLine`, `Rectangle`, `VertLine`, `UserPriceLines`) and functions were exposed to `window` to ensure compatibility between modules.
 - **Event Handling**: Centralized event listeners in `main.js` for ticker/timeframe changes and UI interactions.
 
 ## Next Steps (Future Enhancements)
