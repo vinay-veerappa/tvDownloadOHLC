@@ -1,8 +1,10 @@
 import { state } from './state.js';
 import { changeTimeframe } from './data_loader.js';
 import { UserPriceLines } from '../plugins/user-price-lines.js';
+import { DeltaTooltipPrimitive } from '../plugins/delta-tooltip.js';
+import { UserPriceAlerts } from '../plugins/user-price-alerts.js';
 
-console.log("Drawings module loaded (v7 - Price Line Tool)");
+console.log("Drawings module loaded (v9 - Measure & Alert Tools)");
 
 export function setTool(tool) {
     state.currentTool = (state.currentTool === tool) ? null : tool; // Toggle
@@ -15,6 +17,19 @@ export function setTool(tool) {
         state.userPriceLinesTool = null;
     }
 
+    // Handle UserPriceAlerts cleanup
+    if (state.userPriceAlertsTool && state.currentTool !== 'alert') {
+        state.userPriceAlertsTool.detached();
+        state.userPriceAlertsTool = null;
+    }
+
+    // Handle DeltaTooltipPrimitive cleanup
+    if (state.deltaTooltipTool && state.currentTool !== 'measure') {
+        state.deltaTooltipTool.detached();
+        window.chartSeries.detachPrimitive(state.deltaTooltipTool);
+        state.deltaTooltipTool = null;
+    }
+
     // Update UI
     document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
     if (state.currentTool === 'line') document.getElementById('btn-line').classList.add('active');
@@ -23,6 +38,8 @@ export function setTool(tool) {
     if (state.currentTool === 'fib') document.getElementById('btn-fib').classList.add('active');
     if (state.currentTool === 'vert') document.getElementById('btn-vert').classList.add('active');
     if (state.currentTool === 'price_line') document.getElementById('btn-price-line').classList.add('active');
+    if (state.currentTool === 'alert') document.getElementById('btn-alert').classList.add('active');
+    if (state.currentTool === 'measure') document.getElementById('btn-measure').classList.add('active');
 
     // Initialize UserPriceLines if selected
     if (state.currentTool === 'price_line') {
@@ -31,6 +48,30 @@ export function setTool(tool) {
                 color: '#2962FF',
                 hoverColor: '#E91E63'
             });
+        }
+    }
+
+    // Initialize UserPriceAlerts if selected
+    if (state.currentTool === 'alert') {
+        if (!state.userPriceAlertsTool) {
+            state.userPriceAlertsTool = new UserPriceAlerts();
+            // We need to manually attach it because it's designed as a primitive but also handles events
+            // The class has an 'attached' method but it's usually called by the series when attached.
+            // However, UserPriceAlerts extends L (listener) and seems to be a primitive.
+            // Let's check if it needs to be attached to series.
+            // Yes, it has paneViews() etc.
+            window.chartSeries.attachPrimitive(state.userPriceAlertsTool);
+        }
+    }
+
+    // Initialize DeltaTooltipPrimitive if selected
+    if (state.currentTool === 'measure') {
+        if (!state.deltaTooltipTool) {
+            state.deltaTooltipTool = new DeltaTooltipPrimitive({
+                lineColor: 'rgba(41, 98, 255, 0.5)',
+                showTime: true
+            });
+            window.chartSeries.attachPrimitive(state.deltaTooltipTool);
         }
     }
 

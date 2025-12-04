@@ -256,12 +256,12 @@ window.chartSeries = series;
 | File | Description | Init Type | Status |
 |------|-------------|-----------|--------|
 | `tooltip.js` | Crosshair tooltip | Simple | Ready |
-| `delta-tooltip.js` | Delta tooltip | Simple | Ready |
+| `delta-tooltip.js` | Delta tooltip | Simple | ✅ Integrated (Toolbar) |
 | `vertical-line.js` | Vertical line drawing | Simple | Ready |
 | `anchored-text.js` | Text annotations | Simple | Ready |
 | `volume-profile.js` | Volume profile | Special ⚠️ | Needs custom init |
 | `session-highlighting.js` | Session highlighting | Special ⚠️ | Needs options |
-| `user-price-alerts.js` | Price alerts | Simple | Ready |
+| `user-price-alerts.js` | Price alerts | Simple | ✅ Integrated (Toolbar) |
 | `user-price-lines.js` | Price lines | Simple | ✅ Integrated (Toolbar) |
 | `trend-line.js` | Trend line | Simple | Ready |
 | `expiring-price-alerts.js` | Expiring alerts | Simple | Ready |

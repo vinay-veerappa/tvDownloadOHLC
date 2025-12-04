@@ -44,7 +44,7 @@ function P(s, t, i) {
     length: Math.abs(r - e) + 1
   };
 }
-const n = 21, C = "M7.5,7.5 m -7,0 a 7,7 0 1,0 14,0 a 7,7 0 1,0 -14,0 M4 7.5H11 M7.5 4V11", m = new Path2D(C), g = 15;
+const n = 21, C = "M3 7.5H12 M7.5 3V12", m = new Path2D(C), g = 15;
 class w {
   _y = 0;
   _data;
@@ -68,10 +68,10 @@ class M {
     this._data.visible && t.useBitmapCoordinateSpace((i) => {
       const e = i.context, r = n, h = r + 1, o = P(this._data.rightX - h, this._data.rightX - 1, i.horizontalPixelRatio), a = b(this._data.y, i.verticalPixelRatio, r);
       e.fillStyle = this._data.color;
-      const l = [5, 0, 0, 5].map((_) => _ * i.horizontalPixelRatio);
+      const l = [4, 4, 4, 4].map((_) => _ * i.horizontalPixelRatio);
       e.beginPath(), e.roundRect(o.position, a.position, o.length, a.length, l), e.fill(), this._data.hovered && (e.fillStyle = this._data.hoverColor, e.beginPath(), e.roundRect(o.position, a.position, o.length, a.length, l), e.fill()), e.translate(o.position + 3 * i.horizontalPixelRatio, a.position + 3 * i.verticalPixelRatio), e.scale(i.horizontalPixelRatio, i.verticalPixelRatio);
       const c = 15 / g;
-      e.scale(c, c), e.strokeStyle = this._data.textColor, e.lineWidth = 1, e.stroke(m);
+      e.scale(c, c), e.strokeStyle = this._data.textColor, e.lineWidth = 2, e.stroke(m);
     });
   }
 }

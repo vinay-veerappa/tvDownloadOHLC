@@ -35,6 +35,8 @@ The application has been successfully redesigned to mimic the TradingView interf
 - **Robustness**: Fixed critical `TypeError` crashes in Rectangle and Fibonacci tools by implementing strict null checks for coordinate conversions.
 - **Fibonacci Tool**: Fully implemented the Fibonacci Retracement tool logic, ensuring it draws correctly and interacts safely with the chart.
 - **New Tool**: Added a "Price Line" tool (using `UserPriceLines` plugin) to the sidebar, allowing users to easily add horizontal price lines.
+- **Measure Tool**: Integrated `DeltaTooltipPrimitive` as a "Measure" tool (Ruler icon) for measuring price/time deltas.
+- **Alert Tool**: Integrated `UserPriceAlerts` as a "Price Alert" tool (Bell icon) for setting price alerts.
 - **Icon Update**: Redesigned the "Price Line" icon to a modern, bold "+" sign for better visibility and aesthetics.
 
 ## Technical Details
