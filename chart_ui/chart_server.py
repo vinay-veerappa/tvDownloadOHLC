@@ -120,6 +120,14 @@ async def get_css_file(filename: str):
         return FileResponse(css_path, media_type="text/css")
     raise HTTPException(status_code=404, detail=f"CSS file {filename}.css not found")
 
+@app.get("/js/{filename}.js")
+async def get_js_module(filename: str):
+    """Serve JS files from the js directory"""
+    js_path = BASE_DIR / "js" / f"{filename}.js"
+    if js_path.exists():
+        return FileResponse(js_path, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail=f"JS file {filename}.js not found")
+
 @app.get("/api/tickers")
 async def get_tickers():
     """Get list of available tickers"""
