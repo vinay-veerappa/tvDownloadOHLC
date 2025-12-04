@@ -74,7 +74,14 @@ class x {
     this._source = t;
   }
   update() {
-    const t = this._source.series, e = t.priceToCoordinate(this._source._p1.price), i = t.priceToCoordinate(this._source._p2.price), r = this._source.chart.timeScale(), n = r.timeToCoordinate(this._source._p1.time), u = r.timeToCoordinate(this._source._p2.time);
+    const t = this._source.series;
+    const r = this._source.chart.timeScale();
+    if (!this._source._p1.time || !this._source._p2.time) return;
+
+    const e = t.priceToCoordinate(this._source._p1.price);
+    const i = t.priceToCoordinate(this._source._p2.price);
+    const n = r.timeToCoordinate(this._source._p1.time);
+    const u = r.timeToCoordinate(this._source._p2.time);
     this._p1 = { x: n, y: e }, this._p2 = { x: u, y: i };
   }
   renderer() {
@@ -132,13 +139,19 @@ class c {
 }
 class f extends c {
   getPoints() {
-    const t = this._source.series, e = t.priceToCoordinate(this._source._p1.price), i = t.priceToCoordinate(this._source._p2.price);
+    const t = this._source.series;
+    if (!this._source._p1.price || !this._source._p2.price) return [null, null];
+    const e = t.priceToCoordinate(this._source._p1.price);
+    const i = t.priceToCoordinate(this._source._p2.price);
     return [e, i];
   }
 }
 class m extends c {
   getPoints() {
-    const t = this._source.chart.timeScale(), e = t.timeToCoordinate(this._source._p1.time), i = t.timeToCoordinate(this._source._p2.time);
+    const t = this._source.chart.timeScale();
+    if (!this._source._p1.time || !this._source._p2.time) return [null, null];
+    const e = t.timeToCoordinate(this._source._p1.time);
+    const i = t.timeToCoordinate(this._source._p2.time);
     return [e, i];
   }
 }
@@ -171,6 +184,7 @@ class _ {
 class l extends _ {
   update() {
     const t = this._source.chart.timeScale();
+    if (!this._p.time) { this._pos = -1; return; }
     this._pos = t.timeToCoordinate(this._p.time);
   }
   text() {
@@ -180,6 +194,7 @@ class l extends _ {
 class h extends _ {
   update() {
     const t = this._source.series;
+    if (!this._p.price) { this._pos = -1; return; }
     this._pos = t.priceToCoordinate(this._p.price);
   }
   text() {
@@ -192,8 +207,8 @@ const C = {
   labelColor: "rgba(200, 50, 100, 1)",
   labelTextColor: "white",
   showLabels: !0,
-  priceLabelFormatter: (s) => s.toFixed(2),
-  timeLabelFormatter: (s) => typeof s == "string" ? s : (d(s) ? new Date(s.year, s.month, s.day) : new Date(s * 1e3)).toLocaleDateString()
+  priceLabelFormatter: (s) => (s !== undefined && s !== null) ? s.toFixed(2) : '',
+  timeLabelFormatter: (s) => { if (s === undefined || s === null) return ''; return typeof s == "string" ? s : (d(s) ? new Date(s.year, s.month, s.day) : new Date(s * 1e3)).toLocaleDateString(); }
 };
 class p extends w {
   _options;

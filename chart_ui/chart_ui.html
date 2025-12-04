@@ -34,7 +34,7 @@
 </head>
 
 <body>
-    
+
     <!-- Chart Legend -->
     <div id="chart-legend" class="chart-legend">
         <!-- Populated by JS -->
@@ -48,9 +48,9 @@
         <button class="tool-btn" id="btn-fib" onclick="setTool('fib')" title="Fibonacci">🔢</button>
         <button class="tool-btn" id="btn-vert" onclick="setTool('vert')" title="Vertical Line">│</button>
         <button class="tool-btn" id="btn-text" onclick="addWatermark()" title="Text">T</button>
-        
+
         <div class="tool-separator"></div>
-        
+
         <button class="tool-btn delete" onclick="clearDrawings()" title="Clear All">🗑</button>
     </div>
 
@@ -89,11 +89,11 @@
 
             <!-- Drawing Tools Moved to Sidebar -->
 
-            
 
-            
 
-            
+
+
+
             <!-- Indicators & Strategy -->
             <button onclick="openIndicatorsModal()">📊 Indicators</button>
             <button id="strategyBtn" onclick="toggleStrategy()">⚡ Strategy</button>
@@ -118,12 +118,12 @@
 
             <div class="divider"></div>
             <!-- Plugin Manager -->
-        
+
         </div>
-        
+
 
         <div id="status">Loading...</div>
-        </div>
+    </div>
     </div>
 
     <div id="chart-container">
@@ -131,7 +131,7 @@
         <div id="indicator-container" style="flex: 0 0 auto;"></div>
     </div>
 
-    
+
     <!-- Indicators Modal -->
     <div id="indicators-modal" class="modal-overlay">
         <div class="modal-content">
@@ -145,7 +145,8 @@
                 </div>
                 <div class="modal-main">
                     <div class="search-container">
-                        <input type="text" id="indicator-search" class="search-input" placeholder="Search indicators...">
+                        <input type="text" id="indicator-search" class="search-input"
+                            placeholder="Search indicators...">
                     </div>
                     <div class="items-grid" id="modal-items">
                         <!-- Items populated by JS -->
@@ -156,7 +157,7 @@
     </div>
 
     <!-- Main Application Module -->
-    <script type="module" src="js/main.js"></script>
+    <script type="module" src="js/main.js?v=6"></script>
 </body>
 
 </html>
