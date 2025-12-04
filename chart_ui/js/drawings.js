@@ -123,12 +123,14 @@ export function setupDrawingHandlers() {
     const series = window.chartSeries;
 
     chart.subscribeClick((param) => {
-        if (!param.point || !param.time) return;
+        if (!param.point) return;
 
         if (state.currentTool) {
+            // Drawing mode - need time for drawing
+            if (!param.time) return;
             handleDrawingClick(param);
         } else {
-            // Selection Mode
+            // Selection Mode - don't need time to select
             const hit = hitTest(param.point);
             selectDrawing(hit);
         }
@@ -166,8 +168,47 @@ export function setupDrawingHandlers() {
     window.addEventListener('drawing-created', (e) => {
         if (e.detail && e.detail.drawing) {
             state.drawings.push(e.detail.drawing);
-            // If we want to auto-select it or something, we could.
-            // But for now just tracking it is enough for hitTest.
+        }
+    });
+
+    // Properties Panel Listeners
+    document.getElementById('prop-color').addEventListener('input', (e) => {
+        if (state.selectedDrawing && state.selectedDrawing.applyOptions) {
+            const color = e.target.value;
+            const updates = {};
+            if (state.selectedDrawing instanceof window.TrendLine) {
+                updates.lineColor = color;
+            }
+            else if (state.selectedDrawing instanceof window.Rectangle) {
+                updates.fillColor = color + 'BF'; // Add 75% opacity
+                updates.labelColor = color;
+            }
+            else if (state.selectedDrawing instanceof window.VertLine) {
+                updates.color = color;
+            }
+            else if (state.selectedDrawing.options && state.selectedDrawing.options().price !== undefined) {
+                updates.color = color; // PriceLine
+            }
+            state.selectedDrawing.applyOptions(updates);
+        }
+    });
+
+    document.getElementById('prop-width').addEventListener('input', (e) => {
+        if (state.selectedDrawing && state.selectedDrawing.applyOptions) {
+            const width = parseInt(e.target.value);
+            const updates = {};
+            if (state.selectedDrawing instanceof window.TrendLine) updates.lineWidth = width;
+            else if (state.selectedDrawing instanceof window.VertLine) updates.width = width;
+            else if (state.selectedDrawing.options && state.selectedDrawing.options().price !== undefined) updates.lineWidth = width;
+            // Rectangle doesn't have a border width property
+            state.selectedDrawing.applyOptions(updates);
+        }
+    });
+
+    document.getElementById('prop-delete').addEventListener('click', () => {
+        if (state.selectedDrawing) {
+            deleteDrawing(state.selectedDrawing);
+            document.getElementById('drawing-properties').style.display = 'none';
         }
     });
 }
@@ -302,9 +343,13 @@ function selectDrawing(drawing) {
     if (state.selectedDrawing) {
         // Deselect
         if (state.selectedDrawing.applyOptions) {
-            if (state.selectedDrawing instanceof window.TrendLine) state.selectedDrawing.applyOptions({ width: 2 });
-            if (state.selectedDrawing instanceof window.Rectangle) state.selectedDrawing.applyOptions({ borderColor: '#2196F3', width: 1 });
+            if (state.selectedDrawing instanceof window.TrendLine) state.selectedDrawing.applyOptions({ lineWidth: 2 });
+            if (state.selectedDrawing instanceof window.Rectangle) state.selectedDrawing.applyOptions({ fillColor: 'rgba(33, 150, 243, 0.75)', labelColor: '#2196F3' });
             if (state.selectedDrawing instanceof window.VertLine) state.selectedDrawing.applyOptions({ width: 3 });
+            // Price Line Deselection
+            if (state.selectedDrawing.options && typeof state.selectedDrawing.options === 'function' && state.selectedDrawing.options().price !== undefined) {
+                state.selectedDrawing.applyOptions({ lineWidth: 1, color: '#2962FF' });
+            }
         }
     }
 
@@ -313,10 +358,19 @@ function selectDrawing(drawing) {
     if (drawing) {
         // Select
         if (drawing.applyOptions) {
-            if (drawing instanceof window.TrendLine) drawing.applyOptions({ width: 4 });
-            if (drawing instanceof window.Rectangle) drawing.applyOptions({ borderColor: '#FFD700', width: 3 });
+            if (drawing instanceof window.TrendLine) drawing.applyOptions({ lineWidth: 4 });
+            if (drawing instanceof window.Rectangle) drawing.applyOptions({ fillColor: 'rgba(255, 215, 0, 0.9)', labelColor: '#FFD700' });
             if (drawing instanceof window.VertLine) drawing.applyOptions({ width: 5 });
+            // Price Line Selection
+            if (drawing.options && typeof drawing.options === 'function' && drawing.options().price !== undefined) {
+                drawing.applyOptions({ lineWidth: 3, color: '#FFD700' });
+            }
         }
+        // Show Properties Panel
+        updatePropertiesPanel(drawing);
+    } else {
+        // Hide Properties Panel
+        document.getElementById('drawing-properties').style.display = 'none';
     }
 }
 
@@ -327,6 +381,40 @@ function deleteDrawing(drawing) {
 
     state.drawings = state.drawings.filter(d => d !== drawing);
     state.selectedDrawing = null;
+}
+
+function updatePropertiesPanel(drawing) {
+    const panel = document.getElementById('drawing-properties');
+    const colorInput = document.getElementById('prop-color');
+    const widthInput = document.getElementById('prop-width');
+
+    if (!drawing || !drawing.options) return;
+
+    panel.style.display = 'flex';
+
+    const opts = drawing.options();
+
+    // Color - handle different property names
+    let color = opts.color || opts.lineColor || opts.fillColor || opts.labelColor || '#2962FF';
+
+    // Convert rgba to hex if needed
+    if (color.startsWith('rgba') || color.startsWith('rgb')) {
+        const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        if (match) {
+            const r = parseInt(match[1]).toString(16).padStart(2, '0');
+            const g = parseInt(match[2]).toString(16).padStart(2, '0');
+            const b = parseInt(match[3]).toString(16).padStart(2, '0');
+            color = `#${r}${g}${b}`;
+        } else {
+            color = '#2962FF';
+        }
+    }
+
+    colorInput.value = color;
+
+    // Width
+    let width = opts.width || opts.lineWidth || 1;
+    widthInput.value = width;
 }
 
 function distanceToSegment(x, y, x1, y1, x2, y2) {
