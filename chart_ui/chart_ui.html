@@ -27,10 +27,25 @@
     <!-- CSS -->
     <link rel="stylesheet" href="css/main.css">
     <link rel="stylesheet" href="css/toolbar.css">
+    <link rel="stylesheet" href="css/sidebar.css">
     </style>
 </head>
 
 <body>
+    <!-- Left Sidebar -->
+    <div id="drawing-sidebar">
+        <button class="tool-btn" id="btn-line" onclick="setTool('line')" title="Line">📏</button>
+        <button class="tool-btn" id="btn-ray" onclick="setTool('ray')" title="Trend Line">📉</button>
+        <button class="tool-btn" id="btn-rect" onclick="setTool('rect')" title="Rectangle">▭</button>
+        <button class="tool-btn" id="btn-fib" onclick="setTool('fib')" title="Fibonacci">🔢</button>
+        <button class="tool-btn" id="btn-vert" onclick="setTool('vert')" title="Vertical Line">│</button>
+        <button class="tool-btn" id="btn-text" onclick="addWatermark()" title="Text">T</button>
+        
+        <div class="tool-separator"></div>
+        
+        <button class="tool-btn delete" onclick="clearDrawings()" title="Clear All">🗑</button>
+    </div>
+
     <div id="header">
         <div class="toolbar-group">
             <!-- Ticker -->
@@ -64,16 +79,7 @@
 
             <div class="divider"></div>
 
-            <!-- Drawing Tools -->
-            <button id="btn-line" onclick="setTool('line')" title="Draw Price Line">📏 Line</button>
-            <button id="btn-ray" onclick="setTool('ray')" title="Draw Trend Line">📉 Trend</button>
-            <button id="btn-rect" onclick="setTool('rect')" title="Draw Rectangle">▭ Rect</button>
-            <button id="btn-fib" onclick="setTool('fib')" title="Draw Fibonacci">🔢 Fib</button>
-            <button id="btn-vert" onclick="setTool('vert')" title="Draw Vertical Line">│ Vert</button>
-            <button id="btn-text" onclick="addWatermark()" title="Add Watermark">T Text</button>
-            <button onclick="clearDrawings()" title="Clear All Drawings">🗑</button>
-
-            <div class="divider"></div>
+            <!-- Drawing Tools Moved to Sidebar -->
 
             <!-- Enhanced Plugins Menu -->
             <div class="menu-dropdown">
@@ -162,8 +168,8 @@
         </div>
     </div>
 
-    <div id="chart-container" style="display: flex; flex-direction: column; height: calc(100vh - 54px);">
-        <div id="chart" style="flex: 1; min-height: 400px;"></div>
+    <div id="chart-container">
+        <div id="chart"></div>
         <div id="indicator-container" style="flex: 0 0 auto;"></div>
     </div>
 

@@ -15,8 +15,18 @@ body {
 /* Chart Container */
 #chart {
     width: 100%;
-    height: calc(100vh - 54px);
+    height: 100%;
+    /* Fill container */
     position: relative;
+}
+
+#chart-container {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 54px);
+    margin-left: 50px;
+    /* Sidebar width */
+    width: calc(100% - 50px);
 }
 
 /* Status Bar */
