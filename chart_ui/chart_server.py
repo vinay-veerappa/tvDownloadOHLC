@@ -7,6 +7,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
 from indicators import calculate_indicator
+from timeframe_utils import find_best_base_file, get_pandas_rule, resample_dataframe
 import mimetypes
 
 # Ensure JS files are served with correct MIME type
@@ -167,14 +168,26 @@ async def get_ohlc(
     - limit: Max bars to return
     - ticker: Ticker symbol (default: ES1)
     """
+    # Scan for available files for this ticker
+    available_files = []
     ticker_clean = ticker.upper().replace("!", "").replace(" ", "_")
-    parquet_file = DATA_DIR / f"{ticker_clean}_{timeframe}.parquet"
+    for f in DATA_DIR.glob(f"{ticker_clean}_*.parquet"):
+        available_files.append(f.stem.replace(f"{ticker_clean}_", ""))
     
-    if not parquet_file.exists():
-        raise HTTPException(status_code=404, detail=f"Data not found for {ticker} {timeframe}")
+    # Determine best base file
+    base_tf = find_best_base_file(timeframe, available_files)
+    if not base_tf:
+        raise HTTPException(status_code=404, detail=f"No data found for {ticker}")
+        
+    parquet_file = DATA_DIR / f"{ticker_clean}_{base_tf}.parquet"
     
     # Load data
     df = pd.read_parquet(parquet_file)
+    
+    # Resample if needed
+    if base_tf != timeframe:
+        rule = get_pandas_rule(timeframe)
+        df = resample_dataframe(df, rule)
     
     # Filter by date range
     if start:
@@ -238,14 +251,26 @@ async def get_indicator(
     """
     Calculate indicator values for a timeframe
     """
+    # Scan for available files for this ticker
+    available_files = []
     ticker_clean = ticker.upper().replace("!", "").replace(" ", "_")
-    parquet_file = DATA_DIR / f"{ticker_clean}_{timeframe}.parquet"
+    for f in DATA_DIR.glob(f"{ticker_clean}_*.parquet"):
+        available_files.append(f.stem.replace(f"{ticker_clean}_", ""))
     
-    if not parquet_file.exists():
-        raise HTTPException(status_code=404, detail=f"Timeframe {timeframe} not found for {ticker}")
+    # Determine best base file
+    base_tf = find_best_base_file(timeframe, available_files)
+    if not base_tf:
+        raise HTTPException(status_code=404, detail=f"No data found for {ticker}")
+        
+    parquet_file = DATA_DIR / f"{ticker_clean}_{base_tf}.parquet"
     
     # Load data
     df = pd.read_parquet(parquet_file)
+    
+    # Resample if needed
+    if base_tf != timeframe:
+        rule = get_pandas_rule(timeframe)
+        df = resample_dataframe(df, rule)
     
     # Filter by date range
     if start:
