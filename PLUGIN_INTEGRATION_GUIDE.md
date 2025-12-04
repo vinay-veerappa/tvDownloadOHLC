@@ -11,8 +11,8 @@
 
 ## 🔄 Current Integration Status
 **Last Updated**: 2025-12-04 10:06 PST  
-**Overall Progress**: Phase 1 & 2a Complete! 🎉  
-**Status**: Plugin system fully functional, pivoting to UI redesign
+**Overall Progress**: Phase 1 & 2a Complete! 🎉 (Drawing Tools Integrated)
+**Status**: Plugin system fully functional, UI redesign in progress (Phase 1 Complete).
 
 ### ✅ Plugin Integration Complete! (2025-12-04)
 
@@ -262,7 +262,7 @@ window.chartSeries = series;
 | `volume-profile.js` | Volume profile | Special ⚠️ | Needs custom init |
 | `session-highlighting.js` | Session highlighting | Special ⚠️ | Needs options |
 | `user-price-alerts.js` | Price alerts | Simple | Ready |
-| `user-price-lines.js` | Price lines | Simple | Ready |
+| `user-price-lines.js` | Price lines | Simple | ✅ Integrated (Toolbar) |
 | `trend-line.js` | Trend line | Simple | Ready |
 | `expiring-price-alerts.js` | Expiring alerts | Simple | Ready |
 | `highlight-bar-crosshair.js` | Bar highlighting | Simple | Ready |
