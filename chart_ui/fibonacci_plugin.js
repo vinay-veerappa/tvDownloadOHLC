@@ -10,6 +10,7 @@ class FibonacciRenderer {
     draw(target) {
         target.useBitmapCoordinateSpace(scope => {
             if (this._p1.x === null || this._p1.y === null || this._p2.x === null || this._p2.y === null) return;
+            if (isNaN(this._p1.x) || isNaN(this._p1.y) || isNaN(this._p2.x) || isNaN(this._p2.y)) return;
 
             const ctx = scope.context;
             const hPR = scope.horizontalPixelRatio;
@@ -102,6 +103,10 @@ class FibonacciRetracement {
         this._requestUpdate();
     }
 
+    updateAllViews() {
+        if (this._requestUpdate) this._requestUpdate();
+    }
+
     attached({ chart, series, requestUpdate }) {
         this._requestUpdate = requestUpdate;
     }
@@ -117,6 +122,7 @@ class FibonacciRetracement {
 
     _updatePoints() {
         if (!this._chart || !this._series) return;
+        if (!this._p1.time || !this._p2.time) return;
 
         const timeScale = this._chart.timeScale();
 

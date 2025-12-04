@@ -1,6 +1,8 @@
 import { state } from './state.js';
 import { changeTimeframe } from './data_loader.js';
 
+console.log("Drawings module loaded (v6 - HitTest Fixes)");
+
 export function setTool(tool) {
     state.currentTool = (state.currentTool === tool) ? null : tool; // Toggle
     state.activeDrawing = null;
@@ -24,10 +26,8 @@ export function setTool(tool) {
 export function clearDrawings() {
     const series = window.chartSeries;
     state.drawings.forEach(d => {
-        if (d.detach) d.detach(); // If primitive (our custom ones might not have detach, but series.detachPrimitive(d))
-        // Actually, series.detachPrimitive(d) is the correct way for primitives
+        if (d.detach) d.detach();
         try { series.detachPrimitive(d); } catch (e) { }
-
         if (series.removePriceLine) try { series.removePriceLine(d); } catch (e) { }
     });
     state.drawings = [];
@@ -61,14 +61,13 @@ export function setupDrawingHandlers() {
             const time = chart.timeScale().coordinateToTime(x);
             const price = series.coordinateToPrice(y);
 
-            if (time && price) {
-                state.activeDrawing.updateEnd({ time, price }); // Assuming updateEnd exists on instance
-                // Note: TrendLine (p) does NOT have updateEnd. But Rectangle (p) does?
-                // Wait, I checked TrendLine (p) and it didn't. 
-                // But Rectangle (p) didn't either.
-                // Only RectangleDrawingTool (V) had logic.
-                // This implies my drawing logic for ray/rect/fib IS BROKEN unless I fix the primitive classes.
-                // For now, I will focus on Selection.
+            if (time && price !== null && price !== undefined) {
+                state.activeDrawing._p2 = { time, price };
+                if (state.activeDrawing.updateAllViews) {
+                    state.activeDrawing.updateAllViews();
+                } else if (state.activeDrawing._requestUpdate) {
+                    state.activeDrawing._requestUpdate();
+                }
             }
         }
     });
@@ -106,9 +105,7 @@ function handleDrawingClick(param) {
             }
         } else {
             if (state.activeDrawing) {
-                // state.activeDrawing.updateEnd({ time, price }); // This might fail if method missing
-                // Manual update if method missing:
-                if (state.activeDrawing._p2) state.activeDrawing._p2 = { time, price };
+                state.activeDrawing._p2 = { time, price };
                 if (state.activeDrawing.updateAllViews) state.activeDrawing.updateAllViews();
 
                 state.activeDrawing = null;
@@ -119,6 +116,7 @@ function handleDrawingClick(param) {
     }
     else if (state.currentTool === 'rect') {
         if (!state.startPoint) {
+            if (!time || price === null || price === undefined) return;
             state.startPoint = { time, price };
             if (window.Rectangle) {
                 const rect = new window.Rectangle(chart, series, state.startPoint, state.startPoint, {
@@ -131,8 +129,34 @@ function handleDrawingClick(param) {
             }
         } else {
             if (state.activeDrawing) {
-                if (state.activeDrawing._p2) state.activeDrawing._p2 = { time, price };
+                state.activeDrawing._p2 = { time, price };
                 if (state.activeDrawing.updateAllViews) state.activeDrawing.updateAllViews();
+
+                state.activeDrawing = null;
+                state.startPoint = null;
+                setTool(null);
+            }
+        }
+    }
+    else if (state.currentTool === 'fib') {
+        if (!state.startPoint) {
+            if (!time || price === null || price === undefined) return;
+            state.startPoint = { time, price };
+            if (window.FibonacciRetracement) {
+                const fib = new window.FibonacciRetracement(chart, series, state.startPoint, state.startPoint, { lineColor: '#2962FF' });
+                series.attachPrimitive(fib);
+                state.activeDrawing = fib;
+                state.drawings.push(fib);
+            }
+        } else {
+            if (state.activeDrawing) {
+                state.activeDrawing._p2 = { time, price };
+                // Fib plugin uses requestUpdate internally when p2 changes if we used updateEnd, 
+                // but here we set _p2 directly. We need to trigger update.
+                // The library calls paneViews() on update, so we just need to ensure the chart redraws.
+                // But let's add updateAllViews to Fib plugin for consistency or check if it has it.
+                if (state.activeDrawing.updateAllViews) state.activeDrawing.updateAllViews();
+                else if (state.activeDrawing._requestUpdate) state.activeDrawing._requestUpdate();
 
                 state.activeDrawing = null;
                 state.startPoint = null;
@@ -163,6 +187,8 @@ function hitTest(point) {
         if (window.TrendLine && drawing instanceof window.TrendLine) {
             const p1 = drawing._p1;
             const p2 = drawing._p2;
+            if (!p1 || !p2 || !p1.time || !p2.time || p1.price === undefined || p2.price === undefined) continue;
+
             const x1 = timeScale.timeToCoordinate(p1.time);
             const y1 = series.priceToCoordinate(p1.price);
             const x2 = timeScale.timeToCoordinate(p2.time);
@@ -176,6 +202,8 @@ function hitTest(point) {
         else if (window.Rectangle && drawing instanceof window.Rectangle) {
             const p1 = drawing._p1;
             const p2 = drawing._p2;
+            if (!p1 || !p2 || !p1.time || !p2.time || p1.price === undefined || p2.price === undefined) continue;
+
             const x1 = timeScale.timeToCoordinate(p1.time);
             const y1 = series.priceToCoordinate(p1.price);
             const x2 = timeScale.timeToCoordinate(p2.time);
@@ -193,6 +221,7 @@ function hitTest(point) {
             }
         }
         else if (window.VertLine && drawing instanceof window.VertLine) {
+            if (!drawing._time) continue;
             const x = timeScale.timeToCoordinate(drawing._time);
             if (Math.abs(point.x - x) < 10) return drawing;
         }
@@ -204,9 +233,8 @@ function selectDrawing(drawing) {
     if (state.selectedDrawing) {
         // Deselect
         if (state.selectedDrawing.applyOptions) {
-            // Restore defaults (approximate)
             if (state.selectedDrawing instanceof window.TrendLine) state.selectedDrawing.applyOptions({ width: 2 });
-            if (state.selectedDrawing instanceof window.Rectangle) state.selectedDrawing.applyOptions({ borderColor: '#2196F3', width: 1 }); // Assuming default
+            if (state.selectedDrawing instanceof window.Rectangle) state.selectedDrawing.applyOptions({ borderColor: '#2196F3', width: 1 });
             if (state.selectedDrawing instanceof window.VertLine) state.selectedDrawing.applyOptions({ width: 3 });
         }
     }
