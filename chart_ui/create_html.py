@@ -153,13 +153,13 @@ html_content = """<!DOCTYPE html>
             wickUpColor: '#26a69a', wickDownColor: '#ef5350'
         });
         
-        // Volume Series
-        const volumeSeries = chart.addSeries(window.LightweightCharts.HistogramSeries, {
-            color: '#26a69a',
-            priceFormat: { type: 'volume' },
-            priceScaleId: '', // Overlay
-            scaleMargins: { top: 0.8, bottom: 0 }
-        });
+        // Volume Series removed as per user request
+        // const volumeSeries = chart.addSeries(window.LightweightCharts.HistogramSeries, {
+        //     color: '#26a69a',
+        //     priceFormat: { type: 'volume' },
+        //     priceScaleId: '', // Overlay
+        //     scaleMargins: { top: 0.8, bottom: 0 }
+        // });
         
         // PDH/PDL Lines
         let pdhLine = null;
@@ -178,7 +178,7 @@ html_content = """<!DOCTYPE html>
                 
                 allData = result.data; // Store for navigation
                 series.setData(allData);
-                volumeSeries.setData(allData); // Uses 'value' and 'color' from API
+                // volumeSeries.setData(allData); // Uses 'value' and 'color' from API
                 
                 // Calculate PDH/PDL
                 calculatePDHPDL(allData);

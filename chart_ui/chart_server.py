@@ -26,89 +26,80 @@ app.add_middleware(
 # Data directory (in parent folder)
 DATA_DIR = Path(__file__).parent.parent / "data"
 
+# Base directory for static files (where this script is located)
+BASE_DIR = Path(__file__).parent
+
 @app.get("/")
 async def root():
     """Serve the chart UI"""
-    import os
-    html_path = os.path.join(os.getcwd(), "chart_ui.html")
+    html_path = BASE_DIR / "chart_ui.html"
     return FileResponse(html_path)
 
 @app.get("/indicator_manager.js")
 async def get_indicator_manager():
     """Serve the indicator manager JS file"""
-    import os
-    js_path = os.path.join(os.getcwd(), "indicator_manager.js")
+    js_path = BASE_DIR / "indicator_manager.js"
     return FileResponse(js_path, media_type="application/javascript")
 
 @app.get("/demo-plugins")
 async def get_demo_plugins():
     """Serve Drawing Tools demo"""
-    import os
-    demo_path = os.path.join(os.getcwd(), "demo_plugins.html")
+    demo_path = BASE_DIR / "demo_plugins.html"
     return FileResponse(demo_path)
 
 @app.get("/demo-strategy")
 async def get_demo_strategy():
     """Serve Strategy demo"""
-    import os
-    demo_path = os.path.join(os.getcwd(), "demo_strategy.html")
+    demo_path = BASE_DIR / "demo_strategy.html"
     return FileResponse(demo_path)
 
 @app.get("/demo-rectangle")
 async def get_demo_rectangle():
     """Serve Rectangle demo"""
-    import os
-    demo_path = os.path.join(os.getcwd(), "demo_rectangle.html")
+    demo_path = BASE_DIR / "demo_rectangle.html"
     return FileResponse(demo_path)
 
 @app.get("/trendline_plugin.js")
 async def get_trendline_plugin():
     """Serve TrendLine Plugin"""
-    import os
-    plugin_path = os.path.join(os.getcwd(), "trendline_plugin.js")
+    plugin_path = BASE_DIR / "trendline_plugin.js"
     return FileResponse(plugin_path)
 
 @app.get("/rectangle_plugin.js")
 async def get_rectangle_plugin():
     """Serve Rectangle Plugin"""
-    import os
-    plugin_path = os.path.join(os.getcwd(), "rectangle_plugin.js")
+    plugin_path = BASE_DIR / "rectangle_plugin.js"
     return FileResponse(plugin_path)
 
 @app.get("/fibonacci_plugin.js")
 async def get_fibonacci_plugin():
     """Serve Fibonacci Plugin"""
-    import os
-    plugin_path = os.path.join(os.getcwd(), "fibonacci_plugin.js")
+    plugin_path = BASE_DIR / "fibonacci_plugin.js"
     return FileResponse(plugin_path)
 
 @app.get("/vertical_line_plugin.js")
 async def get_vertical_line_plugin():
     """Serve Vertical Line Plugin"""
-    import os
-    plugin_path = os.path.join(os.getcwd(), "vertical_line_plugin.js")
+    plugin_path = BASE_DIR / "vertical_line_plugin.js"
     return FileResponse(plugin_path)
 
 @app.get("/anchored_text_plugin.js")
 async def get_anchored_text_plugin():
     """Serve Anchored Text Plugin"""
-    import os
-    plugin_path = os.path.join(os.getcwd(), "anchored_text_plugin.js")
+    plugin_path = BASE_DIR / "anchored_text_plugin.js"
     return FileResponse(plugin_path)
 
 @app.get("/test_plugins.html")
 async def get_test_plugins():
     """Serve Plugin Test Page"""
-    import os
-    test_path = os.path.join(os.getcwd(), "test_plugins.html")
+    test_path = BASE_DIR / "test_plugins.html"
     return FileResponse(test_path)
 
 @app.get("/{filename}.js")
 async def get_js_file(filename: str):
     """Serve any JavaScript file from the chart_ui directory"""
-    import os
-    js_path = os.path.join(os.getcwd(), f"{filename}.js")
-    if os.path.exists(js_path):
+    js_path = BASE_DIR / f"{filename}.js"
+    if js_path.exists():
         return FileResponse(js_path, media_type="application/javascript")
     raise HTTPException(status_code=404, detail=f"JavaScript file {filename}.js not found")
 
@@ -198,19 +189,27 @@ async def get_ohlc(
     if len(df) > limit:
         df = df.tail(limit)
     
+    # Helper to handle NaN
+    def safe_float(val):
+        import math
+        if pd.isna(val) or math.isnan(val):
+            return None
+        return float(val)
+
     # Convert to format for lightweight-charts
     data = []
     for idx, row in df.iterrows():
         item = {
             "time": int(idx.timestamp()),  # Unix timestamp
-            "open": float(row['open']),
-            "high": float(row['high']),
-            "low": float(row['low']),
-            "close": float(row['close'])
+            "open": safe_float(row['open']),
+            "high": safe_float(row['high']),
+            "low": safe_float(row['low']),
+            "close": safe_float(row['close'])
         }
         if 'volume' in row:
-            item['value'] = float(row['volume']) # For HistogramSeries
-            item['volume'] = float(row['volume']) # For reference
+            vol = safe_float(row['volume'])
+            item['value'] = vol # For HistogramSeries
+            item['volume'] = vol # For reference
             # Color based on price change
             item['color'] = '#26a69a' if row['close'] >= row['open'] else '#ef5350'
             
@@ -305,12 +304,19 @@ async def get_indicator(
         
     offset = len(data_list) - result_len
     
+    # Helper to handle NaN
+    def safe_float(val):
+        import math
+        if val is None or pd.isna(val) or math.isnan(val):
+            return None
+        return float(val)
+
     if 'values' in indicator_values:
         # Single line indicator (SMA, EMA, RSI, VWAP, ATR)
         for i, value in enumerate(indicator_values['values']):
             result_data.append({
                 "time": data_list[offset + i]['time'],
-                "value": float(value)
+                "value": safe_float(value)
             })
     else:
         # Multi-line indicator (BB, MACD)
@@ -318,7 +324,7 @@ async def get_indicator(
         for i in range(len(indicator_values[keys[0]])):
             point = {"time": data_list[offset + i]['time']}
             for key in keys:
-                point[key] = float(indicator_values[key][i])
+                point[key] = safe_float(indicator_values[key][i])
             result_data.append(point)
     
     return {
