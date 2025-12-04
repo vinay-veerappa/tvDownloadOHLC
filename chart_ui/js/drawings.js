@@ -3,6 +3,10 @@ import { changeTimeframe } from './data_loader.js';
 import { UserPriceLines } from '../plugins/user-price-lines.js';
 import { DeltaTooltipPrimitive } from '../plugins/delta-tooltip.js';
 import { UserPriceAlerts } from '../plugins/user-price-alerts.js';
+import { RectangleDrawingTool, Rectangle } from '../plugins/rectangle-drawing-tool.js';
+
+// Expose Rectangle class globally for hit testing
+window.Rectangle = Rectangle;
 
 console.log("Drawings module loaded (v9 - Measure & Alert Tools)");
 
@@ -28,6 +32,11 @@ export function setTool(tool) {
         state.deltaTooltipTool.detached();
         window.chartSeries.detachPrimitive(state.deltaTooltipTool);
         state.deltaTooltipTool = null;
+    }
+
+    // Handle RectangleDrawingTool cleanup
+    if (state.rectangleTool && state.currentTool !== 'rect') {
+        state.rectangleTool.stopDrawing();
     }
 
     // Update UI
@@ -75,6 +84,21 @@ export function setTool(tool) {
         }
     }
 
+    // Initialize RectangleDrawingTool if selected
+    if (state.currentTool === 'rect') {
+        if (!state.rectangleTool) {
+            // Pass null for toolbar container to avoid UI creation
+            state.rectangleTool = new RectangleDrawingTool(window.chart, window.chartSeries, null, {
+                fillColor: 'rgba(33, 150, 243, 0.2)',
+                previewFillColor: 'rgba(33, 150, 243, 0.1)',
+                labelColor: '#2196F3',
+                labelTextColor: 'white',
+                showLabels: true
+            });
+        }
+        state.rectangleTool.startDrawing();
+    }
+
     // Re-highlight active timeframe button
     changeTimeframe(state.currentTimeframe);
 
@@ -112,7 +136,7 @@ export function setupDrawingHandlers() {
 
     // Mouse Move for Dragging (Drawing)
     document.getElementById('chart').addEventListener('mousemove', (e) => {
-        if ((state.currentTool === 'ray' || state.currentTool === 'rect' || state.currentTool === 'fib') && state.activeDrawing && state.startPoint) {
+        if ((state.currentTool === 'ray' || state.currentTool === 'fib') && state.activeDrawing && state.startPoint) {
             const rect = document.getElementById('chart').getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
@@ -135,6 +159,15 @@ export function setupDrawingHandlers() {
     document.addEventListener('keydown', (e) => {
         if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedDrawing) {
             deleteDrawing(state.selectedDrawing);
+        }
+    });
+
+    // Listen for drawings created by plugins
+    window.addEventListener('drawing-created', (e) => {
+        if (e.detail && e.detail.drawing) {
+            state.drawings.push(e.detail.drawing);
+            // If we want to auto-select it or something, we could.
+            // But for now just tracking it is enough for hitTest.
         }
     });
 }
@@ -173,30 +206,7 @@ function handleDrawingClick(param) {
             }
         }
     }
-    else if (state.currentTool === 'rect') {
-        if (!state.startPoint) {
-            if (!time || price === null || price === undefined) return;
-            state.startPoint = { time, price };
-            if (window.Rectangle) {
-                const rect = new window.Rectangle(chart, series, state.startPoint, state.startPoint, {
-                    color: 'rgba(33, 150, 243, 0.2)',
-                    borderColor: '#2196F3'
-                });
-                series.attachPrimitive(rect);
-                state.activeDrawing = rect;
-                state.drawings.push(rect);
-            }
-        } else {
-            if (state.activeDrawing) {
-                state.activeDrawing._p2 = { time, price };
-                if (state.activeDrawing.updateAllViews) state.activeDrawing.updateAllViews();
 
-                state.activeDrawing = null;
-                state.startPoint = null;
-                setTool(null);
-            }
-        }
-    }
     else if (state.currentTool === 'fib') {
         if (!state.startPoint) {
             if (!time || price === null || price === undefined) return;
