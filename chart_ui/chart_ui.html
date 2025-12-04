@@ -109,6 +109,57 @@
         input[type="date"] {
             padding: 5px;
         }
+
+        /* Dropdown Menu Styles */
+        .menu-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .menu-content {
+            display: none;
+            position: absolute;
+            background-color: #2a2e39;
+            min-width: 220px;
+            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.5);
+            z-index: 1000;
+            border-radius: 4px;
+            border: 1px solid #4a4e59;
+            max-height: 450px;
+            overflow-y: auto;
+        }
+        .menu-content a {
+            color: #d1d4dc;
+            padding: 10px 16px;
+            text-decoration: none;
+            display: block;
+            font-size: 13px;
+        }
+        .menu-content a:hover {
+            background-color: #3a3e49;
+        }
+        .menu-dropdown:hover .menu-content {
+            display: block;
+        }
+        .menu-category {
+            color: #888;
+            padding: 8px 16px;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            border-top: 1px solid #363c4e;
+        }
+        .menu-category:first-child {
+            border-top: none;
+        }
+        .plugin-badge {
+            display: inline-block;
+            background: #2962FF;
+            color: white;
+            border-radius: 3px;
+            padding: 2px 6px;
+            font-size: 10px;
+            margin-left: 8px;
+        }
     </style>
 </head>
 
@@ -157,6 +208,48 @@
 
             <div class="divider"></div>
 
+            <!-- Enhanced Plugins Menu -->
+            <div class="menu-dropdown">
+                <button>🧩 Plugins</button>
+                <div class="menu-content">
+                    <div class="menu-category">Tooltips</div>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('tooltip', 'Tooltip', 'primitive');">Crosshair Tooltip</a>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('delta-tooltip', 'Delta Tooltip', 'primitive');">Delta Tooltip</a>
+                    
+                    <div class="menu-category">Visual</div>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('volume-profile', 'Volume Profile', 'primitive');">Volume Profile</a>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('session-highlighting', 'Session Highlighting', 'primitive');">Session Highlighting</a>
+                    
+                    <div class="menu-category">Drawing Tools</div>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('vertical-line', 'Vertical Line', 'primitive');">Vertical Line</a>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('anchored-text', 'Anchored Text', 'primitive');">Anchored Text</a>
+                    
+                    <div class="menu-category">Price Lines</div>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('user-price-lines', 'Price Lines', 'primitive');">User Price Lines</a>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('user-price-alerts', 'Price Alerts', 'primitive');">Price Alerts</a>
+                </div>
+            </div>
+
+            <!-- Enhanced Indicators Menu -->
+            <div class="menu-dropdown">
+                <button>📊 Plugin Indicators</button>
+                <div class="menu-content">
+                    <div class="menu-category">Trend</div>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('moving-average', 'Moving Average', 'indicator');">Moving Average</a>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('momentum', 'Momentum', 'indicator');">Momentum</a>
+                    
+                    <div class="menu-category">Price Analysis</div>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('average-price', 'Average Price', 'indicator');">Average Price</a>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('median-price', 'Median Price', 'indicator');">Median Price</a>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('weighted-close', 'Weighted Close', 'indicator');">Weighted Close</a>
+                    
+                    <div class="menu-category">Mathematical</div>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('percent-change', 'Percent Change', 'indicator');">Percent Change</a>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('correlation', 'Correlation', 'indicator');">Correlation</a>
+                    <a href="#" onclick="event.preventDefault(); loadAndApplyPlugin('product', 'Product', 'indicator');">Product</a>
+                </div>
+            </div>
+
             <!-- Indicators & Strategy -->
             <select id="indicatorSelect" onchange="addIndicatorFromMenu(this)">
                 <option value="" disabled selected>+ Indicators</option>
@@ -198,6 +291,48 @@
     </div>
 
     <script>
+        // ===== PLUGIN SYSTEM =====
+        // Plugin/Module Registry
+        window.pluginModules = new Map();
+        window.activePlugins = [];
+
+        // Dynamic module loader
+        async function loadAndApplyPlugin(moduleName, displayName, type = 'primitive') {
+            if (window.pluginModules.has(moduleName)) {
+                alert(`${displayName} already loaded`);
+                return;
+            }
+            
+            try {
+                const module = await import('./plugins/' + moduleName + '.js');
+                window.pluginModules.set(moduleName, module);
+                
+                // Apply based on type
+                if (type === 'primitive') {
+                    // For TooltipPrimitive, VertLine, etc.
+                    const PrimitiveClass = module[Object.keys(module)[0]];
+                    const primitive = new PrimitiveClass();
+                    window.chartSeries.attachPrimitive(primitive);
+                    window.activePlugins.push({ name: moduleName, instance: primitive });
+                    console.log(`✅ Plugin '${displayName}' loaded and attached`);
+                    alert(`${displayName} enabled!`);
+                }
+                else if (type === 'indicator') {
+                    // For moving-average, etc.
+                    const indicatorFn = module[Object.keys(module)[0]];
+                    const indicatorSeries = indicatorFn(window.chartSeries, { length: 20 });
+                    window.activePlugins.push({ name: moduleName, series: indicatorSeries });
+                    console.log(`✅ Indicator '${displayName}' loaded and applied`);
+                    alert(`${displayName} added!`);
+                }
+                
+            } catch (error) {
+                console.error(`Failed to load ${displayName}:`, error);
+                alert(`Error loading ${displayName}: ${error.message}`);
+            }
+        }
+        window.loadAndApplyPlugin = loadAndApplyPlugin; // Expose globally
+
         // Wait for LightweightCharts ES module to load
         function initChart() {
             // --- Configuration ---
