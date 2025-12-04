@@ -312,6 +312,7 @@ class V {
   _addNewRectangle(t, e) {
     const i = new p(t, e, { ...this._defaultOptions });
     this._rectangles.push(i), o(this._series).attachPrimitive(i);
+    window.dispatchEvent(new CustomEvent('drawing-created', { detail: { drawing: i, type: 'rectangle' } }));
   }
   _removeRectangle(t) {
     o(this._series).detachPrimitive(t);
