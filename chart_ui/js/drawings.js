@@ -335,6 +335,31 @@ function hitTest(point) {
             const x = timeScale.timeToCoordinate(drawing._time);
             if (Math.abs(point.x - x) < 10) return drawing;
         }
+        else if (window.FibonacciRetracement && drawing instanceof window.FibonacciRetracement) {
+            const p1 = drawing._p1;
+            const p2 = drawing._p2;
+            if (!p1 || !p2 || !p1.time || !p2.time || p1.price === undefined || p2.price === undefined) continue;
+
+            const x1 = timeScale.timeToCoordinate(p1.time);
+            const y1 = series.priceToCoordinate(p1.price);
+            const x2 = timeScale.timeToCoordinate(p2.time);
+            const y2 = series.priceToCoordinate(p2.price);
+
+            if (x1 === null || y1 === null || x2 === null || y2 === null) continue;
+
+            const dist = distanceToSegment(point.x, point.y, x1, y1, x2, y2);
+            if (dist < 10) return drawing;
+        }
+        else if (drawing.options && typeof drawing.options === 'function') {
+            const opts = drawing.options();
+            if (opts.price !== undefined) {
+                // This is a PriceLine
+                const y = series.priceToCoordinate(opts.price);
+                if (y !== null && Math.abs(point.y - y) < 10) {
+                    return drawing;
+                }
+            }
+        }
     }
     return null;
 }
@@ -346,6 +371,7 @@ function selectDrawing(drawing) {
             if (state.selectedDrawing instanceof window.TrendLine) state.selectedDrawing.applyOptions({ lineWidth: 2 });
             if (state.selectedDrawing instanceof window.Rectangle) state.selectedDrawing.applyOptions({ fillColor: 'rgba(33, 150, 243, 0.75)', labelColor: '#2196F3' });
             if (state.selectedDrawing instanceof window.VertLine) state.selectedDrawing.applyOptions({ width: 3 });
+            if (state.selectedDrawing instanceof window.FibonacciRetracement) state.selectedDrawing.applyOptions({ lineColor: '#2962FF' });
             // Price Line Deselection
             if (state.selectedDrawing.options && typeof state.selectedDrawing.options === 'function' && state.selectedDrawing.options().price !== undefined) {
                 state.selectedDrawing.applyOptions({ lineWidth: 1, color: '#2962FF' });
@@ -361,6 +387,7 @@ function selectDrawing(drawing) {
             if (drawing instanceof window.TrendLine) drawing.applyOptions({ lineWidth: 4 });
             if (drawing instanceof window.Rectangle) drawing.applyOptions({ fillColor: 'rgba(255, 215, 0, 0.9)', labelColor: '#FFD700' });
             if (drawing instanceof window.VertLine) drawing.applyOptions({ width: 5 });
+            if (drawing instanceof window.FibonacciRetracement) drawing.applyOptions({ lineColor: '#FFD700' });
             // Price Line Selection
             if (drawing.options && typeof drawing.options === 'function' && drawing.options().price !== undefined) {
                 drawing.applyOptions({ lineWidth: 3, color: '#FFD700' });
