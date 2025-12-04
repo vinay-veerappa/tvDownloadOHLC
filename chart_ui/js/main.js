@@ -7,9 +7,18 @@ import { addIndicator, addWatermark } from './indicators.js';
 import { setupModalListeners, renderLegend } from './ui.js';
 import { state } from './state.js';
 
+import { TrendLine } from '../plugins/trend-line.js';
+import { Rectangle } from '../plugins/rectangle-drawing-tool.js';
+import { VertLine } from '../plugins/vertical-line.js';
+
 // Initialize Application
 function initApp() {
     console.log('🚀 Initializing Chart App...');
+
+    // Expose Primitives for drawings.js
+    window.TrendLine = TrendLine;
+    window.Rectangle = Rectangle;
+    window.VertLine = VertLine;
 
     // 1. Setup Chart
     setupChart('chart');
