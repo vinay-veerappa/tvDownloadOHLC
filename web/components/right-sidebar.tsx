@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 
 export interface Drawing {
     id: string
-    type: 'trend-line' | 'fibonacci' | 'rectangle' | 'vertical-line'
+    type: 'trend-line' | 'fibonacci' | 'rectangle' | 'vertical-line' | 'horizontal-line' | 'text'
     createdAt: number
 }
 
