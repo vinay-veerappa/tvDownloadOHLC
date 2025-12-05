@@ -7,9 +7,10 @@ import { addIndicator, addWatermark } from './indicators.js';
 import { setupModalListeners, renderLegend } from './ui.js';
 import { state } from './state.js';
 
-import { TrendLine } from '../plugins/trend-line.js';
+import { TrendLine } from '../trendline_plugin.js';
 import { Rectangle } from '../plugins/rectangle-drawing-tool.js';
-import { VertLine } from '../plugins/vertical-line.js';
+import { VertLine } from '../vertical_line_plugin.js';
+import { FibonacciRetracement } from '../fibonacci_plugin.js';
 
 // Initialize Application
 function initApp() {
@@ -19,6 +20,7 @@ function initApp() {
     window.TrendLine = TrendLine;
     window.Rectangle = Rectangle;
     window.VertLine = VertLine;
+    window.FibonacciRetracement = FibonacciRetracement;
 
     // 1. Setup Chart
     setupChart('chart');
