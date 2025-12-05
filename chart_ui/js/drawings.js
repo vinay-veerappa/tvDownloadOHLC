@@ -15,29 +15,24 @@ export function setTool(tool) {
     state.activeDrawing = null;
     state.startPoint = null;
 
-    // Handle UserPriceLines cleanup
+    // Cleanup all tools
     if (state.userPriceLinesTool && state.currentTool !== 'price_line') {
         state.userPriceLinesTool.remove();
         state.userPriceLinesTool = null;
     }
-
-    // Handle UserPriceAlerts cleanup
     if (state.userPriceAlertsTool && state.currentTool !== 'alert') {
         state.userPriceAlertsTool.detached();
         state.userPriceAlertsTool = null;
     }
-
-    // Handle DeltaTooltipPrimitive cleanup
     if (state.deltaTooltipTool && state.currentTool !== 'measure') {
         state.deltaTooltipTool.detached();
         window.chartSeries.detachPrimitive(state.deltaTooltipTool);
         state.deltaTooltipTool = null;
     }
-
-    // Handle RectangleDrawingTool cleanup
-    if (state.rectangleTool && state.currentTool !== 'rect') {
-        state.rectangleTool.stopDrawing();
-    }
+    if (state.rectangleTool && state.currentTool !== 'rect') state.rectangleTool.stopDrawing();
+    if (state.trendLineTool && state.currentTool !== 'ray') state.trendLineTool.stopDrawing();
+    if (state.fibonacciTool && state.currentTool !== 'fib') state.fibonacciTool.stopDrawing();
+    if (state.vertLineTool && state.currentTool !== 'vert') state.vertLineTool.stopDrawing();
 
     // Update UI
     document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
@@ -49,7 +44,7 @@ export function setTool(tool) {
     if (state.currentTool === 'alert') document.getElementById('btn-alert').classList.add('active');
     if (state.currentTool === 'measure') document.getElementById('btn-measure').classList.add('active');
 
-    // Initialize UserPriceLines if selected
+    // Initialize Tools
     if (state.currentTool === 'price_line') {
         if (!state.userPriceLinesTool) {
             state.userPriceLinesTool = new UserPriceLines(window.chart, window.chartSeries, {
@@ -58,22 +53,13 @@ export function setTool(tool) {
             });
         }
     }
-
-    // Initialize UserPriceAlerts if selected
-    if (state.currentTool === 'alert') {
+    else if (state.currentTool === 'alert') {
         if (!state.userPriceAlertsTool) {
             state.userPriceAlertsTool = new UserPriceAlerts();
-            // We need to manually attach it because it's designed as a primitive but also handles events
-            // The class has an 'attached' method but it's usually called by the series when attached.
-            // However, UserPriceAlerts extends L (listener) and seems to be a primitive.
-            // Let's check if it needs to be attached to series.
-            // Yes, it has paneViews() etc.
             window.chartSeries.attachPrimitive(state.userPriceAlertsTool);
         }
     }
-
-    // Initialize DeltaTooltipPrimitive if selected
-    if (state.currentTool === 'measure') {
+    else if (state.currentTool === 'measure') {
         if (!state.deltaTooltipTool) {
             state.deltaTooltipTool = new DeltaTooltipPrimitive({
                 lineColor: 'rgba(41, 98, 255, 0.5)',
@@ -82,11 +68,8 @@ export function setTool(tool) {
             window.chartSeries.attachPrimitive(state.deltaTooltipTool);
         }
     }
-
-    // Initialize RectangleDrawingTool if selected
-    if (state.currentTool === 'rect') {
+    else if (state.currentTool === 'rect') {
         if (!state.rectangleTool) {
-            // Pass null for toolbar container to avoid UI creation
             state.rectangleTool = new RectangleDrawingTool(window.chart, window.chartSeries, null, {
                 fillColor: 'rgba(33, 150, 243, 0.2)',
                 previewFillColor: 'rgba(33, 150, 243, 0.1)',
@@ -96,6 +79,24 @@ export function setTool(tool) {
             });
         }
         state.rectangleTool.startDrawing();
+    }
+    else if (state.currentTool === 'ray') {
+        if (!state.trendLineTool) {
+            state.trendLineTool = new window.TrendLineTool(window.chart, window.chartSeries);
+        }
+        state.trendLineTool.startDrawing();
+    }
+    else if (state.currentTool === 'fib') {
+        if (!state.fibonacciTool) {
+            state.fibonacciTool = new window.FibonacciTool(window.chart, window.chartSeries);
+        }
+        state.fibonacciTool.startDrawing();
+    }
+    else if (state.currentTool === 'vert') {
+        if (!state.vertLineTool) {
+            state.vertLineTool = new window.VertLineTool(window.chart, window.chartSeries);
+        }
+        state.vertLineTool.startDrawing();
     }
 
     // Re-highlight active timeframe button
@@ -124,44 +125,27 @@ export function setupDrawingHandlers() {
     // Listen for drawings created by plugins
     window.addEventListener('drawing-created', (e) => {
         if (e.detail && e.detail.drawing) {
-            console.log('New drawing created via event:', e.detail.type);
-            state.drawings.push(e.detail.drawing);
-            selectDrawing(e.detail.drawing);
+            // Only add if not already in list (for partial updates)
+            if (!state.drawings.includes(e.detail.drawing)) {
+                console.log('New drawing created via event:', e.detail.type);
+                state.drawings.push(e.detail.drawing);
+            }
+
+            // If it's a finished drawing (not partial), select it
+            if (e.detail.partial === false) {
+                selectDrawing(e.detail.drawing);
+            }
         }
     });
 
     chart.subscribeClick((param) => {
         if (!param.point) return;
 
-        if (state.currentTool) {
-            // Drawing mode - need time for drawing
-            if (!param.time) return;
-            handleDrawingClick(param);
-        } else {
-            // Selection Mode - don't need time to select
+        // If not in a drawing tool mode, check for selection
+        // Note: Drawing tools now handle their own clicks via startDrawing()
+        if (!state.currentTool) {
             const hit = hitTest(param.point);
             selectDrawing(hit);
-        }
-    });
-
-    // Mouse Move for Dragging (Drawing)
-    document.getElementById('chart').addEventListener('mousemove', (e) => {
-        if ((state.currentTool === 'ray' || state.currentTool === 'fib') && state.activeDrawing && state.startPoint) {
-            const rect = document.getElementById('chart').getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-
-            const time = chart.timeScale().coordinateToTime(x);
-            const price = series.coordinateToPrice(y);
-
-            if (time && price !== null && price !== undefined) {
-                state.activeDrawing._p2 = { time, price };
-                if (state.activeDrawing.updateAllViews) {
-                    state.activeDrawing.updateAllViews();
-                } else if (state.activeDrawing._requestUpdate) {
-                    state.activeDrawing._requestUpdate();
-                }
-            }
         }
     });
 
@@ -169,13 +153,6 @@ export function setupDrawingHandlers() {
     document.addEventListener('keydown', (e) => {
         if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedDrawing) {
             deleteDrawing(state.selectedDrawing);
-        }
-    });
-
-    // Listen for drawings created by plugins
-    window.addEventListener('drawing-created', (e) => {
-        if (e.detail && e.detail.drawing) {
-            state.drawings.push(e.detail.drawing);
         }
     });
 
@@ -222,70 +199,7 @@ export function setupDrawingHandlers() {
 }
 
 function handleDrawingClick(param) {
-    const series = window.chartSeries;
-    const chart = window.chart;
-    const price = series.coordinateToPrice(param.point.y);
-    const time = param.time;
-
-    if (state.currentTool === 'ray') {
-        if (!state.startPoint) {
-            state.startPoint = { time, price };
-            if (window.TrendLine) {
-                const tl = new window.TrendLine(chart, series, state.startPoint, state.startPoint, { lineColor: '#D500F9', lineWidth: 2 });
-                series.attachPrimitive(tl);
-                state.activeDrawing = tl;
-                state.drawings.push(tl);
-            }
-        } else {
-            if (state.activeDrawing) {
-                state.activeDrawing._p2 = { time, price };
-                if (state.activeDrawing.updateAllViews) state.activeDrawing.updateAllViews();
-
-                state.activeDrawing = null;
-                state.startPoint = null;
-                setTool(null);
-            }
-        }
-    }
-
-    else if (state.currentTool === 'fib') {
-        if (!state.startPoint) {
-            if (!time || price === null || price === undefined) return;
-            state.startPoint = { time, price };
-            if (window.FibonacciRetracement) {
-                const fib = new window.FibonacciRetracement(chart, series, state.startPoint, state.startPoint, { lineColor: '#2962FF' });
-                series.attachPrimitive(fib);
-                state.activeDrawing = fib;
-                state.drawings.push(fib);
-            }
-        } else {
-            if (state.activeDrawing) {
-                state.activeDrawing._p2 = { time, price };
-                // Fib plugin uses requestUpdate internally when p2 changes if we used updateEnd, 
-                // but here we set _p2 directly. We need to trigger update.
-                // The library calls paneViews() on update, so we just need to ensure the chart redraws.
-                // But let's add updateAllViews to Fib plugin for consistency or check if it has it.
-                if (state.activeDrawing.updateAllViews) state.activeDrawing.updateAllViews();
-                else if (state.activeDrawing._requestUpdate) state.activeDrawing._requestUpdate();
-
-                state.activeDrawing = null;
-                state.startPoint = null;
-                setTool(null);
-            }
-        }
-    }
-    else if (state.currentTool === 'vert') {
-        if (window.VertLine) {
-            const vl = new window.VertLine(chart, series, time, {
-                color: '#2962FF',
-                labelText: new Date(time * 1000).toLocaleDateString(),
-                showLabel: true
-            });
-            series.attachPrimitive(vl);
-            state.drawings.push(vl);
-            setTool(null);
-        }
-    }
+    // Deprecated: Tools now handle their own clicks
 }
 
 function hitTest(point) {
