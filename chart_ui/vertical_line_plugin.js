@@ -133,6 +133,16 @@ class VertLine {
         this.updateAllViews();
     }
 
+    // Apply options for property modification
+    applyOptions(options) {
+        this._options = { ...this._options, ...options };
+        // Update the views with new options
+        this._paneViews = [new VertLinePaneView(this, this._options)];
+        this._timeAxisViews = [new VertLineTimeAxisView(this, this._options)];
+        this.updateAllViews();
+        if (this._requestUpdate) this._requestUpdate();
+    }
+
     // Required for v5 primitives
     attached({ chart, series, requestUpdate }) {
         this._requestUpdate = requestUpdate;
