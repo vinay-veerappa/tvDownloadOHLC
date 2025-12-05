@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, forwardRef, useImperativeHandle } from "react"
+import { useEffect, useRef, forwardRef, useImperativeHandle, useState } from "react"
 import { useChart } from "@/hooks/use-chart"
 import { getChartData } from "@/actions/data-actions"
 import { DrawingTool } from "./left-toolbar"
@@ -20,15 +20,17 @@ interface ChartContainerProps {
     selectedTool: DrawingTool
     onToolSelect: (tool: DrawingTool) => void
     onDrawingCreated: (drawing: Drawing) => void
+    indicators: string[]
 }
 
 export interface ChartContainerRef {
     deleteDrawing: (id: string) => void
 }
 
-export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated }, ref) => {
+export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, indicators }, ref) => {
     const chartContainerRef = useRef<HTMLDivElement>(null)
-    const { chart, series } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style)
+    const [data, setData] = useState<any[]>([])
+    const { chart, series } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data)
     const activeToolRef = useRef<any>(null)
     const drawingsRef = useRef<Map<string, any>>(new Map())
     const { openTradeDialog } = useTradeContext()
@@ -47,25 +49,18 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
     // Load Data
     useEffect(() => {
-        if (!series) return
-
         async function loadData() {
             try {
                 const result = await getChartData(ticker, timeframe)
-                if (result.success && result.data && series) {
-                    const data = style === 'heiken-ashi'
-                        ? calculateHeikenAshi(result.data as any)
-                        : result.data
-
-                    series.setData(data as any)
-                    chart?.timeScale().fitContent()
+                if (result.success && result.data) {
+                    setData(result.data)
                 }
             } catch (e) {
                 console.error("Failed to load data:", e)
             }
         }
         loadData()
-    }, [series, ticker, timeframe, chart, style])
+    }, [ticker, timeframe])
 
     // Handle Tool Selection
     useEffect(() => {

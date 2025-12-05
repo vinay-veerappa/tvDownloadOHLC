@@ -37,6 +37,7 @@ export function ChartWrapper(props: any) {
                     selectedTool={selectedTool}
                     onToolSelect={setSelectedTool}
                     onDrawingCreated={handleDrawingCreated}
+                    indicators={props.indicators || []}
                 />
             </div>
             <RightSidebar drawings={drawings} onDeleteDrawing={handleDeleteDrawing} />
