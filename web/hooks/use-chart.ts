@@ -17,6 +17,7 @@ import {
 import { calculateSMA, calculateEMA } from "@/lib/charts/indicators"
 import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
 import { AnchoredText } from "@/lib/charts/plugins/anchored-text"
+import { SessionHighlighting } from "@/lib/charts/plugins/session-highlighting"
 
 export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: string = 'candles', indicators: string[] = [], data: any[] = [], markers: any[] = []) {
     const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
@@ -204,6 +205,16 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
                         series: seriesInstance
                     });
                     primitivesRef.current.push(watermark);
+                }
+            } else if (type === 'sessions') {
+                if (seriesInstance) {
+                    const sessions = new SessionHighlighting();
+                    seriesInstance.attachPrimitive(sessions);
+                    (indicatorSeries as any[]).push({
+                        primitive: sessions,
+                        series: seriesInstance
+                    });
+                    primitivesRef.current.push(sessions);
                 }
             }
         })
