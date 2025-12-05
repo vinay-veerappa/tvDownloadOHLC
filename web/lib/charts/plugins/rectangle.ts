@@ -1,4 +1,5 @@
 import { IChartApi, ISeriesApi, Time, ISeriesPrimitive, Coordinate } from "lightweight-charts";
+import { getLineDash } from "../chart-utils";
 
 interface Point {
     time: Time;
@@ -12,6 +13,7 @@ interface RectangleOptions {
     previewFillColor: string;
     borderColor: string;
     borderWidth: number;
+    lineStyle?: number;
     labelColor: string;
     labelTextColor: string;
     showLabels: boolean;
@@ -97,11 +99,13 @@ class RectangleRenderer {
 
             // Draw Border
             if (this._options.borderWidth > 0) {
-                ctx.lineWidth = this._options.borderWidth * hPR; // Scale? usually yes for high DPI
+                ctx.lineWidth = this._options.borderWidth * hPR;
                 ctx.strokeStyle = this._options.borderColor;
-                ctx.setLineDash([]); // Solid border for now
+                ctx.setLineDash(getLineDash(this._options.lineStyle || 0).map(d => d * hPR));
                 ctx.strokeRect(left, top, width, height);
+                ctx.setLineDash([]);
             }
+
 
             // Internal Lines
             const drawInternalLine = (y: number, styles: { color: string, width: number, style: number }) => {

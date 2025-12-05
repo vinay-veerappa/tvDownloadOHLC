@@ -1,10 +1,11 @@
 import { IChartApi, ISeriesApi, ISeriesPrimitive, Coordinate } from "lightweight-charts";
 import { TextLabel } from "./text-label";
+import { getLineDash } from "../chart-utils";
 
 export interface HorizontalLineOptions {
     color: string;
     width: number;
-    style: number; // 0=Solid, 1=Dotted, 2=Dashed
+    lineStyle?: number;
     labelBackgroundColor: string;
     labelTextColor: string;
     showLabel: boolean;
@@ -17,7 +18,7 @@ export interface HorizontalLineOptions {
 const defaultOptions: HorizontalLineOptions = {
     color: '#2962FF',
     width: 1,
-    style: 1, // Dotted by default
+    lineStyle: 1, // Dotted by default
     labelBackgroundColor: '#2962FF',
     labelTextColor: 'white',
     showLabel: true,
@@ -50,15 +51,11 @@ class HorizontalLinePaneRenderer {
             ctx.beginPath();
             ctx.strokeStyle = this._options.color;
             ctx.lineWidth = this._options.width * vPR;
-
-            // Line Style
-            if (this._options.style === 1) ctx.setLineDash([2 * vPR, 2 * vPR]); // Dotted
-            else if (this._options.style === 2) ctx.setLineDash([6 * vPR, 6 * vPR]); // Dashed
-            else ctx.setLineDash([]);
-
+            ctx.setLineDash(getLineDash(this._options.lineStyle || 1).map(d => d * hPR));
             ctx.moveTo(0, y);
-            ctx.lineTo(width, y);
+            ctx.lineTo(scope.bitmapSize.width, y);
             ctx.stroke();
+            ctx.setLineDash([]);
 
             // Draw selection handle (circle) at the right or left? 
             // Usually simply highlighting the line is enough, but handles help indicate "selected"

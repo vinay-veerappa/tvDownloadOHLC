@@ -1,8 +1,12 @@
 import { IChartApi, ISeriesApi, ISeriesPrimitive, Time } from "lightweight-charts";
 import { TextLabel, TextLabelOptions } from "./text-label";
+import { getLineDash } from "../chart-utils";
 
 export interface TextDrawingOptions extends TextLabelOptions {
-    // Add any specific drawing options if needed
+    borderVisible?: boolean;
+    borderColor?: string;
+    borderWidth?: number;
+    lineStyle?: number;
 }
 
 class TextDrawingPaneRenderer {
@@ -28,21 +32,6 @@ class TextDrawingPaneRenderer {
 
             this._textLabel.update(this._x, this._y);
             this._textLabel.draw(ctx, hPR, vPR);
-
-            if (this._selected) {
-                // Draw selection box around text? 
-                // Since TextLabel draws itself, we might not know dimensions here easily unless we ask TextLabel.
-                // For now, let's assume TextLabel handles its own rendering.
-                // We could draw a small circle at the anchor point to indicate selection.
-
-                const anchorX = this._x * hPR;
-                const anchorY = this._y * vPR;
-
-                ctx.beginPath();
-                ctx.arc(anchorX, anchorY, 4 * vPR, 0, 2 * Math.PI);
-                ctx.fillStyle = 'blue';
-                ctx.fill();
-            }
         });
     }
 }
@@ -90,7 +79,10 @@ export class TextDrawing implements ISeriesPrimitive {
         this._options = options;
         this._id = Math.random().toString(36).substring(7);
 
-        this._textLabel = new TextLabel(0, 0, options);
+        this._textLabel = new TextLabel(0, 0, {
+            ...options,
+            borderStyle: options.lineStyle
+        });
         this._paneViews = [new TextDrawingPaneView(this)];
     }
 
@@ -99,7 +91,10 @@ export class TextDrawing implements ISeriesPrimitive {
 
     applyOptions(options: Partial<TextDrawingOptions>) {
         this._options = { ...this._options, ...options };
-        this._textLabel.update(0, 0, this._options);
+        this._textLabel.update(0, 0, {
+            ...this._options,
+            borderStyle: this._options.lineStyle
+        });
         this.updateAllViews();
     }
 

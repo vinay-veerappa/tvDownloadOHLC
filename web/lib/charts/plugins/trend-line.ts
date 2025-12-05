@@ -1,5 +1,6 @@
 import { IChartApi, ISeriesApi, Time, ISeriesPrimitive, SeriesOptionsCommon, Logical, Coordinate } from "lightweight-charts";
 import { TextLabel } from "./text-label";
+import { getLineDash } from "../chart-utils";
 
 interface Point {
     time: Time;
@@ -9,6 +10,7 @@ interface Point {
 interface TrendLineOptions {
     lineColor: string;
     lineWidth: number;
+    lineStyle?: number;
     text?: string;
     textColor?: string;
 }
@@ -18,6 +20,7 @@ class TrendLineRenderer {
     private _p2: { x: number | null; y: number | null };
     private _color: string;
     private _width: number;
+    private _lineStyle: number;
     private _textLabel: TextLabel | null;
     private _selected: boolean;
 
@@ -26,6 +29,7 @@ class TrendLineRenderer {
         p2: { x: number | null; y: number | null },
         color: string,
         width: number,
+        lineStyle: number,
         textLabel: TextLabel | null,
         selected: boolean = false
     ) {
@@ -33,6 +37,7 @@ class TrendLineRenderer {
         this._p2 = p2;
         this._color = color;
         this._width = width;
+        this._lineStyle = lineStyle;
         this._textLabel = textLabel;
         this._selected = selected;
     }
@@ -48,10 +53,14 @@ class TrendLineRenderer {
             // Draw the main line
             ctx.lineWidth = this._width * horizontalPixelRatio;
             ctx.strokeStyle = this._color;
+            ctx.lineWidth = this._width * horizontalPixelRatio;
+            ctx.strokeStyle = this._color;
+            ctx.setLineDash(getLineDash(this._lineStyle).map(d => d * horizontalPixelRatio));
             ctx.beginPath();
             ctx.moveTo(this._p1.x * horizontalPixelRatio, this._p1.y * verticalPixelRatio);
             ctx.lineTo(this._p2.x * horizontalPixelRatio, this._p2.y * verticalPixelRatio);
             ctx.stroke();
+            ctx.setLineDash([]);
 
             // Draw handles when selected
             if (this._selected) {
@@ -106,6 +115,7 @@ class TrendLinePaneView {
             this._source._p2Point,
             this._source._options.lineColor,
             this._source._options.lineWidth,
+            this._source._options.lineStyle || 0,
             this._source._textLabel,
             this._source._selected
         );

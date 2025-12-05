@@ -1,3 +1,5 @@
+import { getLineDash } from "../chart-utils";
+
 export interface TextLabelOptions {
     text: string;
     fontSize?: number;
@@ -5,6 +7,7 @@ export interface TextLabelOptions {
     color?: string;
     borderVisible?: boolean;
     borderWidth?: number;
+    borderStyle?: number; // 0=Solid, 1=Dotted, etc
     borderColor?: string;
     backgroundColor?: string;
     padding?: number;
@@ -145,14 +148,15 @@ export class TextLabel {
         // Draw Border
         if (this._options.borderVisible && this._options.borderWidth && this._options.borderWidth > 0) {
             ctx.strokeStyle = this._options.borderColor || '#FFFFFF';
-            ctx.lineWidth = this._options.borderWidth * horizontalPixelRatio; // Scale border? usually yes
-            // ctx.setLineDash([]); // Assuming solid for now, can add style later if requested
+            ctx.lineWidth = this._options.borderWidth * horizontalPixelRatio;
+            ctx.setLineDash(getLineDash(this._options.borderStyle || 0).map(d => d * horizontalPixelRatio));
             ctx.strokeRect(
                 x - padding,
                 y - padding,
                 maxWidth + (padding * 2),
                 totalHeight + (padding * 2)
             );
+            ctx.setLineDash([]);
         }
 
         // Draw each line of text

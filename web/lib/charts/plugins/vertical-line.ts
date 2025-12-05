@@ -1,11 +1,14 @@
 import { IChartApi, ISeriesApi, Time, ISeriesPrimitive, Coordinate } from "lightweight-charts";
 
+
 import { TextLabel } from "./text-label";
+import { getLineDash } from "../chart-utils";
 
 interface VertLineOptions {
     color: string;
     labelText: string;
     width: number;
+    lineStyle?: number;
     labelBackgroundColor: string;
     labelTextColor: string;
     showLabel: boolean;
@@ -49,19 +52,16 @@ class VertLinePaneRenderer {
             const hPR = scope.horizontalPixelRatio;
             const vPR = scope.verticalPixelRatio;
 
-            const position = positionsLine(
-                this._x,
-                hPR,
-                this._options.width
-            );
+            const x = Math.round(this._x * hPR);
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, scope.bitmapSize.height);
 
-            ctx.fillStyle = this._options.color;
-            ctx.fillRect(
-                position.position,
-                0,
-                position.length,
-                scope.bitmapSize.height
-            );
+            ctx.lineWidth = Math.max(1, this._options.width * hPR);
+            ctx.strokeStyle = this._options.color;
+            ctx.setLineDash(getLineDash(this._options.lineStyle || 0).map(d => d * hPR));
+            ctx.stroke();
+            ctx.setLineDash([]);
 
             if (this._textLabel) {
                 // Draw text near the top of the line
@@ -91,7 +91,7 @@ class VertLinePaneView {
     }
 
     renderer() {
-        return new VertLinePaneRenderer(this._x, this._options, this._source._textLabel);
+        return new VertLinePaneRenderer(this._x, this._source._options, this._source._textLabel);
     }
 }
 
@@ -111,11 +111,11 @@ class VertLineTimeAxisView {
     }
 
     visible() {
-        return this._options.showLabel;
+        return this._source._options.showLabel;
     }
 
     tickVisible() {
-        return this._options.showLabel;
+        return this._source._options.showLabel;
     }
 
     coordinate() {
@@ -123,15 +123,15 @@ class VertLineTimeAxisView {
     }
 
     text() {
-        return this._options.labelText;
+        return this._source._options.labelText;
     }
 
     textColor() {
-        return this._options.labelTextColor;
+        return this._source._options.labelTextColor;
     }
 
     backColor() {
-        return this._options.labelBackgroundColor;
+        return this._source._options.labelBackgroundColor;
     }
 }
 
