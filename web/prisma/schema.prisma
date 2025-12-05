@@ -1,0 +1,48 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Trade {
+  id          String   @id @default(uuid())
+  symbol      String
+  direction   String   // "LONG" or "SHORT"
+  entryDate   DateTime
+  exitDate    DateTime?
+  entryPrice  Float
+  exitPrice   Float?
+  quantity    Float
+  status      String   // "OPEN", "CLOSED", "PENDING"
+  pnl         Float?
+  notes       String?
+  
+  tags        Tag[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Journal {
+  id        String   @id @default(uuid())
+  date      DateTime @unique
+  content   String
+  mood      String?  // "HAPPY", "FRUSTRATED", "NEUTRAL"
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Tag {
+  id     String  @id @default(uuid())
+  name   String  @unique
+  color  String  @default("#808080")
+  
+  trades Trade[]
+}
