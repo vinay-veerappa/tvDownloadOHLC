@@ -27,7 +27,9 @@ export async function getChartData(ticker: string, timeframe: string): Promise<{
         }
 
         // Execute Python script
-        const { stdout, stderr } = await execAsync(`python "${scriptPath}" "${filePath}"`)
+        // Execute Python script
+        // Increase maxBuffer to 50MB to handle large JSON output
+        const { stdout, stderr } = await execAsync(`python "${scriptPath}" "${filePath}"`, { maxBuffer: 50 * 1024 * 1024 })
 
         if (stderr) {
             console.error(`[getChartData] Stderr: ${stderr}`)
@@ -48,41 +50,46 @@ export async function getChartData(ticker: string, timeframe: string): Promise<{
     }
 }
 
-export async function getAvailableData(): Promise<{ success: boolean, tickers: string[], timeframes: string[] }> {
+export async function getAvailableData(): Promise<{ success: boolean, tickers: string[], timeframes: string[], tickerMap: Record<string, string[]> }> {
     try {
         const dataDir = path.join(process.cwd(), "..", "data")
         if (!fs.existsSync(dataDir)) {
-            return { success: false, tickers: [], timeframes: [] }
+            return { success: false, tickers: [], timeframes: [], tickerMap: {} }
         }
 
         const files = fs.readdirSync(dataDir).filter(f => f.endsWith('.parquet'))
-        const tickers = new Set<string>()
-        const timeframes = new Set<string>()
+        const tickerMap: Record<string, string[]> = {}
 
         files.forEach(file => {
             // Expected format: Ticker_Timeframe.parquet
             const name = path.basename(file, '.parquet')
             const parts = name.split('_')
             if (parts.length >= 2) {
-                // Handle cases like ES1_1D or NQ1_1m
-                // If ticker has underscores, this might be tricky, but assuming standard format
-                const timeframe = parts.pop() // Last part is timeframe
+                const timeframe = parts.pop()! // Last part is timeframe
                 const ticker = parts.join('_') // Rest is ticker
 
                 if (ticker && timeframe) {
-                    tickers.add(ticker)
-                    timeframes.add(timeframe)
+                    if (!tickerMap[ticker]) {
+                        tickerMap[ticker] = []
+                    }
+                    tickerMap[ticker].push(timeframe)
                 }
             }
         })
 
+        // Sort timeframes for each ticker
+        Object.keys(tickerMap).forEach(ticker => {
+            tickerMap[ticker].sort()
+        })
+
         return {
             success: true,
-            tickers: Array.from(tickers).sort(),
-            timeframes: Array.from(timeframes).sort() // You might want custom sorting for timeframes later
+            tickers: Object.keys(tickerMap).sort(),
+            timeframes: Array.from(new Set(Object.values(tickerMap).flat())).sort(),
+            tickerMap // Return the map
         }
     } catch (error) {
         console.error("Error listing data files:", error)
-        return { success: false, tickers: [], timeframes: [] }
+        return { success: false, tickers: [], timeframes: [], tickerMap: {} }
     }
 }

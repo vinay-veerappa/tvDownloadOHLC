@@ -12,6 +12,7 @@ import { VertLineTool } from "@/lib/charts/plugins/vertical-line"
 import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
 
 import { useTradeContext } from "@/components/journal/trade-context"
+import { toast } from "sonner"
 
 interface ChartContainerProps {
     ticker: string
@@ -54,9 +55,12 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 const result = await getChartData(ticker, timeframe)
                 if (result.success && result.data) {
                     setData(result.data)
+                } else {
+                    toast.error(`Failed to load data for ${ticker} ${timeframe}`)
                 }
             } catch (e) {
                 console.error("Failed to load data:", e)
+                toast.error("An unexpected error occurred while loading data")
             }
         }
         loadData()

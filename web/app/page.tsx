@@ -10,7 +10,7 @@ interface PageProps {
 
 export default async function Home(props: PageProps) {
   const searchParams = await props.searchParams
-  const { tickers, timeframes } = await getAvailableData()
+  const { tickers, timeframes, tickerMap } = await getAvailableData()
 
   const ticker = (searchParams?.ticker as string) || "ES1"
   const timeframe = (searchParams?.timeframe as string) || "1D"
@@ -21,7 +21,7 @@ export default async function Home(props: PageProps) {
       <Card className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Top Toolbar integrated into Card */}
         <div className="border-b">
-          <TopToolbar tickers={tickers} timeframes={timeframes}>
+          <TopToolbar tickers={tickers} timeframes={timeframes} tickerMap={tickerMap || {}}>
             <div className="flex items-center gap-4 px-4">
               <div className="h-4 w-[1px] bg-border" />
               <div className="flex items-center gap-2 text-sm">
