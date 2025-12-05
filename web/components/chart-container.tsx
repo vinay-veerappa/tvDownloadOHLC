@@ -116,6 +116,17 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         const vTime = saved.p1?.time ?? saved.p1;
                         drawing = new VertLine(chart, series, vTime, saved.options);
                         break;
+                    case 'horizontal-line':
+                        // Restore HorizontalLine - uses price
+                        const { HorizontalLine } = require('@/lib/charts/plugins/horizontal-line');
+                        const hPrice = saved.p1?.price ?? saved.p1;
+                        drawing = new HorizontalLine(chart, series, hPrice, saved.options);
+                        break;
+                    case 'text':
+                        // Restore TextDrawing
+                        const { TextDrawing } = require('@/lib/charts/plugins/text-tool');
+                        drawing = new TextDrawing(chart, series, saved.p1.time, saved.p1.price, saved.options);
+                        break;
                 }
 
                 if (drawing) {
@@ -175,12 +186,20 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             case 'vertical-line':
                 ToolClass = VertLineTool
                 break
+            case 'horizontal-line':
+                const { HorizontalLineTool } = require('@/lib/charts/plugins/horizontal-line');
+                ToolClass = HorizontalLineTool
+                break
+            case 'text':
+                const { TextTool } = require('@/lib/charts/plugins/text-tool');
+                ToolClass = TextTool
+                break;
         }
 
         if (ToolClass) {
             console.log('Instantiating tool:', selectedTool);
             // Prepare magnet options for tools that support it
-            const magnetOptions = selectedTool !== 'vertical-line'
+            const magnetOptions = selectedTool !== 'vertical-line' && selectedTool !== 'horizontal-line' && selectedTool !== 'text'
                 ? { magnetMode, ohlcData: data }
                 : undefined;
             const tool = new ToolClass(chart, series, (drawing: any) => {
@@ -192,6 +211,18 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     console.log('Registering drawing with ID:', id);
                     drawingsRef.current.set(id, drawing)
 
+                    // If it's a new Text tool (or generic if we want), select it and open properties
+                    if (selectedTool === 'text') {
+                        setSelectedDrawingId(id);
+                        selectedDrawingRef.current = drawing;
+                        if (drawing.setSelected) drawing.setSelected(true);
+
+                        // Open modal immediately for text editing
+                        setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
+                        setSelectedDrawingType('text');
+                        setPropertiesModalOpen(true);
+                    }
+
                     // Serialize and save to storage
                     // Handle different drawing types appropriately
                     let serialized: SerializedDrawing;
@@ -202,6 +233,25 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                             type: selectedTool as any,
                             p1: { time: drawing._time, price: 0 },
                             p2: { time: drawing._time, price: 0 },
+                            options: drawing._options,
+                            createdAt: Date.now()
+                        };
+                    } else if (selectedTool === 'horizontal-line') {
+                        // HorizontalLine uses _price
+                        serialized = {
+                            id,
+                            type: selectedTool as any,
+                            p1: { time: 0, price: drawing._price },
+                            p2: { time: 0, price: drawing._price },
+                            options: drawing._options,
+                            createdAt: Date.now()
+                        };
+                    } else if (selectedTool === 'text') {
+                        serialized = {
+                            id,
+                            type: selectedTool as any,
+                            p1: { time: drawing._time, price: drawing._price },
+                            p2: { time: drawing._time, price: drawing._price }, // p2 redundant
                             options: drawing._options,
                             createdAt: Date.now()
                         };
@@ -381,6 +431,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     else if (className === 'Rectangle') drawingType = 'rectangle';
                     else if (className === 'FibonacciRetracement') drawingType = 'fibonacci';
                     else if (className === 'VertLine') drawingType = 'vertical-line';
+                    else if (className === 'HorizontalLine') drawingType = 'horizontal-line';
+                    else if (className === 'TextDrawing') drawingType = 'text';
 
                     setSelectedDrawingType(drawingType)
                     setPropertiesModalOpen(true)
@@ -487,6 +539,17 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 return closest;
             };
 
+            const coordToTime = (baseTime: any, pixelDelta: number) => {
+                const baseCoord = timeScale.timeToCoordinate(baseTime) as number
+                return timeScale.coordinateToTime(baseCoord + pixelDelta)
+            }
+            const coordToPrice = (basePrice: number, pixelDelta: number, time?: any) => {
+                const baseCoord = series.priceToCoordinate(basePrice) as number
+                const rawPrice = series.coordinateToPrice(baseCoord + pixelDelta) as number
+                if (rawPrice === null) return null
+                return time ? findSnapPrice(time, rawPrice) : rawPrice
+            }
+
             // For Rectangle corner/edge handles, we need to update both points appropriately
             if (drawing.constructor?.name === 'Rectangle') {
                 const minTime = Math.min(startP1.time, startP2.time)
@@ -496,17 +559,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
                 let newP1 = { ...startP1 }
                 let newP2 = { ...startP2 }
-
-                const coordToTime = (baseTime: any, pixelDelta: number) => {
-                    const baseCoord = timeScale.timeToCoordinate(baseTime) as number
-                    return timeScale.coordinateToTime(baseCoord + pixelDelta)
-                }
-                const coordToPrice = (basePrice: number, pixelDelta: number, time?: any) => {
-                    const baseCoord = series.priceToCoordinate(basePrice) as number
-                    const rawPrice = series.coordinateToPrice(baseCoord + pixelDelta) as number
-                    if (rawPrice === null) return null
-                    return time ? findSnapPrice(time, rawPrice) : rawPrice
-                }
 
                 if (hitType === 'body' || hitType === 'center') {
                     // Move entire rectangle
@@ -574,6 +626,36 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
                 if (drawing.updatePoints) {
                     drawing.updatePoints(newP1, newP2)
+                }
+            } else if (selectedDrawingType === 'horizontal-line') {
+                // Horizontal Line - only Y/Price changes
+                const rawPrice = series.coordinateToPrice(
+                    (series.priceToCoordinate(startP1.price) as number) + dy
+                ) as number
+
+                if (rawPrice !== null) {
+                    const newPrice = findSnapPrice(null, rawPrice); // Magnet for price? Only if needed. Start with null time. 
+                    // Actually findSnapPrice likely requires time to match bar? 
+                    // Horizontal line snaps to High/Low of bars nearby? 
+                    // For now, let's just use rawPrice or simple price magnet if we can infer time. 
+                    // Simpler: Just rawPrice for now, add PriceMagnet later if requested.
+
+                    const newP = { price: newPrice };
+                    if (drawing.updatePoints) {
+                        drawing.updatePoints(newP);
+                    }
+                }
+            } else if (selectedDrawingType === 'text') {
+                // Text Tool - moves like a point (Time/Price)
+                const newTime = coordToTime(startP1.time, dx);
+                // Disable magnet for text: do not pass time to coordToPrice
+                const newPrice = coordToPrice(startP1.price, dy);
+
+                if (newTime && newPrice !== null) {
+                    const newP = { time: newTime, price: newPrice };
+                    if (drawing.updatePoints) {
+                        drawing.updatePoints(newP);
+                    }
                 }
             } else {
                 // TrendLine, Fibonacci - simple two-point handling
@@ -652,12 +734,14 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     if (className === 'Rectangle') drawingType = 'rectangle'
                     else if (className === 'FibonacciRetracement') drawingType = 'fibonacci'
                     else if (className === 'VertLine') drawingType = 'vertical-line'
+                    else if (className === 'HorizontalLine') drawingType = 'horizontal-line'
+                    else if (className === 'TextDrawing') drawingType = 'text'
 
                     const serialized: SerializedDrawing = {
                         id,
                         type: drawingType as any,
                         p1: drawing._p1,
-                        p2: drawing._p2,
+                        p2: drawing._p2, // Text/Horizontal/Vert will return duplicate/dummy p2 via getter
                         options: drawing._options,
                         createdAt: Date.now()
                     }

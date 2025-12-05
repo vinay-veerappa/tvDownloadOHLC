@@ -3,6 +3,9 @@ export interface TextLabelOptions {
     fontSize?: number;
     fontFamily?: string;
     color?: string;
+    borderVisible?: boolean;
+    borderWidth?: number;
+    borderColor?: string;
     backgroundColor?: string;
     padding?: number;
     visible?: boolean;
@@ -33,6 +36,9 @@ export class TextLabel {
             padding: 4,
             visible: true,
             orientation: 'horizontal',
+            borderVisible: false,
+            borderWidth: 1,
+            borderColor: '#FFFFFF',
             ...options
         };
     }
@@ -136,6 +142,19 @@ export class TextLabel {
             );
         }
 
+        // Draw Border
+        if (this._options.borderVisible && this._options.borderWidth && this._options.borderWidth > 0) {
+            ctx.strokeStyle = this._options.borderColor || '#FFFFFF';
+            ctx.lineWidth = this._options.borderWidth * horizontalPixelRatio; // Scale border? usually yes
+            // ctx.setLineDash([]); // Assuming solid for now, can add style later if requested
+            ctx.strokeRect(
+                x - padding,
+                y - padding,
+                maxWidth + (padding * 2),
+                totalHeight + (padding * 2)
+            );
+        }
+
         // Draw each line of text
         ctx.fillStyle = this._options.color || '#FFFFFF';
         ctx.textBaseline = 'top';
@@ -145,10 +164,33 @@ export class TextLabel {
             ctx.fillText(line, x, lineY);
         });
 
+        // Store bounding box for hit testing (in pixels relative to origin 0,0)
+        // We need to convert back to CSS pixels potentially or just store what we used here?
+        // hitTest(x,y) comes in media coordinates (CSS pixels), so tracking screen coordinates is tricky if PR changes.
+        // Better to store the computed rect relative to (x, y) anchor and then apply that during hit test.
+
+        // Rect relative to anchor (this._x, this._y)
+        this._box = {
+            offsetX: offsetX / horizontalPixelRatio,
+            offsetY: offsetY / verticalPixelRatio,
+            width: (maxWidth + padding * 2) / horizontalPixelRatio,
+            height: (totalHeight + padding * 2) / verticalPixelRatio,
+            padding: padding / horizontalPixelRatio
+        };
+
         ctx.restore();
     }
 
+    private _box: { offsetX: number; offsetY: number; width: number; height: number; padding: number } | null = null;
+
     hitTest(x: number, y: number): boolean {
-        return false;
+        if (!this._box || !this._options.visible) return false;
+
+        const left = this._x + this._box.offsetX - this._box.padding;
+        const top = this._y + this._box.offsetY - this._box.padding;
+        const right = left + this._box.width;
+        const bottom = top + this._box.height;
+
+        return x >= left && x <= right && y >= top && y <= bottom;
     }
 }

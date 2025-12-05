@@ -244,6 +244,11 @@ export class VertLine implements ISeriesPrimitive {
         this.updateAllViews();
     }
 
+    // Compatibility
+    get _p1() { return { time: this._time, price: 0 }; }
+    get _p2() { return this._p1; }
+    set _p1(p: { time: Time, price: number }) { this.updateTime(p.time); }
+
     attached({ chart, series, requestUpdate }: any) {
         this._requestUpdate = requestUpdate;
         this.updateAllViews();

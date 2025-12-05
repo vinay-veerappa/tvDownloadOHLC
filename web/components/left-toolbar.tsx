@@ -1,12 +1,12 @@
 "use client"
 
 import * as React from "react"
-import { MousePointer2, TrendingUp, Menu, Square, Columns } from "lucide-react"
+import { MousePointer2, TrendingUp, Menu, Square, Columns, Minus, Type } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 
-export type DrawingTool = "cursor" | "trend-line" | "fibonacci" | "rectangle" | "vertical-line"
+export type DrawingTool = "cursor" | "trend-line" | "fibonacci" | "rectangle" | "vertical-line" | "horizontal-line" | "text"
 
 interface LeftToolbarProps {
     selectedTool: DrawingTool
@@ -36,6 +36,26 @@ export function LeftToolbar({ selectedTool, onToolSelect }: LeftToolbarProps) {
                 title="Trend Line"
             >
                 <TrendingUp className="h-4 w-4" />
+            </Button>
+
+            <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-8 w-8", selectedTool === "horizontal-line" && "bg-accent text-accent-foreground")}
+                onClick={() => onToolSelect("horizontal-line")}
+                title="Horizontal Line"
+            >
+                <Minus className="h-4 w-4" />
+            </Button>
+
+            <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-8 w-8", selectedTool === "text" && "bg-accent text-accent-foreground")}
+                onClick={() => onToolSelect("text")}
+                title="Text"
+            >
+                <Type className="h-4 w-4" />
             </Button>
 
             <Button

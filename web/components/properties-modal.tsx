@@ -245,14 +245,55 @@ export function PropertiesModal({ isOpen, onClose, drawingType, initialOptions, 
                             <input
                                 type="checkbox"
                                 id="showText"
-                                checked={options.showLabels !== false && options.visible !== false} // Default true usually
+                                checked={(options.showLabels !== undefined ? options.showLabels : options.showLabel) !== false && options.visible !== false}
                                 onChange={(e) => {
                                     handleChange('showLabels', e.target.checked);
+                                    handleChange('showLabel', e.target.checked);
                                     handleChange('visible', e.target.checked);
                                 }}
                                 className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
                             />
                             <Label htmlFor="showText">Show Text</Label>
+                        </div>
+
+                        <div className="space-y-4 pt-4 border-t">
+                            <div className="flex items-center space-x-2">
+                                <input
+                                    type="checkbox"
+                                    id="showBorder"
+                                    checked={options.borderVisible === true}
+                                    onChange={(e) => handleChange('borderVisible', e.target.checked)}
+                                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                />
+                                <Label htmlFor="showBorder">Show Border</Label>
+                            </div>
+
+                            {options.borderVisible && (
+                                <div className="grid grid-cols-2 gap-4 pl-6">
+                                    <div className="space-y-2">
+                                        <Label className="text-xs">Border Color</Label>
+                                        <div className="flex items-center gap-2">
+                                            <Input
+                                                type="color"
+                                                value={options.borderColor || '#FFFFFF'}
+                                                onChange={(e) => handleChange('borderColor', e.target.value)}
+                                                className="w-full h-8 p-1"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label className="text-xs">Border Width</Label>
+                                        <Input
+                                            type="number"
+                                            min="1"
+                                            max="10"
+                                            value={options.borderWidth || 1}
+                                            onChange={(e) => handleChange('borderWidth', parseInt(e.target.value))}
+                                            className="h-8"
+                                        />
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         <div className="space-y-2">
