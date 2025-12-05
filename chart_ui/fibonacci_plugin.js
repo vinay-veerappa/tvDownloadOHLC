@@ -181,5 +181,93 @@ class FibonacciRetracement {
     }
 }
 
+// ============================================================================
+// Tool: FibonacciTool
+// ============================================================================
+
+class FibonacciTool {
+    constructor(chart, series) {
+        this._chart = chart;
+        this._series = series;
+        this._startPoint = null;
+        this._activeDrawing = null;
+        this._drawing = false;
+
+        // Bind handlers
+        this._clickHandler = this._onClick.bind(this);
+        this._moveHandler = this._onMouseMove.bind(this);
+    }
+
+    startDrawing() {
+        this._drawing = true;
+        this._startPoint = null;
+        this._activeDrawing = null;
+        this._chart.subscribeClick(this._clickHandler);
+        this._chart.subscribeCrosshairMove(this._moveHandler);
+    }
+
+    stopDrawing() {
+        this._drawing = false;
+        this._startPoint = null;
+        this._activeDrawing = null;
+        this._chart.unsubscribeClick(this._clickHandler);
+        this._chart.unsubscribeCrosshairMove(this._moveHandler);
+    }
+
+    isDrawing() {
+        return this._drawing;
+    }
+
+    _onClick(param) {
+        if (!this._drawing || !param.point || !param.time || !this._series) return;
+
+        const price = this._series.coordinateToPrice(param.point.y);
+        if (price === null) return;
+
+        if (!this._startPoint) {
+            // First click: Start drawing
+            this._startPoint = { time: param.time, price: price };
+            this._activeDrawing = new FibonacciRetracement(
+                this._chart,
+                this._series,
+                this._startPoint,
+                this._startPoint,
+                { lineColor: '#2962FF' }
+            );
+            this._series.attachPrimitive(this._activeDrawing);
+
+            // Dispatch event for tracking
+            window.dispatchEvent(new CustomEvent('drawing-created', {
+                detail: { drawing: this._activeDrawing, type: 'fibonacci', partial: true }
+            }));
+        } else {
+            // Second click: Finish drawing
+            if (this._activeDrawing) {
+                this._activeDrawing._p2 = { time: param.time, price: price };
+                this._activeDrawing.updateAllViews();
+
+                // Dispatch final event
+                window.dispatchEvent(new CustomEvent('drawing-created', {
+                    detail: { drawing: this._activeDrawing, type: 'fibonacci', partial: false }
+                }));
+
+                this.stopDrawing();
+            }
+        }
+    }
+
+    _onMouseMove(param) {
+        if (!this._drawing || !this._activeDrawing || !this._startPoint || !param.point || !param.time) return;
+
+        const price = this._series.coordinateToPrice(param.point.y);
+        if (price !== null) {
+            this._activeDrawing._p2 = { time: param.time, price: price };
+            this._activeDrawing.updateAllViews();
+        }
+    }
+}
+
+// Export for use
 window.FibonacciRetracement = FibonacciRetracement;
-export { FibonacciRetracement };
+window.FibonacciTool = FibonacciTool;
+export { FibonacciRetracement, FibonacciTool };

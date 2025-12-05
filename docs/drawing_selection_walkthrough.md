@@ -2,7 +2,7 @@
 
 ## ✅ Successfully Implemented
 
-All drawing tools now support selection, modification, and deletion with a unified properties panel interface. Phase 1 and Phase 2 of plugin standardization are complete.
+All drawing tools now support selection, modification, and deletion with a unified properties panel interface. The entire architecture has been standardized into Plugin and Tool classes.
 
 ---
 
@@ -34,15 +34,21 @@ All drawing plugins now implement:
 
 ### Phase 2: Self-Contained Hit Testing ✅
 Hit testing logic moved from `drawings.js` to individual plugins:
-- `hitTest(point)` method added to TrendLine, Fibonacci, VertLine, and Rectangle
+- `hitTest(point)` method added to all plugins
 - `drawings.js` delegates hit testing to plugins
 - Cleaner separation of concerns
 
-### Rectangle Tool Refactoring ✅
-- **De-minified** code for better maintainability
-- **Standardized** with `options()`, `applyOptions()`, `hitTest()`
-- **Event-driven** - Dispatches `drawing-created` event
-- **Tracked** - `drawings.js` listens for event and tracks new rectangles
+### Phase 3: Tool Classes (Separation of Concerns) ✅
+Drawing creation logic moved from `drawings.js` to dedicated Tool classes:
+- `TrendLineTool` - Handles TrendLine creation
+- `FibonacciTool` - Handles Fibonacci creation
+- `VertLineTool` - Handles VertLine creation
+- `RectangleDrawingTool` - Handles Rectangle creation
+
+### Refactored drawings.js ✅
+- **Coordinator Role:** `drawings.js` now simply initializes the active Tool and delegates control.
+- **Event Driven:** Listens for `drawing-created` events to track new drawings.
+- **Clean:** No more inline drawing logic or massive switch statements for mouse events.
 
 ---
 
@@ -77,7 +83,8 @@ Hit testing logic moved from `drawings.js` to individual plugins:
 7. **dd677e0** - Add ES6 exports to all plugin files
 8. **d2f208e** - Remove duplicate script tags
 9. **b476600** - Phase 2: Add hitTest methods to plugins
-10. **(New)** - Refactor Rectangle tool
+10. **d8ab4a8** - Refactor Rectangle tool
+11. **(New)** - Phase 3: Create Tool Classes & Refactor drawings.js
 
 ---
 
@@ -98,12 +105,8 @@ Hit testing logic moved from `drawings.js` to individual plugins:
 - Drawings currently persist across ticker changes
 - Need to implement per-ticker storage
 
-### Phase 3 (Optional)
-- Create tool classes for drawing creation logic
-- Simplify `drawings.js` to coordinator role
-
 ---
 
 ## Summary
 
-Successfully implemented drawing selection and deletion with a unified properties panel. Completed Phase 1 and Phase 2 of plugin standardization. All drawing plugins (including Rectangle) now follow consistent interfaces and encapsulate their own hit testing logic.
+Successfully implemented drawing selection and deletion with a unified properties panel. Completed Phase 1, 2, and 3 of architecture refactoring. The codebase is now cleaner, more modular, and easier to maintain.

@@ -171,5 +171,55 @@ class VertLine {
     }
 }
 
+// ============================================================================
+// Tool: VertLineTool
+// ============================================================================
+
+class VertLineTool {
+    constructor(chart, series) {
+        this._chart = chart;
+        this._series = series;
+        this._drawing = false;
+
+        // Bind handlers
+        this._clickHandler = this._onClick.bind(this);
+    }
+
+    startDrawing() {
+        this._drawing = true;
+        this._chart.subscribeClick(this._clickHandler);
+    }
+
+    stopDrawing() {
+        this._drawing = false;
+        this._chart.unsubscribeClick(this._clickHandler);
+    }
+
+    isDrawing() {
+        return this._drawing;
+    }
+
+    _onClick(param) {
+        if (!this._drawing || !param.time || !this._series) return;
+
+        // Create Vertical Line
+        const vl = new VertLine(this._chart, this._series, param.time, {
+            color: '#2962FF',
+            labelText: new Date(param.time * 1000).toLocaleDateString(),
+            showLabel: true
+        });
+        this._series.attachPrimitive(vl);
+
+        // Dispatch event
+        window.dispatchEvent(new CustomEvent('drawing-created', {
+            detail: { drawing: vl, type: 'vertline', partial: false }
+        }));
+
+        this.stopDrawing();
+    }
+}
+
+// Export for use
 window.VertLine = VertLine;
-export { VertLine };
+window.VertLineTool = VertLineTool;
+export { VertLine, VertLineTool };
