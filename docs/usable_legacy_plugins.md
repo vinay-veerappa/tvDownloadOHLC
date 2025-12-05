@@ -14,9 +14,14 @@ The following plugins were found in `legacy_chart_ui` and are suitable for migra
 *   **Ported To:** `web/lib/charts/plugins/anchored-text.ts`
 *   **Status:** ✅ **COMPLETE** - Fixed screen positioning, editable via PropertiesModal.
 
+### 3. Session Highlighting
+*   **Source:** `legacy_chart_ui/session-highlighting.js`
+*   **Ported To:** `web/lib/charts/plugins/session-highlighting.ts`
+*   **Status:** ✅ **COMPLETE** - Timezone-aware sessions (Tokyo/London/NY), extends PluginBase.
+
 ## 🌟 High Priority (Remaining)
 
-### 1. Session Highlighting
+### 1. Volume Profile
 *   **Source:** `legacy_chart_ui/session-highlighting.js`
 *   **Functionality:** Draws background colored stripes for specific time ranges (e.g., NY Session, London Session).
 *   **Migration:** Medium Complexity. Logic is self-contained. Needs to be adapted to receive session definition objects (Timezone aware).
