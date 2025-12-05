@@ -143,6 +143,11 @@ class VertLine {
         if (this._requestUpdate) this._requestUpdate();
     }
 
+    // Get current options
+    options() {
+        return this._options;
+    }
+
     // Required for v5 primitives
     attached({ chart, series, requestUpdate }) {
         this._requestUpdate = requestUpdate;

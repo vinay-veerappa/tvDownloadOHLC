@@ -356,6 +356,11 @@ function hitTest(point) {
 }
 
 function selectDrawing(drawing) {
+    console.log('[SELECT] Drawing:', drawing);
+    console.log('[SELECT] Drawing type:', drawing ? drawing.constructor.name : 'null');
+    console.log('[SELECT] Has applyOptions:', drawing ? typeof drawing.applyOptions : 'N/A');
+    console.log('[SELECT] Has _options:', drawing ? !!drawing._options : 'N/A');
+
     if (state.selectedDrawing) {
         // Deselect
         if (state.selectedDrawing.applyOptions) {
@@ -402,6 +407,9 @@ function deleteDrawing(drawing) {
 }
 
 function updatePropertiesPanel(drawing) {
+    console.log('[UPDATE_PANEL] Drawing:', drawing);
+    console.log('[UPDATE_PANEL] Drawing type:', drawing ? drawing.constructor.name : 'null');
+
     const panel = document.getElementById('drawing-properties');
     const colorInput = document.getElementById('prop-color');
     const widthInput = document.getElementById('prop-width');
@@ -412,9 +420,12 @@ function updatePropertiesPanel(drawing) {
     let opts;
     if (typeof drawing.options === 'function') {
         opts = drawing.options();
+        console.log('[UPDATE_PANEL] Got options from options() method:', opts);
     } else if (drawing._options) {
         opts = drawing._options;
+        console.log('[UPDATE_PANEL] Got options from _options property:', opts);
     } else {
+        console.log('[UPDATE_PANEL] No options available!');
         return; // No options available
     }
 
