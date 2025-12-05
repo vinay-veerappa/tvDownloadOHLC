@@ -38,7 +38,12 @@ export default async function Home(props: PageProps) {
 
         {/* Chart Wrapper fills remaining space */}
         <CardContent className="flex-1 p-0 relative min-h-0">
-          <ChartWrapper ticker={ticker} timeframe={timeframe} style={(searchParams?.style as string) || "candles"} />
+          <ChartWrapper
+            ticker={ticker}
+            timeframe={timeframe}
+            style={(searchParams?.style as string) || "candles"}
+            indicators={searchParams?.indicators ? (searchParams.indicators as string).split(",") : []}
+          />
         </CardContent>
 
         <BottomBar />

@@ -26,6 +26,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select"
+import { IndicatorsDialog } from "@/components/indicators-dialog"
 
 interface TopToolbarProps {
     tickers: string[]
@@ -174,10 +175,21 @@ export function TopToolbar({ tickers, timeframes, children }: TopToolbarProps) {
             <div className="h-6 w-[1px] bg-border mx-2" />
 
             {/* Indicators */}
-            <Button variant="ghost" size="sm" className="h-8 gap-2">
-                <Activity className="h-4 w-4" />
-                <span>Indicators</span>
-            </Button>
+            <IndicatorsDialog onSelect={(value) => {
+                const params = new URLSearchParams(searchParams.toString())
+                const currentIndicators = params.get("indicators") ? params.get("indicators")!.split(",") : []
+                // Simple toggle logic or add logic
+                if (!currentIndicators.includes(value)) {
+                    currentIndicators.push(value)
+                }
+                params.set("indicators", currentIndicators.join(","))
+                router.push(`?${params.toString()}`)
+            }}>
+                <Button variant="ghost" size="sm" className="h-8 gap-2">
+                    <Activity className="h-4 w-4" />
+                    <span>Indicators</span>
+                </Button>
+            </IndicatorsDialog>
 
             {/* Spacer to push children to the right */}
             <div className="flex-1" />

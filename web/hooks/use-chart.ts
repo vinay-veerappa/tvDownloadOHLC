@@ -13,7 +13,10 @@ import {
     AreaSeries
 } from "lightweight-charts"
 
-export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: string = 'candles') {
+import { calculateSMA, calculateEMA } from "@/lib/charts/indicators"
+import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
+
+export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: string = 'candles', indicators: string[] = [], data: any[] = []) {
     const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
     const [seriesInstance, setSeriesInstance] = useState<ISeriesApi<any> | null>(null)
 
@@ -106,6 +109,13 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
 
         setSeriesInstance(newSeries)
 
+        // Set Data if available
+        if (data.length > 0) {
+            const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
+            newSeries.setData(chartData)
+            chartInstance.timeScale().fitContent()
+        }
+
         return () => {
             if (chartInstance && newSeries) {
                 try {
@@ -116,7 +126,58 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
             }
             setSeriesInstance(null)
         }
-    }, [chartInstance, style])
+    }, [chartInstance, style]) // Re-create series if style changes
+
+    // Update Data when data changes (but style stays same)
+    useEffect(() => {
+        if (!seriesInstance || !data.length) return
+
+        const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
+        seriesInstance.setData(chartData)
+    }, [seriesInstance, data, style])
+
+
+    // Manage Indicators
+    useEffect(() => {
+        if (!chartInstance || !data.length || !indicators.length) return
+
+        const indicatorSeries: ISeriesApi<"Line">[] = []
+
+        indicators.forEach(ind => {
+            // Parse indicator string "type:period" (e.g., "sma:9")
+            // If just "sma", default to 9
+            const [type, param] = ind.split(":")
+            const period = param ? parseInt(param) : 9
+
+            if (type === 'sma') {
+                const smaData = calculateSMA(data, period)
+                const lineSeries = chartInstance.addSeries(LineSeries, {
+                    color: '#2962FF',
+                    lineWidth: 1,
+                    title: `SMA ${period}`,
+                })
+                lineSeries.setData(smaData)
+                indicatorSeries.push(lineSeries)
+            } else if (type === 'ema') {
+                const emaData = calculateEMA(data, period)
+                const lineSeries = chartInstance.addSeries(LineSeries, {
+                    color: '#FF6D00',
+                    lineWidth: 1,
+                    title: `EMA ${period}`,
+                })
+                lineSeries.setData(emaData)
+                indicatorSeries.push(lineSeries)
+            }
+        })
+
+        return () => {
+            indicatorSeries.forEach(series => {
+                try {
+                    chartInstance.removeSeries(series)
+                } catch (e) { }
+            })
+        }
+    }, [chartInstance, indicators, data])
 
     return {
         chart: chartInstance,
