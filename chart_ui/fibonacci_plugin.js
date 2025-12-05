@@ -145,3 +145,4 @@ class FibonacciRetracement {
 }
 
 window.FibonacciRetracement = FibonacciRetracement;
+export { FibonacciRetracement };

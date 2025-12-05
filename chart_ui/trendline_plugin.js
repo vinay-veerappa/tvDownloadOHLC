@@ -103,3 +103,4 @@ class TrendLine {
 
 // Export for use
 window.TrendLine = TrendLine;
+export { TrendLine };
