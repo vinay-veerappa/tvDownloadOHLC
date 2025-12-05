@@ -66,6 +66,10 @@ class TrendLine {
         this._requestUpdate();
     }
 
+    options() {
+        return this._options;
+    }
+
     attached({ chart, series, requestUpdate }) {
         this._requestUpdate = requestUpdate;
     }
