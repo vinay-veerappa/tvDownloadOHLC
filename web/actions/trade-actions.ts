@@ -10,7 +10,11 @@ export async function getTrades() {
                 entryDate: 'desc'
             }
         })
-        return { success: true, data: trades }
+        const mappedTrades = trades.map(t => ({
+            ...t,
+            symbol: t.ticker // Map ticker to symbol for frontend compatibility
+        }))
+        return { success: true, data: mappedTrades }
     } catch (error) {
         return { success: false, error: "Failed to fetch trades" }
     }
@@ -28,6 +32,7 @@ export async function createTrade(data: {
         const trade = await db.trade.create({
             data: {
                 ...data,
+                ticker: data.symbol,
                 status: data.status,
             }
         })

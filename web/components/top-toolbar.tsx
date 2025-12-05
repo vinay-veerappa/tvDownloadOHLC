@@ -27,6 +27,7 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { IndicatorsDialog } from "@/components/indicators-dialog"
+import { IndicatorStorage } from "@/lib/indicator-storage"
 
 interface TopToolbarProps {
     tickers: string[]
@@ -189,14 +190,26 @@ export function TopToolbar({ tickers, timeframes, tickerMap, children }: TopTool
 
             {/* Indicators */}
             <IndicatorsDialog onSelect={(value) => {
-                const params = new URLSearchParams(searchParams.toString())
-                const currentIndicators = params.get("indicators") ? params.get("indicators")!.split(",") : []
-                // Simple toggle logic or add logic
-                if (!currentIndicators.includes(value)) {
-                    currentIndicators.push(value)
+                // TODO: When multi-pane support is added, determine which pane is active
+                const chartId = IndicatorStorage.getDefaultChartId();
+
+                // Add to storage
+                const success = IndicatorStorage.addIndicator(chartId, {
+                    type: value,
+                    enabled: true,
+                    params: {}
+                });
+
+                if (success) {
+                    // Also update URL params for compatibility
+                    const params = new URLSearchParams(searchParams.toString())
+                    const currentIndicators = params.get("indicators") ? params.get("indicators")!.split(",") : []
+                    if (!currentIndicators.includes(value)) {
+                        currentIndicators.push(value)
+                    }
+                    params.set("indicators", currentIndicators.join(","))
+                    router.push(`?${params.toString()}`)
                 }
-                params.set("indicators", currentIndicators.join(","))
-                router.push(`?${params.toString()}`)
             }}>
                 <Button variant="ghost" size="sm" className="h-8 gap-2">
                     <Activity className="h-4 w-4" />

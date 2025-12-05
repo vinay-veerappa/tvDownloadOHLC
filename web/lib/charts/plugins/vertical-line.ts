@@ -1,5 +1,7 @@
 import { IChartApi, ISeriesApi, Time, ISeriesPrimitive, Coordinate } from "lightweight-charts";
 
+import { TextLabel } from "./text-label";
+
 interface VertLineOptions {
     color: string;
     labelText: string;
@@ -7,6 +9,8 @@ interface VertLineOptions {
     labelBackgroundColor: string;
     labelTextColor: string;
     showLabel: boolean;
+    text?: string;
+    textColor?: string;
 }
 
 const defaultOptions: VertLineOptions = {
@@ -30,21 +34,27 @@ function positionsLine(position: number, pixelRatio: number, width: number) {
 class VertLinePaneRenderer {
     private _x: number | null;
     private _options: VertLineOptions;
+    private _textLabel: TextLabel | null;
 
-    constructor(x: number | null, options: VertLineOptions) {
+    constructor(x: number | null, options: VertLineOptions, textLabel: TextLabel | null) {
         this._x = x;
         this._options = options;
+        this._textLabel = textLabel;
     }
 
     draw(target: any) {
         target.useBitmapCoordinateSpace((scope: any) => {
             if (this._x === null) return;
             const ctx = scope.context;
+            const hPR = scope.horizontalPixelRatio;
+            const vPR = scope.verticalPixelRatio;
+
             const position = positionsLine(
                 this._x,
-                scope.horizontalPixelRatio,
+                hPR,
                 this._options.width
             );
+
             ctx.fillStyle = this._options.color;
             ctx.fillRect(
                 position.position,
@@ -52,6 +62,15 @@ class VertLinePaneRenderer {
                 position.length,
                 scope.bitmapSize.height
             );
+
+            if (this._textLabel) {
+                // Draw text near the top of the line
+                // We need to update Y coordinate since vertical line doesn't store Y
+                // Let's put it at 10% from top
+                const y = scope.bitmapSize.height * 0.1 / vPR;
+                this._textLabel.update(this._x, y);
+                this._textLabel.draw(ctx, hPR, vPR);
+            }
         });
     }
 }
@@ -72,7 +91,7 @@ class VertLinePaneView {
     }
 
     renderer() {
-        return new VertLinePaneRenderer(this._x, this._options);
+        return new VertLinePaneRenderer(this._x, this._options, this._source._textLabel);
     }
 }
 
@@ -124,6 +143,7 @@ export class VertLine implements ISeriesPrimitive {
     _paneViews: VertLinePaneView[];
     _timeAxisViews: VertLineTimeAxisView[];
     _requestUpdate: (() => void) | null = null;
+    _textLabel: TextLabel | null = null;
 
     _id: string;
 
@@ -136,11 +156,75 @@ export class VertLine implements ISeriesPrimitive {
         this._paneViews = [new VertLinePaneView(this, this._options)];
         this._timeAxisViews = [new VertLineTimeAxisView(this, this._options)];
         this._id = Math.random().toString(36).substring(7);
+
+        if (this._options.text) {
+            this._textLabel = new TextLabel(0, 0, {
+                text: this._options.text,
+                color: this._options.textColor || this._options.color
+            });
+        }
     }
 
     id() {
         return this._id;
     }
+
+    options() {
+        return this._options;
+    }
+
+    applyOptions(options: Partial<VertLineOptions>) {
+        this._options = { ...this._options, ...options };
+        if (this._options.text) {
+            // For vertical lines, "along-line" means vertical text (rotated -90 degrees)
+            const orientation = (this._options as any).orientation || 'horizontal';
+            const rotation = orientation === 'along-line' ? -Math.PI / 2 : 0;
+
+            const textOptions = {
+                text: this._options.text,
+                color: this._options.textColor || this._options.color,
+                fontSize: (this._options as any).fontSize,
+                bold: (this._options as any).bold,
+                italic: (this._options as any).italic,
+                alignment: (this._options as any).alignment,
+                orientation: orientation,
+                rotation: rotation,
+                visible: true
+            };
+            if (!this._textLabel) {
+                this._textLabel = new TextLabel(0, 0, textOptions);
+            } else {
+                this._textLabel.update(0, 0, textOptions);
+            }
+        } else {
+            this._textLabel = null;
+        }
+        this.updateAllViews();
+    }
+
+    hitTest(x: number, y: number): any {
+        const timeScale = this._chart.timeScale();
+        const lineX = timeScale.timeToCoordinate(this._time);
+        // console.log(`VertLine hitTest: x=${x}, lineX=${lineX}, diff=${lineX !== null ? Math.abs(x - lineX) : 'N/A'}`);
+
+        if (lineX === null) return null;
+
+        // Debug: Show hit test values
+        // const diff = Math.abs(x - lineX);
+        // console.log(`VertLine HitTest: ClickX=${Math.round(x)}, LineX=${Math.round(lineX)}, Diff=${Math.round(diff)}`);
+        // (window as any)._debugVertLine = { clickX: x, lineX: lineX, diff: diff };
+
+        if (Math.abs(x - lineX) < 20) {
+            return {
+                cursorStyle: 'ew-resize', // Or pointer
+                externalId: this._id,
+                zOrder: 'top'
+            };
+        }
+        return null;
+    }
+
+
 
     updateAllViews() {
         this._paneViews.forEach(pw => pw.update());

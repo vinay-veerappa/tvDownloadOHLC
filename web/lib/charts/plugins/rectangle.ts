@@ -5,12 +5,16 @@ interface Point {
     price: number;
 }
 
+import { TextLabel } from "./text-label";
+
 interface RectangleOptions {
     fillColor: string;
     previewFillColor: string;
     labelColor: string;
     labelTextColor: string;
     showLabels: boolean;
+    text?: string;
+    textColor?: string;
 }
 
 const defaultOptions: RectangleOptions = {
@@ -25,11 +29,18 @@ class RectangleRenderer {
     private _p1: { x: number | null; y: number | null };
     private _p2: { x: number | null; y: number | null };
     private _options: RectangleOptions;
+    private _textLabel: TextLabel | null;
 
-    constructor(p1: { x: number | null; y: number | null }, p2: { x: number | null; y: number | null }, options: RectangleOptions) {
+    constructor(
+        p1: { x: number | null; y: number | null },
+        p2: { x: number | null; y: number | null },
+        options: RectangleOptions,
+        textLabel: TextLabel | null
+    ) {
         this._p1 = p1;
         this._p2 = p2;
         this._options = options;
+        this._textLabel = textLabel;
     }
 
     draw(target: any) {
@@ -52,6 +63,10 @@ class RectangleRenderer {
 
             ctx.fillStyle = this._options.fillColor;
             ctx.fillRect(left, top, width, height);
+
+            if (this._textLabel) {
+                this._textLabel.draw(ctx, hPR, vPR);
+            }
         });
     }
 }
@@ -67,7 +82,8 @@ class RectanglePaneView {
         return new RectangleRenderer(
             this._source._p1Point,
             this._source._p2Point,
-            this._source._options
+            this._source._options,
+            this._source._textLabel
         );
     }
 }
@@ -82,6 +98,7 @@ export class Rectangle implements ISeriesPrimitive {
     _p2Point: { x: number | null; y: number | null };
     _paneViews: RectanglePaneView[];
     _requestUpdate: (() => void) | null = null;
+    _textLabel: TextLabel | null = null;
 
     _id: string;
 
@@ -95,10 +112,44 @@ export class Rectangle implements ISeriesPrimitive {
         this._p2Point = { x: null, y: null };
         this._paneViews = [new RectanglePaneView(this)];
         this._id = Math.random().toString(36).substring(7);
+
+        if (this._options.text) {
+            this._textLabel = new TextLabel(0, 0, {
+                text: this._options.text,
+                color: this._options.textColor || this._options.labelTextColor
+            });
+        }
     }
 
     id() {
         return this._id;
+    }
+
+    options() {
+        return this._options;
+    }
+
+    applyOptions(options: Partial<RectangleOptions>) {
+        this._options = { ...this._options, ...options };
+        if (this._options.text) {
+            const textOptions = {
+                text: this._options.text,
+                color: this._options.textColor || this._options.labelTextColor,
+                fontSize: (this._options as any).fontSize,
+                bold: (this._options as any).bold,
+                italic: (this._options as any).italic,
+                alignment: (this._options as any).alignment,
+                visible: this._options.showLabels
+            };
+            if (!this._textLabel) {
+                this._textLabel = new TextLabel(0, 0, textOptions);
+            } else {
+                this._textLabel.update(0, 0, textOptions);
+            }
+        } else {
+            this._textLabel = null;
+        }
+        this.updateAllViews();
     }
 
     updateAllViews() {
@@ -130,11 +181,45 @@ export class Rectangle implements ISeriesPrimitive {
 
         this._p2Point.x = timeScale.timeToCoordinate(this._p2.time);
         this._p2Point.y = this._series.priceToCoordinate(this._p2.price);
+
+        if (this._textLabel && this._p1Point.x !== null && this._p1Point.y !== null && this._p2Point.x !== null && this._p2Point.y !== null) {
+            // Position text at center of rectangle
+            const centerX = (this._p1Point.x + this._p2Point.x) / 2;
+            const centerY = (this._p1Point.y + this._p2Point.y) / 2;
+
+            // Calculate rectangle dimensions for edge-relative alignment
+            const rectWidth = Math.abs(this._p2Point.x - this._p1Point.x);
+            const rectHeight = Math.abs(this._p2Point.y - this._p1Point.y);
+
+            this._textLabel.update(centerX, centerY, {
+                containerWidth: rectWidth,
+                containerHeight: rectHeight
+            });
+        }
     }
 
     updateEndPoint(p2: Point) {
         this._p2 = p2;
         this.updateAllViews();
+    }
+
+    hitTest(x: number, y: number): any {
+        if (this._p1Point.x === null || this._p1Point.y === null || this._p2Point.x === null || this._p2Point.y === null) return null;
+
+        const minX = Math.min(this._p1Point.x, this._p2Point.x);
+        const maxX = Math.max(this._p1Point.x, this._p2Point.x);
+        const minY = Math.min(this._p1Point.y, this._p2Point.y);
+        const maxY = Math.max(this._p1Point.y, this._p2Point.y);
+
+        if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+            // console.log(`Rectangle Hit: ${this._id} at ${x},${y}`);
+            return {
+                cursorStyle: 'pointer',
+                externalId: this._id,
+                zOrder: 'top'
+            };
+        }
+        return null;
     }
 }
 

@@ -1,0 +1,456 @@
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useState, useEffect } from "react"
+import { Bold, Italic, AlignLeft, AlignCenter, AlignRight, AlignVerticalJustifyCenter, ArrowUpToLine, ArrowDownToLine, Save, Star, Trash2 } from "lucide-react"
+import { TemplateManager } from "@/lib/template-manager"
+import { toast } from "sonner"
+
+interface PropertiesModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    drawingType: string;
+    initialOptions: any;
+    onSave: (options: any) => void;
+}
+
+// Helper to convert Hex + Alpha (0-1) to RGBA string
+const hexToRgba = (hex: string, alpha: number) => {
+    let c: any;
+    if (/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) {
+        c = hex.substring(1).split('');
+        if (c.length === 3) {
+            c = [c[0], c[0], c[1], c[1], c[2], c[2]];
+        }
+        c = '0x' + c.join('');
+        return 'rgba(' + [(c >> 16) & 255, (c >> 8) & 255, c & 255].join(',') + ',' + alpha + ')';
+    }
+    return hex;
+}
+
+// Helper to parse RGBA/Hex to Hex + Alpha
+const parseColor = (color: string) => {
+    if (!color) return { hex: '#000000', alpha: 1 };
+    if (color.startsWith('#')) return { hex: color, alpha: 1 };
+    if (color.startsWith('rgba')) {
+        const parts = color.match(/[\d.]+/g);
+        if (parts && parts.length >= 4) {
+            const r = parseInt(parts[0]).toString(16).padStart(2, '0');
+            const g = parseInt(parts[1]).toString(16).padStart(2, '0');
+            const b = parseInt(parts[2]).toString(16).padStart(2, '0');
+            return { hex: `#${r}${g}${b}`, alpha: parseFloat(parts[3]) };
+        }
+    }
+    return { hex: '#000000', alpha: 1 };
+}
+
+export function PropertiesModal({ isOpen, onClose, drawingType, initialOptions, onSave }: PropertiesModalProps) {
+    const [options, setOptions] = useState(initialOptions || {});
+    // Local state for color inputs to handle hex/alpha split
+    const [lineColorState, setLineColorState] = useState({ hex: '#000000', alpha: 1 });
+    const [fillColorState, setFillColorState] = useState({ hex: '#000000', alpha: 1 });
+    const [textColorState, setTextColorState] = useState({ hex: '#000000', alpha: 1 });
+
+    useEffect(() => {
+        const opts = initialOptions || {};
+        setOptions(opts);
+        if (opts.lineColor) setLineColorState(parseColor(opts.lineColor));
+        else if (opts.color) setLineColorState(parseColor(opts.color));
+
+        if (opts.fillColor) setFillColorState(parseColor(opts.fillColor));
+
+        if (opts.textColor) setTextColorState(parseColor(opts.textColor));
+        // Fallback for TextLabel which might use 'color' if it's just a label tool, but usually it's 'textColor' in complex shapes
+    }, [initialOptions, isOpen]);
+
+    const handleSave = () => {
+        // Construct final options with RGBA colors
+        const finalOptions = {
+            ...options,
+            lineColor: hexToRgba(lineColorState.hex, lineColorState.alpha),
+            color: hexToRgba(lineColorState.hex, lineColorState.alpha), // Sync both for compatibility
+            fillColor: options.fillColor ? hexToRgba(fillColorState.hex, fillColorState.alpha) : undefined,
+            textColor: hexToRgba(textColorState.hex, textColorState.alpha)
+        };
+        onSave(finalOptions);
+        onClose();
+    };
+
+    const handleChange = (key: string, value: any) => {
+        setOptions((prev: any) => ({ ...prev, [key]: value }));
+    };
+
+    // Template management state
+    const [templates, setTemplates] = useState<any[]>([]);
+    const [selectedTemplate, setSelectedTemplate] = useState<string>("");
+    const [newTemplateName, setNewTemplateName] = useState("");
+    const [showSaveDialog, setShowSaveDialog] = useState(false);
+
+    // Load templates on mount
+    useEffect(() => {
+        const loadedTemplates = TemplateManager.getTemplates(drawingType);
+        setTemplates(loadedTemplates);
+    }, [drawingType, isOpen]);
+
+    const handleLoadTemplate = (templateName: string) => {
+        const template = TemplateManager.getTemplate(drawingType, templateName);
+        if (template) {
+            setOptions(template.options);
+            if (template.options.lineColor) setLineColorState(parseColor(template.options.lineColor));
+            if (template.options.fillColor) setFillColorState(parseColor(template.options.fillColor));
+            if (template.options.textColor) setTextColorState(parseColor(template.options.textColor));
+            setSelectedTemplate(templateName);
+            toast.success(`Template "${templateName}" loaded`);
+        }
+    };
+
+    const handleSaveTemplate = () => {
+        if (!newTemplateName.trim()) {
+            toast.error("Please enter a template name");
+            return;
+        }
+        const currentOptions = {
+            ...options,
+            lineColor: hexToRgba(lineColorState.hex, lineColorState.alpha),
+            fillColor: options.fillColor ? hexToRgba(fillColorState.hex, fillColorState.alpha) : undefined,
+            textColor: hexToRgba(textColorState.hex, textColorState.alpha)
+        };
+        TemplateManager.saveTemplate(newTemplateName, drawingType, currentOptions);
+        toast.success(`Template "${newTemplateName}" saved`);
+        setTemplates(TemplateManager.getTemplates(drawingType));
+        setNewTemplateName("");
+        setShowSaveDialog(false);
+    };
+
+    const handleSetDefault = () => {
+        const currentOptions = {
+            ...options,
+            lineColor: hexToRgba(lineColorState.hex, lineColorState.alpha),
+            fillColor: options.fillColor ? hexToRgba(fillColorState.hex, fillColorState.alpha) : undefined,
+            textColor: hexToRgba(textColorState.hex, textColorState.alpha)
+        };
+        TemplateManager.saveDefault(drawingType, currentOptions);
+        toast.success("Saved as default");
+    };
+
+    const handleDeleteTemplate = (templateName: string) => {
+        TemplateManager.deleteTemplate(drawingType, templateName);
+        toast.success(`Template "${templateName}" deleted`);
+        setTemplates(TemplateManager.getTemplates(drawingType));
+        if (selectedTemplate === templateName) setSelectedTemplate("");
+    };
+
+    return (
+        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+            <DialogContent className="sm:max-w-[500px]">
+                <DialogHeader>
+                    <DialogTitle>{drawingType} Properties</DialogTitle>
+                    <DialogDescription>
+                        Modify the properties of the selected {drawingType.toLowerCase()}.
+                    </DialogDescription>
+                </DialogHeader>
+                <Tabs defaultValue="style" className="w-full">
+                    <TabsList className="grid w-full grid-cols-3">
+                        <TabsTrigger value="style">Style</TabsTrigger>
+                        <TabsTrigger value="text">Text</TabsTrigger>
+                        <TabsTrigger value="coords">Coordinates</TabsTrigger>
+                    </TabsList>
+
+                    {/* STYLE TAB */}
+                    <TabsContent value="style" className="space-y-6 py-4">
+                        <div className="space-y-4">
+                            <Label>Line Style</Label>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="lineColor" className="text-right text-xs">Color</Label>
+                                <div className="col-span-3 flex items-center gap-2">
+                                    <Input
+                                        id="lineColor"
+                                        type="color"
+                                        value={lineColorState.hex}
+                                        onChange={(e) => setLineColorState(p => ({ ...p, hex: e.target.value }))}
+                                        className="w-12 h-8 p-1"
+                                    />
+                                    <div className="flex-1 flex items-center gap-2">
+                                        <span className="text-xs text-muted-foreground">Opacity</span>
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.1"
+                                            value={lineColorState.alpha}
+                                            onChange={(e) => setLineColorState(p => ({ ...p, alpha: parseFloat(e.target.value) }))}
+                                            className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
+                                        />
+                                        <span className="text-xs w-8 text-right">{Math.round(lineColorState.alpha * 100)}%</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="lineWidth" className="text-right text-xs">Width</Label>
+                                <Input
+                                    id="lineWidth"
+                                    type="number"
+                                    min="1"
+                                    max="10"
+                                    value={options.lineWidth || options.width || 1}
+                                    onChange={(e) => {
+                                        const val = parseInt(e.target.value);
+                                        handleChange('lineWidth', val);
+                                        handleChange('width', val);
+                                    }}
+                                    className="col-span-3"
+                                />
+                            </div>
+                        </div>
+
+                        {(options.fillColor !== undefined) && (
+                            <div className="space-y-4 pt-4 border-t">
+                                <Label>Fill Style</Label>
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor="fillColor" className="text-right text-xs">Fill</Label>
+                                    <div className="col-span-3 flex items-center gap-2">
+                                        <Input
+                                            id="fillColor"
+                                            type="color"
+                                            value={fillColorState.hex}
+                                            onChange={(e) => setFillColorState(p => ({ ...p, hex: e.target.value }))}
+                                            className="w-12 h-8 p-1"
+                                        />
+                                        <div className="flex-1 flex items-center gap-2">
+                                            <span className="text-xs text-muted-foreground">Opacity</span>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.1"
+                                                value={fillColorState.alpha}
+                                                onChange={(e) => setFillColorState(p => ({ ...p, alpha: parseFloat(e.target.value) }))}
+                                                className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
+                                            />
+                                            <span className="text-xs w-8 text-right">{Math.round(fillColorState.alpha * 100)}%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </TabsContent>
+
+                    {/* TEXT TAB */}
+                    <TabsContent value="text" className="space-y-6 py-4">
+                        <div className="flex items-center space-x-2">
+                            <input
+                                type="checkbox"
+                                id="showText"
+                                checked={options.showLabels !== false && options.visible !== false} // Default true usually
+                                onChange={(e) => {
+                                    handleChange('showLabels', e.target.checked);
+                                    handleChange('visible', e.target.checked);
+                                }}
+                                className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                            />
+                            <Label htmlFor="showText">Show Text</Label>
+                        </div>
+
+                        <div className="space-y-2">
+                            <textarea
+                                value={options.text || ''}
+                                onChange={(e) => handleChange('text', e.target.value)}
+                                placeholder="Enter text..."
+                                className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            {/* Color & Opacity */}
+                            <div className="space-y-2">
+                                <Label className="text-xs">Color</Label>
+                                <div className="flex items-center gap-2">
+                                    <Input
+                                        type="color"
+                                        value={textColorState.hex}
+                                        onChange={(e) => setTextColorState(p => ({ ...p, hex: e.target.value }))}
+                                        className="w-10 h-8 p-1"
+                                    />
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.1"
+                                        value={textColorState.alpha}
+                                        onChange={(e) => setTextColorState(p => ({ ...p, alpha: parseFloat(e.target.value) }))}
+                                        className="flex-1 h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Font Size */}
+                            <div className="space-y-2">
+                                <Label className="text-xs">Size</Label>
+                                <Select
+                                    value={(options.fontSize || 12).toString()}
+                                    onValueChange={(val) => handleChange('fontSize', parseInt(val))}
+                                >
+                                    <SelectTrigger className="h-8">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {[10, 12, 14, 16, 20, 24, 28, 32, 40].map(s => (
+                                            <SelectItem key={s} value={s.toString()}>{s}px</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-between items-center bg-secondary/20 p-2 rounded-md">
+                            {/* Formatting */}
+                            <div className="flex gap-1">
+                                <Button
+                                    variant={options.bold ? "secondary" : "ghost"}
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => handleChange('bold', !options.bold)}
+                                >
+                                    <Bold className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                    variant={options.italic ? "secondary" : "ghost"}
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => handleChange('italic', !options.italic)}
+                                >
+                                    <Italic className="h-4 w-4" />
+                                </Button>
+                            </div>
+
+                            {/* Orientation (for lines) */}
+                            {(drawingType === 'trend-line' || drawingType === 'vertical-line') && (
+                                <div className="flex gap-1 border-l pl-2 ml-2">
+                                    <Button
+                                        variant={options.orientation !== 'along-line' ? "secondary" : "ghost"}
+                                        size="sm"
+                                        className="h-8 text-xs"
+                                        onClick={() => handleChange('orientation', 'horizontal')}
+                                        title="Horizontal Text"
+                                    >
+                                        Horiz
+                                    </Button>
+                                    <Button
+                                        variant={options.orientation === 'along-line' ? "secondary" : "ghost"}
+                                        size="sm"
+                                        className="h-8 text-xs"
+                                        onClick={() => handleChange('orientation', 'along-line')}
+                                        title="Along Line"
+                                    >
+                                        Along
+                                    </Button>
+                                </div>
+                            )}
+
+                            {/* Alignment */}
+                            <div className="flex gap-1 border-l pl-2 ml-2">
+                                {/* Vertical */}
+                                <Button variant={options.alignment?.vertical === 'top' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, vertical: 'top' })} title="Top">
+                                    <ArrowUpToLine className="h-4 w-4" />
+                                </Button>
+                                <Button variant={options.alignment?.vertical === 'middle' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, vertical: 'middle' })} title="Middle">
+                                    <AlignVerticalJustifyCenter className="h-4 w-4" />
+                                </Button>
+                                <Button variant={options.alignment?.vertical === 'bottom' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, vertical: 'bottom' })} title="Bottom">
+                                    <ArrowDownToLine className="h-4 w-4" />
+                                </Button>
+                            </div>
+                            <div className="flex gap-1 border-l pl-2 ml-2">
+                                {/* Horizontal */}
+                                <Button variant={options.alignment?.horizontal === 'left' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, horizontal: 'left' })} title="Left">
+                                    <AlignLeft className="h-4 w-4" />
+                                </Button>
+                                <Button variant={options.alignment?.horizontal === 'center' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, horizontal: 'center' })} title="Center">
+                                    <AlignCenter className="h-4 w-4" />
+                                </Button>
+                                <Button variant={options.alignment?.horizontal === 'right' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, horizontal: 'right' })} title="Right">
+                                    <AlignRight className="h-4 w-4" />
+                                </Button>
+                            </div>
+                        </div>
+                    </TabsContent>
+
+                    <TabsContent value="coords">
+                        <div className="py-4 text-center text-sm text-muted-foreground">
+                            Coordinates editing coming soon.
+                        </div>
+                    </TabsContent>
+                </Tabs>
+
+                {/* TEMPLATE CONTROLS */}
+                <div className="border-t pt-4 space-y-3">
+                    <Label className="text-sm font-semibold">Templates</Label>
+                    <div className="flex gap-2">
+                        <Select value={selectedTemplate} onValueChange={handleLoadTemplate}>
+                            <SelectTrigger className="flex-1">
+                                <SelectValue placeholder="Load template..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {templates.length === 0 ? (
+                                    <SelectItem value="_none" disabled>No templates saved</SelectItem>
+                                ) : (
+                                    templates.map(t => (
+                                        <SelectItem key={t.name} value={t.name}>{t.name}</SelectItem>
+                                    ))
+                                )}
+                            </SelectContent>
+                        </Select>
+                        {selectedTemplate && (
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleDeleteTemplate(selectedTemplate)}
+                                title="Delete template"
+                            >
+                                <Trash2 className="h-4 w-4" />
+                            </Button>
+                        )}
+                    </div>
+
+                    {showSaveDialog ? (
+                        <div className="flex gap-2">
+                            <Input
+                                placeholder="Template name..."
+                                value={newTemplateName}
+                                onChange={(e) => setNewTemplateName(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleSaveTemplate()}
+                            />
+                            <Button onClick={handleSaveTemplate} size="sm">
+                                <Save className="h-4 w-4 mr-1" />
+                                Save
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => setShowSaveDialog(false)}>
+                                Cancel
+                            </Button>
+                        </div>
+                    ) : (
+                        <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => setShowSaveDialog(true)} className="flex-1">
+                                <Save className="h-4 w-4 mr-1" />
+                                Save as Template
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={handleSetDefault}>
+                                <Star className="h-4 w-4 mr-1" />
+                                Set as Default
+                            </Button>
+                        </div>
+                    )}
+                </div>
+
+                <DialogFooter>
+                    <Button variant="outline" onClick={onClose}>Cancel</Button>
+                    <Button onClick={handleSave}>Save</Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    )
+}

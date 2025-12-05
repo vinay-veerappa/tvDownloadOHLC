@@ -1,4 +1,5 @@
 import { IChartApi, ISeriesApi, Time, ISeriesPrimitive, SeriesOptionsCommon, Logical, Coordinate } from "lightweight-charts";
+import { TextLabel } from "./text-label";
 
 interface Point {
     time: Time;
@@ -8,6 +9,8 @@ interface Point {
 interface TrendLineOptions {
     lineColor: string;
     lineWidth: number;
+    text?: string;
+    textColor?: string;
 }
 
 class TrendLineRenderer {
@@ -15,12 +18,20 @@ class TrendLineRenderer {
     private _p2: { x: number | null; y: number | null };
     private _color: string;
     private _width: number;
+    private _textLabel: TextLabel | null;
 
-    constructor(p1: { x: number | null; y: number | null }, p2: { x: number | null; y: number | null }, color: string, width: number) {
+    constructor(
+        p1: { x: number | null; y: number | null },
+        p2: { x: number | null; y: number | null },
+        color: string,
+        width: number,
+        textLabel: TextLabel | null
+    ) {
         this._p1 = p1;
         this._p2 = p2;
         this._color = color;
         this._width = width;
+        this._textLabel = textLabel;
     }
 
     draw(target: any) {
@@ -37,6 +48,11 @@ class TrendLineRenderer {
             ctx.moveTo(this._p1.x * horizontalPixelRatio, this._p1.y * verticalPixelRatio);
             ctx.lineTo(this._p2.x * horizontalPixelRatio, this._p2.y * verticalPixelRatio);
             ctx.stroke();
+
+            if (this._textLabel) {
+                // Draw text at the center of the line
+                this._textLabel.draw(ctx, horizontalPixelRatio, verticalPixelRatio);
+            }
         });
     }
 }
@@ -53,7 +69,8 @@ class TrendLinePaneView {
             this._source._p1Point,
             this._source._p2Point,
             this._source._options.lineColor,
-            this._source._options.lineWidth
+            this._source._options.lineWidth,
+            this._source._textLabel
         );
     }
 }
@@ -68,6 +85,7 @@ export class TrendLine implements ISeriesPrimitive {
     _p2Point: { x: number | null; y: number | null };
     _paneViews: TrendLinePaneView[];
     _requestUpdate: (() => void) | null = null;
+    _textLabel: TextLabel | null = null;
 
     _id: string;
 
@@ -81,6 +99,13 @@ export class TrendLine implements ISeriesPrimitive {
         this._p2Point = { x: null, y: null };
         this._paneViews = [new TrendLinePaneView(this)];
         this._id = Math.random().toString(36).substring(7);
+
+        if (this._options.text) {
+            this._textLabel = new TextLabel(0, 0, {
+                text: this._options.text,
+                color: this._options.textColor || this._options.lineColor
+            });
+        }
     }
 
     id() {
@@ -94,6 +119,25 @@ export class TrendLine implements ISeriesPrimitive {
 
     applyOptions(options: Partial<TrendLineOptions>) {
         this._options = { ...this._options, ...options };
+        if (this._options.text) {
+            const textOptions = {
+                text: this._options.text,
+                color: this._options.textColor || this._options.lineColor,
+                fontSize: (this._options as any).fontSize,
+                bold: (this._options as any).bold,
+                italic: (this._options as any).italic,
+                alignment: (this._options as any).alignment,
+                orientation: (this._options as any).orientation || 'horizontal',
+                visible: true
+            };
+            if (!this._textLabel) {
+                this._textLabel = new TextLabel(0, 0, textOptions);
+            } else {
+                this._textLabel.update(0, 0, textOptions);
+            }
+        } else {
+            this._textLabel = null;
+        }
         if (this._requestUpdate) this._requestUpdate();
     }
 
@@ -120,6 +164,84 @@ export class TrendLine implements ISeriesPrimitive {
 
         this._p2Point.x = timeScale.timeToCoordinate(this._p2.time);
         this._p2Point.y = this._series.priceToCoordinate(this._p2.price);
+
+        if (this._textLabel && this._p1Point.x !== null && this._p1Point.y !== null && this._p2Point.x !== null && this._p2Point.y !== null) {
+            // Position text at the center of the line
+            const centerX = (this._p1Point.x + this._p2Point.x) / 2;
+            const centerY = (this._p1Point.y + this._p2Point.y) / 2;
+
+            // We need to account for pixel ratio here because TextLabel draws directly to context
+            // But wait, TextLabel.draw uses the context passed from renderer which already has scaling applied?
+            // Actually, the renderer applies scaling to the coordinates it passes to moveTo/lineTo.
+            // TextLabel.draw takes a context.
+            // If I pass raw coordinates to TextLabel, I need to scale them inside TextLabel or pass scaled coordinates.
+            // Let's look at TrendLineRenderer.draw. It uses `scope.horizontalPixelRatio`.
+            // So I should pass scaled coordinates to TextLabel.draw or update TextLabel with scaled coordinates.
+            // But `_updatePoints` runs outside of the draw loop, so it doesn't know about pixel ratio.
+            // The `TextLabel` holds logical coordinates?
+            // Let's make `TextLabel` accept logical coordinates and handle scaling in its `draw` method if needed, 
+            // OR just pass the scaling factors to `draw`.
+
+            // For simplicity, let's update `TextLabel` with logical coordinates here, 
+            // and in `TrendLineRenderer.draw`, we'll pass the scaled coordinates to `TextLabel.update` before drawing?
+            // No, `TextLabel` is shared between `TrendLine` and `TrendLineRenderer` (via reference).
+            // `TrendLineRenderer` is recreated every frame? No, `paneViews` returns the same instance usually?
+            // Actually `paneViews` returns `this._paneViews` which is created once.
+            // `TrendLinePaneView.renderer()` returns a NEW `TrendLineRenderer` every time?
+            // Yes, `renderer()` is called by the library.
+
+            // So `TrendLineRenderer` gets the snapshot of state.
+            // I should pass the logical coordinates to `TextLabel` in `_updatePoints`.
+            // And `TextLabel.draw` should accept `pixelRatio` to scale them?
+            // Or `TrendLineRenderer` should scale them before calling `draw`.
+
+            // Let's assume `TextLabel` stores logical coordinates.
+            // In `TrendLineRenderer.draw`:
+            // const scaledX = centerX * horizontalPixelRatio;
+            // const scaledY = centerY * verticalPixelRatio;
+            // this._textLabel.update(scaledX, scaledY);
+            // this._textLabel.draw(ctx);
+
+            // But `TextLabel.update` changes the state of the object, which might be shared?
+            // `TextLabel` is owned by `TrendLine`.
+            // `TrendLineRenderer` has a reference to it.
+            // If I update it in `draw`, it's fine as long as it's not used elsewhere concurrently (JS is single threaded).
+
+            // However, `TextLabel` also has font size. Font size should NOT be scaled by pixel ratio usually, 
+            // or rather, the canvas context handles it if we don't scale the context.
+            // But `lightweight-charts` usually scales the context or expects us to scale coordinates.
+            // `ctx.scale(pixelRatio, pixelRatio)` is NOT called by default in `useBitmapCoordinateSpace`.
+            // We have to multiply coordinates by pixelRatio.
+            // So we should also scale font size?
+            // `ctx.font = (fontSize * verticalPixelRatio) + "px ..."`
+
+            // Let's update `TextLabel` to handle scaling in `draw`.
+            // I'll update `TextLabel` to accept `pixelRatio` in `draw`.
+
+            // Calculate line angle for rotation
+            const dx = this._p2Point.x - this._p1Point.x;
+            const dy = this._p2Point.y - this._p1Point.y;
+            const angle = Math.atan2(dy, dx);
+
+            this._textLabel.update(centerX, centerY, { rotation: angle });
+        }
+    }
+
+    options() {
+        return this._options;
+    }
+
+    hitTest(x: number, y: number): any {
+        if (this._p1Point.x === null || this._p1Point.y === null || this._p2Point.x === null || this._p2Point.y === null) return null;
+        const dist = this._distanceToSegment(x, y, this._p1Point.x, this._p1Point.y, this._p2Point.x, this._p2Point.y);
+        if (dist < 20) {
+            return {
+                cursorStyle: 'pointer',
+                externalId: this._id,
+                zOrder: 'top'
+            };
+        }
+        return null;
     }
 
     // Helper: Calculate distance from point to line segment
