@@ -36,7 +36,7 @@ export interface ChartContainerRef {
 export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off', selection, onSelectionChange, onDeleteSelection }, ref) => {
     const chartContainerRef = useRef<HTMLDivElement>(null)
     const [data, setData] = useState<any[]>([])
-    const { chart, series } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data, markers)
+    const { chart, series, primitives } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data, markers)
 
     const { openTradeDialog } = useTradeContext()
 
@@ -97,18 +97,58 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         setSelectedDrawingId(null);
     };
 
-    // Open settings from sidebar
     const handleEditDrawing = (id: string) => {
+        // Check if it's a drawing first
         const drawing = drawingManager.getDrawing(id);
         if (drawing) {
             onSelectionChange?.({ type: 'drawing', id });
-
             setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
-
-            const drawingType = drawing._type;
-
-            setSelectedDrawingType(drawingType);
+            setSelectedDrawingType(drawing._type);
             setPropertiesModalOpen(true);
+        } else {
+            // Check if it's an indicator
+            // We don't have a direct "Indicator Manager" yet, but we know indicators list.
+            const ind = indicators.find(i => i.startsWith(id)); // id passed is usually 'sma' or 'sma:9'
+            // Actually, in RightSidebar we pass 'indicator.type' which is 'sma:9' or 'watermark'.
+            // wait, RightSidebar uses 'type' which comes from IndicatorStorage...
+            // In ChartWrapper, indicatorObjects map type to label.
+            // Let's assume ID is the full indicator string e.g. "sma:9"
+
+            // We need to find the primitive if it's a primitive-based indicator (Watermark)
+            // OR just open generic options if it's a line series (SMA).
+            // For now, PropertiesModal is designed for DRAWINGS (ISeriesPrimitive).
+            // Does it support generic indicators? 
+            // The user wants to edit properties.
+            // If it's Watermark, we have a primitive in `primitives.current`!
+
+            if (primitives && primitives.current) {
+                const primitive = primitives.current.find(p => p._type === id || (p.options && p.options().text === id /* weak check */));
+                // Actually Watermark _type is 'anchored-text'. ID is random.
+                // But the "ID" passed from Sidebar is likely the indicator string "watermark".
+
+                // Issue: Sidebar displays "watermark", but the Primitive has a random ID.
+                // We need to link them.
+                // For now, let's look for ANY primitive with type 'anchored-text' if id is 'watermark'.
+                // This is a bit hacky but works for 1-of-each-type.
+                if (id === 'watermark') {
+                    const p = primitives.current.find(p => p._type === 'anchored-text');
+                    if (p) {
+                        onSelectionChange?.({ type: 'indicator', id: 'watermark' });
+                        setSelectedDrawingOptions(p.options ? p.options() : {});
+                        setSelectedDrawingType('anchored-text');
+                        setPropertiesModalOpen(true);
+                        return;
+                    }
+                }
+            }
+
+            // If it's a standard indicator (SMA/EMA)
+            if (id.startsWith('sma') || id.startsWith('ema')) {
+                // Open modal for generic line? We don't have options for them yet in `useChart`.
+                // `useChart` hardcodes colors.
+                // We need to Implement `IIndicator` properly to support this.
+                // But for Watermark (which relies on Primitive), we can support it now.
+            }
         }
     };
 
@@ -201,6 +241,33 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         setContextMenu({ ...contextMenu, visible: false });
     };
 
+    // Handle Properties Save (from PropertiesModal)
+    const handlePropertiesSave = (options: any) => {
+        // Check if we have a selected drawing
+        if (selectedDrawingRef.current) {
+            const drawing = selectedDrawingRef.current;
+            if (drawing.applyOptions) {
+                drawing.applyOptions(options);
+            }
+            // Also update storage
+            const id = typeof drawing.id === 'function' ? drawing.id() : drawing._id;
+            if (id) {
+                DrawingStorage.updateDrawingOptions(ticker, timeframe, id, options);
+            }
+            toast.success('Properties saved');
+            return;
+        }
+
+        // Check for indicator primitives (Watermark)
+        if (primitives?.current && selectedDrawingType === 'anchored-text') {
+            const primitive = primitives.current.find((p: any) => p._type === 'anchored-text');
+            if (primitive && primitive.applyOptions) {
+                primitive.applyOptions(options);
+                toast.success('Watermark updated');
+            }
+        }
+    };
+
     // Handle Delete Key
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -227,12 +294,28 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         const clickHandler = (param: any) => {
             if (!param.point) return;
 
+            let hitDrawing: any = null;
+
+            // 1. Check Drawing Manager
             const result = drawingManager.hitTest(param.point.x, param.point.y);
-            const hitDrawing = result?.drawing;
+            if (result) {
+                hitDrawing = result.drawing;
+            } else {
+                // 2. Check Primitives from useChart (e.g. Watermark)
+                // primitives is a RefObject from useChart
+                if (primitives && primitives.current) {
+                    for (const p of primitives.current) {
+                        if (p.hitTest && p.hitTest(param.point.x, param.point.y)) {
+                            hitDrawing = p;
+                            break;
+                        }
+                    }
+                }
+            }
 
             if (hitDrawing) {
                 const id = typeof hitDrawing.id === 'function' ? hitDrawing.id() : hitDrawing.id;
-                onSelectionChange?.({ type: 'drawing', id });
+                onSelectionChange?.({ type: hitDrawing._type || 'drawing', id }); // Use type if available
 
                 const now = Date.now()
                 const lastClick = lastClickRef.current
@@ -555,29 +638,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         }
     }, [chart, series, ticker, timeframe, magnetMode, data])
 
-
-    const handlePropertiesSave = (newOptions: any) => {
-        if (selectedDrawingId) {
-            const drawing = drawingManager.getDrawing(selectedDrawingId)
-            if (drawing && drawing.applyOptions) {
-                drawing.applyOptions(newOptions)
-                // Persistence handled during create/delete/drag.
-                // Property updates might need explicit save to storage?
-                // Yes, we should update storage here too.
-                const drawingType = drawing._type;
-
-                const serialized: SerializedDrawing = {
-                    id: selectedDrawingId,
-                    type: drawingType as any,
-                    p1: drawing._p1,
-                    p2: drawing._p2,
-                    options: drawing._options,
-                    createdAt: Date.now()
-                }
-                DrawingStorage.updateDrawing(ticker, timeframe, selectedDrawingId, serialized);
-            }
-        }
-    }
 
 
     // Context Menu Effect

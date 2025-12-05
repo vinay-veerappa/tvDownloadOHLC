@@ -16,6 +16,7 @@ import {
 
 import { calculateSMA, calculateEMA } from "@/lib/charts/indicators"
 import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
+import { AnchoredText } from "@/lib/charts/plugins/anchored-text"
 
 export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: string = 'candles', indicators: string[] = [], data: any[] = [], markers: any[] = []) {
     const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
@@ -154,11 +155,15 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
     }, [seriesInstance, data, style, markers])
 
 
+    const primitivesRef = useRef<any[]>([])
+
     // Manage Indicators
     useEffect(() => {
         if (!chartInstance || !data.length || !indicators.length) return
 
         const indicatorSeries: ISeriesApi<"Line">[] = []
+        // Clear previous primitives from ref
+        primitivesRef.current = []
 
         indicators.forEach(ind => {
             // Parse indicator string "type:period" (e.g., "sma:9")
@@ -184,20 +189,41 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
                 })
                 lineSeries.setData(emaData)
                 indicatorSeries.push(lineSeries)
+            } else if (type === 'watermark') {
+                if (seriesInstance) {
+                    const watermark = new AnchoredText(chartInstance, seriesInstance, {
+                        text: param || 'Watermark',
+                        color: 'rgba(0, 150, 136, 0.5)',
+                        font: 'bold 48px Arial',
+                        horzAlign: 'center',
+                        vertAlign: 'middle'
+                    });
+                    seriesInstance.attachPrimitive(watermark);
+                    (indicatorSeries as any[]).push({
+                        primitive: watermark,
+                        series: seriesInstance
+                    });
+                    primitivesRef.current.push(watermark);
+                }
             }
         })
 
         return () => {
-            indicatorSeries.forEach(series => {
+            indicatorSeries.forEach(item => {
                 try {
-                    chartInstance.removeSeries(series)
+                    if ((item as any).primitive) {
+                        (item as any).series.detachPrimitive((item as any).primitive);
+                    } else {
+                        chartInstance.removeSeries(item as any)
+                    }
                 } catch (e) { }
             })
         }
-    }, [chartInstance, indicators, data])
+    }, [chartInstance, indicators, data, seriesInstance])
 
     return {
         chart: chartInstance,
         series: seriesInstance,
+        primitives: primitivesRef
     }
 }

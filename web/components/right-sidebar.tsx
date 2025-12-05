@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 
 export interface Drawing {
     id: string
-    type: 'trend-line' | 'fibonacci' | 'rectangle' | 'vertical-line' | 'horizontal-line' | 'text'
+    type: 'trend-line' | 'fibonacci' | 'rectangle' | 'vertical-line' | 'horizontal-line' | 'text' | 'measure'
     createdAt: number
 }
 
@@ -76,6 +76,20 @@ export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIn
                                                     </span>
                                                 </div>
                                                 <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-6 w-6 mr-1"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            // For indicators, we can reuse onEditDrawing or better, have onEditIndicator (but onEditDrawing takes ID which serves as type here)
+                                                            // Actually, onEditDrawing prop is typed as (id:string)=>void. 
+                                                            // Let's use it for now as the ID for indicator is its type.
+                                                            if (onEditDrawing) onEditDrawing(indicator.type);
+                                                        }}
+                                                    >
+                                                        <Settings className="h-3 w-3" />
+                                                    </Button>
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"

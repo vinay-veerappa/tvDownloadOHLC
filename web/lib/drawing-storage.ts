@@ -5,7 +5,7 @@
 
 export interface SerializedDrawing {
     id: string;
-    type: 'trend-line' | 'rectangle' | 'fibonacci' | 'vertical-line' | 'horizontal-line' | 'text';
+    type: 'trend-line' | 'rectangle' | 'fibonacci' | 'vertical-line' | 'horizontal-line' | 'text' | 'measure';
     p1: { time: number; price: number };
     p2: { time: number; price: number };
     options: Record<string, any>;
@@ -78,6 +78,21 @@ export class DrawingStorage {
 
         if (index >= 0) {
             drawings[index] = { ...drawings[index], ...updates };
+            return this.saveDrawings(ticker, timeframe, drawings);
+        }
+
+        return false;
+    }
+
+    /**
+     * Update only the options of a drawing by ID
+     */
+    static updateDrawingOptions(ticker: string, timeframe: string, drawingId: string, options: Record<string, any>): boolean {
+        const drawings = this.getDrawings(ticker, timeframe);
+        const index = drawings.findIndex(d => d.id === drawingId);
+
+        if (index >= 0) {
+            drawings[index].options = { ...drawings[index].options, ...options };
             return this.saveDrawings(ticker, timeframe, drawings);
         }
 
