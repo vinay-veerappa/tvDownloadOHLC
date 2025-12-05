@@ -125,6 +125,8 @@ export class VertLine implements ISeriesPrimitive {
     _timeAxisViews: VertLineTimeAxisView[];
     _requestUpdate: (() => void) | null = null;
 
+    _id: string;
+
     constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, time: Time, options?: Partial<VertLineOptions>) {
         this._chart = chart;
         this._series = series;
@@ -133,6 +135,11 @@ export class VertLine implements ISeriesPrimitive {
 
         this._paneViews = [new VertLinePaneView(this, this._options)];
         this._timeAxisViews = [new VertLineTimeAxisView(this, this._options)];
+        this._id = Math.random().toString(36).substring(7);
+    }
+
+    id() {
+        return this._id;
     }
 
     updateAllViews() {

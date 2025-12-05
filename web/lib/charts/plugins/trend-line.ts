@@ -69,6 +69,8 @@ export class TrendLine implements ISeriesPrimitive {
     _paneViews: TrendLinePaneView[];
     _requestUpdate: (() => void) | null = null;
 
+    _id: string;
+
     constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, p1: Point, p2: Point, options?: TrendLineOptions) {
         this._chart = chart;
         this._series = series;
@@ -78,6 +80,11 @@ export class TrendLine implements ISeriesPrimitive {
         this._p1Point = { x: null, y: null };
         this._p2Point = { x: null, y: null };
         this._paneViews = [new TrendLinePaneView(this)];
+        this._id = Math.random().toString(36).substring(7);
+    }
+
+    id() {
+        return this._id;
     }
 
     updateEnd(p2: Point) {
