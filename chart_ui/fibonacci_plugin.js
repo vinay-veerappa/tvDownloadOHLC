@@ -107,6 +107,16 @@ class FibonacciRetracement {
         if (this._requestUpdate) this._requestUpdate();
     }
 
+    options() {
+        return this._options;
+    }
+
+    applyOptions(options) {
+        this._options = { ...this._options, ...options };
+        this._paneViews = [new FibonacciPaneView(this)];
+        this.updateAllViews();
+    }
+
     attached({ chart, series, requestUpdate }) {
         this._requestUpdate = requestUpdate;
     }
