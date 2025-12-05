@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react"
 import { createChart, ColorType, CrosshairMode, IChartApi, ISeriesApi, CandlestickSeries } from "lightweight-charts"
 
 export function useChart(containerRef: React.RefObject<HTMLDivElement>) {
-    const chartRef = useRef<IChartApi | null>(null)
-    const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null)
+    const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
+    const [seriesInstance, setSeriesInstance] = useState<ISeriesApi<"Candlestick"> | null>(null)
 
     useEffect(() => {
         if (!containerRef.current) return
@@ -39,16 +39,18 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>) {
             wickDownColor: '#ef5350',
         })
 
-        chartRef.current = chart
-        seriesRef.current = candlestickSeries
+        setChartInstance(chart)
+        setSeriesInstance(candlestickSeries)
 
         return () => {
             chart.remove()
+            setChartInstance(null)
+            setSeriesInstance(null)
         }
     }, [containerRef])
 
     return {
-        chart: chartRef.current,
-        series: seriesRef.current,
+        chart: chartInstance,
+        series: seriesInstance,
     }
 }

@@ -19,6 +19,10 @@ export const metadata: Metadata = {
   description: "Advanced Trading Journal and Backtesting Platform",
 };
 
+import { TradeProvider } from "@/components/journal/trade-context";
+
+// ... existing imports
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -28,16 +32,19 @@ export default function RootLayout({
     <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        suppressHydrationWarning
       >
-        <div className="flex h-screen overflow-hidden">
-          <AppSidebar />
-          <div className="flex flex-col flex-1 overflow-hidden">
-            <SiteHeader />
-            <main className="flex-1 overflow-auto p-4 bg-muted/10">
-              {children}
-            </main>
+        <TradeProvider>
+          <div className="flex h-screen overflow-hidden">
+            <AppSidebar />
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <SiteHeader />
+              <main className="flex-1 overflow-auto p-4 bg-muted/10">
+                {children}
+              </main>
+            </div>
           </div>
-        </div>
+        </TradeProvider>
       </body>
     </html>
   );

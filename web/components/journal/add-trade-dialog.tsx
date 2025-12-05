@@ -21,10 +21,20 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select"
+import { useTradeContext } from "@/components/journal/trade-context"
+import { format } from "date-fns"
 
 export function AddTradeDialog() {
-    const [open, setOpen] = useState(false)
+    const { isOpen, setIsOpen, initialData } = useTradeContext()
     const [loading, setLoading] = useState(false)
+
+    // Form default values
+    const defaultSymbol = initialData?.symbol || "ES"
+    const defaultPrice = initialData?.price?.toString() || ""
+    const defaultDate = initialData?.date
+        ? format(initialData.date, "yyyy-MM-dd'T'HH:mm")
+        : format(new Date(), "yyyy-MM-dd'T'HH:mm")
+    const defaultDirection = initialData?.direction || "LONG"
 
     async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault()
@@ -44,11 +54,8 @@ export function AddTradeDialog() {
         const result = await createTrade(data)
 
         if (result.success) {
-            setOpen(false)
-            // Ideally trigger a refresh of the list here, 
-            // but Server Actions revalidatePath handles it for server components.
-            // For client components, we might need a context or router refresh.
-            window.location.reload() // Simple brute force refresh for now
+            setIsOpen(false)
+            window.location.reload()
         } else {
             alert("Failed to create trade")
         }
@@ -56,9 +63,9 @@ export function AddTradeDialog() {
     }
 
     return (
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
-                <Button>Add Trade</Button>
+                <Button onClick={() => setIsOpen(true)}>Add Trade</Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-[425px]">
                 <form onSubmit={onSubmit}>
@@ -76,7 +83,7 @@ export function AddTradeDialog() {
                             <Input
                                 id="symbol"
                                 name="symbol"
-                                defaultValue="ES"
+                                defaultValue={defaultSymbol}
                                 className="col-span-3"
                                 required
                             />
@@ -85,7 +92,7 @@ export function AddTradeDialog() {
                             <Label htmlFor="direction" className="text-right">
                                 Direction
                             </Label>
-                            <Select name="direction" defaultValue="LONG" required>
+                            <Select name="direction" defaultValue={defaultDirection} required>
                                 <SelectTrigger className="col-span-3">
                                     <SelectValue placeholder="Select direction" />
                                 </SelectTrigger>
@@ -103,6 +110,7 @@ export function AddTradeDialog() {
                                 id="entryDate"
                                 name="entryDate"
                                 type="datetime-local"
+                                defaultValue={defaultDate}
                                 className="col-span-3"
                                 required
                             />
@@ -116,6 +124,7 @@ export function AddTradeDialog() {
                                 name="entryPrice"
                                 type="number"
                                 step="0.01"
+                                defaultValue={defaultPrice}
                                 className="col-span-3"
                                 required
                             />
