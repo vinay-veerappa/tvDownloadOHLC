@@ -30,11 +30,11 @@ tradingview-selenium-data/
 !gaps_report.txt
 *.png
 *.html
-!chart_ui/chart_ui.html
-!chart_ui/demo_plugins.html
-!chart_ui/demo_strategy.html
-!chart_ui/demo_rectangle.html
-!chart_ui/test_plugins.html
+!legacy_chart_ui/chart_ui.html
+!legacy_chart_ui/demo_plugins.html
+!legacy_chart_ui/demo_strategy.html
+!legacy_chart_ui/demo_rectangle.html
+!legacy_chart_ui/test_plugins.html
 
 # Credentials
 credentials.json
