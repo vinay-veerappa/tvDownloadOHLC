@@ -80,3 +80,12 @@ Contains **compiled** JavaScript (ESM/UMD) for several standard indicators. The 
 *   `weighted-close`
 
 **Strategy:** Since these are compiled, it is better to prioritize the **uncompiled** source files found in `legacy_chart_ui` where available. For example, `legacy_chart_ui/moving-average.js` seems to be an uncompiled source file, which is much better for migration.
+
+## 📚 Official TypeScript References
+
+The official TradingView `lightweight-charts` repository contains TypeScript source examples:
+
+- **Indicators**: [github.com/tradingview/lightweight-charts/tree/master/indicator-examples](https://github.com/tradingview/lightweight-charts/tree/master/indicator-examples)
+- **Plugins**: [github.com/tradingview/lightweight-charts/tree/master/plugin-examples](https://github.com/tradingview/lightweight-charts/tree/master/plugin-examples)
+
+These are valuable references for implementing new features with proper TypeScript patterns.
