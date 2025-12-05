@@ -199,6 +199,7 @@ export class Rectangle implements ISeriesPrimitive {
     _paneViews: RectanglePaneView[];
     _requestUpdate: (() => void) | null = null;
     _textLabel: TextLabel | null = null;
+    public _type = 'rectangle';
 
     _id: string;
     _selected: boolean = false;

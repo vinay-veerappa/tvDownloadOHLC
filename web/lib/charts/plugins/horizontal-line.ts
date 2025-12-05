@@ -158,6 +158,7 @@ export class HorizontalLine implements ISeriesPrimitive {
     _priceAxisViews: HorizontalLineAxisView[];
     _id: string;
     _textLabel: TextLabel | null = null;
+    public _type = 'horizontal-line';
     _selected: boolean = false;
 
     constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, price: number, options?: Partial<HorizontalLineOptions>) {

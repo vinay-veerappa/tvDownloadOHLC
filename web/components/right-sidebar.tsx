@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Trash2, Layers, ChevronLeft, ChevronRight } from "lucide-react"
+import { Trash2, Layers, ChevronLeft, ChevronRight, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
@@ -22,9 +22,13 @@ interface RightSidebarProps {
     indicators: Indicator[]
     onDeleteDrawing: (id: string) => void
     onDeleteIndicator: (type: string) => void
+    onEditDrawing?: (id: string) => void
+    selection?: { type: 'drawing' | 'indicator', id: string } | null
+    onSelect?: (selection: { type: 'drawing' | 'indicator', id: string } | null) => void
 }
 
-export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIndicator }: RightSidebarProps) {
+
+export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIndicator, onEditDrawing, selection, onSelect }: RightSidebarProps) {
     const [collapsed, setCollapsed] = React.useState(false)
 
     const totalItems = drawings.length + indicators.length
@@ -57,27 +61,33 @@ export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIn
                                         <div className="text-xs font-semibold text-muted-foreground px-2 py-1">
                                             INDICATORS
                                         </div>
-                                        {indicators.map((indicator) => (
+                                        {indicators.map((indicator, i) => (
                                             <div
-                                                key={indicator.type}
-                                                className="flex items-center justify-between p-2 rounded-md border bg-card hover:bg-accent/50 transition-colors group"
+                                                key={i}
+                                                className={cn(
+                                                    "group flex items-center justify-between p-2 rounded-md hover:bg-accent cursor-pointer border border-transparent",
+                                                    selection?.type === 'indicator' && selection.id === indicator.type && "bg-accent border-accent-foreground/10"
+                                                )}
+                                                onClick={() => onSelect?.({ type: 'indicator', id: indicator.type })}
                                             >
-                                                <div className="flex flex-col">
-                                                    <span className="text-sm font-medium">
+                                                <div className="flex items-center overflow-hidden">
+                                                    <span className="text-sm truncate" title={indicator.label}>
                                                         {indicator.label}
                                                     </span>
-                                                    <span className="text-xs text-muted-foreground capitalize">
-                                                        {indicator.type}
-                                                    </span>
                                                 </div>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                    onClick={() => onDeleteIndicator(indicator.type)}
-                                                >
-                                                    <Trash2 className="h-4 w-4 text-destructive" />
-                                                </Button>
+                                                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-6 w-6 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onDeleteIndicator(indicator.type);
+                                                        }}
+                                                    >
+                                                        <Trash2 className="h-3 w-3" />
+                                                    </Button>
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
@@ -92,24 +102,50 @@ export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIn
                                         {drawings.map((drawing) => (
                                             <div
                                                 key={drawing.id}
-                                                className="flex items-center justify-between p-2 rounded-md border bg-card hover:bg-accent/50 transition-colors group"
+                                                className={cn(
+                                                    "group flex items-center justify-between p-2 rounded-md hover:bg-accent cursor-pointer border border-transparent",
+                                                    selection?.type === 'drawing' && selection.id === drawing.id && "bg-accent border-accent-foreground/10"
+                                                )}
+                                                onClick={() => {
+                                                    onSelect?.({ type: 'drawing', id: drawing.id });
+                                                    // Also trigger edit on click if already selected? No, separate button.
+                                                    if (selection?.type === 'drawing' && selection.id === drawing.id) {
+                                                        onEditDrawing?.(drawing.id);
+                                                    }
+                                                }}
                                             >
-                                                <div className="flex flex-col">
-                                                    <span className="text-sm font-medium capitalize">
+                                                <div className="flex items-center overflow-hidden">
+                                                    <span className="text-sm truncate capitalize">
                                                         {drawing.type.replace('-', ' ')}
                                                     </span>
-                                                    <span className="text-xs text-muted-foreground">
-                                                        ID: {drawing.id}
+                                                    <span className="text-xs text-muted-foreground ml-2">
+                                                        {new Date(drawing.createdAt).toLocaleTimeString()}
                                                     </span>
                                                 </div>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                    onClick={() => onDeleteDrawing(drawing.id)}
-                                                >
-                                                    <Trash2 className="h-4 w-4 text-destructive" />
-                                                </Button>
+                                                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-6 w-6 mr-1"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onEditDrawing?.(drawing.id);
+                                                        }}
+                                                    >
+                                                        <Settings className="h-3 w-3" />
+                                                    </Button>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-6 w-6 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onDeleteDrawing(drawing.id);
+                                                        }}
+                                                    >
+                                                        <Trash2 className="h-3 w-3" />
+                                                    </Button>
+                                                </div>
                                             </div>
                                         ))}
                                     </div>

@@ -123,6 +123,7 @@ export class TrendLine implements ISeriesPrimitive {
     _paneViews: TrendLinePaneView[];
     _requestUpdate: (() => void) | null = null;
     _textLabel: TextLabel | null = null;
+    public _type = 'trend-line';
 
     _id: string;
     _selected: boolean = false;
