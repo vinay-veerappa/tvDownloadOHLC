@@ -9,7 +9,7 @@ All drawing tools now support selection, modification, and deletion with a unifi
 ## Features Implemented
 
 ### Drawing Selection & Modification
-- **Click to select** any drawing (TrendLine, Fibonacci, VertLine, PriceLine)
+- **Click to select** any drawing (TrendLine, Fibonacci, VertLine, PriceLine, Rectangle)
 - **Properties panel** appears at bottom-left showing current color and width
 - **Real-time updates** when changing color or width
 - **Visual feedback** - selected drawings are highlighted (thicker lines, gold color)
@@ -20,7 +20,7 @@ All drawing tools now support selection, modification, and deletion with a unifi
 - ✅ **Fibonacci** (🔢) - Retracement levels with color control
 - ✅ **Vertical Line** (│) - Time-based vertical line with color and width
 - ✅ **Price Line** (─) - Horizontal price level with color and width
-- ⚠️ **Rectangle** (▭) - Selection works, but not tracked in state (pending fix)
+- ✅ **Rectangle** (▭) - Fully refactored and working with selection
 
 ---
 
@@ -34,9 +34,15 @@ All drawing plugins now implement:
 
 ### Phase 2: Self-Contained Hit Testing ✅
 Hit testing logic moved from `drawings.js` to individual plugins:
-- `hitTest(point)` method added to TrendLine, Fibonacci, and VertLine
+- `hitTest(point)` method added to TrendLine, Fibonacci, VertLine, and Rectangle
 - `drawings.js` delegates hit testing to plugins
 - Cleaner separation of concerns
+
+### Rectangle Tool Refactoring ✅
+- **De-minified** code for better maintainability
+- **Standardized** with `options()`, `applyOptions()`, `hitTest()`
+- **Event-driven** - Dispatches `drawing-created` event
+- **Tracked** - `drawings.js` listens for event and tracks new rectangles
 
 ---
 
@@ -54,6 +60,10 @@ Hit testing logic moved from `drawings.js` to individual plugins:
 **Problem:** `Unexpected token 'export'` errors.
 **Solution:** Removed duplicate `<script>` tags, loading plugins only as modules.
 
+### 4. Rectangle Selection Not Working
+**Problem:** Rectangles weren't tracked in state.
+**Solution:** Added `drawing-created` event and listener.
+
 ---
 
 ## Git Commits
@@ -67,6 +77,7 @@ Hit testing logic moved from `drawings.js` to individual plugins:
 7. **dd677e0** - Add ES6 exports to all plugin files
 8. **d2f208e** - Remove duplicate script tags
 9. **b476600** - Phase 2: Add hitTest methods to plugins
+10. **(New)** - Refactor Rectangle tool
 
 ---
 
@@ -83,10 +94,6 @@ Hit testing logic moved from `drawings.js` to individual plugins:
 
 ## Pending Items
 
-### Rectangle Tracking
-- Rectangle drawings work but aren't tracked in `state.drawings`
-- Need to add `drawing-created` event dispatch in RectangleDrawingTool
-
 ### Ticker-Specific Drawings
 - Drawings currently persist across ticker changes
 - Need to implement per-ticker storage
@@ -99,4 +106,4 @@ Hit testing logic moved from `drawings.js` to individual plugins:
 
 ## Summary
 
-Successfully implemented drawing selection and deletion with a unified properties panel. Completed Phase 1 and Phase 2 of plugin standardization. All drawing plugins now follow consistent interfaces and encapsulate their own hit testing logic, significantly improving code maintainability.
+Successfully implemented drawing selection and deletion with a unified properties panel. Completed Phase 1 and Phase 2 of plugin standardization. All drawing plugins (including Rectangle) now follow consistent interfaces and encapsulate their own hit testing logic.

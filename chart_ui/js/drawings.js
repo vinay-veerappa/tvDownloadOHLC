@@ -121,6 +121,15 @@ export function setupDrawingHandlers() {
     const chart = window.chart;
     const series = window.chartSeries;
 
+    // Listen for drawings created by plugins
+    window.addEventListener('drawing-created', (e) => {
+        if (e.detail && e.detail.drawing) {
+            console.log('New drawing created via event:', e.detail.type);
+            state.drawings.push(e.detail.drawing);
+            selectDrawing(e.detail.drawing);
+        }
+    });
+
     chart.subscribeClick((param) => {
         if (!param.point) return;
 
@@ -291,28 +300,7 @@ function hitTest(point) {
             continue;
         }
 
-        // Fallback for Rectangle (until standardized)
-        if (window.Rectangle && drawing instanceof window.Rectangle) {
-            const p1 = drawing._p1;
-            const p2 = drawing._p2;
-            if (!p1 || !p2 || !p1.time || !p2.time || p1.price === undefined || p2.price === undefined) continue;
 
-            const x1 = timeScale.timeToCoordinate(p1.time);
-            const y1 = series.priceToCoordinate(p1.price);
-            const x2 = timeScale.timeToCoordinate(p2.time);
-            const y2 = series.priceToCoordinate(p2.price);
-
-            if (x1 === null || y1 === null || x2 === null || y2 === null) continue;
-
-            const left = Math.min(x1, x2);
-            const right = Math.max(x1, x2);
-            const top = Math.min(y1, y2);
-            const bottom = Math.max(y1, y2);
-
-            if (point.x >= left && point.x <= right && point.y >= top && point.y <= bottom) {
-                return drawing;
-            }
-        }
         // Fallback for PriceLine (UserPriceLines plugin)
         else if (drawing.options && typeof drawing.options === 'function') {
             const opts = drawing.options();
