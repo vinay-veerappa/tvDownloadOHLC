@@ -1,4 +1,5 @@
 import { IChartApi, ISeriesApi, Time, ISeriesPrimitive, Coordinate } from "lightweight-charts";
+import { getLineDash } from "../chart-utils";
 
 interface Point {
     time: Time;
@@ -10,6 +11,7 @@ import { TextLabel } from "./text-label";
 interface FibonacciOptions {
     lineColor: string;
     lineWidth: number;
+    lineStyle?: number;
     text?: string;
     textColor?: string;
 }
@@ -54,7 +56,7 @@ class FibonacciRenderer {
             ctx.lineTo(x2, y2);
             ctx.strokeStyle = this._options.lineColor;
             ctx.lineWidth = this._options.lineWidth * hPR;
-            ctx.setLineDash([5 * hPR, 5 * hPR]);
+            ctx.setLineDash(getLineDash(this._options.lineStyle || 2).map(d => d * hPR)); // Default dashed for levels
             ctx.stroke();
             ctx.setLineDash([]);
 
@@ -75,7 +77,9 @@ class FibonacciRenderer {
 
                 ctx.strokeStyle = colors[index] || '#888';
                 ctx.lineWidth = 1 * hPR;
+                ctx.setLineDash(getLineDash(this._options.lineStyle || 0).map(d => d * hPR)); // Use user style for main line
                 ctx.stroke();
+                ctx.setLineDash([]);
 
                 // Draw Text
                 ctx.font = `${10 * hPR}px sans-serif`;

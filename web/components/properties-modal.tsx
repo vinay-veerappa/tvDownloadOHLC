@@ -164,6 +164,23 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
                         <div className="space-y-4">
                             <Label>Line Style</Label>
                             <div className="grid grid-cols-4 items-center gap-4">
+                                <Label className="text-right text-xs">Style</Label>
+                                <Select
+                                    value={options.lineStyle?.toString() || "0"}
+                                    onValueChange={(val) => handleChange('lineStyle', parseInt(val))}
+                                >
+                                    <SelectTrigger className="col-span-3 h-8">
+                                        <SelectValue placeholder="Select style" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="0">Solid</SelectItem>
+                                        <SelectItem value="1">Dotted</SelectItem>
+                                        <SelectItem value="2">Dashed</SelectItem>
+                                        <SelectItem value="3">Large Dashed</SelectItem>
+                                        <SelectItem value="4">Sparse Dotted</SelectItem>
+                                    </SelectContent>
+                                </Select>
+
                                 <Label htmlFor="lineColor" className="text-right text-xs">Color</Label>
                                 <div className="col-span-3 flex items-center gap-2">
                                     <Input
