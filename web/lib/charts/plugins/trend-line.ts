@@ -19,19 +19,22 @@ class TrendLineRenderer {
     private _color: string;
     private _width: number;
     private _textLabel: TextLabel | null;
+    private _selected: boolean;
 
     constructor(
         p1: { x: number | null; y: number | null },
         p2: { x: number | null; y: number | null },
         color: string,
         width: number,
-        textLabel: TextLabel | null
+        textLabel: TextLabel | null,
+        selected: boolean = false
     ) {
         this._p1 = p1;
         this._p2 = p2;
         this._color = color;
         this._width = width;
         this._textLabel = textLabel;
+        this._selected = selected;
     }
 
     draw(target: any) {
@@ -42,12 +45,45 @@ class TrendLineRenderer {
             const horizontalPixelRatio = scope.horizontalPixelRatio;
             const verticalPixelRatio = scope.verticalPixelRatio;
 
+            // Draw the main line
             ctx.lineWidth = this._width * horizontalPixelRatio;
             ctx.strokeStyle = this._color;
             ctx.beginPath();
             ctx.moveTo(this._p1.x * horizontalPixelRatio, this._p1.y * verticalPixelRatio);
             ctx.lineTo(this._p2.x * horizontalPixelRatio, this._p2.y * verticalPixelRatio);
             ctx.stroke();
+
+            // Draw handles when selected
+            if (this._selected) {
+                const HANDLE_RADIUS = 6;
+
+                // P1 handle (filled circle)
+                ctx.fillStyle = '#2962FF';
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 2 * horizontalPixelRatio;
+                ctx.beginPath();
+                ctx.arc(
+                    this._p1.x * horizontalPixelRatio,
+                    this._p1.y * verticalPixelRatio,
+                    HANDLE_RADIUS * horizontalPixelRatio,
+                    0,
+                    2 * Math.PI
+                );
+                ctx.fill();
+                ctx.stroke();
+
+                // P2 handle (filled circle)
+                ctx.beginPath();
+                ctx.arc(
+                    this._p2.x * horizontalPixelRatio,
+                    this._p2.y * verticalPixelRatio,
+                    HANDLE_RADIUS * horizontalPixelRatio,
+                    0,
+                    2 * Math.PI
+                );
+                ctx.fill();
+                ctx.stroke();
+            }
 
             if (this._textLabel) {
                 // Draw text at the center of the line
@@ -70,7 +106,8 @@ class TrendLinePaneView {
             this._source._p2Point,
             this._source._options.lineColor,
             this._source._options.lineWidth,
-            this._source._textLabel
+            this._source._textLabel,
+            this._source._selected
         );
     }
 }
@@ -88,6 +125,7 @@ export class TrendLine implements ISeriesPrimitive {
     _textLabel: TextLabel | null = null;
 
     _id: string;
+    _selected: boolean = false;
 
     constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, p1: Point, p2: Point, options?: TrendLineOptions) {
         this._chart = chart;
@@ -236,16 +274,63 @@ export class TrendLine implements ISeriesPrimitive {
         return this._options;
     }
 
+    isSelected() {
+        return this._selected;
+    }
+
+    setSelected(selected: boolean) {
+        this._selected = selected;
+        if (this._requestUpdate) this._requestUpdate();
+    }
+
+    updatePoints(p1: Point, p2: Point) {
+        this._p1 = p1;
+        this._p2 = p2;
+        if (this._requestUpdate) this._requestUpdate();
+    }
+
     hitTest(x: number, y: number): any {
         if (this._p1Point.x === null || this._p1Point.y === null || this._p2Point.x === null || this._p2Point.y === null) return null;
-        const dist = this._distanceToSegment(x, y, this._p1Point.x, this._p1Point.y, this._p2Point.x, this._p2Point.y);
-        if (dist < 20) {
+
+        const HANDLE_RADIUS = 8;
+
+        // Check P1 handle first
+        const distToP1 = Math.sqrt(
+            Math.pow(x - this._p1Point.x, 2) + Math.pow(y - this._p1Point.y, 2)
+        );
+        if (distToP1 <= HANDLE_RADIUS) {
             return {
-                cursorStyle: 'pointer',
+                cursorStyle: 'nwse-resize',
                 externalId: this._id,
-                zOrder: 'top'
+                zOrder: 'top',
+                hitType: 'p1'
             };
         }
+
+        // Check P2 handle
+        const distToP2 = Math.sqrt(
+            Math.pow(x - this._p2Point.x, 2) + Math.pow(y - this._p2Point.y, 2)
+        );
+        if (distToP2 <= HANDLE_RADIUS) {
+            return {
+                cursorStyle: 'nwse-resize',
+                externalId: this._id,
+                zOrder: 'top',
+                hitType: 'p2'
+            };
+        }
+
+        // Check body (line segment)
+        const dist = this._distanceToSegment(x, y, this._p1Point.x, this._p1Point.y, this._p2Point.x, this._p2Point.y);
+        if (dist < 10) {
+            return {
+                cursorStyle: 'move',
+                externalId: this._id,
+                zOrder: 'top',
+                hitType: 'body'
+            };
+        }
+
         return null;
     }
 
@@ -269,6 +354,11 @@ export class TrendLine implements ISeriesPrimitive {
     }
 }
 
+interface TrendLineToolOptions {
+    magnetMode?: 'off' | 'weak' | 'strong';
+    ohlcData?: any[];
+}
+
 export class TrendLineTool {
     private _chart: IChartApi;
     private _series: ISeriesApi<"Candlestick">;
@@ -278,15 +368,25 @@ export class TrendLineTool {
     private _clickHandler: (param: any) => void;
     private _moveHandler: (param: any) => void;
     private _onDrawingCreated?: (drawing: TrendLine) => void;
+    private _magnetMode: 'off' | 'weak' | 'strong';
+    private _ohlcData: any[];
 
-    constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, onDrawingCreated?: (drawing: TrendLine) => void) {
+    constructor(
+        chart: IChartApi,
+        series: ISeriesApi<"Candlestick">,
+        onDrawingCreated?: (drawing: TrendLine) => void,
+        options?: TrendLineToolOptions
+    ) {
         this._chart = chart;
         this._series = series;
         this._onDrawingCreated = onDrawingCreated;
+        this._magnetMode = options?.magnetMode || 'off';
+        this._ohlcData = options?.ohlcData || [];
 
         this._clickHandler = this._onClick.bind(this);
         this._moveHandler = this._onMouseMove.bind(this);
     }
+
 
     startDrawing() {
         this._drawing = true;
@@ -311,12 +411,22 @@ export class TrendLineTool {
     private _onClick(param: any) {
         if (!this._drawing || !param.point || !param.time || !this._series) return;
 
-        const price = this._series.coordinateToPrice(param.point.y);
-        if (price === null) return;
+        const rawPrice = this._series.coordinateToPrice(param.point.y);
+        if (rawPrice === null) return;
+
+        let priceValue = rawPrice as number;
+
+        // Apply magnet snapping if enabled
+        if (this._magnetMode !== 'off' && this._ohlcData) {
+            const snapped = this._findSnapPrice(param.time, priceValue);
+            if (snapped !== null) {
+                priceValue = snapped;
+            }
+        }
 
         if (!this._startPoint) {
             // First click: Start drawing
-            this._startPoint = { time: param.time, price: price };
+            this._startPoint = { time: param.time, price: priceValue };
             this._activeDrawing = new TrendLine(
                 this._chart,
                 this._series,
@@ -328,7 +438,7 @@ export class TrendLineTool {
         } else {
             // Second click: Finish drawing
             if (this._activeDrawing) {
-                this._activeDrawing.updateEnd({ time: param.time, price: price });
+                this._activeDrawing.updateEnd({ time: param.time, price: priceValue });
 
                 if (this._onDrawingCreated) {
                     this._onDrawingCreated(this._activeDrawing);
@@ -342,9 +452,50 @@ export class TrendLineTool {
     private _onMouseMove(param: any) {
         if (!this._drawing || !this._activeDrawing || !this._startPoint || !param.point || !param.time) return;
 
-        const price = this._series.coordinateToPrice(param.point.y);
-        if (price !== null) {
-            this._activeDrawing.updateEnd({ time: param.time, price: price });
+        const rawPrice = this._series.coordinateToPrice(param.point.y);
+        if (rawPrice === null) return;
+
+        let priceValue = rawPrice as number;
+
+        // Apply magnet snapping if enabled
+        if (this._magnetMode !== 'off' && this._ohlcData) {
+            const snapped = this._findSnapPrice(param.time, priceValue);
+            if (snapped !== null) {
+                priceValue = snapped;
+            }
         }
+
+        this._activeDrawing.updateEnd({ time: param.time, price: priceValue });
+    }
+
+    private _findSnapPrice(time: Time, price: number): number | null {
+        if (!this._ohlcData || this._ohlcData.length === 0) return null;
+
+        // Find the bar at or near this time
+        const bar = this._ohlcData.find((b: any) => b.time === time);
+        if (!bar) return null;
+
+        const ohlcValues = [bar.open, bar.high, bar.low, bar.close];
+        let closest = ohlcValues[0];
+        let minDist = Math.abs(price - closest);
+
+        for (const val of ohlcValues) {
+            const dist = Math.abs(price - val);
+            if (dist < minDist) {
+                minDist = dist;
+                closest = val;
+            }
+        }
+
+        // For 'weak' mode, only snap if within threshold
+        if (this._magnetMode === 'weak') {
+            const priceRange = bar.high - bar.low;
+            const threshold = priceRange * 0.3; // 30% of bar range
+            if (minDist > threshold) {
+                return null; // Don't snap
+            }
+        }
+
+        return closest;
     }
 }

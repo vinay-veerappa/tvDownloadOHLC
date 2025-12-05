@@ -30,17 +30,20 @@ class RectangleRenderer {
     private _p2: { x: number | null; y: number | null };
     private _options: RectangleOptions;
     private _textLabel: TextLabel | null;
+    private _selected: boolean;
 
     constructor(
         p1: { x: number | null; y: number | null },
         p2: { x: number | null; y: number | null },
         options: RectangleOptions,
-        textLabel: TextLabel | null
+        textLabel: TextLabel | null,
+        selected: boolean = false
     ) {
         this._p1 = p1;
         this._p2 = p2;
         this._options = options;
         this._textLabel = textLabel;
+        this._selected = selected;
     }
 
     draw(target: any) {
@@ -58,11 +61,55 @@ class RectangleRenderer {
 
             const left = Math.min(x1, x2);
             const top = Math.min(y1, y2);
-            const width = Math.abs(x2 - x1);
-            const height = Math.abs(y2 - y1);
+            const right = Math.max(x1, x2);
+            const bottom = Math.max(y1, y2);
+            const width = right - left;
+            const height = bottom - top;
+            const midX = (left + right) / 2;
+            const midY = (top + bottom) / 2;
 
+            // Draw rectangle fill
             ctx.fillStyle = this._options.fillColor;
             ctx.fillRect(left, top, width, height);
+
+            // Draw handles when selected
+            if (this._selected) {
+                const HANDLE_SIZE = 6 * hPR;
+
+                ctx.fillStyle = '#2962FF';
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 2 * hPR;
+
+                // Corner handles (circles) at TL, TR, BL, BR
+                const corners = [
+                    { x: left, y: top },
+                    { x: right, y: top },
+                    { x: left, y: bottom },
+                    { x: right, y: bottom }
+                ];
+                for (const c of corners) {
+                    ctx.beginPath();
+                    ctx.arc(c.x, c.y, HANDLE_SIZE, 0, 2 * Math.PI);
+                    ctx.fill();
+                    ctx.stroke();
+                }
+
+                // Edge handles (squares) at T, B, L, R
+                const edges = [
+                    { x: midX, y: top },
+                    { x: midX, y: bottom },
+                    { x: left, y: midY },
+                    { x: right, y: midY }
+                ];
+                for (const e of edges) {
+                    ctx.fillRect(e.x - HANDLE_SIZE / 2, e.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+                    ctx.strokeRect(e.x - HANDLE_SIZE / 2, e.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+                }
+
+                // Center handle (square)
+                ctx.fillRect(midX - HANDLE_SIZE / 2, midY - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+                ctx.strokeRect(midX - HANDLE_SIZE / 2, midY - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+            }
 
             if (this._textLabel) {
                 this._textLabel.draw(ctx, hPR, vPR);
@@ -83,7 +130,8 @@ class RectanglePaneView {
             this._source._p1Point,
             this._source._p2Point,
             this._source._options,
-            this._source._textLabel
+            this._source._textLabel,
+            this._source._selected
         );
     }
 }
@@ -101,6 +149,7 @@ export class Rectangle implements ISeriesPrimitive {
     _textLabel: TextLabel | null = null;
 
     _id: string;
+    _selected: boolean = false;
 
     constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, p1: Point, p2: Point, options?: Partial<RectangleOptions>) {
         this._chart = chart;
@@ -127,6 +176,21 @@ export class Rectangle implements ISeriesPrimitive {
 
     options() {
         return this._options;
+    }
+
+    isSelected() {
+        return this._selected;
+    }
+
+    setSelected(selected: boolean) {
+        this._selected = selected;
+        if (this._requestUpdate) this._requestUpdate();
+    }
+
+    updatePoints(p1: Point, p2: Point) {
+        this._p1 = p1;
+        this._p2 = p2;
+        this.updateAllViews();
     }
 
     applyOptions(options: Partial<RectangleOptions>) {
@@ -206,21 +270,57 @@ export class Rectangle implements ISeriesPrimitive {
     hitTest(x: number, y: number): any {
         if (this._p1Point.x === null || this._p1Point.y === null || this._p2Point.x === null || this._p2Point.y === null) return null;
 
+        const HANDLE_RADIUS = 8;
         const minX = Math.min(this._p1Point.x, this._p2Point.x);
         const maxX = Math.max(this._p1Point.x, this._p2Point.x);
         const minY = Math.min(this._p1Point.y, this._p2Point.y);
         const maxY = Math.max(this._p1Point.y, this._p2Point.y);
+        const midX = (minX + maxX) / 2;
+        const midY = (minY + maxY) / 2;
 
+        // Define handle positions: 4 corners + 4 edges + center
+        const handles: { x: number; y: number; type: string; cursor: string }[] = [
+            { x: minX, y: minY, type: 'tl', cursor: 'nwse-resize' },
+            { x: maxX, y: minY, type: 'tr', cursor: 'nesw-resize' },
+            { x: minX, y: maxY, type: 'bl', cursor: 'nesw-resize' },
+            { x: maxX, y: maxY, type: 'br', cursor: 'nwse-resize' },
+            { x: midX, y: minY, type: 't', cursor: 'ns-resize' },
+            { x: midX, y: maxY, type: 'b', cursor: 'ns-resize' },
+            { x: minX, y: midY, type: 'l', cursor: 'ew-resize' },
+            { x: maxX, y: midY, type: 'r', cursor: 'ew-resize' },
+            { x: midX, y: midY, type: 'center', cursor: 'move' }
+        ];
+
+        // Check each handle
+        for (const handle of handles) {
+            const dist = Math.sqrt(Math.pow(x - handle.x, 2) + Math.pow(y - handle.y, 2));
+            if (dist <= HANDLE_RADIUS) {
+                return {
+                    cursorStyle: handle.cursor,
+                    externalId: this._id,
+                    zOrder: 'top',
+                    hitType: handle.type
+                };
+            }
+        }
+
+        // Check body (inside rectangle)
         if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
-            // console.log(`Rectangle Hit: ${this._id} at ${x},${y}`);
             return {
-                cursorStyle: 'pointer',
+                cursorStyle: 'move',
                 externalId: this._id,
-                zOrder: 'top'
+                zOrder: 'top',
+                hitType: 'body'
             };
         }
+
         return null;
     }
+}
+
+interface RectangleToolOptions {
+    magnetMode?: 'off' | 'weak' | 'strong';
+    ohlcData?: any[];
 }
 
 export class RectangleDrawingTool {
@@ -232,11 +332,20 @@ export class RectangleDrawingTool {
     private _clickHandler: (param: any) => void;
     private _moveHandler: (param: any) => void;
     private _onDrawingCreated?: (drawing: Rectangle) => void;
+    private _magnetMode: 'off' | 'weak' | 'strong';
+    private _ohlcData: any[];
 
-    constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, onDrawingCreated?: (drawing: Rectangle) => void) {
+    constructor(
+        chart: IChartApi,
+        series: ISeriesApi<"Candlestick">,
+        onDrawingCreated?: (drawing: Rectangle) => void,
+        options?: RectangleToolOptions
+    ) {
         this._chart = chart;
         this._series = series;
         this._onDrawingCreated = onDrawingCreated;
+        this._magnetMode = options?.magnetMode || 'off';
+        this._ohlcData = options?.ohlcData || [];
         this._clickHandler = this._onClick.bind(this);
         this._moveHandler = this._onMouseMove.bind(this);
     }
@@ -263,18 +372,40 @@ export class RectangleDrawingTool {
     private _onClick(param: any) {
         if (!this._drawing || !param.point || !param.time || !this._series) return;
 
-        const price = this._series.coordinateToPrice(param.point.y);
-        if (price === null) return;
+        const rawPrice = this._series.coordinateToPrice(param.point.y);
+        if (rawPrice === null) return;
 
-        this._addPoint({ time: param.time, price: price });
+        let priceValue = rawPrice as number;
+
+        // Apply magnet snapping if enabled
+        if (this._magnetMode !== 'off' && this._ohlcData) {
+            const snapped = this._findSnapPrice(param.time, priceValue);
+            if (snapped !== null) {
+                priceValue = snapped;
+            }
+        }
+
+        this._addPoint({ time: param.time, price: priceValue });
     }
 
     private _onMouseMove(param: any) {
         if (!this._drawing || !param.point || !param.time || !this._series) return;
 
-        const price = this._series.coordinateToPrice(param.point.y);
-        if (price !== null && this._previewRectangle) {
-            this._previewRectangle.updateEndPoint({ time: param.time, price: price });
+        const rawPrice = this._series.coordinateToPrice(param.point.y);
+        if (rawPrice === null) return;
+
+        let priceValue = rawPrice as number;
+
+        // Apply magnet snapping if enabled
+        if (this._magnetMode !== 'off' && this._ohlcData) {
+            const snapped = this._findSnapPrice(param.time, priceValue);
+            if (snapped !== null) {
+                priceValue = snapped;
+            }
+        }
+
+        if (this._previewRectangle) {
+            this._previewRectangle.updateEndPoint({ time: param.time, price: priceValue });
         }
     }
 
@@ -311,5 +442,34 @@ export class RectangleDrawingTool {
         if (this._onDrawingCreated) {
             this._onDrawingCreated(rect);
         }
+    }
+
+    private _findSnapPrice(time: Time, price: number): number | null {
+        if (!this._ohlcData || this._ohlcData.length === 0) return null;
+
+        const bar = this._ohlcData.find((b: any) => b.time === time);
+        if (!bar) return null;
+
+        const ohlcValues = [bar.open, bar.high, bar.low, bar.close];
+        let closest = ohlcValues[0];
+        let minDist = Math.abs(price - closest);
+
+        for (const val of ohlcValues) {
+            const dist = Math.abs(price - val);
+            if (dist < minDist) {
+                minDist = dist;
+                closest = val;
+            }
+        }
+
+        if (this._magnetMode === 'weak') {
+            const priceRange = bar.high - bar.low;
+            const threshold = priceRange * 0.3;
+            if (minDist > threshold) {
+                return null;
+            }
+        }
+
+        return closest;
     }
 }
