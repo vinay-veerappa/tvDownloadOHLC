@@ -107,9 +107,10 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         drawing = new Fibonacci(chart, series, saved.p1, saved.p2, saved.options);
                         break;
                     case 'vertical-line':
-                        // Restore VerticalLine
+                        // Restore VerticalLine - uses time, not p1/p2 point
                         const { VertLine } = require('@/lib/charts/plugins/vertical-line');
-                        drawing = new VertLine(chart, series, saved.p1, saved.options);
+                        const vTime = saved.p1?.time ?? saved.p1;
+                        drawing = new VertLine(chart, series, vTime, saved.options);
                         break;
                 }
 
@@ -174,14 +175,28 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     drawingsRef.current.set(id, drawing)
 
                     // Serialize and save to storage
-                    const serialized: SerializedDrawing = {
-                        id,
-                        type: selectedTool as any,
-                        p1: drawing._p1,
-                        p2: drawing._p2,
-                        options: drawing._options,
-                        createdAt: Date.now()
-                    };
+                    // Handle different drawing types appropriately
+                    let serialized: SerializedDrawing;
+                    if (selectedTool === 'vertical-line') {
+                        // VertLine uses _time, not _p1/_p2
+                        serialized = {
+                            id,
+                            type: selectedTool as any,
+                            p1: { time: drawing._time, price: 0 },
+                            p2: { time: drawing._time, price: 0 },
+                            options: drawing._options,
+                            createdAt: Date.now()
+                        };
+                    } else {
+                        serialized = {
+                            id,
+                            type: selectedTool as any,
+                            p1: drawing._p1,
+                            p2: drawing._p2,
+                            options: drawing._options,
+                            createdAt: Date.now()
+                        };
+                    }
                     DrawingStorage.addDrawing(ticker, timeframe, serialized);
                     toast.success(`Drawing saved`);
 
