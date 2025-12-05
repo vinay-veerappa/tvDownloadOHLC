@@ -10,19 +10,31 @@ import { TextLabel } from "./text-label";
 interface RectangleOptions {
     fillColor: string;
     previewFillColor: string;
+    borderColor: string;
+    borderWidth: number;
     labelColor: string;
     labelTextColor: string;
     showLabels: boolean;
     text?: string;
     textColor?: string;
+    extendLeft: boolean;
+    extendRight: boolean;
+    midline: { visible: boolean; color: string; width: number; style: number }; // 0=Solid, 1=Dotted
+    quarterLines: { visible: boolean; color: string; width: number; style: number };
 }
 
 const defaultOptions: RectangleOptions = {
-    fillColor: "rgba(200, 50, 100, 0.75)",
-    previewFillColor: "rgba(200, 50, 100, 0.25)",
-    labelColor: "rgba(200, 50, 100, 1)",
+    fillColor: "rgba(41, 98, 255, 0.2)",
+    previewFillColor: "rgba(41, 98, 255, 0.1)",
+    borderColor: "#2962FF",
+    borderWidth: 2,
+    labelColor: "rgba(41, 98, 255, 1)",
     labelTextColor: "white",
     showLabels: true,
+    extendLeft: false,
+    extendRight: false,
+    midline: { visible: false, color: "#2962FF", width: 1, style: 1 },
+    quarterLines: { visible: false, color: "#2962FF", width: 1, style: 1 },
 };
 
 class RectangleRenderer {
@@ -54,10 +66,21 @@ class RectangleRenderer {
             const hPR = scope.horizontalPixelRatio;
             const vPR = scope.verticalPixelRatio;
 
-            const x1 = this._p1.x * hPR;
+            let x1 = this._p1.x * hPR;
             const y1 = this._p1.y * vPR;
-            const x2 = this._p2.x * hPR;
+            let x2 = this._p2.x * hPR;
             const y2 = this._p2.y * vPR;
+            const widthBitmap = scope.bitmapSize.width;
+
+            // Handle Extensions
+            if (this._options.extendLeft) {
+                const minX = Math.min(x1, x2);
+                if (x1 === minX) x1 = 0; else x2 = 0;
+            }
+            if (this._options.extendRight) {
+                const maxX = Math.max(x1, x2);
+                if (x1 === maxX) x1 = widthBitmap; else x2 = widthBitmap;
+            }
 
             const left = Math.min(x1, x2);
             const top = Math.min(y1, y2);
@@ -71,6 +94,35 @@ class RectangleRenderer {
             // Draw rectangle fill
             ctx.fillStyle = this._options.fillColor;
             ctx.fillRect(left, top, width, height);
+
+            // Draw Border
+            if (this._options.borderWidth > 0) {
+                ctx.lineWidth = this._options.borderWidth * hPR; // Scale? usually yes for high DPI
+                ctx.strokeStyle = this._options.borderColor;
+                ctx.setLineDash([]); // Solid border for now
+                ctx.strokeRect(left, top, width, height);
+            }
+
+            // Internal Lines
+            const drawInternalLine = (y: number, styles: { color: string, width: number, style: number }) => {
+                ctx.beginPath();
+                ctx.moveTo(left, y);
+                ctx.lineTo(right, y);
+                ctx.lineWidth = styles.width * hPR;
+                ctx.strokeStyle = styles.color;
+                if (styles.style === 1) ctx.setLineDash([4 * hPR, 4 * hPR]); // Dotted/Dashed
+                else ctx.setLineDash([]);
+                ctx.stroke();
+            };
+
+            if (this._options.midline?.visible) {
+                drawInternalLine(midY, this._options.midline);
+            }
+
+            if (this._options.quarterLines?.visible) {
+                drawInternalLine(top + height * 0.25, this._options.quarterLines);
+                drawInternalLine(top + height * 0.75, this._options.quarterLines);
+            }
 
             // Draw handles when selected
             if (this._selected) {
@@ -275,7 +327,20 @@ export class Rectangle implements ISeriesPrimitive {
         const maxX = Math.max(this._p1Point.x, this._p2Point.x);
         const minY = Math.min(this._p1Point.y, this._p2Point.y);
         const maxY = Math.max(this._p1Point.y, this._p2Point.y);
-        const midX = (minX + maxX) / 2;
+
+        // Adjust for extensions in hit test
+        // NOTE: Lightweight charts typically handles clipping, but for hit test we deal with logical logic
+        // If extended, we effectively test x against -Infinity/Infinity relative to the visible view?
+        // Actually, we can just say if extendLeft, effectiveMinX is -Infinity or 0
+        let effectiveMinX = minX;
+        let effectiveMaxX = maxX;
+        // Ideally we check visibility logic or just assume 'infinite' clickability horizontally
+        if (this._options.extendLeft) effectiveMinX = -99999; // Arbitrary large negative (or handle logic properly)
+        if (this._options.extendRight) effectiveMaxX = 99999;
+
+        const midX = (minX + maxX) / 2; // Handles stay at original points usually? 
+        // TradingView keeps handles at the original anchor points even if extended. 
+        // So we leave handles calculation based on ORIGINAL points.
         const midY = (minY + maxY) / 2;
 
         // Define handle positions: 4 corners + 4 edges + center
@@ -305,7 +370,8 @@ export class Rectangle implements ISeriesPrimitive {
         }
 
         // Check body (inside rectangle)
-        if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+        // Check body (inside rectangle)
+        if (x >= effectiveMinX && x <= effectiveMaxX && y >= minY && y <= maxY) {
             return {
                 cursorStyle: 'move',
                 externalId: this._id,

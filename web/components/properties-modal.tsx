@@ -209,7 +209,7 @@ export function PropertiesModal({ isOpen, onClose, drawingType, initialOptions, 
 
                         {(options.fillColor !== undefined) && (
                             <div className="space-y-4 pt-4 border-t">
-                                <Label>Fill Style</Label>
+                                <Label>Fill & Border</Label>
                                 <div className="grid grid-cols-4 items-center gap-4">
                                     <Label htmlFor="fillColor" className="text-right text-xs">Fill</Label>
                                     <div className="col-span-3 flex items-center gap-2">
@@ -235,6 +235,76 @@ export function PropertiesModal({ isOpen, onClose, drawingType, initialOptions, 
                                         </div>
                                     </div>
                                 </div>
+                                {drawingType === 'rectangle' && (
+                                    <>
+                                        <div className="grid grid-cols-4 items-center gap-4">
+                                            <Label htmlFor="borderColor" className="text-right text-xs">Border</Label>
+                                            <div className="col-span-3 flex items-center gap-2">
+                                                <Input
+                                                    id="borderColor"
+                                                    type="color"
+                                                    value={options.borderColor || '#2962FF'}
+                                                    onChange={(e) => handleChange('borderColor', e.target.value)}
+                                                    className="w-12 h-8 p-1"
+                                                />
+                                                <Input
+                                                    type="number"
+                                                    min="0"
+                                                    max="10"
+                                                    value={options.borderWidth || 0}
+                                                    onChange={(e) => handleChange('borderWidth', parseInt(e.target.value))}
+                                                    className="w-20"
+                                                    placeholder="Width"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-4 gap-4">
+                                            <Label className="text-right text-xs pt-2">Extend</Label>
+                                            <div className="col-span-3 flex gap-4">
+                                                <div className="flex items-center space-x-2">
+                                                    <input type="checkbox" id="extLeft" checked={options.extendLeft} onChange={(e) => handleChange('extendLeft', e.target.checked)} />
+                                                    <Label htmlFor="extLeft" className="text-xs">Left</Label>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <input type="checkbox" id="extRight" checked={options.extendRight} onChange={(e) => handleChange('extendRight', e.target.checked)} />
+                                                    <Label htmlFor="extRight" className="text-xs">Right</Label>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-4 gap-4 pt-2 border-t">
+                                            <Label className="text-right text-xs pt-2">Internal</Label>
+                                            <div className="col-span-3 space-y-2">
+                                                <div className="flex items-center gap-2">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={options.midline?.visible}
+                                                        onChange={(e) => handleChange('midline', { ...options.midline, visible: e.target.checked })}
+                                                    />
+                                                    <span className="text-xs w-16">Midline</span>
+                                                    <Input type="color" value={options.midline?.color || '#2962FF'} onChange={(e) => handleChange('midline', { ...options.midline, color: e.target.value })} className="w-8 h-6 p-0" />
+                                                    <select
+                                                        className="h-6 text-xs border rounded"
+                                                        value={options.midline?.width || 1}
+                                                        onChange={(e) => handleChange('midline', { ...options.midline, width: parseInt(e.target.value) })}
+                                                    >
+                                                        {[1, 2, 3, 4].map(w => <option key={w} value={w}>{w}px</option>)}
+                                                    </select>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={options.quarterLines?.visible}
+                                                        onChange={(e) => handleChange('quarterLines', { ...options.quarterLines, visible: e.target.checked })}
+                                                    />
+                                                    <span className="text-xs w-16">Quarters</span>
+                                                    <Input type="color" value={options.quarterLines?.color || '#2962FF'} onChange={(e) => handleChange('quarterLines', { ...options.quarterLines, color: e.target.value })} className="w-8 h-6 p-0" />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
                             </div>
                         )}
                     </TabsContent>
