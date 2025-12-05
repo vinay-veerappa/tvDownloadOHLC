@@ -11,18 +11,17 @@ datasource db {
 }
 
 model Trade {
-  id          String   @id @default(uuid())
-  symbol      String
-  direction   String   // "LONG" or "SHORT"
+  id          String   @id @default(cuid())
+  ticker      String
   entryDate   DateTime
   exitDate    DateTime?
   entryPrice  Float
   exitPrice   Float?
   quantity    Float
-  status      String   // "OPEN", "CLOSED", "PENDING"
+  direction   String   // "LONG" or "SHORT"
+  status      String   // "OPEN", "CLOSED"
   pnl         Float?
   notes       String?
-  
   tags        Tag[]
   
   createdAt   DateTime @default(now())
@@ -30,19 +29,36 @@ model Trade {
 }
 
 model Journal {
-  id        String   @id @default(uuid())
+  id        String   @id @default(cuid())
   date      DateTime @unique
   content   String
-  mood      String?  // "HAPPY", "FRUSTRATED", "NEUTRAL"
+  mood      String?
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model Tag {
-  id     String  @id @default(uuid())
+  id     String  @id @default(cuid())
   name   String  @unique
-  color  String  @default("#808080")
-  
   trades Trade[]
+}
+
+model BacktestResult {
+  id          String   @id @default(cuid())
+  strategy    String
+  ticker      String
+  timeframe   String
+  startDate   DateTime
+  endDate     DateTime
+  
+  totalTrades Int
+  winRate     Float
+  profitFactor Float
+  totalPnl    Float
+  
+  config      String   // JSON string of strategy config
+  trades      String   // JSON string of trade list (or relation to Trade model if we want detailed storage)
+  
+  createdAt   DateTime @default(now())
 }

@@ -12,13 +12,22 @@ export interface Drawing {
     createdAt: number
 }
 
-interface RightSidebarProps {
-    drawings: Drawing[]
-    onDeleteDrawing: (id: string) => void
+export interface Indicator {
+    type: string
+    label: string
 }
 
-export function RightSidebar({ drawings, onDeleteDrawing }: RightSidebarProps) {
+interface RightSidebarProps {
+    drawings: Drawing[]
+    indicators: Indicator[]
+    onDeleteDrawing: (id: string) => void
+    onDeleteIndicator: (type: string) => void
+}
+
+export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIndicator }: RightSidebarProps) {
     const [collapsed, setCollapsed] = React.useState(false)
+
+    const totalItems = drawings.length + indicators.length
 
     return (
         <div className={cn("flex flex-col border-l bg-background transition-all duration-300", collapsed ? "w-12" : "w-64")}>
@@ -36,34 +45,76 @@ export function RightSidebar({ drawings, onDeleteDrawing }: RightSidebarProps) {
             {!collapsed && (
                 <ScrollArea className="flex-1">
                     <div className="p-4 space-y-2">
-                        {drawings.length === 0 ? (
+                        {totalItems === 0 ? (
                             <div className="text-sm text-muted-foreground text-center py-4">
-                                No active drawings
+                                No active objects
                             </div>
                         ) : (
-                            drawings.map((drawing) => (
-                                <div
-                                    key={drawing.id}
-                                    className="flex items-center justify-between p-2 rounded-md border bg-card hover:bg-accent/50 transition-colors group"
-                                >
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-medium capitalize">
-                                            {drawing.type.replace('-', ' ')}
-                                        </span>
-                                        <span className="text-xs text-muted-foreground">
-                                            ID: {drawing.id}
-                                        </span>
+                            <>
+                                {/* Indicators Section */}
+                                {indicators.length > 0 && (
+                                    <div className="space-y-2">
+                                        <div className="text-xs font-semibold text-muted-foreground px-2 py-1">
+                                            INDICATORS
+                                        </div>
+                                        {indicators.map((indicator) => (
+                                            <div
+                                                key={indicator.type}
+                                                className="flex items-center justify-between p-2 rounded-md border bg-card hover:bg-accent/50 transition-colors group"
+                                            >
+                                                <div className="flex flex-col">
+                                                    <span className="text-sm font-medium">
+                                                        {indicator.label}
+                                                    </span>
+                                                    <span className="text-xs text-muted-foreground capitalize">
+                                                        {indicator.type}
+                                                    </span>
+                                                </div>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    onClick={() => onDeleteIndicator(indicator.type)}
+                                                >
+                                                    <Trash2 className="h-4 w-4 text-destructive" />
+                                                </Button>
+                                            </div>
+                                        ))}
                                     </div>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                                        onClick={() => onDeleteDrawing(drawing.id)}
-                                    >
-                                        <Trash2 className="h-4 w-4 text-destructive" />
-                                    </Button>
-                                </div>
-                            ))
+                                )}
+
+                                {/* Drawings Section */}
+                                {drawings.length > 0 && (
+                                    <div className="space-y-2">
+                                        <div className="text-xs font-semibold text-muted-foreground px-2 py-1">
+                                            DRAWINGS
+                                        </div>
+                                        {drawings.map((drawing) => (
+                                            <div
+                                                key={drawing.id}
+                                                className="flex items-center justify-between p-2 rounded-md border bg-card hover:bg-accent/50 transition-colors group"
+                                            >
+                                                <div className="flex flex-col">
+                                                    <span className="text-sm font-medium capitalize">
+                                                        {drawing.type.replace('-', ' ')}
+                                                    </span>
+                                                    <span className="text-xs text-muted-foreground">
+                                                        ID: {drawing.id}
+                                                    </span>
+                                                </div>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    onClick={() => onDeleteDrawing(drawing.id)}
+                                                >
+                                                    <Trash2 className="h-4 w-4 text-destructive" />
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </>
                         )}
                     </div>
                 </ScrollArea>

@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { MousePointer2, TrendingUp, Menu, Square, GripVertical } from "lucide-react"
+import { MousePointer2, TrendingUp, Menu, Square, Columns } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
@@ -65,7 +65,7 @@ export function LeftToolbar({ selectedTool, onToolSelect }: LeftToolbarProps) {
                 onClick={() => onToolSelect("vertical-line")}
                 title="Vertical Line"
             >
-                <GripVertical className="h-4 w-4" />
+                <Columns className="h-4 w-4" />
             </Button>
         </div>
     )

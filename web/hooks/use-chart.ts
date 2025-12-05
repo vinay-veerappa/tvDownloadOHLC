@@ -10,13 +10,14 @@ import {
     CandlestickSeries,
     BarSeries,
     LineSeries,
-    AreaSeries
+    AreaSeries,
+    createSeriesMarkers
 } from "lightweight-charts"
 
 import { calculateSMA, calculateEMA } from "@/lib/charts/indicators"
 import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
 
-export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: string = 'candles', indicators: string[] = [], data: any[] = []) {
+export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: string = 'candles', indicators: string[] = [], data: any[] = [], markers: any[] = []) {
     const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
     const [seriesInstance, setSeriesInstance] = useState<ISeriesApi<any> | null>(null)
 
@@ -49,7 +50,11 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
 
         const handleResize = () => {
             if (containerRef.current) {
-                chart.applyOptions({ width: containerRef.current.clientWidth })
+                // Warning fix: You should turn autoSize off explicitly before specifying sizes
+                chart.applyOptions({
+                    autoSize: false,
+                    width: containerRef.current.clientWidth
+                })
             }
         }
 
@@ -134,7 +139,19 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
 
         const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
         seriesInstance.setData(chartData)
-    }, [seriesInstance, data, style])
+
+        if (markers && markers.length > 0) {
+            // Check if createSeriesMarkers is available (v5)
+            if (typeof createSeriesMarkers === 'function') {
+                createSeriesMarkers(seriesInstance as any, markers)
+            } else if (typeof (seriesInstance as any).setMarkers === 'function') {
+                // Fallback for v4 or if method exists on series
+                (seriesInstance as any).setMarkers(markers)
+            } else {
+                console.warn("Markers not supported in this version of lightweight-charts")
+            }
+        }
+    }, [seriesInstance, data, style, markers])
 
 
     // Manage Indicators

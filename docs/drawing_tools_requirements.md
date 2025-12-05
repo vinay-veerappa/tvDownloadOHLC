@@ -5,28 +5,32 @@ Enhance the drawing tools to match professional charting platforms (like Trading
 
 ## 🛠 Common Features (All Tools)
 
-### 1. Text Annotations
-Every drawing tool (TrendLine, Rectangle, etc.) should support an optional text label.
+### 1. Text Annotations (Enhanced)
+Every drawing tool (TrendLine, Rectangle, etc.) should support an optional text label with rich formatting:
 *   **Content:** Multi-line text entry.
 *   **Visibility:** Toggle On/Off.
-*   **Positioning:**
-    *   *Relative:* Inside/Outside, Top/Bottom/Center, Left/Right/Center.
-    *   *Orientation:* Horizontal or Aligned with the drawing (e.g., along the trendline).
-*   **Styling:** Font size (10px, 12px, 14px, etc.), Bold/Italic, Color (default to drawing color or custom).
+*   **Styling:**
+    *   **Font Size:** Dropdown (10, 11, 12, 14, 16, 20, 24, 28, 32, 40).
+    *   **Format:** Bold (B), Italic (I) toggles.
+    *   **Color:** Default to drawing color or custom.
+*   **Alignment:**
+    *   **Vertical:** Top, Middle, Bottom (or Inside).
+    *   **Horizontal:** Left, Center, Right.
+    *   **Orientation:** Horizontal or aligned with drawing path.
 
 ### 2. Templates (Presets)
-Users must be able to save and load configuration sets.
-*   **Save As:** Save current settings (color, width, text options, specific flags) as a named template (e.g., "Bullish Order Block", "Stop Loss Line").
-*   **Quick Load:** Dropdown in the properties panel to apply a template.
-*   **Default:** Option to "Save as Default" for new drawings of that type.
-*   **Hotkeys:** (Optional) Bind templates to hotkeys (e.g., Alt+1 for Template 1).
+Users must be able to save and load configuration sets for drawings:
+*   **Save As:** Save current settings (color, width, text options, specific flags) as a named template.
+*   **Quick Load:** Dropdown in the properties panel (bottom-left) to apply a template.
+*   **Storage:** Persisted to local storage (or database/user profile).
+*   **Default:** "Save as Default" option for new drawings.
 
-### 3. Visibility & Coordinates
-*   **Timeframe Visibility:** Option to show/hide drawings on specific timeframes (e.g., "Show on 1H only").
-*   **Precise Coordinates:** Input fields to manually edit Price and Time/Bar Index for anchor points.
-*   **Auto-Scaling (autoscaleInfo):**
-    *   Drawings must implement `autoscaleInfo` to ensure they are included in the chart's vertical auto-scaling calculation.
-    *   Critical for tools that extend beyond the current price range (e.g., Fibonacci extensions, long TrendLines).
+### 3. Visibility & Coordinates (Timeframe Awareness)
+*   **Timeframe Visibility:** Detailed control to show/hide drawings on specific intervals:
+    *   **Ticks / Seconds / Minutes / Hours / Days / Weeks / Months / Ranges.**
+    *   **Range Sliders:** Define visibility range (e.g., "1 min to 2 hours").
+*   **Precise Coordinates:** Input fields to manually edit Price and Time/Bar Index.
+*   **Auto-Scaling (autoscaleInfo):** Ensure drawings affect chart scaling.
 
 ---
 
@@ -69,6 +73,35 @@ Users must be able to save and load configuration sets.
 *   **Label:** Show Price on axis (already implemented).
 *   **Text:** Custom text (e.g., "Daily Open").
 *   **Style:** Solid, Dashed, Dotted.
+
+### 6. Measuring Tool (Date & Price Range)
+*   **Function:** Measure distance between two points.
+*   **Visual:**
+    *   **Box/Line:** Shaded area covering the time/price range.
+    *   **Label:** Tooltip showing:
+        *   Price Change (Absolute & Percentage).
+        *   Time Change (Bars & Time duration).
+*   **Interaction:** Click-Drag or Click-Click.
+*   **Shortcut:** Shift + Click (Standard behavior).
+
+---
+
+## 📊 Standard Indicators (TradingView Core)
+The following indicators are essential for a complete charting platform:
+
+### 1. Overlays (Main Pane)
+*   **Moving Averages:** SMA, EMA, WMA, VWMA.
+*   **Bollinger Bands:** Standard deviation bands around an MA.
+*   **VWAP:** Volume Weighted Average Price (Intraday).
+*   **Supertrend:** Trend-following indicator.
+*   **Ichimoku Cloud:** Comprehensive trend/momentum indicator.
+
+### 2. Oscillators (Separate Pane)
+*   **RSI:** Relative Strength Index.
+*   **MACD:** Moving Average Convergence Divergence (Histogram + Lines).
+*   **Stochastic:** Stochastic Oscillator.
+*   **ATR:** Average True Range (Volatility).
+*   **Volume:** (Often an overlay at bottom, or separate pane).
 
 ---
 
@@ -143,12 +176,67 @@ The current simple bottom-left panel is insufficient for this level of detail.
 *   **Tabbed Modal:** We likely need a floating modal window (like TradingView's settings dialog) with tabs: "Style", "Text", "Coordinates", "Visibility".
 *   **Quick Toolbar:** Keep the small floating toolbar for common actions (Color, Thickness, Delete, Settings Icon). Clicking "Settings Icon" opens the full modal.
 
+### 5. Multi-Pane Support (Stacked Scales)
+To support indicators like RSI/MACD in separate panels below the main price:
+*   **Architecture:** Use `lightweight-charts` multiple price scales feature with `scaleMargins` to stack them vertically within a single chart instance.
+*   **Drawing Dependency:**
+    *   **Attachment:** Each drawing must be attached to a specific `priceScaleId` (e.g., "right" for Price, "pane1" for RSI).
+    *   **Drag/Drop:** Users should be able to move drawings between panes (if applicable) or the drawing should be strictly bound to the pane it was created on.
+    *   **Global Tools:** Vertical Lines should optionally span *all* panes (global time marker).
+    *   **Coordinates:** Y-coordinates are scale-dependent. X-coordinates (Time) are shared.
+
 ---
 
 ## 📝 Next Steps Plan
 
 1.  **Mockup:** Design the new "Quick Toolbar" vs "Full Settings Modal".
 2.  **Architecture:** Implement the `TextLabel` primitive.
+### 6. Trade Execution & Visualization (Chart Trading)
+*   **Visual Orders:**
+    *   **Drag-and-Drop:** Users can drag limit/stop orders directly on the chart.
+    *   **Modification:** Dragging an active order line modifies its price.
+    *   **Cancellation:** "X" button on the order line to cancel.
+*   **Position Management:**
+    *   **Position Line:** Shows Entry Price, Quantity, and current PnL (floating).
+    *   **SL/TP Brackets:** Draggable Stop Loss and Take Profit lines attached to the position.
+*   **Dependency:**
+    *   **Order Management System (OMS):** Requires a backend to handle order logic.
+    *   **Real-time Data:** PnL calculations need live ticks.
+
+### 7. Core Dependencies & Utilities
+*   **Magnet Mode:**
+    *   **Function:** Cursor snaps to OHLC values (High/Low/Close/Open) when drawing.
+    *   **Dependency:** Critical for precise drawing (Trendlines, Fibs).
+    *   **Toggle:** Weak Magnet, Strong Magnet, Off.
+*   **Timezone Management:**
+    *   **Global Setting:** Chart and all time-based tools (Vertical Lines, Sessions) must respect the selected timezone (e.g., "America/New_York").
+    *   **Dependency:** Essential for "Session Highlighting" and correct "Daily Open" lines.
+*   **Crosshair Sync:**
+    *   **Multi-Pane:** Crosshair must move in sync across all stacked panes (Price, RSI, MACD).
+    *   **Multi-Chart:** (Future) Sync crosshair across multiple chart widgets in a grid.
+
+### 8. User's Favorite Tools (Priority List)
+Derived from the provided screenshot (TradingView Toolbar):
+
+1.  **Trend Line:** Basic line with 2 anchors.
+2.  **Fibonacci Retracement:** Standard retracement levels.
+3.  **Trend-Based Fib Extension:** 3-point tool for projections.
+4.  **Fixed Range Volume Profile (FRVP):** [DEFERRED] Volume distribution over a specific time range.
+5.  **Long Position:** Risk/Reward tool for buying.
+6.  **Short Position:** Risk/Reward tool for selling.
+7.  **Date & Price Range:** Measurement tool.
+8.  **Brush:** Freehand drawing.
+9.  **Highlighter:** Transparent freehand drawing.
+10. **Rectangle:** Box shape.
+11. **Text:** Simple text label.
+12. **Callout:** Text bubble with an arrow.
+13. **Arrow:** Single directional arrow.
+14. **Ray:** Line extending infinitely in one direction.
+15. **Extended Line:** Line extending infinitely in both directions.
+16. **Parallel Channel:** Two parallel lines forming a channel.
+
+---
+
 ## 🎨 UI Mockups
 
 ### 1. Quick Toolbar (Floating)
@@ -169,8 +257,8 @@ Opens when clicking "Settings" or Double-Clicking.
 |  [ Style ]   [ Text ]   [ Coordinates ]   [ Visibility ]      |
 |                                                               |
 |  + Style --------------------------------------------------+  |
-|  |  Border:  [ Color Picker ]   [ 2px ]   [ Solid v ]      |  |
-|  |  Fill:    [ Color Picker ]   [ 20% Opacity ]            |  |
+|  |  Border:  [ Color Picker (w/ Alpha) ]  [ 2px ]          |  |
+|  |  Fill:    [ Color Picker (w/ Alpha) ]                   |  |
 |  |                                                         |  |
 |  |  [x] Extend Left    [ ] Extend Right                    |  |
 |  |                                                         |  |

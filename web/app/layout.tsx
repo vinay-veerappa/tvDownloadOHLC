@@ -19,6 +19,7 @@ export const metadata: Metadata = {
 };
 
 import { TradeProvider } from "@/components/journal/trade-context";
+import { Toaster } from "@/components/ui/sonner";
 
 // ... existing imports
 
@@ -42,6 +43,7 @@ export default function RootLayout({
               </main>
             </div>
           </div>
+          <Toaster />
         </TradeProvider>
       </body>
     </html>

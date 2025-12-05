@@ -8,7 +8,7 @@ import { promisify } from "util"
 const execAsync = promisify(exec)
 
 interface OHLCData {
-    time: string
+    time: number
     open: number
     high: number
     low: number
