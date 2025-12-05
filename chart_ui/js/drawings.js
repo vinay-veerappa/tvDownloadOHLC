@@ -285,22 +285,14 @@ function hitTest(point) {
     const timeScale = chart.timeScale();
 
     for (const drawing of state.drawings) {
-        if (window.TrendLine && drawing instanceof window.TrendLine) {
-            const p1 = drawing._p1;
-            const p2 = drawing._p2;
-            if (!p1 || !p2 || !p1.time || !p2.time || p1.price === undefined || p2.price === undefined) continue;
-
-            const x1 = timeScale.timeToCoordinate(p1.time);
-            const y1 = series.priceToCoordinate(p1.price);
-            const x2 = timeScale.timeToCoordinate(p2.time);
-            const y2 = series.priceToCoordinate(p2.price);
-
-            if (x1 === null || y1 === null || x2 === null || y2 === null) continue;
-
-            const dist = distanceToSegment(point.x, point.y, x1, y1, x2, y2);
-            if (dist < 10) return drawing;
+        // Use plugin's own hit test if available (Phase 2 Standardization)
+        if (drawing.hitTest && typeof drawing.hitTest === 'function') {
+            if (drawing.hitTest(point)) return drawing;
+            continue;
         }
-        else if (window.Rectangle && drawing instanceof window.Rectangle) {
+
+        // Fallback for Rectangle (until standardized)
+        if (window.Rectangle && drawing instanceof window.Rectangle) {
             const p1 = drawing._p1;
             const p2 = drawing._p2;
             if (!p1 || !p2 || !p1.time || !p2.time || p1.price === undefined || p2.price === undefined) continue;
@@ -321,26 +313,7 @@ function hitTest(point) {
                 return drawing;
             }
         }
-        else if (window.VertLine && drawing instanceof window.VertLine) {
-            if (!drawing._time) continue;
-            const x = timeScale.timeToCoordinate(drawing._time);
-            if (Math.abs(point.x - x) < 10) return drawing;
-        }
-        else if (window.FibonacciRetracement && drawing instanceof window.FibonacciRetracement) {
-            const p1 = drawing._p1;
-            const p2 = drawing._p2;
-            if (!p1 || !p2 || !p1.time || !p2.time || p1.price === undefined || p2.price === undefined) continue;
-
-            const x1 = timeScale.timeToCoordinate(p1.time);
-            const y1 = series.priceToCoordinate(p1.price);
-            const x2 = timeScale.timeToCoordinate(p2.time);
-            const y2 = series.priceToCoordinate(p2.price);
-
-            if (x1 === null || y1 === null || x2 === null || y2 === null) continue;
-
-            const dist = distanceToSegment(point.x, point.y, x1, y1, x2, y2);
-            if (dist < 10) return drawing;
-        }
+        // Fallback for PriceLine (UserPriceLines plugin)
         else if (drawing.options && typeof drawing.options === 'function') {
             const opts = drawing.options();
             if (opts.price !== undefined) {

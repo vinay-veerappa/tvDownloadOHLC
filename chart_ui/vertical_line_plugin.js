@@ -157,6 +157,18 @@ class VertLine {
     detached() {
         this._requestUpdate = null;
     }
+
+    // Hit test for selection
+    hitTest(point) {
+        if (!this._chart || !this._time) return false;
+
+        const timeScale = this._chart.timeScale();
+        const x = timeScale.timeToCoordinate(this._time);
+
+        if (x === null) return false;
+
+        return Math.abs(point.x - x) < 10;
+    }
 }
 
 window.VertLine = VertLine;

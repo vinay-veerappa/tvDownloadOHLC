@@ -99,6 +99,43 @@ class TrendLine {
         this._p2Point.x = timeScale.timeToCoordinate(this._p2.time);
         this._p2Point.y = this._series.priceToCoordinate(this._p2.price);
     }
+
+    // Hit test for selection
+    hitTest(point) {
+        if (!this._chart || !this._series) return false;
+        if (!this._p1 || !this._p2 || !this._p1.time || !this._p2.time) return false;
+        if (this._p1.price === undefined || this._p2.price === undefined) return false;
+
+        const timeScale = this._chart.timeScale();
+        const x1 = timeScale.timeToCoordinate(this._p1.time);
+        const y1 = this._series.priceToCoordinate(this._p1.price);
+        const x2 = timeScale.timeToCoordinate(this._p2.time);
+        const y2 = this._series.priceToCoordinate(this._p2.price);
+
+        if (x1 === null || y1 === null || x2 === null || y2 === null) return false;
+
+        const dist = this._distanceToSegment(point.x, point.y, x1, y1, x2, y2);
+        return dist < 10;
+    }
+
+    // Helper: Calculate distance from point to line segment
+    _distanceToSegment(x, y, x1, y1, x2, y2) {
+        const A = x - x1;
+        const B = y - y1;
+        const C = x2 - x1;
+        const D = y2 - y1;
+        const dot = A * C + B * D;
+        const len_sq = C * C + D * D;
+        let param = -1;
+        if (len_sq !== 0) param = dot / len_sq;
+        let xx, yy;
+        if (param < 0) { xx = x1; yy = y1; }
+        else if (param > 1) { xx = x2; yy = y2; }
+        else { xx = x1 + param * C; yy = y1 + param * D; }
+        const dx = x - xx;
+        const dy = y - yy;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
 }
 
 // Export for use
