@@ -41,7 +41,6 @@ export function setTool(tool) {
 
     // Update UI
     document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-    if (state.currentTool === 'line') document.getElementById('btn-line').classList.add('active');
     if (state.currentTool === 'ray') document.getElementById('btn-ray').classList.add('active');
     if (state.currentTool === 'rect') document.getElementById('btn-rect').classList.add('active');
     if (state.currentTool === 'fib') document.getElementById('btn-fib').classList.add('active');
@@ -219,15 +218,7 @@ function handleDrawingClick(param) {
     const price = series.coordinateToPrice(param.point.y);
     const time = param.time;
 
-    if (state.currentTool === 'line') {
-        const line = series.createPriceLine({
-            price: price, color: '#2962FF', lineWidth: 2, lineStyle: 0,
-            axisLabelVisible: true, title: 'Line'
-        });
-        state.drawings.push(line);
-        setTool(null);
-    }
-    else if (state.currentTool === 'ray') {
+    if (state.currentTool === 'ray') {
         if (!state.startPoint) {
             state.startPoint = { time, price };
             if (window.TrendLine) {
