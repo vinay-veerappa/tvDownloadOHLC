@@ -34,10 +34,10 @@ export function setupChart(containerId) {
     window.chart = chart;
     window.chartSeries = series;
 
-    // Handle resize
-    window.addEventListener('resize', () => {
-        chart.applyOptions({ width: window.innerWidth, height: window.innerHeight - 54 });
-    });
+    // Handle resize - Removed as autoSize: true handles this
+    // window.addEventListener('resize', () => {
+    //     chart.applyOptions({ width: window.innerWidth, height: window.innerHeight - 54 });
+    // });
 
     return { chart, series };
 }
