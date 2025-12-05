@@ -1,26 +1,35 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef } from "react"
 import { useChart } from "@/hooks/use-chart"
-import { Button } from "@/components/ui/button"
+import { getChartData } from "@/actions/data-actions"
+import { DrawingTool } from "./left-toolbar"
 import { TrendLineTool } from "@/lib/charts/plugins/trend-line"
+import { FibonacciTool } from "@/lib/charts/plugins/fibonacci"
+import { RectangleDrawingTool } from "@/lib/charts/plugins/rectangle"
+import { VertLineTool } from "@/lib/charts/plugins/vertical-line"
 import { useTradeContext } from "@/components/journal/trade-context"
 
-import { getChartData } from "@/actions/data-actions"
+interface ChartContainerProps {
+    ticker: string
+    timeframe: string
+    selectedTool: DrawingTool
+    onToolSelect: (tool: DrawingTool) => void
+}
 
-export function ChartContainer() {
+export function ChartContainer({ ticker, timeframe, selectedTool, onToolSelect }: ChartContainerProps) {
     const chartContainerRef = useRef<HTMLDivElement>(null)
-    const { chart, series } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>)
-    const [activeTool, setActiveTool] = useState<string | null>(null)
-    const toolRef = useRef<any>(null)
+    const { chart, series } = useChart(chartContainerRef)
+    const activeToolRef = useRef<any>(null)
     const { openTradeDialog } = useTradeContext()
 
+    // Load Data
     useEffect(() => {
         if (!series) return
 
         async function loadData() {
             try {
-                const result = await getChartData("ES1", "1D")
+                const result = await getChartData(ticker, timeframe)
                 if (result.success && result.data && series) {
                     series.setData(result.data)
                     chart?.timeScale().fitContent()
@@ -30,63 +39,58 @@ export function ChartContainer() {
             }
         }
         loadData()
-    }, [series])
+    }, [series, ticker, timeframe, chart])
 
-    const handleToolClick = (tool: string) => {
-        if (activeTool === tool) {
-            // Deactivate
-            if (toolRef.current) toolRef.current.stopDrawing()
-            toolRef.current = null
-            setActiveTool(null)
-        } else {
-            // Activate
-            if (toolRef.current) toolRef.current.stopDrawing()
+    // Handle Tool Selection
+    useEffect(() => {
+        if (!chart || !series) return
 
-            if (tool === 'trendline' && chart && series) {
-                toolRef.current = new TrendLineTool(chart, series, () => {
-                    // Callback when drawing finished
-                    setActiveTool(null)
-                    toolRef.current = null
-                })
-                toolRef.current.startDrawing()
-                setActiveTool('trendline')
+        // Stop previous tool if any
+        if (activeToolRef.current) {
+            if (typeof activeToolRef.current.stopDrawing === 'function') {
+                activeToolRef.current.stopDrawing()
             }
+            activeToolRef.current = null
         }
-    }
 
-    const handleTradeClick = () => {
-        // In a real app, we'd get the last price from the data
-        // For now, we'll just use a dummy price or the last one from our dummy data
-        const lastPrice = 111.26
-        openTradeDialog({
-            symbol: "ES", // Hardcoded for now, would come from chart state
-            price: lastPrice,
-            date: new Date(),
-            direction: "LONG"
-        })
-    }
+        if (selectedTool === 'cursor') {
+            return
+        }
+
+        let ToolClass: any
+        switch (selectedTool) {
+            case 'trend-line':
+                ToolClass = TrendLineTool
+                break
+            case 'fibonacci':
+                ToolClass = FibonacciTool
+                break
+            case 'rectangle':
+                ToolClass = RectangleDrawingTool
+                break
+            case 'vertical-line':
+                ToolClass = VertLineTool
+                break
+        }
+
+        if (ToolClass) {
+            const tool = new ToolClass(chart, series, (drawing: any) => {
+                console.log('Drawing created:', drawing)
+                // Reset to cursor after drawing
+                onToolSelect('cursor')
+            })
+
+            tool.startDrawing()
+            activeToolRef.current = tool
+        }
+
+    }, [selectedTool, chart, series, onToolSelect])
 
     return (
         <div className="relative w-full h-full">
-            <div className="absolute top-4 left-4 z-10 flex gap-2">
-                <Button
-                    variant={activeTool === 'trendline' ? "default" : "secondary"}
-                    size="sm"
-                    onClick={() => handleToolClick('trendline')}
-                >
-                    Trend Line
-                </Button>
-                <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={handleTradeClick}
-                >
-                    Trade
-                </Button>
-            </div>
             <div
                 ref={chartContainerRef}
-                className="w-full h-[600px]"
+                className="w-full h-full"
             />
         </div>
     )
