@@ -160,3 +160,4 @@ class VertLine {
 }
 
 window.VertLine = VertLine;
+export { VertLine };
