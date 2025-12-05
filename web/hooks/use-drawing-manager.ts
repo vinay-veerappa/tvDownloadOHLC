@@ -13,6 +13,7 @@ import { RectangleDrawingTool } from "@/lib/charts/plugins/rectangle";
 import { VertLineTool } from "@/lib/charts/plugins/vertical-line";
 import { HorizontalLineTool } from "@/lib/charts/plugins/horizontal-line";
 import { TextTool } from "@/lib/charts/plugins/text-tool";
+import { MeasureTool, Measure } from "@/lib/charts/plugins/measuring-tool";
 
 // Drawing Classes for restoration
 import { TrendLine } from "@/lib/charts/plugins/trend-line";
@@ -71,6 +72,9 @@ export function useDrawingManager(
                         break;
                     case 'text':
                         drawing = new TextDrawing(chart, series, saved.p1.time as Time, saved.p1.price, saved.options as any);
+                        break;
+                    case 'measure':
+                        drawing = new Measure(chart, series, { ...saved.p1, time: saved.p1.time as Time }, { ...saved.p2, time: saved.p2.time as Time }, saved.options as any);
                         break;
                 }
 
@@ -144,12 +148,13 @@ export function useDrawingManager(
             case 'vertical-line': ToolClass = VertLineTool; break;
             case 'horizontal-line': ToolClass = HorizontalLineTool; break;
             case 'text': ToolClass = TextTool; break;
+            case 'measure': ToolClass = MeasureTool; break;
         }
 
         if (ToolClass) {
             console.log('Instantiating tool:', selectedTool);
             // Prepare magnet options for tools that support it
-            const magnetOptions = selectedTool !== 'vertical-line' && selectedTool !== 'horizontal-line' && selectedTool !== 'text'
+            const magnetOptions = selectedTool !== 'vertical-line' && selectedTool !== 'horizontal-line' && selectedTool !== 'text' && selectedTool !== 'measure'
                 ? { magnetMode, ohlcData: data }
                 : undefined;
 
@@ -161,11 +166,6 @@ export function useDrawingManager(
                 if (id) {
                     console.log('Registering drawing with ID:', id, 'Type:', drawing._type);
                     drawingsRef.current.set(id, drawing)
-
-                    // Special handling for Text tool (select immediately)
-                    if (selectedTool === 'text') {
-                        onTextCreated(id, drawing);
-                    }
 
                     // Serialize and save to storage
                     let serialized: SerializedDrawing;
@@ -214,15 +214,15 @@ export function useDrawingManager(
                         id: id,
                         type: (drawing._type || selectedTool) as any,
                         createdAt: Date.now()
-                    })
+                    });
                 }
 
                 if (onComplete) onComplete();
 
-            }, magnetOptions)
+            }, magnetOptions);
 
-            tool.startDrawing()
-            activeToolRef.current = tool
+            tool.startDrawing();
+            activeToolRef.current = tool;
         }
 
     }, [chart, series, ticker, timeframe, onDrawingCreated]);

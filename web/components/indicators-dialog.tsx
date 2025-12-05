@@ -9,6 +9,7 @@ import {
     DialogContent,
     DialogHeader,
     DialogTitle,
+    DialogDescription,
     DialogTrigger,
 } from "@/components/ui/dialog"
 import {
@@ -29,6 +30,10 @@ const indicators = [
         value: "ema",
         label: "Exponential Moving Average (EMA)",
     },
+    {
+        value: "watermark",
+        label: "Watermark (Anchored Text)",
+    },
 ]
 
 interface IndicatorsDialogProps {
@@ -47,6 +52,9 @@ export function IndicatorsDialog({ children, onSelect }: IndicatorsDialogProps) 
             <DialogContent className="sm:max-w-[425px] p-0 gap-0">
                 <DialogHeader className="px-4 py-2 border-b">
                     <DialogTitle>Indicators</DialogTitle>
+                    <DialogDescription className="sr-only">
+                        Select an indicator to add to the chart
+                    </DialogDescription>
                 </DialogHeader>
                 <Command className="rounded-lg border-none shadow-none">
                     <CommandInput placeholder="Search indicators..." />

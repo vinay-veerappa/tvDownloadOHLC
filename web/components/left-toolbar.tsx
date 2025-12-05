@@ -1,12 +1,12 @@
 "use client"
 
 import * as React from "react"
-import { MousePointer2, TrendingUp, Menu, Square, Columns, Minus, Type } from "lucide-react"
+import { MousePointer2, TrendingUp, Menu, Square, Columns, Minus, Type, Ruler } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 
-export type DrawingTool = "cursor" | "trend-line" | "fibonacci" | "rectangle" | "vertical-line" | "horizontal-line" | "text"
+export type DrawingTool = "cursor" | "trend-line" | "fibonacci" | "rectangle" | "vertical-line" | "horizontal-line" | "text" | "measure"
 
 interface LeftToolbarProps {
     selectedTool: DrawingTool
@@ -56,6 +56,16 @@ export function LeftToolbar({ selectedTool, onToolSelect }: LeftToolbarProps) {
                 title="Text"
             >
                 <Type className="h-4 w-4" />
+            </Button>
+
+            <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-8 w-8", selectedTool === "measure" && "bg-accent text-accent-foreground")}
+                onClick={() => onToolSelect("measure")}
+                title="Measure"
+            >
+                <Ruler className="h-4 w-4" />
             </Button>
 
             <Button

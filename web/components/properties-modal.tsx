@@ -514,6 +514,30 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
                     </TabsContent>
                 </Tabs>
 
+                {drawingType === 'anchored-text' && (
+                    <div className="border-t pt-4 mt-4">
+                        <Label className="mb-2 block">Position Offsets</Label>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                                <Label className="text-xs">Top</Label>
+                                <Input type="number" value={options.topOffset || 0} onChange={(e) => handleChange('topOffset', parseInt(e.target.value))} />
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs">Bottom</Label>
+                                <Input type="number" value={options.bottomOffset || 0} onChange={(e) => handleChange('bottomOffset', parseInt(e.target.value))} />
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs">Left</Label>
+                                <Input type="number" value={options.leftOffset || 0} onChange={(e) => handleChange('leftOffset', parseInt(e.target.value))} />
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs">Right</Label>
+                                <Input type="number" value={options.rightOffset || 0} onChange={(e) => handleChange('rightOffset', parseInt(e.target.value))} />
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* TEMPLATE CONTROLS */}
                 <div className="border-t pt-4 space-y-3">
                     <Label className="text-sm font-semibold">Templates</Label>

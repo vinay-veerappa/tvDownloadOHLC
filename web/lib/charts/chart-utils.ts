@@ -25,3 +25,10 @@ export const LineStyle = {
     LargeDashed: 3,
     SparseDotted: 4
 } as const;
+
+export function ensureDefined<T>(value: T | undefined | null): T {
+    if (value === undefined || value === null) {
+        throw new Error('Value is undefined or null');
+    }
+    return value;
+}
