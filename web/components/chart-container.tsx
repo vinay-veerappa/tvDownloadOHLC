@@ -84,6 +84,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
         // Load from storage
         const savedDrawings = DrawingStorage.getDrawings(ticker, timeframe);
+        const restoredDrawings: Drawing[] = [];
 
         savedDrawings.forEach(saved => {
             try {
@@ -119,11 +120,21 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     drawing._id = saved.id;
                     series.attachPrimitive(drawing);
                     drawingsRef.current.set(saved.id, drawing);
+
+                    // Track for notifying parent
+                    restoredDrawings.push({
+                        id: saved.id,
+                        type: saved.type,
+                        createdAt: saved.createdAt
+                    });
                 }
             } catch (error) {
                 console.error('Failed to restore drawing:', saved, error);
             }
         });
+
+        // Notify parent about all restored drawings
+        restoredDrawings.forEach(d => onDrawingCreated(d));
 
         if (savedDrawings.length > 0) {
             toast.success(`Loaded ${savedDrawings.length} drawing(s)`);
@@ -258,12 +269,21 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 if (now - lastClick < 800 && lastClickId === id) {
                     setSelectedDrawingId(id)
                     setSelectedDrawingOptions(hitDrawing.options ? hitDrawing.options() : {})
-                    setSelectedDrawingType('Drawing')
+
+                    // Determine drawing type from class name
+                    const className = hitDrawing.constructor?.name;
+                    let drawingType = 'Drawing';
+                    if (className === 'TrendLine') drawingType = 'trend-line';
+                    else if (className === 'Rectangle') drawingType = 'rectangle';
+                    else if (className === 'Fibonacci') drawingType = 'fibonacci';
+                    else if (className === 'VertLine') drawingType = 'vertical-line';
+
+                    setSelectedDrawingType(drawingType)
                     setPropertiesModalOpen(true)
                     toast.dismiss() // Dismiss selection toast
                 } else {
                     // Single Click Logic
-                    toast.success(`Selected: ${selectedTool === 'vertical-line' ? 'Vertical Line' : 'Drawing'}`)
+                    toast.success(`Selected: ${id}`)
                 }
 
                 lastClickRef.current = now

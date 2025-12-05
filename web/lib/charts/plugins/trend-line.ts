@@ -118,6 +118,7 @@ export class TrendLine implements ISeriesPrimitive {
     }
 
     applyOptions(options: Partial<TrendLineOptions>) {
+        console.log('TrendLine.applyOptions called with:', options);
         this._options = { ...this._options, ...options };
         if (this._options.text) {
             const textOptions = {
@@ -130,12 +131,16 @@ export class TrendLine implements ISeriesPrimitive {
                 orientation: (this._options as any).orientation || 'horizontal',
                 visible: true
             };
+            console.log('Creating/updating TextLabel with:', textOptions);
             if (!this._textLabel) {
                 this._textLabel = new TextLabel(0, 0, textOptions);
+                console.log('Created new TextLabel');
             } else {
                 this._textLabel.update(0, 0, textOptions);
+                console.log('Updated existing TextLabel');
             }
         } else {
+            console.log('No text in options, clearing TextLabel');
             this._textLabel = null;
         }
         if (this._requestUpdate) this._requestUpdate();

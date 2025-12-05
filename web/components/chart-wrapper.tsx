@@ -40,7 +40,11 @@ export function ChartWrapper(props: any) {
     }, [chartId, props.indicators])
 
     const handleDrawingCreated = (drawing: Drawing) => {
-        setDrawings(prev => [...prev, drawing])
+        setDrawings(prev => {
+            // Prevent duplicates when restoring from storage
+            if (prev.some(d => d.id === drawing.id)) return prev;
+            return [...prev, drawing];
+        });
     }
 
     const handleDeleteDrawing = (id: string) => {
