@@ -2,25 +2,25 @@
 
 The following plugins were found in `legacy_chart_ui` and are suitable for migration to the new TypeScript/React architecture.
 
-## 🌟 Top Priority (High Value)
+## ✅ Completed
 
 ### 1. Delta Tooltip (Measuring Tool)
 *   **Source:** `legacy_chart_ui/delta-tooltip.js`
-*   **Functionality:** Advanced crosshair that calculates Price/Time delta between two points (drag to measure). Supports multi-point tooltips.
-*   **Migration:** High Complexity. Contains significant interaction logic (touch/mouse handling). This effectively solves the "Measuring Tool" requirement.
-*   **Recommendation:** Prioritize porting this as `MeasuringTool` or `AdvancedCrosshair`.
+*   **Ported To:** `web/lib/charts/plugins/measuring-tool.ts`
+*   **Status:** ✅ **COMPLETE** - TradingView-style UI with dashed guides, color-coded labels.
 
-### 2. Session Highlighting
+### 2. Anchored Text (Watermark)
+*   **Source:** `legacy_chart_ui/anchored_text_plugin.js`
+*   **Ported To:** `web/lib/charts/plugins/anchored-text.ts`
+*   **Status:** ✅ **COMPLETE** - Fixed screen positioning, editable via PropertiesModal.
+
+## 🌟 High Priority (Remaining)
+
+### 1. Session Highlighting
 *   **Source:** `legacy_chart_ui/session-highlighting.js`
 *   **Functionality:** Draws background colored stripes for specific time ranges (e.g., NY Session, London Session).
 *   **Migration:** Medium Complexity. Logic is self-contained. Needs to be adapted to receive session definition objects (Timezone aware).
 *   **Recommendation:** Port as `SessionHighlighter` plugin.
-
-### 3. Anchored Text (Watermark)
-*   **Source:** `legacy_chart_ui/anchored_text_plugin.js`
-*   **Functionality:** Places text at a fixed screen position (e.g., "Top Right") regardless of zoom/scroll.
-*   **Migration:** Low Complexity. Very easy to port.
-*   **Recommendation:** Port as `WatermarkPlugin` or `AnchoredText`.
 
 ### 4. Volume Profile (Fixed Range)
 *   **Source:** `legacy_chart_ui/volume-profile.js`
