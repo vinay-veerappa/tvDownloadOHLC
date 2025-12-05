@@ -144,6 +144,7 @@ export class VertLine implements ISeriesPrimitive {
     _timeAxisViews: VertLineTimeAxisView[];
     _requestUpdate: (() => void) | null = null;
     _textLabel: TextLabel | null = null;
+    public _type = 'vertical-line';
 
     _id: string;
 
@@ -237,6 +238,10 @@ export class VertLine implements ISeriesPrimitive {
 
     paneViews() {
         return this._paneViews;
+    }
+
+    updatePoints(p1: { time: Time }) {
+        this.updateTime(p1.time);
     }
 
     updateTime(time: Time) {

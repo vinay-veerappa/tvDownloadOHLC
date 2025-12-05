@@ -5,17 +5,12 @@ import { useChart } from "@/hooks/use-chart"
 import { getChartData } from "@/actions/data-actions"
 import { DrawingTool } from "./left-toolbar"
 import { Drawing } from "./right-sidebar"
-import { TrendLineTool } from "@/lib/charts/plugins/trend-line"
-import { FibonacciTool } from "@/lib/charts/plugins/fibonacci"
-import { RectangleDrawingTool } from "@/lib/charts/plugins/rectangle"
-import { VertLineTool } from "@/lib/charts/plugins/vertical-line"
-import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
 import { PropertiesModal } from "./properties-modal"
 import { DrawingStorage, SerializedDrawing } from "@/lib/drawing-storage"
 import type { MagnetMode } from "@/lib/charts/magnet-utils"
-
 import { useTradeContext } from "@/components/journal/trade-context"
 import { toast } from "sonner"
+import { useDrawingManager } from "@/hooks/use-drawing-manager"
 
 interface ChartContainerProps {
     ticker: string
@@ -28,31 +23,101 @@ interface ChartContainerProps {
     indicators: string[]
     markers?: any[]
     magnetMode?: MagnetMode
+    selection?: { type: 'drawing' | 'indicator', id: string } | null
+    onSelectionChange?: (selection: { type: 'drawing' | 'indicator', id: string } | null) => void
+    onDeleteSelection?: () => void
 }
 
 export interface ChartContainerRef {
-    deleteDrawing: (id: string) => void
+    deleteDrawing: (id: string) => void;
+    editDrawing: (id: string) => void;
 }
 
-export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off' }, ref) => {
+export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off', selection, onSelectionChange, onDeleteSelection }, ref) => {
     const chartContainerRef = useRef<HTMLDivElement>(null)
     const [data, setData] = useState<any[]>([])
     const { chart, series } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data, markers)
-    const activeToolRef = useRef<any>(null)
-    const drawingsRef = useRef<Map<string, any>>(new Map())
+
     const { openTradeDialog } = useTradeContext()
+
+    // Internal state that should be synced with props if valid
+    const selectedDrawingRef = useRef<any>(null)
+    const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
+
+    // Drawing Manager
+    const drawingManager = useDrawingManager(
+        chart,
+        series,
+        ticker,
+        timeframe,
+        onDrawingCreated,
+        onDrawingDeleted
+    );
+
+    // Sync external selection prop to internal state
+    useEffect(() => {
+        if (!selection) {
+            deselectDrawing();
+            return;
+        }
+
+        if (selection.type === 'drawing') {
+            const drawing = drawingManager.getDrawing(selection.id);
+            if (drawing) {
+                if (selectedDrawingRef.current && selectedDrawingRef.current !== drawing) {
+                    if (selectedDrawingRef.current.setSelected) {
+                        selectedDrawingRef.current.setSelected(false);
+                    }
+                }
+                if (drawing.setSelected) {
+                    drawing.setSelected(true);
+                }
+                selectedDrawingRef.current = drawing;
+                setSelectedDrawingId(selection.id);
+            }
+        } else {
+            deselectDrawing();
+        }
+    }, [selection, drawingManager]);
+
+    // UI State
+    const [propertiesModalOpen, setPropertiesModalOpen] = useState(false)
+    const [selectedDrawingOptions, setSelectedDrawingOptions] = useState<any>(null)
+    const [selectedDrawingType, setSelectedDrawingType] = useState<string>('')
+    const lastClickRef = useRef<number>(0)
+    const lastClickIdRef = useRef<string | null>(null)
+    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean }>({ x: 0, y: 0, visible: false })
+
+    // Helper functions
+    const deselectDrawing = () => {
+        if (selectedDrawingRef.current?.setSelected) {
+            selectedDrawingRef.current.setSelected(false);
+        }
+        selectedDrawingRef.current = null;
+        setSelectedDrawingId(null);
+    };
+
+    // Open settings from sidebar
+    const handleEditDrawing = (id: string) => {
+        const drawing = drawingManager.getDrawing(id);
+        if (drawing) {
+            onSelectionChange?.({ type: 'drawing', id });
+
+            setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
+
+            const drawingType = drawing._type;
+
+            setSelectedDrawingType(drawingType);
+            setPropertiesModalOpen(true);
+        }
+    };
 
     useImperativeHandle(ref, () => ({
         deleteDrawing: (id: string) => {
-            if (!series) return
-            const drawing = drawingsRef.current.get(id)
-            if (drawing) {
-                series.detachPrimitive(drawing)
-                drawingsRef.current.delete(id)
-                // Remove from storage
-                DrawingStorage.deleteDrawing(ticker, timeframe, id)
-                toast.success('Drawing deleted')
-            }
+            drawingManager.deleteDrawing(id);
+        },
+        editDrawing: (id: string) => {
+            handleEditDrawing(id);
         }
     }))
 
@@ -75,242 +140,48 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         loadData()
     }, [ticker, timeframe])
 
-    // Load Saved Drawings
+    // Load Saved Drawings via Manager
+    const { loadDrawings, initiateTool } = drawingManager;
+    const hasLoadedDrawingsRef = useRef(false);
+
+    // Reset load state on ticker/timeframe change
     useEffect(() => {
-        if (!chart || !series || !data.length) return;
+        hasLoadedDrawingsRef.current = false;
+    }, [ticker, timeframe]);
 
-        // Clear existing drawings
-        drawingsRef.current.forEach(drawing => {
-            series.detachPrimitive(drawing);
-        });
-        drawingsRef.current.clear();
-
-        // Load from storage
-        const savedDrawings = DrawingStorage.getDrawings(ticker, timeframe);
-        const restoredDrawings: Drawing[] = [];
-
-        savedDrawings.forEach(saved => {
-            try {
-                let DrawingClass: any;
-                let drawing: any;
-
-                switch (saved.type) {
-                    case 'trend-line':
-                        // Restore TrendLine
-                        const { TrendLine } = require('@/lib/charts/plugins/trend-line');
-                        drawing = new TrendLine(chart, series, saved.p1, saved.p2, saved.options);
-                        break;
-                    case 'rectangle':
-                        // Restore Rectangle
-                        const { Rectangle } = require('@/lib/charts/plugins/rectangle');
-                        drawing = new Rectangle(chart, series, saved.p1, saved.p2, saved.options);
-                        break;
-                    case 'fibonacci':
-                        // Restore Fibonacci
-                        const { FibonacciRetracement } = require('@/lib/charts/plugins/fibonacci');
-                        drawing = new FibonacciRetracement(chart, series, saved.p1, saved.p2, saved.options);
-                        break;
-                    case 'vertical-line':
-                        // Restore VerticalLine - uses time, not p1/p2 point
-                        const { VertLine } = require('@/lib/charts/plugins/vertical-line');
-                        const vTime = saved.p1?.time ?? saved.p1;
-                        drawing = new VertLine(chart, series, vTime, saved.options);
-                        break;
-                    case 'horizontal-line':
-                        // Restore HorizontalLine - uses price
-                        const { HorizontalLine } = require('@/lib/charts/plugins/horizontal-line');
-                        const hPrice = saved.p1?.price ?? saved.p1;
-                        drawing = new HorizontalLine(chart, series, hPrice, saved.options);
-                        break;
-                    case 'text':
-                        // Restore TextDrawing
-                        const { TextDrawing } = require('@/lib/charts/plugins/text-tool');
-                        drawing = new TextDrawing(chart, series, saved.p1.time, saved.p1.price, saved.options);
-                        break;
-                }
-
-                if (drawing) {
-                    // Manually assign the same ID
-                    drawing._id = saved.id;
-                    series.attachPrimitive(drawing);
-                    drawingsRef.current.set(saved.id, drawing);
-
-                    // Track for notifying parent
-                    restoredDrawings.push({
-                        id: saved.id,
-                        type: saved.type,
-                        createdAt: saved.createdAt
-                    });
-                }
-            } catch (error) {
-                console.error('Failed to restore drawing:', saved, error);
-            }
-        });
-
-        // Notify parent about all restored drawings
-        restoredDrawings.forEach(d => onDrawingCreated(d));
-
-        if (savedDrawings.length > 0) {
-            toast.success(`Loaded ${savedDrawings.length} drawing(s)`);
-        }
-    }, [chart, series, ticker, timeframe, data])
-
-
-    // Handle Tool Selection
     useEffect(() => {
-        if (!chart || !series) return
+        if (data && data.length > 0 && !hasLoadedDrawingsRef.current) {
+            loadDrawings(data);
+            hasLoadedDrawingsRef.current = true;
+        }
+    }, [loadDrawings, ticker, timeframe, data]);
 
-        // Stop previous tool if any
-        if (activeToolRef.current) {
-            if (typeof activeToolRef.current.stopDrawing === 'function') {
-                activeToolRef.current.stopDrawing()
+
+    // Handle Tool Selection with Manager
+    useEffect(() => {
+        initiateTool(
+            selectedTool,
+            magnetMode,
+            data,
+            () => onToolSelect('cursor'),
+            (id, drawing) => {
+                onSelectionChange?.({ type: 'drawing', id });
+                setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
+                setSelectedDrawingType('text');
+                setPropertiesModalOpen(true);
             }
-            activeToolRef.current = null
-        }
+        );
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedTool, initiateTool, magnetMode, onToolSelect, onSelectionChange]); // Removed data to prevent tool reset
 
-        if (selectedTool === 'cursor') {
-            return
-        }
 
-        let ToolClass: any
-        switch (selectedTool) {
-            case 'trend-line':
-                ToolClass = TrendLineTool
-                break
-            case 'fibonacci':
-                ToolClass = FibonacciTool
-                break
-            case 'rectangle':
-                ToolClass = RectangleDrawingTool
-                break
-            case 'vertical-line':
-                ToolClass = VertLineTool
-                break
-            case 'horizontal-line':
-                const { HorizontalLineTool } = require('@/lib/charts/plugins/horizontal-line');
-                ToolClass = HorizontalLineTool
-                break
-            case 'text':
-                const { TextTool } = require('@/lib/charts/plugins/text-tool');
-                ToolClass = TextTool
-                break;
-        }
-
-        if (ToolClass) {
-            console.log('Instantiating tool:', selectedTool);
-            // Prepare magnet options for tools that support it
-            const magnetOptions = selectedTool !== 'vertical-line' && selectedTool !== 'horizontal-line' && selectedTool !== 'text'
-                ? { magnetMode, ohlcData: data }
-                : undefined;
-            const tool = new ToolClass(chart, series, (drawing: any) => {
-                console.log('Drawing created callback triggered', drawing);
-                // Store drawing instance
-                const id = typeof drawing.id === 'function' ? drawing.id() : drawing.id;
-
-                if (id) {
-                    console.log('Registering drawing with ID:', id);
-                    drawingsRef.current.set(id, drawing)
-
-                    // If it's a new Text tool (or generic if we want), select it and open properties
-                    if (selectedTool === 'text') {
-                        setSelectedDrawingId(id);
-                        selectedDrawingRef.current = drawing;
-                        if (drawing.setSelected) drawing.setSelected(true);
-
-                        // Open modal immediately for text editing
-                        setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
-                        setSelectedDrawingType('text');
-                        setPropertiesModalOpen(true);
-                    }
-
-                    // Serialize and save to storage
-                    // Handle different drawing types appropriately
-                    let serialized: SerializedDrawing;
-                    if (selectedTool === 'vertical-line') {
-                        // VertLine uses _time, not _p1/_p2
-                        serialized = {
-                            id,
-                            type: selectedTool as any,
-                            p1: { time: drawing._time, price: 0 },
-                            p2: { time: drawing._time, price: 0 },
-                            options: drawing._options,
-                            createdAt: Date.now()
-                        };
-                    } else if (selectedTool === 'horizontal-line') {
-                        // HorizontalLine uses _price
-                        serialized = {
-                            id,
-                            type: selectedTool as any,
-                            p1: { time: 0, price: drawing._price },
-                            p2: { time: 0, price: drawing._price },
-                            options: drawing._options,
-                            createdAt: Date.now()
-                        };
-                    } else if (selectedTool === 'text') {
-                        serialized = {
-                            id,
-                            type: selectedTool as any,
-                            p1: { time: drawing._time, price: drawing._price },
-                            p2: { time: drawing._time, price: drawing._price }, // p2 redundant
-                            options: drawing._options,
-                            createdAt: Date.now()
-                        };
-                    } else {
-                        serialized = {
-                            id,
-                            type: selectedTool as any,
-                            p1: drawing._p1,
-                            p2: drawing._p2,
-                            options: drawing._options,
-                            createdAt: Date.now()
-                        };
-                    }
-                    DrawingStorage.addDrawing(ticker, timeframe, serialized);
-                    toast.success(`Drawing saved`);
-
-                    // Notify parent
-                    onDrawingCreated({
-                        id: id,
-                        type: selectedTool as any,
-                        createdAt: Date.now()
-                    })
-                } else {
-                    console.error('Drawing created but no ID found', drawing);
-                }
-
-                // Reset to cursor after drawing
-                onToolSelect('cursor')
-            }, magnetOptions)
-
-            tool.startDrawing()
-            activeToolRef.current = tool
-        }
-
-    }, [selectedTool, chart, series, onToolSelect, onDrawingCreated, magnetMode, data])
-
-    const [propertiesModalOpen, setPropertiesModalOpen] = useState(false)
-    const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
-    const [selectedDrawingOptions, setSelectedDrawingOptions] = useState<any>(null)
-    const [selectedDrawingType, setSelectedDrawingType] = useState<string>('')
-    const lastClickRef = useRef<number>(0)
-    const lastClickIdRef = useRef<string | null>(null)
-    const selectedDrawingRef = useRef<any>(null)
-
-    // Context menu state
-    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean }>({ x: 0, y: 0, visible: false })
-
-    // Open settings from context menu
+    // Context Menu Logic
     const openDrawingSettings = () => {
         if (selectedDrawingRef.current) {
             const drawing = selectedDrawingRef.current;
             setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
 
-            const className = drawing.constructor?.name;
-            let drawingType = 'Drawing';
-            if (className === 'TrendLine') drawingType = 'trend-line';
-            else if (className === 'Rectangle') drawingType = 'rectangle';
-            else if (className === 'FibonacciRetracement') drawingType = 'fibonacci';
-            else if (className === 'VertLine') drawingType = 'vertical-line';
+            const drawingType = drawing._type;
 
             setSelectedDrawingType(drawingType);
             setPropertiesModalOpen(true);
@@ -318,121 +189,59 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         setContextMenu({ ...contextMenu, visible: false });
     };
 
-    // Delete from context menu
     const deleteSelectedDrawing = () => {
-        if (selectedDrawingRef.current && series) {
+        if (onDeleteSelection) {
+            onDeleteSelection();
+        } else if (selectedDrawingRef.current) {
             const drawing = selectedDrawingRef.current;
             const id = typeof drawing.id === 'function' ? drawing.id() : drawing.id;
-
-            series.detachPrimitive(drawing);
-            drawingsRef.current.delete(id);
-            DrawingStorage.deleteDrawing(ticker, timeframe, id);
-
-            if (onDrawingDeleted) {
-                onDrawingDeleted(id);
-            }
-
+            drawingManager.deleteDrawing(id);
             deselectDrawing();
-            toast.success('Drawing deleted');
         }
         setContextMenu({ ...contextMenu, visible: false });
     };
 
-    // Deselect drawing helper
-    const deselectDrawing = () => {
-        if (selectedDrawingRef.current?.setSelected) {
-            selectedDrawingRef.current.setSelected(false);
-        }
-        selectedDrawingRef.current = null;
-        setSelectedDrawingId(null);
-    };
-
-    // Handle Delete key to remove selected drawing
+    // Handle Delete Key
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawingRef.current && series) {
-                const drawing = selectedDrawingRef.current;
-                const id = typeof drawing.id === 'function' ? drawing.id() : drawing.id;
-
-                // Detach and remove from map
-                series.detachPrimitive(drawing);
-                drawingsRef.current.delete(id);
-
-                // Remove from storage
-                DrawingStorage.deleteDrawing(ticker, timeframe, id);
-
-                // Notify parent to update Object Tree
-                if (onDrawingDeleted) {
-                    onDrawingDeleted(id);
+            if ((e.key === 'Delete' || e.key === 'Backspace')) {
+                if (onDeleteSelection) {
+                    onDeleteSelection();
+                } else if (selectedDrawingRef.current) {
+                    const drawing = selectedDrawingRef.current;
+                    const id = typeof drawing.id === 'function' ? drawing.id() : drawing.id;
+                    drawingManager.deleteDrawing(id);
+                    deselectDrawing();
                 }
-
-                // Deselect
-                deselectDrawing();
-
-                toast.success('Drawing deleted');
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [series, ticker, timeframe, onDrawingDeleted]);
+    }, [onDeleteSelection, drawingManager]);
 
-    // Handle Chart Clicks for Selection and Double Click
+    // Handle Click (Selection) use Manager hitTest
     useEffect(() => {
         if (!chart || !series) return
 
         const clickHandler = (param: any) => {
             if (!param.point) return;
 
-            // Iterate over drawings to check for hit
-            let hitDrawing: any = null
-            let hitInfo: any = null
-
-            for (const [id, drawing] of drawingsRef.current.entries()) {
-                if (drawing.hitTest) {
-                    const hit = drawing.hitTest(param.point.x, param.point.y)
-                    if (hit) {
-                        hitDrawing = drawing
-                        hitInfo = hit
-                        break
-                    }
-                }
-            }
+            const result = drawingManager.hitTest(param.point.x, param.point.y);
+            const hitDrawing = result?.drawing;
 
             if (hitDrawing) {
                 const id = typeof hitDrawing.id === 'function' ? hitDrawing.id() : hitDrawing.id;
-
-                // Deselect previous drawing if different
-                if (selectedDrawingRef.current && selectedDrawingRef.current !== hitDrawing) {
-                    if (selectedDrawingRef.current.setSelected) {
-                        selectedDrawingRef.current.setSelected(false);
-                    }
-                }
-
-                // Select new drawing
-                if (hitDrawing.setSelected) {
-                    hitDrawing.setSelected(true);
-                }
-                selectedDrawingRef.current = hitDrawing;
-                setSelectedDrawingId(id);
+                onSelectionChange?.({ type: 'drawing', id });
 
                 const now = Date.now()
                 const lastClick = lastClickRef.current
                 const lastClickId = lastClickIdRef.current
 
-                // Double Click Logic (Threshold 800ms)
                 if (now - lastClick < 800 && lastClickId === id) {
                     setSelectedDrawingOptions(hitDrawing.options ? hitDrawing.options() : {})
 
-                    // Determine drawing type from class name
-                    const className = hitDrawing.constructor?.name;
-                    let drawingType = 'Drawing';
-                    if (className === 'TrendLine') drawingType = 'trend-line';
-                    else if (className === 'Rectangle') drawingType = 'rectangle';
-                    else if (className === 'FibonacciRetracement') drawingType = 'fibonacci';
-                    else if (className === 'VertLine') drawingType = 'vertical-line';
-                    else if (className === 'HorizontalLine') drawingType = 'horizontal-line';
-                    else if (className === 'TextDrawing') drawingType = 'text';
+                    const drawingType = hitDrawing._type;
 
                     setSelectedDrawingType(drawingType)
                     setPropertiesModalOpen(true)
@@ -441,23 +250,20 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 lastClickRef.current = now
                 lastClickIdRef.current = id
             } else {
-                // Click on empty space - deselect
                 deselectDrawing();
             }
         }
-
         chart.subscribeClick(clickHandler)
-
         return () => {
             chart.unsubscribeClick(clickHandler)
         }
-    }, [chart, series])
+    }, [chart, series, drawingManager, onSelectionChange]);
 
-    // Drag state refs
+
+    // DRAG LOGIC
     const isDraggingRef = useRef(false)
     const dragInfoRef = useRef<{ hitType: string; startPoint: { x: number; y: number }; startP1: any; startP2: any } | null>(null)
 
-    // Handle Drag Operations for resizing/moving drawings
     useEffect(() => {
         if (!chartContainerRef.current || !chart || !series) return
 
@@ -480,7 +286,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     startP2: selectedDrawingRef.current._p2 ? { ...selectedDrawingRef.current._p2 } : null
                 }
 
-                // Disable chart scrolling/panning during drag
                 chart.applyOptions({
                     handleScroll: false,
                     handleScale: false
@@ -509,11 +314,9 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
             const timeScale = chart.timeScale()
 
-            // Helper: Find snap price if magnet mode is enabled
             const findSnapPrice = (time: any, price: number): number => {
                 if (magnetMode === 'off' || !data || data.length === 0) return price;
 
-                // Find the bar at this time
                 const bar = data.find((b: any) => b.time === time);
                 if (!bar) return price;
 
@@ -529,7 +332,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     }
                 }
 
-                // For 'weak' mode, only snap if within threshold
                 if (magnetMode === 'weak') {
                     const priceRange = bar.high - bar.low;
                     const threshold = priceRange * 0.3;
@@ -550,8 +352,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 return time ? findSnapPrice(time, rawPrice) : rawPrice
             }
 
-            // For Rectangle corner/edge handles, we need to update both points appropriately
-            if (drawing.constructor?.name === 'Rectangle') {
+            if (drawing._type === 'rectangle') {
                 const minTime = Math.min(startP1.time, startP2.time)
                 const maxTime = Math.max(startP1.time, startP2.time)
                 const minPrice = Math.min(startP1.price, startP2.price)
@@ -561,7 +362,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 let newP2 = { ...startP2 }
 
                 if (hitType === 'body' || hitType === 'center') {
-                    // Move entire rectangle
                     const newT1 = coordToTime(startP1.time, dx)
                     const newT2 = coordToTime(startP2.time, dx)
                     const newPr1 = coordToPrice(startP1.price, dy, newT1)
@@ -627,28 +427,20 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 if (drawing.updatePoints) {
                     drawing.updatePoints(newP1, newP2)
                 }
-            } else if (selectedDrawingType === 'horizontal-line') {
-                // Horizontal Line - only Y/Price changes
+            } else if (drawing._type === 'horizontal-line') {
                 const rawPrice = series.coordinateToPrice(
                     (series.priceToCoordinate(startP1.price) as number) + dy
                 ) as number
 
                 if (rawPrice !== null) {
-                    const newPrice = findSnapPrice(null, rawPrice); // Magnet for price? Only if needed. Start with null time. 
-                    // Actually findSnapPrice likely requires time to match bar? 
-                    // Horizontal line snaps to High/Low of bars nearby? 
-                    // For now, let's just use rawPrice or simple price magnet if we can infer time. 
-                    // Simpler: Just rawPrice for now, add PriceMagnet later if requested.
-
+                    const newPrice = rawPrice;
                     const newP = { price: newPrice };
                     if (drawing.updatePoints) {
                         drawing.updatePoints(newP);
                     }
                 }
-            } else if (selectedDrawingType === 'text') {
-                // Text Tool - moves like a point (Time/Price)
+            } else if (drawing._type === 'text') {
                 const newTime = coordToTime(startP1.time, dx);
-                // Disable magnet for text: do not pass time to coordToPrice
                 const newPrice = coordToPrice(startP1.price, dy);
 
                 if (newTime && newPrice !== null) {
@@ -657,8 +449,15 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         drawing.updatePoints(newP);
                     }
                 }
+            } else if (drawing._type === 'vertical-line') {
+                const newTime = coordToTime(startP1.time, dx);
+                if (newTime) {
+                    const newP = { time: newTime };
+                    if (drawing.updatePoints) {
+                        drawing.updatePoints(newP);
+                    }
+                }
             } else {
-                // TrendLine, Fibonacci - simple two-point handling
                 if (hitType === 'body' && startP1 && startP2 && drawing.updatePoints) {
                     const newP1Time = timeScale.coordinateToTime(
                         (timeScale.timeToCoordinate(startP1.time) as number) + dx
@@ -718,30 +517,22 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
         const handleMouseUp = () => {
             if (isDraggingRef.current) {
-                // Re-enable chart scrolling
                 chart.applyOptions({
                     handleScroll: true,
                     handleScale: true
                 })
 
                 if (selectedDrawingRef.current) {
-                    // Save updated position to storage
                     const drawing = selectedDrawingRef.current
                     const id = typeof drawing.id === 'function' ? drawing.id() : drawing.id
-                    const className = drawing.constructor?.name
 
-                    let drawingType = 'trend-line'
-                    if (className === 'Rectangle') drawingType = 'rectangle'
-                    else if (className === 'FibonacciRetracement') drawingType = 'fibonacci'
-                    else if (className === 'VertLine') drawingType = 'vertical-line'
-                    else if (className === 'HorizontalLine') drawingType = 'horizontal-line'
-                    else if (className === 'TextDrawing') drawingType = 'text'
+                    const drawingType = drawing._type;
 
                     const serialized: SerializedDrawing = {
                         id,
                         type: drawingType as any,
                         p1: drawing._p1,
-                        p2: drawing._p2, // Text/Horizontal/Vert will return duplicate/dummy p2 via getter
+                        p2: drawing._p2,
                         options: drawing._options,
                         createdAt: Date.now()
                     }
@@ -753,7 +544,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             dragInfoRef.current = null
         }
 
-        // Use capture phase for mousedown to intercept before chart
         container.addEventListener('mousedown', handleMouseDown, true)
         window.addEventListener('mousemove', handleMouseMove)
         window.addEventListener('mouseup', handleMouseUp)
@@ -765,19 +555,34 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         }
     }, [chart, series, ticker, timeframe, magnetMode, data])
 
+
     const handlePropertiesSave = (newOptions: any) => {
         if (selectedDrawingId) {
-            const drawing = drawingsRef.current.get(selectedDrawingId)
+            const drawing = drawingManager.getDrawing(selectedDrawingId)
             if (drawing && drawing.applyOptions) {
                 drawing.applyOptions(newOptions)
+                // Persistence handled during create/delete/drag.
+                // Property updates might need explicit save to storage?
+                // Yes, we should update storage here too.
+                const drawingType = drawing._type;
+
+                const serialized: SerializedDrawing = {
+                    id: selectedDrawingId,
+                    type: drawingType as any,
+                    p1: drawing._p1,
+                    p2: drawing._p2,
+                    options: drawing._options,
+                    createdAt: Date.now()
+                }
+                DrawingStorage.updateDrawing(ticker, timeframe, selectedDrawingId, serialized);
             }
         }
     }
 
-    // Handle right-click context menu
+
+    // Context Menu Effect
     useEffect(() => {
         if (!chartContainerRef.current) return;
-
         const container = chartContainerRef.current;
 
         const handleContextMenu = (e: MouseEvent) => {
@@ -787,11 +592,10 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
 
-            // Check if right-click is on selected drawing
             const hit = selectedDrawingRef.current.hitTest?.(x, y);
             if (hit) {
                 e.preventDefault();
-                setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
+                setContextMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top, visible: true });
             }
         };
 
@@ -809,49 +613,32 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     }, []);
 
     return (
-        <div className="relative w-full h-full">
-            <div
-                ref={chartContainerRef}
-                className="w-full h-full"
-            />
+        <div ref={chartContainerRef} className="w-full h-full relative" onContextMenu={(e) => {
+            // Keep native React onContextMenu as backup or for other interactions if needed
+        }}>
+            {/* Custom Context Menu */}
+            {contextMenu.visible && selectedDrawingId && (
+                <div
+                    className="absolute bg-popover text-popover-foreground border rounded-md shadow-md p-1 min-w-[150px] z-50 flex flex-col gap-1"
+                    style={{ left: contextMenu.x, top: contextMenu.y }}
+                >
+                    <button className="text-left px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground rounded-sm flex items-center gap-2" onClick={openDrawingSettings}>
+                        Settings
+                    </button>
+                    <div className="border-t my-1" />
+                    <button className="text-left px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground rounded-sm flex items-center text-destructive gap-2" onClick={deleteSelectedDrawing}>
+                        Delete
+                    </button>
+                </div>
+            )}
+
             <PropertiesModal
-                isOpen={propertiesModalOpen}
-                onClose={() => setPropertiesModalOpen(false)}
+                open={propertiesModalOpen}
+                onOpenChange={setPropertiesModalOpen}
                 drawingType={selectedDrawingType}
                 initialOptions={selectedDrawingOptions}
                 onSave={handlePropertiesSave}
             />
-
-            {/* Context Menu */}
-            {contextMenu.visible && (
-                <div
-                    className="fixed bg-zinc-800 border border-zinc-700 rounded-md shadow-xl py-1 z-50 min-w-[160px]"
-                    style={{ left: contextMenu.x, top: contextMenu.y }}
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <button
-                        className="w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
-                        onClick={openDrawingSettings}
-                    >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        Settings...
-                    </button>
-                    <div className="border-t border-zinc-700 my-1" />
-                    <button
-                        className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-zinc-700 flex items-center gap-2"
-                        onClick={deleteSelectedDrawing}
-                    >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                        Remove
-                        <span className="ml-auto text-zinc-500 text-xs">Del</span>
-                    </button>
-                </div>
-            )}
         </div>
     )
 })

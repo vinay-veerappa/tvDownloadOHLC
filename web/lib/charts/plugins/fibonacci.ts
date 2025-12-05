@@ -140,6 +140,7 @@ export class FibonacciRetracement implements ISeriesPrimitive {
     _paneViews: FibonacciPaneView[];
     _requestUpdate: (() => void) | null = null;
     _textLabel: TextLabel | null = null;
+    public _type = 'fibonacci';
 
     _id: string;
     _selected: boolean = false;

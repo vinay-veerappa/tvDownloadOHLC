@@ -10,8 +10,8 @@ import { TemplateManager } from "@/lib/template-manager"
 import { toast } from "sonner"
 
 interface PropertiesModalProps {
-    isOpen: boolean;
-    onClose: () => void;
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
     drawingType: string;
     initialOptions: any;
     onSave: (options: any) => void;
@@ -47,7 +47,7 @@ const parseColor = (color: string) => {
     return { hex: '#000000', alpha: 1 };
 }
 
-export function PropertiesModal({ isOpen, onClose, drawingType, initialOptions, onSave }: PropertiesModalProps) {
+export function PropertiesModal({ open, onOpenChange, drawingType, initialOptions, onSave }: PropertiesModalProps) {
     const [options, setOptions] = useState(initialOptions || {});
     // Local state for color inputs to handle hex/alpha split
     const [lineColorState, setLineColorState] = useState({ hex: '#000000', alpha: 1 });
@@ -64,7 +64,7 @@ export function PropertiesModal({ isOpen, onClose, drawingType, initialOptions, 
 
         if (opts.textColor) setTextColorState(parseColor(opts.textColor));
         // Fallback for TextLabel which might use 'color' if it's just a label tool, but usually it's 'textColor' in complex shapes
-    }, [initialOptions, isOpen]);
+    }, [initialOptions, open]);
 
     const handleSave = () => {
         // Construct final options with RGBA colors
@@ -76,7 +76,7 @@ export function PropertiesModal({ isOpen, onClose, drawingType, initialOptions, 
             textColor: hexToRgba(textColorState.hex, textColorState.alpha)
         };
         onSave(finalOptions);
-        onClose();
+        onOpenChange(false);
     };
 
     const handleChange = (key: string, value: any) => {
@@ -93,7 +93,7 @@ export function PropertiesModal({ isOpen, onClose, drawingType, initialOptions, 
     useEffect(() => {
         const loadedTemplates = TemplateManager.getTemplates(drawingType);
         setTemplates(loadedTemplates);
-    }, [drawingType, isOpen]);
+    }, [drawingType, open]);
 
     const handleLoadTemplate = (templateName: string) => {
         const template = TemplateManager.getTemplate(drawingType, templateName);
@@ -144,7 +144,7 @@ export function PropertiesModal({ isOpen, onClose, drawingType, initialOptions, 
     };
 
     return (
-        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-[500px]">
                 <DialogHeader>
                     <DialogTitle>{drawingType} Properties</DialogTitle>
@@ -558,7 +558,7 @@ export function PropertiesModal({ isOpen, onClose, drawingType, initialOptions, 
                 </div>
 
                 <DialogFooter>
-                    <Button variant="outline" onClick={onClose}>Cancel</Button>
+                    <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
                     <Button onClick={handleSave}>Save</Button>
                 </DialogFooter>
             </DialogContent>

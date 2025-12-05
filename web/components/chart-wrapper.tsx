@@ -1,7 +1,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { LeftToolbar, DrawingTool } from './left-toolbar'
 import { RightSidebar, Drawing } from './right-sidebar'
 import type { ChartContainerRef } from './chart-container'
@@ -48,31 +48,46 @@ export function ChartWrapper(props: ChartWrapperProps) {
         }
     }, [chartId, props.indicators])
 
-    const handleDrawingCreated = (drawing: Drawing) => {
+    // Global Selection State
+    const [selection, setSelection] = useState<{ type: 'drawing' | 'indicator', id: string } | null>(null);
+
+    const handleDrawingCreated = useCallback((drawing: Drawing) => {
         setDrawings(prev => {
-            // Prevent duplicates when restoring from storage
             if (prev.some(d => d.id === drawing.id)) return prev;
             return [...prev, drawing];
         });
-    }
+    }, []);
 
-    const handleDeleteDrawing = (id: string) => {
+    const handleDeleteDrawing = useCallback((id: string) => {
         if (chartRef.current) {
             chartRef.current.deleteDrawing(id)
             setDrawings(prev => prev.filter(d => d.id !== id))
+            if (selection?.id === id) setSelection(null);
         }
-    }
+    }, [selection?.id]);
 
-    const handleDeleteIndicator = (type: string) => {
-        // Remove from storage
+    const handleDeleteIndicator = useCallback((type: string) => {
         IndicatorStorage.removeIndicator(chartId, type)
-        // Update local state
         setIndicators(prev => prev.filter(ind => ind !== type))
-    }
+        if (selection?.id === type) setSelection(null);
+        // Force chart update if needed, though indicators prop change should trigger it
+    }, [chartId, selection?.id]);
 
-    const handleChartDrawingDeleted = (id: string) => {
+    // Unified Delete Handler (triggered by Delete key or UI)
+    const handleDeleteSelection = useCallback(() => {
+        if (!selection) return;
+
+        if (selection.type === 'drawing') {
+            handleDeleteDrawing(selection.id);
+        } else if (selection.type === 'indicator') {
+            handleDeleteIndicator(selection.id);
+        }
+    }, [selection, handleDeleteDrawing, handleDeleteIndicator]);
+
+    const handleChartDrawingDeleted = useCallback((id: string) => {
         setDrawings(prev => prev.filter(d => d.id !== id))
-    }
+        if (selection?.id === id) setSelection(null);
+    }, [selection?.id]);
 
     // Map indicator types to display objects for sidebar
     const indicatorObjects = indicators.map(type => ({
@@ -93,6 +108,9 @@ export function ChartWrapper(props: ChartWrapperProps) {
                     onDrawingCreated={handleDrawingCreated}
                     onDrawingDeleted={handleChartDrawingDeleted}
                     indicators={indicators}
+                    selection={selection}
+                    onSelectionChange={setSelection}
+                    onDeleteSelection={handleDeleteSelection}
                 />
             </div>
             <RightSidebar
@@ -100,6 +118,9 @@ export function ChartWrapper(props: ChartWrapperProps) {
                 indicators={indicatorObjects}
                 onDeleteDrawing={handleDeleteDrawing}
                 onDeleteIndicator={handleDeleteIndicator}
+                onEditDrawing={(id) => chartRef.current?.editDrawing(id)}
+                selection={selection}
+                onSelect={setSelection}
             />
         </div>
     )

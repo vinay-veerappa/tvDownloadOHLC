@@ -78,6 +78,7 @@ export class TextDrawing implements ISeriesPrimitive {
     _options: TextDrawingOptions;
     _textLabel: TextLabel;
     _paneViews: TextDrawingPaneView[];
+    public _type = 'text';
     _id: string;
     _selected: boolean = false;
 
