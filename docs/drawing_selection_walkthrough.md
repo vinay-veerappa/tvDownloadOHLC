@@ -2,7 +2,7 @@
 
 ## ✅ Successfully Implemented
 
-All drawing tools now support selection, modification, and deletion with a unified properties panel interface. Phase 1 of plugin standardization is complete with all plugins following consistent API patterns.
+All drawing tools now support selection, modification, and deletion with a unified properties panel interface. Phase 1 and Phase 2 of plugin standardization are complete.
 
 ---
 
@@ -24,96 +24,35 @@ All drawing tools now support selection, modification, and deletion with a unifi
 
 ---
 
+## Architecture Improvements
+
+### Phase 1: Standardize Interfaces ✅
+All drawing plugins now implement:
+- `options()` - Returns current options for properties panel
+- `applyOptions(options)` - Updates options and refreshes views
+- ES6 module exports
+
+### Phase 2: Self-Contained Hit Testing ✅
+Hit testing logic moved from `drawings.js` to individual plugins:
+- `hitTest(point)` method added to TrendLine, Fibonacci, and VertLine
+- `drawings.js` delegates hit testing to plugins
+- Cleaner separation of concerns
+
+---
+
 ## Issues Resolved
 
 ### 1. Properties Panel Not Displaying
 **Problem:** Panel didn't appear when clicking on drawings.
-
-**Root Cause:** Plugins had inconsistent interfaces:
-- TrendLine had `_options` but no `options()` method
-- Fibonacci had neither `options()` nor `applyOptions()`
-- VertLine had `_options` and `applyOptions()` but no `options()`
-
-**Solution:** Standardized all plugins with both methods:
-```javascript
-options() {
-    return this._options;
-}
-
-applyOptions(options) {
-    this._options = { ...this._options, ...options };
-    this._paneViews = [new PaneView(this, this._options)];
-    this.updateAllViews();
-}
-```
+**Solution:** Standardized all plugins with `options()` and `applyOptions()` methods.
 
 ### 2. Wrong Plugin Files Being Loaded
-**Problem:** Browser loaded old duplicate files instead of updated ones.
-
-**Root Cause:** `main.js` imported from old files:
-- `plugins/trend-line.js` instead of `trendline_plugin.js`
-- `plugins/vertical-line.js` instead of `vertical_line_plugin.js`
-
+**Problem:** Browser loaded old duplicate files.
 **Solution:** Updated imports in `main.js` to use correct files.
 
 ### 3. ES6 Export Syntax Errors
-**Problem:** `Unexpected token 'export'` errors in browser console.
-
-**Root Cause:** Plugins were loaded twice:
-1. As regular `<script>` tags in HTML (doesn't support `export`)
-2. As ES6 modules in `main.js` (supports `export`)
-
-**Solution:** 
-- Added `export` statements to all plugin files
-- Removed duplicate `<script>` tags from HTML
-- Plugins now only loaded as ES6 modules
-
----
-
-## Phase 1: Plugin Standardization Complete
-
-### Standard Interface
-All drawing plugins now implement:
-
-```javascript
-class StandardPlugin {
-    // Official Lightweight Charts API
-    paneViews() { }
-    attached({ chart, series, requestUpdate }) { }
-    detached() { }
-    updateAllViews() { }
-    
-    // Custom methods for properties panel
-    options() { return this._options; }
-    applyOptions(options) { }
-}
-```
-
-### Plugins Standardized
-- ✅ **TrendLine** - Added `options()` method
-- ✅ **Fibonacci** - Added `options()` and `applyOptions()` methods
-- ✅ **VertLine** - Added `options()` method
-
-### ES6 Module Exports
-All plugins now export properly:
-```javascript
-window.PluginName = PluginName;  // Global for backwards compatibility
-export { PluginName };            // ES6 module export
-```
-
----
-
-## Files Modified
-
-### Plugin Files
-- `trendline_plugin.js` - Added `options()` and `export`
-- `fibonacci_plugin.js` - Added `options()`, `applyOptions()`, and `export`
-- `vertical_line_plugin.js` - Added `options()` and `export`
-
-### Core Files
-- `js/main.js` - Fixed imports to use correct plugin files
-- `js/drawings.js` - Already had selection logic (no changes needed)
-- `chart_ui.html` - Removed duplicate script tags
+**Problem:** `Unexpected token 'export'` errors.
+**Solution:** Removed duplicate `<script>` tags, loading plugins only as modules.
 
 ---
 
@@ -127,18 +66,18 @@ export { PluginName };            // ES6 module export
 6. **98ae682** - Fix plugin imports to use updated files
 7. **dd677e0** - Add ES6 exports to all plugin files
 8. **d2f208e** - Remove duplicate script tags
+9. **b476600** - Phase 2: Add hitTest methods to plugins
 
 ---
 
 ## Usage
 
 1. **Select a drawing tool** from left sidebar
-2. **Draw** by clicking on the chart (2 clicks for lines, 1 for vertical line)
-3. **Tool auto-deselects** after drawing is complete
-4. **Click on any drawing** to select it
-5. **Properties panel appears** at bottom-left
-6. **Modify** color or width - changes apply immediately
-7. **Delete** using panel button or keyboard shortcut
+2. **Draw** by clicking on the chart
+3. **Click on any drawing** to select it
+4. **Properties panel appears** at bottom-left
+5. **Modify** color or width
+6. **Delete** using panel button or keyboard shortcut
 
 ---
 
@@ -147,51 +86,17 @@ export { PluginName };            // ES6 module export
 ### Rectangle Tracking
 - Rectangle drawings work but aren't tracked in `state.drawings`
 - Need to add `drawing-created` event dispatch in RectangleDrawingTool
-- Plugin is minified, making modification difficult
 
 ### Ticker-Specific Drawings
 - Drawings currently persist across ticker changes
 - Need to implement per-ticker storage
-- Decision needed: in-memory vs localStorage
 
-### Phase 2 (Optional)
-- Move hit testing into plugins (`hitTest()` method)
+### Phase 3 (Optional)
 - Create tool classes for drawing creation logic
 - Simplify `drawings.js` to coordinator role
 
 ---
 
-## Testing Verified
-
-✅ TrendLine - Selection, color/width modification, deletion  
-✅ Fibonacci - Selection, color modification, deletion  
-✅ VertLine - Selection, color/width modification, deletion  
-✅ PriceLine - Selection, color/width modification, deletion  
-✅ Properties panel displays correctly for all types  
-✅ Real-time updates when changing properties  
-✅ Delete button works  
-✅ Keyboard shortcuts (Delete/Backspace) work  
-✅ Tool auto-deselects after drawing completion
-
----
-
-## Architecture Improvements
-
-### Before
-- Inconsistent plugin interfaces
-- Mixed loading (scripts + modules)
-- Duplicate plugin files
-- Hard to maintain and extend
-
-### After
-- ✅ Standardized plugin interfaces
-- ✅ ES6 module-based architecture
-- ✅ Single source of truth for each plugin
-- ✅ Follows official Lightweight Charts API
-- ✅ Easy to add new drawing tools
-
----
-
 ## Summary
 
-Successfully implemented drawing selection and deletion with a unified properties panel. Completed Phase 1 of plugin standardization, ensuring all drawing plugins follow consistent interfaces and official Lightweight Charts API patterns. All drawing types (TrendLine, Fibonacci, VertLine, PriceLine) are now fully functional with selection, modification, and deletion capabilities.
+Successfully implemented drawing selection and deletion with a unified properties panel. Completed Phase 1 and Phase 2 of plugin standardization. All drawing plugins now follow consistent interfaces and encapsulate their own hit testing logic, significantly improving code maintainability.
