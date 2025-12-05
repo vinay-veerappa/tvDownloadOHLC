@@ -206,20 +206,15 @@ export class VertLine implements ISeriesPrimitive {
     hitTest(x: number, y: number): any {
         const timeScale = this._chart.timeScale();
         const lineX = timeScale.timeToCoordinate(this._time);
-        // console.log(`VertLine hitTest: x=${x}, lineX=${lineX}, diff=${lineX !== null ? Math.abs(x - lineX) : 'N/A'}`);
 
         if (lineX === null) return null;
-
-        // Debug: Show hit test values
-        // const diff = Math.abs(x - lineX);
-        // console.log(`VertLine HitTest: ClickX=${Math.round(x)}, LineX=${Math.round(lineX)}, Diff=${Math.round(diff)}`);
-        // (window as any)._debugVertLine = { clickX: x, lineX: lineX, diff: diff };
 
         if (Math.abs(x - lineX) < 20) {
             return {
                 cursorStyle: 'ew-resize', // Or pointer
                 externalId: this._id,
-                zOrder: 'top'
+                zOrder: 'top',
+                hitType: 'move'
             };
         }
         return null;
