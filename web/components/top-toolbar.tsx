@@ -31,10 +31,11 @@ import { IndicatorsDialog } from "@/components/indicators-dialog"
 interface TopToolbarProps {
     tickers: string[]
     timeframes: string[]
+    tickerMap: Record<string, string[]>
     children?: React.ReactNode
 }
 
-export function TopToolbar({ tickers, timeframes, children }: TopToolbarProps) {
+export function TopToolbar({ tickers, timeframes, tickerMap, children }: TopToolbarProps) {
     const router = useRouter()
     const searchParams = useSearchParams()
 
@@ -47,6 +48,15 @@ export function TopToolbar({ tickers, timeframes, children }: TopToolbarProps) {
     const handleTickerChange = (currentValue: string) => {
         const params = new URLSearchParams(searchParams.toString())
         params.set("ticker", currentValue)
+
+        // Reset timeframe if current one is not available for new ticker
+        const availableForTicker = tickerMap[currentValue] || []
+        if (!availableForTicker.includes(currentTimeframe)) {
+            if (availableForTicker.length > 0) {
+                params.set("timeframe", availableForTicker[0])
+            }
+        }
+
         router.push(`?${params.toString()}`)
         setOpen(false)
     }
@@ -63,10 +73,13 @@ export function TopToolbar({ tickers, timeframes, children }: TopToolbarProps) {
         router.push(`?${params.toString()}`)
     }
 
+    // Filter timeframes based on current ticker
+    const availableTimeframesForTicker = currentTicker ? (tickerMap[currentTicker] || []) : timeframes
+
     // Quick access timeframes
     const quickTimeframes = ['1m', '5m', '15m', '1h', '4h', 'D', 'W']
-    const availableQuickTimeframes = quickTimeframes.filter(tf => timeframes.includes(tf))
-    const otherTimeframes = timeframes.filter(tf => !quickTimeframes.includes(tf))
+    const availableQuickTimeframes = quickTimeframes.filter(tf => availableTimeframesForTicker.includes(tf))
+    const otherTimeframes = availableTimeframesForTicker.filter(tf => !quickTimeframes.includes(tf))
 
     return (
         <div className="flex items-center gap-1 border-b p-1 bg-background overflow-x-auto">

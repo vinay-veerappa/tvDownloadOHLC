@@ -23,9 +23,13 @@ def read_parquet_to_json(file_path):
         elif 'date' in df.columns:
             df.rename(columns={'date': 'time'}, inplace=True)
             
-        # Convert time to string (YYYY-MM-DD) for daily, or ISO for intraday
+        # Convert time to UNIX timestamp (seconds) for compatibility
         if pd.api.types.is_datetime64_any_dtype(df['time']):
-            df['time'] = df['time'].dt.strftime('%Y-%m-%d')
+            # Convert to seconds (int)
+            df['time'] = (df['time'].astype('int64') // 10**9).astype(int)
+            
+        # Ensure data is sorted by time
+        df.sort_values('time', inplace=True)
             
         # Select only OHLCV data
         result_data = df[['time', 'open', 'high', 'low', 'close']].to_dict(orient='records')
