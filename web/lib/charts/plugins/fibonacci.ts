@@ -19,17 +19,20 @@ class FibonacciRenderer {
     private _p2: { x: number | null; y: number | null };
     private _options: FibonacciOptions;
     private _textLabel: TextLabel | null;
+    private _selected: boolean;
 
     constructor(
         p1: { x: number | null; y: number | null },
         p2: { x: number | null; y: number | null },
         options: FibonacciOptions,
-        textLabel: TextLabel | null
+        textLabel: TextLabel | null,
+        selected: boolean = false
     ) {
         this._p1 = p1;
         this._p2 = p2;
         this._options = options;
         this._textLabel = textLabel;
+        this._selected = selected;
     }
 
     draw(target: any) {
@@ -80,6 +83,27 @@ class FibonacciRenderer {
                 ctx.fillText(`${(level * 100).toFixed(1)}%`, x2 + (5 * hPR), y + (3 * hPR));
             });
 
+            // Draw handles when selected
+            if (this._selected) {
+                const HANDLE_RADIUS = 6;
+
+                ctx.fillStyle = '#2962FF';
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 2 * hPR;
+
+                // P1 handle
+                ctx.beginPath();
+                ctx.arc(x1, y1, HANDLE_RADIUS * hPR, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.stroke();
+
+                // P2 handle
+                ctx.beginPath();
+                ctx.arc(x2, y2, HANDLE_RADIUS * hPR, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.stroke();
+            }
+
             if (this._textLabel) {
                 this._textLabel.draw(ctx, hPR, vPR);
             }
@@ -99,7 +123,8 @@ class FibonacciPaneView {
             this._source._p1Point,
             this._source._p2Point,
             this._source._options,
-            this._source._textLabel
+            this._source._textLabel,
+            this._source._selected
         );
     }
 }
@@ -117,6 +142,7 @@ export class FibonacciRetracement implements ISeriesPrimitive {
     _textLabel: TextLabel | null = null;
 
     _id: string;
+    _selected: boolean = false;
 
     constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, p1: Point, p2: Point, options?: FibonacciOptions) {
         this._chart = chart;
@@ -143,6 +169,21 @@ export class FibonacciRetracement implements ISeriesPrimitive {
 
     options() {
         return this._options;
+    }
+
+    isSelected() {
+        return this._selected;
+    }
+
+    setSelected(selected: boolean) {
+        this._selected = selected;
+        if (this._requestUpdate) this._requestUpdate();
+    }
+
+    updatePoints(p1: Point, p2: Point) {
+        this._p1 = p1;
+        this._p2 = p2;
+        if (this._requestUpdate) this._requestUpdate();
     }
 
     applyOptions(options: Partial<FibonacciOptions>) {
@@ -212,16 +253,45 @@ export class FibonacciRetracement implements ISeriesPrimitive {
     hitTest(x: number, y: number): any {
         if (this._p1Point.x === null || this._p1Point.y === null || this._p2Point.x === null || this._p2Point.y === null) return null;
 
-        // Check distance to main diagonal
-        const dist = this._distanceToSegment(x, y, this._p1Point.x, this._p1Point.y, this._p2Point.x, this._p2Point.y);
+        const HANDLE_RADIUS = 8;
 
-        if (dist < 5) {
+        // Check P1 handle first
+        const distToP1 = Math.sqrt(
+            Math.pow(x - this._p1Point.x, 2) + Math.pow(y - this._p1Point.y, 2)
+        );
+        if (distToP1 <= HANDLE_RADIUS) {
             return {
-                cursorStyle: 'pointer',
+                cursorStyle: 'nwse-resize',
                 externalId: this._id,
-                zOrder: 'top'
+                zOrder: 'top',
+                hitType: 'p1'
             };
         }
+
+        // Check P2 handle
+        const distToP2 = Math.sqrt(
+            Math.pow(x - this._p2Point.x, 2) + Math.pow(y - this._p2Point.y, 2)
+        );
+        if (distToP2 <= HANDLE_RADIUS) {
+            return {
+                cursorStyle: 'nwse-resize',
+                externalId: this._id,
+                zOrder: 'top',
+                hitType: 'p2'
+            };
+        }
+
+        // Check body (diagonal line)
+        const dist = this._distanceToSegment(x, y, this._p1Point.x, this._p1Point.y, this._p2Point.x, this._p2Point.y);
+        if (dist < 10) {
+            return {
+                cursorStyle: 'move',
+                externalId: this._id,
+                zOrder: 'top',
+                hitType: 'body'
+            };
+        }
+
         return null;
     }
 
@@ -245,6 +315,11 @@ export class FibonacciRetracement implements ISeriesPrimitive {
     }
 }
 
+interface FibonacciToolOptions {
+    magnetMode?: 'off' | 'weak' | 'strong';
+    ohlcData?: any[];
+}
+
 export class FibonacciTool {
     private _chart: IChartApi;
     private _series: ISeriesApi<"Candlestick">;
@@ -254,11 +329,20 @@ export class FibonacciTool {
     private _clickHandler: (param: any) => void;
     private _moveHandler: (param: any) => void;
     private _onDrawingCreated?: (drawing: FibonacciRetracement) => void;
+    private _magnetMode: 'off' | 'weak' | 'strong';
+    private _ohlcData: any[];
 
-    constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, onDrawingCreated?: (drawing: FibonacciRetracement) => void) {
+    constructor(
+        chart: IChartApi,
+        series: ISeriesApi<"Candlestick">,
+        onDrawingCreated?: (drawing: FibonacciRetracement) => void,
+        options?: FibonacciToolOptions
+    ) {
         this._chart = chart;
         this._series = series;
         this._onDrawingCreated = onDrawingCreated;
+        this._magnetMode = options?.magnetMode || 'off';
+        this._ohlcData = options?.ohlcData || [];
 
         this._clickHandler = this._onClick.bind(this);
         this._moveHandler = this._onMouseMove.bind(this);
@@ -287,12 +371,22 @@ export class FibonacciTool {
     private _onClick(param: any) {
         if (!this._drawing || !param.point || !param.time || !this._series) return;
 
-        const price = this._series.coordinateToPrice(param.point.y);
-        if (price === null) return;
+        const rawPrice = this._series.coordinateToPrice(param.point.y);
+        if (rawPrice === null) return;
+
+        let priceValue = rawPrice as number;
+
+        // Apply magnet snapping if enabled
+        if (this._magnetMode !== 'off' && this._ohlcData) {
+            const snapped = this._findSnapPrice(param.time, priceValue);
+            if (snapped !== null) {
+                priceValue = snapped;
+            }
+        }
 
         if (!this._startPoint) {
             // First click: Start drawing
-            this._startPoint = { time: param.time, price: price };
+            this._startPoint = { time: param.time, price: priceValue };
             this._activeDrawing = new FibonacciRetracement(
                 this._chart,
                 this._series,
@@ -304,7 +398,7 @@ export class FibonacciTool {
         } else {
             // Second click: Finish drawing
             if (this._activeDrawing) {
-                this._activeDrawing.updateEnd({ time: param.time, price: price });
+                this._activeDrawing.updateEnd({ time: param.time, price: priceValue });
 
                 if (this._onDrawingCreated) {
                     this._onDrawingCreated(this._activeDrawing);
@@ -318,9 +412,48 @@ export class FibonacciTool {
     private _onMouseMove(param: any) {
         if (!this._drawing || !this._activeDrawing || !this._startPoint || !param.point || !param.time) return;
 
-        const price = this._series.coordinateToPrice(param.point.y);
-        if (price !== null) {
-            this._activeDrawing.updateEnd({ time: param.time, price: price });
+        const rawPrice = this._series.coordinateToPrice(param.point.y);
+        if (rawPrice === null) return;
+
+        let priceValue = rawPrice as number;
+
+        // Apply magnet snapping if enabled
+        if (this._magnetMode !== 'off' && this._ohlcData) {
+            const snapped = this._findSnapPrice(param.time, priceValue);
+            if (snapped !== null) {
+                priceValue = snapped;
+            }
         }
+
+        this._activeDrawing.updateEnd({ time: param.time, price: priceValue });
+    }
+
+    private _findSnapPrice(time: Time, price: number): number | null {
+        if (!this._ohlcData || this._ohlcData.length === 0) return null;
+
+        const bar = this._ohlcData.find((b: any) => b.time === time);
+        if (!bar) return null;
+
+        const ohlcValues = [bar.open, bar.high, bar.low, bar.close];
+        let closest = ohlcValues[0];
+        let minDist = Math.abs(price - closest);
+
+        for (const val of ohlcValues) {
+            const dist = Math.abs(price - val);
+            if (dist < minDist) {
+                minDist = dist;
+                closest = val;
+            }
+        }
+
+        if (this._magnetMode === 'weak') {
+            const priceRange = bar.high - bar.low;
+            const threshold = priceRange * 0.3;
+            if (minDist > threshold) {
+                return null;
+            }
+        }
+
+        return closest;
     }
 }

@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronsUpDown, CandlestickChart, BarChart, LineChart, AreaChart, Activity } from "lucide-react"
+import { Check, ChevronsUpDown, CandlestickChart, BarChart, LineChart, AreaChart, Activity, Magnet } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 
 import { cn } from "@/lib/utils"
@@ -28,15 +28,18 @@ import {
 } from "@/components/ui/select"
 import { IndicatorsDialog } from "@/components/indicators-dialog"
 import { IndicatorStorage } from "@/lib/indicator-storage"
+import type { MagnetMode } from "@/lib/charts/magnet-utils"
 
 interface TopToolbarProps {
     tickers: string[]
     timeframes: string[]
     tickerMap: Record<string, string[]>
+    magnetMode?: MagnetMode
+    onMagnetModeChange?: (mode: MagnetMode) => void
     children?: React.ReactNode
 }
 
-export function TopToolbar({ tickers, timeframes, tickerMap, children }: TopToolbarProps) {
+export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off', onMagnetModeChange, children }: TopToolbarProps) {
     const router = useRouter()
     const searchParams = useSearchParams()
 
@@ -185,6 +188,25 @@ export function TopToolbar({ tickers, timeframes, tickerMap, children }: TopTool
                     </SelectItem>
                 </SelectContent>
             </Select>
+
+            <div className="h-6 w-[1px] bg-border mx-2" />
+
+            {/* Magnet Mode Toggle */}
+            <Button
+                variant={magnetMode === 'off' ? 'ghost' : 'secondary'}
+                size="sm"
+                className="h-8 gap-2"
+                onClick={() => {
+                    if (!onMagnetModeChange) return;
+                    // Cycle: off -> weak -> strong -> off
+                    const nextMode = magnetMode === 'off' ? 'weak' : magnetMode === 'weak' ? 'strong' : 'off';
+                    onMagnetModeChange(nextMode);
+                }}
+                title={`Magnet: ${magnetMode === 'off' ? 'Off' : magnetMode === 'weak' ? 'Weak (proximity)' : 'Strong (always snap)'}`}
+            >
+                <Magnet className={cn("h-4 w-4", magnetMode === 'strong' && "text-primary")} />
+                <span className="text-xs">{magnetMode === 'off' ? 'Off' : magnetMode === 'weak' ? 'W' : 'S'}</span>
+            </Button>
 
             <div className="h-6 w-[1px] bg-border mx-2" />
 

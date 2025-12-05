@@ -6,13 +6,22 @@ import { LeftToolbar, DrawingTool } from './left-toolbar'
 import { RightSidebar, Drawing } from './right-sidebar'
 import type { ChartContainerRef } from './chart-container'
 import { IndicatorStorage } from '@/lib/indicator-storage'
+import type { MagnetMode } from '@/lib/charts/magnet-utils'
 
 const ChartContainer = dynamic(
     () => import('./chart-container').then((mod) => mod.ChartContainer),
     { ssr: false }
 )
 
-export function ChartWrapper(props: any) {
+interface ChartWrapperProps {
+    ticker: string
+    timeframe: string
+    style: string
+    indicators: string[]
+    magnetMode?: MagnetMode
+}
+
+export function ChartWrapper(props: ChartWrapperProps) {
     const [selectedTool, setSelectedTool] = useState<DrawingTool>("cursor")
     const [drawings, setDrawings] = useState<Drawing[]>([])
     const chartRef = useRef<ChartContainerRef>(null)
@@ -61,6 +70,10 @@ export function ChartWrapper(props: any) {
         setIndicators(prev => prev.filter(ind => ind !== type))
     }
 
+    const handleChartDrawingDeleted = (id: string) => {
+        setDrawings(prev => prev.filter(d => d.id !== id))
+    }
+
     // Map indicator types to display objects for sidebar
     const indicatorObjects = indicators.map(type => ({
         type,
@@ -78,6 +91,7 @@ export function ChartWrapper(props: any) {
                     selectedTool={selectedTool}
                     onToolSelect={setSelectedTool}
                     onDrawingCreated={handleDrawingCreated}
+                    onDrawingDeleted={handleChartDrawingDeleted}
                     indicators={indicators}
                 />
             </div>
