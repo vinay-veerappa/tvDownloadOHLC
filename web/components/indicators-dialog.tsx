@@ -34,6 +34,10 @@ const indicators = [
         value: "watermark",
         label: "Watermark (Anchored Text)",
     },
+    {
+        value: "sessions",
+        label: "Session Highlighting",
+    },
 ]
 
 interface IndicatorsDialogProps {
