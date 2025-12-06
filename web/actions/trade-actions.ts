@@ -17,7 +17,10 @@ interface CreateTradeParams {
     takeProfit?: number
     accountId: string
     strategyId?: string
+    risk?: number // Intended risk
 }
+
+// ... types above ...
 
 export async function getTrades() {
     try {
@@ -56,7 +59,8 @@ export async function createTrade(data: CreateTradeParams) {
                 stopLoss: data.stopLoss,
                 takeProfit: data.takeProfit,
                 accountId: data.accountId,
-                strategyId: data.strategyId
+                strategyId: data.strategyId,
+                risk: data.risk
             }
         })
 
@@ -76,6 +80,9 @@ export async function closeTrade(id: string, data: {
     exitPrice: number
     exitDate: Date
     pnl: number
+    mae?: number
+    mfe?: number
+    duration?: number
 }) {
     try {
         const trade = await prisma.trade.update({

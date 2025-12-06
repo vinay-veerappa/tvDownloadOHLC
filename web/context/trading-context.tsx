@@ -43,7 +43,13 @@ export interface Position {
     unrealizedPnl: number
     stopLoss?: number
     takeProfit?: number
+    // Advanced Metrics
+    maxPrice: number // Highest price reached (MFE/MAE tracking)
+    minPrice: number // Lowest price reached
+    risk: number // Intended risk in $ (for SQN/RoR)
 }
+
+// --- 1. Data Loading ---
 
 export interface Trade {
     id: string
@@ -167,7 +173,8 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
         price: number,
         sl?: number,
         tp?: number,
-        dbId?: string
+        dbId?: string,
+        risk?: number
     ) => {
         const newPos: Position = {
             id: dbId,
@@ -179,7 +186,10 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
             currentPrice: price,
             unrealizedPnl: 0,
             stopLoss: sl,
-            takeProfit: tp
+            takeProfit: tp,
+            maxPrice: price,
+            minPrice: price,
+            risk: risk || 0
         }
         setActivePosition(newPos)
     }, [])
@@ -189,6 +199,24 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
         const priceDiff = exitPrice - pos.entryPrice
         const pnlRaw = pos.direction === 'LONG' ? priceDiff : -priceDiff
         const pnl = pnlRaw * pos.quantity * POINT_VALUE
+
+        // Calculate Advanced Metrics
+        const duration = Math.floor((Date.now() - pos.startTime) / 1000)
+        let mae = 0
+        let mfe = 0
+
+        // Use the tracked max/min prices from live session
+        // If we closed instantly (no ticks), fallback to entry/exit
+        const finalMax = Math.max(pos.maxPrice, exitPrice)
+        const finalMin = Math.min(pos.minPrice, exitPrice)
+
+        if (pos.direction === 'LONG') {
+            mfe = finalMax - pos.entryPrice
+            mae = pos.entryPrice - finalMin
+        } else {
+            mfe = pos.entryPrice - finalMin
+            mae = finalMax - pos.entryPrice
+        }
 
         // Optimistic Update
         setActivePosition(null)
@@ -208,7 +236,10 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
                 await closeTrade(tradeId, {
                     exitPrice,
                     exitDate: new Date(),
-                    pnl
+                    pnl,
+                    mae: Number(mae.toFixed(2)),
+                    mfe: Number(mfe.toFixed(2)),
+                    duration
                 })
                 toast.success(`Position Closed. Realized P&L: $${pnl.toFixed(2)}`)
                 refreshTrades()
@@ -222,8 +253,21 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         if (!currentPrice) return
 
-        // A. Check Brackets (SL/TP) - ONLY Check, don't update state unless closing
         if (activePosition) {
+            // Updated MAE/MFE tracking (Max/Min)
+            const newMax = Math.max(activePosition.maxPrice, currentPrice)
+            const newMin = Math.min(activePosition.minPrice, currentPrice)
+
+            // Only update state if changed (Throttle? No, React batches usually fine for simple state)
+            if (newMax !== activePosition.maxPrice || newMin !== activePosition.minPrice) {
+                setActivePosition(prev => prev ? {
+                    ...prev,
+                    maxPrice: newMax,
+                    minPrice: newMin
+                } : null)
+            }
+
+            // A. Check Brackets (SL/TP) - ONLY Check, don't update state unless closing
             // Check SL
             if (activePosition.stopLoss) {
                 const hitSL = activePosition.direction === 'LONG' ? currentPrice <= activePosition.stopLoss : currentPrice >= activePosition.stopLoss
