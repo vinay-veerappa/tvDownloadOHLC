@@ -52,7 +52,6 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
 
         const handleResize = () => {
             if (containerRef.current) {
-                // Warning fix: You should turn autoSize off explicitly before specifying sizes
                 chart.applyOptions({
                     autoSize: false,
                     width: containerRef.current.clientWidth
@@ -116,7 +115,6 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
 
         setSeriesInstance(newSeries)
 
-        // Set Data if available
         if (data.length > 0) {
             const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
             newSeries.setData(chartData)
@@ -127,15 +125,13 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
             if (chartInstance && newSeries) {
                 try {
                     chartInstance.removeSeries(newSeries)
-                } catch (e) {
-                    // Ignore cleanup errors
-                }
+                } catch (e) { }
             }
             setSeriesInstance(null)
         }
-    }, [chartInstance, style]) // Re-create series if style changes
+    }, [chartInstance, style])
 
-    // Update Data when data changes (but style stays same)
+    // Update Data when data changes
     useEffect(() => {
         if (!seriesInstance || !data.length) return
 
@@ -143,39 +139,25 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
         seriesInstance.setData(chartData)
 
         if (markers && markers.length > 0) {
-            // Check if createSeriesMarkers is available (v5)
             if (typeof createSeriesMarkers === 'function') {
                 createSeriesMarkers(seriesInstance as any, markers)
             } else if (typeof (seriesInstance as any).setMarkers === 'function') {
-                // Fallback for v4 or if method exists on series
                 (seriesInstance as any).setMarkers(markers)
-            } else {
-                console.warn("Markers not supported in this version of lightweight-charts")
             }
         }
     }, [seriesInstance, data, style, markers])
 
-
     const primitivesRef = useRef<any[]>([])
-
-    // Create stable string key for indicators array to use as dependency
     const indicatorsKey = useMemo(() => JSON.stringify(indicators), [indicators])
 
-    // Manage Indicators
+    // Manage Data-Dependent Indicators (SMA, EMA)
     useEffect(() => {
-        if (!chartInstance || !seriesInstance) return
+        if (!chartInstance || !seriesInstance || !data.length) return
 
-        // Parse indicators from the stable key
         const currentIndicators: string[] = indicatorsKey ? JSON.parse(indicatorsKey) : []
-        if (currentIndicators.length === 0) return
-
         const indicatorSeries: ISeriesApi<"Line">[] = []
-        // Clear previous primitives from ref
-        primitivesRef.current = []
 
         currentIndicators.forEach(ind => {
-            // Parse indicator string "type:period" (e.g., "sma:9")
-            // If just "sma", default to 9
             const [type, param] = ind.split(":")
             const period = param ? parseInt(param) : 9
 
@@ -197,7 +179,30 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
                 })
                 lineSeries.setData(emaData)
                 indicatorSeries.push(lineSeries)
-            } else if (type === 'watermark') {
+            }
+        })
+
+        return () => {
+            indicatorSeries.forEach(item => {
+                try {
+                    chartInstance.removeSeries(item)
+                } catch (e) { }
+            })
+        }
+    }, [chartInstance, seriesInstance, indicatorsKey, data])
+
+    // Manage Primitives (Sessions, Watermark) - NO data dependency
+    useEffect(() => {
+        if (!chartInstance || !seriesInstance) return
+
+        const currentIndicators: string[] = indicatorsKey ? JSON.parse(indicatorsKey) : []
+        const primitiveItems: Array<{ primitive: any, series: any }> = []
+        primitivesRef.current = []
+
+        currentIndicators.forEach(ind => {
+            const [type, param] = ind.split(":")
+
+            if (type === 'watermark') {
                 const watermark = new AnchoredText(chartInstance, seriesInstance, {
                     text: param || 'Watermark',
                     color: 'rgba(0, 150, 136, 0.5)',
@@ -206,34 +211,24 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
                     vertAlign: 'middle'
                 });
                 seriesInstance.attachPrimitive(watermark);
-                (indicatorSeries as any[]).push({
-                    primitive: watermark,
-                    series: seriesInstance
-                });
+                primitiveItems.push({ primitive: watermark, series: seriesInstance });
                 primitivesRef.current.push(watermark);
             } else if (type === 'sessions') {
                 const sessions = new SessionHighlighting();
                 seriesInstance.attachPrimitive(sessions);
-                (indicatorSeries as any[]).push({
-                    primitive: sessions,
-                    series: seriesInstance
-                });
+                primitiveItems.push({ primitive: sessions, series: seriesInstance });
                 primitivesRef.current.push(sessions);
             }
         })
 
         return () => {
-            indicatorSeries.forEach(item => {
+            primitiveItems.forEach(item => {
                 try {
-                    if ((item as any).primitive) {
-                        (item as any).series.detachPrimitive((item as any).primitive);
-                    } else {
-                        chartInstance.removeSeries(item as any)
-                    }
+                    item.series.detachPrimitive(item.primitive);
                 } catch (e) { }
             })
         }
-    }, [chartInstance, seriesInstance, indicatorsKey, data]) // Use stable indicatorsKey string
+    }, [chartInstance, seriesInstance, indicatorsKey]) // NO data dependency!
 
     return {
         chart: chartInstance,
