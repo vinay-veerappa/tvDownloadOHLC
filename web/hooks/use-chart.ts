@@ -33,6 +33,10 @@ export function useChart(
     const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
     const [seriesInstance, setSeriesInstance] = useState<ISeriesApi<any> | null>(null)
 
+    // Track chart lifecycle to prevent "disposed" errors in Strict Mode
+    const chartRef = useRef<IChartApi | null>(null)
+    const isDisposedRef = useRef(false)
+
     // Create timezone-aware tick mark formatter
     const formatTimeForTimezone = (time: number) => {
         const date = new Date(time * 1000)
@@ -69,7 +73,10 @@ export function useChart(
 
         const isDark = resolvedTheme === 'dark'
 
-        // Defensive: Clear any existing chart elements to prevent duplication
+        // Reset disposed flag for new chart
+        isDisposedRef.current = false
+
+        // Clear container to prevent duplication
         containerRef.current.innerHTML = ''
 
         const chart = createChart(containerRef.current, {
@@ -96,18 +103,27 @@ export function useChart(
             },
         })
 
+        chartRef.current = chart
         setChartInstance(chart)
 
         return () => {
-            chart.remove()
+            // Mark as disposed BEFORE removal to prevent race conditions
+            isDisposedRef.current = true
+            chartRef.current = null
             setChartInstance(null)
+            setSeriesInstance(null)
+            try {
+                chart.remove()
+            } catch (e) {
+                // Chart may already be disposed in Strict Mode double-mount
+            }
         }
 
     }, [containerRef, resolvedTheme])
 
     // Manage Series based on Style
     useEffect(() => {
-        if (!chartInstance) return
+        if (!chartInstance || isDisposedRef.current) return
 
         let newSeries: ISeriesApi<any>
 
@@ -116,49 +132,54 @@ export function useChart(
             downColor: '#ef5350',
         }
 
-        switch (style) {
-            case 'bars':
-                newSeries = chartInstance.addSeries(BarSeries, {
-                    ...commonOptions,
-                    thinBars: false,
-                })
-                break
-            case 'line':
-                newSeries = chartInstance.addSeries(LineSeries, {
-                    color: '#2962FF',
-                    lineWidth: 2,
-                })
-                break
-            case 'area':
-                newSeries = chartInstance.addSeries(AreaSeries, {
-                    topColor: 'rgba(41, 98, 255, 0.3)',
-                    bottomColor: 'rgba(41, 98, 255, 0)',
-                    lineColor: '#2962FF',
-                    lineWidth: 2,
-                })
-                break
-            case 'heiken-ashi':
-            case 'candles':
-            default:
-                newSeries = chartInstance.addSeries(CandlestickSeries, {
-                    ...commonOptions,
-                    borderVisible: false,
-                    wickUpColor: '#26a69a',
-                    wickDownColor: '#ef5350',
-                })
-                break
-        }
+        try {
+            switch (style) {
+                case 'bars':
+                    newSeries = chartInstance.addSeries(BarSeries, {
+                        ...commonOptions,
+                        thinBars: false,
+                    })
+                    break
+                case 'line':
+                    newSeries = chartInstance.addSeries(LineSeries, {
+                        color: '#2962FF',
+                        lineWidth: 2,
+                    })
+                    break
+                case 'area':
+                    newSeries = chartInstance.addSeries(AreaSeries, {
+                        topColor: 'rgba(41, 98, 255, 0.3)',
+                        bottomColor: 'rgba(41, 98, 255, 0)',
+                        lineColor: '#2962FF',
+                        lineWidth: 2,
+                    })
+                    break
+                case 'heiken-ashi':
+                case 'candles':
+                default:
+                    newSeries = chartInstance.addSeries(CandlestickSeries, {
+                        ...commonOptions,
+                        borderVisible: false,
+                        wickUpColor: '#26a69a',
+                        wickDownColor: '#ef5350',
+                    })
+                    break
+            }
 
-        setSeriesInstance(newSeries)
+            setSeriesInstance(newSeries)
 
-        if (data.length > 0) {
-            const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
-            newSeries.setData(chartData)
-            chartInstance.timeScale().fitContent()
+            if (data.length > 0) {
+                const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
+                newSeries.setData(chartData)
+                chartInstance.timeScale().fitContent()
+            }
+        } catch (e) {
+            // Chart may be disposed during rapid re-renders
+            return
         }
 
         return () => {
-            if (chartInstance && newSeries) {
+            if (!isDisposedRef.current && chartInstance && newSeries) {
                 try {
                     chartInstance.removeSeries(newSeries)
                 } catch (e) { }
@@ -168,18 +189,23 @@ export function useChart(
     }, [chartInstance, style])
 
     // Update Data when data changes
+    // Update Data when data changes
     useEffect(() => {
-        if (!seriesInstance || !data.length) return
+        if (!seriesInstance || !data.length || isDisposedRef.current) return
 
-        const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
-        seriesInstance.setData(chartData)
+        try {
+            const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
+            seriesInstance.setData(chartData)
 
-        if (markers && markers.length > 0) {
-            if (typeof createSeriesMarkers === 'function') {
-                createSeriesMarkers(seriesInstance as any, markers)
-            } else if (typeof (seriesInstance as any).setMarkers === 'function') {
-                (seriesInstance as any).setMarkers(markers)
+            if (markers && markers.length > 0) {
+                if (typeof createSeriesMarkers === 'function') {
+                    createSeriesMarkers(seriesInstance as any, markers)
+                } else if (typeof (seriesInstance as any).setMarkers === 'function') {
+                    (seriesInstance as any).setMarkers(markers)
+                }
             }
+        } catch (e) {
+            // Series may be disposed
         }
     }, [seriesInstance, data, style, markers])
 
@@ -188,37 +214,43 @@ export function useChart(
 
     // Manage Data-Dependent Indicators (SMA, EMA)
     useEffect(() => {
-        if (!chartInstance || !seriesInstance || !data.length) return
+        if (!chartInstance || !seriesInstance || !data.length || isDisposedRef.current) return
 
         const currentIndicators: string[] = indicatorsKey ? JSON.parse(indicatorsKey) : []
         const indicatorSeries: ISeriesApi<"Line">[] = []
 
-        currentIndicators.forEach(ind => {
-            const [type, param] = ind.split(":")
-            const period = param ? parseInt(param) : 9
+        try {
+            currentIndicators.forEach(ind => {
+                const [type, param] = ind.split(":")
+                const period = param ? parseInt(param) : 9
 
-            if (type === 'sma') {
-                const smaData = calculateSMA(data, period)
-                const lineSeries = chartInstance.addSeries(LineSeries, {
-                    color: '#2962FF',
-                    lineWidth: 1,
-                    title: `SMA ${period}`,
-                })
-                lineSeries.setData(smaData)
-                indicatorSeries.push(lineSeries)
-            } else if (type === 'ema') {
-                const emaData = calculateEMA(data, period)
-                const lineSeries = chartInstance.addSeries(LineSeries, {
-                    color: '#FF6D00',
-                    lineWidth: 1,
-                    title: `EMA ${period}`,
-                })
-                lineSeries.setData(emaData)
-                indicatorSeries.push(lineSeries)
-            }
-        })
+                if (type === 'sma') {
+                    const smaData = calculateSMA(data, period)
+                    const lineSeries = chartInstance.addSeries(LineSeries, {
+                        color: '#2962FF',
+                        lineWidth: 1,
+                        title: `SMA ${period}`,
+                    })
+                    lineSeries.setData(smaData)
+                    indicatorSeries.push(lineSeries)
+                } else if (type === 'ema') {
+                    const emaData = calculateEMA(data, period)
+                    const lineSeries = chartInstance.addSeries(LineSeries, {
+                        color: '#FF6D00',
+                        lineWidth: 1,
+                        title: `EMA ${period}`,
+                    })
+                    lineSeries.setData(emaData)
+                    indicatorSeries.push(lineSeries)
+                }
+            })
+        } catch (e) {
+            // Chart may be disposed
+            return
+        }
 
         return () => {
+            if (isDisposedRef.current) return
             indicatorSeries.forEach(item => {
                 try {
                     chartInstance.removeSeries(item)
@@ -229,35 +261,41 @@ export function useChart(
 
     // Manage Primitives (Sessions, Watermark) - NO data dependency
     useEffect(() => {
-        if (!chartInstance || !seriesInstance) return
+        if (!chartInstance || !seriesInstance || isDisposedRef.current) return
 
         const currentIndicators: string[] = indicatorsKey ? JSON.parse(indicatorsKey) : []
         const primitiveItems: Array<{ primitive: any, series: any }> = []
         primitivesRef.current = []
 
-        currentIndicators.forEach(ind => {
-            const [type, param] = ind.split(":")
+        try {
+            currentIndicators.forEach(ind => {
+                const [type, param] = ind.split(":")
 
-            if (type === 'watermark') {
-                const watermark = new AnchoredText(chartInstance, seriesInstance, {
-                    text: param || 'Watermark',
-                    color: 'rgba(0, 150, 136, 0.5)',
-                    font: 'bold 48px Arial',
-                    horzAlign: 'center',
-                    vertAlign: 'middle'
-                });
-                seriesInstance.attachPrimitive(watermark);
-                primitiveItems.push({ primitive: watermark, series: seriesInstance });
-                primitivesRef.current.push(watermark);
-            } else if (type === 'sessions') {
-                const sessions = new SessionHighlighting();
-                seriesInstance.attachPrimitive(sessions);
-                primitiveItems.push({ primitive: sessions, series: seriesInstance });
-                primitivesRef.current.push(sessions);
-            }
-        })
+                if (type === 'watermark') {
+                    const watermark = new AnchoredText(chartInstance, seriesInstance, {
+                        text: param || 'Watermark',
+                        color: 'rgba(0, 150, 136, 0.5)',
+                        font: 'bold 48px Arial',
+                        horzAlign: 'center',
+                        vertAlign: 'middle'
+                    });
+                    seriesInstance.attachPrimitive(watermark);
+                    primitiveItems.push({ primitive: watermark, series: seriesInstance });
+                    primitivesRef.current.push(watermark);
+                } else if (type === 'sessions') {
+                    const sessions = new SessionHighlighting();
+                    seriesInstance.attachPrimitive(sessions);
+                    primitiveItems.push({ primitive: sessions, series: seriesInstance });
+                    primitivesRef.current.push(sessions);
+                }
+            })
+        } catch (e) {
+            // Chart may be disposed
+            return
+        }
 
         return () => {
+            if (isDisposedRef.current) return
             primitiveItems.forEach(item => {
                 try {
                     item.series.detachPrimitive(item.primitive);
