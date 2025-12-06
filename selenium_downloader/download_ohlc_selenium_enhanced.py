@@ -743,7 +743,7 @@ def run_enhanced_downloader(args):
         if args.use_shortcuts:
             jump_to_start(driver)
 
-        max_iterations = args.iterations if args.iterations else 100 # Safety limit
+        max_iterations = args.iterations if args.iterations else 15 # Safety limit
         iteration = 0
         last_oldest_time = None
         
