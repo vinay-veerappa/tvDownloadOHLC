@@ -20,6 +20,7 @@ export const metadata: Metadata = {
 
 import { TradeProvider } from "@/components/journal/trade-context";
 import { Toaster } from "@/components/ui/sonner";
+import { ThemeProvider } from "@/components/theme-provider";
 
 // ... existing imports
 
@@ -34,17 +35,24 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         suppressHydrationWarning
       >
-        <TradeProvider>
-          <div className="flex h-screen overflow-hidden">
-            <AppSidebar />
-            <div className="flex flex-col flex-1 overflow-hidden">
-              <main className="flex-1 overflow-auto p-4 bg-muted/10">
-                {children}
-              </main>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <TradeProvider>
+            <div className="flex h-screen overflow-hidden">
+              <AppSidebar />
+              <div className="flex flex-col flex-1 overflow-hidden">
+                <main className="flex-1 overflow-auto p-4 bg-muted/10">
+                  {children}
+                </main>
+              </div>
             </div>
-          </div>
-          <Toaster />
-        </TradeProvider>
+            <Toaster />
+          </TradeProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
