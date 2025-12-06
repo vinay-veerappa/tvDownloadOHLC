@@ -19,6 +19,8 @@ import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
 import { AnchoredText } from "@/lib/charts/plugins/anchored-text"
 import { SessionHighlighting } from "@/lib/charts/plugins/session-highlighting"
 
+import { useTheme } from "next-themes"
+
 export function useChart(
     containerRef: React.RefObject<HTMLDivElement>,
     style: string = 'candles',
@@ -27,6 +29,7 @@ export function useChart(
     markers: any[] = [],
     displayTimezone: string = 'America/New_York'
 ) {
+    const { resolvedTheme } = useTheme()
     const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
     const [seriesInstance, setSeriesInstance] = useState<ISeriesApi<any> | null>(null)
 
@@ -64,20 +67,26 @@ export function useChart(
     useEffect(() => {
         if (!containerRef.current) return
 
+        const isDark = resolvedTheme === 'dark'
+
         const chart = createChart(containerRef.current, {
             layout: {
-                background: { type: ColorType.Solid, color: '#1e222d' },
-                textColor: '#d1d4dc',
+                background: { type: ColorType.Solid, color: isDark ? '#1e222d' : '#ffffff' },
+                textColor: isDark ? '#d1d4dc' : '#333333',
             },
             grid: {
-                vertLines: { color: '#2a2e39' },
-                horzLines: { color: '#2a2e39' },
+                vertLines: { color: isDark ? '#2a2e39' : '#e0e0e0' },
+                horzLines: { color: isDark ? '#2a2e39' : '#e0e0e0' },
             },
             autoSize: true,
             timeScale: {
                 timeVisible: true,
                 rightOffset: 5,
                 tickMarkFormatter: (time: number) => formatTimeForTimezone(time),
+                borderColor: isDark ? '#2a2e39' : '#e0e0e0',
+            },
+            rightPriceScale: {
+                borderColor: isDark ? '#2a2e39' : '#e0e0e0',
             },
             crosshair: {
                 mode: CrosshairMode.Normal,
@@ -90,7 +99,8 @@ export function useChart(
             chart.remove()
             setChartInstance(null)
         }
-    }, [containerRef])
+
+    }, [containerRef, resolvedTheme])
 
     // Manage Series based on Style
     useEffect(() => {

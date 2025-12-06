@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { TopToolbar } from './top-toolbar'
+import { useTheme } from "next-themes"
 import { ChartWrapper, type NavigationFunctions } from './chart-wrapper'
 import { BottomBar } from './bottom-bar'
 import { BottomPanel } from './trading/bottom-panel'
@@ -84,14 +85,17 @@ export function ChartPageClient({
         setDataRange(range)
     }, [])
 
+
+
     // Bottom Panel state
     const [isPanelOpen, setIsPanelOpen] = useState(false)
+    const { resolvedTheme } = useTheme()
 
     return (
         <TradingProvider>
-            <div className="flex flex-col h-screen overflow-hidden bg-[#131722]">
+            <div className="flex flex-col h-screen overflow-hidden bg-background">
                 {/* Top Toolbar */}
-                <div className="flex-none border-b border-[#2a2e39]">
+                <div className="flex-none border-b border-border">
                     <TopToolbar
                         tickers={tickers}
                         timeframes={timeframes}
@@ -118,7 +122,7 @@ export function ChartPageClient({
                 </div>
 
                 {/* Bottom Bar (Status/Controls) - Flex None */}
-                <div className="flex-none border-t border-[#2a2e39]">
+                <div className="flex-none border-t border-border">
                     <BottomBar
                         timezone={displayTimezone}
                         onTimezoneChange={handleTimezoneChange}
