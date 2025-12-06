@@ -160,7 +160,7 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
 
     // Manage Indicators
     useEffect(() => {
-        if (!chartInstance || !data.length || !indicators.length) return
+        if (!chartInstance || !seriesInstance || !indicators.length) return
 
         const indicatorSeries: ISeriesApi<"Line">[] = []
         // Clear previous primitives from ref
@@ -191,31 +191,27 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
                 lineSeries.setData(emaData)
                 indicatorSeries.push(lineSeries)
             } else if (type === 'watermark') {
-                if (seriesInstance) {
-                    const watermark = new AnchoredText(chartInstance, seriesInstance, {
-                        text: param || 'Watermark',
-                        color: 'rgba(0, 150, 136, 0.5)',
-                        font: 'bold 48px Arial',
-                        horzAlign: 'center',
-                        vertAlign: 'middle'
-                    });
-                    seriesInstance.attachPrimitive(watermark);
-                    (indicatorSeries as any[]).push({
-                        primitive: watermark,
-                        series: seriesInstance
-                    });
-                    primitivesRef.current.push(watermark);
-                }
+                const watermark = new AnchoredText(chartInstance, seriesInstance, {
+                    text: param || 'Watermark',
+                    color: 'rgba(0, 150, 136, 0.5)',
+                    font: 'bold 48px Arial',
+                    horzAlign: 'center',
+                    vertAlign: 'middle'
+                });
+                seriesInstance.attachPrimitive(watermark);
+                (indicatorSeries as any[]).push({
+                    primitive: watermark,
+                    series: seriesInstance
+                });
+                primitivesRef.current.push(watermark);
             } else if (type === 'sessions') {
-                if (seriesInstance) {
-                    const sessions = new SessionHighlighting();
-                    seriesInstance.attachPrimitive(sessions);
-                    (indicatorSeries as any[]).push({
-                        primitive: sessions,
-                        series: seriesInstance
-                    });
-                    primitivesRef.current.push(sessions);
-                }
+                const sessions = new SessionHighlighting();
+                seriesInstance.attachPrimitive(sessions);
+                (indicatorSeries as any[]).push({
+                    primitive: sessions,
+                    series: seriesInstance
+                });
+                primitivesRef.current.push(sessions);
             }
         })
 
@@ -230,7 +226,8 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
                 } catch (e) { }
             })
         }
-    }, [chartInstance, indicators, data, seriesInstance])
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [chartInstance, indicators, seriesInstance]) // Removed `data` - primitives use internal data subscriptions
 
     return {
         chart: chartInstance,
