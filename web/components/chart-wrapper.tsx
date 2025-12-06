@@ -20,6 +20,7 @@ interface ChartWrapperProps {
     style: string
     indicators: string[]
     magnetMode?: MagnetMode
+    displayTimezone?: string
 }
 
 export function ChartWrapper(props: ChartWrapperProps) {
