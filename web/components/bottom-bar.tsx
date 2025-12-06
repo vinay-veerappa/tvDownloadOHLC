@@ -81,7 +81,7 @@ export function BottomBar({
     const currentTz = TIMEZONES.find(tz => tz.value === timezone)
 
     return (
-        <div className="flex items-center justify-between border-t p-1 bg-background text-xs">
+        <div className="flex items-center justify-between border-t border-border p-1 bg-background text-xs">
             {/* Timezone Selector */}
             <div className="flex items-center gap-1">
                 <Globe className="h-3 w-3 text-muted-foreground" />

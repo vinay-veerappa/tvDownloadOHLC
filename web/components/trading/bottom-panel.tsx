@@ -34,28 +34,28 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
 
     return (
         <div
-            className="border-t border-[#2a2e39] bg-[#131722] flex flex-col transition-all duration-200"
+            className="border-t border-border bg-background flex flex-col transition-all duration-200"
             style={{ height: isOpen ? height : 40 }}
         >
             {/* Header / Tabs */}
-            <div className="h-10 flex items-center justify-between px-2 bg-[#1e222d] border-b border-[#2a2e39]">
+            <div className="h-10 flex items-center justify-between px-2 bg-muted border-b border-border">
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full">
                     <TabsList className="h-full bg-transparent p-0 gap-4">
                         <TabsTrigger
                             value="positions"
-                            className="h-full rounded-none border-b-2 border-transparent data-[state=active]:border-[#2962FF] data-[state=active]:text-[#2962FF] data-[state=active]:bg-transparent px-2 text-xs font-bold text-[#787b86]"
+                            className="h-full rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent px-2 text-xs font-bold text-muted-foreground"
                         >
                             Positions ({activePosition ? 1 : 0})
                         </TabsTrigger>
                         <TabsTrigger
                             value="orders"
-                            className="h-full rounded-none border-b-2 border-transparent data-[state=active]:border-[#2962FF] data-[state=active]:text-[#2962FF] data-[state=active]:bg-transparent px-2 text-xs font-bold text-[#787b86]"
+                            className="h-full rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent px-2 text-xs font-bold text-muted-foreground"
                         >
                             Working Orders ({pendingOrders.length})
                         </TabsTrigger>
                         <TabsTrigger
                             value="log"
-                            className="h-full rounded-none border-b-2 border-transparent data-[state=active]:border-[#2962FF] data-[state=active]:text-[#2962FF] data-[state=active]:bg-transparent px-2 text-xs font-bold text-[#787b86]"
+                            className="h-full rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent px-2 text-xs font-bold text-muted-foreground"
                         >
                             Session Log ({sessionTrades.length})
                         </TabsTrigger>
@@ -63,20 +63,20 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
                 </Tabs>
 
                 <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="sm" onClick={onToggle} className="h-6 w-6 p-0 hover:bg-[#2a2e39]">
-                        {isOpen ? <ChevronDown className="h-4 w-4 text-[#787b86]" /> : <ChevronUp className="h-4 w-4 text-[#787b86]" />}
+                    <Button variant="ghost" size="sm" onClick={onToggle} className="h-6 w-6 p-0 hover:bg-muted-foreground/10">
+                        {isOpen ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronUp className="h-4 w-4 text-muted-foreground" />}
                     </Button>
                 </div>
             </div>
 
             {/* Content Area */}
             {isOpen && (
-                <div className="flex-1 overflow-auto bg-[#131722]">
+                <div className="flex-1 overflow-auto bg-background">
                     {/* POSITIONS TAB */}
                     {activeTab === "positions" && (
                         <div className="w-full">
                             <table className="w-full text-left border-collapse">
-                                <thead className="sticky top-0 bg-[#1e222d] z-10 text-[11px] text-[#787b86] font-semibold uppercase">
+                                <thead className="sticky top-0 bg-muted z-10 text-[11px] text-muted-foreground font-semibold uppercase">
                                     <tr>
                                         <th className="px-4 py-2">Symbol</th>
                                         <th className="px-4 py-2">Side</th>
@@ -87,9 +87,9 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
                                         <th className="px-4 py-2 text-right">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody className="text-xs text-[#d1d4dc] divide-y divide-[#2a2e39]">
+                                <tbody className="text-xs text-foreground divide-y divide-border">
                                     {activePosition ? (
-                                        <tr className="hover:bg-[#2a2e39]/50">
+                                        <tr className="hover:bg-muted/50">
                                             <td className="px-4 py-2 font-bold">{activePosition.ticker}</td>
                                             <td className={cn("px-4 py-2 font-bold", activePosition.direction === 'LONG' ? "text-[#00C853]" : "text-[#ef5350]")}>
                                                 {activePosition.direction}
@@ -113,7 +113,7 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
                                         </tr>
                                     ) : (
                                         <tr>
-                                            <td colSpan={7} className="px-4 py-8 text-center text-[#787b86]">
+                                            <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                                                 No Open Positions
                                             </td>
                                         </tr>
@@ -127,7 +127,7 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
                     {activeTab === "orders" && (
                         <div className="w-full">
                             <table className="w-full text-left border-collapse">
-                                <thead className="sticky top-0 bg-[#1e222d] z-10 text-[11px] text-[#787b86] font-semibold uppercase">
+                                <thead className="sticky top-0 bg-muted z-10 text-[11px] text-muted-foreground font-semibold uppercase">
                                     <tr>
                                         <th className="px-4 py-2">Symbol</th>
                                         <th className="px-4 py-2">Type</th>
@@ -138,9 +138,9 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
                                         <th className="px-4 py-2 text-right">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody className="text-xs text-[#d1d4dc] divide-y divide-[#2a2e39]">
+                                <tbody className="text-xs text-foreground divide-y divide-border">
                                     {pendingOrders.length > 0 ? pendingOrders.map(order => (
-                                        <tr key={order.id} className="hover:bg-[#2a2e39]/50">
+                                        <tr key={order.id} className="hover:bg-muted/50">
                                             <td className="px-4 py-2 font-bold">{order.symbol}</td>
                                             <td className="px-4 py-2">{order.orderType}</td>
                                             <td className={cn("px-4 py-2 font-bold", order.direction === 'LONG' ? "text-[#00C853]" : "text-[#ef5350]")}>
@@ -148,12 +148,12 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
                                             </td>
                                             <td className="px-4 py-2 text-right">{order.price.toFixed(2)}</td>
                                             <td className="px-4 py-2 text-right">{order.quantity}</td>
-                                            <td className="px-4 py-2 text-right italic text-[#787b86]">{order.status}</td>
+                                            <td className="px-4 py-2 text-right italic text-muted-foreground">{order.status}</td>
                                             <td className="px-4 py-2 text-right">
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
-                                                    className="h-6 w-6 text-[#787b86] hover:text-[#ef5350]"
+                                                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
                                                     onClick={() => cancelOrder(order.id)}
                                                     title="Cancel Order"
                                                 >
@@ -163,7 +163,7 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
                                         </tr>
                                     )) : (
                                         <tr>
-                                            <td colSpan={7} className="px-4 py-8 text-center text-[#787b86]">
+                                            <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                                                 No Working Orders
                                             </td>
                                         </tr>
@@ -177,7 +177,7 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
                     {activeTab === "log" && (
                         <div className="w-full">
                             <table className="w-full text-left border-collapse">
-                                <thead className="sticky top-0 bg-[#1e222d] z-10 text-[11px] text-[#787b86] font-semibold uppercase">
+                                <thead className="sticky top-0 bg-muted z-10 text-[11px] text-muted-foreground font-semibold uppercase">
                                     <tr>
                                         <th className="px-4 py-2">Time</th>
                                         <th className="px-4 py-2">Symbol</th>
@@ -187,10 +187,10 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
                                         <th className="px-4 py-2 text-right">Realized P&L</th>
                                     </tr>
                                 </thead>
-                                <tbody className="text-xs text-[#d1d4dc] divide-y divide-[#2a2e39]">
+                                <tbody className="text-xs text-foreground divide-y divide-border">
                                     {sessionTrades.length > 0 ? sessionTrades.map(trade => (
-                                        <tr key={trade.id} className="hover:bg-[#2a2e39]/50">
-                                            <td className="px-4 py-2 text-[#787b86]">
+                                        <tr key={trade.id} className="hover:bg-muted/50">
+                                            <td className="px-4 py-2 text-muted-foreground">
                                                 {new Date(trade.entryDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                                             </td>
                                             <td className="px-4 py-2 font-bold">{trade.ticker}</td>
@@ -199,13 +199,13 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
                                             </td>
                                             <td className="px-4 py-2 text-right">{trade.entryPrice.toFixed(2)}</td>
                                             <td className="px-4 py-2 text-right">{trade.quantity}</td>
-                                            <td className={cn("px-4 py-2 text-right font-mono", (trade.pnl || 0) > 0 ? "text-[#00C853]" : (trade.pnl || 0) < 0 ? "text-[#ef5350]" : "text-[#787b86]")}>
+                                            <td className={cn("px-4 py-2 text-right font-mono", (trade.pnl || 0) > 0 ? "text-[#00C853]" : (trade.pnl || 0) < 0 ? "text-[#ef5350]" : "text-muted-foreground")}>
                                                 {trade.pnl ? `$${trade.pnl.toFixed(2)}` : '-'}
                                             </td>
                                         </tr>
                                     )) : (
                                         <tr>
-                                            <td colSpan={6} className="px-4 py-8 text-center text-[#787b86]">
+                                            <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                                                 No trades in this session
                                             </td>
                                         </tr>
