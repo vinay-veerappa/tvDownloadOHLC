@@ -19,18 +19,17 @@ The following plugins were found in `legacy_chart_ui` and are suitable for migra
 *   **Ported To:** `web/lib/charts/plugins/session-highlighting.ts`
 *   **Status:** ✅ **COMPLETE** - Timezone-aware sessions (Tokyo/London/NY), extends PluginBase.
 
+### 4. Indicator Settings Modal
+*   **Source:** New component
+*   **Location:** `web/components/indicator-settings-modal.tsx`
+*   **Status:** ✅ **COMPLETE** - Settings for SMA/EMA (period, color, width). Sessions (read-only).
+
 ## 🌟 High Priority (Remaining)
 
-### 1. Volume Profile
-*   **Source:** `legacy_chart_ui/session-highlighting.js`
-*   **Functionality:** Draws background colored stripes for specific time ranges (e.g., NY Session, London Session).
-*   **Migration:** Medium Complexity. Logic is self-contained. Needs to be adapted to receive session definition objects (Timezone aware).
-*   **Recommendation:** Port as `SessionHighlighter` plugin.
-
-### 4. Volume Profile (Fixed Range)
+### 1. Volume Profile (Fixed Range)
 *   **Source:** `legacy_chart_ui/volume-profile.js`
 *   **Functionality:** Renders horizontal volume histograms.
-*   **Dependency:** Requires pre-calculated `vpData` (price levels and volume). The drawing logic is ready, but the *calculation* logic (binning trades/ticks) is backend-dependent or needs to be written in TS.
+*   **Dependency:** Requires pre-calculated `vpData` (price levels and volume).
 *   **Recommendation:** Port drawing logic now; connect to data source later.
 
 ## 📊 Indicators & Series Types
