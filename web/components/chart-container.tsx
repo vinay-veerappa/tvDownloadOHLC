@@ -110,6 +110,15 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
     const { chart, series, primitives, scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data, markers, displayTimezone)
 
+    // Replay: Auto-scroll to end when data updates (new bar revealed)
+    useEffect(() => {
+        if (replayMode && data.length > 0) {
+            // Force scroll to current "real time" (replay head)
+            // Timeout ensures render cycle is complete and series has settled
+            setTimeout(() => scrollToEnd(), 0)
+        }
+    }, [data, replayMode, scrollToEnd])
+
     // Replay control functions
     const startReplay = (options?: { index?: number, time?: number }) => {
         let startIdx = 0
@@ -147,7 +156,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const stepForward = () => {
         if (replayMode && replayIndex < fullData.length - 1) {
             setReplayIndex(prev => prev + 1)
-            chart?.timeScale().scrollToRealTime()
         }
     }
 
