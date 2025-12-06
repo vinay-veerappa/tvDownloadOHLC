@@ -2,7 +2,6 @@
 
 import * as React from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
@@ -14,7 +13,9 @@ import {
     ChevronsRight,
     Play,
     Pause,
-    Calendar as CalendarIcon
+    Calendar as CalendarIcon,
+    RotateCcw,
+    Square
 } from "lucide-react"
 
 interface PlaybackControlsProps {
@@ -24,6 +25,14 @@ interface PlaybackControlsProps {
     onScrollToTime: (time: number) => void
     dataRange: { start: number; end: number; totalBars: number } | null
     displayTimezone?: string
+    // Replay functions
+    onStartReplay?: (fromIndex?: number) => void
+    onStepForward?: () => void
+    onStepBack?: () => void
+    onStopReplay?: () => void
+    isReplayMode?: boolean
+    replayIndex?: number
+    totalBars?: number
 }
 
 export function PlaybackControls({
@@ -32,20 +41,31 @@ export function PlaybackControls({
     onScrollToEnd,
     onScrollToTime,
     dataRange,
-    displayTimezone = 'America/New_York'
+    displayTimezone = 'America/New_York',
+    onStartReplay,
+    onStepForward,
+    onStepBack,
+    onStopReplay,
+    isReplayMode = false,
+    replayIndex = 0,
+    totalBars = 0
 }: PlaybackControlsProps) {
     const [isPlaying, setIsPlaying] = React.useState(false)
     const [playbackSpeed, setPlaybackSpeed] = React.useState("1")
     const [selectedDate, setSelectedDate] = React.useState<Date | undefined>()
     const playIntervalRef = React.useRef<NodeJS.Timeout | null>(null)
 
-    // Handle playback
+    // Handle playback - in replay mode, advance replayIndex; otherwise scroll
     React.useEffect(() => {
         if (isPlaying) {
             const speed = parseFloat(playbackSpeed)
             const interval = 1000 / speed // 1 bar per second at 1x
             playIntervalRef.current = setInterval(() => {
-                onScrollByBars(1)
+                if (isReplayMode && onStepForward) {
+                    onStepForward()
+                } else {
+                    onScrollByBars(1)
+                }
             }, interval)
         } else {
             if (playIntervalRef.current) {
@@ -59,7 +79,14 @@ export function PlaybackControls({
                 clearInterval(playIntervalRef.current)
             }
         }
-    }, [isPlaying, playbackSpeed, onScrollByBars])
+    }, [isPlaying, playbackSpeed, onScrollByBars, isReplayMode, onStepForward])
+
+    // Stop playback when replay mode ends
+    React.useEffect(() => {
+        if (!isReplayMode && isPlaying) {
+            setIsPlaying(false)
+        }
+    }, [isReplayMode])
 
     // Handle keyboard shortcuts
     React.useEffect(() => {
@@ -70,11 +97,19 @@ export function PlaybackControls({
             switch (e.key) {
                 case 'ArrowLeft':
                     e.preventDefault()
-                    onScrollByBars(-1)
+                    if (isReplayMode && onStepBack) {
+                        onStepBack()
+                    } else {
+                        onScrollByBars(-1)
+                    }
                     break
                 case 'ArrowRight':
                     e.preventDefault()
-                    onScrollByBars(1)
+                    if (isReplayMode && onStepForward) {
+                        onStepForward()
+                    } else {
+                        onScrollByBars(1)
+                    }
                     break
                 case 'Home':
                     e.preventDefault()
@@ -88,19 +123,38 @@ export function PlaybackControls({
                     e.preventDefault()
                     setIsPlaying(prev => !prev)
                     break
+                case 'Escape':
+                    if (isReplayMode && onStopReplay) {
+                        onStopReplay()
+                        setIsPlaying(false)
+                    }
+                    break
             }
         }
 
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [onScrollByBars, onScrollToStart, onScrollToEnd])
+    }, [onScrollByBars, onScrollToStart, onScrollToEnd, isReplayMode, onStepForward, onStepBack, onStopReplay])
 
     const handleDateSelect = (date: Date | undefined) => {
         if (date) {
             setSelectedDate(date)
-            // Convert to Unix timestamp (seconds)
             const timestamp = Math.floor(date.getTime() / 1000)
             onScrollToTime(timestamp)
+        }
+    }
+
+    const handleStartReplay = () => {
+        if (onStartReplay) {
+            onStartReplay(0) // Start from beginning
+            setIsPlaying(true)
+        }
+    }
+
+    const handleStopReplay = () => {
+        if (onStopReplay) {
+            onStopReplay()
+            setIsPlaying(false)
         }
     }
 
@@ -119,6 +173,9 @@ export function PlaybackControls({
             return 'Data loaded'
         }
     }
+
+    // Progress percentage for replay mode
+    const progressPercent = totalBars > 0 ? (replayIndex / (totalBars - 1)) * 100 : 0
 
     return (
         <div className="flex items-center gap-2">
@@ -142,6 +199,36 @@ export function PlaybackControls({
 
             <div className="h-4 w-[1px] bg-border" />
 
+            {/* Replay Mode Toggle */}
+            {onStartReplay && (
+                <>
+                    {isReplayMode ? (
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            className="h-6 px-2 text-xs gap-1"
+                            onClick={handleStopReplay}
+                            title="Stop Replay (Esc)"
+                        >
+                            <Square className="h-3 w-3" />
+                            Stop
+                        </Button>
+                    ) : (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-6 px-2 text-xs gap-1"
+                            onClick={handleStartReplay}
+                            title="Start Replay Mode"
+                        >
+                            <RotateCcw className="h-3 w-3" />
+                            Replay
+                        </Button>
+                    )}
+                    <div className="h-4 w-[1px] bg-border" />
+                </>
+            )}
+
             {/* Navigation Buttons */}
             <div className="flex items-center">
                 <Button
@@ -157,7 +244,7 @@ export function PlaybackControls({
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6"
-                    onClick={() => onScrollByBars(-1)}
+                    onClick={() => isReplayMode && onStepBack ? onStepBack() : onScrollByBars(-1)}
                     title="Previous bar (←)"
                 >
                     <ChevronLeft className="h-3 w-3" />
@@ -175,7 +262,7 @@ export function PlaybackControls({
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6"
-                    onClick={() => onScrollByBars(1)}
+                    onClick={() => isReplayMode && onStepForward ? onStepForward() : onScrollByBars(1)}
                     title="Next bar (→)"
                 >
                     <ChevronRight className="h-3 w-3" />
@@ -207,10 +294,24 @@ export function PlaybackControls({
 
             <div className="h-4 w-[1px] bg-border" />
 
-            {/* Data Range Info */}
-            <span className="text-xs text-muted-foreground">
-                {formatDateRange()}
-            </span>
+            {/* Replay Progress or Date Range */}
+            {isReplayMode ? (
+                <div className="flex items-center gap-2 min-w-[150px]">
+                    <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div
+                            className="h-full bg-primary transition-all duration-100"
+                            style={{ width: `${progressPercent}%` }}
+                        />
+                    </div>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                        {replayIndex + 1}/{totalBars}
+                    </span>
+                </div>
+            ) : (
+                <span className="text-xs text-muted-foreground">
+                    {formatDateRange()}
+                </span>
+            )}
         </div>
     )
 }

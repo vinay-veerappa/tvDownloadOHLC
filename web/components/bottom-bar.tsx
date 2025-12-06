@@ -1,9 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { cn } from "@/lib/utils"
 import { Globe } from "lucide-react"
 import { PlaybackControls } from "./playback-controls"
 
@@ -29,6 +27,14 @@ interface BottomBarProps {
     onScrollToEnd?: () => void
     onScrollToTime?: (time: number) => void
     dataRange?: { start: number; end: number; totalBars: number } | null
+    // Replay callbacks
+    onStartReplay?: (fromIndex?: number) => void
+    onStepForward?: () => void
+    onStepBack?: () => void
+    onStopReplay?: () => void
+    isReplayMode?: boolean
+    replayIndex?: number
+    totalBars?: number
 }
 
 export function BottomBar({
@@ -38,7 +44,14 @@ export function BottomBar({
     onScrollToStart,
     onScrollToEnd,
     onScrollToTime,
-    dataRange
+    dataRange,
+    onStartReplay,
+    onStepForward,
+    onStepBack,
+    onStopReplay,
+    isReplayMode = false,
+    replayIndex = 0,
+    totalBars = 0
 }: BottomBarProps) {
     const [timezone, setTimezone] = React.useState(externalTimezone || 'America/New_York')
 
@@ -93,6 +106,13 @@ export function BottomBar({
                     onScrollToTime={onScrollToTime}
                     dataRange={dataRange || null}
                     displayTimezone={timezone}
+                    onStartReplay={onStartReplay}
+                    onStepForward={onStepForward}
+                    onStepBack={onStepBack}
+                    onStopReplay={onStopReplay}
+                    isReplayMode={isReplayMode}
+                    replayIndex={replayIndex}
+                    totalBars={totalBars}
                 />
             )}
         </div>
