@@ -23,6 +23,16 @@ The drawing toolbar is located on the left side of the screen.
 - **Delete**: Press `Delete` or `Backspace` key to remove the selected drawing.
 - **Clear All**: Click the trash can icon (🗑) at the bottom of the toolbar to remove all drawings.
 
+- **Clear All**: Click the trash can icon (🗑) at the bottom of the toolbar to remove all drawings.
+
+## 📑 Object Tree (Right Sidebar)
+Access formatting and management tools via the **Right Sidebar** icon strip.
+
+- **Layer Management**: Click the **Layers Icon** (top) to open the Object Tree.
+  - **Drawings**: View, select, lock, or delete individual drawings.
+  - **Indicators**: Manage active indicators (Settings, Visibility, Remove).
+- **Collapsing**: Click the icon again or the Chevron (`>`) button to collapse the panel for a full-screen chart view.
+
 ## 📊 Indicators & Plugins
 Access indicators and plugins via the **"📊 Indicators"** button in the top toolbar.
 
