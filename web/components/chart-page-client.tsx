@@ -77,6 +77,11 @@ export function ChartPageClient({
         setReplayState(state)
     }, [])
 
+    // Handle data load updates (fix for stale calendar constraints)
+    const handleDataLoad = useCallback((range: { start: number; end: number; totalBars: number }) => {
+        setDataRange(range)
+    }, [])
+
     return (
         <>
             {/* Top Toolbar */}
@@ -113,6 +118,7 @@ export function ChartPageClient({
                     displayTimezone={displayTimezone}
                     onNavigationReady={handleNavigationReady}
                     onReplayStateChange={handleReplayStateChange}
+                    onDataLoad={handleDataLoad}
                 />
             </div>
 
