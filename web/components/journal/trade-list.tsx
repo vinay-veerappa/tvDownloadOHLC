@@ -17,8 +17,8 @@ interface Trade {
     id: string
     symbol: string
     direction: string
-    entryDate: Date
-    entryPrice: number
+    entryDate: Date | string
+    entryPrice: number | null
     exitPrice: number | null
     quantity: number
     status: string

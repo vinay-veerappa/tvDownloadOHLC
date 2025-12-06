@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "Trade" ADD COLUMN "chartSnapshot" TEXT;
+ALTER TABLE "Trade" ADD COLUMN "duration" INTEGER;
+ALTER TABLE "Trade" ADD COLUMN "mae" REAL;
+ALTER TABLE "Trade" ADD COLUMN "mfe" REAL;
+ALTER TABLE "Trade" ADD COLUMN "risk" REAL;

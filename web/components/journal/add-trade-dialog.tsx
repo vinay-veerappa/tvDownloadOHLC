@@ -43,12 +43,15 @@ export function AddTradeDialog() {
         const formData = new FormData(event.currentTarget)
 
         const data = {
-            symbol: formData.get("symbol") as string,
+            ticker: formData.get("symbol") as string,
             direction: formData.get("direction") as "LONG" | "SHORT",
             entryDate: new Date(formData.get("entryDate") as string),
             entryPrice: parseFloat(formData.get("entryPrice") as string),
             quantity: parseFloat(formData.get("quantity") as string),
             status: "OPEN" as const,
+            orderType: "MARKET" as const,
+            accountId: "manual-entry", // Placeholder
+            risk: 0
         }
 
         const result = await createTrade(data)

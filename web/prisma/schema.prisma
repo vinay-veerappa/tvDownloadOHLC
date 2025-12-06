@@ -62,6 +62,14 @@ model Trade {
   
   pnl         Float?
   fees        Float?
+  
+  // Advanced Journal Metrics
+  risk        Float?   // Intended risk in $
+  mae         Float?   // Max Adverse Excursion price
+  mfe         Float?   // Max Favorable Excursion price
+  duration    Int?     // Duration in seconds
+  chartSnapshot String? // URL or path to snapshot
+
   notes       String?
   tags        Tag[]
   

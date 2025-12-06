@@ -221,7 +221,7 @@ export class RayTool {
     private _onClick(param: MouseEventParams) {
         if (!this._drawing || !param.point || !param.time) return;
 
-        const price = this._series.coordinateToPrice(param.point.y);
+        const price = this._series.coordinateToPrice(param.point.y) as number | null;
         if (price === null) return;
 
         let finalPrice = price;

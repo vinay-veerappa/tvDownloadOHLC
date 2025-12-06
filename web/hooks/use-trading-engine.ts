@@ -58,12 +58,15 @@ export function useTradingEngine({ currentPrice, ticker, autoScreenshot }: UseTr
 
             // Persist to DB
             const result = await createTrade({
-                symbol: ticker,
+                ticker: ticker,
                 direction: tradeDirection,
                 entryDate: new Date(),
                 entryPrice: currentPrice,
                 quantity: quantity,
-                status: "OPEN"
+                status: "OPEN",
+                orderType: "MARKET" as const,
+                accountId: "sim-account", // Placeholder
+                risk: 0
             })
 
             if (result.success && result.data) {
