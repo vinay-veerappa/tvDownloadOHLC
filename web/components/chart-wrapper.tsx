@@ -43,8 +43,9 @@ interface ChartWrapperProps {
     magnetMode?: MagnetMode
     displayTimezone?: string
     onNavigationReady?: (nav: NavigationFunctions) => void
-    onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number }) => void
+    onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number, currentTime?: number }) => void
     onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
+    initialReplayTime?: number // Timestamp to restore replay position after remount
 }
 
 export function ChartWrapper(props: ChartWrapperProps) {
