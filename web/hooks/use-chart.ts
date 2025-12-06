@@ -69,6 +69,9 @@ export function useChart(
 
         const isDark = resolvedTheme === 'dark'
 
+        // Defensive: Clear any existing chart elements to prevent duplication
+        containerRef.current.innerHTML = ''
+
         const chart = createChart(containerRef.current, {
             layout: {
                 background: { type: ColorType.Solid, color: isDark ? '#1e222d' : '#ffffff' },
