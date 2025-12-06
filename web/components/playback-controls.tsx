@@ -220,6 +220,14 @@ export function PlaybackControls({
     // Progress percentage for replay mode
     const progressPercent = totalBars > 0 ? (replayIndex / (totalBars - 1)) * 100 : 0
 
+    // Calendar constraints
+    const minDate = dataRange ? new Date(dataRange.start * 1000) : undefined
+    const maxDate = dataRange ? new Date(dataRange.end * 1000) : undefined
+    const isDateDisabled = (date: Date) => {
+        if (!minDate || !maxDate) return false
+        return date < minDate || date > maxDate
+    }
+
     return (
         <div className="flex items-center gap-2">
             {/* Date Picker (Normal Navigation) */}
@@ -236,6 +244,8 @@ export function PlaybackControls({
                         selected={selectedDate}
                         onSelect={handleDateSelect}
                         initialFocus
+                        disabled={isDateDisabled}
+                        defaultMonth={selectedDate || maxDate}
                     />
                 </PopoverContent>
             </Popover>
@@ -289,6 +299,8 @@ export function PlaybackControls({
                                                 selected={replayDate}
                                                 onSelect={handleReplayStartSelect}
                                                 initialFocus
+                                                disabled={isDateDisabled}
+                                                defaultMonth={replayDate || maxDate}
                                                 className="rounded-md border shadow-sm"
                                             />
                                         </div>
