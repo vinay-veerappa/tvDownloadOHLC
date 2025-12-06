@@ -268,9 +268,68 @@ export function useChart(
         }
     }, [chartInstance, seriesInstance, indicatorsKey]) // NO data dependency!
 
+    // Navigation functions for replay mode
+    const scrollToTime = (time: number) => {
+        if (!chartInstance) return
+        chartInstance.timeScale().scrollToPosition(-5, false)
+        // Find logical index for this time
+        const timeScale = chartInstance.timeScale()
+        timeScale.scrollToRealTime()
+        // Then scroll to specific time
+        chartInstance.timeScale().setVisibleRange({
+            from: time - 3600 * 24, // 1 day before
+            to: time + 3600 * 24    // 1 day after
+        } as any)
+    }
+
+    const scrollByBars = (numBars: number) => {
+        if (!chartInstance) return
+        const timeScale = chartInstance.timeScale()
+        const visibleRange = timeScale.getVisibleLogicalRange()
+        if (visibleRange) {
+            timeScale.setVisibleLogicalRange({
+                from: visibleRange.from + numBars,
+                to: visibleRange.to + numBars
+            })
+        }
+    }
+
+    const scrollToStart = () => {
+        if (!chartInstance) return
+        chartInstance.timeScale().scrollToPosition(10, false)
+    }
+
+    const scrollToEnd = () => {
+        if (!chartInstance) return
+        chartInstance.timeScale().scrollToRealTime()
+    }
+
+    const getDataRange = () => {
+        if (data.length === 0) return null
+        return {
+            start: data[0].time,
+            end: data[data.length - 1].time,
+            totalBars: data.length
+        }
+    }
+
+    const getVisibleBarIndex = () => {
+        if (!chartInstance) return null
+        const range = chartInstance.timeScale().getVisibleLogicalRange()
+        return range ? Math.floor((range.from + range.to) / 2) : null
+    }
+
     return {
         chart: chartInstance,
         series: seriesInstance,
-        primitives: primitivesRef
+        primitives: primitivesRef,
+        // Navigation functions
+        scrollToTime,
+        scrollByBars,
+        scrollToStart,
+        scrollToEnd,
+        getDataRange,
+        getVisibleBarIndex
     }
 }
+

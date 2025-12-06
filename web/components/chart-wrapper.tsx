@@ -14,6 +14,14 @@ const ChartContainer = dynamic(
     { ssr: false }
 )
 
+interface NavigationFunctions {
+    scrollByBars: (n: number) => void
+    scrollToStart: () => void
+    scrollToEnd: () => void
+    scrollToTime: (time: number) => void
+    getDataRange: () => { start: number; end: number; totalBars: number } | null
+}
+
 interface ChartWrapperProps {
     ticker: string
     timeframe: string
@@ -21,6 +29,7 @@ interface ChartWrapperProps {
     indicators: string[]
     magnetMode?: MagnetMode
     displayTimezone?: string
+    onNavigationReady?: (nav: NavigationFunctions) => void
 }
 
 export function ChartWrapper(props: ChartWrapperProps) {
@@ -36,6 +45,20 @@ export function ChartWrapper(props: ChartWrapperProps) {
     const [indicatorSettingsOpen, setIndicatorSettingsOpen] = useState(false)
     const [editingIndicator, setEditingIndicator] = useState<string | null>(null)
     const [indicatorOptions, setIndicatorOptions] = useState<Record<string, any>>({})
+
+    // Notify parent when navigation is ready
+    useEffect(() => {
+        if (chartRef.current && props.onNavigationReady) {
+            const ref = chartRef.current
+            props.onNavigationReady({
+                scrollByBars: ref.scrollByBars,
+                scrollToStart: ref.scrollToStart,
+                scrollToEnd: ref.scrollToEnd,
+                scrollToTime: ref.scrollToTime,
+                getDataRange: ref.getDataRange
+            })
+        }
+    })
 
     useEffect(() => {
         const savedIndicators = IndicatorStorage.getIndicators(chartId)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { TopToolbar } from './top-toolbar'
 import { ChartWrapper } from './chart-wrapper'
 import { BottomBar } from './bottom-bar'
@@ -14,6 +14,14 @@ interface ChartPageClientProps {
     timeframe: string
     style: string
     indicators: string[]
+}
+
+interface NavigationFunctions {
+    scrollByBars: (n: number) => void
+    scrollToStart: () => void
+    scrollToEnd: () => void
+    scrollToTime: (time: number) => void
+    getDataRange: () => { start: number; end: number; totalBars: number } | null
 }
 
 const MAGNET_STORAGE_KEY = 'chart_magnet_mode'
@@ -30,6 +38,10 @@ export function ChartPageClient({
 }: ChartPageClientProps) {
     const [magnetMode, setMagnetMode] = useState<MagnetMode>('off')
     const [displayTimezone, setDisplayTimezone] = useState('America/New_York')
+
+    // Navigation state
+    const [navigation, setNavigation] = useState<NavigationFunctions | null>(null)
+    const [dataRange, setDataRange] = useState<{ start: number; end: number; totalBars: number } | null>(null)
 
     // Load preferences from localStorage on mount
     useEffect(() => {
@@ -53,6 +65,14 @@ export function ChartPageClient({
         setDisplayTimezone(tz)
         localStorage.setItem(TIMEZONE_STORAGE_KEY, tz)
     }
+
+    // Handle navigation ready callback from ChartWrapper
+    const handleNavigationReady = useCallback((nav: NavigationFunctions) => {
+        setNavigation(nav)
+        // Also get initial data range
+        const range = nav.getDataRange()
+        setDataRange(range)
+    }, [])
 
     return (
         <>
@@ -88,15 +108,20 @@ export function ChartPageClient({
                     indicators={indicators}
                     magnetMode={magnetMode}
                     displayTimezone={displayTimezone}
+                    onNavigationReady={handleNavigationReady}
                 />
             </div>
 
-            {/* Bottom Bar with Timezone Selector */}
+            {/* Bottom Bar with Timezone Selector and Navigation */}
             <BottomBar
                 timezone={displayTimezone}
                 onTimezoneChange={handleTimezoneChange}
+                onScrollByBars={navigation?.scrollByBars}
+                onScrollToStart={navigation?.scrollToStart}
+                onScrollToEnd={navigation?.scrollToEnd}
+                onScrollToTime={navigation?.scrollToTime}
+                dataRange={dataRange}
             />
         </>
     )
 }
-
