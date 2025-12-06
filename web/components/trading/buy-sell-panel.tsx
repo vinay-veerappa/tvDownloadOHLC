@@ -143,10 +143,11 @@ export function BuySellPanel({ currentPrice, onBuy, onSell, position }: BuySellP
                 <div className="border rounded-md p-2 space-y-2 bg-secondary/10">
                     <div className="flex items-center justify-between">
                         <Label className="text-xs font-semibold">Bracket Orders</Label>
-                        <Switch
+                        <input
+                            type="checkbox"
                             checked={bracketEnabled}
-                            onCheckedChange={setBracketEnabled}
-                            className="scale-75"
+                            onChange={(e) => setBracketEnabled(e.target.checked)}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         />
                     </div>
 

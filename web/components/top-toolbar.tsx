@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronsUpDown, CandlestickChart, BarChart, Activity, Magnet, Settings, FileText, ChevronDown } from "lucide-react"
+import { Check, ChevronsUpDown, CandlestickChart, BarChart, Activity, Magnet, Settings, ChevronDown } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 
 import { cn } from "@/lib/utils"
@@ -20,19 +20,13 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover"
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select"
+
 import { IndicatorsDialog } from "@/components/indicators-dialog"
 import { IndicatorStorage } from "@/lib/indicator-storage"
 import type { MagnetMode } from "@/lib/charts/magnet-utils"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { AccountManagerDialog } from "@/components/journal/account-manager-dialog"
-import { JournalPanel } from "@/components/journal/journal-panel"
+
 
 
 interface TopToolbarProps {
@@ -58,7 +52,6 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
 
     // Journal UI State
     const [isAccountManagerOpen, setIsAccountManagerOpen] = React.useState(false)
-    const [isJournalPanelOpen, setIsJournalPanelOpen] = React.useState(false)
 
     // Context Data
     const { activeAccount, sessionPnl } = useTrading()
@@ -162,18 +155,31 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                     ))}
 
                     {otherTimeframes.length > 0 && (
-                        <Select value={currentTimeframe} onValueChange={handleTimeframeChange}>
-                            <SelectTrigger className="h-8 w-[30px] px-0 border-none shadow-none focus:ring-0 bg-transparent">
-                                <ChevronsUpDown className="h-4 w-4 text-[#787b86]" />
-                            </SelectTrigger>
-                            <SelectContent className="bg-[#1e222d] border-[#2a2e39]">
-                                {otherTimeframes.map((tf) => (
-                                    <SelectItem key={tf} value={tf} className="text-[#d1d4dc] focus:bg-[#2a2e39]">
-                                        {tf}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
+                        <Popover>
+                            <PopoverTrigger asChild>
+                                <Button variant="ghost" className="h-8 w-[30px] px-0 hover:bg-[#2a2e39]">
+                                    <ChevronsUpDown className="h-4 w-4 text-[#787b86]" />
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[80px] p-1 bg-[#1e222d] border-[#2a2e39]">
+                                <div className="flex flex-col gap-1">
+                                    {otherTimeframes.map((tf) => (
+                                        <Button
+                                            key={tf}
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => handleTimeframeChange(tf)}
+                                            className={cn(
+                                                "justify-start h-7 px-2 text-xs font-medium hover:bg-[#2a2e39]",
+                                                currentTimeframe === tf ? "text-[#2962FF]" : "text-[#d1d4dc]"
+                                            )}
+                                        >
+                                            {tf}
+                                        </Button>
+                                    ))}
+                                </div>
+                            </PopoverContent>
+                        </Popover>
                     )}
                 </div>
             </div>
@@ -229,20 +235,6 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
 
                 <div className="h-4 w-[1px] bg-[#2a2e39] mx-1" />
 
-                {/* Journal Toggle */}
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    className={cn(
-                        "h-8 w-8 hover:bg-[#2a2e39]",
-                        isJournalPanelOpen ? "text-[#2962FF] bg-[#2962FF]/10" : "text-[#d1d4dc]"
-                    )}
-                    onClick={() => setIsJournalPanelOpen(!isJournalPanelOpen)}
-                    title="Trade Journal"
-                >
-                    <FileText className="w-4 h-4" />
-                </Button>
-
                 {/* Settings */}
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-[#d1d4dc] hover:bg-[#2a2e39]" onClick={() => setIsSettingsOpen(true)}>
                     <Settings className="w-4 h-4" />
@@ -252,11 +244,6 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
             {/* Dialogs */}
             <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
             <AccountManagerDialog open={isAccountManagerOpen} onOpenChange={setIsAccountManagerOpen} />
-
-            {/* Journal Panel (Rendered here but positioned absolutely at bottom of screen usually, or we pass state up?
-                For simplicity in this layout, we render it here. CSS fixed position bottom is safest.) 
-            */}
-            {isJournalPanelOpen && <JournalPanel isOpen={true} />}
 
         </div>
     )
