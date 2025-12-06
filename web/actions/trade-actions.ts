@@ -1,13 +1,33 @@
 "use server"
 
-import { db } from "@/lib/db"
+import prisma from "@/lib/prisma"
 import { revalidatePath } from "next/cache"
+
+interface CreateTradeParams {
+    ticker: string
+    entryDate: Date
+    entryPrice?: number
+    quantity: number
+    direction: "LONG" | "SHORT"
+    status: "OPEN" | "PENDING"
+    orderType: "MARKET" | "LIMIT" | "STOP"
+    limitPrice?: number
+    stopPrice?: number
+    stopLoss?: number
+    takeProfit?: number
+    accountId: string
+    strategyId?: string
+}
 
 export async function getTrades() {
     try {
-        const trades = await db.trade.findMany({
+        const trades = await prisma.trade.findMany({
             orderBy: {
                 entryDate: 'desc'
+            },
+            include: {
+                account: true,
+                strategy: true
             }
         })
         const mappedTrades = trades.map(t => ({
@@ -20,26 +40,23 @@ export async function getTrades() {
     }
 }
 
-export async function createTrade(data: {
-    symbol: string
-    direction: "LONG" | "SHORT"
-    entryDate: Date
-    entryPrice?: number // Made optional for Pending orders
-    quantity: number
-    status: "OPEN" | "PENDING"
-    // Advanced Fields
-    orderType?: "MARKET" | "LIMIT" | "STOP"
-    limitPrice?: number
-    stopPrice?: number
-    stopLoss?: number
-    takeProfit?: number
-}) {
+export async function createTrade(data: CreateTradeParams) {
     try {
-        const trade = await db.trade.create({
+        const trade = await prisma.trade.create({
             data: {
-                ...data,
-                ticker: data.symbol,
+                ticker: data.ticker,
+                entryDate: data.entryDate,
+                entryPrice: data.entryPrice,
+                quantity: data.quantity,
+                direction: data.direction,
                 status: data.status,
+                orderType: data.orderType,
+                limitPrice: data.limitPrice,
+                stopPrice: data.stopPrice,
+                stopLoss: data.stopLoss,
+                takeProfit: data.takeProfit,
+                accountId: data.accountId,
+                strategyId: data.strategyId
             }
         })
 
@@ -59,13 +76,15 @@ export async function closeTrade(id: string, data: {
     pnl: number
 }) {
     try {
-        const trade = await db.trade.update({
+        const trade = await prisma.trade.update({
             where: { id },
             data: {
                 ...data,
                 status: "CLOSED"
             }
         })
+
+        // TODO: Update Account Balance here if needed
 
         revalidatePath("/")
         revalidatePath("/journal")

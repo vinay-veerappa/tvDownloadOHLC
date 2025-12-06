@@ -1,11 +1,10 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronsUpDown, CandlestickChart, BarChart, LineChart, AreaChart, Activity, Magnet } from "lucide-react"
+import { Check, ChevronsUpDown, CandlestickChart, BarChart, Activity, Magnet, Settings, FileText, ChevronDown } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 
 import { cn } from "@/lib/utils"
-// import { Button } from "@/components/ui/button" // Already imported below? No, likely imported from local
 import { Button } from "@/components/ui/button"
 import { useTrading } from "@/context/trading-context"
 import {
@@ -31,6 +30,10 @@ import {
 import { IndicatorsDialog } from "@/components/indicators-dialog"
 import { IndicatorStorage } from "@/lib/indicator-storage"
 import type { MagnetMode } from "@/lib/charts/magnet-utils"
+import { SettingsDialog } from "@/components/settings-dialog"
+import { AccountManagerDialog } from "@/components/journal/account-manager-dialog"
+import { JournalPanel } from "@/components/journal/journal-panel"
+
 
 interface TopToolbarProps {
     tickers: string[]
@@ -45,25 +48,31 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
     const router = useRouter()
     const searchParams = useSearchParams()
 
-    // Use same defaults as page.tsx to prevent mismatch
+    // Use same defaults as page.tsx
     const currentTicker = searchParams.get("ticker") || "ES1"
     const currentTimeframe = searchParams.get("timeframe") || "1D"
     const currentStyle = searchParams.get("style") || "candles"
 
     const [open, setOpen] = React.useState(false)
+    const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
+
+    // Journal UI State
+    const [isAccountManagerOpen, setIsAccountManagerOpen] = React.useState(false)
+    const [isJournalPanelOpen, setIsJournalPanelOpen] = React.useState(false)
+
+    // Context Data
+    const { activeAccount, sessionPnl } = useTrading()
+    const pnlColor = sessionPnl >= 0 ? "text-[#00C853]" : "text-[#ef5350]"
 
     const handleTickerChange = (currentValue: string) => {
         const params = new URLSearchParams(searchParams.toString())
         params.set("ticker", currentValue)
-
-        // Reset timeframe if current one is not available for new ticker
         const availableForTicker = tickerMap[currentValue] || []
         if (!availableForTicker.includes(currentTimeframe)) {
             if (availableForTicker.length > 0) {
                 params.set("timeframe", availableForTicker[0])
             }
         }
-
         router.push(`?${params.toString()}`)
         setOpen(false)
     }
@@ -80,229 +89,175 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
         router.push(`?${params.toString()}`)
     }
 
-    // Filter timeframes based on current ticker
     const availableTimeframesForTicker = currentTicker ? (tickerMap[currentTicker] || []) : timeframes
-
-    // Quick access timeframes
     const quickTimeframes = ['1m', '5m', '15m', '1h', '4h', 'D', 'W']
     const availableQuickTimeframes = quickTimeframes.filter(tf => availableTimeframesForTicker.includes(tf))
     const otherTimeframes = availableTimeframesForTicker.filter(tf => !quickTimeframes.includes(tf))
 
     return (
-        <div className="flex items-center gap-1 border-b p-1 bg-background overflow-x-auto">
-            {/* Ticker Combobox */}
-            <Popover open={open} onOpenChange={setOpen}>
-                <PopoverTrigger asChild>
-                    <Button
-                        variant="ghost"
-                        role="combobox"
-                        aria-expanded={open}
-                        className="w-[180px] justify-between font-bold"
-                    >
-                        {currentTicker
-                            ? tickers.find((ticker) => ticker === currentTicker)
-                            : "Select ticker..."}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[200px] p-0">
-                    <Command>
-                        <CommandInput placeholder="Search ticker..." />
-                        <CommandList>
-                            <CommandEmpty>No ticker found.</CommandEmpty>
-                            <CommandGroup>
-                                {tickers.map((ticker) => (
-                                    <CommandItem
-                                        key={ticker}
-                                        value={ticker}
-                                        onSelect={handleTickerChange}
-                                    >
-                                        <Check
-                                            className={cn(
-                                                "mr-2 h-4 w-4",
-                                                currentTicker === ticker ? "opacity-100" : "opacity-0"
-                                            )}
-                                        />
-                                        {ticker}
-                                    </CommandItem>
+        <div className="h-12 border-b border-[#2a2e39] bg-[#131722] flex items-center justify-between px-4 select-none shrink-0 z-50 relative">
+
+            {/* Left: Ticker & Timeframe */}
+            <div className="flex items-center gap-1 overflow-x-auto">
+                {/* Ticker Combobox */}
+                <Popover open={open} onOpenChange={setOpen}>
+                    <PopoverTrigger asChild>
+                        <Button
+                            variant="ghost"
+                            role="combobox"
+                            aria-expanded={open}
+                            className="w-[140px] justify-between font-bold text-[#d1d4dc] hover:text-white hover:bg-[#2a2e39]"
+                        >
+                            {currentTicker
+                                ? tickers.find((ticker) => ticker === currentTicker)
+                                : "Select ticker..."}
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[200px] p-0 bg-[#1e222d] border-[#2a2e39]">
+                        <Command className="bg-[#1e222d]">
+                            <CommandInput placeholder="Search ticker..." className="text-[#d1d4dc]" />
+                            <CommandList>
+                                <CommandEmpty>No ticker found.</CommandEmpty>
+                                <CommandGroup>
+                                    {tickers.map((ticker) => (
+                                        <CommandItem
+                                            key={ticker}
+                                            value={ticker}
+                                            onSelect={handleTickerChange}
+                                            className="text-[#d1d4dc] aria-selected:bg-[#2a2e39]"
+                                        >
+                                            <Check
+                                                className={cn(
+                                                    "mr-2 h-4 w-4",
+                                                    currentTicker === ticker ? "opacity-100" : "opacity-0"
+                                                )}
+                                            />
+                                            {ticker}
+                                        </CommandItem>
+                                    ))}
+                                </CommandGroup>
+                            </CommandList>
+                        </Command>
+                    </PopoverContent>
+                </Popover>
+
+                <div className="h-4 w-[1px] bg-[#2a2e39] mx-2" />
+
+                {/* Quick Timeframes */}
+                <div className="flex items-center">
+                    {availableQuickTimeframes.map((tf) => (
+                        <Button
+                            key={tf}
+                            variant="ghost"
+                            size="sm"
+                            className={cn(
+                                "h-8 px-2 text-sm font-medium transition-colors hover:bg-[#2a2e39]",
+                                currentTimeframe === tf ? "text-[#2962FF]" : "text-[#787b86]"
+                            )}
+                            onClick={() => handleTimeframeChange(tf)}
+                        >
+                            {tf}
+                        </Button>
+                    ))}
+
+                    {otherTimeframes.length > 0 && (
+                        <Select value={currentTimeframe} onValueChange={handleTimeframeChange}>
+                            <SelectTrigger className="h-8 w-[30px] px-0 border-none shadow-none focus:ring-0 bg-transparent">
+                                <ChevronsUpDown className="h-4 w-4 text-[#787b86]" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[#1e222d] border-[#2a2e39]">
+                                {otherTimeframes.map((tf) => (
+                                    <SelectItem key={tf} value={tf} className="text-[#d1d4dc] focus:bg-[#2a2e39]">
+                                        {tf}
+                                    </SelectItem>
                                 ))}
-                            </CommandGroup>
-                        </CommandList>
-                    </Command>
-                </PopoverContent>
-            </Popover>
-
-            <div className="h-6 w-[1px] bg-border mx-2" />
-
-            {/* Quick Timeframes */}
-            <div className="flex items-center">
-                {availableQuickTimeframes.map((tf) => (
-                    <Button
-                        key={tf}
-                        variant="ghost"
-                        size="sm"
-                        className={cn(
-                            "h-8 px-2 text-sm font-medium",
-                            currentTimeframe === tf && "bg-accent text-accent-foreground"
-                        )}
-                        onClick={() => handleTimeframeChange(tf)}
-                    >
-                        {tf}
-                    </Button>
-                ))}
-
-                {/* More Timeframes Dropdown */}
-                {otherTimeframes.length > 0 && (
-                    <Select value={currentTimeframe} onValueChange={handleTimeframeChange}>
-                        <SelectTrigger className="h-8 w-[30px] px-0 border-none shadow-none focus:ring-0">
-                            <ChevronsUpDown className="h-4 w-4 opacity-50" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {otherTimeframes.map((tf) => (
-                                <SelectItem key={tf} value={tf}>
-                                    {tf}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                )}
+                            </SelectContent>
+                        </Select>
+                    )}
+                </div>
             </div>
 
-            <div className="h-6 w-[1px] bg-border mx-2" />
+            {/* Middle: Account & P&L */}
+            <div className="flex items-center gap-4">
+                {/* Account Selector Trigger */}
+                <div
+                    className="flex items-center gap-2 px-3 py-1 rounded bg-[#1e222d] border border-[#2a2e39] cursor-pointer hover:border-[#2962FF] transition-colors"
+                    onClick={() => setIsAccountManagerOpen(true)}
+                >
+                    <div className="flex flex-col items-start leading-none">
+                        <span className="text-[9px] text-[#787b86] uppercase font-bold tracking-wider">Account</span>
+                        <span className="text-sm font-medium text-[#d1d4dc] truncate max-w-[120px]">
+                            {activeAccount ? activeAccount.name : "Select"}
+                        </span>
+                    </div>
+                    <ChevronDown className="w-3 h-3 text-[#787b86]" />
+                </div>
 
-            {/* Chart Style */}
-            <Select value={currentStyle} onValueChange={handleStyleChange}>
-                <SelectTrigger className="h-8 w-[40px] px-0 border-none shadow-none focus:ring-0 mx-1">
-                    {currentStyle === 'candles' && <CandlestickChart className="h-5 w-5" />}
-                    {currentStyle === 'heiken-ashi' && <BarChart className="h-5 w-5" />}
-                </SelectTrigger>
-                <SelectContent>
-                    <SelectItem value="candles">
-                        <div className="flex items-center gap-2">
-                            <CandlestickChart className="h-4 w-4" />
-                            <span>Candles</span>
-                        </div>
-                    </SelectItem>
-                    <SelectItem value="heiken-ashi">
-                        <div className="flex items-center gap-2">
-                            <BarChart className="h-4 w-4" />
-                            <span>Heiken Ashi</span>
-                        </div>
-                    </SelectItem>
-                </SelectContent>
-            </Select>
+                {/* Session P&L */}
+                <div className="flex flex-col items-end leading-none">
+                    <span className="text-[9px] text-[#787b86] uppercase font-bold tracking-wider">Session P&L</span>
+                    <span className={`text-sm font-mono font-medium ${pnlColor}`}>
+                        {sessionPnl >= 0 ? "+" : ""}${sessionPnl.toFixed(2)}
+                    </span>
+                </div>
+            </div>
 
-            <div className="h-6 w-[1px] bg-border mx-2" />
-
-            {/* Magnet Mode Toggle */}
-            <Button
-                variant={magnetMode === 'off' ? 'ghost' : 'secondary'}
-                size="sm"
-                className="h-8 gap-2"
-                onClick={() => {
-                    if (!onMagnetModeChange) return;
-                    // Cycle: off -> weak -> strong -> off
-                    const nextMode = magnetMode === 'off' ? 'weak' : magnetMode === 'weak' ? 'strong' : 'off';
-                    onMagnetModeChange(nextMode);
-                }}
-                title={`Magnet: ${magnetMode === 'off' ? 'Off' : magnetMode === 'weak' ? 'Weak (proximity)' : 'Strong (always snap)'}`}
-            >
-                <Magnet className={cn("h-4 w-4", magnetMode === 'strong' && "text-primary")} />
-                <span className="text-xs">{magnetMode === 'off' ? 'Off' : magnetMode === 'weak' ? 'W' : 'S'}</span>
-            </Button>
-
-            <div className="h-6 w-[1px] bg-border mx-2" />
-
-            {/* Indicators */}
-            <IndicatorsDialog onSelect={(value) => {
-                // TODO: When multi-pane support is added, determine which pane is active
-                const chartId = IndicatorStorage.getDefaultChartId();
-
-                // Add to storage
-                const success = IndicatorStorage.addIndicator(chartId, {
-                    type: value,
-                    enabled: true,
-                    params: {}
-                });
-
-                if (success) {
-                    // Also update URL params for compatibility
-                    const params = new URLSearchParams(searchParams.toString())
-                    const currentIndicators = params.get("indicators") ? params.get("indicators")!.split(",") : []
-                    if (!currentIndicators.includes(value)) {
-                        currentIndicators.push(value)
-                    }
-                    params.set("indicators", currentIndicators.join(","))
-                    router.push(`?${params.toString()}`)
-                }
-            }}>
-                <Button variant="ghost" size="sm" className="h-8 gap-2">
-                    <Activity className="h-4 w-4" />
-                    <span>Indicators</span>
+            {/* Right: Tools */}
+            <div className="flex items-center gap-1">
+                {/* Magnet */}
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className={cn("h-8 w-8 hover:bg-[#2a2e39]", magnetMode !== 'off' && "text-[#2962FF]")}
+                    onClick={() => onMagnetModeChange?.(magnetMode === 'off' ? 'weak' : magnetMode === 'weak' ? 'strong' : 'off')}
+                    title="Magnet Mode"
+                >
+                    <Magnet className="h-4 w-4" />
                 </Button>
-            </IndicatorsDialog>
 
-            {/* Spacer */}
-            <div className="flex-1" />
+                {/* Indicators */}
+                <IndicatorsDialog onSelect={(value) => {
+                    const chartId = IndicatorStorage.getDefaultChartId();
+                    IndicatorStorage.addIndicator(chartId, { type: value, enabled: true, params: {} });
+                    router.refresh();
+                }}>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-[#d1d4dc] hover:bg-[#2a2e39]" title="Indicators">
+                        <Activity className="h-4 w-4" />
+                    </Button>
+                </IndicatorsDialog>
 
-            {/* Trading Journal Controls */}
-            <TradingControls />
+                <div className="h-4 w-[1px] bg-[#2a2e39] mx-1" />
 
-            {/* Extra Content (Stats - DEPRECATED in favor of TradingControls but keeping for safety if children passed) */}
-            {children}
+                {/* Journal Toggle */}
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className={cn(
+                        "h-8 w-8 hover:bg-[#2a2e39]",
+                        isJournalPanelOpen ? "text-[#2962FF] bg-[#2962FF]/10" : "text-[#d1d4dc]"
+                    )}
+                    onClick={() => setIsJournalPanelOpen(!isJournalPanelOpen)}
+                    title="Trade Journal"
+                >
+                    <FileText className="w-4 h-4" />
+                </Button>
 
-        </div>
-    )
-}
-
-function TradingControls() {
-    const {
-        activeAccount, setActiveAccount,
-        activeStrategy, setActiveStrategy,
-        sessionPnl
-    } = useTrading()
-
-    const accounts = ["Simulated Account ($50k)", "Evaluation Account 1", "Personal Account"]
-    const strategies = ["Momentum", "Gap Fill", "Reversal", "Trend Following"]
-
-    return (
-        <div className="flex items-center gap-2 mx-2">
-            <div className="h-6 w-[1px] bg-border mx-2" />
-
-            {/* Account Selector */}
-            <Select value={activeAccount} onValueChange={setActiveAccount}>
-                <SelectTrigger className="h-8 w-[160px] border-none shadow-none focus:ring-0 bg-secondary/20">
-                    <SelectValue placeholder="Select Account" />
-                </SelectTrigger>
-                <SelectContent>
-                    {accounts.map(acc => (
-                        <SelectItem key={acc} value={acc}>{acc}</SelectItem>
-                    ))}
-                </SelectContent>
-            </Select>
-
-            {/* Strategy Selector */}
-            <Select value={activeStrategy} onValueChange={setActiveStrategy}>
-                <SelectTrigger className="h-8 w-[130px] border-none shadow-none focus:ring-0 bg-secondary/20">
-                    <SelectValue placeholder="Strategy" />
-                </SelectTrigger>
-                <SelectContent>
-                    {strategies.map(strat => (
-                        <SelectItem key={strat} value={strat}>{strat}</SelectItem>
-                    ))}
-                </SelectContent>
-            </Select>
-
-            {/* Session P&L */}
-            <div className="flex items-center gap-2 px-3 h-8 bg-secondary/20 rounded-md">
-                <span className="text-xs text-muted-foreground font-medium uppercase">Session P&L</span>
-                <span className={cn(
-                    "font-mono font-bold text-sm",
-                    sessionPnl > 0 ? "text-green-500" : sessionPnl < 0 ? "text-red-500" : "text-foreground"
-                )}>
-                    {sessionPnl >= 0 ? "+" : ""}{sessionPnl.toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
-                </span>
+                {/* Settings */}
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-[#d1d4dc] hover:bg-[#2a2e39]" onClick={() => setIsSettingsOpen(true)}>
+                    <Settings className="w-4 h-4" />
+                </Button>
             </div>
+
+            {/* Dialogs */}
+            <SettingsDialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
+            <AccountManagerDialog open={isAccountManagerOpen} onOpenChange={setIsAccountManagerOpen} />
+
+            {/* Journal Panel (Rendered here but positioned absolutely at bottom of screen usually, or we pass state up?
+                For simplicity in this layout, we render it here. CSS fixed position bottom is safest.) 
+            */}
+            {isJournalPanelOpen && <JournalPanel isOpen={true} />}
+
         </div>
     )
 }
