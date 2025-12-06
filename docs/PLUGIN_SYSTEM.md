@@ -1,5 +1,13 @@
 # Plugin System Master Guide
 
+> ⚠️ **LEGACY DOCUMENTATION**
+> 
+> This document applies to the **legacy Vanilla JS chart viewer** (`legacy_chart_ui/`).
+> The new Next.js platform (`web/`) uses a different architecture with built-in plugins.
+> See [USER_GUIDE.md](USER_GUIDE.md) for current platform documentation.
+
+---
+
 **Last Updated**: 2025-12-04 12:45 PST
 
 ## 🔄 Current Status: Phase 1 Complete (UI Redesign) ✅ 

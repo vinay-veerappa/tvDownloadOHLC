@@ -1,24 +1,51 @@
 # 📚 Documentation Index
 
-Welcome to the documentation for the TV Download & Charting System.
+**Version 0.3.0** - Trading Platform Documentation
+
+---
 
 ## 🚀 Getting Started
-- **[User Guide](USER_GUIDE.md)**: Comprehensive guide on how to use the chart, drawing tools, and indicators.
+- **[User Guide](USER_GUIDE.md)**: Comprehensive guide on using the chart, trading panel, replay mode, and drawing tools.
+
+---
 
 ## 🛠️ Technical Guides
-- **[Plugin System Master Guide](PLUGIN_SYSTEM.md)**: Detailed guide on the plugin architecture, inventory, and integration status.
-- **[UI Redesign Master Plan](UI_REDESIGN.md)**: Implementation guide, progress tracking, and specifications for the ongoing UI redesign.
-- **[Indicators Guide](INDICATORS.md)**: Guide for adding and managing custom indicators.
-- **[Indicators Modal Spec](INDICATORS_MODAL_DOCUMENTATION.md)**: Technical specifications for the upcoming Indicators Modal (Phase 2).
-- **[UI Mockup Specs](UI_MOCKUP_DOCUMENTATION.md)**: Visual design specifications for the UI.
 
-## 📊 Data Reports
+### Current Platform (Next.js)
+- **[Application Roadmap](application_roadmap.md)**: Feature roadmap and implementation status.
+- **[Architecture Analysis](architecture_analysis.md)**: System architecture overview.
+- **[Trading Journal Requirements](trading_journal_requirements.md)**: Requirements for the trading journal feature.
+
+### Drawing & Indicators
+- **[Drawing Tool Implementation Guide](drawing_tool_implementation_guide.md)**: Technical guide for drawing tools.
+- **[Indicators Guide](INDICATORS.md)**: Guide for adding and managing indicators.
+
+---
+
+## 📊 Data Documentation
+
 - **[Data Coverage Report](DATA_COVERAGE_REPORT.md)**: Summary of available data ranges for each ticker.
-- **[Data Gaps Report](DATA_GAPS_REPORT.md)**: Detailed analysis of gaps in the data.
-- **[Data Processing Instructions](DATA_PROCESSING_INSTRUCTIONS.md)**: Instructions for processing raw data.
+- **[Data Gaps Report](DATA_GAPS_REPORT.md)**: Analysis of gaps in the data.
+- **[Data Processing Instructions](DATA_PROCESSING_INSTRUCTIONS.md)**: How to process raw data.
+- **[Data Strategy](DATA_STRATEGY.md)**: Overall data management strategy.
 
-## 📥 Downloads
-- **[Download Instructions](DOWNLOAD_INSTRUCTIONS.md)**: How to download data using the Selenium tools.
+---
+
+## 📥 Data Download
+- **[Download Instructions](DOWNLOAD_INSTRUCTIONS.md)**: How to download data using Selenium tools.
+
+---
+
+## 📂 Legacy Documentation (Vanilla JS)
+
+> ⚠️ **Note**: The following documents apply to the **legacy Vanilla JS chart viewer** (`legacy_chart_ui/`).
+> The new platform uses Next.js and Lightweight Charts v5 with a different architecture.
+
+- **[Plugin System Master Guide](PLUGIN_SYSTEM.md)**: Plugin architecture for the legacy chart UI.
+- **[Usable Legacy Plugins](usable_legacy_plugins.md)**: List of working legacy plugins.
+- **[Official Plugin Research](official_plugin_research.md)**: Research on official plugins.
+
+---
 
 ## 📂 Archive
-- **[Archive](archive/)**: Historical documents, old plans, and backup info.
+- **[Archive](archive/)**: Historical documents, old plans, session summaries, and backup info.
