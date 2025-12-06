@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { TopToolbar } from './top-toolbar'
-import { ChartWrapper } from './chart-wrapper'
+import { ChartWrapper, type NavigationFunctions } from './chart-wrapper'
 import { BottomBar } from './bottom-bar'
 import type { MagnetMode } from '@/lib/charts/magnet-utils'
 
@@ -14,14 +14,6 @@ interface ChartPageClientProps {
     timeframe: string
     style: string
     indicators: string[]
-}
-
-interface NavigationFunctions {
-    scrollByBars: (n: number) => void
-    scrollToStart: () => void
-    scrollToEnd: () => void
-    scrollToTime: (time: number) => void
-    getDataRange: () => { start: number; end: number; totalBars: number } | null
 }
 
 const MAGNET_STORAGE_KEY = 'chart_magnet_mode'
@@ -66,12 +58,23 @@ export function ChartPageClient({
         localStorage.setItem(TIMEZONE_STORAGE_KEY, tz)
     }
 
+    // Replay state
+    const [replayState, setReplayState] = useState<{ isReplayMode: boolean, index: number, total: number }>({
+        isReplayMode: false,
+        index: 0,
+        total: 0
+    })
+
     // Handle navigation ready callback from ChartWrapper
     const handleNavigationReady = useCallback((nav: NavigationFunctions) => {
         setNavigation(nav)
         // Also get initial data range
         const range = nav.getDataRange()
         setDataRange(range)
+    }, [])
+
+    const handleReplayStateChange = useCallback((state: { isReplayMode: boolean, index: number, total: number }) => {
+        setReplayState(state)
     }, [])
 
     return (
@@ -109,6 +112,7 @@ export function ChartPageClient({
                     magnetMode={magnetMode}
                     displayTimezone={displayTimezone}
                     onNavigationReady={handleNavigationReady}
+                    onReplayStateChange={handleReplayStateChange}
                 />
             </div>
 
@@ -121,6 +125,14 @@ export function ChartPageClient({
                 onScrollToEnd={navigation?.scrollToEnd}
                 onScrollToTime={navigation?.scrollToTime}
                 dataRange={dataRange}
+                // Replay props
+                onStartReplay={navigation?.startReplay}
+                onStepForward={navigation?.stepForward}
+                onStepBack={navigation?.stepBack}
+                onStopReplay={navigation?.stopReplay}
+                isReplayMode={replayState.isReplayMode}
+                replayIndex={replayState.index}
+                totalBars={replayState.total}
             />
         </>
     )

@@ -44,6 +44,7 @@ interface ChartContainerProps {
     selection?: { type: 'drawing' | 'indicator', id: string } | null
     onSelectionChange?: (selection: { type: 'drawing' | 'indicator', id: string } | null) => void
     onDeleteSelection?: () => void
+    onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number }) => void
 }
 
 export interface ChartContainerRef {
@@ -55,9 +56,17 @@ export interface ChartContainerRef {
     scrollToEnd: () => void;
     scrollToTime: (time: number) => void;
     getDataRange: () => { start: number; end: number; totalBars: number } | null;
+    // Replay mode functions
+    startReplay: (fromIndex?: number) => void;
+    stepForward: () => void;
+    stepBack: () => void;
+    stopReplay: () => void;
+    isReplayMode: () => boolean;
+    getReplayIndex: () => number;
+    getTotalBars: () => number;
 }
 
-export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', selection, onSelectionChange, onDeleteSelection }, ref) => {
+export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', selection, onSelectionChange, onDeleteSelection, onReplayStateChange }, ref) => {
     const chartContainerRef = useRef<HTMLDivElement>(null)
 
     // Full data and window state for performance
@@ -65,25 +74,84 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const [windowStart, setWindowStart] = useState(0)
     const windowSize = useMemo(() => getWindowSizeForTimeframe(timeframe), [timeframe])
 
-    // Apply windowing to data for chart performance
+    // Replay mode state - progressive bar reveal
+    const [replayMode, setReplayMode] = useState(false)
+    const [replayIndex, setReplayIndex] = useState(0) // Current bar position in replay
+
+    // Notify parent of replay state changes
+    useEffect(() => {
+        onReplayStateChange?.({
+            isReplayMode: replayMode,
+            index: replayIndex,
+            total: fullData.length
+        })
+    }, [replayMode, replayIndex, fullData.length, onReplayStateChange])
+
+    // Apply windowing and replay slice to data
     const data = useMemo(() => {
-        if (fullData.length <= windowSize) return fullData
-        const start = Math.max(0, Math.min(windowStart, fullData.length - windowSize))
-        return fullData.slice(start, start + windowSize)
-    }, [fullData, windowStart, windowSize])
+        if (fullData.length === 0) return []
+
+        if (replayMode) {
+            // In replay mode, show only bars up to replayIndex
+            const endIndex = Math.min(replayIndex + 1, fullData.length)
+            const startIndex = Math.max(0, endIndex - windowSize)
+            return fullData.slice(startIndex, endIndex)
+        } else {
+            // Normal mode - window from windowStart
+            if (fullData.length <= windowSize) return fullData
+            const start = Math.max(0, Math.min(windowStart, fullData.length - windowSize))
+            return fullData.slice(start, start + windowSize)
+        }
+    }, [fullData, windowStart, windowSize, replayMode, replayIndex])
 
     const { chart, series, primitives, scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data, markers, displayTimezone)
+
+    // Replay control functions
+    const startReplay = (fromIndex?: number) => {
+        const startIdx = fromIndex ?? 0
+        setReplayIndex(startIdx)
+        setReplayMode(true)
+        // Scroll to right edge to see new bars appear
+        chart?.timeScale().scrollToRealTime()
+    }
+
+    const stepForward = () => {
+        if (replayMode && replayIndex < fullData.length - 1) {
+            setReplayIndex(prev => prev + 1)
+            chart?.timeScale().scrollToRealTime()
+        }
+    }
+
+    const stepBack = () => {
+        if (replayMode && replayIndex > 0) {
+            setReplayIndex(prev => prev - 1)
+        }
+    }
+
+    const stopReplay = () => {
+        setReplayMode(false)
+        // Reset to show all data
+        setWindowStart(Math.max(0, fullData.length - windowSize))
+    }
 
     // Expose navigation functions via ref
     useImperativeHandle(ref, () => ({
         deleteDrawing: (id: string) => drawingManager?.deleteDrawing(id),
         editDrawing: (id: string) => handleEditDrawing(id),
-        scrollByBars,
-        scrollToStart,
-        scrollToEnd,
+        scrollByBars: replayMode ? stepForward : scrollByBars,
+        scrollToStart: replayMode ? () => setReplayIndex(0) : scrollToStart,
+        scrollToEnd: replayMode ? () => setReplayIndex(fullData.length - 1) : scrollToEnd,
         scrollToTime,
-        getDataRange
-    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange])
+        getDataRange,
+        // Replay functions
+        startReplay,
+        stepForward,
+        stepBack,
+        stopReplay,
+        isReplayMode: () => replayMode,
+        getReplayIndex: () => replayIndex,
+        getTotalBars: () => fullData.length
+    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData.length, chart, windowSize])
 
     const { openTradeDialog } = useTradeContext()
 

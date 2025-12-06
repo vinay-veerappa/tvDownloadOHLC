@@ -14,12 +14,20 @@ const ChartContainer = dynamic(
     { ssr: false }
 )
 
-interface NavigationFunctions {
+export interface NavigationFunctions {
     scrollByBars: (n: number) => void
     scrollToStart: () => void
     scrollToEnd: () => void
     scrollToTime: (time: number) => void
     getDataRange: () => { start: number; end: number; totalBars: number } | null
+    // Replay mode functions
+    startReplay: (fromIndex?: number) => void
+    stepForward: () => void
+    stepBack: () => void
+    stopReplay: () => void
+    isReplayMode: () => boolean
+    getReplayIndex: () => number
+    getTotalBars: () => number
 }
 
 interface ChartWrapperProps {
@@ -30,6 +38,7 @@ interface ChartWrapperProps {
     magnetMode?: MagnetMode
     displayTimezone?: string
     onNavigationReady?: (nav: NavigationFunctions) => void
+    onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number }) => void
 }
 
 export function ChartWrapper(props: ChartWrapperProps) {
@@ -59,7 +68,15 @@ export function ChartWrapper(props: ChartWrapperProps) {
                     scrollToStart: ref.scrollToStart,
                     scrollToEnd: ref.scrollToEnd,
                     scrollToTime: ref.scrollToTime,
-                    getDataRange: ref.getDataRange
+                    getDataRange: ref.getDataRange,
+                    // Replay functions
+                    startReplay: ref.startReplay,
+                    stepForward: ref.stepForward,
+                    stepBack: ref.stepBack,
+                    stopReplay: ref.stopReplay,
+                    isReplayMode: ref.isReplayMode,
+                    getReplayIndex: ref.getReplayIndex,
+                    getTotalBars: ref.getTotalBars
                 })
             }
         }, 500)
