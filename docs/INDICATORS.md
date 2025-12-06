@@ -1,5 +1,12 @@
 # Indicator System Documentation
 
+> **Note**: This document was originally written for the legacy Python/JS architecture.
+> 
+> The new **Next.js platform** (`web/`) has built-in indicators (SMA, EMA, Sessions, Watermark) 
+> calculated client-side in `web/lib/charts/indicators.ts`. See [USER_GUIDE.md](USER_GUIDE.md) for usage.
+
+---
+
 ## Overview
 A modular, extensible indicator system for ES Futures charting.
 

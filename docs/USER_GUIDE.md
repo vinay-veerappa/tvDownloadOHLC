@@ -1,82 +1,206 @@
-# Chart UI User Guide
+# User Guide
+
+**Version 0.3.0** - Next.js Trading Platform
 
 ## Overview
-This application provides a professional charting interface for analyzing OHLC data (ES1, NQ1). It features a TradingView-like interface with drawing tools, indicators, and plugins.
+This application provides a professional TradingView-inspired charting interface for analyzing OHLC data. Built with Next.js, TypeScript, and Lightweight Charts v5.
+
+---
+
+## 🖥️ Interface Overview
+
+### Layout Structure
+- **Top Toolbar**: Ticker selector, timeframe buttons, style selector, indicators, theme toggle
+- **Left Toolbar**: Drawing tools, trading panel toggle
+- **Chart Area**: Main chart canvas with price/time scales
+- **Right Sidebar**: Object tree (drawings, indicators), settings
+- **Bottom Bar**: Navigation, replay controls, timezone, date jump
+
+---
+
+## 📊 Chart Controls
+
+### Ticker Selection
+- Click the ticker dropdown in the top toolbar
+- Select from available tickers (ES1!, NQ1!, etc.)
+- Chart automatically loads data for the selected ticker
+
+### Timeframe Selection
+- Available: 1m, 5m, 15m, 1h, 4h, D, W
+- Click any timeframe button to switch
+- Data is filtered based on available timeframes for each ticker
+
+### Chart Styles
+Click the style dropdown to choose:
+- **Candles**: Standard candlestick chart (default)
+- **Bars**: OHLC bars
+- **Line**: Close price line
+- **Area**: Filled area under close price
+- **Heiken-Ashi**: Smoothed candlesticks
+
+### Theme Toggle
+- Click the sun/moon icon in the top toolbar
+- Switches between Light and Dark mode
+- Chart colors adapt automatically
+
+---
 
 ## 🛠️ Drawing Tools
-The drawing toolbar is located on the left side of the screen.
 
-| Icon | Tool | Description | Usage |
-|------|------|-------------|-------|
-| 📏 | **Line** | Draw a simple line segment | Click start point, click end point. |
-| 📉 | **Ray** | Draw an infinite ray | Click start point, click second point to define direction. |
-| ▭ | **Rectangle** | Draw a rectangle | Click top-left corner, click bottom-right corner. |
-| 🔢 | **Fibonacci** | Fibonacci Retracement | Click start point (low/high), click end point (high/low). |
-| │ | **Vertical Line** | Draw a vertical line | Click any point on the time axis. |
-| ─ | **Price Line** | Draw a horizontal price line | Click any point on the price axis. |
-| 🔔 | **Alert** | Add a price alert | Click to activate, then click on the chart near the price scale to set an alert. |
-| 📐 | **Measure** | Measure price/time delta | Click and drag from one point to another to see the difference. |
-| T | **Text** | Add text watermark | Click to add a text label (currently adds "Watermark"). |
+Access via the **Left Toolbar** (vertical buttons on left edge).
+
+| Tool | Description | How to Use |
+|------|-------------|------------|
+| **Cursor** | Select/move drawings | Click to select, drag to move |
+| **Line** | Trend line segment | Click start, click end |
+| **Ray** | Infinite ray | Click start, click direction |
+| **Rectangle** | Price range box | Click corner, click opposite corner |
+| **Fibonacci** | Retracement levels | Click low, click high (or vice versa) |
+| **Vertical** | Vertical time line | Click anywhere |
+| **Horizontal** | Horizontal price line | Click at desired price |
+| **Text** | Text annotation | Click to place, type text |
 
 ### Managing Drawings
-- **Select**: Click on any drawing to select it. It will appear thicker/highlighted.
-- **Delete**: Press `Delete` or `Backspace` key to remove the selected drawing.
-- **Clear All**: Click the trash can icon (🗑) at the bottom of the toolbar to remove all drawings.
+- **Select**: Click on any drawing
+- **Delete**: Press `Delete` or `Backspace` key
+- **Edit**: Double-click to open properties
+- **Right-Click Menu**: Delete, Settings options
 
-- **Clear All**: Click the trash can icon (🗑) at the bottom of the toolbar to remove all drawings.
+### Right Sidebar Object Tree
+- **Drawings Tab**: Lists all drawings with select/delete options
+- **Indicators Tab**: Lists active indicators with settings/delete
 
-## 📑 Object Tree (Right Sidebar)
-Access formatting and management tools via the **Right Sidebar** icon strip.
+---
 
-- **Layer Management**: Click the **Layers Icon** (top) to open the Object Tree.
-  - **Drawings**: View, select, lock, or delete individual drawings.
-  - **Indicators**: Manage active indicators (Settings, Visibility, Remove).
-- **Collapsing**: Click the icon again or the Chevron (`>`) button to collapse the panel for a full-screen chart view.
+## 📈 Indicators
 
-## 📊 Indicators & Plugins
-Access indicators and plugins via the **"📊 Indicators"** button in the top toolbar.
+Click **"📊 Indicators"** in the top toolbar.
 
-### Adding Indicators
-1. Click **"📊 Indicators"**.
-2. Browse the categories (Built-in, Primitives, Indicators).
-3. Click on an item to add it to the chart.
-   - **Built-in**: Standard indicators like SMA, EMA, RSI.
-   - **Primitives**: Visual tools like Tooltips, Volume Profile.
-   - **Plugin Indicators**: Custom indicators like Weighted Close, Momentum.
+### Built-in Indicators
+| Indicator | Description |
+|-----------|-------------|
+| SMA | Simple Moving Average (configurable period) |
+| EMA | Exponential Moving Average (configurable period) |
+| Sessions | Market session highlighting |
+| Watermark | Chart watermark text |
 
-### Managing Active Indicators
-- Active indicators are listed in the **Legend** (top-left corner).
-- Click the **"×"** next to an indicator name in the legend to remove it.
+### Managing Indicators
+- **Add**: Click indicator name in dropdown
+- **Settings**: Click gear icon in Object Tree
+- **Remove**: Click "×" in Object Tree or legend
 
-## 🎮 Chart Controls
-- **Ticker**: Switch between `ES1` and `NQ1` using the buttons in the top-left.
-- **Timeframe**: Select timeframes (1m, 5m, 15m, 1h, 4h, 1D) from the top toolbar.
-- **Date Navigation**: Use the "Go to" button to jump to a specific date.
-- **Strategy**: Toggle the "Strategy" button to show/hide strategy signals (if available).
-- **Timezone**: Switch between Exchange and Local timezones.
+---
+
+## 💹 Trading Panel
+
+### Opening the Trading Panel
+- Click the **$** button in the left toolbar
+- Panel appears in the right sidebar
+
+### Placing Trades
+1. Enter **Quantity** (lot size)
+2. Click **Buy** or **Sell** button
+3. Position appears with real-time P&L
+
+### Position Management
+- **Stop Loss / Take Profit**: Enter values before placing trade
+- **Visual SL/TP**: Drag the lines on chart to adjust
+- **Close Position**: Click "Close" button in bottom panel
+- **Reverse Position**: Place opposite trade to flip direction
+
+### Trade Reversals
+- If you have a LONG position and place a SELL, it will:
+  1. Close the LONG position
+  2. Open a new SHORT position
+- Same applies in reverse (SHORT → BUY → LONG)
+
+---
 
 ## ⏪ Replay Mode
+
 Simulate live market conditions by playing back historical data.
 
-- **Start Replay**: Click the `Replay` button in the top toolbar to open the menu.
-  - **Select Bar**: Click anywhere on the chart start playback from that candle.
-  - **Select Date**: Choose a specific start date from the calendar.
-  - **First Available**: Start from the beginning of the loaded data.
-- **Playback Controls**:
-  - **Play/Pause**: Toggle automatic playback.
-  - **Step**: Advance one candle at a time.
-  - **Speed**: Adjust the playback speed (1x to 10x).
-  - **Stop**: Exit replay mode and return to the live chart.
+### Starting Replay
+1. Click **Replay** button in bottom bar
+2. Choose start option:
+   - **Select Bar**: Click on chart to start from that bar
+   - **Select Date**: Pick specific date from calendar
+   - **First Available**: Start from beginning
+
+### Replay Controls
+| Control | Action |
+|---------|--------|
+| ▶️ Play | Auto-advance bars |
+| ⏸️ Pause | Stop auto-advance |
+| ⏭️ Step | Advance one bar |
+| ⏮️ Back | Go back one bar |
+| ⏹️ Stop | Exit replay mode |
+| Speed | 1x to 10x playback speed |
+
+### Timeframe Sync
+- When you change timeframe in replay mode, the view stays synchronized
+- The chart jumps to the same point in time in the new timeframe
+
+---
 
 ## ⌨️ Keyboard Shortcuts
-- **Delete / Backspace**: Delete selected drawing.
-- **Ctrl + Z**: Undo (Not yet implemented).
-- **Ctrl + Y**: Redo (Not yet implemented).
 
-## 🧩 Plugins
-The application supports a modular plugin system.
-- **Primitives**: Attach directly to the chart series (e.g., Tooltips).
-- **Indicators**: Create new data series (e.g., Moving Averages).
-- **Series Types**: Change the main chart visualization (e.g., Rounded Candles).
+| Key | Action |
+|-----|--------|
+| Delete / Backspace | Delete selected drawing |
+| Left/Right Arrow | Scroll chart (in replay: step back/forward) |
 
-For more technical details on plugins, refer to `docs/PLUGIN_INTEGRATION_GUIDE.md`.
+---
+
+## 🧭 Navigation
+
+### Bottom Bar Controls
+- **« / »**: Jump to start/end of data
+- **< / >**: Scroll by bars
+- **Go to Date**: Jump to specific date
+
+### Date Range Info
+- Bottom bar shows available data range
+- Current bar count and position in replay mode
+
+---
+
+## 📝 Trading Journal (Bottom Panel)
+
+### Opening the Journal Panel
+- Click **Open Positions** or **Orders** tab in bottom panel
+- Toggle panel with the expand/collapse button
+
+### Views
+- **Open Positions**: Current active trades with live P&L
+- **Orders**: Pending limit/stop orders
+- **Trade History**: Closed trades with metrics
+
+### Trade Metrics (Captured Automatically)
+- **MAE**: Max Adverse Excursion (worst drawdown)
+- **MFE**: Max Favorable Excursion (best unrealized profit)
+- **Duration**: Time position was held
+- **P&L**: Final profit/loss
+
+---
+
+## 🔧 Settings
+
+### Session Settings (Right Sidebar)
+- Configure timezone for display
+- Adjust chart preferences
+
+### Magnet Mode (Top Toolbar)
+- **Off**: Free drawing
+- **Weak**: Snaps to OHLC prices nearby
+- **Strong**: Always snaps to nearest price
+
+---
+
+## 💡 Tips
+
+1. **Use Replay for Practice**: Paper trade with historical data
+2. **Set SL/TP Before Entry**: Protect your positions
+3. **Right-Click for Options**: Context menu on drawings
+4. **Object Tree**: Quickly manage all chart objects
+5. **Timeframe Sync**: Works in both normal and replay mode
