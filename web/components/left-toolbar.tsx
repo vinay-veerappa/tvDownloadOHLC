@@ -15,7 +15,7 @@ interface LeftToolbarProps {
 
 export function LeftToolbar({ selectedTool, onToolSelect }: LeftToolbarProps) {
     return (
-        <div className="flex flex-col items-center w-12 border-r bg-background py-2 gap-2">
+        <div className="flex flex-col items-center w-12 border-r bg-background py-2 gap-2 shrink-0">
             <Button
                 variant="ghost"
                 size="icon"
