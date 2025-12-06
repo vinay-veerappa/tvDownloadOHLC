@@ -121,7 +121,13 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         setReplayIndex(startIdx)
         setReplayMode(true)
         // Scroll to right edge to see new bars appear (with slight delay for state update)
-        setTimeout(() => chart?.timeScale().scrollToRealTime(), 50)
+        setTimeout(() => {
+            if (startIdx < 50) {
+                chart?.timeScale().fitContent()
+            } else {
+                chart?.timeScale().scrollToRealTime()
+            }
+        }, 100)
     }
 
     const stepForward = () => {
@@ -138,7 +144,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     }
 
     const stopReplay = () => {
-        setReplayMode(false)
         setReplayMode(false)
         setIsSelectingReplayStart(false)
         // Reset to show all data
