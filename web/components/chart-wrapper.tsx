@@ -66,20 +66,20 @@ export function ChartWrapper(props: ChartWrapperProps) {
                 navReadyRef.current = true
                 const ref = chartRef.current
                 props.onNavigationReady({
-                    scrollByBars: ref.scrollByBars,
-                    scrollToStart: ref.scrollToStart,
-                    scrollToEnd: ref.scrollToEnd,
-                    scrollToTime: ref.scrollToTime,
-                    getDataRange: ref.getDataRange,
-                    // Replay functions
-                    startReplay: ref.startReplay,
-                    stepForward: ref.stepForward,
-                    stepBack: ref.stepBack,
-                    stopReplay: ref.stopReplay,
-                    isReplayMode: ref.isReplayMode,
-                    getReplayIndex: ref.getReplayIndex,
-                    getTotalBars: ref.getTotalBars,
-                    startReplaySelection: ref.startReplaySelection
+                    scrollByBars: (n) => chartRef.current?.scrollByBars(n),
+                    scrollToStart: () => chartRef.current?.scrollToStart(),
+                    scrollToEnd: () => chartRef.current?.scrollToEnd(),
+                    scrollToTime: (t) => chartRef.current?.scrollToTime(t),
+                    getDataRange: () => chartRef.current?.getDataRange() ?? null,
+                    // Replay functions (Delegated to Ref to ensure fresh state)
+                    startReplay: (opts) => chartRef.current?.startReplay(opts),
+                    stepForward: () => chartRef.current?.stepForward(),
+                    stepBack: () => chartRef.current?.stepBack(),
+                    stopReplay: () => chartRef.current?.stopReplay(),
+                    isReplayMode: () => chartRef.current?.isReplayMode() ?? false,
+                    getReplayIndex: () => chartRef.current?.getReplayIndex() ?? 0,
+                    getTotalBars: () => chartRef.current?.getTotalBars() ?? 0,
+                    startReplaySelection: () => chartRef.current?.startReplaySelection()
                 })
             }
         }, 500)
