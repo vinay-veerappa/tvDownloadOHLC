@@ -12,8 +12,6 @@ import {
     DataChangedScope,
     ISeriesPrimitive,
     Time,
-    SeriesDataItemTypeMap,
-    SeriesType,
 } from 'lightweight-charts';
 import { PluginBase } from './plugin-base';
 
@@ -184,7 +182,8 @@ export class SessionHighlighting extends PluginBase implements ISeriesPrimitive<
     }
 
     /**
-     * Calculate background color for each bar based on session definitions
+     * Calculate background color for visible bars only (performance optimization)
+     * Max 200 bars to prevent sluggishness
      */
     private _calculateBackgroundColors() {
         if (!this.isAttached()) {
@@ -193,7 +192,28 @@ export class SessionHighlighting extends PluginBase implements ISeriesPrimitive<
         }
 
         const data = this.series.data();
-        this._backgroundColors = data.map(dataPoint => {
+        if (data.length === 0) {
+            this._backgroundColors = [];
+            return;
+        }
+
+        // Get visible range for performance - only render visible bars
+        const timeScale = this.chart.timeScale();
+        const visibleRange = timeScale.getVisibleLogicalRange();
+
+        let startIdx = 0;
+        let endIdx = Math.min(data.length, 200); // Cap at 200 bars max
+
+        if (visibleRange) {
+            // Only process visible range with small buffer
+            startIdx = Math.max(0, Math.floor(visibleRange.from) - 5);
+            endIdx = Math.min(data.length, Math.ceil(visibleRange.to) + 5, startIdx + 200);
+        }
+
+        // Only process visible data slice
+        const visibleData = data.slice(startIdx, endIdx);
+
+        this._backgroundColors = visibleData.map(dataPoint => {
             const color = this._getSessionColor(dataPoint.time);
             return {
                 time: dataPoint.time,
