@@ -400,6 +400,7 @@ export function PlaybackControls({
                     <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
                         <div
                             className="h-full bg-primary transition-all duration-100"
+                            // eslint-disable-next-line
                             style={{ width: `${progressPercent}%` }}
                         />
                     </div>

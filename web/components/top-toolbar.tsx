@@ -5,7 +5,9 @@ import { Check, ChevronsUpDown, CandlestickChart, BarChart, LineChart, AreaChart
 import { useRouter, useSearchParams } from "next/navigation"
 
 import { cn } from "@/lib/utils"
+// import { Button } from "@/components/ui/button" // Already imported below? No, likely imported from local
 import { Button } from "@/components/ui/button"
+import { useTrading } from "@/context/trading-context"
 import {
     Command,
     CommandEmpty,
@@ -240,12 +242,67 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                 </Button>
             </IndicatorsDialog>
 
-            {/* Spacer to push children to the right */}
+            {/* Spacer */}
             <div className="flex-1" />
 
-            {/* Extra Content (Stats) */}
+            {/* Trading Journal Controls */}
+            <TradingControls />
+
+            {/* Extra Content (Stats - DEPRECATED in favor of TradingControls but keeping for safety if children passed) */}
             {children}
 
+        </div>
+    )
+}
+
+function TradingControls() {
+    const {
+        activeAccount, setActiveAccount,
+        activeStrategy, setActiveStrategy,
+        sessionPnl
+    } = useTrading()
+
+    const accounts = ["Simulated Account ($50k)", "Evaluation Account 1", "Personal Account"]
+    const strategies = ["Momentum", "Gap Fill", "Reversal", "Trend Following"]
+
+    return (
+        <div className="flex items-center gap-2 mx-2">
+            <div className="h-6 w-[1px] bg-border mx-2" />
+
+            {/* Account Selector */}
+            <Select value={activeAccount} onValueChange={setActiveAccount}>
+                <SelectTrigger className="h-8 w-[160px] border-none shadow-none focus:ring-0 bg-secondary/20">
+                    <SelectValue placeholder="Select Account" />
+                </SelectTrigger>
+                <SelectContent>
+                    {accounts.map(acc => (
+                        <SelectItem key={acc} value={acc}>{acc}</SelectItem>
+                    ))}
+                </SelectContent>
+            </Select>
+
+            {/* Strategy Selector */}
+            <Select value={activeStrategy} onValueChange={setActiveStrategy}>
+                <SelectTrigger className="h-8 w-[130px] border-none shadow-none focus:ring-0 bg-secondary/20">
+                    <SelectValue placeholder="Strategy" />
+                </SelectTrigger>
+                <SelectContent>
+                    {strategies.map(strat => (
+                        <SelectItem key={strat} value={strat}>{strat}</SelectItem>
+                    ))}
+                </SelectContent>
+            </Select>
+
+            {/* Session P&L */}
+            <div className="flex items-center gap-2 px-3 h-8 bg-secondary/20 rounded-md">
+                <span className="text-xs text-muted-foreground font-medium uppercase">Session P&L</span>
+                <span className={cn(
+                    "font-mono font-bold text-sm",
+                    sessionPnl > 0 ? "text-green-500" : sessionPnl < 0 ? "text-red-500" : "text-foreground"
+                )}>
+                    {sessionPnl >= 0 ? "+" : ""}{sessionPnl.toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
+                </span>
+            </div>
         </div>
     )
 }

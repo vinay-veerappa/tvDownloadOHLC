@@ -11,7 +11,7 @@ import type { MagnetMode } from '@/lib/charts/magnet-utils'
 import { BuySellPanel } from "@/components/trading/buy-sell-panel"
 import { toast } from "sonner"
 import { SettingsDialog } from "@/components/settings-dialog"
-import { useTradingEngine } from "@/hooks/use-trading-engine"
+import { useTrading } from "@/context/trading-context"
 
 const ChartContainer = dynamic(
     () => import('./chart-container').then((mod) => mod.ChartContainer),
@@ -57,12 +57,15 @@ export function ChartWrapper(props: ChartWrapperProps) {
     // Live Price State
     const [currentPrice, setCurrentPrice] = useState<number>(0)
 
-    // Trading Engine
-    const { position, executeOrder } = useTradingEngine({
-        currentPrice,
-        ticker: props.ticker,
-        autoScreenshot: false
-    })
+    // Trading Engine (Global Context)
+    const { position, executeOrder, updatePrice, modifyOrder, modifyPosition, pendingOrders } = useTrading()
+
+    // Sync Chart Price with Context
+    useEffect(() => {
+        if (currentPrice > 0) {
+            updatePrice(currentPrice)
+        }
+    }, [currentPrice, updatePrice])
 
     // Load indicators from storage
     const chartId = IndicatorStorage.getDefaultChartId()
@@ -232,8 +235,22 @@ export function ChartWrapper(props: ChartWrapperProps) {
                         <div className="absolute top-4 left-4 z-20">
                             <BuySellPanel
                                 currentPrice={currentPrice}
-                                onBuy={(qty) => executeOrder('BUY', qty)}
-                                onSell={(qty) => executeOrder('SELL', qty)}
+                                onBuy={(qty, type, price, sl, tp) => executeOrder({
+                                    direction: 'BUY',
+                                    quantity: qty,
+                                    orderType: type,
+                                    price,
+                                    stopLoss: sl,
+                                    takeProfit: tp
+                                })}
+                                onSell={(qty, type, price, sl, tp) => executeOrder({
+                                    direction: 'SELL',
+                                    quantity: qty,
+                                    orderType: type,
+                                    price,
+                                    stopLoss: sl,
+                                    takeProfit: tp
+                                })}
                                 position={position}
                             />
                         </div>
@@ -251,6 +268,9 @@ export function ChartWrapper(props: ChartWrapperProps) {
                         onDeleteSelection={handleDeleteSelection}
                         onPriceChange={setCurrentPrice}
                         position={position}
+                        pendingOrders={pendingOrders}
+                        onModifyOrder={modifyOrder}
+                        onModifyPosition={modifyPosition}
                     />
                 </div>
                 <RightSidebar

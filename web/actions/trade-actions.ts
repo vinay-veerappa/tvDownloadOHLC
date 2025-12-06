@@ -24,9 +24,15 @@ export async function createTrade(data: {
     symbol: string
     direction: "LONG" | "SHORT"
     entryDate: Date
-    entryPrice: number
+    entryPrice?: number // Made optional for Pending orders
     quantity: number
     status: "OPEN" | "PENDING"
+    // Advanced Fields
+    orderType?: "MARKET" | "LIMIT" | "STOP"
+    limitPrice?: number
+    stopPrice?: number
+    stopLoss?: number
+    takeProfit?: number
 }) {
     try {
         const trade = await db.trade.create({
