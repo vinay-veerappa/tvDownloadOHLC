@@ -58,7 +58,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
     const [currentPrice, setCurrentPrice] = useState<number>(0)
 
     // Trading Engine (Global Context)
-    const { position, executeOrder, updatePrice, modifyOrder, modifyPosition, pendingOrders } = useTrading()
+    const { activePosition: position, executeOrder, updatePrice, modifyOrder, modifyPosition, pendingOrders } = useTrading()
 
     // Sync Chart Price with Context
     useEffect(() => {
@@ -236,18 +236,20 @@ export function ChartWrapper(props: ChartWrapperProps) {
                             <BuySellPanel
                                 currentPrice={currentPrice}
                                 onBuy={(qty, type, price, sl, tp) => executeOrder({
+                                    ticker: props.ticker,
                                     direction: 'BUY',
                                     quantity: qty,
                                     orderType: type,
-                                    price,
+                                    price: price || 0,
                                     stopLoss: sl,
                                     takeProfit: tp
                                 })}
                                 onSell={(qty, type, price, sl, tp) => executeOrder({
+                                    ticker: props.ticker,
                                     direction: 'SELL',
                                     quantity: qty,
                                     orderType: type,
-                                    price,
+                                    price: price || 0,
                                     stopLoss: sl,
                                     takeProfit: tp
                                 })}

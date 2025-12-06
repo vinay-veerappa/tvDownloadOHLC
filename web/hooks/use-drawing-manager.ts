@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect } from 'react';
+import { useRef, useCallback, useEffect, useMemo } from 'react';
 import { DrawingStorage, SerializedDrawing } from "@/lib/drawing-storage";
 import { toast } from "sonner";
 import { Drawing } from "@/components/right-sidebar";
@@ -257,12 +257,12 @@ export function useDrawingManager(
         return drawingsRef.current.get(id);
     }, []);
 
-    return {
+    return useMemo(() => ({
         loadDrawings,
         deleteDrawing,
         initiateTool,
         hitTest,
         getDrawing,
         activeToolRef // exposed if needed for cleanup
-    }
+    }), [loadDrawings, deleteDrawing, initiateTool, hitTest, getDrawing]);
 }

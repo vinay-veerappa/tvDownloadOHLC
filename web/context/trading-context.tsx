@@ -77,6 +77,11 @@ interface TradingContextType {
     refreshAccounts: () => void
     refreshTrades: () => Promise<void>
 
+    // Strategy State
+    strategies: any[]
+    activeStrategy: any | null
+    setActiveStrategy: (strategy: any) => void
+
     // Actions
     executeOrder: (params: OrderParams) => Promise<void>
     cancelOrder: (id: string) => Promise<void>
@@ -106,6 +111,12 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
     // Journal State
     const [accounts, setAccounts] = useState<any[]>([])
     const [activeAccount, setActiveAccount] = useState<any | null>(null)
+    const [strategies, setStrategies] = useState<any[]>([
+        { id: "strat-1", name: "Momentum" },
+        { id: "strat-2", name: "Reversal" },
+        { id: "strat-3", name: "Scalp" }
+    ])
+    const [activeStrategy, setActiveStrategy] = useState<any | null>(null)
 
     // P&L Constants (ES Futures)
     const POINT_VALUE = 50
@@ -211,12 +222,8 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         if (!currentPrice) return
 
-        // A. Update Position P&L and Check Brackets
+        // A. Check Brackets (SL/TP) - ONLY Check, don't update state unless closing
         if (activePosition) {
-            const priceDiff = currentPrice - activePosition.entryPrice
-            const pnlRaw = activePosition.direction === 'LONG' ? priceDiff : -priceDiff
-            const pnl = pnlRaw * activePosition.quantity * POINT_VALUE
-
             // Check SL
             if (activePosition.stopLoss) {
                 const hitSL = activePosition.direction === 'LONG' ? currentPrice <= activePosition.stopLoss : currentPrice >= activePosition.stopLoss
@@ -235,9 +242,6 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
                     return // Exit
                 }
             }
-
-            // Update PnL
-            setActivePosition(prev => prev ? { ...prev, currentPrice, unrealizedPnl: pnl } : null)
         }
 
         // B. Check Pending Orders
@@ -279,7 +283,8 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
                         status: 'OPEN',
                         stopLoss: o.stopLoss,
                         takeProfit: o.takeProfit,
-                        accountId: activeAccount.id
+                        accountId: activeAccount.id,
+                        strategyId: activeStrategy?.id
                     }).then(res => {
                         if (res.success && res.data) {
                             openPosition(o.symbol, o.direction, o.quantity, currentPrice, o.stopLoss, o.takeProfit, res.data.id)
@@ -323,7 +328,8 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
                     status: 'OPEN',
                     stopLoss: params.stopLoss,
                     takeProfit: params.takeProfit,
-                    accountId: activeAccount.id
+                    accountId: activeAccount.id,
+                    strategyId: activeStrategy?.id
                 })
 
                 if (res.success && res.data) {
@@ -393,20 +399,35 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
         }
     }
 
+    // --- Derived State for Context ---
+    const livePosition = activePosition ? {
+        ...activePosition,
+        currentPrice,
+        unrealizedPnl: (() => {
+            const priceDiff = currentPrice - activePosition.entryPrice
+            const pnlRaw = activePosition.direction === 'LONG' ? priceDiff : -priceDiff
+            return pnlRaw * activePosition.quantity * POINT_VALUE
+        })()
+    } : null
+
     return (
         <TradingContext.Provider value={{
             currentPrice,
             updatePrice,
             trades,
-            activePosition,
+            activePosition: livePosition,
             pendingOrders,
-            sessionPnl: sessionPnl + (activePosition?.unrealizedPnl || 0), // Total P&L
+            sessionPnl: sessionPnl + (livePosition?.unrealizedPnl || 0), // Total P&L
 
             accounts,
             activeAccount,
             setActiveAccount,
             refreshAccounts,
             refreshTrades,
+
+            strategies,
+            activeStrategy,
+            setActiveStrategy,
 
             executeOrder,
             cancelOrder,

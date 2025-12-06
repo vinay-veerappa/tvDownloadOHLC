@@ -66,6 +66,8 @@ export async function createTrade(data: CreateTradeParams) {
         return { success: true, data: trade }
     } catch (error) {
         console.error("createTrade Error:", error)
+        // Log the data that caused the error
+        console.error("Payload:", data)
         return { success: false, error: "Failed to create trade" }
     }
 }

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { TopToolbar } from './top-toolbar'
 import { ChartWrapper, type NavigationFunctions } from './chart-wrapper'
 import { BottomBar } from './bottom-bar'
+import { BottomPanel } from './trading/bottom-panel'
 import { TradingProvider } from '@/context/trading-context'
 import type { MagnetMode } from '@/lib/charts/magnet-utils'
 
@@ -83,53 +84,69 @@ export function ChartPageClient({
         setDataRange(range)
     }, [])
 
+    // Bottom Panel state
+    const [isPanelOpen, setIsPanelOpen] = useState(false)
+
     return (
-        <TradingProvider ticker={ticker}>
-            {/* Top Toolbar */}
-            <div className="border-b">
-                <TopToolbar
-                    tickers={tickers}
-                    timeframes={timeframes}
-                    tickerMap={tickerMap}
-                    magnetMode={magnetMode}
-                    onMagnetModeChange={handleMagnetModeChange}
-                />
-            </div>
+        <TradingProvider>
+            <div className="flex flex-col h-screen overflow-hidden bg-[#131722]">
+                {/* Top Toolbar */}
+                <div className="flex-none border-b border-[#2a2e39]">
+                    <TopToolbar
+                        tickers={tickers}
+                        timeframes={timeframes}
+                        tickerMap={tickerMap}
+                        magnetMode={magnetMode}
+                        onMagnetModeChange={handleMagnetModeChange}
+                    />
+                </div>
 
-            {/* Chart Wrapper */}
-            <div className="flex-1 p-0 relative min-h-0">
-                <ChartWrapper
-                    ticker={ticker}
-                    timeframe={timeframe}
-                    style={style}
-                    indicators={indicators}
-                    magnetMode={magnetMode}
-                    displayTimezone={displayTimezone}
-                    onNavigationReady={handleNavigationReady}
-                    onReplayStateChange={handleReplayStateChange}
-                    onDataLoad={handleDataLoad}
-                />
-            </div>
+                {/* Chart Wrapper (Flex Grow) */}
+                <div className="flex-1 min-h-0 relative">
+                    <ChartWrapper
+                        ticker={ticker}
+                        timeframe={timeframe}
+                        style={style}
+                        indicators={indicators}
+                        magnetMode={magnetMode}
+                        displayTimezone={displayTimezone}
+                        onNavigationReady={handleNavigationReady}
+                        onReplayStateChange={handleReplayStateChange}
+                        onDataLoad={handleDataLoad}
+                    />
+                </div>
 
-            {/* Bottom Bar with Timezone Selector and Navigation */}
-            <BottomBar
-                timezone={displayTimezone}
-                onTimezoneChange={handleTimezoneChange}
-                onScrollByBars={navigation?.scrollByBars}
-                onScrollToStart={navigation?.scrollToStart}
-                onScrollToEnd={navigation?.scrollToEnd}
-                onScrollToTime={navigation?.scrollToTime}
-                dataRange={dataRange}
-                // Replay props
-                onStartReplay={navigation?.startReplay}
-                onStartReplaySelection={navigation?.startReplaySelection}
-                onStepForward={navigation?.stepForward}
-                onStepBack={navigation?.stepBack}
-                onStopReplay={navigation?.stopReplay}
-                isReplayMode={replayState.isReplayMode}
-                replayIndex={replayState.index}
-                totalBars={replayState.total}
-            />
+                {/* Bottom Bar (Status/Controls) - Flex None */}
+                <div className="flex-none border-t border-[#2a2e39]">
+                    <BottomBar
+                        timezone={displayTimezone}
+                        onTimezoneChange={handleTimezoneChange}
+                        onScrollByBars={navigation?.scrollByBars}
+                        onScrollToStart={navigation?.scrollToStart}
+                        onScrollToEnd={navigation?.scrollToEnd}
+                        onScrollToTime={navigation?.scrollToTime}
+                        dataRange={dataRange}
+                        // Replay props
+                        onStartReplay={navigation?.startReplay}
+                        onStartReplaySelection={navigation?.startReplaySelection}
+                        onStepForward={navigation?.stepForward}
+                        onStepBack={navigation?.stepBack}
+                        onStopReplay={navigation?.stopReplay}
+                        isReplayMode={replayState.isReplayMode}
+                        replayIndex={replayState.index}
+                        totalBars={replayState.total}
+                    />
+                </div>
+
+                {/* Trading Panel (Docked Bottom) - Flex None */}
+                <div className="flex-none z-20">
+                    <BottomPanel
+                        isOpen={isPanelOpen}
+                        onToggle={() => setIsPanelOpen(!isPanelOpen)}
+                        height={250}
+                    />
+                </div>
+            </div>
         </TradingProvider>
     )
 }
