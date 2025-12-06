@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { TopToolbar } from './top-toolbar'
 import { ChartWrapper, type NavigationFunctions } from './chart-wrapper'
 import { BottomBar } from './bottom-bar'
+import { TradingProvider } from '@/context/trading-context'
 import type { MagnetMode } from '@/lib/charts/magnet-utils'
 
 interface ChartPageClientProps {
@@ -83,7 +84,7 @@ export function ChartPageClient({
     }, [])
 
     return (
-        <>
+        <TradingProvider ticker={ticker}>
             {/* Top Toolbar */}
             <div className="border-b">
                 <TopToolbar
@@ -92,19 +93,7 @@ export function ChartPageClient({
                     tickerMap={tickerMap}
                     magnetMode={magnetMode}
                     onMagnetModeChange={handleMagnetModeChange}
-                >
-                    <div className="flex items-center gap-4 px-4">
-                        <div className="h-4 w-[1px] bg-border" />
-                        <div className="flex items-center gap-2 text-sm">
-                            <span className="text-muted-foreground">Trades:</span>
-                            <span className="font-bold">0</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-sm">
-                            <span className="text-muted-foreground">Win Rate:</span>
-                            <span className="font-bold">0%</span>
-                        </div>
-                    </div>
-                </TopToolbar>
+                />
             </div>
 
             {/* Chart Wrapper */}
@@ -141,6 +130,6 @@ export function ChartPageClient({
                 replayIndex={replayState.index}
                 totalBars={replayState.total}
             />
-        </>
+        </TradingProvider>
     )
 }

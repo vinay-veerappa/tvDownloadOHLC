@@ -15,12 +15,23 @@ model Trade {
   ticker      String
   entryDate   DateTime
   exitDate    DateTime?
-  entryPrice  Float
+  entryPrice  Float?   // Optional for Pending orders until filled
   exitPrice   Float?
   quantity    Float
   direction   String   // "LONG" or "SHORT"
-  status      String   // "OPEN", "CLOSED"
+  status      String   // "OPEN", "CLOSED", "PENDING", "CANCELLED"
+  
+  // Advanced Order Fields
+  orderType      String   @default("MARKET") // "MARKET", "LIMIT", "STOP"
+  limitPrice     Float?
+  stopPrice      Float?   // Trigger price for Stop orders
+  
+  // Bracket Orders
+  stopLoss       Float?
+  takeProfit     Float?
+  
   pnl         Float?
+  fees        Float?
   notes       String?
   tags        Tag[]
   

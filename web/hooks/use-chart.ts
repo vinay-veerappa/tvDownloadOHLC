@@ -304,6 +304,26 @@ export function useChart(
         return range ? Math.floor((range.from + range.to) / 2) : null
     }
 
+    const getVisibleTimeRange = () => {
+        if (!chartInstance || !seriesInstance || data.length === 0) return null
+
+        // Logical range
+        const range = chartInstance.timeScale().getVisibleLogicalRange()
+        if (!range) return null
+
+        // Safe mapping: logic index -> data array index
+        const leftIndex = Math.floor(Math.max(0, range.from))
+        const rightIndex = Math.ceil(Math.min(data.length - 1, range.to))
+
+        if (leftIndex < 0 || rightIndex >= data.length || leftIndex > rightIndex) return null
+
+        return {
+            start: data[leftIndex].time,
+            end: data[rightIndex].time,
+            center: data[Math.floor((leftIndex + rightIndex) / 2)].time
+        }
+    }
+
     return {
         chart: chartInstance,
         series: seriesInstance,
@@ -314,7 +334,8 @@ export function useChart(
         scrollToStart,
         scrollToEnd,
         getDataRange,
-        getVisibleBarIndex
+        getVisibleBarIndex,
+        getVisibleTimeRange
     }
 }
 
