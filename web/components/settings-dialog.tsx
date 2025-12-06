@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { Monitor, Bell, CandlestickChart, MousePointer2 } from "lucide-react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
@@ -24,6 +24,9 @@ export function SettingsDialog({ open, onOpenChange, showTrading, onToggleTradin
             <DialogContent className="max-w-[800px] h-[600px] flex flex-col p-0 gap-0">
                 <DialogHeader className="px-6 py-4 border-b shrink-0">
                     <DialogTitle>Chart Settings</DialogTitle>
+                    <DialogDescription className="sr-only">
+                        Configure chart appearance, trading options, and other settings.
+                    </DialogDescription>
                 </DialogHeader>
 
                 <div className="flex flex-1 overflow-hidden">
