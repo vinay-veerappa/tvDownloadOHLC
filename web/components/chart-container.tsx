@@ -57,7 +57,8 @@ export interface ChartContainerRef {
     scrollToTime: (time: number) => void;
     getDataRange: () => { start: number; end: number; totalBars: number } | null;
     // Replay mode functions
-    startReplay: (fromIndex?: number) => void;
+    startReplay: (options?: { index?: number, time?: number }) => void;
+    startReplaySelection: () => void;
     stepForward: () => void;
     stepBack: () => void;
     stopReplay: () => void;
@@ -77,6 +78,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     // Replay mode state - progressive bar reveal
     const [replayMode, setReplayMode] = useState(false)
     const [replayIndex, setReplayIndex] = useState(0) // Current bar position in replay
+    const [isSelectingReplayStart, setIsSelectingReplayStart] = useState(false)
 
     // Notify parent of replay state changes
     useEffect(() => {
@@ -107,12 +109,19 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const { chart, series, primitives, scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data, markers, displayTimezone)
 
     // Replay control functions
-    const startReplay = (fromIndex?: number) => {
-        const startIdx = fromIndex ?? 0
+    const startReplay = (options?: { index?: number, time?: number }) => {
+        let startIdx = 0
+
+        if (options?.time !== undefined) {
+            startIdx = findIndexForTime(options.time)
+        } else if (options?.index !== undefined) {
+            startIdx = options.index
+        }
+
         setReplayIndex(startIdx)
         setReplayMode(true)
-        // Scroll to right edge to see new bars appear
-        chart?.timeScale().scrollToRealTime()
+        // Scroll to right edge to see new bars appear (with slight delay for state update)
+        setTimeout(() => chart?.timeScale().scrollToRealTime(), 50)
     }
 
     const stepForward = () => {
@@ -130,8 +139,52 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
     const stopReplay = () => {
         setReplayMode(false)
+        setReplayMode(false)
+        setIsSelectingReplayStart(false)
         // Reset to show all data
         setWindowStart(Math.max(0, fullData.length - windowSize))
+    }
+
+    // Handle interactive replay selection click
+    useEffect(() => {
+        if (!chart || !isSelectingReplayStart) return
+
+        const handleChartClick = (param: any) => {
+            if (param.time) {
+                startReplay({ time: param.time as number })
+                setIsSelectingReplayStart(false)
+                toast.info(`Replay started from selected time`)
+            }
+        }
+
+        chart.subscribeClick(handleChartClick)
+
+        // Update cursor logic if possible via ref manipulation or overlay
+        // NOTE: Lightweight charts manages its own cursor, but we can try setting style on container
+        if (chartContainerRef.current) {
+            chartContainerRef.current.style.cursor = 'crosshair'
+        }
+
+        return () => {
+            chart.unsubscribeClick(handleChartClick)
+            if (chartContainerRef.current) {
+                chartContainerRef.current.style.cursor = 'default'
+            }
+        }
+    }, [chart, isSelectingReplayStart, fullData]) // fullData needed for findIndex inside startReplay? startReplay is stable enough
+
+    const startReplaySelection = () => {
+        setIsSelectingReplayStart(true)
+        toast.info("Select a bar to start replay")
+    }
+
+    // Helper to find index for time
+    const findIndexForTime = (time: number) => {
+        if (!fullData.length) return 0
+        // Find closest index
+        // Data is sorted by time
+        const idx = fullData.findIndex(item => item.time >= time)
+        return idx === -1 ? fullData.length - 1 : idx
     }
 
     // Expose navigation functions via ref
@@ -141,17 +194,29 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         scrollByBars: replayMode ? stepForward : scrollByBars,
         scrollToStart: replayMode ? () => setReplayIndex(0) : scrollToStart,
         scrollToEnd: replayMode ? () => setReplayIndex(fullData.length - 1) : scrollToEnd,
-        scrollToTime,
+        scrollToTime: (time: number) => {
+            if (replayMode) {
+                // In replay mode, jump replay index to this time
+                const idx = findIndexForTime(time)
+                setReplayIndex(idx)
+                // Force chart to scroll to this new end point
+                setTimeout(() => chart?.timeScale().scrollToRealTime(), 50)
+            } else {
+                scrollToTime(time)
+            }
+        },
         getDataRange,
         // Replay functions
         startReplay,
+        startReplaySelection,
         stepForward,
         stepBack,
         stopReplay,
         isReplayMode: () => replayMode,
         getReplayIndex: () => replayIndex,
         getTotalBars: () => fullData.length
-    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData.length, chart, windowSize])
+    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart, windowSize])
+
 
     const { openTradeDialog } = useTradeContext()
 

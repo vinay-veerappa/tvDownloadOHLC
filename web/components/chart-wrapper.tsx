@@ -21,7 +21,8 @@ export interface NavigationFunctions {
     scrollToTime: (time: number) => void
     getDataRange: () => { start: number; end: number; totalBars: number } | null
     // Replay mode functions
-    startReplay: (fromIndex?: number) => void
+    startReplay: (options?: { index?: number, time?: number }) => void
+    startReplaySelection: () => void
     stepForward: () => void
     stepBack: () => void
     stopReplay: () => void
@@ -76,7 +77,8 @@ export function ChartWrapper(props: ChartWrapperProps) {
                     stopReplay: ref.stopReplay,
                     isReplayMode: ref.isReplayMode,
                     getReplayIndex: ref.getReplayIndex,
-                    getTotalBars: ref.getTotalBars
+                    getTotalBars: ref.getTotalBars,
+                    startReplaySelection: ref.startReplaySelection
                 })
             }
         }, 500)

@@ -127,6 +127,7 @@ export function ChartPageClient({
                 dataRange={dataRange}
                 // Replay props
                 onStartReplay={navigation?.startReplay}
+                onStartReplaySelection={navigation?.startReplaySelection}
                 onStepForward={navigation?.stepForward}
                 onStepBack={navigation?.stepBack}
                 onStopReplay={navigation?.stopReplay}
