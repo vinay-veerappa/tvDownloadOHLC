@@ -23,12 +23,12 @@ interface RightSidebarProps {
     onDeleteDrawing: (id: string) => void
     onDeleteIndicator: (type: string) => void
     onEditDrawing?: (id: string) => void
+    onEditIndicator?: (type: string) => void
     selection?: { type: 'drawing' | 'indicator', id: string } | null
     onSelect?: (selection: { type: 'drawing' | 'indicator', id: string } | null) => void
 }
 
-
-export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIndicator, onEditDrawing, selection, onSelect }: RightSidebarProps) {
+export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIndicator, onEditDrawing, onEditIndicator, selection, onSelect }: RightSidebarProps) {
     const [collapsed, setCollapsed] = React.useState(false)
 
     const totalItems = drawings.length + indicators.length
@@ -82,10 +82,7 @@ export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIn
                                                         className="h-6 w-6 mr-1"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            // For indicators, we can reuse onEditDrawing or better, have onEditIndicator (but onEditDrawing takes ID which serves as type here)
-                                                            // Actually, onEditDrawing prop is typed as (id:string)=>void. 
-                                                            // Let's use it for now as the ID for indicator is its type.
-                                                            if (onEditDrawing) onEditDrawing(indicator.type);
+                                                            if (onEditIndicator) onEditIndicator(indicator.type);
                                                         }}
                                                     >
                                                         <Settings className="h-3 w-3" />

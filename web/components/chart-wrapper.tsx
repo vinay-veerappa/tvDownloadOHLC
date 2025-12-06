@@ -6,6 +6,7 @@ import { LeftToolbar, DrawingTool } from './left-toolbar'
 import { RightSidebar, Drawing } from './right-sidebar'
 import type { ChartContainerRef } from './chart-container'
 import { IndicatorStorage } from '@/lib/indicator-storage'
+import { IndicatorSettingsModal } from './indicator-settings-modal'
 import type { MagnetMode } from '@/lib/charts/magnet-utils'
 
 const ChartContainer = dynamic(
@@ -27,17 +28,19 @@ export function ChartWrapper(props: ChartWrapperProps) {
     const chartRef = useRef<ChartContainerRef>(null)
 
     // Load indicators from storage
-    // TODO: When multi-pane support is added, pass paneId to getDefaultChartId()
     const chartId = IndicatorStorage.getDefaultChartId()
     const [indicators, setIndicators] = useState<string[]>([])
 
+    // Indicator Settings Modal State
+    const [indicatorSettingsOpen, setIndicatorSettingsOpen] = useState(false)
+    const [editingIndicator, setEditingIndicator] = useState<string | null>(null)
+    const [indicatorOptions, setIndicatorOptions] = useState<Record<string, any>>({})
+
     useEffect(() => {
-        // Load from storage or fall back to URL params
         const savedIndicators = IndicatorStorage.getIndicators(chartId)
         if (savedIndicators.length > 0) {
             setIndicators(savedIndicators.filter(i => i.enabled).map(i => i.type))
         } else if (props.indicators && props.indicators.length > 0) {
-            // Initialize from URL params
             const initialIndicators = props.indicators.map((type: string) => ({
                 type,
                 enabled: true,
@@ -70,10 +73,8 @@ export function ChartWrapper(props: ChartWrapperProps) {
         IndicatorStorage.removeIndicator(chartId, type)
         setIndicators(prev => prev.filter(ind => ind !== type))
         if (selection?.id === type) setSelection(null);
-        // Force chart update if needed, though indicators prop change should trigger it
     }, [chartId, selection?.id]);
 
-    // Unified Delete Handler (triggered by Delete key or UI)
     const handleDeleteSelection = useCallback(() => {
         if (!selection) return;
 
@@ -89,39 +90,106 @@ export function ChartWrapper(props: ChartWrapperProps) {
         if (selection?.id === id) setSelection(null);
     }, [selection?.id]);
 
+    // Indicator Settings Handlers
+    const handleEditIndicator = useCallback((type: string) => {
+        // Parse existing options from type string (e.g., "sma:9" -> period=9)
+        const [indType, param] = type.split(":");
+        const existingOptions: Record<string, any> = {};
+
+        if (indType === 'sma' || indType === 'ema') {
+            existingOptions.period = param ? parseInt(param) : 9;
+            existingOptions.color = indType === 'sma' ? '#2962FF' : '#FF6D00';
+            existingOptions.lineWidth = 1;
+        }
+
+        setEditingIndicator(type);
+        setIndicatorOptions(existingOptions);
+        setIndicatorSettingsOpen(true);
+    }, []);
+
+    const handleSaveIndicatorSettings = useCallback((newOptions: Record<string, any>) => {
+        if (!editingIndicator) return;
+
+        const [indType] = editingIndicator.split(":");
+
+        // Build new indicator string with updated params
+        let newIndicatorStr = indType;
+        if (indType === 'sma' || indType === 'ema') {
+            newIndicatorStr = `${indType}:${newOptions.period || 9}`;
+        }
+
+        // Update indicators list
+        setIndicators(prev => {
+            const idx = prev.findIndex(i => i === editingIndicator);
+            if (idx === -1) return prev;
+            const updated = [...prev];
+            updated[idx] = newIndicatorStr;
+            return updated;
+        });
+
+        // Update storage
+        const savedIndicators = IndicatorStorage.getIndicators(chartId);
+        const updated = savedIndicators.map(ind => {
+            if (ind.type === editingIndicator) {
+                return { ...ind, type: newIndicatorStr, params: newOptions };
+            }
+            return ind;
+        });
+        IndicatorStorage.saveIndicators(chartId, updated);
+
+        setEditingIndicator(null);
+    }, [editingIndicator, chartId]);
+
     // Map indicator types to display objects for sidebar
-    const indicatorObjects = indicators.map(type => ({
-        type,
-        label: type.toUpperCase() === 'SMA' ? 'Moving Average (SMA)' :
-            type.toUpperCase() === 'EMA' ? 'Exponential MA (EMA)' : type.toUpperCase()
-    }))
+    const indicatorObjects = indicators.map(type => {
+        const [indType, param] = type.split(":");
+        let label = type.toUpperCase();
+        if (indType === 'sma') label = `SMA (${param || 9})`;
+        else if (indType === 'ema') label = `EMA (${param || 9})`;
+        else if (indType === 'sessions') label = 'Session Highlighting';
+        else if (indType === 'watermark') label = `Watermark: ${param || 'Text'}`;
+        return { type, label };
+    });
 
     return (
-        <div className="flex flex-1 h-full overflow-hidden">
-            <LeftToolbar selectedTool={selectedTool} onToolSelect={setSelectedTool} />
-            <div className="flex-1 relative">
-                <ChartContainer
-                    ref={chartRef}
-                    {...props}
-                    selectedTool={selectedTool}
-                    onToolSelect={setSelectedTool}
-                    onDrawingCreated={handleDrawingCreated}
-                    onDrawingDeleted={handleChartDrawingDeleted}
-                    indicators={indicators}
+        <>
+            <div className="flex flex-1 h-full overflow-hidden">
+                <LeftToolbar selectedTool={selectedTool} onToolSelect={setSelectedTool} />
+                <div className="flex-1 relative">
+                    <ChartContainer
+                        ref={chartRef}
+                        {...props}
+                        selectedTool={selectedTool}
+                        onToolSelect={setSelectedTool}
+                        onDrawingCreated={handleDrawingCreated}
+                        onDrawingDeleted={handleChartDrawingDeleted}
+                        indicators={indicators}
+                        selection={selection}
+                        onSelectionChange={setSelection}
+                        onDeleteSelection={handleDeleteSelection}
+                    />
+                </div>
+                <RightSidebar
+                    drawings={drawings}
+                    indicators={indicatorObjects}
+                    onDeleteDrawing={handleDeleteDrawing}
+                    onDeleteIndicator={handleDeleteIndicator}
+                    onEditDrawing={(id) => chartRef.current?.editDrawing(id)}
+                    onEditIndicator={handleEditIndicator}
                     selection={selection}
-                    onSelectionChange={setSelection}
-                    onDeleteSelection={handleDeleteSelection}
+                    onSelect={setSelection}
                 />
             </div>
-            <RightSidebar
-                drawings={drawings}
-                indicators={indicatorObjects}
-                onDeleteDrawing={handleDeleteDrawing}
-                onDeleteIndicator={handleDeleteIndicator}
-                onEditDrawing={(id) => chartRef.current?.editDrawing(id)}
-                selection={selection}
-                onSelect={setSelection}
+
+            {/* Indicator Settings Modal */}
+            <IndicatorSettingsModal
+                open={indicatorSettingsOpen}
+                onOpenChange={setIndicatorSettingsOpen}
+                indicatorType={editingIndicator || ''}
+                initialOptions={indicatorOptions}
+                onSave={handleSaveIndicatorSettings}
             />
-        </div>
+        </>
     )
 }
+
