@@ -233,7 +233,7 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
 
         if (tradeId) {
             try {
-                await closeTrade(tradeId, {
+                const res = await closeTrade(tradeId, {
                     exitPrice,
                     exitDate: new Date(),
                     pnl,
@@ -241,9 +241,19 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
                     mfe: Number(mfe.toFixed(2)),
                     duration
                 })
-                toast.success(`Position Closed. Realized P&L: $${pnl.toFixed(2)}`)
-                refreshTrades()
-            } catch (e) { console.error("Failed to close trade", e) }
+
+                if (res.success) {
+                    toast.success(`Position Closed. Realized P&L: $${pnl.toFixed(2)}`)
+                    refreshTrades()
+                } else {
+                    console.error("DB Close Failed:", res.error)
+                    toast.error(`DB Update Failed: ${res.error}`)
+                    // Ideally restore position here or flag error
+                }
+            } catch (e) {
+                console.error("Failed to close trade", e)
+                toast.error("Network/Server Error closing trade")
+            }
         } else {
             toast.warning("Position closed locally but no open trade found in DB.")
         }
@@ -385,14 +395,46 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
                     toast.error("Failed to place order")
                 }
             } else {
-                // CLOSE / REVERSE
-                const isClosing = (activePosition.direction === 'LONG' && params.direction === 'SELL') ||
-                    (activePosition.direction === 'SHORT' && params.direction === 'BUY')
-
-                if (isClosing) {
-                    await closePosHelper(activePosition, currentPrice)
-                } else {
+                const isSameDirection = activePosition.direction === tradeDirection
+                if (isSameDirection) {
                     toast.error("Adding to position not implemented")
+                    return
+                }
+
+                // Check for Reversal (Qty > Current)
+                const qtyToClose = Math.min(activePosition.quantity, params.quantity)
+                const qtyToReverse = params.quantity - qtyToClose
+
+                // 1. Close Current
+                if (qtyToClose === activePosition.quantity) {
+                    await closePosHelper(activePosition, currentPrice)
+
+                    // 2. Open Reverse if needed
+                    if (qtyToReverse > 0) {
+                        const res = await createTrade({
+                            ticker: params.ticker,
+                            entryDate: new Date(),
+                            entryPrice: currentPrice,
+                            quantity: qtyToReverse,
+                            direction: tradeDirection,
+                            orderType: 'MARKET',
+                            status: 'OPEN',
+                            stopLoss: params.stopLoss,
+                            takeProfit: params.takeProfit,
+                            accountId: activeAccount.id,
+                            strategyId: activeStrategy?.id
+                        })
+
+                        if (res.success && res.data) {
+                            await openPosition(params.ticker, tradeDirection, qtyToReverse, currentPrice, params.stopLoss, params.takeProfit, res.data.id)
+                            toast.success(`Position Reversed (Opened ${tradeDirection})`)
+                            refreshTrades()
+                        } else {
+                            toast.error("Failed to open reverse position")
+                        }
+                    }
+                } else {
+                    toast.error("Partial close not implemented")
                 }
             }
             return
