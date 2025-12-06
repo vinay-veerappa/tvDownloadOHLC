@@ -15,7 +15,10 @@ import {
     Pause,
     Calendar as CalendarIcon,
     RotateCcw,
-    Square
+    Square,
+    MousePointerClick,
+    Shuffle,
+    SkipBack
 } from "lucide-react"
 
 interface PlaybackControlsProps {
@@ -26,7 +29,8 @@ interface PlaybackControlsProps {
     dataRange: { start: number; end: number; totalBars: number } | null
     displayTimezone?: string
     // Replay functions
-    onStartReplay?: (fromIndex?: number) => void
+    onStartReplay?: (options?: { index?: number, time?: number }) => void
+    onStartReplaySelection?: () => void
     onStepForward?: () => void
     onStepBack?: () => void
     onStopReplay?: () => void
@@ -43,6 +47,7 @@ export function PlaybackControls({
     dataRange,
     displayTimezone = 'America/New_York',
     onStartReplay,
+    onStartReplaySelection,
     onStepForward,
     onStepBack,
     onStopReplay,
@@ -54,6 +59,8 @@ export function PlaybackControls({
     const [playbackSpeed, setPlaybackSpeed] = React.useState("1")
     const [selectedDate, setSelectedDate] = React.useState<Date | undefined>()
     const playIntervalRef = React.useRef<NodeJS.Timeout | null>(null)
+    const [replayDate, setReplayDate] = React.useState<Date | undefined>()
+    const [isReplayPopoverOpen, setIsReplayPopoverOpen] = React.useState(false)
 
     // Handle playback - in replay mode, advance replayIndex; otherwise scroll
     React.useEffect(() => {
@@ -64,6 +71,7 @@ export function PlaybackControls({
                 if (isReplayMode && onStepForward) {
                     onStepForward()
                 } else {
+                    // Logic update: In normal mode "play" scrolls right
                     onScrollByBars(1)
                 }
             }, interval)
@@ -144,10 +152,31 @@ export function PlaybackControls({
         }
     }
 
-    const handleStartReplay = () => {
-        if (onStartReplay) {
-            onStartReplay(0) // Start from beginning
-            setIsPlaying(true)
+    const handleReplayStartSelect = (date: Date | undefined) => {
+        if (date && onStartReplay) {
+            setReplayDate(date)
+            const timestamp = Math.floor(date.getTime() / 1000)
+            onStartReplay({ time: timestamp })
+            setIsReplayPopoverOpen(false)
+        }
+    }
+
+    const handleSelectBar = () => {
+        setIsReplayPopoverOpen(false)
+        onStartReplaySelection?.()
+    }
+
+    const handleFirstAvailable = () => {
+        setIsReplayPopoverOpen(false)
+        onStartReplay?.({ index: 0 })
+    }
+
+    const handleRandom = () => {
+        setIsReplayPopoverOpen(false)
+        if (totalBars > 0 && onStartReplay) {
+            // Random index between 0 and totalBars - 1
+            const randomIndex = Math.floor(Math.random() * totalBars)
+            onStartReplay({ index: randomIndex })
         }
     }
 
@@ -179,7 +208,7 @@ export function PlaybackControls({
 
     return (
         <div className="flex items-center gap-2">
-            {/* Date Picker */}
+            {/* Date Picker (Normal Navigation) */}
             <Popover>
                 <PopoverTrigger asChild>
                     <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1">
@@ -214,16 +243,55 @@ export function PlaybackControls({
                             Stop
                         </Button>
                     ) : (
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 px-2 text-xs gap-1"
-                            onClick={handleStartReplay}
-                            title="Start Replay Mode"
-                        >
-                            <RotateCcw className="h-3 w-3" />
-                            Replay
-                        </Button>
+                        <Popover open={isReplayPopoverOpen} onOpenChange={setIsReplayPopoverOpen}>
+                            <PopoverTrigger asChild>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-6 px-2 text-xs gap-1"
+                                    title="Start Replay Mode"
+                                >
+                                    <RotateCcw className="h-3 w-3" />
+                                    Replay...
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-2" align="start">
+                                <div className="flex flex-col gap-1 w-[280px]">
+                                    <h4 className="font-medium text-xs text-muted-foreground px-2 py-1 uppercase tracking-wider">Replay Timing</h4>
+
+                                    <Button variant="ghost" size="sm" className="justify-start gap-2 h-8 px-2" onClick={handleSelectBar}>
+                                        <MousePointerClick className="h-4 w-4" />
+                                        Select bar
+                                    </Button>
+
+                                    <div className="space-y-1">
+                                        <Button variant="ghost" size="sm" className="justify-start gap-2 h-8 px-2 w-full" onClick={() => { }}>
+                                            <CalendarIcon className="h-4 w-4" />
+                                            Select date...
+                                        </Button>
+                                        <div className="px-2 pb-2">
+                                            <Calendar
+                                                mode="single"
+                                                selected={replayDate}
+                                                onSelect={handleReplayStartSelect}
+                                                initialFocus
+                                                className="rounded-md border shadow-sm"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <Button variant="ghost" size="sm" className="justify-start gap-2 h-8 px-2" onClick={handleFirstAvailable}>
+                                        <SkipBack className="h-4 w-4" />
+                                        Select the first available date
+                                    </Button>
+
+                                    <Button variant="ghost" size="sm" className="justify-start gap-2 h-8 px-2" onClick={handleRandom}>
+                                        <Shuffle className="h-4 w-4" />
+                                        Random bar
+                                    </Button>
+                                </div>
+                            </PopoverContent>
+                        </Popover>
                     )}
                     <div className="h-4 w-[1px] bg-border" />
                 </>
