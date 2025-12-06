@@ -205,7 +205,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
         <>
             <div className="flex flex-1 h-full overflow-hidden">
                 <LeftToolbar selectedTool={selectedTool} onToolSelect={setSelectedTool} />
-                <div className="flex-1 relative">
+                <div className="flex-1 relative min-w-0">
                     <ChartContainer
                         ref={chartRef}
                         {...props}
