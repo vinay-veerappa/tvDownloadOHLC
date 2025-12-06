@@ -46,19 +46,25 @@ export function ChartWrapper(props: ChartWrapperProps) {
     const [editingIndicator, setEditingIndicator] = useState<string | null>(null)
     const [indicatorOptions, setIndicatorOptions] = useState<Record<string, any>>({})
 
-    // Notify parent when navigation is ready
+    // Notify parent when navigation is ready (only once)
+    const navReadyRef = useRef(false)
     useEffect(() => {
-        if (chartRef.current && props.onNavigationReady) {
-            const ref = chartRef.current
-            props.onNavigationReady({
-                scrollByBars: ref.scrollByBars,
-                scrollToStart: ref.scrollToStart,
-                scrollToEnd: ref.scrollToEnd,
-                scrollToTime: ref.scrollToTime,
-                getDataRange: ref.getDataRange
-            })
-        }
-    })
+        // Use a short timeout to ensure chartRef is populated after ChartContainer mounts
+        const timer = setTimeout(() => {
+            if (chartRef.current && props.onNavigationReady && !navReadyRef.current) {
+                navReadyRef.current = true
+                const ref = chartRef.current
+                props.onNavigationReady({
+                    scrollByBars: ref.scrollByBars,
+                    scrollToStart: ref.scrollToStart,
+                    scrollToEnd: ref.scrollToEnd,
+                    scrollToTime: ref.scrollToTime,
+                    getDataRange: ref.getDataRange
+                })
+            }
+        }, 500)
+        return () => clearTimeout(timer)
+    }, [props.onNavigationReady])
 
     useEffect(() => {
         const savedIndicators = IndicatorStorage.getIndicators(chartId)
