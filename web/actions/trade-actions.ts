@@ -42,6 +42,30 @@ export async function createTrade(data: {
 
         return { success: true, data: trade }
     } catch (error) {
+        console.error("createTrade Error:", error)
         return { success: false, error: "Failed to create trade" }
+    }
+}
+
+export async function closeTrade(id: string, data: {
+    exitPrice: number
+    exitDate: Date
+    pnl: number
+}) {
+    try {
+        const trade = await db.trade.update({
+            where: { id },
+            data: {
+                ...data,
+                status: "CLOSED"
+            }
+        })
+
+        revalidatePath("/")
+        revalidatePath("/journal")
+
+        return { success: true, data: trade }
+    } catch (error) {
+        return { success: false, error: "Failed to close trade" }
     }
 }

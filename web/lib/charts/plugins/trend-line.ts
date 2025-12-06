@@ -378,6 +378,9 @@ export class TrendLineTool {
     private _drawing: boolean = false;
     private _clickHandler: (param: any) => void;
     private _moveHandler: (param: any) => void;
+    private _keyDownHandler: (e: KeyboardEvent) => void;
+    private _keyUpHandler: (e: KeyboardEvent) => void;
+    private _shiftPressed: boolean = false;
     private _onDrawingCreated?: (drawing: TrendLine) => void;
     private _magnetMode: 'off' | 'weak' | 'strong';
     private _ohlcData: any[];
@@ -396,6 +399,8 @@ export class TrendLineTool {
 
         this._clickHandler = this._onClick.bind(this);
         this._moveHandler = this._onMouseMove.bind(this);
+        this._keyDownHandler = (e: KeyboardEvent) => { if (e.key === 'Shift') this._shiftPressed = true; };
+        this._keyUpHandler = (e: KeyboardEvent) => { if (e.key === 'Shift') this._shiftPressed = false; };
     }
 
 
@@ -403,16 +408,22 @@ export class TrendLineTool {
         this._drawing = true;
         this._startPoint = null;
         this._activeDrawing = null;
+        this._shiftPressed = false;
         this._chart.subscribeClick(this._clickHandler);
         this._chart.subscribeCrosshairMove(this._moveHandler);
+        window.addEventListener('keydown', this._keyDownHandler);
+        window.addEventListener('keyup', this._keyUpHandler);
     }
 
     stopDrawing() {
         this._drawing = false;
         this._startPoint = null;
         this._activeDrawing = null;
+        this._shiftPressed = false;
         this._chart.unsubscribeClick(this._clickHandler);
         this._chart.unsubscribeCrosshairMove(this._moveHandler);
+        window.removeEventListener('keydown', this._keyDownHandler);
+        window.removeEventListener('keyup', this._keyUpHandler);
     }
 
     isDrawing() {
@@ -427,12 +438,17 @@ export class TrendLineTool {
 
         let priceValue = rawPrice as number;
 
-        // Apply magnet snapping if enabled
+        // Apply magnet snap first
         if (this._magnetMode !== 'off' && this._ohlcData) {
             const snapped = this._findSnapPrice(param.time, priceValue);
             if (snapped !== null) {
                 priceValue = snapped;
             }
+        }
+
+        // Apply Shift Lock (Horizontal) on 2nd click
+        if (this._activeDrawing && this._startPoint && this._shiftPressed) {
+            priceValue = this._startPoint.price;
         }
 
         if (!this._startPoint) {
@@ -443,7 +459,7 @@ export class TrendLineTool {
                 this._series,
                 this._startPoint,
                 this._startPoint,
-                { lineColor: '#D500F9', lineWidth: 2 }
+                { lineColor: '#2962FF', lineWidth: 2 } // Changed default to Blue to match others
             );
             this._series.attachPrimitive(this._activeDrawing);
         } else {
@@ -474,6 +490,11 @@ export class TrendLineTool {
             if (snapped !== null) {
                 priceValue = snapped;
             }
+        }
+
+        // Apply Shift Lock (Horizontal)
+        if (this._shiftPressed) {
+            priceValue = this._startPoint.price;
         }
 
         this._activeDrawing.updateEnd({ time: param.time, price: priceValue });

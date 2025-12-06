@@ -46,6 +46,15 @@ interface ChartContainerProps {
     onDeleteSelection?: () => void
     onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number }) => void
     onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
+    onPriceChange?: (price: number) => void
+
+    // Trading Props
+    position?: {
+        entryPrice: number
+        direction: 'LONG' | 'SHORT'
+        quantity: number
+        unrealizedPnl: number
+    } | null
 }
 
 export interface ChartContainerRef {
@@ -68,7 +77,7 @@ export interface ChartContainerRef {
     getTotalBars: () => number;
 }
 
-export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad }, ref) => {
+export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad, onPriceChange, position }, ref) => {
     const chartContainerRef = useRef<HTMLDivElement>(null)
 
     // Full data and window state for performance
@@ -110,14 +119,53 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
     const { chart, series, primitives, scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data, markers, displayTimezone)
 
+    // Manage Position Line
+    const positionLineRef = useRef<any>(null)
+
+    useEffect(() => {
+        if (!series) return
+
+        if (position) {
+            const lineOptions: any = {
+                price: position.entryPrice,
+                color: position.direction === 'LONG' ? '#2962FF' : '#F44336',
+                lineWidth: 2,
+                lineStyle: 2, // Dashed
+                axisLabelVisible: true,
+                title: `${position.direction} ${position.quantity} (${position.unrealizedPnl >= 0 ? '+' : ''}${position.unrealizedPnl.toFixed(2)})`,
+            }
+
+            if (positionLineRef.current) {
+                positionLineRef.current.applyOptions(lineOptions)
+            } else {
+                positionLineRef.current = series.createPriceLine(lineOptions)
+            }
+        } else {
+            if (positionLineRef.current) {
+                series.removePriceLine(positionLineRef.current)
+                positionLineRef.current = null
+            }
+        }
+    }, [position, series])
+
+
+
     // Replay: Auto-scroll to end when data updates (new bar revealed)
     useEffect(() => {
+        if (data.length > 0) {
+            const lastBar = data[data.length - 1]
+            // We can assume 'close' is the current price
+            if (lastBar && lastBar.close) {
+                onPriceChange?.(lastBar.close)
+            }
+        }
+
         if (replayMode && data.length > 0) {
             // Force scroll to current "real time" (replay head)
             // Timeout ensures render cycle is complete and series has settled
             setTimeout(() => scrollToEnd(), 0)
         }
-    }, [data, replayMode, scrollToEnd])
+    }, [data, replayMode, scrollToEnd, onPriceChange])
 
     // Replay control functions
     const startReplay = (options?: { index?: number, time?: number }) => {

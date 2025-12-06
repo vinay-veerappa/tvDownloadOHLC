@@ -8,6 +8,10 @@ import type { ChartContainerRef } from './chart-container'
 import { IndicatorStorage } from '@/lib/indicator-storage'
 import { IndicatorSettingsModal } from './indicator-settings-modal'
 import type { MagnetMode } from '@/lib/charts/magnet-utils'
+import { BuySellPanel } from "@/components/trading/buy-sell-panel"
+import { toast } from "sonner"
+import { SettingsDialog } from "@/components/settings-dialog"
+import { useTradingEngine } from "@/hooks/use-trading-engine"
 
 const ChartContainer = dynamic(
     () => import('./chart-container').then((mod) => mod.ChartContainer),
@@ -45,8 +49,20 @@ interface ChartWrapperProps {
 
 export function ChartWrapper(props: ChartWrapperProps) {
     const [selectedTool, setSelectedTool] = useState<DrawingTool>("cursor")
+    const [showTrading, setShowTrading] = useState(false)
+    const [settingsOpen, setSettingsOpen] = useState(false)
     const [drawings, setDrawings] = useState<Drawing[]>([])
     const chartRef = useRef<ChartContainerRef>(null)
+
+    // Live Price State
+    const [currentPrice, setCurrentPrice] = useState<number>(0)
+
+    // Trading Engine
+    const { position, executeOrder } = useTradingEngine({
+        currentPrice,
+        ticker: props.ticker,
+        autoScreenshot: false
+    })
 
     // Load indicators from storage
     const chartId = IndicatorStorage.getDefaultChartId()
@@ -204,8 +220,24 @@ export function ChartWrapper(props: ChartWrapperProps) {
     return (
         <>
             <div className="flex flex-1 h-full overflow-hidden">
-                <LeftToolbar selectedTool={selectedTool} onToolSelect={setSelectedTool} />
+                <LeftToolbar
+                    selectedTool={selectedTool}
+                    onToolSelect={setSelectedTool}
+                    showTrading={showTrading}
+                    onToggleTrading={() => setShowTrading(!showTrading)}
+                />
                 <div className="flex-1 relative min-w-0">
+                    {/* Trading Panel Overlay */}
+                    {showTrading && (
+                        <div className="absolute top-4 left-4 z-20">
+                            <BuySellPanel
+                                currentPrice={currentPrice}
+                                onBuy={(qty) => executeOrder('BUY', qty)}
+                                onSell={(qty) => executeOrder('SELL', qty)}
+                                position={position}
+                            />
+                        </div>
+                    )}
                     <ChartContainer
                         ref={chartRef}
                         {...props}
@@ -217,6 +249,8 @@ export function ChartWrapper(props: ChartWrapperProps) {
                         selection={selection}
                         onSelectionChange={setSelection}
                         onDeleteSelection={handleDeleteSelection}
+                        onPriceChange={setCurrentPrice}
+                        position={position}
                     />
                 </div>
                 <RightSidebar
@@ -228,8 +262,17 @@ export function ChartWrapper(props: ChartWrapperProps) {
                     onEditIndicator={handleEditIndicator}
                     selection={selection}
                     onSelect={setSelection}
+                    onOpenSettings={() => setSettingsOpen(true)}
                 />
             </div>
+
+            {/* General Settings Modal */}
+            <SettingsDialog
+                open={settingsOpen}
+                onOpenChange={setSettingsOpen}
+                showTrading={showTrading}
+                onToggleTrading={() => setShowTrading(!showTrading)}
+            />
 
             {/* Indicator Settings Modal */}
             <IndicatorSettingsModal
