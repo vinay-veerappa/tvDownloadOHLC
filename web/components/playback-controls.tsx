@@ -20,6 +20,7 @@ import {
     Shuffle,
     SkipBack
 } from "lucide-react"
+import { toast } from "sonner"
 
 interface PlaybackControlsProps {
     onScrollByBars: (n: number) => void
@@ -136,7 +137,12 @@ export function PlaybackControls({
                     break
                 case ' ':
                     e.preventDefault()
-                    setIsPlaying(prev => !prev)
+                    if (isReplayMode && totalBars > 0 && replayIndex >= totalBars - 1) {
+                        toast.info("Replay finished")
+                        setIsPlaying(false)
+                    } else {
+                        setIsPlaying(prev => !prev)
+                    }
                     break
                 case 'Escape':
                     if (isReplayMode && onStopReplay) {
@@ -163,6 +169,7 @@ export function PlaybackControls({
         if (date && onStartReplay) {
             setReplayDate(date)
             const timestamp = Math.floor(date.getTime() / 1000)
+            toast.info(`Starting replay from ${format(date, 'MMM d, yyyy')}`)
             onStartReplay({ time: timestamp })
             setIsReplayPopoverOpen(false)
         }
@@ -328,7 +335,13 @@ export function PlaybackControls({
                     variant={isPlaying ? "secondary" : "ghost"}
                     size="icon"
                     className="h-6 w-6"
-                    onClick={() => setIsPlaying(!isPlaying)}
+                    onClick={() => {
+                        if (!isPlaying && isReplayMode && totalBars > 0 && replayIndex >= totalBars - 1) {
+                            toast.info("Replay finished. Restart to play again.")
+                        } else {
+                            setIsPlaying(!isPlaying)
+                        }
+                    }}
                     title="Play/Pause (Space)"
                 >
                     {isPlaying ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}

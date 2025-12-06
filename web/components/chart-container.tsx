@@ -114,7 +114,12 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         let startIdx = 0
 
         if (options?.time !== undefined) {
-            startIdx = findIndexForTime(options.time)
+            const idx = findIndexForTime(options.time)
+            if (idx === -1) {
+                toast.error("Selected date is beyond available data")
+                return
+            }
+            startIdx = idx
         } else if (options?.index !== undefined) {
             startIdx = options.index
         }
@@ -202,7 +207,9 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         // Find closest index
         // Data is sorted by time
         const idx = fullData.findIndex(item => item.time >= time)
-        return idx === -1 ? fullData.length - 1 : idx
+        // If idx is -1, it means all items are < time (time is in future)
+        // Return -1 to indicate invalid selection
+        return idx
     }
 
     // Expose navigation functions via ref
