@@ -45,6 +45,19 @@ Access indicators and plugins via the **"📊 Indicators"** button in the top to
 - **Strategy**: Toggle the "Strategy" button to show/hide strategy signals (if available).
 - **Timezone**: Switch between Exchange and Local timezones.
 
+## ⏪ Replay Mode
+Simulate live market conditions by playing back historical data.
+
+- **Start Replay**: Click the `Replay` button in the top toolbar to open the menu.
+  - **Select Bar**: Click anywhere on the chart start playback from that candle.
+  - **Select Date**: Choose a specific start date from the calendar.
+  - **First Available**: Start from the beginning of the loaded data.
+- **Playback Controls**:
+  - **Play/Pause**: Toggle automatic playback.
+  - **Step**: Advance one candle at a time.
+  - **Speed**: Adjust the playback speed (1x to 10x).
+  - **Stop**: Exit replay mode and return to the live chart.
+
 ## ⌨️ Keyboard Shortcuts
 - **Delete / Backspace**: Delete selected drawing.
 - **Ctrl + Z**: Undo (Not yet implemented).
