@@ -93,6 +93,11 @@ class SessionHighlightingPaneView {
     }
 
     update() {
+        if (!this._source.isAttached()) {
+            this._data.data = [];
+            return;
+        }
+
         const timeScale = this._source.chart.timeScale();
         this._data.data = this._source._backgroundColors.map(d => ({
             x: timeScale.timeToCoordinate(d.time) ?? -100,
@@ -182,6 +187,11 @@ export class SessionHighlighting extends PluginBase implements ISeriesPrimitive<
      * Calculate background color for each bar based on session definitions
      */
     private _calculateBackgroundColors() {
+        if (!this.isAttached()) {
+            this._backgroundColors = [];
+            return;
+        }
+
         const data = this.series.data();
         this._backgroundColors = data.map(dataPoint => {
             const color = this._getSessionColor(dataPoint.time);

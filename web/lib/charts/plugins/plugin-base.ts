@@ -61,6 +61,13 @@ export abstract class PluginBase implements ISeriesPrimitive<Time> {
     }
 
     /**
+     * Check if the plugin is currently attached to a series
+     */
+    public isAttached(): boolean {
+        return this._chart !== undefined && this._series !== undefined;
+    }
+
+    /**
      * Get the chart instance (throws if not attached)
      */
     public get chart(): IChartApi {
