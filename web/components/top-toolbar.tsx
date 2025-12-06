@@ -43,8 +43,9 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
     const router = useRouter()
     const searchParams = useSearchParams()
 
-    const currentTicker = searchParams.get("ticker") || (tickers.length > 0 ? tickers[0] : "")
-    const currentTimeframe = searchParams.get("timeframe") || (timeframes.length > 0 ? timeframes[0] : "1D")
+    // Use same defaults as page.tsx to prevent mismatch
+    const currentTicker = searchParams.get("ticker") || "ES1"
+    const currentTimeframe = searchParams.get("timeframe") || "1D"
     const currentStyle = searchParams.get("style") || "candles"
 
     const [open, setOpen] = React.useState(false)
