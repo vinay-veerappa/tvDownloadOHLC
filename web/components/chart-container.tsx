@@ -1,8 +1,25 @@
 "use client"
 
-import { useEffect, useRef, forwardRef, useImperativeHandle, useState } from "react"
+import { useEffect, useRef, forwardRef, useImperativeHandle, useState, useMemo } from "react"
 import { useChart } from "@/hooks/use-chart"
 import { getChartData } from "@/actions/data-actions"
+
+// Window size based on timeframe for performance
+function getWindowSizeForTimeframe(timeframe: string): number {
+    switch (timeframe) {
+        case '1m':
+        case '5m':
+            return 5000
+        case '15m':
+        case '1h':
+            return 7500
+        case '4h':
+        case 'D':
+        case 'W':
+        default:
+            return 10000
+    }
+}
 import { DrawingTool } from "./left-toolbar"
 import { Drawing } from "./right-sidebar"
 import { PropertiesModal } from "./properties-modal"
@@ -42,7 +59,19 @@ export interface ChartContainerRef {
 
 export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', selection, onSelectionChange, onDeleteSelection }, ref) => {
     const chartContainerRef = useRef<HTMLDivElement>(null)
-    const [data, setData] = useState<any[]>([])
+
+    // Full data and window state for performance
+    const [fullData, setFullData] = useState<any[]>([])
+    const [windowStart, setWindowStart] = useState(0)
+    const windowSize = useMemo(() => getWindowSizeForTimeframe(timeframe), [timeframe])
+
+    // Apply windowing to data for chart performance
+    const data = useMemo(() => {
+        if (fullData.length <= windowSize) return fullData
+        const start = Math.max(0, Math.min(windowStart, fullData.length - windowSize))
+        return fullData.slice(start, start + windowSize)
+    }, [fullData, windowStart, windowSize])
+
     const { chart, series, primitives, scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data, markers, displayTimezone)
 
     // Expose navigation functions via ref
@@ -176,7 +205,9 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             try {
                 const result = await getChartData(ticker, timeframe)
                 if (result.success && result.data) {
-                    setData(result.data)
+                    setFullData(result.data)
+                    // Start at the end of data (most recent)
+                    setWindowStart(Math.max(0, result.data.length - windowSize))
                 } else {
                     toast.error(`Failed to load data for ${ticker} ${timeframe}`)
                 }
