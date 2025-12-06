@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 
 export interface Drawing {
     id: string
-    type: 'trend-line' | 'fibonacci' | 'rectangle' | 'vertical-line' | 'horizontal-line' | 'text' | 'measure'
+    type: 'trend-line' | 'ray' | 'fibonacci' | 'rectangle' | 'vertical-line' | 'horizontal-line' | 'text' | 'measure'
     createdAt: number
 }
 
@@ -26,9 +26,10 @@ interface RightSidebarProps {
     onEditIndicator?: (type: string) => void
     selection?: { type: 'drawing' | 'indicator', id: string } | null
     onSelect?: (selection: { type: 'drawing' | 'indicator', id: string } | null) => void
+    onOpenSettings?: () => void
 }
 
-export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIndicator, onEditDrawing, onEditIndicator, selection, onSelect }: RightSidebarProps) {
+export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIndicator, onEditDrawing, onEditIndicator, selection, onSelect, onOpenSettings }: RightSidebarProps) {
     const [activeTab, setActiveTab] = React.useState<string | null>(null)
 
     const toggleTab = (tab: string) => {
@@ -44,7 +45,6 @@ export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIn
                         <span className="font-semibold text-sm">
                             {activeTab === 'objects' && 'Object Tree'}
                             {activeTab === 'alerts' && 'Alerts'}
-                            {activeTab === 'settings' && 'Settings'}
                         </span>
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setActiveTab(null)}>
                             <ChevronRight className="h-4 w-4" />
@@ -140,11 +140,6 @@ export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIn
                                 Alerts panel placeholder
                             </div>
                         )}
-                        {activeTab === 'settings' && (
-                            <div className="p-4 text-center text-sm text-muted-foreground">
-                                Settings panel placeholder
-                            </div>
-                        )}
                     </ScrollArea>
                 </div>
             )}
@@ -173,10 +168,10 @@ export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIn
                 </Button>
                 <div className="flex-1" />
                 <Button
-                    variant={activeTab === 'settings' ? "secondary" : "ghost"}
+                    variant="ghost"
                     size="icon"
                     className="h-10 w-10 text-muted-foreground hover:text-foreground"
-                    onClick={() => toggleTab('settings')}
+                    onClick={onOpenSettings}
                     title="Settings"
                 >
                     <Settings className="h-5 w-5" />
@@ -189,6 +184,7 @@ export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIn
 function getDrawingLabel(type: string): string {
     switch (type) {
         case 'trend-line': return "Trend Line"
+        case 'ray': return "Ray"
         case 'fibonacci': return "Fib Retracement"
         case 'rectangle': return "Rectangle"
         case 'vertical-line': return "Vertical Line"

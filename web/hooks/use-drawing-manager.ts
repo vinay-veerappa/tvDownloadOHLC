@@ -14,6 +14,7 @@ import { VertLineTool } from "@/lib/charts/plugins/vertical-line";
 import { HorizontalLineTool } from "@/lib/charts/plugins/horizontal-line";
 import { TextTool } from "@/lib/charts/plugins/text-tool";
 import { MeasureTool, Measure } from "@/lib/charts/plugins/measuring-tool";
+import { RayTool, Ray } from "@/lib/charts/plugins/ray";
 
 // Drawing Classes for restoration
 import { TrendLine } from "@/lib/charts/plugins/trend-line";
@@ -61,6 +62,9 @@ export function useDrawingManager(
                         break;
                     case 'fibonacci':
                         drawing = new FibonacciRetracement(chart, series, { ...saved.p1, time: saved.p1.time as Time }, { ...saved.p2, time: saved.p2.time as Time }, saved.options as any);
+                        break;
+                    case 'ray':
+                        drawing = new Ray(chart, series, { ...saved.p1, time: saved.p1.time as Time }, saved.options as any);
                         break;
                     case 'vertical-line':
                         const vTime = saved.p1?.time ?? saved.p1;
@@ -143,6 +147,7 @@ export function useDrawingManager(
         let ToolClass: any
         switch (selectedTool) {
             case 'trend-line': ToolClass = TrendLineTool; break;
+            case 'ray': ToolClass = RayTool; break;
             case 'fibonacci': ToolClass = FibonacciTool; break;
             case 'rectangle': ToolClass = RectangleDrawingTool; break;
             case 'vertical-line': ToolClass = VertLineTool; break;
@@ -169,7 +174,16 @@ export function useDrawingManager(
 
                     // Serialize and save to storage
                     let serialized: SerializedDrawing;
-                    if (selectedTool === 'vertical-line') {
+                    if (selectedTool === 'ray') {
+                        serialized = {
+                            id,
+                            type: (drawing._type || selectedTool) as any,
+                            p1: drawing._p1,
+                            p2: drawing._p1, // Reuse P1 for structure compatibility
+                            options: drawing._options,
+                            createdAt: Date.now()
+                        };
+                    } else if (selectedTool === 'vertical-line') {
                         serialized = {
                             id,
                             type: (drawing._type || selectedTool) as any,

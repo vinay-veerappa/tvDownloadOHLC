@@ -1,19 +1,19 @@
-"use client"
-
 import * as React from "react"
-import { MousePointer2, TrendingUp, Menu, Square, Columns, Minus, Type, Ruler } from "lucide-react"
+import { MousePointer2, TrendingUp, Menu, Square, Columns, Minus, Type, Ruler, ArrowRight, DollarSign } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 
-export type DrawingTool = "cursor" | "trend-line" | "fibonacci" | "rectangle" | "vertical-line" | "horizontal-line" | "text" | "measure"
+export type DrawingTool = "cursor" | "trend-line" | "ray" | "fibonacci" | "rectangle" | "vertical-line" | "horizontal-line" | "text" | "measure"
 
 interface LeftToolbarProps {
     selectedTool: DrawingTool
     onToolSelect: (tool: DrawingTool) => void
+    showTrading?: boolean
+    onToggleTrading?: () => void
 }
 
-export function LeftToolbar({ selectedTool, onToolSelect }: LeftToolbarProps) {
+export function LeftToolbar({ selectedTool, onToolSelect, showTrading, onToggleTrading }: LeftToolbarProps) {
     return (
         <div className="flex flex-col items-center w-12 border-r bg-background py-2 gap-2 shrink-0">
             <Button
@@ -36,6 +36,16 @@ export function LeftToolbar({ selectedTool, onToolSelect }: LeftToolbarProps) {
                 title="Trend Line"
             >
                 <TrendingUp className="h-4 w-4" />
+            </Button>
+
+            <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-8 w-8", selectedTool === "ray" && "bg-accent text-accent-foreground")}
+                onClick={() => onToolSelect("ray")}
+                title="Ray"
+            >
+                <ArrowRight className="h-4 w-4" />
             </Button>
 
             <Button
@@ -96,6 +106,20 @@ export function LeftToolbar({ selectedTool, onToolSelect }: LeftToolbarProps) {
                 title="Vertical Line"
             >
                 <Columns className="h-4 w-4" />
+            </Button>
+
+            <div className="flex-1" />
+
+            <Separator className="w-8 my-2" />
+
+            <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-8 w-8 text-muted-foreground", showTrading && "bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400")}
+                onClick={onToggleTrading}
+                title="Trading Panel"
+            >
+                <DollarSign className="h-4 w-4" />
             </Button>
         </div>
     )
