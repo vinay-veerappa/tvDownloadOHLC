@@ -79,6 +79,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const [replayMode, setReplayMode] = useState(false)
     const [replayIndex, setReplayIndex] = useState(0) // Current bar position in replay
     const [isSelectingReplayStart, setIsSelectingReplayStart] = useState(false)
+    const prevWindowStartRef = useRef<number | null>(null)
 
     // Notify parent of replay state changes
     useEffect(() => {
@@ -118,6 +119,13 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             startIdx = options.index
         }
 
+        if (startIdx >= fullData.length - 1 && fullData.length > 0) {
+            toast.warning("Replay started at the end of data")
+        }
+
+        // Save current window start to restore later
+        prevWindowStartRef.current = windowStart
+
         setReplayIndex(startIdx)
         setReplayMode(true)
         // Scroll to right edge to see new bars appear (with slight delay for state update)
@@ -146,8 +154,13 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const stopReplay = () => {
         setReplayMode(false)
         setIsSelectingReplayStart(false)
-        // Reset to show all data
-        setWindowStart(Math.max(0, fullData.length - windowSize))
+        // Restore previous window view if available, else reset to end
+        if (prevWindowStartRef.current !== null) {
+            setWindowStart(prevWindowStartRef.current)
+            prevWindowStartRef.current = null
+        } else {
+            setWindowStart(Math.max(0, fullData.length - windowSize))
+        }
     }
 
     // Handle interactive replay selection click

@@ -96,6 +96,13 @@ export function PlaybackControls({
         }
     }, [isReplayMode])
 
+    // Auto-stop when replay reaches end
+    React.useEffect(() => {
+        if (isReplayMode && isPlaying && totalBars > 0 && replayIndex >= totalBars - 1) {
+            setIsPlaying(false)
+        }
+    }, [replayIndex, totalBars, isReplayMode, isPlaying])
+
     // Handle keyboard shortcuts
     React.useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
