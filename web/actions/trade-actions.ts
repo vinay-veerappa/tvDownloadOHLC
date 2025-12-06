@@ -100,6 +100,9 @@ export async function closeTrade(id: string, data: {
 
         return { success: true, data: trade }
     } catch (error) {
-        return { success: false, error: "Failed to close trade" }
+        console.error("closeTrade Error:", error)
+        console.error("closeTrade Payload:", { id, data })
+        const errorMessage = error instanceof Error ? error.message : "Failed to close trade"
+        return { success: false, error: errorMessage }
     }
 }
