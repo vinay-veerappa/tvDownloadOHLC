@@ -34,7 +34,7 @@ export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIn
     const totalItems = drawings.length + indicators.length
 
     return (
-        <div className={cn("flex flex-col border-l bg-background transition-all duration-300", collapsed ? "w-12" : "w-64")}>
+        <div className={cn("flex flex-col border-l bg-background transition-all duration-300 shrink-0", collapsed ? "w-12" : "w-64")}>
             <div className={cn("flex items-center border-b h-12", collapsed ? "justify-center" : "justify-between px-4")}>
                 {!collapsed && (
                     <div className="flex items-center">
