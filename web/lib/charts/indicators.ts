@@ -29,6 +29,12 @@ export function calculateSMA(data: { time: Time; close: number }[], period: numb
 
 export function calculateEMA(data: { time: Time; close: number }[], period: number): IndicatorData[] {
     const emaData: IndicatorData[] = []
+
+    // Not enough data to calculate EMA
+    if (data.length < period) {
+        return []
+    }
+
     const multiplier = 2 / (period + 1)
 
     // Start with SMA for the first EMA value
