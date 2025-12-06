@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Trash2, Layers, ChevronLeft, ChevronRight, Settings } from "lucide-react"
+import { Trash2, Layers, ChevronRight, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
@@ -29,143 +29,176 @@ interface RightSidebarProps {
 }
 
 export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIndicator, onEditDrawing, onEditIndicator, selection, onSelect }: RightSidebarProps) {
-    const [collapsed, setCollapsed] = React.useState(false)
+    const [activeTab, setActiveTab] = React.useState<string | null>(null)
 
-    const totalItems = drawings.length + indicators.length
+    const toggleTab = (tab: string) => {
+        setActiveTab(current => current === tab ? null : tab)
+    }
 
     return (
-        <div className={cn("flex flex-col border-l bg-background transition-all duration-300 shrink-0", collapsed ? "w-12" : "w-64")}>
-            <div className={cn("flex items-center border-b h-12", collapsed ? "justify-center" : "justify-between px-4")}>
-                {!collapsed && (
-                    <div className="flex items-center">
-                        <Layers className="mr-2 h-4 w-4" />
-                        <span className="font-semibold text-sm">Object Tree</span>
+        <div className="flex h-full shrink-0 border-l bg-background">
+            {/* Expanded Content Panel */}
+            {activeTab && (
+                <div className="w-64 flex flex-col border-r bg-background">
+                    <div className="flex items-center justify-between border-b h-12 px-4 shrink-0">
+                        <span className="font-semibold text-sm">
+                            {activeTab === 'objects' && 'Object Tree'}
+                            {activeTab === 'alerts' && 'Alerts'}
+                            {activeTab === 'settings' && 'Settings'}
+                        </span>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setActiveTab(null)}>
+                            <ChevronRight className="h-4 w-4" />
+                        </Button>
                     </div>
-                )}
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCollapsed(!collapsed)}>
-                    {collapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+
+                    <ScrollArea className="flex-1">
+                        {activeTab === 'objects' && (
+                            <div className="p-4 space-y-4">
+                                {/* Drawings Section */}
+                                <div>
+                                    <h3 className="text-xs font-semibold text-muted-foreground mb-2 flex justify-between items-center">
+                                        <span>Drawings</span>
+                                        <span className="text-[10px] bg-muted px-1.5 rounded-full">{drawings.length}</span>
+                                    </h3>
+                                    {drawings.length === 0 ? (
+                                        <div className="text-sm text-muted-foreground italic pl-2">No drawings</div>
+                                    ) : (
+                                        <div className="space-y-1">
+                                            {drawings.map(drawing => (
+                                                <div
+                                                    key={drawing.id}
+                                                    className={cn(
+                                                        "flex items-center justify-between group rounded p-1.5 hover:bg-muted/50 transition-colors cursor-pointer",
+                                                        selection?.type === 'drawing' && selection.id === drawing.id && "bg-muted"
+                                                    )}
+                                                    onClick={() => onSelect?.({ type: 'drawing', id: drawing.id })}
+                                                >
+                                                    <div className="flex items-center gap-2 overflow-hidden">
+                                                        {getDrawingIcon(drawing.type)}
+                                                        <span className="text-sm truncate">{getDrawingLabel(drawing.type)}</span>
+                                                    </div>
+                                                    <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        {onEditDrawing && (
+                                                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); onEditDrawing(drawing.id) }}>
+                                                                <Settings className="h-3 w-3" />
+                                                            </Button>
+                                                        )}
+                                                        <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={(e) => { e.stopPropagation(); onDeleteDrawing(drawing.id) }}>
+                                                            <Trash2 className="h-3 w-3" />
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="h-[1px] bg-border" />
+
+                                {/* Indicators Section */}
+                                <div>
+                                    <h3 className="text-xs font-semibold text-muted-foreground mb-2 flex justify-between items-center">
+                                        <span>Indicators</span>
+                                        <span className="text-[10px] bg-muted px-1.5 rounded-full">{indicators.length}</span>
+                                    </h3>
+                                    {indicators.length === 0 ? (
+                                        <div className="text-sm text-muted-foreground italic pl-2">No indicators</div>
+                                    ) : (
+                                        <div className="space-y-1">
+                                            {indicators.map((ind, i) => (
+                                                <div
+                                                    key={`${ind.type}-${i}`}
+                                                    className={cn(
+                                                        "flex items-center justify-between group rounded p-1.5 hover:bg-muted/50 transition-colors cursor-pointer",
+                                                        selection?.type === 'indicator' && selection.id === ind.type && "bg-muted"
+                                                    )}
+                                                    onClick={() => onSelect?.({ type: 'indicator', id: ind.type })}
+                                                >
+                                                    <div className="flex items-center gap-2 overflow-hidden">
+                                                        <div className="h-2 w-2 rounded-full bg-blue-500 shrink-0" />
+                                                        <span className="text-sm truncate" title={ind.label}>{ind.label}</span>
+                                                    </div>
+                                                    <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        {onEditIndicator && (
+                                                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); onEditIndicator(ind.type) }}>
+                                                                <Settings className="h-3 w-3" />
+                                                            </Button>
+                                                        )}
+                                                        <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={(e) => { e.stopPropagation(); onDeleteIndicator(ind.type) }}>
+                                                            <Trash2 className="h-3 w-3" />
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                        {activeTab === 'alerts' && (
+                            <div className="p-4 text-center text-sm text-muted-foreground">
+                                Alerts panel placeholder
+                            </div>
+                        )}
+                        {activeTab === 'settings' && (
+                            <div className="p-4 text-center text-sm text-muted-foreground">
+                                Settings panel placeholder
+                            </div>
+                        )}
+                    </ScrollArea>
+                </div>
+            )}
+
+            {/* Icon Strip */}
+            <div className="w-12 flex flex-col items-center py-2 gap-2 shrink-0 border-l bg-background z-10">
+                <Button
+                    variant={activeTab === 'objects' ? "secondary" : "ghost"}
+                    size="icon"
+                    className="h-10 w-10 text-muted-foreground hover:text-foreground"
+                    onClick={() => toggleTab('objects')}
+                    title="Object Tree"
+                >
+                    <Layers className="h-5 w-5" />
+                </Button>
+                <Button
+                    variant={activeTab === 'alerts' ? "secondary" : "ghost"}
+                    size="icon"
+                    className="h-10 w-10 text-muted-foreground hover:text-foreground"
+                    onClick={() => toggleTab('alerts')}
+                    title="Alerts"
+                >
+                    <div className="h-5 w-5 relative">
+                        <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
+                    </div>
+                </Button>
+                <div className="flex-1" />
+                <Button
+                    variant={activeTab === 'settings' ? "secondary" : "ghost"}
+                    size="icon"
+                    className="h-10 w-10 text-muted-foreground hover:text-foreground"
+                    onClick={() => toggleTab('settings')}
+                    title="Settings"
+                >
+                    <Settings className="h-5 w-5" />
                 </Button>
             </div>
-            {!collapsed && (
-                <ScrollArea className="flex-1">
-                    <div className="p-4 space-y-2">
-                        {totalItems === 0 ? (
-                            <div className="text-sm text-muted-foreground text-center py-4">
-                                No active objects
-                            </div>
-                        ) : (
-                            <>
-                                {/* Indicators Section */}
-                                {indicators.length > 0 && (
-                                    <div className="space-y-2">
-                                        <div className="text-xs font-semibold text-muted-foreground px-2 py-1">
-                                            INDICATORS
-                                        </div>
-                                        {indicators.map((indicator, i) => (
-                                            <div
-                                                key={i}
-                                                className={cn(
-                                                    "group flex items-center justify-between p-2 rounded-md hover:bg-accent cursor-pointer border border-transparent",
-                                                    selection?.type === 'indicator' && selection.id === indicator.type && "bg-accent border-accent-foreground/10"
-                                                )}
-                                                onClick={() => onSelect?.({ type: 'indicator', id: indicator.type })}
-                                            >
-                                                <div className="flex items-center overflow-hidden">
-                                                    <span className="text-sm truncate" title={indicator.label}>
-                                                        {indicator.label}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-6 w-6 mr-1"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            if (onEditIndicator) onEditIndicator(indicator.type);
-                                                        }}
-                                                    >
-                                                        <Settings className="h-3 w-3" />
-                                                    </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-6 w-6 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            onDeleteIndicator(indicator.type);
-                                                        }}
-                                                    >
-                                                        <Trash2 className="h-3 w-3" />
-                                                    </Button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-
-                                {/* Drawings Section */}
-                                {drawings.length > 0 && (
-                                    <div className="space-y-2">
-                                        <div className="text-xs font-semibold text-muted-foreground px-2 py-1">
-                                            DRAWINGS
-                                        </div>
-                                        {drawings.map((drawing) => (
-                                            <div
-                                                key={drawing.id}
-                                                className={cn(
-                                                    "group flex items-center justify-between p-2 rounded-md hover:bg-accent cursor-pointer border border-transparent",
-                                                    selection?.type === 'drawing' && selection.id === drawing.id && "bg-accent border-accent-foreground/10"
-                                                )}
-                                                onClick={() => {
-                                                    onSelect?.({ type: 'drawing', id: drawing.id });
-                                                    // Also trigger edit on click if already selected? No, separate button.
-                                                    if (selection?.type === 'drawing' && selection.id === drawing.id) {
-                                                        onEditDrawing?.(drawing.id);
-                                                    }
-                                                }}
-                                            >
-                                                <div className="flex items-center overflow-hidden">
-                                                    <span className="text-sm truncate capitalize">
-                                                        {drawing.type.replace('-', ' ')}
-                                                    </span>
-                                                    <span className="text-xs text-muted-foreground ml-2">
-                                                        {new Date(drawing.createdAt).toLocaleTimeString()}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-6 w-6 mr-1"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            onEditDrawing?.(drawing.id);
-                                                        }}
-                                                    >
-                                                        <Settings className="h-3 w-3" />
-                                                    </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-6 w-6 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            onDeleteDrawing(drawing.id);
-                                                        }}
-                                                    >
-                                                        <Trash2 className="h-3 w-3" />
-                                                    </Button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </>
-                        )}
-                    </div>
-                </ScrollArea>
-            )}
         </div>
     )
+}
+
+function getDrawingLabel(type: string): string {
+    switch (type) {
+        case 'trend-line': return "Trend Line"
+        case 'fibonacci': return "Fib Retracement"
+        case 'rectangle': return "Rectangle"
+        case 'vertical-line': return "Vertical Line"
+        case 'horizontal-line': return "Horizontal Line"
+        case 'text': return "Text"
+        case 'measure': return "Measure"
+        default: return type
+    }
+}
+
+function getDrawingIcon(type: string) {
+    return <div className="h-3 w-3 rounded-full bg-muted-foreground/30" />
 }
