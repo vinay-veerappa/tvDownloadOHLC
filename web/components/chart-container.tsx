@@ -45,6 +45,7 @@ interface ChartContainerProps {
     onSelectionChange?: (selection: { type: 'drawing' | 'indicator', id: string } | null) => void
     onDeleteSelection?: () => void
     onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number }) => void
+    onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
 }
 
 export interface ChartContainerRef {
@@ -67,7 +68,7 @@ export interface ChartContainerRef {
     getTotalBars: () => number;
 }
 
-export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', selection, onSelectionChange, onDeleteSelection, onReplayStateChange }, ref) => {
+export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad }, ref) => {
     const chartContainerRef = useRef<HTMLDivElement>(null)
 
     // Full data and window state for performance
@@ -366,6 +367,14 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     setFullData(result.data)
                     // Start at the end of data (most recent)
                     setWindowStart(Math.max(0, result.data.length - windowSize))
+
+                    if (result.data.length > 0) {
+                        onDataLoad?.({
+                            start: result.data[0].time,
+                            end: result.data[result.data.length - 1].time,
+                            totalBars: result.data.length
+                        })
+                    }
                 } else {
                     toast.error(`Failed to load data for ${ticker} ${timeframe}`)
                 }

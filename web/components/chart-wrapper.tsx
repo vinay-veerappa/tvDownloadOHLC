@@ -40,6 +40,7 @@ interface ChartWrapperProps {
     displayTimezone?: string
     onNavigationReady?: (nav: NavigationFunctions) => void
     onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number }) => void
+    onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
 }
 
 export function ChartWrapper(props: ChartWrapperProps) {
