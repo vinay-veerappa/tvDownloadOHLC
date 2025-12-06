@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { Globe } from "lucide-react"
+import { PlaybackControls } from "./playback-controls"
 
 const TIMEZONE_STORAGE_KEY = 'chart-timezone'
 
@@ -22,10 +23,23 @@ export const TIMEZONES = [
 interface BottomBarProps {
     timezone?: string
     onTimezoneChange?: (timezone: string) => void
+    // Navigation callbacks
+    onScrollByBars?: (n: number) => void
+    onScrollToStart?: () => void
+    onScrollToEnd?: () => void
+    onScrollToTime?: (time: number) => void
+    dataRange?: { start: number; end: number; totalBars: number } | null
 }
 
-export function BottomBar({ timezone: externalTimezone, onTimezoneChange }: BottomBarProps) {
-    const [activeRange, setActiveRange] = React.useState("1Y")
+export function BottomBar({
+    timezone: externalTimezone,
+    onTimezoneChange,
+    onScrollByBars,
+    onScrollToStart,
+    onScrollToEnd,
+    onScrollToTime,
+    dataRange
+}: BottomBarProps) {
     const [timezone, setTimezone] = React.useState(externalTimezone || 'America/New_York')
 
     // Load from localStorage on mount
@@ -51,25 +65,13 @@ export function BottomBar({ timezone: externalTimezone, onTimezoneChange }: Bott
 
     const currentTz = TIMEZONES.find(tz => tz.value === timezone)
 
-    const ranges = [
-        { label: "1D", value: "1D" },
-        { label: "5D", value: "5D" },
-        { label: "1M", value: "1M" },
-        { label: "3M", value: "3M" },
-        { label: "6M", value: "6M" },
-        { label: "YTD", value: "YTD" },
-        { label: "1Y", value: "1Y" },
-        { label: "5Y", value: "5Y" },
-        { label: "All", value: "All" },
-    ]
-
     return (
         <div className="flex items-center justify-between border-t p-1 bg-background text-xs">
             {/* Timezone Selector */}
             <div className="flex items-center gap-1">
                 <Globe className="h-3 w-3 text-muted-foreground" />
                 <Select value={timezone} onValueChange={handleTimezoneChange}>
-                    <SelectTrigger className="h-6 w-[140px] border-0 bg-transparent text-xs focus:ring-0">
+                    <SelectTrigger className="h-6 w-[120px] border-0 bg-transparent text-xs focus:ring-0">
                         <SelectValue>{currentTz?.label || timezone}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
@@ -82,23 +84,17 @@ export function BottomBar({ timezone: externalTimezone, onTimezoneChange }: Bott
                 </Select>
             </div>
 
-            {/* Date Ranges */}
-            <div className="flex items-center">
-                {ranges.map((range) => (
-                    <Button
-                        key={range.value}
-                        variant="ghost"
-                        size="sm"
-                        className={cn(
-                            "h-6 px-2 text-xs font-medium",
-                            activeRange === range.value && "bg-accent text-accent-foreground font-bold"
-                        )}
-                        onClick={() => setActiveRange(range.value)}
-                    >
-                        {range.label}
-                    </Button>
-                ))}
-            </div>
+            {/* Playback Controls */}
+            {onScrollByBars && onScrollToStart && onScrollToEnd && onScrollToTime && (
+                <PlaybackControls
+                    onScrollByBars={onScrollByBars}
+                    onScrollToStart={onScrollToStart}
+                    onScrollToEnd={onScrollToEnd}
+                    onScrollToTime={onScrollToTime}
+                    dataRange={dataRange || null}
+                    displayTimezone={timezone}
+                />
+            )}
         </div>
     )
 }

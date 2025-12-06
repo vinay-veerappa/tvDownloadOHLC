@@ -32,12 +32,29 @@ interface ChartContainerProps {
 export interface ChartContainerRef {
     deleteDrawing: (id: string) => void;
     editDrawing: (id: string) => void;
+    // Navigation functions
+    scrollByBars: (n: number) => void;
+    scrollToStart: () => void;
+    scrollToEnd: () => void;
+    scrollToTime: (time: number) => void;
+    getDataRange: () => { start: number; end: number; totalBars: number } | null;
 }
 
 export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', selection, onSelectionChange, onDeleteSelection }, ref) => {
     const chartContainerRef = useRef<HTMLDivElement>(null)
     const [data, setData] = useState<any[]>([])
-    const { chart, series, primitives } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data, markers, displayTimezone)
+    const { chart, series, primitives, scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data, markers, displayTimezone)
+
+    // Expose navigation functions via ref
+    useImperativeHandle(ref, () => ({
+        deleteDrawing: (id: string) => drawingManager?.deleteDrawing(id),
+        editDrawing: (id: string) => handleEditDrawing(id),
+        scrollByBars,
+        scrollToStart,
+        scrollToEnd,
+        scrollToTime,
+        getDataRange
+    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange])
 
     const { openTradeDialog } = useTradeContext()
 
@@ -152,16 +169,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             }
         }
     };
-
-    useImperativeHandle(ref, () => ({
-        deleteDrawing: (id: string) => {
-            drawingManager.deleteDrawing(id);
-        },
-        editDrawing: (id: string) => {
-            handleEditDrawing(id);
-        }
-    }))
-
 
     // Load Data
     useEffect(() => {
