@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useMemo } from "react"
 import {
     createChart,
     ColorType,
@@ -158,15 +158,22 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
 
     const primitivesRef = useRef<any[]>([])
 
+    // Create stable string key for indicators array to use as dependency
+    const indicatorsKey = useMemo(() => JSON.stringify(indicators), [indicators])
+
     // Manage Indicators
     useEffect(() => {
-        if (!chartInstance || !seriesInstance || !indicators.length) return
+        if (!chartInstance || !seriesInstance) return
+
+        // Parse indicators from the stable key
+        const currentIndicators: string[] = indicatorsKey ? JSON.parse(indicatorsKey) : []
+        if (currentIndicators.length === 0) return
 
         const indicatorSeries: ISeriesApi<"Line">[] = []
         // Clear previous primitives from ref
         primitivesRef.current = []
 
-        indicators.forEach(ind => {
+        currentIndicators.forEach(ind => {
             // Parse indicator string "type:period" (e.g., "sma:9")
             // If just "sma", default to 9
             const [type, param] = ind.split(":")
@@ -226,8 +233,7 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
                 } catch (e) { }
             })
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [chartInstance, indicators, seriesInstance]) // Removed `data` - primitives use internal data subscriptions
+    }, [chartInstance, seriesInstance, indicatorsKey, data]) // Use stable indicatorsKey string
 
     return {
         chart: chartInstance,
