@@ -33,9 +33,10 @@ interface ChartContainerProps {
     selection?: { type: 'drawing' | 'indicator', id: string } | null
     onSelectionChange?: (selection: { type: 'drawing' | 'indicator', id: string } | null) => void
     onDeleteSelection?: () => void
-    onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number }) => void
+    onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number, currentTime?: number }) => void
     onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
     onPriceChange?: (price: number) => void
+    initialReplayTime?: number // Timestamp to restore replay position after remount
 
     // Trading Props
     position?: {
@@ -81,7 +82,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted,
     indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York',
     selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad,
-    onPriceChange, position, pendingOrders, onModifyOrder, onModifyPosition
+    onPriceChange, position, pendingOrders, onModifyOrder, onModifyPosition, initialReplayTime
 }, ref) => {
 
     // 1. Chart Reference
@@ -97,7 +98,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         stepForward, stepBack, findIndexForTime, setReplayIndex
     } = useChartData({
         ticker, timeframe, onDataLoad, onReplayStateChange, onPriceChange,
-        getVisibleTimeRange: () => getVisibleTimeRangeRef.current?.() ?? null
+        getVisibleTimeRange: () => getVisibleTimeRangeRef.current?.() ?? null,
+        initialReplayTime
     })
 
     // 3. Core Chart Initialization (Hook)

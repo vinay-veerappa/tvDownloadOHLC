@@ -61,11 +61,12 @@ export function ChartPageClient({
         localStorage.setItem(TIMEZONE_STORAGE_KEY, tz)
     }
 
-    // Replay state
-    const [replayState, setReplayState] = useState<{ isReplayMode: boolean, index: number, total: number }>({
+    // Replay state (lifted from child to persist across timeframe changes)
+    const [replayState, setReplayState] = useState<{ isReplayMode: boolean, index: number, total: number, currentTime?: number }>({
         isReplayMode: false,
         index: 0,
-        total: 0
+        total: 0,
+        currentTime: undefined
     })
 
     // Handle navigation ready callback from ChartWrapper
@@ -76,7 +77,7 @@ export function ChartPageClient({
         setDataRange(range)
     }, [])
 
-    const handleReplayStateChange = useCallback((state: { isReplayMode: boolean, index: number, total: number }) => {
+    const handleReplayStateChange = useCallback((state: { isReplayMode: boolean, index: number, total: number, currentTime?: number }) => {
         setReplayState(state)
     }, [])
 
@@ -118,6 +119,7 @@ export function ChartPageClient({
                         onNavigationReady={handleNavigationReady}
                         onReplayStateChange={handleReplayStateChange}
                         onDataLoad={handleDataLoad}
+                        initialReplayTime={replayState.isReplayMode ? replayState.currentTime : undefined}
                     />
                 </div>
 

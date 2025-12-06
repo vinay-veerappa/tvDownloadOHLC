@@ -25,9 +25,10 @@ interface UseChartDataProps {
     ticker: string
     timeframe: string
     onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
-    onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number }) => void
+    onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number, currentTime?: number }) => void
     onPriceChange?: (price: number) => void
     getVisibleTimeRange?: () => { start: number, end: number, center: number } | null
+    initialReplayTime?: number // Timestamp to restore replay position on mount
 }
 
 export function useChartData({
@@ -36,7 +37,8 @@ export function useChartData({
     onDataLoad,
     onReplayStateChange,
     onPriceChange,
-    getVisibleTimeRange
+    getVisibleTimeRange,
+    initialReplayTime
 }: UseChartDataProps) {
 
     // Full data and window state
@@ -45,19 +47,24 @@ export function useChartData({
     const windowSize = useMemo(() => getWindowSizeForTimeframe(timeframe), [timeframe])
 
     // Replay mode state
-    const [replayMode, setReplayMode] = useState(false)
+    const [replayMode, setReplayMode] = useState(initialReplayTime !== undefined)
     const [replayIndex, setReplayIndex] = useState(0)
     const [isSelectingReplayStart, setIsSelectingReplayStart] = useState(false)
     const prevWindowStartRef = useRef<number | null>(null)
 
+    // Store the initial replay time to use after data loads
+    const initialReplayTimeRef = useRef(initialReplayTime)
+
     // Notify parent of replay state changes
     useEffect(() => {
+        const currentTime = fullData.length > 0 && replayIndex < fullData.length ? fullData[replayIndex]?.time : undefined
         onReplayStateChange?.({
             isReplayMode: replayMode,
             index: replayIndex,
-            total: fullData.length
+            total: fullData.length,
+            currentTime
         })
-    }, [replayMode, replayIndex, fullData.length, onReplayStateChange])
+    }, [replayMode, replayIndex, fullData.length, fullData, onReplayStateChange])
 
     // Load Data
     useEffect(() => {
@@ -65,7 +72,12 @@ export function useChartData({
         let timeToRestore: number | null = null;
         let isReplayRestore = false;
 
-        if (fullData.length > 0) {
+        // Priority 1: Use initialReplayTimeRef if provided (for remount with existing replay position)
+        if (initialReplayTimeRef.current !== undefined) {
+            timeToRestore = initialReplayTimeRef.current;
+            isReplayRestore = true;
+        } else if (fullData.length > 0) {
+            // Priority 2: Use current position from existing data
             if (replayMode) {
                 // In replay mode, sync to the exact replay index (the "current" time)
                 const safeIndex = Math.min(replayIndex, fullData.length - 1);
@@ -99,6 +111,10 @@ export function useChartData({
                                 // If we were in replay mode, simply set the new replay index.
                                 // The new window will be calculated in useMemo based on this index.
                                 setReplayIndex(idx);
+                                // Keep replay mode on if restoring from initialReplayTime
+                                if (initialReplayTimeRef.current !== undefined) {
+                                    setReplayMode(true);
+                                }
                             } else {
                                 // Standard mode: center the view on the restored time
                                 const halfWindow = Math.floor(windowSize / 2);
@@ -106,6 +122,9 @@ export function useChartData({
                             }
                         }
                     }
+
+                    // Clear the initialReplayTimeRef after first use
+                    initialReplayTimeRef.current = undefined;
 
                     if (!isReplayRestore) {
                         setWindowStart(newStart)
