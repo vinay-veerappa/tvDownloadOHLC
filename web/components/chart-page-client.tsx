@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { TopToolbar } from './top-toolbar'
 import { ChartWrapper } from './chart-wrapper'
+import { BottomBar } from './bottom-bar'
 import type { MagnetMode } from '@/lib/charts/magnet-utils'
 
 interface ChartPageClientProps {
@@ -16,6 +17,7 @@ interface ChartPageClientProps {
 }
 
 const MAGNET_STORAGE_KEY = 'chart_magnet_mode'
+const TIMEZONE_STORAGE_KEY = 'chart-timezone'
 
 export function ChartPageClient({
     tickers,
@@ -27,18 +29,29 @@ export function ChartPageClient({
     indicators
 }: ChartPageClientProps) {
     const [magnetMode, setMagnetMode] = useState<MagnetMode>('off')
+    const [displayTimezone, setDisplayTimezone] = useState('America/New_York')
 
-    // Load magnet mode from localStorage on mount
+    // Load preferences from localStorage on mount
     useEffect(() => {
-        const saved = localStorage.getItem(MAGNET_STORAGE_KEY) as MagnetMode | null
-        if (saved && ['off', 'weak', 'strong'].includes(saved)) {
-            setMagnetMode(saved)
+        const savedMagnet = localStorage.getItem(MAGNET_STORAGE_KEY) as MagnetMode | null
+        if (savedMagnet && ['off', 'weak', 'strong'].includes(savedMagnet)) {
+            setMagnetMode(savedMagnet)
+        }
+
+        const savedTimezone = localStorage.getItem(TIMEZONE_STORAGE_KEY)
+        if (savedTimezone) {
+            setDisplayTimezone(savedTimezone)
         }
     }, [])
 
     const handleMagnetModeChange = (mode: MagnetMode) => {
         setMagnetMode(mode)
         localStorage.setItem(MAGNET_STORAGE_KEY, mode)
+    }
+
+    const handleTimezoneChange = (tz: string) => {
+        setDisplayTimezone(tz)
+        localStorage.setItem(TIMEZONE_STORAGE_KEY, tz)
     }
 
     return (
@@ -74,8 +87,16 @@ export function ChartPageClient({
                     style={style}
                     indicators={indicators}
                     magnetMode={magnetMode}
+                    displayTimezone={displayTimezone}
                 />
             </div>
+
+            {/* Bottom Bar with Timezone Selector */}
+            <BottomBar
+                timezone={displayTimezone}
+                onTimezoneChange={handleTimezoneChange}
+            />
         </>
     )
 }
+

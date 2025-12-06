@@ -23,6 +23,7 @@ interface ChartContainerProps {
     indicators: string[]
     markers?: any[]
     magnetMode?: MagnetMode
+    displayTimezone?: string
     selection?: { type: 'drawing' | 'indicator', id: string } | null
     onSelectionChange?: (selection: { type: 'drawing' | 'indicator', id: string } | null) => void
     onDeleteSelection?: () => void
@@ -33,10 +34,10 @@ export interface ChartContainerRef {
     editDrawing: (id: string) => void;
 }
 
-export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off', selection, onSelectionChange, onDeleteSelection }, ref) => {
+export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({ ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted, indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', selection, onSelectionChange, onDeleteSelection }, ref) => {
     const chartContainerRef = useRef<HTMLDivElement>(null)
     const [data, setData] = useState<any[]>([])
-    const { chart, series, primitives } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data, markers)
+    const { chart, series, primitives } = useChart(chartContainerRef as React.RefObject<HTMLDivElement>, style, indicators, data, markers, displayTimezone)
 
     const { openTradeDialog } = useTradeContext()
 

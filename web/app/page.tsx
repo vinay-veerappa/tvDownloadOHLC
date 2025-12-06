@@ -1,7 +1,6 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
 import { getAvailableData } from "@/actions/data-actions"
 import { ChartPageClient } from "@/components/chart-page-client"
-import { BottomBar } from "@/components/bottom-bar"
 
 interface PageProps {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
@@ -27,9 +26,8 @@ export default async function Home(props: PageProps) {
           style={(searchParams?.style as string) || "candles"}
           indicators={searchParams?.indicators ? (searchParams.indicators as string).split(",") : []}
         />
-
-        <BottomBar />
       </Card>
     </div>
   )
 }
+

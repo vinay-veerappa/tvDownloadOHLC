@@ -19,9 +19,46 @@ import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
 import { AnchoredText } from "@/lib/charts/plugins/anchored-text"
 import { SessionHighlighting } from "@/lib/charts/plugins/session-highlighting"
 
-export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: string = 'candles', indicators: string[] = [], data: any[] = [], markers: any[] = []) {
+export function useChart(
+    containerRef: React.RefObject<HTMLDivElement>,
+    style: string = 'candles',
+    indicators: string[] = [],
+    data: any[] = [],
+    markers: any[] = [],
+    displayTimezone: string = 'America/New_York'
+) {
     const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
     const [seriesInstance, setSeriesInstance] = useState<ISeriesApi<any> | null>(null)
+
+    // Create timezone-aware tick mark formatter
+    const formatTimeForTimezone = (time: number) => {
+        const date = new Date(time * 1000)
+        const tz = displayTimezone === 'local' ? undefined : displayTimezone
+        try {
+            return date.toLocaleTimeString('en-US', {
+                timeZone: tz,
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            })
+        } catch {
+            return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+        }
+    }
+
+    const formatDateForTimezone = (time: number) => {
+        const date = new Date(time * 1000)
+        const tz = displayTimezone === 'local' ? undefined : displayTimezone
+        try {
+            return date.toLocaleDateString('en-US', {
+                timeZone: tz,
+                month: 'short',
+                day: 'numeric'
+            })
+        } catch {
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        }
+    }
 
     // Create Chart Instance
     useEffect(() => {
@@ -42,6 +79,7 @@ export function useChart(containerRef: React.RefObject<HTMLDivElement>, style: s
             timeScale: {
                 timeVisible: true,
                 rightOffset: 5,
+                tickMarkFormatter: (time: number) => formatTimeForTimezone(time),
             },
             crosshair: {
                 mode: CrosshairMode.Normal,
