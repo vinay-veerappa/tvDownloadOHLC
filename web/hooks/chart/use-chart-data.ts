@@ -61,12 +61,24 @@ export function useChartData({
 
     // Load Data
     useEffect(() => {
-        // Capture current view center time BEFORE loading new data
-        let centerTimeToRestore: number | null = null;
+        // Capture current view center time OR replay time BEFORE loading new data
+        let timeToRestore: number | null = null;
+        let isReplayRestore = false;
+
         if (fullData.length > 0) {
-            const range = getVisibleTimeRange?.();
-            if (range) {
-                centerTimeToRestore = range.center;
+            if (replayMode) {
+                // In replay mode, sync to the exact replay index (the "current" time)
+                const safeIndex = Math.min(replayIndex, fullData.length - 1);
+                if (safeIndex >= 0) {
+                    timeToRestore = fullData[safeIndex].time;
+                    isReplayRestore = true;
+                }
+            } else {
+                // In normal mode, sync to the center of the visible view
+                const range = getVisibleTimeRange?.();
+                if (range) {
+                    timeToRestore = range.center;
+                }
             }
         }
 
@@ -78,16 +90,26 @@ export function useChartData({
 
                     let newStart = Math.max(0, result.data.length - windowSize);
 
-                    // Restore position if we have a center time
-                    if (centerTimeToRestore !== null) {
-                        const idx = result.data.findIndex((item: any) => item.time >= centerTimeToRestore!);
+                    if (timeToRestore !== null) {
+                        // Find the index in the NEW data that matches our restore time
+                        const idx = result.data.findIndex((item: any) => item.time >= timeToRestore!);
+
                         if (idx !== -1) {
-                            const halfWindow = Math.floor(windowSize / 2);
-                            newStart = Math.max(0, Math.min(idx - halfWindow, result.data.length - windowSize));
+                            if (isReplayRestore) {
+                                // If we were in replay mode, simply set the new replay index.
+                                // The new window will be calculated in useMemo based on this index.
+                                setReplayIndex(idx);
+                            } else {
+                                // Standard mode: center the view on the restored time
+                                const halfWindow = Math.floor(windowSize / 2);
+                                newStart = Math.max(0, Math.min(idx - halfWindow, result.data.length - windowSize));
+                            }
                         }
                     }
 
-                    setWindowStart(newStart)
+                    if (!isReplayRestore) {
+                        setWindowStart(newStart)
+                    }
 
                     if (result.data.length > 0) {
                         onDataLoad?.({
