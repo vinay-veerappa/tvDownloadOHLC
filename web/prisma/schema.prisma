@@ -10,6 +10,30 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Account {
+  id             String   @id @default(cuid())
+  name           String
+  currency       String   @default("USD")
+  initialBalance Float
+  currentBalance Float
+  isDefault      Boolean  @default(false)
+  trades         Trade[]
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Strategy {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  color       String   @default("#2962FF") // For UI tagging
+  trades      Trade[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 model Trade {
   id          String   @id @default(cuid())
   ticker      String
@@ -21,6 +45,12 @@ model Trade {
   direction   String   // "LONG" or "SHORT"
   status      String   // "OPEN", "CLOSED", "PENDING", "CANCELLED"
   
+  // Relations
+  account     Account  @relation(fields: [accountId], references: [id])
+  accountId   String
+  strategy    Strategy? @relation(fields: [strategyId], references: [id])
+  strategyId  String?
+
   // Advanced Order Fields
   orderType      String   @default("MARKET") // "MARKET", "LIMIT", "STOP"
   limitPrice     Float?
