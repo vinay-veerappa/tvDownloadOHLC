@@ -73,8 +73,6 @@ export function useChart(
                 vertLines: { color: '#2a2e39' },
                 horzLines: { color: '#2a2e39' },
             },
-            width: containerRef.current.clientWidth,
-            height: 500,
             autoSize: true,
             timeScale: {
                 timeVisible: true,
@@ -88,20 +86,7 @@ export function useChart(
 
         setChartInstance(chart)
 
-        const handleResize = () => {
-            if (containerRef.current) {
-                chart.applyOptions({
-                    autoSize: false,
-                    width: containerRef.current.clientWidth
-                })
-            }
-        }
-
-        const resizeObserver = new ResizeObserver(handleResize)
-        resizeObserver.observe(containerRef.current)
-
         return () => {
-            resizeObserver.disconnect()
             chart.remove()
             setChartInstance(null)
         }
