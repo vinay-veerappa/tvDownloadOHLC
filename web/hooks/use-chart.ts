@@ -69,7 +69,8 @@ export function useChart(
 
     // Create Chart Instance
     useEffect(() => {
-        if (!containerRef.current) return
+        // Wait for theme to resolve to prevent flash during hydration
+        if (!containerRef.current || resolvedTheme === undefined) return
 
         const isDark = resolvedTheme === 'dark'
 
