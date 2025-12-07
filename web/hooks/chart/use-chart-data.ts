@@ -1,23 +1,31 @@
-"use client"
+﻿"use client"
 
-import { useState, useEffect, useMemo, useRef } from "react"
-import { getChartData } from "@/actions/data-actions"
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import { getChartData, loadNextChunks } from "@/actions/data-actions"
 import { toast } from "sonner"
 
+// Memory limits for sliding window (3 years max, evict 1 year when full)
+const MAX_BARS_3_YEARS = 1050000  // ~3 years of 1m data (~350K bars/year)
+const EVICT_BARS_1_YEAR = 350000  // Drop 1 year when limit reached
+const CHUNKS_PER_LOAD = 5         // Load 5 chunks at a time (~100K bars, ~3 months)
+
 // Window size based on timeframe for performance
+// 20K bars balances between render speed and scroll smoothness
 export function getWindowSizeForTimeframe(timeframe: string): number {
     switch (timeframe) {
         case '1m':
+            return 20000  // ~14 days of 1m data
         case '5m':
-            return 5000
+            return 20000  // ~70 days of 5m data
         case '15m':
+            return 20000  // ~200 days of 15m data
         case '1h':
-            return 7500
+            return 20000  // ~3 years of 1h data
         case '4h':
         case 'D':
         case 'W':
         default:
-            return 10000
+            return 20000  // All years for higher TFs
     }
 }
 
@@ -51,6 +59,15 @@ export function useChartData({
     const [replayIndex, setReplayIndex] = useState(0)
     const [isSelectingReplayStart, setIsSelectingReplayStart] = useState(false)
     const prevWindowStartRef = useRef<number | null>(null)
+
+    // On-demand loading state
+    const [totalRows, setTotalRows] = useState(0)
+    const [chunksLoaded, setChunksLoaded] = useState(0)
+    const [numChunks, setNumChunks] = useState(0)
+    const [nextChunkIndex, setNextChunkIndex] = useState(0)
+    const [hasMoreData, setHasMoreData] = useState(true)
+    const [isLoadingMore, setIsLoadingMore] = useState(false)
+    const lastLoadTimeRef = useRef<number>(0) // For debouncing rapid loads
 
     // Store the initial replay time to use after data loads
     const initialReplayTimeRef = useRef(initialReplayTime)
@@ -98,7 +115,13 @@ export function useChartData({
             try {
                 const result = await getChartData(ticker, timeframe)
                 if (result.success && result.data) {
+
                     setFullData(result.data)
+                    setTotalRows(result.totalRows || result.data.length)
+                    setChunksLoaded(result.chunksLoaded || 0)
+                    setNumChunks(result.numChunks || 0)
+                    setNextChunkIndex(result.chunksLoaded || 0)
+                    setHasMoreData((result.chunksLoaded || 0) < (result.numChunks || 0))
 
                     let newStart = Math.max(0, result.data.length - windowSize);
 
@@ -148,20 +171,130 @@ export function useChartData({
         loadData()
     }, [ticker, timeframe])
 
-    // Apply windowing and replay slice to data
+    // On-demand loading of more historical data
+    // Called when user scrolls to the oldest data and wants more
+    const LOAD_DEBOUNCE_MS = 200 // Prevent rapid double-loads
+    const loadMoreData = useCallback(async () => {
+        // Debounce: prevent rapid successive calls
+        const now = Date.now()
+        if (now - lastLoadTimeRef.current < LOAD_DEBOUNCE_MS) {
+            return
+        }
+
+        if (isLoadingMore || !hasMoreData) return
+
+        lastLoadTimeRef.current = now
+        setIsLoadingMore(true)
+
+        try {
+            const result = await loadNextChunks(ticker, timeframe, nextChunkIndex, CHUNKS_PER_LOAD)
+
+            if (result.success && result.data && result.data.length > 0) {
+                const prependedCount = result.data.length
+                const oldestDate = new Date(result.data[0].time * 1000).toLocaleDateString()
+
+                toast.info(`Loading more data... ${prependedCount.toLocaleString()} bars from ${oldestDate}`)
+
+                // Check if we need to evict old data first
+                setFullData(prev => {
+                    let newData = [...result.data!, ...prev]
+
+                    // If exceeding 3-year limit, evict oldest 1 year from the END (newest data)
+                    if (newData.length > MAX_BARS_3_YEARS) {
+                        const evictCount = EVICT_BARS_1_YEAR
+                        const evictedDate = new Date(newData[newData.length - 1].time * 1000).toLocaleDateString()
+                        newData = newData.slice(0, newData.length - evictCount)
+                        toast.warning(`Memory limit reached. Dropped 1 year of newest data (up to ${evictedDate})`)
+                    }
+
+
+                    return newData
+                })
+
+                // Adjust windowStart to maintain user's position
+                setWindowStart(prev => prev + prependedCount)
+
+                // Update chunk tracking
+                setNextChunkIndex(result.nextChunkIndex || nextChunkIndex + CHUNKS_PER_LOAD)
+                setHasMoreData(result.hasMore || false)
+                setChunksLoaded(prev => prev + (result.chunksLoaded || 0))
+            } else if (!result.hasMore) {
+                setHasMoreData(false)
+                toast.info("Reached the end of available data")
+            }
+        } catch (e) {
+            console.error("Failed to load more data:", e)
+            toast.error("Failed to load more historical data")
+        } finally {
+            setIsLoadingMore(false)
+        }
+    }, [ticker, timeframe, nextChunkIndex, isLoadingMore, hasMoreData])
+
+    // Auto-trigger loading more data when windowStart is getting low
+    // This pre-loads data BEFORE the user reaches the oldest data
+    const PRELOAD_THRESHOLD = 50000 // Trigger loading when within 50K bars of start
+    useEffect(() => {
+        // If windowStart is below threshold and we have more data to load, load it
+        if (windowStart < PRELOAD_THRESHOLD && hasMoreData && !isLoadingMore && fullData.length > 0) {
+            loadMoreData()
+        }
+    }, [windowStart, hasMoreData, isLoadingMore, fullData.length, loadMoreData])
+
+    // Return data for chart - windowed for performance
+    // Window can be shifted via windowStart state
     const data = useMemo(() => {
         if (fullData.length === 0) return []
 
+        let result: any[]
         if (replayMode) {
+            // In replay mode, show data up to the replay index
             const endIndex = Math.min(replayIndex + 1, fullData.length)
-            const startIndex = Math.max(0, endIndex - windowSize)
-            return fullData.slice(startIndex, endIndex)
+            result = fullData.slice(0, endIndex)
         } else {
-            if (fullData.length <= windowSize) return fullData
-            const start = Math.max(0, Math.min(windowStart, fullData.length - windowSize))
-            return fullData.slice(start, start + windowSize)
+            // Apply windowing for performance
+            if (fullData.length <= windowSize) {
+                result = fullData
+            } else {
+                // Use windowStart state - clamp to valid range
+                const start = Math.max(0, Math.min(windowStart, fullData.length - windowSize))
+                result = fullData.slice(start, start + windowSize)
+            }
         }
+
+
+        return result
     }, [fullData, windowStart, windowSize, replayMode, replayIndex])
+
+    // Shift window to show a specific time (for scroll handling)
+    const shiftWindowToTime = useCallback((targetTime: number, position: 'center' | 'start' | 'end' = 'center') => {
+        if (fullData.length <= windowSize) return // No need to shift
+
+        const idx = fullData.findIndex(item => item.time >= targetTime)
+        if (idx === -1) return
+
+        let newStart: number
+        if (position === 'start') {
+            newStart = idx
+        } else if (position === 'end') {
+            newStart = idx - windowSize + 1
+        } else {
+            newStart = idx - Math.floor(windowSize / 2)
+        }
+
+        // Clamp to valid range
+        newStart = Math.max(0, Math.min(newStart, fullData.length - windowSize))
+        setWindowStart(newStart)
+    }, [fullData, windowSize])
+
+    // Shift window by number of bars (positive = forward/right, negative = back/left)
+    const shiftWindowByBars = useCallback((bars: number) => {
+        if (fullData.length <= windowSize) return
+
+        setWindowStart(prev => {
+            const newStart = prev + bars
+            return Math.max(0, Math.min(newStart, fullData.length - windowSize))
+        })
+    }, [fullData.length, windowSize])
 
     // Helper to find index for time
     const findIndexForTime = (time: number) => {
@@ -258,6 +391,15 @@ export function useChartData({
         stopReplay,
         stepForward,
         stepBack,
-        findIndexForTime
+        findIndexForTime,
+        // Data loading status
+        isLoadingMore,
+        hasMoreData,
+        loadMoreData,
+        totalRows,
+        // Window control for scroll handling
+        shiftWindowByBars,
+        shiftWindowToTime
     }
 }
+

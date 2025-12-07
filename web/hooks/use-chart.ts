@@ -72,6 +72,8 @@ export function useChart(
         // Wait for theme to resolve to prevent flash during hydration
         if (!containerRef.current || resolvedTheme === undefined) return
 
+
+
         const isDark = resolvedTheme === 'dark'
 
         // Reset disposed flag for new chart
@@ -104,10 +106,12 @@ export function useChart(
             },
         })
 
+
         chartRef.current = chart
         setChartInstance(chart)
 
         return () => {
+
             // Mark as disposed BEFORE removal to prevent race conditions
             isDisposedRef.current = true
             chartRef.current = null
@@ -115,7 +119,9 @@ export function useChart(
             setSeriesInstance(null)
             try {
                 chart.remove()
+
             } catch (e) {
+
                 // Chart may already be disposed in Strict Mode double-mount
             }
         }
@@ -125,6 +131,8 @@ export function useChart(
     // Manage Series based on Style
     useEffect(() => {
         if (!chartInstance || isDisposedRef.current) return
+
+
 
         let newSeries: ISeriesApi<any>
 
@@ -167,19 +175,25 @@ export function useChart(
                     break
             }
 
+
             setSeriesInstance(newSeries)
 
             if (data.length > 0) {
                 const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
                 newSeries.setData(chartData)
                 chartInstance.timeScale().fitContent()
+
+            } else {
+
             }
         } catch (e) {
+
             // Chart may be disposed during rapid re-renders
             return
         }
 
         return () => {
+
             if (!isDisposedRef.current && chartInstance && newSeries) {
                 try {
                     chartInstance.removeSeries(newSeries)
@@ -189,14 +203,49 @@ export function useChart(
         }
     }, [chartInstance, style])
 
-    // Update Data when data changes
+    // Track if this is the first data load for this ticker
+    const isFirstLoadRef = useRef(true)
+    const prevDataLengthRef = useRef(0)
+
     // Update Data when data changes
     useEffect(() => {
-        if (!seriesInstance || !data.length || isDisposedRef.current) return
+        if (!seriesInstance || !data.length || isDisposedRef.current || !chartInstance) return
 
         try {
+            const timeScale = chartInstance.timeScale()
+            const isFirstLoad = isFirstLoadRef.current || prevDataLengthRef.current === 0
+
+            // SAVE visible time range BEFORE setData
+            // getVisibleRange() returns TIME values (timestamps), not indices
+            // These timestamps remain constant even when data array changes
+            const visibleTimeRange = timeScale.getVisibleRange()
+
+            // Set the new data
             const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
             seriesInstance.setData(chartData)
+
+            // RESTORE visible time range AFTER setData
+            if (isFirstLoad) {
+                isFirstLoadRef.current = false
+                requestAnimationFrame(() => {
+                    try {
+                        if (!isDisposedRef.current) {
+                            timeScale.fitContent()
+                        }
+                    } catch { }
+                })
+            } else if (visibleTimeRange) {
+                // Use setVisibleRange with TIME values - chart will find correct indices
+                requestAnimationFrame(() => {
+                    try {
+                        if (!isDisposedRef.current) {
+                            timeScale.setVisibleRange(visibleTimeRange)
+                        }
+                    } catch { }
+                })
+            }
+
+            prevDataLengthRef.current = data.length
 
             if (markers && markers.length > 0) {
                 if (typeof createSeriesMarkers === 'function') {
@@ -208,7 +257,7 @@ export function useChart(
         } catch (e) {
             // Series may be disposed
         }
-    }, [seriesInstance, data, style, markers])
+    }, [seriesInstance, data, style, markers, chartInstance])
 
     const primitivesRef = useRef<any[]>([])
     const indicatorsKey = useMemo(() => JSON.stringify(indicators), [indicators])

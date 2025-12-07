@@ -95,7 +95,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const {
         fullData, data, windowSize, replayMode, replayIndex, isSelectingReplayStart,
         setIsSelectingReplayStart, startReplay, startReplaySelection, stopReplay,
-        stepForward, stepBack, findIndexForTime, setReplayIndex
+        stepForward, stepBack, findIndexForTime, setReplayIndex, shiftWindowByBars,
+        loadMoreData, hasMoreData, isLoadingMore
     } = useChartData({
         ticker, timeframe, onDataLoad, onReplayStateChange, onPriceChange,
         getVisibleTimeRange: () => getVisibleTimeRangeRef.current?.() ?? null,
@@ -124,6 +125,43 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             }, 50)
         }
     }, [data, replayMode, chart])
+
+    // 4c. Dynamic Window Scrolling - Pre-shift window before user reaches edge
+    // Also triggers loading more data when at the oldest available data
+    useEffect(() => {
+        if (!chart || replayMode || data.length === 0) return
+
+        const handleVisibleRangeChange = () => {
+            const logicalRange = chart.timeScale().getVisibleLogicalRange()
+            if (!logicalRange) return
+
+            // Calculate threshold - shift when within 20% of visible range from edge
+            const visibleBars = (logicalRange.to - logicalRange.from) || 100
+            const threshold = Math.max(500, Math.floor(visibleBars * 0.5)) // Shift when halfway to edge
+            const shiftAmount = 5000 // Shift by 5000 bars (~3-4 days of 1m data)
+
+            // If user scrolls to within threshold of left edge
+            if (logicalRange.from < threshold) {
+                // First try to shift window left
+                shiftWindowByBars(-shiftAmount)
+
+                // If we're at the beginning of fullData and there's more to load, load it
+                // This is detected when logicalRange.from is near 0 after shifting
+                if (logicalRange.from < 50 && hasMoreData && !isLoadingMore) {
+                    loadMoreData()
+                }
+            }
+            // If user scrolls to within threshold of right edge, shift window right  
+            else if (logicalRange.to > data.length - threshold) {
+                shiftWindowByBars(shiftAmount)
+            }
+        }
+
+        chart.timeScale().subscribeVisibleLogicalRangeChange(handleVisibleRangeChange)
+        return () => {
+            chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange)
+        }
+    }, [chart, replayMode, data.length, shiftWindowByBars, hasMoreData, isLoadingMore, loadMoreData])
 
 
     // 5. Drawing Manager
