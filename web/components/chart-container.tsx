@@ -463,6 +463,63 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart, fullDataRange, jumpToTime])
 
 
+    // -------------------------------------------------------------------------
+    // 12. Volume Profile Plugin Integration
+    // -------------------------------------------------------------------------
+
+    // Import (Dynamic / Lazy to avoid SSR issues if any, but regular import is fine here)
+    // Note: We need to import these at the top level, but for this edit block we assume they are added.
+    // I will add the imports via a separate edit or assume the user accepts the diff logic if I put imports here? 
+    // Typescript might complain. I'll add imports in a separate block first.
+
+    const vpPrimitiveRef = useRef<any>(null); // Type: VolumeProfilePrimitive
+
+    useEffect(() => {
+        if (!series || !chart || !data || data.length === 0) return;
+
+        // Check if enabled (hacky check for now, ideally strictly typed)
+        const isVPEnabled = indicators.includes('Volume Profile') || indicators.includes('vp');
+
+        if (isVPEnabled) {
+            // Dynamic Import to avoid circular dependencies or server side issues
+            import('@/components/chart/plugins/volume-profile-primitive').then(({ VolumeProfilePrimitive }) => {
+                import('@/lib/charts/volume-profile-calc').then(({ calculateVolumeProfile }) => {
+
+                    // 1. Calculate Profile (Visible Range or Session?)
+                    // For now, let's use the visible data range or last n bars
+                    // A true VPVR updates on scroll. A Session VP is static per day.
+                    // Let's implement a simple "Visible Range" style initial load
+
+                    const profileData = calculateVolumeProfile(data, null, 50); // 50 rows
+
+                    // 2. Create or Update Primitive
+                    if (!vpPrimitiveRef.current) {
+                        vpPrimitiveRef.current = new VolumeProfilePrimitive({
+                            time: data[data.length - 1].time, // Anchor to latest
+                            width: 50, // 50 bars wide
+                            profile: profileData
+                        });
+                        series.attachPrimitive(vpPrimitiveRef.current);
+                    } else {
+                        vpPrimitiveRef.current.setData({
+                            time: data[data.length - 1].time,
+                            width: 50,
+                            profile: profileData
+                        });
+                    }
+                    vpPrimitiveRef.current.setVisible(true);
+
+                });
+            });
+        } else {
+            if (vpPrimitiveRef.current) {
+                vpPrimitiveRef.current.setVisible(false);
+                // Optionally detach? vpPrimitiveRef.current.detach();
+            }
+        }
+
+    }, [series, chart, data, indicators]); // Re-run when data updates (streaming) or indicators change
+
     return (
         <div ref={chartContainerRef} className="w-full h-full relative" onContextMenu={(e) => {
             // Keep native React onContextMenu as backup
