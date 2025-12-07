@@ -208,6 +208,8 @@ export function useChart(
     const prevDataLengthRef = useRef(0)
 
     // Update Data when data changes
+    // SIMPLIFIED: Chart auto-preserves scroll position by TIME
+    // No manual getVisibleRange/setVisibleRange needed!
     useEffect(() => {
         if (!seriesInstance || !data.length || isDisposedRef.current || !chartInstance) return
 
@@ -215,18 +217,15 @@ export function useChart(
             const timeScale = chartInstance.timeScale()
             const isFirstLoad = isFirstLoadRef.current || prevDataLengthRef.current === 0
 
-            // SAVE visible time range BEFORE setData
-            // getVisibleRange() returns TIME values (timestamps), not indices
-            // These timestamps remain constant even when data array changes
-            const visibleTimeRange = timeScale.getVisibleRange()
-
             // Set the new data
             const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
+            console.log(`[CHART] setData with ${chartData.length} bars`)
             seriesInstance.setData(chartData)
 
-            // RESTORE visible time range AFTER setData
+            // Only fitContent on first load - chart auto-preserves on subsequent updates
             if (isFirstLoad) {
                 isFirstLoadRef.current = false
+                console.log('[CHART] First load, fitting content')
                 requestAnimationFrame(() => {
                     try {
                         if (!isDisposedRef.current) {
@@ -234,16 +233,8 @@ export function useChart(
                         }
                     } catch { }
                 })
-            } else if (visibleTimeRange) {
-                // Use setVisibleRange with TIME values - chart will find correct indices
-                requestAnimationFrame(() => {
-                    try {
-                        if (!isDisposedRef.current) {
-                            timeScale.setVisibleRange(visibleTimeRange)
-                        }
-                    } catch { }
-                })
             }
+            // NO ELSE NEEDED - chart preserves position by TIME automatically!
 
             prevDataLengthRef.current = data.length
 
