@@ -93,7 +93,7 @@ interface TradingContextType {
     cancelOrder: (id: string) => Promise<void>
     modifyOrder: (id: string, updates: Partial<Order>) => Promise<void>
     closePosition: () => Promise<void>
-    modifyPosition: (sl?: number, tp?: number) => Promise<void>
+    modifyPosition: (updates: { stopLoss?: number, takeProfit?: number }) => Promise<void>
 }
 
 const TradingContext = createContext<TradingContextType | undefined>(undefined)
@@ -472,9 +472,9 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
         setPendingOrders(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o))
     }
 
-    const modifyPosition = async (sl?: number, tp?: number) => {
+    const modifyPosition = async (updates: { stopLoss?: number, takeProfit?: number }) => {
         if (activePosition) {
-            setActivePosition({ ...activePosition, stopLoss: sl, takeProfit: tp })
+            setActivePosition({ ...activePosition, ...updates })
             // TODO: Update DB trade with new brackets
         }
     }
