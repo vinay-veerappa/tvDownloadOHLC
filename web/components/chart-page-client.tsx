@@ -37,6 +37,7 @@ export function ChartPageClient({
     // Navigation state
     const [navigation, setNavigation] = useState<NavigationFunctions | null>(null)
     const [dataRange, setDataRange] = useState<{ start: number; end: number; totalBars: number } | null>(null)
+    const [fullDataRange, setFullDataRange] = useState<{ start: number; end: number } | null>(null)
 
     // Load preferences from localStorage on mount
     useEffect(() => {
@@ -72,9 +73,11 @@ export function ChartPageClient({
     // Handle navigation ready callback from ChartWrapper
     const handleNavigationReady = useCallback((nav: NavigationFunctions) => {
         setNavigation(nav)
-        // Also get initial data range
+        // Also get initial data range and full data range
         const range = nav.getDataRange()
         setDataRange(range)
+        const fullRange = nav.getFullDataRange()
+        setFullDataRange(fullRange)
     }, [])
 
     const handleReplayStateChange = useCallback((state: { isReplayMode: boolean, index: number, total: number, currentTime?: number }) => {
@@ -85,6 +88,29 @@ export function ChartPageClient({
     const handleDataLoad = useCallback((range: { start: number; end: number; totalBars: number }) => {
         setDataRange(range)
     }, [])
+
+    // Poll for fullDataRange after navigation is ready (metadata loads async)
+    useEffect(() => {
+        if (!navigation) return
+
+        // Try immediately
+        const fullRange = navigation.getFullDataRange()
+        if (fullRange) {
+            setFullDataRange(fullRange)
+            return
+        }
+
+        // If null, poll every 500ms until available
+        const interval = setInterval(() => {
+            const fullRange = navigation.getFullDataRange()
+            if (fullRange) {
+                setFullDataRange(fullRange)
+                clearInterval(interval)
+            }
+        }, 500)
+
+        return () => clearInterval(interval)
+    }, [navigation])
 
 
 
@@ -133,6 +159,7 @@ export function ChartPageClient({
                         onScrollToEnd={navigation?.scrollToEnd}
                         onScrollToTime={navigation?.scrollToTime}
                         dataRange={dataRange}
+                        fullDataRange={fullDataRange}
                         // Replay props
                         onStartReplay={navigation?.startReplay}
                         onStartReplaySelection={navigation?.startReplaySelection}

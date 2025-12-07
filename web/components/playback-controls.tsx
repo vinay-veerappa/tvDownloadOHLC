@@ -28,6 +28,7 @@ interface PlaybackControlsProps {
     onScrollToEnd: () => void
     onScrollToTime: (time: number) => void
     dataRange: { start: number; end: number; totalBars: number } | null
+    fullDataRange?: { start: number; end: number } | null  // Full range from metadata for calendar
     displayTimezone?: string
     // Replay functions
     onStartReplay?: (options?: { index?: number, time?: number }) => void
@@ -46,6 +47,7 @@ export function PlaybackControls({
     onScrollToEnd,
     onScrollToTime,
     dataRange,
+    fullDataRange,
     displayTimezone = 'America/New_York',
     onStartReplay,
     onStartReplaySelection,
@@ -220,9 +222,10 @@ export function PlaybackControls({
     // Progress percentage for replay mode
     const progressPercent = totalBars > 0 ? (replayIndex / (totalBars - 1)) * 100 : 0
 
-    // Calendar constraints
-    const minDate = dataRange ? new Date(dataRange.start * 1000) : undefined
-    const maxDate = dataRange ? new Date(dataRange.end * 1000) : undefined
+    // Calendar constraints - use fullDataRange (from metadata) if available, fallback to dataRange
+    const calendarRange = fullDataRange || dataRange
+    const minDate = calendarRange ? new Date(calendarRange.start * 1000) : undefined
+    const maxDate = calendarRange ? new Date(calendarRange.end * 1000) : undefined
     const isDateDisabled = (date: Date) => {
         if (!minDate || !maxDate) return false
         return date < minDate || date > maxDate
@@ -246,6 +249,7 @@ export function PlaybackControls({
                         initialFocus
                         disabled={isDateDisabled}
                         defaultMonth={selectedDate || maxDate}
+                        fixedWeeks
                     />
                 </PopoverContent>
             </Popover>
@@ -302,6 +306,7 @@ export function PlaybackControls({
                                                 disabled={isDateDisabled}
                                                 defaultMonth={replayDate || maxDate}
                                                 className="rounded-md border shadow-sm"
+                                                fixedWeeks
                                             />
                                         </div>
                                     </div>

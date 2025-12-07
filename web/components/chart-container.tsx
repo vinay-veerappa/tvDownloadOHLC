@@ -67,6 +67,7 @@ export interface ChartContainerRef {
     scrollToEnd: () => void;
     scrollToTime: (time: number) => void;
     getDataRange: () => { start: number; end: number; totalBars: number } | null;
+    getFullDataRange: () => { start: number; end: number } | null;  // Full range from metadata
     // Replay mode functions
     startReplay: (options?: { index?: number, time?: number }) => void;
     startReplaySelection: () => void;
@@ -96,7 +97,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         fullData, data, replayMode, replayIndex, isSelectingReplayStart,
         setIsSelectingReplayStart, startReplay, startReplaySelection, stopReplay,
         stepForward, stepBack, findIndexForTime, setReplayIndex,
-        loadMoreData, hasMoreData, isLoadingMore
+        loadMoreData, hasMoreData, isLoadingMore, fullDataRange
     } = useChartData({
         ticker, timeframe, onDataLoad, onReplayStateChange, onPriceChange,
         getVisibleTimeRange: () => getVisibleTimeRangeRef.current?.() ?? null,
@@ -443,6 +444,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             }
         },
         getDataRange,
+        getFullDataRange: () => fullDataRange,
         startReplay: (op) => startReplay(op, chart),
         startReplaySelection,
         stepForward,
@@ -451,7 +453,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         isReplayMode: () => replayMode,
         getReplayIndex: () => replayIndex,
         getTotalBars: () => fullData.length
-    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart])
+    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart, fullDataRange])
 
 
     return (

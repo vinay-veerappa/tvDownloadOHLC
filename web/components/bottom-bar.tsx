@@ -27,6 +27,7 @@ interface BottomBarProps {
     onScrollToEnd?: () => void
     onScrollToTime?: (time: number) => void
     dataRange?: { start: number; end: number; totalBars: number } | null
+    fullDataRange?: { start: number; end: number } | null  // Full range from metadata
     // Replay callbacks
     onStartReplay?: (options?: { index?: number, time?: number }) => void
     onStartReplaySelection?: () => void
@@ -46,6 +47,7 @@ export function BottomBar({
     onScrollToEnd,
     onScrollToTime,
     dataRange,
+    fullDataRange,
     onStartReplay,
     onStartReplaySelection,
     onStepForward,
@@ -107,6 +109,7 @@ export function BottomBar({
                     onScrollToEnd={onScrollToEnd}
                     onScrollToTime={onScrollToTime}
                     dataRange={dataRange || null}
+                    fullDataRange={fullDataRange || null}
                     displayTimezone={timezone}
                     onStartReplay={onStartReplay}
                     onStartReplaySelection={onStartReplaySelection}

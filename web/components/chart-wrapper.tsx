@@ -24,6 +24,7 @@ export interface NavigationFunctions {
     scrollToEnd: () => void
     scrollToTime: (time: number) => void
     getDataRange: () => { start: number; end: number; totalBars: number } | null
+    getFullDataRange: () => { start: number; end: number } | null  // Full range from metadata
     // Replay mode functions
     startReplay: (options?: { index?: number, time?: number }) => void
     startReplaySelection: () => void
@@ -91,6 +92,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
                     scrollToEnd: () => chartRef.current?.scrollToEnd(),
                     scrollToTime: (t) => chartRef.current?.scrollToTime(t),
                     getDataRange: () => chartRef.current?.getDataRange() ?? null,
+                    getFullDataRange: () => chartRef.current?.getFullDataRange() ?? null,
                     // Replay functions (Delegated to Ref to ensure fresh state)
                     startReplay: (opts) => chartRef.current?.startReplay(opts),
                     stepForward: () => chartRef.current?.stepForward(),
