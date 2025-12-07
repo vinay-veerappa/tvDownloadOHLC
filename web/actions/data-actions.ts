@@ -3,12 +3,13 @@
 import path from "path"
 import fs from "fs"
 
-interface OHLCData {
+export interface OHLCData {
     time: number
     open: number
     high: number
     low: number
     close: number
+    volume?: number
 }
 
 interface ChunkRange {
@@ -220,145 +221,125 @@ export async function loadChunksForTime(
             startChunkIndex: startChunk,
             endChunkIndex: endChunk
         }
+
     } catch (error) {
         console.error(`[loadChunksForTime] Exception: ${error}`)
-        return { success: false, error: "Failed to load data for time" }
+        return { success: false, error: "Failed to load chunks" }
     }
 }
 
-// Load specific number of chunks for on-demand loading
-// Returns older data starting from startChunk, loading up to numToLoad chunks
+// Load next batch of chunks (for infinite scrolling)
+// Loads 'count' chunks starting from 'startIndex' (going backwards in time)
+// Returns new data and updated index
 export async function loadNextChunks(
     ticker: string,
     timeframe: string,
-    startChunk: number,
-    numToLoad: number = 5 // Default to 5 chunks (~100K bars, ~3 months of 1m data)
-): Promise<{ success: boolean, data?: OHLCData[], chunksLoaded?: number, nextChunkIndex?: number, hasMore?: boolean, error?: string }> {
+    startIndex: number,
+    count: number = 5
+): Promise<{ success: boolean, data?: OHLCData[], nextChunkIndex?: number, hasMore?: boolean, chunksLoaded?: number, error?: string }> {
     try {
         const meta = loadMeta(ticker, timeframe)
         if (!meta) {
             return { success: false, error: "Data not found" }
         }
 
-        if (startChunk >= meta.numChunks) {
-            // No more data to load
-            return { success: true, data: [], chunksLoaded: 0, nextChunkIndex: startChunk, hasMore: false }
+        const startChunk = startIndex
+        const endChunk = Math.min(meta.numChunks, startChunk + count)
+        const chunksToLoad = endChunk - startChunk
+
+        if (chunksToLoad <= 0) {
+            return { success: false, hasMore: false, error: "No more data" }
         }
 
-        // Load up to numToLoad chunks (older data)
-        const endChunk = Math.min(startChunk + numToLoad, meta.numChunks)
-        const allChunks: OHLCData[][] = []
+        console.log(`[loadNextChunks] Loading chunks ${startChunk} to ${endChunk} for ${ticker} ${timeframe}`)
 
+        const allChunks: OHLCData[][] = []
         for (let i = startChunk; i < endChunk; i++) {
             const chunkData = loadChunk(ticker, timeframe, i)
             allChunks.push(chunkData)
         }
 
-        // Combine: reverse so oldest chunk is first
+        // Combine chunks
+        // Chunks are loaded from newest to oldest (index 0 is newest)
+        // Inside each chunk, data is oldest to newest
+        // We want the resulting array to be continuous time, oldest to newest
+        // So we append chunks: Chunk X+4, Chunk X+3, ... Chunk X
+        // WAIT: Chunks are contiguous in index order. Chunk 0 is newest. Chunk 1 is older.
+        // If we load Chunk 1 and Chunk 2.
+        // Chunk 2 contains older data than Chunk 1.
+        // We want [Older Data, Newer Data].
+        // So we want [Chunk 2 data, Chunk 1 data].
+
         let data: OHLCData[] = []
         for (let i = allChunks.length - 1; i >= 0; i--) {
             data = [...data, ...allChunks[i]]
         }
 
-        const chunksLoaded = allChunks.length
-        const hasMore = endChunk < meta.numChunks
-
         return {
             success: true,
             data,
-            chunksLoaded,
             nextChunkIndex: endChunk,
-            hasMore
+            hasMore: endChunk < meta.numChunks,
+            chunksLoaded: chunksToLoad
         }
 
     } catch (error) {
         console.error(`[loadNextChunks] Exception: ${error}`)
-        return { success: false, error: "Failed to load data chunks" }
+        return { success: false, error: "Failed to load next chunks" }
     }
 }
 
-// Legacy function - loads ALL remaining chunks (can cause OOM with large datasets)
-export async function loadRemainingChunks(
-    ticker: string,
-    timeframe: string,
-    startChunk: number
-): Promise<{ success: boolean, data?: OHLCData[], chunksLoaded?: number, error?: string }> {
-    try {
-        const meta = loadMeta(ticker, timeframe)
-        if (!meta) {
-            return { success: false, error: "Data not found" }
-        }
-
-        if (startChunk >= meta.numChunks) {
-            // No more data to load
-            return { success: true, data: [], chunksLoaded: 0 }
-        }
-
-        // Load all remaining chunks (older data)
-        // Collect chunks first, then combine oldest to newest
-        const allChunks: OHLCData[][] = []
-        for (let i = startChunk; i < meta.numChunks; i++) {
-            const chunkData = loadChunk(ticker, timeframe, i)
-            allChunks.push(chunkData)
-        }
-
-        // Combine: reverse so oldest chunk is first
-        let data: OHLCData[] = []
-        for (let i = allChunks.length - 1; i >= 0; i--) {
-            data = [...data, ...allChunks[i]]
-        }
-        const chunksLoaded = allChunks.length
-
-        return {
-            success: true,
-            data,
-            chunksLoaded
-        }
-
-    } catch (error) {
-        console.error(`[loadRemainingChunks] Exception: ${error}`)
-        return { success: false, error: "Failed to load remaining data" }
-    }
+// Legacy function - kept for compatibility but should be replaced
+export async function loadRemainingChunks(ticker: string, timeframe: string, startChunkIndex: number): Promise<{ success: boolean, data?: OHLCData[], chunkIndex?: number, error?: string }> {
+    return loadNextChunks(ticker, timeframe, startChunkIndex, 1000) // Load plenty
 }
 
-export async function getAvailableData(): Promise<{ success: boolean, tickers: string[], timeframes: string[], tickerMap: Record<string, string[]> }> {
+// Discover available data files
+export async function getAvailableData() {
     try {
         const dataDir = getDataDir()
         if (!fs.existsSync(dataDir)) {
             return { success: false, tickers: [], timeframes: [], tickerMap: {} }
         }
 
-        // Get all directories (each is a ticker_timeframe combo)
         const entries = fs.readdirSync(dataDir, { withFileTypes: true })
+        const dirs = entries.filter(e => e.isDirectory()).map(e => e.name)
+
         const tickerMap: Record<string, string[]> = {}
+        const allTickers = new Set<string>()
+        const allTimeframes = new Set<string>()
 
-        entries.forEach(entry => {
-            if (entry.isDirectory()) {
-                // Expected format: Ticker_Timeframe
-                const parts = entry.name.split('_')
-                if (parts.length >= 2) {
-                    const timeframe = parts.pop()! // Last part is timeframe
-                    const ticker = parts.join('_') // Rest is ticker
+        for (const dir of dirs) {
+            const parts = dir.split('_')
+            if (parts.length >= 2) {
+                const ticker = parts[0]
+                const timeframe = parts.slice(1).join('_') // Handle timeframes with underscores if any
 
-                    if (ticker && timeframe) {
-                        if (!tickerMap[ticker]) {
-                            tickerMap[ticker] = []
-                        }
-                        tickerMap[ticker].push(timeframe)
-                    }
+                allTickers.add(ticker)
+                allTimeframes.add(timeframe)
+
+                if (!tickerMap[ticker]) {
+                    tickerMap[ticker] = []
                 }
+                tickerMap[ticker].push(timeframe)
             }
-        })
+        }
 
-        // Sort timeframes for each ticker
-        Object.keys(tickerMap).forEach(ticker => {
-            tickerMap[ticker].sort()
+        // Sort timeframes logically
+        const tfOrder = ['1m', '3m', '5m', '15m', '30m', '1H', '2H', '4H', '6H', '8H', '12H', '1D', '3D', '1W', '1M']
+        const sortedTimeframes = Array.from(allTimeframes).sort((a, b) => {
+            const indexA = tfOrder.indexOf(a)
+            const indexB = tfOrder.indexOf(b)
+            if (indexA !== -1 && indexB !== -1) return indexA - indexB
+            if (indexA !== -1) return -1
+            if (indexB !== -1) return 1
+            return a.localeCompare(b)
         })
 
         return {
             success: true,
-            tickers: Object.keys(tickerMap).sort(),
-            timeframes: Array.from(new Set(Object.values(tickerMap).flat())).sort(),
+            tickers: Array.from(allTickers).sort(),
+            timeframes: sortedTimeframes,
             tickerMap
         }
     } catch (error) {
