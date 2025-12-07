@@ -106,3 +106,39 @@ export async function closeTrade(id: string, data: {
         return { success: false, error: errorMessage }
     }
 }
+
+export async function updateTrade(id: string, updates: Partial<CreateTradeParams>) {
+    try {
+        const trade = await prisma.trade.update({
+            where: { id },
+            data: {
+                stopLoss: updates.stopLoss,
+                takeProfit: updates.takeProfit,
+                quantity: updates.quantity,
+                // Add validation logic if needed
+            }
+        })
+
+        revalidatePath("/")
+        revalidatePath("/journal")
+
+        return { success: true, data: trade }
+    } catch (error) {
+        console.error("updateTrade Error:", error)
+        return { success: false, error: "Failed to update trade" }
+    }
+}
+
+export async function deleteTrade(id: string) {
+    try {
+        await prisma.trade.delete({
+            where: { id }
+        })
+        revalidatePath("/")
+        revalidatePath("/journal")
+        return { success: true }
+    } catch (error) {
+        console.error("deleteTrade Error:", error)
+        return { success: false, error: "Failed to delete trade" }
+    }
+}
