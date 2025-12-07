@@ -474,6 +474,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 onSettings={openDrawingSettings}
             />
 
+
             <PropertiesModal
                 open={propertiesModalOpen}
                 onOpenChange={setPropertiesModalOpen}

@@ -26,6 +26,7 @@ import { IndicatorStorage } from "@/lib/indicator-storage"
 import type { MagnetMode } from "@/lib/charts/magnet-utils"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { AccountManagerDialog } from "@/components/journal/account-manager-dialog"
+import { TimeframeSelector } from "@/components/timeframe-selector"
 
 
 
@@ -83,9 +84,6 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
     }
 
     const availableTimeframesForTicker = currentTicker ? (tickerMap[currentTicker] || []) : timeframes
-    const quickTimeframes = ['1m', '5m', '15m', '1h', '4h', 'D', 'W']
-    const availableQuickTimeframes = quickTimeframes.filter(tf => availableTimeframesForTicker.includes(tf))
-    const otherTimeframes = availableTimeframesForTicker.filter(tf => !quickTimeframes.includes(tf))
 
     return (
         <div className="h-12 border-b border-border bg-background flex items-center justify-between px-4 select-none shrink-0 z-50 relative">
@@ -137,51 +135,12 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
 
                 <div className="h-4 w-[1px] bg-border mx-2" />
 
-                {/* Quick Timeframes */}
-                <div className="flex items-center">
-                    {availableQuickTimeframes.map((tf) => (
-                        <Button
-                            key={tf}
-                            variant="ghost"
-                            size="sm"
-                            className={cn(
-                                "h-8 px-2 text-sm font-medium transition-colors hover:bg-muted",
-                                currentTimeframe === tf ? "text-primary" : "text-muted-foreground"
-                            )}
-                            onClick={() => handleTimeframeChange(tf)}
-                        >
-                            {tf}
-                        </Button>
-                    ))}
-
-                    {otherTimeframes.length > 0 && (
-                        <Popover>
-                            <PopoverTrigger asChild>
-                                <Button variant="ghost" className="h-8 w-[30px] px-0 hover:bg-muted">
-                                    <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
-                                </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-[80px] p-1 bg-popover border-border">
-                                <div className="flex flex-col gap-1">
-                                    {otherTimeframes.map((tf) => (
-                                        <Button
-                                            key={tf}
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() => handleTimeframeChange(tf)}
-                                            className={cn(
-                                                "justify-start h-7 px-2 text-xs font-medium hover:bg-muted",
-                                                currentTimeframe === tf ? "text-primary" : "text-foreground"
-                                            )}
-                                        >
-                                            {tf}
-                                        </Button>
-                                    ))}
-                                </div>
-                            </PopoverContent>
-                        </Popover>
-                    )}
-                </div>
+                {/* Timeframe Selector (TradingView-style) */}
+                <TimeframeSelector
+                    currentTimeframe={currentTimeframe}
+                    availableTimeframes={availableTimeframesForTicker}
+                    onTimeframeChange={handleTimeframeChange}
+                />
             </div>
 
             {/* Middle: Account & P&L */}

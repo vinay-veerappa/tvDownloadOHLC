@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { getChartData, loadNextChunks, getDataMetadata, DataMetadata, loadChunksForTime } from "@/actions/data-actions"
 import { toast } from "sonner"
+import { resampleOHLC, canResample } from "@/lib/resampling"
 
 // Memory limits for data (2+ years of 1m data max)
 // Eviction happens from the NEWEST end when scrolling into older history
@@ -41,6 +42,10 @@ export function useChartData({
     const [isSelectingReplayStart, setIsSelectingReplayStart] = useState(false)
     const prevWindowStartRef = useRef<number | null>(null)
 
+    // Resampling state
+    const baseTimeframeRef = useRef<string>(timeframe)
+    const isResamplingRef = useRef<boolean>(false)
+
     // On-demand loading state
     const [totalRows, setTotalRows] = useState(0)
     const [chunksLoaded, setChunksLoaded] = useState(0)
@@ -49,6 +54,7 @@ export function useChartData({
     const [hasMoreData, setHasMoreData] = useState(true)
     const [isLoadingMore, setIsLoadingMore] = useState(false)
     const lastLoadTimeRef = useRef<number>(0) // For debouncing rapid loads
+    const [lastError, setLastError] = useState<string | null>(null) // Debug state
 
     // Store the initial replay time to use after data loads
     const initialReplayTimeRef = useRef(initialReplayTime)
@@ -66,6 +72,16 @@ export function useChartData({
             currentTime
         })
     }, [replayMode, replayIndex, fullData.length, fullData, onReplayStateChange])
+
+    // Helper to find index for time
+    const findIndexForTime = (time: number, dataArray: any[] = fullData) => {
+        if (!dataArray.length) return 0
+        const idx = dataArray.findIndex(item => item.time >= time)
+        if (idx === -1) {
+            return dataArray.length - 1
+        }
+        return idx
+    }
 
     // Load Data
     useEffect(() => {
@@ -97,11 +113,46 @@ export function useChartData({
 
         async function loadData() {
             try {
-                const result = await getChartData(ticker, timeframe)
-                if (result.success && result.data) {
+                // Reset resampling state
+                baseTimeframeRef.current = timeframe
+                isResamplingRef.current = false
+                setLastError(null)
 
-                    setFullData(result.data)
-                    setTotalRows(result.totalRows || result.data.length)
+                let result = await getChartData(ticker, timeframe)
+
+                // If native data not found, try resampling from 1m
+                if (!result.success && result.error === "Data not found" && canResample('1m', timeframe)) {
+                    console.log(`[Resampling] Native data for ${timeframe} not found, trying resampling from 1m`)
+                    setLastError(`Native missing, trying 1m for ${timeframe}`)
+
+                    const baseResult = await getChartData(ticker, '1m')
+
+                    if (baseResult.success) {
+                        result = baseResult
+                        baseTimeframeRef.current = '1m'
+                        isResamplingRef.current = true
+                    } else {
+                        console.error(`[Resampling] Fallback to 1m FAILED:`, baseResult.error)
+                        setLastError(`Native ${timeframe} missing AND 1m fallback failed: ${baseResult.error}`)
+                        // If fallback fails, we want the user to know 1m is also missing
+                        result.error = `Data not found for ${timeframe} (and 1m base not found)`
+                    }
+                } else if (!result.success) {
+                    console.warn(`[LoadData] Failed:`, result.error)
+                    setLastError(`Load failed: ${result.error}`)
+                }
+
+                if (result.success && result.data) {
+                    let finalData = result.data
+
+                    // Apply resampling if needed
+                    if (isResamplingRef.current) {
+                        finalData = resampleOHLC(result.data, baseTimeframeRef.current, timeframe)
+                        console.log(`[Resampling] Resampled ${result.data.length} 1m bars to ${finalData.length} ${timeframe} bars`)
+                    }
+
+                    setFullData(finalData)
+                    setTotalRows(result.totalRows || (result.data.length || 0)) // Note: totalRows refers to base TF matches
                     setChunksLoaded(result.chunksLoaded || 0)
                     setNumChunks(result.numChunks || 0)
                     setNextChunkIndex(result.chunksLoaded || 0)
@@ -109,7 +160,7 @@ export function useChartData({
 
                     // For replay restore, find the index
                     if (timeToRestore !== null && isReplayRestore) {
-                        const idx = result.data.findIndex((item: any) => item.time >= timeToRestore!)
+                        const idx = findIndexForTime(timeToRestore!, finalData)
                         if (idx !== -1) {
                             setReplayIndex(idx)
                             if (initialReplayTimeRef.current !== undefined) {
@@ -121,41 +172,47 @@ export function useChartData({
                     // Clear the initialReplayTimeRef after first use
                     initialReplayTimeRef.current = undefined
 
-                    if (result.data.length > 0) {
+                    if (finalData.length > 0) {
                         onDataLoad?.({
-                            start: result.data[0].time,
-                            end: result.data[result.data.length - 1].time,
-                            totalBars: result.data.length
+                            start: finalData[0].time,
+                            end: finalData[finalData.length - 1].time,
+                            totalBars: finalData.length
                         })
                     }
+
+                    // Fetch metadata using the BASE timeframe
+                    fetchMetadata(baseTimeframeRef.current)
                 } else {
-                    toast.error(`Failed to load data for ${ticker} ${timeframe}`)
+                    console.error(`[LoadData] Final Failure:`, result.error)
+                    toast.error(result.error || `Failed to load data for ${ticker} ${timeframe}`)
                 }
             } catch (e) {
                 console.error("Failed to load data:", e)
                 toast.error("An unexpected error occurred while loading data")
+                setLastError(`Exception: ${e}`)
             }
         }
-        loadData()
 
-        // Also fetch full data range metadata (for calendar)
-        async function fetchMetadata() {
-            const metaResult = await getDataMetadata(ticker, timeframe)
-            if (metaResult.success && metaResult.metadata) {
-                setFullDataRange({
-                    start: metaResult.metadata.firstBarTime,
-                    end: metaResult.metadata.lastBarTime
-                })
+        async function fetchMetadata(tf: string) {
+            try {
+                const metaResult = await getDataMetadata(ticker, tf)
+                if (metaResult.success && metaResult.metadata) {
+                    setFullDataRange({
+                        start: metaResult.metadata.firstBarTime,
+                        end: metaResult.metadata.lastBarTime
+                    })
+                }
+            } catch (error) {
+                console.error("Failed to load metadata:", error)
             }
         }
-        fetchMetadata()
+
+        loadData()
     }, [ticker, timeframe])
 
     // On-demand loading of more historical data
-    // Called when user scrolls to the oldest data and wants more
-    const LOAD_DEBOUNCE_MS = 200 // Prevent rapid double-loads
+    const LOAD_DEBOUNCE_MS = 200
     const loadMoreData = useCallback(async () => {
-        // Debounce: prevent rapid successive calls
         const now = Date.now()
         if (now - lastLoadTimeRef.current < LOAD_DEBOUNCE_MS) {
             return
@@ -166,36 +223,43 @@ export function useChartData({
         lastLoadTimeRef.current = now
         setIsLoadingMore(true)
 
+        // Use base timeframe for loading
+        const usedTimeframe = baseTimeframeRef.current
+
         try {
-            const result = await loadNextChunks(ticker, timeframe, nextChunkIndex, CHUNKS_PER_LOAD)
+            console.log(`Loading more data from chunk ${nextChunkIndex} for ${usedTimeframe}...`)
+            const result = await loadNextChunks(ticker, usedTimeframe, nextChunkIndex, CHUNKS_PER_LOAD)
 
             if (result.success && result.data && result.data.length > 0) {
-                const prependedCount = result.data.length
-                const oldestDate = new Date(result.data[0].time * 1000).toLocaleDateString()
+                let newData = result.data
+
+                // Resample if needed
+                if (isResamplingRef.current) {
+                    newData = resampleOHLC(result.data, usedTimeframe, timeframe)
+                    console.log(`Resampled loaded chunk: ${result.data.length} -> ${newData.length} bars`)
+                }
+
+                const prependedCount = newData.length
+                const oldestDate = new Date(newData[0].time * 1000).toLocaleDateString()
 
                 toast.info(`Loading more data... ${prependedCount.toLocaleString()} bars from ${oldestDate}`)
 
                 // Check if we need to evict data from the END (newest)
                 setFullData(prev => {
-                    let newData = [...result.data!, ...prev]
+                    let combined = [...newData, ...prev]
 
-                    // If exceeding limit, evict from the START (oldest data)
-                    // This preserves newest data so Home key always works
-                    if (newData.length > EVICT_WHEN_OVER) {
-                        const evictCount = newData.length - EVICT_TO
-                        const evictedDate = new Date(newData[0].time * 1000).toLocaleDateString()
-                        newData = newData.slice(evictCount) // Drop from beginning (oldest)
-                        console.log(`[EVICT] Dropped ${evictCount} oldest bars (from ${evictedDate})`)
-                        toast.info(`Freed memory: dropped ${evictCount.toLocaleString()} oldest bars`)
+                    if (combined.length > EVICT_WHEN_OVER) {
+                        const overflow = combined.length - EVICT_TO
+                        if (overflow > 0 && overflow < combined.length) {
+                            combined = combined.slice(0, combined.length - overflow)
+                            console.log(`[EVICT] Dropped ${overflow} newest bars`)
+                        }
                     }
 
-                    console.log(`[DATA] Total bars: ${newData.length}`)
-                    return newData
+                    console.log(`[DATA] Total bars: ${combined.length}`)
+                    return combined
                 })
 
-                // NO windowStart adjustment needed - chart preserves by TIME!
-
-                // Update chunk tracking
                 setNextChunkIndex(result.nextChunkIndex || nextChunkIndex + CHUNKS_PER_LOAD)
                 setHasMoreData(result.hasMore || false)
                 setChunksLoaded(prev => prev + (result.chunksLoaded || 0))
@@ -211,36 +275,16 @@ export function useChartData({
         }
     }, [ticker, timeframe, nextChunkIndex, isLoadingMore, hasMoreData])
 
-    // REMOVED: Preload threshold useEffect - replaced by barsInLogicalRange in chart-container
-
-    // Return data for chart - SIMPLIFIED: use fullData directly (no windowing)
+    // Return data for chart
     const data = useMemo(() => {
         if (fullData.length === 0) return []
 
         if (replayMode) {
-            // In replay mode, show data up to the replay index
             const endIndex = Math.min(replayIndex + 1, fullData.length)
             return fullData.slice(0, endIndex)
         }
-
-        // NO WINDOWING - pass all data to chart
-        // Chart handles position by TIME, auto-preserves scroll
-        console.log(`[DATA] Passing ${fullData.length} bars to chart`)
         return fullData
     }, [fullData, replayMode, replayIndex])
-
-    // REMOVED: shiftWindowToTime and shiftWindowByBars
-    // No longer needed - chart handles position by TIME automatically
-
-    // Helper to find index for time
-    const findIndexForTime = (time: number) => {
-        if (!fullData.length) return 0
-        const idx = fullData.findIndex(item => item.time >= time)
-        if (idx === -1) {
-            return fullData.length - 1
-        }
-        return idx
-    }
 
     // Replay Controls
     const startReplay = (options?: { index?: number, time?: number }, chart?: any) => {
@@ -261,7 +305,7 @@ export function useChartData({
             toast.warning("Replay started at the end of data")
         }
 
-        prevWindowStartRef.current = null // No longer used for window position
+        prevWindowStartRef.current = null
 
         setReplayIndex(startIdx)
         setReplayMode(true)
@@ -296,7 +340,6 @@ export function useChartData({
         setReplayMode(false)
         setIsSelectingReplayStart(false)
         prevWindowStartRef.current = null
-        // NO windowStart to restore - chart handles position by TIME
     }
 
     // Auto-scroll on replay update
@@ -330,6 +373,12 @@ export function useChartData({
         totalRows,
         // Full data range for calendar (from metadata)
         fullDataRange,
+        // Debug info
+        debug: {
+            baseTimeframe: baseTimeframeRef.current,
+            isResampling: isResamplingRef.current,
+            lastError
+        },
         // Jump to time (loads data if needed)
         jumpToTime: async (time: number) => {
             // Check if time is within loaded data
@@ -338,7 +387,6 @@ export function useChartData({
                 const loadedEnd = fullData[fullData.length - 1].time
 
                 if (time >= loadedStart && time <= loadedEnd) {
-                    // Already loaded, just return success
                     return { success: true, needsScroll: true }
                 }
             }
@@ -347,14 +395,32 @@ export function useChartData({
             toast.info(`Loading data for ${new Date(time * 1000).toLocaleDateString()}...`)
 
             try {
-                const result = await loadChunksForTime(ticker, timeframe, time, 12)
+                // Use base timeframe for loading
+                const usedTimeframe = baseTimeframeRef.current
+
+                // Adjust chunks needed if resampling
+                let chunksToLoad = 12
+                if (isResamplingRef.current && usedTimeframe === '1m') {
+                    chunksToLoad = 36
+                }
+
+                const result = await loadChunksForTime(ticker, usedTimeframe, time, chunksToLoad)
                 if (result.success && result.data && result.data.length > 0) {
+                    let finalData = result.data
+
+                    // Resample if needed
+                    if (isResamplingRef.current) {
+                        finalData = resampleOHLC(result.data, usedTimeframe, timeframe)
+                        console.log(`Resampled jump data: ${result.data.length} -> ${finalData.length}`)
+                    }
+
                     // Replace fullData with new data centered on target time
-                    setFullData(result.data)
+                    setFullData(finalData)
                     setNextChunkIndex(result.endChunkIndex || 0)
+                    // Update metadata tracking
                     setHasMoreData((result.endChunkIndex || 0) < numChunks)
 
-                    toast.success(`Loaded ${result.data.length.toLocaleString()} bars`)
+                    toast.success(`Loaded ${finalData.length.toLocaleString()} bars`)
                     return { success: true, needsScroll: true }
                 } else {
                     toast.error(result.error || 'Failed to load data')
@@ -366,7 +432,5 @@ export function useChartData({
                 return { success: false }
             }
         }
-        // REMOVED: shiftWindowByBars, shiftWindowToTime, windowSize
     }
 }
-
