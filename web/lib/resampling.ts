@@ -1,8 +1,13 @@
 import { OHLCData } from "@/actions/data-actions"
 
 // Helper to parse timeframe string into seconds
-// e.g., "1m" -> 60, "1h" -> 3600
+// e.g., "1m" -> 60, "1h" -> 3600, "240" -> 14400
 export function parseTimeframeToSeconds(tf: string): number {
+    // Check for resolution string (number only)
+    if (/^\d+$/.test(tf)) {
+        return parseInt(tf, 10) * 60 // Default to minutes
+    }
+
     // Strict case matching for units: m (min), h (hour), D (day), W (week), M (month)
     // We allow 'd' and 'w' to leniently map to Day/Week, but 'm' MUST be minute and 'M' MUST be Month
     const match = tf.match(/^(\d+)(m|h|d|w|M)$/i)
@@ -106,10 +111,10 @@ export function canResample(fromTF: string, toTF: string): boolean {
     if (toSeconds <= fromSeconds) return false
 
     // AND target is not Daily/Weekly/Monthly (D, W, M)
-    // We strictly check for 'D', 'W', 'M', 'd', 'w' but ALLOW 'm' (minutes)
+    // We strictly check for 'D', 'W', 'M', 'd', 'w' but ALLOW 'm' (minutes) AND number-only strings
     if (toTF.match(/[DWM]$/)) return false // Uppercase D, W, M forbidden
     if (toTF.match(/[dw]$/)) return false  // Lowercase d, w forbidden (just in case)
 
-    // 'm' (minutes) is allowed!
+    // 'm' (minutes) and raw resolution strings ("240") are allowed!
     return true
 }
