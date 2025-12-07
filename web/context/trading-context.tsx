@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { toast } from 'sonner'
-import { createTrade, closeTrade, getTrades } from '@/actions/trade-actions'
+import { createTrade, closeTrade, getTrades, updateTrade, deleteTrade } from '@/actions/trade-actions'
 import { getAccounts } from '@/actions/journal-actions'
 
 // --- Types ---
@@ -10,7 +10,7 @@ import { getAccounts } from '@/actions/journal-actions'
 export interface Order {
     id: string
     symbol: string
-    direction: 'LONG' | 'SHORT' // Normalized to LONG/SHORT
+    direction: 'LONG' | 'SHORT'
     orderType: 'MARKET' | 'LIMIT' | 'STOP'
     price: number
     quantity: number
@@ -19,7 +19,6 @@ export interface Order {
     takeProfit?: number
 }
 
-// For UI convenience, BuySellPanel might pass 'BUY'/'SELL'
 export interface OrderParams {
     ticker: string
     direction: 'BUY' | 'SELL'
@@ -33,23 +32,20 @@ export interface OrderParams {
 }
 
 export interface Position {
-    id?: string // Database ID
+    id?: string
     ticker: string
     direction: 'LONG' | 'SHORT'
     entryPrice: number
     quantity: number
     startTime: number
-    currentPrice?: number // Updated via tick
+    currentPrice?: number
     unrealizedPnl: number
     stopLoss?: number
     takeProfit?: number
-    // Advanced Metrics
-    maxPrice: number // Highest price reached (MFE/MAE tracking)
-    minPrice: number // Lowest price reached
-    risk: number // Intended risk in $ (for SQN/RoR)
+    maxPrice: number
+    minPrice: number
+    risk: number
 }
-
-// --- 1. Data Loading ---
 
 export interface Trade {
     id: string
@@ -63,32 +59,33 @@ export interface Trade {
     pnl?: number
     orderType: string
     accountId: string
+    risk?: number
+    stopLoss?: number
+    takeProfit?: number
+    limitPrice?: number
+    stopPrice?: number
 }
 
 interface TradingContextType {
-    // Market Data
     currentPrice: number
-    updatePrice: (price: number) => void
+    updatePrice: (price: number, ticker: string) => void
+    currentTicker: string
 
-    // Trading State
     trades: Trade[]
     activePosition: Position | null
     pendingOrders: Order[]
-    sessionPnl: number // Realized
+    sessionPnl: number
 
-    // Journal State
     accounts: any[]
     activeAccount: any | null
     setActiveAccount: (account: any) => void
     refreshAccounts: () => void
     refreshTrades: () => Promise<void>
 
-    // Strategy State
     strategies: any[]
     activeStrategy: any | null
     setActiveStrategy: (strategy: any) => void
 
-    // Actions
     executeOrder: (params: OrderParams) => Promise<void>
     cancelOrder: (id: string) => Promise<void>
     modifyOrder: (id: string, updates: Partial<Order>) => Promise<void>
@@ -107,14 +104,13 @@ export function useTrading() {
 }
 
 export function TradingProvider({ children }: { children: React.ReactNode }) {
-    // State
     const [currentPrice, setCurrentPrice] = useState<number>(0)
+    const [currentTicker, setCurrentTicker] = useState<string>("")
     const [trades, setTrades] = useState<Trade[]>([])
     const [activePosition, setActivePosition] = useState<Position | null>(null)
     const [pendingOrders, setPendingOrders] = useState<Order[]>([])
     const [sessionPnl, setSessionPnl] = useState<number>(0)
 
-    // Journal State
     const [accounts, setAccounts] = useState<any[]>([])
     const [activeAccount, setActiveAccount] = useState<any | null>(null)
     const [strategies, setStrategies] = useState<any[]>([
@@ -124,48 +120,8 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
     ])
     const [activeStrategy, setActiveStrategy] = useState<any | null>(null)
 
-    // P&L Constants (ES Futures)
     const POINT_VALUE = 50
 
-    // --- 1. Data Loading ---
-
-    const refreshAccounts = async () => {
-        try {
-            const res = await getAccounts()
-            if (res.success && res.data) {
-                setAccounts(res.data)
-                // Set default if no active account
-                if (!activeAccount && res.data.length > 0) {
-                    const def = res.data.find((a: any) => a.isDefault)
-                    setActiveAccount(def || res.data[0])
-                }
-            }
-        } catch (e) {
-            console.error("Failed to load accounts", e)
-        }
-    }
-
-    const refreshTrades = async () => {
-        const result = await getTrades()
-        if (result.success && result.data) {
-            setTrades(result.data as any[])
-        }
-    }
-
-    // Initial Load
-    useEffect(() => {
-        refreshAccounts()
-        refreshTrades()
-    }, [])
-
-    // --- 2. Live Updates (Price, PnL, Brackets) ---
-
-    // Update Price callback (passed to Chart)
-    const updatePrice = useCallback((price: number) => {
-        setCurrentPrice(price)
-    }, [])
-
-    // Logic: Helper to Open a Position (Local State)
     const openPosition = useCallback(async (
         ticker: string,
         direction: 'LONG' | 'SHORT',
@@ -194,19 +150,80 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
         setActivePosition(newPos)
     }, [])
 
-    // Logic: Helper to Close a Position
+    const refreshAccounts = async () => {
+        try {
+            const res = await getAccounts()
+            if (res.success && res.data) {
+                setAccounts(res.data)
+                if (!activeAccount && res.data.length > 0) {
+                    const def = res.data.find((a: any) => a.isDefault)
+                    setActiveAccount(def || res.data[0])
+                }
+            }
+        } catch (e) {
+            console.error("Failed to load accounts", e)
+        }
+    }
+
+    const refreshTrades = async () => {
+        const result = await getTrades()
+        if (result.success && result.data) {
+            const fetchedTrades = result.data as any[]
+            setTrades(fetchedTrades)
+
+            if (!activePosition) {
+                const openTrade = fetchedTrades.find(t => t.status === 'OPEN')
+                if (openTrade) {
+                    openPosition(
+                        openTrade.ticker,
+                        openTrade.direction,
+                        openTrade.quantity,
+                        openTrade.entryPrice,
+                        openTrade.stopLoss,
+                        openTrade.takeProfit,
+                        openTrade.id,
+                        openTrade.risk
+                    )
+                }
+            }
+
+            const pending = fetchedTrades
+                .filter(t => t.status === 'PENDING')
+                .map(t => ({
+                    id: t.id,
+                    symbol: t.ticker,
+                    direction: t.direction === 'LONG' ? 'LONG' : 'SHORT',
+                    orderType: t.orderType as 'LIMIT' | 'STOP',
+                    price: t.limitPrice || t.stopPrice || 0,
+                    quantity: t.quantity,
+                    status: 'PENDING',
+                    stopLoss: t.stopLoss,
+                    takeProfit: t.takeProfit
+                } as Order))
+
+            setPendingOrders(pending)
+        }
+    }
+
+    useEffect(() => {
+        refreshAccounts()
+        refreshTrades()
+    }, [])
+
+    const updatePrice = useCallback((price: number, ticker: string) => {
+        setCurrentPrice(price)
+        setCurrentTicker(ticker)
+    }, [])
+
     const closePosHelper = useCallback(async (pos: Position, exitPrice: number) => {
         const priceDiff = exitPrice - pos.entryPrice
         const pnlRaw = pos.direction === 'LONG' ? priceDiff : -priceDiff
         const pnl = pnlRaw * pos.quantity * POINT_VALUE
 
-        // Calculate Advanced Metrics
         const duration = Math.floor((Date.now() - pos.startTime) / 1000)
         let mae = 0
         let mfe = 0
 
-        // Use the tracked max/min prices from live session
-        // If we closed instantly (no ticks), fallback to entry/exit
         const finalMax = Math.max(pos.maxPrice, exitPrice)
         const finalMin = Math.min(pos.minPrice, exitPrice)
 
@@ -218,13 +235,9 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
             mae = finalMax - pos.entryPrice
         }
 
-        // Optimistic Update
         setActivePosition(null)
         setSessionPnl(prev => prev + pnl)
 
-        // Persist Close
-        // Find the open trade ID. If we have pos.id locally, use it.
-        // Otherwise search in trades array.
         let tradeId = pos.id
         if (!tradeId) {
             const openTrade = trades.find(t => t.status === "OPEN" && t.ticker === pos.ticker)
@@ -248,7 +261,6 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
                 } else {
                     console.error("DB Close Failed:", res.error)
                     toast.error(`DB Update Failed: ${res.error}`)
-                    // Ideally restore position here or flag error
                 }
             } catch (e) {
                 console.error("Failed to close trade", e)
@@ -259,16 +271,13 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
         }
     }, [trades])
 
-    // Effect: Check Orders/Brackets on Tick
     useEffect(() => {
-        if (!currentPrice) return
+        if (!currentPrice || !currentTicker) return
 
-        if (activePosition) {
-            // Updated MAE/MFE tracking (Max/Min)
+        if (activePosition && activePosition.ticker === currentTicker) {
             const newMax = Math.max(activePosition.maxPrice, currentPrice)
             const newMin = Math.min(activePosition.minPrice, currentPrice)
 
-            // Only update state if changed (Throttle? No, React batches usually fine for simple state)
             if (newMax !== activePosition.maxPrice || newMin !== activePosition.minPrice) {
                 setActivePosition(prev => prev ? {
                     ...prev,
@@ -277,40 +286,39 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
                 } : null)
             }
 
-            // A. Check Brackets (SL/TP) - ONLY Check, don't update state unless closing
-            // Check SL
             if (activePosition.stopLoss) {
                 const hitSL = activePosition.direction === 'LONG' ? currentPrice <= activePosition.stopLoss : currentPrice >= activePosition.stopLoss
                 if (hitSL) {
                     toast.warning(`Stop Loss Hit @ ${currentPrice}`)
                     closePosHelper(activePosition, currentPrice)
-                    return // Exit
+                    return
                 }
             }
-            // Check TP
+
             if (activePosition.takeProfit) {
                 const hitTP = activePosition.direction === 'LONG' ? currentPrice >= activePosition.takeProfit : currentPrice <= activePosition.takeProfit
                 if (hitTP) {
                     toast.success(`Take Profit Hit @ ${currentPrice}`)
                     closePosHelper(activePosition, currentPrice)
-                    return // Exit
+                    return
                 }
             }
         }
 
-        // B. Check Pending Orders
         if (pendingOrders.length > 0) {
             let triggeredOrder: Order | null = null;
             const remainingOrders: Order[] = []
 
             pendingOrders.forEach(order => {
                 let triggered = false
-                if (order.orderType === 'LIMIT') {
-                    if (order.direction === 'LONG' && currentPrice <= order.price) triggered = true
-                    if (order.direction === 'SHORT' && currentPrice >= order.price) triggered = true
-                } else if (order.orderType === 'STOP') {
-                    if (order.direction === 'LONG' && currentPrice >= order.price) triggered = true
-                    if (order.direction === 'SHORT' && currentPrice <= order.price) triggered = true
+                if (order.symbol === currentTicker) {
+                    if (order.orderType === 'LIMIT') {
+                        if (order.direction === 'LONG' && currentPrice <= order.price) triggered = true
+                        if (order.direction === 'SHORT' && currentPrice >= order.price) triggered = true
+                    } else if (order.orderType === 'STOP') {
+                        if (order.direction === 'LONG' && currentPrice >= order.price) triggered = true
+                        if (order.direction === 'SHORT' && currentPrice <= order.price) triggered = true
+                    }
                 }
 
                 if (triggered && !triggeredOrder && !activePosition) {
@@ -322,23 +330,13 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
 
             if (triggeredOrder) {
                 setPendingOrders(remainingOrders)
-                // Execute Logic
                 const o = triggeredOrder as Order
 
-                // We need to persist this entry as a Trade
                 if (activeAccount) {
-                    createTrade({
-                        ticker: o.symbol,
-                        entryDate: new Date(),
-                        entryPrice: currentPrice, // Fill at market on trigger? Or trigger price? Usually trigger price or slippage.
-                        quantity: o.quantity,
-                        direction: o.direction,
-                        orderType: o.orderType,
+                    updateTrade(o.id, {
                         status: 'OPEN',
-                        stopLoss: o.stopLoss,
-                        takeProfit: o.takeProfit,
-                        accountId: activeAccount.id,
-                        strategyId: activeStrategy?.id
+                        entryDate: new Date(),
+                        entryPrice: currentPrice,
                     }).then(res => {
                         if (res.success && res.data) {
                             openPosition(o.symbol, o.direction, o.quantity, currentPrice, o.stopLoss, o.takeProfit, res.data.id)
@@ -349,10 +347,7 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
                 }
             }
         }
-    }, [currentPrice, pendingOrders, activePosition, activeAccount, closePosHelper, openPosition])
-
-
-    // --- 3. Actions ---
+    }, [currentPrice, currentTicker, pendingOrders, activePosition, activeAccount, closePosHelper, openPosition])
 
     const executeOrder = async (params: OrderParams) => {
         if (!activeAccount) {
@@ -364,14 +359,10 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
             return
         }
 
-        // Prepare Common Data
         const tradeDirection = params.direction === 'BUY' ? 'LONG' : 'SHORT'
 
-        // A. MARKET ORDER
         if (params.orderType === 'MARKET') {
             if (!activePosition) {
-                // OPEN NEW
-                // 1. Persist
                 const res = await createTrade({
                     ticker: params.ticker,
                     entryDate: new Date(),
@@ -387,7 +378,6 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
                 })
 
                 if (res.success && res.data) {
-                    // 2. Local State
                     await openPosition(params.ticker, tradeDirection, params.quantity, currentPrice, params.stopLoss, params.takeProfit, res.data.id)
                     toast.success("Market Order Filled")
                     refreshTrades()
@@ -401,15 +391,12 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
                     return
                 }
 
-                // Check for Reversal (Qty > Current)
                 const qtyToClose = Math.min(activePosition.quantity, params.quantity)
                 const qtyToReverse = params.quantity - qtyToClose
 
-                // 1. Close Current
                 if (qtyToClose === activePosition.quantity) {
                     await closePosHelper(activePosition, currentPrice)
 
-                    // 2. Open Reverse if needed
                     if (qtyToReverse > 0) {
                         const res = await createTrade({
                             ticker: params.ticker,
@@ -440,42 +427,85 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
             return
         }
 
-        // B. LIMIT / STOP (Pending)
         if (!params.price) {
             toast.error("Price required for Limit/Stop")
             return
         }
 
-        const newOrder: Order = {
-            id: Math.random().toString(36).substring(7), // Temporary ID
-            symbol: params.ticker,
+        const res = await createTrade({
+            ticker: params.ticker,
+            entryDate: new Date(),
+            quantity: params.quantity,
             direction: tradeDirection,
             orderType: params.orderType,
-            price: params.price,
-            quantity: params.quantity,
             status: 'PENDING',
+            limitPrice: params.orderType === 'LIMIT' ? params.price : undefined,
+            stopPrice: params.orderType === 'STOP' ? params.price : undefined,
             stopLoss: params.stopLoss,
-            takeProfit: params.takeProfit
-        }
+            takeProfit: params.takeProfit,
+            accountId: activeAccount.id,
+            strategyId: activeStrategy?.id
+        })
 
-        // In a real app, we'd persist PENDING orders to DB too. For now keeping in local state.
-        setPendingOrders(prev => [...prev, newOrder])
-        toast.info(`${params.orderType} Placed`)
+        if (res.success && res.data) {
+            const newOrder: Order = {
+                id: res.data.id,
+                symbol: params.ticker,
+                direction: tradeDirection,
+                orderType: params.orderType,
+                price: params.price,
+                quantity: params.quantity,
+                status: 'PENDING',
+                stopLoss: params.stopLoss,
+                takeProfit: params.takeProfit
+            }
+            setPendingOrders(prev => [...prev, newOrder])
+            toast.info(`${params.orderType} Placed & Saved`)
+        } else {
+            toast.error("Failed to save pending order")
+        }
     }
 
     const cancelOrder = async (id: string) => {
         setPendingOrders(prev => prev.filter(o => o.id !== id))
-        toast.info("Order Cancelled")
+
+        const res = await deleteTrade(id)
+        if (res.success) {
+            toast.info("Order Cancelled")
+        } else {
+            toast.error("Failed to cancel order in DB")
+        }
     }
 
     const modifyOrder = async (id: string, updates: Partial<Order>) => {
         setPendingOrders(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o))
+
+        const tradeUpdates: any = {}
+        if (updates.price) {
+            const order = pendingOrders.find(o => o.id === id)
+            if (order) {
+                if (order.orderType === 'LIMIT') tradeUpdates.limitPrice = updates.price
+                if (order.orderType === 'STOP') tradeUpdates.stopPrice = updates.price
+            }
+        }
+        if (updates.stopLoss !== undefined) tradeUpdates.stopLoss = updates.stopLoss
+        if (updates.takeProfit !== undefined) tradeUpdates.takeProfit = updates.takeProfit
+
+        if (Object.keys(tradeUpdates).length > 0) {
+            updateTrade(id, tradeUpdates)
+        }
     }
 
     const modifyPosition = async (updates: { stopLoss?: number, takeProfit?: number }) => {
         if (activePosition) {
             setActivePosition({ ...activePosition, ...updates })
-            // TODO: Update DB trade with new brackets
+
+            if (activePosition.id) {
+                const res = await updateTrade(activePosition.id, updates)
+                if (!res.success) {
+                    toast.error("Failed to persist brackets")
+                }
+            }
         }
     }
 
@@ -485,11 +515,12 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
         }
     }
 
-    // --- Derived State for Context ---
     const livePosition = activePosition ? {
         ...activePosition,
-        currentPrice,
+        currentPrice: (activePosition.ticker === currentTicker) ? currentPrice : activePosition.currentPrice,
         unrealizedPnl: (() => {
+            if (activePosition.ticker !== currentTicker) return activePosition.unrealizedPnl || 0
+
             const priceDiff = currentPrice - activePosition.entryPrice
             const pnlRaw = activePosition.direction === 'LONG' ? priceDiff : -priceDiff
             return pnlRaw * activePosition.quantity * POINT_VALUE
@@ -500,10 +531,11 @@ export function TradingProvider({ children }: { children: React.ReactNode }) {
         <TradingContext.Provider value={{
             currentPrice,
             updatePrice,
+            currentTicker,
             trades,
             activePosition: livePosition,
             pendingOrders,
-            sessionPnl: sessionPnl + (livePosition?.unrealizedPnl || 0), // Total P&L
+            sessionPnl: sessionPnl + (livePosition?.unrealizedPnl || 0),
 
             accounts,
             activeAccount,

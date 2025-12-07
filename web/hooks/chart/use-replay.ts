@@ -6,14 +6,16 @@ import { OHLCData } from "@/actions/data-actions"
 
 interface UseReplayProps {
     fullData: OHLCData[]
+    ticker: string
     initialReplayTime?: number
     onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number, currentTime?: number }) => void
-    onPriceChange?: (price: number) => void
-    chart?: any // Optional chart ref if needed for auto-scroll
+    onPriceChange?: (price: number, ticker: string) => void
+    chart?: any
 }
 
 export function useReplay({
     fullData,
+    ticker,
     initialReplayTime,
     onReplayStateChange,
     onPriceChange,
@@ -25,7 +27,6 @@ export function useReplay({
     const prevWindowStartRef = useRef<number | null>(null)
     const initialReplayTimeRef = useRef(initialReplayTime)
 
-    // Helper: Find index for time
     const findIndexForTime = useCallback((time: number, dataArray: OHLCData[] = fullData) => {
         if (!dataArray.length) return 0
         const idx = dataArray.findIndex(item => item.time >= time)
@@ -35,7 +36,6 @@ export function useReplay({
         return idx
     }, [fullData])
 
-    // Derived Data (Slice)
     const data = useMemo(() => {
         if (fullData.length === 0) return []
 
@@ -46,7 +46,6 @@ export function useReplay({
         return fullData
     }, [fullData, replayMode, replayIndex])
 
-    // Notify parent of state change
     useEffect(() => {
         const currentTime = fullData.length > 0 && replayIndex < fullData.length ? fullData[replayIndex]?.time : undefined
         onReplayStateChange?.({
@@ -57,15 +56,15 @@ export function useReplay({
         })
     }, [replayMode, replayIndex, fullData.length, fullData, onReplayStateChange])
 
-    // Notify of price change (last bar close)
+    // Notify of price change with ticker
     useEffect(() => {
         if (data.length > 0) {
             const lastBar = data[data.length - 1]
             if (lastBar && lastBar.close) {
-                onPriceChange?.(lastBar.close)
+                onPriceChange?.(lastBar.close, ticker)
             }
         }
-    }, [data, onPriceChange])
+    }, [data, ticker, onPriceChange])
 
     // Handle initial replay time only once when data first loads
     useEffect(() => {

@@ -10,9 +10,9 @@ interface UseChartDataProps {
     timeframe: string
     onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
     onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number, currentTime?: number }) => void
-    onPriceChange?: (price: number) => void
+    onPriceChange?: (price: number, ticker: string) => void
     getVisibleTimeRange?: () => { start: number, end: number, center: number } | null
-    initialReplayTime?: number // Timestamp to restore replay position on mount
+    initialReplayTime?: number
 }
 
 export function useChartData({
@@ -24,33 +24,26 @@ export function useChartData({
     initialReplayTime
 }: UseChartDataProps) {
 
-    // 1. Normalize timeframe
     const timeframe = useMemo(() => normalizeResolution(rawTimeframe), [rawTimeframe])
 
-    // Forward refs for coordination
     const currentReplayTimeRef = useRef<number | null>(null)
 
-    // 2. Data Loading Hook
     const loading = useDataLoading({
         ticker,
         timeframe,
         onDataLoad,
-        // When data is prepended (pagination), shift replay index to maintain position
         onPrepend: (count) => replay.adjustIndex(count)
     })
 
-    // 3. Replay Hook
     const replay = useReplay({
         fullData: loading.fullData,
+        ticker,
         initialReplayTime,
         onReplayStateChange,
         onPriceChange
     })
 
-    // 4. Coordinator Logic: Persistence across timeframe switches
-    // Track current replay time to restore it after loading new data (timeframe switch)
     useEffect(() => {
-        // If in replay mode, keep track of the current time
         if (replay.replayMode && replay.data.length > 0) {
             const lastBar = replay.data[replay.data.length - 1]
             if (lastBar) {
@@ -59,14 +52,8 @@ export function useChartData({
         }
     }, [replay.replayMode, replay.data])
 
-    // Restore replay position after main data load (not pagination)
     useEffect(() => {
-        // If we just finished loading (isLoading false) and have data
         if (!loading.isLoading && loading.fullData.length > 0) {
-            // Priority: Initial Replay > Persisted Replay Time
-            // Note: Initial Replay is handled by useReplay internal effect on mount.
-            // We only care about PERSISTED time (switching timeframes while in replay).
-
             if (replay.replayMode && currentReplayTimeRef.current) {
                 const newIdx = replay.findIndexForTime(currentReplayTimeRef.current)
                 if (newIdx !== -1) {
@@ -74,15 +61,12 @@ export function useChartData({
                 }
             }
         }
-    }, [loading.isLoading, loading.fullData.length]) // Only run when loading state changes or data arrives
+    }, [loading.isLoading, loading.fullData.length])
 
-    // 5. Expose Unified Interface
     return {
-        // Data & State
         fullData: loading.fullData,
-        data: replay.data, // Sliced data for chart
+        data: replay.data,
 
-        // Replay
         replayMode: replay.replayMode,
         replayIndex: replay.replayIndex,
         isSelectingReplayStart: replay.isSelectingReplayStart,
@@ -95,7 +79,6 @@ export function useChartData({
         stepBack: replay.stepBack,
         findIndexForTime: replay.findIndexForTime,
 
-        // Data Loading
         isLoadingMore: loading.isLoadingMore,
         hasMoreData: loading.hasMoreData,
         loadMoreData: loading.loadMoreData,
@@ -103,7 +86,6 @@ export function useChartData({
         fullDataRange: loading.fullDataRange,
         jumpToTime: loading.jumpToTime,
 
-        // Debug / Internals
         debug: {
             baseTimeframe: loading.baseTimeframe,
             isResampling: loading.isResampling,
