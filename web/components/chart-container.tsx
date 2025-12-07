@@ -227,7 +227,10 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     e.preventDefault()
                     // Go to oldest data (user preference: End = oldest)
                     if (data.length > 0) {
-                        timeScale.scrollToPosition(-data.length + 50, false)
+                        // Scroll to leftmost position (oldest bar at left edge)
+                        requestAnimationFrame(() => {
+                            timeScale.scrollToPosition(-data.length + 100, false)
+                        })
                         console.log('[KEY] End - scroll to oldest bar')
                     }
                     break
