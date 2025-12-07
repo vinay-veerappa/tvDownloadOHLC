@@ -1,7 +1,7 @@
 ﻿"use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
-import { getChartData, loadNextChunks } from "@/actions/data-actions"
+import { getChartData, loadNextChunks, getDataMetadata, DataMetadata } from "@/actions/data-actions"
 import { toast } from "sonner"
 
 // Memory limits for data (2+ years of 1m data max)
@@ -52,6 +52,9 @@ export function useChartData({
 
     // Store the initial replay time to use after data loads
     const initialReplayTimeRef = useRef(initialReplayTime)
+
+    // Full data range (from metadata - for calendar)
+    const [fullDataRange, setFullDataRange] = useState<{ start: number; end: number } | null>(null)
 
     // Notify parent of replay state changes
     useEffect(() => {
@@ -134,6 +137,18 @@ export function useChartData({
             }
         }
         loadData()
+
+        // Also fetch full data range metadata (for calendar)
+        async function fetchMetadata() {
+            const metaResult = await getDataMetadata(ticker, timeframe)
+            if (metaResult.success && metaResult.metadata) {
+                setFullDataRange({
+                    start: metaResult.metadata.firstBarTime,
+                    end: metaResult.metadata.lastBarTime
+                })
+            }
+        }
+        fetchMetadata()
     }, [ticker, timeframe])
 
     // On-demand loading of more historical data
@@ -312,7 +327,9 @@ export function useChartData({
         isLoadingMore,
         hasMoreData,
         loadMoreData,
-        totalRows
+        totalRows,
+        // Full data range for calendar (from metadata)
+        fullDataRange
         // REMOVED: shiftWindowByBars, shiftWindowToTime, windowSize
     }
 }

@@ -101,6 +101,41 @@ export async function getChartData(ticker: string, timeframe: string): Promise<{
     }
 }
 
+// Get metadata about the full data range (for calendar)
+export interface DataMetadata {
+    firstBarTime: number  // Oldest bar timestamp
+    lastBarTime: number   // Newest bar timestamp
+    totalBars: number
+    numChunks: number
+    chunkSize: number
+}
+
+export async function getDataMetadata(
+    ticker: string,
+    timeframe: string
+): Promise<{ success: boolean, metadata?: DataMetadata, error?: string }> {
+    try {
+        const meta = loadMeta(ticker, timeframe)
+        if (!meta) {
+            return { success: false, error: "Data not found" }
+        }
+
+        return {
+            success: true,
+            metadata: {
+                firstBarTime: meta.startTime,
+                lastBarTime: meta.endTime,
+                totalBars: meta.totalBars,
+                numChunks: meta.numChunks,
+                chunkSize: meta.chunkSize
+            }
+        }
+    } catch (error) {
+        console.error(`[getDataMetadata] Exception: ${error}`)
+        return { success: false, error: "Failed to load metadata" }
+    }
+}
+
 // Load specific number of chunks for on-demand loading
 // Returns older data starting from startChunk, loading up to numToLoad chunks
 export async function loadNextChunks(
