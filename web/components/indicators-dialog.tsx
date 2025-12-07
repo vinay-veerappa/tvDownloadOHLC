@@ -38,6 +38,10 @@ const indicators = [
         value: "sessions",
         label: "Session Highlighting",
     },
+    {
+        value: "vp",
+        label: "Volume Profile",
+    },
 ]
 
 interface IndicatorsDialogProps {
