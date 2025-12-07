@@ -1,7 +1,7 @@
 ﻿"use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
-import { getChartData, loadNextChunks, getDataMetadata, DataMetadata } from "@/actions/data-actions"
+import { getChartData, loadNextChunks, getDataMetadata, DataMetadata, loadChunksForTime } from "@/actions/data-actions"
 import { toast } from "sonner"
 
 // Memory limits for data (2+ years of 1m data max)
@@ -329,7 +329,43 @@ export function useChartData({
         loadMoreData,
         totalRows,
         // Full data range for calendar (from metadata)
-        fullDataRange
+        fullDataRange,
+        // Jump to time (loads data if needed)
+        jumpToTime: async (time: number) => {
+            // Check if time is within loaded data
+            if (fullData.length > 0) {
+                const loadedStart = fullData[0].time
+                const loadedEnd = fullData[fullData.length - 1].time
+
+                if (time >= loadedStart && time <= loadedEnd) {
+                    // Already loaded, just return success
+                    return { success: true, needsScroll: true }
+                }
+            }
+
+            // Need to load data for this time
+            toast.info(`Loading data for ${new Date(time * 1000).toLocaleDateString()}...`)
+
+            try {
+                const result = await loadChunksForTime(ticker, timeframe, time, 12)
+                if (result.success && result.data && result.data.length > 0) {
+                    // Replace fullData with new data centered on target time
+                    setFullData(result.data)
+                    setNextChunkIndex(result.endChunkIndex || 0)
+                    setHasMoreData((result.endChunkIndex || 0) < numChunks)
+
+                    toast.success(`Loaded ${result.data.length.toLocaleString()} bars`)
+                    return { success: true, needsScroll: true }
+                } else {
+                    toast.error(result.error || 'Failed to load data')
+                    return { success: false }
+                }
+            } catch (e) {
+                console.error('jumpToTime error:', e)
+                toast.error('Failed to load data')
+                return { success: false }
+            }
+        }
         // REMOVED: shiftWindowByBars, shiftWindowToTime, windowSize
     }
 }
