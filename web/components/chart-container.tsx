@@ -292,14 +292,14 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     };
 
     // 7. Trading Visuals (Hook)
-    const { pendingLinesRef, slLineRef, tpLineRef } = useChartTrading({
+    const { positionLineRef, pendingLinesRef, slLineRef, tpLineRef } = useChartTrading({
         series, position, pendingOrders
     })
 
     // 8. Interaction & Drag Logic (Hook)
     useChartDrag({
-        chartContainerRef, chart, series, data, magnetMode, ticker, timeframe,
-        drawingManager, selectedDrawingRef, pendingLinesRef, slLineRef, tpLineRef,
+        chartContainerRef, chart, series, data,
+        positionLineRef, pendingLinesRef, slLineRef, tpLineRef,
         onModifyOrder, onModifyPosition
     })
 
