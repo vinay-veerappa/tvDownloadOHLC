@@ -1,27 +1,35 @@
 # tvDownloadOHLC - Trading Platform
 
-**Version 0.3.0** - Trading Engine, Theme Support, Replay Sync
-
-## 📂 Project Structure
-
-*   **`web/`**: The main Next.js Trading Platform (Chart, Journal, Backtest).
-    *   Stack: Next.js 16, TypeScript, Shadcn/UI, Prisma, Lightweight Charts v5.
-    *   Run: `cd web && npm run dev`
-*   **`data/`**: Historical OHLC data (Parquet/CSV).
-*   **`scripts/`**: Python scripts for data downloading and processing.
-*   **`docs/`**: Technical documentation and guides.
-*   **`legacy_chart_ui/`**: **[DEPRECATED]** The original Vanilla JS Chart Viewer. Kept for reference.
-
-## ✨ Features (v0.3.0)
-
-### Trading Engine
-- LONG/SHORT position management with real-time P&L
-- Stop Loss / Take Profit bracket orders
-- Trade reversal support (LONG → SHORT or vice versa)
-- Draggable SL/TP price lines on chart
-- Session-based P&L tracking
-
-### Advanced Journaling
+**Version 0.4.0** - Timeframe Standardization & Performance Refactor
+ 
+ ## 📂 Project Structure
+ 
+ *   **`web/`**: The main Next.js Trading Platform (Chart, Journal, Backtest).
+     *   Stack: Next.js 16, TypeScript, Shadcn/UI, Prisma, Lightweight Charts v5.
+     *   Run: `cd web && npm run dev`
+ *   **`data/`**: Historical OHLC data (Parquet/CSV).
+ *   **`scripts/`**: Python scripts for data downloading and processing.
+ *   **`docs/`**: Technical documentation and guides.
+ *   **`legacy_chart_ui/`**: **[DEPRECATED]** The original Vanilla JS Chart Viewer. Kept for reference.
+ 
+ ## ✨ Features (v0.4.0)
+ 
+ ### Architecture Improvements
+ - **Resolution Standardization**: Unified timeframe handling (minutes-based, e.g., "60" vs "1h") using `resolution.ts`.
+ - **Hook Splitting**: `useChartData` decomposed into:
+     - `useDataLoading`: Optimized data fetching, pagination, and memory management.
+     - `useReplay`: Focused replay state logic.
+     - `useResampling`: Client-side data aggregation (e.g., 3m from 1m).
+ - **Performance**: Fixed NQ1 (high-frequency) data crashes by optimizing initial load sizes.
+ 
+ ### Trading Engine
+ - LONG/SHORT position management with real-time P&L
+ - Stop Loss / Take Profit bracket orders
+ - Trade reversal support (LONG → SHORT or vice versa)
+ - Draggable SL/TP price lines on chart
+ - Session-based P&L tracking
+ 
+ ### Advanced Journaling
 - MAE (Max Adverse Excursion) / MFE (Max Favorable Excursion) tracking
 - Trade duration in seconds
 - Risk-per-trade configurable
