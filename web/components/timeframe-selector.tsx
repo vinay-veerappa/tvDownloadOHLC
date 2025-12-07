@@ -10,6 +10,7 @@ import {
     PopoverTrigger,
 } from "@/components/ui/popover"
 import { Input } from "@/components/ui/input"
+import { normalizeResolution, getResolutionInMinutes, formatResolution } from "@/lib/resolution"
 
 const FAVORITES_STORAGE_KEY = 'chart-tf-favorites'
 const RECENT_TF_STORAGE_KEY = 'chart-tf-recent'
@@ -17,24 +18,24 @@ const RECENT_TF_STORAGE_KEY = 'chart-tf-recent'
 // All available timeframes organized by category
 const TIMEFRAME_CATEGORIES = {
     minutes: [
-        { value: '1m', label: '1 minute' },
-        { value: '2m', label: '2 minutes' },
-        { value: '3m', label: '3 minutes' },
-        { value: '4m', label: '4 minutes' },
-        { value: '5m', label: '5 minutes' },
-        { value: '10m', label: '10 minutes' },
-        { value: '15m', label: '15 minutes' },
-        { value: '30m', label: '30 minutes' },
-        { value: '45m', label: '45 minutes' },
+        { value: '1', label: '1 minute' },
+        { value: '2', label: '2 minutes' },
+        { value: '3', label: '3 minutes' },
+        { value: '4', label: '4 minutes' },
+        { value: '5', label: '5 minutes' },
+        { value: '10', label: '10 minutes' },
+        { value: '15', label: '15 minutes' },
+        { value: '30', label: '30 minutes' },
+        { value: '45', label: '45 minutes' },
     ],
     hours: [
-        { value: '1h', label: '1 hour' },
-        { value: '2h', label: '2 hours' },
-        { value: '3h', label: '3 hours' },
-        { value: '4h', label: '4 hours' },
-        { value: '6h', label: '6 hours' },
-        { value: '8h', label: '8 hours' },
-        { value: '12h', label: '12 hours' },
+        { value: '60', label: '1 hour' },
+        { value: '120', label: '2 hours' },
+        { value: '180', label: '3 hours' },
+        { value: '240', label: '4 hours' },
+        { value: '360', label: '6 hours' },
+        { value: '480', label: '8 hours' },
+        { value: '720', label: '12 hours' },
     ],
     days: [
         { value: '1D', label: '1 day' },
@@ -51,7 +52,7 @@ const ALL_TIMEFRAMES = [
 ]
 
 // Default favorites to show in top bar
-const DEFAULT_FAVORITES = ['1m', '5m', '15m', '1h', '4h', '1D', '2m', '3m', '4m', '6h', '12h']
+const DEFAULT_FAVORITES = ['1', '5', '15', '60', '240', '1D', '2', '3', '4', '360', '720']
 
 interface TimeframeSelectorProps {
     currentTimeframe: string
@@ -131,49 +132,24 @@ export function TimeframeSelector({
     }
 
     const parseCustomTimeframe = (input: string): string | null => {
-        const trimmed = input.trim()
-
-        // Try format with unit: "3m", "6H", "12h", "2D" etc.
-        const matchWithUnit = trimmed.match(/^(\d+)\s*(m|h|d|w|M)$/i)
-        if (matchWithUnit) {
-            const [, num, unit] = matchWithUnit
-            const unitLower = unit.toLowerCase()
-            if (unitLower === 'm') return `${num}m`
-            if (unitLower === 'h') return `${num}h`
-            if (unitLower === 'd') return `${num}D`
-            if (unitLower === 'w') return `${num}W`
-            if (unit === 'M') return `${num}M`
+        try {
+            return normalizeResolution(input)
+        } catch {
+            return null
         }
-
-        // Try bare number: auto-convert to appropriate unit
-        const matchNumber = trimmed.match(/^(\d+)$/)
-        if (matchNumber) {
-            const num = parseInt(matchNumber[1], 10)
-            // Smart conversion: minutes by default, convert to hours if >= 60 and divisible
-            if (num >= 60 && num % 60 === 0) {
-                const hours = num / 60
-                return `${hours}h`
-            }
-            return `${num}m`
-        }
-
-        return null
     }
+
 
     // Convert timeframe to minutes for sorting
     const tfToMinutes = (tf: string): number => {
-        const match = tf.match(/^(\d+)(m|h|D|W|M)$/i)
-        if (!match) return 0
-        const [, num, unit] = match
-        const n = parseInt(num, 10)
-        switch (unit.toLowerCase()) {
-            case 'm': return n
-            case 'h': return n * 60
-            case 'd': return n * 60 * 24
-            case 'w': return n * 60 * 24 * 7
-            default: return n * 60 * 24 * 30  // Month
+        try {
+            return getResolutionInMinutes(tf)
+        } catch {
+            return 0
         }
     }
+
+
 
     const handleCustomSubmit = () => {
         const parsed = parseCustomTimeframe(customTf)
@@ -209,7 +185,7 @@ export function TimeframeSelector({
                     )}
                     onClick={() => handleTimeframeSelect(tf)}
                 >
-                    {tf}
+                    {formatResolution(tf)}
                 </Button>
             ))}
 

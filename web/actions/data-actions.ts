@@ -2,6 +2,7 @@
 
 import path from "path"
 import fs from "fs"
+import { resolutionToFolderName } from "@/lib/resolution"
 
 export interface OHLCData {
     time: number
@@ -55,7 +56,15 @@ function loadChunk(ticker: string, timeframe: string, chunkIndex: number): OHLCD
 
 export async function getChartData(ticker: string, timeframe: string): Promise<{ success: boolean, data?: OHLCData[], totalRows?: number, chunksLoaded?: number, numChunks?: number, error?: string }> {
     try {
-        const meta = loadMeta(ticker, timeframe)
+        // Try direct folder (for legacy support like 'folder_3m') OR converted folder name
+        let folderName = timeframe
+        const directMeta = loadMeta(ticker, folderName)
+
+        if (!directMeta) {
+            folderName = resolutionToFolderName(timeframe)
+        }
+
+        const meta = loadMeta(ticker, folderName)
         if (!meta) {
             return { success: false, error: "Data not found" }
         }
@@ -64,7 +73,7 @@ export async function getChartData(ticker: string, timeframe: string): Promise<{
         // Each chunk is 20,000 bars
         // Load ~8 months initially (~240ms), background load rest
         let initialChunks: number
-        switch (timeframe) {
+        switch (folderName) {
             case '1m':
                 initialChunks = 12  // ~240,000 bars (~8 months)
                 break
@@ -85,7 +94,7 @@ export async function getChartData(ticker: string, timeframe: string): Promise<{
         const chunksToLoad = Math.min(initialChunks, meta.numChunks)
         const allChunks: OHLCData[][] = []
         for (let i = 0; i < chunksToLoad; i++) {
-            const chunkData = loadChunk(ticker, timeframe, i)
+            const chunkData = loadChunk(ticker, folderName, i)
             allChunks.push(chunkData)
         }
 
@@ -124,7 +133,14 @@ export async function getDataMetadata(
     timeframe: string
 ): Promise<{ success: boolean, metadata?: DataMetadata, error?: string }> {
     try {
-        const meta = loadMeta(ticker, timeframe)
+        let folderName = timeframe
+        const directMeta = loadMeta(ticker, folderName)
+
+        if (!directMeta) {
+            folderName = resolutionToFolderName(timeframe)
+        }
+
+        const meta = loadMeta(ticker, folderName)
         if (!meta) {
             return { success: false, error: "Data not found" }
         }
@@ -154,7 +170,14 @@ export async function loadChunksForTime(
     chunksToLoad: number = 10 // Load 10 chunks (~200K bars) centered on target
 ): Promise<{ success: boolean, data?: OHLCData[], startChunkIndex?: number, endChunkIndex?: number, error?: string }> {
     try {
-        const meta = loadMeta(ticker, timeframe)
+        let folderName = timeframe
+        const directMeta = loadMeta(ticker, folderName)
+
+        if (!directMeta) {
+            folderName = resolutionToFolderName(timeframe)
+        }
+
+        const meta = loadMeta(ticker, folderName)
         if (!meta) {
             return { success: false, error: "Data not found" }
         }
@@ -205,7 +228,7 @@ export async function loadChunksForTime(
         // Load chunks
         const allChunks: OHLCData[][] = []
         for (let i = startChunk; i < endChunk; i++) {
-            const chunkData = loadChunk(ticker, timeframe, i)
+            const chunkData = loadChunk(ticker, folderName, i)
             allChunks.push(chunkData)
         }
 
@@ -238,7 +261,14 @@ export async function loadNextChunks(
     count: number = 5
 ): Promise<{ success: boolean, data?: OHLCData[], nextChunkIndex?: number, hasMore?: boolean, chunksLoaded?: number, error?: string }> {
     try {
-        const meta = loadMeta(ticker, timeframe)
+        let folderName = timeframe
+        const directMeta = loadMeta(ticker, folderName)
+
+        if (!directMeta) {
+            folderName = resolutionToFolderName(timeframe)
+        }
+
+        const meta = loadMeta(ticker, folderName)
         if (!meta) {
             return { success: false, error: "Data not found" }
         }
@@ -255,7 +285,7 @@ export async function loadNextChunks(
 
         const allChunks: OHLCData[][] = []
         for (let i = startChunk; i < endChunk; i++) {
-            const chunkData = loadChunk(ticker, timeframe, i)
+            const chunkData = loadChunk(ticker, folderName, i)
             allChunks.push(chunkData)
         }
 
