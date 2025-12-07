@@ -93,9 +93,9 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
     // 2. Data & Replay Logic (Hook)
     const {
-        fullData, data, windowSize, replayMode, replayIndex, isSelectingReplayStart,
+        fullData, data, replayMode, replayIndex, isSelectingReplayStart,
         setIsSelectingReplayStart, startReplay, startReplaySelection, stopReplay,
-        stepForward, stepBack, findIndexForTime, setReplayIndex, shiftWindowByBars,
+        stepForward, stepBack, findIndexForTime, setReplayIndex,
         loadMoreData, hasMoreData, isLoadingMore
     } = useChartData({
         ticker, timeframe, onDataLoad, onReplayStateChange, onPriceChange,
@@ -126,34 +126,31 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         }
     }, [data, replayMode, chart])
 
-    // 4c. Dynamic Window Scrolling - Pre-shift window before user reaches edge
-    // Also triggers loading more data when at the oldest available data
-    useEffect(() => {
-        if (!chart || replayMode || data.length === 0) return
+    // 4c. Load more data when scrolling near the left edge (oldest data)
+    // Uses official Lightweight Charts pattern: barsInLogicalRange().barsBefore
+    const lastLoadTimeRef = useRef<number>(0)
+    const LOAD_DEBOUNCE_MS = 500 // Debounce loading
 
-        const handleVisibleRangeChange = () => {
-            const logicalRange = chart.timeScale().getVisibleLogicalRange()
+    useEffect(() => {
+        if (!chart || !series || replayMode || data.length === 0) return
+
+        const handleVisibleRangeChange = (logicalRange: { from: number; to: number } | null) => {
             if (!logicalRange) return
 
-            // Calculate threshold - shift when within 20% of visible range from edge
-            const visibleBars = (logicalRange.to - logicalRange.from) || 100
-            const threshold = Math.max(500, Math.floor(visibleBars * 0.5)) // Shift when halfway to edge
-            const shiftAmount = 5000 // Shift by 5000 bars (~3-4 days of 1m data)
+            // Debounce
+            const now = Date.now()
+            if (now - lastLoadTimeRef.current < LOAD_DEBOUNCE_MS) return
 
-            // If user scrolls to within threshold of left edge
-            if (logicalRange.from < threshold) {
-                // First try to shift window left
-                shiftWindowByBars(-shiftAmount)
+            // Use barsInLogicalRange to check how many bars are to the left of visible area
+            const barsInfo = series.barsInLogicalRange(logicalRange)
 
-                // If we're at the beginning of fullData and there's more to load, load it
-                // This is detected when logicalRange.from is near 0 after shifting
-                if (logicalRange.from < 50 && hasMoreData && !isLoadingMore) {
+            // If less than 50 bars to the left and we have more data to load
+            if (barsInfo && barsInfo.barsBefore !== null && barsInfo.barsBefore < 50) {
+                if (hasMoreData && !isLoadingMore) {
+                    console.log('[LOAD] Triggering loadMoreData, barsBefore:', barsInfo.barsBefore)
+                    lastLoadTimeRef.current = now
                     loadMoreData()
                 }
-            }
-            // If user scrolls to within threshold of right edge, shift window right  
-            else if (logicalRange.to > data.length - threshold) {
-                shiftWindowByBars(shiftAmount)
             }
         }
 
@@ -161,8 +158,94 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         return () => {
             chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange)
         }
-    }, [chart, replayMode, data.length, shiftWindowByBars, hasMoreData, isLoadingMore, loadMoreData])
+    }, [chart, series, replayMode, data.length, hasMoreData, isLoadingMore, loadMoreData])
 
+    // 4d. Keyboard Navigation
+    // Arrow Left/Right: Scroll, Arrow Up/Down: Zoom, Home: Go to first bar
+    useEffect(() => {
+        if (!chart || !chartContainerRef.current) return
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Only handle if chart container or its children have focus
+            if (!chartContainerRef.current?.contains(document.activeElement) &&
+                document.activeElement !== document.body) return
+
+            const timeScale = chart.timeScale()
+            const SCROLL_BARS = 20  // Scroll by 20 bars per key press
+            const ZOOM_FACTOR = 0.1 // Zoom by 10% per key press
+
+            switch (e.key) {
+                case 'ArrowLeft':
+                    e.preventDefault()
+                    timeScale.scrollToPosition(
+                        timeScale.scrollPosition() - SCROLL_BARS,
+                        false
+                    )
+                    console.log('[KEY] Scroll left')
+                    break
+
+                case 'ArrowRight':
+                    e.preventDefault()
+                    timeScale.scrollToPosition(
+                        timeScale.scrollPosition() + SCROLL_BARS,
+                        false
+                    )
+                    console.log('[KEY] Scroll right')
+                    break
+
+                case 'ArrowUp':
+                    e.preventDefault()
+                    // Zoom in by reducing bar spacing
+                    const currentSpacing = timeScale.options().barSpacing
+                    timeScale.applyOptions({
+                        barSpacing: currentSpacing * (1 + ZOOM_FACTOR)
+                    })
+                    console.log('[KEY] Zoom in')
+                    break
+
+                case 'ArrowDown':
+                    e.preventDefault()
+                    // Zoom out by increasing bar spacing
+                    const spacing = timeScale.options().barSpacing
+                    timeScale.applyOptions({
+                        barSpacing: Math.max(1, spacing * (1 - ZOOM_FACTOR))
+                    })
+                    console.log('[KEY] Zoom out')
+                    break
+
+                case 'Home':
+                    e.preventDefault()
+                    // Go to newest data (user preference: Home = latest)
+                    // Use scrollToPosition(0) = rightmost position (last bar visible)
+                    requestAnimationFrame(() => {
+                        timeScale.scrollToPosition(0, false)
+                    })
+                    console.log('[KEY] Home - scroll to latest')
+                    break
+
+                case 'End':
+                    e.preventDefault()
+                    // Go to oldest data (user preference: End = oldest)
+                    if (data.length > 0) {
+                        timeScale.scrollToPosition(-data.length + 50, false)
+                        console.log('[KEY] End - scroll to oldest bar')
+                    }
+                    break
+            }
+        }
+
+        // Add to window to catch keys when chart has focus
+        window.addEventListener('keydown', handleKeyDown)
+
+        // Make chart container focusable
+        if (chartContainerRef.current) {
+            chartContainerRef.current.tabIndex = 0
+        }
+
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown)
+        }
+    }, [chart, data.length])
 
     // 5. Drawing Manager
     const drawingManager = useDrawingManager(
@@ -365,7 +448,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         isReplayMode: () => replayMode,
         getReplayIndex: () => replayIndex,
         getTotalBars: () => fullData.length
-    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart, windowSize])
+    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart])
 
 
     return (
