@@ -14,7 +14,9 @@ import {
     createSeriesMarkers
 } from "lightweight-charts"
 
-import { calculateSMA, calculateEMA } from "@/lib/charts/indicators"
+import { calculateSMA, calculateEMA, calculateRSI, calculateMACD } from "@/lib/charts/indicators"
+import { INDICATOR_DEFINITIONS } from "@/lib/charts/indicator-config"
+import { HistogramSeries } from "lightweight-charts"
 import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
 import { AnchoredText } from "@/lib/charts/plugins/anchored-text"
 import { SessionHighlighting } from "@/lib/charts/plugins/session-highlighting"
@@ -72,8 +74,6 @@ export function useChart(
         // Wait for theme to resolve to prevent flash during hydration
         if (!containerRef.current || resolvedTheme === undefined) return
 
-
-
         const isDark = resolvedTheme === 'dark'
 
         // Reset disposed flag for new chart
@@ -86,6 +86,10 @@ export function useChart(
             layout: {
                 background: { type: ColorType.Solid, color: isDark ? '#1e222d' : '#ffffff' },
                 textColor: isDark ? '#d1d4dc' : '#333333',
+                panes: {
+                    enableResize: true,
+                    separatorColor: isDark ? '#FFFFFF' : '#000000', // Explicit high-contrast separators
+                }
             },
             grid: {
                 vertLines: { color: isDark ? '#2a2e39' : '#e0e0e0' },
@@ -132,8 +136,6 @@ export function useChart(
     useEffect(() => {
         if (!chartInstance || isDisposedRef.current) return
 
-
-
         let newSeries: ISeriesApi<any>
 
         const commonOptions = {
@@ -171,7 +173,8 @@ export function useChart(
                         borderVisible: false,
                         wickUpColor: '#26a69a',
                         wickDownColor: '#ef5350',
-                    })
+                        pane: 0 // Explicitly assign to pane 0
+                    } as any)
                     break
             }
 
@@ -208,8 +211,6 @@ export function useChart(
     const prevDataLengthRef = useRef(0)
 
     // Update Data when data changes
-    // SIMPLIFIED: Chart auto-preserves scroll position by TIME
-    // No manual getVisibleRange/setVisibleRange needed!
     useEffect(() => {
         if (!seriesInstance || !data.length || isDisposedRef.current || !chartInstance) return
 
@@ -219,13 +220,11 @@ export function useChart(
 
             // Set the new data
             const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
-            console.log(`[CHART] setData with ${chartData.length} bars`)
             seriesInstance.setData(chartData)
 
             // Only fitContent on first load - chart auto-preserves on subsequent updates
             if (isFirstLoad) {
                 isFirstLoadRef.current = false
-                console.log('[CHART] First load, fitting content')
                 requestAnimationFrame(() => {
                     try {
                         if (!isDisposedRef.current) {
@@ -253,46 +252,109 @@ export function useChart(
     const primitivesRef = useRef<any[]>([])
     const indicatorsKey = useMemo(() => JSON.stringify(indicators), [indicators])
 
-    // Manage Data-Dependent Indicators (SMA, EMA)
+    // Manage Indicators & Layout (Native Panes)
     useEffect(() => {
         if (!chartInstance || !seriesInstance || !data.length || isDisposedRef.current) return
 
         const currentIndicators: string[] = indicatorsKey ? JSON.parse(indicatorsKey) : []
-        const indicatorSeries: ISeriesApi<"Line">[] = []
+        const activeSeries: ISeriesApi<any>[] = []
+
+        let oscillatorPaneIndex = 1;
 
         try {
-            currentIndicators.forEach(ind => {
-                const [type, param] = ind.split(":")
-                const period = param ? parseInt(param) : 9
+            currentIndicators.forEach((ind) => {
+                const [baseId, param] = ind.split(":");
+                const config = INDICATOR_DEFINITIONS[baseId];
+                if (!config) return;
 
-                if (type === 'sma') {
-                    const smaData = calculateSMA(data, period)
-                    const lineSeries = chartInstance.addSeries(LineSeries, {
-                        color: '#2962FF',
-                        lineWidth: 1,
-                        title: `SMA ${period}`,
-                    })
-                    lineSeries.setData(smaData)
-                    indicatorSeries.push(lineSeries)
-                } else if (type === 'ema') {
-                    const emaData = calculateEMA(data, period)
-                    const lineSeries = chartInstance.addSeries(LineSeries, {
-                        color: '#FF6D00',
-                        lineWidth: 1,
-                        title: `EMA ${period}`,
-                    })
-                    lineSeries.setData(emaData)
-                    indicatorSeries.push(lineSeries)
+                const period = param ? parseInt(param) : (config.defaultParams?.period || 14);
+
+                if (config.type === 'overlay') {
+                    if (baseId === 'sma') {
+                        const smaData = calculateSMA(data, period);
+                        const line = chartInstance.addSeries(LineSeries, {
+                            color: config.color || '#2962FF',
+                            lineWidth: 1,
+                            title: `${config.label} ${period}`,
+                            priceScaleId: 'right',
+                            pane: 0
+                        } as any);
+                        line.setData(smaData);
+                        activeSeries.push(line);
+                    } else if (baseId === 'ema') {
+                        const emaData = calculateEMA(data, period);
+                        const line = chartInstance.addSeries(LineSeries, {
+                            color: config.color || '#FF6D00',
+                            lineWidth: 1,
+                            title: `${config.label} ${period}`,
+                            priceScaleId: 'right',
+                            pane: 0
+                        } as any);
+                        line.setData(emaData);
+                        activeSeries.push(line);
+                    }
+                } else if (config.type === 'oscillator') {
+                    const currentPane = oscillatorPaneIndex++;
+
+                    if (baseId === 'rsi') {
+                        const rsiData = calculateRSI(data, period);
+                        const rsiSeries = chartInstance.addSeries(LineSeries, {
+                            color: config.color || '#9C27B0',
+                            lineWidth: 1,
+                            title: `RSI ${period}`,
+                        } as any, currentPane);
+                        rsiSeries.setData(rsiData);
+                        activeSeries.push(rsiSeries);
+                    } else if (baseId === 'macd') {
+                        const defaults = config.defaultParams || {};
+                        const macdData = calculateMACD(data, defaults.fast || 12, defaults.slow || 26, defaults.signal || 9);
+
+                        const histSeries = chartInstance.addSeries(HistogramSeries, {
+                            color: '#26a69a',
+                            priceLineVisible: false,
+                        } as any, currentPane);
+                        histSeries.setData(macdData.map(d => ({
+                            time: d.time,
+                            value: d.histogram,
+                            color: d.histogram >= 0 ? '#26a69a' : '#ef5350'
+                        })));
+
+                        const macdLine = chartInstance.addSeries(LineSeries, {
+                            color: '#2962FF',
+                            lineWidth: 1,
+                            title: 'MACD',
+                        } as any, currentPane);
+                        macdLine.setData(macdData.map(d => ({ time: d.time, value: d.macd })));
+
+                        const signalLine = chartInstance.addSeries(LineSeries, {
+                            color: '#FF6D00',
+                            lineWidth: 1,
+                            title: 'Signal',
+                        } as any, currentPane);
+                        signalLine.setData(macdData.map(d => ({ time: d.time, value: d.signal })));
+
+                        activeSeries.push(histSeries, macdLine, signalLine);
+                    }
                 }
-            })
+            });
+
+            // 2. Set Pane Sizing
+            const panes = chartInstance.panes();
+            panes.forEach((pane, index) => {
+                pane.moveTo(index); // Explicitly move pane to its index
+                if (index > 0) {
+                    pane.setHeight(150);
+                }
+            });
+
         } catch (e) {
-            // Chart may be disposed
-            return
+            console.error('[CHART] Error in pane sizing:', e);
+            return;
         }
 
         return () => {
             if (isDisposedRef.current) return
-            indicatorSeries.forEach(item => {
+            activeSeries.forEach(item => {
                 try {
                     chartInstance.removeSeries(item)
                 } catch (e) { }
@@ -430,4 +492,3 @@ export function useChart(
         getVisibleTimeRange
     }
 }
-

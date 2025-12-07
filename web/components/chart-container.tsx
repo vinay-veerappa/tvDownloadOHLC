@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, forwardRef, useImperativeHandle, useState } from "react"
+import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react"
 import { useChart } from "@/hooks/use-chart"
 import { DrawingTool } from "./left-toolbar"
 import { Drawing } from "./right-sidebar"

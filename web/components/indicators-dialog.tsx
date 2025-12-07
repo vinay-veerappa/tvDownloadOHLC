@@ -42,6 +42,14 @@ const indicators = [
         value: "vp",
         label: "Volume Profile",
     },
+    {
+        value: "rsi",
+        label: "Relative Strength Index (RSI)",
+    },
+    {
+        value: "macd",
+        label: "MACD",
+    },
 ]
 
 interface IndicatorsDialogProps {
