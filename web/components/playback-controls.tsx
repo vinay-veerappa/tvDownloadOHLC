@@ -61,6 +61,7 @@ export function PlaybackControls({
     const [isPlaying, setIsPlaying] = React.useState(false)
     const [playbackSpeed, setPlaybackSpeed] = React.useState("1")
     const [selectedDate, setSelectedDate] = React.useState<Date | undefined>()
+    const [isDatePopoverOpen, setIsDatePopoverOpen] = React.useState(false)  // Control date picker popover
     const playIntervalRef = React.useRef<NodeJS.Timeout | null>(null)
     const [replayDate, setReplayDate] = React.useState<Date | undefined>()
     const [isReplayPopoverOpen, setIsReplayPopoverOpen] = React.useState(false)
@@ -164,6 +165,7 @@ export function PlaybackControls({
             setSelectedDate(date)
             const timestamp = Math.floor(date.getTime() / 1000)
             onScrollToTime(timestamp)
+            setIsDatePopoverOpen(false)  // Close popover after selection
         }
     }
 
@@ -234,7 +236,7 @@ export function PlaybackControls({
     return (
         <div className="flex items-center gap-2">
             {/* Date Picker (Normal Navigation) */}
-            <Popover>
+            <Popover open={isDatePopoverOpen} onOpenChange={setIsDatePopoverOpen}>
                 <PopoverTrigger asChild>
                     <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1">
                         <CalendarIcon className="h-3 w-3" />

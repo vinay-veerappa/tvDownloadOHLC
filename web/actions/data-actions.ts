@@ -11,6 +11,13 @@ interface OHLCData {
     close: number
 }
 
+interface ChunkRange {
+    index: number
+    startTime: number
+    endTime: number
+    bars: number
+}
+
 interface ChunkMeta {
     ticker: string
     timeframe: string
@@ -19,6 +26,7 @@ interface ChunkMeta {
     numChunks: number
     startTime: number
     endTime: number
+    chunks?: ChunkRange[]  // Per-chunk time ranges for precise lookup
 }
 
 // Get the JSON data directory path
@@ -133,6 +141,88 @@ export async function getDataMetadata(
     } catch (error) {
         console.error(`[getDataMetadata] Exception: ${error}`)
         return { success: false, error: "Failed to load metadata" }
+    }
+}
+
+// Load chunks around a specific timestamp (for "go to date" feature)
+// Returns data centered around the target time
+export async function loadChunksForTime(
+    ticker: string,
+    timeframe: string,
+    targetTime: number,
+    chunksToLoad: number = 10 // Load 10 chunks (~200K bars) centered on target
+): Promise<{ success: boolean, data?: OHLCData[], startChunkIndex?: number, endChunkIndex?: number, error?: string }> {
+    try {
+        const meta = loadMeta(ticker, timeframe)
+        if (!meta) {
+            return { success: false, error: "Data not found" }
+        }
+
+        // Validate target time is within data range
+        if (targetTime < meta.startTime || targetTime > meta.endTime) {
+            return { success: false, error: "Target time is outside available data range" }
+        }
+
+        // Find chunk containing target time using precise metadata
+        let targetChunk = -1
+
+        if (meta.chunks && meta.chunks.length > 0) {
+            // Use precise chunk lookup from metadata
+            for (const chunk of meta.chunks) {
+                if (targetTime >= chunk.startTime && targetTime <= chunk.endTime) {
+                    targetChunk = chunk.index
+                    break
+                }
+            }
+            // If not found (edge case), find closest
+            if (targetChunk === -1) {
+                for (const chunk of meta.chunks) {
+                    if (targetTime <= chunk.endTime) {
+                        targetChunk = chunk.index
+                        break
+                    }
+                }
+                if (targetChunk === -1) {
+                    targetChunk = meta.numChunks - 1
+                }
+            }
+        } else {
+            // Fallback: estimate using linear interpolation (old behavior)
+            const timeRange = meta.endTime - meta.startTime
+            const timeOffset = meta.endTime - targetTime
+            const estimatedProgress = timeOffset / timeRange
+            targetChunk = Math.floor(estimatedProgress * (meta.numChunks - 1))
+        }
+
+        // Load chunks centered around target chunk
+        const halfChunks = Math.floor(chunksToLoad / 2)
+        const startChunk = Math.max(0, targetChunk - halfChunks)
+        const endChunk = Math.min(meta.numChunks, startChunk + chunksToLoad)
+
+        console.log(`[loadChunksForTime] Target: ${new Date(targetTime * 1000).toISOString()}, Chunk: ${targetChunk}, Loading: ${startChunk}-${endChunk}`)
+
+        // Load chunks
+        const allChunks: OHLCData[][] = []
+        for (let i = startChunk; i < endChunk; i++) {
+            const chunkData = loadChunk(ticker, timeframe, i)
+            allChunks.push(chunkData)
+        }
+
+        // Combine: reverse so oldest chunk is first (for correct time ordering)
+        let data: OHLCData[] = []
+        for (let i = allChunks.length - 1; i >= 0; i--) {
+            data = [...data, ...allChunks[i]]
+        }
+
+        return {
+            success: true,
+            data,
+            startChunkIndex: startChunk,
+            endChunkIndex: endChunk
+        }
+    } catch (error) {
+        console.error(`[loadChunksForTime] Exception: ${error}`)
+        return { success: false, error: "Failed to load data for time" }
     }
 }
 

@@ -97,7 +97,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         fullData, data, replayMode, replayIndex, isSelectingReplayStart,
         setIsSelectingReplayStart, startReplay, startReplaySelection, stopReplay,
         stepForward, stepBack, findIndexForTime, setReplayIndex,
-        loadMoreData, hasMoreData, isLoadingMore, fullDataRange
+        loadMoreData, hasMoreData, isLoadingMore, fullDataRange, jumpToTime
     } = useChartData({
         ticker, timeframe, onDataLoad, onReplayStateChange, onPriceChange,
         getVisibleTimeRange: () => getVisibleTimeRangeRef.current?.() ?? null,
@@ -434,13 +434,20 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         scrollByBars: replayMode ? stepForward : scrollByBars,
         scrollToStart: replayMode ? () => setReplayIndex(0) : scrollToStart,
         scrollToEnd: replayMode ? () => setReplayIndex(fullData.length - 1) : scrollToEnd,
-        scrollToTime: (time) => {
+        scrollToTime: async (time) => {
             if (replayMode) {
                 const idx = findIndexForTime(time)
                 setReplayIndex(idx)
                 setTimeout(() => chart?.timeScale().scrollToRealTime(), 50)
             } else {
-                scrollToTime(time)
+                // Try to load data if needed (async), then scroll
+                const result = await jumpToTime(time)
+                if (result.needsScroll) {
+                    // Data loaded or already present, scroll to target
+                    setTimeout(() => {
+                        scrollToTime(time)
+                    }, 100)  // Small delay to let chart update
+                }
             }
         },
         getDataRange,
@@ -453,7 +460,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         isReplayMode: () => replayMode,
         getReplayIndex: () => replayIndex,
         getTotalBars: () => fullData.length
-    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart, fullDataRange])
+    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart, fullDataRange, jumpToTime])
 
 
     return (
