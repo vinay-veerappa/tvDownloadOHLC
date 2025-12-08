@@ -324,6 +324,77 @@ export class Rectangle implements ISeriesPrimitive {
         this.updateAllViews();
     }
 
+    // Custom resizing logic delegated from useDrawingInteraction
+    movePoint(hitType: string, newPoint: Point) {
+        const t1 = this._p1.time as number;
+        const t2 = this._p2.time as number;
+        const p1 = this._p1.price;
+        const p2 = this._p2.price;
+
+        const isP1Left = t1 <= t2;
+        const isP1Top = p1 >= p2;
+
+        const moveP1 = (updates: Partial<Point>) => this.updatePoints({ ...this._p1, ...updates }, this._p2);
+        const moveP2 = (updates: Partial<Point>) => this.updatePoints(this._p1, { ...this._p2, ...updates });
+
+        switch (hitType) {
+            case 'tl': // Top-Left
+                if (isP1Left) {
+                    if (isP1Top) moveP1(newPoint);
+                    else { moveP1({ time: newPoint.time }); moveP2({ price: newPoint.price }); }
+                } else {
+                    if (isP1Top) { moveP2({ time: newPoint.time }); moveP1({ price: newPoint.price }); }
+                    else moveP2(newPoint);
+                }
+                break;
+            case 'tr': // Top-Right
+                if (!isP1Left) {
+                    if (isP1Top) moveP1(newPoint);
+                    else { moveP1({ time: newPoint.time }); moveP2({ price: newPoint.price }); }
+                } else {
+                    if (isP1Top) { moveP2({ time: newPoint.time }); moveP1({ price: newPoint.price }); }
+                    else moveP2(newPoint);
+                }
+                break;
+            case 'bl': // Bottom-Left
+                if (isP1Left) {
+                    if (!isP1Top) moveP1(newPoint);
+                    else { moveP1({ time: newPoint.time }); moveP2({ price: newPoint.price }); }
+                } else {
+                    if (!isP1Top) { moveP2({ time: newPoint.time }); moveP1({ price: newPoint.price }); }
+                    else moveP2(newPoint);
+                }
+                break;
+            case 'br': // Bottom-Right
+                if (!isP1Left) {
+                    if (!isP1Top) moveP1(newPoint);
+                    else { moveP1({ time: newPoint.time }); moveP2({ price: newPoint.price }); }
+                } else {
+                    if (!isP1Top) { moveP2({ time: newPoint.time }); moveP1({ price: newPoint.price }); }
+                    else moveP2(newPoint);
+                }
+                break;
+            case 't': // Top Edge
+                if (isP1Top) moveP1({ price: newPoint.price });
+                else moveP2({ price: newPoint.price });
+                break;
+            case 'b': // Bottom Edge
+                if (!isP1Top) moveP1({ price: newPoint.price });
+                else moveP2({ price: newPoint.price });
+                break;
+            case 'l': // Left Edge
+                if (isP1Left) moveP1({ time: newPoint.time });
+                else moveP2({ time: newPoint.time });
+                break;
+            case 'r': // Right Edge
+                if (!isP1Left) moveP1({ time: newPoint.time });
+                else moveP2({ time: newPoint.time });
+                break;
+            case 'center':
+                break;
+        }
+    }
+
     hitTest(x: number, y: number): any {
         if (this._p1Point.x === null || this._p1Point.y === null || this._p2Point.x === null || this._p2Point.y === null) return null;
 
@@ -334,18 +405,13 @@ export class Rectangle implements ISeriesPrimitive {
         const maxY = Math.max(this._p1Point.y, this._p2Point.y);
 
         // Adjust for extensions in hit test
-        // NOTE: Lightweight charts typically handles clipping, but for hit test we deal with logical logic
-        // If extended, we effectively test x against -Infinity/Infinity relative to the visible view?
-        // Actually, we can just say if extendLeft, effectiveMinX is -Infinity or 0
         let effectiveMinX = minX;
         let effectiveMaxX = maxX;
-        // Ideally we check visibility logic or just assume 'infinite' clickability horizontally
-        if (this._options.extendLeft) effectiveMinX = -99999; // Arbitrary large negative (or handle logic properly)
+
+        if (this._options.extendLeft) effectiveMinX = -99999;
         if (this._options.extendRight) effectiveMaxX = 99999;
 
-        const midX = (minX + maxX) / 2; // Handles stay at original points usually? 
-        // TradingView keeps handles at the original anchor points even if extended. 
-        // So we leave handles calculation based on ORIGINAL points.
+        const midX = (minX + maxX) / 2;
         const midY = (minY + maxY) / 2;
 
         // Define handle positions: 4 corners + 4 edges + center
@@ -369,12 +435,11 @@ export class Rectangle implements ISeriesPrimitive {
                     cursorStyle: handle.cursor,
                     externalId: this._id,
                     zOrder: 'top',
-                    hitType: handle.type
+                    hitType: handle.type === 'center' ? 'body' : handle.type
                 };
             }
         }
 
-        // Check body (inside rectangle)
         // Check body (inside rectangle)
         if (x >= effectiveMinX && x <= effectiveMaxX && y >= minY && y <= maxY) {
             return {

@@ -259,6 +259,28 @@ export class Measure implements ISeriesPrimitive {
 
         if (x1 === null || y1 === null || x2 === null || y2 === null) return null;
 
+        const HANDLE_RADIUS = 8;
+
+        // Check P1
+        if (Math.sqrt(Math.pow(x - x1, 2) + Math.pow(y - y1, 2)) <= HANDLE_RADIUS) {
+            return {
+                zOrder: 'top' as const,
+                cursor: 'pointer' as const,
+                externalId: this._id,
+                hitType: 'p1'
+            };
+        }
+
+        // Check P2
+        if (Math.sqrt(Math.pow(x - x2, 2) + Math.pow(y - y2, 2)) <= HANDLE_RADIUS) {
+            return {
+                zOrder: 'top' as const,
+                cursor: 'pointer' as const,
+                externalId: this._id,
+                hitType: 'p2'
+            };
+        }
+
         // Distance from point to line segment
         const A = x - x1;
         const B = y - y1;
@@ -293,8 +315,9 @@ export class Measure implements ISeriesPrimitive {
         if (dist < 8) { // 8px slop
             return {
                 zOrder: 'top' as const,
-                cursor: 'pointer' as const,
-                externalId: this._id
+                cursor: 'move' as const, // body is move
+                externalId: this._id,
+                hitType: 'body'
             };
         }
         return null;

@@ -51,15 +51,6 @@ export function useChartDrag({
 
         const coordinate = series.priceToCoordinate(price)
         if (coordinate === null) return null // Off screen
-
-        // We need to compare this coordinate with the mouse coordinate
-        // But the mouse handler gives us the coordinate directly? 
-        // No, standard mouse event gives clientY. We can convert standard mouse Y to price.
-
-        // Actually simpler:
-        // Convert Mouse Y -> Price.
-        // Convert Mouse Y -> Coordinate.
-        // Compare Coordinate with Line Coordinate?
         return coordinate
     }, [series, chart])
 
