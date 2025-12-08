@@ -36,6 +36,7 @@ export function useChart(
     vwapSettings?: VWAPSettings,
     ticker?: string
 ) {
+    // console.log('[useChart] displayTimezone:', displayTimezone)
     const { resolvedTheme } = useTheme()
     const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
     const [seriesInstance, setSeriesInstance] = useState<ISeriesApi<any> | null>(null)
@@ -43,10 +44,15 @@ export function useChart(
     // Track chart lifecycle to prevent "disposed" errors in Strict Mode
     const chartRef = useRef<IChartApi | null>(null)
     const isDisposedRef = useRef(false)
-
     // Create timezone-aware tick mark formatter
     const formatTimeForTimezone = (time: number) => {
         const date = new Date(time * 1000)
+        // Explicitly handle UTC to avoid Intl overhead/issues and ensure safety
+        if (displayTimezone === 'UTC') {
+            return date.toISOString().substring(11, 16)
+        }
+
+        // Sanitization: 'local' should be undefined to use browser default
         const tz = displayTimezone === 'local' ? undefined : displayTimezone
         try {
             return date.toLocaleTimeString('en-US', {
@@ -55,24 +61,14 @@ export function useChart(
                 minute: '2-digit',
                 hour12: false
             })
-        } catch {
-            return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+        } catch (e) {
+            console.warn(`[Chart] Timezone error for ${tz}:`, e)
+            // Fallback to UTC safe string
+            return date.toISOString().substring(11, 16)
         }
     }
 
-    const formatDateForTimezone = (time: number) => {
-        const date = new Date(time * 1000)
-        const tz = displayTimezone === 'local' ? undefined : displayTimezone
-        try {
-            return date.toLocaleDateString('en-US', {
-                timeZone: tz,
-                month: 'short',
-                day: 'numeric'
-            })
-        } catch {
-            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        }
-    }
+
 
     // Create Chart Instance
     useEffect(() => {
@@ -131,13 +127,31 @@ export function useChart(
 
             } catch (e) {
 
-                // Chart may already be disposed in Strict Mode double-mount
             }
         }
-
     }, [containerRef, resolvedTheme])
 
-    // Manage Series based on Style
+    // Update Timezone Formatter when displayTimezone changes
+    useEffect(() => {
+        if (!chartInstance) return
+
+        const formatter = (time: number) => formatTimeForTimezone(time)
+
+        try {
+            chartInstance.applyOptions({
+                localization: {
+                    timeFormatter: formatter,
+                    dateFormat: 'yyyy-MM-dd',
+                },
+                timeScale: {
+                    tickMarkFormatter: formatter,
+                }
+            })
+        } catch (e) {
+            console.warn('Failed to apply timezone options', e)
+        }
+    }, [chartInstance, displayTimezone])
+
     useEffect(() => {
         if (!chartInstance || isDisposedRef.current) return
 
@@ -264,6 +278,7 @@ export function useChart(
         const currentIndicators: string[] = indicatorsKey ? JSON.parse(indicatorsKey) : []
         const activeSeries: ISeriesApi<any>[] = []
 
+        let isCancelled = false;
         let oscillatorPaneIndex = 1;
 
         try {
@@ -276,10 +291,6 @@ export function useChart(
                 if (indicatorRenderer) {
                     const params = { ...config, period: param ? parseInt(param) : undefined };
 
-                    // Render using strategy pattern
-                    // Note: render is async, but we can't await inside forEach easily. 
-                    // We'll fire and forget, but tracking series for cleanup is tricky if async.
-                    // Actually, we should collect promises.
                     const renderPromise = indicatorRenderer.render({
                         chart: chartInstance,
                         data,
@@ -290,13 +301,14 @@ export function useChart(
                     }, params, oscillatorPaneIndex);
 
                     renderPromise.then(({ series, paneIndexIncrement }: { series: any[], paneIndexIncrement: number }) => {
-                        if (isDisposedRef.current) {
-                            // Cleanup immediately if chart disposed while rendering
+                        if (isCancelled || isDisposedRef.current) {
+                            // Effect cancelled or chart disposed - clean up immediately
                             series.forEach(s => {
                                 try { chartInstance.removeSeries(s); } catch (e) { }
                             });
                             return;
                         }
+
                         activeSeries.push(...series);
                         oscillatorPaneIndex += paneIndexIncrement;
 
@@ -328,6 +340,7 @@ export function useChart(
         }
 
         return () => {
+            isCancelled = true;
             if (isDisposedRef.current) return
             activeSeries.forEach(item => {
                 try {
@@ -335,7 +348,7 @@ export function useChart(
                 } catch (e) { }
             })
         }
-    }, [chartInstance, seriesInstance, indicatorsKey, data])
+    }, [chartInstance, seriesInstance, indicatorsKey, data, vwapSettings, ticker, resolvedTheme])
 
     // Manage Primitives (Sessions, Watermark) - NO data dependency
     useEffect(() => {

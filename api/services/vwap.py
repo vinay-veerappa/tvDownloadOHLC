@@ -63,6 +63,9 @@ def calculate_vwap_with_settings(
         anchor_hour = int(parts[0])
         anchor_minute = int(parts[1]) if len(parts) > 1 else 0
     
+    print(f"DEBUG: Calculating VWAP. Anchor Time: {anchor_time} (Hour: {anchor_hour})")
+    print(f"DEBUG: Settings: Bands={bands}, Anchor={anchor}")
+    
     # Create group keys based on anchor period
     if anchor == 'session':
         # Group by date, but a new group starts at anchor_time

@@ -72,13 +72,72 @@ def calculate_indicator(df: pd.DataFrame, indicator: str) -> Dict[str, List[Opti
     result = {}
     
     if name == "vwap":
-        # pandas-ta VWAP requires DatetimeIndex
-        df_copy = df.copy()
-        df_copy.index = pd.to_datetime(df_copy['time'], unit='s')
-        values = ta.vwap(df_copy['high'], df_copy['low'], df_copy['close'], df_copy['volume'])
-        if values is not None:
-            result[indicator] = values.tolist()
-        else:
+        # Custom Anchored VWAP Implementation
+        try:
+            df_copy = df.copy()
+            # Ensure time is datetime in UTC first (assuming input is unix seconds)
+            df_copy['dt'] = pd.to_datetime(df_copy['time'], unit='s', utc=True)
+            
+            # Default to Eastern for session anchoring if not specified
+            tz = params.get('timezone', 'America/New_York')
+            df_copy['dt_tz'] = df_copy['dt'].dt.tz_convert(tz)
+            
+            # Parse anchor time (e.g., "18:00" or default "09:30" or "00:00")
+            anchor_time_str = params.get('anchor_time', '00:00')
+            h, m = map(int, anchor_time_str.split(':'))
+            
+            # Identify session changes
+            # A new session starts if time >= anchor_time AND previous time < anchor_time (crossing)
+            # OR if the date changes and we are past anchor time
+            # Simplest approach: Shift time by roughly (24 - anchor_hour) to align "start" to 00:00 local "virtual" time
+            # then group by date of this shifted time.
+            
+            # Offset logic: 
+            # If anchor is 18:00, we want 18:01 today to be same session as 17:59 tomorrow? No.
+            # 18:00 today starts the session for tomorrow.
+            # So 18:00 T -> 17:59 T+1 is one session.
+            # If we subtract 18 hours, 18:00 becomes 00:00. 
+            # 17:59 (next day) becomes 23:59 (prev day "session").
+            # So just subtracting the offset and taking the .date() works for grouping.
+            
+            offset = pd.Timedelta(hours=h, minutes=m)
+            df_copy['session_group'] = (df_copy['dt_tz'] - offset).dt.date
+            
+            # Helper for PV and P2V (Price * Price * Volume) for Variance
+            df_copy['pv'] = df_copy['close'] * df_copy['volume']
+            df_copy['p2v'] = df_copy['close'] * df_copy['close'] * df_copy['volume']
+            
+            # Calculate cumulative sums per session
+            df_copy['cum_pv'] = df_copy.groupby('session_group')['pv'].cumsum()
+            df_copy['cum_vol'] = df_copy.groupby('session_group')['volume'].cumsum()
+            df_copy['cum_p2v'] = df_copy.groupby('session_group')['p2v'].cumsum()
+            
+            # Calculate VWAP
+            vwap_values = df_copy['cum_pv'] / df_copy['cum_vol']
+            result[indicator] = vwap_values.tolist()
+            
+            # Calculate Bands if requested
+            bands = params.get('bands', []) # List of multipliers e.g. [1.0, 2.0]
+            if bands:
+                # Variance = (CumP2V / CumVol) - (VWAP^2)
+                # Standard Deviation = sqrt(Variance)
+                variance = (df_copy['cum_p2v'] / df_copy['cum_vol']) - (vwap_values * vwap_values)
+                # Ensure variance is non-negative (floating point errors)
+                variance = variance.clip(lower=0)
+                std_dev = variance ** 0.5
+                
+                for mult in bands:
+                    if mult <= 0: continue
+                    # Format key to match frontend expectation (e.g. 1.0 -> 1_0)
+                    mult_str = f"{mult:.1f}".replace('.', '_')
+                    upper_key = f"{indicator}_upper_{mult_str}"
+                    lower_key = f"{indicator}_lower_{mult_str}"
+                    
+                    result[upper_key] = (vwap_values + (std_dev * mult)).tolist()
+                    result[lower_key] = (vwap_values - (std_dev * mult)).tolist()
+            
+        except Exception as e:
+            print(f"Error calculating Custom VWAP: {e}")
             result[indicator] = [None] * len(df)
     
     elif name == "sma":

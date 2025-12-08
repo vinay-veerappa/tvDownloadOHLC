@@ -30,6 +30,9 @@ import { TimeframeSelector } from "@/components/timeframe-selector"
 
 
 
+import { VWAPSettings } from "@/lib/indicator-api"
+import { VWAPSettingsDialog } from "./vwap-settings-dialog"
+
 interface TopToolbarProps {
     tickers: string[]
     timeframes: string[]
@@ -40,6 +43,8 @@ interface TopToolbarProps {
 }
 
 export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off', onMagnetModeChange, children }: TopToolbarProps) {
+
+
     const router = useRouter()
     const searchParams = useSearchParams()
 
@@ -100,7 +105,7 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                             className="w-[100px] justify-between font-bold text-foreground hover:bg-muted"
                         >
                             {currentTicker
-                                ? tickers.find((ticker) => ticker === currentTicker)
+                                ? (tickers.find((t) => t === currentTicker) || tickers.find(t => t === `${currentTicker}!`) || currentTicker)
                                 : "Select ticker..."}
                             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>
@@ -165,6 +170,8 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                         <Activity className="h-4 w-4" />
                     </Button>
                 </IndicatorsDialog>
+
+
             </div>
 
             {/* Middle: Account & P&L */}

@@ -8,6 +8,7 @@ import { BottomBar } from './bottom-bar'
 import { BottomPanel } from './trading/bottom-panel'
 import { TradingProvider } from '@/context/trading-context'
 import type { MagnetMode } from '@/lib/charts/magnet-utils'
+import { VWAPSettingsDialog } from './vwap-settings-dialog'
 
 interface ChartPageClientProps {
     tickers: string[]
@@ -34,6 +35,45 @@ export function ChartPageClient({
 }: ChartPageClientProps) {
     const [magnetMode, setMagnetMode] = useState<MagnetMode>('off')
     const [displayTimezone, setDisplayTimezone] = useState('America/New_York')
+    // VWAP Settings State
+    const [vwapSettings, setVwapSettings] = useState<any>({
+        anchor: 'session',
+        anchor_time: '09:30', // Default, will be adjusted by logic
+        bands: [1.0, 2.0, 3.0]
+    })
+    const [isVwapSettingsOpen, setIsVwapSettingsOpen] = useState(false)
+
+    // Update VWAP settings when ticker changes (Futures vs Stocks)
+    useEffect(() => {
+        // Simple heuristic: If ticker contains '!' (e.g. ES1!), it's a future -> 18:00
+        // Otherwise (e.g. SPX, AAPL), it's a stock/index -> 09:30
+        const isFuture = ticker.includes('!')
+
+        // Load from localStorage or use defaults
+        const savedSettings = localStorage.getItem('vwap-settings')
+        let initialSettings = savedSettings ? JSON.parse(savedSettings) : {
+            anchor: 'session',
+            bands: [1.0, 2.0, 3.0],
+            bandsEnabled: [true, true, true]
+        }
+
+        // Always override anchor_time based on ticker type logic (unless we want to persist that too?)
+        // Better to respect the "Smart Default" for anchor time, but persist other preferences like bands
+        setVwapSettings((prev: any) => ({
+            ...initialSettings,
+            ...prev, // Keep current session state if any? actually we want to overwrite with logic + storage
+            anchor_time: isFuture ? '18:00' : '09:30'
+        }))
+    }, [ticker])
+
+    // Save VWAP settings to localStorage whenever they change
+    useEffect(() => {
+        if (vwapSettings) {
+            // Don't save anchor_time as it's dynamic per ticker type, or maybe we should? 
+            // Let's save everything for now, but the loader overrides anchor_time.
+            localStorage.setItem('vwap-settings', JSON.stringify(vwapSettings))
+        }
+    }, [vwapSettings])
 
     // Navigation state
     const [navigation, setNavigation] = useState<NavigationFunctions | null>(null)
@@ -159,6 +199,8 @@ export function ChartPageClient({
                         onReplayStateChange={handleReplayStateChange}
                         onDataLoad={handleDataLoad}
                         initialReplayTime={replayState.isReplayMode ? replayState.currentTime : undefined}
+                        vwapSettings={vwapSettings}
+                        onOpenVwapSettings={() => setIsVwapSettingsOpen(true)}
                     />
                 </div>
 
@@ -193,6 +235,13 @@ export function ChartPageClient({
                         height={250}
                     />
                 </div>
+                <VWAPSettingsDialog
+                    settings={vwapSettings}
+                    onSave={setVwapSettings}
+                    open={isVwapSettingsOpen}
+                    onOpenChange={setIsVwapSettingsOpen}
+                    showTrigger={false}
+                />
             </div>
         </TradingProvider>
     )

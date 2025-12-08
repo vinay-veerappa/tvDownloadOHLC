@@ -18,6 +18,12 @@ export const SMAIndicator: ChartIndicator = {
             priceLineVisible: false
         } as any);
 
+        line.applyOptions({
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false
+        });
+
         line.setData(smaData);
 
         return {
