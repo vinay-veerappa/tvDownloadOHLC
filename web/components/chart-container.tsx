@@ -16,7 +16,7 @@ import { useChartData } from "@/hooks/chart/use-chart-data"
 import { useChartTrading } from "@/hooks/chart/use-chart-trading"
 import { useChartDrag } from "@/hooks/chart/use-chart-drag"
 import { ChartContextMenu } from "@/components/chart/chart-context-menu"
-import { ChartLegend } from "@/components/chart/chart-legend"
+import { ChartLegend, ChartLegendRef } from "@/components/chart/chart-legend"
 
 
 interface ChartContainerProps {
@@ -136,32 +136,38 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         }
     }, [data, replayMode, chart])
 
-    // 4b. OHLC Legend State - track hovered or latest candle
-    const [hoveredOHLC, setHoveredOHLC] = useState<{ open: number, high: number, low: number, close: number } | null>(null)
+    // 4b. OHLC Legend - use ref to avoid re-render loops
+    const legendRef = useRef<ChartLegendRef>(null)
     const dataRef = useRef(data)
-    dataRef.current = data // Keep ref in sync
+    const seriesRef = useRef(series)
+    const isSubscribedRef = useRef(false)
 
-    // Subscribe to crosshair moves (only when chart/series change, not data)
+    // Keep refs in sync
+    dataRef.current = data
+    seriesRef.current = series
+
+    // Subscribe to crosshair moves ONCE when chart is ready
     useEffect(() => {
-        if (!chart || !series) return
+        if (!chart || !series || isSubscribedRef.current) return
 
         const handleCrosshairMove = (param: any) => {
             const currentData = dataRef.current
-            if (!currentData || currentData.length === 0) return
+            const currentSeries = seriesRef.current
+            if (!currentData || currentData.length === 0 || !currentSeries) return
 
             if (!param || !param.time) {
                 // Mouse left chart - show latest candle
                 const lastBar = currentData[currentData.length - 1]
                 if (lastBar) {
-                    setHoveredOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
+                    legendRef.current?.updateOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
                 }
                 return
             }
 
             // Get the candle data at crosshair position
-            const candleData = param.seriesData.get(series)
+            const candleData = param.seriesData.get(currentSeries)
             if (candleData) {
-                setHoveredOHLC({
+                legendRef.current?.updateOHLC({
                     open: candleData.open,
                     high: candleData.high,
                     low: candleData.low,
@@ -171,19 +177,23 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         }
 
         chart.subscribeCrosshairMove(handleCrosshairMove)
+        isSubscribedRef.current = true
+
+        // Set initial value after a small delay
+        const timer = setTimeout(() => {
+            const currentData = dataRef.current
+            if (currentData && currentData.length > 0) {
+                const lastBar = currentData[currentData.length - 1]
+                legendRef.current?.updateOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
+            }
+        }, 100)
 
         return () => {
+            clearTimeout(timer)
             chart.unsubscribeCrosshairMove(handleCrosshairMove)
+            isSubscribedRef.current = false
         }
     }, [chart, series])
-
-    // Update legend when data changes (initial load or new data)
-    useEffect(() => {
-        if (data.length > 0) {
-            const lastBar = data[data.length - 1]
-            setHoveredOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
-        }
-    }, [data.length]) // Only trigger on data length change, not every array reference
 
     // 4c. Load more data when scrolling near the left edge (oldest data)
     // Uses official Lightweight Charts pattern: barsInLogicalRange().barsBefore
@@ -591,9 +601,9 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
             {/* OHLC Legend Overlay */}
             <ChartLegend
+                ref={legendRef}
                 ticker={ticker}
                 timeframe={timeframe}
-                ohlc={hoveredOHLC}
                 className="absolute top-2 left-2 z-10 bg-background/80 backdrop-blur-sm px-2 py-1 rounded"
             />
 
