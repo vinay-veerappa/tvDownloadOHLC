@@ -118,12 +118,20 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         getVisibleTimeRangeRef.current = getVisibleTimeRange
     }, [getVisibleTimeRange])
 
-    // 4. Force Replay Scroll (Hook integration)
+    // 4. Force Replay Scroll ONLY on initial start (not on every step)
+    // This allows normal chart dragging during replay
+    const hasScrolledOnReplayStartRef = useRef(false)
     useEffect(() => {
-        if (replayMode && data.length > 0) {
+        if (replayMode && data.length > 0 && !hasScrolledOnReplayStartRef.current) {
+            // Only scroll once when replay starts
             setTimeout(() => {
                 chart?.timeScale().scrollToRealTime()
             }, 50)
+            hasScrolledOnReplayStartRef.current = true
+        }
+        // Reset when replay ends
+        if (!replayMode) {
+            hasScrolledOnReplayStartRef.current = false
         }
     }, [data, replayMode, chart])
 
