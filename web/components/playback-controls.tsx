@@ -66,17 +66,14 @@ export function PlaybackControls({
     const [replayDate, setReplayDate] = React.useState<Date | undefined>()
     const [isReplayPopoverOpen, setIsReplayPopoverOpen] = React.useState(false)
 
-    // Handle playback - in replay mode, advance replayIndex; otherwise scroll
+    // Handle playback - ONLY works in replay mode
     React.useEffect(() => {
-        if (isPlaying) {
+        if (isPlaying && isReplayMode) {
             const speed = parseFloat(playbackSpeed)
             const interval = 1000 / speed // 1 bar per second at 1x
             playIntervalRef.current = setInterval(() => {
-                if (isReplayMode && onStepForward) {
+                if (onStepForward) {
                     onStepForward()
-                } else {
-                    // Logic update: In normal mode "play" scrolls right
-                    onScrollByBars(1)
                 }
             }, interval)
         } else {
@@ -91,7 +88,7 @@ export function PlaybackControls({
                 clearInterval(playIntervalRef.current)
             }
         }
-    }, [isPlaying, playbackSpeed, onScrollByBars, isReplayMode, onStepForward])
+    }, [isPlaying, playbackSpeed, isReplayMode, onStepForward])
 
     // Stop playback when replay mode ends
     React.useEffect(() => {
@@ -355,7 +352,11 @@ export function PlaybackControls({
                     size="icon"
                     className="h-6 w-6"
                     onClick={() => {
-                        if (!isPlaying && isReplayMode && totalBars > 0 && replayIndex >= totalBars - 1) {
+                        if (!isReplayMode) {
+                            toast.info("Start Replay mode first to use playback controls")
+                            return
+                        }
+                        if (!isPlaying && totalBars > 0 && replayIndex >= totalBars - 1) {
                             toast.info("Replay finished. Restart to play again.")
                         } else {
                             setIsPlaying(!isPlaying)

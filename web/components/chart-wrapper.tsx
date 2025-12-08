@@ -126,14 +126,20 @@ export function ChartWrapper(props: ChartWrapperProps) {
     // Global Selection State
     const [selection, setSelection] = useState<{ type: 'drawing' | 'indicator', id: string } | null>(null);
 
-    // Validated order execution - prevents trading at end of replay data
+    // Validated order execution - only allows trading in replay mode
     const validatedExecuteOrder = useCallback((params: Parameters<typeof executeOrder>[0]) => {
-        // Check if in replay mode and at end of data
         const isReplay = chartRef.current?.isReplayMode() ?? false
         const replayIndex = chartRef.current?.getReplayIndex() ?? 0
         const totalBars = chartRef.current?.getTotalBars() ?? 0
 
-        if (isReplay && totalBars > 0 && replayIndex >= totalBars - 1) {
+        // Must be in replay mode to trade
+        if (!isReplay) {
+            toast.error("Start Replay mode first to place trades")
+            return
+        }
+
+        // Cannot trade at end of data
+        if (totalBars > 0 && replayIndex >= totalBars - 1) {
             toast.error("Cannot trade at end of data. Step back or load more data to continue.")
             return
         }
