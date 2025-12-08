@@ -97,7 +97,7 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                             variant="ghost"
                             role="combobox"
                             aria-expanded={open}
-                            className="w-[140px] justify-between font-bold text-foreground hover:bg-muted"
+                            className="w-[100px] justify-between font-bold text-foreground hover:bg-muted"
                         >
                             {currentTicker
                                 ? tickers.find((ticker) => ticker === currentTicker)
@@ -141,6 +141,30 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                     availableTimeframes={availableTimeframesForTicker}
                     onTimeframeChange={handleTimeframeChange}
                 />
+
+                <div className="h-4 w-[1px] bg-border mx-2" />
+
+                {/* Magnet */}
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className={cn("h-8 w-8 hover:bg-muted", magnetMode !== 'off' && "text-primary")}
+                    onClick={() => onMagnetModeChange?.(magnetMode === 'off' ? 'weak' : magnetMode === 'weak' ? 'strong' : 'off')}
+                    title={`Magnet Mode: ${magnetMode}`}
+                >
+                    <Magnet className="h-4 w-4" />
+                </Button>
+
+                {/* Indicators */}
+                <IndicatorsDialog onSelect={(value) => {
+                    const chartId = IndicatorStorage.getDefaultChartId();
+                    IndicatorStorage.addIndicator(chartId, { type: value, enabled: true, params: {} });
+                    router.refresh();
+                }}>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-foreground hover:bg-muted" title="Indicators">
+                        <Activity className="h-4 w-4" />
+                    </Button>
+                </IndicatorsDialog>
             </div>
 
             {/* Middle: Account & P&L */}
@@ -168,34 +192,10 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                 </div>
             </div>
 
-            {/* Right: Tools */}
+            {/* Right: Settings */}
             <div className="flex items-center gap-1">
-                {/* Magnet */}
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    className={cn("h-8 w-8 hover:bg-muted", magnetMode !== 'off' && "text-primary")}
-                    onClick={() => onMagnetModeChange?.(magnetMode === 'off' ? 'weak' : magnetMode === 'weak' ? 'strong' : 'off')}
-                    title="Magnet Mode"
-                >
-                    <Magnet className="h-4 w-4" />
-                </Button>
-
-                {/* Indicators */}
-                <IndicatorsDialog onSelect={(value) => {
-                    const chartId = IndicatorStorage.getDefaultChartId();
-                    IndicatorStorage.addIndicator(chartId, { type: value, enabled: true, params: {} });
-                    router.refresh();
-                }}>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-foreground hover:bg-muted" title="Indicators">
-                        <Activity className="h-4 w-4" />
-                    </Button>
-                </IndicatorsDialog>
-
-                <div className="h-4 w-[1px] bg-border mx-1" />
-
                 {/* Settings */}
-                <Button variant="ghost" size="icon" className="h-8 w-8 text-foreground hover:bg-muted" onClick={() => setIsSettingsOpen(true)}>
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-foreground hover:bg-muted" onClick={() => setIsSettingsOpen(true)} title="Settings">
                     <Settings className="w-4 h-4" />
                 </Button>
             </div>
