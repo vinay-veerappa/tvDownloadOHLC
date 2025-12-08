@@ -418,7 +418,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
         const serialized = drawingManager.serializeDrawing(drawing);
         if (serialized) {
-            DrawingStorage.updateDrawing(ticker, timeframe, serialized);
+            DrawingStorage.updateDrawing(ticker, timeframe, serialized.id, serialized);
         }
     };
 
@@ -557,8 +557,25 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     // Keyboard Shortcuts
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.key === 'Delete' || e.key === 'Backspace')) deleteSelectedDrawing();
+            // 1. Check if user is typing in an input/textarea
+            const activeTag = document.activeElement?.tagName.toLowerCase();
+            const isInputActive = activeTag === 'input' || activeTag === 'textarea' || (document.activeElement as HTMLElement)?.isContentEditable;
+
+            if (isInputActive) return;
+
+            // 2. Delete / Backspace
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault(); // Prevent browser back navigation if Backspace
+                deleteSelectedDrawing();
+            }
+
+            // 3. Escape for Deselection
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                deselectDrawing();
+            }
         };
+
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [onDeleteSelection, drawingManager]);
