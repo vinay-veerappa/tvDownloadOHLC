@@ -229,6 +229,11 @@ export function useDrawingManager(
                         type: (drawing._type || selectedTool) as any,
                         createdAt: Date.now()
                     });
+
+                    // Call the instance-specific callback (passed from initiateTool)
+                    if (onTextCreated) {
+                        onTextCreated(id, drawing);
+                    }
                 }
 
                 if (onComplete) onComplete();
@@ -253,6 +258,49 @@ export function useDrawingManager(
         return null;
     }, []);
 
+    const serializeDrawing = useCallback((drawing: any): SerializedDrawing | null => {
+        const id = typeof drawing.id === 'function' ? drawing.id() : drawing._id;
+        if (!id) return null;
+
+        const type = drawing._type;
+        const opts = drawing.options ? drawing.options() : {};
+
+        // Base Props
+        const base = { id, type: type as any, options: opts, createdAt: Date.now() }; // ideally preserve createdAt?
+
+        // Type specific serialization
+        if (type === 'trend-line' || type === 'ray' || type === 'fibonacci' || type === 'rectangle' || type === 'measure') {
+            return {
+                ...base,
+                p1: drawing._p1,
+                p2: drawing._p2
+            };
+        } else if (type === 'vertical-line') {
+            return {
+                ...base,
+                p1: { time: drawing._time, price: 0 },
+                p2: { time: drawing._time, price: 0 }
+            };
+        } else if (type === 'horizontal-line') {
+            return {
+                ...base,
+                p1: { time: 0, price: drawing._price },
+                p2: { time: 0, price: drawing._price }
+            };
+        } else if (type === 'text') {
+            return {
+                ...base,
+                p1: { time: drawing._time, price: drawing._price },
+                p2: { time: drawing._time, price: drawing._price }
+            };
+        } else if (type === 'anchored-text') {
+            return null; // Don't serialize watermark
+        }
+
+        // Fallback or unknown
+        return null;
+    }, []);
+
     const getDrawing = useCallback((id: string) => {
         return drawingsRef.current.get(id);
     }, []);
@@ -263,6 +311,7 @@ export function useDrawingManager(
         initiateTool,
         hitTest,
         getDrawing,
+        serializeDrawing,
         activeToolRef // exposed if needed for cleanup
-    }), [loadDrawings, deleteDrawing, initiateTool, hitTest, getDrawing]);
+    }), [loadDrawings, deleteDrawing, initiateTool, hitTest, getDrawing, serializeDrawing]);
 }

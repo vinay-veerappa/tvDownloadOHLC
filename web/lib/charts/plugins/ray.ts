@@ -115,6 +115,11 @@ export class Ray implements ISeriesPrimitive {
         return this._id;
     }
 
+    // Compatibility for generic hook
+    updatePoints(p1: Point, p2?: Point) {
+        this.updatePoint(p1);
+    }
+
     updatePoint(p1: Point) {
         this._p1 = p1;
         if (this._requestUpdate) this._requestUpdate();

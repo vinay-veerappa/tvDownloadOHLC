@@ -1,5 +1,5 @@
 import { getChartData } from "@/actions/data-actions"
-import { calculateSMA } from "@/lib/charts/indicators"
+import { calculateSMA } from "@/lib/charts/indicator-calculations"
 
 export interface BacktestConfig {
     ticker: string

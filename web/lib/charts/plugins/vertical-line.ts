@@ -211,10 +211,10 @@ export class VertLine implements ISeriesPrimitive {
 
         if (Math.abs(x - lineX) < 20) {
             return {
-                cursorStyle: 'ew-resize', // Or pointer
+                cursorStyle: 'ew-resize',
                 externalId: this._id,
                 zOrder: 'top',
-                hitType: 'move'
+                hitType: 'body'
             };
         }
         return null;
@@ -241,7 +241,15 @@ export class VertLine implements ISeriesPrimitive {
 
     updateTime(time: Time) {
         this._time = time;
-        this.updateAllViews();
+        // Update label text if showing label
+        if (this._options.showLabel) {
+            const dateStr = new Date((this._time as number) * 1000).toLocaleString(undefined, {
+                year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
+            this.applyOptions({ labelText: dateStr });
+        } else {
+            this.updateAllViews();
+        }
     }
 
     // Compatibility
@@ -293,7 +301,9 @@ export class VertLineTool {
         // Create Vertical Line
         const vl = new VertLine(this._chart, this._series, param.time, {
             color: '#2962FF',
-            labelText: new Date(param.time * 1000).toLocaleDateString(), // Simple formatting
+            labelText: new Date((param.time as number) * 1000).toLocaleString(undefined, {
+                year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
+            }),
             showLabel: true
         });
         this._series.attachPrimitive(vl);

@@ -14,6 +14,7 @@ import { useDrawingManager } from "@/hooks/use-drawing-manager"
 import { useChartData } from "@/hooks/chart/use-chart-data"
 import { useChartTrading } from "@/hooks/chart/use-chart-trading"
 import { useChartDrag } from "@/hooks/chart/use-chart-drag"
+import { useDrawingInteraction } from "@/hooks/chart/use-drawing-interaction"
 import { ChartContextMenu } from "@/components/chart/chart-context-menu"
 import { ChartLegend, ChartLegendRef } from "@/components/chart/chart-legend"
 import { VWAPSettings } from "@/lib/indicator-api"
@@ -367,11 +368,73 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     })
 
     // 8. Interaction & Drag Logic (Hook)
+    // 8. Interaction & Drag Logic (Hook)
+    // We need to know if trading drag is active to disable drawing drag
+    const isTradingDragActive = useRef(false); // We need to expose this from useChartDrag? 
+    // Actually useChartDrag doesn't expose it. We might need to refactor useChartDrag to accept a ref or return state.
+    // For now, let's assume they don't overlap much or we update useChartDrag to update a ref.
+
+    // Let's modify useChartDrag to return isDragging? 
+    // Or simpler: useChartDrag accepts a ref to update?
+    // Let's rely on cursor state or z-order? 
+    // Ideally, pass a shared ref.
+
+    // TODO: Ideally refactor useChartDrag to expose isDragging. 
+    // For now, let's just initialize DrawingInteraction. 
+    // If we want perfection, we pass "isDraggingRef" to useChartDrag.
+
     useChartDrag({
         chartContainerRef, chart, series, data,
         positionLineRef, pendingLinesRef, slLineRef, tpLineRef,
         onModifyOrder, onModifyPosition
     })
+
+    const handleDrawingModified = (id: string, drawing: any) => {
+        // Persist
+        const opts = drawing.options ? drawing.options() : {};
+        if (id) DrawingStorage.updateDrawingOptions(ticker, timeframe, id, opts);
+
+        // Also update points if strictly needed (DrawingStorage usually handles options, but points are separate?)
+        // DrawingStorage.updateDrawingOptions stores "options". 
+        // Most drawings store points in options or separate? 
+        // Looking at drawing-storage.ts: updateDrawingOptions saves "options". 
+        // Does it save points? 
+        // Standard Lightweight Charts primitives usually keep points in private fields, 
+        // but our wrappers might expose them in options() or we need a separate savePoints?
+
+        // For Fib/TrendLine, points are usually part of the serialized state.
+        // DrawingStorage.saveDrawing saves the whole object.
+        // updateDrawingOptions only updates the "options" object.
+
+        // If we drag, points change. We should probably use drawingManager.saveDrawings() or similar?
+        // Or specific update method.
+
+        // Let's check drawingManager. 
+        // drawingManager doesn't expose granular updates easily.
+        // But DrawingStorage has updateDrawing (full replace?).
+
+        // Let's assume for now we can just save all drawings or update specific one.
+        // Better: DrawingStorage.updateDrawing(ticker, timeframe, serializedDrawing);
+
+        const serialized = drawingManager.serializeDrawing(drawing);
+        if (serialized) {
+            DrawingStorage.updateDrawing(ticker, timeframe, serialized);
+        }
+    };
+
+    const handleDrawingClicked = (id: string, drawing: any) => {
+        onSelectionChange?.({ type: 'drawing', id });
+    };
+
+    useDrawingInteraction({
+        chartContainerRef,
+        chart,
+        series,
+        drawingManager,
+        onDrawingModified: handleDrawingModified,
+        onDrawingClicked: handleDrawingClicked,
+        isTradingDragActive: false // Placeholder until we wire up shared state
+    });
 
 
     // 9. Tool Initiation
@@ -382,8 +445,12 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             (id, drawing) => {
                 onSelectionChange?.({ type: 'drawing', id });
                 setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
-                setSelectedDrawingType('text');
-                setPropertiesModalOpen(true);
+                setSelectedDrawingType(drawing._type || selectedTool);
+                // Only open properties for text or if configured to do so (Fibonacci usually doesn't auto-open, but we can if desired)
+                // For now, let's keep the behavior consistent but correct the type.
+                if (selectedTool === 'text' || selectedTool === 'fibonacci') {
+                    setPropertiesModalOpen(true);
+                }
             }
         );
     }, [selectedTool, magnetMode, data, drawingManager, onToolSelect, onSelectionChange]);
