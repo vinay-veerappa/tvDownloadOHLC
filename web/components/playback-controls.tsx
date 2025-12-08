@@ -107,8 +107,13 @@ export function PlaybackControls({
     // Handle keyboard shortcuts
     React.useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            // Don't handle if focused on input
-            if (e.target instanceof HTMLInputElement) return
+            // Don't handle if focused on input/textarea
+            const target = e.target as HTMLElement;
+            const isInput = target instanceof HTMLInputElement ||
+                target instanceof HTMLTextAreaElement ||
+                target.isContentEditable;
+
+            if (isInput) return;
 
             switch (e.key) {
                 case 'ArrowLeft':
