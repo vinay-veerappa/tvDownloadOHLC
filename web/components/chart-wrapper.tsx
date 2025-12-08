@@ -1,3 +1,4 @@
+
 'use client'
 
 import dynamic from 'next/dynamic'
@@ -36,6 +37,8 @@ export interface NavigationFunctions {
     getTotalBars: () => number
 }
 
+import { VWAPSettings } from "@/lib/indicator-api"
+
 interface ChartWrapperProps {
     ticker: string
     timeframe: string
@@ -47,6 +50,8 @@ interface ChartWrapperProps {
     onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number, currentTime?: number }) => void
     onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
     initialReplayTime?: number // Timestamp to restore replay position after remount
+    vwapSettings?: VWAPSettings
+    onOpenVwapSettings?: () => void
 }
 
 export function ChartWrapper(props: ChartWrapperProps) {
@@ -185,6 +190,12 @@ export function ChartWrapper(props: ChartWrapperProps) {
 
     // Indicator Settings Handlers
     const handleEditIndicator = useCallback((type: string) => {
+        // Handle special case for VWAP
+        if (type === 'vwap') {
+            props.onOpenVwapSettings?.();
+            return;
+        }
+
         // Parse existing options from type string (e.g., "sma:9" -> period=9)
         const [indType, param] = type.split(":");
         const existingOptions: Record<string, any> = {};
@@ -198,7 +209,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
         setEditingIndicator(type);
         setIndicatorOptions(existingOptions);
         setIndicatorSettingsOpen(true);
-    }, []);
+    }, [props.onOpenVwapSettings]);
 
     const handleSaveIndicatorSettings = useCallback((newOptions: Record<string, any>) => {
         if (!editingIndicator) return;
@@ -295,8 +306,10 @@ export function ChartWrapper(props: ChartWrapperProps) {
                         onPriceChange={setCurrentPrice}
                         position={position}
                         pendingOrders={pendingOrders}
+
                         onModifyOrder={modifyOrder}
                         onModifyPosition={modifyPosition}
+                        vwapSettings={props.vwapSettings}
                     />
                 </div>
                 <RightSidebar
@@ -331,4 +344,3 @@ export function ChartWrapper(props: ChartWrapperProps) {
         </>
     )
 }
-

@@ -10,7 +10,7 @@ export default async function Home(props: PageProps) {
   const searchParams = await props.searchParams
   const { tickers, timeframes, tickerMap } = await getAvailableData()
 
-  const ticker = (searchParams?.ticker as string) || "ES1"
+  const ticker = (searchParams?.ticker as string) || "ES1!"
   const timeframe = (searchParams?.timeframe as string) || "1D"
 
   return (

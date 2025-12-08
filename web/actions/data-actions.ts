@@ -38,7 +38,8 @@ function getDataDir() {
 
 // Load chunk metadata for a ticker/timeframe
 function loadMeta(ticker: string, timeframe: string): ChunkMeta | null {
-    const metaPath = path.join(getDataDir(), `${ticker}_${timeframe}`, "meta.json")
+    const cleanTicker = ticker.replace('!', '')
+    const metaPath = path.join(getDataDir(), `${cleanTicker}_${timeframe}`, "meta.json")
     if (!fs.existsSync(metaPath)) {
         return null
     }
@@ -47,7 +48,8 @@ function loadMeta(ticker: string, timeframe: string): ChunkMeta | null {
 
 // Load a specific chunk
 function loadChunk(ticker: string, timeframe: string, chunkIndex: number): OHLCData[] {
-    const chunkPath = path.join(getDataDir(), `${ticker}_${timeframe}`, `chunk_${chunkIndex}.json`)
+    const cleanTicker = ticker.replace('!', '')
+    const chunkPath = path.join(getDataDir(), `${cleanTicker}_${timeframe}`, `chunk_${chunkIndex}.json`)
     if (!fs.existsSync(chunkPath)) {
         return []
     }
@@ -342,8 +344,15 @@ export async function getAvailableData() {
         for (const dir of dirs) {
             const parts = dir.split('_')
             if (parts.length >= 2) {
-                const ticker = parts[0]
+                const baseTicker = parts[0]
                 const timeframe = parts.slice(1).join('_') // Handle timeframes with underscores if any
+
+                // Standardize: "ES1" -> "ES1!"
+                // Strategy: If it ends in a digit, assume it's a future and add !
+                let ticker = baseTicker
+                if (baseTicker && /\d$/.test(baseTicker)) {
+                    ticker = `${baseTicker}!`
+                }
 
                 allTickers.add(ticker)
                 allTimeframes.add(timeframe)

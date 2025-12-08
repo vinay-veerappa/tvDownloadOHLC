@@ -15,12 +15,21 @@ export interface IndicatorResult {
     indicators: Record<string, (number | null)[]>
 }
 
+export interface LineStyle {
+    color: string
+    width: number
+    style: number // 0=Solid, 1=Dotted, 2=Dashed, 3=LargeDashed
+}
+
 export interface VWAPSettings {
     anchor?: "session" | "week" | "month"
     anchor_time?: string // "09:30"
     anchor_timezone?: string // "America/New_York"
     bands?: number[] // [1.0, 2.0]
+    bandsEnabled?: boolean[] // [true, false]
     source?: "hlc3" | "close" | "ohlc4"
+    vwapStyle?: LineStyle
+    bandStyles?: LineStyle[]
 }
 
 /**

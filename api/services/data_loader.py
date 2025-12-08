@@ -17,13 +17,15 @@ def load_parquet(ticker: str, timeframe: str) -> Optional[pd.DataFrame]:
     Load OHLCV data from Parquet file
     
     Args:
-        ticker: e.g., "ES1", "NQ1"
+        ticker: e.g., "ES1", "NQ1" or "ES1!" (will be stripped)
         timeframe: e.g., "5m", "1h", "1D"
     
     Returns:
         DataFrame with columns: time, open, high, low, close, volume
     """
-    filename = f"{ticker}_{timeframe}.parquet"
+    # Clean ticker: "ES1!" -> "ES1"
+    clean_ticker = ticker.replace("!", "")
+    filename = f"{clean_ticker}_{timeframe}.parquet"
     filepath = DATA_DIR / filename
     
     if not filepath.exists():
@@ -68,7 +70,14 @@ def get_available_data() -> list:
     for f in DATA_DIR.glob("*.parquet"):
         parts = f.stem.split("_")
         if len(parts) >= 2:
-            ticker = parts[0]
+            base_ticker = parts[0]
+            # Standardize: "ES1" -> "ES1!"
+            # Strategy: If it ends in a digit, assume it's a future and add !
+            if base_ticker and base_ticker[-1].isdigit():
+                ticker = f"{base_ticker}!"
+            else:
+                ticker = base_ticker
+                
             timeframe = "_".join(parts[1:])
             files.append({"ticker": ticker, "timeframe": timeframe})
     

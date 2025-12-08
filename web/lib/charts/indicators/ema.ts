@@ -18,6 +18,12 @@ export const EMAIndicator: ChartIndicator = {
             priceLineVisible: false
         } as any);
 
+        line.applyOptions({
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false
+        });
+
         line.setData(emaData);
 
         return {

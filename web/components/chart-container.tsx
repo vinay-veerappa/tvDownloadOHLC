@@ -10,14 +10,13 @@ import type { MagnetMode } from "@/lib/charts/magnet-utils"
 import { useTradeContext } from "@/components/journal/trade-context"
 import { toast } from "sonner"
 import { useDrawingManager } from "@/hooks/use-drawing-manager"
-
 // New Hooks
 import { useChartData } from "@/hooks/chart/use-chart-data"
 import { useChartTrading } from "@/hooks/chart/use-chart-trading"
 import { useChartDrag } from "@/hooks/chart/use-chart-drag"
 import { ChartContextMenu } from "@/components/chart/chart-context-menu"
 import { ChartLegend, ChartLegendRef } from "@/components/chart/chart-legend"
-
+import { VWAPSettings } from "@/lib/indicator-api"
 
 interface ChartContainerProps {
     ticker: string
@@ -57,6 +56,7 @@ interface ChartContainerProps {
     }>
     onModifyOrder?: (id: string, updates: any) => void
     onModifyPosition?: (updates: any) => void
+    vwapSettings?: VWAPSettings
 }
 
 export interface ChartContainerRef {
@@ -80,11 +80,13 @@ export interface ChartContainerRef {
     getTotalBars: () => number;
 }
 
+
 export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({
     ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted,
     indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York',
     selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad,
-    onPriceChange, position, pendingOrders, onModifyOrder, onModifyPosition, initialReplayTime
+    onPriceChange, position, pendingOrders, onModifyOrder, onModifyPosition, initialReplayTime,
+    vwapSettings
 }, ref) => {
 
     // 1. Chart Reference
@@ -111,7 +113,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         scrollToTime, getDataRange, getVisibleTimeRange
     } = useChart(
         chartContainerRef as React.RefObject<HTMLDivElement>,
-        style, indicators, data, markers, displayTimezone, timeframe, undefined, ticker
+        style, indicators, data, markers, displayTimezone, timeframe, vwapSettings, ticker
     )
 
     // Keep ref synced
