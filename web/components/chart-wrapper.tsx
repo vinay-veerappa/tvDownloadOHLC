@@ -65,9 +65,9 @@ export function ChartWrapper(props: ChartWrapperProps) {
     // Sync Chart Price with Context
     useEffect(() => {
         if (currentPrice > 0) {
-            updatePrice(currentPrice)
+            updatePrice(currentPrice, props.ticker)
         }
-    }, [currentPrice, updatePrice])
+    }, [currentPrice, updatePrice, props.ticker])
 
     // Load indicators from storage
     const chartId = IndicatorStorage.getDefaultChartId()

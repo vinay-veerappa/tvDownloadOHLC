@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 
 interface ChartContextMenuProps {
-    containerRef: React.RefObject<HTMLDivElement>
+    containerRef: React.RefObject<HTMLDivElement | null>
     selectedDrawing: any
     onDelete: () => void
     onSettings: () => void

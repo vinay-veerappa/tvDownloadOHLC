@@ -24,7 +24,7 @@ import { SessionHighlighting } from "@/lib/charts/plugins/session-highlighting"
 import { useTheme } from "next-themes"
 
 export function useChart(
-    containerRef: React.RefObject<HTMLDivElement>,
+    containerRef: React.RefObject<HTMLDivElement | null>,
     style: string = 'candles',
     indicators: string[] = [],
     data: any[] = [],
