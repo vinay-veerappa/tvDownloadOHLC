@@ -51,8 +51,8 @@ const ALL_TIMEFRAMES = [
     ...TIMEFRAME_CATEGORIES.days,
 ]
 
-// Default favorites to show in top bar
-const DEFAULT_FAVORITES = ['1', '5', '15', '60', '240', '1D', '2', '3', '4', '360', '720']
+// Default favorites to show in top bar (use internal format: numbers for minutes, strings for D/W/M)
+const DEFAULT_FAVORITES = ['1', '3', '5', '15', '60', '240', '1D']
 
 interface TimeframeSelectorProps {
     currentTimeframe: string
@@ -167,9 +167,18 @@ export function TimeframeSelector({
     }
 
     // Show all favorites in top bar (up to 10), sorted by duration
+    // Deduplicate by display format to prevent '1' and '1m' from both showing as '1m'
+    const seen = new Set<string>()
     const visibleFavorites = [...favorites]
+        .map(tf => normalizeResolution(tf)) // Normalize all values
+        .filter(tf => {
+            const display = formatResolution(tf)
+            if (seen.has(display)) return false
+            seen.add(display)
+            return true
+        })
         .sort((a, b) => tfToMinutes(a) - tfToMinutes(b))
-        .slice(0, 10)
+        .slice(0, 8)
 
     return (
         <div className="flex items-center">
