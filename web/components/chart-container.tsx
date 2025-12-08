@@ -16,6 +16,7 @@ import { useChartData } from "@/hooks/chart/use-chart-data"
 import { useChartTrading } from "@/hooks/chart/use-chart-trading"
 import { useChartDrag } from "@/hooks/chart/use-chart-drag"
 import { ChartContextMenu } from "@/components/chart/chart-context-menu"
+import { ChartLegend } from "@/components/chart/chart-legend"
 
 
 interface ChartContainerProps {
@@ -134,6 +135,47 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             hasScrolledOnReplayStartRef.current = false
         }
     }, [data, replayMode, chart])
+
+    // 4b. OHLC Legend State - track hovered or latest candle
+    const [hoveredOHLC, setHoveredOHLC] = useState<{ open: number, high: number, low: number, close: number } | null>(null)
+
+    useEffect(() => {
+        if (!chart || !series || data.length === 0) return
+
+        const handleCrosshairMove = (param: any) => {
+            if (!param || !param.time) {
+                // Mouse left chart - show latest candle
+                const lastBar = data[data.length - 1]
+                if (lastBar) {
+                    setHoveredOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
+                }
+                return
+            }
+
+            // Get the candle data at crosshair position
+            const candleData = param.seriesData.get(series)
+            if (candleData) {
+                setHoveredOHLC({
+                    open: candleData.open,
+                    high: candleData.high,
+                    low: candleData.low,
+                    close: candleData.close
+                })
+            }
+        }
+
+        chart.subscribeCrosshairMove(handleCrosshairMove)
+
+        // Set initial value to latest candle
+        const lastBar = data[data.length - 1]
+        if (lastBar) {
+            setHoveredOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
+        }
+
+        return () => {
+            chart.unsubscribeCrosshairMove(handleCrosshairMove)
+        }
+    }, [chart, series, data])
 
     // 4c. Load more data when scrolling near the left edge (oldest data)
     // Uses official Lightweight Charts pattern: barsInLogicalRange().barsBefore
@@ -537,6 +579,14 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 selectedDrawing={selectedDrawingRef.current}
                 onDelete={deleteSelectedDrawing}
                 onSettings={openDrawingSettings}
+            />
+
+            {/* OHLC Legend Overlay */}
+            <ChartLegend
+                ticker={ticker}
+                timeframe={timeframe}
+                ohlc={hoveredOHLC}
+                className="absolute top-2 left-2 z-10 bg-background/80 backdrop-blur-sm px-2 py-1 rounded"
             />
 
 
