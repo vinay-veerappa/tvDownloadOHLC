@@ -31,6 +31,10 @@ const indicators = [
         label: "Exponential Moving Average (EMA)",
     },
     {
+        value: "vwap",
+        label: "VWAP (Volume Weighted)",
+    },
+    {
         value: "watermark",
         label: "Watermark (Anchored Text)",
     },

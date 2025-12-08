@@ -72,8 +72,14 @@ def calculate_indicator(df: pd.DataFrame, indicator: str) -> Dict[str, List[Opti
     result = {}
     
     if name == "vwap":
-        values = ta.vwap(df['high'], df['low'], df['close'], df['volume'])
-        result[indicator] = values.tolist()
+        # pandas-ta VWAP requires DatetimeIndex
+        df_copy = df.copy()
+        df_copy.index = pd.to_datetime(df_copy['time'], unit='s')
+        values = ta.vwap(df_copy['high'], df_copy['low'], df_copy['close'], df_copy['volume'])
+        if values is not None:
+            result[indicator] = values.tolist()
+        else:
+            result[indicator] = [None] * len(df)
     
     elif name == "sma":
         p = period or 20

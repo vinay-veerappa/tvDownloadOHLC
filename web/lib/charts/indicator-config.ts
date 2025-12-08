@@ -13,6 +13,7 @@ export const INDICATOR_DEFINITIONS: Record<string, IndicatorConfig> = {
     // Overlays
     sma: { id: 'sma', label: 'Moving Average (SMA)', type: 'overlay', defaultParams: { period: 9 }, color: '#2962FF' },
     ema: { id: 'ema', label: 'Exponential Moving Average (EMA)', type: 'overlay', defaultParams: { period: 9 }, color: '#FF6D00' },
+    vwap: { id: 'vwap', label: 'VWAP', type: 'overlay', color: '#9C27B0' }, // Requires Python API
     watermark: { id: 'watermark', label: 'Watermark', type: 'overlay' },
     sessions: { id: 'sessions', label: 'Session Highlighting', type: 'overlay' },
     vp: { id: 'vp', label: 'Volume Profile', type: 'overlay' }, // Rendered as primitive on main

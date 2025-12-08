@@ -20,6 +20,7 @@ import { HistogramSeries } from "lightweight-charts"
 import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
 import { AnchoredText } from "@/lib/charts/plugins/anchored-text"
 import { SessionHighlighting } from "@/lib/charts/plugins/session-highlighting"
+import { calculateIndicators, toLineSeriesData } from "@/lib/indicator-api"
 
 import { useTheme } from "next-themes"
 
@@ -292,6 +293,27 @@ export function useChart(
                         } as any);
                         line.setData(emaData);
                         activeSeries.push(line);
+                    } else if (baseId === 'vwap') {
+                        // VWAP requires Python API - fetch asynchronously
+                        (async () => {
+                            try {
+                                const result = await calculateIndicators(data, ['vwap']);
+                                if (result && result.indicators.vwap && chartInstance && !isDisposedRef.current) {
+                                    const vwapData = toLineSeriesData(result.time, result.indicators.vwap);
+                                    const line = chartInstance.addSeries(LineSeries, {
+                                        color: config.color || '#9C27B0',
+                                        lineWidth: 2,
+                                        title: 'VWAP',
+                                        priceScaleId: 'right',
+                                        pane: 0
+                                    } as any);
+                                    line.setData(vwapData as any);
+                                    activeSeries.push(line);
+                                }
+                            } catch (e) {
+                                console.error('Failed to calculate VWAP:', e);
+                            }
+                        })();
                     }
                 } else if (config.type === 'oscillator') {
                     const currentPane = oscillatorPaneIndex++;
