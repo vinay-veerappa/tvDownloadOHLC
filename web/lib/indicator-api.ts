@@ -15,23 +15,36 @@ export interface IndicatorResult {
     indicators: Record<string, (number | null)[]>
 }
 
+export interface VWAPSettings {
+    anchor?: "session" | "week" | "month"
+    anchor_time?: string // "09:30"
+    anchor_timezone?: string // "America/New_York"
+    bands?: number[] // [1.0, 2.0]
+    source?: "hlc3" | "close" | "ohlc4"
+}
+
 /**
  * Calculate indicators from chart OHLCV data via Python API
  * 
  * @param ohlcv - The OHLCV data array from the chart
  * @param indicators - List of indicators to calculate (e.g., ["vwap", "sma_20", "ema_9"])
+ * @param timeframe - Current timeframe (e.g. "5m") to allow auto-hiding on daily+
+ * @param vwapSettings - Optional settings for VWAP
  * @returns Calculated indicator values aligned with time series
  */
 export async function calculateIndicators(
     ohlcv: OHLCData[],
-    indicators: string[]
+    indicators: string[],
+    timeframe?: string,
+    vwapSettings?: VWAPSettings
 ): Promise<IndicatorResult | null> {
     if (!ohlcv.length || !indicators.length) {
         return null
     }
 
     try {
-        const response = await fetch(`${API_BASE_URL}/api/indicators/calculate`, {
+        // Use v2 endpoint which supports settings
+        const response = await fetch(`${API_BASE_URL}/api/indicators/calculate-v2`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -45,7 +58,9 @@ export async function calculateIndicators(
                     close: bar.close,
                     volume: bar.volume || 0
                 })),
-                indicators
+                indicators,
+                timeframe,
+                vwap_settings: vwapSettings
             }),
         })
 
@@ -92,7 +107,7 @@ export function toLineSeriesData(
     for (let i = 0; i < time.length; i++) {
         if (values[i] !== null && values[i] !== undefined) {
             result.push({
-                time: time[i],
+                time: time[i] as any, // Cast to any to satisfy LW Charts Time type requirement
                 value: values[i] as number
             })
         }

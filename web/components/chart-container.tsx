@@ -111,7 +111,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         scrollToTime, getDataRange, getVisibleTimeRange
     } = useChart(
         chartContainerRef as React.RefObject<HTMLDivElement>,
-        style, indicators, data, markers, displayTimezone
+        style, indicators, data, markers, displayTimezone, timeframe
     )
 
     // Keep ref synced

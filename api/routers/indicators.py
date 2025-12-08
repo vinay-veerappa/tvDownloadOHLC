@@ -9,10 +9,13 @@ from api.models.indicator import (
     IndicatorFromFileRequest,
     IndicatorResponse,
     AvailableIndicatorsResponse,
-    AvailableIndicator
+    AvailableIndicator,
+    IndicatorRequestWithSettings,
+    VWAPSettings
 )
 from api.services.data_loader import load_parquet, get_available_data
 from api.services.indicators import calculate_indicators, get_available_indicators
+from api.services.vwap import calculate_vwap_with_settings, should_hide_vwap
 
 
 router = APIRouter()
@@ -46,6 +49,65 @@ async def calculate(request: IndicatorRequest):
     return IndicatorResponse(
         time=df['time'].tolist(),
         indicators=indicator_values
+    )
+
+
+@router.post("/calculate-v2", response_model=IndicatorResponse)
+async def calculate_with_settings(request: IndicatorRequestWithSettings):
+    """
+    Calculate indicators with custom settings (e.g., VWAP anchor period).
+    
+    Example request:
+    {
+        "ohlcv": [...],
+        "indicators": ["vwap", "sma_20"],
+        "timeframe": "5m",
+        "vwap_settings": {
+            "anchor": "session",
+            "anchor_time": "09:30",
+            "anchor_timezone": "America/New_York",
+            "bands": [1.0, 2.0],
+            "source": "hlc3"
+        }
+    }
+    """
+    if not request.ohlcv:
+        raise HTTPException(status_code=400, detail="OHLCV data is required")
+    
+    # Convert to DataFrame
+    df = pd.DataFrame([bar.model_dump() for bar in request.ohlcv])
+    
+    all_indicators = {}
+    non_vwap_indicators = []
+    
+    for ind in request.indicators:
+        if ind.lower() == 'vwap':
+            # Check if should hide on this timeframe
+            if request.timeframe and should_hide_vwap(request.timeframe):
+                continue  # Skip VWAP on daily+ timeframes
+            
+            # Use VWAP settings if provided
+            settings = request.vwap_settings or VWAPSettings()
+            vwap_result = calculate_vwap_with_settings(
+                df,
+                anchor=settings.anchor,
+                anchor_time=settings.anchor_time,
+                anchor_timezone=settings.anchor_timezone,
+                bands=settings.bands,
+                source=settings.source
+            )
+            all_indicators.update(vwap_result)
+        else:
+            non_vwap_indicators.append(ind)
+    
+    # Calculate non-VWAP indicators
+    if non_vwap_indicators:
+        other_indicators = calculate_indicators(df, non_vwap_indicators)
+        all_indicators.update(other_indicators)
+    
+    return IndicatorResponse(
+        time=df['time'].tolist(),
+        indicators=all_indicators
     )
 
 
