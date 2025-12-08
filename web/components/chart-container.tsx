@@ -589,24 +589,26 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     }, [series, chart, data, indicators]); // Re-run when data updates (streaming) or indicators change
 
     return (
-        <div ref={chartContainerRef} className="w-full h-full relative" onContextMenu={(e) => {
+        <div className="w-full h-full relative" onContextMenu={(e) => {
             // Keep native React onContextMenu as backup
         }}>
+            {/* Chart canvas container - innerHTML gets cleared by useChart */}
+            <div ref={chartContainerRef} className="w-full h-full" />
+
+            {/* OHLC Legend Overlay - outside chartContainerRef so it survives */}
+            <ChartLegend
+                ref={legendRef}
+                ticker={ticker}
+                timeframe={timeframe}
+                className="absolute top-2 left-2 z-50 bg-background/80 backdrop-blur-sm px-2 py-1 rounded pointer-events-none"
+            />
+
             <ChartContextMenu
                 containerRef={chartContainerRef}
                 selectedDrawing={selectedDrawingRef.current}
                 onDelete={deleteSelectedDrawing}
                 onSettings={openDrawingSettings}
             />
-
-            {/* OHLC Legend Overlay */}
-            <ChartLegend
-                ref={legendRef}
-                ticker={ticker}
-                timeframe={timeframe}
-                className="absolute top-2 left-2 z-10 bg-background/80 backdrop-blur-sm px-2 py-1 rounded"
-            />
-
 
             <PropertiesModal
                 open={propertiesModalOpen}

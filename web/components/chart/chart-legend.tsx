@@ -37,7 +37,6 @@ export const ChartLegend = forwardRef<ChartLegendRef, ChartLegendProps>(({ ticke
 
             if (ohlcContainerRef.current) {
                 ohlcContainerRef.current.style.color = color
-                ohlcContainerRef.current.style.display = 'flex'
             }
             if (openRef.current) openRef.current.textContent = formatPrice(ohlc.open)
             if (highRef.current) highRef.current.textContent = formatPrice(ohlc.high)
@@ -56,8 +55,7 @@ export const ChartLegend = forwardRef<ChartLegendRef, ChartLegendProps>(({ ticke
             {/* OHLC Values - updated via ref, no re-render */}
             <div
                 ref={ohlcContainerRef}
-                className="items-center gap-2 hidden"
-                style={{ display: 'none' }}
+                className="flex items-center gap-2"
             >
                 <span><span className="text-muted-foreground text-xs">O</span><span ref={openRef}>--</span></span>
                 <span><span className="text-muted-foreground text-xs">H</span><span ref={highRef}>--</span></span>
