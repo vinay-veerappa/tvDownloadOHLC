@@ -126,6 +126,21 @@ export function ChartWrapper(props: ChartWrapperProps) {
     // Global Selection State
     const [selection, setSelection] = useState<{ type: 'drawing' | 'indicator', id: string } | null>(null);
 
+    // Validated order execution - prevents trading at end of replay data
+    const validatedExecuteOrder = useCallback((params: Parameters<typeof executeOrder>[0]) => {
+        // Check if in replay mode and at end of data
+        const isReplay = chartRef.current?.isReplayMode() ?? false
+        const replayIndex = chartRef.current?.getReplayIndex() ?? 0
+        const totalBars = chartRef.current?.getTotalBars() ?? 0
+
+        if (isReplay && totalBars > 0 && replayIndex >= totalBars - 1) {
+            toast.error("Cannot trade at end of data. Step back or load more data to continue.")
+            return
+        }
+
+        executeOrder(params)
+    }, [executeOrder])
+
     const handleDrawingCreated = useCallback((drawing: Drawing) => {
         setDrawings(prev => {
             if (prev.some(d => d.id === drawing.id)) return prev;
@@ -238,7 +253,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
                         <div className="absolute top-4 left-4 z-20">
                             <BuySellPanel
                                 currentPrice={currentPrice}
-                                onBuy={(qty, type, price, sl, tp) => executeOrder({
+                                onBuy={(qty, type, price, sl, tp) => validatedExecuteOrder({
                                     ticker: props.ticker,
                                     direction: 'BUY',
                                     quantity: qty,
@@ -247,7 +262,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
                                     stopLoss: sl,
                                     takeProfit: tp
                                 })}
-                                onSell={(qty, type, price, sl, tp) => executeOrder({
+                                onSell={(qty, type, price, sl, tp) => validatedExecuteOrder({
                                     ticker: props.ticker,
                                     direction: 'SELL',
                                     quantity: qty,
