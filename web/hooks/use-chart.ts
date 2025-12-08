@@ -20,7 +20,7 @@ import { HistogramSeries } from "lightweight-charts"
 import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
 import { AnchoredText } from "@/lib/charts/plugins/anchored-text"
 import { SessionHighlighting } from "@/lib/charts/plugins/session-highlighting"
-import { calculateIndicators, toLineSeriesData } from "@/lib/indicator-api"
+import { calculateIndicators, toLineSeriesData, VWAPSettings } from "@/lib/indicator-api"
 
 import { useTheme } from "next-themes"
 
@@ -30,7 +30,9 @@ export function useChart(
     indicators: string[] = [],
     data: any[] = [],
     markers: any[] = [],
-    displayTimezone: string = 'America/New_York'
+    displayTimezone: string = 'America/New_York',
+    timeframe: string = '1m',
+    vwapSettings?: VWAPSettings
 ) {
     const { resolvedTheme } = useTheme()
     const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
@@ -297,8 +299,14 @@ export function useChart(
                         // VWAP requires Python API - fetch asynchronously
                         (async () => {
                             try {
-                                const result = await calculateIndicators(data, ['vwap']);
+                                const result = await calculateIndicators(
+                                    data,
+                                    ['vwap'],
+                                    timeframe,
+                                    vwapSettings || { anchor: 'session', anchor_time: '09:30', bands: [1.0] }
+                                );
                                 if (result && result.indicators.vwap && chartInstance && !isDisposedRef.current) {
+                                    // Main VWAP Line
                                     const vwapData = toLineSeriesData(result.time, result.indicators.vwap);
                                     const line = chartInstance.addSeries(LineSeries, {
                                         color: config.color || '#9C27B0',
@@ -309,6 +317,42 @@ export function useChart(
                                     } as any);
                                     line.setData(vwapData as any);
                                     activeSeries.push(line);
+
+                                    // Render Bands (1.0, 2.0, 3.0)
+                                    const bands = [1.0, 2.0, 3.0];
+                                    bands.forEach(mult => {
+                                        const multStr = mult.toFixed(1).replace('.', '_');
+                                        const upperKey = `vwap_upper_${multStr}`;
+                                        const lowerKey = `vwap_lower_${multStr}`;
+
+                                        if (result.indicators[upperKey]) {
+                                            const upperData = toLineSeriesData(result.time, result.indicators[upperKey]);
+                                            const upperSeries = chartInstance.addSeries(LineSeries, {
+                                                color: config.color || '#9C27B0',
+                                                lineWidth: 1,
+                                                lineStyle: 2, // Dashed
+                                                title: `VWAP +${mult}σ`,
+                                                priceScaleId: 'right',
+                                                pane: 0
+                                            } as any);
+                                            upperSeries.setData(upperData as any);
+                                            activeSeries.push(upperSeries);
+                                        }
+
+                                        if (result.indicators[lowerKey]) {
+                                            const lowerData = toLineSeriesData(result.time, result.indicators[lowerKey]);
+                                            const lowerSeries = chartInstance.addSeries(LineSeries, {
+                                                color: config.color || '#9C27B0',
+                                                lineWidth: 1,
+                                                lineStyle: 2, // Dashed
+                                                title: `VWAP -${mult}σ`,
+                                                priceScaleId: 'right',
+                                                pane: 0
+                                            } as any);
+                                            lowerSeries.setData(lowerData as any);
+                                            activeSeries.push(lowerSeries);
+                                        }
+                                    });
                                 }
                             } catch (e) {
                                 console.error('Failed to calculate VWAP:', e);

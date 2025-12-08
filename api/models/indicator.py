@@ -47,3 +47,20 @@ class AvailableIndicator(BaseModel):
 class AvailableIndicatorsResponse(BaseModel):
     """List of all available indicators"""
     indicators: List[AvailableIndicator]
+
+
+class VWAPSettings(BaseModel):
+    """Settings for VWAP calculation"""
+    anchor: str = "session"  # session, week, month
+    anchor_time: str = "09:30"  # Time to reset (HH:MM)
+    anchor_timezone: str = "America/New_York"
+    bands: List[float] = [1.0]  # Std dev multipliers [1.0, 2.0, 3.0]
+    source: str = "hlc3"  # hlc3, close, ohlc4
+
+
+class IndicatorRequestWithSettings(BaseModel):
+    """Request with indicator-specific settings"""
+    ohlcv: List[OHLCVBar]
+    indicators: List[str]
+    vwap_settings: Optional[VWAPSettings] = None
+    timeframe: Optional[str] = None  # For auto-hiding VWAP on daily+
