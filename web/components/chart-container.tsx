@@ -138,14 +138,20 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
     // 4b. OHLC Legend State - track hovered or latest candle
     const [hoveredOHLC, setHoveredOHLC] = useState<{ open: number, high: number, low: number, close: number } | null>(null)
+    const dataRef = useRef(data)
+    dataRef.current = data // Keep ref in sync
 
+    // Subscribe to crosshair moves (only when chart/series change, not data)
     useEffect(() => {
-        if (!chart || !series || data.length === 0) return
+        if (!chart || !series) return
 
         const handleCrosshairMove = (param: any) => {
+            const currentData = dataRef.current
+            if (!currentData || currentData.length === 0) return
+
             if (!param || !param.time) {
                 // Mouse left chart - show latest candle
-                const lastBar = data[data.length - 1]
+                const lastBar = currentData[currentData.length - 1]
                 if (lastBar) {
                     setHoveredOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
                 }
@@ -166,16 +172,18 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
         chart.subscribeCrosshairMove(handleCrosshairMove)
 
-        // Set initial value to latest candle
-        const lastBar = data[data.length - 1]
-        if (lastBar) {
-            setHoveredOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
-        }
-
         return () => {
             chart.unsubscribeCrosshairMove(handleCrosshairMove)
         }
-    }, [chart, series, data])
+    }, [chart, series])
+
+    // Update legend when data changes (initial load or new data)
+    useEffect(() => {
+        if (data.length > 0) {
+            const lastBar = data[data.length - 1]
+            setHoveredOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
+        }
+    }, [data.length]) // Only trigger on data length change, not every array reference
 
     // 4c. Load more data when scrolling near the left edge (oldest data)
     // Uses official Lightweight Charts pattern: barsInLogicalRange().barsBefore
