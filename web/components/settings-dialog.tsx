@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Monitor, Bell, CandlestickChart, MousePointer2 } from "lucide-react"
+import { Monitor, Bell, CandlestickChart, MousePointer2, RotateCcw } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -10,6 +10,9 @@ import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import { useChartSettings } from "@/hooks/use-chart-settings"
 
 interface SettingsDialogProps {
     open: boolean
@@ -19,6 +22,8 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onOpenChange, showTrading, onToggleTrading }: SettingsDialogProps) {
+    const { settings, updateSetting, resetToDefaults } = useChartSettings()
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-[800px] h-[600px] flex flex-col p-0 gap-0">
@@ -168,8 +173,174 @@ export function SettingsDialog({ open, onOpenChange, showTrading, onToggleTradin
                                     </div>
                                 </div>
                             </TabsContent>
-                            <TabsContent value="symbol">
-                                <div className="p-4 text-center text-muted-foreground">Symbol Settings Placeholder</div>
+                            <TabsContent value="symbol" className="mt-0 space-y-8">
+                                {/* Candle Colors Section */}
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Candle Colors</h3>
+                                        <Button variant="ghost" size="sm" onClick={resetToDefaults} className="h-7 text-xs gap-1">
+                                            <RotateCcw className="h-3 w-3" />
+                                            Reset
+                                        </Button>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <Label>Up Candle</Label>
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="color"
+                                                    value={settings.upColor}
+                                                    onChange={(e) => updateSetting('upColor', e.target.value)}
+                                                    className="w-10 h-8 rounded border cursor-pointer"
+                                                />
+                                                <Input
+                                                    value={settings.upColor}
+                                                    onChange={(e) => updateSetting('upColor', e.target.value)}
+                                                    className="h-8 flex-1 font-mono text-xs"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label>Down Candle</Label>
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="color"
+                                                    value={settings.downColor}
+                                                    onChange={(e) => updateSetting('downColor', e.target.value)}
+                                                    className="w-10 h-8 rounded border cursor-pointer"
+                                                />
+                                                <Input
+                                                    value={settings.downColor}
+                                                    onChange={(e) => updateSetting('downColor', e.target.value)}
+                                                    className="h-8 flex-1 font-mono text-xs"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label>Up Wick</Label>
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="color"
+                                                    value={settings.wickUpColor}
+                                                    onChange={(e) => updateSetting('wickUpColor', e.target.value)}
+                                                    className="w-10 h-8 rounded border cursor-pointer"
+                                                />
+                                                <Input
+                                                    value={settings.wickUpColor}
+                                                    onChange={(e) => updateSetting('wickUpColor', e.target.value)}
+                                                    className="h-8 flex-1 font-mono text-xs"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label>Down Wick</Label>
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="color"
+                                                    value={settings.wickDownColor}
+                                                    onChange={(e) => updateSetting('wickDownColor', e.target.value)}
+                                                    className="w-10 h-8 rounded border cursor-pointer"
+                                                />
+                                                <Input
+                                                    value={settings.wickDownColor}
+                                                    onChange={(e) => updateSetting('wickDownColor', e.target.value)}
+                                                    className="h-8 flex-1 font-mono text-xs"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <Separator />
+
+                                {/* Grid Settings Section */}
+                                <div className="space-y-4">
+                                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Grid</h3>
+
+                                    <div className="flex items-center gap-3">
+                                        <Checkbox
+                                            id="grid-visible"
+                                            checked={settings.gridVisible}
+                                            onCheckedChange={(checked) => updateSetting('gridVisible', checked === true)}
+                                        />
+                                        <Label htmlFor="grid-visible">Show grid lines</Label>
+                                    </div>
+
+                                    <div className="space-y-2 pl-7">
+                                        <Label className="text-xs text-muted-foreground">Grid Color</Label>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="color"
+                                                value={settings.gridColor.startsWith('rgba') ? '#333333' : settings.gridColor}
+                                                onChange={(e) => updateSetting('gridColor', e.target.value)}
+                                                className="w-10 h-8 rounded border cursor-pointer"
+                                                disabled={!settings.gridVisible}
+                                            />
+                                            <Input
+                                                value={settings.gridColor}
+                                                onChange={(e) => updateSetting('gridColor', e.target.value)}
+                                                className="h-8 w-[180px] font-mono text-xs"
+                                                disabled={!settings.gridVisible}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <Separator />
+
+                                {/* Scale Settings Section */}
+                                <div className="space-y-4">
+                                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Scale</h3>
+
+                                    <div className="flex items-center gap-3">
+                                        <Checkbox
+                                            id="auto-scale"
+                                            checked={settings.autoScale}
+                                            onCheckedChange={(checked) => updateSetting('autoScale', checked === true)}
+                                        />
+                                        <Label htmlFor="auto-scale">Auto-scale price axis</Label>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <Label className="text-sm">Right offset (empty bars)</Label>
+                                            <span className="text-sm text-muted-foreground">{settings.rightOffset}</span>
+                                        </div>
+                                        <Slider
+                                            value={[settings.rightOffset]}
+                                            onValueChange={([value]) => updateSetting('rightOffset', value)}
+                                            min={0}
+                                            max={20}
+                                            step={1}
+                                            className="w-full"
+                                        />
+                                    </div>
+                                </div>
+
+                                <Separator />
+
+                                {/* Crosshair Settings */}
+                                <div className="space-y-4">
+                                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Crosshair</h3>
+
+                                    <div className="space-y-2">
+                                        <Label>Crosshair Mode</Label>
+                                        <Select
+                                            value={settings.crosshairMode}
+                                            onValueChange={(value) => updateSetting('crosshairMode', value as 'normal' | 'magnet' | 'hidden')}
+                                        >
+                                            <SelectTrigger className="w-[180px]">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="normal">Normal</SelectItem>
+                                                <SelectItem value="magnet">Magnet (snap to OHLC)</SelectItem>
+                                                <SelectItem value="hidden">Hidden</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
                             </TabsContent>
                             <TabsContent value="status">
                                 <div className="p-4 text-center text-muted-foreground">Status Line Settings Placeholder</div>
