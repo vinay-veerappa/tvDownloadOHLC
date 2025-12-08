@@ -115,10 +115,19 @@ export function TimeframeSelector({
         localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(newFavorites))
     }
 
+    // Helper to check if a timeframe is in favorites (with normalization)
+    const isFavoriteNormalized = (tf: string): boolean => {
+        const normalized = normalizeResolution(tf)
+        return favorites.some(f => normalizeResolution(f) === normalized)
+    }
+
     const toggleFavorite = (tf: string) => {
-        const newFavorites = favorites.includes(tf)
-            ? favorites.filter(f => f !== tf)
-            : [...favorites, tf]
+        const normalized = normalizeResolution(tf)
+        const isCurrentlyFavorite = favorites.some(f => normalizeResolution(f) === normalized)
+
+        const newFavorites = isCurrentlyFavorite
+            ? favorites.filter(f => normalizeResolution(f) !== normalized)
+            : [...favorites, normalized] // Always add normalized form
         saveFavorites(newFavorites)
     }
 
@@ -237,7 +246,7 @@ export function TimeframeSelector({
                                     key={tf.value}
                                     tf={tf}
                                     isSelected={currentTimeframe === tf.value}
-                                    isFavorite={favorites.includes(tf.value)}
+                                    isFavorite={isFavoriteNormalized(tf.value)}
                                     isAvailable={availableTimeframes.includes(tf.value)}
                                     onSelect={() => handleTimeframeSelect(tf.value)}
                                     onToggleFavorite={() => toggleFavorite(tf.value)}
@@ -253,7 +262,7 @@ export function TimeframeSelector({
                                     key={tf.value}
                                     tf={tf}
                                     isSelected={currentTimeframe === tf.value}
-                                    isFavorite={favorites.includes(tf.value)}
+                                    isFavorite={isFavoriteNormalized(tf.value)}
                                     isAvailable={availableTimeframes.includes(tf.value)}
                                     onSelect={() => handleTimeframeSelect(tf.value)}
                                     onToggleFavorite={() => toggleFavorite(tf.value)}
@@ -269,7 +278,7 @@ export function TimeframeSelector({
                                     key={tf.value}
                                     tf={tf}
                                     isSelected={currentTimeframe === tf.value}
-                                    isFavorite={favorites.includes(tf.value)}
+                                    isFavorite={isFavoriteNormalized(tf.value)}
                                     isAvailable={availableTimeframes.includes(tf.value)}
                                     onSelect={() => handleTimeframeSelect(tf.value)}
                                     onToggleFavorite={() => toggleFavorite(tf.value)}
