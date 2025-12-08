@@ -37,9 +37,12 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
             className="border-t border-border bg-background flex flex-col transition-all duration-200"
             style={{ height: isOpen ? height : 40 }}
         >
-            {/* Header / Tabs */}
-            <div className="h-10 flex items-center justify-between px-2 bg-muted border-b border-border">
-                <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full">
+            {/* Header / Tabs - Click anywhere to toggle */}
+            <div
+                className="h-10 flex items-center justify-between px-2 bg-muted border-b border-border cursor-pointer hover:bg-muted/80 transition-colors"
+                onClick={onToggle}
+            >
+                <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full" onClick={(e) => e.stopPropagation()}>
                     <TabsList className="h-full bg-transparent p-0 gap-4">
                         <TabsTrigger
                             value="positions"
@@ -62,7 +65,7 @@ export function BottomPanel({ isOpen, onToggle, height }: BottomPanelProps) {
                     </TabsList>
                 </Tabs>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                     <Button variant="ghost" size="sm" onClick={onToggle} className="h-6 w-6 p-0 hover:bg-muted-foreground/10">
                         {isOpen ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronUp className="h-4 w-4 text-muted-foreground" />}
                     </Button>

@@ -49,7 +49,7 @@ interface ChartContainerProps {
     } | null
     pendingOrders?: Array<{
         id: string
-        orderType: 'LIMIT' | 'STOP'
+        orderType: 'MARKET' | 'LIMIT' | 'STOP'
         direction: 'LONG' | 'SHORT'
         price: number
         quantity: number
@@ -336,7 +336,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         const clickHandler = (param: any) => {
             if (!param.point) return;
             if (isSelectingReplayStart && param.time) {
-                startReplay({ time: param.time as number }, chart)
+                startReplay({ time: param.time as number })
                 setIsSelectingReplayStart(false)
                 toast.info(`Replay started from selected time`)
                 return
@@ -452,7 +452,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         },
         getDataRange,
         getFullDataRange: () => fullDataRange,
-        startReplay: (op) => startReplay(op, chart),
+        startReplay: (op) => startReplay(op),
         startReplaySelection,
         stepForward,
         stepBack,

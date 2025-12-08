@@ -15,7 +15,7 @@ interface UseChartTradingProps {
     } | null
     pendingOrders?: Array<{
         id: string
-        orderType: 'LIMIT' | 'STOP'
+        orderType: 'MARKET' | 'LIMIT' | 'STOP'
         direction: 'LONG' | 'SHORT'
         price: number
         quantity: number

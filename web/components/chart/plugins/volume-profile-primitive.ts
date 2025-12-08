@@ -1,4 +1,4 @@
-import { ISeriesPrimitive, ISeriesPrimitivePaneRenderer, ISeriesPrimitivePaneView, SeriesPrimitivePaneViewZOrder, Time, IChartApi, ISeriesApi, LogicalRange } from "lightweight-charts";
+import { ISeriesPrimitive, IPrimitivePaneRenderer, IPrimitivePaneView, PrimitivePaneViewZOrder, Time, IChartApi, ISeriesApi, LogicalRange } from "lightweight-charts";
 import { VolumeProfileData } from "@/lib/charts/volume-profile-calc";
 
 // Helper for pixel snapping
@@ -11,7 +11,7 @@ function pixelSnap(start: number, end: number, pixelRatio: number) {
     };
 }
 
-class VolumeProfileRenderer implements ISeriesPrimitivePaneRenderer {
+class VolumeProfileRenderer implements IPrimitivePaneRenderer {
     _data: {
         x: number | null;
         top: number | null;
@@ -52,7 +52,7 @@ class VolumeProfileRenderer implements ISeriesPrimitivePaneRenderer {
     }
 }
 
-class VolumeProfilePaneView implements ISeriesPrimitivePaneView {
+class VolumeProfilePaneView implements IPrimitivePaneView {
     _source: VolumeProfilePrimitive;
     _x: number | null = null;
     _width: number = 0;
@@ -64,7 +64,7 @@ class VolumeProfilePaneView implements ISeriesPrimitivePaneView {
         this._source = source;
     }
 
-    zOrder(): SeriesPrimitivePaneViewZOrder {
+    zOrder(): PrimitivePaneViewZOrder {
         return 'normal'; // or 'bottom' to be behind candles
     }
 
@@ -104,7 +104,7 @@ class VolumeProfilePaneView implements ISeriesPrimitivePaneView {
         this._top = series.priceToCoordinate(vpData.profile[0].price);
     }
 
-    renderer(): ISeriesPrimitivePaneRenderer | null {
+    renderer(): IPrimitivePaneRenderer | null {
         if (!this._source._visible) return null;
 
         return new VolumeProfileRenderer({
@@ -119,7 +119,7 @@ class VolumeProfilePaneView implements ISeriesPrimitivePaneView {
 
 export class VolumeProfilePrimitive implements ISeriesPrimitive {
     _chart: IChartApi | null = null;
-    _series: ISeriesApi<"Candlestick"> | null = null;
+    _series: ISeriesApi<any> | null = null;
     _vpData: VolumeProfileData | null = null;
     _paneViews: VolumeProfilePaneView[];
     _visible: boolean = true;
@@ -139,7 +139,7 @@ export class VolumeProfilePrimitive implements ISeriesPrimitive {
         this.updateAllViews();
     }
 
-    attached({ chart, series, requestUpdate }: { chart: IChartApi; series: ISeriesApi<"Candlestick">; requestUpdate: () => void }) {
+    attached({ chart, series, requestUpdate }: { chart: IChartApi; series: ISeriesApi<any>; requestUpdate: () => void }) {
         this._chart = chart;
         this._series = series;
         this.updateAllViews();

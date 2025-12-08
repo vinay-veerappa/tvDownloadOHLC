@@ -21,6 +21,7 @@ interface ChartPageClientProps {
 
 const MAGNET_STORAGE_KEY = 'chart_magnet_mode'
 const TIMEZONE_STORAGE_KEY = 'chart-timezone'
+const BOTTOM_PANEL_STORAGE_KEY = 'bottom_panel_open'
 
 export function ChartPageClient({
     tickers,
@@ -49,6 +50,12 @@ export function ChartPageClient({
         const savedTimezone = localStorage.getItem(TIMEZONE_STORAGE_KEY)
         if (savedTimezone) {
             setDisplayTimezone(savedTimezone)
+        }
+
+        // Load bottom panel state (default closed)
+        const savedPanelState = localStorage.getItem(BOTTOM_PANEL_STORAGE_KEY)
+        if (savedPanelState !== null) {
+            setIsPanelOpen(savedPanelState === 'true')
         }
     }, [])
 
@@ -116,6 +123,12 @@ export function ChartPageClient({
 
     // Bottom Panel state
     const [isPanelOpen, setIsPanelOpen] = useState(false)
+
+    // Save panel state to localStorage when it changes
+    useEffect(() => {
+        localStorage.setItem(BOTTOM_PANEL_STORAGE_KEY, isPanelOpen.toString())
+    }, [isPanelOpen])
+
     const { resolvedTheme } = useTheme()
 
     return (

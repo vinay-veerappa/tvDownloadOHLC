@@ -5,7 +5,7 @@ import { IChartApi, ISeriesApi, MouseEventParams } from "lightweight-charts"
 import { toast } from "sonner"
 
 interface UseChartDragProps {
-    chartContainerRef: React.RefObject<HTMLDivElement>
+    chartContainerRef: React.RefObject<HTMLDivElement | null>
     chart: IChartApi | null
     series: ISeriesApi<any> | null
     data: any[]
