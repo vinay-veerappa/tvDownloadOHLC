@@ -14,13 +14,14 @@ import {
     createSeriesMarkers
 } from "lightweight-charts"
 
-import { calculateSMA, calculateEMA, calculateRSI, calculateMACD } from "@/lib/charts/indicators"
+import { calculateSMA, calculateEMA, calculateRSI, calculateMACD } from "@/lib/charts/indicator-calculations"
 import { INDICATOR_DEFINITIONS } from "@/lib/charts/indicator-config"
 import { HistogramSeries } from "lightweight-charts"
 import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
 import { AnchoredText } from "@/lib/charts/plugins/anchored-text"
 import { SessionHighlighting } from "@/lib/charts/plugins/session-highlighting"
 import { calculateIndicators, toLineSeriesData, VWAPSettings } from "@/lib/indicator-api"
+import { INDICATOR_REGISTRY } from "@/lib/charts/indicators"
 
 import { useTheme } from "next-themes"
 
@@ -32,7 +33,8 @@ export function useChart(
     markers: any[] = [],
     displayTimezone: string = 'America/New_York',
     timeframe: string = '1m',
-    vwapSettings?: VWAPSettings
+    vwapSettings?: VWAPSettings,
+    ticker?: string
 ) {
     const { resolvedTheme } = useTheme()
     const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
@@ -270,137 +272,44 @@ export function useChart(
                 const config = INDICATOR_DEFINITIONS[baseId];
                 if (!config) return;
 
-                const period = param ? parseInt(param) : (config.defaultParams?.period || 14);
+                const indicatorRenderer = INDICATOR_REGISTRY[baseId];
+                if (indicatorRenderer) {
+                    const params = { ...config, period: param ? parseInt(param) : undefined };
 
-                if (config.type === 'overlay') {
-                    if (baseId === 'sma') {
-                        const smaData = calculateSMA(data, period);
-                        const line = chartInstance.addSeries(LineSeries, {
-                            color: config.color || '#2962FF',
-                            lineWidth: 1,
-                            title: `${config.label} ${period}`,
-                            priceScaleId: 'right',
-                            pane: 0
-                        } as any);
-                        line.setData(smaData);
-                        activeSeries.push(line);
-                    } else if (baseId === 'ema') {
-                        const emaData = calculateEMA(data, period);
-                        const line = chartInstance.addSeries(LineSeries, {
-                            color: config.color || '#FF6D00',
-                            lineWidth: 1,
-                            title: `${config.label} ${period}`,
-                            priceScaleId: 'right',
-                            pane: 0
-                        } as any);
-                        line.setData(emaData);
-                        activeSeries.push(line);
-                    } else if (baseId === 'vwap') {
-                        // VWAP requires Python API - fetch asynchronously
-                        (async () => {
-                            try {
-                                const result = await calculateIndicators(
-                                    data,
-                                    ['vwap'],
-                                    timeframe,
-                                    vwapSettings || { anchor: 'session', anchor_time: '09:30', bands: [1.0] }
-                                );
-                                if (result && result.indicators.vwap && chartInstance && !isDisposedRef.current) {
-                                    // Main VWAP Line
-                                    const vwapData = toLineSeriesData(result.time, result.indicators.vwap);
-                                    const line = chartInstance.addSeries(LineSeries, {
-                                        color: config.color || '#9C27B0',
-                                        lineWidth: 2,
-                                        title: 'VWAP',
-                                        priceScaleId: 'right',
-                                        pane: 0
-                                    } as any);
-                                    line.setData(vwapData as any);
-                                    activeSeries.push(line);
+                    // Render using strategy pattern
+                    // Note: render is async, but we can't await inside forEach easily. 
+                    // We'll fire and forget, but tracking series for cleanup is tricky if async.
+                    // Actually, we should collect promises.
+                    const renderPromise = indicatorRenderer.render({
+                        chart: chartInstance,
+                        data,
+                        timeframe,
+                        ticker,
+                        vwapSettings,
+                        resolvedTheme
+                    }, params, oscillatorPaneIndex);
 
-                                    // Render Bands (1.0, 2.0, 3.0)
-                                    const bands = [1.0, 2.0, 3.0];
-                                    bands.forEach(mult => {
-                                        const multStr = mult.toFixed(1).replace('.', '_');
-                                        const upperKey = `vwap_upper_${multStr}`;
-                                        const lowerKey = `vwap_lower_${multStr}`;
+                    renderPromise.then(({ series, paneIndexIncrement }: { series: any[], paneIndexIncrement: number }) => {
+                        if (isDisposedRef.current) {
+                            // Cleanup immediately if chart disposed while rendering
+                            series.forEach(s => {
+                                try { chartInstance.removeSeries(s); } catch (e) { }
+                            });
+                            return;
+                        }
+                        activeSeries.push(...series);
+                        oscillatorPaneIndex += paneIndexIncrement;
 
-                                        if (result.indicators[upperKey]) {
-                                            const upperData = toLineSeriesData(result.time, result.indicators[upperKey]);
-                                            const upperSeries = chartInstance.addSeries(LineSeries, {
-                                                color: config.color || '#9C27B0',
-                                                lineWidth: 1,
-                                                lineStyle: 2, // Dashed
-                                                title: `VWAP +${mult}σ`,
-                                                priceScaleId: 'right',
-                                                pane: 0
-                                            } as any);
-                                            upperSeries.setData(upperData as any);
-                                            activeSeries.push(upperSeries);
-                                        }
-
-                                        if (result.indicators[lowerKey]) {
-                                            const lowerData = toLineSeriesData(result.time, result.indicators[lowerKey]);
-                                            const lowerSeries = chartInstance.addSeries(LineSeries, {
-                                                color: config.color || '#9C27B0',
-                                                lineWidth: 1,
-                                                lineStyle: 2, // Dashed
-                                                title: `VWAP -${mult}σ`,
-                                                priceScaleId: 'right',
-                                                pane: 0
-                                            } as any);
-                                            lowerSeries.setData(lowerData as any);
-                                            activeSeries.push(lowerSeries);
-                                        }
-                                    });
-                                }
-                            } catch (e) {
-                                console.error('Failed to calculate VWAP:', e);
-                            }
-                        })();
-                    }
-                } else if (config.type === 'oscillator') {
-                    const currentPane = oscillatorPaneIndex++;
-
-                    if (baseId === 'rsi') {
-                        const rsiData = calculateRSI(data, period);
-                        const rsiSeries = chartInstance.addSeries(LineSeries, {
-                            color: config.color || '#9C27B0',
-                            lineWidth: 1,
-                            title: `RSI ${period}`,
-                        } as any, currentPane);
-                        rsiSeries.setData(rsiData);
-                        activeSeries.push(rsiSeries);
-                    } else if (baseId === 'macd') {
-                        const defaults = config.defaultParams || {};
-                        const macdData = calculateMACD(data, defaults.fast || 12, defaults.slow || 26, defaults.signal || 9);
-
-                        const histSeries = chartInstance.addSeries(HistogramSeries, {
-                            color: '#26a69a',
-                            priceLineVisible: false,
-                        } as any, currentPane);
-                        histSeries.setData(macdData.map(d => ({
-                            time: d.time,
-                            value: d.histogram,
-                            color: d.histogram >= 0 ? '#26a69a' : '#ef5350'
-                        })));
-
-                        const macdLine = chartInstance.addSeries(LineSeries, {
-                            color: '#2962FF',
-                            lineWidth: 1,
-                            title: 'MACD',
-                        } as any, currentPane);
-                        macdLine.setData(macdData.map(d => ({ time: d.time, value: d.macd })));
-
-                        const signalLine = chartInstance.addSeries(LineSeries, {
-                            color: '#FF6D00',
-                            lineWidth: 1,
-                            title: 'Signal',
-                        } as any, currentPane);
-                        signalLine.setData(macdData.map(d => ({ time: d.time, value: d.signal })));
-
-                        activeSeries.push(histSeries, macdLine, signalLine);
-                    }
+                        // Re-layout panes if needed
+                        if (paneIndexIncrement > 0) {
+                            const panes = chartInstance.panes();
+                            panes.forEach((pane, index) => {
+                                if (index > 0) pane.setHeight(150);
+                            });
+                        }
+                    }).catch(err => {
+                        console.error(`Failed to render indicator ${baseId}:`, err);
+                    });
                 }
             });
 
