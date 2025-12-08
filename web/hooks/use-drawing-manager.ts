@@ -15,6 +15,7 @@ import { HorizontalLineTool } from "@/lib/charts/plugins/horizontal-line";
 import { TextTool } from "@/lib/charts/plugins/text-tool";
 import { MeasureTool, Measure } from "@/lib/charts/plugins/measuring-tool";
 import { RayTool, Ray } from "@/lib/charts/plugins/ray";
+import { RiskRewardDrawingTool, RiskReward } from "@/lib/charts/plugins/risk-reward";
 
 // Drawing Classes for restoration
 import { TrendLine } from "@/lib/charts/plugins/trend-line";
@@ -65,6 +66,29 @@ export function useDrawingManager(
                         break;
                     case 'ray':
                         drawing = new Ray(chart, series, { ...saved.p1, time: saved.p1.time as Time }, saved.options as any);
+                        break;
+                    case 'risk-reward':
+                        if (!saved.p1) {
+                            console.warn("Skipping invalid risk-reward drawing:", saved.id);
+                            break;
+                        }
+                        const opts = saved.options || {};
+                        // Restore from p1(Entry), p2(Target), options.stopPoint(Stop)
+                        // If stopPoint is missing, fallback to 1% below entry
+                        const entryPrice = saved.p1.price as number;
+                        const safeStop = opts.stopPoint || { time: saved.p1.time, price: entryPrice ? entryPrice * 0.99 : 0 };
+
+                        // Ensure Target also exists, or fallback
+                        const safeTarget = saved.p2 || { time: saved.p1.time, price: entryPrice ? entryPrice * 1.02 : 0 };
+
+                        drawing = new RiskReward(
+                            chart,
+                            series,
+                            { ...saved.p1, time: saved.p1.time as Time },
+                            { ...safeStop, time: safeStop.time as Time },
+                            { ...safeTarget, time: safeTarget.time as Time },
+                            opts as any
+                        );
                         break;
                     case 'vertical-line':
                         const vTime = saved.p1?.time ?? saved.p1;
@@ -153,7 +177,9 @@ export function useDrawingManager(
             case 'vertical-line': ToolClass = VertLineTool; break;
             case 'horizontal-line': ToolClass = HorizontalLineTool; break;
             case 'text': ToolClass = TextTool; break;
+            case 'text': ToolClass = TextTool; break;
             case 'measure': ToolClass = MeasureTool; break;
+            case 'risk-reward': ToolClass = RiskRewardDrawingTool; break;
         }
 
         if (ToolClass) {
@@ -268,30 +294,24 @@ export function useDrawingManager(
         // Base Props
         const base = { id, type: type as any, options: opts, createdAt: Date.now() }; // ideally preserve createdAt?
 
+        const validTypes = ['trend-line', 'ray', 'fibonacci', 'rectangle', 'vertical-line', 'horizontal-line', 'text', 'risk-reward', 'measure'];
+
         // Type specific serialization
-        if (type === 'trend-line' || type === 'ray' || type === 'fibonacci' || type === 'rectangle' || type === 'measure') {
+        if (validTypes.includes(type as string) && type !== 'risk-reward') {
             return {
                 ...base,
                 p1: drawing._p1,
                 p2: drawing._p2
             };
-        } else if (type === 'vertical-line') {
+        } else if (type === 'risk-reward') {
             return {
                 ...base,
-                p1: { time: drawing._time, price: 0 },
-                p2: { time: drawing._time, price: 0 }
-            };
-        } else if (type === 'horizontal-line') {
-            return {
-                ...base,
-                p1: { time: 0, price: drawing._price },
-                p2: { time: 0, price: drawing._price }
-            };
-        } else if (type === 'text') {
-            return {
-                ...base,
-                p1: { time: drawing._time, price: drawing._price },
-                p2: { time: drawing._time, price: drawing._price }
+                p1: drawing._entry,
+                p2: drawing._target,
+                options: {
+                    ...opts,
+                    stopPoint: drawing._stop // Persist Stop Point in options
+                }
             };
         } else if (type === 'anchored-text') {
             return null; // Don't serialize watermark

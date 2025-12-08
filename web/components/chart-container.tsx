@@ -531,7 +531,17 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             const drawing = selectedDrawingRef.current;
             drawing.applyOptions?.(options);
             const id = typeof drawing.id === 'function' ? drawing.id() : drawing._id;
-            if (id) DrawingStorage.updateDrawingOptions(ticker, timeframe, id, options);
+
+            if (id) {
+                // Use full serialization to ensure atomic update of options + points (if interconnected)
+                const serialized = drawingManager.serializeDrawing(drawing);
+                if (serialized) {
+                    DrawingStorage.updateDrawing(ticker, timeframe, id, serialized);
+                } else {
+                    // Fallback
+                    DrawingStorage.updateDrawingOptions(ticker, timeframe, id, options);
+                }
+            }
             toast.success('Properties saved');
         } else if (primitives?.current && selectedDrawingType === 'anchored-text') {
             const primitive = primitives.current.find((p: any) => p._type === 'anchored-text');
