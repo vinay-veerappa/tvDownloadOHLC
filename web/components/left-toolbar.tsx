@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 
-export type DrawingTool = "cursor" | "trend-line" | "ray" | "fibonacci" | "rectangle" | "vertical-line" | "horizontal-line" | "text" | "measure"
+export type DrawingTool = "cursor" | "trend-line" | "ray" | "fibonacci" | "rectangle" | "vertical-line" | "horizontal-line" | "text" | "measure" | "risk-reward"
 
 interface LeftToolbarProps {
     selectedTool: DrawingTool
@@ -96,6 +96,16 @@ export function LeftToolbar({ selectedTool, onToolSelect, showTrading, onToggleT
                 title="Rectangle"
             >
                 <Square className="h-4 w-4" />
+            </Button>
+
+            <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-8 w-8", selectedTool === "risk-reward" && "bg-accent text-accent-foreground")}
+                onClick={() => onToolSelect("risk-reward")}
+                title="Long Position (Risk/Reward)"
+            >
+                <ArrowRight className="h-4 w-4 rotate-[-45deg]" /> {/* Temporary Icon: Angled Arrow */}
             </Button>
 
             <Button

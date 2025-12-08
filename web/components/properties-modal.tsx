@@ -10,6 +10,8 @@ import { TemplateManager } from "@/lib/template-manager"
 import { toast } from "sonner"
 import { FibonacciSettingsView } from "./drawing-settings/fibonacci-settings-view"
 import { FibonacciOptions } from "@/lib/charts/plugins/fibonacci"
+import { RiskRewardSettingsView } from "./settings/risk-reward-settings-view"
+import { RiskRewardOptions } from "@/lib/charts/plugins/risk-reward"
 
 interface PropertiesModalProps {
     open: boolean;
@@ -58,12 +60,15 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
 
     // Specific state for Fib options if type is 'fibonacci'
     const [fibOptions, setFibOptions] = useState<FibonacciOptions | null>(null);
+    const [riskRewardOptions, setRiskRewardOptions] = useState<RiskRewardOptions | null>(null);
 
     useEffect(() => {
         const opts = initialOptions || {};
         setOptions(opts);
         if (drawingType === 'fibonacci') {
             setFibOptions(opts as FibonacciOptions);
+        } else if (drawingType === 'risk-reward') {
+            setRiskRewardOptions(opts as RiskRewardOptions);
         }
 
         if (opts.lineColor) setLineColorState(parseColor(opts.lineColor));
@@ -80,6 +85,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
 
         if (drawingType === 'fibonacci' && fibOptions) {
             finalOptions = fibOptions;
+        } else if (drawingType === 'risk-reward' && riskRewardOptions) {
+            finalOptions = riskRewardOptions;
         } else {
             // Construct final options with RGBA colors for generic tools
             finalOptions = {
@@ -119,6 +126,9 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
             if (drawingType === 'fibonacci') {
                 setFibOptions(tOps as FibonacciOptions);
             }
+            if (drawingType === 'risk-reward') {
+                setRiskRewardOptions(tOps as RiskRewardOptions);
+            }
             if (tOps.lineColor) setLineColorState(parseColor(tOps.lineColor));
             if (tOps.fillColor) setFillColorState(parseColor(tOps.fillColor));
             if (tOps.textColor) setTextColorState(parseColor(tOps.textColor));
@@ -135,6 +145,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
         let currentOptions;
         if (drawingType === 'fibonacci' && fibOptions) {
             currentOptions = fibOptions;
+        } else if (drawingType === 'risk-reward' && riskRewardOptions) {
+            currentOptions = riskRewardOptions;
         } else {
             currentOptions = {
                 ...options,
@@ -154,6 +166,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
         let currentOptions;
         if (drawingType === 'fibonacci' && fibOptions) {
             currentOptions = fibOptions;
+        } else if (drawingType === 'risk-reward' && riskRewardOptions) {
+            currentOptions = riskRewardOptions;
         } else {
             currentOptions = {
                 ...options,
@@ -185,6 +199,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
 
                 {drawingType === 'fibonacci' && fibOptions ? (
                     <FibonacciSettingsView options={fibOptions} onChange={setFibOptions} />
+                ) : drawingType === 'risk-reward' && riskRewardOptions ? (
+                    <RiskRewardSettingsView options={riskRewardOptions} onChange={(updates) => setRiskRewardOptions(prev => prev ? ({ ...prev, ...updates } as RiskRewardOptions) : null)} />
                 ) : (
                     <Tabs defaultValue="style" className="w-full">
                         <TabsList className="grid w-full grid-cols-3">
