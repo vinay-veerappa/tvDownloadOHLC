@@ -9,7 +9,19 @@ import { Button } from "@/components/ui/button"
 
 export function AppSidebar() {
     const pathname = usePathname()
-    const [collapsed, setCollapsed] = React.useState(false)
+    const [collapsed, setCollapsed] = React.useState(true) // Default to collapsed
+
+    // Load and save sidebar state from localStorage
+    React.useEffect(() => {
+        const saved = localStorage.getItem('app_sidebar_collapsed')
+        if (saved !== null) {
+            setCollapsed(saved === 'true')
+        }
+    }, [])
+
+    React.useEffect(() => {
+        localStorage.setItem('app_sidebar_collapsed', collapsed.toString())
+    }, [collapsed])
 
     const routes = [
         {
