@@ -351,6 +351,7 @@ export function PlaybackControls({
                     variant={isPlaying ? "secondary" : "ghost"}
                     size="icon"
                     className="h-6 w-6"
+                    disabled={isReplayMode && totalBars > 0 && replayIndex >= totalBars - 1 && !isPlaying}
                     onClick={() => {
                         if (!isReplayMode) {
                             toast.info("Start Replay mode first to use playback controls")
@@ -362,7 +363,7 @@ export function PlaybackControls({
                             setIsPlaying(!isPlaying)
                         }
                     }}
-                    title="Play/Pause (Space)"
+                    title={replayIndex >= totalBars - 1 ? "Replay finished" : "Play/Pause (Space)"}
                 >
                     {isPlaying ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
                 </Button>
