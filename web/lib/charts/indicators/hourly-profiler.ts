@@ -102,12 +102,16 @@ class HourlyProfilerRenderer {
 
     draw(scope: any) {
         const ctx = scope.context as CanvasRenderingContext2D;
-        if (!ctx) return; // Safety check
+        if (!ctx) {
+            console.warn('[HourlyProfiler] No canvas context available');
+            return;
+        }
 
         const timeScale = scope.horizontalPixelRatio;
         const hPR = scope.horizontalPixelRatio;
         const vPR = scope.verticalPixelRatio;
 
+        console.log('[HourlyProfiler] Drawing with', this._data.length, 'periods');
         ctx.save();
 
         // Draw 3H first (background layer)
@@ -332,12 +336,16 @@ export class HourlyProfiler {
     async fetchData() {
         try {
             const cleanTicker = this._options.ticker.replace('!', '');
+            console.log('[HourlyProfiler] Fetching data for:', cleanTicker);
             const res = await fetch(`http://localhost:8000/api/sessions/${cleanTicker}?range_type=hourly`, {
                 signal: this._abortController.signal
             });
             if (res.ok) {
                 this._data = await res.json();
+                console.log('[HourlyProfiler] Data fetched:', this._data.length, 'periods');
                 this.updateRenderer();
+            } else {
+                console.error('[HourlyProfiler] Failed to fetch data:', res.status, res.statusText);
             }
         } catch (error) {
             if (error instanceof Error && error.name !== 'AbortError') {
