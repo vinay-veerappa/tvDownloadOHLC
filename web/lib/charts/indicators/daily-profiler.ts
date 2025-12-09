@@ -1,26 +1,15 @@
-import {
-    ISeriesPrimitive,
-    Time,
-    IChartApi,
-    ISeriesApi,
-    SeriesOptions,
-    AutoscaleInfo,
-    Logical,
-    Coordinate
-} from 'lightweight-charts';
-import { THEMES, ThemeParams } from '@/lib/themes';
 
-export interface SessionData {
-    date: string;
+import { IChartApi, ISeriesApi, ISeriesPrimitive, Time, AutoscaleInfo, Logical } from 'lightweight-charts';
+import { THEMES, ThemeParams } from '../../themes';
+
+interface SessionData {
     session: string;
-    start_time: string; // ISO
-    end_time?: string; // ISO
+    start_time: string;
+    end_time?: string;
     high?: number;
     low?: number;
     mid?: number;
-    open?: number;
-    close?: number;
-    price?: number; // For single price levels (Midnight Open)
+    price?: number; // For single line items like MidnightOpen
 }
 
 export interface DailyProfilerOptions {
@@ -29,31 +18,69 @@ export interface DailyProfilerOptions {
 
     // Toggles & Colors
     showAsia: boolean;
+    showAsiaLabel: boolean;
     asiaColor: string;
     asiaOpacity: number;
+    extendAsia: boolean;
 
     showLondon: boolean;
+    showLondonLabel: boolean;
     londonColor: string;
     londonOpacity: number;
+    extendLondon: boolean;
 
     showNY1: boolean;
+    showNY1Label: boolean;
     ny1Color: string;
     ny1Opacity: number;
+    extendNY1: boolean;
 
     showNY2: boolean;
+    showNY2Label: boolean;
     ny2Color: string;
     ny2Opacity: number;
+    extendNY2: boolean;
 
     showMidnightOpen: boolean;
+    showMidnightOpenLabel: boolean;
     midnightOpenColor: string;
+    // Midnight is a single price line
 
     // Display Options
     showOpeningRange: boolean;
+    showOpeningRangeLabel: boolean;
     openingRangeColor: string;
+    extendOpeningRange: boolean;
 
     // 09:30 Signal
     showOpeningSignal: boolean;
     openingSignalColor: string;
+
+    // New Levels
+    showPDH: boolean;
+    showPDHLabel: boolean;
+    pdhColor: string;
+
+    showGlobex: boolean;
+    showGlobexLabel: boolean;
+    globexColor: string;
+
+    showWeeklyClose: boolean;
+    showWeeklyCloseLabel: boolean;
+    weeklyCloseColor: string;
+
+    showP12: boolean;
+    showP12Label: boolean;
+    p12Color: string;
+    extendP12: boolean;
+
+    show730: boolean;
+    show730Label: boolean;
+    color730: string;
+
+    showSettlement: boolean;
+    showSettlementLabel: boolean;
+    settlementColor: string;
 
     showLabels: boolean;
     showLines: boolean;
@@ -66,30 +93,66 @@ export const DEFAULT_DAILY_PROFILER_OPTIONS: DailyProfilerOptions = {
     extendUntil: "16:00",
 
     showAsia: true,
-    asiaColor: "#90A4AE", // Slate (Quiet)
+    showAsiaLabel: true,
+    asiaColor: "#90A4AE",
     asiaOpacity: 0.15,
+    extendAsia: true,
 
     showLondon: true,
-    londonColor: "#FFB74D", // Muted Orange
+    showLondonLabel: true,
+    londonColor: "#FFB74D",
     londonOpacity: 0.15,
+    extendLondon: true,
 
     showNY1: true,
-    ny1Color: "#42A5F5", // Soft Blue
+    showNY1Label: true,
+    ny1Color: "#42A5F5",
     ny1Opacity: 0.15,
+    extendNY1: true,
 
     showNY2: true,
-    ny2Color: "#AB47BC", // Purple
+    showNY2Label: true,
+    ny2Color: "#AB47BC",
     ny2Opacity: 0.15,
+    extendNY2: true,
 
     showMidnightOpen: true,
-    midnightOpenColor: "#CFD8DC", // Light Grey
+    showMidnightOpenLabel: true,
+    midnightOpenColor: "#CFD8DC",
 
     showOpeningRange: true,
-    openingRangeColor: "#26A69A", // Teal
+    showOpeningRangeLabel: false, // Default off per user request "Remove the opening range label"
+    openingRangeColor: "#26A69A",
+    extendOpeningRange: true,
 
-    // 09:30 Signal
     showOpeningSignal: true,
-    openingSignalColor: "#FFEA00", // Bright Yellow
+    openingSignalColor: "#FFEA00",
+
+    // New Defaults
+    showPDH: true,
+    showPDHLabel: true,
+    pdhColor: "#B0BEC5",
+
+    showGlobex: true,
+    showGlobexLabel: true,
+    globexColor: "#FF8A65",
+
+    showWeeklyClose: true,
+    showWeeklyCloseLabel: true,
+    weeklyCloseColor: "#DCE775",
+
+    showP12: true,
+    showP12Label: true,
+    p12Color: "#BA68C8",
+    extendP12: true,
+
+    show730: true,
+    show730Label: true,
+    color730: "#4DB6AC",
+
+    showSettlement: true,
+    showSettlementLabel: true,
+    settlementColor: "#FFD54F",
 
     showLabels: true,
     showLines: true,
@@ -119,30 +182,77 @@ class DailyProfilerRenderer {
                 let color = this._options.asiaColor;
                 let opacity = this._options.asiaOpacity;
                 let visible = false;
+                let extend = false;
+                let showLabel = false;
+                let labelPrefix = session.session;
+                let isP12 = false;
+                let isOR = false;
 
                 if (session.session === 'Asia') {
                     color = this._options.asiaColor;
                     opacity = this._options.asiaOpacity;
                     visible = this._options.showAsia;
+                    extend = this._options.extendAsia;
+                    showLabel = this._options.showAsiaLabel;
                 } else if (session.session === 'London') {
                     color = this._options.londonColor;
                     opacity = this._options.londonOpacity;
                     visible = this._options.showLondon;
+                    extend = this._options.extendLondon;
+                    showLabel = this._options.showLondonLabel;
                 } else if (session.session === 'NY1') {
                     color = this._options.ny1Color;
                     opacity = this._options.ny1Opacity;
                     visible = this._options.showNY1;
+                    extend = this._options.extendNY1;
+                    showLabel = this._options.showNY1Label;
                 } else if (session.session === 'NY2') {
                     color = this._options.ny2Color;
                     opacity = this._options.ny2Opacity;
                     visible = this._options.showNY2;
+                    extend = this._options.extendNY2;
+                    showLabel = this._options.showNY2Label;
                 } else if (session.session === 'MidnightOpen') {
                     color = this._options.midnightOpenColor;
                     visible = this._options.showMidnightOpen;
+                    showLabel = this._options.showMidnightOpenLabel;
+                    labelPrefix = "MNO";
                 } else if (session.session === 'OpeningRange') {
                     color = this._options.openingRangeColor;
-                    opacity = 0.3; // Default opacity for opening range box
+                    opacity = 0.3;
                     visible = this._options.showOpeningRange;
+                    extend = this._options.extendOpeningRange;
+                    showLabel = this._options.showOpeningRangeLabel;
+                    isOR = true;
+                }
+                // --- New Levels ---
+                else if (['PDH', 'PDL', 'PDMid'].includes(session.session)) {
+                    color = this._options.pdhColor;
+                    visible = this._options.showPDH;
+                    showLabel = this._options.showPDHLabel;
+                } else if (session.session === 'GlobexOpen') {
+                    color = this._options.globexColor;
+                    visible = this._options.showGlobex;
+                    showLabel = this._options.showGlobexLabel;
+                } else if (session.session === 'PWeeklyClose') {
+                    color = this._options.weeklyCloseColor;
+                    visible = this._options.showWeeklyClose || this._options.showSettlement;
+                    showLabel = this._options.showWeeklyCloseLabel;
+                    if (this._options.showSettlement) {
+                        color = this._options.settlementColor;
+                        showLabel = this._options.showSettlementLabel;
+                    }
+                    labelPrefix = "PWeek-C";
+                } else if (session.session === 'P12') {
+                    color = this._options.p12Color;
+                    visible = this._options.showP12;
+                    showLabel = this._options.showP12Label;
+                    extend = this._options.extendP12;
+                    isP12 = true;
+                } else if (session.session === 'Open730') {
+                    color = this._options.color730;
+                    visible = this._options.show730;
+                    showLabel = this._options.show730Label;
                 }
 
                 if (!visible) return;
@@ -150,74 +260,42 @@ class DailyProfilerRenderer {
                 // Time Coordinates
                 const startUnix = new Date(session.start_time).getTime() / 1000 as Time;
 
-                // Extension Logic (Timezone Aware)
+                // Calculate Extend Time
                 let extendUnix: number = 0;
-                const iso = session.start_time;
-                const T_idx = iso.indexOf('T');
 
-                if (T_idx > 0) {
-                    const datePart = iso.substring(0, T_idx);
-                    const rest = iso.substring(T_idx + 1);
-                    let offset = '';
-                    if (rest.length > 8) {
-                        const char8 = rest.charAt(8);
-                        if (char8 === '+' || char8 === '-' || char8 === 'Z') {
-                            offset = rest.substring(8);
+                // For OR or extended sessions extending to "Until" time (usually 16:00)
+                if (extend || isOR) {
+                    const iso = session.start_time;
+                    const T_idx = iso.indexOf('T');
+                    if (T_idx > 0) {
+                        const datePart = iso.substring(0, T_idx);
+                        const rest = iso.substring(T_idx + 1);
+                        let offset = '';
+                        if (rest.length > 8) {
+                            const char8 = rest.charAt(8);
+                            if (char8 === '+' || char8 === '-' || char8 === 'Z') offset = rest.substring(8);
                         }
-                    }
-                    const newIso = `${datePart}T${this._options.extendUntil}:00${offset}`;
-                    extendUnix = new Date(newIso).getTime() / 1000;
-                    if (extendUnix < (startUnix as number)) {
-                        extendUnix += 86400;
+                        const newIso = `${datePart}T${this._options.extendUntil}:00${offset}`;
+                        extendUnix = new Date(newIso).getTime() / 1000;
+                        if (extendUnix < (startUnix as number)) extendUnix += 86400;
                     }
                 } else {
-                    const d = new Date(session.start_time);
-                    const [h, m] = this._options.extendUntil.split(':').map(Number);
-                    d.setHours(h, m, 0, 0);
-                    extendUnix = d.getTime() / 1000;
-                    if (extendUnix < (startUnix as number)) extendUnix += 86400;
+                    if (session.end_time) extendUnix = new Date(session.end_time).getTime() / 1000;
+                    else extendUnix = (startUnix as number) + 3600;
                 }
 
                 const x1 = timeScale.timeToCoordinate(startUnix);
                 const x2 = timeScale.timeToCoordinate(extendUnix as Time);
 
                 if (x1 === null) return;
-
                 const x1Scaled = (x1 as number) * hPR;
 
-                // Right Edge Calculation
-                let xLinesRightScaled = 0;
-                const lastSession = this._data[this._data.length - 1];
-                const lastStartUnix = new Date(lastSession.start_time).getTime() / 1000;
-
+                // Determine Right Edge (EOD if extended)
+                let xEODScaled = x1Scaled;
                 if (x2 !== null) {
-                    xLinesRightScaled = (x2 as number) * hPR;
-                } else {
-                    if ((startUnix as number) >= lastStartUnix) {
-                        xLinesRightScaled = scope.mediaSize.width * hPR;
-                    } else {
-                        xLinesRightScaled = x1Scaled;
-                    }
-                }
-
-                // Candle Width / Box Width
-                const nextUnix = (startUnix as number) + 60; // 1m duration
-                const xNext = timeScale.timeToCoordinate(nextUnix as Time);
-                let xBoxRightScaled = xLinesRightScaled;
-                let xCandleRightScaled = x1Scaled;
-
-                if (xNext !== null) {
-                    const xNextScaled = (xNext as number) * hPR;
-                    if (session.end_time) {
-                        const endT = new Date(session.end_time).getTime() / 1000 as Time;
-                        const xE = timeScale.timeToCoordinate(endT);
-                        if (xE !== null) {
-                            xBoxRightScaled = (xE as number) * hPR;
-                        }
-                    } else {
-                        xBoxRightScaled = xLinesRightScaled;
-                    }
-                    xCandleRightScaled = xNextScaled;
+                    xEODScaled = (x2 as number) * hPR;
+                } else if ((extend || isOR) && (startUnix as number) >= (this._data[this._data.length - 1].start_time as any)) {
+                    xEODScaled = scope.mediaSize.width * hPR;
                 }
 
                 // Render Boxes
@@ -231,115 +309,174 @@ class DailyProfilerRenderer {
                         const h = y2Scaled - y1Scaled;
 
                         // 1. Session Box
-                        const wBox = xBoxRightScaled - x1Scaled;
-                        ctx.fillStyle = this._hexToRgba(color, opacity);
-                        ctx.fillRect(x1Scaled, y1Scaled, wBox, h);
-
-                        // 1b. Opening Signal Highlight (The 09:30 candle)
-                        if (session.session === 'OpeningRange' && this._options.showOpeningSignal) {
-                            let wCandle = xCandleRightScaled - x1Scaled;
-
-                            // VISIBILITY FIX: Ensure minimum width if calculation failed (e.g. data gaps)
-                            if (wCandle <= 1 * hPR) {
-                                wCandle = 6 * hPR;
+                        let xBoxEndScaled = x1Scaled;
+                        if (isOR) {
+                            // OR Box extends to EOD and is filled
+                            xBoxEndScaled = xEODScaled;
+                        } else if (!isP12 && !extend && session.end_time) {
+                            // Standard (non-extended) box ends at session end
+                            const endT = new Date(session.end_time).getTime() / 1000 as Time;
+                            const xE = timeScale.timeToCoordinate(endT);
+                            if (xE !== null) xBoxEndScaled = (xE as number) * hPR;
+                            else xBoxEndScaled = xEODScaled; // fallback
+                        } else {
+                            if (session.end_time) {
+                                const endT = new Date(session.end_time).getTime() / 1000 as Time;
+                                const xE = timeScale.timeToCoordinate(endT);
+                                if (xE !== null) xBoxEndScaled = (xE as number) * hPR;
+                            } else {
+                                xBoxEndScaled = xEODScaled;
                             }
+                        }
 
-                            if (wCandle > 0) {
+                        if (!isP12) {
+                            const wBox = xBoxEndScaled - x1Scaled;
+                            ctx.fillStyle = this._hexToRgba(color, opacity);
+                            ctx.fillRect(x1Scaled, y1Scaled, wBox, h);
+                        }
+
+                        // 1b. Opening Signal Highlight (OR only)
+                        if (isOR && this._options.showOpeningSignal) {
+                            const xNextOr = timeScale.timeToCoordinate(((startUnix as number) + 60) as Time);
+                            if (xNextOr) {
+                                let wC = (xNextOr as number) * hPR - x1Scaled;
+                                if (wC < 6 * hPR) wC = 6 * hPR;
                                 ctx.fillStyle = this._options.openingSignalColor;
                                 ctx.globalAlpha = 0.8;
-                                ctx.fillRect(x1Scaled, y1Scaled, wCandle, h);
+                                ctx.fillRect(x1Scaled, y1Scaled, wC, h);
                                 ctx.globalAlpha = 1.0;
                             }
                         }
 
-                        // 2. Borders
+                        // 2. Borders / Lines
                         if (this._options.showLines) {
                             ctx.strokeStyle = color;
                             ctx.lineWidth = 1 * hPR;
+                            ctx.font = `${10 * hPR}px sans-serif`;
+                            ctx.textAlign = 'right';
+                            ctx.fillStyle = this._theme ? this._theme.ui.text : color;
+
+                            // H/L Logic:
+                            // Standards: Box End.
+                            // OR: EOD (since box is EOD).
+                            // P12: EOD (if extended).
+                            const xEndHL = (isP12 && extend) ? xEODScaled : xBoxEndScaled;
+                            const xEndMid = (extend || isOR) ? xEODScaled : xBoxEndScaled;
+
+                            // High Line
                             ctx.beginPath();
                             ctx.moveTo(x1Scaled, y1Scaled);
-                            ctx.lineTo(xLinesRightScaled, y1Scaled);
+                            ctx.lineTo(xEndHL, y1Scaled);
                             ctx.stroke();
+                            if (showLabel && !isOR && !isP12 && !['Open730', 'GlobexOpen', 'PWeeklyClose', 'MidnightOpen'].includes(session.session)) {
+                                ctx.fillText(`${labelPrefix}-H`, xEndHL - 5 * hPR, y1Scaled - 4 * hPR);
+                            } else if (showLabel && isP12) {
+                                ctx.fillText(`P12-H`, xEndHL - 5 * hPR, y1Scaled - 4 * hPR);
+                            }
+
+                            // Low Line
                             ctx.beginPath();
                             ctx.moveTo(x1Scaled, y2Scaled);
-                            ctx.lineTo(xLinesRightScaled, y2Scaled);
+                            ctx.lineTo(xEndHL, y2Scaled);
                             ctx.stroke();
-                        }
-
-                        // 3. Opening Range Quarters
-                        if (session.session === 'OpeningRange') {
-                            if (this._options.showLines) {
-                                const high = Math.max(session.high, session.low);
-                                const low = Math.min(session.high, session.low);
-                                const range = high - low;
-                                const levels = [0.25, 0.5, 0.75];
-
-                                levels.forEach(level => {
-                                    const price = low + (range * level);
-                                    const yL = this._series.priceToCoordinate(price);
-                                    if (yL !== null) {
-                                        const yLScaled = yL * vPR;
-                                        ctx.beginPath();
-                                        ctx.strokeStyle = color;
-                                        if (level === 0.5) {
-                                            ctx.lineWidth = 1.5 * hPR;
-                                            ctx.setLineDash([4 * hPR, 2 * hPR]);
-                                        } else {
-                                            ctx.lineWidth = 1 * hPR;
-                                            ctx.setLineDash([2 * hPR, 2 * hPR]);
-                                        }
-                                        ctx.moveTo(x1Scaled, yLScaled);
-                                        ctx.lineTo(xLinesRightScaled, yLScaled);
-                                        ctx.stroke();
-                                        ctx.setLineDash([]);
-                                    }
-                                });
+                            if (showLabel && !isOR && !isP12 && !['Open730', 'GlobexOpen', 'PWeeklyClose', 'MidnightOpen'].includes(session.session)) {
+                                ctx.fillText(`${labelPrefix}-L`, xEndHL - 5 * hPR, y2Scaled + 10 * hPR);
+                            } else if (showLabel && isP12) {
+                                ctx.fillText(`P12-L`, xEndHL - 5 * hPR, y2Scaled + 10 * hPR);
                             }
-                        } else if (session.mid !== undefined) {
-                            // Standard Mid Line for others
-                            if (this._options.showLines) {
-                                const yMid = this._series.priceToCoordinate(session.mid);
-                                if (yMid !== null) {
-                                    const yMidScaled = yMid * vPR;
-                                    ctx.strokeStyle = color;
-                                    ctx.setLineDash([2 * hPR, 2 * hPR]);
+
+                            // P12 Mid
+                            if (isP12 && session.mid) {
+                                const yM = this._series.priceToCoordinate(session.mid);
+                                if (yM) {
                                     ctx.beginPath();
-                                    ctx.moveTo(x1Scaled, yMidScaled);
-                                    ctx.lineTo(xLinesRightScaled, yMidScaled);
+                                    ctx.setLineDash([4, 4]);
+                                    ctx.moveTo(x1Scaled, yM * vPR);
+                                    ctx.lineTo(xEndMid, yM * vPR);
                                     ctx.stroke();
                                     ctx.setLineDash([]);
+                                    if (showLabel) ctx.fillText(`P12-50%`, xEndMid - 5 * hPR, (yM * vPR) - 4 * hPR);
                                 }
                             }
                         }
 
-                        // Label
-                        if (this._options.showLabels) {
+                        // 3. Opening Range Quarters
+                        if (isOR && this._options.showLines) {
+                            const range = session.high! - session.low!;
+                            const levels = [0.25, 0.5, 0.75];
+                            levels.forEach(level => {
+                                const price = session.low! + (range * level);
+                                const yL = this._series.priceToCoordinate(price);
+                                if (yL !== null) {
+                                    const yLScaled = yL * vPR;
+                                    ctx.beginPath();
+                                    ctx.strokeStyle = color;
+                                    let xEndQ = xBoxEndScaled;
+                                    if (level === 0.5) {
+                                        ctx.lineWidth = 1.5 * hPR;
+                                        ctx.setLineDash([4 * hPR, 2 * hPR]);
+                                        if (extend) xEndQ = xEODScaled; // OR Mid extend
+                                    } else {
+                                        ctx.lineWidth = 1 * hPR;
+                                        ctx.setLineDash([2 * hPR, 2 * hPR]);
+                                    }
+                                    ctx.moveTo(x1Scaled, yLScaled);
+                                    ctx.lineTo(xEndQ, yLScaled);
+                                    ctx.stroke();
+                                    ctx.setLineDash([]);
+                                }
+                            });
+                        }
+
+                        // Standard Mid Line
+                        if (session.mid !== undefined && !isP12 && !isOR && this._options.showLines) {
+                            const yMid = this._series.priceToCoordinate(session.mid);
+                            if (yMid !== null) {
+                                const yM = yMid * vPR;
+                                const xEndMid = extend ? xEODScaled : xBoxEndScaled;
+                                ctx.strokeStyle = color;
+                                ctx.setLineDash([2 * hPR, 2 * hPR]);
+                                ctx.beginPath();
+                                ctx.moveTo(x1Scaled, yM);
+                                ctx.lineTo(xEndMid, yM);
+                                ctx.stroke();
+                                ctx.setLineDash([]);
+                                if (showLabel) {
+                                    ctx.fillText(`${labelPrefix}-50%`, xEndMid - 5 * hPR, yM - 4 * hPR);
+                                }
+                            }
+                        }
+
+                        // General Label (Top Right of Box/Line) - Only for Main Label if enabled?
+                        // Only for non-standard sessions or where we don't have H/L labels
+                        if (this._options.showLabels && showLabel && !isP12 && !isOR && ['Open730', 'GlobexOpen', 'PWeeklyClose', 'MidnightOpen'].includes(session.session)) {
                             ctx.font = `${10 * hPR}px sans-serif`;
                             ctx.fillStyle = this._theme ? this._theme.ui.text : color;
                             ctx.textAlign = 'right';
-                            ctx.fillText(session.session, xBoxRightScaled - 5 * hPR, y1Scaled - 4 * hPR);
+                            ctx.fillText(labelPrefix, xEODScaled - 5 * hPR, y1Scaled - 4 * hPR);
+                            // Using xEODScaled for single lines like Midnight/730
                         }
                     }
                 }
-                // Render Single Lines (Midnight Open)
+                // Render Single Lines (Midnight Open is usually a line, handled via session.price if data provides, or Box if H/L)
+                // If the API returns it as a line (price only)?
                 else if (session.price !== undefined) {
                     const y = this._series.priceToCoordinate(session.price);
                     if (y !== null) {
                         const yScaled = y * vPR;
                         ctx.strokeStyle = color;
-                        ctx.lineWidth = 1.5 * hPR; // Distinct line
+                        ctx.lineWidth = 1.5 * hPR;
 
                         ctx.beginPath();
                         ctx.moveTo(x1Scaled, yScaled);
-                        ctx.lineTo(xLinesRightScaled, yScaled);
+                        ctx.lineTo(xEODScaled, yScaled); // Always extend to EOD/Extend limit
                         ctx.stroke();
 
-                        // Label for Line
-                        if (this._options.showLabels) {
+                        if (this._options.showLabels && showLabel) {
                             ctx.font = `${10 * hPR}px sans-serif`;
                             ctx.fillStyle = this._theme ? this._theme.ui.text : color;
                             ctx.textAlign = 'right';
-                            ctx.fillText(session.session, xLinesRightScaled - 5 * hPR, yScaled - 4 * hPR);
+                            ctx.fillText(labelPrefix, xEODScaled - 5 * hPR, yScaled - 4 * hPR);
                         }
                     }
                 }
@@ -400,6 +537,7 @@ export class DailyProfiler implements ISeriesPrimitive {
 
     applyOptions(options: Partial<DailyProfilerOptions>, suppressCallback?: boolean) {
         const PrevTicker = this._options.ticker;
+        // Merge options carefully to preserve defaults
         this._options = { ...this._options, ...options };
 
         if (!suppressCallback) {
@@ -484,7 +622,6 @@ export class DailyProfiler implements ISeriesPrimitive {
 
             const startUnix = new Date(session.start_time).getTime() / 1000 as Time;
             // Simple extension check for hit test
-            let extendUnix = (startUnix as number) + 3600 * 4;
             const x1 = timeScale.timeToCoordinate(startUnix);
             if (x1 === null) continue;
 
@@ -496,8 +633,6 @@ export class DailyProfiler implements ISeriesPrimitive {
                     const top = Math.min(y1, y2);
                     const bottom = Math.max(y1, y2);
                     if (y >= top && y <= bottom && x >= x1) {
-                        // Rough X check (assuming right extension)
-                        // For precise X we need exact end time logic but for hit test this is okay-ish
                         return { hit: true, drawing: this, cursorStyle: 'pointer' };
                     }
                 }
