@@ -1,4 +1,4 @@
-import { ISeriesPrimitive, ISeriesPrimitivePaneRenderer, ISeriesPrimitivePaneView, Time } from "lightweight-charts";
+import { ISeriesPrimitive, IPrimitivePaneRenderer, IPrimitivePaneView, Time } from "lightweight-charts";
 
 // Reuse the base structure, but we will define our own interface to capture the new backend fields
 // we verified are being sent.
@@ -67,7 +67,7 @@ export const DEFAULT_RANGE_EXTENSIONS_OPTIONS: RangeExtensionsOptions = {
     showHourly: true,
 };
 
-class RangeExtensionsRenderer implements ISeriesPrimitivePaneRenderer {
+class RangeExtensionsRenderer implements IPrimitivePaneRenderer {
     constructor(
         private _data: RangeExtensionPeriod[],
         private _options: RangeExtensionsOptions,
@@ -290,7 +290,7 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
         // Trigger generic update if possible, or requestUpdate
     }
 
-    paneViews(): ISeriesPrimitivePaneView[] {
+    paneViews(): IPrimitivePaneView[] {
         return [{
             renderer: () => new RangeExtensionsRenderer(this._data, this._options, this._series)
         }];
@@ -301,7 +301,7 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
         if (!this._options.ticker) return;
 
         // Clean ticker
-        const cleanTicker = this._options.ticker.replace('1!', ''); // Basic clean
+        const cleanTicker = this._options.ticker.replace('!', ''); // Basic clean
 
         try {
             const url = `http://localhost:8000/api/sessions/${cleanTicker}?range_type=hourly`;
