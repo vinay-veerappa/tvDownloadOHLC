@@ -1,0 +1,17 @@
+{
+  "ticker": "YM1",
+  "timeframe": "1W",
+  "totalBars": 1236,
+  "chunkSize": 20000,
+  "numChunks": 1,
+  "startTime": 1017532800,
+  "endTime": 1764460800,
+  "chunks": [
+    {
+      "index": 0,
+      "startTime": 1017532800,
+      "endTime": 1764460800,
+      "bars": 1236
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "ticker": "GC1",
+  "timeframe": "15m",
+  "totalBars": 20030,
+  "chunkSize": 20000,
+  "numChunks": 2,
+  "startTime": 1738537200,
+  "endTime": 1764971100,
+  "chunks": [
+    {
+      "index": 0,
+      "startTime": 1738564200,
+      "endTime": 1764971100,
+      "bars": 20000
+    },
+    {
+      "index": 1,
+      "startTime": 1738537200,
+      "endTime": 1738563300,
+      "bars": 30
+    }
+  ]
+}

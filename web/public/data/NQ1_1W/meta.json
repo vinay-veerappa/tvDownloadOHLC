@@ -1,0 +1,17 @@
+{
+  "ticker": "NQ1",
+  "timeframe": "1W",
+  "totalBars": 1380,
+  "chunkSize": 20000,
+  "numChunks": 1,
+  "startTime": 930441600,
+  "endTime": 1764460800,
+  "chunks": [
+    {
+      "index": 0,
+      "startTime": 930441600,
+      "endTime": 1764460800,
+      "bars": 1380
+    }
+  ]
+}

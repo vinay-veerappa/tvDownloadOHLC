@@ -1,0 +1,47 @@
+{
+  "ticker": "SPX",
+  "timeframe": "5m",
+  "totalBars": 101047,
+  "chunkSize": 20000,
+  "numChunks": 6,
+  "startTime": 1604327400,
+  "endTime": 1764968400,
+  "chunks": [
+    {
+      "index": 0,
+      "startTime": 1732893300,
+      "endTime": 1764968400,
+      "bars": 20000
+    },
+    {
+      "index": 1,
+      "startTime": 1701104100,
+      "endTime": 1732893000,
+      "bars": 20000
+    },
+    {
+      "index": 2,
+      "startTime": 1669047900,
+      "endTime": 1701103800,
+      "bars": 20000
+    },
+    {
+      "index": 3,
+      "startTime": 1637265900,
+      "endTime": 1669047600,
+      "bars": 20000
+    },
+    {
+      "index": 4,
+      "startTime": 1605798300,
+      "endTime": 1637265600,
+      "bars": 20000
+    },
+    {
+      "index": 5,
+      "startTime": 1604327400,
+      "endTime": 1605798000,
+      "bars": 1047
+    }
+  ]
+}

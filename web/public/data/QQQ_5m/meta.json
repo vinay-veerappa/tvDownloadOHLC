@@ -1,0 +1,35 @@
+{
+  "ticker": "QQQ",
+  "timeframe": "5m",
+  "totalBars": 64347,
+  "chunkSize": 20000,
+  "numChunks": 4,
+  "startTime": 1467131100,
+  "endTime": 1764968100,
+  "chunks": [
+    {
+      "index": 0,
+      "startTime": 1732303200,
+      "endTime": 1764968100,
+      "bars": 20000
+    },
+    {
+      "index": 1,
+      "startTime": 1700068200,
+      "endTime": 1732302900,
+      "bars": 20000
+    },
+    {
+      "index": 2,
+      "startTime": 1667832900,
+      "endTime": 1700067900,
+      "bars": 20000
+    },
+    {
+      "index": 3,
+      "startTime": 1467131100,
+      "endTime": 1667832600,
+      "bars": 4347
+    }
+  ]
+}
