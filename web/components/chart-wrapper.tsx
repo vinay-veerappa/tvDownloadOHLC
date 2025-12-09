@@ -151,6 +151,14 @@ export function ChartWrapper(props: ChartWrapperProps) {
         }
     }, [chartId, props.indicators])
 
+    // Toggle indicator visibility
+    const handleToggleIndicator = useCallback((type: string) => {
+        IndicatorStorage.toggleIndicator(chartId, type);
+        // Force re-render by updating state
+        const updated = IndicatorStorage.getIndicators(chartId);
+        setIndicators(updated.filter(i => i.enabled).map(i => i.type));
+    }, [chartId]);
+
     // Save params from child components
     const handleIndicatorParamsChange = useCallback((type: string, newParams: any) => {
         setIndicatorParams(prev => ({ ...prev, [type]: newParams }));
@@ -289,14 +297,18 @@ export function ChartWrapper(props: ChartWrapperProps) {
     }, [editingIndicator, chartId]);
 
     // Map indicator types to display objects for sidebar
-    const indicatorObjects = indicators.map(type => {
-        const [indType, param] = type.split(":");
-        let label = type.toUpperCase();
+    // Show ALL indicators (including hidden ones) in sidebar
+    const allSavedIndicators = IndicatorStorage.getIndicators(chartId);
+    const indicatorObjects = allSavedIndicators.map(ind => {
+        const [indType, param] = ind.type.split(":");
+        let label = ind.type.toUpperCase();
         if (indType === 'sma') label = `SMA (${param || 9})`;
         else if (indType === 'ema') label = `EMA (${param || 9})`;
         else if (indType === 'sessions') label = 'Session Highlighting';
         else if (indType === 'watermark') label = `Watermark: ${param || 'Text'}`;
-        return { type, label };
+        else if (indType === 'daily-profiler') label = 'Daily Profiler';
+        else if (indType === 'hourly-profiler') label = 'Hourly Profiler';
+        return { type: ind.type, label, enabled: ind.enabled };
     });
 
     return (
@@ -364,6 +376,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
                     indicators={indicatorObjects}
                     onDeleteDrawing={handleDeleteDrawing}
                     onDeleteIndicator={handleDeleteIndicator}
+                    onToggleIndicator={handleToggleIndicator}
                     onEditDrawing={(id) => chartRef.current?.editDrawing(id)}
                     onEditIndicator={handleEditIndicator}
                     selection={selection}
