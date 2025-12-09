@@ -21,8 +21,9 @@ export const metadata: Metadata = {
 import { TradeProvider } from "@/components/journal/trade-context";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/theme-provider";
+import { ThemeProvider as ChartThemeProvider } from "@/context/theme-context";
 
-// ... existing imports
+// ...
 
 export default function RootLayout({
   children,
@@ -40,17 +41,19 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <TradeProvider>
-            <div className="flex h-screen overflow-hidden">
-              <AppSidebar />
-              <div className="flex flex-col flex-1 overflow-hidden">
-                <main className="flex-1 overflow-auto p-4 bg-muted/10">
-                  {children}
-                </main>
+          <ChartThemeProvider>
+            <TradeProvider>
+              <div className="flex h-screen overflow-hidden">
+                <AppSidebar />
+                <div className="flex flex-col flex-1 overflow-hidden">
+                  <main className="flex-1 overflow-auto p-4 bg-muted/10">
+                    {children}
+                  </main>
+                </div>
               </div>
-            </div>
-            <Toaster />
-          </TradeProvider>
+              <Toaster />
+            </TradeProvider>
+          </ChartThemeProvider>
         </ThemeProvider>
       </body>
     </html>

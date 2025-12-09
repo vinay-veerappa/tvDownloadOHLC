@@ -39,8 +39,8 @@ const indicators = [
         label: "Watermark (Anchored Text)",
     },
     {
-        value: "sessions",
-        label: "Session Highlighting",
+        value: "daily-profiler",
+        label: "Daily Profiler",
     },
     {
         value: "vp",

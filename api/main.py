@@ -6,6 +6,7 @@ Provides technical indicator calculations using pandas-ta
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routers import indicators
+from api.routers import sessions
 
 app = FastAPI(
     title="Trading Indicators API",
@@ -26,6 +27,7 @@ app.add_middleware(
 )
 
 app.include_router(indicators.router, prefix="/api/indicators", tags=["indicators"])
+app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
 
 
 @app.get("/")

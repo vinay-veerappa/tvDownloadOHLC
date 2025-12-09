@@ -13,6 +13,10 @@ import { BuySellPanel } from "@/components/trading/buy-sell-panel"
 import { toast } from "sonner"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { useTrading } from "@/context/trading-context"
+import { useTheme } from "@/context/theme-context"
+
+// ... imports
+import { VWAPSettings } from "@/lib/indicator-api"
 
 const ChartContainer = dynamic(
     () => import('./chart-container').then((mod) => mod.ChartContainer),
@@ -37,8 +41,6 @@ export interface NavigationFunctions {
     getTotalBars: () => number
 }
 
-import { VWAPSettings } from "@/lib/indicator-api"
-
 interface ChartWrapperProps {
     ticker: string
     timeframe: string
@@ -55,6 +57,7 @@ interface ChartWrapperProps {
 }
 
 export function ChartWrapper(props: ChartWrapperProps) {
+    const { themeParams } = useTheme()
     const [selectedTool, setSelectedTool] = useState<DrawingTool>("cursor")
     const [showTrading, setShowTrading] = useState(false)
     const [settingsOpen, setSettingsOpen] = useState(false)
@@ -77,6 +80,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
     // Load indicators from storage
     const chartId = IndicatorStorage.getDefaultChartId()
     const [indicators, setIndicators] = useState<string[]>([])
+    const [indicatorParams, setIndicatorParams] = useState<Record<string, any>>({})
 
     // Indicator Settings Modal State
     const [indicatorSettingsOpen, setIndicatorSettingsOpen] = useState(false)
@@ -115,8 +119,27 @@ export function ChartWrapper(props: ChartWrapperProps) {
 
     useEffect(() => {
         const savedIndicators = IndicatorStorage.getIndicators(chartId)
+
         if (savedIndicators.length > 0) {
             setIndicators(savedIndicators.filter(i => i.enabled).map(i => i.type))
+
+            // Extract params into map
+            const paramsMap: Record<string, any> = {}
+            savedIndicators.forEach(ind => {
+                if (ind.params) paramsMap[ind.type] = ind.params
+            })
+
+            setIndicatorParams(prev => {
+                // Merge storage params, but prioritize existing local state to prevent overwrite race conditions
+                const next = { ...prev };
+                Object.entries(paramsMap).forEach(([key, value]) => {
+                    // Only load from storage if we don't have local state (e.g. init or new indicator)
+                    if (next[key] === undefined) {
+                        next[key] = value;
+                    }
+                });
+                return next;
+            })
         } else if (props.indicators && props.indicators.length > 0) {
             const initialIndicators = props.indicators.map((type: string) => ({
                 type,
@@ -127,6 +150,21 @@ export function ChartWrapper(props: ChartWrapperProps) {
             setIndicators(props.indicators)
         }
     }, [chartId, props.indicators])
+
+    // Save params from child components
+    const handleIndicatorParamsChange = useCallback((type: string, newParams: any) => {
+        setIndicatorParams(prev => ({ ...prev, [type]: newParams }));
+
+        // Use targeted update to avoid overwriting entire storage with potentially stale list
+        const success = IndicatorStorage.updateIndicatorParams(chartId, type, newParams);
+        if (!success) {
+            IndicatorStorage.addIndicator(chartId, {
+                type,
+                params: newParams,
+                enabled: true
+            });
+        }
+    }, [chartId]);
 
     // Global Selection State
     const [selection, setSelection] = useState<{ type: 'drawing' | 'indicator', id: string } | null>(null);
@@ -193,6 +231,12 @@ export function ChartWrapper(props: ChartWrapperProps) {
         // Handle special case for VWAP
         if (type === 'vwap') {
             props.onOpenVwapSettings?.();
+            return;
+        }
+
+        // Handle Daily Profiler (uses PropertiesModal via ChartContainer)
+        if (type === 'daily-profiler') {
+            chartRef.current?.editDrawing('daily-profiler');
             return;
         }
 
@@ -295,11 +339,14 @@ export function ChartWrapper(props: ChartWrapperProps) {
                     <ChartContainer
                         ref={chartRef}
                         {...props}
+                        theme={themeParams}
                         selectedTool={selectedTool}
                         onToolSelect={setSelectedTool}
                         onDrawingCreated={handleDrawingCreated}
                         onDrawingDeleted={handleChartDrawingDeleted}
                         indicators={indicators}
+                        indicatorParams={indicatorParams}
+                        onIndicatorParamsChange={handleIndicatorParamsChange}
                         selection={selection}
                         onSelectionChange={setSelection}
                         onDeleteSelection={handleDeleteSelection}
