@@ -263,8 +263,11 @@ class DailyProfilerRenderer {
                 // Calculate Extend Time
                 let extendUnix: number = 0;
 
-                // For OR or extended sessions extending to "Until" time (usually 16:00)
-                if (extend || isOR) {
+                // Check if this is a single-price line (PDH, PDL, MNO, etc.)
+                const isSinglePriceLine = session.price !== undefined && session.high === undefined;
+
+                // For OR, extended sessions, or single-price lines - extend to "Until" time (usually 16:00)
+                if (extend || isOR || isSinglePriceLine) {
                     const iso = session.start_time;
                     const T_idx = iso.indexOf('T');
                     if (T_idx > 0) {
