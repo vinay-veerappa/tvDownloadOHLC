@@ -544,8 +544,12 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
     // Helper functions for UI
     const openProperties = (drawing: any) => {
-        setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
-        setSelectedDrawingType(drawing._type || 'anchored-text');
+        console.log('[openProperties] Drawing:', drawing, 'Type:', drawing._type);
+        const options = drawing.options ? drawing.options() : {};
+        const type = drawing._type || 'anchored-text';
+        console.log('[openProperties] Options:', options, 'Type:', type);
+        setSelectedDrawingOptions(options);
+        setSelectedDrawingType(type);
         setPropertiesModalOpen(true);
     }
 
@@ -586,8 +590,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         } else if (sessionRangesRef.current && selectedDrawingType === 'daily-profiler') {
             sessionRangesRef.current.applyOptions(options);
             toast.success('Daily Profiler updated');
-        } else if (hourlyProfilerRef.current && selectedDrawingType === 'hourly-profiler') {
-            hourlyProfilerRef.current.updateOptions(options);
+        } else if (selectedDrawingType === 'hourly-profiler') {
+            if (hourlyProfilerRef.current) {
+                hourlyProfilerRef.current.updateOptions(options);
+            }
+            onIndicatorParamsChange?.('hourly-profiler', options);
             toast.success('Hourly Profiler updated');
         }
     };
@@ -607,10 +614,18 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             // Support editing Daily Profiler
             onSelectionChange?.({ type: 'indicator', id: 'daily-profiler' });
             openProperties(sessionRangesRef.current);
-        } else if (id === 'hourly-profiler' && hourlyProfilerRef.current) {
-            // Support editing Hourly Profiler
+        } else if (id === 'hourly-profiler') {
+            // Support editing Hourly Profiler - even if disabled (ref is null)
             onSelectionChange?.({ type: 'indicator', id: 'hourly-profiler' });
-            openProperties(hourlyProfilerRef.current);
+            if (hourlyProfilerRef.current) {
+                openProperties(hourlyProfilerRef.current);
+            } else {
+                // Fallback for disabled state
+                const currentParams = indicatorParams?.['hourly-profiler'] || {};
+                setSelectedDrawingOptions(currentParams);
+                setSelectedDrawingType('hourly-profiler');
+                setPropertiesModalOpen(true);
+            }
         }
     };
 
@@ -787,13 +802,18 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const hourlyProfilerRef = useRef<any>(null);
 
     useEffect(() => {
-        if (!series || !chart || !ticker) return;
+        if (!series || !chart || !ticker) {
+            console.log('[ChartContainer] Hourly Profiler useEffect: Missing dependencies', { series: !!series, chart: !!chart, ticker });
+            return;
+        }
 
         const isEnabled = indicators.includes('hourly-profiler');
+        console.log('[ChartContainer] Hourly Profiler useEffect: isEnabled =', isEnabled, 'current ref:', hourlyProfilerRef.current);
 
         if (isEnabled) {
             import('@/lib/charts/indicators/hourly-profiler').then(({ HourlyProfiler }) => {
                 const hourlyParams = indicatorParams?.['hourly-profiler'] || {};
+                console.log('[ChartContainer] HourlyProfiler module loaded, params:', hourlyParams);
 
                 // Recreate if series/chart instance changed
                 if (hourlyProfilerRef.current && (hourlyProfilerRef.current._series !== series)) {
@@ -803,24 +823,32 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 }
 
                 if (!hourlyProfilerRef.current) {
-                    hourlyProfilerRef.current = new HourlyProfiler(series, {
+                    console.log('[ChartContainer] Creating new HourlyProfiler instance');
+                    hourlyProfilerRef.current = new HourlyProfiler(chart, series, {
                         ticker,
                         ...hourlyParams
                     }, theme);
+                    console.log('[ChartContainer] HourlyProfiler created:', hourlyProfilerRef.current);
                     series.attachPrimitive(hourlyProfilerRef.current);
+                    console.log('[ChartContainer] HourlyProfiler attached to series');
                 } else {
-                    // Update options
+                    console.log('[ChartContainer] Updating existing HourlyProfiler options');
                     hourlyProfilerRef.current.updateOptions({ ticker, ...hourlyParams });
                 }
+            }).catch(err => {
+                console.error('[ChartContainer] Failed to load HourlyProfiler module:', err);
             });
         } else {
             if (hourlyProfilerRef.current) {
+                console.log('[ChartContainer] Disabling HourlyProfiler, destroying instance');
                 try {
                     if (hourlyProfilerRef.current.destroy) {
                         hourlyProfilerRef.current.destroy();
                     }
                     series.detachPrimitive(hourlyProfilerRef.current);
-                } catch (e) { /* ignore */ }
+                } catch (e) {
+                    console.error('[ChartContainer] Error destroying HourlyProfiler:', e);
+                }
                 hourlyProfilerRef.current = null;
             }
         }

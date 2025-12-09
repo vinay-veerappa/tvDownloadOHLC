@@ -1,88 +1,149 @@
-"""
-Generate DATA_COVERAGE_REPORT.md from parquet files
-"""
-
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
+import os
 
-data_dir = Path("data")
-output_file = Path("docs/DATA_COVERAGE_REPORT.md")
+# Configuration
+BASE_DIR = Path(__file__).parent.parent
+DATA_DIR = BASE_DIR / "data"
+DOCS_DIR = BASE_DIR / "docs"
+REPORT_FILE = DOCS_DIR / "DATA_COVERAGE_REPORT.md"
 
-# Get all parquet files
-parquet_files = sorted(data_dir.glob("*.parquet"))
-
-# Build report data
-report_data = []
-for f in parquet_files:
+def get_parquet_stats(filepath):
     try:
-        df = pd.read_parquet(f)
-        parts = f.stem.split("_")
-        ticker = parts[0]
-        timeframe = parts[1] if len(parts) > 1 else "Unknown"
+        # Read only necessary columns/metadata to be faster? 
+        # parquet metadata might suffice for some, but we need volume check and exact date range
+        df = pd.read_parquet(filepath)
+        df.reset_index(inplace=True)
         
-        start_date = df.index.min()
-        end_date = df.index.max()
-        bar_count = len(df)
+        if df.empty:
+            return None
+            
+        count = len(df)
         
-        # Check volume
-        has_volume = "volume" in df.columns and (df["volume"] > 0).any()
-        vol_status = "✅" if has_volume else "❌"
+        # Determine time column
+        time_col = None
+        if 'time' in df.columns: time_col = 'time'
+        elif 'datetime' in df.columns: time_col = 'datetime'
+        elif 'date' in df.columns: time_col = 'date'
         
-        report_data.append({
-            "ticker": ticker,
-            "timeframe": timeframe,
-            "start": start_date.strftime("%Y-%m-%d"),
-            "end": end_date.strftime("%Y-%m-%d"),
-            "bars": bar_count,
-            "volume": vol_status
-        })
+        start_date = "N/A"
+        end_date = "N/A"
+        
+        if time_col:
+            # Check if unix timestamp
+            first = df[time_col].iloc[0]
+            last = df[time_col].iloc[-1]
+            
+            if isinstance(first, (int, float)):
+                start_date = datetime.fromtimestamp(first).strftime('%Y-%m-%d')
+                end_date = datetime.fromtimestamp(last).strftime('%Y-%m-%d')
+            else:
+                # Assume datetime object or string
+                start_date = pd.to_datetime(first).strftime('%Y-%m-%d')
+                end_date = pd.to_datetime(last).strftime('%Y-%m-%d')
+                
+        has_volume = 'volume' in df.columns or 'Volume' in df.columns
+        
+        return {
+            "count": count,
+            "start": start_date,
+            "end": end_date,
+            "volume": has_volume
+        }
     except Exception as e:
-        print(f"Error reading {f}: {e}")
+        print(f"Error reading {filepath.name}: {e}")
+        return None
 
-# Sort by ticker then timeframe
-tf_order = {"1m": 1, "5m": 2, "15m": 3, "1h": 4, "4h": 5, "1D": 6, "1W": 7}
-report_data.sort(key=lambda x: (x["ticker"], tf_order.get(x["timeframe"], 99)))
+def main():
+    print("Generating Data Coverage Report...")
+    
+    if not DATA_DIR.exists():
+        print("Data directory not found!")
+        return
 
-# Generate markdown
-lines = [
-    "# 📊 Data Coverage Report",
-    "",
-    f"**Last Updated**: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-    "",
-    "## Summary",
-    "",
-    "This report shows the available OHLC data for each ticker and timeframe.",
-    "",
-    "## Data Availability",
-    "",
-    "| Ticker | Timeframe | Start Date | End Date | Bars | Volume |",
-    "|--------|-----------|------------|----------|------|--------|",
-]
+    # Collect stats
+    data = []
+    
+    files = sorted(list(DATA_DIR.glob("*.parquet")))
+    
+    for p_file in files:
+        # Parse ticker and timeframe
+        # Format: TICKER_TF.parquet
+        parts = p_file.stem.split('_')
+        if len(parts) >= 2:
+            ticker = parts[0]
+            timeframe = "_".join(parts[1:]) 
+        else:
+            continue
+            
+        print(f"  Scanning {p_file.name}...")
+        stats = get_parquet_stats(p_file)
+        
+        if stats:
+            data.append({
+                "ticker": ticker,
+                "timeframe": timeframe,
+                "start": stats['start'],
+                "end": stats['end'],
+                "bars": stats['count'],
+                "volume": stats['volume']
+            })
 
-current_ticker = None
-for row in report_data:
-    ticker_cell = f"**{row['ticker']}**" if row["ticker"] != current_ticker else ""
-    current_ticker = row["ticker"]
-    lines.append(f"| {ticker_cell} | {row['timeframe']} | {row['start']} | {row['end']} | {row['bars']:,} | {row['volume']} |")
+    # Group by Ticker
+    data_by_ticker = {}
+    for item in data:
+        t = item['ticker']
+        if t not in data_by_ticker:
+            data_by_ticker[t] = []
+        data_by_ticker[t].append(item)
+        
+    # Sort timeframes ordering
+    tf_order = {"1m": 0, "5m": 1, "15m": 2, "1h": 3, "4h": 4, "1D": 5, "1W": 6}
+    
+    # Generate Markdown
+    lines = []
+    lines.append("# 📊 Data Coverage Report")
+    lines.append("")
+    lines.append(f"**Last Updated**: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    lines.append("")
+    lines.append("## Summary")
+    lines.append("")
+    lines.append("This report shows the available OHLC data for each ticker and timeframe.")
+    lines.append("")
+    lines.append("## Data Availability")
+    lines.append("")
+    lines.append("| Ticker | Timeframe | Start Date | End Date | Bars | Volume |")
+    lines.append("|--------|-----------|------------|----------|------|--------|")
+    
+    for ticker in sorted(data_by_ticker.keys()):
+        items = data_by_ticker[ticker]
+        # Sort items
+        items.sort(key=lambda x: tf_order.get(x['timeframe'], 99))
+        
+        first = True
+        for item in items:
+            t_cell = f"**{ticker}**" if first else ""
+            vol_icon = "✅" if item['volume'] else "❌"
+            
+            lines.append(f"| {t_cell} | {item['timeframe']} | {item['start']} | {item['end']} | {item['bars']:,} | {vol_icon} |")
+            first = False
 
-lines.extend([
-    "",
-    "## Legend",
-    "",
-    "- **Volume**: ✅ = Has volume data, ❌ = No volume data (historical OHLC only)",
-    "",
-    "## Notes",
-    "",
-    "- Data is stored in Parquet format in `data/` directory",
-    "- Timestamps are in UTC",
-    "- Weekend and holiday gaps are expected",
-])
+    lines.append("")
+    lines.append("## Legend")
+    lines.append("")
+    lines.append("- **Volume**: ✅ = Has volume data, ❌ = No volume data (historical OHLC only)")
+    lines.append("")
+    lines.append("## Notes")
+    lines.append("")
+    lines.append("- Data is stored in Parquet format in `data/` directory")
+    lines.append("- Timestamps are in UTC")
+    lines.append("- Weekend and holiday gaps are expected")
+    
+    with open(REPORT_FILE, 'w', encoding='utf-8') as f:
+        f.write("\n".join(lines))
+        
+    print(f"Report updated: {REPORT_FILE}")
 
-md = "\n".join(lines)
-
-# Write to file
-output_file.write_text(md, encoding="utf-8")
-print(f"Report written to {output_file}")
-print()
-print(md)
+if __name__ == "__main__":
+    main()

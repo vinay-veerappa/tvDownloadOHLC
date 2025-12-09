@@ -4,6 +4,7 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useEffect, useState } from "react"
@@ -161,7 +162,128 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                                 </div>
                                 {options.showQuarters && (
                                     <>
-                                        <div className="grid grid-cols-2 gap-4 items-center">
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                                <Label>Quarter Odd Color</Label>
+                                                <div className="flex gap-2">
+                                                    <Input
+                                                        type="color"
+                                                        value={options.quarterOddColor}
+                                                        onChange={(e) => updateOption('quarterOddColor', e.target.value)}
+                                                        className="w-12 h-8 p-1"
+                                                    />
+                                                    <Input
+                                                        type="text"
+                                                        value={options.quarterOddColor}
+                                                        onChange={(e) => updateOption('quarterOddColor', e.target.value)}
+                                                        className="flex-1 h-8 text-xs font-mono"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <Label>Quarter Even Color</Label>
+                                                <div className="flex gap-2">
+                                                    <Input
+                                                        type="color"
+                                                        value={options.quarterEvenColor}
+                                                        onChange={(e) => updateOption('quarterEvenColor', e.target.value)}
+                                                        className="w-12 h-8 p-1"
+                                                    />
+                                                    <Input
+                                                        type="text"
+                                                        value={options.quarterEvenColor}
+                                                        onChange={(e) => updateOption('quarterEvenColor', e.target.value)}
+                                                        className="flex-1 h-8 text-xs font-mono"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="space-y-2 col-span-2">
+                                                <Label>Quarter Opacity ({options.quarterOpacity})</Label>
+                                                <Slider
+                                                    value={[options.quarterOpacity]}
+                                                    max={1}
+                                                    step={0.01}
+                                                    onValueChange={(val) => updateOption('quarterOpacity', val[0])}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center space-x-2 pt-2 border-t border-border">
+                                            <Checkbox
+                                                id="showHourBounds"
+                                                checked={options.showHourBounds}
+                                                onCheckedChange={(c: boolean | string) => updateOption('showHourBounds', !!c)}
+                                            />
+                                            <Label htmlFor="showHourBounds">Show Hour Bounds (Top/Bottom)</Label>
+                                        </div>
+
+                                        {options.showHourBounds && (
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div className="space-y-2">
+                                                    <Label>Bound Color</Label>
+                                                    <div className="flex gap-2">
+                                                        <Input
+                                                            type="color"
+                                                            value={options.hourBoundColor}
+                                                            onChange={(e) => updateOption('hourBoundColor', e.target.value)}
+                                                            className="w-12 h-8 p-1"
+                                                        />
+                                                        <Input
+                                                            type="text"
+                                                            value={options.hourBoundColor}
+                                                            onChange={(e) => updateOption('hourBoundColor', e.target.value)}
+                                                            className="flex-1 h-8 text-xs font-mono"
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <Label>Bound Width</Label>
+                                                    <Input
+                                                        type="number"
+                                                        min={1}
+                                                        max={5}
+                                                        value={options.hourBoundWidth}
+                                                        onChange={(e) => updateOption('hourBoundWidth', Number(e.target.value))}
+                                                        className="h-8"
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {options.showHourBounds && (
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div className="space-y-2">
+                                                    <Label>Bound Color</Label>
+                                                    <div className="flex gap-2">
+                                                        <Input
+                                                            type="color"
+                                                            value={options.hourBoundColor}
+                                                            onChange={(e) => updateOption('hourBoundColor', e.target.value)}
+                                                            className="w-12 h-8 p-1"
+                                                        />
+                                                        <Input
+                                                            type="text"
+                                                            value={options.hourBoundColor}
+                                                            onChange={(e) => updateOption('hourBoundColor', e.target.value)}
+                                                            className="flex-1 h-8 text-xs font-mono"
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <Label>Bound Width</Label>
+                                                    <Input
+                                                        type="number"
+                                                        min={1}
+                                                        max={5}
+                                                        value={options.hourBoundWidth}
+                                                        onChange={(e) => updateOption('hourBoundWidth', Number(e.target.value))}
+                                                        className="h-8"
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+                                        {/* The original quarter line color and width controls are removed as per the instruction's implied replacement */}
+                                        {/* <div className="grid grid-cols-2 gap-4 items-center">
                                             <Label className="text-xs">Color</Label>
                                             <Input
                                                 type="color"
@@ -169,21 +291,7 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                                                 onChange={(e) => updateOption('quarterLineColor', e.target.value)}
                                                 className="h-8"
                                             />
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4 items-center">
-                                            <Label className="text-xs">Width</Label>
-                                            <div className="flex items-center gap-2">
-                                                <Slider
-                                                    value={[options.quarterLineWidth]}
-                                                    onValueChange={([v]) => updateOption('quarterLineWidth', v)}
-                                                    min={1}
-                                                    max={3}
-                                                    step={0.5}
-                                                    className="flex-1"
-                                                />
-                                                <span className="text-xs w-12 text-right">{options.quarterLineWidth}px</span>
-                                            </div>
-                                        </div>
+                                        </div> */}
                                     </>
                                 )}
                             </div>

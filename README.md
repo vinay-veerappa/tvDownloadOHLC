@@ -78,7 +78,17 @@ See [`docs/README.md`](docs/README.md) for the full documentation index includin
 
 ## 🐍 Data Scripts (Python)
 
-To run data processing scripts:
+### Update Data (New)
+To automatically import and sync new TradingView exports:
+1. Place your `.csv` files in `data/imports/`
+2. Run:
+```bash
+python scripts/update_data.py
+```
+This script handles remaining processing, format conversion, and updates documentation automatically.
+
+### Legacy Processing
+To run manual data processing scripts:
 ```bash
 python scripts/process_data.py
 ```
