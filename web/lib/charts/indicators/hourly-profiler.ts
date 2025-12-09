@@ -178,10 +178,11 @@ class HourlyProfilerRenderer {
                 }
             }
 
+
             // 3. Draw Quarter Lines (15-min intervals)
             if (this._options.showQuarters) {
                 for (let i = 1; i < 4; i++) {
-                    const quarterTime = startUnix + (i * 15 * 60);
+                    const quarterTime = (startUnix as number) + (i * 15 * 60);
                     const qX = scope.timeScale.timeToCoordinate(quarterTime as Time);
                     if (qX !== null) {
                         const qXScaled = qX * hPR;
