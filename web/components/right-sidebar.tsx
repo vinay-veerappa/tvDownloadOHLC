@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Trash2, Layers, ChevronRight, Settings } from "lucide-react"
+import { Trash2, Layers, ChevronRight, Settings, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
@@ -15,6 +15,7 @@ export interface Drawing {
 export interface Indicator {
     type: string
     label: string
+    enabled?: boolean
 }
 
 interface RightSidebarProps {
@@ -22,6 +23,7 @@ interface RightSidebarProps {
     indicators: Indicator[]
     onDeleteDrawing: (id: string) => void
     onDeleteIndicator: (type: string) => void
+    onToggleIndicator?: (type: string) => void
     onEditDrawing?: (id: string) => void
     onEditIndicator?: (type: string) => void
     selection?: { type: 'drawing' | 'indicator', id: string } | null
@@ -29,7 +31,7 @@ interface RightSidebarProps {
     onOpenSettings?: () => void
 }
 
-export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIndicator, onEditDrawing, onEditIndicator, selection, onSelect, onOpenSettings }: RightSidebarProps) {
+export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIndicator, onToggleIndicator, onEditDrawing, onEditIndicator, selection, onSelect, onOpenSettings }: RightSidebarProps) {
     const [activeTab, setActiveTab] = React.useState<string | null>(null)
 
     const toggleTab = (tab: string) => {
@@ -110,15 +112,24 @@ export function RightSidebar({ drawings, indicators, onDeleteDrawing, onDeleteIn
                                                     key={`${ind.type}-${i}`}
                                                     className={cn(
                                                         "flex items-center justify-between group rounded p-1.5 hover:bg-muted/50 transition-colors cursor-pointer",
-                                                        selection?.type === 'indicator' && selection.id === ind.type && "bg-muted"
+                                                        selection?.type === 'indicator' && selection.id === ind.type && "bg-muted",
+                                                        ind.enabled === false && "opacity-50"
                                                     )}
                                                     onClick={() => onSelect?.({ type: 'indicator', id: ind.type })}
                                                 >
                                                     <div className="flex items-center gap-2 overflow-hidden">
-                                                        <div className="h-2 w-2 rounded-full bg-blue-500 shrink-0" />
+                                                        <div className={cn(
+                                                            "h-2 w-2 rounded-full shrink-0",
+                                                            ind.enabled === false ? "bg-muted-foreground/30" : "bg-blue-500"
+                                                        )} />
                                                         <span className="text-sm truncate" title={ind.label}>{ind.label}</span>
                                                     </div>
                                                     <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        {onToggleIndicator && (
+                                                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); onToggleIndicator(ind.type) }} title={ind.enabled === false ? "Show" : "Hide"}>
+                                                                {ind.enabled === false ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                                                            </Button>
+                                                        )}
                                                         {onEditIndicator && (
                                                             <Button variant="ghost" size="icon" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); onEditIndicator(ind.type) }}>
                                                                 <Settings className="h-3 w-3" />
