@@ -96,6 +96,18 @@ The Hourly Profiler visually organizes price action into time blocks.
 - **3-Hour Blocks**: Larger aggregation (e.g., 09:30-12:30).
 - **Settings**: fully configurable colors, opacity, and visibility via the "Indicators" settings menu.
 
+### Range Extensions (Sizer) Guide
+A specialized indicator for range-based projections and contract sizing.
+- **Contract Sizer**: Displays an info table calculating Position Size based on:
+    - **Account Balance** (Configurable in Settings)
+    - **Risk %** per trade
+    - **Stop Loss**: Based on the range size of the reference candle (e.g., 09:30 candle range).
+- **Extension Lines**: Projects lines above/below the range based on multiples (1x, 2x, 3x) or percentages (50%, 100%).
+- **Modes**:
+    - **09:30 RTH Open**: Uses the first 1-minute candle of the regular session (09:30 EST) as the reference range.
+    - **Hourly**: Uses the first 5 minutes of each hour as the reference.
+- **Settings**: Customize colors, line styles, risk parameters, and toggle widely used timeframe logic.
+
 ### Managing Indicators
 - **Add**: Click indicator name in dropdown
 - **Settings**: Click gear icon in "Object Tree" or Legend

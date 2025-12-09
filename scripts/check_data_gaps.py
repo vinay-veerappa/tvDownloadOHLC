@@ -3,7 +3,7 @@ import pandas as pd
 from pathlib import Path
 
 data_dir = Path("data")
-tickers = ["ES1", "NQ1"]
+tickers = ["ES1", "NQ1", "CL1"]
 tfs = ["1m", "5m", "15m", "1h", "4h"]
 
 print("=" * 70)

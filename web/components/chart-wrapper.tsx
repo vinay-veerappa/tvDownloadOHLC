@@ -254,6 +254,12 @@ export function ChartWrapper(props: ChartWrapperProps) {
             return;
         }
 
+        // Handle Range Extensions (uses PropertiesModal via ChartContainer)
+        if (type === 'range-extensions') {
+            chartRef.current?.editDrawing('range-extensions');
+            return;
+        }
+
         // Parse existing options from type string (e.g., "sma:9" -> period=9)
         const [indType, param] = type.split(":");
         const existingOptions: Record<string, any> = {};
@@ -314,6 +320,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
         else if (indType === 'watermark') label = `Watermark: ${param || 'Text'}`;
         else if (indType === 'daily-profiler') label = 'Daily Profiler';
         else if (indType === 'hourly-profiler') label = 'Hourly Profiler';
+        else if (indType === 'range-extensions') label = 'Range Extensions';
         return { type: ind.type, label, enabled: ind.enabled };
     });
 

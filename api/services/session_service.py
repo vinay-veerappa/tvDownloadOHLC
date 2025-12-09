@@ -226,67 +226,83 @@ class SessionService:
     @staticmethod
     def calculate_hourly(df: pd.DataFrame) -> List[Dict]:
         """
-        Calculate hourly and 3-hour profiler data.
+        Calculate hourly and 3-hour profiler data using vectorized operations.
         Returns list of hourly periods with OHLC, 5-min OR, and 3H data.
         """
         if df.empty:
             return []
         
-        results = []
-        
-        def safe_float(val):
-            if pd.isna(val) or val is None: return None
-            return float(val)
-        
         # Ensure datetime index
         if not isinstance(df.index, pd.DatetimeIndex):
             df.index = pd.to_datetime(df.index)
-        
-        # 1. Calculate Hourly OHLC
+
+        def safe_float(val):
+             if pd.isna(val) or val is None: return None
+             return float(val)
+
+        # 1. Base Hourly OHLC
         hourly = df.resample('1h').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
+        # Filter out empty hours (where open is NaN)
+        hourly = hourly.dropna(subset=['open'])
         hourly['mid'] = (hourly['high'] + hourly['low']) / 2
         
-        for hour_start, row in hourly.iterrows():
-            if pd.isna(row['open']): continue
-            
-            hour_end = hour_start + pd.Timedelta(hours=1)
-            
-            # Calculate 5-min Opening Range
-            or_end = hour_start + pd.Timedelta(minutes=5)
-            try:
-                or_data = df.loc[hour_start:or_end]
-                or_data = or_data[or_data.index < or_end]
-                or_high = safe_float(or_data['high'].max()) if not or_data.empty else None
-                or_low = safe_float(or_data['low'].min()) if not or_data.empty else None
-            except:
-                or_high = None
-                or_low = None
+        # 2. Vectorized 5-min Opening Range (First 5 mins of each hour)
+        # Filter rows where minute < 5
+        df_or = df[df.index.minute < 5]
+        # Resample to hourly to align with base hourly data
+        hourly_or = df_or.resample('1h').agg({'high': 'max', 'low': 'min'})
+        
+        # 3. Vectorized 1-min Opening Range (First 1 min: minute == 0)
+        df_1m = df[df.index.minute == 0]
+        hourly_1m = df_1m.resample('1h').agg({'high': 'max', 'low': 'min'})
+
+        # 4. RTH 1-min Range (09:30 - 09:31)
+        # Filter for 09:30 candle
+        df_rth = df[(df.index.hour == 9) & (df.index.minute == 30)]
+        # Map to 09:00 bin by resampling to 1h
+        hourly_rth = df_rth.resample('1h').agg({'high': 'max', 'low': 'min'})
+
+        # 5. 3-Hour Blocks (18:00 offset)
+        three_hour = df.resample('3h', offset='18h').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
+        three_hour['mid'] = (three_hour['high'] + three_hour['low']) / 2
+
+        results = []
+
+        # Merge all metrics into main hourly dataframe
+        # Use suffixes to distinguish columns
+        hourly = hourly.join(hourly_or, rsuffix='_or')
+        hourly = hourly.join(hourly_1m, rsuffix='_1m')
+        hourly = hourly.join(hourly_rth, rsuffix='_rth')
+
+        # Iterating over the aggregated hourly dataframe is fast (~60x faster than raw 1m loop)
+        for ts, row in hourly.iterrows():
+            hour_end = ts + pd.Timedelta(hours=1)
             
             results.append({
                 "type": "1H",
-                "start_time": hour_start.isoformat(),
+                "start_time": ts.isoformat(),
                 "end_time": hour_end.isoformat(),
                 "open": safe_float(row['open']),
                 "high": safe_float(row['high']),
                 "low": safe_float(row['low']),
                 "close": safe_float(row['close']),
                 "mid": safe_float(row['mid']),
-                "or_high": or_high,
-                "or_low": or_low
+                "or_high": safe_float(row.get('high_or')),
+                "or_low": safe_float(row.get('low_or')),
+                "open_1m_high": safe_float(row.get('high_1m')),
+                "open_1m_low": safe_float(row.get('low_1m')),
+                "rth_1m_high": safe_float(row.get('high_rth')),
+                "rth_1m_low": safe_float(row.get('low_rth'))
             })
-        
-        # 2. Calculate 3-Hour OHLC (starting at 18:00)
-        three_hour = df.resample('3h', offset='18h').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
-        three_hour['mid'] = (three_hour['high'] + three_hour['low']) / 2
-        
-        for period_start, row in three_hour.iterrows():
+
+        # Process 3H Data
+        for ts, row in three_hour.iterrows():
             if pd.isna(row['open']): continue
-            
-            period_end = period_start + pd.Timedelta(hours=3)
-            
+            period_end = ts + pd.Timedelta(hours=3)
+            # Only include if valid
             results.append({
                 "type": "3H",
-                "start_time": period_start.isoformat(),
+                "start_time": ts.isoformat(),
                 "end_time": period_end.isoformat(),
                 "open": safe_float(row['open']),
                 "high": safe_float(row['high']),
@@ -294,7 +310,7 @@ class SessionService:
                 "close": safe_float(row['close']),
                 "mid": safe_float(row['mid'])
             })
-        
+            
         return results
 
     @staticmethod

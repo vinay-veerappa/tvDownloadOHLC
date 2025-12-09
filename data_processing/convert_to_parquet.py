@@ -52,8 +52,7 @@ def convert_csv_to_parquet(ticker, timeframe="1m"):
     if 'Volume' in df.columns: # Sometimes named 'Volume'
         df.rename(columns={'Volume': 'volume'}, inplace=True)
         
-    if 'volume' in df.columns:
-        ohlc_columns.append('volume')
+    # Volume added above if present
         
     df = df[ohlc_columns]
     

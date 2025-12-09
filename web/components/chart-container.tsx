@@ -596,6 +596,12 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             }
             onIndicatorParamsChange?.('hourly-profiler', options);
             toast.success('Hourly Profiler updated');
+        } else if (selectedDrawingType === 'range-extensions') {
+            if (rangeExtensionsRef.current) {
+                rangeExtensionsRef.current.updateOptions(options);
+            }
+            onIndicatorParamsChange?.('range-extensions', options);
+            toast.success('Range Extensions updated');
         }
     };
 
@@ -624,6 +630,16 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 const currentParams = indicatorParams?.['hourly-profiler'] || {};
                 setSelectedDrawingOptions(currentParams);
                 setSelectedDrawingType('hourly-profiler');
+                setPropertiesModalOpen(true);
+            }
+        } else if (id === 'range-extensions') {
+            onSelectionChange?.({ type: 'indicator', id: 'range-extensions' });
+            if (rangeExtensionsRef.current) {
+                openProperties(rangeExtensionsRef.current);
+            } else {
+                const currentParams = indicatorParams?.['range-extensions'] || {};
+                setSelectedDrawingOptions(currentParams);
+                setSelectedDrawingType('range-extensions');
                 setPropertiesModalOpen(true);
             }
         }
@@ -797,7 +813,51 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     }, [series, chart, ticker, indicators, indicatorParams, onIndicatorParamsChange]);
 
     // -------------------------------------------------------------------------
-    // 14. Hourly Profiler Integration
+    // 14. Range Extensions Integration
+    // -------------------------------------------------------------------------
+    const rangeExtensionsRef = useRef<any>(null);
+
+    useEffect(() => {
+        if (!series || !chart || !ticker) return;
+
+        const isEnabled = indicators.includes('range-extensions');
+
+        if (isEnabled) {
+            import('@/lib/charts/indicators/range-extensions').then(({ RangeExtensions }) => {
+                const params = indicatorParams?.['range-extensions'] || {};
+
+                // Recreate if series/chart instance changed
+                if (rangeExtensionsRef.current && (rangeExtensionsRef.current._series !== series)) {
+                    // Detach old?
+                    // Lightweight charts doesn't have easy detach for primitives if we lose ref?
+                    // Actually we should detach current ref below if exists.
+                }
+
+                if (!rangeExtensionsRef.current) {
+                    rangeExtensionsRef.current = new RangeExtensions({
+                        ticker,
+                        ...params
+                    });
+                    rangeExtensionsRef.current.attached(series); // Attach manually as it's a primitive logic wrapper usually?
+                    // Wait, ISeriesPrimitive is attached via series.attachPrimitive(prim)
+                    series.attachPrimitive(rangeExtensionsRef.current);
+                } else {
+                    rangeExtensionsRef.current.updateOptions({ ticker, ...params });
+                }
+            });
+        } else {
+            if (rangeExtensionsRef.current) {
+                try {
+                    series.detachPrimitive(rangeExtensionsRef.current);
+                    rangeExtensionsRef.current.detached();
+                } catch (e) { }
+                rangeExtensionsRef.current = null;
+            }
+        }
+    }, [series, chart, ticker, indicators, indicatorParams]);
+
+    // -------------------------------------------------------------------------
+    // 15. Hourly Profiler Integration
     // -------------------------------------------------------------------------
     const hourlyProfilerRef = useRef<any>(null);
 

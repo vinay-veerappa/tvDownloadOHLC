@@ -47,6 +47,13 @@ This document serves as a "Cheat Sheet" for developers working on the repository
 ### Type Parsing
 *   **Hex Colors:** Theme strings (e.g., `#FF0000`) and `rgba` strings must be parsed carefully. Simple `parseInt` on `rgba` strings will fail. Use robust helper functions.
 
+### Refactoring & Stability
+*   **Incremental Changes**: When modifying complex files (like `hourly-profiler.ts`), avoid rewriting large chunks blindly. It caused syntax errors that broke the build.
+    *   *Better Approach:* Create a new file (e.g., `range-extensions.ts`) when feature scope diverges, rather than overloading one class.
+*   **Library Types**: `lightweight-charts` types can be tricky.
+    *   Check imports: `ISeriesPrimitive` is often not enough; you might need `ISeriesPrimitivePaneRenderer` or `ISeriesPrimitivePaneView`.
+    *   *Verify:* If the linter complains about "no exported member", check the package version or the `node_modules/@types` definition.
+
 ---
 
 ## 4. Shell & Git Workflow (Windows)

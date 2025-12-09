@@ -36,9 +36,30 @@ def parse_filename(filename):
     # Example: CME_MINI_ES1!, 1W.csv
     # Example: CME_MINI_NQ1!, 60 (1).csv
     
+    # Special case for known large backup files
+    if "nq-1m" in filename.lower():
+        return "NQ1", "1m"
+    if "es-1m" in filename.lower():
+        return "ES1", "1m"
+
     # Split by comma
     parts = filename.split(',')
     if len(parts) < 2:
+        # Fallback: Try underscore split for format like CL1_1m_...
+        # Assume format: TICKER_TIMEFRAME_...
+        parts_score = filename.split('_')
+        if len(parts_score) >= 2:
+             # Check if first part is a known ticker or matches pattern
+             candidate_ticker = parts_score[0]
+             candidate_tf = parts_score[1]
+             
+             # Validation
+             is_ticker = candidate_ticker in TICKER_MAP.values() or candidate_ticker in ["CL1", "ES1", "NQ1"]
+             is_tf = candidate_tf in TIMEFRAME_MAP.values() or candidate_tf in ["1m", "5m", "15m", "1h"]
+             
+             if is_ticker and is_tf:
+                 return candidate_ticker, candidate_tf
+        
         return None, None
     
     raw_ticker = parts[0].strip()
@@ -112,7 +133,12 @@ def merge_history(ticker, timeframe, parquet_path):
     source_df = pd.concat(dfs)
     
     # 2. Standardize Source DF
-    source_df['datetime'] = pd.to_datetime(source_df['time'], unit='s')
+    # Historical CSVs usually have naive timestamps in UTC or EST
+    # We assume UTC if from TradingView unless specified otherwise, but for now let's safely handle them
+    source_df['datetime'] = pd.to_datetime(source_df['time'], unit='s', utc=True)
+    # Convert to US/Eastern to match project standard
+    source_df['datetime'] = source_df['datetime'].dt.tz_convert('US/Eastern')
+    
     source_df.set_index('datetime', inplace=True)
     source_df.sort_index(inplace=True)
     source_df = source_df[~source_df.index.duplicated(keep='first')]
@@ -128,12 +154,21 @@ def merge_history(ticker, timeframe, parquet_path):
     if os.path.exists(parquet_path):
         try:
             target_df = pd.read_parquet(parquet_path)
+            # Ensure target is also US/Eastern
+            if target_df.index.tz is None:
+                 # If mistakenly saved as naive, assume Eastern (or UTC and convert)
+                 # Better to assume UTC and convert if unknown, but let's check convert_to_parquet logic
+                 target_df.index = target_df.index.tz_localize('UTC').tz_convert('US/Eastern')
+            elif str(target_df.index.tz) != 'US/Eastern':
+                 target_df.index = target_df.index.tz_convert('US/Eastern')
+                 
         except Exception as e:
             print(f"  Error reading existing parquet {parquet_path}: {e}")
     
     # 4. Merge
     if target_df is not None:
         # Filter source to only include timestamps NOT in target
+        # Both indices are now US/Eastern
         new_rows = source_df[~source_df.index.isin(target_df.index)]
         if len(new_rows) > 0:
             print(f"  Adding {len(new_rows)} new rows from history.")

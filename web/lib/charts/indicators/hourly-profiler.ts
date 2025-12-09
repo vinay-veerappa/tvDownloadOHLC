@@ -572,7 +572,13 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
 
     updateOptions(options: Partial<HourlyProfilerOptions>) {
         console.log('[HourlyProfiler] updateOptions called with:', options);
+        const prevTicker = this._options.ticker;
         this._options = { ...this._options, ...options };
+
+        if (options.ticker && options.ticker !== prevTicker) {
+            console.log('[HourlyProfiler] Ticker changed from', prevTicker, 'to', options.ticker, 'refetching...');
+            this.fetchData();
+        }
     }
 
     options() {
