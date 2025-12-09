@@ -43,6 +43,10 @@ const indicators = [
         label: "Daily Profiler",
     },
     {
+        value: "hourly-profiler",
+        label: "Hourly Profiler",
+    },
+    {
         value: "vp",
         label: "Volume Profile",
     },
