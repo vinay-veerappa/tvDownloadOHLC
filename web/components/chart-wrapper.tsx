@@ -248,6 +248,12 @@ export function ChartWrapper(props: ChartWrapperProps) {
             return;
         }
 
+        // Handle Hourly Profiler (uses PropertiesModal via ChartContainer)
+        if (type === 'hourly-profiler') {
+            chartRef.current?.editDrawing('hourly-profiler');
+            return;
+        }
+
         // Parse existing options from type string (e.g., "sma:9" -> period=9)
         const [indType, param] = type.split(":");
         const existingOptions: Record<string, any> = {};
