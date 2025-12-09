@@ -9,7 +9,7 @@ router = APIRouter()
 @router.get("/{ticker}")
 async def get_sessions(
     ticker: str, 
-    range_type: str = Query("opening", description="Type of range: opening, custom"),
+    range_type: str = Query("opening", description="Type of range: opening, custom, hourly"),
     start_time: str = Query("09:30", description="Start time (HH:MM)"),
     duration: int = Query(1, description="Duration in minutes (for opening range)")
 ):
@@ -58,6 +58,9 @@ async def get_sessions(
         # Return all configured sessions (Asia, London, NY, Midnight)
         clean_ticker = ticker.replace("!", "")
         sessions = SessionService.calculate_sessions(df, clean_ticker)
+    elif range_type == "hourly":
+        # Return hourly profiler data (1H + 3H)
+        sessions = SessionService.calculate_hourly(df)
     else:
         sessions = [] 
         

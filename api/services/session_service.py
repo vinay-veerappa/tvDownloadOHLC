@@ -202,7 +202,7 @@ class SessionService:
         
         # --- 4. Post-Loop: 12H Session Generation ---
         try:
-           res_12h = df.resample('12H', offset='6H').agg({'high':'max', 'low':'min'})
+           res_12h = df.resample('12h', offset='6h').agg({'high':'max', 'low':'min'})
            res_12h['mid'] = (res_12h['high'] + res_12h['low']) / 2
            shifted_12h = res_12h.shift(1) 
            
@@ -221,6 +221,80 @@ class SessionService:
         except Exception as e:
             print(f"Error calculating 12H sessions: {e}")
 
+        return results
+
+    @staticmethod
+    def calculate_hourly(df: pd.DataFrame) -> List[Dict]:
+        """
+        Calculate hourly and 3-hour profiler data.
+        Returns list of hourly periods with OHLC, 5-min OR, and 3H data.
+        """
+        if df.empty:
+            return []
+        
+        results = []
+        
+        def safe_float(val):
+            if pd.isna(val) or val is None: return None
+            return float(val)
+        
+        # Ensure datetime index
+        if not isinstance(df.index, pd.DatetimeIndex):
+            df.index = pd.to_datetime(df.index)
+        
+        # 1. Calculate Hourly OHLC
+        hourly = df.resample('1h').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
+        hourly['mid'] = (hourly['high'] + hourly['low']) / 2
+        
+        for hour_start, row in hourly.iterrows():
+            if pd.isna(row['open']): continue
+            
+            hour_end = hour_start + pd.Timedelta(hours=1)
+            
+            # Calculate 5-min Opening Range
+            or_end = hour_start + pd.Timedelta(minutes=5)
+            try:
+                or_data = df.loc[hour_start:or_end]
+                or_data = or_data[or_data.index < or_end]
+                or_high = safe_float(or_data['high'].max()) if not or_data.empty else None
+                or_low = safe_float(or_data['low'].min()) if not or_data.empty else None
+            except:
+                or_high = None
+                or_low = None
+            
+            results.append({
+                "type": "1H",
+                "start_time": hour_start.isoformat(),
+                "end_time": hour_end.isoformat(),
+                "open": safe_float(row['open']),
+                "high": safe_float(row['high']),
+                "low": safe_float(row['low']),
+                "close": safe_float(row['close']),
+                "mid": safe_float(row['mid']),
+                "or_high": or_high,
+                "or_low": or_low
+            })
+        
+        # 2. Calculate 3-Hour OHLC (starting at 18:00)
+        three_hour = df.resample('3h', offset='18h').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
+        three_hour['mid'] = (three_hour['high'] + three_hour['low']) / 2
+        
+        for period_start, row in three_hour.iterrows():
+            if pd.isna(row['open']): continue
+            
+            period_end = period_start + pd.Timedelta(hours=3)
+            
+            results.append({
+                "type": "3H",
+                "start_time": period_start.isoformat(),
+                "end_time": period_end.isoformat(),
+                "open": safe_float(row['open']),
+                "high": safe_float(row['high']),
+                "low": safe_float(row['low']),
+                "close": safe_float(row['close']),
+                "mid": safe_float(row['mid'])
+            })
+        
         return results
 
     @staticmethod

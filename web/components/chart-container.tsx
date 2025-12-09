@@ -774,6 +774,51 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         }
     }, [series, chart, ticker, indicators, indicatorParams, onIndicatorParamsChange]);
 
+    // -------------------------------------------------------------------------
+    // 14. Hourly Profiler Integration
+    // -------------------------------------------------------------------------
+    const hourlyProfilerRef = useRef<any>(null);
+
+    useEffect(() => {
+        if (!series || !chart || !ticker) return;
+
+        const isEnabled = indicators.includes('hourly-profiler');
+
+        if (isEnabled) {
+            import('@/lib/charts/indicators/hourly-profiler').then(({ HourlyProfiler }) => {
+                const hourlyParams = indicatorParams?.['hourly-profiler'] || {};
+
+                // Recreate if series/chart instance changed
+                if (hourlyProfilerRef.current && (hourlyProfilerRef.current._series !== series)) {
+                    console.log('[ChartContainer] Series changed, recreating HourlyProfiler');
+                    if (hourlyProfilerRef.current.destroy) hourlyProfilerRef.current.destroy();
+                    hourlyProfilerRef.current = null;
+                }
+
+                if (!hourlyProfilerRef.current) {
+                    hourlyProfilerRef.current = new HourlyProfiler(series, {
+                        ticker,
+                        ...hourlyParams
+                    }, theme);
+                    series.attachPrimitive(hourlyProfilerRef.current);
+                } else {
+                    // Update options
+                    hourlyProfilerRef.current.updateOptions({ ticker, ...hourlyParams });
+                }
+            });
+        } else {
+            if (hourlyProfilerRef.current) {
+                try {
+                    if (hourlyProfilerRef.current.destroy) {
+                        hourlyProfilerRef.current.destroy();
+                    }
+                    series.detachPrimitive(hourlyProfilerRef.current);
+                } catch (e) { /* ignore */ }
+                hourlyProfilerRef.current = null;
+            }
+        }
+    }, [series, chart, ticker, indicators, indicatorParams, theme]);
+
     return (
         <div className="w-full h-full relative" onContextMenu={(e) => {
             // Keep native React onContextMenu as backup
