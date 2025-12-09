@@ -25,6 +25,20 @@ def load_parquet(ticker: str, timeframe: str) -> Optional[pd.DataFrame]:
     """
     # Clean ticker: "ES1!" -> "ES1"
     clean_ticker = ticker.replace("!", "")
+    
+    # Handle aliases (e.g. "NQ" -> "NQ1", "ES" -> "ES1")
+    # This ensures simple names map to the continuous contract file we have.
+    aliases = {
+        "NQ": "NQ1",
+        "ES": "ES1", 
+        "CL": "CL1",
+        "RTY": "RTY1",
+        "YM": "YM1",
+        "GC": "GC1"
+    }
+    if clean_ticker in aliases:
+        clean_ticker = aliases[clean_ticker]
+        
     filename = f"{clean_ticker}_{timeframe}.parquet"
     filepath = DATA_DIR / filename
     
