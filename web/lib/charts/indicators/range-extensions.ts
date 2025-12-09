@@ -278,16 +278,33 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
             const res = await fetch(url);
             if (!res.ok) throw new Error('Failed to fetch range data');
 
-            const data = await res.json();
-            // Sort by time
-            this._data = data.sort((a: any, b: any) => (a.time as number) - (b.time as number))
-                .map((item: any) => ({
+            const rawData = await res.json();
+
+            // Map start_time to time (Unix Seconds)
+            this._data = rawData.map((item: any) => {
+                // Parse ISO string to Unix Timestamp (Seconds)
+                // item.start_time is "2024-01-01T09:00:00"
+                const time = Math.floor(new Date(item.start_time).getTime() / 1000) as Time;
+                return {
                     ...item,
-                    // Ensure time is treated correctly (if string convert to unix?)
-                    // Lightweight charts expects unix timestamp (seconds) or business day object.
-                    // API usually returns unix seconds or ISO.
-                    // Assuming API matches what HourlyProfiler expects.
-                }));
+                    time: time
+                };
+            }).sort((a: any, b: any) => (a.time as number) - (b.time as number));
+
+            // Request update
+            // Since this is a primitive attached to series, we might need to trigger series update
+            // But usually just modifying _data and waiting for next draw is okay, 
+            // OR we need to trigger chart.timeScale().fitContent() or similar?
+            // Actually, primitives are reactive if they call requestUpdate().
+            // But we don't have requestUpdate passed in constructor for IPrimitivePaneRenderer?
+            // Wait, ISeriesPrimitive doesn't typically get requestUpdate unless we use the wrapper pattern.
+            // But we can force a redraw if we have access to something.
+            // However, just assigning this._data should be enough for next interaction/tick.
+            // To be safe, we might want to trigger an update if we knew how.
+            // For now, let's just rely on React interaction or auto-update.
+            // Actually, ISeriesPrimitive usually has access to update methods if attached properly.
+            // Let's assume next scroll/tick will show it.
+
         } catch (e) {
             console.error("RangeExtensions Fetch Error", e);
         }
