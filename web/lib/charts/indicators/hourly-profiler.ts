@@ -1,4 +1,4 @@
-import { ISeriesApi, Time } from 'lightweight-charts';
+import { ISeriesApi, IChartApi, ISeriesPrimitive, Time } from 'lightweight-charts';
 import { THEMES } from '../../themes';
 
 // Hourly Data Structure
@@ -32,10 +32,16 @@ export interface HourlyProfilerOptions {
     orBoxColor: string;
     orBoxOpacity: number;
 
-    // Quarter Lines
+    // Quarter Styling
     showQuarters: boolean;
-    quarterLineColor: string;
-    quarterLineWidth: number;
+    quarterOddColor: string;
+    quarterEvenColor: string;
+    quarterOpacity: number;
+
+    // Hourly Bounds
+    showHourBounds: boolean;
+    hourBoundColor: string;
+    hourBoundWidth: number;
 
     // 3-Hour Settings
     show3Hour: boolean;
@@ -67,8 +73,14 @@ export const DEFAULT_HOURLY_PROFILER_OPTIONS: HourlyProfilerOptions = {
 
     // Quarters
     showQuarters: true,
-    quarterLineColor: '#E0E0E0',
-    quarterLineWidth: 1,
+    quarterEvenColor: '#90A4AE', // Visible (1st, 3rd)
+    quarterOddColor: 'transparent', // Transparent (2nd, 4th)
+    quarterOpacity: 0.05,
+
+    // Hourly Bounds
+    showHourBounds: true,
+    hourBoundColor: '#90A4AE',
+    hourBoundWidth: 1,
 
     // 3-Hour
     show3Hour: true,
@@ -81,52 +93,70 @@ export const DEFAULT_HOURLY_PROFILER_OPTIONS: HourlyProfilerOptions = {
     threeHourLineWidth: 2,
 };
 
-// Renderer Class
 class HourlyProfilerRenderer {
     private _data: HourlyPeriod[] = [];
     private _options: HourlyProfilerOptions;
+    private _chart: IChartApi;
     private _series: ISeriesApi<'Candlestick'>;
     private _theme: typeof THEMES.dark | null = null;
 
     constructor(
         data: HourlyPeriod[],
         options: HourlyProfilerOptions,
+        chart: IChartApi,
         series: ISeriesApi<'Candlestick'>,
         theme?: typeof THEMES.dark
     ) {
+        console.log('[HourlyProfilerRenderer] Constructor - data length:', data.length, 'options:', options);
         this._data = data;
         this._options = options;
+        this._chart = chart;
         this._series = series;
         if (theme) this._theme = theme;
     }
 
-    draw(scope: any) {
-        const ctx = scope.context as CanvasRenderingContext2D;
-        if (!ctx) {
-            console.warn('[HourlyProfiler] No canvas context available');
-            return;
-        }
+    draw(target: any) {
+        console.log('[HourlyProfiler] draw called with', this._data.length, 'periods');
 
-        const timeScale = scope.horizontalPixelRatio;
-        const hPR = scope.horizontalPixelRatio;
-        const vPR = scope.verticalPixelRatio;
+        target.useBitmapCoordinateSpace((scope: any) => {
+            const ctx = scope.context as CanvasRenderingContext2D;
+            if (!ctx) {
+                console.warn('[HourlyProfiler] No canvas context available');
+                return;
+            }
 
-        console.log('[HourlyProfiler] Drawing with', this._data.length, 'periods');
-        ctx.save();
+            const hPR = scope.horizontalPixelRatio;
+            const vPR = scope.verticalPixelRatio;
 
-        // Draw 3H first (background layer)
-        if (this._options.show3Hour) {
-            const threeHourData = this._data.filter(p => p.type === '3H');
-            this._draw3Hour(ctx, threeHourData, scope, hPR, vPR);
-        }
+            console.log('[HourlyProfiler] Drawing with context, hPR:', hPR, 'vPR:', vPR);
+            console.log('[HourlyProfiler] Options - show3Hour:', this._options.show3Hour, 'showHourly:', this._options.showHourly);
+            console.log('[HourlyProfiler] Total data:', this._data.length);
+            if (this._data.length > 0) {
+                console.log('[HourlyProfiler] Sample data[0]:', this._data[0]);
+                console.log('[HourlyProfiler] Sample data[100]:', this._data[100]);
+            }
+            ctx.save();
 
-        // Draw Hourly (foreground layer)
-        if (this._options.showHourly) {
-            const hourlyData = this._data.filter(p => p.type === '1H');
-            this._drawHourly(ctx, hourlyData, scope, hPR, vPR);
-        }
+            // Draw 3H first (background layer)
+            if (this._options.show3Hour) {
+                const threeHourData = this._data.filter(p => p.type === '3H');
+                console.log('[HourlyProfiler] 3H data filtered:', threeHourData.length, 'periods');
+                if (threeHourData.length > 0) {
+                    this._draw3Hour(ctx, threeHourData, scope, hPR, vPR);
+                }
+            }
 
-        ctx.restore();
+            // Draw Hourly (foreground layer)
+            if (this._options.showHourly) {
+                const hourlyData = this._data.filter(p => p.type === '1H');
+                console.log('[HourlyProfiler] 1H data filtered:', hourlyData.length, 'periods');
+                if (hourlyData.length > 0) {
+                    this._drawHourly(ctx, hourlyData, scope, hPR, vPR);
+                }
+            }
+
+            ctx.restore();
+        });
     }
 
     private _drawHourly(
@@ -136,31 +166,128 @@ class HourlyProfilerRenderer {
         hPR: number,
         vPR: number
     ) {
-        const timeScale = scope.bitmapSize.width / scope.mediaSize.width;
+        const timeScale = this._chart.timeScale();
+        console.log('[HourlyProfiler] _drawHourly: Processing', data.length, 'periods');
 
-        data.forEach(period => {
+        // Calculate Half Bar Width for Edge Alignment
+        // We use logical coordinates to determine the width of one bar in pixels
+        const coord0 = timeScale.logicalToCoordinate(0 as any);
+        const coord1 = timeScale.logicalToCoordinate(1 as any);
+        let halfBarWidth = 0;
+        if (coord0 !== null && coord1 !== null) {
+            halfBarWidth = (Math.abs(coord1 - coord0)) / 2;
+        }
+        console.log('[HourlyProfiler] Calculated halfBarWidth:', halfBarWidth);
+
+
+        // Get the visible logical range
+        const visibleRange = timeScale.getVisibleLogicalRange();
+        if (!visibleRange) {
+            console.log('[HourlyProfiler] No visible range, skipping draw');
+            return;
+        }
+
+        // Get the actual time range by converting logical indices to time
+        // We'll use a wider range to ensure we catch periods that might be partially visible
+        const startLogical = Math.max(0, Math.floor(visibleRange.from) - 100) as any;
+        const endLogical = Math.ceil(visibleRange.to) + 100 as any;
+
+        const startCoord = timeScale.logicalToCoordinate(startLogical);
+        const endCoord = timeScale.logicalToCoordinate(endLogical);
+        const startTime = startCoord !== null ? timeScale.coordinateToTime(startCoord) : null;
+        const endTime = endCoord !== null ? timeScale.coordinateToTime(endCoord) : null;
+
+        console.log('[HourlyProfiler] Visible time range:', startTime, 'to', endTime);
+
+        let drawnCount = 0;
+        data.forEach((period, index) => {
             const startUnix = new Date(period.start_time).getTime() / 1000 as Time;
             const endUnix = new Date(period.end_time).getTime() / 1000 as Time;
 
-            const x1 = scope.timeScale.timeToCoordinate(startUnix);
-            const x2 = scope.timeScale.timeToCoordinate(endUnix);
+            const xStartCenter = timeScale.timeToCoordinate(startUnix);
+            const xEndCenter = timeScale.timeToCoordinate(endUnix);
 
-            if (x1 === null || x2 === null) return;
+            if (index === 0) {
+                console.log('[HourlyProfiler] First period:', period);
+            }
+
+            if (xStartCenter === null || xEndCenter === null) {
+                return;
+            }
+
+            // Apply Edge Offset: Shift left by half bar width
+            const x1 = xStartCenter - halfBarWidth;
+            const x2 = xEndCenter - halfBarWidth;
+
+            drawnCount++;
+            if (drawnCount === 1) {
+                console.log('[HourlyProfiler] First drawn w/ offset. Center:', xStartCenter, 'Edge:', x1, 'HalfWidth:', halfBarWidth);
+            }
 
             const x1Scaled = x1 * hPR;
             const x2Scaled = x2 * hPR;
 
-            // 1. Draw Hourly Box
-            const yTop = 0;
-            const yBottom = scope.bitmapSize.height;
+            // Calculate Vertical Bounds (High/Low)
+            const yHighPrice = period.high ?? period.or_high ?? period.open; // Fallback
+            const yLowPrice = period.low ?? period.or_low ?? period.close;
 
-            ctx.fillStyle = this._hexToRgba(
-                this._options.hourlyBoxColor,
-                this._options.hourlyBoxOpacity
-            );
-            ctx.fillRect(x1Scaled, yTop, x2Scaled - x1Scaled, yBottom - yTop);
+            const yHighCoord = this._series.priceToCoordinate(yHighPrice);
+            const yLowCoord = this._series.priceToCoordinate(yLowPrice);
 
-            // 2. Draw 5-Min Opening Range Box
+            if (yHighCoord === null || yLowCoord === null) return;
+
+            // In lightweight-charts, pixel coordinates increase downwards
+            // yHighPrice (higher value) -> smaller Y coordinate (top)
+            // yLowPrice (lower value) -> larger Y coordinate (bottom)
+            const yTop = Math.min(yHighCoord, yLowCoord) * vPR;
+            const yBottom = Math.max(yHighCoord, yLowCoord) * vPR;
+
+            // 1. Draw Alternating Quarters
+            if (this._options.showQuarters) {
+                for (let i = 0; i < 4; i++) {
+                    const qStartUnix = (startUnix as number) + (i * 15 * 60);
+                    const qEndUnix = (startUnix as number) + ((i + 1) * 15 * 60);
+
+                    const qX1Center = timeScale.timeToCoordinate(qStartUnix as Time);
+                    const qX2Center = timeScale.timeToCoordinate(qEndUnix as Time);
+
+                    if (qX1Center !== null && qX2Center !== null) {
+                        // Apply Edge Offset
+                        const qX1 = (qX1Center - halfBarWidth) * hPR;
+                        const qX2 = (qX2Center - halfBarWidth) * hPR;
+
+                        ctx.fillStyle = this._hexToRgba(
+                            i % 2 === 0 ? this._options.quarterEvenColor : this._options.quarterOddColor,
+                            this._options.quarterOpacity
+                        );
+                        ctx.fillRect(qX1, yTop, qX2 - qX1, yBottom - yTop);
+                    }
+                }
+            } else {
+                // Fallback to single box if quarters disabled
+                ctx.fillStyle = this._hexToRgba(
+                    this._options.hourlyBoxColor,
+                    this._options.hourlyBoxOpacity
+                );
+                ctx.fillRect(x1Scaled, yTop, x2Scaled - x1Scaled, yBottom - yTop);
+            }
+
+            // 2. Draw Horizontal Bounds (Top/Bottom)
+            if (this._options.showHourBounds) {
+                ctx.strokeStyle = this._options.hourBoundColor;
+                ctx.lineWidth = this._options.hourBoundWidth * hPR;
+
+                ctx.beginPath();
+                // Top Line
+                ctx.moveTo(x1Scaled, yTop);
+                ctx.lineTo(x2Scaled, yTop);
+                // Bottom Line
+                ctx.moveTo(x1Scaled, yBottom);
+                ctx.lineTo(x2Scaled, yBottom);
+                ctx.stroke();
+            }
+
+            // 3. Draw 5-Min Opening Range Box
             if (this._options.showOpeningRange && period.or_high && period.or_low) {
                 const orYHigh = this._series.priceToCoordinate(period.or_high);
                 const orYLow = this._series.priceToCoordinate(period.or_low);
@@ -182,23 +309,6 @@ class HourlyProfilerRenderer {
                 }
             }
 
-
-            // 3. Draw Quarter Lines (15-min intervals)
-            if (this._options.showQuarters) {
-                for (let i = 1; i < 4; i++) {
-                    const quarterTime = (startUnix as number) + (i * 15 * 60);
-                    const qX = scope.timeScale.timeToCoordinate(quarterTime as Time);
-                    if (qX !== null) {
-                        const qXScaled = qX * hPR;
-                        ctx.strokeStyle = this._options.quarterLineColor;
-                        ctx.lineWidth = this._options.quarterLineWidth * hPR;
-                        ctx.beginPath();
-                        ctx.moveTo(qXScaled, yTop);
-                        ctx.lineTo(qXScaled, yBottom);
-                        ctx.stroke();
-                    }
-                }
-            }
 
             // 4. Draw Hourly Open Line (Green)
             const yOpen = this._series.priceToCoordinate(period.open);
@@ -247,23 +357,47 @@ class HourlyProfilerRenderer {
         hPR: number,
         vPR: number
     ) {
+        const timeScale = this._chart.timeScale();
+
+        // Calculate Half Bar Width for Edge Alignment
+        const coord0 = timeScale.logicalToCoordinate(0 as any);
+        const coord1 = timeScale.logicalToCoordinate(1 as any);
+        let halfBarWidth = 0;
+        if (coord0 !== null && coord1 !== null) {
+            halfBarWidth = (Math.abs(coord1 - coord0)) / 2;
+        }
+
         data.forEach(period => {
             const startUnix = new Date(period.start_time).getTime() / 1000 as Time;
             const endUnix = new Date(period.end_time).getTime() / 1000 as Time;
 
-            const x1 = scope.timeScale.timeToCoordinate(startUnix);
-            const x2 = scope.timeScale.timeToCoordinate(endUnix);
+            const xStartCenter = timeScale.timeToCoordinate(startUnix);
+            const xEndCenter = timeScale.timeToCoordinate(endUnix);
 
-            if (x1 === null || x2 === null) return;
+            if (xStartCenter === null || xEndCenter === null) return;
+
+            // Apply Edge Offset
+            const x1 = xStartCenter - halfBarWidth;
+            const x2 = xEndCenter - halfBarWidth;
 
             const x1Scaled = x1 * hPR;
             const x2Scaled = x2 * hPR;
 
+            // Calculate Vertical Bounds (High/Low)
+            const yHighPrice = period.high ?? period.open;
+            const yLowPrice = period.low ?? period.close;
+
+            const yHighCoord = this._series.priceToCoordinate(yHighPrice);
+            const yLowCoord = this._series.priceToCoordinate(yLowPrice);
+
+            if (yHighCoord === null || yLowCoord === null) return;
+
+            // In lightweight-charts, pixel coordinates increase downwards
+            const yTop = Math.min(yHighCoord, yLowCoord) * vPR;
+            const yBottom = Math.max(yHighCoord, yLowCoord) * vPR;
+
             // 1. Draw 3H Box (if enabled)
             if (this._options.show3HourBox) {
-                const yTop = 0;
-                const yBottom = scope.bitmapSize.height;
-
                 ctx.fillStyle = this._hexToRgba(
                     this._options.threeHourBoxColor,
                     this._options.threeHourBoxOpacity
@@ -302,87 +436,160 @@ class HourlyProfilerRenderer {
         });
     }
 
-    private _hexToRgba(hex: string, alpha: number): string {
-        const r = parseInt(hex.slice(1, 3), 16);
-        const g = parseInt(hex.slice(3, 5), 16);
-        const b = parseInt(hex.slice(5, 7), 16);
-        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    private _hexToRgba(color: string, alpha: number): string {
+        if (!color || color === 'transparent') {
+            return 'rgba(0, 0, 0, 0)';
+        }
+
+        if (color.startsWith('rgb')) {
+            // If it's already rgb/rgba, we could try to inject the alpha, 
+            // but for safety let's just return it or try a simple replace if it is rgb(...)
+            if (color.startsWith('rgba')) return color;
+            // If rgb(r,g,b), convert to rgba
+            return color.replace('rgb', 'rgba').replace(')', `, ${alpha})`);
+        }
+
+        // Handle HEX
+        if (color.startsWith('#')) {
+            const hex = color.replace('#', '');
+            if (hex.length === 3) {
+                const r = parseInt(hex[0] + hex[0], 16);
+                const g = parseInt(hex[1] + hex[1], 16);
+                const b = parseInt(hex[2] + hex[2], 16);
+                return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+            } else if (hex.length === 6) {
+                const r = parseInt(hex.slice(0, 2), 16);
+                const g = parseInt(hex.slice(2, 4), 16);
+                const b = parseInt(hex.slice(4, 6), 16);
+                return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+            }
+        }
+
+        return color; // Fallback
     }
 }
 
 // Main Hourly Profiler Class
-export class HourlyProfiler {
+export class HourlyProfiler implements ISeriesPrimitive<Time> {
     public _type = 'hourly-profiler';
     private _data: HourlyPeriod[] = [];
     private _options: HourlyProfilerOptions;
+    private _chart: IChartApi;
     private _series: ISeriesApi<'Candlestick'>;
-    private _renderer: HourlyProfilerRenderer | null = null;
-    private _paneView: any = null;
     private _abortController: AbortController = new AbortController();
     private _theme: typeof THEMES.dark | null = null;
+    private _requestUpdate: () => void = () => { };
 
     constructor(
+        chart: IChartApi,
         series: ISeriesApi<'Candlestick'>,
         options: Partial<HourlyProfilerOptions> = {},
         theme?: typeof THEMES.dark
     ) {
+        console.log('[HourlyProfiler] Constructor called with options:', options, 'theme:', theme);
+        this._chart = chart;
         this._series = series;
-        this._options = { ...DEFAULT_HOURLY_PROFILER_OPTIONS, ...options };
-        if (theme) this._theme = theme;
+        if (theme) {
+            this._theme = theme;
+            // Apply theme colors
+            const themeOptions: Partial<HourlyProfilerOptions> = {
+                hourlyBoxColor: theme.ui.decoration,
+                hourlyOpenColor: theme.candle.upBody,
+                hourlyCloseColor: theme.candle.downBody,
+                hourlyMidColor: theme.tools.secondary,
 
+                orBoxColor: theme.tools.transparentFill,
+
+                // Quarter Alternating Colors
+                // First Q (0-15 [0]) and Third Q (30-45 [2]) are EVEN indices.
+                // We want these bounded/colored.
+                quarterEvenColor: theme.ui.decoration,
+                quarterOddColor: 'transparent',
+                quarterOpacity: 0.1, // Explicit opacity
+
+                // Horizontal Bounds
+                hourBoundColor: theme.chart.grid,
+
+                threeHourBoxColor: theme.tools.secondary,
+                threeHourOpenColor: theme.tools.secondary,
+                threeHourMidColor: theme.tools.secondary,
+            };
+            this._options = { ...DEFAULT_HOURLY_PROFILER_OPTIONS, ...themeOptions, ...options };
+        } else {
+            this._options = { ...DEFAULT_HOURLY_PROFILER_OPTIONS, ...options };
+        }
+
+        console.log('[HourlyProfiler] After merge, this._options:', this._options);
+        console.log('[HourlyProfiler] show3Hour:', this._options.show3Hour, 'showHourly:', this._options.showHourly);
+
+        console.log('[HourlyProfiler] About to call fetchData');
         this.fetchData();
+        console.log('[HourlyProfiler] fetchData called (async)');
+    }
+
+    attached({ requestUpdate }: { requestUpdate: () => void }) {
+        this._requestUpdate = requestUpdate;
+        // Request update immediately in case data is already there
+        if (this._data.length > 0) {
+            this._requestUpdate();
+        }
+    }
+
+    detached() {
+        this._requestUpdate = () => { };
     }
 
     async fetchData() {
         try {
             const cleanTicker = this._options.ticker.replace('!', '');
-            console.log('[HourlyProfiler] Fetching data for:', cleanTicker);
-            const res = await fetch(`http://localhost:8000/api/sessions/${cleanTicker}?range_type=hourly`, {
+            const url = `http://localhost:8000/api/sessions/${cleanTicker}?range_type=hourly`;
+            console.log('[HourlyProfiler] Fetching data for:', cleanTicker, 'URL:', url);
+
+            const res = await fetch(url, {
                 signal: this._abortController.signal
             });
+
+            console.log('[HourlyProfiler] Fetch response status:', res.status, res.statusText);
+
             if (res.ok) {
-                this._data = await res.json();
-                console.log('[HourlyProfiler] Data fetched:', this._data.length, 'periods');
-                this.updateRenderer();
+                const data = await res.json();
+                console.log('[HourlyProfiler] Data received:', data.length, 'periods', 'First period:', data[0]);
+                this._data = data;
+                console.log('[HourlyProfiler] Data assigned to _data, requesting update');
+                this._requestUpdate();
             } else {
-                console.error('[HourlyProfiler] Failed to fetch data:', res.status, res.statusText);
+                const errorText = await res.text();
+                console.error('[HourlyProfiler] Failed to fetch data:', res.status, res.statusText, 'Body:', errorText);
             }
         } catch (error) {
             if (error instanceof Error && error.name !== 'AbortError') {
-                console.error('Failed to fetch hourly data:', error);
+                console.error('[HourlyProfiler] Fetch error:', error.message, error.stack);
+            } else if (error instanceof Error) {
+                console.log('[HourlyProfiler] Fetch aborted (expected on cleanup)');
             }
         }
     }
 
     updateOptions(options: Partial<HourlyProfilerOptions>) {
+        console.log('[HourlyProfiler] updateOptions called with:', options);
         this._options = { ...this._options, ...options };
-        this.updateRenderer();
     }
 
     options() {
         return this._options;
     }
 
-    private updateRenderer() {
-        this._renderer = new HourlyProfilerRenderer(
-            this._data,
-            this._options,
-            this._series,
-            this._theme || undefined
-        );
-
-        if (this._paneView) {
-            this._paneView.renderer = () => this._renderer;
-        }
-    }
-
     paneViews() {
-        if (!this._paneView) {
-            this._paneView = {
-                renderer: () => this._renderer,
-            };
-        }
-        return [this._paneView];
+        console.log('[HourlyProfiler] paneViews called, creating renderer with', this._data.length, 'periods');
+        return [{
+            renderer: () => new HourlyProfilerRenderer(
+                this._data,
+                this._options,
+                this._chart,
+                this._series,
+                this._theme || undefined
+            )
+        }];
     }
 
     destroy() {
