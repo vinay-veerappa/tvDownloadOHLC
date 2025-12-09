@@ -366,9 +366,6 @@ export class HourlyProfiler {
         if (this._paneView) {
             this._paneView.renderer = () => this._renderer;
         }
-
-        // Request chart update to redraw
-        this._series.chart().requestUpdate();
     }
 
     paneViews() {
