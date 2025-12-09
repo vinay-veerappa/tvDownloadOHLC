@@ -65,9 +65,13 @@ export class MyIndicator implements ISeriesPrimitive<Time> {
 }
 ```
 
-### Step 4: Integration
-1.  Instantiate the indicator in `web/lib/charts/StandardChart.tsx` (or inside a specific `useIndicator` hook).
-2.  Attach it to the series: `series.attachPrimitive(myIndicatorInstance)`.
+### Step 4: Integration & Registration
+1.  **Instantiate**: Add to `web/components/chart-container.tsx`. Import your class, add a `ref`, and handle the `useEffect` lifecycle to `attachPrimitive` and `updateOptions`.
+2.  **Indicators Menu**: Add your indicator to the list in `web/components/indicators-dialog.tsx`.
+3.  **Right Sidebar**: Update `web/components/chart-wrapper.tsx` to handle the label and "edit" click actions.
+4.  **Settings Modal**:
+    *   Create `web/components/settings/<name>-settings-view.tsx`.
+    *   Add your settings view to `web/components/properties-modal.tsx` and handle the state injection.
 
 ---
 

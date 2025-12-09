@@ -13,7 +13,7 @@ backup/
 old_data/
 debug_files/
 *.csv
-*.parquet
+!data/*.parquet
 
 # Chrome
 chrome_profile/

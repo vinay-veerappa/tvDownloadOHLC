@@ -47,6 +47,10 @@ const indicators = [
         label: "Hourly Profiler",
     },
     {
+        value: "range-extensions",
+        label: "Range Extensions (Sizer)",
+    },
+    {
         value: "vp",
         label: "Volume Profile",
     },
