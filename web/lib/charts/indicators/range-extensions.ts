@@ -235,19 +235,25 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
     private _options: RangeExtensionsOptions;
     private _series: any;
     private _chart: IChartApi;
+    private _requestUpdate: () => void = () => { };
 
-    constructor(chart: IChartApi, options: Partial<RangeExtensionsOptions> = {}) {
+    constructor(
+        chart: IChartApi,
+        series: any,
+        options: Partial<RangeExtensionsOptions> = {}
+    ) {
         this._chart = chart;
+        this._series = series;
         this._options = { ...DEFAULT_RANGE_EXTENSIONS_OPTIONS, ...options };
     }
 
-    attached(series: any) {
-        this._series = series;
+    attached({ requestUpdate }: { requestUpdate: () => void }) {
+        this._requestUpdate = requestUpdate;
         this.fetchData();
     }
 
     detached() {
-        this._series = null;
+        this._requestUpdate = () => { };
     }
 
     updateOptions(options: Partial<RangeExtensionsOptions>) {
@@ -257,7 +263,7 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
         if (options.ticker && options.ticker !== prevTicker) {
             this.fetchData();
         }
-        // Trigger generic update if possible, or requestUpdate
+        this._requestUpdate();
     }
 
     paneViews(): IPrimitivePaneView[] {
@@ -292,18 +298,7 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
             }).sort((a: any, b: any) => (a.time as number) - (b.time as number));
 
             // Request update
-            // Since this is a primitive attached to series, we might need to trigger series update
-            // But usually just modifying _data and waiting for next draw is okay, 
-            // OR we need to trigger chart.timeScale().fitContent() or similar?
-            // Actually, primitives are reactive if they call requestUpdate().
-            // But we don't have requestUpdate passed in constructor for IPrimitivePaneRenderer?
-            // Wait, ISeriesPrimitive doesn't typically get requestUpdate unless we use the wrapper pattern.
-            // But we can force a redraw if we have access to something.
-            // However, just assigning this._data should be enough for next interaction/tick.
-            // To be safe, we might want to trigger an update if we knew how.
-            // For now, let's just rely on React interaction or auto-update.
-            // Actually, ISeriesPrimitive usually has access to update methods if attached properly.
-            // Let's assume next scroll/tick will show it.
+            this._requestUpdate();
 
         } catch (e) {
             console.error("RangeExtensions Fetch Error", e);

@@ -834,7 +834,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 }
 
                 if (!rangeExtensionsRef.current) {
-                    rangeExtensionsRef.current = new RangeExtensions(chart, {
+                    rangeExtensionsRef.current = new RangeExtensions(chart, series, {
                         ticker,
                         ...params
                     });
