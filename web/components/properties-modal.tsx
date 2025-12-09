@@ -14,6 +14,8 @@ import { RiskRewardSettingsView } from "./settings/risk-reward-settings-view"
 import { RiskRewardOptions } from "@/lib/charts/plugins/risk-reward"
 import { DailyProfilerSettingsView } from "./settings/daily-profiler-settings-view"
 import { DailyProfilerOptions } from "@/lib/charts/indicators/daily-profiler"
+import { HourlyProfilerSettingsView } from "./settings/hourly-profiler-settings-view"
+import { HourlyProfilerOptions } from "@/lib/charts/indicators/hourly-profiler"
 
 interface PropertiesModalProps {
     open: boolean;
@@ -64,6 +66,7 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
     const [fibOptions, setFibOptions] = useState<FibonacciOptions | null>(null);
     const [riskRewardOptions, setRiskRewardOptions] = useState<RiskRewardOptions | null>(null);
     const [dailyProfilerOptions, setDailyProfilerOptions] = useState<DailyProfilerOptions | null>(null);
+    const [hourlyProfilerOptions, setHourlyProfilerOptions] = useState<HourlyProfilerOptions | null>(null);
 
     useEffect(() => {
         const opts = initialOptions || {};
@@ -74,6 +77,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
             setRiskRewardOptions(opts as RiskRewardOptions);
         } else if (drawingType === 'daily-profiler') {
             setDailyProfilerOptions(opts as DailyProfilerOptions);
+        } else if (drawingType === 'hourly-profiler') {
+            setHourlyProfilerOptions(opts as HourlyProfilerOptions);
         }
 
         if (opts.lineColor) setLineColorState(parseColor(opts.lineColor));
@@ -94,6 +99,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
             finalOptions = riskRewardOptions;
         } else if (drawingType === 'daily-profiler' && dailyProfilerOptions) {
             finalOptions = dailyProfilerOptions;
+        } else if (drawingType === 'hourly-profiler' && hourlyProfilerOptions) {
+            finalOptions = hourlyProfilerOptions;
         } else {
             // Construct final options with RGBA colors for generic tools
             finalOptions = {
@@ -210,6 +217,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
                     <RiskRewardSettingsView options={riskRewardOptions} onChange={(updates) => setRiskRewardOptions(prev => prev ? ({ ...prev, ...updates } as RiskRewardOptions) : null)} />
                 ) : drawingType === 'daily-profiler' && dailyProfilerOptions ? (
                     <DailyProfilerSettingsView initialOptions={dailyProfilerOptions} onChange={(updates) => setDailyProfilerOptions(prev => prev ? ({ ...prev, ...updates } as DailyProfilerOptions) : null)} />
+                ) : drawingType === 'hourly-profiler' && hourlyProfilerOptions ? (
+                    <HourlyProfilerSettingsView initialOptions={hourlyProfilerOptions} onChange={(updates) => setHourlyProfilerOptions(prev => prev ? ({ ...prev, ...updates } as HourlyProfilerOptions) : null)} />
                 ) : (
                     <Tabs defaultValue="style" className="w-full">
                         <TabsList className="grid w-full grid-cols-3">
