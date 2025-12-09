@@ -2,10 +2,11 @@ import pandas as pd
 import numpy as np
 from datetime import time, timedelta
 from typing import List, Dict, Optional, Tuple
+from pathlib import Path
 
 class SessionService:
     @staticmethod
-    def calculate_sessions(df: pd.DataFrame) -> List[Dict]:
+    def calculate_sessions(df: pd.DataFrame, ticker: Optional[str] = None) -> List[Dict]:
         """
         Calculates all required session ranges and levels:
         - Asia: 18:00 - 19:30 EST
@@ -39,13 +40,33 @@ class SessionService:
             daily.index = daily.index.tz_localize(None)
         prev_daily = daily.shift(1) # Row for 2024-12-05 contains data from 2024-12-04
 
-        # 2. Calculate Weekly Aggregates (Previous Week Close)
-        # Resample to Weekly (Ending Friday or distinct weeks?)
-        # 'W-FRI' aligns strictly to weeks ending Friday
-        weekly = df.resample('W-FRI').agg({'close': 'last'})
-        if weekly.index.tz is not None:
-            weekly.index = weekly.index.tz_localize(None)
-        prev_weekly = weekly.shift(1)
+        # 2. Load Weekly Settlement Data from parquet if ticker provided
+        weekly_df = None
+        if ticker:
+            try:
+                # Construct path to weekly parquet file
+                from api.services.data_loader import DATA_DIR
+                weekly_file = DATA_DIR / f"{ticker}_1W.parquet"
+                if weekly_file.exists():
+                    weekly_df = pd.read_parquet(weekly_file)
+                    # Ensure datetime index
+                    if not isinstance(weekly_df.index, pd.DatetimeIndex):
+                        weekly_df.index = pd.to_datetime(weekly_df.index)
+                    # Normalize to naive for lookup
+                    if weekly_df.index.tz is not None:
+                        weekly_df.index = weekly_df.index.tz_localize(None)
+            except Exception as e:
+                print(f"Warning: Could not load weekly data for {ticker}: {e}")
+        
+        # Fallback: resample from 1m data if weekly file not available
+        if weekly_df is None:
+            weekly = df.resample('W-FRI').agg({'close': 'last'})
+            if weekly.index.tz is not None:
+                weekly.index = weekly.index.tz_localize(None)
+            prev_weekly = weekly.shift(1)
+        else:
+            # Use loaded weekly data
+            prev_weekly = weekly_df[['close']].shift(1)
 
         # 3. Helpers for specific times
         def get_price_at_time(d_data, t_str, date_ref):
