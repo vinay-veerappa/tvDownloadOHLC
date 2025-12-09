@@ -1,4 +1,4 @@
-import { ISeriesPrimitive, IPrimitivePaneRenderer, IPrimitivePaneView, Time } from "lightweight-charts";
+import { ISeriesPrimitive, IPrimitivePaneRenderer, IPrimitivePaneView, Time, IChartApi } from "lightweight-charts";
 
 // Reuse the base structure, but we will define our own interface to capture the new backend fields
 // we verified are being sent.
@@ -71,7 +71,8 @@ class RangeExtensionsRenderer implements IPrimitivePaneRenderer {
     constructor(
         private _data: RangeExtensionPeriod[],
         private _options: RangeExtensionsOptions,
-        private _series: any // ISeriesApi<any>
+        private _series: any, // ISeriesApi<any>
+        private _chart: IChartApi
     ) { }
 
     draw(target: any) { // CanvasRenderingTarget2D
@@ -83,46 +84,17 @@ class RangeExtensionsRenderer implements IPrimitivePaneRenderer {
             const data = this._data;
             if (!data || data.length === 0) return;
 
-            // We iterate through available data
-            // In a real optimized renderer, we would use visibleLogicalRange to filter,
-            // but for lightweight overlay, iterating all visible points is often fine or we check x coords.
-
-            // NOTE: lightweight-charts doesn't strictly give us visible range easily in this primitive context 
-            // without more boilerplate. For now, we'll rely on Coordinate check (isNull).
+            const timeScale = this._chart.timeScale();
 
             data.forEach((period) => {
                 const time = period.time;
-                // We need x-coordinate for the period. 
-                // Since 'period.time' is the start of the hour, we can try to get its X.
-                // NOTE: This assumes 'period.time' matches a bar on the chart.
-                const x1 = this._series.timeToCoordinate(time);
+                // Use chart.timeScale() for time to coordinate
+                const x1 = timeScale.timeToCoordinate(time);
 
-                // We also ideally want the End of the hour (x2).
-                // Roughly +1 hour. But timeToCoordinate might not work if that exact bar doesn't exist.
-                // Visually, we want to draw it over the "Hourly Box" width.
-                // The `HourlyProfiler` calculates x2 by looking at the next period or adding width.
-                // Let's try to find x1. If it's null, it's off screen.
                 if (x1 === null) return;
 
                 // For Width: simple approach -> assume ~60 bars (1m) or ~12 bars (5m).
-                // Better approach: look at next period's X, or just draw a fixed width visual
-                // or try to match HourlyProfiler's logic.
-                // HourlyProfiler gets x2 from `_series.timeToCoordinate(nextTime)`.
-                // We will just draw a "short" line or table near the Open.
-                // *Actually*, user wants it "above the range boxes".
-                // So we should try to span the hour.
-
-                // Let's look for the next period in our data to define width?
-                // Or just use a fixed 30-pixel width for the table?
-                // Visual Lines need to span the session.
-                // Let's hack x2 for now: x + 60 pixels? 
-                // Or better, let's try to get x2 from data if possible.
-                // Since this is 1-hour data, and we are likely on a <1h chart,
-                // we can't easily know exactly where the hour ends without querying the chart's time scale.
-                // BUT, we can simplify: Just draw the line starting at x1 and extending some amount,
-                // OR (better) just draw it across the screen? No, they are "Range Extensions", specific to that hour.
-
-                // Let's assume we can get a rough width.
+                // Better approach: look at next period's X
                 const x1Scaled = x1 * hPR;
                 // Default width if we can't find next
                 let width = 50 * hPR;
@@ -131,7 +103,7 @@ class RangeExtensionsRenderer implements IPrimitivePaneRenderer {
                 const idx = data.indexOf(period);
                 if (idx < data.length - 1) {
                     const nextTime = data[idx + 1].time;
-                    const x2 = this._series.timeToCoordinate(nextTime);
+                    const x2 = timeScale.timeToCoordinate(nextTime);
                     if (x2 !== null) {
                         const x2Scaled = x2 * hPR;
                         width = x2Scaled - x1Scaled;
@@ -148,9 +120,6 @@ class RangeExtensionsRenderer implements IPrimitivePaneRenderer {
 
                 // 09:30 Logic
                 // We need to check if this period is 09:00.
-                // 'period.time' is a Time object (often unix timestamp number).
-                // We can check backend data structure or parse date.
-                // Simple check: if rth_1m_high is present, it's the 09:00 bar.
                 if (this._options.show0930 && period.rth_1m_high != null && period.rth_1m_low != null) {
                     rangeHigh = period.rth_1m_high;
                     rangeLow = period.rth_1m_low;
@@ -210,7 +179,6 @@ class RangeExtensionsRenderer implements IPrimitivePaneRenderer {
 
                         if (this._options.extensionMode === 'price-percent') {
                             // Percent of Price (e.g. Close * 0.0005)
-                            // Ideally use Open or Close of the session.
                             extensionAmt = period.close * (val / 100);
                         } else {
                             // Range Multiplier
@@ -266,8 +234,10 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
     private _data: RangeExtensionPeriod[] = [];
     private _options: RangeExtensionsOptions;
     private _series: any;
+    private _chart: IChartApi;
 
-    constructor(options: Partial<RangeExtensionsOptions> = {}) {
+    constructor(chart: IChartApi, options: Partial<RangeExtensionsOptions> = {}) {
+        this._chart = chart;
         this._options = { ...DEFAULT_RANGE_EXTENSIONS_OPTIONS, ...options };
     }
 
@@ -292,7 +262,7 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
 
     paneViews(): IPrimitivePaneView[] {
         return [{
-            renderer: () => new RangeExtensionsRenderer(this._data, this._options, this._series)
+            renderer: () => new RangeExtensionsRenderer(this._data, this._options, this._series, this._chart)
         }];
     }
 

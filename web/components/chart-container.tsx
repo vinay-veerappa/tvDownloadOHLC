@@ -834,12 +834,10 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 }
 
                 if (!rangeExtensionsRef.current) {
-                    rangeExtensionsRef.current = new RangeExtensions({
+                    rangeExtensionsRef.current = new RangeExtensions(chart, {
                         ticker,
                         ...params
                     });
-                    rangeExtensionsRef.current.attached(series); // Attach manually as it's a primitive logic wrapper usually?
-                    // Wait, ISeriesPrimitive is attached via series.attachPrimitive(prim)
                     series.attachPrimitive(rangeExtensionsRef.current);
                 } else {
                     rangeExtensionsRef.current.updateOptions({ ticker, ...params });
