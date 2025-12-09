@@ -79,14 +79,26 @@ Click **"📊 Indicators"** in the top toolbar.
 ### Built-in Indicators
 | Indicator | Description |
 |-----------|-------------|
+| **Hourly Profiler** | Highlights hourly/3-hour blocks with alternating quarter shading. |
 | SMA | Simple Moving Average (configurable period) |
 | EMA | Exponential Moving Average (configurable period) |
 | Sessions | Market session highlighting |
 | Watermark | Chart watermark text |
 
+### Hourly Profiler Guide
+The Hourly Profiler visually organizes price action into time blocks.
+- **Hourly Blocks**: 1-hour ranges (Low/High/Open/Close/Mid).
+- **Alternating Quarters**:
+    - **1st Quarter (0-15m)**: Bounded/Highlighted.
+    - **2nd Quarter (15-30m)**: Transparent.
+    - **3rd Quarter (30-45m)**: Bounded/Highlighted.
+    - **4th Quarter (45-60m)**: Transparent.
+- **3-Hour Blocks**: Larger aggregation (e.g., 09:30-12:30).
+- **Settings**: fully configurable colors, opacity, and visibility via the "Indicators" settings menu.
+
 ### Managing Indicators
 - **Add**: Click indicator name in dropdown
-- **Settings**: Click gear icon in Object Tree
+- **Settings**: Click gear icon in "Object Tree" or Legend
 - **Remove**: Click "×" in Object Tree or legend
 
 ---
@@ -149,6 +161,26 @@ Simulate live market conditions by playing back historical data.
 |-----|--------|
 | Delete / Backspace | Delete selected drawing |
 | Left/Right Arrow | Scroll chart (in replay: step back/forward) |
+
+---
+
+## 🤖 Backtesting Platform
+
+Access via the generic URL `/backtest` (Navigation link pending). This dedicated page allows automated strategy testing.
+
+### 1. Configuration
+- **Ticker**: Input the symbol (e.g., `ES1`, `NQ1`).
+- **Timeframe**: Select resolution (e.g., `1h`, `15m`).
+- **Parameters**: Configure strategy-specific inputs (e.g., Fast SMA: 9, Slow SMA: 21).
+
+### 2. Execution
+- Click **"Run Backtest"**.
+- The system processes historical data and simulates trades based on the strategy.
+
+### 3. Results Dashboard
+- **Metrics**: Total Trades, Win Rate %, Profit Factor, Net P&L.
+- **Visuals**: Chart with Buy (Up Arrow) and Sell (Down Arrow) markers.
+- **Trade List**: Scrollable table of every trade execution with Entry/Exit prices and PnL.
 
 ---
 
