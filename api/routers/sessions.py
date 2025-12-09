@@ -56,7 +56,8 @@ async def get_sessions(
         sessions = SessionService.calculate_opening_range(df, start_time, duration)
     elif range_type == "all":
         # Return all configured sessions (Asia, London, NY, Midnight)
-        sessions = SessionService.calculate_sessions(df)
+        clean_ticker = ticker.replace("!", "")
+        sessions = SessionService.calculate_sessions(df, clean_ticker)
     else:
         sessions = [] 
         

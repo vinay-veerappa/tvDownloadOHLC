@@ -30,7 +30,7 @@ def generate_sessions(ticker):
     
     # Calculate Sessions
     print(f"  Calculating sessions (this may take a while for large files)...")
-    sessions = SessionService.calculate_sessions(df)
+    sessions = SessionService.calculate_sessions(df, ticker)
     
     # Calculate Opening Ranges (separate pass or included?)
     # sessions.py currently calls calculate_opening_range OR calculate_sessions based on param.
