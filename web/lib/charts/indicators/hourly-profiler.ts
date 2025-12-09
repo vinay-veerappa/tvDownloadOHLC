@@ -102,6 +102,8 @@ class HourlyProfilerRenderer {
 
     draw(scope: any) {
         const ctx = scope.context as CanvasRenderingContext2D;
+        if (!ctx) return; // Safety check
+
         const timeScale = scope.horizontalPixelRatio;
         const hPR = scope.horizontalPixelRatio;
         const vPR = scope.verticalPixelRatio;
@@ -345,6 +347,10 @@ export class HourlyProfiler {
     updateOptions(options: Partial<HourlyProfilerOptions>) {
         this._options = { ...this._options, ...options };
         this.updateRenderer();
+    }
+
+    options() {
+        return this._options;
     }
 
     private updateRenderer() {

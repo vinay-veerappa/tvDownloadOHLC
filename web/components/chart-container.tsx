@@ -563,7 +563,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     };
 
     const handlePropertiesSave = (options: any) => {
-        if (selectedDrawingRef.current && selectedDrawingType !== 'daily-profiler') {
+        if (selectedDrawingRef.current && selectedDrawingType !== 'daily-profiler' && selectedDrawingType !== 'hourly-profiler') {
             const drawing = selectedDrawingRef.current;
             drawing.applyOptions?.(options);
             const id = typeof drawing.id === 'function' ? drawing.id() : drawing._id;
@@ -586,6 +586,9 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         } else if (sessionRangesRef.current && selectedDrawingType === 'daily-profiler') {
             sessionRangesRef.current.applyOptions(options);
             toast.success('Daily Profiler updated');
+        } else if (hourlyProfilerRef.current && selectedDrawingType === 'hourly-profiler') {
+            hourlyProfilerRef.current.updateOptions(options);
+            toast.success('Hourly Profiler updated');
         }
     };
 
@@ -604,6 +607,10 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             // Support editing Daily Profiler
             onSelectionChange?.({ type: 'indicator', id: 'daily-profiler' });
             openProperties(sessionRangesRef.current);
+        } else if (id === 'hourly-profiler' && hourlyProfilerRef.current) {
+            // Support editing Hourly Profiler
+            onSelectionChange?.({ type: 'indicator', id: 'hourly-profiler' });
+            openProperties(hourlyProfilerRef.current);
         }
     };
 
