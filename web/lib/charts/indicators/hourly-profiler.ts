@@ -307,6 +307,7 @@ class HourlyProfilerRenderer {
 
 // Main Hourly Profiler Class
 export class HourlyProfiler {
+    public _type = 'hourly-profiler';
     private _data: HourlyPeriod[] = [];
     private _options: HourlyProfilerOptions;
     private _series: ISeriesApi<'Candlestick'>;
@@ -364,6 +365,9 @@ export class HourlyProfiler {
         if (this._paneView) {
             this._paneView.renderer = () => this._renderer;
         }
+
+        // Request chart update to redraw
+        this._series.chart().requestUpdate();
     }
 
     paneViews() {
