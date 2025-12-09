@@ -18,6 +18,8 @@ import { useDrawingInteraction } from "@/hooks/chart/use-drawing-interaction"
 import { ChartContextMenu } from "@/components/chart/chart-context-menu"
 import { ChartLegend, ChartLegendRef } from "@/components/chart/chart-legend"
 import { VWAPSettings } from "@/lib/indicator-api"
+import { ThemeParams } from "@/lib/themes"
+import { ColorType } from "lightweight-charts"
 
 interface ChartContainerProps {
     ticker: string
@@ -28,6 +30,7 @@ interface ChartContainerProps {
     onDrawingCreated: (drawing: Drawing) => void
     onDrawingDeleted?: (id: string) => void
     indicators: string[]
+    theme?: ThemeParams // New Prop
     markers?: any[]
     magnetMode?: MagnetMode
     displayTimezone?: string
@@ -58,6 +61,8 @@ interface ChartContainerProps {
     onModifyOrder?: (id: string, updates: any) => void
     onModifyPosition?: (updates: any) => void
     vwapSettings?: VWAPSettings
+    indicatorParams?: Record<string, any>
+    onIndicatorParamsChange?: (type: string, params: any) => void
 }
 
 export interface ChartContainerRef {
@@ -87,7 +92,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York',
     selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad,
     onPriceChange, position, pendingOrders, onModifyOrder, onModifyPosition, initialReplayTime,
-    vwapSettings
+    vwapSettings, indicatorParams, onIndicatorParamsChange, theme // Destructure theme
 }, ref) => {
 
     // 1. Chart Reference
@@ -116,6 +121,37 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         chartContainerRef as React.RefObject<HTMLDivElement>,
         style, indicators, data, markers, displayTimezone, timeframe, vwapSettings, ticker
     )
+
+    // Apply Theme Changes
+    useEffect(() => {
+        if (!chart || !series || !theme) return
+
+        // Chart Layout
+        chart.applyOptions({
+            layout: {
+                background: { type: ColorType.Solid, color: theme.chart.background },
+                textColor: theme.ui.text,
+            },
+            grid: {
+                vertLines: { visible: false, color: theme.chart.grid, style: 0 },
+                horzLines: { visible: false, color: theme.chart.grid, style: 0 },
+            },
+            crosshair: {
+                vertLine: { color: theme.chart.crosshair, labelBackgroundColor: theme.chart.background },
+                horzLine: { color: theme.chart.crosshair, labelBackgroundColor: theme.chart.background },
+            },
+        })
+
+        // Candle Colors
+        series.applyOptions({
+            upColor: theme.candle.upBody,
+            downColor: theme.candle.downBody,
+            borderUpColor: theme.candle.upBorder,
+            borderDownColor: theme.candle.downBorder,
+            wickUpColor: theme.candle.upWick,
+            wickDownColor: theme.candle.downWick,
+        })
+    }, [chart, series, theme])
 
     // Keep ref synced
     useEffect(() => {
@@ -527,7 +563,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     };
 
     const handlePropertiesSave = (options: any) => {
-        if (selectedDrawingRef.current) {
+        if (selectedDrawingRef.current && selectedDrawingType !== 'daily-profiler') {
             const drawing = selectedDrawingRef.current;
             drawing.applyOptions?.(options);
             const id = typeof drawing.id === 'function' ? drawing.id() : drawing._id;
@@ -547,6 +583,9 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             const primitive = primitives.current.find((p: any) => p._type === 'anchored-text');
             primitive?.applyOptions?.(options);
             toast.success('Watermark updated');
+        } else if (sessionRangesRef.current && selectedDrawingType === 'daily-profiler') {
+            sessionRangesRef.current.applyOptions(options);
+            toast.success('Daily Profiler updated');
         }
     };
 
@@ -556,11 +595,15 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             onSelectionChange?.({ type: 'drawing', id });
             openProperties(drawing);
         } else if (id === 'watermark' && primitives?.current) {
-            const p = primitives.current.find(p => p._type === 'anchored-text');
+            const p = primitives.current.find((p: any) => p._type === 'anchored-text');
             if (p) {
                 onSelectionChange?.({ type: 'indicator', id: 'watermark' });
                 openProperties(p);
             }
+        } else if (id === 'daily-profiler' && sessionRangesRef.current) {
+            // Support editing Daily Profiler
+            onSelectionChange?.({ type: 'indicator', id: 'daily-profiler' });
+            openProperties(sessionRangesRef.current);
         }
     };
 
@@ -682,7 +725,54 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             }
         }
 
-    }, [series, chart, data, indicators]); // Re-run when data updates (streaming) or indicators change
+    }, [series, chart, data, indicators]); // Re-run when data updates or switch indicators
+
+    // -------------------------------------------------------------------------
+    // 13. Session Ranges Integration
+    // -------------------------------------------------------------------------
+    const sessionRangesRef = useRef<any>(null);
+
+    useEffect(() => {
+        if (!series || !chart || !ticker) return;
+
+        const isEnabled = indicators.includes('daily-profiler');
+
+        if (isEnabled) {
+            import('@/lib/charts/indicators/daily-profiler').then(({ DailyProfiler }) => {
+                const dailyParams = indicatorParams?.['daily-profiler'] || {};
+
+                // Recreate if series/chart instance changed (e.g. timeframe change)
+                if (sessionRangesRef.current && (sessionRangesRef.current._series !== series || sessionRangesRef.current._chart !== chart)) {
+                    console.log('[ChartContainer] Series changed, recreating DailyProfiler');
+                    if (sessionRangesRef.current.destroy) sessionRangesRef.current.destroy();
+                    sessionRangesRef.current = null;
+                }
+
+                if (!sessionRangesRef.current) {
+                    sessionRangesRef.current = new DailyProfiler(chart, series, {
+                        ticker,
+                        showAsia: true,
+                        extendUntil: "16:00",
+                        ...dailyParams
+                    }, (newOpts) => onIndicatorParamsChange?.('daily-profiler', newOpts));
+                    series.attachPrimitive(sessionRangesRef.current);
+                } else {
+                    // Update options (ticker + saved params), suppress notification to avoid loops
+                    sessionRangesRef.current.applyOptions({ ticker, ...dailyParams }, true);
+                }
+            });
+        } else {
+            if (sessionRangesRef.current) {
+                try {
+                    if (sessionRangesRef.current.destroy) {
+                        sessionRangesRef.current.destroy();
+                    }
+                    series.detachPrimitive(sessionRangesRef.current);
+                } catch (e) { /* ignore */ }
+                sessionRangesRef.current = null;
+            }
+        }
+    }, [series, chart, ticker, indicators, indicatorParams, onIndicatorParamsChange]);
 
     return (
         <div className="w-full h-full relative" onContextMenu={(e) => {

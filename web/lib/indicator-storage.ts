@@ -25,6 +25,7 @@ export class IndicatorStorage {
         try {
             const allData = this.getAllData();
             const chartData = allData[chartId];
+
             return chartData?.indicators || [];
         } catch (error) {
             console.error('Failed to get indicators:', error);
@@ -32,11 +33,9 @@ export class IndicatorStorage {
         }
     }
 
-    /**
-     * Save indicators for a specific chart
-     */
     static saveIndicators(chartId: string, indicators: IndicatorConfig[]): boolean {
         try {
+
             const allData = this.getAllData();
 
             allData[chartId] = {
@@ -91,9 +90,6 @@ export class IndicatorStorage {
         return false;
     }
 
-    /**
-     * Update indicator parameters
-     */
     static updateIndicatorParams(chartId: string, indicatorType: string, params: Record<string, any>): boolean {
         const indicators = this.getIndicators(chartId);
         const indicator = indicators.find(i => i.type === indicatorType);

@@ -4,7 +4,7 @@ import { ChartIndicator, IndicatorContext } from "./types";
 
 export const VWAPIndicator: ChartIndicator = {
     render: async (ctx: IndicatorContext, config: any, paneIndex: number) => {
-        const { chart, data, timeframe, ticker, vwapSettings } = ctx;
+        const { chart, data, timeframe, ticker, vwapSettings, theme } = ctx;
 
         try {
             // Smart Defaults for VWAP Anchor Time
@@ -43,7 +43,8 @@ export const VWAPIndicator: ChartIndicator = {
 
             // Main VWAP Line
             const vwapData = toLineSeriesData(result.time, result.indicators.vwap);
-            const vwapStyle = settings.vwapStyle || { color: config.color || '#9C27B0', width: 2, style: 0 };
+            const defaultColor = theme?.tools.secondary || config.color || '#9C27B0';
+            const vwapStyle = settings.vwapStyle || { color: defaultColor, width: 2, style: 0 };
 
             const line = chart.addSeries(LineSeries, {
                 color: vwapStyle.color,

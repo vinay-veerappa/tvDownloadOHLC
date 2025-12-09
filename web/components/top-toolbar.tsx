@@ -27,9 +27,7 @@ import type { MagnetMode } from "@/lib/charts/magnet-utils"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { AccountManagerDialog } from "@/components/journal/account-manager-dialog"
 import { TimeframeSelector } from "@/components/timeframe-selector"
-
-
-
+import { ThemeSwitcher } from "@/components/theme-switcher"
 import { VWAPSettings } from "@/lib/indicator-api"
 import { VWAPSettingsDialog } from "./vwap-settings-dialog"
 
@@ -201,6 +199,7 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
 
             {/* Right: Settings */}
             <div className="flex items-center gap-1">
+                <ThemeSwitcher />
                 {/* Settings */}
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-foreground hover:bg-muted" onClick={() => setIsSettingsOpen(true)} title="Settings">
                     <Settings className="w-4 h-4" />

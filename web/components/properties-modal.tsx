@@ -12,6 +12,8 @@ import { FibonacciSettingsView } from "./drawing-settings/fibonacci-settings-vie
 import { FibonacciOptions } from "@/lib/charts/plugins/fibonacci"
 import { RiskRewardSettingsView } from "./settings/risk-reward-settings-view"
 import { RiskRewardOptions } from "@/lib/charts/plugins/risk-reward"
+import { DailyProfilerSettingsView } from "./settings/daily-profiler-settings-view"
+import { DailyProfilerOptions } from "@/lib/charts/indicators/daily-profiler"
 
 interface PropertiesModalProps {
     open: boolean;
@@ -61,6 +63,7 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
     // Specific state for Fib options if type is 'fibonacci'
     const [fibOptions, setFibOptions] = useState<FibonacciOptions | null>(null);
     const [riskRewardOptions, setRiskRewardOptions] = useState<RiskRewardOptions | null>(null);
+    const [dailyProfilerOptions, setDailyProfilerOptions] = useState<DailyProfilerOptions | null>(null);
 
     useEffect(() => {
         const opts = initialOptions || {};
@@ -69,6 +72,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
             setFibOptions(opts as FibonacciOptions);
         } else if (drawingType === 'risk-reward') {
             setRiskRewardOptions(opts as RiskRewardOptions);
+        } else if (drawingType === 'daily-profiler') {
+            setDailyProfilerOptions(opts as DailyProfilerOptions);
         }
 
         if (opts.lineColor) setLineColorState(parseColor(opts.lineColor));
@@ -87,6 +92,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
             finalOptions = fibOptions;
         } else if (drawingType === 'risk-reward' && riskRewardOptions) {
             finalOptions = riskRewardOptions;
+        } else if (drawingType === 'daily-profiler' && dailyProfilerOptions) {
+            finalOptions = dailyProfilerOptions;
         } else {
             // Construct final options with RGBA colors for generic tools
             finalOptions = {
@@ -201,6 +208,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
                     <FibonacciSettingsView options={fibOptions} onChange={setFibOptions} />
                 ) : drawingType === 'risk-reward' && riskRewardOptions ? (
                     <RiskRewardSettingsView options={riskRewardOptions} onChange={(updates) => setRiskRewardOptions(prev => prev ? ({ ...prev, ...updates } as RiskRewardOptions) : null)} />
+                ) : drawingType === 'daily-profiler' && dailyProfilerOptions ? (
+                    <DailyProfilerSettingsView initialOptions={dailyProfilerOptions} onChange={(updates) => setDailyProfilerOptions(prev => prev ? ({ ...prev, ...updates } as DailyProfilerOptions) : null)} />
                 ) : (
                     <Tabs defaultValue="style" className="w-full">
                         <TabsList className="grid w-full grid-cols-3">

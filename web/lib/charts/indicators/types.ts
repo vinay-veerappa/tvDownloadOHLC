@@ -1,5 +1,6 @@
 import { IChartApi, ISeriesApi, LineSeries } from "lightweight-charts";
 import { VWAPSettings } from "@/lib/indicator-api";
+import { ThemeParams } from "@/lib/themes";
 
 export interface IndicatorContext {
     chart: IChartApi;
@@ -8,6 +9,7 @@ export interface IndicatorContext {
     ticker?: string;
     vwapSettings?: VWAPSettings;
     resolvedTheme?: string;
+    theme?: ThemeParams;
 }
 
 export interface ChartIndicator {

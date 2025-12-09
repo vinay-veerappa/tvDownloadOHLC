@@ -23,6 +23,7 @@ import { SessionHighlighting } from "@/lib/charts/plugins/session-highlighting"
 import { calculateIndicators, toLineSeriesData, VWAPSettings } from "@/lib/indicator-api"
 import { INDICATOR_REGISTRY } from "@/lib/charts/indicators"
 
+import { ThemeParams } from "@/lib/themes"
 import { useTheme } from "next-themes"
 
 export function useChart(
@@ -34,7 +35,8 @@ export function useChart(
     displayTimezone: string = 'America/New_York',
     timeframe: string = '1m',
     vwapSettings?: VWAPSettings,
-    ticker?: string
+    ticker?: string,
+    theme?: ThemeParams // New Arg
 ) {
     // console.log('[useChart] displayTimezone:', displayTimezone)
     const { resolvedTheme } = useTheme()
@@ -297,7 +299,8 @@ export function useChart(
                         timeframe,
                         ticker,
                         vwapSettings,
-                        resolvedTheme
+                        resolvedTheme,
+                        theme // Pass ThemeParams
                     }, params, oscillatorPaneIndex);
 
                     renderPromise.then(({ series, paneIndexIncrement }: { series: any[], paneIndexIncrement: number }) => {
