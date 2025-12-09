@@ -1,0 +1,23 @@
+{
+  "ticker": "SPX",
+  "timeframe": "1D",
+  "totalBars": 21732,
+  "chunkSize": 20000,
+  "numChunks": 2,
+  "startTime": -958818600,
+  "endTime": 1764945000,
+  "chunks": [
+    {
+      "index": 0,
+      "startTime": -739881000,
+      "endTime": 1764945000,
+      "bars": 20000
+    },
+    {
+      "index": 1,
+      "startTime": -958818600,
+      "endTime": -740140200,
+      "bars": 1732
+    }
+  ]
+}

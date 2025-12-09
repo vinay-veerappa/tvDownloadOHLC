@@ -1,0 +1,1721 @@
+{
+  "ticker": "NQ1",
+  "timeframe": "1m",
+  "totalBars": 5686264,
+  "chunkSize": 20000,
+  "numChunks": 285,
+  "startTime": 1228981080,
+  "endTime": 1764971940,
+  "chunks": [
+    {
+      "index": 0,
+      "startTime": 1763132760,
+      "endTime": 1764971940,
+      "bars": 20000
+    },
+    {
+      "index": 1,
+      "startTime": 1761533160,
+      "endTime": 1763132700,
+      "bars": 20000
+    },
+    {
+      "index": 2,
+      "startTime": 1759760760,
+      "endTime": 1761533100,
+      "bars": 20000
+    },
+    {
+      "index": 3,
+      "startTime": 1757991900,
+      "endTime": 1759760700,
+      "bars": 20000
+    },
+    {
+      "index": 4,
+      "startTime": 1756204920,
+      "endTime": 1757991840,
+      "bars": 20000
+    },
+    {
+      "index": 5,
+      "startTime": 1754436000,
+      "endTime": 1756204860,
+      "bars": 20000
+    },
+    {
+      "index": 6,
+      "startTime": 1752663540,
+      "endTime": 1754435940,
+      "bars": 20000
+    },
+    {
+      "index": 7,
+      "startTime": 1750863060,
+      "endTime": 1752663480,
+      "bars": 20000
+    },
+    {
+      "index": 8,
+      "startTime": 1749079800,
+      "endTime": 1750863000,
+      "bars": 20000
+    },
+    {
+      "index": 9,
+      "startTime": 1747293000,
+      "endTime": 1749079740,
+      "bars": 20000
+    },
+    {
+      "index": 10,
+      "startTime": 1745520600,
+      "endTime": 1747292940,
+      "bars": 20000
+    },
+    {
+      "index": 11,
+      "startTime": 1743665400,
+      "endTime": 1745520540,
+      "bars": 20000
+    },
+    {
+      "index": 12,
+      "startTime": 1741892820,
+      "endTime": 1743665340,
+      "bars": 20000
+    },
+    {
+      "index": 13,
+      "startTime": 1740127560,
+      "endTime": 1741892760,
+      "bars": 20000
+    },
+    {
+      "index": 14,
+      "startTime": 1738340700,
+      "endTime": 1740127500,
+      "bars": 20000
+    },
+    {
+      "index": 15,
+      "startTime": 1736730300,
+      "endTime": 1738340640,
+      "bars": 20000
+    },
+    {
+      "index": 16,
+      "startTime": 1734571680,
+      "endTime": 1736730240,
+      "bars": 20000
+    },
+    {
+      "index": 17,
+      "startTime": 1732771260,
+      "endTime": 1734571620,
+      "bars": 20000
+    },
+    {
+      "index": 18,
+      "startTime": 1730998860,
+      "endTime": 1732771200,
+      "bars": 20000
+    },
+    {
+      "index": 19,
+      "startTime": 1729226400,
+      "endTime": 1730998800,
+      "bars": 20000
+    },
+    {
+      "index": 20,
+      "startTime": 1727453940,
+      "endTime": 1729226340,
+      "bars": 20000
+    },
+    {
+      "index": 21,
+      "startTime": 1725855600,
+      "endTime": 1727453880,
+      "bars": 20000
+    },
+    {
+      "index": 22,
+      "startTime": 1724068620,
+      "endTime": 1725855540,
+      "bars": 20000
+    },
+    {
+      "index": 23,
+      "startTime": 1722299760,
+      "endTime": 1724068560,
+      "bars": 20000
+    },
+    {
+      "index": 24,
+      "startTime": 1720527240,
+      "endTime": 1722299700,
+      "bars": 20000
+    },
+    {
+      "index": 25,
+      "startTime": 1718712240,
+      "endTime": 1720527180,
+      "bars": 20000
+    },
+    {
+      "index": 26,
+      "startTime": 1716943260,
+      "endTime": 1718712180,
+      "bars": 20000
+    },
+    {
+      "index": 27,
+      "startTime": 1715156160,
+      "endTime": 1716943200,
+      "bars": 20000
+    },
+    {
+      "index": 28,
+      "startTime": 1713383520,
+      "endTime": 1715156100,
+      "bars": 20000
+    },
+    {
+      "index": 29,
+      "startTime": 1711528200,
+      "endTime": 1713383460,
+      "bars": 20000
+    },
+    {
+      "index": 30,
+      "startTime": 1709758620,
+      "endTime": 1711528140,
+      "bars": 20000
+    },
+    {
+      "index": 31,
+      "startTime": 1707975420,
+      "endTime": 1709758560,
+      "bars": 20000
+    },
+    {
+      "index": 32,
+      "startTime": 1706202480,
+      "endTime": 1707975360,
+      "bars": 20000
+    },
+    {
+      "index": 33,
+      "startTime": 1704416580,
+      "endTime": 1706202420,
+      "bars": 20000
+    },
+    {
+      "index": 34,
+      "startTime": 1702471380,
+      "endTime": 1704416520,
+      "bars": 20000
+    },
+    {
+      "index": 35,
+      "startTime": 1700670900,
+      "endTime": 1702471320,
+      "bars": 20000
+    },
+    {
+      "index": 36,
+      "startTime": 1698898500,
+      "endTime": 1700670840,
+      "bars": 20000
+    },
+    {
+      "index": 37,
+      "startTime": 1697126100,
+      "endTime": 1698898440,
+      "bars": 20000
+    },
+    {
+      "index": 38,
+      "startTime": 1695357240,
+      "endTime": 1697126040,
+      "bars": 20000
+    },
+    {
+      "index": 39,
+      "startTime": 1693570140,
+      "endTime": 1695357180,
+      "bars": 20000
+    },
+    {
+      "index": 40,
+      "startTime": 1691974020,
+      "endTime": 1693570080,
+      "bars": 20000
+    },
+    {
+      "index": 41,
+      "startTime": 1690201560,
+      "endTime": 1691973960,
+      "bars": 20000
+    },
+    {
+      "index": 42,
+      "startTime": 1688400960,
+      "endTime": 1690201500,
+      "bars": 20000
+    },
+    {
+      "index": 43,
+      "startTime": 1686617460,
+      "endTime": 1688400900,
+      "bars": 20000
+    },
+    {
+      "index": 44,
+      "startTime": 1684830300,
+      "endTime": 1686617400,
+      "bars": 20000
+    },
+    {
+      "index": 45,
+      "startTime": 1683057720,
+      "endTime": 1684830240,
+      "bars": 20000
+    },
+    {
+      "index": 46,
+      "startTime": 1681288800,
+      "endTime": 1683057660,
+      "bars": 20000
+    },
+    {
+      "index": 47,
+      "startTime": 1679487900,
+      "endTime": 1681288740,
+      "bars": 20000
+    },
+    {
+      "index": 48,
+      "startTime": 1677722520,
+      "endTime": 1679487840,
+      "bars": 20000
+    },
+    {
+      "index": 49,
+      "startTime": 1675935540,
+      "endTime": 1677722460,
+      "bars": 20000
+    },
+    {
+      "index": 50,
+      "startTime": 1674163020,
+      "endTime": 1675935480,
+      "bars": 20000
+    },
+    {
+      "index": 51,
+      "startTime": 1672293120,
+      "endTime": 1674162960,
+      "bars": 20000
+    },
+    {
+      "index": 52,
+      "startTime": 1670434080,
+      "endTime": 1672293060,
+      "bars": 20000
+    },
+    {
+      "index": 53,
+      "startTime": 1668633540,
+      "endTime": 1670434020,
+      "bars": 20000
+    },
+    {
+      "index": 54,
+      "startTime": 1666861140,
+      "endTime": 1668633480,
+      "bars": 20000
+    },
+    {
+      "index": 55,
+      "startTime": 1665088680,
+      "endTime": 1666861080,
+      "bars": 20000
+    },
+    {
+      "index": 56,
+      "startTime": 1663319880,
+      "endTime": 1665088620,
+      "bars": 20000
+    },
+    {
+      "index": 57,
+      "startTime": 1661533080,
+      "endTime": 1663319820,
+      "bars": 20000
+    },
+    {
+      "index": 58,
+      "startTime": 1659936960,
+      "endTime": 1661533020,
+      "bars": 20000
+    },
+    {
+      "index": 59,
+      "startTime": 1658164500,
+      "endTime": 1659936900,
+      "bars": 20000
+    },
+    {
+      "index": 60,
+      "startTime": 1656381300,
+      "endTime": 1658164440,
+      "bars": 20000
+    },
+    {
+      "index": 61,
+      "startTime": 1654594500,
+      "endTime": 1656381240,
+      "bars": 20000
+    },
+    {
+      "index": 62,
+      "startTime": 1652807580,
+      "endTime": 1654594440,
+      "bars": 20000
+    },
+    {
+      "index": 63,
+      "startTime": 1651038780,
+      "endTime": 1652807520,
+      "bars": 20000
+    },
+    {
+      "index": 64,
+      "startTime": 1649179920,
+      "endTime": 1651038720,
+      "bars": 20000
+    },
+    {
+      "index": 65,
+      "startTime": 1647411120,
+      "endTime": 1649179860,
+      "bars": 20000
+    },
+    {
+      "index": 66,
+      "startTime": 1645642320,
+      "endTime": 1647411060,
+      "bars": 20000
+    },
+    {
+      "index": 67,
+      "startTime": 1643859060,
+      "endTime": 1645642260,
+      "bars": 20000
+    },
+    {
+      "index": 68,
+      "startTime": 1642072260,
+      "endTime": 1643859000,
+      "bars": 20000
+    },
+    {
+      "index": 69,
+      "startTime": 1640216820,
+      "endTime": 1642072200,
+      "bars": 20000
+    },
+    {
+      "index": 70,
+      "startTime": 1638443280,
+      "endTime": 1640216760,
+      "bars": 20000
+    },
+    {
+      "index": 71,
+      "startTime": 1636642980,
+      "endTime": 1638443220,
+      "bars": 20000
+    },
+    {
+      "index": 72,
+      "startTime": 1634870460,
+      "endTime": 1636642920,
+      "bars": 20000
+    },
+    {
+      "index": 73,
+      "startTime": 1633097460,
+      "endTime": 1634870400,
+      "bars": 20000
+    },
+    {
+      "index": 74,
+      "startTime": 1631501400,
+      "endTime": 1633097400,
+      "bars": 20000
+    },
+    {
+      "index": 75,
+      "startTime": 1629714240,
+      "endTime": 1631501340,
+      "bars": 20000
+    },
+    {
+      "index": 76,
+      "startTime": 1627945380,
+      "endTime": 1629714180,
+      "bars": 20000
+    },
+    {
+      "index": 77,
+      "startTime": 1626172800,
+      "endTime": 1627945320,
+      "bars": 20000
+    },
+    {
+      "index": 78,
+      "startTime": 1624382280,
+      "endTime": 1626172740,
+      "bars": 20000
+    },
+    {
+      "index": 79,
+      "startTime": 1622600220,
+      "endTime": 1624382220,
+      "bars": 20000
+    },
+    {
+      "index": 80,
+      "startTime": 1620800520,
+      "endTime": 1622600160,
+      "bars": 20000
+    },
+    {
+      "index": 81,
+      "startTime": 1619014320,
+      "endTime": 1620800460,
+      "bars": 20000
+    },
+    {
+      "index": 82,
+      "startTime": 1617201120,
+      "endTime": 1619014260,
+      "bars": 20000
+    },
+    {
+      "index": 83,
+      "startTime": 1615423200,
+      "endTime": 1617201060,
+      "bars": 20000
+    },
+    {
+      "index": 84,
+      "startTime": 1613637300,
+      "endTime": 1615423140,
+      "bars": 20000
+    },
+    {
+      "index": 85,
+      "startTime": 1611837780,
+      "endTime": 1613637240,
+      "bars": 20000
+    },
+    {
+      "index": 86,
+      "startTime": 1610038320,
+      "endTime": 1611837720,
+      "bars": 20000
+    },
+    {
+      "index": 87,
+      "startTime": 1608067920,
+      "endTime": 1610038260,
+      "bars": 20000
+    },
+    {
+      "index": 88,
+      "startTime": 1606259520,
+      "endTime": 1608067860,
+      "bars": 20000
+    },
+    {
+      "index": 89,
+      "startTime": 1604473560,
+      "endTime": 1606259460,
+      "bars": 20000
+    },
+    {
+      "index": 90,
+      "startTime": 1602683940,
+      "endTime": 1604473500,
+      "bars": 20000
+    },
+    {
+      "index": 91,
+      "startTime": 1600902540,
+      "endTime": 1602683880,
+      "bars": 20000
+    },
+    {
+      "index": 92,
+      "startTime": 1599103080,
+      "endTime": 1600902480,
+      "bars": 20000
+    },
+    {
+      "index": 93,
+      "startTime": 1597317000,
+      "endTime": 1599103020,
+      "bars": 20000
+    },
+    {
+      "index": 94,
+      "startTime": 1595530920,
+      "endTime": 1597316940,
+      "bars": 20000
+    },
+    {
+      "index": 95,
+      "startTime": 1593736020,
+      "endTime": 1595530860,
+      "bars": 20000
+    },
+    {
+      "index": 96,
+      "startTime": 1591950120,
+      "endTime": 1593735960,
+      "bars": 20000
+    },
+    {
+      "index": 97,
+      "startTime": 1590150660,
+      "endTime": 1591950060,
+      "bars": 20000
+    },
+    {
+      "index": 98,
+      "startTime": 1588365660,
+      "endTime": 1590150600,
+      "bars": 20000
+    },
+    {
+      "index": 99,
+      "startTime": 1586756160,
+      "endTime": 1588365600,
+      "bars": 20000
+    },
+    {
+      "index": 100,
+      "startTime": 1584706800,
+      "endTime": 1586756100,
+      "bars": 20000
+    },
+    {
+      "index": 101,
+      "startTime": 1582806600,
+      "endTime": 1584706740,
+      "bars": 20000
+    },
+    {
+      "index": 102,
+      "startTime": 1581007140,
+      "endTime": 1582806540,
+      "bars": 20000
+    },
+    {
+      "index": 103,
+      "startTime": 1579207260,
+      "endTime": 1581007080,
+      "bars": 20000
+    },
+    {
+      "index": 104,
+      "startTime": 1577338740,
+      "endTime": 1579207200,
+      "bars": 20000
+    },
+    {
+      "index": 105,
+      "startTime": 1575450300,
+      "endTime": 1577338680,
+      "bars": 20000
+    },
+    {
+      "index": 106,
+      "startTime": 1573638000,
+      "endTime": 1575450240,
+      "bars": 20000
+    },
+    {
+      "index": 107,
+      "startTime": 1571847900,
+      "endTime": 1573637940,
+      "bars": 20000
+    },
+    {
+      "index": 108,
+      "startTime": 1570066140,
+      "endTime": 1571847840,
+      "bars": 20000
+    },
+    {
+      "index": 109,
+      "startTime": 1568279940,
+      "endTime": 1570066080,
+      "bars": 20000
+    },
+    {
+      "index": 110,
+      "startTime": 1566480360,
+      "endTime": 1568279880,
+      "bars": 20000
+    },
+    {
+      "index": 111,
+      "startTime": 1564698900,
+      "endTime": 1566480300,
+      "bars": 20000
+    },
+    {
+      "index": 112,
+      "startTime": 1562912460,
+      "endTime": 1564698840,
+      "bars": 20000
+    },
+    {
+      "index": 113,
+      "startTime": 1561099440,
+      "endTime": 1562912400,
+      "bars": 20000
+    },
+    {
+      "index": 114,
+      "startTime": 1559312760,
+      "endTime": 1561099380,
+      "bars": 20000
+    },
+    {
+      "index": 115,
+      "startTime": 1557513000,
+      "endTime": 1559312700,
+      "bars": 20000
+    },
+    {
+      "index": 116,
+      "startTime": 1555904040,
+      "endTime": 1557512940,
+      "bars": 20000
+    },
+    {
+      "index": 117,
+      "startTime": 1553857980,
+      "endTime": 1555903980,
+      "bars": 20000
+    },
+    {
+      "index": 118,
+      "startTime": 1552075200,
+      "endTime": 1553857920,
+      "bars": 20000
+    },
+    {
+      "index": 119,
+      "startTime": 1550258580,
+      "endTime": 1552075140,
+      "bars": 20000
+    },
+    {
+      "index": 120,
+      "startTime": 1548649680,
+      "endTime": 1550258520,
+      "bars": 20000
+    },
+    {
+      "index": 121,
+      "startTime": 1546850280,
+      "endTime": 1548649620,
+      "bars": 20000
+    },
+    {
+      "index": 122,
+      "startTime": 1544706180,
+      "endTime": 1546850220,
+      "bars": 20000
+    },
+    {
+      "index": 123,
+      "startTime": 1542867900,
+      "endTime": 1544706120,
+      "bars": 20000
+    },
+    {
+      "index": 124,
+      "startTime": 1541077080,
+      "endTime": 1542867840,
+      "bars": 20000
+    },
+    {
+      "index": 125,
+      "startTime": 1539295620,
+      "endTime": 1541077020,
+      "bars": 20000
+    },
+    {
+      "index": 126,
+      "startTime": 1537508040,
+      "endTime": 1539295560,
+      "bars": 20000
+    },
+    {
+      "index": 127,
+      "startTime": 1535701440,
+      "endTime": 1537507980,
+      "bars": 20000
+    },
+    {
+      "index": 128,
+      "startTime": 1533913860,
+      "endTime": 1535701380,
+      "bars": 20000
+    },
+    {
+      "index": 129,
+      "startTime": 1532302560,
+      "endTime": 1533913800,
+      "bars": 20000
+    },
+    {
+      "index": 130,
+      "startTime": 1530489060,
+      "endTime": 1532302500,
+      "bars": 20000
+    },
+    {
+      "index": 131,
+      "startTime": 1528700280,
+      "endTime": 1530489000,
+      "bars": 20000
+    },
+    {
+      "index": 132,
+      "startTime": 1526893560,
+      "endTime": 1528700220,
+      "bars": 20000
+    },
+    {
+      "index": 133,
+      "startTime": 1525102800,
+      "endTime": 1526893500,
+      "bars": 20000
+    },
+    {
+      "index": 134,
+      "startTime": 1523318040,
+      "endTime": 1525102740,
+      "bars": 20000
+    },
+    {
+      "index": 135,
+      "startTime": 1521444960,
+      "endTime": 1523317980,
+      "bars": 20000
+    },
+    {
+      "index": 136,
+      "startTime": 1519661340,
+      "endTime": 1521444900,
+      "bars": 20000
+    },
+    {
+      "index": 137,
+      "startTime": 1517860740,
+      "endTime": 1519661280,
+      "bars": 20000
+    },
+    {
+      "index": 138,
+      "startTime": 1516077780,
+      "endTime": 1517860680,
+      "bars": 20000
+    },
+    {
+      "index": 139,
+      "startTime": 1513911660,
+      "endTime": 1516077720,
+      "bars": 20000
+    },
+    {
+      "index": 140,
+      "startTime": 1512116220,
+      "endTime": 1513911600,
+      "bars": 20000
+    },
+    {
+      "index": 141,
+      "startTime": 1510293720,
+      "endTime": 1512116160,
+      "bars": 20000
+    },
+    {
+      "index": 142,
+      "startTime": 1508494440,
+      "endTime": 1510293660,
+      "bars": 20000
+    },
+    {
+      "index": 143,
+      "startTime": 1506677460,
+      "endTime": 1508494380,
+      "bars": 20000
+    },
+    {
+      "index": 144,
+      "startTime": 1504877520,
+      "endTime": 1506677400,
+      "bars": 20000
+    },
+    {
+      "index": 145,
+      "startTime": 1503065700,
+      "endTime": 1504877460,
+      "bars": 20000
+    },
+    {
+      "index": 146,
+      "startTime": 1501261860,
+      "endTime": 1503065640,
+      "bars": 20000
+    },
+    {
+      "index": 147,
+      "startTime": 1499453580,
+      "endTime": 1501261800,
+      "bars": 20000
+    },
+    {
+      "index": 148,
+      "startTime": 1497619260,
+      "endTime": 1499453520,
+      "bars": 20000
+    },
+    {
+      "index": 149,
+      "startTime": 1495781460,
+      "endTime": 1497619200,
+      "bars": 20000
+    },
+    {
+      "index": 150,
+      "startTime": 1493967480,
+      "endTime": 1495781400,
+      "bars": 20000
+    },
+    {
+      "index": 151,
+      "startTime": 1492050900,
+      "endTime": 1493967420,
+      "bars": 20000
+    },
+    {
+      "index": 152,
+      "startTime": 1490237520,
+      "endTime": 1492050840,
+      "bars": 20000
+    },
+    {
+      "index": 153,
+      "startTime": 1488410400,
+      "endTime": 1490237280,
+      "bars": 20000
+    },
+    {
+      "index": 154,
+      "startTime": 1486568160,
+      "endTime": 1488410340,
+      "bars": 20000
+    },
+    {
+      "index": 155,
+      "startTime": 1484748060,
+      "endTime": 1486568100,
+      "bars": 20000
+    },
+    {
+      "index": 156,
+      "startTime": 1482519240,
+      "endTime": 1484748000,
+      "bars": 20000
+    },
+    {
+      "index": 157,
+      "startTime": 1480649880,
+      "endTime": 1482519180,
+      "bars": 20000
+    },
+    {
+      "index": 158,
+      "startTime": 1478783940,
+      "endTime": 1480649820,
+      "bars": 20000
+    },
+    {
+      "index": 159,
+      "startTime": 1476960540,
+      "endTime": 1478783880,
+      "bars": 20000
+    },
+    {
+      "index": 160,
+      "startTime": 1475113260,
+      "endTime": 1476960480,
+      "bars": 20000
+    },
+    {
+      "index": 161,
+      "startTime": 1473263820,
+      "endTime": 1475113200,
+      "bars": 20000
+    },
+    {
+      "index": 162,
+      "startTime": 1471357680,
+      "endTime": 1473263760,
+      "bars": 20000
+    },
+    {
+      "index": 163,
+      "startTime": 1469492220,
+      "endTime": 1471357620,
+      "bars": 20000
+    },
+    {
+      "index": 164,
+      "startTime": 1467634140,
+      "endTime": 1469492160,
+      "bars": 20000
+    },
+    {
+      "index": 165,
+      "startTime": 1465804140,
+      "endTime": 1467634080,
+      "bars": 20000
+    },
+    {
+      "index": 166,
+      "startTime": 1463739300,
+      "endTime": 1465804080,
+      "bars": 20000
+    },
+    {
+      "index": 167,
+      "startTime": 1461910980,
+      "endTime": 1463739240,
+      "bars": 20000
+    },
+    {
+      "index": 168,
+      "startTime": 1460091600,
+      "endTime": 1461910920,
+      "bars": 20000
+    },
+    {
+      "index": 169,
+      "startTime": 1458166800,
+      "endTime": 1460091540,
+      "bars": 20000
+    },
+    {
+      "index": 170,
+      "startTime": 1456344540,
+      "endTime": 1458166680,
+      "bars": 20000
+    },
+    {
+      "index": 171,
+      "startTime": 1454540580,
+      "endTime": 1456344480,
+      "bars": 20000
+    },
+    {
+      "index": 172,
+      "startTime": 1452739320,
+      "endTime": 1454540520,
+      "bars": 20000
+    },
+    {
+      "index": 173,
+      "startTime": 1450713900,
+      "endTime": 1452739260,
+      "bars": 20000
+    },
+    {
+      "index": 174,
+      "startTime": 1448883720,
+      "endTime": 1450713840,
+      "bars": 20000
+    },
+    {
+      "index": 175,
+      "startTime": 1446831300,
+      "endTime": 1448883660,
+      "bars": 20000
+    },
+    {
+      "index": 176,
+      "startTime": 1444999920,
+      "endTime": 1446831240,
+      "bars": 20000
+    },
+    {
+      "index": 177,
+      "startTime": 1443189540,
+      "endTime": 1444999860,
+      "bars": 20000
+    },
+    {
+      "index": 178,
+      "startTime": 1441364940,
+      "endTime": 1443189480,
+      "bars": 20000
+    },
+    {
+      "index": 179,
+      "startTime": 1439560620,
+      "endTime": 1441364880,
+      "bars": 20000
+    },
+    {
+      "index": 180,
+      "startTime": 1437701160,
+      "endTime": 1439560560,
+      "bars": 20000
+    },
+    {
+      "index": 181,
+      "startTime": 1435837680,
+      "endTime": 1437701040,
+      "bars": 20000
+    },
+    {
+      "index": 182,
+      "startTime": 1433911500,
+      "endTime": 1435837620,
+      "bars": 20000
+    },
+    {
+      "index": 183,
+      "startTime": 1431961740,
+      "endTime": 1433911440,
+      "bars": 20000
+    },
+    {
+      "index": 184,
+      "startTime": 1429884660,
+      "endTime": 1431961680,
+      "bars": 20000
+    },
+    {
+      "index": 185,
+      "startTime": 1427938620,
+      "endTime": 1429884600,
+      "bars": 20000
+    },
+    {
+      "index": 186,
+      "startTime": 1426063140,
+      "endTime": 1427938560,
+      "bars": 20000
+    },
+    {
+      "index": 187,
+      "startTime": 1424083440,
+      "endTime": 1426063080,
+      "bars": 20000
+    },
+    {
+      "index": 188,
+      "startTime": 1422233100,
+      "endTime": 1424083380,
+      "bars": 20000
+    },
+    {
+      "index": 189,
+      "startTime": 1420224540,
+      "endTime": 1422233040,
+      "bars": 20000
+    },
+    {
+      "index": 190,
+      "startTime": 1418152020,
+      "endTime": 1420224480,
+      "bars": 20000
+    },
+    {
+      "index": 191,
+      "startTime": 1416243600,
+      "endTime": 1418151960,
+      "bars": 20000
+    },
+    {
+      "index": 192,
+      "startTime": 1414389660,
+      "endTime": 1416243540,
+      "bars": 20000
+    },
+    {
+      "index": 193,
+      "startTime": 1412573880,
+      "endTime": 1414389600,
+      "bars": 20000
+    },
+    {
+      "index": 194,
+      "startTime": 1410522420,
+      "endTime": 1412573760,
+      "bars": 20000
+    },
+    {
+      "index": 195,
+      "startTime": 1408544160,
+      "endTime": 1410522360,
+      "bars": 20000
+    },
+    {
+      "index": 196,
+      "startTime": 1406660160,
+      "endTime": 1408544100,
+      "bars": 20000
+    },
+    {
+      "index": 197,
+      "startTime": 1404746580,
+      "endTime": 1406660100,
+      "bars": 20000
+    },
+    {
+      "index": 198,
+      "startTime": 1402573080,
+      "endTime": 1404746520,
+      "bars": 20000
+    },
+    {
+      "index": 199,
+      "startTime": 1400595900,
+      "endTime": 1402573020,
+      "bars": 20000
+    },
+    {
+      "index": 200,
+      "startTime": 1398705960,
+      "endTime": 1400595840,
+      "bars": 20000
+    },
+    {
+      "index": 201,
+      "startTime": 1396576800,
+      "endTime": 1398705900,
+      "bars": 20000
+    },
+    {
+      "index": 202,
+      "startTime": 1394688300,
+      "endTime": 1396576740,
+      "bars": 20000
+    },
+    {
+      "index": 203,
+      "startTime": 1392810720,
+      "endTime": 1394688180,
+      "bars": 20000
+    },
+    {
+      "index": 204,
+      "startTime": 1390934700,
+      "endTime": 1392810660,
+      "bars": 20000
+    },
+    {
+      "index": 205,
+      "startTime": 1389004800,
+      "endTime": 1390934640,
+      "bars": 20000
+    },
+    {
+      "index": 206,
+      "startTime": 1386590280,
+      "endTime": 1389004740,
+      "bars": 20000
+    },
+    {
+      "index": 207,
+      "startTime": 1384448280,
+      "endTime": 1386590220,
+      "bars": 20000
+    },
+    {
+      "index": 208,
+      "startTime": 1382562720,
+      "endTime": 1384448220,
+      "bars": 20000
+    },
+    {
+      "index": 209,
+      "startTime": 1380714240,
+      "endTime": 1382562660,
+      "bars": 20000
+    },
+    {
+      "index": 210,
+      "startTime": 1378782840,
+      "endTime": 1380714180,
+      "bars": 20000
+    },
+    {
+      "index": 211,
+      "startTime": 1376863260,
+      "endTime": 1378782720,
+      "bars": 20000
+    },
+    {
+      "index": 212,
+      "startTime": 1374795300,
+      "endTime": 1376863200,
+      "bars": 20000
+    },
+    {
+      "index": 213,
+      "startTime": 1372852140,
+      "endTime": 1374795240,
+      "bars": 20000
+    },
+    {
+      "index": 214,
+      "startTime": 1370973660,
+      "endTime": 1372852080,
+      "bars": 20000
+    },
+    {
+      "index": 215,
+      "startTime": 1369071780,
+      "endTime": 1370973600,
+      "bars": 20000
+    },
+    {
+      "index": 216,
+      "startTime": 1366951680,
+      "endTime": 1369071720,
+      "bars": 20000
+    },
+    {
+      "index": 217,
+      "startTime": 1365073260,
+      "endTime": 1366951620,
+      "bars": 20000
+    },
+    {
+      "index": 218,
+      "startTime": 1363011120,
+      "endTime": 1365073200,
+      "bars": 20000
+    },
+    {
+      "index": 219,
+      "startTime": 1360870380,
+      "endTime": 1363011060,
+      "bars": 20000
+    },
+    {
+      "index": 220,
+      "startTime": 1358954940,
+      "endTime": 1360870320,
+      "bars": 20000
+    },
+    {
+      "index": 221,
+      "startTime": 1356728820,
+      "endTime": 1358954880,
+      "bars": 20000
+    },
+    {
+      "index": 222,
+      "startTime": 1354693020,
+      "endTime": 1356728760,
+      "bars": 20000
+    },
+    {
+      "index": 223,
+      "startTime": 1352777640,
+      "endTime": 1354692960,
+      "bars": 20000
+    },
+    {
+      "index": 224,
+      "startTime": 1350863580,
+      "endTime": 1352777580,
+      "bars": 20000
+    },
+    {
+      "index": 225,
+      "startTime": 1348813020,
+      "endTime": 1350863520,
+      "bars": 20000
+    },
+    {
+      "index": 226,
+      "startTime": 1346890800,
+      "endTime": 1348812960,
+      "bars": 20000
+    },
+    {
+      "index": 227,
+      "startTime": 1344931920,
+      "endTime": 1346890740,
+      "bars": 20000
+    },
+    {
+      "index": 228,
+      "startTime": 1343047440,
+      "endTime": 1344931860,
+      "bars": 20000
+    },
+    {
+      "index": 229,
+      "startTime": 1340943960,
+      "endTime": 1343047380,
+      "bars": 20000
+    },
+    {
+      "index": 230,
+      "startTime": 1339069620,
+      "endTime": 1340943900,
+      "bars": 20000
+    },
+    {
+      "index": 231,
+      "startTime": 1337216280,
+      "endTime": 1339069560,
+      "bars": 20000
+    },
+    {
+      "index": 232,
+      "startTime": 1335342720,
+      "endTime": 1337216220,
+      "bars": 20000
+    },
+    {
+      "index": 233,
+      "startTime": 1333399140,
+      "endTime": 1335342660,
+      "bars": 20000
+    },
+    {
+      "index": 234,
+      "startTime": 1331320740,
+      "endTime": 1333399080,
+      "bars": 20000
+    },
+    {
+      "index": 235,
+      "startTime": 1329379440,
+      "endTime": 1331320680,
+      "bars": 20000
+    },
+    {
+      "index": 236,
+      "startTime": 1327471440,
+      "endTime": 1329379380,
+      "bars": 20000
+    },
+    {
+      "index": 237,
+      "startTime": 1325184060,
+      "endTime": 1327471380,
+      "bars": 20000
+    },
+    {
+      "index": 238,
+      "startTime": 1323149820,
+      "endTime": 1325184000,
+      "bars": 20000
+    },
+    {
+      "index": 239,
+      "startTime": 1321283460,
+      "endTime": 1323149760,
+      "bars": 20000
+    },
+    {
+      "index": 240,
+      "startTime": 1319436120,
+      "endTime": 1321283400,
+      "bars": 20000
+    },
+    {
+      "index": 241,
+      "startTime": 1317615480,
+      "endTime": 1319436060,
+      "bars": 20000
+    },
+    {
+      "index": 242,
+      "startTime": 1315794240,
+      "endTime": 1317615420,
+      "bars": 20000
+    },
+    {
+      "index": 243,
+      "startTime": 1313744700,
+      "endTime": 1315794180,
+      "bars": 20000
+    },
+    {
+      "index": 244,
+      "startTime": 1311910200,
+      "endTime": 1313744640,
+      "bars": 20000
+    },
+    {
+      "index": 245,
+      "startTime": 1310007780,
+      "endTime": 1311910140,
+      "bars": 20000
+    },
+    {
+      "index": 246,
+      "startTime": 1308067740,
+      "endTime": 1310007720,
+      "bars": 20000
+    },
+    {
+      "index": 247,
+      "startTime": 1305920100,
+      "endTime": 1308067680,
+      "bars": 20000
+    },
+    {
+      "index": 248,
+      "startTime": 1303986300,
+      "endTime": 1305920040,
+      "bars": 20000
+    },
+    {
+      "index": 249,
+      "startTime": 1301943780,
+      "endTime": 1303986240,
+      "bars": 20000
+    },
+    {
+      "index": 250,
+      "startTime": 1300065300,
+      "endTime": 1301943720,
+      "bars": 20000
+    },
+    {
+      "index": 251,
+      "startTime": 1297944180,
+      "endTime": 1300065240,
+      "bars": 20000
+    },
+    {
+      "index": 252,
+      "startTime": 1295943240,
+      "endTime": 1297944120,
+      "bars": 20000
+    },
+    {
+      "index": 253,
+      "startTime": 1293724980,
+      "endTime": 1295943180,
+      "bars": 20000
+    },
+    {
+      "index": 254,
+      "startTime": 1291392600,
+      "endTime": 1293724920,
+      "bars": 20000
+    },
+    {
+      "index": 255,
+      "startTime": 1289451960,
+      "endTime": 1291392540,
+      "bars": 20000
+    },
+    {
+      "index": 256,
+      "startTime": 1287501660,
+      "endTime": 1289451840,
+      "bars": 20000
+    },
+    {
+      "index": 257,
+      "startTime": 1285546500,
+      "endTime": 1287501600,
+      "bars": 20000
+    },
+    {
+      "index": 258,
+      "startTime": 1283357880,
+      "endTime": 1285546320,
+      "bars": 20000
+    },
+    {
+      "index": 259,
+      "startTime": 1281435720,
+      "endTime": 1283357820,
+      "bars": 20000
+    },
+    {
+      "index": 260,
+      "startTime": 1279287300,
+      "endTime": 1281435660,
+      "bars": 20000
+    },
+    {
+      "index": 261,
+      "startTime": 1277367060,
+      "endTime": 1279287240,
+      "bars": 20000
+    },
+    {
+      "index": 262,
+      "startTime": 1275450240,
+      "endTime": 1277367000,
+      "bars": 20000
+    },
+    {
+      "index": 263,
+      "startTime": 1273572900,
+      "endTime": 1275450180,
+      "bars": 20000
+    },
+    {
+      "index": 264,
+      "startTime": 1271442900,
+      "endTime": 1273572840,
+      "bars": 20000
+    },
+    {
+      "index": 265,
+      "startTime": 1269288780,
+      "endTime": 1271442840,
+      "bars": 20000
+    },
+    {
+      "index": 266,
+      "startTime": 1267024260,
+      "endTime": 1269288720,
+      "bars": 20000
+    },
+    {
+      "index": 267,
+      "startTime": 1265027880,
+      "endTime": 1267024200,
+      "bars": 20000
+    },
+    {
+      "index": 268,
+      "startTime": 1262893020,
+      "endTime": 1265027820,
+      "bars": 20000
+    },
+    {
+      "index": 269,
+      "startTime": 1260452400,
+      "endTime": 1262892960,
+      "bars": 20000
+    },
+    {
+      "index": 270,
+      "startTime": 1258402380,
+      "endTime": 1260452340,
+      "bars": 20000
+    },
+    {
+      "index": 271,
+      "startTime": 1256235180,
+      "endTime": 1258402320,
+      "bars": 20000
+    },
+    {
+      "index": 272,
+      "startTime": 1254177840,
+      "endTime": 1256235120,
+      "bars": 20000
+    },
+    {
+      "index": 273,
+      "startTime": 1251964800,
+      "endTime": 1254177720,
+      "bars": 20000
+    },
+    {
+      "index": 274,
+      "startTime": 1249988520,
+      "endTime": 1251964740,
+      "bars": 20000
+    },
+    {
+      "index": 275,
+      "startTime": 1247796840,
+      "endTime": 1249988460,
+      "bars": 20000
+    },
+    {
+      "index": 276,
+      "startTime": 1245682560,
+      "endTime": 1247796720,
+      "bars": 20000
+    },
+    {
+      "index": 277,
+      "startTime": 1243398180,
+      "endTime": 1245682500,
+      "bars": 20000
+    },
+    {
+      "index": 278,
+      "startTime": 1241170380,
+      "endTime": 1243398120,
+      "bars": 20000
+    },
+    {
+      "index": 279,
+      "startTime": 1239076800,
+      "endTime": 1241169900,
+      "bars": 20000
+    },
+    {
+      "index": 280,
+      "startTime": 1236877740,
+      "endTime": 1239076740,
+      "bars": 20000
+    },
+    {
+      "index": 281,
+      "startTime": 1234833120,
+      "endTime": 1236877680,
+      "bars": 20000
+    },
+    {
+      "index": 282,
+      "startTime": 1232560740,
+      "endTime": 1234833000,
+      "bars": 20000
+    },
+    {
+      "index": 283,
+      "startTime": 1229677200,
+      "endTime": 1232560680,
+      "bars": 20000
+    },
+    {
+      "index": 284,
+      "startTime": 1228981080,
+      "endTime": 1229677140,
+      "bars": 6264
+    }
+  ]
+}

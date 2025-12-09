@@ -1,0 +1,119 @@
+{
+  "ticker": "ES1",
+  "timeframe": "1m",
+  "totalBars": 347873,
+  "chunkSize": 20000,
+  "numChunks": 18,
+  "startTime": 1733184000,
+  "endTime": 1764971940,
+  "chunks": [
+    {
+      "index": 0,
+      "startTime": 1763132880,
+      "endTime": 1764971940,
+      "bars": 20000
+    },
+    {
+      "index": 1,
+      "startTime": 1761530400,
+      "endTime": 1763132820,
+      "bars": 20000
+    },
+    {
+      "index": 2,
+      "startTime": 1759755000,
+      "endTime": 1761530340,
+      "bars": 20000
+    },
+    {
+      "index": 3,
+      "startTime": 1757985300,
+      "endTime": 1759754940,
+      "bars": 20000
+    },
+    {
+      "index": 4,
+      "startTime": 1756197960,
+      "endTime": 1757985240,
+      "bars": 20000
+    },
+    {
+      "index": 5,
+      "startTime": 1754367780,
+      "endTime": 1756197900,
+      "bars": 20000
+    },
+    {
+      "index": 6,
+      "startTime": 1752537600,
+      "endTime": 1754367720,
+      "bars": 20000
+    },
+    {
+      "index": 7,
+      "startTime": 1750676040,
+      "endTime": 1752537540,
+      "bars": 20000
+    },
+    {
+      "index": 8,
+      "startTime": 1748889240,
+      "endTime": 1750675980,
+      "bars": 20000
+    },
+    {
+      "index": 9,
+      "startTime": 1747044840,
+      "endTime": 1748889180,
+      "bars": 20000
+    },
+    {
+      "index": 10,
+      "startTime": 1745214780,
+      "endTime": 1747044780,
+      "bars": 20000
+    },
+    {
+      "index": 11,
+      "startTime": 1743183120,
+      "endTime": 1745214720,
+      "bars": 20000
+    },
+    {
+      "index": 12,
+      "startTime": 1741356720,
+      "endTime": 1743183060,
+      "bars": 20000
+    },
+    {
+      "index": 13,
+      "startTime": 1739569800,
+      "endTime": 1741356660,
+      "bars": 20000
+    },
+    {
+      "index": 14,
+      "startTime": 1737739740,
+      "endTime": 1739569740,
+      "bars": 20000
+    },
+    {
+      "index": 15,
+      "startTime": 1735868220,
+      "endTime": 1737739680,
+      "bars": 20000
+    },
+    {
+      "index": 16,
+      "startTime": 1733847480,
+      "endTime": 1735868160,
+      "bars": 20000
+    },
+    {
+      "index": 17,
+      "startTime": 1733184000,
+      "endTime": 1733847420,
+      "bars": 7873
+    }
+  ]
+}

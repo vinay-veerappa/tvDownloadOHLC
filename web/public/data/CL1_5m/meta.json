@@ -1,0 +1,47 @@
+{
+  "ticker": "CL1",
+  "timeframe": "5m",
+  "totalBars": 102623,
+  "chunkSize": 20000,
+  "numChunks": 6,
+  "startTime": 1697407200,
+  "endTime": 1765296300,
+  "chunks": [
+    {
+      "index": 0,
+      "startTime": 1752129900,
+      "endTime": 1765296300,
+      "bars": 20000
+    },
+    {
+      "index": 1,
+      "startTime": 1725285000,
+      "endTime": 1752129600,
+      "bars": 20000
+    },
+    {
+      "index": 2,
+      "startTime": 1716403200,
+      "endTime": 1725284700,
+      "bars": 20000
+    },
+    {
+      "index": 3,
+      "startTime": 1707460200,
+      "endTime": 1716402900,
+      "bars": 20000
+    },
+    {
+      "index": 4,
+      "startTime": 1698399300,
+      "endTime": 1707459900,
+      "bars": 20000
+    },
+    {
+      "index": 5,
+      "startTime": 1697407200,
+      "endTime": 1698399000,
+      "bars": 2623
+    }
+  ]
+}
