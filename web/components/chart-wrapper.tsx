@@ -54,6 +54,7 @@ interface ChartWrapperProps {
     initialReplayTime?: number // Timestamp to restore replay position after remount
     vwapSettings?: VWAPSettings
     onOpenVwapSettings?: () => void
+    onTimeframeChange?: (tf: string) => void
 }
 
 export function ChartWrapper(props: ChartWrapperProps) {
@@ -382,6 +383,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
                         onModifyOrder={modifyOrder}
                         onModifyPosition={modifyPosition}
                         vwapSettings={props.vwapSettings}
+                        onTimeframeChange={props.onTimeframeChange}
                     />
                 </div>
                 <RightSidebar

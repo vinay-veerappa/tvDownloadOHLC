@@ -201,6 +201,13 @@ export function ChartPageClient({
                         initialReplayTime={replayState.isReplayMode ? replayState.currentTime : undefined}
                         vwapSettings={vwapSettings}
                         onOpenVwapSettings={() => setIsVwapSettingsOpen(true)}
+                        onTimeframeChange={(newTf) => {
+                            // Use window.location to force a full navigation/refresh state, 
+                            // matching the existing pattern of full remount on key props
+                            const params = new URLSearchParams(window.location.search)
+                            params.set('timeframe', newTf)
+                            window.location.search = params.toString()
+                        }}
                     />
                 </div>
 

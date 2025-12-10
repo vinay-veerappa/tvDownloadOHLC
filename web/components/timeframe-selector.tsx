@@ -87,27 +87,20 @@ export function TimeframeSelector({
 
     // Keyboard shortcut: press number to open TF dialog with that number
     const inputRef = React.useRef<HTMLInputElement>(null)
+    // Listen for global shortcut event from useKeyboardShortcuts
     React.useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            // Skip if typing in an input/textarea
-            const target = e.target as HTMLElement
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-                return
+        const handleHotKey = (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            if (detail && detail.key) {
+                setCustomTf(detail.key);
+                setIsOpen(true);
+                setTimeout(() => inputRef.current?.focus(), 50);
             }
+        };
 
-            // Check for number key (0-9)
-            if (/^[0-9]$/.test(e.key)) {
-                e.preventDefault()
-                setCustomTf(e.key)
-                setIsOpen(true)
-                // Focus the input after opening
-                setTimeout(() => inputRef.current?.focus(), 50)
-            }
-        }
-
-        window.addEventListener('keydown', handleKeyDown)
-        return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [])
+        window.addEventListener('chart-tf-hotkey', handleHotKey);
+        return () => window.removeEventListener('chart-tf-hotkey', handleHotKey);
+    }, []);
 
     // Save favorites to localStorage
     const saveFavorites = (newFavorites: string[]) => {

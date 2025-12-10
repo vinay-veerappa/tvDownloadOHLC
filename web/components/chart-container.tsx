@@ -24,6 +24,7 @@ import { ColorType } from "lightweight-charts"
 import { RangeInfoPanel } from "./range-info-panel"
 import { RangeTooltip } from "./range-tooltip"
 import { RangeExtensionPeriod } from "@/lib/charts/indicators/range-extensions"
+import { useKeyboardShortcuts } from "@/hooks/chart/use-keyboard-shortcuts"
 
 interface ChartContainerProps {
     ticker: string
@@ -45,6 +46,7 @@ interface ChartContainerProps {
     onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
     onPriceChange?: (price: number) => void
     initialReplayTime?: number // Timestamp to restore replay position after remount
+    onTimeframeChange?: (tf: string) => void // New Prop for shortcuts
 
     // Trading Props
     position?: {
@@ -96,7 +98,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York',
     selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad,
     onPriceChange, position, pendingOrders, onModifyOrder, onModifyPosition, initialReplayTime,
-    vwapSettings, indicatorParams, onIndicatorParamsChange, theme // Destructure theme
+    vwapSettings, indicatorParams, onIndicatorParamsChange, theme, onTimeframeChange // Destructure onTimeframeChange
 }, ref) => {
 
     // 1. Chart Reference
@@ -277,95 +279,25 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         }
     }, [chart, series, replayMode, data.length, hasMoreData, isLoadingMore, loadMoreData])
 
-    // 4d. Keyboard Navigation
-    // Arrow Left/Right: Scroll, Arrow Up/Down: Zoom, Home: Go to first bar
-    useEffect(() => {
-        if (!chart || !chartContainerRef.current) return
-
-        const handleKeyDown = (e: KeyboardEvent) => {
-            // Only handle if chart container or its children have focus
-            if (!chartContainerRef.current?.contains(document.activeElement) &&
-                document.activeElement !== document.body) return
-
-            const timeScale = chart.timeScale()
-            const SCROLL_BARS = 20  // Scroll by 20 bars per key press
-            const ZOOM_FACTOR = 0.1 // Zoom by 10% per key press
-
-            switch (e.key) {
-                case 'ArrowLeft':
-                    e.preventDefault()
-                    timeScale.scrollToPosition(
-                        timeScale.scrollPosition() - SCROLL_BARS,
-                        false
-                    )
-                    console.log('[KEY] Scroll left')
-                    break
-
-                case 'ArrowRight':
-                    e.preventDefault()
-                    timeScale.scrollToPosition(
-                        timeScale.scrollPosition() + SCROLL_BARS,
-                        false
-                    )
-                    console.log('[KEY] Scroll right')
-                    break
-
-                case 'ArrowUp':
-                    e.preventDefault()
-                    // Zoom in by reducing bar spacing
-                    const currentSpacing = timeScale.options().barSpacing
-                    timeScale.applyOptions({
-                        barSpacing: currentSpacing * (1 + ZOOM_FACTOR)
-                    })
-                    console.log('[KEY] Zoom in')
-                    break
-
-                case 'ArrowDown':
-                    e.preventDefault()
-                    // Zoom out by increasing bar spacing
-                    const spacing = timeScale.options().barSpacing
-                    timeScale.applyOptions({
-                        barSpacing: Math.max(1, spacing * (1 - ZOOM_FACTOR))
-                    })
-                    console.log('[KEY] Zoom out')
-                    break
-
-                case 'Home':
-                    e.preventDefault()
-                    // Go to newest data (user preference: Home = latest)
-                    // Use scrollToPosition(0) = rightmost position (last bar visible)
-                    requestAnimationFrame(() => {
-                        timeScale.scrollToPosition(0, false)
-                    })
-                    console.log('[KEY] Home - scroll to latest')
-                    break
-
-                case 'End':
-                    e.preventDefault()
-                    // Go to oldest data (user preference: End = oldest)
-                    if (data.length > 0) {
-                        // Scroll to leftmost position (oldest bar at left edge)
-                        requestAnimationFrame(() => {
-                            timeScale.scrollToPosition(-data.length + 100, false)
-                        })
-                        console.log('[KEY] End - scroll to oldest bar')
-                    }
-                    break
-            }
-        }
-
-        // Add to window to catch keys when chart has focus
-        window.addEventListener('keydown', handleKeyDown)
-
-        // Make chart container focusable
-        if (chartContainerRef.current) {
-            chartContainerRef.current.tabIndex = 0
-        }
-
-        return () => {
-            window.removeEventListener('keydown', handleKeyDown)
-        }
-    }, [chart, data.length])
+    // 4d. Keyboard Navigation (Centralized Hook)
+    // Legacy listeners removed in favor of useKeyboardShortcuts
+    useKeyboardShortcuts({
+        chart,
+        series,
+        data,
+        ticker,
+        onTimeframeChange,
+        onGoToDate: () => {
+            // Future: Open Go To Date Modal
+            // For now, jump to end
+            scrollToEnd()
+            toast.info("Go To Date: Coming soon (Use Home/End for now)")
+        },
+        onResetView: () => chart?.timeScale().fitContent(),
+        onDeleteSelection: () => deleteSelectedDrawing(),
+        onDeselect: () => deselectDrawing(),
+        isReplayMode: replayMode
+    })
 
     // 5. Drawing Manager
     const drawingManager = useDrawingManager(
@@ -655,31 +587,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         }
     };
 
-    // Keyboard Shortcuts
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            // 1. Check if user is typing in an input/textarea
-            const activeTag = document.activeElement?.tagName.toLowerCase();
-            const isInputActive = activeTag === 'input' || activeTag === 'textarea' || (document.activeElement as HTMLElement)?.isContentEditable;
-
-            if (isInputActive) return;
-
-            // 2. Delete / Backspace
-            if (e.key === 'Delete' || e.key === 'Backspace') {
-                e.preventDefault(); // Prevent browser back navigation if Backspace
-                deleteSelectedDrawing();
-            }
-
-            // 3. Escape for Deselection
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                deselectDrawing();
-            }
-        };
-
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [onDeleteSelection, drawingManager]);
+    // Keyboard Shortcuts handled by useKeyboardShortcuts hook
+    // Legacy implementation removed
 
 
     // Expose Functions
