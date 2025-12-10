@@ -127,7 +127,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     // 3. Core Chart Initialization (Hook)
     const {
         chart, series, primitives, scrollByBars, scrollToStart, scrollToEnd,
-        scrollToTime, getDataRange, getVisibleTimeRange
+        scrollToTime, getDataRange, getVisibleTimeRange, indicators: activeIndicatorsRef
     } = useChart(
         chartContainerRef as React.RefObject<HTMLDivElement>,
         style, indicators, data, markers, displayTimezone, timeframe, vwapSettings, ticker
@@ -497,10 +497,51 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 if (!hitDrawing && rangeExtensionsRef.current?.hitTest?.(param.point.x, param.point.y)) {
                     hitDrawing = rangeExtensionsRef.current;
                 }
+
+                // Check Standard Indicators (LineSeries, etc.)
+                if (!hitDrawing && activeIndicatorsRef?.current) {
+                    const timeScale = chart.timeScale();
+                    const time = timeScale.coordinateToTime(param.point.x);
+
+                    for (const ind of activeIndicatorsRef.current) {
+                        // ind = { series: ISeriesApi, id: string }
+                        // We need to get the data at this time
+                        // Lightweight charts doesn't make this super easy without internal access
+                        // But param.seriesData map might have it if we knew the series object
+
+                        // param.seriesData is a Map<ISeriesApi, Data>
+                        if (param.seriesData && param.seriesData.has(ind.series)) {
+                            const dataItem = param.seriesData.get(ind.series);
+                            const value = dataItem.value ?? dataItem.close;
+                            if (value !== undefined) {
+                                const priceY = ind.series.priceToCoordinate(value);
+                                if (priceY !== null && Math.abs(priceY - param.point.y) < 5) { // 5px tolerance
+                                    hitDrawing = {
+                                        id: ind.id,
+                                        _type: 'indicator',
+                                        // We need to mimic drawing object for openProperties
+                                        // But openProperties expects a drawing with an ID or type
+                                        // Let's create a proxy object or just handle it directly
+                                    };
+                                    // Hack: Store reference to series on the hit object if needed
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             if (hitDrawing) {
-                openProperties(hitDrawing);
+                // If it's a standard indicator (string ID), we need to open its properties
+                if (hitDrawing._type === 'indicator') {
+                    // Handle standard indicator
+                    setSelectedDrawingOptions(indicatorParams?.[hitDrawing.id] || {});
+                    setSelectedDrawingType(hitDrawing.id);
+                    setPropertiesModalOpen(true);
+                } else {
+                    openProperties(hitDrawing);
+                }
             }
         };
 
