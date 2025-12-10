@@ -298,6 +298,7 @@ export function useChart(
     }, [seriesInstance, data, style, markers, chartInstance])
 
     const primitivesRef = useRef<any[]>([])
+    const indicatorsRef = useRef<any[]>([])
     const indicatorsKey = useMemo(() => JSON.stringify(indicators), [indicators])
 
     // Create a stable key for data time range to prevent unnecessary indicator re-renders
@@ -351,6 +352,11 @@ export function useChart(
                         }
 
                         activeSeries.push(...series);
+
+                        // Populate exposed ref for hit testing [New]
+                        // We store the series along with its definition ID for context if needed
+                        series.forEach(s => indicatorsRef.current.push({ series: s, id: baseId }));
+
                         oscillatorPaneIndex += paneIndexIncrement;
 
                         // Re-layout panes if needed
@@ -388,6 +394,8 @@ export function useChart(
                     chartInstance.removeSeries(item)
                 } catch (e) { }
             })
+            // Clear ref on cleanup
+            indicatorsRef.current = [];
         }
     }, [chartInstance, seriesInstance, indicatorsKey, dataTimeRangeKey, vwapSettings, ticker, resolvedTheme])
 
@@ -518,6 +526,7 @@ export function useChart(
         scrollToEnd,
         getDataRange,
         getVisibleBarIndex,
-        getVisibleTimeRange
+        getVisibleTimeRange,
+        indicators: indicatorsRef // Expose indicators ref
     }
 }
