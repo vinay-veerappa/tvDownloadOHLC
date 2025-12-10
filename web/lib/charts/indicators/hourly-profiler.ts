@@ -118,6 +118,37 @@ class HourlyProfilerRenderer {
         this._chart = chart;
         this._series = series;
         if (theme) this._theme = theme;
+
+        // 1. Merge User Options with Defaults
+        // If user hasn't set specific colors, we can try to derive them from the theme if provided
+        const themeDefaults = this._theme ? this._getThemeDefaults(this._theme) : {};
+
+        this._options = {
+            ...DEFAULT_HOURLY_PROFILER_OPTIONS,
+            ...themeDefaults,
+            ...options
+        };
+    }
+
+    private _getThemeDefaults(theme: typeof THEMES.dark): Partial<HourlyProfilerOptions> {
+        return {
+            // Quarters: Use User Preferred Light Grey-Blue for better visibility across themes
+            // This specific color (#afb7cb) works well on both dark and light backgrounds
+            // with a subtle opacity of 15%
+            quarterEvenColor: '#afb7cb',
+            quarterOpacity: 0.15,
+
+            // Boxes: Use theme's primary tool color or secondary
+            hourlyBoxColor: theme.ui.text,
+
+            // Lines: Use theme defaults or standard TradingView colors (Green/Red usually fine)
+            // But we can match candle bodies if desired:
+            hourlyOpenColor: theme.candle.upBody,
+            hourlyCloseColor: theme.candle.downBody,
+
+            // Bounds
+            hourBoundColor: theme.ui.text,
+        };
     }
 
     draw(target: any) {
@@ -589,7 +620,8 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
                 this._chart,
                 this._series,
                 this._theme || undefined
-            )
+            ),
+            zOrder: () => 'bottom' as const
         }];
     }
 
