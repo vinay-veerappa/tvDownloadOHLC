@@ -1,0 +1,230 @@
+{
+  "timestamp": "2025-12-10T07:42:38.109670",
+  "results": [
+    {
+      "name": "Data Load (ES1 1m)",
+      "avg_ms": 50.32,
+      "std_ms": 3.64,
+      "min_ms": 47.96,
+      "max_ms": 56.52,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "Data Load (ES1 5m)",
+      "avg_ms": 13.89,
+      "std_ms": 2.8,
+      "min_ms": 11.39,
+      "max_ms": 18.64,
+      "iterations": 5,
+      "rows": 69606
+    },
+    {
+      "name": "Data Load (ES1 1h)",
+      "avg_ms": 5.93,
+      "std_ms": 0.87,
+      "min_ms": 4.78,
+      "max_ms": 7.15,
+      "iterations": 5,
+      "rows": 23208
+    },
+    {
+      "name": "Data Load (ES1 1D)",
+      "avg_ms": 4.37,
+      "std_ms": 0.82,
+      "min_ms": 3.48,
+      "max_ms": 5.53,
+      "iterations": 5,
+      "rows": 7458
+    },
+    {
+      "name": "get_available_data()",
+      "avg_ms": 0.27,
+      "std_ms": 0.04,
+      "min_ms": 0.21,
+      "max_ms": 0.34,
+      "iterations": 10,
+      "rows": 0
+    },
+    {
+      "name": "calculate_sessions (full dataset)",
+      "avg_ms": 1445.84,
+      "std_ms": 138.12,
+      "min_ms": 1292.58,
+      "max_ms": 1670.78,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "calculate_hourly (full dataset)",
+      "avg_ms": 502.63,
+      "std_ms": 13.38,
+      "min_ms": 490.67,
+      "max_ms": 524.93,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "calculate_sessions (30 days)",
+      "avg_ms": 139.76,
+      "std_ms": 6.23,
+      "min_ms": 134.81,
+      "max_ms": 149.67,
+      "iterations": 5,
+      "rows": 29200
+    },
+    {
+      "name": "calculate_hourly (30 days)",
+      "avg_ms": 55.62,
+      "std_ms": 4.2,
+      "min_ms": 51.84,
+      "max_ms": 62.55,
+      "iterations": 5,
+      "rows": 29200
+    },
+    {
+      "name": "calculate_opening_range",
+      "avg_ms": 285.15,
+      "std_ms": 11.72,
+      "min_ms": 275.23,
+      "max_ms": 300.17,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "VWAP (session anchor, no bands)",
+      "avg_ms": 1473.21,
+      "std_ms": 123.28,
+      "min_ms": 1287.5,
+      "max_ms": 1607.65,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "VWAP (session anchor, 2 bands)",
+      "avg_ms": 1490.83,
+      "std_ms": 65.07,
+      "min_ms": 1434.98,
+      "max_ms": 1569.27,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "VWAP (session anchor, 3 bands)",
+      "avg_ms": 1672.31,
+      "std_ms": 75.02,
+      "min_ms": 1581.86,
+      "max_ms": 1782.6,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "VWAP (week anchor)",
+      "avg_ms": 8096.15,
+      "std_ms": 105.28,
+      "min_ms": 7953.04,
+      "max_ms": 8215.79,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "VWAP (5 days subset, 2 bands)",
+      "avg_ms": 12.96,
+      "std_ms": 1.92,
+      "min_ms": 11.62,
+      "max_ms": 18.0,
+      "iterations": 10,
+      "rows": 1950
+    },
+    {
+      "name": "calculate_indicator (sma_20)",
+      "avg_ms": 49.41,
+      "std_ms": 1.22,
+      "min_ms": 47.98,
+      "max_ms": 51.34,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "calculate_indicator (ema_9)",
+      "avg_ms": 50.28,
+      "std_ms": 1.59,
+      "min_ms": 47.5,
+      "max_ms": 51.53,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "calculate_indicator (rsi_14)",
+      "avg_ms": 52.11,
+      "std_ms": 1.68,
+      "min_ms": 50.02,
+      "max_ms": 54.48,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "calculate_indicator (macd)",
+      "avg_ms": 162.58,
+      "std_ms": 13.59,
+      "min_ms": 153.62,
+      "max_ms": 186.24,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "calculate_indicators (sma_20, ema_9, rsi_14)",
+      "avg_ms": 160.88,
+      "std_ms": 6.22,
+      "min_ms": 152.96,
+      "max_ms": 166.03,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "resample_ohlc (1m -> 5m)",
+      "avg_ms": 44.22,
+      "std_ms": 5.5,
+      "min_ms": 36.38,
+      "max_ms": 50.69,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "resample_ohlc (1m -> 15m)",
+      "avg_ms": 35.04,
+      "std_ms": 2.2,
+      "min_ms": 31.91,
+      "max_ms": 37.91,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "resample_ohlc (1m -> 30m)",
+      "avg_ms": 31.83,
+      "std_ms": 3.4,
+      "min_ms": 28.46,
+      "max_ms": 35.62,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "resample_ohlc (1m -> 1h)",
+      "avg_ms": 32.11,
+      "std_ms": 9.01,
+      "min_ms": 24.97,
+      "max_ms": 46.88,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "resample_ohlc (1m -> 4h)",
+      "avg_ms": 28.23,
+      "std_ms": 2.42,
+      "min_ms": 26.45,
+      "max_ms": 32.48,
+      "iterations": 5,
+      "rows": 347873
+    }
+  ]
+}

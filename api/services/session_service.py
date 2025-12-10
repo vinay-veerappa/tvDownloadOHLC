@@ -228,6 +228,8 @@ class SessionService:
         """
         Calculate hourly and 3-hour profiler data using vectorized operations.
         Returns list of hourly periods with OHLC, 5-min OR, and 3H data.
+        
+        OPTIMIZED: Uses vectorized operations instead of iterrows()
         """
         if df.empty:
             return []
@@ -235,10 +237,6 @@ class SessionService:
         # Ensure datetime index
         if not isinstance(df.index, pd.DatetimeIndex):
             df.index = pd.to_datetime(df.index)
-
-        def safe_float(val):
-             if pd.isna(val) or val is None: return None
-             return float(val)
 
         # 1. Base Hourly OHLC
         hourly = df.resample('1h').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
@@ -264,9 +262,8 @@ class SessionService:
 
         # 5. 3-Hour Blocks (18:00 offset)
         three_hour = df.resample('3h', offset='18h').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
+        three_hour = three_hour.dropna(subset=['open'])
         three_hour['mid'] = (three_hour['high'] + three_hour['low']) / 2
-
-        results = []
 
         # Merge all metrics into main hourly dataframe
         # Use suffixes to distinguish columns
@@ -274,42 +271,60 @@ class SessionService:
         hourly = hourly.join(hourly_1m, rsuffix='_1m')
         hourly = hourly.join(hourly_rth, rsuffix='_rth')
 
-        # Iterating over the aggregated hourly dataframe is fast (~60x faster than raw 1m loop)
-        for ts, row in hourly.iterrows():
-            hour_end = ts + pd.Timedelta(hours=1)
+        # OPTIMIZED: Vectorized timestamp calculation
+        # Pre-compute start and end times as ISO strings
+        hourly.index.name = 'start_ts'  # Ensure consistent column name after reset
+        hourly = hourly.reset_index()
+        hourly['end_ts'] = hourly['start_ts'] + pd.Timedelta(hours=1)
+        
+        # Convert timestamps to ISO format strings vectorized
+        hourly['start_time'] = hourly['start_ts'].dt.strftime('%Y-%m-%dT%H:%M:%S')
+        hourly['end_time'] = hourly['end_ts'].dt.strftime('%Y-%m-%dT%H:%M:%S')
+        
+        # Handle timezone suffix if present
+        if hourly['start_ts'].dt.tz is not None:
+            # Get timezone offset string
+            tz_offset = hourly['start_ts'].iloc[0].strftime('%z')
+            tz_str = f"{tz_offset[:3]}:{tz_offset[3:]}" if tz_offset else ""
+            hourly['start_time'] = hourly['start_time'] + tz_str
+            hourly['end_time'] = hourly['end_time'] + tz_str
+        
+        # OPTIMIZED: Use to_dict for fast conversion
+        # Select and rename columns for output
+        hourly_out = hourly[['start_time', 'end_time', 'open', 'high', 'low', 'close', 'mid',
+                            'high_or', 'low_or', 'high_1m', 'low_1m', 'high_rth', 'low_rth']].copy()
+        hourly_out.columns = ['start_time', 'end_time', 'open', 'high', 'low', 'close', 'mid',
+                              'or_high', 'or_low', 'open_1m_high', 'open_1m_low', 'rth_1m_high', 'rth_1m_low']
+        
+        # Replace NaN with None
+        hourly_out = hourly_out.where(pd.notna(hourly_out), None)
+        
+        # Add type column
+        hourly_out['type'] = '1H'
+        
+        # Convert to list of dicts
+        results = hourly_out.to_dict('records')
+        
+        # Process 3H Data similarly
+        if len(three_hour) > 0:
+            three_hour.index.name = 'start_ts'  # Ensure consistent column name after reset
+            three_hour = three_hour.reset_index()
+            three_hour['end_ts'] = three_hour['start_ts'] + pd.Timedelta(hours=3)
             
-            results.append({
-                "type": "1H",
-                "start_time": ts.isoformat(),
-                "end_time": hour_end.isoformat(),
-                "open": safe_float(row['open']),
-                "high": safe_float(row['high']),
-                "low": safe_float(row['low']),
-                "close": safe_float(row['close']),
-                "mid": safe_float(row['mid']),
-                "or_high": safe_float(row.get('high_or')),
-                "or_low": safe_float(row.get('low_or')),
-                "open_1m_high": safe_float(row.get('high_1m')),
-                "open_1m_low": safe_float(row.get('low_1m')),
-                "rth_1m_high": safe_float(row.get('high_rth')),
-                "rth_1m_low": safe_float(row.get('low_rth'))
-            })
-
-        # Process 3H Data
-        for ts, row in three_hour.iterrows():
-            if pd.isna(row['open']): continue
-            period_end = ts + pd.Timedelta(hours=3)
-            # Only include if valid
-            results.append({
-                "type": "3H",
-                "start_time": ts.isoformat(),
-                "end_time": period_end.isoformat(),
-                "open": safe_float(row['open']),
-                "high": safe_float(row['high']),
-                "low": safe_float(row['low']),
-                "close": safe_float(row['close']),
-                "mid": safe_float(row['mid'])
-            })
+            three_hour['start_time'] = three_hour['start_ts'].dt.strftime('%Y-%m-%dT%H:%M:%S')
+            three_hour['end_time'] = three_hour['end_ts'].dt.strftime('%Y-%m-%dT%H:%M:%S')
+            
+            if three_hour['start_ts'].dt.tz is not None:
+                tz_offset = three_hour['start_ts'].iloc[0].strftime('%z')
+                tz_str = f"{tz_offset[:3]}:{tz_offset[3:]}" if tz_offset else ""
+                three_hour['start_time'] = three_hour['start_time'] + tz_str
+                three_hour['end_time'] = three_hour['end_time'] + tz_str
+            
+            three_hour_out = three_hour[['start_time', 'end_time', 'open', 'high', 'low', 'close', 'mid']].copy()
+            three_hour_out = three_hour_out.where(pd.notna(three_hour_out), None)
+            three_hour_out['type'] = '3H'
+            
+            results.extend(three_hour_out.to_dict('records'))
             
         return results
 
