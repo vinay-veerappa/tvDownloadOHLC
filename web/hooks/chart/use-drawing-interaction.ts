@@ -30,6 +30,7 @@ export function useDrawingInteraction({
     isTradingDragActive
 }: UseDrawingInteractionProps) {
     const isDraggingRef = useRef(false)
+    const isMouseDownRef = useRef(false) // Track global mouse state for panning optimization
     const dragTargetRef = useRef<{
         id: string,
         hitType: string,
@@ -61,6 +62,9 @@ export function useDrawingInteraction({
             const now = Date.now();
             if (now - lastHitTestRef.current < 20) return;
             lastHitTestRef.current = now;
+
+            // OPTIMIZATION: If mouse is down (Panning), skip hit tests entirely
+            if (isMouseDownRef.current) return;
 
             if (!param.point) {
                 if (isHoveringDrawing) {
@@ -101,6 +105,8 @@ export function useDrawingInteraction({
 
         const handleMouseDown = (e: MouseEvent) => {
             if (e.button !== 0) return
+            isMouseDownRef.current = true; // Mark mouse as down
+
             if (isTradingDragActive) return // Priority to Trading Lines
 
             const rect = container.getBoundingClientRect()
@@ -218,6 +224,8 @@ export function useDrawingInteraction({
         }
 
         const handleMouseUp = (e: MouseEvent) => {
+            isMouseDownRef.current = false; // Mark mouse as up
+
             if (!isDraggingRef.current || !dragTargetRef.current) return
 
             // End Drag
