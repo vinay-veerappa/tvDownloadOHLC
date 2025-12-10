@@ -72,23 +72,10 @@ export async function getChartData(ticker: string, timeframe: string): Promise<{
         }
 
         // Determine how many chunks to load initially based on timeframe
-        // Each chunk is 20,000 bars
-        // Load ~8 months initially (~240ms), background load rest
-        let initialChunks: number
-        switch (folderName) {
-            case '1m':
-                initialChunks = 12  // ~240,000 bars (~8 months)
-                break
-            case '5m':
-                initialChunks = 12  // ~240,000 bars (~2+ years)
-                break
-            case '15m':
-                initialChunks = 12  // ~240,000 bars (~7+ years)
-                break
-            default:
-                // For 1h and above, load all data
-                initialChunks = meta.numChunks
-        }
+        // Optimize for speed: Load only 1 chunk initially (~20,000 bars)
+        // This is ~2 weeks of 1m data, which is plenty for initial view.
+        // Background loading will handle the rest.
+        let initialChunks = 1
 
         // Load initial chunks (most recent first)
         // Chunk 0 = most recent, Chunk N = oldest

@@ -680,7 +680,17 @@ export class DailyProfiler implements ISeriesPrimitive {
         try {
             const cleanTicker = this._options.ticker.replace('!', '');
             let url = `http://localhost:8000/api/sessions/${cleanTicker}?range_type=all`;
-            if (this._options.startTs) url += `&start_ts=${this._options.startTs}`;
+
+            // Prevent unbounded fetch: If startTs is missing, default to last 30 days
+            if (!this._options.startTs) {
+                const now = Math.floor(Date.now() / 1000);
+                const thirtyDaysAgo = now - (30 * 24 * 60 * 60);
+                url += `&start_ts=${thirtyDaysAgo}`;
+                // If endTs is missing, it implicitly goes to "now" or end of data
+            } else {
+                url += `&start_ts=${this._options.startTs}`;
+            }
+
             if (this._options.endTs) url += `&end_ts=${this._options.endTs}`;
 
             const res = await fetch(url, {
