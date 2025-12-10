@@ -940,9 +940,18 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 }
 
                 if (!hourlyProfilerRef.current) {
+                    // Calculate time range (last 14 days) for performance
+                    // 14 days * 24 hours/day * 60 min/hour * 60 sec/min = 1209600 seconds
+                    const LOAD_DAYS = 14;
+                    const SECONDS_PER_DAY = 24 * 60 * 60;
+                    const endTs = data.length > 0 ? data[data.length - 1].time as number : undefined;
+                    const startTs = endTs ? endTs - (LOAD_DAYS * SECONDS_PER_DAY) : undefined;
+
                     hourlyProfilerRef.current = new HourlyProfiler(chart, series, {
                         ...hourlyParams,
-                        ticker // START: Fix ticker override
+                        ticker, // START: Fix ticker override
+                        startTs,
+                        endTs
                     }, theme);
                     series.attachPrimitive(hourlyProfilerRef.current);
                 } else {

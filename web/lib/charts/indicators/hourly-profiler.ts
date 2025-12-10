@@ -57,6 +57,10 @@ export interface HourlyProfilerOptions {
 
     // History
     maxHours: number;
+
+    // Time filtering (optional)
+    startTs?: number;  // Start timestamp (unix seconds)
+    endTs?: number;    // End timestamp (unix seconds)
 }
 
 // Default Options
@@ -585,7 +589,15 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
     async fetchData() {
         try {
             const cleanTicker = this._options.ticker.replace('!', '');
-            const url = `http://localhost:8000/api/sessions/${cleanTicker}?range_type=hourly`;
+
+            // Build URL with optional time filtering
+            let url = `http://localhost:8000/api/sessions/${cleanTicker}?range_type=hourly`;
+            if (this._options.startTs) {
+                url += `&start_ts=${this._options.startTs}`;
+            }
+            if (this._options.endTs) {
+                url += `&end_ts=${this._options.endTs}`;
+            }
 
             const res = await fetch(url, {
                 signal: this._abortController.signal
