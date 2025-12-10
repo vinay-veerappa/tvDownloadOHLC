@@ -646,11 +646,36 @@ export class DailyProfiler implements ISeriesPrimitive {
         return null;
     }
 
+    private _binarySearch(time: number): number {
+        let l = 0;
+        let r = this._data.length - 1;
+        while (l <= r) {
+            const m = Math.floor((l + r) / 2);
+            if ((this._data[m].startUnix || 0) < time) l = m + 1;
+            else r = m - 1;
+        }
+        return Math.max(0, l - 1);
+    }
+
     hitTest(x: number, y: number): any {
         if (!this._data || this._data.length === 0) return null;
         const timeScale = this._chart.timeScale();
+        const time = timeScale.coordinateToTime(x);
+        if (!time) return null;
 
-        for (const session of this._data) {
+        // Optimization: Find start index using binary search
+        // Look back 10 sessions to cover overlaps
+        const startIndex = Math.max(0, this._binarySearch(time as number) - 10);
+
+        // Scan forward but not too far (max 50 items or until start > time)
+        for (let i = startIndex; i < this._data.length; i++) {
+            const session = this._data[i];
+
+            // If session starts more than 24h after current time, stop (impossible to overlap)
+            // Or strictly: if startUnix > time, we can stop? No, because cursor is AT 'time'.
+            // If session starts AFTER 'time', cursor cannot be inside it.
+            if ((session.startUnix || 0) > (time as number)) break;
+
             let visible = false;
             // Matches draw logic visibility
             if (session.session === 'Asia') visible = this._options.showAsia;
@@ -662,7 +687,8 @@ export class DailyProfiler implements ISeriesPrimitive {
 
             if (!visible) continue;
 
-            const startUnix = new Date(session.start_time).getTime() / 1000 as Time;
+            const startUnix = session.startUnix as Time; // Use Pre-calc
+
             // Simple extension check for hit test
             const x1 = timeScale.timeToCoordinate(startUnix);
             if (x1 === null) continue;
@@ -674,7 +700,14 @@ export class DailyProfiler implements ISeriesPrimitive {
                 if (y1 !== null && y2 !== null) {
                     const top = Math.min(y1, y2);
                     const bottom = Math.max(y1, y2);
+                    // Hit if cursor is within Y range and to the right of start
+                    // Technically should check end time too (extendUntil), but checking X >= x1 is a decent approx for 'inside'
+                    // For precision we could calculate xEnd, but "session box" interaction is usually just clicking the label/box.
+                    // Let's assume infinite width to right or strictly within box?
+                    // Previous logic: x >= x1. It assumes box extends indefinitely or user clicked right of start.
                     if (y >= top && y <= bottom && x >= x1) {
+                        // Refine X check: If cursor is *too* far right (> 24h), maybe ignore? 
+                        // But for now, preserving original logic "x >= x1" but efficiently.
                         return { hit: true, drawing: this, cursorStyle: 'pointer' };
                     }
                 }

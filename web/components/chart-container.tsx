@@ -109,6 +109,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const [rangeData, setRangeData] = useState<RangeExtensionPeriod[]>([]);
     const [hoveredRangePeriod, setHoveredRangePeriod] = useState<RangeExtensionPeriod | null>(null);
     const [cursorPos, setCursorPos] = useState<{ x: number, y: number } | null>(null);
+    const cursorPosRafRef = useRef<number | null>(null);
 
     // 2. Data & Replay Logic (Hook)
     const {
@@ -215,11 +216,17 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 return
             }
 
-            // Update Cursor Pos for Tooltip
+            // Update Cursor Pos for Tooltip (Throttled via RAF to prevent Max Depth Error)
             if (param.point) {
-                setCursorPos(prev => {
-                    if (prev && prev.x === param.point.x && prev.y === param.point.y) return prev;
-                    return { x: param.point.x, y: param.point.y };
+                // Cancel previous frame if pending
+                if (cursorPosRafRef.current) return;
+
+                cursorPosRafRef.current = requestAnimationFrame(() => {
+                    setCursorPos(prev => {
+                        if (prev && prev.x === param.point.x && prev.y === param.point.y) return prev;
+                        return { x: param.point.x, y: param.point.y };
+                    });
+                    cursorPosRafRef.current = null;
                 });
             }
 
