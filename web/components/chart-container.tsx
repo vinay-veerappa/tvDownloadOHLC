@@ -479,9 +479,23 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             let hitDrawing: any = null;
             const result = drawingManager.hitTest(param.point.x, param.point.y);
             if (result) hitDrawing = result.drawing;
-            else if (primitives?.current) {
-                for (const p of primitives.current) {
-                    if (p.hitTest?.(param.point.x, param.point.y)) { hitDrawing = p; break; }
+            else {
+                // Check generic primitives
+                if (primitives?.current) {
+                    for (const p of primitives.current) {
+                        if (p.hitTest?.(param.point.x, param.point.y)) { hitDrawing = p; break; }
+                    }
+                }
+
+                // Check specific indicators if no hit yet
+                if (!hitDrawing && sessionRangesRef.current?.hitTest?.(param.point.x, param.point.y)) {
+                    hitDrawing = sessionRangesRef.current;
+                }
+                if (!hitDrawing && hourlyProfilerRef.current?.hitTest?.(param.point.x, param.point.y)) {
+                    hitDrawing = hourlyProfilerRef.current;
+                }
+                if (!hitDrawing && rangeExtensionsRef.current?.hitTest?.(param.point.x, param.point.y)) {
+                    hitDrawing = rangeExtensionsRef.current;
                 }
             }
 
