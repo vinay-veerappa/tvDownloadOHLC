@@ -71,6 +71,8 @@
 ## 📖 Documentation
 
 See [`docs/README.md`](docs/README.md) for the full documentation index including:
+- **[Developer Standards - Indicators & Tools](docs/INDICATOR_DEVELOPMENT_STANDARDS.md)** 🆕 (Performance & Interaction Patterns)
+- **[Lightweight Charts Performance Guide](docs/Lightweight_Charts_Performance_Guide.md)** (General optimization tips)
 - User Guide
 - Plugin System
 - Indicators Guide

@@ -780,6 +780,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 }
 
                 if (!sessionRangesRef.current) {
+                    // See docs/INDICATOR_DEVELOPMENT_STANDARDS.md for performance patterns (Time-Range API)
                     // Calculate time range (last 14 days)
                     const LOAD_DAYS = 14;
                     const SECONDS_PER_DAY = 24 * 60 * 60;
