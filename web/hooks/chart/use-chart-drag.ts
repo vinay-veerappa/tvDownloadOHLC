@@ -34,6 +34,7 @@ export function useChartDrag({
     onModifyPosition
 }: UseChartDragProps) {
     const isDraggingRef = useRef(false)
+    const isMouseDownRef = useRef(false) // Track global mouse state
     const dragTargetRef = useRef<{ type: 'POS' | 'SL' | 'TP' | 'ORDER', id?: string } | null>(null)
     const [isHoveringLine, setIsHoveringLine] = useState(false)
 
@@ -62,6 +63,8 @@ export function useChartDrag({
 
         const handleCrosshairMove = (param: MouseEventParams) => {
             if (isDraggingRef.current) return
+            // OPTIMIZATION: If mouse is down (Panning), skip hit tests
+            if (isMouseDownRef.current) return;
 
             // Throttle Hover Checks (30ms ~ 30fps)
             const now = Date.now()
@@ -126,6 +129,7 @@ export function useChartDrag({
 
         const handleMouseDown = (e: MouseEvent) => {
             if (e.button !== 0) return // Left click only
+            isMouseDownRef.current = true; // Mouse Down
 
             // Get standard coordinate from event relative to container
             const rect = container.getBoundingClientRect()
@@ -193,6 +197,8 @@ export function useChartDrag({
         }
 
         const handleMouseUp = (e: MouseEvent) => {
+            isMouseDownRef.current = false; // Mouse Up
+
             if (!isDraggingRef.current || !dragTargetRef.current) return
 
             isDraggingRef.current = false
