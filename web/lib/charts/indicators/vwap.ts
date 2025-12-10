@@ -32,11 +32,29 @@ export const VWAPIndicator: ChartIndicator = {
                 bands: [1.0]
             };
 
+            // Limit to last 14 days of data for performance
+            // 14 days = ~12k rows, 850KB, 33ms (vs 240k rows, 32MB, 3s for 8 months)
+            const VWAP_LOAD_DAYS = 14;
+            const SECONDS_PER_DAY = 24 * 60 * 60;
+
+            // Get end time from chart data, then calculate start time as 14 days before
+            const endTime = data.length > 0 ? data[data.length - 1].time : undefined;
+            let startTime: number | undefined;
+
+            if (endTime !== undefined) {
+                // Take the max of (chart data start, end - 14 days) to limit range
+                const dataStartTime = data[0].time;
+                const calculatedStartTime = endTime - (VWAP_LOAD_DAYS * SECONDS_PER_DAY);
+                startTime = Math.max(dataStartTime, calculatedStartTime);
+            }
+
             // Use the new backend-file endpoint which has real volume data
             const result = await calculateVWAPFromFile(
                 ticker,
                 timeframe || '1m',
-                settings
+                settings,
+                startTime,
+                endTime
             );
 
             if (!result || !result.indicators.vwap) {

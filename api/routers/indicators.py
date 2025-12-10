@@ -175,59 +175,46 @@ async def list_data():
 @router.post("/vwap-from-file", response_model=IndicatorResponse)
 async def calculate_vwap_from_file(request: VWAPFromFileRequest):
     """
-    Calculate VWAP from backend data files (uses actual volume data).
+    Get VWAP from backend data files.
     
-    This is preferred over calculate-v2 when the frontend doesn't have volume
-    or uses resampled data. The backend loads the parquet file with full
-    volume information.
-    
-    Example request:
-    {
-        "ticker": "ES1",
-        "timeframe": "1m",
-        "vwap_settings": {
-            "anchor": "session",
-            "anchor_time": "18:00",
-            "bands": [1.0, 2.0]
-        }
-    }
+    Uses pre-computed VWAP when available (instant ~10ms response),
+    falls back to on-demand calculation for custom settings.
     """
+    from api.services.vwap_loader import get_vwap
+    
     # Check if should hide on this timeframe
     if should_hide_vwap(request.timeframe):
         return IndicatorResponse(time=[], indicators={})
     
-    # Load data from file
-    df = load_parquet(request.ticker, request.timeframe)
+    # Convert settings to dict for loader
+    settings = {}
+    if request.vwap_settings:
+        settings = {
+            'anchor': request.vwap_settings.anchor,
+            'anchor_time': request.vwap_settings.anchor_time,
+            'anchor_timezone': request.vwap_settings.anchor_timezone,
+            'bands': request.vwap_settings.bands,
+            'source': request.vwap_settings.source
+        }
     
-    if df is None:
+    # Get VWAP (precomputed or calculated)
+    result = get_vwap(
+        request.ticker,
+        request.timeframe,
+        settings,
+        start_time=request.start_time,
+        end_time=request.end_time
+    )
+    
+    if result is None:
         raise HTTPException(
             status_code=404,
             detail=f"Data not found for {request.ticker} {request.timeframe}"
         )
     
-    # Filter by time range if specified
-    if request.start_time:
-        df = df[df['time'] >= request.start_time]
-    if request.end_time:
-        df = df[df['time'] <= request.end_time]
-    
-    if df.empty:
-        return IndicatorResponse(time=[], indicators={})
-    
-    # Use VWAP settings if provided
-    settings = request.vwap_settings or VWAPSettings()
-    
-    vwap_result = calculate_vwap_with_settings(
-        df,
-        anchor=settings.anchor,
-        anchor_time=settings.anchor_time,
-        anchor_timezone=settings.anchor_timezone,
-        bands=settings.bands,
-        source=settings.source
-    )
-    
     return IndicatorResponse(
-        time=df['time'].tolist(),
-        indicators=vwap_result
+        time=result['time'],
+        indicators=result['indicators']
     )
+
 

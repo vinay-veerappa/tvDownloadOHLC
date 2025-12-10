@@ -300,9 +300,20 @@ export function useChart(
     const primitivesRef = useRef<any[]>([])
     const indicatorsKey = useMemo(() => JSON.stringify(indicators), [indicators])
 
+    // Create a stable key for data time range to prevent unnecessary indicator re-renders
+    // Only changes when the data boundaries change (new ticker/timeframe), not on every scroll
+    const dataTimeRangeKey = useMemo(() => {
+        if (!data.length) return '';
+        return `${data[0].time}-${data[data.length - 1].time}`;
+    }, [data.length > 0 ? data[0]?.time : 0, data.length > 0 ? data[data.length - 1]?.time : 0])
+
+    // Store data in a ref so indicators can access it without causing re-renders  
+    const dataRef = useRef(data)
+    dataRef.current = data
+
     // Manage Indicators & Layout (Native Panes)
     useEffect(() => {
-        if (!chartInstance || !seriesInstance || !data.length || isDisposedRef.current) return
+        if (!chartInstance || !seriesInstance || !dataTimeRangeKey || isDisposedRef.current) return
 
         const currentIndicators: string[] = indicatorsKey ? JSON.parse(indicatorsKey) : []
         const activeSeries: ISeriesApi<any>[] = []
@@ -322,7 +333,7 @@ export function useChart(
 
                     const renderPromise = indicatorRenderer.render({
                         chart: chartInstance,
-                        data,
+                        data: dataRef.current, // Use ref to avoid re-renders
                         timeframe,
                         ticker,
                         vwapSettings,
@@ -378,7 +389,7 @@ export function useChart(
                 } catch (e) { }
             })
         }
-    }, [chartInstance, seriesInstance, indicatorsKey, data, vwapSettings, ticker, resolvedTheme])
+    }, [chartInstance, seriesInstance, indicatorsKey, dataTimeRangeKey, vwapSettings, ticker, resolvedTheme])
 
     // Manage Primitives (Sessions, Watermark) - NO data dependency
     useEffect(() => {
