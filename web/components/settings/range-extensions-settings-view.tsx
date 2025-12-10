@@ -55,6 +55,14 @@ export function RangeExtensionsSettingsView({ initialOptions, onChange }: RangeE
                             onChange={(e) => updateOption('tickValue', parseFloat(e.target.value))}
                         />
                     </div>
+                    <div className="space-y-2">
+                        <Label className="text-xs">Micro Mult</Label>
+                        <Input
+                            type="number"
+                            value={options.microMultiplier ?? 10}
+                            onChange={(e) => updateOption('microMultiplier', parseFloat(e.target.value))}
+                        />
+                    </div>
                 </div>
             </div>
 

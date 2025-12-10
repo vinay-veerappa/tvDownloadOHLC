@@ -52,6 +52,9 @@ export interface HourlyProfilerOptions {
     threeHourOpenColor: string;
     threeHourMidColor: string;
     threeHourLineWidth: number;
+
+    // History
+    maxHours: number;
 }
 
 // Default Options
@@ -91,6 +94,9 @@ export const DEFAULT_HOURLY_PROFILER_OPTIONS: HourlyProfilerOptions = {
     threeHourOpenColor: '#9C27B0',   // Purple
     threeHourMidColor: '#9C27B0',
     threeHourLineWidth: 2,
+
+    // History
+    maxHours: 30,
 };
 
 class HourlyProfilerRenderer {
@@ -107,7 +113,6 @@ class HourlyProfilerRenderer {
         series: ISeriesApi<'Candlestick'>,
         theme?: typeof THEMES.dark
     ) {
-        console.log('[HourlyProfilerRenderer] Constructor - data length:', data.length, 'options:', options);
         this._data = data;
         this._options = options;
         this._chart = chart;
@@ -116,31 +121,22 @@ class HourlyProfilerRenderer {
     }
 
     draw(target: any) {
-        console.log('[HourlyProfiler] draw called with', this._data.length, 'periods');
 
         target.useBitmapCoordinateSpace((scope: any) => {
             const ctx = scope.context as CanvasRenderingContext2D;
             if (!ctx) {
-                console.warn('[HourlyProfiler] No canvas context available');
                 return;
             }
 
             const hPR = scope.horizontalPixelRatio;
             const vPR = scope.verticalPixelRatio;
 
-            console.log('[HourlyProfiler] Drawing with context, hPR:', hPR, 'vPR:', vPR);
-            console.log('[HourlyProfiler] Options - show3Hour:', this._options.show3Hour, 'showHourly:', this._options.showHourly);
-            console.log('[HourlyProfiler] Total data:', this._data.length);
-            if (this._data.length > 0) {
-                console.log('[HourlyProfiler] Sample data[0]:', this._data[0]);
-                console.log('[HourlyProfiler] Sample data[100]:', this._data[100]);
-            }
+
             ctx.save();
 
             // Draw 3H first (background layer)
             if (this._options.show3Hour) {
                 const threeHourData = this._data.filter(p => p.type === '3H');
-                console.log('[HourlyProfiler] 3H data filtered:', threeHourData.length, 'periods');
                 if (threeHourData.length > 0) {
                     this._draw3Hour(ctx, threeHourData, scope, hPR, vPR);
                 }
@@ -149,7 +145,6 @@ class HourlyProfilerRenderer {
             // Draw Hourly (foreground layer)
             if (this._options.showHourly) {
                 const hourlyData = this._data.filter(p => p.type === '1H');
-                console.log('[HourlyProfiler] 1H data filtered:', hourlyData.length, 'periods');
                 if (hourlyData.length > 0) {
                     this._drawHourly(ctx, hourlyData, scope, hPR, vPR);
                 }
@@ -167,7 +162,6 @@ class HourlyProfilerRenderer {
         vPR: number
     ) {
         const timeScale = this._chart.timeScale();
-        console.log('[HourlyProfiler] _drawHourly: Processing', data.length, 'periods');
 
         // Calculate Half Bar Width for Edge Alignment
         // We use logical coordinates to determine the width of one bar in pixels
@@ -177,13 +171,11 @@ class HourlyProfilerRenderer {
         if (coord0 !== null && coord1 !== null) {
             halfBarWidth = (Math.abs(coord1 - coord0)) / 2;
         }
-        console.log('[HourlyProfiler] Calculated halfBarWidth:', halfBarWidth);
 
 
         // Get the visible logical range
         const visibleRange = timeScale.getVisibleLogicalRange();
         if (!visibleRange) {
-            console.log('[HourlyProfiler] No visible range, skipping draw');
             return;
         }
 
@@ -197,8 +189,6 @@ class HourlyProfilerRenderer {
         const startTime = startCoord !== null ? timeScale.coordinateToTime(startCoord) : null;
         const endTime = endCoord !== null ? timeScale.coordinateToTime(endCoord) : null;
 
-        console.log('[HourlyProfiler] Visible time range:', startTime, 'to', endTime);
-
         let drawnCount = 0;
         data.forEach((period, index) => {
             const startUnix = new Date(period.start_time).getTime() / 1000 as Time;
@@ -206,10 +196,6 @@ class HourlyProfilerRenderer {
 
             const xStartCenter = timeScale.timeToCoordinate(startUnix);
             const xEndCenter = timeScale.timeToCoordinate(endUnix);
-
-            if (index === 0) {
-                console.log('[HourlyProfiler] First period:', period);
-            }
 
             if (xStartCenter === null || xEndCenter === null) {
                 return;
@@ -221,7 +207,7 @@ class HourlyProfilerRenderer {
 
             drawnCount++;
             if (drawnCount === 1) {
-                console.log('[HourlyProfiler] First drawn w/ offset. Center:', xStartCenter, 'Edge:', x1, 'HalfWidth:', halfBarWidth);
+                // First period drawn
             }
 
             const x1Scaled = x1 * hPR;
@@ -486,7 +472,7 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
         options: Partial<HourlyProfilerOptions> = {},
         theme?: typeof THEMES.dark
     ) {
-        console.log('[HourlyProfiler] Constructor called with options:', options, 'theme:', theme);
+
         this._chart = chart;
         this._series = series;
         if (theme) {
@@ -519,12 +505,7 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
             this._options = { ...DEFAULT_HOURLY_PROFILER_OPTIONS, ...options };
         }
 
-        console.log('[HourlyProfiler] After merge, this._options:', this._options);
-        console.log('[HourlyProfiler] show3Hour:', this._options.show3Hour, 'showHourly:', this._options.showHourly);
-
-        console.log('[HourlyProfiler] About to call fetchData');
         this.fetchData();
-        console.log('[HourlyProfiler] fetchData called (async)');
     }
 
     attached({ requestUpdate }: { requestUpdate: () => void }) {
@@ -543,19 +524,17 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
         try {
             const cleanTicker = this._options.ticker.replace('!', '');
             const url = `http://localhost:8000/api/sessions/${cleanTicker}?range_type=hourly`;
-            console.log('[HourlyProfiler] Fetching data for:', cleanTicker, 'URL:', url);
 
             const res = await fetch(url, {
                 signal: this._abortController.signal
             });
 
-            console.log('[HourlyProfiler] Fetch response status:', res.status, res.statusText);
-
             if (res.ok) {
                 const data = await res.json();
-                console.log('[HourlyProfiler] Data received:', data.length, 'periods', 'First period:', data[0]);
+                if (data.length === 0) {
+                    console.warn('[HourlyProfiler] Data array is empty!');
+                }
                 this._data = data;
-                console.log('[HourlyProfiler] Data assigned to _data, requesting update');
                 this._requestUpdate();
             } else {
                 const errorText = await res.text();
@@ -565,18 +544,16 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
             if (error instanceof Error && error.name !== 'AbortError') {
                 console.error('[HourlyProfiler] Fetch error:', error.message, error.stack);
             } else if (error instanceof Error) {
-                console.log('[HourlyProfiler] Fetch aborted (expected on cleanup)');
+                // Fetch aborted (expected on cleanup)
             }
         }
     }
 
     updateOptions(options: Partial<HourlyProfilerOptions>) {
-        console.log('[HourlyProfiler] updateOptions called with:', options);
         const prevTicker = this._options.ticker;
         this._options = { ...this._options, ...options };
 
         if (options.ticker && options.ticker !== prevTicker) {
-            console.log('[HourlyProfiler] Ticker changed from', prevTicker, 'to', options.ticker, 'refetching...');
             this.fetchData();
         }
     }
@@ -586,10 +563,28 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
     }
 
     paneViews() {
-        console.log('[HourlyProfiler] paneViews called, creating renderer with', this._data.length, 'periods');
+        let displayData = this._data;
+
+        // Apply Max Hours limit for display
+        if (this._options.maxHours > 0 && this._data.length > 0) {
+            // Filter only 1H periods to count them
+            const hourlyPeriods = this._data.filter(p => p.type === '1H');
+            if (hourlyPeriods.length > this._options.maxHours) {
+                // Get the start time of the cutoff period
+                // We want to keep the last `maxHours` periods.
+                const cutoffIndex = hourlyPeriods.length - this._options.maxHours;
+                const cutoffPeriod = hourlyPeriods[cutoffIndex];
+                if (cutoffPeriod) {
+                    const cutoffTime = new Date(cutoffPeriod.start_time).getTime();
+                    // Filter all data (inclusive of 3H) that starts >= cutoffTime
+                    displayData = this._data.filter(p => new Date(p.start_time).getTime() >= cutoffTime);
+                }
+            }
+        }
+
         return [{
             renderer: () => new HourlyProfilerRenderer(
-                this._data,
+                displayData,
                 this._options,
                 this._chart,
                 this._series,

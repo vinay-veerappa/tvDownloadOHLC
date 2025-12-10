@@ -27,6 +27,7 @@ import type { MagnetMode } from "@/lib/charts/magnet-utils"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { AccountManagerDialog } from "@/components/journal/account-manager-dialog"
 import { TimeframeSelector } from "@/components/timeframe-selector"
+import { normalizeResolution } from "@/lib/resolution"
 import { ThemeSwitcher } from "@/components/theme-switcher"
 import { VWAPSettings } from "@/lib/indicator-api"
 import { VWAPSettingsDialog } from "./vwap-settings-dialog"
@@ -62,14 +63,37 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
     const pnlColor = sessionPnl >= 0 ? "text-[#00C853]" : "text-[#ef5350]"
 
     const handleTickerChange = (currentValue: string) => {
+        // Normalize: Find the actual ticker with correct casing from our list
+        // This fixes the issue where CommandItem returns value in lowercase
+        const normalizedTicker = tickers.find(t => t.toLowerCase() === currentValue.toLowerCase()) || currentValue
+
         const params = new URLSearchParams(searchParams.toString())
-        params.set("ticker", currentValue)
-        const availableForTicker = tickerMap[currentValue] || []
-        if (!availableForTicker.includes(currentTimeframe)) {
+        params.set("ticker", normalizedTicker)
+
+        const availableForTicker = tickerMap[normalizedTicker] || []
+
+        // Normalize for comparison (e.g., "1h" vs "60")
+        const normalizedCurrent = normalizeResolution(currentTimeframe)
+        const availableNormalized = availableForTicker.map(tf => normalizeResolution(tf))
+
+        const matchIndex = availableNormalized.indexOf(normalizedCurrent)
+
+        if (matchIndex !== -1) {
+            // Timeframe is available! 
+            // Update to the specific string from availableForTicker to ensure UI consistency (e.g. "1h" instead of "60")
+            console.log('[TopToolbar] Timeframe available, switching to matched format:', availableForTicker[matchIndex])
+            params.set("timeframe", availableForTicker[matchIndex])
+        } else {
+            // Not available, switch to default
+            console.log('[TopToolbar] Timeframe not available (normalized), switching needed.')
             if (availableForTicker.length > 0) {
+                console.log('[TopToolbar] Switching to default:', availableForTicker[0])
                 params.set("timeframe", availableForTicker[0])
+            } else {
+                console.warn('[TopToolbar] No available timeframes found for ticker!')
             }
         }
+
         router.push(`?${params.toString()}`)
         setOpen(false)
     }

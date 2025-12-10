@@ -20,6 +20,9 @@ import { ChartLegend, ChartLegendRef } from "@/components/chart/chart-legend"
 import { VWAPSettings } from "@/lib/indicator-api"
 import { ThemeParams } from "@/lib/themes"
 import { ColorType } from "lightweight-charts"
+import { RangeInfoPanel } from "./range-info-panel"
+import { RangeTooltip } from "./range-tooltip"
+import { RangeExtensionPeriod } from "@/lib/charts/indicators/range-extensions"
 
 interface ChartContainerProps {
     ticker: string
@@ -100,6 +103,12 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
     // Bridge for lazy access to chart methods
     const getVisibleTimeRangeRef = useRef<(() => { start: number, end: number, center: number } | null) | null>(null)
+
+    // Range UI State
+    const [rangeExtensionsActive, setRangeExtensionsActive] = useState(false);
+    const [rangeData, setRangeData] = useState<RangeExtensionPeriod[]>([]);
+    const [hoveredRangePeriod, setHoveredRangePeriod] = useState<RangeExtensionPeriod | null>(null);
+    const [cursorPos, setCursorPos] = useState<{ x: number, y: number } | null>(null);
 
     // 2. Data & Replay Logic (Hook)
     const {
@@ -200,7 +209,18 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 if (lastBar) {
                     legendRef.current?.updateOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
                 }
+                // Optimize state updates to prevent loops
+                setHoveredRangePeriod(prev => prev ? null : prev);
+                setCursorPos(prev => prev ? null : prev);
                 return
+            }
+
+            // Update Cursor Pos for Tooltip
+            if (param.point) {
+                setCursorPos(prev => {
+                    if (prev && prev.x === param.point.x && prev.y === param.point.y) return prev;
+                    return { x: param.point.x, y: param.point.y };
+                });
             }
 
             // Get the candle data at crosshair position
@@ -212,6 +232,23 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     low: candleData.low,
                     close: candleData.close
                 })
+            }
+
+            // Range Extensions Tooltip Logic
+            // @ts-ignore - rangeExtensionsRef might be missing in typescript def but exists in runtime/scope
+            if (typeof rangeExtensionsRef !== 'undefined' && rangeExtensionsRef.current && rangeExtensionsRef.current.data) {
+                const time = param.time as number; // Unix timestamp
+                // @ts-ignore
+                const rangeData = rangeExtensionsRef.current.data;
+
+                // Find period encompassing this time (approximate hourly)
+                const period = rangeData.find((p: any) => {
+                    const t = p.time as number;
+                    return time >= t && time < t + 3600;
+                });
+                setHoveredRangePeriod(prev => prev === period ? prev : period || null);
+            } else {
+                setHoveredRangePeriod(prev => prev ? null : prev);
             }
         }
 
@@ -636,6 +673,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             onSelectionChange?.({ type: 'indicator', id: 'range-extensions' });
             if (rangeExtensionsRef.current) {
                 openProperties(rangeExtensionsRef.current);
+                setRangeData(rangeExtensionsRef.current.data); // Sync data for panel
             } else {
                 const currentParams = indicatorParams?.['range-extensions'] || {};
                 setSelectedDrawingOptions(currentParams);
@@ -788,15 +826,15 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
                 if (!sessionRangesRef.current) {
                     sessionRangesRef.current = new DailyProfiler(chart, series, {
-                        ticker,
                         showAsia: true,
                         extendUntil: "16:00",
-                        ...dailyParams
+                        ...dailyParams,
+                        ticker // START: Fix ticker override
                     }, (newOpts) => onIndicatorParamsChange?.('daily-profiler', newOpts));
                     series.attachPrimitive(sessionRangesRef.current);
                 } else {
                     // Update options (ticker + saved params), suppress notification to avoid loops
-                    sessionRangesRef.current.applyOptions({ ticker, ...dailyParams }, true);
+                    sessionRangesRef.current.applyOptions({ ...dailyParams, ticker }, true);
                 }
             });
         } else {
@@ -831,23 +869,41 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     // Detach old?
                     // Lightweight charts doesn't have easy detach for primitives if we lose ref?
                     // Actually we should detach current ref below if exists.
+                    if (rangeExtensionsRef.current.destroy) rangeExtensionsRef.current.destroy();
+                    rangeExtensionsRef.current = null;
                 }
 
                 if (!rangeExtensionsRef.current) {
                     rangeExtensionsRef.current = new RangeExtensions(chart, series, {
-                        ticker,
-                        ...params
+                        ...params,
+                        ticker // START: Fix ticker override
                     });
                     series.attachPrimitive(rangeExtensionsRef.current);
                 } else {
-                    rangeExtensionsRef.current.updateOptions({ ticker, ...params });
+                    rangeExtensionsRef.current.updateOptions({ ...params, ticker });
                 }
+                setRangeExtensionsActive(true);
+                // We might not have data yet (async fetch), but set active.
+                // Data will come later via internal update, but primitive doesn't auto-push data out.
+                // We rely on polling or just update when we interact?
+                // For now, let's just set blank, it will populate on next interaction or we can add a callback.
+                // But ChartContainer doesn't control the fetch.
+                // Ideally RangeExtensions calls a callback 'onDataUpdate'.
+                // For this iteration, let's just trust crosshair update to catch data 
+                // OR add an interval/timeout to sync initially? 
+                // Or just modify RangeExtensions to accept onDataChanged.
+
+                // Let's add a quick sync after a delay to catch initial load
+                setTimeout(() => {
+                    if (rangeExtensionsRef.current) setRangeData(rangeExtensionsRef.current.data);
+                }, 2000);
             });
         } else {
             if (rangeExtensionsRef.current) {
                 try {
+                    if (rangeExtensionsRef.current.destroy) rangeExtensionsRef.current.destroy();
                     series.detachPrimitive(rangeExtensionsRef.current);
-                    rangeExtensionsRef.current.detached();
+                    if (rangeExtensionsRef.current.detached) rangeExtensionsRef.current.detached();
                 } catch (e) { }
                 rangeExtensionsRef.current = null;
             }
@@ -861,44 +917,35 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
     useEffect(() => {
         if (!series || !chart || !ticker) {
-            console.log('[ChartContainer] Hourly Profiler useEffect: Missing dependencies', { series: !!series, chart: !!chart, ticker });
             return;
         }
 
         const isEnabled = indicators.includes('hourly-profiler');
-        console.log('[ChartContainer] Hourly Profiler useEffect: isEnabled =', isEnabled, 'current ref:', hourlyProfilerRef.current);
 
         if (isEnabled) {
             import('@/lib/charts/indicators/hourly-profiler').then(({ HourlyProfiler }) => {
                 const hourlyParams = indicatorParams?.['hourly-profiler'] || {};
-                console.log('[ChartContainer] HourlyProfiler module loaded, params:', hourlyParams);
 
                 // Recreate if series/chart instance changed
                 if (hourlyProfilerRef.current && (hourlyProfilerRef.current._series !== series)) {
-                    console.log('[ChartContainer] Series changed, recreating HourlyProfiler');
                     if (hourlyProfilerRef.current.destroy) hourlyProfilerRef.current.destroy();
                     hourlyProfilerRef.current = null;
                 }
 
                 if (!hourlyProfilerRef.current) {
-                    console.log('[ChartContainer] Creating new HourlyProfiler instance');
                     hourlyProfilerRef.current = new HourlyProfiler(chart, series, {
-                        ticker,
-                        ...hourlyParams
+                        ...hourlyParams,
+                        ticker // START: Fix ticker override
                     }, theme);
-                    console.log('[ChartContainer] HourlyProfiler created:', hourlyProfilerRef.current);
                     series.attachPrimitive(hourlyProfilerRef.current);
-                    console.log('[ChartContainer] HourlyProfiler attached to series');
                 } else {
-                    console.log('[ChartContainer] Updating existing HourlyProfiler options');
-                    hourlyProfilerRef.current.updateOptions({ ticker, ...hourlyParams });
+                    hourlyProfilerRef.current.updateOptions({ ...hourlyParams, ticker });
                 }
             }).catch(err => {
                 console.error('[ChartContainer] Failed to load HourlyProfiler module:', err);
             });
         } else {
             if (hourlyProfilerRef.current) {
-                console.log('[ChartContainer] Disabling HourlyProfiler, destroying instance');
                 try {
                     if (hourlyProfilerRef.current.destroy) {
                         hourlyProfilerRef.current.destroy();
@@ -916,6 +963,38 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         <div className="w-full h-full relative" onContextMenu={(e) => {
             // Keep native React onContextMenu as backup
         }}>
+            {/* Range Extensions UI */}
+            {rangeExtensionsActive && (() => {
+                const params = indicatorParams?.['range-extensions'] || {};
+                const accountBalance = params.accountBalance ?? 50000;
+                const riskPercent = params.riskPercent ?? 1.0;
+                const tickValue = params.tickValue ?? 50;
+                const microMultiplier = params.microMultiplier ?? 10;
+
+                return (
+                    <>
+                        <RangeInfoPanel
+                            data={rangeData}
+                            accountBalance={accountBalance}
+                            riskPercent={riskPercent}
+                            tickValue={tickValue}
+                            microMultiplier={microMultiplier}
+                        />
+                        {hoveredRangePeriod && cursorPos && (
+                            <RangeTooltip
+                                session={hoveredRangePeriod}
+                                x={cursorPos.x}
+                                y={cursorPos.y}
+                                accountBalance={accountBalance}
+                                riskPercent={riskPercent}
+                                tickValue={tickValue}
+                                microMultiplier={microMultiplier}
+                            />
+                        )}
+                    </>
+                );
+            })()}
+
             {/* Chart canvas container - innerHTML gets cleared by useChart */}
             <div ref={chartContainerRef} className="w-full h-full" />
 
