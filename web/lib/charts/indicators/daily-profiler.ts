@@ -333,14 +333,26 @@ class DailyProfilerRenderer {
                     // session.start_time is the reference.
 
                     // Optimization: Use Regex to replace time but KEEP offset
-                    // This prevents timezone mismatches (e.g. 16:00 Local vs 16:00 EST)
+                    // Handle milliseconds if present (THH:mm:ss.SSSS)
+                    // We split by T and Take the date part, and we split the offset part.
+                    // Robust way:
                     const iso = session.start_time;
-                    // Replace "THH:mm:ss" with "T16:00:00" (derived from extendUntil)
-                    // Matches T followed by digits, colons, until + or - or Z
-                    const newIso = iso.replace(/T\d{2}:\d{2}:\d{2}/, `T${this._options.extendUntil}:00`);
+                    const T_split = iso.split('T');
+                    if (T_split.length === 2) {
+                        const datePart = T_split[0];
+                        const timeAndOffset = T_split[1];
+                        // Find where offset starts (+ or - after the time)
+                        // Time is usually HH:mm:ss ot HH:mm:ss.sssss
+                        // Regex to find offset: /[+-Z]\d{2}:?\d{2}$/ or just Z
+                        const offsetMatch = timeAndOffset.match(/([+-]\d{2}:?\d{2}|Z)$/);
+                        const offset = offsetMatch ? offsetMatch[0] : '';
 
-                    extendUnix = new Date(newIso).getTime() / 1000;
-                    if (extendUnix < (startUnix as number)) extendUnix += 86400;
+                        // Construct new ISO with explicit 16:00:00 and original offset
+                        const newIso = `${datePart}T${this._options.extendUntil}:00${offset}`;
+
+                        extendUnix = new Date(newIso).getTime() / 1000;
+                        if (extendUnix < (startUnix as number)) extendUnix += 86400;
+                    }
                 } else {
                     if (session.endUnix) extendUnix = session.endUnix;
                     else extendUnix = (startUnix as number) + 3600;
@@ -705,12 +717,6 @@ export class DailyProfiler implements ISeriesPrimitive {
                     startUnix: new Date(d.start_time).getTime() / 1000,
                     endUnix: d.end_time ? new Date(d.end_time).getTime() / 1000 : undefined
                 })).sort((a: any, b: any) => (a.startUnix || 0) - (b.startUnix || 0));
-
-                if (this._data.length > 0) {
-                    console.log('[DailyProfiler] Data loaded:', this._data.length, 'Last:', this._data[this._data.length - 1]);
-                } else {
-                    console.warn('[DailyProfiler] No data loaded');
-                }
 
                 this._requestUpdate();
             }
