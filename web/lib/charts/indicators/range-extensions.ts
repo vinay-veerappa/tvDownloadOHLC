@@ -27,6 +27,7 @@ export interface RangeExtensionsOptions {
     accountBalance: number;
     riskPercent: number;       // e.g. 1.0 = 1%
     tickValue: number;         // e.g. 50
+    maxHours: number;          // Limit how many past sessions to show
 
     // Extensions
     showExtensions: boolean;
@@ -37,20 +38,24 @@ export interface RangeExtensionsOptions {
     extensionLineStyle: number; // 0=Solid, 1=Dotted, 2=Dashed
 
     // Info Table
-    showInfoTable: boolean;
+    showInfoTable: boolean; // Deprecated in favor of React UI
     infoTableTextColor: string;
     infoTableBgColor: string;
 
     // Toggles for Logic
     show0930: boolean; // Use RTH 1m logic for 09:00 bar?
     showHourly: boolean; // Use 5m OR logic for other bars?
+    // Duplicate fields removed
+    microMultiplier: number; // e.g. 10 for Indices
 }
 
 export const DEFAULT_RANGE_EXTENSIONS_OPTIONS: RangeExtensionsOptions = {
     ticker: "",
     accountBalance: 50000,
     riskPercent: 1.0,
+    microMultiplier: 10,
     tickValue: 50, // ES Default
+    maxHours: 200,
 
     showExtensions: true,
     extensionMode: 'price-percent',
@@ -59,7 +64,7 @@ export const DEFAULT_RANGE_EXTENSIONS_OPTIONS: RangeExtensionsOptions = {
     extensionOpacity: 0.6,
     extensionLineStyle: 2, // Dashed
 
-    showInfoTable: true,
+    showInfoTable: false,
     infoTableTextColor: '#FFFFFF',
     infoTableBgColor: 'rgba(0,0,0, 0.7)',
 
@@ -236,6 +241,7 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
     private _series: any;
     private _chart: IChartApi;
     private _requestUpdate: () => void = () => { };
+    private _abortController: AbortController | null = null;
 
     constructor(
         chart: IChartApi,
@@ -247,6 +253,10 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
         this._options = { ...DEFAULT_RANGE_EXTENSIONS_OPTIONS, ...options };
     }
 
+    public get data(): RangeExtensionPeriod[] {
+        return this._data;
+    }
+
     attached({ requestUpdate }: { requestUpdate: () => void }) {
         this._requestUpdate = requestUpdate;
         this.fetchData();
@@ -254,6 +264,14 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
 
     detached() {
         this._requestUpdate = () => { };
+        this.destroy();
+    }
+
+    public destroy() {
+        if (this._abortController) {
+            this._abortController.abort();
+            this._abortController = null;
+        }
     }
 
     updateOptions(options: Partial<RangeExtensionsOptions>) {
@@ -267,8 +285,10 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
     }
 
     paneViews(): IPrimitivePaneView[] {
+        const maxHours = this._options.maxHours || 200;
+        const visibleData = this._data.slice(-maxHours);
         return [{
-            renderer: () => new RangeExtensionsRenderer(this._data, this._options, this._series, this._chart)
+            renderer: () => new RangeExtensionsRenderer(visibleData, this._options, this._series, this._chart)
         }];
     }
 
@@ -276,12 +296,19 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
     async fetchData() {
         if (!this._options.ticker) return;
 
+        // Abort previous request
+        if (this._abortController) {
+            this._abortController.abort();
+        }
+        this._abortController = new AbortController();
+        const signal = this._abortController.signal;
+
         // Clean ticker
         const cleanTicker = this._options.ticker.replace('!', ''); // Basic clean
 
         try {
             const url = `http://localhost:8000/api/sessions/${cleanTicker}?range_type=hourly`;
-            const res = await fetch(url);
+            const res = await fetch(url, { signal });
             if (!res.ok) throw new Error('Failed to fetch range data');
 
             const rawData = await res.json();
@@ -300,8 +327,11 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
             // Request update
             this._requestUpdate();
 
-        } catch (e) {
+        } catch (e: any) {
+            if (e.name === 'AbortError') return;
             console.error("RangeExtensions Fetch Error", e);
+        } finally {
+            this._abortController = null;
         }
     }
 }

@@ -3,7 +3,7 @@ Indicator calculation service using pandas-ta
 """
 
 import pandas as pd
-import pandas_ta as ta
+import talib
 from typing import Dict, List, Optional, Any
 
 
@@ -142,38 +142,40 @@ def calculate_indicator(df: pd.DataFrame, indicator: str) -> Dict[str, List[Opti
     
     elif name == "sma":
         p = period or 20
-        values = ta.sma(df['close'], length=p)
+        values = talib.SMA(df['close'], timeperiod=p)
         result[f"sma_{p}"] = values.tolist()
     
     elif name == "ema":
         p = period or 21
-        values = ta.ema(df['close'], length=p)
+        values = talib.EMA(df['close'], timeperiod=p)
         result[f"ema_{p}"] = values.tolist()
     
     elif name == "atr":
         p = period or 14
-        values = ta.atr(df['high'], df['low'], df['close'], length=p)
+        values = talib.ATR(df['high'], df['low'], df['close'], timeperiod=p)
         result[f"atr_{p}"] = values.tolist()
     
     elif name == "rsi":
         p = period or 14
-        values = ta.rsi(df['close'], length=p)
+        values = talib.RSI(df['close'], timeperiod=p)
         result[f"rsi_{p}"] = values.tolist()
     
     elif name == "bbands":
         p = period or 20
-        bb = ta.bbands(df['close'], length=p, std=2.0)
-        if bb is not None:
-            result[f"bbands_upper_{p}"] = bb.iloc[:, 0].tolist()  # BBU
-            result[f"bbands_mid_{p}"] = bb.iloc[:, 1].tolist()    # BBM
-            result[f"bbands_lower_{p}"] = bb.iloc[:, 2].tolist()  # BBL
+        upper, middle, lower = talib.BBANDS(df['close'], timeperiod=p, nbdevup=2.0, nbdevdn=2.0, matype=0)
+        result[f"bbands_upper_{p}"] = upper.tolist()
+        result[f"bbands_mid_{p}"] = middle.tolist()
+        result[f"bbands_lower_{p}"] = lower.tolist()
     
     elif name == "macd":
-        macd_df = ta.macd(df['close'])
-        if macd_df is not None:
-            result["macd_line"] = macd_df.iloc[:, 0].tolist()
-            result["macd_signal"] = macd_df.iloc[:, 1].tolist()
-            result["macd_histogram"] = macd_df.iloc[:, 2].tolist()
+        # MACD default: fast=12, slow=26, signal=9
+        fast = params.get("fast", 12)
+        slow = params.get("slow", 26)
+        signal = params.get("signal", 9)
+        macd, macdsignal, macdhist = talib.MACD(df['close'], fastperiod=fast, slowperiod=slow, signalperiod=signal)
+        result["macd_line"] = macd.tolist()
+        result["macd_signal"] = macdsignal.tolist()
+        result["macd_histogram"] = macdhist.tolist()
     
     # Convert NaN to None for JSON serialization
     for key in result:

@@ -344,6 +344,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
                                                         value={options.borderColor || '#2962FF'}
                                                         onChange={(e) => handleChange('borderColor', e.target.value)}
                                                         className="w-12 h-8 p-1"
+                                                        title="Border Color"
+                                                        aria-label="Border Color"
                                                     />
                                                     <Input
                                                         type="number"
@@ -363,11 +365,11 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
                                                 <Label className="text-right text-xs pt-2">Extend</Label>
                                                 <div className="col-span-3 flex gap-4">
                                                     <div className="flex items-center space-x-2">
-                                                        <input type="checkbox" id="extLeft" checked={options.extendLeft} onChange={(e) => handleChange('extendLeft', e.target.checked)} />
+                                                        <input type="checkbox" id="extLeft" checked={options.extendLeft} onChange={(e) => handleChange('extendLeft', e.target.checked)} title="Extend Left" aria-label="Extend Left" />
                                                         <Label htmlFor="extLeft" className="text-xs">Left</Label>
                                                     </div>
                                                     <div className="flex items-center space-x-2">
-                                                        <input type="checkbox" id="extRight" checked={options.extendRight} onChange={(e) => handleChange('extendRight', e.target.checked)} />
+                                                        <input type="checkbox" id="extRight" checked={options.extendRight} onChange={(e) => handleChange('extendRight', e.target.checked)} title="Extend Right" aria-label="Extend Right" />
                                                         <Label htmlFor="extRight" className="text-xs">Right</Label>
                                                     </div>
                                                 </div>
@@ -428,6 +430,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
                                         handleChange('visible', e.target.checked);
                                     }}
                                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                    title="Show Text"
+                                    aria-label="Show Text"
                                 />
                                 <Label htmlFor="showText">Show Text</Label>
                             </div>

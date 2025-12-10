@@ -15,6 +15,30 @@ interface HourlyProfilerSettingsViewProps {
     onChange: (options: Partial<HourlyProfilerOptions>) => void
 }
 
+function toSafeHex(color: string): string {
+    if (!color) return "#000000";
+    if (color.startsWith("#")) {
+        return color.substring(0, 7);
+    }
+    if (color.startsWith("rgb")) {
+        const match = color.match(/\d+/g);
+        if (match && match.length >= 3) {
+            const r = parseInt(match[0]);
+            const g = parseInt(match[1]);
+            const b = parseInt(match[2]);
+            return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+        }
+    }
+    // Simple named color fallback (add more if needed)
+    if (color === 'transparent') return '#000000';
+    if (color === 'white') return '#ffffff';
+    if (color === 'black') return '#000000';
+    if (color === 'red') return '#ff0000';
+    if (color === 'green') return '#008000';
+    if (color === 'blue') return '#0000ff';
+    return "#000000";
+}
+
 export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyProfilerSettingsViewProps) {
     const [options, setOptions] = useState<HourlyProfilerOptions>({ ...DEFAULT_HOURLY_PROFILER_OPTIONS, ...initialOptions })
 
@@ -54,7 +78,7 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                                     <Label className="text-xs">Color</Label>
                                     <Input
                                         type="color"
-                                        value={options.hourlyBoxColor}
+                                        value={toSafeHex(options.hourlyBoxColor)}
                                         onChange={(e) => updateOption('hourlyBoxColor', e.target.value)}
                                         className="h-8"
                                     />
@@ -84,7 +108,7 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                                     <Label className="text-xs">Open (Green)</Label>
                                     <Input
                                         type="color"
-                                        value={options.hourlyOpenColor}
+                                        value={toSafeHex(options.hourlyOpenColor)}
                                         onChange={(e) => updateOption('hourlyOpenColor', e.target.value)}
                                         className="h-8"
                                     />
@@ -93,7 +117,7 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                                     <Label className="text-xs">Close (Red)</Label>
                                     <Input
                                         type="color"
-                                        value={options.hourlyCloseColor}
+                                        value={toSafeHex(options.hourlyCloseColor)}
                                         onChange={(e) => updateOption('hourlyCloseColor', e.target.value)}
                                         className="h-8"
                                     />
@@ -102,7 +126,7 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                                     <Label className="text-xs">Mid (Orange)</Label>
                                     <Input
                                         type="color"
-                                        value={options.hourlyMidColor}
+                                        value={toSafeHex(options.hourlyMidColor)}
                                         onChange={(e) => updateOption('hourlyMidColor', e.target.value)}
                                         className="h-8"
                                     />
@@ -126,7 +150,7 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                                             <Label className="text-xs">Color</Label>
                                             <Input
                                                 type="color"
-                                                value={options.orBoxColor}
+                                                value={toSafeHex(options.orBoxColor)}
                                                 onChange={(e) => updateOption('orBoxColor', e.target.value)}
                                                 className="h-8"
                                             />
@@ -168,7 +192,7 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                                                 <div className="flex gap-2">
                                                     <Input
                                                         type="color"
-                                                        value={options.quarterOddColor}
+                                                        value={toSafeHex(options.quarterOddColor)}
                                                         onChange={(e) => updateOption('quarterOddColor', e.target.value)}
                                                         className="w-12 h-8 p-1"
                                                     />
@@ -185,7 +209,7 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                                                 <div className="flex gap-2">
                                                     <Input
                                                         type="color"
-                                                        value={options.quarterEvenColor}
+                                                        value={toSafeHex(options.quarterEvenColor)}
                                                         onChange={(e) => updateOption('quarterEvenColor', e.target.value)}
                                                         className="w-12 h-8 p-1"
                                                     />
@@ -326,7 +350,7 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                                             <Label className="text-xs">Color</Label>
                                             <Input
                                                 type="color"
-                                                value={options.threeHourBoxColor}
+                                                value={toSafeHex(options.threeHourBoxColor)}
                                                 onChange={(e) => updateOption('threeHourBoxColor', e.target.value)}
                                                 className="h-8"
                                             />
@@ -366,7 +390,7 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                                             <Label className="text-xs">Open Color</Label>
                                             <Input
                                                 type="color"
-                                                value={options.threeHourOpenColor}
+                                                value={toSafeHex(options.threeHourOpenColor)}
                                                 onChange={(e) => updateOption('threeHourOpenColor', e.target.value)}
                                                 className="h-8"
                                             />
@@ -375,7 +399,7 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                                             <Label className="text-xs">Mid Color</Label>
                                             <Input
                                                 type="color"
-                                                value={options.threeHourMidColor}
+                                                value={toSafeHex(options.threeHourMidColor)}
                                                 onChange={(e) => updateOption('threeHourMidColor', e.target.value)}
                                                 className="h-8"
                                             />
@@ -409,6 +433,25 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
                         <p>Global settings for the Hourly Profiler.</p>
                         <p className="mt-2">Starts at 18:00 and repeats every 3 hours.</p>
                         <p className="mt-2">Low opacity boxes (8-10%) ensure candles remain clearly visible.</p>
+                    </div>
+
+                    <Separator />
+
+                    <div className="space-y-2">
+                        <Label className="text-sm font-medium">History Limit</Label>
+                        <div className="flex items-center gap-4">
+                            <div className="grid gap-1.5">
+                                <Label className="text-xs">Max Hours (0 = Unlimited)</Label>
+                                <Input
+                                    type="number"
+                                    min={0}
+                                    value={options.maxHours ?? 30}
+                                    onChange={(e) => updateOption('maxHours', Number(e.target.value))}
+                                    className="w-24 h-8"
+                                />
+                            </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Limits the number of hourly blocks displayed to improve performance and clarity.</p>
                     </div>
 
                     <Separator />
