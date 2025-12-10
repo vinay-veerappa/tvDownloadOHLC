@@ -178,6 +178,10 @@ export function ChartWrapper(props: ChartWrapperProps) {
     // Global Selection State
     const [selection, setSelection] = useState<{ type: 'drawing' | 'indicator', id: string } | null>(null);
 
+    // Use ref to access current selection in callbacks without adding dependencies
+    const selectionRef = useRef(selection);
+    useEffect(() => { selectionRef.current = selection }, [selection]);
+
     // Validated order execution - only allows trading in replay mode
     const validatedExecuteOrder = useCallback((params: Parameters<typeof executeOrder>[0]) => {
         const isReplay = chartRef.current?.isReplayMode() ?? false
@@ -210,30 +214,31 @@ export function ChartWrapper(props: ChartWrapperProps) {
         if (chartRef.current) {
             chartRef.current.deleteDrawing(id)
             setDrawings(prev => prev.filter(d => d.id !== id))
-            if (selection?.id === id) setSelection(null);
+            setSelection(prev => prev?.id === id ? null : prev)
         }
-    }, [selection?.id]);
+    }, []);
 
     const handleDeleteIndicator = useCallback((type: string) => {
         IndicatorStorage.removeIndicator(chartId, type)
         setIndicators(prev => prev.filter(ind => ind !== type))
-        if (selection?.id === type) setSelection(null);
-    }, [chartId, selection?.id]);
+        setSelection(prev => prev?.id === type ? null : prev)
+    }, [chartId]);
 
     const handleDeleteSelection = useCallback(() => {
-        if (!selection) return;
+        const current = selectionRef.current;
+        if (!current) return;
 
-        if (selection.type === 'drawing') {
-            handleDeleteDrawing(selection.id);
-        } else if (selection.type === 'indicator') {
-            handleDeleteIndicator(selection.id);
+        if (current.type === 'drawing') {
+            handleDeleteDrawing(current.id);
+        } else if (current.type === 'indicator') {
+            handleDeleteIndicator(current.id);
         }
-    }, [selection, handleDeleteDrawing, handleDeleteIndicator]);
+    }, [handleDeleteDrawing, handleDeleteIndicator]);
 
     const handleChartDrawingDeleted = useCallback((id: string) => {
         setDrawings(prev => prev.filter(d => d.id !== id))
-        if (selection?.id === id) setSelection(null);
-    }, [selection?.id]);
+        setSelection(prev => prev?.id === id ? null : prev)
+    }, []);
 
     // Indicator Settings Handlers
     const handleEditIndicator = useCallback((type: string) => {

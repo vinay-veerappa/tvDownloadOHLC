@@ -468,18 +468,37 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             if (hitDrawing) {
                 const id = typeof hitDrawing.id === 'function' ? hitDrawing.id() : hitDrawing.id;
                 onSelectionChange?.({ type: hitDrawing._type || 'drawing', id });
-                const now = Date.now();
-                if (now - lastClickRef.current < 800 && lastClickIdRef.current === id) {
-                    openProperties(hitDrawing)
-                }
-                lastClickRef.current = now;
-                lastClickIdRef.current = id;
             } else {
                 deselectDrawing();
             }
         }
+
+        const dblClickHandler = (param: any) => {
+            if (!param.point) return;
+
+            let hitDrawing: any = null;
+            const result = drawingManager.hitTest(param.point.x, param.point.y);
+            if (result) hitDrawing = result.drawing;
+            else if (primitives?.current) {
+                for (const p of primitives.current) {
+                    if (p.hitTest?.(param.point.x, param.point.y)) { hitDrawing = p; break; }
+                }
+            }
+
+            if (hitDrawing) {
+                openProperties(hitDrawing);
+            }
+        };
+
         chart.subscribeClick(clickHandler)
-        return () => chart.unsubscribeClick(clickHandler)
+        // @ts-ignore - subscribeDblClick might be missing in older type definitions but exists at runtime
+        chart.subscribeDblClick?.(dblClickHandler)
+
+        return () => {
+            chart.unsubscribeClick(clickHandler)
+            // @ts-ignore
+            chart.unsubscribeDblClick?.(dblClickHandler)
+        }
     }, [chart, series, drawingManager, onSelectionChange, isSelectingReplayStart]);
 
 
