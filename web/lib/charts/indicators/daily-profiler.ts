@@ -10,6 +10,8 @@ interface SessionData {
     low?: number;
     mid?: number;
     price?: number; // For single line items like MidnightOpen
+    startUnix?: number;
+    endUnix?: number;
 }
 
 export interface DailyProfilerOptions {
@@ -169,15 +171,35 @@ class DailyProfilerRenderer {
         private _theme: ThemeParams
     ) { }
 
+    private _binarySearch(time: number): number {
+        let l = 0;
+        let r = this._data.length - 1;
+        while (l <= r) {
+            const m = Math.floor((l + r) / 2);
+            if ((this._data[m].startUnix || 0) < time) l = m + 1;
+            else r = m - 1;
+        }
+        return Math.max(0, l - 1);
+    }
+
     draw(target: any): void {
         const timeScale = this._chart.timeScale();
+        const visibleRange = timeScale.getVisibleRange();
+        if (!visibleRange) return;
+
+        const startIndex = this._binarySearch(visibleRange.from as number);
 
         target.useBitmapCoordinateSpace((scope: any) => {
             const ctx = scope.context;
             const hPR = scope.horizontalPixelRatio;
             const vPR = scope.verticalPixelRatio;
 
-            this._data.forEach(session => {
+            let drawnItems = 0;
+
+            for (let i = startIndex; i < this._data.length; i++) {
+                const session = this._data[i];
+                if ((session.startUnix || 0) > (visibleRange.to as number)) break;
+
                 // Determine style based on session name
                 let color = this._options.asiaColor;
                 let opacity = this._options.asiaOpacity;
@@ -255,10 +277,15 @@ class DailyProfilerRenderer {
                     showLabel = this._options.show730Label;
                 }
 
-                if (!visible) return;
+                if (!visible) continue;
 
-                // Time Coordinates
-                const startUnix = new Date(session.start_time).getTime() / 1000 as Time;
+                drawnItems++;
+                // Safety brake (higher limit than Hourly as these are daily sessions, maybe 50 is enough for a view?)
+                // Actually 100 is safe.
+                if (drawnItems > 100) break;
+
+                // Time Coordinates (Pre-calculated)
+                const startUnix = session.startUnix as Time;
 
                 // Calculate Extend Time
                 let extendUnix: number = 0;
@@ -268,36 +295,45 @@ class DailyProfilerRenderer {
 
                 // For OR, extended sessions, or single-price lines - extend to "Until" time (usually 16:00)
                 if (extend || isOR || isSinglePriceLine) {
+                    // Logic for extension - simplified to use cached or recalc if needed?
+                    // Ideally we cache this too, but extension depends on OPTIONS ("extendUntil").
+                    // So we must calc dynamic part here, but we can optimize parsing.
+                    // Actually, "extendUntil" is constant per render pass.
+
+                    // Optimization: Parse ISO only if needed. 
+                    // Better: We can reconstruct date from startUnix without parsing string?
+                    // session.start_time is the reference.
+
                     const iso = session.start_time;
+                    // Fast string op
                     const T_idx = iso.indexOf('T');
                     if (T_idx > 0) {
+                        // This string manimpulation is faster than new Date()
                         const datePart = iso.substring(0, T_idx);
-                        const rest = iso.substring(T_idx + 1);
-                        let offset = '';
-                        if (rest.length > 8) {
-                            const char8 = rest.charAt(8);
-                            if (char8 === '+' || char8 === '-' || char8 === 'Z') offset = rest.substring(8);
-                        }
-                        const newIso = `${datePart}T${this._options.extendUntil}:00${offset}`;
+                        // We assume offset is same?
+                        // Or just append the time.
+                        const newIso = `${datePart}T${this._options.extendUntil}:00`;
+                        // This one new Date per item is still cost.
+                        // But much less if we skip invisible ones.
                         extendUnix = new Date(newIso).getTime() / 1000;
                         if (extendUnix < (startUnix as number)) extendUnix += 86400;
                     }
                 } else {
-                    if (session.end_time) extendUnix = new Date(session.end_time).getTime() / 1000;
+                    if (session.endUnix) extendUnix = session.endUnix;
                     else extendUnix = (startUnix as number) + 3600;
                 }
 
                 const x1 = timeScale.timeToCoordinate(startUnix);
                 const x2 = timeScale.timeToCoordinate(extendUnix as Time);
 
-                if (x1 === null) return;
+                if (x1 === null) continue;
                 const x1Scaled = (x1 as number) * hPR;
 
                 // Determine Right Edge (EOD if extended)
                 let xEODScaled = x1Scaled;
                 if (x2 !== null) {
                     xEODScaled = (x2 as number) * hPR;
-                } else if ((extend || isOR) && (startUnix as number) >= (this._data[this._data.length - 1].start_time as any)) {
+                } else if ((extend || isOR) && (startUnix as number) >= (this._data[this._data.length - 1].startUnix || 0)) {
                     xEODScaled = scope.mediaSize.width * hPR;
                 }
 
@@ -316,16 +352,15 @@ class DailyProfilerRenderer {
                         if (isOR) {
                             // OR Box extends to EOD and is filled
                             xBoxEndScaled = xEODScaled;
-                        } else if (!isP12 && !extend && session.end_time) {
+                        } else if (!isP12 && !extend && session.endUnix) {
                             // Standard (non-extended) box ends at session end
-                            const endT = new Date(session.end_time).getTime() / 1000 as Time;
-                            const xE = timeScale.timeToCoordinate(endT);
+                            const xE = timeScale.timeToCoordinate(session.endUnix as Time);
                             if (xE !== null) xBoxEndScaled = (xE as number) * hPR;
                             else xBoxEndScaled = xEODScaled; // fallback
                         } else {
-                            if (session.end_time) {
-                                const endT = new Date(session.end_time).getTime() / 1000 as Time;
-                                const xE = timeScale.timeToCoordinate(endT);
+                            // Use extended
+                            if (session.endUnix) {
+                                const xE = timeScale.timeToCoordinate(session.endUnix as Time);
                                 if (xE !== null) xBoxEndScaled = (xE as number) * hPR;
                             } else {
                                 xBoxEndScaled = xEODScaled;
@@ -450,19 +485,16 @@ class DailyProfilerRenderer {
                             }
                         }
 
-                        // General Label (Top Right of Box/Line) - Only for Main Label if enabled?
-                        // Only for non-standard sessions or where we don't have H/L labels
+                        // General Label
                         if (this._options.showLabels && showLabel && !isP12 && !isOR && ['Open730', 'GlobexOpen', 'PWeeklyClose', 'MidnightOpen'].includes(session.session)) {
                             ctx.font = `${10 * hPR}px sans-serif`;
                             ctx.fillStyle = this._theme ? this._theme.ui.text : color;
                             ctx.textAlign = 'right';
                             ctx.fillText(labelPrefix, xEODScaled - 5 * hPR, y1Scaled - 4 * hPR);
-                            // Using xEODScaled for single lines like Midnight/730
                         }
                     }
                 }
-                // Render Single Lines (Midnight Open is usually a line, handled via session.price if data provides, or Box if H/L)
-                // If the API returns it as a line (price only)?
+                // Render Single Lines
                 else if (session.price !== undefined) {
                     const y = this._series.priceToCoordinate(session.price);
                     if (y !== null) {
@@ -472,7 +504,7 @@ class DailyProfilerRenderer {
 
                         ctx.beginPath();
                         ctx.moveTo(x1Scaled, yScaled);
-                        ctx.lineTo(xEODScaled, yScaled); // Always extend to EOD/Extend limit
+                        ctx.lineTo(xEODScaled, yScaled);
                         ctx.stroke();
 
                         if (this._options.showLabels && showLabel) {
@@ -483,7 +515,7 @@ class DailyProfilerRenderer {
                         }
                     }
                 }
-            });
+            }
         });
     }
 
@@ -580,7 +612,14 @@ export class DailyProfiler implements ISeriesPrimitive {
                 signal: this._abortController.signal
             });
             if (res.ok) {
-                this._data = await res.json();
+                const data = await res.json();
+                // Pre-process timestamps
+                this._data = data.map((d: any) => ({
+                    ...d,
+                    startUnix: new Date(d.start_time).getTime() / 1000,
+                    endUnix: d.end_time ? new Date(d.end_time).getTime() / 1000 : undefined
+                }));
+
                 this._requestUpdate();
             }
         } catch (e: any) {
