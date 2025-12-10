@@ -2,7 +2,8 @@
 fastapi>=0.104.0
 uvicorn>=0.24.0
 pandas>=2.0.0
-ta-lib>=0.4.0
+ta-lib>=0.4.0 ; platform_system != "Windows"  # Optional C library-based indicators
+pandas-ta>=0.3.0  # Pure Python alternative (works everywhere)
 pyarrow>=14.0.0
 numpy>=1.24.0
 pydantic>=2.0.0

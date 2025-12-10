@@ -3,8 +3,17 @@ Indicator calculation service using pandas-ta
 """
 
 import pandas as pd
-import talib
 from typing import Dict, List, Optional, Any
+
+# Optional talib import - not all environments have it installed
+try:
+    import talib
+    TALIB_AVAILABLE = True
+except ImportError:
+    talib = None
+    TALIB_AVAILABLE = False
+    print("[Indicators] Warning: talib not installed. SMA, EMA, ATR, RSI, BBANDS, MACD indicators will not be available.")
+
 
 
 # Available indicators with their descriptions and parameters
@@ -141,41 +150,64 @@ def calculate_indicator(df: pd.DataFrame, indicator: str) -> Dict[str, List[Opti
             result[indicator] = [None] * len(df)
     
     elif name == "sma":
-        p = period or 20
-        values = talib.SMA(df['close'], timeperiod=p)
-        result[f"sma_{p}"] = values.tolist()
+        if not TALIB_AVAILABLE:
+            result[f"sma_{period or 20}"] = [None] * len(df)
+        else:
+            p = period or 20
+            values = talib.SMA(df['close'], timeperiod=p)
+            result[f"sma_{p}"] = values.tolist()
     
     elif name == "ema":
-        p = period or 21
-        values = talib.EMA(df['close'], timeperiod=p)
-        result[f"ema_{p}"] = values.tolist()
+        if not TALIB_AVAILABLE:
+            result[f"ema_{period or 21}"] = [None] * len(df)
+        else:
+            p = period or 21
+            values = talib.EMA(df['close'], timeperiod=p)
+            result[f"ema_{p}"] = values.tolist()
     
     elif name == "atr":
-        p = period or 14
-        values = talib.ATR(df['high'], df['low'], df['close'], timeperiod=p)
-        result[f"atr_{p}"] = values.tolist()
+        if not TALIB_AVAILABLE:
+            result[f"atr_{period or 14}"] = [None] * len(df)
+        else:
+            p = period or 14
+            values = talib.ATR(df['high'], df['low'], df['close'], timeperiod=p)
+            result[f"atr_{p}"] = values.tolist()
     
     elif name == "rsi":
-        p = period or 14
-        values = talib.RSI(df['close'], timeperiod=p)
-        result[f"rsi_{p}"] = values.tolist()
+        if not TALIB_AVAILABLE:
+            result[f"rsi_{period or 14}"] = [None] * len(df)
+        else:
+            p = period or 14
+            values = talib.RSI(df['close'], timeperiod=p)
+            result[f"rsi_{p}"] = values.tolist()
     
     elif name == "bbands":
-        p = period or 20
-        upper, middle, lower = talib.BBANDS(df['close'], timeperiod=p, nbdevup=2.0, nbdevdn=2.0, matype=0)
-        result[f"bbands_upper_{p}"] = upper.tolist()
-        result[f"bbands_mid_{p}"] = middle.tolist()
-        result[f"bbands_lower_{p}"] = lower.tolist()
+        if not TALIB_AVAILABLE:
+            p = period or 20
+            result[f"bbands_upper_{p}"] = [None] * len(df)
+            result[f"bbands_mid_{p}"] = [None] * len(df)
+            result[f"bbands_lower_{p}"] = [None] * len(df)
+        else:
+            p = period or 20
+            upper, middle, lower = talib.BBANDS(df['close'], timeperiod=p, nbdevup=2.0, nbdevdn=2.0, matype=0)
+            result[f"bbands_upper_{p}"] = upper.tolist()
+            result[f"bbands_mid_{p}"] = middle.tolist()
+            result[f"bbands_lower_{p}"] = lower.tolist()
     
     elif name == "macd":
-        # MACD default: fast=12, slow=26, signal=9
-        fast = params.get("fast", 12)
-        slow = params.get("slow", 26)
-        signal = params.get("signal", 9)
-        macd, macdsignal, macdhist = talib.MACD(df['close'], fastperiod=fast, slowperiod=slow, signalperiod=signal)
-        result["macd_line"] = macd.tolist()
-        result["macd_signal"] = macdsignal.tolist()
-        result["macd_histogram"] = macdhist.tolist()
+        if not TALIB_AVAILABLE:
+            result["macd_line"] = [None] * len(df)
+            result["macd_signal"] = [None] * len(df)
+            result["macd_histogram"] = [None] * len(df)
+        else:
+            # MACD default: fast=12, slow=26, signal=9
+            fast = params.get("fast", 12)
+            slow = params.get("slow", 26)
+            signal = params.get("signal", 9)
+            macd, macdsignal, macdhist = talib.MACD(df['close'], fastperiod=fast, slowperiod=slow, signalperiod=signal)
+            result["macd_line"] = macd.tolist()
+            result["macd_signal"] = macdsignal.tolist()
+            result["macd_histogram"] = macdhist.tolist()
     
     # Convert NaN to None for JSON serialization
     for key in result:

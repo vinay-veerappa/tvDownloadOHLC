@@ -56,7 +56,7 @@ export function RangeInfoPanel({ data, accountBalance, riskPercent, tickValue, m
                         const micros = contracts * microMultiplier;
 
                         return (
-                            <tr key={session.time as number} className="border-t border-border">
+                            <tr key={`${session.time}-${session.type || '1H'}`} className="border-t border-border">
                                 <td className="px-1 py-0.5">{timeStr}</td>
                                 <td className="px-1 py-0.5">{range.toFixed(2)}</td>
                                 <td className="px-1 py-0.5">${riskPerContract.toFixed(0)}</td>

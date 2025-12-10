@@ -816,7 +816,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const sessionRangesRef = useRef<any>(null);
 
     useEffect(() => {
-        if (!series || !chart || !ticker) return;
+        if (!series || !chart || !ticker || data.length === 0) return;
 
         const isEnabled = indicators.includes('daily-profiler');
 
@@ -832,11 +832,19 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 }
 
                 if (!sessionRangesRef.current) {
+                    // Calculate time range (last 14 days)
+                    const LOAD_DAYS = 14;
+                    const SECONDS_PER_DAY = 24 * 60 * 60;
+                    const endTs = data.length > 0 ? data[data.length - 1].time as number : undefined;
+                    const startTs = endTs ? endTs - (LOAD_DAYS * SECONDS_PER_DAY) : undefined;
+
                     sessionRangesRef.current = new DailyProfiler(chart, series, {
                         showAsia: true,
                         extendUntil: "16:00",
                         ...dailyParams,
-                        ticker // START: Fix ticker override
+                        ticker, // START: Fix ticker override
+                        startTs,
+                        endTs
                     }, (newOpts) => onIndicatorParamsChange?.('daily-profiler', newOpts));
                     series.attachPrimitive(sessionRangesRef.current);
                 } else {
@@ -855,7 +863,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 sessionRangesRef.current = null;
             }
         }
-    }, [series, chart, ticker, indicators, indicatorParams, onIndicatorParamsChange]);
+    }, [series, chart, ticker, indicators, indicatorParams, onIndicatorParamsChange, data.length > 0]);
 
     // -------------------------------------------------------------------------
     // 14. Range Extensions Integration
@@ -863,7 +871,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const rangeExtensionsRef = useRef<any>(null);
 
     useEffect(() => {
-        if (!series || !chart || !ticker) return;
+        if (!series || !chart || !ticker || data.length === 0) return;
 
         const isEnabled = indicators.includes('range-extensions');
 
@@ -881,9 +889,17 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 }
 
                 if (!rangeExtensionsRef.current) {
+                    // Calculate time range (last 14 days)
+                    const LOAD_DAYS = 14;
+                    const SECONDS_PER_DAY = 24 * 60 * 60;
+                    const endTs = data.length > 0 ? data[data.length - 1].time as number : undefined;
+                    const startTs = endTs ? endTs - (LOAD_DAYS * SECONDS_PER_DAY) : undefined;
+
                     rangeExtensionsRef.current = new RangeExtensions(chart, series, {
                         ...params,
-                        ticker // START: Fix ticker override
+                        ticker, // START: Fix ticker override
+                        startTs,
+                        endTs
                     });
                     series.attachPrimitive(rangeExtensionsRef.current);
                 } else {
@@ -915,7 +931,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 rangeExtensionsRef.current = null;
             }
         }
-    }, [series, chart, ticker, indicators, indicatorParams]);
+    }, [series, chart, ticker, indicators, indicatorParams, data.length > 0]);
 
     // -------------------------------------------------------------------------
     // 15. Hourly Profiler Integration
@@ -923,7 +939,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const hourlyProfilerRef = useRef<any>(null);
 
     useEffect(() => {
-        if (!series || !chart || !ticker) {
+        if (!series || !chart || !ticker || data.length === 0) {
             return;
         }
 
@@ -973,7 +989,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 hourlyProfilerRef.current = null;
             }
         }
-    }, [series, chart, ticker, indicators, indicatorParams, theme]);
+    }, [series, chart, ticker, indicators, indicatorParams, theme, data.length > 0]);
 
     return (
         <div className="w-full h-full relative" onContextMenu={(e) => {
