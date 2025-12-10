@@ -870,6 +870,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 }, 2000);
             });
         } else {
+            setRangeExtensionsActive(false);
+            setRangeData([]);
             if (rangeExtensionsRef.current) {
                 try {
                     if (rangeExtensionsRef.current.destroy) rangeExtensionsRef.current.destroy();

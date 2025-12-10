@@ -262,6 +262,10 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
         return this._data;
     }
 
+    public get _type(): string {
+        return 'range-extensions';
+    }
+
     attached({ requestUpdate }: { requestUpdate: () => void }) {
         this._requestUpdate = requestUpdate;
         this.fetchData();
@@ -343,7 +347,7 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
         }
     }
 
-    public hitTest(x: number, y: number): { hit: boolean, externalId?: string, zOrder?: number, drawing?: any } | null {
+    public hitTest(x: number, y: number): { hit: boolean, externalId: string, zOrder: string, drawing?: any } | null {
         const timeScale = this._chart.timeScale();
         const time = timeScale.coordinateToTime(x) as number;
         if (!time) return null;
