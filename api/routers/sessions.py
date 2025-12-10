@@ -4,25 +4,15 @@ import pandas as pd
 import math
 from api.services.data_loader import load_parquet
 from api.services.session_service import SessionService
+from api.services.session_loader import (
+    load_precomputed_hourly, 
+    load_precomputed_daily,
+    has_precomputed_hourly,
+    has_precomputed_daily,
+    sanitize_for_json
+)
 
 router = APIRouter()
-
-
-def sanitize_for_json(data):
-    """
-    Recursively sanitize data to be JSON-serializable.
-    Replaces NaN, Inf, -Inf with None.
-    """
-    if isinstance(data, dict):
-        return {k: sanitize_for_json(v) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [sanitize_for_json(item) for item in data]
-    elif isinstance(data, float):
-        if math.isnan(data) or math.isinf(data):
-            return None
-        return data
-    else:
-        return data
 
 
 def filter_sessions_by_time(sessions: list, start_ts: Optional[int], end_ts: Optional[int]) -> list:
@@ -68,39 +58,28 @@ async def get_sessions(
 ):
     """
     Get session ranges for a ticker.
-    Checks pre-calculated cache first for 'all' range type.
+    
+    Uses pre-computed data when available (~10ms), falls back to on-demand calculation (~2-9s).
     
     Time filtering: Use start_ts/end_ts to limit results to a time range.
     """
-    # 1. OPTIMIZATION: Check for pre-calculated session file
-    if range_type == "all":
-        # Data loader has cleaning logic "ES1!"->"ES1"
-        clean_ticker = ticker.replace("!", "")
-        
-        # Hardcoded path logic (should match generate_sessions.py)
-        # Assuming DATA_DIR is imported
-        from api.services.data_loader import DATA_DIR
-        session_file = DATA_DIR / "sessions" / f"{clean_ticker}_sessions.json"
-        
-        if session_file.exists():
-            import json
-            try:
-                with open(session_file, 'r') as f:
-                    print(f"Returning cached sessions for {ticker}")
-                    data = json.load(f)
-                    return filter_sessions_by_time(data, start_ts, end_ts)
-            except Exception as e:
-                print(f"Failed to load cached sessions: {e}")
-                # Fallback to live calc
-
-    # Load 1m data for precision
-    df = load_parquet(ticker, "1m")
+    clean_ticker = ticker.replace("!", "")
     
-    if df is None or df.empty:
-        raise HTTPException(status_code=404, detail=f"No data found for {ticker}")
-
-    # Apply time filter to source data if provided (optimization)
-    if start_ts or end_ts:
+    # =========================================================================
+    # HOURLY: Try pre-computed first
+    # =========================================================================
+    if range_type == "hourly":
+        if has_precomputed_hourly(ticker):
+            sessions = load_precomputed_hourly(ticker, start_ts, end_ts)
+            if sessions is not None:
+                return sessions
+        
+        # Fall back to on-demand calculation
+        df = load_parquet(ticker, "1m")
+        if df is None or df.empty:
+            raise HTTPException(status_code=404, detail=f"No data found for {ticker}")
+        
+        # Apply time filter to source data
         if start_ts:
             df = df[df['time'] >= start_ts]
         if end_ts:
@@ -108,29 +87,72 @@ async def get_sessions(
         
         if df.empty:
             return []
-
-    # Prepare DataFrame for Service (Needs DatetimeIndex)
-    if 'time' in df.columns:
+        
+        # Prepare DataFrame for Service
         df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
         df = df.set_index('datetime')
         df.index = df.index.tz_convert('US/Eastern')
-    else:
-        raise HTTPException(status_code=500, detail="Data format error: missing time column")
-
-    if range_type == "opening":
-        # Specific Opening Range (09:30)
-        sessions = SessionService.calculate_opening_range(df, start_time, duration)
-    elif range_type == "all":
-        # Return all configured sessions (Asia, London, NY, Midnight)
-        clean_ticker = ticker.replace("!", "")
-        sessions = SessionService.calculate_sessions(df, clean_ticker)
-    elif range_type == "hourly":
-        # Return hourly profiler data (1H + 3H)
+        
         sessions = SessionService.calculate_hourly(df)
-    else:
-        sessions = [] 
+        return sanitize_for_json(sessions)
     
-    # Sanitize NaN/Inf values for JSON serialization
-    return sanitize_for_json(sessions)
+    # =========================================================================
+    # DAILY (ALL): Try pre-computed first
+    # =========================================================================
+    if range_type == "all":
+        if has_precomputed_daily(ticker):
+            sessions = load_precomputed_daily(ticker, start_ts, end_ts)
+            if sessions is not None:
+                return sessions
+        
+        # Fall back to on-demand calculation
+        df = load_parquet(ticker, "1m")
+        if df is None or df.empty:
+            raise HTTPException(status_code=404, detail=f"No data found for {ticker}")
+        
+        # Apply time filter to source data
+        if start_ts:
+            df = df[df['time'] >= start_ts]
+        if end_ts:
+            df = df[df['time'] <= end_ts]
+        
+        if df.empty:
+            return []
+        
+        # Prepare DataFrame for Service
+        df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
+        df = df.set_index('datetime')
+        df.index = df.index.tz_convert('US/Eastern')
+        
+        sessions = SessionService.calculate_sessions(df, clean_ticker)
+        return sanitize_for_json(sessions)
+    
+    # =========================================================================
+    # OPENING RANGE: Always calculate on-demand (small dataset)
+    # =========================================================================
+    if range_type == "opening":
+        df = load_parquet(ticker, "1m")
+        if df is None or df.empty:
+            raise HTTPException(status_code=404, detail=f"No data found for {ticker}")
+        
+        # Apply time filter
+        if start_ts:
+            df = df[df['time'] >= start_ts]
+        if end_ts:
+            df = df[df['time'] <= end_ts]
+        
+        if df.empty:
+            return []
+        
+        # Prepare DataFrame
+        df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
+        df = df.set_index('datetime')
+        df.index = df.index.tz_convert('US/Eastern')
+        
+        sessions = SessionService.calculate_opening_range(df, start_time, duration)
+        return sanitize_for_json(sessions)
+    
+    return []
+
 
 

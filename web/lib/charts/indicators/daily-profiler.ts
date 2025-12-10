@@ -88,6 +88,8 @@ export interface DailyProfilerOptions {
     showLines: boolean;
 
     maxDays: number;
+    startTs?: number;
+    endTs?: number;
 }
 
 export const DEFAULT_DAILY_PROFILER_OPTIONS: DailyProfilerOptions = {
@@ -697,7 +699,11 @@ export class DailyProfiler implements ISeriesPrimitive {
 
         try {
             const cleanTicker = this._options.ticker.replace('!', '');
-            const res = await fetch(`http://localhost:8000/api/sessions/${cleanTicker}?range_type=all`, {
+            let url = `http://localhost:8000/api/sessions/${cleanTicker}?range_type=all`;
+            if (this._options.startTs) url += `&start_ts=${this._options.startTs}`;
+            if (this._options.endTs) url += `&end_ts=${this._options.endTs}`;
+
+            const res = await fetch(url, {
                 signal: this._abortController.signal
             });
             if (res.ok) {

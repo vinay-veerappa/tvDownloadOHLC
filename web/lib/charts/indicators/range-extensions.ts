@@ -18,6 +18,7 @@ export interface RangeExtensionPeriod {
     // 09:30 RTH Range
     rth_1m_high?: number | null;
     rth_1m_low?: number | null;
+    type?: string; // '1H' | '3H'
 }
 
 export interface RangeExtensionsOptions {
@@ -47,6 +48,10 @@ export interface RangeExtensionsOptions {
     showHourly: boolean; // Use 5m OR logic for other bars?
     // Duplicate fields removed
     microMultiplier: number; // e.g. 10 for Indices
+
+    // Time filtering (optional)
+    startTs?: number;
+    endTs?: number;
 }
 
 export const DEFAULT_RANGE_EXTENSIONS_OPTIONS: RangeExtensionsOptions = {
@@ -307,7 +312,10 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
         const cleanTicker = this._options.ticker.replace('!', ''); // Basic clean
 
         try {
-            const url = `http://localhost:8000/api/sessions/${cleanTicker}?range_type=hourly`;
+            let url = `http://localhost:8000/api/sessions/${cleanTicker}?range_type=hourly`;
+            if (this._options.startTs) url += `&start_ts=${this._options.startTs}`;
+            if (this._options.endTs) url += `&end_ts=${this._options.endTs}`;
+
             const res = await fetch(url, { signal });
             if (!res.ok) throw new Error('Failed to fetch range data');
 
