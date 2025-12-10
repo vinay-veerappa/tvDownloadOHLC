@@ -1,0 +1,50 @@
+{
+  "timestamp": "2025-12-10T07:51:36.030952",
+  "results": [
+    {
+      "name": "Data Load (ES1 1m)",
+      "avg_ms": 36.98,
+      "std_ms": 0.74,
+      "min_ms": 36.28,
+      "max_ms": 38.16,
+      "iterations": 5,
+      "rows": 347873
+    },
+    {
+      "name": "Data Load (ES1 5m)",
+      "avg_ms": 10.32,
+      "std_ms": 0.56,
+      "min_ms": 9.46,
+      "max_ms": 10.86,
+      "iterations": 5,
+      "rows": 69606
+    },
+    {
+      "name": "Data Load (ES1 1h)",
+      "avg_ms": 4.93,
+      "std_ms": 0.71,
+      "min_ms": 3.69,
+      "max_ms": 5.42,
+      "iterations": 5,
+      "rows": 23208
+    },
+    {
+      "name": "Data Load (ES1 1D)",
+      "avg_ms": 3.69,
+      "std_ms": 1.47,
+      "min_ms": 2.86,
+      "max_ms": 6.31,
+      "iterations": 5,
+      "rows": 7458
+    },
+    {
+      "name": "get_available_data()",
+      "avg_ms": 0.24,
+      "std_ms": 0.06,
+      "min_ms": 0.2,
+      "max_ms": 0.39,
+      "iterations": 10,
+      "rows": 0
+    }
+  ]
+}

@@ -86,6 +86,55 @@ export async function calculateIndicators(
 }
 
 /**
+ * Calculate VWAP from backend data files (uses actual volume data).
+ * 
+ * This is preferred over calculateIndicators for VWAP because:
+ * 1. Backend has full volume data from parquet files
+ * 2. Frontend may not load/display volume
+ * 3. Avoids sending large OHLCV arrays over the network
+ * 
+ * @param ticker - The ticker symbol (e.g., "ES1", "CL1!")
+ * @param timeframe - The timeframe (e.g., "1m", "5m")
+ * @param vwapSettings - Optional VWAP settings
+ * @param startTime - Optional start timestamp filter
+ * @param endTime - Optional end timestamp filter
+ * @returns Calculated VWAP values aligned with time series
+ */
+export async function calculateVWAPFromFile(
+    ticker: string,
+    timeframe: string,
+    vwapSettings?: VWAPSettings,
+    startTime?: number,
+    endTime?: number
+): Promise<IndicatorResult | null> {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/indicators/vwap-from-file`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                ticker,
+                timeframe,
+                vwap_settings: vwapSettings,
+                start_time: startTime,
+                end_time: endTime
+            }),
+        })
+
+        if (!response.ok) {
+            console.error(`VWAP API error: ${response.status}`)
+            return null
+        }
+
+        return await response.json()
+    } catch (error) {
+        console.error("Failed to calculate VWAP from file:", error)
+        return null
+    }
+}
+
+/**
  * Get list of available indicators from the API
  */
 export async function getAvailableIndicators(): Promise<{ name: string; description: string }[] | null> {

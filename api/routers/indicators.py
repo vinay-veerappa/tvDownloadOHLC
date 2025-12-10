@@ -11,7 +11,8 @@ from api.models.indicator import (
     AvailableIndicatorsResponse,
     AvailableIndicator,
     IndicatorRequestWithSettings,
-    VWAPSettings
+    VWAPSettings,
+    VWAPFromFileRequest
 )
 from api.services.data_loader import load_parquet, get_available_data
 from api.services.indicators import calculate_indicators, get_available_indicators
@@ -169,3 +170,64 @@ async def available():
 async def list_data():
     """List all available ticker/timeframe combinations"""
     return {"data": get_available_data()}
+
+
+@router.post("/vwap-from-file", response_model=IndicatorResponse)
+async def calculate_vwap_from_file(request: VWAPFromFileRequest):
+    """
+    Calculate VWAP from backend data files (uses actual volume data).
+    
+    This is preferred over calculate-v2 when the frontend doesn't have volume
+    or uses resampled data. The backend loads the parquet file with full
+    volume information.
+    
+    Example request:
+    {
+        "ticker": "ES1",
+        "timeframe": "1m",
+        "vwap_settings": {
+            "anchor": "session",
+            "anchor_time": "18:00",
+            "bands": [1.0, 2.0]
+        }
+    }
+    """
+    # Check if should hide on this timeframe
+    if should_hide_vwap(request.timeframe):
+        return IndicatorResponse(time=[], indicators={})
+    
+    # Load data from file
+    df = load_parquet(request.ticker, request.timeframe)
+    
+    if df is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Data not found for {request.ticker} {request.timeframe}"
+        )
+    
+    # Filter by time range if specified
+    if request.start_time:
+        df = df[df['time'] >= request.start_time]
+    if request.end_time:
+        df = df[df['time'] <= request.end_time]
+    
+    if df.empty:
+        return IndicatorResponse(time=[], indicators={})
+    
+    # Use VWAP settings if provided
+    settings = request.vwap_settings or VWAPSettings()
+    
+    vwap_result = calculate_vwap_with_settings(
+        df,
+        anchor=settings.anchor,
+        anchor_time=settings.anchor_time,
+        anchor_timezone=settings.anchor_timezone,
+        bands=settings.bands,
+        source=settings.source
+    )
+    
+    return IndicatorResponse(
+        time=df['time'].tolist(),
+        indicators=vwap_result
+    )
+

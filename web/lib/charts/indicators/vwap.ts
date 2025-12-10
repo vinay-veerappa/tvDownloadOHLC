@@ -1,25 +1,29 @@
 import { LineSeries, ISeriesApi } from "lightweight-charts";
-import { calculateIndicators, toLineSeriesData } from "@/lib/indicator-api";
+import { calculateVWAPFromFile, toLineSeriesData } from "@/lib/indicator-api";
 import { ChartIndicator, IndicatorContext } from "./types";
 
 export const VWAPIndicator: ChartIndicator = {
     render: async (ctx: IndicatorContext, config: any, paneIndex: number) => {
         const { chart, data, timeframe, ticker, vwapSettings, theme } = ctx;
 
+        // Need ticker to load from backend files
+        if (!ticker) {
+            console.warn('[VWAP] No ticker provided, cannot calculate VWAP');
+            return { series: [], paneIndexIncrement: 0 };
+        }
+
         try {
             // Smart Defaults for VWAP Anchor Time
             let defaultAnchorTime = '09:30'; // Stocks/ETF default
 
-            if (ticker) {
-                const t = ticker.toUpperCase();
-                // Heuristic for Futures
-                if (t.includes('!') ||
-                    t.startsWith('ES') || t.startsWith('NQ') ||
-                    t.startsWith('YM') || t.startsWith('RTY') ||
-                    t.startsWith('GC') || t.startsWith('CL') ||
-                    t.startsWith('MNQ') || t.startsWith('MES')) {
-                    defaultAnchorTime = '18:00';
-                }
+            const t = ticker.toUpperCase();
+            // Heuristic for Futures
+            if (t.includes('!') ||
+                t.startsWith('ES') || t.startsWith('NQ') ||
+                t.startsWith('YM') || t.startsWith('RTY') ||
+                t.startsWith('GC') || t.startsWith('CL') ||
+                t.startsWith('MNQ') || t.startsWith('MES')) {
+                defaultAnchorTime = '18:00';
             }
 
             const settings = vwapSettings || {
@@ -28,10 +32,10 @@ export const VWAPIndicator: ChartIndicator = {
                 bands: [1.0]
             };
 
-            const result = await calculateIndicators(
-                data,
-                ['vwap'],
-                timeframe,
+            // Use the new backend-file endpoint which has real volume data
+            const result = await calculateVWAPFromFile(
+                ticker,
+                timeframe || '1m',
                 settings
             );
 

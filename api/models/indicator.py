@@ -64,3 +64,12 @@ class IndicatorRequestWithSettings(BaseModel):
     indicators: List[str]
     vwap_settings: Optional[VWAPSettings] = None
     timeframe: Optional[str] = None  # For auto-hiding VWAP on daily+
+
+
+class VWAPFromFileRequest(BaseModel):
+    """Request VWAP calculation from backend data files"""
+    ticker: str
+    timeframe: str
+    vwap_settings: Optional[VWAPSettings] = None
+    start_time: Optional[int] = None  # Unix timestamp filter
+    end_time: Optional[int] = None    # Unix timestamp filter
