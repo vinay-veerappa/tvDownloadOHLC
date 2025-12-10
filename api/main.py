@@ -28,6 +28,8 @@ app.add_middleware(
 
 app.include_router(indicators.router, prefix="/api/indicators", tags=["indicators"])
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
+from api.routers import profiler
+app.include_router(profiler.router)
 
 
 @app.get("/")

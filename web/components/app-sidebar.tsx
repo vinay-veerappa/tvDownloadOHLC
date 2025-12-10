@@ -3,16 +3,18 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BarChart3, BookOpen, History, Settings, ChevronLeft, ChevronRight, Bell, User } from "lucide-react"
+import { BarChart3, BookOpen, History, Settings, ChevronLeft, ChevronRight, Bell, User, LineChart } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
 export function AppSidebar() {
     const pathname = usePathname()
     const [collapsed, setCollapsed] = React.useState(true) // Default to collapsed
+    const [mounted, setMounted] = React.useState(false)
 
     // Load and save sidebar state from localStorage
     React.useEffect(() => {
+        setMounted(true)
         const saved = localStorage.getItem('app_sidebar_collapsed')
         if (saved !== null) {
             setCollapsed(saved === 'true')
@@ -20,8 +22,14 @@ export function AppSidebar() {
     }, [])
 
     React.useEffect(() => {
-        localStorage.setItem('app_sidebar_collapsed', collapsed.toString())
-    }, [collapsed])
+        if (mounted) {
+            localStorage.setItem('app_sidebar_collapsed', collapsed.toString())
+        }
+    }, [collapsed, mounted])
+
+    if (!mounted) {
+        return <div className="w-16 h-full border-r bg-background" /> // Static placeholder to prevent shift
+    }
 
     const routes = [
         {
@@ -42,10 +50,16 @@ export function AppSidebar() {
             href: "/backtest",
             active: pathname === "/backtest",
         },
+        {
+            label: "Profiler",
+            icon: LineChart,
+            href: "/profiler",
+            active: pathname === "/profiler",
+        },
     ]
 
     return (
-        <div className={cn(
+        <div suppressHydrationWarning className={cn(
             "flex flex-col h-full border-r bg-background transition-all duration-300",
             collapsed ? "w-16" : "w-64"
         )}>
