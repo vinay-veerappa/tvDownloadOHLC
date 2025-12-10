@@ -58,8 +58,15 @@ export function useChartDrag({
     useEffect(() => {
         if (!chart || !series || !chartContainerRef.current) return
 
+        const lastCheckRef = { current: 0 }
+
         const handleCrosshairMove = (param: MouseEventParams) => {
-            if (isDraggingRef.current) return // Don't change cursor while dragging
+            if (isDraggingRef.current) return
+
+            // Throttle Hover Checks (30ms ~ 30fps)
+            const now = Date.now()
+            if (now - lastCheckRef.current < 30) return
+            lastCheckRef.current = now
 
             if (!param.point || !param.seriesData.get(series)) {
                 if (isHoveringLine) {

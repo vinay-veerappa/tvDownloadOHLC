@@ -154,6 +154,7 @@ export class SessionHighlighting extends PluginBase implements ISeriesPrimitive<
     _paneViews: SessionHighlightingPaneView[];
     _backgroundColors: BackgroundData[] = [];
     _options: SessionHighlightingOptions;
+    _formatters: Map<string, Intl.DateTimeFormat> = new Map();
 
     public _type = 'session-highlighting';
     public _id: string;
@@ -165,6 +166,23 @@ export class SessionHighlighting extends PluginBase implements ISeriesPrimitive<
         };
         this._paneViews = [new SessionHighlightingPaneView(this)];
         this._id = Math.random().toString(36).substring(7);
+        this._initFormatters();
+    }
+
+    private _initFormatters() {
+        this._formatters.clear();
+        this._options.sessions.forEach(session => {
+            try {
+                const formatter = new Intl.DateTimeFormat('en-US', {
+                    timeZone: session.timezone,
+                    hour: 'numeric',
+                    hour12: false,
+                });
+                this._formatters.set(session.name, formatter);
+            } catch (e) {
+                console.warn(`Invalid timezone for session ${session.name}: ${session.timezone}`, e);
+            }
+        });
     }
 
     updateAllViews() {
@@ -207,7 +225,9 @@ export class SessionHighlighting extends PluginBase implements ISeriesPrimitive<
         if (visibleRange) {
             // Only process visible range with small buffer
             startIdx = Math.max(0, Math.floor(visibleRange.from) - 5);
-            endIdx = Math.min(data.length, Math.ceil(visibleRange.to) + 5, startIdx + 200);
+            // Optimization: Process ALL visible bars (no hard limit like 200)
+            // But safety cap at 1000 just in case of extreme zoom out to prevent thread lock
+            endIdx = Math.min(data.length, Math.ceil(visibleRange.to) + 5);
         }
 
         // Only process visible data slice
@@ -250,14 +270,11 @@ export class SessionHighlighting extends PluginBase implements ISeriesPrimitive<
             return false;
         }
 
-        // Convert to session timezone and check hours
+        // Use cached formatter
+        const formatter = this._formatters.get(session.name);
+        if (!formatter) return false;
+
         try {
-            const options: Intl.DateTimeFormatOptions = {
-                timeZone: session.timezone,
-                hour: 'numeric',
-                hour12: false,
-            };
-            const formatter = new Intl.DateTimeFormat('en-US', options);
             const hourStr = formatter.format(date);
             const hour = parseInt(hourStr, 10);
 
@@ -269,7 +286,6 @@ export class SessionHighlighting extends PluginBase implements ISeriesPrimitive<
                 return hour >= session.startHour || hour < session.endHour;
             }
         } catch (e) {
-            console.warn(`Invalid timezone: ${session.timezone}`, e);
             return false;
         }
     }

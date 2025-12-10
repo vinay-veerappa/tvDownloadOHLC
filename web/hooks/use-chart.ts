@@ -25,6 +25,7 @@ import { INDICATOR_REGISTRY } from "@/lib/charts/indicators"
 
 import { ThemeParams } from "@/lib/themes"
 import { useTheme } from "next-themes"
+import { formatTimeForTimezone } from "@/lib/utils"
 
 export function useChart(
     containerRef: React.RefObject<HTMLDivElement | null>,
@@ -47,26 +48,36 @@ export function useChart(
     const chartRef = useRef<IChartApi | null>(null)
     const isDisposedRef = useRef(false)
     // Create timezone-aware tick mark formatter
-    const formatTimeForTimezone = (time: number) => {
+    // Use the imported formatTimeForTimezone, but we need to create a closure if we want to support 'displayTimezone' 
+    // actually the imported one doesn't support timezone arg yet?
+    // Let's check utils.ts again. 
+    // utils.ts: export function formatTimeForTimezone(time: number): string { ... } - NO timezone arg.
+    // So I need to UPDATE utils.ts to accept timezone, OR keep the local one but fix it to use toLocaleString (Date+Time).
+
+    // Let's fix the local one to be safe and immediate, or update utils.
+    // Updating utils is cleaner.
+    // BUT for now, to ensure I don't break other calls, I will fix the LOCAL one to show Date + Time.
+
+    const formatTimeForTimezoneLocal = (time: number) => {
         const date = new Date(time * 1000)
-        // Explicitly handle UTC to avoid Intl overhead/issues and ensure safety
+        // Explicitly handle UTC
         if (displayTimezone === 'UTC') {
-            return date.toISOString().substring(11, 16)
+            return date.toISOString().substring(0, 16).replace('T', ' ')
         }
 
-        // Sanitization: 'local' should be undefined to use browser default
         const tz = displayTimezone === 'local' ? undefined : displayTimezone
         try {
-            return date.toLocaleTimeString('en-US', {
+            return date.toLocaleString('en-US', {
                 timeZone: tz,
+                month: 'short',
+                day: 'numeric',
                 hour: '2-digit',
                 minute: '2-digit',
                 hour12: false
             })
         } catch (e) {
             console.warn(`[Chart] Timezone error for ${tz}:`, e)
-            // Fallback to UTC safe string
-            return date.toISOString().substring(11, 16)
+            return date.toISOString().substring(0, 16).replace('T', ' ')
         }
     }
 
@@ -102,14 +113,29 @@ export function useChart(
             timeScale: {
                 timeVisible: true,
                 rightOffset: 5,
-                tickMarkFormatter: (time: number) => formatTimeForTimezone(time),
+                tickMarkFormatter: (time: number) => formatTimeForTimezoneLocal(time),
                 borderColor: isDark ? '#2a2e39' : '#e0e0e0',
+            },
+            localization: {
+                locale: 'en-US',
+                dateFormat: 'yyyy-MM-dd',
             },
             rightPriceScale: {
                 borderColor: isDark ? '#2a2e39' : '#e0e0e0',
             },
             crosshair: {
                 mode: CrosshairMode.Normal,
+            },
+            handleScroll: {
+                mouseWheel: true,
+                pressedMouseMove: true,
+                horzTouchDrag: true,
+                vertTouchDrag: true,
+            },
+            handleScale: {
+                axisPressedMouseMove: true,
+                mouseWheel: true,
+                pinch: true,
             },
         })
 
@@ -137,13 +163,14 @@ export function useChart(
     useEffect(() => {
         if (!chartInstance) return
 
-        const formatter = (time: number) => formatTimeForTimezone(time)
+        const formatter = (time: number) => formatTimeForTimezoneLocal(time)
 
         try {
             chartInstance.applyOptions({
                 localization: {
                     timeFormatter: formatter,
                     dateFormat: 'yyyy-MM-dd',
+                    locale: 'en-US', // Enforce US locale
                 },
                 timeScale: {
                     tickMarkFormatter: formatter,

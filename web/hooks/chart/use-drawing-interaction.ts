@@ -51,16 +51,20 @@ export function useDrawingInteraction({
     useEffect(() => {
         if (!chart || !series || !chartContainerRef.current || !drawingManager || isTradingDragActive) return
 
+        const lastHitTestRef = { current: 0 };
+
         const handleCrosshairMove = (param: MouseEventParams) => {
             if (isDraggingRef.current) return
             if (isTradingDragActive) return
 
+            // Throttle Hit Test for Hover Cursor (limit to ~20ms / 50fps)
+            const now = Date.now();
+            if (now - lastHitTestRef.current < 20) return;
+            lastHitTestRef.current = now;
+
             if (!param.point) {
                 if (isHoveringDrawing) {
                     setIsHoveringDrawing(false)
-                    // We don't reset cursor here because Chart might handle it, or TradingDrag
-                    // But if we claimed it, we should release it? 
-                    // Let's assume default behavior handles "no cursor set"
                 }
                 return
             }
@@ -69,11 +73,11 @@ export function useDrawingInteraction({
 
             if (hit) {
                 if (!isHoveringDrawing) setIsHoveringDrawing(true)
-                chartContainerRef.current!.style.cursor = hit.hit.cursorStyle || 'pointer'
+                if (chartContainerRef.current) chartContainerRef.current.style.cursor = hit.hit.cursorStyle || 'pointer'
             } else {
                 if (isHoveringDrawing) {
                     setIsHoveringDrawing(false)
-                    chartContainerRef.current!.style.cursor = 'crosshair' // Default for chart
+                    if (chartContainerRef.current) chartContainerRef.current.style.cursor = 'crosshair'
                 }
             }
         }
