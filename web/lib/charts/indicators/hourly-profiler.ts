@@ -240,7 +240,7 @@ class HourlyProfilerRenderer {
         let startIndex = this._binarySearch(data, startTime);
 
         // Safety check to ensure we include one period before just in case of partial overlap
-        startIndex = Math.max(0, startIndex - 1);
+        startIndex = Math.max(0, startIndex - 20);
 
         let drawnItems = 0;
         for (let i = startIndex; i < data.length; i++) {
@@ -285,6 +285,35 @@ class HourlyProfilerRenderer {
             // In lightweight-charts, pixel coordinates increase downwards
             const yTop = Math.min(yHighCoord, yLowCoord) * vPR;
             const yBottom = Math.max(yHighCoord, yLowCoord) * vPR;
+
+            // 1a. Draw 5-min OR Box (if enabled and data exists)
+            if (this._options.showOpeningRange && (period.or_high !== undefined && period.or_low !== undefined)) {
+                const yOrHigh = this._series.priceToCoordinate(period.or_high!);
+                const yOrLow = this._series.priceToCoordinate(period.or_low!);
+
+                if (yOrHigh !== null && yOrLow !== null) {
+                    const yOrTop = Math.min(yOrHigh, yOrLow) * vPR;
+                    const yOrBottom = Math.max(yOrHigh, yOrLow) * vPR;
+                    // OR is typically 5 mins. Width = 5 mins.
+                    // We can calculate 5m width relative to hour? Or just draw first 1/12th?
+                    // "5 min box does not extend till the end of the hour"
+                    // User wants the 5m RANGE to be drawn as a background for the WHOLE hour.
+                    // So calculate height from 5m range, but width = whole hour.
+                    // x2Scaled is the end of the hour (pre-calculated).
+
+                    const xOrEnd = x2Scaled;
+                    const orColor = this._colors.orBox; // Use pre-calc color
+
+                    // Force full width (x1 -> x2)
+                    ctx.fillStyle = orColor;
+                    ctx.fillRect(x1Scaled, yOrTop, xOrEnd - x1Scaled, yOrBottom - yOrTop);
+
+                    /* Previous timestamp logic disabled 
+                    const orEndUnix = (startUnix as number) + 300; 
+                    const xOrEndCenter = timeScale.timeToCoordinate(orEndUnix as Time);
+                    */
+                }
+            }
 
             // 1. Draw Alternating Quarters
             if (this._options.showQuarters) {
@@ -379,7 +408,7 @@ class HourlyProfilerRenderer {
         let startIndex = this._binarySearch(data, startTime);
 
         // Safety check to ensure we include one period before just in case of partial overlap
-        startIndex = Math.max(0, startIndex - 1);
+        startIndex = Math.max(0, startIndex - 20);
 
         let drawnItems = 0;
         for (let i = startIndex; i < data.length; i++) {

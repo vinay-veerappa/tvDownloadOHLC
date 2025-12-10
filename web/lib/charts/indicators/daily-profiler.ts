@@ -184,10 +184,23 @@ class DailyProfilerRenderer {
 
     draw(target: any): void {
         const timeScale = this._chart.timeScale();
-        const visibleRange = timeScale.getVisibleRange();
-        if (!visibleRange) return;
+        // Robust Visible Range Logic (matches HourlyProfiler)
+        // Convert visible logical indices to timestamps to ensure we have valid Time values
+        const visibleLogical = timeScale.getVisibleLogicalRange();
+        if (!visibleLogical) return;
 
-        const startIndex = this._binarySearch(visibleRange.from as number);
+        const startLogical = Math.floor(visibleLogical.from) as any;
+        const endLogical = Math.ceil(visibleLogical.to) as any;
+        const startCoord = timeScale.logicalToCoordinate(startLogical);
+        const endCoord = timeScale.logicalToCoordinate(endLogical);
+
+        // Safety Fallback: Use getVisibleRange() if coordinate conversion fails (e.g. no candles)
+        const rangeTime = timeScale.getVisibleRange();
+        const startTime = startCoord !== null ? (timeScale.coordinateToTime(startCoord) as number) : (rangeTime?.from as number) || 0;
+        const endTime = endCoord !== null ? (timeScale.coordinateToTime(endCoord) as number) : (rangeTime?.to as number) || Number.MAX_SAFE_INTEGER;
+
+        // Look back 500 items to capture long-duration sessions (Weekly/Monthly levels)
+        const startIndex = Math.max(0, this._binarySearch(startTime) - 500);
 
         target.useBitmapCoordinateSpace((scope: any) => {
             const ctx = scope.context;
@@ -197,8 +210,9 @@ class DailyProfilerRenderer {
             let drawnItems = 0;
 
             for (let i = startIndex; i < this._data.length; i++) {
+                // No break condition - render all applicable passed sessions
+                // Visibility checks inside the loop handles efficiency
                 const session = this._data[i];
-                if ((session.startUnix || 0) > (visibleRange.to as number)) break;
 
                 // Determine style based on session name
                 let color = this._options.asiaColor;
