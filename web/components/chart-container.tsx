@@ -17,6 +17,7 @@ import { useChartDrag } from "@/hooks/chart/use-chart-drag"
 import { useDrawingInteraction } from "@/hooks/chart/use-drawing-interaction"
 import { ChartContextMenu } from "@/components/chart/chart-context-menu"
 import { ChartLegend, ChartLegendRef } from "@/components/chart/chart-legend"
+import { ChartCursorOverlay } from "@/components/chart-cursor-overlay"
 import { VWAPSettings } from "@/lib/indicator-api"
 import { ThemeParams } from "@/lib/themes"
 import { ColorType } from "lightweight-charts"
@@ -107,9 +108,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     // Range UI State
     const [rangeExtensionsActive, setRangeExtensionsActive] = useState(false);
     const [rangeData, setRangeData] = useState<RangeExtensionPeriod[]>([]);
-    const [hoveredRangePeriod, setHoveredRangePeriod] = useState<RangeExtensionPeriod | null>(null);
-    const [cursorPos, setCursorPos] = useState<{ x: number, y: number } | null>(null);
-    const cursorPosRafRef = useRef<number | null>(null);
+
 
     // 2. Data & Replay Logic (Hook)
     const {
@@ -210,24 +209,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 if (lastBar) {
                     legendRef.current?.updateOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
                 }
-                // Optimize state updates to prevent loops
-                setHoveredRangePeriod(prev => prev ? null : prev);
-                setCursorPos(prev => prev ? null : prev);
                 return
-            }
-
-            // Update Cursor Pos for Tooltip (Throttled via RAF to prevent Max Depth Error)
-            if (param.point) {
-                // Cancel previous frame if pending
-                if (cursorPosRafRef.current) return;
-
-                cursorPosRafRef.current = requestAnimationFrame(() => {
-                    setCursorPos(prev => {
-                        if (prev && prev.x === param.point.x && prev.y === param.point.y) return prev;
-                        return { x: param.point.x, y: param.point.y };
-                    });
-                    cursorPosRafRef.current = null;
-                });
             }
 
             // Get the candle data at crosshair position
@@ -239,23 +221,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     low: candleData.low,
                     close: candleData.close
                 })
-            }
-
-            // Range Extensions Tooltip Logic
-            // @ts-ignore - rangeExtensionsRef might be missing in typescript def but exists in runtime/scope
-            if (typeof rangeExtensionsRef !== 'undefined' && rangeExtensionsRef.current && rangeExtensionsRef.current.data) {
-                const time = param.time as number; // Unix timestamp
-                // @ts-ignore
-                const rangeData = rangeExtensionsRef.current.data;
-
-                // Find period encompassing this time (approximate hourly)
-                const period = rangeData.find((p: any) => {
-                    const t = p.time as number;
-                    return time >= t && time < t + 3600;
-                });
-                setHoveredRangePeriod(prev => prev === period ? prev : period || null);
-            } else {
-                setHoveredRangePeriod(prev => prev ? null : prev);
             }
         }
 
@@ -1012,17 +977,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                             tickValue={tickValue}
                             microMultiplier={microMultiplier}
                         />
-                        {hoveredRangePeriod && cursorPos && (
-                            <RangeTooltip
-                                session={hoveredRangePeriod}
-                                x={cursorPos.x}
-                                y={cursorPos.y}
-                                accountBalance={accountBalance}
-                                riskPercent={riskPercent}
-                                tickValue={tickValue}
-                                microMultiplier={microMultiplier}
-                            />
-                        )}
+                        <ChartCursorOverlay
+                            chart={chart}
+                            rangeExtensionsRef={rangeExtensionsRef as any}
+                            indicatorParams={indicatorParams}
+                        />
                     </>
                 );
             })()}
