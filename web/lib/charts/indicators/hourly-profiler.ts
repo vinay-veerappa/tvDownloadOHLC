@@ -360,6 +360,8 @@ class HourlyProfilerRenderer {
         }
     }
 
+
+
     private _binarySearch(data: HourlyPeriod[], time: number): number {
         let low = 0;
         let high = data.length - 1;
@@ -584,6 +586,24 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
 
     detached() {
         this._requestUpdate = () => { };
+    }
+
+    public hitTest(x: number, y: number): { hit: boolean, externalId: string, zOrder: number, drawing?: any } | null {
+        const timeScale = this._chart.timeScale();
+        const time = timeScale.coordinateToTime(x) as number;
+        if (!time) return null;
+
+        // Find session/hour covering this time
+        const hit = this._data.some(d => {
+            if (!d.startUnix || !d.endUnix) return false;
+            return time >= d.startUnix && time <= d.endUnix;
+        });
+
+        if (hit) {
+            return { hit: true, externalId: 'hourly-profiler', zOrder: 'top', drawing: this } as any;
+        }
+
+        return null;
     }
 
     async fetchData() {
