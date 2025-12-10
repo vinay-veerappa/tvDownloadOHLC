@@ -183,6 +183,7 @@ class DailyProfilerRenderer {
     }
 
     draw(target: any): void {
+        console.log('[DailyProfiler] draw() called');
         const timeScale = this._chart.timeScale();
         // Robust Visible Range Logic (matches HourlyProfiler)
         // Convert visible logical indices to timestamps to ensure we have valid Time values
@@ -200,7 +201,9 @@ class DailyProfilerRenderer {
         const endTime = endCoord !== null ? (timeScale.coordinateToTime(endCoord) as number) : (rangeTime?.to as number) || Number.MAX_SAFE_INTEGER;
 
         // Look back 500 items to capture long-duration sessions (Weekly/Monthly levels)
-        const startIndex = Math.max(0, this._binarySearch(startTime) - 500);
+        // Look back buffer to capture long-duration sessions
+        const startIndex = Math.max(0, this._binarySearch(startTime) - 50);
+        console.log('[DailyProfiler] Draw range:', { startIndex, total: this._data.length, startTime });
 
         target.useBitmapCoordinateSpace((scope: any) => {
             const ctx = scope.context;
@@ -213,6 +216,17 @@ class DailyProfilerRenderer {
                 // No break condition - render all applicable passed sessions
                 // Visibility checks inside the loop handles efficiency
                 const session = this._data[i];
+
+                // DEBUG: Log first 5 sessions
+                if (i < 5) {
+                    console.log('[DailyProfiler Debug]', {
+                        i,
+                        session: session.session,
+                        startUnix: session.startUnix,
+                        xStart: timeScale.timeToCoordinate(session.startUnix as Time),
+                        visibleLogical: timeScale.getVisibleLogicalRange()
+                    });
+                }
 
                 // Determine style based on session name
                 let color = this._options.asiaColor;
@@ -318,36 +332,94 @@ class DailyProfilerRenderer {
                     // Better: We can reconstruct date from startUnix without parsing string?
                     // session.start_time is the reference.
 
+                    // Optimization: Use Regex to replace time but KEEP offset
+                    // This prevents timezone mismatches (e.g. 16:00 Local vs 16:00 EST)
                     const iso = session.start_time;
-                    // Fast string op
-                    const T_idx = iso.indexOf('T');
-                    if (T_idx > 0) {
-                        // This string manimpulation is faster than new Date()
-                        const datePart = iso.substring(0, T_idx);
-                        // We assume offset is same?
-                        // Or just append the time.
-                        const newIso = `${datePart}T${this._options.extendUntil}:00`;
-                        // This one new Date per item is still cost.
-                        // But much less if we skip invisible ones.
-                        extendUnix = new Date(newIso).getTime() / 1000;
-                        if (extendUnix < (startUnix as number)) extendUnix += 86400;
-                    }
+                    // Replace "THH:mm:ss" with "T16:00:00" (derived from extendUntil)
+                    // Matches T followed by digits, colons, until + or - or Z
+                    const newIso = iso.replace(/T\d{2}:\d{2}:\d{2}/, `T${this._options.extendUntil}:00`);
+
+                    extendUnix = new Date(newIso).getTime() / 1000;
+                    if (extendUnix < (startUnix as number)) extendUnix += 86400;
                 } else {
                     if (session.endUnix) extendUnix = session.endUnix;
                     else extendUnix = (startUnix as number) + 3600;
                 }
 
                 const x1 = timeScale.timeToCoordinate(startUnix);
-                const x2 = timeScale.timeToCoordinate(extendUnix as Time);
 
-                if (x1 === null) continue;
-                const x1Scaled = (x1 as number) * hPR;
+                // Calculate Logical Extension for future dates
+                let x2 = timeScale.timeToCoordinate(extendUnix as Time);
+
+                // Get interval used for logical projection
+                // We calculate this once per Draw call ideally, but here is safe too
+                // Simplification: assume interval from visible range
+                // If x2 is null (future/missing), we project using logical indices
+                if (x2 === null) {
+                    // We need an interval (minDelta)
+                    let minDelta = Number.MAX_SAFE_INTEGER;
+                    const vStart = Math.ceil(visibleLogical.from);
+                    const vEnd = Math.floor(visibleLogical.to);
+                    let prevTime: number | null = null;
+                    let samples = 0;
+
+                    for (let k = vStart; k <= vEnd && samples < 5; k++) {
+                        const c = timeScale.logicalToCoordinate(k as any);
+                        if (c !== null) {
+                            const t = timeScale.coordinateToTime(c);
+                            if (t !== null) {
+                                if (prevTime !== null) {
+                                    const d = (t as number) - prevTime;
+                                    if (d > 0 && d < minDelta) minDelta = d;
+                                    samples++;
+                                }
+                                prevTime = t as number;
+                            }
+                        }
+                    }
+                    if (minDelta === Number.MAX_SAFE_INTEGER) minDelta = 60;
+
+                    if (x1 !== null) {
+                        // Case 1: Start is visible
+                        const startLogical = timeScale.coordinateToLogical(x1);
+                        if (startLogical !== null) {
+                            const bars = (extendUnix - (startUnix as number)) / minDelta;
+                            const endLogical = startLogical + bars;
+                            x2 = timeScale.logicalToCoordinate(endLogical as any);
+                        }
+                    } else {
+                        // Case 2: Start is off-screen (likely Left)
+                        // Anchor to Visible Start
+                        // bars = (extend - visibleStart) / interval
+                        // endLogical = visibleLogical + bars
+                        const barsFromVisible = (extendUnix - startTime) / minDelta;
+                        const endLogical = visibleLogical.from + barsFromVisible;
+                        x2 = timeScale.logicalToCoordinate(endLogical as any);
+                    }
+                }
+
+                // Handle off-screen left start
+                let x1Scaled: number;
+                if (x1 === null) {
+                    // Start is off-screen. Need logical projection backwards?
+                    // Complex. For now, use the off-screen clamp if we can confirm it's left.
+                    // If we have x2, we can assume x1 is valid logical...?
+                    // Fallback to simple check
+                    if ((startUnix as number) < startTime) {
+                        x1Scaled = -100;
+                    } else {
+                        continue;
+                    }
+                } else {
+                    x1Scaled = (x1 as number) * hPR;
+                }
 
                 // Determine Right Edge (EOD if extended)
                 let xEODScaled = x1Scaled;
                 if (x2 !== null) {
                     xEODScaled = (x2 as number) * hPR;
-                } else if ((extend || isOR) && (startUnix as number) >= (this._data[this._data.length - 1].startUnix || 0)) {
+                } else {
+                    // If still null (projection failed?), clamp to width
                     xEODScaled = scope.mediaSize.width * hPR;
                 }
 
@@ -632,7 +704,13 @@ export class DailyProfiler implements ISeriesPrimitive {
                     ...d,
                     startUnix: new Date(d.start_time).getTime() / 1000,
                     endUnix: d.end_time ? new Date(d.end_time).getTime() / 1000 : undefined
-                }));
+                })).sort((a: any, b: any) => (a.startUnix || 0) - (b.startUnix || 0));
+
+                if (this._data.length > 0) {
+                    console.log('[DailyProfiler] Data loaded:', this._data.length, 'Last:', this._data[this._data.length - 1]);
+                } else {
+                    console.warn('[DailyProfiler] No data loaded');
+                }
 
                 this._requestUpdate();
             }
