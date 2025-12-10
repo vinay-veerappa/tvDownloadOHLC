@@ -12,6 +12,7 @@ interface SessionData {
     price?: number; // For single line items like MidnightOpen
     startUnix?: number;
     endUnix?: number;
+    untilUnix?: number; // Pre-computed extension target (e.g. 16:00 that day)
 }
 
 export interface DailyProfilerOptions {
@@ -213,6 +214,29 @@ class DailyProfilerRenderer {
 
             let drawnItems = 0;
 
+            // OPTIMIZATION: Calculate minDelta once per frame
+            let minDelta = Number.MAX_SAFE_INTEGER;
+            const vStart = Math.ceil(visibleLogical.from);
+            const vEnd = Math.floor(visibleLogical.to);
+            let prevTime: number | null = null;
+            let samples = 0;
+
+            for (let k = vStart; k <= vEnd && samples < 5; k++) {
+                const c = timeScale.logicalToCoordinate(k as any);
+                if (c !== null) {
+                    const t = timeScale.coordinateToTime(c);
+                    if (t !== null) {
+                        if (prevTime !== null) {
+                            const d = (t as number) - prevTime;
+                            if (d > 0 && d < minDelta) minDelta = d;
+                            samples++;
+                        }
+                        prevTime = t as number;
+                    }
+                }
+            }
+            if (minDelta === Number.MAX_SAFE_INTEGER) minDelta = 60;
+
             for (let i = startIndex; i < this._data.length; i++) {
                 // No break condition - render all applicable passed sessions
                 // Visibility checks inside the loop handles efficiency
@@ -313,38 +337,13 @@ class DailyProfilerRenderer {
                 // Check if this is a single-price line (PDH, PDL, MNO, etc.)
                 const isSinglePriceLine = session.price !== undefined && session.high === undefined;
 
-                // For OR, extended sessions, or single-price lines - extend to "Until" time (usually 16:00)
+                // For OR, extended sessions, or single-price lines - use Pre-computed Until Unix
                 if (extend || isOR || isSinglePriceLine) {
-                    // Logic for extension - simplified to use cached or recalc if needed?
-                    // Ideally we cache this too, but extension depends on OPTIONS ("extendUntil").
-                    // So we must calc dynamic part here, but we can optimize parsing.
-                    // Actually, "extendUntil" is constant per render pass.
-
-                    // Optimization: Parse ISO only if needed. 
-                    // Better: We can reconstruct date from startUnix without parsing string?
-                    // session.start_time is the reference.
-
-                    // Optimization: Use Regex to replace time but KEEP offset
-                    // Handle milliseconds if present (THH:mm:ss.SSSS)
-                    // We split by T and Take the date part, and we split the offset part.
-                    // Robust way:
-                    const iso = session.start_time;
-                    const T_split = iso.split('T');
-                    if (T_split.length === 2) {
-                        const datePart = T_split[0];
-                        const timeAndOffset = T_split[1];
-                        // Find where offset starts (+ or - after the time)
-                        // Time is usually HH:mm:ss ot HH:mm:ss.sssss
-                        // Regex to find offset: /[+-Z]\d{2}:?\d{2}|Z$/
-                        const offsetMatch = timeAndOffset.match(/([+-]\d{2}:?\d{2}|Z)$/);
-                        // Default to -05:00 (EST) if no offset found to prevent Local Time fallback (e.g. PST)
-                        const offset = offsetMatch ? offsetMatch[0] : '-05:00';
-
-                        // Construct new ISO with explicit 16:00:00 and original (or default) offset
-                        const newIso = `${datePart}T${this._options.extendUntil}:00${offset}`;
-
-                        extendUnix = new Date(newIso).getTime() / 1000;
-                        if (extendUnix < (startUnix as number)) extendUnix += 86400;
+                    if (session.untilUnix) {
+                        extendUnix = session.untilUnix;
+                    } else {
+                        // Fallback (should not happen if pre-compute worked)
+                        extendUnix = (startUnix as number) + 3600;
                     }
                 } else {
                     if (session.endUnix) extendUnix = session.endUnix;
@@ -357,32 +356,10 @@ class DailyProfilerRenderer {
                 let x2 = timeScale.timeToCoordinate(extendUnix as Time);
 
                 // Get interval used for logical projection
-                // We calculate this once per Draw call ideally, but here is safe too
-                // Simplification: assume interval from visible range
+                // We use the pre-calculated minDelta from top of (draw)
                 // If x2 is null (future/missing), we project using logical indices
                 if (x2 === null) {
-                    // We need an interval (minDelta)
-                    let minDelta = Number.MAX_SAFE_INTEGER;
-                    const vStart = Math.ceil(visibleLogical.from);
-                    const vEnd = Math.floor(visibleLogical.to);
-                    let prevTime: number | null = null;
-                    let samples = 0;
-
-                    for (let k = vStart; k <= vEnd && samples < 5; k++) {
-                        const c = timeScale.logicalToCoordinate(k as any);
-                        if (c !== null) {
-                            const t = timeScale.coordinateToTime(c);
-                            if (t !== null) {
-                                if (prevTime !== null) {
-                                    const d = (t as number) - prevTime;
-                                    if (d > 0 && d < minDelta) minDelta = d;
-                                    samples++;
-                                }
-                                prevTime = t as number;
-                            }
-                        }
-                    }
-                    if (minDelta === Number.MAX_SAFE_INTEGER) minDelta = 60;
+                    // Removed redundant minDelta loop here
 
                     if (x1 !== null) {
                         // Case 1: Start is visible
@@ -670,6 +647,9 @@ export class DailyProfiler implements ISeriesPrimitive {
             this._onOptionsChange?.(this._options);
         }
 
+        // Always pre-compute extensions if options changed (e.g. extendUntil)
+        this._precomputeExtensions();
+
         if (options.ticker && options.ticker !== PrevTicker) {
             this.fetchData();
         } else {
@@ -715,6 +695,7 @@ export class DailyProfiler implements ISeriesPrimitive {
                     endUnix: d.end_time ? new Date(d.end_time).getTime() / 1000 : undefined
                 })).sort((a: any, b: any) => (a.startUnix || 0) - (b.startUnix || 0));
 
+                this._precomputeExtensions();
                 this._requestUpdate();
             }
         } catch (e: any) {
@@ -815,4 +796,32 @@ export class DailyProfiler implements ISeriesPrimitive {
     id() { return 'daily-profiler'; }
     options() { return this._options; }
     setSelected(selected: boolean) { }
+
+    private _precomputeExtensions() {
+        if (!this._data) return;
+        const extendUntil = this._options.extendUntil || "16:00";
+
+        this._data.forEach(session => {
+            if (!session.start_time) return;
+
+            // Logic moved from draw() loop
+            const iso = session.start_time;
+            const T_split = iso.split('T');
+            if (T_split.length === 2) {
+                const datePart = T_split[0];
+                const timeAndOffset = T_split[1];
+                const offsetMatch = timeAndOffset.match(/([+-]\d{2}:?\d{2}|Z)$/);
+                const offset = offsetMatch ? offsetMatch[0] : '-05:00'; // Default EST
+
+                const newIso = `${datePart}T${extendUntil}:00${offset}`;
+                let uUnix = new Date(newIso).getTime() / 1000;
+
+                // If calculated time is before start, assume next day
+                if (session.startUnix && uUnix < session.startUnix) {
+                    uUnix += 86400;
+                }
+                session.untilUnix = uUnix;
+            }
+        });
+    }
 }
