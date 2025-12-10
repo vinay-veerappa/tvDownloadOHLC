@@ -183,7 +183,6 @@ class DailyProfilerRenderer {
     }
 
     draw(target: any): void {
-        console.log('[DailyProfiler] draw() called');
         const timeScale = this._chart.timeScale();
         // Robust Visible Range Logic (matches HourlyProfiler)
         // Convert visible logical indices to timestamps to ensure we have valid Time values
@@ -202,8 +201,8 @@ class DailyProfilerRenderer {
 
         // Look back 500 items to capture long-duration sessions (Weekly/Monthly levels)
         // Look back buffer to capture long-duration sessions
+        // Look back buffer to capture long-duration sessions
         const startIndex = Math.max(0, this._binarySearch(startTime) - 50);
-        console.log('[DailyProfiler] Draw range:', { startIndex, total: this._data.length, startTime });
 
         target.useBitmapCoordinateSpace((scope: any) => {
             const ctx = scope.context;
@@ -217,16 +216,7 @@ class DailyProfilerRenderer {
                 // Visibility checks inside the loop handles efficiency
                 const session = this._data[i];
 
-                // DEBUG: Log first 5 sessions
-                if (i < 5) {
-                    console.log('[DailyProfiler Debug]', {
-                        i,
-                        session: session.session,
-                        startUnix: session.startUnix,
-                        xStart: timeScale.timeToCoordinate(session.startUnix as Time),
-                        visibleLogical: timeScale.getVisibleLogicalRange()
-                    });
-                }
+
 
                 // Determine style based on session name
                 let color = this._options.asiaColor;
@@ -343,11 +333,12 @@ class DailyProfilerRenderer {
                         const timeAndOffset = T_split[1];
                         // Find where offset starts (+ or - after the time)
                         // Time is usually HH:mm:ss ot HH:mm:ss.sssss
-                        // Regex to find offset: /[+-Z]\d{2}:?\d{2}$/ or just Z
+                        // Regex to find offset: /[+-Z]\d{2}:?\d{2}|Z$/
                         const offsetMatch = timeAndOffset.match(/([+-]\d{2}:?\d{2}|Z)$/);
-                        const offset = offsetMatch ? offsetMatch[0] : '';
+                        // Default to -05:00 (EST) if no offset found to prevent Local Time fallback (e.g. PST)
+                        const offset = offsetMatch ? offsetMatch[0] : '-05:00';
 
-                        // Construct new ISO with explicit 16:00:00 and original offset
+                        // Construct new ISO with explicit 16:00:00 and original (or default) offset
                         const newIso = `${datePart}T${this._options.extendUntil}:00${offset}`;
 
                         extendUnix = new Date(newIso).getTime() / 1000;
