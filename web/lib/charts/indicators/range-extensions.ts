@@ -342,4 +342,30 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
             this._abortController = null;
         }
     }
+
+    public hitTest(x: number, y: number): { hit: boolean, externalId?: string, zOrder?: number, drawing?: any } | null {
+        const timeScale = this._chart.timeScale();
+        const time = timeScale.coordinateToTime(x) as number;
+        if (!time) return null;
+
+        for (let i = 0; i < this._data.length; i++) {
+            const period = this._data[i];
+            const nextPeriod = this._data[i + 1];
+
+            if (time >= (period.time as number)) {
+                if (nextPeriod) {
+                    if (time < (nextPeriod.time as number)) {
+                        return { hit: true, externalId: 'range-extensions', zOrder: 'top', drawing: this } as any;
+                    }
+                } else {
+                    if (time < (period.time as number) + 3600) {
+                        return { hit: true, externalId: 'range-extensions', zOrder: 'top', drawing: this } as any;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
 }
+
