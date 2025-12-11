@@ -39,7 +39,43 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
         df['time'] = (df['time'].astype('int64') // 10**9).astype(int)
     
     df.sort_values('time', inplace=True)
+    
+    # Extract timeframe from filename for deduplication logic
+    timeframe = parquet_path.stem.split('_')[-1]  # e.g., "1D" from "ES1_1D"
+    
+    # For daily (1D) timeframes, deduplicate to keep only one bar per calendar day
+    # This fixes the double candle issue where both overnight and regular session bars exist
+    if timeframe in ['1D', '1W']:
+        # Convert time to datetime with NYSE timezone for proper trading day grouping
+        df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True).dt.tz_convert('America/New_York')
+        
+        if timeframe == '1D':
+            df['period'] = df['datetime'].dt.date
+
+        else:  # 1W - use year-week tuple for grouping
+            df['period'] = df['datetime'].dt.isocalendar().week.astype(str) + '-' + df['datetime'].dt.isocalendar().year.astype(str)
+
+        
+        # Keep the bar with highest volume per period, or last bar if no volume
+        if 'volume' in df.columns and df['volume'].notna().any():
+            # Fill NaN volumes with 0 so idxmax() doesn't fail
+            df['volume_filled'] = df['volume'].fillna(0)
+            # Group by period and keep the row with max volume
+            idx = df.groupby('period')['volume_filled'].idxmax()
+            df = df.loc[idx].drop(columns=['volume_filled'])
+
+        else:
+            # No volume data - keep the last bar for each period
+            df = df.groupby('period').last().reset_index()
+        
+        # Sort again after deduplication
+        df.sort_values('time', inplace=True)
+        df = df.drop(columns=['datetime', 'period'])
+        
+        print(f"  Deduplicated {timeframe}: {len(df)} bars (1 per {'day' if timeframe == '1D' else 'week'})")
+    
     df = df[['time', 'open', 'high', 'low', 'close']]
+
     
     total_bars = len(df)
     num_chunks = (total_bars + CHUNK_SIZE - 1) // CHUNK_SIZE  # Ceiling division

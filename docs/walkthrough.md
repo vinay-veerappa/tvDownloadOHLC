@@ -119,3 +119,8 @@ This update enhances the Chart UI with a professional TradingView-style sidebar 
 - **Trading Context**: Centralized all trading logic (Orders, Positions, Accounts) into `TradingContext`, simplifying component interactions.
 - **Timeframe Synchronization**: Fixed critical bugs where changing timeframes would cause temporal drift, ensuring the chart stays anchored to the user's focus point.d `ChartContainer` by adding appropriate suppression for dynamic styling.
 - **Prop Correction**: Fixed `PropertiesModal` prop mismatch (`isOpen` -> `open`) to ensure properties dialog opens correctly.
+
+### 8. Profiler Reference Comparison
+- **New Page**: Added a dedicated `Reference Profiler` page to view historical aggregated stats (2008-2025).
+- **Consolidation**: Updated the Main Profiler (HOD/LOD Analysis) to consolidate late-session moves (16:15-17:00) into the 16:15 bucket, aligning the median/mode calculation with the reference methodology.
+

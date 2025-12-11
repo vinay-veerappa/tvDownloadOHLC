@@ -98,3 +98,26 @@ async def get_level_touches(ticker: str):
     
     return data
 
+@router.get("/stats/reference", tags=["Stats"])
+async def get_reference_stats():
+    """
+    Get Reference Data (aggregated stats and medians) from docs folder.
+    """
+    docs_dir = DATA_DIR.parent / "docs"
+    ref_all_path = docs_dir / "ReferenceAll.json"
+    ref_med_path = docs_dir / "ReferenceMedian.json"
+    
+    if not ref_all_path.exists() or not ref_med_path.exists():
+        raise HTTPException(status_code=404, detail="Reference data not found in docs/ directory.")
+        
+    with open(ref_all_path, 'r') as f:
+        ref_all = json.load(f)
+        
+    with open(ref_med_path, 'r') as f:
+        ref_med = json.load(f)
+        
+    return {
+        "stats": ref_all,
+        "median": ref_med
+    }
+

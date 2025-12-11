@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BarChart3, BookOpen, History, Settings, ChevronLeft, ChevronRight, Bell, User, LineChart } from "lucide-react"
+import { BarChart3, BookOpen, History, Settings, ChevronLeft, ChevronRight, Bell, User, LineChart, Database } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
@@ -55,6 +55,12 @@ export function AppSidebar() {
             icon: LineChart,
             href: "/profiler",
             active: pathname === "/profiler",
+        },
+        {
+            label: "Reference",
+            icon: Database,
+            href: "/profiler/reference",
+            active: pathname === "/profiler/reference",
         },
     ]
 
