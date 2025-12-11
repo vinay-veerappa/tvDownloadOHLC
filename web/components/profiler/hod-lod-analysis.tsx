@@ -47,7 +47,7 @@ function mode(arr: string[]): string {
     return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
 }
 
-export function HodLodAnalysis({ sessions, dailyHodLod }: Props) {
+export function HodLodTimes({ sessions, dailyHodLod }: Props) {
     const [granularity, setGranularity] = useState<number>(15);
 
     // Get unique dates from filtered sessions
@@ -163,6 +163,95 @@ export function HodLodAnalysis({ sessions, dailyHodLod }: Props) {
         };
     }, [sessions, granularity, dailyHodLod, filteredDates]);
 
+    const granularityOptions = [
+        { value: 5, label: '5m' },
+        { value: 15, label: '15m' },
+        { value: 30, label: '30m' },
+        { value: 60, label: '1h' },
+    ];
+
+    return (
+        <Card>
+            <CardHeader className="pb-2 pt-3">
+                <div className="flex items-center justify-between">
+                    <CardTitle className="text-base">High and Low of Day Times</CardTitle>
+                    <Select value={granularity.toString()} onValueChange={(v) => setGranularity(parseInt(v))}>
+                        <SelectTrigger className="w-[70px] h-8">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {granularityOptions.map(o => (
+                                <SelectItem key={o.value} value={o.value.toString()}>{o.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+                <div className="flex gap-6 mt-2 text-sm">
+                    <div className="flex items-center gap-2 bg-green-50 dark:bg-green-950 px-3 py-1 rounded">
+                        <TrendingUp className="h-4 w-4 text-green-600" />
+                        <span className="font-medium text-green-700 dark:text-green-400">HOD</span>
+                        <span className="text-muted-foreground">Mode:</span>
+                        <span className="font-mono font-bold">{hodStats?.mode || '-'}</span>
+                        <span className="text-muted-foreground">Med:</span>
+                        <span className="font-mono">{hodStats?.median || '-'}</span>
+                        <Badge variant="outline" className="ml-1">{hodStats?.count || 0}</Badge>
+                    </div>
+                    <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950 px-3 py-1 rounded">
+                        <TrendingDown className="h-4 w-4 text-red-600" />
+                        <span className="font-medium text-red-700 dark:text-red-400">LOD</span>
+                        <span className="text-muted-foreground">Mode:</span>
+                        <span className="font-mono font-bold">{lodStats?.mode || '-'}</span>
+                        <span className="text-muted-foreground">Med:</span>
+                        <span className="font-mono">{lodStats?.median || '-'}</span>
+                        <Badge variant="outline" className="ml-1">{lodStats?.count || 0}</Badge>
+                    </div>
+                </div>
+            </CardHeader>
+            <CardContent className="h-[280px] pt-0">
+                <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={timeHistogramData} margin={{ top: 10, right: 10, bottom: 30, left: 10 }}>
+                        <XAxis
+                            dataKey="time"
+                            fontSize={9}
+                            interval={granularity <= 15 ? 3 : 1}
+                            angle={-45}
+                            textAnchor="end"
+                            height={50}
+                        />
+                        <YAxis
+                            fontSize={10}
+                            tickFormatter={(v) => `${Math.abs(v).toFixed(0)}%`}
+                            domain={['auto', 'auto']}
+                        />
+                        <Tooltip
+                            contentStyle={{
+                                backgroundColor: 'hsl(var(--background))',
+                                borderColor: 'hsl(var(--border))',
+                                padding: '8px 12px',
+                                borderRadius: '6px',
+                                fontSize: '12px',
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                            }}
+                            itemStyle={{ color: 'hsl(var(--foreground))' }}
+                            labelStyle={{ color: 'hsl(var(--foreground))', fontWeight: 'bold', marginBottom: 4 }}
+                            cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                            formatter={(value: number, name: string, props: any) => {
+                                const isHod = props.dataKey === 'hodPercent';
+                                const count = isHod ? props.payload.hodCount : props.payload.lodCount;
+                                return [`${Math.abs(value).toFixed(1)}% (${count} days)`, isHod ? '🟢 HOD' : '🔴 LOD'];
+                            }}
+                        />
+                        <ReferenceLine y={0} stroke="hsl(var(--border))" />
+                        <Bar dataKey="hodPercent" name="HOD" fill="#22c55e" radius={[2, 2, 0, 0]} />
+                        <Bar dataKey="lodPercent" name="LOD" fill="#ef4444" radius={[0, 0, 2, 2]} />
+                    </ComposedChart>
+                </ResponsiveContainer>
+            </CardContent>
+        </Card>
+    );
+}
+
+export function SessionHodLod({ sessions }: Props) {
     // Session-based stats (which session makes HOD/LOD)
     const sessionStats = useMemo(() => {
         const byDate: Record<string, ProfilerSession[]> = {};
@@ -198,144 +287,55 @@ export function HodLodAnalysis({ sessions, dailyHodLod }: Props) {
         };
     }, [sessions]);
 
-    const granularityOptions = [
-        { value: 5, label: '5m' },
-        { value: 15, label: '15m' },
-        { value: 30, label: '30m' },
-        { value: 60, label: '1h' },
-    ];
-
     return (
-        <div className="space-y-4">
-            {/* Combined HOD/LOD Time Histogram */}
-            <Card>
-                <CardHeader className="pb-2 pt-3">
-                    <div className="flex items-center justify-between">
-                        <CardTitle className="text-base">High and Low of Day Times</CardTitle>
-                        <Select value={granularity.toString()} onValueChange={(v) => setGranularity(parseInt(v))}>
-                            <SelectTrigger className="w-[70px] h-8">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {granularityOptions.map(o => (
-                                    <SelectItem key={o.value} value={o.value.toString()}>{o.label}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
-                    <div className="flex gap-6 mt-2 text-sm">
-                        <div className="flex items-center gap-2 bg-green-50 dark:bg-green-950 px-3 py-1 rounded">
-                            <TrendingUp className="h-4 w-4 text-green-600" />
-                            <span className="font-medium text-green-700 dark:text-green-400">HOD</span>
-                            <span className="text-muted-foreground">Mode:</span>
-                            <span className="font-mono font-bold">{hodStats?.mode || '-'}</span>
-                            <span className="text-muted-foreground">Med:</span>
-                            <span className="font-mono">{hodStats?.median || '-'}</span>
-                            <Badge variant="outline" className="ml-1">{hodStats?.count || 0}</Badge>
-                        </div>
-                        <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950 px-3 py-1 rounded">
-                            <TrendingDown className="h-4 w-4 text-red-600" />
-                            <span className="font-medium text-red-700 dark:text-red-400">LOD</span>
-                            <span className="text-muted-foreground">Mode:</span>
-                            <span className="font-mono font-bold">{lodStats?.mode || '-'}</span>
-                            <span className="text-muted-foreground">Med:</span>
-                            <span className="font-mono">{lodStats?.median || '-'}</span>
-                            <Badge variant="outline" className="ml-1">{lodStats?.count || 0}</Badge>
-                        </div>
-                    </div>
+        <div className="grid grid-cols-2 gap-3">
+            <Card className="border-green-200">
+                <CardHeader className="pb-1 pt-2 px-3">
+                    <CardTitle className="text-xs text-green-700 flex items-center gap-2">
+                        <TrendingUp className="h-3 w-3" /> Which Session Makes HOD?
+                    </CardTitle>
                 </CardHeader>
-                <CardContent className="h-[280px] pt-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart data={timeHistogramData} margin={{ top: 10, right: 10, bottom: 30, left: 10 }}>
-                            <XAxis
-                                dataKey="time"
-                                fontSize={9}
-                                interval={granularity <= 15 ? 3 : 1}
-                                angle={-45}
-                                textAnchor="end"
-                                height={50}
-                            />
-                            <YAxis
-                                fontSize={10}
-                                tickFormatter={(v) => `${Math.abs(v).toFixed(0)}%`}
-                                domain={['auto', 'auto']}
-                            />
-                            <Tooltip
-                                contentStyle={{
-                                    backgroundColor: 'hsl(var(--background))',
-                                    borderColor: 'hsl(var(--border))',
-                                    padding: '8px 12px',
-                                    borderRadius: '6px',
-                                    fontSize: '12px',
-                                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
-                                }}
-                                itemStyle={{ color: 'hsl(var(--foreground))' }}
-                                labelStyle={{ color: 'hsl(var(--foreground))', fontWeight: 'bold', marginBottom: 4 }}
-                                cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
-                                formatter={(value: number, name: string, props: any) => {
-                                    const isHod = props.dataKey === 'hodPercent';
-                                    const count = isHod ? props.payload.hodCount : props.payload.lodCount;
-                                    return [`${Math.abs(value).toFixed(1)}% (${count} days)`, isHod ? '🟢 HOD' : '🔴 LOD'];
-                                }}
-                            />
-                            <ReferenceLine y={0} stroke="hsl(var(--border))" />
-                            <Bar dataKey="hodPercent" name="HOD" fill="#22c55e" radius={[2, 2, 0, 0]} />
-                            <Bar dataKey="lodPercent" name="LOD" fill="#ef4444" radius={[0, 0, 2, 2]} />
-                        </ComposedChart>
-                    </ResponsiveContainer>
+                <CardContent className="px-3 pb-2">
+                    <div className="space-y-1">
+                        {sessionStats.hod.sort((a, b) => b.count - a.count).map(({ session, count }) => {
+                            const pct = sessionStats.totalDays > 0 ? (count / sessionStats.totalDays) * 100 : 0;
+                            return (
+                                <div key={session} className="flex items-center gap-2 text-xs">
+                                    <span className="w-12">{session}</span>
+                                    <div className="flex-1 h-3 bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
+                                        <div className="h-full bg-green-500 rounded" style={{ width: `${pct}%` }} />
+                                    </div>
+                                    <span className="w-10 text-right font-mono">{pct.toFixed(0)}%</span>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </CardContent>
             </Card>
 
-            {/* Which Session Makes HOD/LOD */}
-            <div className="grid grid-cols-2 gap-3">
-                <Card className="border-green-200">
-                    <CardHeader className="pb-1 pt-2 px-3">
-                        <CardTitle className="text-xs text-green-700 flex items-center gap-2">
-                            <TrendingUp className="h-3 w-3" /> Which Session Makes HOD?
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="px-3 pb-2">
-                        <div className="space-y-1">
-                            {sessionStats.hod.sort((a, b) => b.count - a.count).map(({ session, count }) => {
-                                const pct = sessionStats.totalDays > 0 ? (count / sessionStats.totalDays) * 100 : 0;
-                                return (
-                                    <div key={session} className="flex items-center gap-2 text-xs">
-                                        <span className="w-12">{session}</span>
-                                        <div className="flex-1 h-3 bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
-                                            <div className="h-full bg-green-500 rounded" style={{ width: `${pct}%` }} />
-                                        </div>
-                                        <span className="w-10 text-right font-mono">{pct.toFixed(0)}%</span>
+            <Card className="border-red-200">
+                <CardHeader className="pb-1 pt-2 px-3">
+                    <CardTitle className="text-xs text-red-700 flex items-center gap-2">
+                        <TrendingDown className="h-3 w-3" /> Which Session Makes LOD?
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="px-3 pb-2">
+                    <div className="space-y-1">
+                        {sessionStats.lod.sort((a, b) => b.count - a.count).map(({ session, count }) => {
+                            const pct = sessionStats.totalDays > 0 ? (count / sessionStats.totalDays) * 100 : 0;
+                            return (
+                                <div key={session} className="flex items-center gap-2 text-xs">
+                                    <span className="w-12">{session}</span>
+                                    <div className="flex-1 h-3 bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
+                                        <div className="h-full bg-red-500 rounded" style={{ width: `${pct}%` }} />
                                     </div>
-                                );
-                            })}
-                        </div>
-                    </CardContent>
-                </Card>
-
-                <Card className="border-red-200">
-                    <CardHeader className="pb-1 pt-2 px-3">
-                        <CardTitle className="text-xs text-red-700 flex items-center gap-2">
-                            <TrendingDown className="h-3 w-3" /> Which Session Makes LOD?
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="px-3 pb-2">
-                        <div className="space-y-1">
-                            {sessionStats.lod.sort((a, b) => b.count - a.count).map(({ session, count }) => {
-                                const pct = sessionStats.totalDays > 0 ? (count / sessionStats.totalDays) * 100 : 0;
-                                return (
-                                    <div key={session} className="flex items-center gap-2 text-xs">
-                                        <span className="w-12">{session}</span>
-                                        <div className="flex-1 h-3 bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
-                                            <div className="h-full bg-red-500 rounded" style={{ width: `${pct}%` }} />
-                                        </div>
-                                        <span className="w-10 text-right font-mono">{pct.toFixed(0)}%</span>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </CardContent>
-                </Card>
-            </div>
+                                    <span className="w-10 text-right font-mono">{pct.toFixed(0)}%</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </CardContent>
+            </Card>
         </div>
     );
 }

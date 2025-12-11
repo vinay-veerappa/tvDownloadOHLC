@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ProfilerWizard } from '@/components/profiler/profiler-wizard';
 import { TimeHistograms } from '@/components/profiler/time-histograms';
-import { HodLodAnalysis } from '@/components/profiler/hod-lod-analysis';
+import { HodLodTimes, SessionHodLod } from '@/components/profiler/hod-lod-analysis';
 import { RangeDistribution } from '@/components/profiler/range-distribution';
 import { OutcomePanelGrid } from '@/components/profiler/outcome-panel-grid';
 import { DailyLevels } from '@/components/profiler/daily-levels';
@@ -132,9 +132,11 @@ export function ProfilerView({ ticker }: { ticker: string }) {
                 <div className="flex items-center gap-4 bg-muted/50 rounded-lg px-4 py-2">
                     <Calendar className="h-4 w-4 text-muted-foreground" />
                     <div className="flex items-center gap-2">
-                        <Label className="text-sm">From</Label>
+                        <Label htmlFor="startDate" className="text-sm">From</Label>
                         <input
+                            id="startDate"
                             type="date"
+                            aria-label="Start Date"
                             value={startDate}
                             min={dateRange.min}
                             max={endDate}
@@ -143,9 +145,11 @@ export function ProfilerView({ ticker }: { ticker: string }) {
                         />
                     </div>
                     <div className="flex items-center gap-2">
-                        <Label className="text-sm">To</Label>
+                        <Label htmlFor="endDate" className="text-sm">To</Label>
                         <input
+                            id="endDate"
                             type="date"
+                            aria-label="End Date"
                             value={endDate}
                             min={startDate}
                             max={dateRange.max}
@@ -167,17 +171,19 @@ export function ProfilerView({ ticker }: { ticker: string }) {
 
             {/* 3-Tab Analysis View */}
             <Tabs defaultValue="hod-lod" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className="grid w-full grid-cols-4">
                     <TabsTrigger value="hod-lod">HOD/LOD Analysis</TabsTrigger>
                     <TabsTrigger value="outcomes">Outcome Panels</TabsTrigger>
                     <TabsTrigger value="levels">Daily Levels</TabsTrigger>
+                    <TabsTrigger value="history">Session History</TabsTrigger>
                 </TabsList>
 
                 {/* Tab 1: HOD/LOD Analysis */}
                 <TabsContent value="hod-lod" className="space-y-6 mt-4">
-                    <HodLodAnalysis sessions={filteredSessions} dailyHodLod={dailyHodLod} />
-                    <TimeHistograms sessions={filteredSessions} />
+                    <HodLodTimes sessions={filteredSessions} dailyHodLod={dailyHodLod} />
                     <RangeDistribution sessions={filteredSessions} />
+                    <SessionHodLod sessions={filteredSessions} />
+                    <TimeHistograms sessions={filteredSessions} />
                 </TabsContent>
 
                 {/* Tab 2: Outcome Panels */}
@@ -200,101 +206,104 @@ export function ProfilerView({ ticker }: { ticker: string }) {
                         filteredDates={filteredDatesSet}
                     />
                 </TabsContent>
-            </Tabs>
 
-            {/* Aggregate Cards */}
-            <div>
-                <h2 className="text-xl font-semibold mb-4">Session Stats (Filtered Period)</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {sessionOrder.map(sess => {
-                        const stats = aggregates[sess];
-                        if (!stats || stats.total === 0) return null;
-                        return (
-                            <Card key={sess} className="min-w-[250px]">
-                                <CardHeader className="pb-2">
-                                    <CardTitle>{sess}</CardTitle>
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="space-y-2 text-sm">
-                                        <div className="flex justify-between font-semibold">
-                                            <span>Total Sessions</span>
-                                            <span>{stats.total}</span>
-                                        </div>
-                                        <div className="h-px bg-border my-2" />
-                                        {Object.entries(stats.counts).sort((a, b) => b[1] - a[1]).map(([status, count]) => (
-                                            <div key={status} className="flex justify-between items-center">
-                                                <span className={`
-                                                    ${status.includes('True') ? 'text-green-500' : ''}
-                                                    ${status.includes('False') ? 'text-red-500' : ''}
-                                                `}>{status}</span>
-                                                <div className="flex gap-2">
-                                                    <span>{count}</span>
-                                                    <span className="text-muted-foreground w-12 text-right">
-                                                        {((count / stats.total) * 100).toFixed(1)}%
-                                                    </span>
+                {/* Tab 4: Session History & Stats */}
+                <TabsContent value="history" className="space-y-6 mt-4">
+                    {/* Aggregate Cards */}
+                    <div>
+                        <h2 className="text-xl font-semibold mb-4">Session Stats (Filtered Period)</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {sessionOrder.map(sess => {
+                                const stats = aggregates[sess];
+                                if (!stats || stats.total === 0) return null;
+                                return (
+                                    <Card key={sess} className="min-w-[250px]">
+                                        <CardHeader className="pb-2">
+                                            <CardTitle>{sess}</CardTitle>
+                                        </CardHeader>
+                                        <CardContent>
+                                            <div className="space-y-2 text-sm">
+                                                <div className="flex justify-between font-semibold">
+                                                    <span>Total Sessions</span>
+                                                    <span>{stats.total}</span>
                                                 </div>
+                                                <div className="h-px bg-border my-2" />
+                                                {Object.entries(stats.counts).sort((a, b) => b[1] - a[1]).map(([status, count]) => (
+                                                    <div key={status} className="flex justify-between items-center">
+                                                        <span className={`
+                                                            ${status.includes('True') ? 'text-green-500' : ''}
+                                                            ${status.includes('False') ? 'text-red-500' : ''}
+                                                        `}>{status}</span>
+                                                        <div className="flex gap-2">
+                                                            <span>{count}</span>
+                                                            <span className="text-muted-foreground w-12 text-right">
+                                                                {((count / stats.total) * 100).toFixed(1)}%
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                ))}
                                             </div>
-                                        ))}
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        );
-                    })}
-                </div>
-            </div>
-
-            {/* Detailed Log */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>Session History (Last 100 of filtered)</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="max-h-[600px] overflow-auto">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Date</TableHead>
-                                    <TableHead>Session</TableHead>
-                                    <TableHead className="text-right">High</TableHead>
-                                    <TableHead className="text-right">Low</TableHead>
-                                    <TableHead className="text-right">Mid</TableHead>
-                                    <TableHead>Status</TableHead>
-                                    <TableHead>Broken</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {[...filteredSessions].slice(-100).reverse().map((s, i) => (
-                                    <TableRow key={i}>
-                                        <TableCell className="font-mono text-xs">{s.date}</TableCell>
-                                        <TableCell>{s.session}</TableCell>
-                                        <TableCell className="text-right font-mono text-green-600">{s.range_high.toFixed(2)}</TableCell>
-                                        <TableCell className="text-right font-mono text-red-600">{s.range_low.toFixed(2)}</TableCell>
-                                        <TableCell className="text-right font-mono text-muted-foreground">{s.mid.toFixed(2)}</TableCell>
-                                        <TableCell>
-                                            <Badge variant="secondary" className={`
-                                                ${s.status.includes('True') ? 'bg-green-100 text-green-800' : ''}
-                                                ${s.status.includes('False') ? 'bg-red-100 text-red-800' : ''}
-                                            `}>
-                                                {s.status}
-                                            </Badge>
-                                        </TableCell>
-                                        <TableCell>
-                                            {s.broken ? (
-                                                <div className="flex flex-col text-xs">
-                                                    <span className="text-red-500 font-bold">Yes</span>
-                                                    <span>{s.broken_time}</span>
-                                                </div>
-                                            ) : (
-                                                <span className="text-green-500">No</span>
-                                            )}
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
+                                        </CardContent>
+                                    </Card>
+                                );
+                            })}
+                        </div>
                     </div>
-                </CardContent>
-            </Card>
+
+                    {/* Detailed Log */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Session History (Last 100 of filtered)</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="max-h-[600px] overflow-auto">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Date</TableHead>
+                                            <TableHead>Session</TableHead>
+                                            <TableHead className="text-right">High</TableHead>
+                                            <TableHead className="text-right">Low</TableHead>
+                                            <TableHead className="text-right">Mid</TableHead>
+                                            <TableHead>Status</TableHead>
+                                            <TableHead>Broken</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {[...filteredSessions].slice(-100).reverse().map((s, i) => (
+                                            <TableRow key={i}>
+                                                <TableCell className="font-mono text-xs">{s.date}</TableCell>
+                                                <TableCell>{s.session}</TableCell>
+                                                <TableCell className="text-right font-mono text-green-600">{s.range_high.toFixed(2)}</TableCell>
+                                                <TableCell className="text-right font-mono text-red-600">{s.range_low.toFixed(2)}</TableCell>
+                                                <TableCell className="text-right font-mono text-muted-foreground">{s.mid.toFixed(2)}</TableCell>
+                                                <TableCell>
+                                                    <Badge variant="secondary" className={`
+                                                        ${s.status.includes('True') ? 'bg-green-100 text-green-800' : ''}
+                                                        ${s.status.includes('False') ? 'bg-red-100 text-red-800' : ''}
+                                                    `}>
+                                                        {s.status}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell>
+                                                    {s.broken ? (
+                                                        <div className="flex flex-col text-xs">
+                                                            <span className="text-red-500 font-bold">Yes</span>
+                                                            <span>{s.broken_time}</span>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-green-500">No</span>
+                                                    )}
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+            </Tabs>
         </div>
     );
 }
