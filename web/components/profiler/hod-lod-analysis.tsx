@@ -95,7 +95,18 @@ export function HodLodAnalysis({ sessions, dailyHodLod }: Props) {
             });
         }
 
-        if (hodTimes.length === 0 && lodTimes.length === 0) {
+        // Consolidate times 16:15-17:00 into 16:15 boundary
+        const consolidate = (times: string[]) => times.map(t => {
+            const mins = timeToMinutes(t);
+            // 16:15 is 975 min, 17:00 is 1020 min
+            if (mins >= 975 && mins <= 1020) return "16:15";
+            return t;
+        });
+
+        const finalHodTimes = consolidate(hodTimes);
+        const finalLodTimes = consolidate(lodTimes);
+
+        if (finalHodTimes.length === 0 && finalLodTimes.length === 0) {
             return { timeHistogramData: [], hodStats: null, lodStats: null };
         }
 
@@ -103,12 +114,12 @@ export function HodLodAnalysis({ sessions, dailyHodLod }: Props) {
         const hodBuckets: Record<string, number> = {};
         const lodBuckets: Record<string, number> = {};
 
-        hodTimes.forEach(t => {
+        finalHodTimes.forEach(t => {
             const bucket = roundToBucket(t, granularity);
             hodBuckets[bucket] = (hodBuckets[bucket] || 0) + 1;
         });
 
-        lodTimes.forEach(t => {
+        finalLodTimes.forEach(t => {
             const bucket = roundToBucket(t, granularity);
             lodBuckets[bucket] = (lodBuckets[bucket] || 0) + 1;
         });
@@ -122,8 +133,8 @@ export function HodLodAnalysis({ sessions, dailyHodLod }: Props) {
             orderedTimes.push(minutesToTime(mins));
         }
 
-        const totalHod = hodTimes.length || 1;
-        const totalLod = lodTimes.length || 1;
+        const totalHod = finalHodTimes.length || 1;
+        const totalLod = finalLodTimes.length || 1;
 
         const data = orderedTimes.map(time => ({
             time,
@@ -134,20 +145,20 @@ export function HodLodAnalysis({ sessions, dailyHodLod }: Props) {
         }));
 
         // Stats
-        const hodBucketed = hodTimes.map(t => roundToBucket(t, granularity));
-        const lodBucketed = lodTimes.map(t => roundToBucket(t, granularity));
+        const hodBucketed = finalHodTimes.map(t => roundToBucket(t, granularity));
+        const lodBucketed = finalLodTimes.map(t => roundToBucket(t, granularity));
 
         return {
             timeHistogramData: data,
             hodStats: {
-                median: minutesToTime(Math.round(median(hodTimes.map(timeToMinutes)))),
+                median: minutesToTime(Math.round(median(finalHodTimes.map(timeToMinutes)))),
                 mode: mode(hodBucketed),
-                count: hodTimes.length,
+                count: finalHodTimes.length,
             },
             lodStats: {
-                median: minutesToTime(Math.round(median(lodTimes.map(timeToMinutes)))),
+                median: minutesToTime(Math.round(median(finalLodTimes.map(timeToMinutes)))),
                 mode: mode(lodBucketed),
-                count: lodTimes.length,
+                count: finalLodTimes.length,
             },
         };
     }, [sessions, granularity, dailyHodLod, filteredDates]);
@@ -250,10 +261,19 @@ export function HodLodAnalysis({ sessions, dailyHodLod }: Props) {
                                 domain={['auto', 'auto']}
                             />
                             <Tooltip
-                                contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))', padding: '8px 12px' }}
-                                labelStyle={{ fontWeight: 'bold', marginBottom: 4 }}
+                                contentStyle={{
+                                    backgroundColor: 'hsl(var(--background))',
+                                    borderColor: 'hsl(var(--border))',
+                                    padding: '8px 12px',
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                                }}
+                                itemStyle={{ color: 'hsl(var(--foreground))' }}
+                                labelStyle={{ color: 'hsl(var(--foreground))', fontWeight: 'bold', marginBottom: 4 }}
+                                cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
                                 formatter={(value: number, name: string, props: any) => {
-                                    const isHod = name === 'hodPercent';
+                                    const isHod = props.dataKey === 'hodPercent';
                                     const count = isHod ? props.payload.hodCount : props.payload.lodCount;
                                     return [`${Math.abs(value).toFixed(1)}% (${count} days)`, isHod ? '🟢 HOD' : '🔴 LOD'];
                                 }}

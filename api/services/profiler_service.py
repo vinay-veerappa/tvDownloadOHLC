@@ -128,17 +128,33 @@ class ProfilerService:
         # I'll paste the optimized logic I wrote in the previous step.
         
         sessions_def = [
-            {"name": "Asia",   "start": "18:00", "end": "19:30", "next_start": "02:30", "day_offset": 1}, 
-            {"name": "London", "start": "02:30", "end": "03:30", "next_start": "07:30", "day_offset": 0},
-            {"name": "NY1",    "start": "07:30", "end": "08:30", "next_start": "11:30", "day_offset": 0},
-            {"name": "NY2",    "start": "11:30", "end": "12:30", "next_start": "16:00", "day_offset": 0}, 
+            # Trading day sessions - all should share the same trading_date
+            # Asia starts at 18:00 on (trading_date - 1 day)
+            # London/NY sessions are on the actual trading_date
+            # skip_broken: NY2 has no broken window since trading ends at 17:00
+            {"name": "Asia",   "start": "18:00", "end": "19:30", "next_start": "02:30", "day_offset_start": -1, "day_offset_end": -1, "skip_broken": False}, 
+            {"name": "London", "start": "02:30", "end": "03:30", "next_start": "07:30", "day_offset_start": 0, "day_offset_end": 0, "skip_broken": False},
+            {"name": "NY1",    "start": "07:30", "end": "08:30", "next_start": "11:30", "day_offset_start": 0, "day_offset_end": 0, "skip_broken": False},
+            {"name": "NY2",    "start": "11:30", "end": "12:30", "next_start": "17:00", "day_offset_start": 0, "day_offset_end": 0, "skip_broken": True}, 
         ]
 
-        unique_dates = sorted(list(set(df.index.date)))
-        target_dates = unique_dates[-days:]
+        # Get unique calendar dates and derive trading dates
+        # Trading date = the date on which the session ENDS (i.e., 18:00 on Dec 3 → trading date Dec 4)
+        from datetime import time as dt_time
+        
+        def get_trading_date(ts):
+            """Get trading date: if time >= 18:00, it belongs to next calendar day's trading session"""
+            if ts.time() >= dt_time(18, 0):
+                return (ts.date() + timedelta(days=1))
+            return ts.date()
+        
+        # Get unique trading dates from the data
+        trading_dates = sorted(list(set(get_trading_date(ts) for ts in df.index)))
+        target_dates = trading_dates[-days:]
         
         if target_dates:
-            slice_start = pd.Timestamp(target_dates[0]) - timedelta(days=1)
+            # Need to include data from previous calendar day for Asia session
+            slice_start = pd.Timestamp(target_dates[0]) - timedelta(days=2)
             if df.index.tz:
                  slice_start = slice_start.tz_localize(df.index.tz)
             df_slice = df.loc[slice_start:] 
@@ -148,12 +164,17 @@ class ProfilerService:
         tz = df.index.tz
         collected_stats = []
 
-        for date in target_dates:
-            date_str = date.strftime('%Y-%m-%d')
+        for trading_date in target_dates:
+            trading_date_str = trading_date.strftime('%Y-%m-%d')
             
             for sess in sessions_def:
-                start_naive = pd.Timestamp(f"{date_str} {sess['start']}")
-                end_naive = pd.Timestamp(f"{date_str} {sess['end']}")
+                # Calculate session start/end based on trading date and offsets
+                sess_cal_date_start = trading_date + timedelta(days=sess['day_offset_start'])
+                sess_cal_date_end = trading_date + timedelta(days=sess['day_offset_end'])
+                
+                start_naive = pd.Timestamp(f"{sess_cal_date_start.strftime('%Y-%m-%d')} {sess['start']}")
+                end_naive = pd.Timestamp(f"{sess_cal_date_end.strftime('%Y-%m-%d')} {sess['end']}")
+
                 
                 try:
                     start_ts = start_naive.tz_localize(tz)
@@ -184,14 +205,21 @@ class ProfilerService:
                 
                 mon_start = end_ts
                 next_start_time = sess['next_start']
-                mon_end_day = date
-                if sess['day_offset'] == 1: mon_end_day = date + timedelta(days=1)
+                
+                # For next_start calculation: Asia's next_start (02:30) is on the trading_date
+                # All other sessions' next_start is also on the trading_date  
+                if sess['name'] == 'Asia':
+                    # Asia ends at 19:30 on (trading_date - 1), next_start 02:30 is on trading_date
+                    mon_end_day = trading_date
+                else:
+                    # London/NY: next_start is on the same trading_date
+                    mon_end_day = trading_date
                 
                 mon_end_naive = pd.Timestamp(f"{mon_end_day.strftime('%Y-%m-%d')} {next_start_time}")
                 try: status_end = mon_end_naive.tz_localize(tz)
                 except: continue
 
-                reset_time_naive = pd.Timestamp(f"{mon_end_day.strftime('%Y-%m-%d')} 18:00")
+                reset_time_naive = pd.Timestamp(f"{trading_date.strftime('%Y-%m-%d')} 18:00")
                 try: reset_time = reset_time_naive.tz_localize(tz)
                 except: continue
                 
@@ -215,7 +243,18 @@ class ProfilerService:
                         
                         if triggered_side is None:
                             if broke_high and broke_low:
-                                status = 'False'; triggered_side = 'Both'; status_time = ts.isoformat(); break
+                                # Both broken on same bar - infer direction from bar open
+                                # If open is closer to low, assume went up first (Long False)
+                                # If open is closer to high, assume went down first (Short False)
+                                bar_open = row['open']
+                                bar_mid = (h + l) / 2
+                                if bar_open < bar_mid:
+                                    status = 'Long False'  # Started low, went up first
+                                else:
+                                    status = 'Short False'  # Started high, went down first
+                                triggered_side = 'Both'
+                                status_time = ts.isoformat()
+                                break
                             elif broke_high:
                                 triggered_side = 'High'; status = 'Long True'; status_time = ts.isoformat() 
                             elif broke_low:
@@ -234,14 +273,15 @@ class ProfilerService:
                 broken = False
                 broken_time = None
                 
-                if not broken_data.empty:
+                # Skip broken calculation for sessions with no broken window (e.g., NY2 - trading ends at 17:00)
+                if not sess.get('skip_broken', False) and not broken_data.empty:
                     break_mask = (broken_data['low'] <= mid) & (broken_data['high'] >= mid)
                     if break_mask.any():
                         broken = True
                         broken_time = break_mask.idxmax().strftime('%H:%M')
 
                 collected_stats.append({
-                    "date": date_str,
+                    "date": trading_date_str,
                     "session": sess['name'],
                     "open": sess_open,
                     "range_high": float(high),
