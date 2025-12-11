@@ -124,3 +124,10 @@ This update enhances the Chart UI with a professional TradingView-style sidebar 
 - **New Page**: Added a dedicated `Reference Profiler` page to view historical aggregated stats (2008-2025).
 - **Consolidation**: Updated the Main Profiler (HOD/LOD Analysis) to consolidate late-session moves (16:15-17:00) into the 16:15 bucket, aligning the median/mode calculation with the reference methodology.
 
+
+### 9. Data Verification (Reference vs Local)
+- **Goal**: Validated the `NQ1_1m.parquet` dataset against the `ReferenceAll.json` benchmark to ensure statistical integrity.
+- **Finding**: 
+  - **1m Data (2008-2025)**: Median High/Low stats (0.63% / -0.58%) align closely with Reference stats (0.60% / -0.60%), confirming the Reference Data represents the "High Volatility" era (post-2008) including Full Overnight Sessions.
+  - **1D Data (1999-2025)**: Showed significantly lower volatility (0.41% Median) and systematic price discrepancies, confirming it represents a different session profile (likely RTH-only) or contract adjustment.
+- **Conclusion**: Established `NQ1_1m.parquet` as the authoritative source for all Profiler calculations.
