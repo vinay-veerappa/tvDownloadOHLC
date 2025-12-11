@@ -290,6 +290,7 @@ Each level card displays:
 | **Precompute Scripts** | ✅ Done | `precompute_daily_hod_lod.py`, `precompute_level_touches.py` |
 | **Session Stats Cards** | ✅ Done | Direction bias, True/False counts, Broken stats |
 | **History Table** | ✅ Done | Filterable session history |
+| **Compact Wizard UI** | ✅ Done | Horizontal layout, inline filters, clear labels |
 
 ### In Progress 🔄
 
