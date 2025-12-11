@@ -1,7 +1,7 @@
 
 "use client"
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { ProfilerSession } from '@/lib/api/profiler';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -12,12 +12,13 @@ import { ArrowRight, Filter, RefreshCcw } from 'lucide-react';
 
 interface WizardProps {
     sessions: ProfilerSession[];
+    onMatchingDatesChange?: (dates: Set<string> | null) => void; // null = no filter active
 }
 
 const SESSION_ORDER = ['Asia', 'London', 'NY1', 'NY2'];
 const STATUS_OPTIONS = ['Long True', 'Short True', 'Long False', 'Short False', 'None'];
 
-export function ProfilerWizard({ sessions }: WizardProps) {
+export function ProfilerWizard({ sessions, onMatchingDatesChange }: WizardProps) {
     const [targetSession, setTargetSession] = useState<string>('NY1');
     const [filters, setFilters] = useState<Record<string, string>>({});
     const [brokenFilters, setBrokenFilters] = useState<Record<string, string>>({});
@@ -29,8 +30,16 @@ export function ProfilerWizard({ sessions }: WizardProps) {
         return SESSION_ORDER.slice(0, idx);
     }, [targetSession]);
 
-    // 2. Filter Logic
-    const stats = useMemo(() => {
+    // Check if any filter is active
+    const isFilterActive = useMemo(() => {
+        const hasStatusFilter = Object.values(filters).some(v => v && v !== 'Any');
+        const hasBrokenFilter = Object.values(brokenFilters).some(v => v && v !== 'Any');
+        const hasIntraFilter = intraSessionState !== 'Any';
+        return hasStatusFilter || hasBrokenFilter || hasIntraFilter;
+    }, [filters, brokenFilters, intraSessionState]);
+
+    // 2. Filter Logic - now also returns matching dates
+    const { stats, matchingDates } = useMemo(() => {
         // Group sessions by date to reconstruct "Days"
         const sessionsByDate: Record<string, Record<string, ProfilerSession>> = {};
 
@@ -43,8 +52,9 @@ export function ProfilerWizard({ sessions }: WizardProps) {
         const distribution: Record<string, number> = {};
         let matchingDaysCount = 0;
         let validSamples = 0;
+        const dates = new Set<string>();
 
-        Object.values(sessionsByDate).forEach(daySessions => {
+        Object.entries(sessionsByDate).forEach(([date, daySessions]) => {
             // Check if this day matches all active filters
             const isMatch = contextSessions.every(ctxSess => {
                 const actualSess = daySessions[ctxSess];
@@ -72,22 +82,38 @@ export function ProfilerWizard({ sessions }: WizardProps) {
 
                     // 3. Intra-Session Filter (Target Session State)
                     if (intraSessionState !== 'Any') {
-                        if (intraSessionState === 'High Broken First') {
-                            if (!['Long True', 'Long False'].includes(target.status)) return;
-                        } else if (intraSessionState === 'Low Broken First') {
-                            if (!['Short True', 'Short False'].includes(target.status)) return;
+                        // Handle direction-only filters (Long, Short)
+                        if (intraSessionState === 'Long') {
+                            if (!target.status.startsWith('Long')) return;
+                        } else if (intraSessionState === 'Short') {
+                            if (!target.status.startsWith('Short')) return;
+                        } else {
+                            // Direct match to full status (Long True, Long False, etc.)
+                            if (target.status !== intraSessionState) return;
                         }
                     }
 
                     matchingDaysCount++;
                     distribution[target.status] = (distribution[target.status] || 0) + 1;
                     validSamples++;
+                    dates.add(date);
                 }
             }
         });
 
-        return { distribution, matchingDaysCount, validSamples };
+        return {
+            stats: { distribution, matchingDaysCount, validSamples },
+            matchingDates: dates
+        };
     }, [sessions, targetSession, filters, brokenFilters, contextSessions, intraSessionState]);
+
+    // 3. Call callback when matching dates change (use useEffect for side effects)
+    useEffect(() => {
+        if (onMatchingDatesChange) {
+            // Only apply filter if user has set some filters, otherwise pass null (no filter)
+            onMatchingDatesChange(isFilterActive ? matchingDates : null);
+        }
+    }, [matchingDates, isFilterActive, onMatchingDatesChange]);
 
     // Reset filters when target changes
     const handleTargetChange = (val: string) => {
@@ -143,9 +169,13 @@ export function ProfilerWizard({ sessions }: WizardProps) {
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="Any">Session just started (No break)</SelectItem>
-                                    <SelectItem value="High Broken First">High Broken First (Bullish Break)</SelectItem>
-                                    <SelectItem value="Low Broken First">Low Broken First (Bearish Break)</SelectItem>
+                                    <SelectItem value="Any">Any (No filter)</SelectItem>
+                                    <SelectItem value="Long">Long (Any outcome)</SelectItem>
+                                    <SelectItem value="Short">Short (Any outcome)</SelectItem>
+                                    <SelectItem value="Long True">Long True</SelectItem>
+                                    <SelectItem value="Long False">Long False</SelectItem>
+                                    <SelectItem value="Short True">Short True</SelectItem>
+                                    <SelectItem value="Short False">Short False</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
@@ -162,11 +192,11 @@ export function ProfilerWizard({ sessions }: WizardProps) {
                                                 value={filters[sess] || 'Any'}
                                                 onValueChange={(v) => updateFilter(sess, v)}
                                             >
-                                                <SelectTrigger className="h-9 flex-1">
+                                                <SelectTrigger className="h-9 w-[120px]">
                                                     <SelectValue placeholder="Status" />
                                                 </SelectTrigger>
                                                 <SelectContent>
-                                                    <SelectItem value="Any">Status: Any</SelectItem>
+                                                    <SelectItem value="Any">Any</SelectItem>
                                                     {STATUS_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                                                 </SelectContent>
                                             </Select>
@@ -176,13 +206,13 @@ export function ProfilerWizard({ sessions }: WizardProps) {
                                                 value={brokenFilters[sess] || 'Any'}
                                                 onValueChange={(v) => updateBrokenFilter(sess, v)}
                                             >
-                                                <SelectTrigger className="h-9 w-[110px]">
+                                                <SelectTrigger className="h-9 flex-1">
                                                     <SelectValue placeholder="Broken" />
                                                 </SelectTrigger>
                                                 <SelectContent>
-                                                    <SelectItem value="Any">Broken: Any</SelectItem>
-                                                    <SelectItem value="Yes">Broken: Yes</SelectItem>
-                                                    <SelectItem value="No">Broken: No</SelectItem>
+                                                    <SelectItem value="Any">Any</SelectItem>
+                                                    <SelectItem value="Yes">Yes</SelectItem>
+                                                    <SelectItem value="No">No</SelectItem>
                                                 </SelectContent>
                                             </Select>
                                         </div>
