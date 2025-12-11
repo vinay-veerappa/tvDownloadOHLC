@@ -175,13 +175,13 @@ export function ProfilerWizard({ sessions, onMatchingDatesChange }: WizardProps)
                                         value={brokenFilters[sess] || 'Any'}
                                         onValueChange={(v) => updateBrokenFilter(sess, v)}
                                     >
-                                        <SelectTrigger className="h-7 w-[70px] text-xs">
-                                            <SelectValue placeholder="Brk" />
+                                        <SelectTrigger className="h-7 w-[85px] text-xs">
+                                            <SelectValue placeholder="Broken" />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="Any">Brk?</SelectItem>
-                                            <SelectItem value="Yes">Brk ✓</SelectItem>
-                                            <SelectItem value="No">Brk ✗</SelectItem>
+                                            <SelectItem value="Any">Broken?</SelectItem>
+                                            <SelectItem value="Yes">Broken Yes</SelectItem>
+                                            <SelectItem value="No">Broken No</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -225,18 +225,19 @@ export function ProfilerWizard({ sessions, onMatchingDatesChange }: WizardProps)
 
                         {/* Outcome Distribution - compact bars */}
                         {stats.validSamples > 0 && (
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-3">
                                 {Object.entries(stats.distribution)
                                     .sort((a, b) => b[1] - a[1])
                                     .slice(0, 2) // Show top 2
                                     .map(([status, count]) => {
                                         const percent = ((count / stats.validSamples) * 100).toFixed(0);
-                                        const colorClass = status.includes('True') ? 'bg-green-500' : status.includes('False') ? 'bg-red-500' : 'bg-gray-400';
-                                        const label = status.replace('Long ', 'L').replace('Short ', 'S').replace('True', '✓').replace('False', '✗');
+                                        const isTrue = status.includes('True');
+                                        const isFalse = status.includes('False');
                                         return (
                                             <div key={status} className="flex items-center gap-1 text-xs">
-                                                <div className={`h-2 w-2 rounded-full ${colorClass}`} />
-                                                <span className="font-medium">{label}</span>
+                                                <span className={`font-medium ${isTrue ? 'text-green-600' : isFalse ? 'text-red-600' : ''}`}>
+                                                    {status}
+                                                </span>
                                                 <span className="text-muted-foreground">{percent}%</span>
                                             </div>
                                         );
