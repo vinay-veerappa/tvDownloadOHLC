@@ -3,12 +3,11 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { ProfilerSession } from '@/lib/api/profiler';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
+import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ArrowRight, Filter, RefreshCcw } from 'lucide-react';
+import { Filter, RefreshCcw } from 'lucide-react';
 
 interface WizardProps {
     sessions: ProfilerSession[];
@@ -132,136 +131,113 @@ export function ProfilerWizard({ sessions, onMatchingDatesChange }: WizardProps)
     };
 
     return (
-        <Card className="border-2 border-primary/20">
-            <CardHeader className="bg-muted/50 pb-4">
-                <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2">
-                        <Filter className="h-5 w-5" />
-                        Probability Wizard
-                    </CardTitle>
-                    <Button variant="ghost" size="sm" onClick={() => { setFilters({}); setBrokenFilters({}); setIntraSessionState('Any'); }}>
-                        <RefreshCcw className="h-4 w-4 mr-2" />
-                        Reset
-                    </Button>
-                </div>
-            </CardHeader>
-            <CardContent className="pt-6 text-2xl">
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
-
-                    {/* LEFT: Configuration */}
-                    <div className="md:col-span-5 space-y-6">
-                        <div className="space-y-2">
-                            <Label>I want to trade (Target Session)</Label>
-                            <Select value={targetSession} onValueChange={handleTargetChange}>
-                                <SelectTrigger>
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {SESSION_ORDER.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Current Session State (Intra-day)</Label>
-                            <Select value={intraSessionState} onValueChange={setIntraSessionState}>
-                                <SelectTrigger className="border-blue-200 bg-blue-50/50">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="Any">Any (No filter)</SelectItem>
-                                    <SelectItem value="Long">Long (Any outcome)</SelectItem>
-                                    <SelectItem value="Short">Short (Any outcome)</SelectItem>
-                                    <SelectItem value="Long True">Long True</SelectItem>
-                                    <SelectItem value="Long False">Long False</SelectItem>
-                                    <SelectItem value="Short True">Short True</SelectItem>
-                                    <SelectItem value="Short False">Short False</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        {contextSessions.length > 0 && (
-                            <div className="space-y-4 rounded-lg border p-4 bg-muted/10">
-                                <Label className="text-muted-foreground font-semibold">Context (What happened so far?)</Label>
-                                {contextSessions.map(sess => (
-                                    <div key={sess} className="space-y-2">
-                                        <Label className="text-sm font-medium">{sess}</Label>
-                                        <div className="flex gap-2">
-                                            {/* Status Filter */}
-                                            <Select
-                                                value={filters[sess] || 'Any'}
-                                                onValueChange={(v) => updateFilter(sess, v)}
-                                            >
-                                                <SelectTrigger className="h-9 w-[120px]">
-                                                    <SelectValue placeholder="Status" />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="Any">Any</SelectItem>
-                                                    {STATUS_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
-                                                </SelectContent>
-                                            </Select>
-
-                                            {/* Broken Filter */}
-                                            <Select
-                                                value={brokenFilters[sess] || 'Any'}
-                                                onValueChange={(v) => updateBrokenFilter(sess, v)}
-                                            >
-                                                <SelectTrigger className="h-9 flex-1">
-                                                    <SelectValue placeholder="Broken" />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="Any">Any</SelectItem>
-                                                    <SelectItem value="Yes">Yes</SelectItem>
-                                                    <SelectItem value="No">No</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+        <Card className="border border-primary/20">
+            <CardContent className="py-3 px-4">
+                {/* Compact horizontal wizard layout */}
+                <div className="flex flex-wrap items-center gap-3">
+                    {/* Target Session */}
+                    <div className="flex items-center gap-2">
+                        <Filter className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">Target:</span>
+                        <Select value={targetSession} onValueChange={handleTargetChange}>
+                            <SelectTrigger className="h-8 w-[80px]">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {SESSION_ORDER.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
                     </div>
 
-                    {/* CENTER: Arrow */}
-                    <div className="hidden md:flex md:col-span-2 items-center justify-center text-muted-foreground/30">
-                        <ArrowRight className="h-16 w-16" />
+                    {/* Divider */}
+                    <div className="h-6 w-px bg-border" />
+
+                    {/* Context Filters - inline */}
+                    {contextSessions.length > 0 && (
+                        <>
+                            <span className="text-sm text-muted-foreground">Given:</span>
+                            {contextSessions.map(sess => (
+                                <div key={sess} className="flex items-center gap-1">
+                                    <span className="text-xs font-medium text-muted-foreground">{sess}</span>
+                                    <Select
+                                        value={filters[sess] || 'Any'}
+                                        onValueChange={(v) => updateFilter(sess, v)}
+                                    >
+                                        <SelectTrigger className="h-7 w-[90px] text-xs">
+                                            <SelectValue placeholder="Status" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="Any">Any</SelectItem>
+                                            {STATUS_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                    <Select
+                                        value={brokenFilters[sess] || 'Any'}
+                                        onValueChange={(v) => updateBrokenFilter(sess, v)}
+                                    >
+                                        <SelectTrigger className="h-7 w-[70px] text-xs">
+                                            <SelectValue placeholder="Brk" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="Any">Brk?</SelectItem>
+                                            <SelectItem value="Yes">Brk ✓</SelectItem>
+                                            <SelectItem value="No">Brk ✗</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            ))}
+                            <div className="h-6 w-px bg-border" />
+                        </>
+                    )}
+
+                    {/* Current State Filter */}
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">State:</span>
+                        <Select value={intraSessionState} onValueChange={setIntraSessionState}>
+                            <SelectTrigger className="h-8 w-[110px] border-blue-200 bg-blue-50/50">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="Any">Any</SelectItem>
+                                <SelectItem value="Long">Long</SelectItem>
+                                <SelectItem value="Short">Short</SelectItem>
+                                <SelectItem value="Long True">Long True</SelectItem>
+                                <SelectItem value="Long False">Long False</SelectItem>
+                                <SelectItem value="Short True">Short True</SelectItem>
+                                <SelectItem value="Short False">Short False</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
 
-                    {/* RIGHT: Results */}
-                    <div className="md:col-span-6 space-y-6">
-                        <div className="flex items-baseline justify-between mb-2">
-                            <h3 className="text-lg font-semibold">Predicted Outcome</h3>
-                            <Badge variant="secondary">
-                                Based on {stats.validSamples} matching days
-                            </Badge>
-                        </div>
+                    {/* Reset Button */}
+                    {isFilterActive && (
+                        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setFilters({}); setBrokenFilters({}); setIntraSessionState('Any'); }}>
+                            <RefreshCcw className="h-3 w-3 mr-1" />
+                            Reset
+                        </Button>
+                    )}
 
-                        {stats.validSamples === 0 ? (
-                            <div className="h-40 flex items-center justify-center border-2 border-dashed rounded-lg text-muted-foreground">
-                                No historical patterns match this context
-                            </div>
-                        ) : (
-                            <div className="space-y-3">
+                    {/* Results Badge */}
+                    <div className="ml-auto flex items-center gap-3">
+                        <Badge variant={isFilterActive ? "default" : "secondary"} className="whitespace-nowrap">
+                            {stats.validSamples} days
+                        </Badge>
+
+                        {/* Outcome Distribution - compact bars */}
+                        {stats.validSamples > 0 && (
+                            <div className="flex items-center gap-2">
                                 {Object.entries(stats.distribution)
                                     .sort((a, b) => b[1] - a[1])
+                                    .slice(0, 2) // Show top 2
                                     .map(([status, count]) => {
-                                        const percent = ((count / stats.validSamples) * 100).toFixed(1);
-                                        const isHighArray = parseFloat(percent) > 40;
-
+                                        const percent = ((count / stats.validSamples) * 100).toFixed(0);
+                                        const colorClass = status.includes('True') ? 'bg-green-500' : status.includes('False') ? 'bg-red-500' : 'bg-gray-400';
+                                        const label = status.replace('Long ', 'L').replace('Short ', 'S').replace('True', '✓').replace('False', '✗');
                                         return (
-                                            <div key={status} className="space-y-1">
-                                                <div className="flex justify-between text-sm">
-                                                    <span className={`font-medium ${status.includes('True') ? 'text-green-600' : status.includes('False') ? 'text-red-600' : ''}`}>
-                                                        {status}
-                                                    </span>
-                                                    <span>{percent}% ({count})</span>
-                                                </div>
-                                                <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
-                                                    <div
-                                                        className={`h-full rounded-full transition-all ${status.includes('True') ? 'bg-green-500' : status.includes('False') ? 'bg-red-500' : 'bg-gray-400'}`}
-                                                        style={{ width: `${percent}%` }}
-                                                    />
-                                                </div>
+                                            <div key={status} className="flex items-center gap-1 text-xs">
+                                                <div className={`h-2 w-2 rounded-full ${colorClass}`} />
+                                                <span className="font-medium">{label}</span>
+                                                <span className="text-muted-foreground">{percent}%</span>
                                             </div>
                                         );
                                     })}
