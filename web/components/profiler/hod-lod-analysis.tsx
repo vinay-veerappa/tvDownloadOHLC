@@ -1,17 +1,18 @@
 
 "use client"
 
-import { useEffect, useState, useMemo } from 'react';
-import { ProfilerSession, fetchHodLodStats, HodLodResponse } from '@/lib/api/profiler';
+import { useMemo } from 'react';
+import { ProfilerSession, DailyHodLodResponse } from '@/lib/api/profiler';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TrendingUp, TrendingDown } from 'lucide-react';
+import { useState } from 'react';
 
 interface Props {
     sessions: ProfilerSession[];
-    ticker: string;
+    dailyHodLod?: DailyHodLodResponse | null;
 }
 
 // Helper functions
@@ -46,28 +47,59 @@ function mode(arr: string[]): string {
     return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
 }
 
-export function HodLodAnalysis({ sessions, ticker }: Props) {
-    const [hodLodData, setHodLodData] = useState<HodLodResponse | null>(null);
-    const [loading, setLoading] = useState(true);
+export function HodLodAnalysis({ sessions, dailyHodLod }: Props) {
     const [granularity, setGranularity] = useState<number>(15);
 
-    useEffect(() => {
-        fetchHodLodStats(ticker)
-            .then(setHodLodData)
-            .catch(console.error)
-            .finally(() => setLoading(false));
-    }, [ticker]);
+    // Get unique dates from filtered sessions
+    const filteredDates = useMemo(() => {
+        return new Set(sessions.map(s => s.date));
+    }, [sessions]);
 
-    // Build HOD/LOD time histogram with dynamic rebucketing
+    // Calculate HOD/LOD times from TRUE daily data (filtered by date)
     const { timeHistogramData, hodStats, lodStats } = useMemo(() => {
-        if (!hodLodData?.daily.hod_times || !hodLodData?.daily.lod_times) {
+        const hodTimes: string[] = [];
+        const lodTimes: string[] = [];
+
+        // Use true daily HOD/LOD data if available
+        if (dailyHodLod) {
+            filteredDates.forEach(date => {
+                const dayData = dailyHodLod[date];
+                if (dayData) {
+                    if (dayData.hod_time) hodTimes.push(dayData.hod_time);
+                    if (dayData.lod_time) lodTimes.push(dayData.lod_time);
+                }
+            });
+        } else {
+            // Fallback to session-based calculation (less accurate)
+            const byDate: Record<string, ProfilerSession[]> = {};
+            sessions.forEach(s => {
+                if (!byDate[s.date]) byDate[s.date] = [];
+                byDate[s.date].push(s);
+            });
+
+            Object.values(byDate).forEach(daySessions => {
+                if (daySessions.length < 2) return;
+                let maxH = -Infinity, minL = Infinity;
+                let hodSession: ProfilerSession | null = null;
+                let lodSession: ProfilerSession | null = null;
+
+                daySessions.forEach(s => {
+                    if (s.range_high > maxH) { maxH = s.range_high; hodSession = s; }
+                    if (s.range_low < minL) { minL = s.range_low; lodSession = s; }
+                });
+
+                const hTime = (hodSession as ProfilerSession | null)?.high_time;
+                const lTime = (lodSession as ProfilerSession | null)?.low_time;
+                if (hTime) hodTimes.push(hTime);
+                if (lTime) lodTimes.push(lTime);
+            });
+        }
+
+        if (hodTimes.length === 0 && lodTimes.length === 0) {
             return { timeHistogramData: [], hodStats: null, lodStats: null };
         }
 
-        const hodTimes = hodLodData.daily.hod_times;
-        const lodTimes = hodLodData.daily.lod_times;
-
-        // Bucket the times based on granularity
+        // Bucket the times
         const hodBuckets: Record<string, number> = {};
         const lodBuckets: Record<string, number> = {};
 
@@ -81,12 +113,12 @@ export function HodLodAnalysis({ sessions, ticker }: Props) {
             lodBuckets[bucket] = (lodBuckets[bucket] || 0) + 1;
         });
 
-        // Create ordered time slots from 18:00 to 17:59 (trading day)
+        // Create ordered time slots from 18:00 to 16:59 (trading day)
         const orderedTimes: string[] = [];
         for (let mins = 18 * 60; mins < 24 * 60; mins += granularity) {
             orderedTimes.push(minutesToTime(mins));
         }
-        for (let mins = 0; mins < 18 * 60; mins += granularity) {
+        for (let mins = 0; mins < 17 * 60; mins += granularity) {
             orderedTimes.push(minutesToTime(mins));
         }
 
@@ -101,7 +133,7 @@ export function HodLodAnalysis({ sessions, ticker }: Props) {
             lodCount: lodBuckets[time] || 0,
         }));
 
-        // Calculate stats at current granularity
+        // Stats
         const hodBucketed = hodTimes.map(t => roundToBucket(t, granularity));
         const lodBucketed = lodTimes.map(t => roundToBucket(t, granularity));
 
@@ -118,9 +150,9 @@ export function HodLodAnalysis({ sessions, ticker }: Props) {
                 count: lodTimes.length,
             },
         };
-    }, [hodLodData, granularity]);
+    }, [sessions, granularity, dailyHodLod, filteredDates]);
 
-    // Session-based stats
+    // Session-based stats (which session makes HOD/LOD)
     const sessionStats = useMemo(() => {
         const byDate: Record<string, ProfilerSession[]> = {};
         sessions.forEach(s => {
@@ -180,7 +212,6 @@ export function HodLodAnalysis({ sessions, ticker }: Props) {
                             </SelectContent>
                         </Select>
                     </div>
-                    {/* Stats Row - More Visible */}
                     <div className="flex gap-6 mt-2 text-sm">
                         <div className="flex items-center gap-2 bg-green-50 dark:bg-green-950 px-3 py-1 rounded">
                             <TrendingUp className="h-4 w-4 text-green-600" />
@@ -189,6 +220,7 @@ export function HodLodAnalysis({ sessions, ticker }: Props) {
                             <span className="font-mono font-bold">{hodStats?.mode || '-'}</span>
                             <span className="text-muted-foreground">Med:</span>
                             <span className="font-mono">{hodStats?.median || '-'}</span>
+                            <Badge variant="outline" className="ml-1">{hodStats?.count || 0}</Badge>
                         </div>
                         <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950 px-3 py-1 rounded">
                             <TrendingDown className="h-4 w-4 text-red-600" />
@@ -197,6 +229,7 @@ export function HodLodAnalysis({ sessions, ticker }: Props) {
                             <span className="font-mono font-bold">{lodStats?.mode || '-'}</span>
                             <span className="text-muted-foreground">Med:</span>
                             <span className="font-mono">{lodStats?.median || '-'}</span>
+                            <Badge variant="outline" className="ml-1">{lodStats?.count || 0}</Badge>
                         </div>
                     </div>
                 </CardHeader>
@@ -217,19 +250,12 @@ export function HodLodAnalysis({ sessions, ticker }: Props) {
                                 domain={['auto', 'auto']}
                             />
                             <Tooltip
-                                contentStyle={{
-                                    backgroundColor: 'hsl(var(--background))',
-                                    borderColor: 'hsl(var(--border))',
-                                    padding: '8px 12px',
-                                }}
+                                contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))', padding: '8px 12px' }}
                                 labelStyle={{ fontWeight: 'bold', marginBottom: 4 }}
                                 formatter={(value: number, name: string, props: any) => {
                                     const isHod = name === 'hodPercent';
                                     const count = isHod ? props.payload.hodCount : props.payload.lodCount;
-                                    return [
-                                        `${Math.abs(value).toFixed(1)}% (${count} days)`,
-                                        isHod ? '🟢 HOD' : '🔴 LOD'
-                                    ];
+                                    return [`${Math.abs(value).toFixed(1)}% (${count} days)`, isHod ? '🟢 HOD' : '🔴 LOD'];
                                 }}
                             />
                             <ReferenceLine y={0} stroke="hsl(var(--border))" />
@@ -251,7 +277,7 @@ export function HodLodAnalysis({ sessions, ticker }: Props) {
                     <CardContent className="px-3 pb-2">
                         <div className="space-y-1">
                             {sessionStats.hod.sort((a, b) => b.count - a.count).map(({ session, count }) => {
-                                const pct = (count / sessionStats.totalDays) * 100;
+                                const pct = sessionStats.totalDays > 0 ? (count / sessionStats.totalDays) * 100 : 0;
                                 return (
                                     <div key={session} className="flex items-center gap-2 text-xs">
                                         <span className="w-12">{session}</span>
@@ -275,7 +301,7 @@ export function HodLodAnalysis({ sessions, ticker }: Props) {
                     <CardContent className="px-3 pb-2">
                         <div className="space-y-1">
                             {sessionStats.lod.sort((a, b) => b.count - a.count).map(({ session, count }) => {
-                                const pct = (count / sessionStats.totalDays) * 100;
+                                const pct = sessionStats.totalDays > 0 ? (count / sessionStats.totalDays) * 100 : 0;
                                 return (
                                     <div key={session} className="flex items-center gap-2 text-xs">
                                         <span className="w-12">{session}</span>

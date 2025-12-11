@@ -13,6 +13,18 @@ class ProfilerService:
     _json_cache = {} # Cache the loaded JSON data too
 
     @staticmethod
+    def clear_cache(ticker: str = None):
+        """Clear the in-memory cache. If ticker is specified, only clear that ticker."""
+        if ticker:
+            ProfilerService._cache.pop(ticker, None)
+            ProfilerService._json_cache.pop(ticker, None)
+        else:
+            ProfilerService._cache.clear()
+            ProfilerService._json_cache.clear()
+        return {"cleared": ticker or "all"}
+
+
+    @staticmethod
     def analyze_profiler_stats(ticker: str, days: int = 50) -> Dict:
         """
         Get Profiler Stats.
@@ -154,9 +166,21 @@ class ProfilerService:
                 
                 if sess_data.empty: continue
                 
+                # Basic price data
+                sess_open = float(sess_data.iloc[0]['open'])
                 high = sess_data['high'].max()
                 low = sess_data['low'].min()
                 mid = (high + low) / 2
+                
+                # Time when high/low occurred
+                high_idx = sess_data['high'].idxmax()
+                low_idx = sess_data['low'].idxmin()
+                high_time = high_idx.strftime('%H:%M') if pd.notna(high_idx) else None
+                low_time = low_idx.strftime('%H:%M') if pd.notna(low_idx) else None
+                
+                # Percentage from open
+                high_pct = round(((high - sess_open) / sess_open) * 100, 2) if sess_open > 0 else 0
+                low_pct = round(((low - sess_open) / sess_open) * 100, 2) if sess_open > 0 else 0
                 
                 mon_start = end_ts
                 next_start_time = sess['next_start']
@@ -219,9 +243,14 @@ class ProfilerService:
                 collected_stats.append({
                     "date": date_str,
                     "session": sess['name'],
+                    "open": sess_open,
                     "range_high": float(high),
                     "range_low": float(low),
                     "mid": float(mid),
+                    "high_time": high_time,
+                    "low_time": low_time,
+                    "high_pct": high_pct,
+                    "low_pct": low_pct,
                     "status": status,
                     "status_time": status_time,
                     "broken": broken,
