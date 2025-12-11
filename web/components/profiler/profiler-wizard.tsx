@@ -12,12 +12,13 @@ import { Filter, RefreshCcw } from 'lucide-react';
 interface WizardProps {
     sessions: ProfilerSession[];
     onMatchingDatesChange?: (dates: Set<string> | null) => void; // null = no filter active
+    onStateChange?: (state: string) => void; // Expose selected state (Long, Short, Long True, etc.)
 }
 
 const SESSION_ORDER = ['Asia', 'London', 'NY1', 'NY2'];
 const STATUS_OPTIONS = ['Long True', 'Short True', 'Long False', 'Short False', 'None'];
 
-export function ProfilerWizard({ sessions, onMatchingDatesChange }: WizardProps) {
+export function ProfilerWizard({ sessions, onMatchingDatesChange, onStateChange }: WizardProps) {
     const [targetSession, setTargetSession] = useState<string>('NY1');
     const [filters, setFilters] = useState<Record<string, string>>({});
     const [brokenFilters, setBrokenFilters] = useState<Record<string, string>>({});
@@ -113,6 +114,13 @@ export function ProfilerWizard({ sessions, onMatchingDatesChange }: WizardProps)
             onMatchingDatesChange(isFilterActive ? matchingDates : null);
         }
     }, [matchingDates, isFilterActive, onMatchingDatesChange]);
+
+    // Notify state change
+    useEffect(() => {
+        if (onStateChange) {
+            onStateChange(intraSessionState);
+        }
+    }, [intraSessionState, onStateChange]);
 
     // Reset filters when target changes
     const handleTargetChange = (val: string) => {
