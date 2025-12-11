@@ -269,6 +269,55 @@ Each level card displays:
 
 ---
 
+## ✅ Implementation Status (as of Dec 10, 2024)
+
+### Completed ✅
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Profiler Wizard** | ✅ Done | Full filter support for prior sessions, direction, outcome state |
+| **3-Tab UI Structure** | ✅ Done | HOD/LOD Analysis, Outcome Panels, Daily Levels tabs implemented |
+| **True Daily HOD/LOD** | ✅ Done | Computed from 1-min OHLC, not session-based. See `precompute_daily_hod_lod.py` |
+| **HOD/LOD Time Distributions** | ✅ Done | Histograms in HOD/LOD tab with granularity selector |
+| **Time Histograms (False Moves)** | ✅ Done | Integrated in HOD/LOD Analysis tab |
+| **Range Distribution** | ✅ Done | High/Low from open distribution charts |
+| **Outcome Panel Grid** | ✅ Done | 1-4 panels based on filter state (dynamic count) |
+| **PDH/PDM/PDL Touch Stats** | ✅ Done | Hit rate, mode, median, histogram in Daily Levels tab |
+| **P12 H/M/L Touch Stats** | ✅ Done | Hit rate, mode, median, histogram in Daily Levels tab |
+| **Time-Based Opens** | ✅ Done | Daily Open (18:00), Midnight Open, 07:30 Open |
+| **Session Mids** | ✅ Done | Asia, London, NY1, NY2 session mids with touch stats |
+| **Global Filter Context** | ✅ Done | All tabs respond to Wizard filters |
+| **Precompute Scripts** | ✅ Done | `precompute_daily_hod_lod.py`, `precompute_level_touches.py` |
+| **Session Stats Cards** | ✅ Done | Direction bias, True/False counts, Broken stats |
+| **History Table** | ✅ Done | Filterable session history |
+
+### In Progress 🔄
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Average Price Path Charts** | 🔄 Partial | UI component exists but not fully integrated |
+
+### Pending ⏳
+
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| **PWH/PWL (Previous Week H/L)** | Medium | Requires weekly OHLC aggregation |
+| **PMH/PML (Previous Month H/L)** | Medium | Requires monthly OHLC aggregation |
+| **Weekly Close** | Low | Settlement price from weekly data |
+| **Volatility Models** | Low | Expected range expansion over time |
+| **Reference Level Filtering** | Low | Filter by "PDH touched" or "PDL not touched" |
+| **Touch vs Respected Stats** | Low | Differentiate touched vs just approached |
+
+### Known Issues 🐛
+
+| Issue | Severity | Notes |
+|-------|----------|-------|
+| Build TypeScript error in `hourly-profiler.ts` | Medium | `hitTest` return type mismatch - unrelated to profiler pages |
+| CSS inline style lint warnings | Low | Cosmetic, doesn't affect functionality |
+| Form label accessibility warnings | Low | Select components need aria labels |
+
+---
+
 ## 🛠️ Implementation Strategy (Draft)
 
 1.  **Backend (`/api/stats/profiler`)**:
@@ -284,3 +333,34 @@ Each level card displays:
     *   Charts using `Recharts` (better for bar/line charts than Lightweight Charts).
     *   Dynamic outcome panel grid (1, 2, or 4 panels).
     *   Global filter context from Wizard to all components.
+
+---
+
+## 📁 Key Files
+
+### Backend
+| File | Purpose |
+|------|---------|
+| `api/routers/profiler.py` | API endpoints for profiler data |
+| `api/services/profiler_service.py` | Profiler calculation logic |
+| `scripts/precompute_daily_hod_lod.py` | Precompute true daily HOD/LOD times |
+| `scripts/precompute_level_touches.py` | Precompute reference level touch data |
+
+### Frontend
+| File | Purpose |
+|------|---------|
+| `web/app/profiler/page.tsx` | Profiler page entry point |
+| `web/components/profiler/profiler-view.tsx` | Main profiler container (3 tabs) |
+| `web/components/profiler/profiler-wizard.tsx` | Filter wizard component |
+| `web/components/profiler/hod-lod-analysis.tsx` | HOD/LOD histograms |
+| `web/components/profiler/daily-levels.tsx` | Daily Levels tab (all reference levels) |
+| `web/components/profiler/outcome-panel-grid.tsx` | Dynamic outcome panel layout |
+| `web/components/profiler/outcome-panel.tsx` | Individual outcome panel |
+| `web/lib/api/profiler.ts` | API types and fetch functions |
+
+### Data Files
+| File | Purpose |
+|------|---------|
+| `data/NQ1_daily_hod_lod.json` | Precomputed HOD/LOD times by date |
+| `data/NQ1_level_touches.json` | Precomputed level touch data by date |
+| `data/NQ1_profiler_stats.json` | Precomputed session statistics |
