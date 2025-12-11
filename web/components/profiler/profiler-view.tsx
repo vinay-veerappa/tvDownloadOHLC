@@ -52,6 +52,7 @@ export function ProfilerView({ ticker }: { ticker: string }) {
 
     // Wizard filter state - matching dates from wizard
     const [wizardDates, setWizardDates] = useState<Set<string> | null>(null);
+    const [outcomeFilter, setOutcomeFilter] = useState<string | null>(null);
 
     useEffect(() => {
         Promise.all([
@@ -92,6 +93,7 @@ export function ProfilerView({ ticker }: { ticker: string }) {
         dateFiltered: dateFilteredSessions.length,
         wizardActive: wizardDates !== null,
         wizardDays: wizardDates?.size ?? 'N/A',
+        outcomeFilter,
         final: filteredSessions.length
     });
 
@@ -167,6 +169,7 @@ export function ProfilerView({ ticker }: { ticker: string }) {
             <ProfilerWizard
                 sessions={dateFilteredSessions}
                 onMatchingDatesChange={setWizardDates}
+                onStateChange={setOutcomeFilter}
             />
 
             {/* 3-Tab Analysis View */}
@@ -196,6 +199,7 @@ export function ProfilerView({ ticker }: { ticker: string }) {
                         sessions={filteredSessions}
                         targetSession="NY1"
                         dailyHodLod={dailyHodLod}
+                        directionFilter={outcomeFilter}
                     />
                 </TabsContent>
 

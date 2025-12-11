@@ -14,6 +14,7 @@ import {
     Tooltip,
     ReferenceLine
 } from 'recharts';
+import { TrendingUp, TrendingDown } from 'lucide-react';
 
 interface OutcomePanelProps {
     outcomeName: string;  // e.g., "Short True"
@@ -72,6 +73,63 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
     const probability = totalInCategory > 0
         ? ((uniqueDays / totalInCategory) * 100).toFixed(1)
         : '0.0';
+
+    // Calculate Price Range Distribution (High/Low % from Open)
+    const { highDistData, lowDistData, highRangeStats, lowRangeStats } = useMemo(() => {
+        const highPcts: number[] = [];
+        const lowPcts: number[] = [];
+
+        // Use true daily data if available, otherwise session fallback
+        if (dailyHodLod) {
+            // Use outcomeDates if available to ensure we only count each day once
+            const datesToProcess = outcomeDates ? Array.from(outcomeDates) : Array.from(new Set(sessions.map(s => s.date)));
+
+            datesToProcess.forEach(date => {
+                const dayData = dailyHodLod[date];
+                if (dayData && dayData.daily_open > 0) {
+                    const hp = ((dayData.daily_high - dayData.daily_open) / dayData.daily_open) * 100;
+                    const lp = ((dayData.daily_low - dayData.daily_open) / dayData.daily_open) * 100;
+                    highPcts.push(hp);
+                    lowPcts.push(lp);
+                }
+            });
+        } else {
+            // Fallback: This path is less accurate as we don't have daily open
+            // We could try to deduce it but since we always fetch dailyHodLod in parent, this case handles 'loading' or missing data
+        }
+
+        const bucketSize = 0.1;
+        const buildDist = (values: number[]) => {
+            const buckets: Record<string, number> = {};
+            values.forEach(v => {
+                const b = (Math.round(v / bucketSize) * bucketSize).toFixed(1);
+                buckets[b] = (buckets[b] || 0) + 1;
+            });
+            const total = values.length || 1;
+            return Object.entries(buckets)
+                .map(([k, count]) => ({
+                    pct: parseFloat(k),
+                    percent: (count / total) * 100,
+                    count
+                }))
+                .sort((a, b) => a.pct - b.pct);
+        };
+
+        return {
+            highDistData: buildDist(highPcts),
+            lowDistData: buildDist(lowPcts),
+            highRangeStats: {
+                median: highPcts.length > 0 ? calculateMedian(highPcts) : 0,
+                mode: highPcts.length > 0 ? calculateMode(highPcts, bucketSize) : 0,
+                count: highPcts.length
+            },
+            lowRangeStats: {
+                median: lowPcts.length > 0 ? calculateMedian(lowPcts) : 0,
+                mode: lowPcts.length > 0 ? calculateMode(lowPcts, bucketSize) : 0,
+                count: lowPcts.length
+            }
+        };
+    }, [sessions, dailyHodLod, outcomeDates]);
 
     // Calculate HOD/LOD time distributions using true daily data when available
     const { timeHistogramData, hodStats, lodStats } = useMemo(() => {
@@ -245,12 +303,12 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
                             {probability}%
                         </Badge>
                         <Badge variant="secondary">
-                            {sessions.length} days
+                            {uniqueDays} days
                         </Badge>
                     </div>
                 </div>
             </CardHeader>
-            <CardContent className="p-4 space-y-4">
+            <CardContent className="p-4 space-y-6">
                 {/* HOD/LOD Time Distribution */}
                 <div>
                     <div className="flex items-center justify-between mb-2">
@@ -293,6 +351,99 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
                                 <Bar dataKey="lod" fill="#ef4444" />
                             </ComposedChart>
                         </ResponsiveContainer>
+                    </div>
+                </div>
+
+                {/* Price Range Distribution (High & Low) */}
+                <div>
+                    <h4 className="text-sm font-medium mb-2">Price Range Distribution (Daily)</h4>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        {/* High Dist */}
+                        <div className="border rounded-lg p-0 overflow-hidden">
+                            <div className="p-4 pb-2">
+                                <h3 className="text-base font-semibold flex items-center gap-2 mb-2">
+                                    <TrendingUp className="h-4 w-4 text-green-600" />
+                                    High Distribution (from Open)
+                                </h3>
+                                <div className="flex flex-wrap gap-3 text-sm">
+                                    <div className="flex items-center gap-2 bg-green-50 dark:bg-green-950 px-2 py-1 rounded">
+                                        <span className="text-muted-foreground">Mode:</span>
+                                        <span className="font-mono font-bold">{highRangeStats.mode.toFixed(1)}%</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-muted-foreground">Median:</span>
+                                        <span className="font-mono">{highRangeStats.median.toFixed(2)}%</span>
+                                    </div>
+                                    <Badge variant="outline">{highRangeStats.count} days</Badge>
+                                </div>
+                            </div>
+                            <div className="h-48 px-2 pb-2">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <ComposedChart data={highDistData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                                        <XAxis
+                                            dataKey="pct"
+                                            fontSize={9}
+                                            tickFormatter={(v) => `${v}%`}
+                                            interval="preserveStartEnd"
+                                        />
+                                        <YAxis
+                                            fontSize={10}
+                                            tickFormatter={(v) => `${v.toFixed(0)}%`}
+                                        />
+                                        <Tooltip
+                                            contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
+                                            labelFormatter={(v) => `+${v}%`}
+                                            formatter={(v: number) => [`${v.toFixed(1)}%`, 'Frequency']}
+                                        />
+                                        <ReferenceLine x={highRangeStats.median} stroke="#22c55e" strokeDasharray="3 3" />
+                                        <Bar dataKey="percent" fill="#22c55e" radius={[2, 2, 0, 0]} opacity={0.8} />
+                                    </ComposedChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+                        {/* Low Dist */}
+                        <div className="border rounded-lg p-0 overflow-hidden">
+                            <div className="p-4 pb-2">
+                                <h3 className="text-base font-semibold flex items-center gap-2 mb-2">
+                                    <TrendingDown className="h-4 w-4 text-red-600" />
+                                    Low Distribution (from Open)
+                                </h3>
+                                <div className="flex flex-wrap gap-3 text-sm">
+                                    <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950 px-2 py-1 rounded">
+                                        <span className="text-muted-foreground">Mode:</span>
+                                        <span className="font-mono font-bold">{lowRangeStats.mode.toFixed(1)}%</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-muted-foreground">Median:</span>
+                                        <span className="font-mono">{lowRangeStats.median.toFixed(2)}%</span>
+                                    </div>
+                                    <Badge variant="outline">{lowRangeStats.count} days</Badge>
+                                </div>
+                            </div>
+                            <div className="h-48 px-2 pb-2">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <ComposedChart data={lowDistData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                                        <XAxis
+                                            dataKey="pct"
+                                            fontSize={9}
+                                            tickFormatter={(v) => `${v}%`}
+                                            interval="preserveStartEnd"
+                                        />
+                                        <YAxis
+                                            fontSize={10}
+                                            tickFormatter={(v) => `${v.toFixed(0)}%`}
+                                        />
+                                        <Tooltip
+                                            contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
+                                            labelFormatter={(v) => `${v}%`}
+                                            formatter={(v: number) => [`${v.toFixed(1)}%`, 'Frequency']}
+                                        />
+                                        <ReferenceLine x={lowRangeStats.median} stroke="#ef4444" strokeDasharray="3 3" />
+                                        <Bar dataKey="percent" fill="#ef4444" radius={[2, 2, 0, 0]} opacity={0.8} />
+                                    </ComposedChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

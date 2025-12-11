@@ -7,7 +7,7 @@ import { OutcomePanel } from './outcome-panel';
 interface OutcomePanelGridProps {
     sessions: ProfilerSession[];  // All filtered sessions
     targetSession: string;  // Which session outcomes to show (Asia, London, NY1, NY2)
-    directionFilter?: 'Long' | 'Short' | null;  // If direction is known
+    directionFilter?: string | null;  // 'Long', 'Short', 'Long True', etc. or null
     dailyHodLod?: DailyHodLodResponse | null;  // True daily HOD/LOD times
 }
 
@@ -55,20 +55,22 @@ export function OutcomePanelGrid({ sessions, targetSession, directionFilter, dai
         return { outcomeData: outcomes, outcomeDates: dates, totalDays: total };
     }, [sessions, targetSession]);
 
-    // Filter outcomes based on direction
+    // Filter outcomes based on direction/status
     const visibleOutcomes = useMemo(() => {
-        if (!directionFilter) {
+        if (!directionFilter || directionFilter === 'Any') {
             return OUTCOME_STATUSES;
         }
+        // Check for exact match first (e.g. "Long True")
+        if (OUTCOME_STATUSES.includes(directionFilter as any)) {
+            return [directionFilter];
+        }
+        // Fallback to startsWith (e.g. "Long" -> Long True, Long False)
         return OUTCOME_STATUSES.filter(s => s.startsWith(directionFilter));
     }, [directionFilter]);
 
     // Dynamic grid layout
-    const gridCols = visibleOutcomes.length === 4
-        ? 'grid-cols-1 lg:grid-cols-2 xl:grid-cols-4'
-        : visibleOutcomes.length === 2
-            ? 'grid-cols-1 md:grid-cols-2'
-            : 'grid-cols-1';
+    // Dynamic grid layout - Force one per row as requested
+    const gridCols = 'grid-cols-1';
 
     return (
         <div className={`grid ${gridCols} gap-4`}>
