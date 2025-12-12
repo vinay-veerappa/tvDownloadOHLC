@@ -128,73 +128,98 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                         <TabsTrigger value="ny2" className="px-6 py-2">NY2</TabsTrigger>
                     </TabsList>
 
-                    {/* --- Tab 1: Daily Overview --- */}
-                    <TabsContent value="daily" className="mt-6 space-y-8">
-                        {/* 1. HOD/LOD Time Analysis */}
-                        <section>
-                            <h2 className="text-xl font-semibold mb-4">HOD/LOD Time Analysis</h2>
-                            <HodLodChart
-                                sessions={deferredFilteredSessions}
-                                dailyHodLod={deferredDailyHodLod}
-                            />
-                        </section>
-
-                        {/* 2. Global Price Range Distribution */}
-                        <section>
-                            <h2 className="text-xl font-semibold mb-4">Global Price Range Distribution</h2>
-                            <RangeDistribution sessions={deferredFilteredSessions} forcedSession="daily" />
-                        </section>
-
-                        {/* 3. Daily Price Model */}
-                        <section>
-                            <h2 className="text-xl font-semibold mb-4">Daily Price Model (Median)</h2>
-                            <PriceModelChart
-                                ticker={debouncedTicker}
-                                session="Daily"
-                                targetSession={debouncedTargetSession} // NY1 derived
-                                filters={debouncedFilters}
-                                brokenFilters={debouncedBrokenFilters}
-                                intraState={intraState}
-                                height={400}
-                            />
-                        </section>
-
-                        {/* 4. Daily Levels Analysis */}
-                        <section>
-                            <h2 className="text-xl font-semibold mb-4">Daily Levels Analysis</h2>
-                            <DailyLevels
-                                levelTouches={deferredLevelTouches}
-                                filteredDates={filteredDates}
-                            />
-                        </section>
-
-                        {/* 5. Session Contribution Stats */}
-                        <section>
-                            <h2 className="text-xl font-semibold mb-4">Session HOD/LOD Contribution</h2>
-                            <SessionStats sessions={deferredFilteredSessions} />
-                        </section>
-                    </TabsContent>
-
-                    {/* --- Session Tabs --- */}
-                    {['asia', 'london', 'ny1', 'ny2'].map(sessKey => {
-                        const sessName = sessKey === 'asia' ? 'Asia' : sessKey === 'london' ? 'London' : sessKey === 'ny1' ? 'NY1' : 'NY2';
-                        return (
-                            <TabsContent key={sessKey} value={sessKey} className="mt-6">
-                                <SessionAnalysisView
-                                    session={sessName}
+                    {/* --- Tab 1: Daily Overview (Memoized) --- */}
+                    {useMemo(() => (
+                        <TabsContent value="daily" className="mt-6 space-y-8">
+                            {/* 1. HOD/LOD Time Analysis */}
+                            <section>
+                                <h2 className="text-xl font-semibold mb-4">HOD/LOD Time Analysis</h2>
+                                <HodLodChart
                                     sessions={deferredFilteredSessions}
-                                    allSessions={deferredFilteredSessions}
-                                    dailyHodLod={deferredDailyHodLod || null}
-                                    filteredDates={filteredDates}
+                                    dailyHodLod={deferredDailyHodLod}
+                                />
+                            </section>
+
+                            {/* 2. Global Price Range Distribution */}
+                            <section>
+                                <h2 className="text-xl font-semibold mb-4">Global Price Range Distribution</h2>
+                                <RangeDistribution sessions={deferredFilteredSessions} forcedSession="daily" />
+                            </section>
+
+                            {/* 3. Daily Price Model */}
+                            <section>
+                                <h2 className="text-xl font-semibold mb-4">Daily Price Model (Median)</h2>
+                                <PriceModelChart
                                     ticker={debouncedTicker}
-                                    levelTouches={deferredLevelTouches}
+                                    session="Daily"
+                                    targetSession={debouncedTargetSession} // NY1 derived
                                     filters={debouncedFilters}
                                     brokenFilters={debouncedBrokenFilters}
                                     intraState={intraState}
+                                    height={400}
                                 />
-                            </TabsContent>
-                        );
-                    })}
+                            </section>
+
+                            {/* 4. Daily Levels Analysis */}
+                            <section>
+                                <h2 className="text-xl font-semibold mb-4">Daily Levels Analysis</h2>
+                                <DailyLevels
+                                    levelTouches={deferredLevelTouches}
+                                    filteredDates={filteredDates}
+                                />
+                            </section>
+
+                            {/* 5. Session Contribution Stats */}
+                            <section>
+                                <h2 className="text-xl font-semibold mb-4">Session HOD/LOD Contribution</h2>
+                                <SessionStats sessions={deferredFilteredSessions} />
+                            </section>
+                        </TabsContent>
+                    ), [
+                        deferredFilteredSessions,
+                        deferredDailyHodLod,
+                        debouncedTicker,
+                        debouncedTargetSession,
+                        debouncedFilters,
+                        debouncedBrokenFilters,
+                        intraState,
+                        deferredLevelTouches,
+                        filteredDates
+                    ])}
+
+                    {/* --- Session Tabs (Memoized) --- */}
+                    {useMemo(() => (
+                        <>
+                            {['asia', 'london', 'ny1', 'ny2'].map(sessKey => {
+                                const sessName = sessKey === 'asia' ? 'Asia' : sessKey === 'london' ? 'London' : sessKey === 'ny1' ? 'NY1' : 'NY2';
+                                return (
+                                    <TabsContent key={sessKey} value={sessKey} className="mt-6">
+                                        <SessionAnalysisView
+                                            session={sessName}
+                                            sessions={deferredFilteredSessions}
+                                            allSessions={deferredFilteredSessions}
+                                            dailyHodLod={deferredDailyHodLod || null}
+                                            filteredDates={filteredDates}
+                                            ticker={debouncedTicker}
+                                            levelTouches={deferredLevelTouches}
+                                            filters={debouncedFilters}
+                                            brokenFilters={debouncedBrokenFilters}
+                                            intraState={intraState}
+                                        />
+                                    </TabsContent>
+                                );
+                            })}
+                        </>
+                    ), [
+                        deferredFilteredSessions,
+                        deferredDailyHodLod,
+                        filteredDates,
+                        debouncedTicker,
+                        deferredLevelTouches,
+                        debouncedFilters,
+                        debouncedBrokenFilters,
+                        intraState
+                    ])}
                 </Tabs>
             </div>
         </div>

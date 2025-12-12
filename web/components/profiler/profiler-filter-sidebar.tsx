@@ -182,7 +182,7 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
                                             className={`flex-1 ${isBrk('Yes') ? 'bg-red-600 hover:bg-red-700 text-white' : 'text-muted-foreground'}`}
                                             onClick={() => onBrokenFilterChange(session, isBrk('Yes') ? 'Any' : 'Yes')}
                                         >
-                                            Broken
+                                            Yes
                                         </Button>
                                         <Button
                                             variant={isBrk('No') ? "default" : "outline"}
@@ -190,7 +190,7 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
                                             className={`flex-1 ${isBrk('No') ? 'bg-green-600 hover:bg-green-700 text-white' : 'text-muted-foreground'}`}
                                             onClick={() => onBrokenFilterChange(session, isBrk('No') ? 'Any' : 'No')}
                                         >
-                                            Complete
+                                            No
                                         </Button>
                                     </div>
                                 </div>
