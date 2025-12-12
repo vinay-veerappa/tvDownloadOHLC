@@ -161,7 +161,7 @@ export interface PriceModelEntry {
 }
 
 export interface PriceModelResponse {
-    average: PriceModelEntry[];
+    median: PriceModelEntry[];
     extreme: PriceModelEntry[];
     count: number;
 }

@@ -30,7 +30,7 @@ const SESSION_CONFIG: Record<string, { start: string; duration: number }> = {
     "MidnightOpen": { start: "00:00", duration: 60 },
 };
 import { TrendingUp, TrendingDown, Activity } from 'lucide-react';
-import { fetchPriceModel, PriceModelResponse } from '@/lib/api/profiler';
+import { fetchFilteredPriceModel, PriceModelResponse } from '@/lib/api/profiler';
 
 interface OutcomePanelProps {
     outcomeName: string;  // e.g., "Short True"
@@ -50,15 +50,28 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
     const [loadingModel, setLoadingModel] = useState(false);
 
     // Fetch Price Model Aggregates - TEMPORARILY DISABLED
-    // useEffect(() => {
-    //     if (ticker && targetSession && outcomeName) {
-    //         setLoadingModel(true);
-    //         fetchPriceModel(ticker, targetSession, outcomeName)
-    //             .then(data => setPriceModel(data))
-    //             .catch(err => console.error("Failed to fetch price model", err))
-    //             .finally(() => setLoadingModel(false));
-    //     }
-    // }, [ticker, targetSession, outcomeName]);
+    // Fetch Price Model Aggregates (Restored using Filter API)
+    useEffect(() => {
+        if (ticker && targetSession && outcomeName) {
+            setLoadingModel(true);
+
+            // Construct payload for specific outcome
+            // Filter: Target Session Status == Outcome Name
+            const payload = {
+                ticker,
+                target_session: targetSession,
+                filters: { [targetSession]: outcomeName },
+                broken_filters: {},
+                intra_state: "Any",
+                bucket_minutes: 5 // Default for small charts
+            };
+
+            fetchFilteredPriceModel(payload)
+                .then(data => setPriceModel(data))
+                .catch(err => console.error("Failed to fetch price model", err))
+                .finally(() => setLoadingModel(false));
+        }
+    }, [ticker, targetSession, outcomeName]);
 
     const { uniqueDays, probability, timeHistogramData, referenceLevelStats, hodStats, lodStats, highRangeStats, lowRangeStats, highDistData, lowDistData } = useMemo(() => {
         const unique = outcomeDates ? outcomeDates.size : new Set(sessions.map(s => s.date)).size;
@@ -419,7 +432,7 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
                         <div className="text-xs text-muted-foreground p-4">Loading model...</div>
                     ) : priceModel && priceModel.count > 0 ? (
                         <div className="grid grid-cols-1 gap-4">
-                            {renderPriceModelChart(priceModel.average, "Average Path (Median)", "#3b82f6", "high", "low")}
+                            {renderPriceModelChart(priceModel.median, "Median Path", "#3b82f6", "high", "low")}
                         </div>
                     ) : (
                         <div className="text-xs text-muted-foreground p-4">No model data available</div>
