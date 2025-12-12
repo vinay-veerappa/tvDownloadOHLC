@@ -1,8 +1,6 @@
 "use client"
 
 import { useState, useMemo } from 'react';
-import useSWR from 'swr';
-import { fetchProfilerStats, fetchLevelTouches } from '@/lib/api/profiler';
 import { useServerFilteredStats } from '@/hooks/use-server-filtered-stats';
 import { useLevelTouches } from '@/hooks/use-level-touches';
 import { SESSION_ORDER } from '@/hooks/use-profiler-filter';
@@ -13,6 +11,7 @@ import { ActiveFiltersRow } from './active-filters-row';
 import { SessionAnalysisView } from './session-analysis-view';
 import { RangeDistribution } from './range-distribution';
 import { PriceModelChart } from './price-model-chart';
+import { HodLodAnalysis } from './hod-lod-analysis';
 import { DailyLevels } from './daily-levels';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -36,9 +35,10 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
         return idx === -1 ? [] : SESSION_ORDER.slice(0, idx);
     }, [targetSession]);
 
-    // 3. Server-Side Filtered Data (NEW - calls backend filter endpoints)
+    // 3. Server-Side Filtered Data (uses backend filter endpoints)
     const {
         filteredDates,
+        filteredSessions,  // Server-side filtered sessions - no need to fetch all!
         distribution,
         validSamples,
         isLoading: isFilterLoading,
@@ -51,19 +51,11 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
         intraState
     });
 
-    // 4. Other Data Fetching
-    const { data: profilerData, error: profilerError } = useSWR(`profilerStats-${ticker}`, () => fetchProfilerStats(ticker, 10000));
+    // 4. Other Data Fetching (level touches only - sessions now come from filter API)
     const { levelTouches } = useLevelTouches(ticker);
 
-    // 5. Compute filtered sessions from the matched dates
-    const sessions = profilerData?.sessions || [];
-    const filteredSessions = useMemo(() => {
-        return sessions.filter(s => filteredDates.has(s.date));
-    }, [sessions, filteredDates]);
-
-    const error = filterError || profilerError;
-    if (error) return <div className="p-8 text-center text-red-500">Failed to load profiler data.</div>;
-    if (!profilerData || isFilterLoading) return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
+    if (filterError) return <div className="p-8 text-center text-red-500">Failed to load profiler data.</div>;
+    if (isFilterLoading) return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
 
     // Reset Handlers
     const handleReset = () => {
@@ -135,21 +127,29 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                         <RangeDistribution sessions={filteredSessions} forcedSession="daily" />
                     </section>
 
-                    {/* B. Daily Price Model (Median, Full Day) - TEMPORARILY DISABLED */}
+                    {/* B. Daily Price Model (Median, Full Day) */}
                     <section>
                         <h2 className="text-xl font-semibold mb-4">Daily Price Model (Median)</h2>
-                        <div className="h-[400px] flex items-center justify-center border rounded-md text-muted-foreground">
-                            Price Model chart temporarily disabled for debugging.
-                        </div>
-                        {/* <PriceModelChart
-                            ticker="NQ1"
+                        <PriceModelChart
+                            ticker={ticker}
                             session="Daily"
-                            filteredDates={filteredDates}
+                            targetSession={targetSession}
+                            filters={filters}
+                            brokenFilters={brokenFilters}
+                            intraState={intraState}
                             height={400}
-                        /> */}
+                        />
                     </section>
 
-                    {/* C. Daily Levels */}
+                    {/* C. HOD/LOD Time Analysis */}
+                    <section>
+                        <h2 className="text-xl font-semibold mb-4">HOD/LOD Time Analysis</h2>
+                        <HodLodAnalysis
+                            sessions={filteredSessions}
+                        />
+                    </section>
+
+                    {/* D. Daily Levels */}
                     <section>
                         <h2 className="text-xl font-semibold mb-4">Daily Levels Analysis</h2>
                         <DailyLevels
@@ -167,6 +167,7 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                         sessions={filteredSessions}
                         filteredDates={filteredDates}
                         ticker="NQ1"
+                        levelTouches={levelTouches}
                     />
                 </TabsContent>
 
@@ -176,6 +177,7 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                         sessions={filteredSessions}
                         filteredDates={filteredDates}
                         ticker="NQ1"
+                        levelTouches={levelTouches}
                     />
                 </TabsContent>
 
@@ -185,6 +187,7 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                         sessions={filteredSessions}
                         filteredDates={filteredDates}
                         ticker="NQ1"
+                        levelTouches={levelTouches}
                     />
                 </TabsContent>
 
@@ -194,6 +197,7 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                         sessions={filteredSessions}
                         filteredDates={filteredDates}
                         ticker="NQ1"
+                        levelTouches={levelTouches}
                     />
                 </TabsContent>
             </Tabs>

@@ -1,15 +1,12 @@
 "use client"
 
 import { useMemo } from 'react';
-import { ProfilerSession } from '@/lib/api/profiler';
+import { ProfilerSession, LevelTouchesResponse } from '@/lib/api/profiler';
 import { RangeDistribution } from './range-distribution';
 import { PriceModelChart } from './price-model-chart';
 import { OutcomePanel } from './outcome-panel';
 import { HodLodAnalysis } from './hod-lod-analysis';
 import { DailyLevels } from './daily-levels';
-import { useLevelTouches } from '@/hooks/use-level-touches'; // Assume this exists or I'll stub/use SWR in DailyLevels
-import { fetchLevelTouches, LevelTouchesResponse } from '@/lib/api/profiler';
-import useSWR from 'swr';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
 interface SessionAnalysisViewProps {
@@ -17,6 +14,7 @@ interface SessionAnalysisViewProps {
     sessions: ProfilerSession[]; // Fully filtered sessions from parent
     filteredDates: Set<string>;
     ticker: string;
+    levelTouches: LevelTouchesResponse | null;  // Passed from parent to avoid duplicate fetch
 }
 
 const OUTCOMES = ['Long True', 'Short True', 'Long False', 'Short False'];
@@ -29,13 +27,7 @@ const SESSION_LEVELS: Record<string, string[]> = {
     'NY2': ['ny1_mid', 'ny2_mid', 'london_mid']
 };
 
-export function SessionAnalysisView({ session, sessions, filteredDates, ticker }: SessionAnalysisViewProps) {
-
-    // Fetch level touches once (swr handles cache)
-    const { data: levelTouches } = useSWR<LevelTouchesResponse>(
-        `${ticker}_levels`,
-        () => fetchLevelTouches(ticker)
-    );
+export function SessionAnalysisView({ session, sessions, filteredDates, ticker, levelTouches }: SessionAnalysisViewProps) {
 
     // Filter sessions to strictly this session context
     const sessionData = useMemo(() => {

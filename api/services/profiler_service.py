@@ -704,6 +704,7 @@ class ProfilerService:
             "count": len(matched_dates),
             "distribution": distribution,
             "range_stats": range_stats,
+            "sessions": matched_sessions,  # <-- Add filtered sessions to response
             "target_session": target_session,
             "filters_applied": filters or {},
             "broken_filters_applied": broken_filters or {}

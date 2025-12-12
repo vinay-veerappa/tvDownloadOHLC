@@ -1,8 +1,8 @@
 
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
-import { ReferenceData, fetchReferenceData } from "@/lib/api/reference"
+import { useMemo, useState } from "react"
+import { useReferenceData } from "@/hooks/use-reference-data"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -16,17 +16,9 @@ function minutesToTime(mins: number): string {
 }
 
 export function ReferenceProfilerView() {
-    const [data, setData] = useState<ReferenceData | null>(null)
-    const [loading, setLoading] = useState(true)
-    const [error, setError] = useState<string | null>(null)
+    const { referenceData: data, isLoading: loading, error: fetchError } = useReferenceData()
     const [selectedSession, setSelectedSession] = useState("asia")
-
-    useEffect(() => {
-        fetchReferenceData()
-            .then(setData)
-            .catch(err => setError(err.message))
-            .finally(() => setLoading(false))
-    }, [])
+    const error = fetchError?.message || null
 
     // Process Distributions
     const distributionData = useMemo(() => {
