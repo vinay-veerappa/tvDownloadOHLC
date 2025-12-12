@@ -117,14 +117,11 @@ async def get_daily_hod_lod(ticker: str):
     Get pre-computed true daily HOD/LOD times (from 1-minute data).
     Returns dict mapping date -> {hod_time, lod_time, hod_price, lod_price, ...}
     """
-    json_path = DATA_DIR / f"{ticker}_daily_hod_lod.json"
+    data = ProfilerService.get_daily_hod_lod(ticker)
     
-    if not json_path.exists():
-        raise HTTPException(status_code=404, detail=f"Daily HOD/LOD data for {ticker} not found. Run precompute_daily_hod_lod.py")
-    
-    with open(json_path, 'r') as f:
-        data = json.load(f)
-    
+    if "error" in data:
+        raise HTTPException(status_code=404, detail=data["error"])
+        
     return data
 
 @router.get("/stats/level-touches/{ticker}", tags=["Stats"])
@@ -133,14 +130,11 @@ async def get_level_touches(ticker: str):
     Get pre-computed reference level touch data (PDH/PDL/PDM, P12 H/L/M).
     Returns dict mapping date -> {pdh: {level, touched, touch_time}, ...}
     """
-    json_path = DATA_DIR / f"{ticker}_level_touches.json"
+    data = ProfilerService.get_level_touches(ticker)
     
-    if not json_path.exists():
-        raise HTTPException(status_code=404, detail=f"Level touch data for {ticker} not found. Run precompute_level_touches.py")
-    
-    with open(json_path, 'r') as f:
-        data = json.load(f)
-    
+    if "error" in data:
+        raise HTTPException(status_code=404, detail=data["error"])
+        
     return data
 
 @router.get("/stats/reference", tags=["Stats"])
