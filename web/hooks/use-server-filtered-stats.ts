@@ -46,7 +46,8 @@ export function useServerFilteredStats({
         },
         {
             revalidateOnFocus: false,
-            dedupingInterval: 1000, // Debounce rapid filter changes
+            dedupingInterval: 1000,
+            keepPreviousData: true, // [NEW] Prevent UI flash by showing stale data while fetching
         }
     );
 
