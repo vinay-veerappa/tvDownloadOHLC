@@ -38,11 +38,39 @@ export function OutcomeDetailView({
         return new Set(sessions.map(s => s.date));
     }, [sessions]);
 
-    // 2. Daily Context: Filter "allSessions" for these dates AND session="Daily"
-    // This gives us the Full Day Range stats for the days where "Asia was Long True"
-    const dailyContextSessions = useMemo(() => {
-        return allSessions.filter(s => s.session === 'Daily' && outcomeDates.has(s.date));
-    }, [allSessions, outcomeDates]);
+    // 2. Daily Context: Create Synthetic Sessions from dailyHodLod
+    // The backend filtered list usually lacks "Daily" rows or specific daily_open fields.
+    // We construct them here to ensure RangeDistribution has correct daily stats.
+    const dailyRangeSessions = useMemo(() => {
+        if (!dailyHodLod) return [];
+        const synthetic: ProfilerSession[] = [];
+
+        outcomeDates.forEach(date => {
+            const d = dailyHodLod[date];
+            if (d) {
+                // @ts-ignore - Constructing partial session with required fields for RangeDistribution
+                synthetic.push({
+                    date: date,
+                    session: 'Asia', // RangeDistribution looks for 'Asia' to grab daily_open/high/low attached
+                    open: d.daily_open,
+                    // Attach daily stats that RangeDistribution (daily mode) looks for
+                    // @ts-ignore
+                    daily_open: d.daily_open,
+                    // @ts-ignore
+                    daily_high: d.daily_high,
+                    // @ts-ignore
+                    daily_low: d.daily_low,
+                    // Dummy props to satisfy interface
+                    range_high: 0,
+                    range_low: 0,
+                    mid: 0, high_time: null, low_time: null, high_pct: 0, low_pct: 0,
+                    status: 'None', status_time: null, broken: false, broken_time: null,
+                    start_time: '', end_time: ''
+                });
+            }
+        });
+        return synthetic;
+    }, [dailyHodLod, outcomeDates]);
 
     // 3. Merge Outcome Filter
     // We strictly force the target session to have this outcome status
@@ -84,7 +112,7 @@ export function OutcomeDetailView({
             <section>
                 <h3 className="text-lg font-semibold mb-3">Price Range Distribution  ({outcome})</h3>
                 <p className="text-xs text-muted-foreground mb-2">Showing <strong>Daily Range</strong> distribution.</p>
-                <RangeDistribution sessions={dailyContextSessions} forcedSession="Daily" />
+                <RangeDistribution sessions={dailyRangeSessions} forcedSession="daily" />
             </section>
 
             {/* 3. Price Model (Median) */}
