@@ -58,9 +58,11 @@
 
 ### 2.1 Daily Overview Tab
 Contains:
-1. **Global Price Range Distribution** (All sessions combined)
-2. **Daily Price Model** (Median High/Low paths, Full Day 18:00→16:00)
-3. **Daily Levels Analysis** (All reference levels)
+1. **HOD/LOD Time Analysis**
+2. **Global Price Range Distribution** (All sessions combined)
+3. **Daily Price Model** (Median High/Low paths, Full Day 18:00→16:00)
+4. **Daily Levels Analysis** (All reference levels)
+5. **Session HOD/LOD Contribution** (Stats)
 
 ### 2.2 Session Tabs (Asia, London, NY1, NY2)
 Each session tab uses the `SessionAnalysisView` component with:

@@ -6,20 +6,7 @@ import json
 
 router = APIRouter()
 
-@router.get("/stats/profiler/{ticker}", tags=["Stats"])
-async def get_profiler_stats(
-    ticker: str, 
-    days: int = Query(50, description="Number of days to analyze")
-):
-    """
-    Get Profiler Statistics (Status, Broken) for the last N days.
-    """
-    result = ProfilerService.analyze_profiler_stats(ticker, days)
-    
-    if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
-        
-    return result
+
 
 
 @router.post("/stats/profiler/{ticker}/filtered", tags=["Stats"])
@@ -195,23 +182,7 @@ async def get_price_model(
         raise HTTPException(status_code=404, detail=result["error"])
     return result
 
-@router.post("/stats/price-model/custom", tags=["Stats"])
-async def get_custom_price_model(
-    payload: dict = Body(...)
-):
-    """
-    Get Price Model for a specific list of dates (Global Filter Intersection).
-    Payload: { "ticker": str, "target_session": str, "dates": List[str] }
-    """
-    ticker = payload.get("ticker", "NQ1")
-    target = payload.get("target_session")
-    dates = payload.get("dates", [])
-    bucket_minutes = payload.get("bucket_minutes", 1)
-    
-    result = ProfilerService.get_custom_price_model(ticker, target, dates, bucket_minutes)
-    if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
-    return result
+
 
 # ============================================================================
 # NEW: Filter-Based Endpoints (Architecture Refactor)
