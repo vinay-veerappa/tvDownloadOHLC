@@ -174,6 +174,8 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                     <SessionAnalysisView
                         session="Asia"
                         sessions={filteredSessions}
+                        allSessions={filteredSessions} // Pass full list for Daily context
+                        dailyHodLod={dailyHodLod || null}
                         filteredDates={filteredDates}
                         ticker="NQ1"
                         levelTouches={levelTouches}
@@ -187,6 +189,8 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                     <SessionAnalysisView
                         session="London"
                         sessions={filteredSessions}
+                        allSessions={filteredSessions}
+                        dailyHodLod={dailyHodLod || null}
                         filteredDates={filteredDates}
                         ticker="NQ1"
                         levelTouches={levelTouches}
@@ -200,6 +204,8 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                     <SessionAnalysisView
                         session="NY1"
                         sessions={filteredSessions}
+                        allSessions={filteredSessions}
+                        dailyHodLod={dailyHodLod || null}
                         filteredDates={filteredDates}
                         ticker="NQ1"
                         levelTouches={levelTouches}
@@ -213,6 +219,8 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                     <SessionAnalysisView
                         session="NY2"
                         sessions={filteredSessions}
+                        allSessions={filteredSessions}
+                        dailyHodLod={dailyHodLod || null}
                         filteredDates={filteredDates}
                         ticker="NQ1"
                         levelTouches={levelTouches}
