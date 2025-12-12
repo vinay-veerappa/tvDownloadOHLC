@@ -196,3 +196,76 @@ export async function fetchCustomPriceModel(ticker: string, targetSession: strin
     }
     return res.json();
 }
+
+// ============================================================================
+// NEW: Filter-Based API Functions (Server-Side Filtering)
+// ============================================================================
+
+export interface FilterPayload {
+    ticker: string;
+    target_session: string;
+    filters: Record<string, string>;
+    broken_filters: Record<string, string>;
+    intra_state: string;
+}
+
+export interface FilteredStatsResponse {
+    matched_dates: string[];
+    count: number;
+    distribution: Record<string, number>;
+    range_stats: {
+        high_pct: Record<string, number>;
+        low_pct: Record<string, number>;
+    };
+    target_session: string;
+    filters_applied: Record<string, string>;
+    broken_filters_applied: Record<string, string>;
+}
+
+/**
+ * Fetch pre-aggregated profiler stats using filter criteria.
+ * Filtering is done on the server for better performance.
+ */
+export async function fetchFilteredStats(payload: FilterPayload): Promise<FilteredStatsResponse> {
+    const res = await fetch(`${API_BASE_URL}/stats/filtered-stats`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            ticker: payload.ticker,
+            target_session: payload.target_session,
+            filters: payload.filters,
+            broken_filters: payload.broken_filters,
+            intra_state: payload.intra_state
+        })
+    });
+    if (!res.ok) {
+        throw new Error('Failed to fetch filtered stats');
+    }
+    return res.json();
+}
+
+/**
+ * Fetch Price Model using filter criteria (server-side filtering).
+ * Returns average and extreme price paths for matching dates.
+ */
+export async function fetchFilteredPriceModel(payload: FilterPayload): Promise<PriceModelResponse> {
+    const res = await fetch(`${API_BASE_URL}/stats/filtered-price-model`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            ticker: payload.ticker,
+            target_session: payload.target_session,
+            filters: payload.filters,
+            broken_filters: payload.broken_filters,
+            intra_state: payload.intra_state
+        })
+    });
+    if (!res.ok) {
+        throw new Error('Failed to fetch filtered price model');
+    }
+    return res.json();
+}
