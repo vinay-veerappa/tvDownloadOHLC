@@ -595,9 +595,21 @@ class ProfilerService:
             for session_name, required_status in filters.items():
                 if required_status and required_status != 'Any':
                     sess = sessions_by_name.get(session_name)
-                    if not sess or sess.get('status') != required_status:
+                    if not sess:
                         matches_all = False
                         break
+                    
+                    actual_status = sess.get('status', '')
+                    # If filter is just "Long" or "Short", treat as prefix match (matches "Short True" and "Short False")
+                    if required_status in ['Long', 'Short']:
+                        if not actual_status.startswith(required_status):
+                            matches_all = False
+                            break
+                    else:
+                        # Exact match for full status (e.g. "Short True")
+                        if actual_status != required_status:
+                            matches_all = False
+                            break
             
             if not matches_all:
                 continue
