@@ -3,8 +3,9 @@
 import { useState, useMemo } from 'react';
 import useSWR from 'swr';
 import { fetchProfilerStats, fetchLevelTouches } from '@/lib/api/profiler';
-import { useProfilerFilter } from '@/hooks/use-profiler-filter';
+import { useServerFilteredStats } from '@/hooks/use-server-filtered-stats';
 import { useLevelTouches } from '@/hooks/use-level-touches';
+import { SESSION_ORDER } from '@/hooks/use-profiler-filter';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProfilerWizard } from './profiler-wizard';
@@ -29,26 +30,40 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     const [brokenFilters, setBrokenFilters] = useState<Record<string, string>>({});
     const [intraState, setIntraState] = useState('Any');
 
-    // 2. Data Fetching (uses ticker state)
-    const { data: profilerData, error } = useSWR(`profilerStats-${ticker}`, () => fetchProfilerStats(ticker, 10000));
-    const { levelTouches } = useLevelTouches(ticker);
+    // 2. Compute context sessions (sessions before target)
+    const contextSessions = useMemo(() => {
+        const idx = SESSION_ORDER.indexOf(targetSession);
+        return idx === -1 ? [] : SESSION_ORDER.slice(0, idx);
+    }, [targetSession]);
 
-    // 3. Filtering Logic (Hook)
-    const sessions = profilerData?.sessions || [];
-    const { filteredDates, distribution, validSamples, contextSessions } = useProfilerFilter(sessions, {
+    // 3. Server-Side Filtered Data (NEW - calls backend filter endpoints)
+    const {
+        filteredDates,
+        distribution,
+        validSamples,
+        isLoading: isFilterLoading,
+        error: filterError
+    } = useServerFilteredStats({
+        ticker,
         targetSession,
         filters,
         brokenFilters,
-        intraSessionState: intraState
+        intraState
     });
 
-    // Compute the list of sessions that belong to the matched dates (Global Intersection)
+    // 4. Other Data Fetching
+    const { data: profilerData, error: profilerError } = useSWR(`profilerStats-${ticker}`, () => fetchProfilerStats(ticker, 10000));
+    const { levelTouches } = useLevelTouches(ticker);
+
+    // 5. Compute filtered sessions from the matched dates
+    const sessions = profilerData?.sessions || [];
     const filteredSessions = useMemo(() => {
         return sessions.filter(s => filteredDates.has(s.date));
     }, [sessions, filteredDates]);
 
+    const error = filterError || profilerError;
     if (error) return <div className="p-8 text-center text-red-500">Failed to load profiler data.</div>;
-    if (!profilerData) return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
+    if (!profilerData || isFilterLoading) return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
 
     // Reset Handlers
     const handleReset = () => {
