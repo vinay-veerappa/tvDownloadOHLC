@@ -71,12 +71,22 @@ export function SessionAnalysisView({ session, sessions, filteredDates, ticker, 
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
 
-            {/* Row 1: Range Distribution (Locked to Session) */}
+            {/* Row 1: HOD/LOD Analysis (Moved to Top) */}
+            <section>
+                <h3 className="text-lg font-semibold mb-3">HOD/LOD Analysis</h3>
+                <HodLodAnalysis
+                    sessions={sessionData}
+                    ticker={ticker}
+                    selectedSession={session} // Force session context
+                />
+            </section>
+
+            {/* Row 2: Range Distribution (Locked to Session) */}
             <section>
                 <RangeDistribution sessions={sessionData} forcedSession={session} />
             </section>
 
-            {/* Row 2: Price Model (Median) - TEMPORARILY DISABLED */}
+            {/* Row 3: Price Model (Median) */}
             <section>
                 <h3 className="text-lg font-semibold mb-3">Median Price Model</h3>
                 <div className="h-[350px] flex items-center justify-center border rounded-md text-muted-foreground">
@@ -90,7 +100,7 @@ export function SessionAnalysisView({ session, sessions, filteredDates, ticker, 
                 /> */}
             </section>
 
-            {/* Row 3: Outcome Analysis (Grid) */}
+            {/* Row 4: Outcome Analysis (Grid) */}
             <section>
                 <h3 className="text-lg font-semibold mb-3">Outcome Analysis</h3>
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -112,16 +122,6 @@ export function SessionAnalysisView({ session, sessions, filteredDates, ticker, 
                         );
                     })}
                 </div>
-            </section>
-
-            {/* Row 4: HOD/LOD Analysis */}
-            <section>
-                <h3 className="text-lg font-semibold mb-3">HOD/LOD Analysis</h3>
-                <HodLodAnalysis
-                    sessions={sessionData}
-                    ticker={ticker}
-                    selectedSession={session} // Force session context
-                />
             </section>
 
             {/* Row 5: Session Levels */}

@@ -353,13 +353,17 @@ class ProfilerService:
         return ProfilerService.generate_composite_path(ticker, filtered, duration_hours=7.0)
 
     @staticmethod
-    def generate_composite_path(ticker: str, sessions: List[Dict], duration_hours: float = 7.0) -> Dict:
+    def generate_composite_path(ticker: str, sessions: List[Dict], duration_hours: float = 7.0, bucket_minutes: int = 1) -> Dict:
         """
         Generic method to generate composite price paths from a list of sessions.
         OPTIMIZED: Uses searchsorted and integer slicing for high performance.
+        Supports aggregation into larger buckets (e.g. 5 min, 15 min).
         """
         start_time = time.time()
         
+        # ... validation ...
+        # (lines 364-453 unchanged)
+
         # 1. Load 1-minute DataFrame (Cached)
         df = ProfilerService._cache.get(ticker)
         if df is None:
@@ -441,8 +445,12 @@ class ProfilerService:
             norm_high = ((vals_high - sess_open) / sess_open) * 100
             norm_low = ((vals_low - sess_open) / sess_open) * 100
             
+            # Bucketing Logic: Map raw minute delta to bucket index (minute)
+            # e.g. for 5-min bucket: 0,1,2,3,4 -> 0; 5,6,7,8,9 -> 5
+            bucketed_time = (time_deltas // bucket_minutes) * bucket_minutes
+            
             sub_df = pd.DataFrame({
-                'time_idx': time_deltas.astype(int),
+                'time_idx': bucketed_time.astype(int),
                 'norm_high': norm_high,
                 'norm_low': norm_low
             })
@@ -454,7 +462,7 @@ class ProfilerService:
         # 5. Concatenate and GroupBy (Stats Aggregation)
         combined = pd.concat(relevant_chunks, ignore_index=True)
         
-        # Group by minute offset and calculate median/extreme
+        # Group by bucketed minute offset and calculate median/extreme
         stats = combined.groupby('time_idx').agg({
             'norm_high': ['median', 'max'],
             'norm_low':  ['median', 'min']
@@ -515,7 +523,7 @@ class ProfilerService:
             "count": len(sessions)
         }
     @staticmethod
-    def get_custom_price_model(ticker: str, target_session: str, dates: List[str]):
+    def get_custom_price_model(ticker: str, target_session: str, dates: List[str], bucket_minutes: int = 1):
         """
         Generate price model for a specific list of dates and target session.
         If target_session == 'Daily', creates synthetic full-day sessions (18:00->16:00).
@@ -564,8 +572,18 @@ class ProfilerService:
             
         print(f"[Profiling] Custom Model: Found {len(matches)} matching sessions for {target_session}")
         
+        # Determine duration based on session type
+        # Default 7.0 works for partial sessions, but Daily needs full day
+        duration = 7.0
+        if target_session == 'Daily':
+            duration = 22.0
+        elif target_session == 'Asia':
+            duration = 8.0 # 18:00 - 02:00
+        elif target_session == 'London':
+            duration = 6.0 # 03:00 - 09:00? 
+        
         # 3. Generate Composite Path
-        return ProfilerService.generate_composite_path(ticker, matches)
+        return ProfilerService.generate_composite_path(ticker, matches, duration_hours=duration, bucket_minutes=bucket_minutes)
 
     # ========================================================================
     # NEW: Filter-Based API Methods (Architecture Refactor)
@@ -750,7 +768,8 @@ class ProfilerService:
         target_session: str,
         filters: Dict[str, str] = None,
         broken_filters: Dict[str, str] = None,
-        intra_state: str = "Any"
+        intra_state: str = "Any",
+        bucket_minutes: int = 1
     ) -> Dict:
         """
         Generate price model using filter criteria instead of explicit date list.
@@ -769,4 +788,4 @@ class ProfilerService:
             return {"average": [], "extreme": [], "count": 0}
         
         # 2. Use existing get_custom_price_model with the matched dates
-        return ProfilerService.get_custom_price_model(ticker, target_session, matched_dates)
+        return ProfilerService.get_custom_price_model(ticker, target_session, matched_dates, bucket_minutes=bucket_minutes)

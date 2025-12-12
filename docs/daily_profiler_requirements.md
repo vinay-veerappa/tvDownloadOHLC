@@ -67,11 +67,11 @@ Each session tab uses the `SessionAnalysisView` component with:
 
 | Row | Component | Description |
 |-----|-----------|-------------|
-| 1 | **Range Distribution** | High/Low % from open, locked to this session |
-| 2 | **Median Price Model** | Session-specific timeframe chart |
-| 3 | **Outcome Grid** | True/False outcome panels with detailed stats |
-| 4 | **HOD/LOD Analysis** | Time histograms filtered to session context |
-| 5 | **Session Levels** | Relevant reference levels for this session |
+| 1 | **HOD/LOD Analysis** | Time histograms + zoom |
+| 2 | **Range Distribution** | High/Low % from open |
+| 3 | **Median Price Model** | Session-specific timeframe chart |
+| 4 | **Outcome Grid** | True/False outcome panels |
+| 5 | **Session Levels** | Relevant reference levels |
 
 ---
 
