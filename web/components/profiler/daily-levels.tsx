@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, memo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -113,7 +113,8 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
     );
 }
 
-export function DailyLevels({ levelTouches, filteredDates, limitLevels }: DailyLevelsProps) {
+// Export optimized component
+export const DailyLevels = memo(function DailyLevels({ levelTouches, filteredDates, limitLevels }: DailyLevelsProps) {
     const [granularity, setGranularity] = useState<number>(15);
 
     if (!levelTouches || filteredDates.size === 0) {
@@ -194,4 +195,4 @@ export function DailyLevels({ levelTouches, filteredDates, limitLevels }: DailyL
             )}
         </div>
     );
-}
+});

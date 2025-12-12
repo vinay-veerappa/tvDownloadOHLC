@@ -2,7 +2,7 @@
 
 "use client"
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, memo } from 'react';
 import { ProfilerSession } from '@/lib/api/profiler';
 import { useReferenceData } from '@/hooks/use-reference-data';
 import { ReferenceData } from '@/lib/api/reference';
@@ -43,7 +43,7 @@ function mode(arr: number[], bucketSize: number = 0.1, referenceDist?: Record<st
     return sorted.length > 0 ? parseFloat(sorted[0][0]) : null;
 }
 
-export function RangeDistribution({ sessions, forcedSession }: Props) {
+export const RangeDistribution = memo(function RangeDistribution({ sessions, forcedSession }: Props) {
     const [selectedSession, setSelectedSession] = useState<string>(forcedSession || 'daily');
     const { referenceData } = useReferenceData();  // Use shared hook (SWR deduplicates)
     const [showReference, setShowReference] = useState(false);
@@ -344,4 +344,4 @@ export function RangeDistribution({ sessions, forcedSession }: Props) {
             </div>
         </div >
     );
-}
+});

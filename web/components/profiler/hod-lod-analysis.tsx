@@ -1,7 +1,7 @@
 
 "use client"
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, memo } from 'react';
 import { ProfilerSession, DailyHodLodResponse } from '@/lib/api/profiler';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Brush } from 'recharts';
@@ -48,7 +48,7 @@ function mode(arr: string[]): string {
     return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
 }
 
-export function HodLodChart({ sessions, dailyHodLod }: Props) {
+export const HodLodChart = memo(function HodLodChart({ sessions, dailyHodLod }: Props) {
     const [granularity, setGranularity] = useState<number>(15);
 
     // Get unique dates from filtered sessions
@@ -258,9 +258,9 @@ export function HodLodChart({ sessions, dailyHodLod }: Props) {
             </CardContent>
         </Card>
     );
-}
+});
 
-export function SessionStats({ sessions }: { sessions: ProfilerSession[] }) {
+export const SessionStats = memo(function SessionStats({ sessions }: { sessions: ProfilerSession[] }) {
     // Session-based stats (which session makes HOD/LOD)
     const sessionStats = useMemo(() => {
         const byDate: Record<string, ProfilerSession[]> = {};
@@ -347,7 +347,7 @@ export function SessionStats({ sessions }: { sessions: ProfilerSession[] }) {
             </Card>
         </div>
     );
-}
+});
 
 export function HodLodAnalysis({ sessions, dailyHodLod, selectedSession }: Props) {
     return (

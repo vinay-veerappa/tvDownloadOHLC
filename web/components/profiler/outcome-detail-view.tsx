@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import { ProfilerSession, DailyHodLodResponse } from '@/lib/api/profiler';
 import { HodLodChart, SessionStats } from './hod-lod-analysis';
 import { RangeDistribution } from './range-distribution';
@@ -21,7 +21,7 @@ interface OutcomeDetailViewProps {
     intraState: string;
 }
 
-export function OutcomeDetailView({
+export const OutcomeDetailView = memo(function OutcomeDetailView({
     outcome,
     sessions,
     allSessions,
@@ -136,4 +136,4 @@ export function OutcomeDetailView({
             </section>
         </div>
     );
-}
+});

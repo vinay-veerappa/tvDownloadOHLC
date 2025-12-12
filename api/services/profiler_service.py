@@ -16,6 +16,7 @@ class ProfilerService:
     _price_model_cache = {}
     _level_touches_cache = {}
     _daily_hod_lod_cache = {}
+    _filtered_stats_cache = {} # Cache for filtered stats results
 
     @staticmethod
     def clear_cache(ticker: str = None):
@@ -675,6 +676,10 @@ class ProfilerService:
                         if not actual_status.startswith(required_status):
                             matches_all = False
                             break
+                    elif required_status in ['True', 'False']:
+                        if not actual_status.endswith(required_status):
+                            matches_all = False
+                            break
                     else:
                         # Exact match for full status (e.g. "Short True")
                         if actual_status != required_status:
@@ -732,6 +737,18 @@ class ProfilerService:
         Get pre-aggregated stats for filtered sessions.
         Returns matched dates, distribution, and aggregated statistics.
         """
+        # Create cache key
+        cache_key = (
+            ticker, 
+            target_session, 
+            json.dumps(filters, sort_keys=True) if filters else "", 
+            json.dumps(broken_filters, sort_keys=True) if broken_filters else "", 
+            intra_state
+        )
+        
+        if cache_key in ProfilerService._filtered_stats_cache:
+             return ProfilerService._filtered_stats_cache[cache_key]
+
         # 1. Load all sessions
         # 1. Load all sessions
         stats = ProfilerService.analyze_profiler_stats(ticker, days=10000)
@@ -784,16 +801,43 @@ class ProfilerService:
             range_stats["low_pct"]["median"] = round(float(np.median(low_pcts)), 3)
             range_stats["low_pct"]["mean"] = round(float(np.mean(low_pcts)), 3)
         
-        return {
+
+        # Optimize payload size: Strip unused fields locally
+        # We only need enough info for charts.
+        lean_sessions = []
+        for s in matched_sessions:
+            # Create a shallow copy with only needed fields
+            lean_s = {
+                'date': s.get('date'),
+                'session': s.get('session'),
+                'status': s.get('status'),
+                'broken': s.get('broken'),
+                'high_time': s.get('high_time'),
+                'low_time': s.get('low_time'),
+                'high_pct': s.get('high_pct'),
+                'low_pct': s.get('low_pct'),
+                # Keep numeric ranges for some charts if needed?
+                # RangeDistribution needs high_pct/low_pct.
+                # HodLod needs times.
+                # SessionStats needs status/broken.
+                # PriceModel calls a separate endpoint.
+                # DailyLevels needs dates (which are in lean_s['date']).
+            }
+            lean_sessions.append(lean_s)
+
+        result = {
             "matched_dates": matched_dates,
             "count": len(matched_dates),
             "distribution": distribution,
             "range_stats": range_stats,
-            "sessions": matched_sessions,  # <-- Add filtered sessions to response
+            "sessions": lean_sessions, # Reduced size payload
             "target_session": target_session,
             "filters_applied": filters or {},
             "broken_filters_applied": broken_filters or {}
         }
+        
+        ProfilerService._filtered_stats_cache[cache_key] = result
+        return result
 
     @staticmethod
     def get_filtered_price_model(
@@ -905,15 +949,24 @@ class ProfilerService:
             ProfilerService.get_daily_hod_lod(ticker)
             ProfilerService.get_level_touches(ticker)
             
-            # 2. Run Heavy Price Model Calculation (Daily)
-            # This triggers the 2.5s compute and caches it
-            ProfilerService.get_filtered_price_model(
-                ticker=ticker,
-                target_session="Daily",
-                filters={},
-                intra_state="Any",
-                bucket_minutes=5
-            )
+            # 2. Run Heavy Price Model Calculation (All Sessions)
+            # This pre-computes "Daily", "Asia", "London", "NY1", "NY2" Default Views
+            for session_name in ["Daily", "Asia", "London", "NY1", "NY2"]:
+                ProfilerService.get_filtered_price_model(
+                    ticker=ticker,
+                    target_session=session_name,
+                    filters={},
+                    intra_state="Any",
+                    bucket_minutes=5
+                )
+                # Ensure stats are also cached
+                ProfilerService.get_filtered_stats(
+                    ticker=ticker, 
+                    target_session=session_name,
+                    filters={}, 
+                    broken_filters={},
+                    intra_state="Any"
+                )
             print(f"[Pre-Warm] Successfully warmed cache for {ticker}")
         except Exception as e:
             print(f"[Pre-Warm] Failed to warm cache: {e}")

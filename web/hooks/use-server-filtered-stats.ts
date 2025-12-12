@@ -1,5 +1,6 @@
 "use client"
 
+import { useMemo } from 'react';
 import useSWR from 'swr';
 import { fetchFilteredStats, FilterPayload, FilteredStatsResponse } from '@/lib/api/profiler';
 
@@ -51,14 +52,19 @@ export function useServerFilteredStats({
         }
     );
 
-    return {
-        filteredDates: data?.matched_dates ? new Set(data.matched_dates) : new Set<string>(),
-        filteredSessions: data?.sessions || [],  // Server-filtered sessions
-        distribution: data?.distribution || {},
-        validSamples: data?.count || 0,
-        rangeStats: data?.range_stats || { high_pct: {}, low_pct: {} },
-        isLoading,
-        error,
-        refresh: mutate
-    };
+    // Memoize the return value to ensure stable references when data hasn't changed
+    const result = useMemo(() => {
+        return {
+            filteredDates: data?.matched_dates ? new Set(data.matched_dates) : new Set<string>(),
+            filteredSessions: data?.sessions || [],  // Server-filtered sessions
+            distribution: data?.distribution || {},
+            validSamples: data?.count || 0,
+            rangeStats: data?.range_stats || { high_pct: {}, low_pct: {} },
+            isLoading,
+            error,
+            refresh: mutate
+        };
+    }, [data, isLoading, error, mutate]);
+
+    return result;
 }

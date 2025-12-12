@@ -1,5 +1,6 @@
 "use client"
 
+import { useMemo } from 'react';
 import useSWR from 'swr';
 import { fetchDailyHodLod, DailyHodLodResponse } from '@/lib/api/profiler';
 
@@ -13,9 +14,9 @@ export function useDailyHodLod(ticker: string) {
         }
     );
 
-    return {
+    return useMemo(() => ({
         dailyHodLod: data,
         isLoading,
         error
-    };
+    }), [data, isLoading, error]);
 }
