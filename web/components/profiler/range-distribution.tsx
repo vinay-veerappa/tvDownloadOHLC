@@ -71,14 +71,22 @@ export function RangeDistribution({ sessions, forcedSession }: Props) {
             });
 
             Object.values(byDate).forEach(daySessions => {
-                if (daySessions.length < 2) return;
                 const asiaSess = daySessions.find(s => s.session === 'Asia');
                 if (!asiaSess || !asiaSess.open) return;
 
                 // Use precomputed daily stats if available (from enrichment), otherwise calculate from visible sessions
-                const dailyOpen = (asiaSess as any).daily_open;
-                const dailyHigh = (asiaSess as any).daily_high;
-                const dailyLow = (asiaSess as any).daily_low;
+                // @ts-ignore
+                const dailyOpen = asiaSess.daily_open;
+                // @ts-ignore
+                const dailyHigh = asiaSess.daily_high;
+                // @ts-ignore
+                const dailyLow = asiaSess.daily_low;
+
+                // CRITICAL: If we have explicit daily stats (e.g. synthetic sessions or enriched data), 
+                // we don't need to enforce having \u003e= 2 sessions.
+                const hasExplicitDaily = dailyOpen !== undefined && dailyHigh !== undefined;
+
+                if (daySessions.length < 2 && !hasExplicitDaily) return;
 
                 const dayOpen = dailyOpen !== undefined ? dailyOpen : asiaSess.open;
                 // If dailyHigh is available, use it. Otherwise finding max of visible sessions is the best fallback, but incorrect for filtered views.
