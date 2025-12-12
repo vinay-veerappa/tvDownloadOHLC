@@ -29,13 +29,7 @@ export interface ProfilerResponse {
     };
 }
 
-export async function fetchProfilerStats(ticker: string, days: number = 50): Promise<ProfilerResponse> {
-    const res = await fetch(`${API_BASE_URL}/stats/profiler/${ticker}?days=${days}`);
-    if (!res.ok) {
-        throw new Error('Failed to fetch profiler stats');
-    }
-    return res.json();
-}
+
 
 // HOD/LOD Types
 export interface TimeStats {
@@ -172,31 +166,7 @@ export interface PriceModelResponse {
     count: number;
 }
 
-export async function fetchPriceModel(ticker: string, session: string, outcome: string, days: number = 50): Promise<PriceModelResponse> {
-    const res = await fetch(`${API_BASE_URL}/stats/price-model/${ticker}?session=${encodeURIComponent(session)}&outcome=${encodeURIComponent(outcome)}&days=${days}`);
-    if (!res.ok) {
-        throw new Error('Failed to fetch price model');
-    }
-    return res.json();
-}
 
-export async function fetchCustomPriceModel(ticker: string, targetSession: string, dates: string[]): Promise<PriceModelResponse> {
-    const res = await fetch(`${API_BASE_URL}/stats/price-model/custom`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            ticker,
-            target_session: targetSession,
-            dates
-        })
-    });
-    if (!res.ok) {
-        throw new Error('Failed to fetch custom price model');
-    }
-    return res.json();
-}
 
 // ============================================================================
 // NEW: Filter-Based API Functions (Server-Side Filtering)
