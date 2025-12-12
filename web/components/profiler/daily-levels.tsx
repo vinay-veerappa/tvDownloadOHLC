@@ -17,43 +17,7 @@ import {
 interface DailyLevelsProps {
     levelTouches: LevelTouchesResponse | null;
     filteredDates: Set<string>;
-}
-
-// Time bucket helpers
-function timeToMinutes(timeStr: string): number {
-    const [h, m] = timeStr.split(':').map(Number);
-    return h * 60 + m;
-}
-
-function minutesToTime(minutes: number): string {
-    const h = Math.floor(minutes / 60) % 24;
-    const m = minutes % 60;
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-}
-
-function calculateMedian(arr: number[]): number {
-    if (arr.length === 0) return 0;
-    const sorted = [...arr].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function calculateMode(arr: number[], bucketSize: number): number {
-    if (arr.length === 0) return 0;
-    const buckets: Record<number, number> = {};
-    arr.forEach(v => {
-        const bucket = Math.floor(v / bucketSize) * bucketSize;
-        buckets[bucket] = (buckets[bucket] || 0) + 1;
-    });
-    let maxCount = 0;
-    let mode = 0;
-    Object.entries(buckets).forEach(([k, count]) => {
-        if (count > maxCount) {
-            maxCount = count;
-            mode = Number(k);
-        }
-    });
-    return mode;
+    limitLevels?: string[];
 }
 
 interface LevelCardProps {
@@ -66,92 +30,97 @@ interface LevelCardProps {
 }
 
 function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, color }: LevelCardProps) {
-    // Calculate stats for this level
     const stats = useMemo(() => {
-        const touchTimes: number[] = [];
         let touched = 0;
         let total = 0;
+        const touchTimes: string[] = [];
 
         filteredDates.forEach(date => {
             const dayData = levelTouches[date];
             if (!dayData) return;
 
-            const entry = dayData[levelKey as keyof typeof dayData] as LevelTouchEntry | undefined;
-            if (!entry) return;
+            const levelData = dayData[levelKey as keyof typeof dayData] as LevelTouchEntry | undefined;
+            if (!levelData) return;
 
             total++;
-            if (entry.touched && entry.touch_time) {
+            if (levelData.touched) {
                 touched++;
-                touchTimes.push(timeToMinutes(entry.touch_time));
+                if (levelData.touch_time) {
+                    touchTimes.push(levelData.touch_time);
+                }
             }
         });
 
         const hitRate = total > 0 ? (touched / total) * 100 : 0;
-        const mode = touchTimes.length > 0 ? minutesToTime(calculateMode(touchTimes, granularity)) : 'N/A';
-        const median = touchTimes.length > 0 ? minutesToTime(Math.round(calculateMedian(touchTimes))) : 'N/A';
 
-        // Build histogram
-        const buckets: Record<number, number> = {};
-        touchTimes.forEach(t => {
-            const bucket = Math.floor(t / granularity) * granularity;
-            buckets[bucket] = (buckets[bucket] || 0) + 1;
+        // Calculate time distribution
+        const timeBuckets: Record<string, number> = {};
+        touchTimes.forEach(time => {
+            const [h, m] = time.split(':').map(Number);
+            const mins = h * 60 + m;
+            const bucketMins = Math.floor(mins / granularity) * granularity;
+            const bucketH = Math.floor(bucketMins / 60);
+            const bucketM = bucketMins % 60;
+            const bucket = `${bucketH.toString().padStart(2, '0')}:${bucketM.toString().padStart(2, '0')}`;
+            timeBuckets[bucket] = (timeBuckets[bucket] || 0) + 1;
         });
 
-        // Create data from 06:00 to 16:00 (main session)
-        const data: { time: string; count: number }[] = [];
-        for (let m = 6 * 60; m <= 16 * 60; m += granularity) {
-            const pct = touchTimes.length > 0 ? ((buckets[m] || 0) / touchTimes.length) * 100 : 0;
-            data.push({
-                time: minutesToTime(m),
-                count: pct
-            });
-        }
+        // Find mode
+        const mode = Object.entries(timeBuckets).sort((a, b) => b[1] - a[1])[0]?.[0] || '-';
 
-        return { hitRate, mode, median, data, touched, total };
+        // Create histogram data
+        const histData = Object.entries(timeBuckets)
+            .map(([time, count]) => ({ time, count, pct: (count / touched) * 100 }))
+            .sort((a, b) => a.time.localeCompare(b.time));
+
+        return { hitRate, mode, total, touched, histData };
     }, [levelTouches, filteredDates, levelKey, granularity]);
 
     return (
-        <Card className="border">
-            <CardHeader className="py-2 px-3 bg-muted/30">
+        <Card>
+            <CardHeader className="pb-2 pt-3">
                 <div className="flex items-center justify-between">
                     <CardTitle className="text-sm font-medium">{title}</CardTitle>
-                    <Badge variant="outline" className="font-bold">
+                    <Badge variant="outline" className="text-lg font-bold" style={{ color }}>
                         {stats.hitRate.toFixed(1)}%
                     </Badge>
                 </div>
-                <div className="flex gap-4 text-xs text-muted-foreground">
-                    <span>Mode: <span className="font-medium">{stats.mode}</span></span>
-                    <span>Median: <span className="font-medium">{stats.median}</span></span>
+                <div className="text-xs text-muted-foreground">
+                    Mode: <span className="font-mono font-semibold">{stats.mode}</span> •
+                    {stats.touched}/{stats.total} days
                 </div>
             </CardHeader>
-            <CardContent className="p-2">
-                <div className="h-24">
+            <CardContent className="h-[120px] pt-0">
+                {stats.histData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={stats.data} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
-                            <XAxis
-                                dataKey="time"
-                                tick={{ fontSize: 8 }}
-                                interval={Math.floor(stats.data.length / 4)}
-                            />
-                            <YAxis tick={{ fontSize: 8 }} domain={[0, 'auto']} />
+                        <BarChart data={stats.histData} margin={{ top: 5, right: 5, bottom: 20, left: 5 }}>
+                            <XAxis dataKey="time" fontSize={8} angle={-45} textAnchor="end" height={40} interval={0} />
+                            <YAxis hide />
                             <Tooltip
-                                formatter={(value: number) => [`${value.toFixed(1)}%`, 'Touches']}
+                                formatter={(value: number) => [`${value.toFixed(1)}%`, 'Frequency']}
+                                contentStyle={{ fontSize: '12px' }}
                             />
-                            <Bar dataKey="count" fill={color} />
+                            <Bar dataKey="pct" fill={color} radius={[2, 2, 0, 0]} />
                         </BarChart>
                     </ResponsiveContainer>
-                </div>
+                ) : (
+                    <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+                        No touch data
+                    </div>
+                )}
             </CardContent>
         </Card>
     );
 }
 
-export function DailyLevels({ levelTouches, filteredDates }: DailyLevelsProps) {
+export function DailyLevels({ levelTouches, filteredDates, limitLevels }: DailyLevelsProps) {
     const [granularity, setGranularity] = useState<number>(15);
 
     if (!levelTouches || filteredDates.size === 0) {
         return <div className="text-muted-foreground text-center py-8">Loading level data...</div>;
     }
+
+    const shouldShow = (key: string) => !limitLevels || limitLevels.includes(key);
 
     return (
         <div className="space-y-6">
@@ -176,136 +145,53 @@ export function DailyLevels({ levelTouches, filteredDates }: DailyLevelsProps) {
             </div>
 
             {/* Previous Day Levels */}
-            <div>
-                <h3 className="text-lg font-semibold mb-3">Previous Day Levels</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <LevelCard
-                        title="Previous Day Low"
-                        levelKey="pdl"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#ef4444"
-                    />
-                    <LevelCard
-                        title="Previous Day Mid"
-                        levelKey="pdm"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#f59e0b"
-                    />
-                    <LevelCard
-                        title="Previous Day High"
-                        levelKey="pdh"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#22c55e"
-                    />
+            {(shouldShow('pdl') || shouldShow('pdm') || shouldShow('pdh')) && (
+                <div>
+                    <h3 className="text-lg font-semibold mb-3">Previous Day Levels</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {shouldShow('pdl') && <LevelCard title="Previous Day Low" levelKey="pdl" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#ef4444" />}
+                        {shouldShow('pdm') && <LevelCard title="Previous Day Mid" levelKey="pdm" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#f59e0b" />}
+                        {shouldShow('pdh') && <LevelCard title="Previous Day High" levelKey="pdh" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#22c55e" />}
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* P12 Levels */}
-            <div>
-                <h3 className="text-lg font-semibold mb-3">P12 Levels (Overnight)</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <LevelCard
-                        title="P12 High"
-                        levelKey="p12h"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#22c55e"
-                    />
-                    <LevelCard
-                        title="P12 Mid"
-                        levelKey="p12m"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#06b6d4"
-                    />
-                    <LevelCard
-                        title="P12 Low"
-                        levelKey="p12l"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#ef4444"
-                    />
+            {(shouldShow('p12h') || shouldShow('p12m') || shouldShow('p12l')) && (
+                <div>
+                    <h3 className="text-lg font-semibold mb-3">P12 Levels (Overnight)</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {shouldShow('p12h') && <LevelCard title="P12 High" levelKey="p12h" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#22c55e" />}
+                        {shouldShow('p12m') && <LevelCard title="P12 Mid" levelKey="p12m" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#06b6d4" />}
+                        {shouldShow('p12l') && <LevelCard title="P12 Low" levelKey="p12l" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#ef4444" />}
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* Time-Based Opens */}
-            <div>
-                <h3 className="text-lg font-semibold mb-3">Time-Based Opens</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <LevelCard
-                        title="Daily Open (18:00)"
-                        levelKey="daily_open"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#8b5cf6"
-                    />
-                    <LevelCard
-                        title="Midnight Open (00:00)"
-                        levelKey="midnight_open"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#a855f7"
-                    />
-                    <LevelCard
-                        title="07:30 Open"
-                        levelKey="open_0730"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#c084fc"
-                    />
+            {(shouldShow('daily_open') || shouldShow('midnight_open') || shouldShow('open_0730')) && (
+                <div>
+                    <h3 className="text-lg font-semibold mb-3">Time-Based Opens</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {shouldShow('daily_open') && <LevelCard title="Daily Open (18:00)" levelKey="daily_open" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#8b5cf6" />}
+                        {shouldShow('midnight_open') && <LevelCard title="Midnight Open (00:00)" levelKey="midnight_open" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#a855f7" />}
+                        {shouldShow('open_0730') && <LevelCard title="07:30 Open" levelKey="open_0730" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#c084fc" />}
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* Session Mids */}
-            <div>
-                <h3 className="text-lg font-semibold mb-3">Session Mids</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <LevelCard
-                        title="Asia Mid"
-                        levelKey="asia_mid"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#f472b6"
-                    />
-                    <LevelCard
-                        title="London Mid"
-                        levelKey="london_mid"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#fb923c"
-                    />
-                    <LevelCard
-                        title="NY1 Mid"
-                        levelKey="ny1_mid"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#38bdf8"
-                    />
-                    <LevelCard
-                        title="NY2 Mid"
-                        levelKey="ny2_mid"
-                        levelTouches={levelTouches}
-                        filteredDates={filteredDates}
-                        granularity={granularity}
-                        color="#34d399"
-                    />
+            {(shouldShow('asia_mid') || shouldShow('london_mid') || shouldShow('ny1_mid') || shouldShow('ny2_mid')) && (
+                <div>
+                    <h3 className="text-lg font-semibold mb-3">Session Mids</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        {shouldShow('asia_mid') && <LevelCard title="Asia Mid" levelKey="asia_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#f472b6" />}
+                        {shouldShow('london_mid') && <LevelCard title="London Mid" levelKey="london_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#fb923c" />}
+                        {shouldShow('ny1_mid') && <LevelCard title="NY1 Mid" levelKey="ny1_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#38bdf8" />}
+                        {shouldShow('ny2_mid') && <LevelCard title="NY2 Mid" levelKey="ny2_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#34d399" />}
+                    </div>
                 </div>
-            </div>
+            )}
         </div>
     );
 }

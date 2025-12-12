@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label';
 
 interface Props {
     sessions: ProfilerSession[];
+    forcedSession?: string;
 }
 
 function median(arr: number[]): number {
@@ -41,10 +42,14 @@ function mode(arr: number[], bucketSize: number = 0.1, referenceDist?: Record<st
     return sorted.length > 0 ? parseFloat(sorted[0][0]) : null;
 }
 
-export function RangeDistribution({ sessions }: Props) {
-    const [selectedSession, setSelectedSession] = useState<string>('daily');
+export function RangeDistribution({ sessions, forcedSession }: Props) {
+    const [selectedSession, setSelectedSession] = useState<string>(forcedSession || 'daily');
     const [referenceData, setReferenceData] = useState<ReferenceData | null>(null);
     const [showReference, setShowReference] = useState(true);
+
+    useEffect(() => {
+        if (forcedSession) setSelectedSession(forcedSession);
+    }, [forcedSession]);
 
     useEffect(() => {
         fetchReferenceData().then(setReferenceData).catch(console.error);

@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
 from api.services.profiler_service import ProfilerService
 from api.services.data_loader import DATA_DIR
 import json
@@ -120,4 +120,37 @@ async def get_reference_stats():
         "stats": ref_all,
         "median": ref_med
     }
+
+@router.get("/stats/price-model/{ticker}", tags=["Stats"])
+async def get_price_model(
+    ticker: str,
+    session: str,
+    outcome: str,
+    days: int = Query(50)
+):
+    """
+    Get Price Model (Composite High/Low) for a specific outcome.
+    Returns Average and Extreme models.
+    """
+    result = ProfilerService.get_price_model_data(ticker, session, outcome, days)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+@router.post("/stats/price-model/custom", tags=["Stats"])
+async def get_custom_price_model(
+    payload: dict = Body(...)
+):
+    """
+    Get Price Model for a specific list of dates (Global Filter Intersection).
+    Payload: { "ticker": str, "target_session": str, "dates": List[str] }
+    """
+    ticker = payload.get("ticker", "NQ1")
+    target = payload.get("target_session")
+    dates = payload.get("dates", [])
+    
+    result = ProfilerService.get_custom_price_model(ticker, target, dates)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 

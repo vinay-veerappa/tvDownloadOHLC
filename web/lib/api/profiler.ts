@@ -158,3 +158,41 @@ export async function fetchLevelTouches(ticker: string): Promise<LevelTouchesRes
     }
     return res.json();
 }
+
+export interface PriceModelEntry {
+    time_idx: number; // Minutes from session start
+    high: number;     // % from Open
+    low: number;      // % from Open
+}
+
+export interface PriceModelResponse {
+    average: PriceModelEntry[];
+    extreme: PriceModelEntry[];
+    count: number;
+}
+
+export async function fetchPriceModel(ticker: string, session: string, outcome: string, days: number = 50): Promise<PriceModelResponse> {
+    const res = await fetch(`${API_BASE_URL}/stats/price-model/${ticker}?session=${encodeURIComponent(session)}&outcome=${encodeURIComponent(outcome)}&days=${days}`);
+    if (!res.ok) {
+        throw new Error('Failed to fetch price model');
+    }
+    return res.json();
+}
+
+export async function fetchCustomPriceModel(ticker: string, targetSession: string, dates: string[]): Promise<PriceModelResponse> {
+    const res = await fetch(`${API_BASE_URL}/stats/price-model/custom`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            ticker,
+            target_session: targetSession,
+            dates
+        })
+    });
+    if (!res.ok) {
+        throw new Error('Failed to fetch custom price model');
+    }
+    return res.json();
+}

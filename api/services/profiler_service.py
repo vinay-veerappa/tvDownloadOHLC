@@ -300,15 +300,248 @@ class ProfilerService:
                 })
 
         collected_stats.sort(key=lambda x: x['start_time'])
+        
+        # --- SAVE TO DISK (PERSISTENT CACHE) ---
+        try:
+            with open(json_path, 'w') as f:
+                json.dump(collected_stats, f, indent=2)
+            print(f"[Profiling] Saved {len(collected_stats)} sessions to {json_path}")
+            # Update In-Memory Cache
+            ProfilerService._json_cache[ticker] = collected_stats
+        except Exception as e:
+            print(f"Error saving JSON: {e}")
+            
         elapsed = time.time() - start_time
 
         return {
             "sessions": collected_stats,
-            "metadata": {
-                "ticker": ticker,
-                "days": days,
-                "count": len(collected_stats),
-                "source": "calculated_fallback",
-                "elapsed_seconds": round(elapsed, 2)
-            }
+            "count": len(collected_stats),
+            "elapsed_seconds": round(elapsed, 4)
         }
+
+    @staticmethod
+    def get_price_model_data(ticker: str, session_name: str, outcome_name: str, days: int = 50) -> Dict:
+        """
+        Calculate Price Model (Composite High/Low paths) for a specific outcome.
+        Returns two models: 
+            1. Average (Mean High/Low)
+            2. Extreme (Max High/Min Low)
+        """
+        # 1. Get filtered sessions first to know which dates/times to aggregate
+        stats_result = ProfilerService.analyze_profiler_stats(ticker, days)
+        if "error" in stats_result: return stats_result
+        
+        all_sessions = stats_result.get("sessions", [])
+        
+        # Filter for target session and outcome
+        target_sessions = [
+            s for s in all_sessions 
+            if s['session'] == session_name and 
+            (s['status'] == outcome_name or 
+             (outcome_name == "Long" and "Long" in s['status']) or 
+             (outcome_name == "Short" and "Short" in s['status']))
+        ]
+        
+        # Strict filter for exact outcome string match (e.g. "Short False") if passed
+        filtered = [s for s in target_sessions if s['status'] == outcome_name] if " " in outcome_name else target_sessions
+        
+        print(f"[DEBUG] Calculating Price Model for {ticker} {session_name} {outcome_name}")
+        
+        if not filtered:
+             return {"average": [], "extreme": [], "count": 0}
+
+        return ProfilerService.generate_composite_path(ticker, filtered, duration_hours=7.0)
+
+    @staticmethod
+    def generate_composite_path(ticker: str, sessions: List[Dict], duration_hours: float = 7.0) -> Dict:
+        """
+        Generic method to generate composite price paths from a list of sessions.
+        OPTIMIZED: Uses searchsorted and integer slicing for high performance.
+        """
+        start_time = time.time()
+        
+        # 1. Load 1-minute DataFrame (Cached)
+        df = ProfilerService._cache.get(ticker)
+        if df is None:
+            try:
+                from api.services.data_loader import DATA_DIR
+                file_path = DATA_DIR / f"{ticker}_1m.parquet"
+                if file_path.exists():
+                    df = pd.read_parquet(file_path)
+                    df = df.sort_index()
+                    if df.index.tz is None: df = df.tz_localize('UTC').tz_convert('US/Eastern')
+                    else: df = df.tz_convert('US/Eastern')
+                    ProfilerService._cache[ticker] = df
+            except Exception as e:
+                print(f"[DEBUG] Error loading parquet: {e}")
+                pass
+            
+        if df is None: return {"error": "Data not loaded"}
+
+        # 2. Prepare Timestamps & Validate
+        # Ensure timestamps match DataFrame timezone
+        tz = df.index.tz
+        
+        start_ts_list = []
+        for s in sessions:
+            ts = pd.Timestamp(s['start_time'])
+            # Ensure timezone matches
+            if ts.tz is None and tz is not None:
+                ts = ts.tz_localize(tz)
+            elif ts.tz is not None and tz is not None and ts.tz != tz:
+                ts = ts.tz_convert(tz)
+            start_ts_list.append(ts)
+        
+        # Bounds check
+        min_idx_ts = df.index[0]
+        max_idx_ts = df.index[-1]
+        
+        valid_sessions = []
+        valid_starts = []
+        
+        for i, ts in enumerate(start_ts_list):
+            end_t = ts + pd.Timedelta(hours=duration_hours)
+            if ts >= min_idx_ts and end_t <= max_idx_ts:
+                valid_sessions.append(sessions[i])
+                valid_starts.append(ts)
+                
+        if not valid_starts:
+             return {"average": [], "extreme": [], "count": 0}
+
+        # 3. Vectorized Lookup (Fast Slicing)
+        # Find integer positions for all start and end times
+        start_locs = df.index.searchsorted(valid_starts)
+        
+        end_ts_list = [ts + pd.Timedelta(hours=duration_hours) for ts in valid_starts]
+        end_locs = df.index.searchsorted(end_ts_list)
+        
+        relevant_chunks = []
+        
+        # 4. Extract Data Arrays
+        for i, (start_idx, end_idx) in enumerate(zip(start_locs, end_locs)):
+            # Bounds check for searchsorted results
+            if start_idx >= len(df) or end_idx > len(df): continue
+            if start_idx >= end_idx: continue # invalid range
+
+            # Slice using integer location (FAST)
+            chunk = df.iloc[start_idx:end_idx]
+            if chunk.empty: continue
+            
+            sess = valid_sessions[i]
+            sess_open = sess['open']
+            if sess_open <= 0: continue
+            
+            # Normalize execution
+            base_time = chunk.index[0]
+            time_deltas = (chunk.index - base_time).total_seconds() / 60
+            
+            vals_high = chunk['high'].values
+            vals_low = chunk['low'].values
+            
+            norm_high = ((vals_high - sess_open) / sess_open) * 100
+            norm_low = ((vals_low - sess_open) / sess_open) * 100
+            
+            sub_df = pd.DataFrame({
+                'time_idx': time_deltas.astype(int),
+                'norm_high': norm_high,
+                'norm_low': norm_low
+            })
+            relevant_chunks.append(sub_df)
+
+        if not relevant_chunks:
+            return {"average": [], "extreme": [], "count": 0}
+
+        # 5. Concatenate and GroupBy (Stats Aggregation)
+        combined = pd.concat(relevant_chunks, ignore_index=True)
+        
+        # Group by minute offset and calculate median/extreme
+        stats = combined.groupby('time_idx').agg({
+            'norm_high': ['median', 'max'],
+            'norm_low':  ['median', 'min']
+        })
+        
+        # 6. Format Output
+        avg_path = []
+        ext_path = []
+        
+        # Using sorted index ensures time order
+        for time_idx in sorted(stats.index):
+            # Access using MultiIndex columns
+            row = stats.loc[time_idx]
+            
+            # ('col', 'stat') lookup
+            avg_h = row[('norm_high', 'median')]
+            max_h = row[('norm_high', 'max')]
+            avg_l = row[('norm_low', 'median')]
+            min_l = row[('norm_low', 'min')]
+            
+            avg_path.append({
+                "time_idx": int(time_idx),
+                "high": round(float(avg_h), 3),
+                "low": round(float(avg_l), 3)
+            })
+            
+            ext_path.append({
+                "time_idx": int(time_idx),
+                "high": round(float(max_h), 3),
+                "low": round(float(min_l), 3)
+            })
+            
+        print(f"[DEBUG] Composite Path Gen Time: {time.time() - start_time:.2f}s (Processed {len(valid_sessions)} sessions)")
+        return {
+            "average": avg_path,
+            "extreme": ext_path,
+            "count": len(sessions)
+        }
+    @staticmethod
+    def get_custom_price_model(ticker: str, target_session: str, dates: List[str]):
+        """
+        Generate price model for a specific list of dates and target session.
+        If target_session == 'Daily', creates synthetic full-day sessions (18:00->16:00).
+        """
+        # 1. Get Full History
+        stats = ProfilerService.analyze_profiler_stats(ticker, days=10000)
+        if "error" in stats:
+            return stats
+        
+        history = stats.get('sessions', [])
+        
+        # 2. Filter History
+        date_set = set(dates)
+        
+        if target_session == 'Daily':
+            matches = []
+            asia_map = {s['date']: s for s in history if s['session'] == 'Asia'}
+            
+            for d in dates:
+                if d in asia_map:
+                    asia = asia_map[d]
+                    # Start: Asia start (18:00 prev day)
+                    # Duration: ~22 hours (until 16:00 next day)
+                    # We rely on generate_composite_path to slice 7h usually, but here we want more?
+                    # generate_composite_path usually uses start_time and finds data.
+                    # We need to make sure generate_composite_path fetches enough data (it slices 7h by default?)
+                    # Wait, existing `get_price_model_data` sliced 7h. 
+                    # `generate_composite_path` takes `sessions` list.
+                    # It iterates and does `chunk = df.loc[start_ts : end_ts]`.
+                    # So we must set `end_time` correctly here.
+                    matches.append({
+                        'start_time': asia['start_time'], 
+                        'end_time': (pd.Timestamp(d) + pd.Timedelta(hours=16)).isoformat(), 
+                        'open': asia['open'],
+                        'session': 'Daily',
+                        'date': d
+                    })
+        else:
+            matches = [
+                s for s in history 
+                if s.get('session') == target_session and s.get('date') in date_set
+            ]
+        
+        if not matches:
+            return {"average": [], "extreme": [], "count": 0}
+            
+        print(f"[Profiling] Custom Model: Found {len(matches)} matching sessions for {target_session}")
+        
+        # 3. Generate Composite Path
+        return ProfilerService.generate_composite_path(ticker, matches)
