@@ -154,3 +154,66 @@ async def get_custom_price_model(
         raise HTTPException(status_code=404, detail=result["error"])
     return result
 
+# ============================================================================
+# NEW: Filter-Based Endpoints (Architecture Refactor)
+# ============================================================================
+
+@router.post("/stats/filtered-stats", tags=["Stats"])
+async def get_filtered_profiler_stats(
+    payload: dict = Body(...)
+):
+    """
+    Get pre-aggregated profiler stats using filter criteria.
+    Payload: {
+        "ticker": str,
+        "target_session": str,
+        "filters": { "Asia": "Short True", ... },
+        "broken_filters": { "Asia": "Broken", ... },
+        "intra_state": "Any"
+    }
+    Returns: matched_dates, count, distribution, range_stats
+    """
+    ticker = payload.get("ticker", "NQ1")
+    target_session = payload.get("target_session", "NY1")
+    filters = payload.get("filters", {})
+    broken_filters = payload.get("broken_filters", {})
+    intra_state = payload.get("intra_state", "Any")
+    
+    result = ProfilerService.get_filtered_stats(
+        ticker, target_session, filters, broken_filters, intra_state
+    )
+    
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.post("/stats/filtered-price-model", tags=["Stats"])
+async def get_filtered_price_model(
+    payload: dict = Body(...)
+):
+    """
+    Get Price Model using filter criteria instead of explicit date list.
+    Payload: {
+        "ticker": str,
+        "target_session": str (price model session, e.g. "Daily", "NY1"),
+        "filters": { "Asia": "Short True", ... },
+        "broken_filters": { "Asia": "Broken", ... },
+        "intra_state": "Any"
+    }
+    Returns: average path, extreme path, count
+    """
+    ticker = payload.get("ticker", "NQ1")
+    target_session = payload.get("target_session", "Daily")
+    filters = payload.get("filters", {})
+    broken_filters = payload.get("broken_filters", {})
+    intra_state = payload.get("intra_state", "Any")
+    
+    result = ProfilerService.get_filtered_price_model(
+        ticker, target_session, filters, broken_filters, intra_state
+    )
+    
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+

@@ -13,20 +13,24 @@ import { SessionAnalysisView } from './session-analysis-view';
 import { RangeDistribution } from './range-distribution';
 import { PriceModelChart } from './price-model-chart';
 import { DailyLevels } from './daily-levels';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
+const AVAILABLE_TICKERS = ['NQ1'] as const; // Extensible for future tickers
 
 interface ProfilerViewProps {
     ticker?: string;
 }
 
-export function ProfilerView({ ticker = "NQ1" }: ProfilerViewProps) {
+export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProps) {
     // 1. Global State
+    const [ticker, setTicker] = useState(initialTicker);
     const [targetSession, setTargetSession] = useState('NY1'); // "Context Target" for Wizard
     const [filters, setFilters] = useState<Record<string, string>>({});
     const [brokenFilters, setBrokenFilters] = useState<Record<string, string>>({});
     const [intraState, setIntraState] = useState('Any');
 
-    // 2. Data Fetching
-    const { data: profilerData, error } = useSWR('profilerStats', () => fetchProfilerStats(ticker, 10000));
+    // 2. Data Fetching (uses ticker state)
+    const { data: profilerData, error } = useSWR(`profilerStats-${ticker}`, () => fetchProfilerStats(ticker, 10000));
     const { levelTouches } = useLevelTouches(ticker);
 
     // 3. Filtering Logic (Hook)
@@ -56,7 +60,22 @@ export function ProfilerView({ ticker = "NQ1" }: ProfilerViewProps) {
     return (
         <div className="space-y-6 animate-in fade-in duration-500 pb-20">
             <div className="flex flex-col gap-4">
-                <h1 className="text-3xl font-bold tracking-tight">Market Profiler</h1>
+                <div className="flex items-center justify-between">
+                    <h1 className="text-3xl font-bold tracking-tight">Market Profiler</h1>
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">Ticker:</span>
+                        <Select value={ticker} onValueChange={setTicker}>
+                            <SelectTrigger className="w-[100px] h-8">
+                                <SelectValue placeholder="Select ticker" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {AVAILABLE_TICKERS.map(t => (
+                                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
 
                 {/* 1. Profiler Wizard (Controls Global Filters) */}
                 <ProfilerWizard
