@@ -464,6 +464,19 @@ class ProfilerService:
         avg_path = []
         ext_path = []
         
+        # Helper to format time
+        base_dt = None
+        if valid_sessions:
+            try:
+                # Parse start time from first session to get base hours/minutes
+                # Assumes all sessions start around same time (e.g. all 'Daily' or all 'NY1')
+                # Handle ISO format with timezone
+                from datetime import datetime, timedelta
+                s_ts = pd.Timestamp(valid_sessions[0]['start_time'])
+                base_dt = s_ts.replace(year=2000, month=1, day=1) # Normalize date
+            except:
+                pass
+
         # Using sorted index ensures time order
         for time_idx in sorted(stats.index):
             # Access using MultiIndex columns
@@ -475,14 +488,22 @@ class ProfilerService:
             avg_l = row[('norm_low', 'median')]
             min_l = row[('norm_low', 'min')]
             
+            # Calculate time string
+            time_str = ""
+            if base_dt:
+                curr_dt = base_dt + timedelta(minutes=int(time_idx))
+                time_str = curr_dt.strftime("%H:%M")
+
             avg_path.append({
                 "time_idx": int(time_idx),
+                "time": time_str,
                 "high": round(float(avg_h), 3),
                 "low": round(float(avg_l), 3)
             })
             
             ext_path.append({
                 "time_idx": int(time_idx),
+                "time": time_str,
                 "high": round(float(max_h), 3),
                 "low": round(float(min_l), 3)
             })
