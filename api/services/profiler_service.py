@@ -1,16 +1,21 @@
 
+
 import pandas as pd
 import numpy as np
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 from typing import List, Dict, Optional
 from api.services.session_service import SessionService
 import time
 from pathlib import Path
+from api.services.data_loader import DATA_DIR
 
 class ProfilerService:
     _cache = {}
     _json_cache = {} # Cache the loaded JSON data too
+    _price_model_cache = {}
+    _level_touches_cache = {}
+    _daily_hod_lod_cache = {}
 
     @staticmethod
     def clear_cache(ticker: str = None):
@@ -18,9 +23,19 @@ class ProfilerService:
         if ticker:
             ProfilerService._cache.pop(ticker, None)
             ProfilerService._json_cache.pop(ticker, None)
+            ProfilerService._level_touches_cache.pop(ticker, None)
+            ProfilerService._daily_hod_lod_cache.pop(ticker, None)
+            
+            # Clear price model cache for this ticker key prefix
+            keys = [k for k in ProfilerService._price_model_cache.keys() if k[0] == ticker]
+            for k in keys:
+                ProfilerService._price_model_cache.pop(k, None)
         else:
             ProfilerService._cache.clear()
             ProfilerService._json_cache.clear()
+            ProfilerService._price_model_cache.clear()
+            ProfilerService._level_touches_cache.clear()
+            ProfilerService._daily_hod_lod_cache.clear()
         return {"cleared": ticker or "all"}
 
 
@@ -419,48 +434,64 @@ class ProfilerService:
         end_ts_list = [ts + pd.Timedelta(hours=duration_hours) for ts in valid_starts]
         end_locs = df.index.searchsorted(end_ts_list)
         
-        relevant_chunks = []
+        # 4. Extract Data Arrays (Optimized: NumPy)
+        all_time_idxs = []
+        all_norm_highs = []
+        all_norm_lows = []
         
-        # 4. Extract Data Arrays
+        # Pre-fetch numpy arrays (Zero Copy views)
+        np_high = df['high'].values
+        np_low = df['low'].values
+        np_index = df.index.values
+
         for i, (start_idx, end_idx) in enumerate(zip(start_locs, end_locs)):
             # Bounds check for searchsorted results
-            if start_idx >= len(df) or end_idx > len(df): continue
-            if start_idx >= end_idx: continue # invalid range
-
-            # Slice using integer location (FAST)
-            chunk = df.iloc[start_idx:end_idx]
-            if chunk.empty: continue
-            
-            sess = valid_sessions[i]
-            sess_open = sess['open']
+            if start_idx >= len(df) or end_idx > len(df) or start_idx >= end_idx:
+                continue
+                
+            sess_open = valid_sessions[i]['open']
             if sess_open <= 0: continue
             
-            # Normalize execution
-            base_time = chunk.index[0]
-            time_deltas = (chunk.index - base_time).total_seconds() / 60
+            # Slicing numpy array is FAST
+            chunk_ts = np_index[start_idx:end_idx]
+            if len(chunk_ts) == 0: continue
+            base_ts = chunk_ts[0]
             
-            vals_high = chunk['high'].values
-            vals_low = chunk['low'].values
+            # Vectorized time delta calculation
+            # Time delta in minutes
+            time_deltas_m = (chunk_ts - base_ts).astype('timedelta64[m]').astype(int)
             
-            norm_high = ((vals_high - sess_open) / sess_open) * 100
-            norm_low = ((vals_low - sess_open) / sess_open) * 100
+            # Vectorized Price Normalization
+            chunk_high = np_high[start_idx:end_idx]
+            chunk_low = np_low[start_idx:end_idx]
             
-            # Bucketing Logic: Map raw minute delta to bucket index (minute)
-            # e.g. for 5-min bucket: 0,1,2,3,4 -> 0; 5,6,7,8,9 -> 5
-            bucketed_time = (time_deltas // bucket_minutes) * bucket_minutes
+            norm_high = ((chunk_high - sess_open) / sess_open) * 100
+            norm_low = ((chunk_low - sess_open) / sess_open) * 100
             
-            sub_df = pd.DataFrame({
-                'time_idx': bucketed_time.astype(int),
-                'norm_high': norm_high,
-                'norm_low': norm_low
-            })
-            relevant_chunks.append(sub_df)
+            # Bucketing Logic
+            if bucket_minutes > 1:
+                time_idxs = (time_deltas_m // bucket_minutes) * bucket_minutes
+            else:
+                time_idxs = time_deltas_m
+                
+            all_time_idxs.append(time_idxs)
+            all_norm_highs.append(norm_high)
+            all_norm_lows.append(norm_low)
 
-        if not relevant_chunks:
+        if not all_time_idxs:
             return {"median": [], "extreme": [], "count": 0}
 
-        # 5. Concatenate and GroupBy (Stats Aggregation)
-        combined = pd.concat(relevant_chunks, ignore_index=True)
+        # 5. Concatenate (Fast)
+        cat_time = np.concatenate(all_time_idxs)
+        cat_high = np.concatenate(all_norm_highs)
+        cat_low = np.concatenate(all_norm_lows)
+        
+        # Create SINGLE DataFrame for GroupBy
+        combined = pd.DataFrame({
+            'time_idx': cat_time,
+            'norm_high': cat_high,
+            'norm_low': cat_low
+        })
         
         # Group by bucketed minute offset and calculate median/extreme
         stats = combined.groupby('time_idx').agg({
@@ -702,7 +733,9 @@ class ProfilerService:
         Returns matched dates, distribution, and aggregated statistics.
         """
         # 1. Load all sessions
+        # 1. Load all sessions
         stats = ProfilerService.analyze_profiler_stats(ticker, days=10000)
+        
         if "error" in stats:
             return stats
         
@@ -774,6 +807,19 @@ class ProfilerService:
         """
         Generate price model using filter criteria instead of explicit date list.
         """
+        # Create cache key
+        cache_key = (
+            ticker, 
+            target_session, 
+            json.dumps(filters, sort_keys=True) if filters else "", 
+            json.dumps(broken_filters, sort_keys=True) if broken_filters else "", 
+            intra_state, 
+            bucket_minutes
+        )
+        
+        if cache_key in ProfilerService._price_model_cache:
+            return ProfilerService._price_model_cache[cache_key]
+
         # 1. Get filtered stats (which includes matched dates)
         stats = ProfilerService.get_filtered_stats(
             ticker, target_session, filters, broken_filters, intra_state
@@ -782,10 +828,92 @@ class ProfilerService:
         if "error" in stats:
             return stats
         
-        matched_dates = stats.get("matched_dates", [])
+        # 2. Extract matched sessions or dates
+        # get_filtered_stats returns 'sessions' (filtered list)
+        matched_sessions = stats.get('sessions', [])
         
-        if not matched_dates:
-            return {"median": [], "extreme": [], "count": 0}
+        # 3. Generate Composite Path
+        # Determine duration
+        duration = 7.0
+        if target_session == 'Daily':
+            duration = 22.0
+        elif target_session == 'Asia':
+            duration = 8.0
+        elif target_session == 'London':
+            duration = 6.0
+            
+        result = ProfilerService.generate_composite_path(
+            ticker, matched_sessions, duration_hours=duration, bucket_minutes=bucket_minutes
+        )
         
-        # 2. Use existing get_custom_price_model with the matched dates
-        return ProfilerService.get_custom_price_model(ticker, target_session, matched_dates, bucket_minutes=bucket_minutes)
+        # Cache Result
+        ProfilerService._price_model_cache[cache_key] = result
+        return result
+
+    @staticmethod
+    def get_daily_hod_lod(ticker: str) -> Dict:
+        """
+        Get pre-computed true daily HOD/LOD times.
+        Buffered in memory to avoid repeated disk I/O (1MB+).
+        """
+        if ticker in ProfilerService._daily_hod_lod_cache:
+            return ProfilerService._daily_hod_lod_cache[ticker]
+            
+        json_path = DATA_DIR / f"{ticker}_daily_hod_lod.json"
+        
+        if not json_path.exists():
+            return {"error": f"Daily HOD/LOD data for {ticker} not found."}
+        
+        try:
+            with open(json_path, 'r') as f:
+                data = json.load(f)
+            ProfilerService._daily_hod_lod_cache[ticker] = data
+            return data
+        except Exception as e:
+            return {"error": str(e)}
+
+    @staticmethod
+    def get_level_touches(ticker: str) -> Dict:
+        """
+        Get pre-computed reference level touch data.
+        Buffered in memory to avoid repeated disk I/O (6MB+).
+        """
+        if ticker in ProfilerService._level_touches_cache:
+            return ProfilerService._level_touches_cache[ticker]
+            
+        json_path = DATA_DIR / f"{ticker}_level_touches.json"
+        
+        if not json_path.exists():
+            return {"error": f"Level touch data for {ticker} not found."}
+        
+        try:
+            with open(json_path, 'r') as f:
+                data = json.load(f)
+            ProfilerService._level_touches_cache[ticker] = data
+            return data
+        except Exception as e:
+            return {"error": str(e)}
+
+    @staticmethod
+    def prewarm_cache(ticker: str = "NQ1"):
+        """
+        Run heavy calculations on startup to populate cache.
+        """
+        print(f"[Pre-Warm] Warming cache for {ticker}...")
+        try:
+            # 1. Load Static Files
+            ProfilerService.get_daily_hod_lod(ticker)
+            ProfilerService.get_level_touches(ticker)
+            
+            # 2. Run Heavy Price Model Calculation (Daily)
+            # This triggers the 2.5s compute and caches it
+            ProfilerService.get_filtered_price_model(
+                ticker=ticker,
+                target_session="Daily",
+                filters={},
+                intra_state="Any",
+                bucket_minutes=5
+            )
+            print(f"[Pre-Warm] Successfully warmed cache for {ticker}")
+        except Exception as e:
+            print(f"[Pre-Warm] Failed to warm cache: {e}")

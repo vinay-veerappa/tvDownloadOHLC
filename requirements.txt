@@ -1,8 +1,12 @@
 git+https://github.com/rongardF/tvdatafeed.git
 pandas
 numpy
+talib
 selenium
 webdriver-manager
 fastapi
 uvicorn
 pyarrow
+o r j s o n 
+ 
+ 

@@ -40,6 +40,15 @@ from api.routers import profiler
 app.include_router(profiler.router)
 
 
+@app.on_event("startup")
+async def startup_event():
+    """Run pre-warming logic on startup."""
+    print("Pre-warming cache...")
+    from api.services.profiler_service import ProfilerService
+    # Warm up for default ticker NQ1
+    ProfilerService.prewarm_cache("NQ1")
+
+
 @app.get("/")
 async def root():
     return {"message": "Trading Indicators API", "version": "1.0.0"}
