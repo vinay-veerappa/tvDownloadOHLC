@@ -206,8 +206,9 @@ async def get_custom_price_model(
     ticker = payload.get("ticker", "NQ1")
     target = payload.get("target_session")
     dates = payload.get("dates", [])
+    bucket_minutes = payload.get("bucket_minutes", 1)
     
-    result = ProfilerService.get_custom_price_model(ticker, target, dates)
+    result = ProfilerService.get_custom_price_model(ticker, target, dates, bucket_minutes)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result
@@ -266,9 +267,10 @@ async def get_filtered_price_model(
     filters = payload.get("filters", {})
     broken_filters = payload.get("broken_filters", {})
     intra_state = payload.get("intra_state", "Any")
+    bucket_minutes = payload.get("bucket_minutes", 1)
     
     result = ProfilerService.get_filtered_price_model(
-        ticker, target_session, filters, broken_filters, intra_state
+        ticker, target_session, filters, broken_filters, intra_state, bucket_minutes
     )
     
     if "error" in result:

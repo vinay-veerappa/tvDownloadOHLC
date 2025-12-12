@@ -208,6 +208,7 @@ export interface FilterPayload {
     filters: Record<string, string>;
     broken_filters: Record<string, string>;
     intra_state: string;
+    bucket_minutes?: number; // Optional bucket size (1, 5, 15)
 }
 
 export interface FilteredStatsResponse {
@@ -263,7 +264,8 @@ export async function fetchFilteredPriceModel(payload: FilterPayload): Promise<P
             target_session: payload.target_session,
             filters: payload.filters,
             broken_filters: payload.broken_filters,
-            intra_state: payload.intra_state
+            intra_state: payload.intra_state,
+            bucket_minutes: payload.bucket_minutes
         })
     });
     if (!res.ok) {

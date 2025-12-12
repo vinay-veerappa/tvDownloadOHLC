@@ -13,7 +13,8 @@ import {
     YAxis,
     CartesianGrid,
     Tooltip,
-    ReferenceLine
+    ReferenceLine,
+    Brush
 } from 'recharts';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
@@ -38,6 +39,9 @@ export function PriceModelChart({
     intraState,
     height = 300
 }: PriceModelChartProps) {
+    // State for aggregation interval
+    const [bucketMinutes, setBucketMinutes] = useState<number>(5);
+
     // Header Info State (Hover)
     const [hoverData, setHoverData] = useState<{
         time: string;
@@ -53,7 +57,8 @@ export function PriceModelChart({
         targetSession,
         filters,
         brokenFilters,
-        intraState
+        intraState,
+        bucketMinutes
     });
 
     // Use SWR for caching and deduplication
@@ -65,7 +70,8 @@ export function PriceModelChart({
                 target_session: session,  // Price model session (e.g. "Daily")
                 filters,
                 broken_filters: brokenFilters,
-                intra_state: intraState
+                intra_state: intraState,
+                bucket_minutes: bucketMinutes
             };
             return fetchFilteredPriceModel(payload);
         },
@@ -150,7 +156,7 @@ export function PriceModelChart({
     return (
         <Card className="border border-border/50 shadow-none">
             <CardContent className="p-0">
-                <div className="pt-2 px-4">
+                <div className="pt-2 px-4 flex justify-between items-start">
                     <ChartHeaderInfo
                         title={`${session} Price Model (Median)`}
                         subtitle={`${data.count} Sessions`}
@@ -158,6 +164,22 @@ export function PriceModelChart({
                             { label: 'Hover chart for details', value: '' }
                         ]}
                     />
+
+                    {/* Interval Selector */}
+                    <div className="flex space-x-1 bg-secondary/30 rounded p-1 ml-auto">
+                        {[1, 5, 15].map((mins) => (
+                            <button
+                                key={mins}
+                                onClick={() => setBucketMinutes(mins)}
+                                className={`text-xs px-2 py-0.5 rounded transition-colors ${bucketMinutes === mins
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'hover:bg-muted text-muted-foreground'
+                                    }`}
+                            >
+                                {mins}m
+                            </button>
+                        ))}
+                    </div>
                 </div>
                 <div style={{ height: height - 40, width: '100%', minWidth: 0, minHeight: 0 }}>
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
@@ -171,18 +193,18 @@ export function PriceModelChart({
                             <XAxis
                                 dataKey="time_idx"
                                 tickFormatter={formatXAxis}
-                                tick={{ fontSize: 10, fill: '#6B7280' }}
+                                tick={{ fontSize: 12, fill: '#9CA3AF' }}
                                 axisLine={false}
                                 tickLine={false}
-                                minTickGap={30}
+                                minTickGap={40}
                             />
                             <YAxis
-                                tick={{ fontSize: 10, fill: '#6B7280' }}
+                                tick={{ fontSize: 12, fill: '#9CA3AF' }}
                                 axisLine={false}
                                 tickLine={false}
                                 domain={['auto', 'auto']}
                                 tickFormatter={(val) => `${val.toFixed(2)}%`}
-                                width={45}
+                                width={50}
                             />
                             {/* Grey line at 0 */}
                             <ReferenceLine y={0} stroke="#9CA3AF" strokeDasharray="3 3" />
@@ -196,6 +218,8 @@ export function PriceModelChart({
                                 stroke="#10b981"
                                 strokeWidth={2}
                                 dot={false}
+                                connectNulls={true}
+                                name="Median High"
                                 isAnimationActive={false}
                             />
                             <Line
@@ -204,7 +228,17 @@ export function PriceModelChart({
                                 stroke="#ef4444"
                                 strokeWidth={2}
                                 dot={false}
+                                connectNulls={true}
+                                name="Median Low"
                                 isAnimationActive={false}
+                            />
+                            <Brush
+                                dataKey="time_idx"
+                                height={30}
+                                stroke="#8884d8"
+                                tickFormatter={formatXAxis}
+                                travellerWidth={10}
+                                alwaysShowText={false}
                             />
                         </LineChart>
                     </ResponsiveContainer>

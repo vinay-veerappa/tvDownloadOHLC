@@ -46,7 +46,7 @@ function mode(arr: number[], bucketSize: number = 0.1, referenceDist?: Record<st
 export function RangeDistribution({ sessions, forcedSession }: Props) {
     const [selectedSession, setSelectedSession] = useState<string>(forcedSession || 'daily');
     const { referenceData } = useReferenceData();  // Use shared hook (SWR deduplicates)
-    const [showReference, setShowReference] = useState(true);
+    const [showReference, setShowReference] = useState(false);
 
     useEffect(() => {
         if (forcedSession) setSelectedSession(forcedSession);
@@ -192,31 +192,20 @@ export function RangeDistribution({ sessions, forcedSession }: Props) {
         <div className="space-y-4">
             <div className="flex items-center justify-between">
                 <h2 className="text-xl font-semibold">Price Range Distribution</h2>
-                <div className="flex items-center gap-4">
-                    {selectedSession === 'daily' && referenceData && (
-                        <div className="flex items-center space-x-2">
-                            <Switch
-                                id="ref-mode"
-                                checked={showReference}
-                                onCheckedChange={setShowReference}
-                            />
-                            <Label htmlFor="ref-mode" className="text-sm font-medium">Ref Overlay</Label>
-                        </div>
-                    )}
-                    <Select value={selectedSession} onValueChange={setSelectedSession}>
-                        <SelectTrigger className="w-[120px]">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="daily">Full Day</SelectItem>
-                            <SelectItem value="Asia">Asia</SelectItem>
-                            <SelectItem value="London">London</SelectItem>
-                            <SelectItem value="NY1">NY1</SelectItem>
-                            <SelectItem value="NY2">NY2</SelectItem>
-                        </SelectContent>
-                    </Select>
-                </div>
+                <Select value={selectedSession} onValueChange={setSelectedSession}>
+                    <SelectTrigger className="w-[120px]">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="daily">Full Day</SelectItem>
+                        <SelectItem value="Asia">Asia</SelectItem>
+                        <SelectItem value="London">London</SelectItem>
+                        <SelectItem value="NY1">NY1</SelectItem>
+                        <SelectItem value="NY2">NY2</SelectItem>
+                    </SelectContent>
+                </Select>
             </div>
+
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* High Distribution */}
@@ -345,6 +334,6 @@ export function RangeDistribution({ sessions, forcedSession }: Props) {
                     </CardContent>
                 </Card>
             </div>
-        </div>
+        </div >
     );
 }

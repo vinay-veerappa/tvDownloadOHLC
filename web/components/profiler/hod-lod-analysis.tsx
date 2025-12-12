@@ -4,7 +4,7 @@
 import { useMemo, useState } from 'react';
 import { ProfilerSession, DailyHodLodResponse } from '@/lib/api/profiler';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Brush } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TrendingUp, TrendingDown } from 'lucide-react';
@@ -48,7 +48,7 @@ function mode(arr: string[]): string {
     return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
 }
 
-function HodLodChart({ sessions, dailyHodLod }: Props) {
+export function HodLodChart({ sessions, dailyHodLod }: Props) {
     const [granularity, setGranularity] = useState<number>(15);
 
     // Get unique dates from filtered sessions
@@ -214,14 +214,14 @@ function HodLodChart({ sessions, dailyHodLod }: Props) {
                     <ComposedChart data={timeHistogramData} margin={{ top: 10, right: 10, bottom: 30, left: 10 }}>
                         <XAxis
                             dataKey="time"
-                            fontSize={9}
-                            interval={granularity <= 15 ? 3 : 1}
+                            fontSize={12} // Increased from 9 to 12
+                            interval={granularity <= 15 ? 5 : 1} // Adjusted interval for readability
                             angle={-45}
                             textAnchor="end"
-                            height={50}
+                            height={60} // Increased height for rotated text
                         />
                         <YAxis
-                            fontSize={10}
+                            fontSize={12} // Increased from 10 to 12
                             tickFormatter={(v) => `${Math.abs(v).toFixed(0)}%`}
                             domain={['auto', 'auto']}
                         />
@@ -246,6 +246,13 @@ function HodLodChart({ sessions, dailyHodLod }: Props) {
                         <ReferenceLine y={0} stroke="hsl(var(--border))" />
                         <Bar dataKey="hodPercent" name="HOD" fill="#22c55e" radius={[2, 2, 0, 0]} />
                         <Bar dataKey="lodPercent" name="LOD" fill="#ef4444" radius={[0, 0, 2, 2]} />
+                        <Brush
+                            dataKey="time"
+                            height={30}
+                            stroke="#8884d8"
+                            travellerWidth={10}
+                            alwaysShowText={false}
+                        />
                     </ComposedChart>
                 </ResponsiveContainer>
             </CardContent>
@@ -253,7 +260,7 @@ function HodLodChart({ sessions, dailyHodLod }: Props) {
     );
 }
 
-function SessionStats({ sessions }: Props) {
+export function SessionStats({ sessions }: { sessions: ProfilerSession[] }) {
     // Session-based stats (which session makes HOD/LOD)
     const sessionStats = useMemo(() => {
         const byDate: Record<string, ProfilerSession[]> = {};

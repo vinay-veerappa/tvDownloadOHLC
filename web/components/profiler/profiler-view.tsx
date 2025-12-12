@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import { useServerFilteredStats } from '@/hooks/use-server-filtered-stats';
 import { useLevelTouches } from '@/hooks/use-level-touches';
+import { useDailyHodLod } from '@/hooks/use-daily-hod-lod';
 import { SESSION_ORDER } from '@/hooks/use-profiler-filter';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,7 +12,7 @@ import { ActiveFiltersRow } from './active-filters-row';
 import { SessionAnalysisView } from './session-analysis-view';
 import { RangeDistribution } from './range-distribution';
 import { PriceModelChart } from './price-model-chart';
-import { HodLodAnalysis } from './hod-lod-analysis';
+import { HodLodAnalysis, HodLodChart, SessionStats } from './hod-lod-analysis';
 import { DailyLevels } from './daily-levels';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -51,8 +52,9 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
         intraState
     });
 
-    // 4. Other Data Fetching (level touches only - sessions now come from filter API)
+    // 4. Other Data Fetching
     const { levelTouches } = useLevelTouches(ticker);
+    const { dailyHodLod } = useDailyHodLod(ticker);
 
     if (filterError) return <div className="p-8 text-center text-red-500">Failed to load profiler data.</div>;
     if (isFilterLoading) return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
@@ -121,13 +123,22 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                 {/* --- Tab 1: Daily Overview --- */}
                 <TabsContent value="daily" className="mt-6 space-y-8">
 
-                    {/* A. Global Price Range Distribution */}
+                    {/* 1. HOD/LOD Time Analysis (Moved to Top) */}
+                    <section>
+                        <h2 className="text-xl font-semibold mb-4">HOD/LOD Time Analysis</h2>
+                        <HodLodChart
+                            sessions={filteredSessions}
+                            dailyHodLod={dailyHodLod}
+                        />
+                    </section>
+
+                    {/* 2. Global Price Range Distribution */}
                     <section>
                         <h2 className="text-xl font-semibold mb-4">Global Price Range Distribution</h2>
                         <RangeDistribution sessions={filteredSessions} forcedSession="daily" />
                     </section>
 
-                    {/* B. Daily Price Model (Median, Full Day) */}
+                    {/* 3. Daily Price Model (Median, Full Day) */}
                     <section>
                         <h2 className="text-xl font-semibold mb-4">Daily Price Model (Median)</h2>
                         <PriceModelChart
@@ -141,15 +152,7 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                         />
                     </section>
 
-                    {/* C. HOD/LOD Time Analysis */}
-                    <section>
-                        <h2 className="text-xl font-semibold mb-4">HOD/LOD Time Analysis</h2>
-                        <HodLodAnalysis
-                            sessions={filteredSessions}
-                        />
-                    </section>
-
-                    {/* D. Daily Levels */}
+                    {/* 4. Daily Levels Analysis */}
                     <section>
                         <h2 className="text-xl font-semibold mb-4">Daily Levels Analysis</h2>
                         <DailyLevels
@@ -157,6 +160,12 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                             filteredDates={filteredDates}
                         // No limitLevels = Show all
                         />
+                    </section>
+
+                    {/* 5. Session Contribution Stats (Moved to Bottom) */}
+                    <section>
+                        <h2 className="text-xl font-semibold mb-4">Session HOD/LOD Contribution</h2>
+                        <SessionStats sessions={filteredSessions} />
                     </section>
                 </TabsContent>
 
