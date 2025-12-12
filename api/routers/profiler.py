@@ -51,7 +51,7 @@ async def get_profiler_filtered_price_model(
         "broken_filters": { "Asia": "Broken", ... },
         "intra_state": "Any"
     }
-    Returns: average path, extreme path, count
+    Returns: median path, extreme path, count
     """
     target_session = payload.get("target_session", "Daily")
     filters = payload.get("filters", {})

@@ -348,7 +348,7 @@ class ProfilerService:
         print(f"[DEBUG] Calculating Price Model for {ticker} {session_name} {outcome_name}")
         
         if not filtered:
-             return {"average": [], "extreme": [], "count": 0}
+             return {"median": [], "extreme": [], "count": 0}
 
         return ProfilerService.generate_composite_path(ticker, filtered, duration_hours=7.0)
 
@@ -410,7 +410,7 @@ class ProfilerService:
                 valid_starts.append(ts)
                 
         if not valid_starts:
-             return {"average": [], "extreme": [], "count": 0}
+             return {"median": [], "extreme": [], "count": 0}
 
         # 3. Vectorized Lookup (Fast Slicing)
         # Find integer positions for all start and end times
@@ -457,7 +457,7 @@ class ProfilerService:
             relevant_chunks.append(sub_df)
 
         if not relevant_chunks:
-            return {"average": [], "extreme": [], "count": 0}
+            return {"median": [], "extreme": [], "count": 0}
 
         # 5. Concatenate and GroupBy (Stats Aggregation)
         combined = pd.concat(relevant_chunks, ignore_index=True)
@@ -518,7 +518,7 @@ class ProfilerService:
             
         print(f"[DEBUG] Composite Path Gen Time: {time.time() - start_time:.2f}s (Processed {len(valid_sessions)} sessions)")
         return {
-            "average": avg_path,
+            "median": avg_path,
             "extreme": ext_path,
             "count": len(sessions)
         }
@@ -568,7 +568,7 @@ class ProfilerService:
             ]
         
         if not matches:
-            return {"average": [], "extreme": [], "count": 0}
+            return {"median": [], "extreme": [], "count": 0}
             
         print(f"[Profiling] Custom Model: Found {len(matches)} matching sessions for {target_session}")
         
@@ -785,7 +785,7 @@ class ProfilerService:
         matched_dates = stats.get("matched_dates", [])
         
         if not matched_dates:
-            return {"average": [], "extreme": [], "count": 0}
+            return {"median": [], "extreme": [], "count": 0}
         
         # 2. Use existing get_custom_price_model with the matched dates
         return ProfilerService.get_custom_price_model(ticker, target_session, matched_dates, bucket_minutes=bucket_minutes)

@@ -82,8 +82,8 @@ export function PriceModelChart({
     );
 
     const chartData = useMemo(() => {
-        if (!data || !data.average) return [];
-        return data.average.map(d => ({
+        if (!data || !data.median) return [];
+        return data.median.map(d => ({
             ...d,
             // Format time for X-axis display if needed? 
             // Or use time_idx as minutes
@@ -92,21 +92,27 @@ export function PriceModelChart({
 
     // Format time for display (using backend 'time' string if available)
     const formatXAxis = (tickItem: any, index: number) => {
-        // If data has explicit time string, find it
-        if (chartData[index] && chartData[index].time) {
-            return chartData[index].time;
-        }
-        // Fallback to tickItem if string
-        if (typeof tickItem === 'string' && tickItem.includes(':')) return tickItem;
+        // tickItem is the value of time_idx (e.g., 0, 5, 10...)
+        const val = Number(tickItem);
 
-        // Final fallback: Use index/minute math
+        // 1. Try to find the exact data point matching this time_idx
+        const match = chartData.find(d => d.time_idx === val);
+        if (match && match.time) {
+            return match.time;
+        }
+
+        // 2. Fallback to calculation
         let startHour = 18;
         let startMin = 0;
-        if (session === 'London') startHour = 3;
+        if (session === 'London') startHour = 3; // London starts 02:30 or 03:00? Backend says 02:30.
+        // Let's use backend strings primarily to avoid this guessing game.
+
+        if (session === 'London') { startHour = 2; startMin = 30; }
         if (session === 'NY1') { startHour = 7; startMin = 30; }
         if (session === 'NY2') { startHour = 11; startMin = 30; }
+        if (session === 'Daily') { startHour = 18; startMin = 0; }
 
-        const totalMinutes = startHour * 60 + startMin + Number(tickItem);
+        const totalMinutes = startHour * 60 + startMin + val;
         const h = Math.floor(totalMinutes / 60) % 24;
         const m = totalMinutes % 60;
         return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;

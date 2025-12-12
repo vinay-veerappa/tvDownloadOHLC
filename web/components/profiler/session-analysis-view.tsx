@@ -89,15 +89,15 @@ export function SessionAnalysisView({ session, sessions, filteredDates, ticker, 
             {/* Row 3: Price Model (Median) */}
             <section>
                 <h3 className="text-lg font-semibold mb-3">Median Price Model</h3>
-                <div className="h-[350px] flex items-center justify-center border rounded-md text-muted-foreground">
-                    Price Model chart temporarily disabled for debugging.
-                </div>
-                {/* <PriceModelChart
+                <PriceModelChart
                     ticker={ticker}
                     session={session}
-                    filteredDates={filteredDates}
+                    targetSession={session} // Use session as target in this view
+                    filters={{}}
+                    brokenFilters={{}}
+                    intraState="Any"
                     height={350}
-                /> */}
+                />
             </section>
 
             {/* Row 4: Outcome Analysis (Grid) */}
