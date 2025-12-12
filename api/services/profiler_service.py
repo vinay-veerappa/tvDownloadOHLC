@@ -623,10 +623,12 @@ class ProfilerService:
                         break
                     
                     is_broken = sess.get('broken', False)
-                    if required_broken == 'Broken' and not is_broken:
+                    # "Broken" or "Yes" -> must be broken
+                    if required_broken in ['Broken', 'Yes'] and not is_broken:
                         matches_all = False
                         break
-                    elif required_broken == 'Not Broken' and is_broken:
+                    # "Not Broken" or "No" -> must NOT be broken
+                    elif required_broken in ['Not Broken', 'No'] and is_broken:
                         matches_all = False
                         break
             
