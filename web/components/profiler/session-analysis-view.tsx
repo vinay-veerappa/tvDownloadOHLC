@@ -5,7 +5,7 @@ import { ProfilerSession, LevelTouchesResponse } from '@/lib/api/profiler';
 import { RangeDistribution } from './range-distribution';
 import { PriceModelChart } from './price-model-chart';
 import { OutcomePanel } from './outcome-panel';
-import { HodLodAnalysis } from './hod-lod-analysis';
+import { HodLodChart, SessionStats } from './hod-lod-analysis';
 import { DailyLevels } from './daily-levels';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
@@ -15,6 +15,10 @@ interface SessionAnalysisViewProps {
     filteredDates: Set<string>;
     ticker: string;
     levelTouches: LevelTouchesResponse | null;  // Passed from parent to avoid duplicate fetch
+    // [NEW] Filter Props for PriceModelChart
+    filters: Record<string, string>;
+    brokenFilters: Record<string, string>;
+    intraState: string;
 }
 
 const OUTCOMES = ['Long True', 'Short True', 'Long False', 'Short False'];
@@ -27,7 +31,7 @@ const SESSION_LEVELS: Record<string, string[]> = {
     'NY2': ['ny1_mid', 'ny2_mid', 'london_mid']
 };
 
-export function SessionAnalysisView({ session, sessions, filteredDates, ticker, levelTouches }: SessionAnalysisViewProps) {
+export function SessionAnalysisView({ session, sessions, filteredDates, ticker, levelTouches, filters, brokenFilters, intraState }: SessionAnalysisViewProps) {
 
     // Filter sessions to strictly this session context
     const sessionData = useMemo(() => {
@@ -74,10 +78,9 @@ export function SessionAnalysisView({ session, sessions, filteredDates, ticker, 
             {/* Row 1: HOD/LOD Analysis (Moved to Top) */}
             <section>
                 <h3 className="text-lg font-semibold mb-3">HOD/LOD Analysis</h3>
-                <HodLodAnalysis
+                <HodLodChart
                     sessions={sessionData}
-                    ticker={ticker}
-                    selectedSession={session} // Force session context
+                // selectedSession={session} // No longer needed as we use the component directly
                 />
             </section>
 
@@ -93,9 +96,9 @@ export function SessionAnalysisView({ session, sessions, filteredDates, ticker, 
                     ticker={ticker}
                     session={session}
                     targetSession={session} // Use session as target in this view
-                    filters={{}}
-                    brokenFilters={{}}
-                    intraState="Any"
+                    filters={filters}       // Pass global filters
+                    brokenFilters={brokenFilters}
+                    intraState={intraState}
                     height={350}
                 />
             </section>
@@ -132,6 +135,13 @@ export function SessionAnalysisView({ session, sessions, filteredDates, ticker, 
                     filteredDates={filteredDates}
                     limitLevels={SESSION_LEVELS[session]}
                 />
+            </section>
+
+
+            {/* Row 6: Session Contribution (Bottom) */}
+            <section>
+                <h3 className="text-lg font-semibold mb-3">Session HOD/LOD Contribution</h3>
+                <SessionStats sessions={sessionData} />
             </section>
 
         </div>

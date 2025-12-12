@@ -177,6 +177,9 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                         filteredDates={filteredDates}
                         ticker="NQ1"
                         levelTouches={levelTouches}
+                        filters={filters}
+                        brokenFilters={brokenFilters}
+                        intraState={intraState}
                     />
                 </TabsContent>
 
@@ -187,6 +190,9 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                         filteredDates={filteredDates}
                         ticker="NQ1"
                         levelTouches={levelTouches}
+                        filters={filters}
+                        brokenFilters={brokenFilters}
+                        intraState={intraState}
                     />
                 </TabsContent>
 
@@ -197,6 +203,9 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                         filteredDates={filteredDates}
                         ticker="NQ1"
                         levelTouches={levelTouches}
+                        filters={filters}
+                        brokenFilters={brokenFilters}
+                        intraState={intraState}
                     />
                 </TabsContent>
 
@@ -207,6 +216,9 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                         filteredDates={filteredDates}
                         ticker="NQ1"
                         levelTouches={levelTouches}
+                        filters={filters}
+                        brokenFilters={brokenFilters}
+                        intraState={intraState}
                     />
                 </TabsContent>
             </Tabs>
