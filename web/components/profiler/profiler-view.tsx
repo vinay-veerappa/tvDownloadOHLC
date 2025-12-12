@@ -57,7 +57,9 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     const { dailyHodLod } = useDailyHodLod(ticker);
 
     if (filterError) return <div className="p-8 text-center text-red-500">Failed to load profiler data.</div>;
-    if (isFilterLoading) return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
+    if (filterError) return <div className="p-8 text-center text-red-500">Failed to load profiler data.</div>;
+    // Removed blocking loading state to allow "Stale-While-Revalidate" UI
+    // if (isFilterLoading) return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
 
     // Reset Handlers
     const handleReset = () => {
@@ -67,7 +69,7 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     };
 
     return (
-        <div className="space-y-6 animate-in fade-in duration-500 pb-20">
+        <div className={`space-y-6 animate-in fade-in duration-500 pb-20 ${isFilterLoading ? 'opacity-70 transition-opacity' : ''}`}>
             <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
                     <h1 className="text-3xl font-bold tracking-tight">Market Profiler</h1>
