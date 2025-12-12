@@ -9,11 +9,12 @@ interface OutcomePanelGridProps {
     targetSession: string;  // Which session outcomes to show (Asia, London, NY1, NY2)
     directionFilter?: string | null;  // 'Long', 'Short', 'Long True', etc. or null
     dailyHodLod?: DailyHodLodResponse | null;  // True daily HOD/LOD times
+    ticker: string; // [NEW]
 }
 
 const OUTCOME_STATUSES = ['Long True', 'Long False', 'Short True', 'Short False'] as const;
 
-export function OutcomePanelGrid({ sessions, targetSession, directionFilter, dailyHodLod }: OutcomePanelGridProps) {
+export function OutcomePanelGrid({ sessions, targetSession, directionFilter, dailyHodLod, ticker }: OutcomePanelGridProps) {
     // Group sessions by date and get target session outcome
     const { outcomeData, outcomeDates, totalDays } = useMemo(() => {
         const byDate: Record<string, Record<string, ProfilerSession>> = {};
@@ -83,6 +84,7 @@ export function OutcomePanelGrid({ sessions, targetSession, directionFilter, dai
                     totalInCategory={totalDays}
                     targetSession={targetSession}
                     dailyHodLod={dailyHodLod}
+                    ticker={ticker}
                 />
             ))}
         </div>

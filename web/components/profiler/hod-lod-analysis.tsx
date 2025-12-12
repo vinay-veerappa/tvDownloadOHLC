@@ -1,21 +1,22 @@
 
 "use client"
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { ProfilerSession, DailyHodLodResponse } from '@/lib/api/profiler';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TrendingUp, TrendingDown } from 'lucide-react';
-import { useState } from 'react';
 
 interface Props {
     sessions: ProfilerSession[];
     dailyHodLod?: DailyHodLodResponse | null;
+    ticker?: string;           // Optional
+    selectedSession?: string;  // Optional
 }
 
-// Helper functions
+// ... existing helper functions (timeToMinutes, etc) ...
 function timeToMinutes(time: string): number {
     const [h, m] = time.split(':').map(Number);
     return h * 60 + m;
@@ -47,13 +48,14 @@ function mode(arr: string[]): string {
     return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
 }
 
-export function HodLodTimes({ sessions, dailyHodLod }: Props) {
+function HodLodChart({ sessions, dailyHodLod }: Props) {
     const [granularity, setGranularity] = useState<number>(15);
 
     // Get unique dates from filtered sessions
     const filteredDates = useMemo(() => {
         return new Set(sessions.map(s => s.date));
     }, [sessions]);
+
 
     // Calculate HOD/LOD times from TRUE daily data (filtered by date)
     const { timeHistogramData, hodStats, lodStats } = useMemo(() => {
@@ -78,7 +80,7 @@ export function HodLodTimes({ sessions, dailyHodLod }: Props) {
             });
 
             Object.values(byDate).forEach(daySessions => {
-                if (daySessions.length < 2) return;
+                if (daySessions.length < 1) return; // Allow 1 session
                 let maxH = -Infinity, minL = Infinity;
                 let hodSession: ProfilerSession | null = null;
                 let lodSession: ProfilerSession | null = null;
@@ -251,7 +253,7 @@ export function HodLodTimes({ sessions, dailyHodLod }: Props) {
     );
 }
 
-export function SessionHodLod({ sessions }: Props) {
+function SessionStats({ sessions }: Props) {
     // Session-based stats (which session makes HOD/LOD)
     const sessionStats = useMemo(() => {
         const byDate: Record<string, ProfilerSession[]> = {};
@@ -264,7 +266,7 @@ export function SessionHodLod({ sessions }: Props) {
         const lodSessions: string[] = [];
 
         Object.values(byDate).forEach(daySessions => {
-            if (daySessions.length < 2) return;
+            if (daySessions.length < 1) return;
             let maxH = -Infinity, minL = Infinity, hodS = '', lodS = '';
             daySessions.forEach(s => {
                 if (s.range_high > maxH) { maxH = s.range_high; hodS = s.session; }
@@ -336,6 +338,15 @@ export function SessionHodLod({ sessions }: Props) {
                     </div>
                 </CardContent>
             </Card>
+        </div>
+    );
+}
+
+export function HodLodAnalysis({ sessions, dailyHodLod, selectedSession }: Props) {
+    return (
+        <div className="space-y-4">
+            <HodLodChart sessions={sessions} dailyHodLod={dailyHodLod} />
+            {!selectedSession && <SessionStats sessions={sessions} />}
         </div>
     );
 }

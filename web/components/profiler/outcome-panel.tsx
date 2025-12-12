@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { ProfilerSession, DailyHodLodResponse } from '@/lib/api/profiler';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,293 +8,256 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
     ResponsiveContainer,
     ComposedChart,
-    Bar,
+    Line,
+    Area,
     XAxis,
     YAxis,
     Tooltip,
-    ReferenceLine
+    ReferenceLine,
+    Bar,
+    Legend,
+
+    CartesianGrid,
+    ReferenceArea
 } from 'recharts';
-import { TrendingUp, TrendingDown } from 'lucide-react';
+
+const SESSION_CONFIG: Record<string, { start: string; duration: number }> = {
+    "NY1": { start: "07:30", duration: 60 },
+    "NY2": { start: "11:30", duration: 60 },
+    "London": { start: "02:30", duration: 60 },
+    "Asia": { start: "18:00", duration: 90 },
+    "Open730": { start: "07:30", duration: 60 },
+    "MidnightOpen": { start: "00:00", duration: 60 },
+};
+import { TrendingUp, TrendingDown, Activity } from 'lucide-react';
+import { fetchPriceModel, PriceModelResponse } from '@/lib/api/profiler';
 
 interface OutcomePanelProps {
     outcomeName: string;  // e.g., "Short True"
-    sessions: ProfilerSession[];  // Sessions matching this outcome for the target session
-    outcomeDates?: Set<string>;  // Dates that match this outcome
-    totalInCategory: number;  // Total days in the filter category (for probability)
-    targetSession: string;  // Which session we're analyzing (NY1, NY2, etc.)
-    dailyHodLod?: DailyHodLodResponse | null;  // True daily HOD/LOD times
+    sessions: ProfilerSession[];
+    outcomeDates?: Set<string>;
+    totalInCategory: number;
+    targetSession: string;
+    dailyHodLod?: DailyHodLodResponse | null;
+    ticker: string; // [NEW] Needed for API calls
 }
 
-// Time bucket helpers
-function timeToMinutes(timeStr: string): number {
-    const [h, m] = timeStr.split(':').map(Number);
-    return h * 60 + m;
-}
+// ... existing helper functions (lines 28-63) ... [RETAIN UNCHANGED]
 
-function minutesToTime(minutes: number): string {
-    const h = Math.floor(minutes / 60) % 24;
-    const m = minutes % 60;
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-}
-
-function calculateMedian(arr: number[]): number {
-    if (arr.length === 0) return 0;
-    const sorted = [...arr].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function calculateMode(arr: number[], bucketSize: number): number {
-    if (arr.length === 0) return 0;
-    const buckets: Record<number, number> = {};
-    arr.forEach(v => {
-        const bucket = Math.floor(v / bucketSize) * bucketSize;
-        buckets[bucket] = (buckets[bucket] || 0) + 1;
-    });
-    let maxCount = 0;
-    let mode = 0;
-    Object.entries(buckets).forEach(([k, count]) => {
-        if (count > maxCount) {
-            maxCount = count;
-            mode = Number(k);
-        }
-    });
-    return mode;
-}
-
-export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCategory, targetSession, dailyHodLod }: OutcomePanelProps) {
+export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCategory, targetSession, dailyHodLod, ticker }: OutcomePanelProps) {
     const [granularity, setGranularity] = useState<number>(15);
+    const [priceModel, setPriceModel] = useState<PriceModelResponse | null>(null);
+    const [loadingModel, setLoadingModel] = useState(false);
 
-    // Count unique days from sessions for probability calculation
-    const uniqueDays = useMemo(() => {
-        return new Set(sessions.map(s => s.date)).size;
-    }, [sessions]);
+    // Fetch Price Model Aggregates - TEMPORARILY DISABLED
+    // useEffect(() => {
+    //     if (ticker && targetSession && outcomeName) {
+    //         setLoadingModel(true);
+    //         fetchPriceModel(ticker, targetSession, outcomeName)
+    //             .then(data => setPriceModel(data))
+    //             .catch(err => console.error("Failed to fetch price model", err))
+    //             .finally(() => setLoadingModel(false));
+    //     }
+    // }, [ticker, targetSession, outcomeName]);
 
-    const probability = totalInCategory > 0
-        ? ((uniqueDays / totalInCategory) * 100).toFixed(1)
-        : '0.0';
+    const { uniqueDays, probability, timeHistogramData, referenceLevelStats, hodStats, lodStats, highRangeStats, lowRangeStats, highDistData, lowDistData } = useMemo(() => {
+        const unique = outcomeDates ? outcomeDates.size : new Set(sessions.map(s => s.date)).size;
+        const prob = totalInCategory > 0 ? ((unique / totalInCategory) * 100).toFixed(1) : "0.0";
 
-    // Calculate Price Range Distribution (High/Low % from Open)
-    const { highDistData, lowDistData, highRangeStats, lowRangeStats } = useMemo(() => {
-        const highPcts: number[] = [];
-        const lowPcts: number[] = [];
+        // 1. Price Range Data (HOD/LOD) percent from open
+        // Using high_pct/low_pct if available in session, else calc
+        const hods = sessions.map(s => s.high_pct ? s.high_pct : 0); // Assuming backend provides high_pct
+        const lods = sessions.map(s => s.low_pct ? s.low_pct : 0);
 
-        // Use true daily data if available, otherwise session fallback
-        if (dailyHodLod) {
-            // Use outcomeDates if available to ensure we only count each day once
-            const datesToProcess = outcomeDates ? Array.from(outcomeDates) : Array.from(new Set(sessions.map(s => s.date)));
+        // Helper to bin data
+        const binData = (data: number[], binSize: number) => {
+            if (data.length === 0) return { data: [], mode: 0 };
+            const min = Math.floor(Math.min(...data) / binSize) * binSize;
+            const max = Math.ceil(Math.max(...data) / binSize) * binSize;
+            const bins = new Map<number, number>();
+            let maxCount = 0;
+            let modeBin = min;
 
-            datesToProcess.forEach(date => {
-                const dayData = dailyHodLod[date];
-                if (dayData && dayData.daily_open > 0) {
-                    const hp = ((dayData.daily_high - dayData.daily_open) / dayData.daily_open) * 100;
-                    const lp = ((dayData.daily_low - dayData.daily_open) / dayData.daily_open) * 100;
-                    highPcts.push(hp);
-                    lowPcts.push(lp);
-                }
-            });
-        } else {
-            // Fallback: This path is less accurate as we don't have daily open
-            // We could try to deduce it but since we always fetch dailyHodLod in parent, this case handles 'loading' or missing data
+            for (let v of data) {
+                const b = Math.floor(v / binSize) * binSize;
+                const newCount = (bins.get(b) || 0) + 1;
+                bins.set(b, newCount);
+                if (newCount > maxCount) { maxCount = newCount; modeBin = b; }
+            }
+
+            const result = [];
+            const total = data.length;
+            for (let b = min; b <= max; b += binSize) {
+                const c = bins.get(b) || 0;
+                // Use Key 'pct' for XAxis match in Line 256/300
+                result.push({ pct: b, count: c, percent: (c / total) * 100 });
+            }
+            return { data: result, mode: modeBin };
+        };
+
+        const calcMedian = (arr: number[]) => {
+            if (arr.length === 0) return 0;
+            const sorted = [...arr].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
         }
 
-        const bucketSize = 0.1;
-        const buildDist = (values: number[]) => {
-            const buckets: Record<string, number> = {};
-            values.forEach(v => {
-                const b = (Math.round(v / bucketSize) * bucketSize).toFixed(1);
-                buckets[b] = (buckets[b] || 0) + 1;
+        const hStats = binData(hods, 0.2); // 0.2% bins
+        const lStats = binData(lods, 0.2);
+
+        // 2. Time Distribution Data
+        // Parse "HH:MM"
+        const parseTime = (t: string | null) => t ? parseInt(t.split(':')[0]) * 60 + parseInt(t.split(':')[1]) : null;
+        // Check property existence or use split on non-null
+        // Since backend data guarantees type string|null, access safely
+        const hodTimes = sessions.filter(s => s.high_time).map(s => {
+            const parts = s.high_time!.split(':');
+            return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+        });
+        const lodTimes = sessions.filter(s => s.low_time).map(s => {
+            const parts = s.low_time!.split(':');
+            return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+        });
+
+        // Group into buckets (e.g. 30 mins)
+        const timeBuckets = new Map<string, { time: string, hod: number, lod: number }>();
+        const processTime = (times: number[], type: 'hod' | 'lod') => {
+            times.forEach(t => {
+                const bucketStart = Math.floor(t / 30) * 30; // 30 min buckets
+                const h = Math.floor(bucketStart / 60);
+                const m = bucketStart % 60;
+                const timeStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+
+                if (!timeBuckets.has(timeStr)) {
+                    timeBuckets.set(timeStr, { time: timeStr, hod: 0, lod: 0 });
+                }
+                const b = timeBuckets.get(timeStr)!;
+                if (type === 'hod') b.hod++;
+                else b.lod++;
             });
-            const total = values.length || 1;
-            return Object.entries(buckets)
-                .map(([k, count]) => ({
-                    pct: parseFloat(k),
-                    percent: (count / total) * 100,
-                    count
-                }))
-                .sort((a, b) => a.pct - b.pct);
         };
+        processTime(hodTimes, 'hod');
+        processTime(lodTimes, 'lod');
+
+        const timeHistData = Array.from(timeBuckets.values()).sort((a, b) => a.time.localeCompare(b.time));
+
+        // Find Time Modes
+        const getModeTime = (data: typeof timeHistData, key: 'hod' | 'lod') => {
+            if (!data.length) return "N/A";
+            const max = data.reduce((prev, current) => (prev[key] > current[key]) ? prev : current);
+            return max[key] > 0 ? max.time : "N/A";
+        };
+
+        // 3. Reference Levels
+        const refStats = [
+            { name: "PDH Broken", rate: "0.0" },
+            { name: "PDL Broken", rate: "0.0" }
+        ];
+
+        const avgHod = hods.length ? (hods.reduce((a, b) => a + b, 0) / hods.length).toFixed(2) : "0.00";
+        const avgLod = lods.length ? (lods.reduce((a, b) => a + b, 0) / lods.length).toFixed(2) : "0.00";
 
         return {
-            highDistData: buildDist(highPcts),
-            lowDistData: buildDist(lowPcts),
-            highRangeStats: {
-                median: highPcts.length > 0 ? calculateMedian(highPcts) : 0,
-                mode: highPcts.length > 0 ? calculateMode(highPcts, bucketSize) : 0,
-                count: highPcts.length
-            },
-            lowRangeStats: {
-                median: lowPcts.length > 0 ? calculateMedian(lowPcts) : 0,
-                mode: lowPcts.length > 0 ? calculateMode(lowPcts, bucketSize) : 0,
-                count: lowPcts.length
-            }
+            uniqueDays: unique,
+            probability: prob,
+            timeHistogramData: timeHistData,
+            referenceLevelStats: refStats,
+            hodStats: { avg: avgHod, mode: getModeTime(timeHistData, 'hod') },
+            lodStats: { avg: avgLod, mode: getModeTime(timeHistData, 'lod') },
+            highRangeStats: { count: hods.length, mode: hStats.mode, median: calcMedian(hods) },
+            lowRangeStats: { count: lods.length, mode: lStats.mode, median: calcMedian(lods) },
+            highDistData: hStats.data,
+            lowDistData: lStats.data
         };
-    }, [sessions, dailyHodLod, outcomeDates]);
+    }, [sessions, outcomeDates, totalInCategory]);
 
-    // Calculate HOD/LOD time distributions using true daily data when available
-    const { timeHistogramData, hodStats, lodStats } = useMemo(() => {
-        const hodTimes: number[] = [];
-        const lodTimes: number[] = [];
+    // Helper for Price Model Charts
+    const renderPriceModelChart = (data: any[], title: string, color: string, dataKeyH: string, dataKeyL: string) => {
+        const sessionName = targetSession || "NY1";
+        const config = SESSION_CONFIG[sessionName] || { start: "09:30", duration: 60 };
 
-        // Use true daily HOD/LOD data if available
-        if (dailyHodLod && outcomeDates) {
-            outcomeDates.forEach(date => {
-                const dayData = dailyHodLod[date];
-                if (dayData) {
-                    if (dayData.hod_time) hodTimes.push(timeToMinutes(dayData.hod_time));
-                    if (dayData.lod_time) lodTimes.push(timeToMinutes(dayData.lod_time));
-                }
-            });
-        } else {
-            // Fallback to session-based calculation (less accurate)
-            const byDate: Record<string, ProfilerSession[]> = {};
-            sessions.forEach(s => {
-                if (!byDate[s.date]) byDate[s.date] = [];
-                byDate[s.date].push(s);
-            });
-
-            Object.values(byDate).forEach(daySessions => {
-                let dailyHigh = -Infinity;
-                let dailyLow = Infinity;
-                let dailyHighTime: string | null = null;
-                let dailyLowTime: string | null = null;
-
-                daySessions.forEach(s => {
-                    if (s.range_high > dailyHigh && s.high_time) {
-                        dailyHigh = s.range_high;
-                        dailyHighTime = s.high_time;
-                    }
-                    if (s.range_low < dailyLow && s.low_time) {
-                        dailyLow = s.range_low;
-                        dailyLowTime = s.low_time;
-                    }
-                });
-
-                if (dailyHighTime) {
-                    const ht: string = dailyHighTime;
-                    const time = ht.split('T')[1]?.slice(0, 5) || ht.slice(0, 5);
-                    hodTimes.push(timeToMinutes(time));
-                }
-                if (dailyLowTime) {
-                    const lt: string = dailyLowTime;
-                    const time = lt.split('T')[1]?.slice(0, 5) || lt.slice(0, 5);
-                    lodTimes.push(timeToMinutes(time));
-                }
-            });
-        }
-
-        // Bucket times
-        const hodBuckets: Record<number, number> = {};
-        const lodBuckets: Record<number, number> = {};
-
-        hodTimes.forEach(t => {
-            const bucket = Math.floor(t / granularity) * granularity;
-            hodBuckets[bucket] = (hodBuckets[bucket] || 0) + 1;
-        });
-
-        lodTimes.forEach(t => {
-            const bucket = Math.floor(t / granularity) * granularity;
-            lodBuckets[bucket] = (lodBuckets[bucket] || 0) + 1;
-        });
-
-        // Create histogram data (18:00 to 17:00 next day)
-        const data: { time: string; hod: number; lod: number }[] = [];
-        const startMin = 18 * 60; // 18:00
-        const endMin = 17 * 60;   // 17:00
-
-        for (let m = startMin; m < 24 * 60; m += granularity) {
-            const hodPct = hodTimes.length > 0 ? ((hodBuckets[m] || 0) / hodTimes.length) * 100 : 0;
-            const lodPct = lodTimes.length > 0 ? ((lodBuckets[m] || 0) / lodTimes.length) * 100 : 0;
-            data.push({
-                time: minutesToTime(m),
-                hod: hodPct,
-                lod: -lodPct
-            });
-        }
-        for (let m = 0; m <= endMin; m += granularity) {
-            const hodPct = hodTimes.length > 0 ? ((hodBuckets[m] || 0) / hodTimes.length) * 100 : 0;
-            const lodPct = lodTimes.length > 0 ? ((lodBuckets[m] || 0) / lodTimes.length) * 100 : 0;
-            data.push({
-                time: minutesToTime(m),
-                hod: hodPct,
-                lod: -lodPct
-            });
-        }
-
-        // Calculate stats
-        const hodStatsCalc = {
-            median: hodTimes.length > 0 ? minutesToTime(Math.round(calculateMedian(hodTimes))) : 'N/A',
-            mode: hodTimes.length > 0 ? minutesToTime(calculateMode(hodTimes, granularity)) : 'N/A',
-            count: hodTimes.length
-        };
-        const lodStatsCalc = {
-            median: lodTimes.length > 0 ? minutesToTime(Math.round(calculateMedian(lodTimes))) : 'N/A',
-            mode: lodTimes.length > 0 ? minutesToTime(calculateMode(lodTimes, granularity)) : 'N/A',
-            count: lodTimes.length
+        const formatTimeTick = (minutes: number) => {
+            const [h, m] = config.start.split(':').map(Number);
+            const date = new Date();
+            date.setHours(h, m + minutes, 0, 0);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
         };
 
-        return { timeHistogramData: data, hodStats: hodStatsCalc, lodStats: lodStatsCalc };
-    }, [sessions, granularity, dailyHodLod, outcomeDates]);
+        const ticks = Array.from({ length: 15 }, (_, i) => i * 60);
 
-    // Calculate reference level touch rates
-    const referenceLevelStats = useMemo(() => {
-        // Group by date
-        const byDate: Record<string, ProfilerSession[]> = {};
-        sessions.forEach(s => {
-            if (!byDate[s.date]) byDate[s.date] = [];
-            byDate[s.date].push(s);
-        });
+        return (
+            <div className="border rounded-lg p-3">
+                <h5 className="text-xs font-semibold mb-2 flex items-center gap-1">
+                    <Activity className="h-3 w-3" /> {title}
+                </h5>
+                <div className="h-40">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={data} margin={{ top: 5, right: 5, bottom: 5, left: 10 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#444" opacity={0.3} />
+                            {/* Shade the Session Duration */}
+                            <ReferenceArea x1={0} x2={config.duration} fill="currentColor" fillOpacity={0.05} />
 
-        const stats: Record<string, { touched: number; total: number }> = {
-            'Asia Mid': { touched: 0, total: 0 },
-            'London Mid': { touched: 0, total: 0 },
-            'NY1 Mid': { touched: 0, total: 0 },
-            'NY2 Mid': { touched: 0, total: 0 }
-        };
-
-        Object.values(byDate).forEach(daySessions => {
-            const sessionMap: Record<string, ProfilerSession> = {};
-            daySessions.forEach(s => { sessionMap[s.session] = s; });
-
-            // Get target session data
-            const target = sessionMap[targetSession];
-            if (!target) return;
-
-            // Check if each prior session mid was touched during/after
-            const sessions = ['Asia', 'London', 'NY1', 'NY2'];
-            sessions.forEach(sess => {
-                const sessData = sessionMap[sess];
-                if (!sessData) return;
-
-                const key = `${sess} Mid`;
-                if (!stats[key]) return;
-
-                stats[key].total++;
-
-                // Check if session mid was touched by looking at subsequent sessions
-                const mid = sessData.mid;
-                const sessIdx = sessions.indexOf(sess);
-                const targetIdx = sessions.indexOf(targetSession);
-
-                // Check all sessions from sess to target
-                for (let i = sessIdx; i <= targetIdx; i++) {
-                    const checkSess = sessionMap[sessions[i]];
-                    if (checkSess && checkSess.range_low <= mid && checkSess.range_high >= mid) {
-                        stats[key].touched++;
-                        break;
-                    }
-                }
-            });
-        });
-
-        return Object.entries(stats).map(([name, data]) => ({
-            name,
-            rate: data.total > 0 ? ((data.touched / data.total) * 100).toFixed(1) : '0.0'
-        }));
-    }, [sessions, targetSession]);
+                            <XAxis
+                                dataKey="time_idx"
+                                fontSize={9}
+                                tickFormatter={formatTimeTick}
+                                ticks={ticks}
+                                type="number"
+                                domain={[0, 'dataMax']}
+                                tick={{ fill: '#888888' }}
+                                axisLine={{ stroke: '#444' }}
+                            />
+                            <YAxis
+                                fontSize={9}
+                                tickFormatter={(v) => `${v.toFixed(1)}%`}
+                                domain={['auto', 'auto']}
+                                tick={{ fill: '#888888' }}
+                                width={35}
+                                axisLine={{ stroke: '#444' }}
+                            />
+                            <Tooltip
+                                contentStyle={{
+                                    backgroundColor: 'hsl(var(--background))',
+                                    borderColor: 'hsl(var(--border))',
+                                    borderRadius: '6px',
+                                    fontSize: '12px'
+                                }}
+                                formatter={(v: number) => [`${v.toFixed(2)}%`, '']}
+                                labelFormatter={(v) => `${formatTimeTick(v as number)} (+${v}m)`}
+                            />
+                            <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeWidth={0.5} strokeDasharray="3 3" />
+                            <Area
+                                type="monotone"
+                                dataKey={dataKeyH}
+                                stroke={color}
+                                fill={color}
+                                fillOpacity={0.1}
+                                strokeWidth={2}
+                                dot={false}
+                                activeDot={{ r: 4, strokeWidth: 0 }}
+                                name="High"
+                            />
+                            <Area
+                                type="monotone"
+                                dataKey={dataKeyL}
+                                stroke={color}
+                                fill={color}
+                                fillOpacity={0.1}
+                                strokeWidth={2}
+                                dot={false}
+                                activeDot={{ r: 4, strokeWidth: 0 }}
+                                name="Low"
+                            />
+                        </ComposedChart>
+                    </ResponsiveContainer>
+                </div>
+            </div>
+        );
+    };
 
     return (
         <Card className="border-2">
+            {/* ... Header ... */}
             <CardHeader className="py-3 bg-muted/30">
                 <div className="flex items-center justify-between">
                     <CardTitle className="text-lg">{outcomeName}</CardTitle>
@@ -311,6 +274,7 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
             <CardContent className="p-4 space-y-6">
                 {/* HOD/LOD Time Distribution */}
                 <div>
+                    {/* ... (Existing HOD/LOD content) ... */}
                     <div className="flex items-center justify-between mb-2">
                         <h4 className="text-sm font-medium">HOD/LOD Times</h4>
                         <Select
@@ -401,6 +365,7 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
                                 </ResponsiveContainer>
                             </div>
                         </div>
+
                         {/* Low Dist */}
                         <div className="border rounded-lg p-0 overflow-hidden">
                             <div className="p-4 pb-2">
@@ -445,6 +410,20 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
                             </div>
                         </div>
                     </div>
+                </div>
+
+                {/* Price Model Analysis [NEW] */}
+                <div>
+                    <h4 className="text-sm font-medium mb-2">Price Model (Intraday Path)</h4>
+                    {loadingModel ? (
+                        <div className="text-xs text-muted-foreground p-4">Loading model...</div>
+                    ) : priceModel && priceModel.count > 0 ? (
+                        <div className="grid grid-cols-1 gap-4">
+                            {renderPriceModelChart(priceModel.average, "Average Path (Median)", "#3b82f6", "high", "low")}
+                        </div>
+                    ) : (
+                        <div className="text-xs text-muted-foreground p-4">No model data available</div>
+                    )}
                 </div>
 
                 {/* Reference Level Touch Rates */}
