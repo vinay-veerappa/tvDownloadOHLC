@@ -250,3 +250,153 @@ Each outcome panel contains:
 | `data/NQ1_daily_hod_lod.json` | Daily HOD/LOD times |
 | `data/NQ1_level_touches.json` | Level touch data |
 | `data/NQ1_range_dist.json` | Range distribution data |
+
+---
+
+## 📝 Part 5: Backend API Reference
+
+> [!NOTE]
+> All endpoints are served from `http://localhost:8000`. The `{ticker}` parameter is required and should be the ticker symbol (e.g., `NQ1`).
+
+### 5.1 Core Data Endpoints
+
+#### `GET /stats/profiler/{ticker}`
+**Purpose**: Get all session statistics for the last N days.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ticker` | path | required | Ticker symbol (e.g., `NQ1`) |
+| `days` | query | 50 | Number of days to analyze |
+
+**Response**: Returns list of session objects with status, broken flags, and price data.
+```json
+{
+  "sessions": [...],
+  "metadata": { "ticker": "NQ1", "days": 50, "count": 200 }
+}
+```
+
+---
+
+#### `POST /stats/profiler/{ticker}/filtered`
+**Purpose**: Get pre-aggregated stats using filter criteria (server-side filtering).
+
+**Request Body**:
+```json
+{
+  "target_session": "NY1",
+  "filters": { "Asia": "Short True", "London": "Long" },
+  "broken_filters": { "Asia": "Broken" },
+  "intra_state": "Any"
+}
+```
+
+**Response**:
+```json
+{
+  "matched_dates": ["2024-12-01", "2024-12-02", ...],
+  "count": 250,
+  "distribution": {
+    "Long True": { "count": 45, "pct": 18.0 },
+    "Short True": { "count": 80, "pct": 32.0 }
+  },
+  "range_stats": { "high_pct": {...}, "low_pct": {...} }
+}
+```
+
+---
+
+#### `POST /stats/profiler/{ticker}/price-model`
+**Purpose**: Get median price model using filter criteria.
+
+**Request Body**:
+```json
+{
+  "target_session": "Daily",
+  "filters": { "Asia": "Short True" },
+  "broken_filters": {},
+  "intra_state": "Any"
+}
+```
+
+**Response**:
+```json
+{
+  "average": [{ "time_idx": 0, "high": 0.01, "low": -0.02 }, ...],
+  "extreme": [...],
+  "count": 150
+}
+```
+
+---
+
+### 5.2 Reference Level Endpoints
+
+#### `GET /stats/level-touches/{ticker}`
+**Purpose**: Get level touch statistics (hit rate, mode time, histograms).
+
+---
+
+#### `GET /stats/daily-hod-lod/{ticker}`
+**Purpose**: Get daily high/low of day timing data.
+
+---
+
+#### `GET /stats/hod-lod/{ticker}`
+**Purpose**: Get pre-computed HOD/LOD time statistics.
+
+---
+
+#### `GET /stats/reference`
+**Purpose**: Get reference price levels (P12, PDH/PDL, etc.).
+
+---
+
+### 5.3 Price Model Endpoints
+
+#### `GET /stats/price-model/{ticker}`
+**Purpose**: Get price model for specific session and outcome.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `session` | query | Session name (e.g., `NY1`, `Daily`) |
+| `outcome` | query | Outcome filter (e.g., `Long True`) |
+| `days` | query | Number of days |
+
+---
+
+#### `POST /stats/price-model/custom`
+**Purpose**: Get price model for specific list of dates.
+
+**Request Body**:
+```json
+{
+  "ticker": "NQ1",
+  "target_session": "Daily",
+  "dates": ["2024-12-01", "2024-12-02"]
+}
+```
+
+---
+
+### 5.4 Utility Endpoints
+
+#### `POST /stats/clear-cache/{ticker}`
+**Purpose**: Clear in-memory cache for specified ticker.
+
+#### `POST /stats/clear-cache`
+**Purpose**: Clear all in-memory caches.
+
+---
+
+### 5.5 Frontend Usage Patterns
+
+**Current Architecture**:
+1. Frontend fetches all sessions: `GET /stats/profiler/{ticker}?days=10000`
+2. Frontend applies filters client-side using `useProfilerFilter` hook
+3. Frontend components render based on `filteredDates` Set
+
+**Recommended Architecture** (Filter-Based):
+1. Frontend sends filter criteria: `POST /stats/profiler/{ticker}/filtered`
+2. Backend applies filters and returns aggregated stats
+3. Frontend renders pre-computed data
