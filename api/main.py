@@ -5,14 +5,20 @@ Provides technical indicator calculations using pandas-ta
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import ORJSONResponse
 from api.routers import indicators
 from api.routers import sessions
 
 app = FastAPI(
     title="Trading Indicators API",
     description="Technical indicator calculations for chart display and backtesting",
-    version="1.0.0"
+    version="1.0.0",
+    default_response_class=ORJSONResponse
 )
+
+# Enable GZip Compression for payloads > 1KB
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Allow Next.js frontend to call this API
 app.add_middleware(
