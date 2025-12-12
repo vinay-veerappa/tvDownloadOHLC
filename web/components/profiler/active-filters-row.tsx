@@ -1,5 +1,6 @@
 "use client"
 
+import { memo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -11,7 +12,7 @@ interface ActiveFiltersRowProps {
     onClearAll: () => void;
 }
 
-export function ActiveFiltersRow({ filters, brokenFilters, intraSessionState, onClearAll }: ActiveFiltersRowProps) {
+export const ActiveFiltersRow = memo(function ActiveFiltersRow({ filters, brokenFilters, intraSessionState, onClearAll }: ActiveFiltersRowProps) {
     const activeItems = [];
 
     // Context Sessions
@@ -76,4 +77,4 @@ export function ActiveFiltersRow({ filters, brokenFilters, intraSessionState, on
             </Button>
         </div>
     );
-}
+});

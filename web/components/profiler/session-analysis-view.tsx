@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import { ProfilerSession, LevelTouchesResponse, DailyHodLodResponse } from '@/lib/api/profiler';
 import { SessionStats } from './hod-lod-analysis';
 import { DailyLevels } from './daily-levels';
@@ -32,7 +32,7 @@ const SESSION_LEVELS: Record<string, string[]> = {
     'NY2': ['ny1_mid', 'ny2_mid', 'london_mid']
 };
 
-export function SessionAnalysisView({ session, sessions, allSessions, dailyHodLod, filteredDates, ticker, levelTouches, filters, brokenFilters, intraState }: SessionAnalysisViewProps) {
+export const SessionAnalysisView = memo(function SessionAnalysisView({ session, sessions, allSessions, dailyHodLod, filteredDates, ticker, levelTouches, filters, brokenFilters, intraState }: SessionAnalysisViewProps) {
 
     // Filter sessions to strictly this session context
     const sessionData = useMemo(() => {
@@ -145,4 +145,4 @@ export function SessionAnalysisView({ session, sessions, allSessions, dailyHodLo
 
         </div>
     );
-}
+});

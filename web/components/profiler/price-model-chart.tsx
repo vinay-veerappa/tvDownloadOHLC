@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import useSWR from 'swr';
 import { fetchFilteredPriceModel, FilterPayload, PriceModelResponse, PriceModelEntry } from '@/lib/api/profiler';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,7 +30,8 @@ interface PriceModelChartProps {
     height?: number;
 }
 
-export function PriceModelChart({
+// Export optimized component
+export const PriceModelChart = memo(function PriceModelChart({
     ticker,
     session,
     targetSession,
@@ -252,4 +253,4 @@ export function PriceModelChart({
             </CardContent>
         </Card>
     );
-}
+});

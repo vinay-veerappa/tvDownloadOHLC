@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import useSWR from 'swr';
 import { fetchLevelTouches, LevelTouchesResponse } from '@/lib/api/profiler';
 
@@ -13,9 +14,9 @@ export function useLevelTouches(ticker: string) {
         }
     );
 
-    return {
+    return useMemo(() => ({
         levelTouches: data || null,
         isLoading,
         isError: error
-    };
+    }), [data, isLoading, error]);
 }

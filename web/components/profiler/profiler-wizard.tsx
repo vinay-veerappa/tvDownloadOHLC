@@ -1,5 +1,6 @@
 "use client"
 
+import { memo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
@@ -31,7 +32,7 @@ interface WizardProps {
 
 const STATUS_OPTIONS = ['Long True', 'Short True', 'Long False', 'Short False', 'None'];
 
-export function ProfilerWizard({
+export const ProfilerWizard = memo(function ProfilerWizard({
     targetSession,
     filters,
     brokenFilters,
@@ -170,4 +171,4 @@ export function ProfilerWizard({
             </CardContent>
         </Card>
     );
-}
+});
