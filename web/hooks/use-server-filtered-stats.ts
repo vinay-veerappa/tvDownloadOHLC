@@ -52,6 +52,7 @@ export function useServerFilteredStats({
 
     return {
         filteredDates: data?.matched_dates ? new Set(data.matched_dates) : new Set<string>(),
+        filteredSessions: data?.sessions || [],  // Server-filtered sessions
         distribution: data?.distribution || {},
         validSamples: data?.count || 0,
         rangeStats: data?.range_stats || { high_pct: {}, low_pct: {} },

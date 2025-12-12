@@ -4,7 +4,8 @@
 
 import { useMemo, useState, useEffect } from 'react';
 import { ProfilerSession } from '@/lib/api/profiler';
-import { fetchReferenceData, ReferenceData } from '@/lib/api/reference';
+import { useReferenceData } from '@/hooks/use-reference-data';
+import { ReferenceData } from '@/lib/api/reference';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ComposedChart, Bar, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { Badge } from '@/components/ui/badge';
@@ -44,16 +45,12 @@ function mode(arr: number[], bucketSize: number = 0.1, referenceDist?: Record<st
 
 export function RangeDistribution({ sessions, forcedSession }: Props) {
     const [selectedSession, setSelectedSession] = useState<string>(forcedSession || 'daily');
-    const [referenceData, setReferenceData] = useState<ReferenceData | null>(null);
+    const { referenceData } = useReferenceData();  // Use shared hook (SWR deduplicates)
     const [showReference, setShowReference] = useState(true);
 
     useEffect(() => {
         if (forcedSession) setSelectedSession(forcedSession);
     }, [forcedSession]);
-
-    useEffect(() => {
-        fetchReferenceData().then(setReferenceData).catch(console.error);
-    }, []);
 
     // Calculate range distribution from session data (fully filter-aware)
     const { highData, lowData, highStats, lowStats } = useMemo(() => {

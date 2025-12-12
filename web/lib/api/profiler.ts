@@ -217,6 +217,7 @@ export interface FilteredStatsResponse {
         high_pct: Record<string, number>;
         low_pct: Record<string, number>;
     };
+    sessions: ProfilerSession[];  // Filtered sessions returned by server
     target_session: string;
     filters_applied: Record<string, string>;
     broken_filters_applied: Record<string, string>;
