@@ -84,18 +84,23 @@ export function PriceModelChart({
         }));
     }, [data]);
 
-    // Format minute index to HH:MM relative to session start?
-    // Session start times: Asia=18:00, London=03:00, NY1=07:30, NY2=11:30, Daily=18:00
-    const formatXAxis = (tickItem: number) => {
+    // Format time for display (using backend 'time' string if available)
+    const formatXAxis = (tickItem: any, index: number) => {
+        // If data has explicit time string, find it
+        if (chartData[index] && chartData[index].time) {
+            return chartData[index].time;
+        }
+        // Fallback to tickItem if string
+        if (typeof tickItem === 'string' && tickItem.includes(':')) return tickItem;
+
+        // Final fallback: Use index/minute math
         let startHour = 18;
         let startMin = 0;
-
         if (session === 'London') startHour = 3;
         if (session === 'NY1') { startHour = 7; startMin = 30; }
         if (session === 'NY2') { startHour = 11; startMin = 30; }
-        // daily is 18:00
 
-        const totalMinutes = startHour * 60 + startMin + tickItem;
+        const totalMinutes = startHour * 60 + startMin + Number(tickItem);
         const h = Math.floor(totalMinutes / 60) % 24;
         const m = totalMinutes % 60;
         return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
@@ -115,7 +120,7 @@ export function PriceModelChart({
         if (state && state.activePayload && state.activePayload.length > 0) {
             const payload = state.activePayload[0].payload;
             setHoverData({
-                time: formatXAxis(payload.time_idx), // Recalculate time string
+                time: payload.time || formatXAxis(payload.time_idx, 0), // Use payload.time directly
                 high: payload.high,
                 low: payload.low
             });

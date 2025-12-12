@@ -161,6 +161,7 @@ export async function fetchLevelTouches(ticker: string): Promise<LevelTouchesRes
 
 export interface PriceModelEntry {
     time_idx: number; // Minutes from session start
+    time?: string;    // HH:MM time label from server
     high: number;     // % from Open
     low: number;      // % from Open
 }
