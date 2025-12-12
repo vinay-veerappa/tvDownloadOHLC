@@ -545,3 +545,193 @@ class ProfilerService:
         
         # 3. Generate Composite Path
         return ProfilerService.generate_composite_path(ticker, matches)
+
+    # ========================================================================
+    # NEW: Filter-Based API Methods (Architecture Refactor)
+    # ========================================================================
+
+    @staticmethod
+    def apply_filters(
+        sessions: List[Dict],
+        target_session: str,
+        filters: Dict[str, str] = None,
+        broken_filters: Dict[str, str] = None,
+        intra_state: str = "Any"
+    ) -> List[str]:
+        """
+        Apply filters and return the list of matching dates (intersection logic).
+        
+        Args:
+            sessions: List of all session dicts
+            target_session: The primary session to analyze (e.g., "NY1")
+            filters: Dict of session -> status filter (e.g., {"Asia": "Short True"})
+            broken_filters: Dict of session -> broken filter (e.g., {"Asia": "Broken"})
+            intra_state: "Any", "Long", "Short", etc. for intra-session filtering
+        
+        Returns:
+            List of matching date strings
+        """
+        filters = filters or {}
+        broken_filters = broken_filters or {}
+        
+        # Group sessions by date for intersection logic
+        date_sessions: Dict[str, Dict[str, Dict]] = {}
+        for s in sessions:
+            date = s.get('date')
+            sess_name = s.get('session')
+            if date and sess_name:
+                if date not in date_sessions:
+                    date_sessions[date] = {}
+                date_sessions[date][sess_name] = s
+        
+        # Apply filters - find intersection of all conditions
+        matched_dates = []
+        
+        for date, sessions_by_name in date_sessions.items():
+            # Check if this date satisfies ALL filters
+            matches_all = True
+            
+            # Check status filters
+            for session_name, required_status in filters.items():
+                if required_status and required_status != 'Any':
+                    sess = sessions_by_name.get(session_name)
+                    if not sess or sess.get('status') != required_status:
+                        matches_all = False
+                        break
+            
+            if not matches_all:
+                continue
+            
+            # Check broken filters
+            for session_name, required_broken in broken_filters.items():
+                if required_broken and required_broken != 'Any':
+                    sess = sessions_by_name.get(session_name)
+                    if not sess:
+                        matches_all = False
+                        break
+                    
+                    is_broken = sess.get('broken', False)
+                    if required_broken == 'Broken' and not is_broken:
+                        matches_all = False
+                        break
+                    elif required_broken == 'Not Broken' and is_broken:
+                        matches_all = False
+                        break
+            
+            if not matches_all:
+                continue
+            
+            # Check intra-session state (direction filter on target session)
+            if intra_state and intra_state != 'Any':
+                target_sess = sessions_by_name.get(target_session)
+                if target_sess:
+                    status = target_sess.get('status', '')
+                    if intra_state == 'Long' and not status.startswith('Long'):
+                        matches_all = False
+                    elif intra_state == 'Short' and not status.startswith('Short'):
+                        matches_all = False
+            
+            if matches_all:
+                matched_dates.append(date)
+        
+        return sorted(matched_dates)
+
+    @staticmethod
+    def get_filtered_stats(
+        ticker: str,
+        target_session: str,
+        filters: Dict[str, str] = None,
+        broken_filters: Dict[str, str] = None,
+        intra_state: str = "Any"
+    ) -> Dict:
+        """
+        Get pre-aggregated stats for filtered sessions.
+        Returns matched dates, distribution, and aggregated statistics.
+        """
+        # 1. Load all sessions
+        stats = ProfilerService.analyze_profiler_stats(ticker, days=10000)
+        if "error" in stats:
+            return stats
+        
+        all_sessions = stats.get('sessions', [])
+        
+        # 2. Apply filters to get matched dates
+        matched_dates = ProfilerService.apply_filters(
+            all_sessions, target_session, filters, broken_filters, intra_state
+        )
+        
+        date_set = set(matched_dates)
+        
+        # 3. Get sessions for matched dates
+        matched_sessions = [s for s in all_sessions if s.get('date') in date_set]
+        
+        # 4. Calculate distribution (for target session)
+        target_sessions = [s for s in matched_sessions if s.get('session') == target_session]
+        
+        distribution = {}
+        for status in ['Long True', 'Long False', 'Short True', 'Short False', 'None']:
+            count = sum(1 for s in target_sessions if s.get('status') == status)
+            pct = (count / len(target_sessions) * 100) if target_sessions else 0
+            distribution[status] = {"count": count, "pct": round(pct, 1)}
+        
+        # 5. Calculate range stats
+        range_stats = {
+            "high_pct": {
+                "median": None,
+                "mean": None,
+                "mode": None
+            },
+            "low_pct": {
+                "median": None,
+                "mean": None,
+                "mode": None
+            }
+        }
+        
+        high_pcts = [s.get('high_pct', 0) for s in target_sessions if s.get('high_pct') is not None]
+        low_pcts = [s.get('low_pct', 0) for s in target_sessions if s.get('low_pct') is not None]
+        
+        if high_pcts:
+            range_stats["high_pct"]["median"] = round(float(np.median(high_pcts)), 3)
+            range_stats["high_pct"]["mean"] = round(float(np.mean(high_pcts)), 3)
+        
+        if low_pcts:
+            range_stats["low_pct"]["median"] = round(float(np.median(low_pcts)), 3)
+            range_stats["low_pct"]["mean"] = round(float(np.mean(low_pcts)), 3)
+        
+        return {
+            "matched_dates": matched_dates,
+            "count": len(matched_dates),
+            "distribution": distribution,
+            "range_stats": range_stats,
+            "target_session": target_session,
+            "filters_applied": filters or {},
+            "broken_filters_applied": broken_filters or {}
+        }
+
+    @staticmethod
+    def get_filtered_price_model(
+        ticker: str,
+        target_session: str,
+        filters: Dict[str, str] = None,
+        broken_filters: Dict[str, str] = None,
+        intra_state: str = "Any"
+    ) -> Dict:
+        """
+        Generate price model using filter criteria instead of explicit date list.
+        """
+        # 1. Get filtered stats (which includes matched dates)
+        stats = ProfilerService.get_filtered_stats(
+            ticker, target_session, filters, broken_filters, intra_state
+        )
+        
+        if "error" in stats:
+            return stats
+        
+        matched_dates = stats.get("matched_dates", [])
+        
+        if not matched_dates:
+            return {"average": [], "extreme": [], "count": 0}
+        
+        # 2. Use existing get_custom_price_model with the matched dates
+        return ProfilerService.get_custom_price_model(ticker, target_session, matched_dates)
