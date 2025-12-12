@@ -312,6 +312,7 @@ export const SessionStats = memo(function SessionStats({ sessions }: { sessions:
                                 <div key={session} className="flex items-center gap-2 text-xs">
                                     <span className="w-12">{session}</span>
                                     <div className="flex-1 h-3 bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
+                                        {/* Dynamic width is exception to inline-style rule */}
                                         <div className="h-full bg-green-500 rounded" style={{ width: `${pct}%` }} />
                                     </div>
                                     <span className="w-10 text-right font-mono">{pct.toFixed(0)}%</span>
@@ -336,6 +337,7 @@ export const SessionStats = memo(function SessionStats({ sessions }: { sessions:
                                 <div key={session} className="flex items-center gap-2 text-xs">
                                     <span className="w-12">{session}</span>
                                     <div className="flex-1 h-3 bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
+                                        {/* Dynamic width is exception to inline-style rule */}
                                         <div className="h-full bg-red-500 rounded" style={{ width: `${pct}%` }} />
                                     </div>
                                     <span className="w-10 text-right font-mono">{pct.toFixed(0)}%</span>
