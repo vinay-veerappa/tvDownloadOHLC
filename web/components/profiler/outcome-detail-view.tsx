@@ -10,7 +10,8 @@ import { Badge } from '@/components/ui/badge';
 
 interface OutcomeDetailViewProps {
     outcome: string; // "Long True", "Short True", etc.
-    sessions: ProfilerSession[]; // Sessions matching this outcome
+    sessions: ProfilerSession[]; // Sessions matching this outcome (e.g. Asia rows)
+    allSessions: ProfilerSession[]; // [NEW] All sessions for context
     dailyHodLod?: DailyHodLodResponse | null;
     ticker: string;
     targetSession: string;
@@ -23,6 +24,7 @@ interface OutcomeDetailViewProps {
 export function OutcomeDetailView({
     outcome,
     sessions,
+    allSessions,
     dailyHodLod,
     ticker,
     targetSession,
@@ -31,7 +33,18 @@ export function OutcomeDetailView({
     intraState
 }: OutcomeDetailViewProps) {
 
-    // 1. Merge Outcome Filter
+    // 1. Identification: Which dates match this outcome?
+    const outcomeDates = useMemo(() => {
+        return new Set(sessions.map(s => s.date));
+    }, [sessions]);
+
+    // 2. Daily Context: Filter "allSessions" for these dates AND session="Daily"
+    // This gives us the Full Day Range stats for the days where "Asia was Long True"
+    const dailyContextSessions = useMemo(() => {
+        return allSessions.filter(s => s.session === 'Daily' && outcomeDates.has(s.date));
+    }, [allSessions, outcomeDates]);
+
+    // 3. Merge Outcome Filter
     // We strictly force the target session to have this outcome status
     const mergedFilters = useMemo(() => ({
         ...filters,
@@ -57,19 +70,21 @@ export function OutcomeDetailView({
                 {/* Could add win rate or other stats here if passed */}
             </div>
 
-            {/* 1. HOD/LOD Analysis */}
+            {/* 1. HOD/LOD Analysis (Daily Context) */}
             <section>
                 <h3 className="text-lg font-semibold mb-3">HOD/LOD Analysis ({outcome})</h3>
+                <p className="text-xs text-muted-foreground mb-2">Showing <strong>Full Day</strong> HOD/LOD times for these dates.</p>
                 <HodLodChart
-                    sessions={sessions}
+                    sessions={sessions} // The chart component handles dailyHodLod lookup internally via dates
                     dailyHodLod={dailyHodLod}
                 />
             </section>
 
-            {/* 2. Range Distribution */}
+            {/* 2. Range Distribution (Daily Context) */}
             <section>
                 <h3 className="text-lg font-semibold mb-3">Price Range Distribution  ({outcome})</h3>
-                <RangeDistribution sessions={sessions} forcedSession={targetSession} />
+                <p className="text-xs text-muted-foreground mb-2">Showing <strong>Daily Range</strong> distribution.</p>
+                <RangeDistribution sessions={dailyContextSessions} forcedSession="Daily" />
             </section>
 
             {/* 3. Price Model (Median) */}

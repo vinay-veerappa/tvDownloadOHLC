@@ -10,7 +10,9 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
 interface SessionAnalysisViewProps {
     session: string;
-    sessions: ProfilerSession[]; // Fully filtered sessions from parent
+    sessions: ProfilerSession[]; // Fully filtered sessions from parent (contains specific session rows)
+    allSessions: ProfilerSession[]; // [NEW] All sessions (including "Daily" rows) for context lookup
+    dailyHodLod: DailyHodLodResponse | null; // [NEW] True Daily HOD/LOD data
     filteredDates: Set<string>;
     ticker: string;
     levelTouches: LevelTouchesResponse | null;  // Passed from parent to avoid duplicate fetch
@@ -30,7 +32,7 @@ const SESSION_LEVELS: Record<string, string[]> = {
     'NY2': ['ny1_mid', 'ny2_mid', 'london_mid']
 };
 
-export function SessionAnalysisView({ session, sessions, filteredDates, ticker, levelTouches, filters, brokenFilters, intraState }: SessionAnalysisViewProps) {
+export function SessionAnalysisView({ session, sessions, allSessions, dailyHodLod, filteredDates, ticker, levelTouches, filters, brokenFilters, intraState }: SessionAnalysisViewProps) {
 
     // Filter sessions to strictly this session context
     const sessionData = useMemo(() => {
@@ -111,7 +113,8 @@ export function SessionAnalysisView({ session, sessions, filteredDates, ticker, 
                             <OutcomeDetailView
                                 outcome={outcome}
                                 sessions={outcomeGroups.groups[outcome]}
-                                dailyHodLod={null}
+                                allSessions={allSessions}
+                                dailyHodLod={dailyHodLod}
                                 ticker={ticker}
                                 targetSession={session}
                                 filters={filters}
