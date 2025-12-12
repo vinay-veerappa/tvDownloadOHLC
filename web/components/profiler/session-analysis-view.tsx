@@ -1,12 +1,11 @@
 "use client"
 
 import { useMemo } from 'react';
-import { ProfilerSession, LevelTouchesResponse } from '@/lib/api/profiler';
-import { RangeDistribution } from './range-distribution';
-import { PriceModelChart } from './price-model-chart';
-import { OutcomePanel } from './outcome-panel';
-import { HodLodChart, SessionStats } from './hod-lod-analysis';
+import { ProfilerSession, LevelTouchesResponse, DailyHodLodResponse } from '@/lib/api/profiler';
+import { SessionStats } from './hod-lod-analysis';
 import { DailyLevels } from './daily-levels';
+import { OutcomeDetailView } from './outcome-detail-view'; // [NEW]
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // [NEW]
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 
 interface SessionAnalysisViewProps {
@@ -15,7 +14,7 @@ interface SessionAnalysisViewProps {
     filteredDates: Set<string>;
     ticker: string;
     levelTouches: LevelTouchesResponse | null;  // Passed from parent to avoid duplicate fetch
-    // [NEW] Filter Props for PriceModelChart
+    // [NEW] Filter Props for PriceModelChart and OutcomeDetailView
     filters: Record<string, string>;
     brokenFilters: Record<string, string>;
     intraState: string;
@@ -68,63 +67,60 @@ export function SessionAnalysisView({ session, sessions, filteredDates, ticker, 
         return { groups, bases };
     }, [sessionData]);
 
+    // [NEW] Dynamic Tabs: Filter for outcomes that have data
+    const validOutcomes = useMemo(() => {
+        return OUTCOMES.filter(o => outcomeGroups.groups[o].length > 0);
+    }, [outcomeGroups]);
+
     if (sessionData.length === 0) {
         return <div className="p-8 text-center text-muted-foreground">No data matches criteria for {session} session.</div>;
+    }
+
+    // Edge case: Data exists but not mapped to these 4 outcomes (e.g. "None")
+    if (validOutcomes.length === 0) {
+        return <div className="p-8 text-center text-muted-foreground">Sessions found but no specific Long/Short outcomes (likely consolidated inside range).</div>;
     }
 
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
 
-            {/* Row 1: HOD/LOD Analysis (Moved to Top) */}
-            <section>
-                <h3 className="text-lg font-semibold mb-3">HOD/LOD Analysis</h3>
-                <HodLodChart
-                    sessions={sessionData}
-                // selectedSession={session} // No longer needed as we use the component directly
-                />
-            </section>
 
-            {/* Row 2: Range Distribution (Locked to Session) */}
-            <section>
-                <RangeDistribution sessions={sessionData} forcedSession={session} />
-            </section>
 
-            {/* Row 3: Price Model (Median) */}
+            {/* Row 4: Outcome Analysis (Tabs) */}
             <section>
-                <h3 className="text-lg font-semibold mb-3">Median Price Model</h3>
-                <PriceModelChart
-                    ticker={ticker}
-                    session={session}
-                    targetSession={session} // Use session as target in this view
-                    filters={filters}       // Pass global filters
-                    brokenFilters={brokenFilters}
-                    intraState={intraState}
-                    height={350}
-                />
-            </section>
+                <h3 className="text-lg font-semibold mb-3">Outcome Detailed Analysis</h3>
+                <Tabs defaultValue={validOutcomes[0]} className="w-full">
+                    <TabsList className="w-full justify-start h-auto p-1 bg-muted/20 mb-4 overflow-x-auto">
+                        {validOutcomes.map(outcome => {
+                            const count = outcomeGroups.groups[outcome].length;
+                            return (
+                                <TabsTrigger
+                                    key={outcome}
+                                    value={outcome}
+                                    className="px-4 py-2 flex items-center gap-2"
+                                >
+                                    {outcome}
+                                    <span className="text-xs bg-muted text-muted-foreground px-1.5 rounded-full">{count}</span>
+                                </TabsTrigger>
+                            )
+                        })}
+                    </TabsList>
 
-            {/* Row 4: Outcome Analysis (Grid) */}
-            <section>
-                <h3 className="text-lg font-semibold mb-3">Outcome Analysis</h3>
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                    {OUTCOMES.map(outcome => {
-                        const sList = outcomeGroups.groups[outcome];
-                        if (sList.length === 0) return null; // Skip empty? Or show 0%?
-                        // User wants "True or False outcomes only". If 0, maybe skip to save space.
-
-                        return (
-                            <OutcomePanel
-                                key={outcome}
-                                outcomeName={outcome}
-                                sessions={sList}
-                                targetSession={session}
-                                totalInCategory={outcomeGroups.bases[outcome]}
+                    {validOutcomes.map(outcome => (
+                        <TabsContent key={outcome} value={outcome} className="mt-0">
+                            <OutcomeDetailView
+                                outcome={outcome}
+                                sessions={outcomeGroups.groups[outcome]}
+                                dailyHodLod={null}
                                 ticker={ticker}
-                                outcomeDates={new Set(sList.map(s => s.date))}
+                                targetSession={session}
+                                filters={filters}
+                                brokenFilters={brokenFilters}
+                                intraState={intraState}
                             />
-                        );
-                    })}
-                </div>
+                        </TabsContent>
+                    ))}
+                </Tabs>
             </section>
 
             {/* Row 5: Session Levels */}
