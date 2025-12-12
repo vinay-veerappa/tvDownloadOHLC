@@ -683,8 +683,7 @@ class ProfilerService:
         distribution = {}
         for status in ['Long True', 'Long False', 'Short True', 'Short False', 'None']:
             count = sum(1 for s in target_sessions if s.get('status') == status)
-            pct = (count / len(target_sessions) * 100) if target_sessions else 0
-            distribution[status] = {"count": count, "pct": round(pct, 1)}
+            distribution[status] = count
         
         # 5. Calculate range stats
         range_stats = {
