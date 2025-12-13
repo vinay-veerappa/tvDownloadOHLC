@@ -134,15 +134,35 @@ def compute_level_touches(ticker: str) -> dict:
             p12h = p12l = p12m = None
         
         # Find touch times for each level
-        def find_touch_time(level, bars_df, tolerance_pct=0.001):
-            """Find first time the level was touched (within tolerance)"""
+        def find_touch_times(level, bars_df):
+            """Find ALL unique 15-min bucket times the level was touched"""
             if level is None:
-                return None
-            tolerance = abs(level) * tolerance_pct
-            for ts, row in bars_df.iterrows():
-                if row['low'] <= level + tolerance and row['high'] >= level - tolerance:
-                    return ts.strftime('%H:%M')
-            return None
+                return []
+            
+            # Strict check: Level must be within (or equal to) the bar's range
+            hits = bars_df[(bars_df['low'] <= level) & (bars_df['high'] >= level)]
+            
+            if hits.empty:
+                return []
+            
+            unique_buckets = set()
+            times_list = []
+            
+            # Iterate hits to bucket them
+            # We use 1 minute buckets (raw precision) to allow frontend aggregation
+            for ts in hits.index:
+                # No rounding, keep 1-min precision
+                h = ts.hour
+                m = ts.minute
+                # m_bucket = m  (effectively)
+                bucket_key = f"{h:02d}:{m:02d}"
+                
+                if bucket_key not in unique_buckets:
+                    unique_buckets.add(bucket_key)
+                    # Store the bucket timestamp
+                    times_list.append(bucket_key)
+            
+            return times_list
         
         # Day session bars for touch analysis (From 18:00 previous day to 17:00 current day)
         # Actually logic is simpler: 'group' itself IS the trading day (18:00 -> 17:00).
@@ -156,52 +176,52 @@ def compute_level_touches(ticker: str) -> dict:
             'pdh': {
                 'level': round(pdh, 2),
                 'touched': False,
-                'touch_time': None
+                'touch_times': []
             },
             'pdl': {
                 'level': round(pdl, 2),
                 'touched': False,
-                'touch_time': None
+                'touch_times': []
             },
             'pdm': {
                 'level': round(pdm, 2),
                 'touched': False,
-                'touch_time': None
+                'touch_times': []
             }
         }
         
         # Check PDH/PDL/PDM touches
-        pdh_time = find_touch_time(pdh, day_session)
-        if pdh_time:
+        pdh_times = find_touch_times(pdh, day_session)
+        if pdh_times:
             result['pdh']['touched'] = True
-            result['pdh']['touch_time'] = pdh_time
+            result['pdh']['touch_times'] = pdh_times
         
-        pdl_time = find_touch_time(pdl, day_session)
-        if pdl_time:
+        pdl_times = find_touch_times(pdl, day_session)
+        if pdl_times:
             result['pdl']['touched'] = True
-            result['pdl']['touch_time'] = pdl_time
+            result['pdl']['touch_times'] = pdl_times
         
-        pdm_time = find_touch_time(pdm, day_session)
-        if pdm_time:
+        pdm_times = find_touch_times(pdm, day_session)
+        if pdm_times:
             result['pdm']['touched'] = True
-            result['pdm']['touch_time'] = pdm_time
+            result['pdm']['touch_times'] = pdm_times
         
         # P12 levels
         if p12h is not None:
             result['p12h'] = {
                 'level': round(p12h, 2),
                 'touched': False,
-                'touch_time': None
+                'touch_times': []
             }
             result['p12l'] = {
                 'level': round(p12l, 2),
                 'touched': False,
-                'touch_time': None
+                'touch_times': []
             }
             result['p12m'] = {
                 'level': round(p12m, 2),
                 'touched': False,
-                'touch_time': None
+                'touch_times': []
             }
             
             # Check P12 touches (valid only during 06:00 - 17:00 of the trading day)
@@ -210,20 +230,20 @@ def compute_level_touches(ticker: str) -> dict:
             # Valid touch period: 06:00 onwards
             p12_session = day_session[~overnight_mask]
             
-            p12h_time = find_touch_time(p12h, p12_session)
-            if p12h_time:
+            p12h_times = find_touch_times(p12h, p12_session)
+            if p12h_times:
                 result['p12h']['touched'] = True
-                result['p12h']['touch_time'] = p12h_time
+                result['p12h']['touch_times'] = p12h_times
             
-            p12l_time = find_touch_time(p12l, p12_session)
-            if p12l_time:
+            p12l_times = find_touch_times(p12l, p12_session)
+            if p12l_times:
                 result['p12l']['touched'] = True
-                result['p12l']['touch_time'] = p12l_time
+                result['p12l']['touch_times'] = p12l_times
             
-            p12m_time = find_touch_time(p12m, p12_session)
-            if p12m_time:
+            p12m_times = find_touch_times(p12m, p12_session)
+            if p12m_times:
                 result['p12m']['touched'] = True
-                result['p12m']['touch_time'] = p12m_time
+                result['p12m']['touch_times'] = p12m_times
         
         # Helper to slice session from start_time (exclusive) to 17:00
         def get_valid_window(bars_df, start_t: time):
@@ -274,11 +294,11 @@ def compute_level_touches(ticker: str) -> dict:
              # Filter: exclude exact 18:00 bar if it matches open
              valid_bars = day_session[day_session.index.time != time(18,0)] 
              # (This is rough, assumes 1m bars. safe enough for now)
-             do_time = find_touch_time(daily_open, valid_bars)
+             do_times = find_touch_times(daily_open, valid_bars)
              result['daily_open'] = {
                 'level': round(daily_open, 2),
-                'touched': do_time is not None,
-                'touch_time': do_time
+                'touched': len(do_times) > 0,
+                'touch_times': do_times
              }
         
         # Midnight Open (00:00)
@@ -289,11 +309,11 @@ def compute_level_touches(ticker: str) -> dict:
             # Or just >= 00:00? Usually "Open" implies the 00:00 price. Touch means revisiting.
             # Let's filter > 00:00.
             valid_bars = day_session.between_time('00:01', '17:00')
-            mo_time = find_touch_time(midnight_open, valid_bars)
+            mo_times = find_touch_times(midnight_open, valid_bars)
             result['midnight_open'] = {
                 'level': round(midnight_open, 2),
-                'touched': mo_time is not None,
-                'touch_time': mo_time
+                'touched': len(mo_times) > 0,
+                'touch_times': mo_times
             }
         
         # 07:30 Open
@@ -301,11 +321,11 @@ def compute_level_touches(ticker: str) -> dict:
         if open_0730 is not None:
             # Valid: 07:31 - 17:00
             valid_bars = day_session.between_time('07:31', '17:00')
-            o730_time = find_touch_time(open_0730, valid_bars)
+            o730_times = find_touch_times(open_0730, valid_bars)
             result['open_0730'] = {
                 'level': round(open_0730, 2),
-                'touched': o730_time is not None,
-                'touch_time': o730_time
+                'touched': len(o730_times) > 0,
+                'touch_times': o730_times
             }
 
         # Session Mids
@@ -340,15 +360,15 @@ def compute_level_touches(ticker: str) -> dict:
                             start_dt = (datetime.min + timedelta(hours=h, minutes=m, seconds=1)).time() # +1 sec effectively
                             
                             valid_bars = day_session.between_time(start_dt, time(17,0))
-                            mid_time = find_touch_time(mid, valid_bars)
+                            mid_times = find_touch_times(mid, valid_bars)
                             result[key] = {
                                 'level': round(mid, 2),
-                                'touched': mid_time is not None,
-                                'touch_time': mid_time
+                                'touched': len(mid_times) > 0,
+                                'touch_times': mid_times
                             }
                         else:
                             # Fallback if no window defined (shouldn't happen)
-                            result[key] = { 'level': round(mid, 2), 'touched': False, 'touch_time': None }
+                            result[key] = { 'level': round(mid, 2), 'touched': False, 'touch_times': [] }
         
         results[date] = result
     
@@ -368,10 +388,13 @@ def main():
     print("\nSample (last 5 days):")
     for d in sample_dates:
         r = results[d]
-        pdh_t = r['pdh']['touch_time'] or 'N/A'
-        pdl_t = r['pdl']['touch_time'] or 'N/A'
-        pdm_t = r['pdm']['touch_time'] or 'N/A'
-        print(f"  {d}: PDH@{pdh_t}, PDM@{pdm_t}, PDL@{pdl_t}")
+        # Helper to show first hit time or N/A
+        def get_1st(times): return times[0] if times else 'N/A'
+        
+        pdh_t = get_1st(r['pdh']['touch_times'])
+        pdl_t = get_1st(r['pdl']['touch_times'])
+        pdm_t = get_1st(r['pdm']['touch_times'])
+        print(f"  {d}: PDH@{pdh_t}, PDM@{pdm_t}, PDL@{pdl_t} (showing 1st hit)")
     
     # Calculate hit rates
     pdh_hits = sum(1 for r in results.values() if r['pdh']['touched'])

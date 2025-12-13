@@ -16,8 +16,21 @@
 *   **End**: 17:00 ET (Current Calendar Day)
 *   **Anchor**: All statistical calculations are anchored to **18:00 ET**. Timestamps are minutes from 18:00.
 
-### 0.2 Touch Validity Logic
-A level is strictly considered "touched" **only after** its establishment time has passed. Any price action *during* the establishment period (or before it) is ignored for statistical touch counting.
+### 0.3 Session Independence (The "Reset Flag" Logic)
+*   **Definition**: The probability of a level being hit is calculated **independently** for each session.
+*   **Logic**: A hit in a prior session (e.g., Asia) **does not** preclude a hit in a later session (e.g., NY1) from being counted. The "Hit Flag" is effectively reset at the start of each session of interest.
+*   **Implication**: Hits must be tracked with sufficient granularity (e.g., list of all hit times) to allow dynamic filtering by session boundaries (Asia, London, NY1, etc.). Use **5-minute** distinct buckets for storage and analysis.
+
+### 0.4 Hit Calculation Logic (Strict Precision)
+*   **Granularity**: 5-Minute Buckets (e.g., 09:30, 09:35).
+*   **Precision (Zero Tolerance)**: A hit is recorded **only if** the price strictly intersects the level:
+    *   `Bar Low <= Level <= Bar High`
+    *   No tolerance buffer allowed (e.g., a miss by 1 tick is a miss).
+*   **Uniqueness (First Hit Rule)**:
+    *   For any given session (e.g., NY1), only the **First Hit** is counted towards the probability.
+    *   Subsequent hits in the same session are ignored.
+    *   This ensures the sum of counts in a distribution histogram never exceeds the total number of days.
+
 
 ---
 
@@ -143,8 +156,8 @@ Each session tab displays only relevant levels:
 For each level, display:
 - **Touch Rate**: % of filtered days where level was touched
 - **Mode Time**: Most common time bucket when touched
-- **Median Time**: Median time for touches
-- **Time Histogram**: Distribution of touch times
+- **Median Time**: Time where 50% of total hits have occurred (White Dashed Line on chart)
+- **Time Histogram**: Distribution of touch times (supports 1min, 5min, 15min granularity)
 
 ---
 
