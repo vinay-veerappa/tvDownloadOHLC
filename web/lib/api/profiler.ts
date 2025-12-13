@@ -122,7 +122,8 @@ export async function fetchDailyHodLod(ticker: string): Promise<DailyHodLodRespo
 export interface LevelTouchEntry {
     level: number;
     touched: boolean;
-    touch_times: string[];  // List of HH:MM buckets
+    hits: Record<string, string>; // session name -> first hit time (HH:MM)
+    // touch_times: string[]; REMOVED for optimization
 }
 
 export interface DayLevelTouches {

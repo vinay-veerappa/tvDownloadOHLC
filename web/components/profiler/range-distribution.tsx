@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { TrendingUp, TrendingDown, Layers } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { ChartTooltipFrame, ChartTooltipHeader, ChartTooltipRow } from '@/components/ui/chart-tooltip';
 
 interface Props {
     sessions: ProfilerSession[];
@@ -223,12 +224,24 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
                                     tickFormatter={(v) => `${v.toFixed(0)}%`}
                                 />
                                 <Tooltip
-                                    contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
-                                    formatter={(value: number, name: string, props: any) => {
-                                        if (name === 'Reference') return [`${value.toFixed(1)}%`, 'Reference (All-Time)'];
-                                        return [`${value.toFixed(1)}% (${props.payload.count} days)`, 'Current Data'];
+                                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                                    content={({ active, payload, label }) => {
+                                        if (!active || !payload || !payload.length) return null;
+                                        return (
+                                            <ChartTooltipFrame>
+                                                <ChartTooltipHeader>High: +{label}% from open</ChartTooltipHeader>
+                                                {payload.map((entry: any, index: number) => (
+                                                    <ChartTooltipRow
+                                                        key={index}
+                                                        label="Distribution"
+                                                        value={`${Number(entry.value).toFixed(1)}%`}
+                                                        subValue={`${entry.payload.count} days`}
+                                                        indicatorColor={entry.fill}
+                                                    />
+                                                ))}
+                                            </ChartTooltipFrame>
+                                        );
                                     }}
-                                    labelFormatter={(label) => `High: +${label}% from open`}
                                 />
                                 {highStats?.median && <ReferenceLine x={highStats.median} stroke="#22c55e" strokeDasharray="3 3" />}
                                 {/* @ts-ignore */}
@@ -283,12 +296,24 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
                                     tickFormatter={(v) => `${v.toFixed(0)}%`}
                                 />
                                 <Tooltip
-                                    contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
-                                    formatter={(value: number, name: string, props: any) => {
-                                        if (name === 'Reference') return [`${value.toFixed(1)}%`, 'Reference (All-Time)'];
-                                        return [`${value.toFixed(1)}% (${props.payload.count} days)`, 'Current Data'];
+                                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                                    content={({ active, payload, label }) => {
+                                        if (!active || !payload || !payload.length) return null;
+                                        return (
+                                            <ChartTooltipFrame>
+                                                <ChartTooltipHeader>Low: {label}% from open</ChartTooltipHeader>
+                                                {payload.map((entry: any, index: number) => (
+                                                    <ChartTooltipRow
+                                                        key={index}
+                                                        label="Distribution"
+                                                        value={`${Number(entry.value).toFixed(1)}%`}
+                                                        subValue={`${entry.payload.count} days`}
+                                                        indicatorColor={entry.fill}
+                                                    />
+                                                ))}
+                                            </ChartTooltipFrame>
+                                        );
                                     }}
-                                    labelFormatter={(label) => `Low: ${label}% from open`}
                                 />
                                 {lowStats?.median && <ReferenceLine x={lowStats.median} stroke="#ef4444" strokeDasharray="3 3" />}
                                 {/* @ts-ignore */}
