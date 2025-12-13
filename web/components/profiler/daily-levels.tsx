@@ -187,7 +187,7 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
                     <CardTitle className="text-sm font-medium">{title}</CardTitle>
                     <div className="flex items-center gap-2">
                         <div className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
-                        <Badge variant="outline" className="text-lg font-bold border-gray-600 text-gray-100">
+                        <Badge variant="outline" className="text-lg font-bold border-muted-foreground/20 text-foreground">
                             {stats.hitRate.toFixed(1)}%
                         </Badge>
                     </div>
@@ -212,7 +212,7 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
                             />
                             <YAxis hide />
                             <Tooltip
-                                cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                                cursor={{ fill: 'var(--muted)', fillOpacity: 0.2 }}
                                 content={({ active, payload, label }) => {
                                     if (active && payload && payload.length) {
                                         const data = payload[0].payload;
@@ -225,27 +225,28 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
                                         const endTime = `${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`;
 
                                         return (
-                                            <div className="bg-slate-900 border border-slate-700 shadow-xl rounded-md text-xs p-3 min-w-[140px]">
+
+                                            <div className="bg-background border border-border shadow-xl rounded-md text-xs p-3 min-w-[140px]">
                                                 {/* Header: Level Name */}
-                                                <div className="font-bold text-base mb-1 flex items-center gap-2 text-white border-b border-slate-700 pb-2">
+                                                <div className="font-bold text-base mb-1 flex items-center gap-2 text-foreground border-b border-border pb-2">
                                                     <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
                                                     {title}
                                                 </div>
 
                                                 {/* Time Range */}
-                                                <div className="mt-2 text-slate-400 font-medium text-[10px] uppercase tracking-wider">
+                                                <div className="mt-2 text-muted-foreground font-medium text-[10px] uppercase tracking-wider">
                                                     Eastern Time
                                                 </div>
-                                                <div className="text-slate-200 font-mono text-sm mb-2">
+                                                <div className="text-foreground font-mono text-sm mb-2">
                                                     {label} - {endTime}
                                                 </div>
 
                                                 {/* Stats */}
-                                                <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-sm">
-                                                    <span className="font-bold text-white">
+                                                <div className="pt-2 border-t border-border flex items-center justify-between text-sm">
+                                                    <span className="font-bold text-foreground">
                                                         {Number(data.pct).toFixed(2)}%
                                                     </span>
-                                                    <span className="text-slate-500 text-xs">
+                                                    <span className="text-muted-foreground text-xs">
                                                         {data.count} hits
                                                     </span>
                                                 </div>

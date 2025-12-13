@@ -35,7 +35,7 @@ export function ChartHeaderInfo({ title, subtitle, items }: ChartHeaderInfoProps
                             {item.label}:
                         </span>
                         <span
-                            className="font-mono font-medium"
+                            className="font-mono font-medium text-foreground"
                             style={{ color: item.color }}
                         >
                             {item.value}
