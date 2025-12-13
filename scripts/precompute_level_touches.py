@@ -90,6 +90,9 @@ def compute_level_touches(ticker: str) -> dict:
         
         # 07:30 open
         open_0730 = get_price_at_time(time(7, 30), group)
+
+        # 08:00 open (NY1 Open)
+        open_0800 = get_price_at_time(time(8, 0), group)
         
         daily_data[str(trading_date)] = {
             'high': float(group['high'].max()),
@@ -98,7 +101,8 @@ def compute_level_touches(ticker: str) -> dict:
             'bars': group,
             'daily_open': daily_open,
             'midnight_open': midnight_open,
-            'open_0730': open_0730
+            'open_0730': open_0730,
+            'open_0800': open_0800
         }
     
     results = {}
@@ -140,8 +144,13 @@ def compute_level_touches(ticker: str) -> dict:
                     return ts.strftime('%H:%M')
             return None
         
-        # Day session bars (06:00 onwards for touch analysis)
-        day_session = bars[bars.index.time >= time(6, 0)]
+        # Day session bars for touch analysis (From 18:00 previous day to 17:00 current day)
+        # Actually logic is simpler: 'group' itself IS the trading day (18:00 -> 17:00).
+        # We just need to ensure we don't filter out the overnight hours if we want the chart to start at 18:00.
+        # The line `day_session = bars[bars.index.time >= time(6, 0)]` was likely excluding overnight.
+        # Let's use the full group, but maybe respect the 17:00 close?
+        # The 'group' is already bucketed by `get_trading_date`.
+        day_session = current['bars']
         
         result = {
             'pdh': {
@@ -195,66 +204,151 @@ def compute_level_touches(ticker: str) -> dict:
                 'touch_time': None
             }
             
-            # Check P12 touches (during day session 06:00+)
-            p12h_time = find_touch_time(p12h, day_session)
+            # Check P12 touches (valid only during 06:00 - 17:00 of the trading day)
+            # We filter the day_session to exclude the overnight definition period
+            # P12 definition period: 18:00 - 06:00
+            # Valid touch period: 06:00 onwards
+            p12_session = day_session[~overnight_mask]
+            
+            p12h_time = find_touch_time(p12h, p12_session)
             if p12h_time:
                 result['p12h']['touched'] = True
                 result['p12h']['touch_time'] = p12h_time
             
-            p12l_time = find_touch_time(p12l, day_session)
+            p12l_time = find_touch_time(p12l, p12_session)
             if p12l_time:
                 result['p12l']['touched'] = True
                 result['p12l']['touch_time'] = p12l_time
             
-            p12m_time = find_touch_time(p12m, day_session)
+            p12m_time = find_touch_time(p12m, p12_session)
             if p12m_time:
                 result['p12m']['touched'] = True
                 result['p12m']['touch_time'] = p12m_time
         
-        # Time-based opens
-        daily_open = current['daily_open']
-        midnight_open = current['midnight_open']
-        open_0730 = current['open_0730']
+        # Helper to slice session from start_time (exclusive) to 17:00
+        def get_valid_window(bars_df, start_t: time):
+            # Trading day ends at 17:00. 
+            # If start_t is >= 18:00, it implies previous day part of the session.
+            # If 00:00 <= start_t <= 17:00, it's current day.
+            
+            # Simple approach since bars_df is already the correct trading day sequence:
+            # Find the index of the first bar AFTER start_t.
+            # But simpler: just filter events.
+            
+            # Case 1: Start time is 18:00 (Daily Open)
+            if start_t == time(18, 0):
+                # Filter strictly after 18:00
+                # But bars_df might start at 18:00.
+                mask = (bars_df.index.time > start_t) | (bars_df.index.time < time(17, 0)) 
+                # Careful with "OR" across midnight. 
+                # 18:00 -> 23:59 (Prev Day) -> 00:00 -> 17:00 (Curr Day)
+                # Valid: 18:01...23:59 OR 00:00...17:00.
+                # Actually, easier to just check if index > timestamp of open? 
+                # But we only have time objects here.
+                
+                # Let's filter by requiring time != 18:00 if it's the very first bar?
+                # Best way: Iterate and skip until > start_t.
+                pass
+
+            # Robust Way: Build a valid mask based on minute of day? 
+            # Or just use between_time equivalent on the sorted index.
+            
+            # Construct a full datetime start for filter
+            # bars_df is strictly 18:00 D-1 to 17:00 D.
+            # We want [Start Time + 1m, 17:00]
+            
+            # Let's just pass the sliced DF to find_touch_time.
+            # Need a robust slicer.
+            return bars_df # Placeholder if complex, but let's do inline below.
         
+        # We will do inline slicing for clarity.
+        
+        # --- Time-based Opens ---
+        # Valid from Open Time + 1m (approx) to 17:00. 
+        # Actually, "Philosophy" implies subsequent price action.
+        
+        # Daily Open (18:00)
+        daily_open = current['daily_open']
         if daily_open is not None:
-            do_time = find_touch_time(daily_open, day_session)
-            result['daily_open'] = {
+             # Valid: > 18:00 prev day through 17:00 current day
+             # Filter: exclude exact 18:00 bar if it matches open
+             valid_bars = day_session[day_session.index.time != time(18,0)] 
+             # (This is rough, assumes 1m bars. safe enough for now)
+             do_time = find_touch_time(daily_open, valid_bars)
+             result['daily_open'] = {
                 'level': round(daily_open, 2),
                 'touched': do_time is not None,
                 'touch_time': do_time
-            }
+             }
         
+        # Midnight Open (00:00)
+        midnight_open = current['midnight_open']
         if midnight_open is not None:
-            mo_time = find_touch_time(midnight_open, day_session)
+            # Valid: 00:00 to 17:00. 
+            # Filter: time > 00:00 and time <= 17:00 (implicit in day_session)
+            # Or just >= 00:00? Usually "Open" implies the 00:00 price. Touch means revisiting.
+            # Let's filter > 00:00.
+            valid_bars = day_session.between_time('00:01', '17:00')
+            mo_time = find_touch_time(midnight_open, valid_bars)
             result['midnight_open'] = {
                 'level': round(midnight_open, 2),
                 'touched': mo_time is not None,
                 'touch_time': mo_time
             }
         
+        # 07:30 Open
+        open_0730 = current['open_0730']
         if open_0730 is not None:
-            o730_time = find_touch_time(open_0730, day_session)
+            # Valid: 07:31 - 17:00
+            valid_bars = day_session.between_time('07:31', '17:00')
+            o730_time = find_touch_time(open_0730, valid_bars)
             result['open_0730'] = {
                 'level': round(open_0730, 2),
                 'touched': o730_time is not None,
                 'touch_time': o730_time
             }
-        
-        # Session mids from profiler data
+
+        # Session Mids
         if date in profiler_sessions:
             day_prof = profiler_sessions[date]
+            
+            # Map session to "Valid Start Time" for checking touches
+            # Asia (End 02:00) -> Check after 02:00
+            # London (End 07:00) -> Check after 07:00
+            # NY1 (End 12:00) -> Check after 12:00
+            # NY2 (End 16:00) -> Check after 16:00
+            session_check_starts = {
+                'Asia': '02:00',
+                'London': '07:00',
+                'NY1': '12:00',
+                'NY2': '16:00'
+            }
+            
             for sess_name in ['Asia', 'London', 'NY1', 'NY2']:
                 if sess_name in day_prof:
                     sess = day_prof[sess_name]
                     mid = sess.get('mid')
                     if mid is not None:
                         key = f'{sess_name.lower()}_mid'
-                        mid_time = find_touch_time(mid, day_session)
-                        result[key] = {
-                            'level': round(mid, 2),
-                            'touched': mid_time is not None,
-                            'touch_time': mid_time
-                        }
+                        
+                        start_t_str = session_check_starts.get(sess_name)
+                        if start_t_str:
+                            # Slicing: StartTime (Exclusive ideally) to 17:00
+                            # between_time is inclusive. So create a start time + 1min?
+                            # '02:00' -> '02:01'
+                            h, m = map(int, start_t_str.split(':'))
+                            start_dt = (datetime.min + timedelta(hours=h, minutes=m, seconds=1)).time() # +1 sec effectively
+                            
+                            valid_bars = day_session.between_time(start_dt, time(17,0))
+                            mid_time = find_touch_time(mid, valid_bars)
+                            result[key] = {
+                                'level': round(mid, 2),
+                                'touched': mid_time is not None,
+                                'touch_time': mid_time
+                            }
+                        else:
+                            # Fallback if no window defined (shouldn't happen)
+                            result[key] = { 'level': round(mid, 2), 'touched': False, 'touch_time': None }
         
         results[date] = result
     

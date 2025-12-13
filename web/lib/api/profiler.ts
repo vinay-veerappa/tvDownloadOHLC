@@ -243,3 +243,37 @@ export async function fetchFilteredPriceModel(payload: FilterPayload): Promise<P
     }
     return res.json();
 }
+
+// Level Stats (Probability & Timing)
+export interface LevelStat {
+    rate: number;
+    median: number;
+    mode: number;
+    avg_rel: number; // calculated in precompute
+    count: number;
+    hits: number;
+}
+
+export interface LevelContextData {
+    PDH: LevelStat;
+    PDL: LevelStat;
+    GlobexOpen: LevelStat;
+    MidnightOpen: LevelStat;
+    AsiaMid: LevelStat;
+    LondonMid: LevelStat;
+    NY1Mid: LevelStat;
+}
+
+export interface AllLevelStats {
+    All: LevelContextData;
+    Green: LevelContextData;
+    Red: LevelContextData;
+}
+
+export async function fetchLevelStats(ticker: string): Promise<AllLevelStats> {
+    const res = await fetch(`${API_BASE_URL}/stats/profiler/${ticker}/levels`);
+    if (!res.ok) {
+        throw new Error('Failed to fetch level stats');
+    }
+    return res.json();
+}

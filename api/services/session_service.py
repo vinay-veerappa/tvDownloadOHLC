@@ -30,64 +30,88 @@ class SessionService:
             if pd.isna(val) or val is None: return None
             return float(val)
 
-        # 1. Calculate Daily Aggregates (PDH, PDL, PD-Mid)
-        # We resample to Daily (1D) to get OHLC for each day
-        # Shift by 1 to get "Previous Day" relative to "Today"
-        daily = df.resample('1D').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
+        # Shift index to align Trading Day (18:00 previous day -> 17:00 current day)
+        # Adding 6 hours makes 18:00 -> 00:00 (start of next day)
+        # So "Tuesday 18:00" becomes "Wednesday 00:00", belonging to Wednesday's trading day.
+        df_shifted = df.copy()
+        df_shifted.index = df.index + pd.Timedelta(hours=6)
+
+        # 1. Calculate Daily Aggregates (PDH, PDL, PD-Mid) on TRADING DAY
+        daily = df_shifted.resample('1D').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
         daily['mid'] = (daily['high'] + daily['low']) / 2
+        
         # Normalize index to be timezone-naive for easier lookup with date_obj
         if daily.index.tz is not None:
             daily.index = daily.index.tz_localize(None)
-        prev_daily = daily.shift(1) # Row for 2024-12-05 contains data from 2024-12-04
+        
+        # Shift by 1 to get "Previous Day"
+        prev_daily = daily.shift(1) 
 
-        # 2. Load Weekly Settlement Data from parquet if ticker provided
+        # 2. Load Weekly... (unchanged, maybe needs shift too? ignoring for now)
         weekly_df = None
         if ticker:
             try:
-                # Construct path to weekly parquet file
                 from api.services.data_loader import DATA_DIR
                 weekly_file = DATA_DIR / f"{ticker}_1W.parquet"
                 if weekly_file.exists():
                     weekly_df = pd.read_parquet(weekly_file)
-                    # Ensure datetime index
-                    if not isinstance(weekly_df.index, pd.DatetimeIndex):
-                        weekly_df.index = pd.to_datetime(weekly_df.index)
-                    # Normalize to naive for lookup
-                    if weekly_df.index.tz is not None:
-                        weekly_df.index = weekly_df.index.tz_localize(None)
+                    if not isinstance(weekly_df.index, pd.DatetimeIndex): weekly_df.index = pd.to_datetime(weekly_df.index)
+                    if weekly_df.index.tz is not None: weekly_df.index = weekly_df.index.tz_localize(None)
             except Exception as e:
                 print(f"Warning: Could not load weekly data for {ticker}: {e}")
         
-        # Fallback: resample from 1m data if weekly file not available
         if weekly_df is None:
             weekly = df.resample('W-FRI').agg({'close': 'last'})
-            if weekly.index.tz is not None:
-                weekly.index = weekly.index.tz_localize(None)
+            if weekly.index.tz is not None: weekly.index = weekly.index.tz_localize(None)
             prev_weekly = weekly.shift(1)
         else:
-            # Use loaded weekly data
             prev_weekly = weekly_df[['close']].shift(1)
 
-        # 3. Helpers for specific times
+        # 3. Helpers
         def get_price_at_time(d_data, t_str, date_ref):
             try:
-                # Use passed date_ref instead of d_data.name (which fails on DataFrame)
                 ts = pd.Timestamp.combine(date_ref, pd.to_datetime(t_str).time())
+                # If checking 00:00 or 02:30, it is on the 'date_ref' day.
+                # If checking 18:00, it is on 'date_ref - 1 day'.
+                # But d_data contains the full trading day (18:00 prev -> 17:00 curr).
+                # So we just search in d_data.
+                
+                # Careful: date_ref is the "Trading Date". 
+                # e.g. Wednesday. d_data has Tues 18:00 to Wed 17:00.
+                # If we ask for "08:00", it is Wed 08:00.
+                # If we ask for "18:00", it is ??? 18:00 is START of NEXT day.
+                # Usually we want "Globex Open" (18:00 of prev day) or "Midnight Open" (00:00 of curr day).
+                
+                # We need to construct the correct absolute timestamp for lookup.
+                # For 18:00 start, we want (date_ref - 1 day) 18:00.
+                # For 00:00, we want date_ref 00:00.
+                
+                t_obj = pd.to_datetime(t_str).time()
+                if t_obj.hour >= 18:
+                    ts = pd.Timestamp.combine(date_ref - timedelta(days=1), t_obj)
+                else:
+                    ts = pd.Timestamp.combine(date_ref, t_obj)
+                    
                 if d_data.index.tz:
-                    ts = ts.tz_localize(d_data.index.tz, ambiguous='NaT', nonexistent='shift_forward')
-                # Find exact or nearest forward
+                     ts = ts.tz_localize(d_data.index.tz, ambiguous='NaT', nonexistent='shift_forward')
+                
                 idx = d_data.index.searchsorted(ts)
                 if idx < len(d_data):
                     row = d_data.iloc[idx]
-                    # Check tolerance (e.g. 30 mins)
-                    if (row.name - ts).total_seconds() < 1800:
+                    if abs((row.name - ts).total_seconds()) < 1800:
                         return row['open']
-            except:
-                pass
+            except: pass
             return None
 
-        # Main Loop: Group by Date
-        grouped = df.groupby(df.index.date)
+        # Main Loop: Group by TRADING Date
+        # df_shifted has index shifted by +6H. 
+        # So Tuesday 18:00 (+6) -> Wed 00:00.
+        # Group by date of shifted index gives "Wednesday".
+        # But we need to iterate over original data rows.
+        # We can group the original DF by the shifted date.
+        
+        grouped = df.groupby(df_shifted.index.date)
+
         
         for date_obj, day_data in grouped:
             date_str = date_obj.strftime('%Y-%m-%d')
@@ -125,9 +149,35 @@ class SessionService:
                     })
             
             # Standard Session Ranges
+            # Standard Session Ranges
             for sess in session_defs:
-                start_t = pd.Timestamp.combine(date_obj, pd.to_datetime(sess["start"]).time())
-                end_t = pd.Timestamp.combine(date_obj, pd.to_datetime(sess["end"]).time())
+                t_start = pd.to_datetime(sess["start"]).time()
+                t_end = pd.to_datetime(sess["end"]).time()
+                
+                # If start time is >= 18:00, it belongs to previous calendar day
+                if t_start.hour >= 18:
+                    start_t = pd.Timestamp.combine(date_obj - timedelta(days=1), t_start)
+                else:
+                    start_t = pd.Timestamp.combine(date_obj, t_start)
+                
+                # End time handling:
+                # If end time is < start time (crosses midnight)
+                # OR if start was shifted back but end is next day?
+                # Asia: 18:00 -> 02:00. (18 Prev -> 02 Curr)
+                # NY1: 08:00 -> 12:00 (08 Curr -> 12 Curr)
+                
+                # Logic: If end < start, add 1 day to end.
+                # If start was shifted back (18:00), and end is 02:00, 
+                # end should be date_obj (02:00). 
+                # If we construct end from date_obj, it is 02:00 Current. Correct.
+                
+                # But if standard logic:
+                if t_end < t_start:
+                   # This implies crossing midnight relative to start date
+                   end_t = pd.Timestamp.combine(start_t.date() + timedelta(days=1), t_end)
+                else:
+                   # Same day as start
+                   end_t = pd.Timestamp.combine(start_t.date(), t_end)
                 
                 if df.index.tz:
                     try:
@@ -158,6 +208,8 @@ class SessionService:
                                 "start_time": start_t.isoformat(),
                                 "price": op
                             })
+                    
+
 
             # --- Previous Day Levels (PDH, PDL, PDMid) ---
             # Retrieve from pre-calculated `prev_daily` (naive index lookup)
