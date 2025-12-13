@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, memo } from 'react';
+import { useMemo, memo, useState } from 'react';
 import useSWR from 'swr';
 import { fetchFilteredPriceModel, fetchLevelStats, FilterPayload, PriceModelResponse, LevelContextData, AllLevelStats } from '@/lib/api/profiler';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,7 +17,6 @@ import {
     Brush
 } from 'recharts';
 import { Loader2 } from 'lucide-react';
-import { useState } from 'react';
 
 interface PriceModelChartProps {
     ticker: string;
@@ -42,8 +41,6 @@ export const PriceModelChart = memo(function PriceModelChart({
 }: PriceModelChartProps) {
     // State for aggregation interval
     const [bucketMinutes, setBucketMinutes] = useState<number>(5);
-    const [showLevels, setShowLevels] = useState<boolean>(true); // Default to on
-
 
     const [hoverData, setHoverData] = useState<{
         time: string;
@@ -92,66 +89,34 @@ export const PriceModelChart = memo(function PriceModelChart({
         }));
     }, [data]);
 
-    // --- Fetch Levels Data ---
-    const { data: levelStats } = useSWR(
-        ['level-stats', ticker],
-        () => fetchLevelStats(ticker)
-    );
-
-    const context = useMemo(() => {
-        const londonFilter = filters['London'] || '';
-        if (londonFilter.startsWith('Long')) return 'Green';
-        if (londonFilter.startsWith('Short')) return 'Red';
-        return 'All';
-    }, [filters]) as keyof import('@/lib/api/profiler').AllLevelStats;
-
-    const referenceLevels = useMemo(() => {
-        if (!showLevels || !levelStats || !levelStats[context]) return [];
-        const data = levelStats[context];
-
-        const levels = [
-            { id: 'PDH', color: '#3b82f6', label: 'Avg PDH' },
-            { id: 'PDL', color: '#f59e0b', label: 'Avg PDL' },
-            { id: 'GlobexOpen', color: '#a855f7', label: 'Avg GLBX' },
-            { id: 'MidnightOpen', color: '#ec4899', label: 'Avg Mid' },
-            { id: 'AsiaMid', color: '#f472b6', label: 'Asia Mid' },
-            { id: 'LondonMid', color: '#fb923c', label: 'Lon Mid' },
-            { id: 'NY1Mid', color: '#38bdf8', label: 'NY1 Mid' },
-        ];
-
-        return levels.map(lvl => {
-            const stat = data[lvl.id as keyof LevelContextData];
-            if (!stat) return null;
-            return { ...lvl, y: stat.avg_rel };
-        }).filter(Boolean) as { id: string, color: string, label: string, y: number }[];
-    }, [levelStats, context]);
-
     // Format time for display (using backend 'time' string if available)
     const formatXAxis = (tickItem: any, index: number) => {
         // tickItem is the value of time_idx (e.g., 0, 5, 10...)
         const val = Number(tickItem);
 
         // 1. Try to find the exact data point matching this time_idx
+        // SKIP `match.time` for Daily session to force strict 18:00 alignment
         const match = chartData.find(d => d.time_idx === val);
-        if (match && match.time) {
+        if (session !== 'Daily' && match && match.time) {
             return match.time;
         }
 
-        // 2. Fallback to calculation
+        // 2. Fallback to strict calculation based on session start
         let startHour = 18;
         let startMin = 0;
-        if (session === 'London') startHour = 3; // London starts 02:30 or 03:00? Backend says 02:30.
-        // Let's use backend strings primarily to avoid this guessing game.
 
-        if (session === 'London') { startHour = 2; startMin = 30; } // Adjusted to match backend
-        if (session === 'NY1') { startHour = 8; startMin = 0; } // Adjusted to 08:00
-        if (session === 'NY2') { startHour = 12; startMin = 0; } // Adjusted to 12:00
-        if (session === 'P12') { startHour = 6; startMin = 0; } // Added P12
+        if (session === 'London') { startHour = 2; startMin = 30; }
+        if (session === 'NY1') { startHour = 7; startMin = 30; } // NY1 starts 07:30
+        if (session === 'NY2') { startHour = 11; startMin = 30; } // NY2 starts 11:30
+        if (session === 'P12') { startHour = 6; startMin = 0; }
         if (session === 'Daily') { startHour = 18; startMin = 0; }
 
+        // Correct: val is already minutes (time_idx from backend is raw minutes offset)
         const totalMinutes = startHour * 60 + startMin + val;
-        const h = Math.floor(totalMinutes / 60) % 24;
-        const m = totalMinutes % 60;
+
+        const normalizedMinutes = totalMinutes % (24 * 60);
+        const h = Math.floor(normalizedMinutes / 60);
+        const m = normalizedMinutes % 60;
         return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
     };
 
@@ -159,17 +124,22 @@ export const PriceModelChart = memo(function PriceModelChart({
     const headerItems = useMemo(() => {
         if (!hoverData) return [];
         return [
-            { label: 'Time', value: hoverData.time },
-            { label: 'Med High', value: hoverData.high.toFixed(2) + '%', color: '#10b981' }, // Green
-            { label: 'Med Low', value: hoverData.low.toFixed(2) + '%', color: '#ef4444' }   // Red
+
+            { label: 'Time', value: hoverData.time }
+            // User requested to remove High/Low values
         ];
     }, [hoverData]);
 
     const handleMouseMove = (state: any) => {
         if (state && state.activePayload && state.activePayload.length > 0) {
             const payload = state.activePayload[0].payload;
+            // payload.time might be undefined if not in data, recalculate if needed
+            const timeDisplay = (session === 'Daily' || !payload.time)
+                ? formatXAxis(payload.time_idx, 0)
+                : payload.time;
+
             setHoverData({
-                time: payload.time || formatXAxis(payload.time_idx, 0), // Use payload.time directly
+                time: timeDisplay,
                 high: payload.high,
                 low: payload.low
             });
@@ -201,26 +171,13 @@ export const PriceModelChart = memo(function PriceModelChart({
             <CardContent className="p-0">
                 <div className="pt-2 px-4 flex justify-between items-start">
                     <ChartHeaderInfo
-                        title={`${session} Price Model (Median)`}
-                        subtitle={`${data.count} Sessions • Context: ${context}`}
-                        items={headerItems.length > 0 ? headerItems : [
-                            { label: 'Hover chart for details', value: '' }
-                        ]}
+                        title=""
+                        subtitle={hoverData ? '' : `${data.count} Sessions`}
+                        items={headerItems} // Fallback text removed completely
                     />
 
                     {/* Interval Selector & Tools */}
                     <div className="flex items-center space-x-2 ml-auto bg-secondary/30 rounded p-1">
-                        <button
-                            onClick={() => setShowLevels(!showLevels)}
-                            className={`text-xs px-2 py-0.5 rounded transition-colors ${showLevels
-                                ? 'bg-primary text-primary-foreground'
-                                : 'text-muted-foreground hover:text-foreground'
-                                }`}
-                            title="Toggle Reference Levels"
-                        >
-                            Levels
-                        </button>
-                        <div className="h-4 w-px bg-border" />
                         <div className="flex space-x-1">
                             {[1, 5, 15].map((mins) => (
                                 <button
@@ -245,17 +202,19 @@ export const PriceModelChart = memo(function PriceModelChart({
                             onMouseMove={handleMouseMove}
                             onMouseLeave={handleMouseLeave}
                         >
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
                             <XAxis
                                 dataKey="time_idx"
                                 tickFormatter={formatXAxis}
-                                tick={{ fontSize: 12, fill: '#9CA3AF' }}
+                                tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
                                 axisLine={false}
                                 tickLine={false}
-                                minTickGap={40}
+                                minTickGap={20}
+                                type="number"
+                                domain={['dataMin', 'dataMax']}
                             />
                             <YAxis
-                                tick={{ fontSize: 12, fill: '#9CA3AF' }}
+                                tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
                                 axisLine={false}
                                 tickLine={false}
                                 domain={['auto', 'auto']}
@@ -263,27 +222,13 @@ export const PriceModelChart = memo(function PriceModelChart({
                                 width={50}
                             />
                             {/* Grey line at 0 */}
-                            <ReferenceLine y={0} stroke="#9CA3AF" strokeDasharray="3 3" />
+                            <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
 
-                            {/* Level Reference Lines */}
-                            {referenceLevels.map(lvl => (
-                                <ReferenceLine
-                                    key={`${lvl.id}-${lvl.y}`}
-                                    y={lvl.y}
-                                    stroke={lvl.color}
-                                    strokeDasharray="4 4"
-                                    strokeOpacity={0.7}
-                                    label={{
-                                        value: lvl.label,
-                                        position: 'right',
-                                        fill: lvl.color,
-                                        fontSize: 10
-                                    }}
-                                />
-                            ))}
-
-                            {/* Invisible tooltip to capture hover but not render popover */}
-                            <Tooltip content={() => null} cursor={{ stroke: '#9CA3AF', strokeWidth: 1, strokeDasharray: '4 4' }} />
+                            {/* Tooltip hidden via opacity to ensure events fire but no popover */}
+                            <Tooltip
+                                wrapperStyle={{ opacity: 0 }}
+                                cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '4 4' }}
+                            />
 
                             <Line
                                 type="monotone"
@@ -291,9 +236,8 @@ export const PriceModelChart = memo(function PriceModelChart({
                                 stroke="#10b981"
                                 strokeWidth={2}
                                 dot={false}
-                                connectNulls={true}
-                                name="Median High"
-                                isAnimationActive={false}
+                                activeDot={{ r: 4 }}
+                                isAnimationActive={false} // Disable animation for performance
                             />
                             <Line
                                 type="monotone"
@@ -301,8 +245,7 @@ export const PriceModelChart = memo(function PriceModelChart({
                                 stroke="#ef4444"
                                 strokeWidth={2}
                                 dot={false}
-                                connectNulls={true}
-                                name="Median Low"
+                                activeDot={{ r: 4 }}
                                 isAnimationActive={false}
                             />
                             <Brush

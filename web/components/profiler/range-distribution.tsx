@@ -105,6 +105,10 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
             lowPcts = targetSessions.map(s => s.low_pct).filter(p => p !== undefined);
         }
 
+        // Filter out any invalid numbers (NaN, Infinity)
+        highPcts = highPcts.filter(p => Number.isFinite(p));
+        lowPcts = lowPcts.filter(p => Number.isFinite(p));
+
         return buildDistribution(highPcts, lowPcts, selectedSession === 'daily' ? referenceData : null);
 
     }, [sessions, selectedSession, referenceData]);

@@ -167,7 +167,7 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
 
                             {/* 3. Daily Price Model */}
                             <section>
-                                <h2 className="text-xl font-semibold mb-4">Daily Price Model (Median)</h2>
+                                <h2 className="text-xl font-semibold mb-4">Daily Price Model</h2>
                                 <PriceModelChart
                                     ticker={debouncedTicker}
                                     session="Daily"
