@@ -835,6 +835,9 @@ class ProfilerService:
                 'start_time': s.get('start_time'), # Required for PriceModel path generation
                 'end_time': s.get('end_time'),
                 'open': s.get('open'), # Required for PriceModel normalization
+                'range_high': s.get('range_high'), # Required for Daily range calc
+                'range_low': s.get('range_low'),
+                'mid': s.get('mid'),
                 # Keep numeric ranges for some charts if needed?
                 # RangeDistribution needs high_pct/low_pct.
                 # HodLod needs times.

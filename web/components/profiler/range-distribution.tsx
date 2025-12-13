@@ -4,8 +4,7 @@
 
 import { useMemo, useState, useEffect, memo } from 'react';
 import { ProfilerSession } from '@/lib/api/profiler';
-import { useReferenceData } from '@/hooks/use-reference-data';
-import { ReferenceData } from '@/lib/api/reference';
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ComposedChart, Bar, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { Badge } from '@/components/ui/badge';
@@ -45,8 +44,7 @@ function mode(arr: number[], bucketSize: number = 0.1, referenceDist?: Record<st
 
 export const RangeDistribution = memo(function RangeDistribution({ sessions, forcedSession }: Props) {
     const [selectedSession, setSelectedSession] = useState<string>(forcedSession || 'daily');
-    const { referenceData } = useReferenceData();  // Use shared hook (SWR deduplicates)
-    const [showReference, setShowReference] = useState(false);
+
 
     useEffect(() => {
         if (forcedSession) setSelectedSession(forcedSession);
@@ -109,11 +107,11 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
         highPcts = highPcts.filter(p => Number.isFinite(p));
         lowPcts = lowPcts.filter(p => Number.isFinite(p));
 
-        return buildDistribution(highPcts, lowPcts, selectedSession === 'daily' ? referenceData : null);
+        return buildDistribution(highPcts, lowPcts);
 
-    }, [sessions, selectedSession, referenceData]);
+    }, [sessions, selectedSession]);
 
-    function buildDistribution(highPcts: number[], lowPcts: number[], refData: ReferenceData | null) {
+    function buildDistribution(highPcts: number[], lowPcts: number[]) {
         const bucketSize = 0.1;
 
         // Build histogram data (My Data)
@@ -133,46 +131,23 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
         const totalHigh = highPcts.length || 1;
         const totalLow = lowPcts.length || 1;
 
-        // Process Reference Data if available (and applicable)
-        let refHighBuckets: Record<string, number> = {};
-        let refLowBuckets: Record<string, number> = {};
-        let totalRefHigh = 1;
-        let totalRefLow = 1;
-
-        if (refData && refData.stats.distributions.daily) {
-            refHighBuckets = refData.stats.distributions.daily.high;
-            refLowBuckets = refData.stats.distributions.daily.low;
-            // Calculate totals for normalization
-            totalRefHigh = Object.values(refHighBuckets).reduce((sum, c) => sum + c, 0) || 1;
-            totalRefLow = Object.values(refLowBuckets).reduce((sum, c) => sum + c, 0) || 1;
-        }
-
-        // Merge keys from both datasets
-        const allHighKeys = new Set([...Object.keys(highBuckets), ...(refData ? Object.keys(refHighBuckets) : [])]);
-        const allLowKeys = new Set([...Object.keys(lowBuckets), ...(refData ? Object.keys(refLowBuckets) : [])]);
-
-        const highData = Array.from(allHighKeys).map(pctStr => {
+        const highData = Object.keys(highBuckets).map(pctStr => {
             const pct = parseFloat(pctStr);
             return {
                 pct,
                 percent: ((highBuckets[pctStr] || 0) / totalHigh) * 100,
                 count: highBuckets[pctStr] || 0,
-                refPercent: ((refHighBuckets[pctStr] || 0) / totalRefHigh) * 100,
             };
         }).sort((a, b) => a.pct - b.pct);
 
-        const lowData = Array.from(allLowKeys).map(pctStr => {
+        const lowData = Object.keys(lowBuckets).map(pctStr => {
             const pct = parseFloat(pctStr);
             return {
                 pct,
                 percent: ((lowBuckets[pctStr] || 0) / totalLow) * 100,
                 count: lowBuckets[pctStr] || 0,
-                refPercent: ((refLowBuckets[pctStr] || 0) / totalRefLow) * 100,
             };
         }).sort((a, b) => a.pct - b.pct);
-
-
-        // ... (previous code)
 
         return {
             highData,
@@ -186,17 +161,7 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
                 median: median(lowPcts),
                 mode: mode(lowPcts),
                 count: lowPcts.length,
-            },
-            refStats: (referenceData && selectedSession === 'daily') ? {
-                high: {
-                    median: referenceData.stats.distributions.daily.high.median,
-                    mode: referenceData.stats.distributions.daily.high.mode
-                },
-                low: {
-                    median: referenceData.stats.distributions.daily.low.median,
-                    mode: referenceData.stats.distributions.daily.low.mode
-                }
-            } : null
+            }
         };
     }
 
@@ -241,13 +206,7 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
                             </div>
                             {/* Reference Stats */}
                             {/* @ts-ignore - refStats added to return object */}
-                            {highStats?.refStats?.high && showReference && (
-                                <div className="flex gap-4 text-xs text-muted-foreground pl-1 border-l-2 border-indigo-200">
-                                    <span className="font-medium text-indigo-600">Reference:</span>
-                                    <span>Mode: {(highStats as any).refStats.high.mode}%</span>
-                                    <span>Median: {(highStats as any).refStats.high.median}%</span>
-                                </div>
-                            )}
+
                         </div>
                     </CardHeader>
                     <CardContent className="h-[220px] pt-0">
@@ -273,10 +232,7 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
                                 />
                                 {highStats?.median && <ReferenceLine x={highStats.median} stroke="#22c55e" strokeDasharray="3 3" />}
                                 {/* @ts-ignore */}
-                                {(highStats as any)?.refStats?.high?.median && showReference && <ReferenceLine x={(highStats as any).refStats.high.median} stroke="#6366f1" strokeDasharray="3 3" label={{ value: 'Ref', position: 'insideTopRight', fill: '#6366f1', fontSize: 10 }} />}
-                                {showReference && selectedSession === 'daily' && (
-                                    <Area type="monotone" dataKey="refPercent" stroke="#6366f1" fill="#6366f1" fillOpacity={0.2} name="Reference" strokeWidth={2} />
-                                )}
+
                                 <Bar dataKey="percent" fill="#22c55e" radius={[2, 2, 0, 0]} name="Current" opacity={0.8} />
                             </ComposedChart>
                         </ResponsiveContainer>
@@ -337,9 +293,7 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
                                 {lowStats?.median && <ReferenceLine x={lowStats.median} stroke="#ef4444" strokeDasharray="3 3" />}
                                 {/* @ts-ignore */}
                                 {(lowStats as any)?.refStats?.low?.median && showReference && <ReferenceLine x={(lowStats as any).refStats.low.median} stroke="#6366f1" strokeDasharray="3 3" label={{ value: 'Ref', position: 'insideTopRight', fill: '#6366f1', fontSize: 10 }} />}
-                                {showReference && selectedSession === 'daily' && (
-                                    <Area type="monotone" dataKey="refPercent" stroke="#6366f1" fill="#6366f1" fillOpacity={0.2} name="Reference" strokeWidth={2} />
-                                )}
+
                                 <Bar dataKey="percent" fill="#ef4444" radius={[2, 2, 0, 0]} name="Current" opacity={0.8} />
                             </ComposedChart>
                         </ResponsiveContainer>

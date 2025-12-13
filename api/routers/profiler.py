@@ -155,7 +155,7 @@ async def get_reference_stats():
     """
     Get Reference Data (aggregated stats and medians) from docs folder.
     """
-    docs_dir = DATA_DIR.parent / "docs"
+    docs_dir = DATA_DIR.parent / "docs" / "reference_data"
     ref_all_path = docs_dir / "ReferenceAll.json"
     ref_med_path = docs_dir / "ReferenceMedian.json"
     
