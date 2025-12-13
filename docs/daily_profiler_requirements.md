@@ -6,6 +6,19 @@
 
 ![Daily Profiler Dashboard](media/profiler_dashboard.png)
 
+
+---
+
+## 📝 Part 0: Philosophy & Core Logic ("08-12 Philosophy")
+
+### 0.1 Trading Day Definition
+*   **Start**: 18:00 ET (Previous Calendar Day)
+*   **End**: 17:00 ET (Current Calendar Day)
+*   **Anchor**: All statistical calculations are anchored to **18:00 ET**. Timestamps are minutes from 18:00.
+
+### 0.2 Touch Validity Logic
+A level is strictly considered "touched" **only after** its establishment time has passed. Any price action *during* the establishment period (or before it) is ignored for statistical touch counting.
+
 ---
 
 ## 📝 Part 1: Core Statistical Logic
@@ -96,23 +109,25 @@ When filters are set in the Profiler Wizard:
 
 ## 📝 Part 4: Reference Price Levels
 
-### 4.1 Level Definitions
 
-| Level | Definition | Calculation |
-|-------|------------|-------------|
-| **PDH** | Previous Day High | High of previous trading day (18:00 - 18:00) |
-| **PDL** | Previous Day Low | Low of previous trading day |
-| **PDM** | Previous Day Mid | (PDH + PDL) / 2 |
-| **P12 High** | Overnight High | High from 18:00 to 06:00 |
-| **P12 Low** | Overnight Low | Low from 18:00 to 06:00 |
-| **P12 Mid** | Overnight Midpoint | (P12 High + P12 Low) / 2 |
-| **Daily Open** | Globex Open | Price at 18:00 (Asia start) |
-| **Midnight Open** | Midnight Price | Price at 00:00 EST |
-| **07:30 Open** | Pre-Market Open | Price at 07:30 EST |
-| **Asia Mid** | Asia Session Midpoint | (Asia High + Asia Low) / 2 |
-| **London Mid** | London Session Midpoint | (London High + London Low) / 2 |
-| **NY1 Mid** | NY1 Session Midpoint | (NY1 High + NY1 Low) / 2 |
-| **NY2 Mid** | NY2 Session Midpoint | (NY2 High + NY2 Low) / 2 |
+### 4.1 Level Definitions & Strict Time Windows
+
+All times are in **US/Eastern (ET)**.
+
+| Level Name | Definition | Establishment Time | **Valid Touch Window** |
+| :--- | :--- | :--- | :--- |
+| **PDH** | Previous Day High | 18:00 | **18:00 - 17:00** |
+| **PDL** | Previous Day Low | 18:00 | **18:00 - 17:00** |
+| **P12 High** | Overnight High (18:00-06:00) | 06:00 | **06:00 - 17:00** |
+| **P12 Low** | Overnight Low (18:00-06:00) | 06:00 | **06:00 - 17:00** |
+| **P12 Mid** | Overnight Midpoint | 06:00 | **06:00 - 17:00** |
+| **Daily Open** | Globex Open (18:00) | 18:00 | **18:00 - 17:00** |
+| **Midnight Open** | Midnight Price (00:00) | 00:00 | **00:00 - 17:00** |
+| **07:30 Open** | Pre-Market Open | 07:30 | **07:30 - 17:00** |
+| **Asia Mid** | Asia Session Midpoint | 02:00 | **02:00 - 17:00** |
+| **London Mid** | London Session Midpoint | 07:00 | **07:00 - 17:00** |
+| **NY1 Mid** | NY1 Session Midpoint | 12:00 | **12:00 - 17:00** |
+| **NY2 Mid** | NY2 Session Midpoint | 16:00 | (Removed from UI) |
 
 ### 4.2 Session-Specific Levels
 Each session tab displays only relevant levels:
@@ -122,7 +137,7 @@ Each session tab displays only relevant levels:
 | **Asia** | Daily Open, PDH, PDL, PDM, P12 H/M/L, Asia Mid |
 | **London** | Midnight Open, Asia Mid, London Mid, PDH, PDL |
 | **NY1** | 07:30 Open, London Mid, NY1 Mid, Asia Mid |
-| **NY2** | NY1 Mid, NY2 Mid, London Mid |
+| **NY2** | NY1 Mid, London Mid, Asia Mid |
 
 ### 4.3 Level Statistics
 For each level, display:
