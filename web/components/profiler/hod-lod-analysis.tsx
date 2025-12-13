@@ -8,6 +8,7 @@ import { ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Referen
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TrendingUp, TrendingDown } from 'lucide-react';
+import { ChartTooltipFrame, ChartTooltipHeader, ChartTooltipRow } from '@/components/ui/chart-tooltip';
 
 interface Props {
     sessions: ProfilerSession[];
@@ -226,21 +227,27 @@ export const HodLodChart = memo(function HodLodChart({ sessions, dailyHodLod }: 
                             domain={['auto', 'auto']}
                         />
                         <Tooltip
-                            contentStyle={{
-                                backgroundColor: 'hsl(var(--background))',
-                                borderColor: 'hsl(var(--border))',
-                                padding: '8px 12px',
-                                borderRadius: '6px',
-                                fontSize: '12px',
-                                boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
-                            }}
-                            itemStyle={{ color: 'hsl(var(--foreground))' }}
-                            labelStyle={{ color: 'hsl(var(--foreground))', fontWeight: 'bold', marginBottom: 4 }}
                             cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
-                            formatter={(value: number, name: string, props: any) => {
-                                const isHod = props.dataKey === 'hodPercent';
-                                const count = isHod ? props.payload.hodCount : props.payload.lodCount;
-                                return [`${Math.abs(value).toFixed(1)}% (${count} days)`, isHod ? '🟢 HOD' : '🔴 LOD'];
+                            content={({ active, payload, label }) => {
+                                if (!active || !payload || !payload.length) return null;
+                                return (
+                                    <ChartTooltipFrame>
+                                        <ChartTooltipHeader>{label}</ChartTooltipHeader>
+                                        {payload.map((entry: any, index: number) => {
+                                            const isHod = entry.name === 'HOD';
+                                            const count = isHod ? entry.payload.hodCount : entry.payload.lodCount;
+                                            return (
+                                                <ChartTooltipRow
+                                                    key={index}
+                                                    label={entry.name}
+                                                    value={`${Math.abs(Number(entry.value)).toFixed(1)}%`}
+                                                    subValue={`${count} days`}
+                                                    indicatorColor={entry.fill}
+                                                />
+                                            );
+                                        })}
+                                    </ChartTooltipFrame>
+                                );
                             }}
                         />
                         <ReferenceLine y={0} stroke="hsl(var(--border))" />

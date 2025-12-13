@@ -5,6 +5,7 @@ import { ProfilerSession, DailyHodLodResponse } from '@/lib/api/profiler';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ChartTooltipFrame, ChartTooltipHeader, ChartTooltipRow } from '@/components/ui/chart-tooltip';
 import {
     ResponsiveContainer,
     ComposedChart,
@@ -229,14 +230,23 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
                                 axisLine={{ stroke: '#444' }}
                             />
                             <Tooltip
-                                contentStyle={{
-                                    backgroundColor: 'hsl(var(--background))',
-                                    borderColor: 'hsl(var(--border))',
-                                    borderRadius: '6px',
-                                    fontSize: '12px'
+                                cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                                content={({ active, payload, label }) => {
+                                    if (!active || !payload || !payload.length) return null;
+                                    return (
+                                        <ChartTooltipFrame>
+                                            <ChartTooltipHeader>{formatTimeTick(label as number)} (+{label}m)</ChartTooltipHeader>
+                                            {payload.map((entry: any, index: number) => (
+                                                <ChartTooltipRow
+                                                    key={index}
+                                                    label="Probability"
+                                                    value={`${Number(entry.value).toFixed(2)}%`}
+                                                    indicatorColor={entry.stroke}
+                                                />
+                                            ))}
+                                        </ChartTooltipFrame>
+                                    );
                                 }}
-                                formatter={(v: number) => [`${v.toFixed(2)}%`, '']}
-                                labelFormatter={(v) => `${formatTimeTick(v as number)} (+${v}m)`}
                             />
                             <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeWidth={0.5} strokeDasharray="3 3" />
                             <Area
@@ -318,10 +328,23 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
                                 />
                                 <YAxis tick={{ fontSize: 9 }} domain={['auto', 'auto']} />
                                 <Tooltip
-                                    formatter={(value: number, name: string) => [
-                                        `${Math.abs(value).toFixed(1)}%`,
-                                        name === 'hod' ? 'HOD' : 'LOD'
-                                    ]}
+                                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                                    content={({ active, payload, label }) => {
+                                        if (!active || !payload || !payload.length) return null;
+                                        return (
+                                            <ChartTooltipFrame>
+                                                <ChartTooltipHeader>{label}</ChartTooltipHeader>
+                                                {payload.map((entry: any, index: number) => (
+                                                    <ChartTooltipRow
+                                                        key={index}
+                                                        label={entry.name === 'hod' ? 'HOD' : 'LOD'}
+                                                        value={`${Math.abs(Number(entry.value)).toFixed(1)}%`}
+                                                        indicatorColor={entry.fill}
+                                                    />
+                                                ))}
+                                            </ChartTooltipFrame>
+                                        );
+                                    }}
                                 />
                                 <ReferenceLine y={0} stroke="#666" strokeWidth={0.5} />
                                 <Bar dataKey="hod" fill="#22c55e" />
@@ -368,9 +391,23 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
                                             tickFormatter={(v) => `${v.toFixed(0)}%`}
                                         />
                                         <Tooltip
-                                            contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
-                                            labelFormatter={(v) => `+${v}%`}
-                                            formatter={(v: number) => [`${v.toFixed(1)}%`, 'Frequency']}
+                                            cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                                            content={({ active, payload, label }) => {
+                                                if (!active || !payload || !payload.length) return null;
+                                                return (
+                                                    <ChartTooltipFrame>
+                                                        <ChartTooltipHeader>High: +{label}%</ChartTooltipHeader>
+                                                        {payload.map((entry: any, index: number) => (
+                                                            <ChartTooltipRow
+                                                                key={index}
+                                                                label="Frequency"
+                                                                value={`${Number(entry.value).toFixed(1)}%`}
+                                                                indicatorColor={entry.fill}
+                                                            />
+                                                        ))}
+                                                    </ChartTooltipFrame>
+                                                );
+                                            }}
                                         />
                                         <ReferenceLine x={highRangeStats.median} stroke="#22c55e" strokeDasharray="3 3" />
                                         <Bar dataKey="percent" fill="#22c55e" radius={[2, 2, 0, 0]} opacity={0.8} />
@@ -412,9 +449,23 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
                                             tickFormatter={(v) => `${v.toFixed(0)}%`}
                                         />
                                         <Tooltip
-                                            contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
-                                            labelFormatter={(v) => `${v}%`}
-                                            formatter={(v: number) => [`${v.toFixed(1)}%`, 'Frequency']}
+                                            cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                                            content={({ active, payload, label }) => {
+                                                if (!active || !payload || !payload.length) return null;
+                                                return (
+                                                    <ChartTooltipFrame>
+                                                        <ChartTooltipHeader>Low: {label}%</ChartTooltipHeader>
+                                                        {payload.map((entry: any, index: number) => (
+                                                            <ChartTooltipRow
+                                                                key={index}
+                                                                label="Frequency"
+                                                                value={`${Number(entry.value).toFixed(1)}%`}
+                                                                indicatorColor={entry.fill}
+                                                            />
+                                                        ))}
+                                                    </ChartTooltipFrame>
+                                                );
+                                            }}
                                         />
                                         <ReferenceLine x={lowRangeStats.median} stroke="#ef4444" strokeDasharray="3 3" />
                                         <Bar dataKey="percent" fill="#ef4444" radius={[2, 2, 0, 0]} opacity={0.8} />

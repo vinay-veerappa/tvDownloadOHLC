@@ -942,7 +942,8 @@ class ProfilerService:
     def get_level_touches(ticker: str) -> Dict:
         """
         Get pre-computed reference level touch data.
-        Buffered in memory to avoid repeated disk I/O (6MB+).
+        Buffered in memory to avoid repeated disk I/O.
+        OPTIMIZED: Returns only the first hit per session to reduce payload size.
         """
         if ticker in ProfilerService._level_touches_cache:
             return ProfilerService._level_touches_cache[ticker]
@@ -954,9 +955,111 @@ class ProfilerService:
         
         try:
             with open(json_path, 'r') as f:
-                data = json.load(f)
-            ProfilerService._level_touches_cache[ticker] = data
-            return data
+                raw_data = json.load(f)
+                
+            # Optimize Payload: Convert raw touch_times list to first_hit dict per session
+            # Matches ranges in daily-levels.tsx
+            SESSION_RANGES = {
+                'Asia':   {'start': 18*60, 'end': 26*60}, # 18:00 - 02:00 (next day)
+                'London': {'start': 26*60, 'end': 31*60}, # 02:00 - 07:00
+                'NY1':    {'start': 8*60,  'end': 12*60}, # 08:00 - 12:00
+                'NY2':    {'start': 12*60, 'end': 16*60}, # 12:00 - 16:00
+                'P12':    {'start': 6*60,  'end': 17*60}, # 06:00 - 17:00
+                'Daily':  {'start': 18*60, 'end': 41*60}  # 18:00 - 17:00 (next day)
+            }
+            
+            optimized_data = {}
+            
+            for date_key, day_levels in raw_data.items():
+                optimized_day = {}
+                for level_name, level_data in day_levels.items():
+                    if not isinstance(level_data, dict):
+                        continue
+                        
+                    touch_times = level_data.get('touch_times', [])
+                    touched = level_data.get('touched', False)
+                    
+                    if not touched or not touch_times:
+                        optimized_day[level_name] = {
+                            'level': level_data.get('level'),
+                            'touched': False,
+                            'hits': {}
+                        }
+                        continue
+                        
+                    # Calculate first hit for each session
+                    hits = {}
+                    parsed_times = []
+                    for t in touch_times:
+                        try:
+                            h, m = map(int, t.split(':'))
+                            # Convert to minutes from midnight (0-1440)
+                            # But sessions can cross midnight (Asia starts 18:00, ends 02:00 next day)
+                            # We need to normalize. 
+                            # Our data aligns 18:00 as start of day?
+                            # Raw touch_times are HH:MM string.
+                            # If touch is 19:00, it's min 1140.
+                            # If touch is 01:00, it's min 60.
+                            # If session is Asia (18:00-02:00), we treat 18:00-23:59 as 1080-1439, and 00:00-02:00 as 1440-1560?
+                            # daily-levels.tsx logic:
+                            # if range.end < range.start (crossing midnight), endMins += 24*60.
+                            # then loop m from start to end.
+                            # const normM = m % 1440.
+                            # So it checks if time matches.
+                            
+                            mins = h * 60 + m
+                            parsed_times.append(mins)
+                        except:
+                            continue
+                            
+                    parsed_times.sort() # Ensure sorted
+                    
+                    for sess_name, rng in SESSION_RANGES.items():
+                        start = rng['start']
+                        end = rng['end']
+                        
+                        # Find first time in range
+                        first_hit = None
+                        for mins in parsed_times:
+                            # Handle midnight crossing logic
+                            # Impact: A time 'mins' (0-1439) is in [start, end]?
+                            # If end > 1440 (e.g. 26*60 = 1560 for 02:00), we need to check:
+                            # 1. mins (0-1439)
+                            # 2. mins + 1440 (if mins < start, maybe it belongs to next day part?)
+                            # Wait, raw touches are just time of day.
+                            # If session is 18:00-02:00.
+                            # Touches: 19:00 (1140), 01:00 (60).
+                            # 1140 is in [1080, 1560]? Yes.
+                            # 60 is in [1080, 1560]? No.
+                            # But 60 + 1440 = 1500 IS in [1080, 1560].
+                            # So we check: m or m+1440.
+                            
+                            m_targets = [mins]
+                            if mins < start and (mins + 1440) <= end:
+                                m_targets.append(mins + 1440)
+                            
+                            found = False
+                            for m in m_targets:
+                                if start <= m < end:
+                                    first_hit = f"{int(mins/60):02d}:{mins%60:02d}"
+                                    found = True
+                                    break
+                            if found:
+                                break
+                        
+                        if first_hit:
+                            hits[sess_name] = first_hit
+
+                    optimized_day[level_name] = {
+                        'level': level_data.get('level'),
+                        'touched': True,
+                        'hits': hits
+                    }
+                    
+                optimized_data[date_key] = optimized_day
+
+            ProfilerService._level_touches_cache[ticker] = optimized_data
+            return optimized_data
         except Exception as e:
             return {"error": str(e)}
 

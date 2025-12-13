@@ -4,6 +4,7 @@
 import { useMemo, useState } from 'react';
 import { ProfilerSession } from '@/lib/api/profiler';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { ChartTooltipFrame, ChartTooltipHeader, ChartTooltipRow } from '@/components/ui/chart-tooltip';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -141,7 +142,23 @@ export function TimeHistograms({ sessions }: Props) {
                                 />
                                 <YAxis fontSize={10} width={30} />
                                 <Tooltip
-                                    contentStyle={{ backgroundColor: 'hsl(var(--popover))', borderColor: 'hsl(var(--border))', fontSize: 12 }}
+                                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                                    content={({ active, payload, label }) => {
+                                        if (!active || !payload || !payload.length) return null;
+                                        return (
+                                            <ChartTooltipFrame>
+                                                <ChartTooltipHeader>{label}</ChartTooltipHeader>
+                                                {payload.map((entry: any, index: number) => (
+                                                    <ChartTooltipRow
+                                                        key={index}
+                                                        label="Count"
+                                                        value={entry.value}
+                                                        indicatorColor={entry.fill}
+                                                    />
+                                                ))}
+                                            </ChartTooltipFrame>
+                                        );
+                                    }}
                                 />
                                 <Bar dataKey="count" name="False" fill="#ef4444" radius={[3, 3, 0, 0]} />
                             </BarChart>
@@ -174,7 +191,23 @@ export function TimeHistograms({ sessions }: Props) {
                                 />
                                 <YAxis fontSize={10} width={30} />
                                 <Tooltip
-                                    contentStyle={{ backgroundColor: 'hsl(var(--popover))', borderColor: 'hsl(var(--border))', fontSize: 12 }}
+                                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                                    content={({ active, payload, label }) => {
+                                        if (!active || !payload || !payload.length) return null;
+                                        return (
+                                            <ChartTooltipFrame>
+                                                <ChartTooltipHeader>{label}</ChartTooltipHeader>
+                                                {payload.map((entry: any, index: number) => (
+                                                    <ChartTooltipRow
+                                                        key={index}
+                                                        label="Count"
+                                                        value={entry.value}
+                                                        indicatorColor={entry.fill}
+                                                    />
+                                                ))}
+                                            </ChartTooltipFrame>
+                                        );
+                                    }}
                                 />
                                 <Bar dataKey="count" name="Broken" fill="#f59e0b" radius={[3, 3, 0, 0]} />
                             </BarChart>

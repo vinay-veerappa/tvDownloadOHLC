@@ -15,6 +15,7 @@ import {
     Brush,
     ReferenceLine
 } from 'recharts';
+import { ChartTooltipFrame, ChartTooltipHeader, ChartTooltipRow } from '@/components/ui/chart-tooltip';
 
 const SESSION_RANGES: Record<string, { start: string; end: string }> = {
     'Asia': { start: '18:00', end: '02:00' },
@@ -52,32 +53,8 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
     const stats = useMemo(() => {
         let touched = 0;
         let total = 0;
-        const touchTimes: string[] = [];
-
-        // Helper to check if time is in range (handles crossing midnight)
-        const isInRange = (timeStr: string, range: { start: string, end: string }) => {
-            if (range.start === '00:00' && range.end === '23:59') return true;
-
-            const time = parseInt(timeStr.replace(':', ''));
-            const start = parseInt(range.start.replace(':', ''));
-            const end = parseInt(range.end.replace(':', ''));
-
-            // Debug first few calls
-            if (Math.random() < 0.0001) {
-                console.log(`Debug isInRange: Time=${timeStr} (${time}), Range=${range.start}-${range.end}, Start=${start}, End=${end}`);
-            }
-
-            if (start < end) {
-                return time >= start && time < end;
-            } else {
-                // Crossing midnight (e.g., 18:00 - 02:00)
-                return time >= start || time < end;
-            }
-        };
 
         const sessionRange = SESSION_RANGES[targetSession as keyof typeof SESSION_RANGES];
-
-        const bucketHits = new Map<string, Set<string>>(); // Removed, using allBuckets and filteredHitDates
 
         // Generate all buckets for the full session range to ensure fixed X-Axis
         const allBuckets: string[] = [];
@@ -117,18 +94,12 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
 
             total++;
 
-            if (levelData.touched && levelData.touch_times && levelData.touch_times.length > 0) {
-                // Filter hits relevant to this session
-                const validHits = levelData.touch_times.filter(t => isInRange(t, sessionRange));
+            if (levelData.touched && levelData.hits) {
+                // Optimized backend returns pre-calculated first hit per session
+                const firstHit = levelData.hits[targetSession];
 
-                if (validHits.length > 0) {
+                if (firstHit) {
                     touched++;
-
-                    // Sort to ensure we get the earliest hit in the session
-                    validHits.sort();
-
-                    // ONLY use the first hit for the histogram distribution
-                    const firstHit = validHits[0];
 
                     const [h, m] = firstHit.split(':').map(Number);
                     const mins = h * 60 + m;
@@ -226,12 +197,11 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
 
                                         return (
 
-                                            <div className="bg-background border border-border shadow-xl rounded-md text-xs p-3 min-w-[140px]">
+                                            <ChartTooltipFrame>
                                                 {/* Header: Level Name */}
-                                                <div className="font-bold text-base mb-1 flex items-center gap-2 text-foreground border-b border-border pb-2">
-                                                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
+                                                <ChartTooltipHeader color={color}>
                                                     {title}
-                                                </div>
+                                                </ChartTooltipHeader>
 
                                                 {/* Time Range */}
                                                 <div className="mt-2 text-muted-foreground font-medium text-[10px] uppercase tracking-wider">
@@ -242,15 +212,14 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
                                                 </div>
 
                                                 {/* Stats */}
-                                                <div className="pt-2 border-t border-border flex items-center justify-between text-sm">
-                                                    <span className="font-bold text-foreground">
-                                                        {Number(data.pct).toFixed(2)}%
-                                                    </span>
-                                                    <span className="text-muted-foreground text-xs">
-                                                        {data.count} hits
-                                                    </span>
+                                                <div className="pt-2 border-t border-border">
+                                                    <ChartTooltipRow
+                                                        label="Probability"
+                                                        value={`${Number(data.pct).toFixed(2)}%`}
+                                                        subValue={`${data.count} hits`}
+                                                    />
                                                 </div>
-                                            </div>
+                                            </ChartTooltipFrame>
                                         );
                                     }
                                     return null;

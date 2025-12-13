@@ -4,6 +4,7 @@
 import { useMemo, useState } from "react"
 import { useReferenceData } from "@/hooks/use-reference-data"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { ChartTooltipFrame, ChartTooltipHeader, ChartTooltipRow } from '@/components/ui/chart-tooltip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area, ReferenceLine } from "recharts"
@@ -171,8 +172,23 @@ export function ReferenceProfilerView() {
                                     <YAxis />
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                                     <Tooltip
-                                        contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
-                                        labelStyle={{ color: 'hsl(var(--foreground))' }}
+                                        cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                                        content={({ active, payload, label }) => {
+                                            if (!active || !payload || !payload.length) return null
+                                            return (
+                                                <ChartTooltipFrame>
+                                                    <ChartTooltipHeader>Range: {label}%</ChartTooltipHeader>
+                                                    {payload.map((entry: any, index: number) => (
+                                                        <ChartTooltipRow
+                                                            key={index}
+                                                            label={entry.name}
+                                                            value={Number(entry.value).toFixed(2)}
+                                                            indicatorColor={entry.stroke || entry.fill}
+                                                        />
+                                                    ))}
+                                                </ChartTooltipFrame>
+                                            )
+                                        }}
                                     />
                                     <Legend />
                                     <Area type="monotone" dataKey="high" stroke="#22c55e" fillOpacity={1} fill="url(#colorHigh)" name="High %" />
@@ -200,9 +216,23 @@ export function ReferenceProfilerView() {
                                     <YAxis tickFormatter={(v) => `${v.toFixed(2)}%`} />
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                                     <Tooltip
-                                        contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
-                                        labelStyle={{ color: 'hsl(var(--foreground))' }}
-                                        formatter={(val: number) => [`${val.toFixed(3)}%`]}
+                                        cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                                        content={({ active, payload, label }) => {
+                                            if (!active || !payload || !payload.length) return null
+                                            return (
+                                                <ChartTooltipFrame>
+                                                    <ChartTooltipHeader>{label}</ChartTooltipHeader>
+                                                    {payload.map((entry: any, index: number) => (
+                                                        <ChartTooltipRow
+                                                            key={index}
+                                                            label={entry.name}
+                                                            value={`${Number(entry.value).toFixed(3)}%`}
+                                                            indicatorColor={entry.stroke || entry.fill}
+                                                        />
+                                                    ))}
+                                                </ChartTooltipFrame>
+                                            )
+                                        }}
                                     />
                                     <Legend />
                                     <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" />
@@ -239,8 +269,23 @@ export function ReferenceProfilerView() {
                                     <YAxis />
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                                     <Tooltip
-                                        contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
-                                        labelStyle={{ color: 'hsl(var(--foreground))' }}
+                                        cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                                        content={({ active, payload, label }) => {
+                                            if (!active || !payload || !payload.length) return null
+                                            return (
+                                                <ChartTooltipFrame>
+                                                    <ChartTooltipHeader>{label}</ChartTooltipHeader>
+                                                    {payload.map((entry: any, index: number) => (
+                                                        <ChartTooltipRow
+                                                            key={index}
+                                                            label={entry.name}
+                                                            value={entry.value}
+                                                            indicatorColor={entry.stroke || entry.fill}
+                                                        />
+                                                    ))}
+                                                </ChartTooltipFrame>
+                                            )
+                                        }}
                                     />
                                     <Legend />
                                     <Bar dataKey="broken" name="Broken Count" fill="#8884d8" radius={[4, 4, 0, 0]} />
