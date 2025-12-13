@@ -181,31 +181,33 @@ def precompute_level_stats(ticker="NQ1"):
             stats[context][out_key]['rel_pcts'].append(rel_pct)
             
             # --- Valid Window Filter ---
-            # Don't count hits before the level exists.
-            # Daily Open (Globex): 18:00.
-            # Midnight: 00:00.
-            # AsiaMid: 02:00 (End of Asia).
-            # LondonMid: 07:00.
-            # NY1Mid: 12:00.
-            # NY2Mid: 16:00.
+            # Define "Valid Start" time for this level (08-12 rule)
+            # Level is valid ONLY AFTER it is established.
+            # Adding buffer to avoid counting the establishment candle and immediate chop.
+            valid_start = None
+            start_t = trading_start # Base for calculating offsets
+            lvl_key = out_key.lower() # Normalize to lowercase for comparison
             
-            valid_start = trading_start # Default
-            
-            if src_level == 'MidnightOpen':
-                 valid_start = pd.Timestamp.combine(date_obj, time(0,1)).tz_localize('US/Eastern')
-            elif src_level == 'Open730':
-                 valid_start = pd.Timestamp.combine(date_obj, time(7,31)).tz_localize('US/Eastern')
-            elif src_level == 'AsiaMid':
-                 valid_start = pd.Timestamp.combine(date_obj, time(2,1)).tz_localize('US/Eastern')
-            elif src_level == 'LondonMid':
-                 valid_start = pd.Timestamp.combine(date_obj, time(7,1)).tz_localize('US/Eastern')
-            elif src_level == 'NY1Mid': # Post 12:00
-                 valid_start = pd.Timestamp.combine(date_obj, time(12,1)).tz_localize('US/Eastern')
-            elif src_level == 'NY2Mid':
-                 valid_start = pd.Timestamp.combine(date_obj, time(16,1)).tz_localize('US/Eastern')
-            elif src_level == 'GlobexOpen':
-                 # Don't count the open candle itself
-                 valid_start = trading_start + timedelta(minutes=1)
+            if lvl_key == 'daily_open': # 18:00 (Globex)
+                valid_start = start_t + timedelta(minutes=15)
+            elif lvl_key == 'midnight_open': # 00:00
+                valid_start = start_t + timedelta(hours=6, minutes=15)
+            elif lvl_key == 'open730' or lvl_key == 'open_0730': # 07:30
+                valid_start = start_t + timedelta(hours=13, minutes=35)
+            elif lvl_key == 'open_0800': # 08:00
+                valid_start = start_t + timedelta(hours=14, minutes=5)
+            elif lvl_key == 'asia_mid' or lvl_key == 'asiamid': # Valid after 02:00
+                valid_start = start_t + timedelta(hours=8, minutes=5)
+            elif lvl_key == 'london_mid' or lvl_key == 'londonmid': # Valid after 07:00
+                valid_start = start_t + timedelta(hours=13, minutes=5)
+            elif lvl_key == 'ny1_mid' or lvl_key == 'ny1mid': # Valid after 12:00
+                valid_start = start_t + timedelta(hours=18, minutes=5)
+            elif lvl_key == 'ny2_mid' or lvl_key == 'ny2mid': # Valid after 16:00
+                valid_start = start_t + timedelta(hours=22, minutes=5)
+            elif lvl_key.startswith('p12'): # Valid after 06:00
+                valid_start = start_t + timedelta(hours=12) 
+            else:
+                valid_start = start_t
             
             # Filter slice
             valid_slice = session_slice.loc[valid_start:]

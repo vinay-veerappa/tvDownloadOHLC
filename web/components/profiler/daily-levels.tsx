@@ -12,7 +12,8 @@ import {
     XAxis,
     YAxis,
     Tooltip,
-    Brush
+    Brush,
+    ReferenceLine
 } from 'recharts';
 
 const SESSION_RANGES: Record<string, { start: string; end: string }> = {
@@ -60,6 +61,11 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
             const time = parseInt(timeStr.replace(':', ''));
             const start = parseInt(range.start.replace(':', ''));
             const end = parseInt(range.end.replace(':', ''));
+
+            // Debug first few calls
+            if (Math.random() < 0.0001) {
+                console.log(`Debug isInRange: Time=${timeStr} (${time}), Range=${range.start}-${range.end}, Start=${start}, End=${end}`);
+            }
 
             if (start < end) {
                 return time >= start && time < end;
@@ -111,11 +117,20 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
 
             total++;
 
-            if (levelData.touched && levelData.touch_time) {
-                if (isInRange(levelData.touch_time, sessionRange)) {
+            if (levelData.touched && levelData.touch_times && levelData.touch_times.length > 0) {
+                // Filter hits relevant to this session
+                const validHits = levelData.touch_times.filter(t => isInRange(t, sessionRange));
+
+                if (validHits.length > 0) {
                     touched++;
 
-                    const [h, m] = levelData.touch_time.split(':').map(Number);
+                    // Sort to ensure we get the earliest hit in the session
+                    validHits.sort();
+
+                    // ONLY use the first hit for the histogram distribution
+                    const firstHit = validHits[0];
+
+                    const [h, m] = firstHit.split(':').map(Number);
                     const mins = h * 60 + m;
                     const bucketMins = Math.floor(mins / granularity) * granularity;
                     const bucketH = Math.floor(bucketMins / 60);
@@ -149,7 +164,20 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
             return { time, count, pct };
         });
 
-        return { hitRate, mode, total, touched, histData };
+        // Calculate Median
+        let median = '-';
+        let cumulativeHits = 0;
+        const halfTotal = touched / 2;
+
+        for (const bin of histData) {
+            cumulativeHits += bin.count;
+            if (cumulativeHits >= halfTotal) {
+                median = bin.time;
+                break;
+            }
+        }
+
+        return { hitRate, mode, median, total, touched, histData };
     }, [levelTouches, filteredDates, levelKey, granularity, targetSession]); // Add targetSession to dependency array
 
     return (
@@ -166,6 +194,7 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
                 </div>
                 <div className="text-xs text-muted-foreground">
                     Mode: <span className="font-mono font-semibold">{stats.mode}</span> •
+                    Median: <span className="font-mono font-semibold">{stats.median}</span> •
                     {stats.touched}/{stats.total} days
                     {targetSession !== 'All' && <span className="ml-1 text-[10px] opacity-70">({targetSession})</span>}
                 </div>
@@ -227,6 +256,7 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
                                 }}
                             />
                             <Bar dataKey="pct" fill={color} radius={[2, 2, 0, 0]} activeBar={{ fill: color, opacity: 0.8 }} />
+                            <ReferenceLine x={stats.median} stroke="white" strokeDasharray="3 3" />
                             <Brush dataKey="time" height={20} stroke={color} opacity={0.5} tickFormatter={() => ''} />
                         </BarChart>
                     </ResponsiveContainer>
@@ -264,16 +294,16 @@ export const DailyLevels = memo(function DailyLevels({ levelTouches, filteredDat
                         value={targetSession}
                         onValueChange={setTargetSession}
                     >
-                        <SelectTrigger className="h-8 w-28">
+                        <SelectTrigger className="h-8 w-[160px]">
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="Daily">Daily (18-17)</SelectItem>
-                            <SelectItem value="P12">P12 (06-17)</SelectItem>
-                            <SelectItem value="Asia">Asia</SelectItem>
-                            <SelectItem value="London">London</SelectItem>
-                            <SelectItem value="NY1">NY1</SelectItem>
-                            <SelectItem value="NY2">NY2</SelectItem>
+                            <SelectItem value="Daily">Daily (18:00-17:00)</SelectItem>
+                            <SelectItem value="P12">P12 (06:00-17:00)</SelectItem>
+                            <SelectItem value="Asia">Asia (18:00-02:00)</SelectItem>
+                            <SelectItem value="London">London (02:00-07:00)</SelectItem>
+                            <SelectItem value="NY1">NY1 (08:00-12:00)</SelectItem>
+                            <SelectItem value="NY2">NY2 (12:00-16:00)</SelectItem>
                         </SelectContent>
                     </Select >
                 </div >
@@ -289,6 +319,8 @@ export const DailyLevels = memo(function DailyLevels({ levelTouches, filteredDat
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
+                            <SelectItem value="1">1min</SelectItem>
+                            <SelectItem value="5">5min</SelectItem>
                             <SelectItem value="15">15min</SelectItem>
                             <SelectItem value="30">30min</SelectItem>
                             <SelectItem value="60">1hr</SelectItem>
@@ -317,9 +349,9 @@ export const DailyLevels = memo(function DailyLevels({ levelTouches, filteredDat
                     <div>
                         <h3 className="text-lg font-semibold mb-3">P12 Levels (Overnight)</h3>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {shouldShow('p12h') && <LevelCard title="P12 High" levelKey="p12h" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#22c55e" targetSession="P12" />}
-                            {shouldShow('p12m') && <LevelCard title="P12 Mid" levelKey="p12m" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#06b6d4" targetSession="P12" />}
-                            {shouldShow('p12l') && <LevelCard title="P12 Low" levelKey="p12l" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#ef4444" targetSession="P12" />}
+                            {shouldShow('p12h') && <LevelCard title="P12 High" levelKey="p12h" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#22c55e" targetSession={targetSession} />}
+                            {shouldShow('p12m') && <LevelCard title="P12 Mid" levelKey="p12m" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#06b6d4" targetSession={targetSession} />}
+                            {shouldShow('p12l') && <LevelCard title="P12 Low" levelKey="p12l" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#ef4444" targetSession={targetSession} />}
                         </div>
                     </div>
                 )
@@ -331,9 +363,9 @@ export const DailyLevels = memo(function DailyLevels({ levelTouches, filteredDat
                     <div>
                         <h3 className="text-lg font-semibold mb-3">Time-Based Opens</h3>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {shouldShow('daily_open') && <LevelCard title="Daily Open (18:00)" levelKey="daily_open" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#8b5cf6" targetSession={'Daily'} />}
-                            {shouldShow('midnight_open') && <LevelCard title="Midnight Open (00:00)" levelKey="midnight_open" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#a855f7" targetSession={'Midnight'} />}
-                            {shouldShow('open_0730') && <LevelCard title="07:30 Open" levelKey="open_0730" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#c084fc" targetSession={'Open0730'} />}
+                            {shouldShow('daily_open') && <LevelCard title="Daily Open (18:00)" levelKey="daily_open" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#8b5cf6" targetSession={targetSession} />}
+                            {shouldShow('midnight_open') && <LevelCard title="Midnight Open (00:00)" levelKey="midnight_open" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#a855f7" targetSession={targetSession} />}
+                            {shouldShow('open_0730') && <LevelCard title="07:30 Open" levelKey="open_0730" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#c084fc" targetSession={targetSession} />}
                         </div>
                     </div>
                 )
@@ -345,9 +377,9 @@ export const DailyLevels = memo(function DailyLevels({ levelTouches, filteredDat
                     <div>
                         <h3 className="text-lg font-semibold mb-3">Session Mids</h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                            {shouldShow('asia_mid') && <LevelCard title="Asia Mid" levelKey="asia_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#f472b6" targetSession={'AsiaMid'} />}
-                            {shouldShow('london_mid') && <LevelCard title="London Mid" levelKey="london_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#fb923c" targetSession={'LondonMid'} />}
-                            {shouldShow('ny1_mid') && <LevelCard title="NY1 Mid" levelKey="ny1_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#38bdf8" targetSession={'NY1Mid'} />}
+                            {shouldShow('asia_mid') && <LevelCard title="Asia Mid" levelKey="asia_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#f472b6" targetSession={targetSession} />}
+                            {shouldShow('london_mid') && <LevelCard title="London Mid" levelKey="london_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#fb923c" targetSession={targetSession} />}
+                            {shouldShow('ny1_mid') && <LevelCard title="NY1 Mid" levelKey="ny1_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#38bdf8" targetSession={targetSession} />}
                         </div>
                     </div>
                 )

@@ -122,7 +122,7 @@ export async function fetchDailyHodLod(ticker: string): Promise<DailyHodLodRespo
 export interface LevelTouchEntry {
     level: number;
     touched: boolean;
-    touch_time: string | null;  // HH:MM or null if not touched
+    touch_times: string[];  // List of HH:MM buckets
 }
 
 export interface DayLevelTouches {
@@ -146,7 +146,7 @@ export interface DayLevelTouches {
 export type LevelTouchesResponse = Record<string, DayLevelTouches>;
 
 export async function fetchLevelTouches(ticker: string): Promise<LevelTouchesResponse> {
-    const res = await fetch(`${API_BASE_URL}/stats/level-touches/${ticker}`);
+    const res = await fetch(`${API_BASE_URL}/stats/level-touches/${ticker}?t=${new Date().getTime()}`);
     if (!res.ok) {
         throw new Error('Failed to fetch level touches data');
     }
