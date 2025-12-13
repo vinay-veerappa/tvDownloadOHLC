@@ -71,12 +71,12 @@
 ## 📖 Documentation
 
 See [`docs/README.md`](docs/README.md) for the full documentation index including:
-- **[Developer Standards - Indicators & Tools](docs/INDICATOR_DEVELOPMENT_STANDARDS.md)** 🆕 (Performance & Interaction Patterns)
-- **[Lightweight Charts Performance Guide](docs/Lightweight_Charts_Performance_Guide.md)** (General optimization tips)
-- User Guide
+- **[Developer Standards - Indicators & Tools](docs/architecture/INDICATOR_DEVELOPMENT_STANDARDS.md)** 🆕 (Performance & Interaction Patterns)
+- **[Lightweight Charts Performance Guide](docs/ui/Lightweight_Charts_Performance_Guide.md)** (General optimization tips)
+- [User Guide](docs/setup/USER_GUIDE.md)
 - Plugin System
 - Indicators Guide
-- Data Processing Instructions
+- [Data Processing Instructions](docs/data/DATA_PROCESSING_INSTRUCTIONS.md)
 
 ## 🐍 Data Scripts (Python)
 

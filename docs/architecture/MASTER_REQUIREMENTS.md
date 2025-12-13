@@ -3,42 +3,19 @@
 This document consolidates all pending requirements for the Trading Platform, superseding previous roadmap documents.
 
 ## 1. Plugin System (Chart Extensibility)
-*Source: `docs/PLUGIN_SYSTEM.md`*
+*Source: `../archive/PLUGIN_SYSTEM.md`*
 
 The plugin system allows dynamic loading of visual tools and indicators.
 - [ ] **Indicators Modal**: Replace the simple dropdown with a searchable modal dialog to browse/add plugins.
-- [ ] **Active Plugin Management (Legend)**:
-    - [ ] Show list of active indicators/plugins on the chart.
-    - [ ] Allow toggling visibility (Eye icon).
-    - [ ] Allow removal (X icon).
-    - [ ] Allow configuration (Settings icon).
-- [ ] **Drawing Tools**:
-    - [ ] Select individual drawings.
-    - [ ] Delete specific drawings (vs "Clear All").
-    - [ ] Edit drawing properties (color, line width) after placement.
-- [ ] **Specific Plugin Fixes**:
-    - [ ] `volume-profile.js`: Fix data initialization (requires `vol` data).
-    - [ ] `session-highlighting.js`: Add UI for configuring session times.
 
 ## 2. Indicators (Calculation & Rendering)
-*Source: `docs/INDICATORS.md`*
+*Source: `../archive/INDICATORS.md`*
 
 Client-side calculation and rendering of technical indicators.
 - [ ] **Oscillators (Separate Panes)**:
-    - [ ] Implement multi-pane chart layout (Price Pane vs Indicator Panes).
-    - [ ] Support RSI, MACD, Stochastics in separate panes.
-- [ ] **Customization**:
-    - [ ] Color pickers for indicator lines.
-    - [ ] Line style (solid, dashed) and width.
-    - [ ] Input parameters (e.g., SMA period, StDev).
-- [ ] **Persistence**:
-    - [ ] Save active indicators and their settings to local storage/DB.
-    - [ ] Restore indicators on page reload.
-- [ ] **Templates**:
-    - [ ] Save "Indicator Sets" (e.g., "Trend Setup", "Oscillator Setup").
 
 ## 3. Trading Journal & Simulation
-*Source: `docs/trading_journal_requirements.md`*
+*Source: `../archive/trading_journal_requirements.md`*
 
 A comprehensive system to simulate trading and log results.
 
