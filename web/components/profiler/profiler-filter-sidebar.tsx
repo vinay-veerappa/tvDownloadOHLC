@@ -21,6 +21,8 @@ interface FilterSidebarProps {
     onReset: () => void;
     ticker: string;
     onTickerChange: (ticker: string) => void;
+    isCollapsed: boolean;
+    onToggleCollapse: (collapsed: boolean) => void;
 }
 
 const SESSIONS = ['Asia', 'London', 'NY1', 'NY2'];
@@ -34,9 +36,11 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
     onBrokenFilterChange,
     onReset,
     ticker,
-    onTickerChange
+    onTickerChange,
+    isCollapsed,
+    onToggleCollapse
 }: FilterSidebarProps) {
-    const [isCollapsed, setIsCollapsed] = useState(false);
+    // Removed internal state
 
     // Helper to parse complex status string "Long True" -> { direction: 'Long', outcome: 'True' }
     const parseStatus = (val: string) => {
@@ -73,11 +77,11 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
     if (isCollapsed) {
         return (
             <div className="h-full border-r bg-background/50 backdrop-blur-sm w-[50px] flex flex-col items-center py-4 gap-4 transition-all duration-300">
-                <Button variant="ghost" size="icon" onClick={() => setIsCollapsed(false)} title="Expand Filters">
+                <Button variant="ghost" size="icon" onClick={() => onToggleCollapse(false)} title="Expand Filters">
                     <ChevronRight className="h-4 w-4" />
                 </Button>
                 <div className="flex-1 flex flex-col items-center gap-4 mt-4">
-                    <Button variant="ghost" size="icon" onClick={() => setIsCollapsed(false)} title="Filters" className="text-muted-foreground">
+                    <Button variant="ghost" size="icon" onClick={() => onToggleCollapse(false)} title="Filters" className="text-muted-foreground">
                         <SlidersHorizontal className="h-5 w-5" />
                     </Button>
                 </div>
@@ -86,11 +90,11 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
     }
 
     return (
-        <Card className="h-full border-r rounded-none border-y-0 border-l-0 w-[320px] flex flex-col bg-background/50 backdrop-blur-sm transition-all duration-300">
+        <Card className="h-full border-r rounded-none border-y-0 border-l-0 w-[280px] flex flex-col bg-background/50 backdrop-blur-sm transition-all duration-300"> {/* Synced width with parent */}
             <CardHeader className="pb-4 border-b space-y-4">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                        <Button variant="ghost" size="icon" className="-ml-2 h-8 w-8" onClick={() => setIsCollapsed(true)}>
+                        <Button variant="ghost" size="icon" className="-ml-2 h-8 w-8" onClick={() => onToggleCollapse(true)}>
                             <ChevronLeft className="h-4 w-4" />
                         </Button>
                         <CardTitle className="text-lg font-bold">Filters</CardTitle>

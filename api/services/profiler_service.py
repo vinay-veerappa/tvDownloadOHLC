@@ -111,6 +111,22 @@ class ProfilerService:
                     }
                 }
 
+    @staticmethod
+    def get_level_stats(ticker: str) -> Dict:
+        """
+        Get pre-computed level statistics (Hit Rate, Timing) from JSON.
+        """
+        from api.services.data_loader import DATA_DIR
+        json_path = DATA_DIR / f"{ticker}_level_stats.json"
+        
+        if json_path.exists():
+            try:
+                with open(json_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                return {"error": str(e)}
+        return {"error": "Stats not found"}
+
         # 2. Fallback to Calculation (Original Logic)
         # ... (Previous implementation below, kept as fallback)
         
@@ -816,6 +832,9 @@ class ProfilerService:
                 'low_time': s.get('low_time'),
                 'high_pct': s.get('high_pct'),
                 'low_pct': s.get('low_pct'),
+                'start_time': s.get('start_time'), # Required for PriceModel path generation
+                'end_time': s.get('end_time'),
+                'open': s.get('open'), # Required for PriceModel normalization
                 # Keep numeric ranges for some charts if needed?
                 # RangeDistribution needs high_pct/low_pct.
                 # HodLod needs times.

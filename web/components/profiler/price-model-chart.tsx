@@ -2,8 +2,8 @@
 
 import { useMemo, memo } from 'react';
 import useSWR from 'swr';
-import { fetchFilteredPriceModel, FilterPayload, PriceModelResponse, PriceModelEntry } from '@/lib/api/profiler';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { fetchFilteredPriceModel, fetchLevelStats, FilterPayload, PriceModelResponse, LevelContextData, AllLevelStats } from '@/lib/api/profiler';
+import { Card, CardContent } from '@/components/ui/card';
 import { ChartHeaderInfo } from './chart-header-info';
 import {
     ResponsiveContainer,
@@ -42,8 +42,9 @@ export const PriceModelChart = memo(function PriceModelChart({
 }: PriceModelChartProps) {
     // State for aggregation interval
     const [bucketMinutes, setBucketMinutes] = useState<number>(5);
+    const [showLevels, setShowLevels] = useState<boolean>(true); // Default to on
 
-    // Header Info State (Hover)
+
     const [hoverData, setHoverData] = useState<{
         time: string;
         high: number;
@@ -91,6 +92,40 @@ export const PriceModelChart = memo(function PriceModelChart({
         }));
     }, [data]);
 
+    // --- Fetch Levels Data ---
+    const { data: levelStats } = useSWR(
+        ['level-stats', ticker],
+        () => fetchLevelStats(ticker)
+    );
+
+    const context = useMemo(() => {
+        const londonFilter = filters['London'] || '';
+        if (londonFilter.startsWith('Long')) return 'Green';
+        if (londonFilter.startsWith('Short')) return 'Red';
+        return 'All';
+    }, [filters]) as keyof import('@/lib/api/profiler').AllLevelStats;
+
+    const referenceLevels = useMemo(() => {
+        if (!showLevels || !levelStats || !levelStats[context]) return [];
+        const data = levelStats[context];
+
+        const levels = [
+            { id: 'PDH', color: '#3b82f6', label: 'Avg PDH' },
+            { id: 'PDL', color: '#f59e0b', label: 'Avg PDL' },
+            { id: 'GlobexOpen', color: '#a855f7', label: 'Avg GLBX' },
+            { id: 'MidnightOpen', color: '#ec4899', label: 'Avg Mid' },
+            { id: 'AsiaMid', color: '#f472b6', label: 'Asia Mid' },
+            { id: 'LondonMid', color: '#fb923c', label: 'Lon Mid' },
+            { id: 'NY1Mid', color: '#38bdf8', label: 'NY1 Mid' },
+        ];
+
+        return levels.map(lvl => {
+            const stat = data[lvl.id as keyof LevelContextData];
+            if (!stat) return null;
+            return { ...lvl, y: stat.avg_rel };
+        }).filter(Boolean) as { id: string, color: string, label: string, y: number }[];
+    }, [levelStats, context]);
+
     // Format time for display (using backend 'time' string if available)
     const formatXAxis = (tickItem: any, index: number) => {
         // tickItem is the value of time_idx (e.g., 0, 5, 10...)
@@ -108,9 +143,10 @@ export const PriceModelChart = memo(function PriceModelChart({
         if (session === 'London') startHour = 3; // London starts 02:30 or 03:00? Backend says 02:30.
         // Let's use backend strings primarily to avoid this guessing game.
 
-        if (session === 'London') { startHour = 2; startMin = 30; }
-        if (session === 'NY1') { startHour = 7; startMin = 30; }
-        if (session === 'NY2') { startHour = 11; startMin = 30; }
+        if (session === 'London') { startHour = 2; startMin = 30; } // Adjusted to match backend
+        if (session === 'NY1') { startHour = 8; startMin = 0; } // Adjusted to 08:00
+        if (session === 'NY2') { startHour = 12; startMin = 0; } // Adjusted to 12:00
+        if (session === 'P12') { startHour = 6; startMin = 0; } // Added P12
         if (session === 'Daily') { startHour = 18; startMin = 0; }
 
         const totalMinutes = startHour * 60 + startMin + val;
@@ -166,26 +202,39 @@ export const PriceModelChart = memo(function PriceModelChart({
                 <div className="pt-2 px-4 flex justify-between items-start">
                     <ChartHeaderInfo
                         title={`${session} Price Model (Median)`}
-                        subtitle={`${data.count} Sessions`}
+                        subtitle={`${data.count} Sessions • Context: ${context}`}
                         items={headerItems.length > 0 ? headerItems : [
                             { label: 'Hover chart for details', value: '' }
                         ]}
                     />
 
-                    {/* Interval Selector */}
-                    <div className="flex space-x-1 bg-secondary/30 rounded p-1 ml-auto">
-                        {[1, 5, 15].map((mins) => (
-                            <button
-                                key={mins}
-                                onClick={() => setBucketMinutes(mins)}
-                                className={`text-xs px-2 py-0.5 rounded transition-colors ${bucketMinutes === mins
-                                    ? 'bg-primary text-primary-foreground'
-                                    : 'hover:bg-muted text-muted-foreground'
-                                    }`}
-                            >
-                                {mins}m
-                            </button>
-                        ))}
+                    {/* Interval Selector & Tools */}
+                    <div className="flex items-center space-x-2 ml-auto bg-secondary/30 rounded p-1">
+                        <button
+                            onClick={() => setShowLevels(!showLevels)}
+                            className={`text-xs px-2 py-0.5 rounded transition-colors ${showLevels
+                                ? 'bg-primary text-primary-foreground'
+                                : 'text-muted-foreground hover:text-foreground'
+                                }`}
+                            title="Toggle Reference Levels"
+                        >
+                            Levels
+                        </button>
+                        <div className="h-4 w-px bg-border" />
+                        <div className="flex space-x-1">
+                            {[1, 5, 15].map((mins) => (
+                                <button
+                                    key={mins}
+                                    onClick={() => setBucketMinutes(mins)}
+                                    className={`text-xs px-2 py-0.5 rounded transition-colors ${bucketMinutes === mins
+                                        ? 'bg-primary text-primary-foreground'
+                                        : 'hover:bg-muted text-muted-foreground'
+                                        }`}
+                                >
+                                    {mins}m
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 </div>
                 <div style={{ height: height - 40, width: '100%', minWidth: 0, minHeight: 0 }}>
@@ -215,6 +264,23 @@ export const PriceModelChart = memo(function PriceModelChart({
                             />
                             {/* Grey line at 0 */}
                             <ReferenceLine y={0} stroke="#9CA3AF" strokeDasharray="3 3" />
+
+                            {/* Level Reference Lines */}
+                            {referenceLevels.map(lvl => (
+                                <ReferenceLine
+                                    key={`${lvl.id}-${lvl.y}`}
+                                    y={lvl.y}
+                                    stroke={lvl.color}
+                                    strokeDasharray="4 4"
+                                    strokeOpacity={0.7}
+                                    label={{
+                                        value: lvl.label,
+                                        position: 'right',
+                                        fill: lvl.color,
+                                        fontSize: 10
+                                    }}
+                                />
+                            ))}
 
                             {/* Invisible tooltip to capture hover but not render popover */}
                             <Tooltip content={() => null} cursor={{ stroke: '#9CA3AF', strokeWidth: 1, strokeDasharray: '4 4' }} />

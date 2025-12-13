@@ -81,6 +81,19 @@ async def get_hod_lod_stats(ticker: str):
     
     return data
 
+@router.get("/stats/profiler/{ticker}/levels", tags=["Stats"])
+async def get_profiler_level_stats(ticker: str):
+    """
+    Get pre-computed daily level hit probability stats (Hit Rate, Median Time, Mode).
+    Returns nested dict by Context (All, Green, Red).
+    """
+    result = ProfilerService.get_level_stats(ticker)
+    
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+        
+    return result
+
 @router.get("/stats/range-dist/{ticker}", tags=["Stats"])
 async def get_range_distribution(ticker: str):
     """

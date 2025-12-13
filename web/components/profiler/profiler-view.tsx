@@ -14,6 +14,7 @@ import { RangeDistribution } from './range-distribution';
 import { PriceModelChart } from './price-model-chart';
 import { HodLodAnalysis, HodLodChart, SessionStats } from './hod-lod-analysis';
 import { DailyLevels } from './daily-levels';
+import { LevelProbabilityWidget } from './level-probability-widget';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 const AVAILABLE_TICKERS = ['NQ1'] as const; // Extensible for future tickers
@@ -95,12 +96,26 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
 
     const sidebarStats = useMemo(() => ({ validSamples }), [validSamples]);
 
+
+    // Calculate Context for Probability Widget
+    // We look at the 'London' filter direction if set, or try to infer?
+    // Actually, the widget expects 'Long' | 'Short' | 'None'.
+    // The Sidebar filter for London is EXACTLY that direction.
+    // If user filtered London='Long True' => Context is Green.
+    // If 'Short True' => Red.
+    // If 'None' or 'Any', it falls back to 'All'.
+    const londonDirFilter = filters['London'] || '';
+    const londonContext = londonDirFilter.startsWith('Long') ? 'Long' :
+        londonDirFilter.startsWith('Short') ? 'Short' : 'None';
+
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
     if (filterError) return <div className="p-8 text-center text-red-500">Failed to load profiler data.</div>;
 
     return (
         <div className="flex items-start gap-4">
             {/* 1. Sidebar (Sticky) */}
-            <div className="sticky top-4 flex-none z-10 transition-all duration-300">
+            <div className={`sticky top-4 flex-none z-10 transition-all duration-300 ${isSidebarCollapsed ? 'w-[60px]' : 'w-[280px]'} space-y-4`}>
                 <ProfilerFilterSidebar
                     stats={sidebarStats}
                     filters={filters}
@@ -110,7 +125,11 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                     onReset={handleReset}
                     ticker={ticker}
                     onTickerChange={setTicker}
+                    isCollapsed={isSidebarCollapsed}
+                    onToggleCollapse={setIsSidebarCollapsed}
                 />
+
+                {/* Level Probability Widget removed per user request */}
             </div>
 
             {/* 2. Main Content (Scrolls naturally) */}
