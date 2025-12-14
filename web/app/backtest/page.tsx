@@ -171,8 +171,11 @@ export default function BacktestPage() {
                                         title={config.tp_mode === 'R' ? "Example: 1.0 for 1R" : "Example: 10 for 10bps"}
                                         type="number"
                                         step={config.tp_mode === 'R' ? "0.1" : "1"}
-                                        value={config.tp_value}
-                                        onChange={(e) => setConfig({ ...config, tp_value: parseFloat(e.target.value) })}
+                                        value={isNaN(config.tp_value) ? '' : config.tp_value}
+                                        onChange={(e) => {
+                                            const val = parseFloat(e.target.value)
+                                            setConfig({ ...config, tp_value: isNaN(val) ? 0 : val })
+                                        }}
                                     />
                                     <p className="text-xs text-muted-foreground">
                                         {config.tp_mode === 'R' ? 'Default: 1.0 (1x Risk)' : 'Default: 10 (0.10%)'}
