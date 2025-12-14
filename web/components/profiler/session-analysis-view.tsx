@@ -25,11 +25,11 @@ interface SessionAnalysisViewProps {
 const OUTCOMES = ['Long True', 'Short True', 'Long False', 'Short False'];
 
 // Level configuration per session
-const SESSION_LEVELS: Record<string, string[]> = {
+export const SESSION_LEVELS: Record<string, string[]> = {
     'Asia': ['daily_open', 'pdl', 'pdm', 'pdh', 'p12h', 'p12m', 'p12l', 'asia_mid'],
-    'London': ['midnight_open', 'asia_mid', 'london_mid', 'pdl', 'pdh'],
-    'NY1': ['open_0730', 'london_mid', 'ny1_mid', 'asia_mid'],
-    'NY2': ['ny1_mid', 'ny2_mid', 'london_mid']
+    'London': ['midnight_open', 'asia_mid', 'london_mid', 'pdl', 'pdh', 'pdm', 'p12h', 'p12m', 'p12l'],
+    'NY1': ['open_0730', 'london_mid', 'ny1_mid', 'asia_mid', 'midnight_open', 'pdl', 'pdh', 'pdm', 'p12h', 'p12m', 'p12l'],
+    'NY2': ['ny1_mid', 'ny2_mid', 'london_mid', 'open_0730', 'asia_mid', 'daily_open', 'pdl', 'pdh', 'pdm'],
 };
 
 export const SessionAnalysisView = memo(function SessionAnalysisView({ session, sessions, allSessions, dailyHodLod, filteredDates, ticker, levelTouches, filters, brokenFilters, intraState }: SessionAnalysisViewProps) {
@@ -117,6 +117,7 @@ export const SessionAnalysisView = memo(function SessionAnalysisView({ session, 
                                 dailyHodLod={dailyHodLod}
                                 ticker={ticker}
                                 targetSession={session}
+                                levelTouches={levelTouches} // [NEW] Pass level data
                                 filters={filters}
                                 brokenFilters={brokenFilters}
                                 intraState={intraState}

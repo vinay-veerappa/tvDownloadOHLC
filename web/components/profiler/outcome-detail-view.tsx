@@ -1,10 +1,12 @@
 "use client"
 
 import { useMemo, memo } from 'react';
-import { ProfilerSession, DailyHodLodResponse } from '@/lib/api/profiler';
+import { ProfilerSession, DailyHodLodResponse, LevelTouchesResponse } from '@/lib/api/profiler';
 import { HodLodChart, SessionStats } from './hod-lod-analysis';
 import { RangeDistribution } from './range-distribution';
 import { PriceModelChart } from './price-model-chart';
+import { DailyLevels } from './daily-levels'; // [NEW]
+import { SESSION_LEVELS } from './session-analysis-view'; // [NEW]
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
@@ -13,8 +15,10 @@ interface OutcomeDetailViewProps {
     sessions: ProfilerSession[]; // Sessions matching this outcome (e.g. Asia rows)
     allSessions: ProfilerSession[]; // [NEW] All sessions for context
     dailyHodLod?: DailyHodLodResponse | null;
+    dailyHodLod?: DailyHodLodResponse | null;
     ticker: string;
     targetSession: string;
+    levelTouches: LevelTouchesResponse | null; // [NEW]
     // Global Filters to extend
     filters: Record<string, string>;
     brokenFilters: Record<string, string>;
@@ -28,6 +32,7 @@ export const OutcomeDetailView = memo(function OutcomeDetailView({
     dailyHodLod,
     ticker,
     targetSession,
+    levelTouches,
     filters,
     brokenFilters,
     intraState
@@ -129,7 +134,19 @@ export const OutcomeDetailView = memo(function OutcomeDetailView({
                 />
             </section>
 
-            {/* 4. Session Contribution Stats */}
+            {/* 4. Session Levels (Outcome Specific) */}
+            <section>
+                <h3 className="text-lg font-semibold mb-3">Session Levels ({outcome})</h3>
+                <p className="text-xs text-muted-foreground mb-2">Showing touch rates for dates matching this outcome.</p>
+                <DailyLevels
+                    levelTouches={levelTouches}
+                    filteredDates={outcomeDates}
+                    limitLevels={SESSION_LEVELS[targetSession] || undefined}
+                    initialSession={targetSession}
+                />
+            </section>
+
+            {/* 5. Session Contribution Stats */}
             <section>
                 <h3 className="text-lg font-semibold mb-3">Session HOD/LOD Contribution  ({outcome})</h3>
                 <SessionStats sessions={sessions} />
