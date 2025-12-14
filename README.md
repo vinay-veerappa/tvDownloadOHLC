@@ -89,6 +89,28 @@ python scripts/update_data.py
 ```
 This script handles remaining processing, format conversion, and updates documentation automatically.
 
+### Historical Download (Selenium)
+**New!** Automated download of full contract history using TradingView Replay mode.
+
+**Prerequisites:**
+1.  Open Chrome with remote debugging enabled:
+    ```bash
+    chrome.exe --remote-debugging-port=9222 --user-data-dir="c:\selenium\profile"
+    ```
+2.  Log in to TradingView in this Chrome instance.
+
+**Usage:**
+Run the replay downloader with a list of contracts:
+```bash
+python selenium_downloader/download_contracts_replay.py --contracts "ESZ2023,ESH2024"
+```
+
+**Features:**
+- Automatic **Replay Mode** navigation.
+- **Rollover Awareness**: Automatically stops downloading when it reaches the previous contract's rollover date (uses `es_rollover_calendar.csv` or `cl_rollover_calendar.csv`).
+- **Resilient**: Handles "Continue Replay" dialogs and connection interruptions.
+- Saves data chunks to `data/downloads_contracts_replay/`.
+
 ### Legacy Processing
 To run manual data processing scripts:
 ```bash

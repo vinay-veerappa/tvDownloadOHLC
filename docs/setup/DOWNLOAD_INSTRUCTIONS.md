@@ -94,3 +94,24 @@ If you have already processed your data into Parquet files, you can use the Parq
 ```powershell
 python download_ohlc_selenium_enhanced.py --ticker ES1! --resume --parquet-file "../data/ES1_1m.parquet"
 ```
+
+---
+
+### 6. Full Contract Download (Replay Mode)
+**New!** Use the specialized `download_contracts_replay.py` to download the entire available history for specific contracts (e.g., `ESZ2023`, `CLF2024`).
+
+This script:
+1.  **Iterates** through a list of contracts.
+2.  **Identifies Rollover Boundaries**: Automatically stops downloading when it reaches the *previous* contract's rollover date (loading `es_rollover_calendar.csv` or `cl_rollover_calendar.csv`).
+3.  **Use Replay Mode**: Navigates backwards safely using TradingView's Replay function.
+
+**Usage:**
+```powershell
+python selenium_downloader/download_contracts_replay.py --contracts "ESZ2023,ESH2024,CLF2024"
+```
+
+**Output:**
+Files are saved to `data/downloads_contracts_replay/`.
+
+**Note:**
+Ensure you have `pandas` installed and the rollover CSVs (generated automatically if missing) are accessible.
