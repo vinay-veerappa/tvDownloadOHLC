@@ -15,12 +15,24 @@ export default function BacktestPage() {
     const [result, setResult] = useState<BacktestResult | null>(null)
     const [markers, setMarkers] = useState<any[]>([])
 
-    const [config, setConfig] = useState({
+    const [config, setConfig] = useState<{
+        ticker: string
+        timeframe: string
+        strategy: string
+        fastPeriod: number
+        slowPeriod: number
+        tp_mode: 'R' | 'BPS'
+        tp_value: number
+        max_trades: number
+    }>({
         ticker: "ES1",
         timeframe: "1h",
         strategy: "SMA_CROSSOVER",
         fastPeriod: 9,
-        slowPeriod: 21
+        slowPeriod: 21,
+        tp_mode: 'R',
+        tp_value: 1.0,
+        max_trades: 0 // Unlimited
     })
 
     const handleRun = async () => {
@@ -30,9 +42,13 @@ export default function BacktestPage() {
                 ticker: config.ticker,
                 timeframe: config.timeframe,
                 strategy: config.strategy,
-                params: {
+                params: config.strategy === 'SMA_CROSSOVER' ? {
                     fastPeriod: config.fastPeriod,
                     slowPeriod: config.slowPeriod
+                } : {
+                    tp_mode: config.tp_mode,
+                    tp_value: config.tp_value,
+                    max_trades: config.max_trades
                 }
             })
 
@@ -82,6 +98,24 @@ export default function BacktestPage() {
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="space-y-2">
+                            <Label>Strategy</Label>
+                            <select
+                                className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                value={config.strategy}
+                                onChange={(e) => {
+                                    const strat = e.target.value
+                                    if (strat === 'NQ_1MIN') {
+                                        setConfig({ ...config, strategy: strat, ticker: 'NQ1!', timeframe: '1m' })
+                                    } else {
+                                        setConfig({ ...config, strategy: strat })
+                                    }
+                                }}
+                            >
+                                <option value="SMA_CROSSOVER">SMA Crossover</option>
+                                <option value="NQ_1MIN">NQ 9:30 Reversal</option>
+                            </select>
+                        </div>
+                        <div className="space-y-2">
                             <Label>Ticker</Label>
                             <Input
                                 value={config.ticker}
@@ -95,22 +129,66 @@ export default function BacktestPage() {
                                 onChange={(e) => setConfig({ ...config, timeframe: e.target.value })}
                             />
                         </div>
-                        <div className="space-y-2">
-                            <Label>Fast SMA</Label>
-                            <Input
-                                type="number"
-                                value={config.fastPeriod}
-                                onChange={(e) => setConfig({ ...config, fastPeriod: parseInt(e.target.value) })}
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label>Slow SMA</Label>
-                            <Input
-                                type="number"
-                                value={config.slowPeriod}
-                                onChange={(e) => setConfig({ ...config, slowPeriod: parseInt(e.target.value) })}
-                            />
-                        </div>
+
+                        {config.strategy === 'SMA_CROSSOVER' && (
+                            <>
+                                <div className="space-y-2">
+                                    <Label>Fast SMA</Label>
+                                    <Input
+                                        type="number"
+                                        value={config.fastPeriod}
+                                        onChange={(e) => setConfig({ ...config, fastPeriod: parseInt(e.target.value) })}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Slow SMA</Label>
+                                    <Input
+                                        type="number"
+                                        value={config.slowPeriod}
+                                        onChange={(e) => setConfig({ ...config, slowPeriod: parseInt(e.target.value) })}
+                                    />
+                                </div>
+                            </>
+                        )}
+
+                        {config.strategy === 'NQ_1MIN' && (
+                            <div className="space-y-4 border-l-2 border-muted pl-4">
+                                <div className="space-y-2">
+                                    <Label>TP Mode</Label>
+                                    <select
+                                        title="Take Profit Mode"
+                                        className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                        value={config.tp_mode}
+                                        onChange={(e) => setConfig({ ...config, tp_mode: e.target.value as 'R' | 'BPS' })}
+                                    >
+                                        <option value="R">R-Multiple (Risk units)</option>
+                                        <option value="BPS">Basis Points (bps)</option>
+                                    </select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>{config.tp_mode === 'R' ? 'R-Multiple Value' : 'Basis Points Value'}</Label>
+                                    <Input
+                                        title={config.tp_mode === 'R' ? "Example: 1.0 for 1R" : "Example: 10 for 10bps"}
+                                        type="number"
+                                        step={config.tp_mode === 'R' ? "0.1" : "1"}
+                                        value={config.tp_value}
+                                        onChange={(e) => setConfig({ ...config, tp_value: parseFloat(e.target.value) })}
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        {config.tp_mode === 'R' ? 'Default: 1.0 (1x Risk)' : 'Default: 10 (0.10%)'}
+                                    </p>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Max Trades (0 = All)</Label>
+                                    <Input
+                                        title="Maximum number of trades to execute"
+                                        type="number"
+                                        value={config.max_trades}
+                                        onChange={(e) => setConfig({ ...config, max_trades: parseInt(e.target.value) })}
+                                    />
+                                </div>
+                            </div>
+                        )}
 
                         <Button className="w-full" onClick={handleRun} disabled={loading}>
                             {loading ? "Running..." : "Run Backtest"}

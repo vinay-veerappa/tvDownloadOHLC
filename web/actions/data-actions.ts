@@ -56,7 +56,7 @@ function loadChunk(ticker: string, timeframe: string, chunkIndex: number): OHLCD
     return JSON.parse(fs.readFileSync(chunkPath, 'utf8'))
 }
 
-export async function getChartData(ticker: string, timeframe: string): Promise<{ success: boolean, data?: OHLCData[], totalRows?: number, chunksLoaded?: number, numChunks?: number, error?: string }> {
+export async function getChartData(ticker: string, timeframe: string, limit: number = 0): Promise<{ success: boolean, data?: OHLCData[], totalRows?: number, chunksLoaded?: number, numChunks?: number, error?: string }> {
     try {
         // Try direct folder (for legacy support like 'folder_3m') OR converted folder name
         let folderName = timeframe
@@ -71,16 +71,20 @@ export async function getChartData(ticker: string, timeframe: string): Promise<{
             return { success: false, error: "Data not found" }
         }
 
-        // Determine how many chunks to load initially based on timeframe
-        // Optimize for speed: Load only 1 chunk initially (~20,000 bars)
-        // This is ~2 weeks of 1m data, which is plenty for initial view.
-        // Background loading will handle the rest.
-        let initialChunks = 1
+        // Determine how many chunks to load
+        // If limit is 0 (default), load 1 chunk (chart view)
+        // If limit is -1, load ALL chunks (backtest)
+        // If limit > 0, load that many chunks
+        let chunksToLoad = 1
 
-        // Load initial chunks (most recent first)
-        // Chunk 0 = most recent, Chunk N = oldest
-        // Within each chunk, data is sorted oldest to newest
-        const chunksToLoad = Math.min(initialChunks, meta.numChunks)
+        if (limit === 0) {
+            chunksToLoad = 1
+        } else if (limit === -1) {
+            chunksToLoad = meta.numChunks
+        } else {
+            chunksToLoad = Math.min(limit, meta.numChunks)
+        }
+
         const allChunks: OHLCData[][] = []
         for (let i = 0; i < chunksToLoad; i++) {
             const chunkData = loadChunk(ticker, folderName, i)
