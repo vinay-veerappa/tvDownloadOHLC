@@ -37,6 +37,7 @@ interface DailyLevelsProps {
     levelTouches: LevelTouchesResponse | null;
     filteredDates: Set<string>;
     limitLevels?: string[];
+    initialSession?: string;
 }
 
 interface LevelCardProps {
@@ -242,10 +243,17 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
 
 // Export optimized component
 
+interface DailyLevelsProps {
+    levelTouches: LevelTouchesResponse | null;
+    filteredDates: Set<string>;
+    limitLevels?: string[];
+    initialSession?: string; // [NEW]
+}
+
 // Export optimized component
-export const DailyLevels = memo(function DailyLevels({ levelTouches, filteredDates, limitLevels }: DailyLevelsProps) {
+export const DailyLevels = memo(function DailyLevels({ levelTouches, filteredDates, limitLevels, initialSession = 'Daily' }: DailyLevelsProps) {
     const [granularity, setGranularity] = useState<number>(15);
-    const [targetSession, setTargetSession] = useState<string>('Daily');
+    const [targetSession, setTargetSession] = useState<string>(initialSession);
 
     if (!levelTouches || filteredDates.size === 0) {
         return <div className="text-muted-foreground text-center py-8">Loading level data...</div>;
@@ -350,6 +358,7 @@ export const DailyLevels = memo(function DailyLevels({ levelTouches, filteredDat
                             {shouldShow('asia_mid') && <LevelCard title="Asia Mid" levelKey="asia_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#f472b6" targetSession={targetSession} />}
                             {shouldShow('london_mid') && <LevelCard title="London Mid" levelKey="london_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#fb923c" targetSession={targetSession} />}
                             {shouldShow('ny1_mid') && <LevelCard title="NY1 Mid" levelKey="ny1_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#38bdf8" targetSession={targetSession} />}
+                            {shouldShow('ny2_mid') && <LevelCard title="NY2 Mid" levelKey="ny2_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#60a5fa" targetSession={targetSession} />}
                         </div>
                     </div>
                 )
