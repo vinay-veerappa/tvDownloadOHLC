@@ -213,7 +213,7 @@ Each outcome panel contains:
 | **Active Filters Row** | Badge display of active filters |
 | **Profiler Wizard (Compact)** | Horizontal layout, inline filters |
 | **Median Price Model Charts** | Backend + Frontend implementation |
-| **Header-Style Chart Tooltips** | Fixed header, not floating |
+| **Header-Style Chart Tooltips** | Fixed header (PriceModel), Standardized Floating (Others) |
 | **True Daily HOD/LOD** | Computed from 1-min data |
 | **HOD/LOD Time Distributions** | Histograms with granularity selector |
 | **Range Distribution** | High/Low from open charts |
@@ -224,14 +224,10 @@ Each outcome panel contains:
 | **Precompute Scripts** | All level/stats precomputation |
 | **Session Stats Cards** | Direction bias, True/False, Broken |
 | **History Table** | Filterable session history |
-| **Backend Optimization** | Vectorized price model generation |
-
-### In Progress 🔄
-
-| Feature | Notes |
-|---------|-------|
-| **Outcome Panel Grid** | Needs integration in session tabs |
-| **Session-Specific Levels** | `limitLevels` prop added, needs verification |
+| **Backend Optimization** | Vectorized price model + Optimized Level Touches |
+| **Standardized Tooltips** | Unified styling across all Recharts components |
+| **Outcome Panel Grid** | Integrated in session tabs |
+| **Session-Specific Levels** | `limitLevels` prop verified |
 
 ### Pending ⏳
 
