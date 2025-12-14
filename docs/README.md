@@ -13,6 +13,7 @@
 ## 🚀 Features & Usage
 - **[User Guide](setup/USER_GUIDE.md)**: Manual for Charting, Trading Panel, Replay Mode, and Backtesting.
 - **[Roadmap](ROADMAP.md)**: Feature requirements and status (Journaling, Drawings, Backtesting).
+- **[Journal Requirements](JournalRequirements/trading_journal_requirements.md)**: Detailed requirements for the Trading Journal enhancements.
 
 ## 📊 Data Pipeline
 - **[Data Pipeline Guide](data/DATA_PIPELINE.md)**: How to acquire (TradingView/BacktestMarket) and process OHLC data with scripts.
