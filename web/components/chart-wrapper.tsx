@@ -55,6 +55,7 @@ interface ChartWrapperProps {
     vwapSettings?: VWAPSettings
     onOpenVwapSettings?: () => void
     onTimeframeChange?: (tf: string) => void
+    markers?: any[]
 }
 
 export function ChartWrapper(props: ChartWrapperProps) {

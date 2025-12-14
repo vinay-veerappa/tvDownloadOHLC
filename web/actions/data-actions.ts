@@ -2,7 +2,7 @@
 
 import path from "path"
 import fs from "fs"
-import { resolutionToFolderName } from "@/lib/resolution"
+import { resolutionToFolderName } from "../lib/resolution"
 
 export interface OHLCData {
     time: number
@@ -92,10 +92,24 @@ export async function getChartData(ticker: string, timeframe: string, limit: num
         }
 
         // Combine chunks: oldest chunk first, then newer chunks
-        // Reverse the array so we go from oldest (last loaded) to newest (first loaded)
-        let data: OHLCData[] = []
-        for (let i = allChunks.length - 1; i >= 0; i--) {
-            data = [...data, ...allChunks[i]]
+        // Chunk 0 is newest, Chunk N is oldest.
+        // We want data sorted by time (oldest to newest).
+        // So we want Chunk N, Chunk N-1, ... Chunk 0.
+
+        // Efficient flattening
+        const validChunks = allChunks.filter(c => c && c.length > 0)
+        let totalLen = 0
+        for (const c of validChunks) totalLen += c.length
+
+        const data = new Array(totalLen)
+        let offset = 0
+
+        // Iterate backwards (from oldest chunk to newest chunk)
+        for (let i = validChunks.length - 1; i >= 0; i--) {
+            const chunk = validChunks[i]
+            for (let j = 0; j < chunk.length; j++) {
+                data[offset++] = chunk[j]
+            }
         }
 
         return {

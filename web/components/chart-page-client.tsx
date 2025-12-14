@@ -18,6 +18,7 @@ interface ChartPageClientProps {
     timeframe: string
     style: string
     indicators: string[]
+    markers?: any[]
 }
 
 const MAGNET_STORAGE_KEY = 'chart_magnet_mode'
@@ -31,7 +32,8 @@ export function ChartPageClient({
     ticker,
     timeframe,
     style,
-    indicators
+    indicators,
+    markers
 }: ChartPageClientProps) {
     const [magnetMode, setMagnetMode] = useState<MagnetMode>('off')
     const [displayTimezone, setDisplayTimezone] = useState('America/New_York')
@@ -193,6 +195,7 @@ export function ChartPageClient({
                         timeframe={timeframe}
                         style={style}
                         indicators={indicators}
+                        markers={markers}
                         magnetMode={magnetMode}
                         displayTimezone={displayTimezone}
                         onNavigationReady={handleNavigationReady}

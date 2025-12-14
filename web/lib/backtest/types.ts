@@ -14,6 +14,7 @@ export interface Trade {
     direction: 'LONG' | 'SHORT'
     pnl: number
     result: 'WIN' | 'LOSS'
+    metadata?: Record<string, any>
 }
 
 export interface BacktestResult {

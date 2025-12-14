@@ -34,8 +34,9 @@ export class IndicatorStorage {
     }
 
     static saveIndicators(chartId: string, indicators: IndicatorConfig[]): boolean {
-        try {
+        if (typeof window === 'undefined') return false; // SSR check
 
+        try {
             const allData = this.getAllData();
 
             allData[chartId] = {
@@ -113,6 +114,8 @@ export class IndicatorStorage {
      * Get all stored data
      */
     private static getAllData(): Record<string, ChartIndicators> {
+        if (typeof window === 'undefined') return {}; // SSR check
+
         try {
             const data = localStorage.getItem(STORAGE_KEY);
             return data ? JSON.parse(data) : {};

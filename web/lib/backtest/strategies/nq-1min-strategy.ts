@@ -28,29 +28,43 @@ export class Nq1MinStrategy implements Strategy {
         // Params
         const tp_mode = params.tp_mode || 'R'
         const tp_value = params.tp_value || 1.0
-        const max_trades = params.max_trades || 0
+        const exit_hour = params.exit_hour !== undefined ? params.exit_hour : 9
+        const exit_minute = params.exit_minute !== undefined ? params.exit_minute : 44
 
         // Helper to get ET time parts
+        // Reuse formatter for performance (crucial for 5M+ bars)
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/New_York',
+            hour: 'numeric',
+            minute: 'numeric',
+            hour12: false,
+            year: 'numeric',
+            month: 'numeric',
+            day: 'numeric'
+        })
+
         const getEtTime = (timestamp: number) => {
             const date = new Date(timestamp * 1000)
-            // Format to parts in New York time
-            const formatter = new Intl.DateTimeFormat('en-US', {
-                timeZone: 'America/New_York',
-                hour: 'numeric',
-                minute: 'numeric',
-                hour12: false,
-                year: 'numeric',
-                month: 'numeric',
-                day: 'numeric'
-            })
-
             const parts = formatter.formatToParts(date)
-            const getPart = (type: string) => parts.find(p => p.type === type)?.value
+            // Manual optimization: map lookup is faster than find for known parts? 
+            // array.find is slow in tight loop.
+            // formatToParts returns known order usually, but safer to loop once.
+
+            let year = '', month = '', day = '', hour = '0', minute = '0'
+
+            for (let i = 0; i < parts.length; i++) {
+                const p = parts[i]
+                if (p.type === 'hour') hour = p.value
+                else if (p.type === 'minute') minute = p.value
+                else if (p.type === 'year') year = p.value
+                else if (p.type === 'month') month = p.value
+                else if (p.type === 'day') day = p.value
+            }
 
             return {
-                dateStr: `${getPart('year')}-${getPart('month')}-${getPart('day')}`,
-                hour: parseInt(getPart('hour') || '0'),
-                minute: parseInt(getPart('minute') || '0')
+                dateStr: `${year}-${month}-${day}`,
+                hour: parseInt(hour),
+                minute: parseInt(minute)
             }
         }
 
@@ -104,9 +118,22 @@ export class Nq1MinStrategy implements Strategy {
             // "The position" usually implies singular. Staying conservative: one trade per day.
             if (currentState.hasTraded && !position) continue
 
-            // 3. Execution Window (9:31 - 9:44)
-            const isExecutionWindow = (time.hour === 9 && time.minute >= 31 && time.minute <= 44)
-            const isHardExitTime = (time.hour === 9 && time.minute >= 44) // 9:44 is hard exit candle
+            // 3. Execution Window (9:31 - Exit)
+            // Hard exit time check
+            let isHardExitTime = false;
+
+            // Simple check: matches exact exit minute or is after
+            if (time.hour > exit_hour || (time.hour === exit_hour && time.minute >= exit_minute)) {
+                isHardExitTime = true
+            }
+
+            // Execution window logic: From 9:31 until Exit
+            // Strict window: 9:31 to Exit Time
+            // We shouldn't enter if we are AT or PAST exit time
+            let isExecutionWindow = false
+            if (time.hour === 9 && time.minute >= 31) {
+                if (!isHardExitTime) isExecutionWindow = true
+            }
 
             // --- TRADE MANAGEMENT ---
             if (position) {

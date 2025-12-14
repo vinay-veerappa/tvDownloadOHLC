@@ -1,19 +1,27 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { executeBacktest } from "@/actions/backtest-actions"
+import { exportToJournal } from "@/actions/backtest-exporter"
 import { BacktestResult } from "@/lib/backtest/runner"
 import { toast } from "sonner"
-import { ChartContainer } from "@/components/chart-container"
+import { ChartContainer, ChartContainerRef } from "@/components/chart-container"
+import { ChevronLeft, ChevronRight, Save, LineChart } from "lucide-react" // Add LineChart
+import { useRouter } from "next/navigation"
 
 export default function BacktestPage() {
+    const router = useRouter()
     const [loading, setLoading] = useState(false)
+    const [exporting, setExporting] = useState(false)
     const [result, setResult] = useState<BacktestResult | null>(null)
     const [markers, setMarkers] = useState<any[]>([])
+    const [selectedTradeIndex, setSelectedTradeIndex] = useState<number | null>(null)
+
+    const chartRef = useRef<ChartContainerRef>(null)
 
     const [config, setConfig] = useState<{
         ticker: string
@@ -37,6 +45,7 @@ export default function BacktestPage() {
 
     const handleRun = async () => {
         setLoading(true)
+        setSelectedTradeIndex(null)
         try {
             const res = await executeBacktest({
                 ticker: config.ticker,
@@ -85,6 +94,73 @@ export default function BacktestPage() {
             setLoading(false)
         }
     }
+
+    const handleTradeClick = (index: number) => {
+        if (!result || !result.trades[index]) return
+
+        // Trades in UI are usually reversed (newest first), but we need correct index
+        // If we map reversed, index logic should match UI
+        // Let's assume passed index matches the `result.trades` array index directly
+
+        const trade = result.trades[index]
+        setSelectedTradeIndex(index)
+        chartRef.current?.scrollToTime(trade.entryDate)
+    }
+
+    const handlePrev = () => {
+        if (!result || selectedTradeIndex === null) return
+        // Chronological order (index 0 is oldest)
+        // If UI is showing Newest First, "Next" usually means "Older" in list, 
+        // but "Next Trade" chronologically means "Newer".
+        // Let's stick to Chronological for buttons: Left = Older (Prev), Right = Newer (Next)
+        const newIndex = Math.max(0, selectedTradeIndex - 1)
+        handleTradeClick(newIndex)
+    }
+
+    const handleNext = () => {
+        if (!result || selectedTradeIndex === null) {
+            // Start from beginning
+            handleTradeClick(0)
+            return
+        }
+        const newIndex = Math.min(result.trades.length - 1, selectedTradeIndex + 1)
+        handleTradeClick(newIndex)
+    }
+
+    const handleExport = async () => {
+        if (!result) return
+
+        // Create a user friendly name
+        const name = prompt("Enter a name for the Journal Account:", `Backtest: ${config.strategy} ${config.ticker}`)
+        if (!name) return
+
+        setExporting(true)
+        try {
+            const res = await exportToJournal(result.trades, name, config)
+            if (res.success) {
+                toast.success(`Exported to account: ${res.accountName}`)
+            } else {
+                toast.error("Export failed: " + res.error)
+            }
+        } catch (e) {
+            toast.error("Export failed")
+        } finally {
+            setExporting(false)
+        }
+    }
+
+    const handleOpenInChart = () => {
+        if (!result) return
+
+        // Save markers to localStorage for the chart page to pick up
+        localStorage.setItem('backtest_markers_preview', JSON.stringify(markers))
+
+        // Navigate to chart page with correct ticker/timeframe
+        router.push(`/chart?ticker=${config.ticker}&timeframe=${config.timeframe}`)
+    }
+
+    // Sort trades for list (Newest First)
+    const sortedTrades = result ? [...result.trades].sort((a, b) => b.entryDate - a.entryDate) : []
 
     return (
         <div className="container mx-auto p-4 space-y-4">
@@ -136,16 +212,16 @@ export default function BacktestPage() {
                                     <Label>Fast SMA</Label>
                                     <Input
                                         type="number"
-                                        value={config.fastPeriod}
-                                        onChange={(e) => setConfig({ ...config, fastPeriod: parseInt(e.target.value) })}
+                                        value={isNaN(config.fastPeriod) ? '' : config.fastPeriod}
+                                        onChange={(e) => setConfig({ ...config, fastPeriod: parseInt(e.target.value) || 0 })}
                                     />
                                 </div>
                                 <div className="space-y-2">
                                     <Label>Slow SMA</Label>
                                     <Input
                                         type="number"
-                                        value={config.slowPeriod}
-                                        onChange={(e) => setConfig({ ...config, slowPeriod: parseInt(e.target.value) })}
+                                        value={isNaN(config.slowPeriod) ? '' : config.slowPeriod}
+                                        onChange={(e) => setConfig({ ...config, slowPeriod: parseInt(e.target.value) || 0 })}
                                     />
                                 </div>
                             </>
@@ -186,8 +262,8 @@ export default function BacktestPage() {
                                     <Input
                                         title="Maximum number of trades to execute"
                                         type="number"
-                                        value={config.max_trades}
-                                        onChange={(e) => setConfig({ ...config, max_trades: parseInt(e.target.value) })}
+                                        value={isNaN(config.max_trades) ? '' : config.max_trades}
+                                        onChange={(e) => setConfig({ ...config, max_trades: parseInt(e.target.value) || 0 })}
                                     />
                                 </div>
                             </div>
@@ -201,8 +277,26 @@ export default function BacktestPage() {
 
                 {/* Results Panel */}
                 <Card className="md:col-span-2 flex flex-col h-[800px]">
-                    <CardHeader>
+                    <CardHeader className="flex flex-row items-center justify-between">
                         <CardTitle>Results</CardTitle>
+                        {result && (
+                            <div className="flex gap-2">
+                                <Button variant="outline" size="sm" onClick={handlePrev} disabled={selectedTradeIndex === null}>
+                                    <ChevronLeft className="h-4 w-4" />
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={handleNext}>
+                                    <ChevronRight className="h-4 w-4" />
+                                </Button>
+                                <Button variant="secondary" size="sm" onClick={handleExport} disabled={exporting}>
+                                    <Save className="mr-2 h-4 w-4" />
+                                    {exporting ? 'Exporting...' : 'Export to Journal'}
+                                </Button>
+                                <Button size="sm" onClick={handleOpenInChart}>
+                                    <LineChart className="mr-2 h-4 w-4" />
+                                    Open in Chart
+                                </Button>
+                            </div>
+                        )}
                     </CardHeader>
                     <CardContent className="flex-1 flex flex-col min-h-0">
                         {result ? (
@@ -231,6 +325,7 @@ export default function BacktestPage() {
                                 {/* Chart */}
                                 <div className="flex-1 min-h-[400px] border rounded-lg overflow-hidden relative">
                                     <ChartContainer
+                                        ref={chartRef}
                                         ticker={config.ticker}
                                         timeframe={config.timeframe}
                                         style="candles"
@@ -252,17 +347,29 @@ export default function BacktestPage() {
                                         <div>PnL</div>
                                     </div>
                                     <div>
-                                        {result.trades.slice().reverse().map((trade, i) => (
-                                            <div key={i} className="p-2 border-t grid grid-cols-5 gap-2 text-sm hover:bg-muted/50">
-                                                <div>{new Date(trade.entryDate * 1000).toLocaleDateString()}</div>
-                                                <div className={trade.direction === 'LONG' ? 'text-green-500' : 'text-red-500'}>{trade.direction}</div>
-                                                <div>{trade.entryPrice.toFixed(2)}</div>
-                                                <div>{trade.exitPrice.toFixed(2)}</div>
-                                                <div className={trade.pnl >= 0 ? 'text-green-500' : 'text-red-500'}>
-                                                    {trade.pnl.toFixed(2)}
+                                        {/* Use sortedTrade for display but map click to original data via entryDate look up or just simpler index mapping */}
+                                        {/* To keep it simple, we'll iterate sortedTrades and find their original index */}
+                                        {sortedTrades.map((trade, i) => {
+                                            // Find original index
+                                            const originalIndex = result.trades.indexOf(trade)
+                                            const isSelected = selectedTradeIndex === originalIndex
+
+                                            return (
+                                                <div
+                                                    key={i}
+                                                    className={`p-2 border-t grid grid-cols-5 gap-2 text-sm cursor-pointer ${isSelected ? 'bg-primary/20' : 'hover:bg-muted/50'}`}
+                                                    onClick={() => handleTradeClick(originalIndex)}
+                                                >
+                                                    <div>{new Date(trade.entryDate * 1000).toLocaleDateString()} {new Date(trade.entryDate * 1000).toLocaleTimeString()}</div>
+                                                    <div className={trade.direction === 'LONG' ? 'text-green-500' : 'text-red-500'}>{trade.direction}</div>
+                                                    <div>{trade.entryPrice.toFixed(2)}</div>
+                                                    <div>{trade.exitPrice.toFixed(2)}</div>
+                                                    <div className={trade.pnl >= 0 ? 'text-green-500' : 'text-red-500'}>
+                                                        {trade.pnl.toFixed(2)}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            )
+                                        })}
                                     </div>
                                 </div>
                             </div>
