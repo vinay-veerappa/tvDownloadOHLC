@@ -215,11 +215,29 @@ export const HodLodChart = memo(function HodLodChart({ sessions, dailyHodLod }: 
                     <ComposedChart data={timeHistogramData} margin={{ top: 10, right: 10, bottom: 30, left: 10 }}>
                         <XAxis
                             dataKey="time"
-                            fontSize={12} // Increased from 9 to 12
-                            interval={granularity <= 15 ? 5 : 1} // Adjusted interval for readability
+                            fontSize={12}
+                            interval={0} // Force show provided ticks
+                            ticks={useMemo(() => {
+                                // Calculate explicit ticks to show (e.g. every hour or 30 mins)
+                                // timeHistogramData has "HH:MM" strings
+                                if (timeHistogramData.length === 0) return undefined;
+
+                                const stepMinutes = 60; // Target ~60m spacing for labels
+                                return timeHistogramData
+                                    .filter(d => {
+                                        const [h, m] = d.time.split(':').map(Number);
+                                        // Show if minute is 0 (top of hour)
+                                        // If granularity is > 60 (unlikely), show all
+                                        if (granularity >= 60) return true;
+                                        if (granularity === 30) return m === 0; // Show 18:00, 19:00...
+                                        // For 15m/5m, show top of hour
+                                        return m === 0;
+                                    })
+                                    .map(d => d.time);
+                            }, [timeHistogramData, granularity])}
                             angle={-45}
                             textAnchor="end"
-                            height={60} // Increased height for rotated text
+                            height={60}
                         />
                         <YAxis
                             fontSize={12} // Increased from 10 to 12
