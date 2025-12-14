@@ -120,6 +120,30 @@ export const PriceModelChart = memo(function PriceModelChart({
         return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
     };
 
+    // Calculate ticks for XAxis based on duration
+    const xAxisTicks = useMemo(() => {
+        if (chartData.length === 0) return undefined;
+
+        const lastIdx = chartData[chartData.length - 1].time_idx;
+        const generatedTicks: number[] = [];
+
+        // Determine interval based on total duration
+        let interval = 60; // Default: Hourly for long sessions (Daily)
+
+        if (lastIdx <= 180) { // <= 3 hours
+            interval = 15; // 15 mins
+        } else if (lastIdx <= 360) { // <= 6 hours
+            interval = 30; // 30 mins
+        }
+
+        // Ensure we cover the full range
+        for (let i = 0; i <= lastIdx; i += interval) {
+            generatedTicks.push(i);
+        }
+
+        return generatedTicks;
+    }, [chartData]);
+
     // Prepare Header Items
     const headerItems = useMemo(() => {
         if (!hoverData) return [];
@@ -166,6 +190,7 @@ export const PriceModelChart = memo(function PriceModelChart({
         );
     }
 
+
     return (
         <Card className="border border-border/50 shadow-none">
             <CardContent className="p-0">
@@ -209,7 +234,8 @@ export const PriceModelChart = memo(function PriceModelChart({
                                 tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
                                 axisLine={false}
                                 tickLine={false}
-                                minTickGap={20}
+                                ticks={xAxisTicks}
+                                interval={0} // Force show all calculated ticks
                                 type="number"
                                 domain={['dataMin', 'dataMax']}
                             />

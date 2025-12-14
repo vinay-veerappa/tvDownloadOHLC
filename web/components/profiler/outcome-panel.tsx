@@ -197,7 +197,10 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
             return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
         };
 
-        const ticks = Array.from({ length: 15 }, (_, i) => i * 60);
+        // Dynamic ticks based on duration (15m for <= 3h, 30m for <= 6h)
+        const tickInterval = config.duration <= 180 ? 15 : (config.duration <= 360 ? 30 : 60);
+        const tickCount = Math.floor(config.duration / tickInterval) + 1;
+        const ticks = Array.from({ length: tickCount }, (_, i) => i * tickInterval);
 
         return (
             <div className="border rounded-lg p-3">
