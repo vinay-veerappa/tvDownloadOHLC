@@ -29,7 +29,24 @@ async function main() {
         }
     })
 
-    console.log({ defaultAccount })
+    // Create Tag Groups for journal categorization
+    const tagGroups = [
+        { id: 'group-mistake', name: 'mistake', color: '#ef4444' },
+        { id: 'group-setup', name: 'setup', color: '#3b82f6' },
+        { id: 'group-psychology', name: 'psychology', color: '#8b5cf6' },
+        { id: 'group-strategy', name: 'strategy', color: '#10b981' },
+        { id: 'group-event', name: 'event', color: '#f59e0b' }
+    ]
+
+    for (const group of tagGroups) {
+        await prisma.tagGroup.upsert({
+            where: { id: group.id },
+            update: {},
+            create: group
+        })
+    }
+
+    console.log({ defaultAccount, tagGroups: tagGroups.length })
 }
 
 main()

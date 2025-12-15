@@ -74,6 +74,12 @@ model Trade {
   tags        Tag[]
   metadata    String?  // Storage for arbitrary JSON metrics (e.g. correlation data)
   
+  // Phase 1: Journal Enhancement Relations
+  marketCondition MarketCondition?
+  tradeEvents     TradeEvent[]
+  tradeNotes      Note[]
+  tradePlan       TradePlan?
+  
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -89,9 +95,11 @@ model Journal {
 }
 
 model Tag {
-  id     String  @id @default(cuid())
-  name   String  @unique
-  trades Trade[]
+  id      String    @id @default(cuid())
+  name    String    @unique
+  trades  Trade[]
+  groupId String?
+  group   TagGroup? @relation(fields: [groupId], references: [id])
 }
 
 model BacktestResult {
@@ -111,4 +119,85 @@ model BacktestResult {
   trades      String   // JSON string of trade list (or relation to Trade model if we want detailed storage)
   
   createdAt   DateTime @default(now())
+}
+
+// ==========================================
+// Phase 1: Journal Enhancement Models
+// ==========================================
+
+// Market context captured at trade time
+model MarketCondition {
+  id        String  @id @default(cuid())
+  tradeId   String  @unique
+  trade     Trade   @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  
+  vix       Float?
+  vvix      Float?
+  atr       Float?
+  trend     String? // "TRENDING_UP" | "RANGING" | "TRENDING_DOWN"
+  session   String? // "ASIAN" | "EUROPEAN" | "US" | "AFTER_HOURS"
+  volume    String? // "LOW" | "NORMAL" | "HIGH"
+}
+
+// Economic calendar events
+model EconomicEvent {
+  id        String   @id @default(cuid())
+  datetime  DateTime
+  name      String
+  impact    String   // "HIGH" | "MEDIUM" | "LOW"
+  actual    Float?
+  forecast  Float?
+  previous  Float?
+  
+  trades    TradeEvent[]
+  
+  createdAt DateTime @default(now())
+}
+
+// Many-to-many: Trade to EconomicEvent
+model TradeEvent {
+  tradeId   String
+  eventId   String
+  trade     Trade         @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  event     EconomicEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  
+  @@id([tradeId, eventId])
+}
+
+// Enhanced notes (trade notes, daily notes, misc notes)
+model Note {
+  id          String    @id @default(cuid())
+  tradeId     String?
+  trade       Trade?    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  date        DateTime? // For day notes (when tradeId is null)
+  type        String    @default("trade") // "trade" | "day" | "misc"
+  content     String
+  aiGenerated Boolean   @default(false)
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// Trade planning (pre-trade plans)
+model TradePlan {
+  id            String   @id @default(cuid())
+  date          DateTime
+  instrument    String
+  setup         String?
+  entryPlan     String?
+  exitPlan      String?
+  riskPlan      String?
+  linkedTradeId String?  @unique
+  linkedTrade   Trade?   @relation(fields: [linkedTradeId], references: [id], onDelete: SetNull)
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Tag groups for multi-category tagging
+model TagGroup {
+  id    String @id @default(cuid())
+  name  String @unique // "mistake" | "setup" | "psychology" | "strategy" | "event"
+  color String @default("#6b7280")
+  tags  Tag[]
 }
