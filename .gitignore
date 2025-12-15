@@ -14,6 +14,8 @@ old_data/
 debug_files/
 *.csv
 !data/*.parquet
+!web/app/data/
+!web/components/data/
 
 # Chrome
 chrome_profile/

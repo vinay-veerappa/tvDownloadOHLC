@@ -55,8 +55,9 @@ export async function getDashboardContext(): Promise<{ success: boolean, data?: 
         // 1. Fetch live events for "today" from ForexFactory
         // 2. If successful, display them AND upsert to DB (so they become history)
         // 3. If live fails, fall back to DB
+        // 3. If live fails, fall back to DB
 
-        let events = []
+        let events: any[] = []
         try {
             // Fetch from DB first (fastest, covers history)
             const dbEvents = await prisma.economicEvent.findMany({
