@@ -1,47 +1,35 @@
 {
   "ticker": "CL1",
   "timeframe": "5m",
-  "totalBars": 102623,
+  "totalBars": 72064,
   "chunkSize": 20000,
-  "numChunks": 6,
-  "startTime": 1697407200,
-  "endTime": 1765296300,
+  "numChunks": 4,
+  "startTime": 1733443200,
+  "endTime": 1765839900,
   "chunks": [
     {
       "index": 0,
-      "startTime": 1752129900,
-      "endTime": 1765296300,
+      "startTime": 1756810500,
+      "endTime": 1765839900,
       "bars": 20000
     },
     {
       "index": 1,
-      "startTime": 1725285000,
-      "endTime": 1752129600,
+      "startTime": 1747913100,
+      "endTime": 1756810200,
       "bars": 20000
     },
     {
       "index": 2,
-      "startTime": 1716403200,
-      "endTime": 1725284700,
+      "startTime": 1739142300,
+      "endTime": 1747912800,
       "bars": 20000
     },
     {
       "index": 3,
-      "startTime": 1707460200,
-      "endTime": 1716402900,
-      "bars": 20000
-    },
-    {
-      "index": 4,
-      "startTime": 1698399300,
-      "endTime": 1707459900,
-      "bars": 20000
-    },
-    {
-      "index": 5,
-      "startTime": 1697407200,
-      "endTime": 1698399000,
-      "bars": 2623
+      "startTime": 1733443200,
+      "endTime": 1739142000,
+      "bars": 12064
     }
   ]
 }

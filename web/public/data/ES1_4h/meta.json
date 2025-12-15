@@ -1,23 +1,17 @@
 {
   "ticker": "ES1",
   "timeframe": "4h",
-  "totalBars": 22980,
+  "totalBars": 1572,
   "chunkSize": 20000,
-  "numChunks": 2,
-  "startTime": 1325588400,
-  "endTime": 1764961200,
+  "numChunks": 1,
+  "startTime": 1733173200,
+  "endTime": 1765832400,
   "chunks": [
     {
       "index": 0,
-      "startTime": 1386572400,
-      "endTime": 1764961200,
-      "bars": 20000
-    },
-    {
-      "index": 1,
-      "startTime": 1325588400,
-      "endTime": 1386558000,
-      "bars": 2980
+      "startTime": 1733173200,
+      "endTime": 1765832400,
+      "bars": 1572
     }
   ]
 }

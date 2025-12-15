@@ -5,12 +5,12 @@
   "chunkSize": 20000,
   "numChunks": 1,
   "startTime": -551183400,
-  "endTime": 1764599400,
+  "endTime": 1765152000,
   "chunks": [
     {
       "index": 0,
       "startTime": -551183400,
-      "endTime": 1764599400,
+      "endTime": 1765152000,
       "bars": 3830
     }
   ]

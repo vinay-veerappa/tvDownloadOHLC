@@ -1,23 +1,17 @@
 {
   "ticker": "CL1",
   "timeframe": "4h",
-  "totalBars": 21493,
+  "totalBars": 1595,
   "chunkSize": 20000,
-  "numChunks": 2,
-  "startTime": 1325545200,
-  "endTime": 1765285200,
+  "numChunks": 1,
+  "startTime": 1733432400,
+  "endTime": 1765832400,
   "chunks": [
     {
       "index": 0,
-      "startTime": 1355871600,
-      "endTime": 1765285200,
-      "bars": 20000
-    },
-    {
-      "index": 1,
-      "startTime": 1325545200,
-      "endTime": 1355857200,
-      "bars": 1493
+      "startTime": 1733432400,
+      "endTime": 1765832400,
+      "bars": 1595
     }
   ]
 }

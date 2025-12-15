@@ -1,17 +1,17 @@
 {
   "ticker": "RTY1",
-  "timeframe": "1D",
-  "totalBars": 2187,
+  "timeframe": "1d",
+  "totalBars": 2207,
   "chunkSize": 20000,
   "numChunks": 1,
   "startTime": 1499724000,
-  "endTime": 1764975600,
+  "endTime": 1765756800,
   "chunks": [
     {
       "index": 0,
       "startTime": 1499724000,
-      "endTime": 1764975600,
-      "bars": 2187
+      "endTime": 1765756800,
+      "bars": 2207
     }
   ]
 }

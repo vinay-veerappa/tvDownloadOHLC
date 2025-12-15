@@ -1,17 +1,17 @@
 {
   "ticker": "VVIX",
-  "timeframe": "1D",
-  "totalBars": 4898,
+  "timeframe": "1d",
+  "totalBars": 4918,
   "chunkSize": 20000,
   "numChunks": 1,
   "startTime": 1141655400,
-  "endTime": 1764945000,
+  "endTime": 1765756800,
   "chunks": [
     {
       "index": 0,
       "startTime": 1141655400,
-      "endTime": 1764945000,
-      "bars": 4898
+      "endTime": 1765756800,
+      "bars": 4918
     }
   ]
 }

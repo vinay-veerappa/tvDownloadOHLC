@@ -1,101 +1,23 @@
 {
   "ticker": "CL1",
   "timeframe": "15m",
-  "totalBars": 287652,
+  "totalBars": 24028,
   "chunkSize": 20000,
-  "numChunks": 15,
-  "startTime": 1380578400,
-  "endTime": 1765296000,
+  "numChunks": 2,
+  "startTime": 1733443200,
+  "endTime": 1765839600,
   "chunks": [
     {
       "index": 0,
-      "startTime": 1738650600,
-      "endTime": 1765296000,
+      "startTime": 1739148300,
+      "endTime": 1765839600,
       "bars": 20000
     },
     {
       "index": 1,
-      "startTime": 1712008800,
-      "endTime": 1738649700,
-      "bars": 20000
-    },
-    {
-      "index": 2,
-      "startTime": 1685110500,
-      "endTime": 1712004300,
-      "bars": 20000
-    },
-    {
-      "index": 3,
-      "startTime": 1658354400,
-      "endTime": 1685109600,
-      "bars": 20000
-    },
-    {
-      "index": 4,
-      "startTime": 1631718900,
-      "endTime": 1658349900,
-      "bars": 20000
-    },
-    {
-      "index": 5,
-      "startTime": 1604956500,
-      "endTime": 1631718000,
-      "bars": 20000
-    },
-    {
-      "index": 6,
-      "startTime": 1578410100,
-      "endTime": 1604955600,
-      "bars": 20000
-    },
-    {
-      "index": 7,
-      "startTime": 1551681900,
-      "endTime": 1578409200,
-      "bars": 20000
-    },
-    {
-      "index": 8,
-      "startTime": 1524753900,
-      "endTime": 1551681000,
-      "bars": 20000
-    },
-    {
-      "index": 9,
-      "startTime": 1498018500,
-      "endTime": 1524753000,
-      "bars": 20000
-    },
-    {
-      "index": 10,
-      "startTime": 1471222800,
-      "endTime": 1498017600,
-      "bars": 20000
-    },
-    {
-      "index": 11,
-      "startTime": 1444239000,
-      "endTime": 1471221900,
-      "bars": 20000
-    },
-    {
-      "index": 12,
-      "startTime": 1417502700,
-      "endTime": 1444238100,
-      "bars": 20000
-    },
-    {
-      "index": 13,
-      "startTime": 1390928400,
-      "endTime": 1417501800,
-      "bars": 20000
-    },
-    {
-      "index": 14,
-      "startTime": 1380578400,
-      "endTime": 1390927500,
-      "bars": 7652
+      "startTime": 1733443200,
+      "endTime": 1739147400,
+      "bars": 4028
     }
   ]
 }
