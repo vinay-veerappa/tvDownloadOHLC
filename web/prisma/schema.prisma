@@ -210,3 +210,16 @@ model Watchlist {
   name      String?
   createdAt DateTime @default(now())
 }
+
+model MarketNews {
+  id                  String   @id @default(cuid())
+  uuid                String   @unique // Yahoo's UUID
+  title               String
+  publisher           String
+  link                String
+  providerPublishTime DateTime // Converted from Unix timestamp
+  type                String?
+  relatedTickers      String?  // Comma-separated or JSON
+  
+  createdAt           DateTime @default(now())
+}
