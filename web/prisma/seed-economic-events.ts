@@ -70,7 +70,7 @@ function parseCsvLine(line: string): string[] {
 }
 
 async function main() {
-    const csvPath = path.join(__dirname, '..', '..', 'docs', 'us_complete_economic_calendar_2000_2025.csv')
+    const csvPath = path.join(__dirname, '..', '..', 'data', 'journal', 'economic_calendar.csv')
 
     if (!fs.existsSync(csvPath)) {
         console.error(`CSV file not found: ${csvPath}`)
