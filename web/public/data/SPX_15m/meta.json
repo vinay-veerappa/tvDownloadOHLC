@@ -1,23 +1,17 @@
 {
   "ticker": "SPX",
   "timeframe": "15m",
-  "totalBars": 20324,
+  "totalBars": 130,
   "chunkSize": 20000,
-  "numChunks": 2,
-  "startTime": 1669905000,
-  "endTime": 1764968400,
+  "numChunks": 1,
+  "startTime": 1765290600,
+  "endTime": 1765831500,
   "chunks": [
     {
       "index": 0,
-      "startTime": 1671460200,
-      "endTime": 1764968400,
-      "bars": 20000
-    },
-    {
-      "index": 1,
-      "startTime": 1669905000,
-      "endTime": 1671224400,
-      "bars": 324
+      "startTime": 1765290600,
+      "endTime": 1765831500,
+      "bars": 130
     }
   ]
 }

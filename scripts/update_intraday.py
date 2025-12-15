@@ -15,14 +15,17 @@ TICKER_MAP = {
     "GC1": "GC=F",
     "CL1": "CL=F",
     "SPX": "^GSPC",
-    "VIX": "^VIX"
+    "VIX": "^VIX",
+    "QQQ": "QQQ",
+    "VVIX": "^VVIX"
 }
 
-def update_ticker_intraday(ticker_key, interval="1m"):
-    """
-    Updates the parquet file for a given ticker with recent intraday data.
-    """
-    filename = f"{ticker_key}_{interval}.parquet"
+    # Map Yahoo interval to App Convention (1wk -> 1W)
+    file_interval = interval
+    if interval == '1wk':
+        file_interval = '1W'
+        
+    filename = f"{ticker_key}_{file_interval}.parquet"
     filepath = os.path.join(data_utils.DATA_DIR, filename)
     yahoo_ticker = TICKER_MAP.get(ticker_key)
     
@@ -61,11 +64,10 @@ def update_ticker_intraday(ticker_key, interval="1m"):
         old_df = pd.DataFrame()
         last_date = None
 
-    # 2. Fetch New Data (Last 5 days is Yahoo limit for 1m)
-    print(f"Fetching recent data for {yahoo_ticker}...")
+    # 2. Fetch New Data
+    print(f"Fetching recent data for {yahoo_ticker} (Period: {period})...")
     try:
-        # fetch 1m data for last 5 days
-        new_df = yf.download(tickers=yahoo_ticker, period="5d", interval=interval, progress=False)
+        new_df = yf.download(tickers=yahoo_ticker, period=period, interval=interval, progress=False)
         
         if new_df.empty:
             print("No data fetched.")
@@ -80,9 +82,25 @@ def update_ticker_intraday(ticker_key, interval="1m"):
             "Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"
         }, inplace=True)
         
-        # Ensure timezone naive (or match existing). Usually converting to UTC or removing tz is safest for merge.
-        if new_df.index.tz is not None:
-             new_df.index = new_df.index.tz_localize(None)
+        # Timezone Alignment
+        # The existing file usually has a timezone (e.g. America/New_York or UTC)
+        # We must align new data to match old data's timezone before concat.
+        
+        target_tz = None
+        if not old_df.empty and isinstance(old_df.index, pd.DatetimeIndex):
+            target_tz = old_df.index.tz
+            
+        if target_tz is not None:
+             # Convert new data to match existing file's timezone
+             if new_df.index.tz is None:
+                 # Assume fetched data is UTC if naive (unlikely with yfinance, usually returns localized)
+                 new_df.index = new_df.index.tz_localize("UTC").tz_convert(target_tz)
+             else:
+                 new_df.index = new_df.index.tz_convert(target_tz)
+        else:
+            # If old data is naive, strip timezone from new data
+            if new_df.index.tz is not None:
+                 new_df.index = new_df.index.tz_localize(None)
 
         print(f"Fetched {len(new_df)} rows. Range: {new_df.index.min()} to {new_df.index.max()}")
 
@@ -104,12 +122,73 @@ def update_ticker_intraday(ticker_key, interval="1m"):
     data_utils.safe_save_parquet(combined, filepath)
     print(f"Update complete. New count: {len(combined)} rows.")
 
+def upsample_from_1m(ticker_key):
+    """
+    Generates 5m, 15m, 1h, 4h files from the 1m master file.
+    """
+    source_file = os.path.join(data_utils.DATA_DIR, f"{ticker_key}_1m.parquet")
+    if not os.path.exists(source_file):
+        print(f"Skipping upsample for {ticker_key}: No 1m file found.")
+        return
+
+    print(f"\n--- Upsampling {ticker_key} from 1m ---")
+    try:
+        df_1m = pd.read_parquet(source_file)
+        if df_1m.empty:
+            return
+            
+        # Define Targets
+        targets = [
+            ("5m", "5min"),
+            ("15m", "15min"),
+            ("1h", "1h"),
+            ("4h", "4h")
+        ]
+        
+        for interval_name, rule in targets:
+            print(f"  > Creating {interval_name}...")
+            # Resample
+            # Standard OHLCV aggregation
+            agg_dict = {
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum'
+            }
+            
+            # Pandas resample. 
+            # TradingView/Yahoo typically label with start time (left).
+            resampled = df_1m.resample(rule, label='left', closed='left').agg(agg_dict)
+            
+            # Drop NaN rows (e.g. gaps)
+            resampled.dropna(inplace=True)
+            
+            if not resampled.empty:
+                dest_file = os.path.join(data_utils.DATA_DIR, f"{ticker_key}_{interval_name}.parquet")
+                data_utils.safe_save_parquet(resampled, dest_file)
+                print(f"    Saved {dest_file} ({len(resampled)} rows)")
+                
+    except Exception as e:
+        print(f"Upsample failed for {ticker_key}: {e}")
+
 def main():
-    # Update major indices
-    tickets_to_update = ["ES1", "NQ1", "SPX"]
+    # Update all mapped tickers
+    tickets_to_update = TICKER_MAP.keys()
     
     for ticker in tickets_to_update:
-        update_ticker_intraday(ticker, "1m")
+        # 1. Intraday 1m (Last 5 days) + Direct Downloads
+        update_ticker_intraday(ticker, "1m", "5d")
+        
+        # 2. Daily 1D (Last 1 month) - Direct for Settlement
+        update_ticker_intraday(ticker, "1d", "1mo")
+        
+        # 3. Weekly 1W (Last 3 months) - Direct for Settlement
+        # Yahoo interval is '1wk'
+        update_ticker_intraday(ticker, "1wk", "3mo")
+        
+        # 4. Upsample Intermediate Timeframes (5m, 15m, 1h, 4h)
+        upsample_from_1m(ticker)
 
 if __name__ == "__main__":
     main()

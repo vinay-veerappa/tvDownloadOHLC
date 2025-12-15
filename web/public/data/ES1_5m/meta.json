@@ -1,35 +1,35 @@
 {
   "ticker": "ES1",
   "timeframe": "5m",
-  "totalBars": 69606,
+  "totalBars": 70616,
   "chunkSize": 20000,
   "numChunks": 4,
   "startTime": 1733184000,
-  "endTime": 1764971700,
+  "endTime": 1765839900,
   "chunks": [
     {
       "index": 0,
-      "startTime": 1756205400,
-      "endTime": 1764971700,
+      "startTime": 1756695600,
+      "endTime": 1765839900,
       "bars": 20000
     },
     {
       "index": 1,
-      "startTime": 1747052700,
-      "endTime": 1756205100,
+      "startTime": 1747370100,
+      "endTime": 1756695300,
       "bars": 20000
     },
     {
       "index": 2,
-      "startTime": 1737747900,
-      "endTime": 1747052400,
+      "startTime": 1738238100,
+      "endTime": 1747369800,
       "bars": 20000
     },
     {
       "index": 3,
       "startTime": 1733184000,
-      "endTime": 1737747600,
-      "bars": 9606
+      "endTime": 1738237800,
+      "bars": 10616
     }
   ]
 }

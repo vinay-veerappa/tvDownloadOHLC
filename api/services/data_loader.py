@@ -18,7 +18,7 @@ def load_parquet(ticker: str, timeframe: str) -> Optional[pd.DataFrame]:
     
     Args:
         ticker: e.g., "ES1", "NQ1" or "ES1!" (will be stripped)
-        timeframe: e.g., "5m", "1h", "1D"
+        timeframe: e.g., "5m", "1h", "1D", "1wk" (maps "1W" -> "1wk")
     
     Returns:
         DataFrame with columns: time, open, high, low, close, volume

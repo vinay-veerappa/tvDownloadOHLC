@@ -34,6 +34,8 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
         df.rename(columns={'datetime': 'time'}, inplace=True)
     elif 'date' in df.columns:
         df.rename(columns={'date': 'time'}, inplace=True)
+    elif 'index' in df.columns:
+        df.rename(columns={'index': 'time'}, inplace=True)
     
     if pd.api.types.is_datetime64_any_dtype(df['time']):
         df['time'] = (df['time'].astype('int64') // 10**9).astype(int)

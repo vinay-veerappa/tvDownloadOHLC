@@ -12,6 +12,9 @@ export interface DataFileStatus {
     size: string
     rows: string
     status: string
+    startDate?: string
+    endDate?: string
+    category: string
 }
 
 export async function getDataStatus() {

@@ -1,119 +1,119 @@
 {
   "ticker": "CL1",
   "timeframe": "1m",
-  "totalBars": 349320,
+  "totalBars": 354362,
   "chunkSize": 20000,
   "numChunks": 18,
   "startTime": 1733443200,
-  "endTime": 1765296360,
+  "endTime": 1765840140,
   "chunks": [
     {
       "index": 0,
-      "startTime": 1763379420,
-      "endTime": 1765296360,
+      "startTime": 1763698140,
+      "endTime": 1765840140,
       "bars": 20000
     },
     {
       "index": 1,
-      "startTime": 1761586200,
-      "endTime": 1763379360,
+      "startTime": 1761909000,
+      "endTime": 1763698080,
       "bars": 20000
     },
     {
       "index": 2,
-      "startTime": 1759797840,
-      "endTime": 1761586140,
+      "startTime": 1760117760,
+      "endTime": 1761908940,
       "bars": 20000
     },
     {
       "index": 3,
-      "startTime": 1757994900,
-      "endTime": 1759797780,
+      "startTime": 1758494100,
+      "endTime": 1760117700,
       "bars": 20000
     },
     {
       "index": 4,
-      "startTime": 1756170300,
-      "endTime": 1757994840,
+      "startTime": 1756492980,
+      "endTime": 1758494040,
       "bars": 20000
     },
     {
       "index": 5,
-      "startTime": 1754358780,
-      "endTime": 1756170240,
+      "startTime": 1754677560,
+      "endTime": 1756492920,
       "bars": 20000
     },
     {
       "index": 6,
-      "startTime": 1752553440,
-      "endTime": 1754358720,
+      "startTime": 1753054020,
+      "endTime": 1754677500,
       "bars": 20000
     },
     {
       "index": 7,
-      "startTime": 1750739760,
-      "endTime": 1752553380,
+      "startTime": 1751055720,
+      "endTime": 1753053960,
       "bars": 20000
     },
     {
       "index": 8,
-      "startTime": 1748946960,
-      "endTime": 1750739700,
+      "startTime": 1749443160,
+      "endTime": 1751055660,
       "bars": 20000
     },
     {
       "index": 9,
-      "startTime": 1747149780,
-      "endTime": 1748946900,
+      "startTime": 1747643880,
+      "endTime": 1749443100,
       "bars": 20000
     },
     {
       "index": 10,
-      "startTime": 1745368980,
-      "endTime": 1747149720,
+      "startTime": 1745859240,
+      "endTime": 1747643820,
       "bars": 20000
     },
     {
       "index": 11,
-      "startTime": 1743500640,
-      "endTime": 1745368920,
+      "startTime": 1743992340,
+      "endTime": 1745859180,
       "bars": 20000
     },
     {
       "index": 12,
-      "startTime": 1741707960,
-      "endTime": 1743500580,
+      "startTime": 1742203740,
+      "endTime": 1743992280,
       "bars": 20000
     },
     {
       "index": 13,
-      "startTime": 1739931840,
-      "endTime": 1741707900,
+      "startTime": 1740421320,
+      "endTime": 1742203680,
       "bars": 20000
     },
     {
       "index": 14,
-      "startTime": 1738140360,
-      "endTime": 1739931780,
+      "startTime": 1738631220,
+      "endTime": 1740421260,
       "bars": 20000
     },
     {
       "index": 15,
-      "startTime": 1736348700,
-      "endTime": 1738140300,
+      "startTime": 1736841420,
+      "endTime": 1738631160,
       "bars": 20000
     },
     {
       "index": 16,
-      "startTime": 1734377160,
-      "endTime": 1736348640,
+      "startTime": 1734698220,
+      "endTime": 1736841360,
       "bars": 20000
     },
     {
       "index": 17,
       "startTime": 1733443200,
-      "endTime": 1734377100,
-      "bars": 9320
+      "endTime": 1734698160,
+      "bars": 14362
     }
   ]
 }

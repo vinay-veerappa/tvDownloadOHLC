@@ -1,23 +1,23 @@
 {
   "ticker": "NQ1",
   "timeframe": "4h",
-  "totalBars": 23002,
+  "totalBars": 26625,
   "chunkSize": 20000,
   "numChunks": 2,
-  "startTime": 1325588400,
-  "endTime": 1764961200,
+  "startTime": 1228971600,
+  "endTime": 1765832400,
   "chunks": [
     {
       "index": 0,
-      "startTime": 1386889200,
-      "endTime": 1764961200,
+      "startTime": 1363251600,
+      "endTime": 1765832400,
       "bars": 20000
     },
     {
       "index": 1,
-      "startTime": 1325588400,
-      "endTime": 1386874800,
-      "bars": 3002
+      "startTime": 1228971600,
+      "endTime": 1363237200,
+      "bars": 6625
     }
   ]
 }

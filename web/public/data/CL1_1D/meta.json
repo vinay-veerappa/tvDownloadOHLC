@@ -1,17 +1,17 @@
 {
   "ticker": "CL1",
-  "timeframe": "1D",
-  "totalBars": 10727,
+  "timeframe": "1d",
+  "totalBars": 10747,
   "chunkSize": 20000,
   "numChunks": 1,
   "startTime": 417826800,
-  "endTime": 1765256400,
+  "endTime": 1765756800,
   "chunks": [
     {
       "index": 0,
       "startTime": 417826800,
-      "endTime": 1765256400,
-      "bars": 10727
+      "endTime": 1765756800,
+      "bars": 10747
     }
   ]
 }
