@@ -43,6 +43,27 @@ export async function getTrades() {
     }
 }
 
+export async function getTrade(id: string) {
+    try {
+        const trade = await prisma.trade.findUnique({
+            where: { id },
+            include: {
+                account: true,
+                strategy: true,
+                marketCondition: true,
+                tradeNotes: true
+            }
+        })
+        if (!trade) {
+            return { success: false, error: "Trade not found" }
+        }
+        return { success: true, data: trade }
+    } catch (error) {
+        console.error("getTrade Error:", error)
+        return { success: false, error: "Failed to fetch trade" }
+    }
+}
+
 export async function createTrade(data: CreateTradeParams) {
     try {
         const trade = await prisma.trade.create({
@@ -107,7 +128,15 @@ export async function closeTrade(id: string, data: {
     }
 }
 
-export async function updateTrade(id: string, updates: Partial<CreateTradeParams>) {
+interface UpdateTradeParams {
+    stopLoss?: number
+    takeProfit?: number
+    quantity?: number
+    notes?: string
+    strategyId?: string
+}
+
+export async function updateTrade(id: string, updates: UpdateTradeParams) {
     try {
         const trade = await prisma.trade.update({
             where: { id },
@@ -115,12 +144,14 @@ export async function updateTrade(id: string, updates: Partial<CreateTradeParams
                 stopLoss: updates.stopLoss,
                 takeProfit: updates.takeProfit,
                 quantity: updates.quantity,
-                // Add validation logic if needed
+                notes: updates.notes,
+                strategyId: updates.strategyId,
             }
         })
 
         revalidatePath("/")
         revalidatePath("/journal")
+        revalidatePath(`/journal/trade/${id}`)
 
         return { success: true, data: trade }
     } catch (error) {
