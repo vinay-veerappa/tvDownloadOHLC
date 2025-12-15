@@ -64,6 +64,18 @@ export async function getTrade(id: string) {
     }
 }
 
+export async function getStrategies() {
+    try {
+        const strategies = await prisma.strategy.findMany({
+            orderBy: { name: 'asc' }
+        })
+        return { success: true, data: strategies }
+    } catch (error) {
+        console.error("getStrategies Error:", error)
+        return { success: false, error: "Failed to fetch strategies" }
+    }
+}
+
 export async function createTrade(data: CreateTradeParams) {
     try {
         const trade = await prisma.trade.create({
