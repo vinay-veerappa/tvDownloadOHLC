@@ -47,6 +47,10 @@ A comprehensive trading journal application designed for systematic futures trad
 - Pre-populated events (FOMC, NFP, CPI, etc.)
 - Event impact classification (high/medium/low)
 - Time-to-event tracking
+- **Live Implementation:**
+    - Interactive "Week View" calendar widget
+    - Client-side country filtering (saving preferences)
+    - Background sync of live events to database for historical preservation
 
 **Market Conditions:**
 - VIX/VVIX levels at trade time
@@ -1392,3 +1396,13 @@ GET    /api/calendar/day/{date} Detailed day view
 **Last Updated:** December 14, 2024  
 **Author:** Trading Journal Project  
 **Status:** Draft for Review
+
+---
+
+## 6. Known Implementation Issues
+
+### 6.1 Data Feeds
+- **Forex Factory API (429 Errors):**
+    - **Issue:** The `fetchLiveCalendar` function occasionally receives `429 Too Many Requests` errors from Forex Factory, specifically when running on server-side environments or frequent reloads.
+    - **Current Mitigation:** A server-side proxy (`getLiveEconomicEvents`) with a "User-Agent" header is used to mimic a browser, which reduces frequency.
+    - **Status:** Open. Requires a more robust solution (e.g., rotating proxies, official API subscription, or caching enhancements) for production stability.

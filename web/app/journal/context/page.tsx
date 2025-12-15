@@ -9,6 +9,7 @@ import { TrendingUp, TrendingDown, Minus, RefreshCw, Calendar, Globe, Newspaper 
 import { detectSession } from "@/lib/market-utils"
 import { ContextForm } from "@/components/journal/context/context-form"
 import { WatchlistWidget } from "@/components/journal/context/watchlist-widget"
+import { EconomicCalendarWidget } from "@/components/journal/context/economic-calendar-widget"
 
 export default async function ContextDashboardPage() {
     const contextResult = await getDashboardContext()
@@ -80,41 +81,7 @@ export default async function ContextDashboardPage() {
 
                 {/* 3. Economic Calendar */}
                 <div className="md:col-span-3 space-y-6">
-                    <Card className="h-full">
-                        <CardHeader>
-                            <CardTitle className="flex items-center gap-2">
-                                <Calendar className="h-5 w-5" />
-                                Economic Events
-                            </CardTitle>
-                            <CardDescription>Scheduled events for today</CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            {events.length === 0 ? (
-                                <div className="text-center py-8 text-muted-foreground">
-                                    No events scheduled for today.
-                                </div>
-                            ) : (
-                                <div className="space-y-4">
-                                    {events.map((event: any) => (
-                                        <div key={event.id} className="flex items-center justify-between border-b pb-2 last:border-0 hover:bg-muted/50 p-2 rounded">
-                                            <div>
-                                                <p className="font-medium text-sm">{event.name}</p>
-                                                <p className="text-xs text-muted-foreground">
-                                                    {new Date(event.datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                </p>
-                                            </div>
-                                            <Badge variant={
-                                                event.impact === 'HIGH' ? 'destructive' :
-                                                    event.impact === 'MEDIUM' ? 'default' : 'secondary'
-                                            }>
-                                                {event.impact}
-                                            </Badge>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
+                    <EconomicCalendarWidget initialEvents={events} />
                 </div>
 
                 {/* 4. News */}

@@ -49,22 +49,60 @@ export async function getDashboardContext(): Promise<{ success: boolean, data?: 
             }
         })
 
-        // 4. Fetch Economic Events for today
-        const eventsIn = prisma.economicEvent.findMany({
-            where: {
-                datetime: {
-                    gte: startOfDay,
-                    lte: endOfDay
-                }
-            },
-            orderBy: { datetime: 'asc' }
-        })
+        // 4. Fetch Economic Events (Hybrid: Live for Today/Future + DB Sync)
 
-        const [marketData, news, dailyNote, events] = await Promise.all([
+        // Strategy: 
+        // 1. Fetch live events for "today" from ForexFactory
+        // 2. If successful, display them AND upsert to DB (so they become history)
+        // 3. If live fails, fall back to DB
+
+        let events = []
+        try {
+            // Fetch from DB first (fastest, covers history)
+            const dbEvents = await prisma.economicEvent.findMany({
+                where: {
+                    datetime: {
+                        gte: startOfDay,
+                        lte: endOfDay
+                    }
+                },
+                orderBy: { datetime: 'asc' }
+            })
+            events = dbEvents
+
+            // Try Live Fetch for today
+            const { fetchLiveCalendar, mapImpact, syncLiveEventsToDb } = await import("@/lib/economic-calendar")
+            const liveEvents = await fetchLiveCalendar()
+
+            // Filter live events for *today* locally since feed gives whole week
+            const todayStr = today.toISOString().split('T')[0]
+            const todayLive = liveEvents.filter(e => e.date.startsWith(todayStr))
+
+            if (todayLive.length > 0) {
+                // We have live data! Use it for display.
+                // Map to UI format (simulating DB model)
+                events = todayLive.map(e => ({
+                    id: `live-${e.date}-${e.title}`, // temp ID
+                    name: e.title, // Map 'title' to 'name'
+                    datetime: new Date(e.date),
+                    impact: mapImpact(e.impact),
+                    forecast: parseFloat(e.forecast) || null,
+                    previous: parseFloat(e.previous) || null,
+                    actual: null // FF feed often doesn't have actual immediately in this JSON
+                }))
+
+                // Async Sync to DB (Fire and forget, don't block UI)
+                // This ensures "static history" requirement is met for tomorrow
+                syncLiveEventsToDb(todayLive).catch(err => console.error("Sync events failed", err))
+            }
+        } catch (e) {
+            console.error("Live calendar fetch failed, using DB events only", e)
+        }
+
+        const [marketData, news, dailyNote] = await Promise.all([
             marketDataIn,
             newsIn,
-            noteIn,
-            eventsIn
+            noteIn
         ])
 
         return {
@@ -126,5 +164,29 @@ export async function saveDailyContext(data: {
     } catch (error) {
         console.error("saveDailyContext Error:", error)
         return { success: false, error: "Failed to save daily context" }
+    }
+}
+
+import { LiveEconomicEvent, syncLiveEventsToDb } from "@/lib/economic-calendar"
+
+export async function syncLiveEvents(events: LiveEconomicEvent[]) {
+    try {
+        await syncLiveEventsToDb(events)
+        return { success: true }
+    } catch (e) {
+        console.error("Sync action failed", e)
+        return { success: false }
+    }
+}
+
+import { fetchLiveCalendar } from "@/lib/economic-calendar"
+
+export async function getLiveEconomicEvents() {
+    try {
+        const events = await fetchLiveCalendar()
+        return { success: true, data: events }
+    } catch (e) {
+        console.error("Server fetch failed", e)
+        return { success: false, error: "Failed to fetch events" }
     }
 }

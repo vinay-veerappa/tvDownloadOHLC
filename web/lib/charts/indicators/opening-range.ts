@@ -14,6 +14,12 @@ export interface RangeDefinition {
     extendUntil?: string; // "16:00"
     extendCount?: number;
 
+    // Measured Moves
+    measuredMoveType?: 'deviation' | 'fixed'; // default 'deviation'
+    fixedMoveValue?: number;
+    measuredMoveCount?: number; // default 0 (off)
+    measuredMoveColor?: string;
+
     // Style
     lineColor: string;
     lineWidth: number;
@@ -54,7 +60,11 @@ const DEFAULT_DEFINITION: RangeDefinition = {
     lineColor: "#2962FF",
     lineWidth: 2,
     fillColor: "#2962FF",
-    fillOpacity: 0.5
+    fillOpacity: 0.5,
+    measuredMoveType: 'deviation',
+    fixedMoveValue: 10,
+    measuredMoveCount: 0,
+    measuredMoveColor: "#FF9800"
 };
 
 const DEFAULT_OPTIONS: OpeningRangeOptions = {
@@ -73,6 +83,13 @@ interface RangeBox {
     width: number;
     fill: string;
     opacity: number;
+
+    // Measured Moves Data
+    mmType?: 'deviation' | 'fixed';
+    mmValue?: number;
+    mmCount?: number;
+    mmColor?: string;
+    mmStyle?: 'solid' | 'dashed' | 'dotted';
 }
 
 class OpeningRangePaneRenderer {
@@ -137,6 +154,67 @@ class OpeningRangePaneRenderer {
                 ctx.strokeStyle = box.color;
                 ctx.lineWidth = box.width * hPR;
                 ctx.strokeRect(x1Scaled, yTopScaled, wScaled, hScaled);
+
+                // ---------------------------------------------------------
+                // Draw Measured Moves
+                // ---------------------------------------------------------
+                if (box.mmCount && box.mmCount > 0) {
+                    ctx.beginPath();
+
+                    // Style & Color
+                    ctx.strokeStyle = box.mmColor || box.color;
+                    ctx.lineWidth = 1 * hPR;
+
+                    if (box.mmStyle === 'dotted') {
+                        ctx.setLineDash([2 * hPR, 2 * hPR]);
+                    } else if (box.mmStyle === 'dashed') {
+                        ctx.setLineDash([6 * hPR, 6 * hPR]);
+                    } else {
+                        ctx.setLineDash([]); // solid
+                    }
+
+                    let moveSize = 0;
+                    if (box.mmType === 'fixed' && box.mmValue) {
+                        moveSize = box.mmValue;
+                    } else {
+                        // Default deviation: box height (High - Low)
+                        moveSize = box.high - box.low;
+                    }
+
+                    if (moveSize > 0) {
+                        const timeX1 = x1Scaled;
+                        const timeX2 = safeX2 * hPR; // Use safeX2 for width logic
+                        // Actually safeX2 is already scaled? No, logic above:
+                        // const x1Scaled = safeX1 * hPR;
+
+                        // We need the X2 coord scaled
+                        const x2Scaled = safeX2 * hPR;
+
+                        for (let i = 1; i <= box.mmCount; i++) {
+                            const offset = moveSize * i;
+
+                            // Upper
+                            const pUp = box.high + offset;
+                            const yUpRaw = this._series.priceToCoordinate(pUp);
+                            if (yUpRaw !== null) {
+                                const yUp = yUpRaw * vPR;
+                                ctx.moveTo(x1Scaled, yUp);
+                                ctx.lineTo(x2Scaled, yUp);
+                            }
+
+                            // Lower
+                            const pDown = box.low - offset;
+                            const yDownRaw = this._series.priceToCoordinate(pDown);
+                            if (yDownRaw !== null) {
+                                const yDown = yDownRaw * vPR;
+                                ctx.moveTo(x1Scaled, yDown);
+                                ctx.lineTo(x2Scaled, yDown);
+                            }
+                        }
+                    }
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
             });
 
             ctx.restore();
@@ -391,7 +469,12 @@ export class OpeningRange implements ISeriesPrimitive {
                             color: def.lineColor,
                             width: def.lineWidth,
                             fill: def.fillColor,
-                            opacity: def.fillOpacity
+                            opacity: def.fillOpacity,
+                            mmType: def.measuredMoveType,
+                            mmValue: def.fixedMoveValue,
+                            mmCount: def.measuredMoveCount,
+                            mmColor: def.measuredMoveColor,
+                            mmStyle: def.measuredMoveStyle
                         });
                     }
                 }
