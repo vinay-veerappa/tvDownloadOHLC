@@ -171,7 +171,9 @@ model Note {
   trade       Trade?    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
   date        DateTime? // For day notes (when tradeId is null)
   type        String    @default("trade") // "trade" | "day" | "misc"
+  mood        String?   // "BULLISH" | "BEARISH" | "NEUTRAL"
   content     String
+  tags        String?
   aiGenerated Boolean   @default(false)
   
   createdAt   DateTime  @default(now())

@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { getTrade, updateTrade, deleteTrade } from "@/actions/trade-actions"
-import { detectSession } from "@/actions/market-context-actions"
+import { detectSession } from "@/lib/market-utils"
 
 interface MarketCondition {
     vix: number | null
