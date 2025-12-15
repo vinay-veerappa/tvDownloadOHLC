@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { format } from "date-fns"
-import { ArrowLeft, Edit, Trash2, Save, X } from "lucide-react"
+import { ArrowLeft, Edit, Trash2, Save, X, Globe, TrendingUp, Clock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -11,6 +11,16 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { getTrade, updateTrade, deleteTrade } from "@/actions/trade-actions"
+import { detectSession } from "@/actions/market-context-actions"
+
+interface MarketCondition {
+    vix: number | null
+    vvix: number | null
+    atr: number | null
+    trend: string | null
+    session: string | null
+    volume: string | null
+}
 
 interface Trade {
     id: string
@@ -31,6 +41,7 @@ interface Trade {
     duration: number | null
     strategy?: { id: string; name: string; color: string } | null
     account?: { id: string; name: string } | null
+    marketCondition?: MarketCondition | null
 }
 
 export default function TradeDetailPage() {
@@ -182,6 +193,56 @@ export default function TradeDetailPage() {
                     </CardContent>
                 </Card>
             </div>
+
+            {/* Market Context Card */}
+            <Card>
+                <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                        <Globe className="h-4 w-4" />
+                        Market Context
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <div className="grid gap-4 md:grid-cols-5">
+                        <div className="text-center">
+                            <p className="text-sm text-muted-foreground">Session</p>
+                            <Badge variant="outline" className="mt-1">
+                                {trade.marketCondition?.session || detectSession(new Date(trade.entryDate))}
+                            </Badge>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-sm text-muted-foreground">VIX</p>
+                            <p className="text-lg font-mono">
+                                {trade.marketCondition?.vix?.toFixed(1) || "-"}
+                            </p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-sm text-muted-foreground">VVIX</p>
+                            <p className="text-lg font-mono">
+                                {trade.marketCondition?.vvix?.toFixed(1) || "-"}
+                            </p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-sm text-muted-foreground">ATR</p>
+                            <p className="text-lg font-mono">
+                                {trade.marketCondition?.atr?.toFixed(2) || "-"}
+                            </p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-sm text-muted-foreground">Trend</p>
+                            <Badge
+                                variant={
+                                    trade.marketCondition?.trend === "TRENDING_UP" ? "default" :
+                                        trade.marketCondition?.trend === "TRENDING_DOWN" ? "destructive" :
+                                            "outline"
+                                }
+                            >
+                                {trade.marketCondition?.trend?.replace("_", " ") || "Unknown"}
+                            </Badge>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
 
             {/* Notes Section */}
             <Card>
