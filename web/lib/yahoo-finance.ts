@@ -88,3 +88,33 @@ export async function fetchNews(query: string = "stock market"): Promise<YahooNe
         return []
     }
 }
+
+export interface YahooSearchResult {
+    symbol: string
+    shortname: string
+    longname: string
+    exchDisp: string
+    typeDisp: string
+}
+
+export async function searchSymbols(query: string): Promise<YahooSearchResult[]> {
+    try {
+        const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=6&newsCount=0`
+
+        const response = await fetch(url, {
+            headers: {
+                "User-Agent": USER_AGENT
+            },
+            next: { revalidate: 3600 } // Cache for 1 hour
+        })
+
+        if (!response.ok) return []
+
+        const data = await response.json()
+        return data.quotes || []
+
+    } catch (error) {
+        console.error("Error searching symbols:", error)
+        return []
+    }
+}

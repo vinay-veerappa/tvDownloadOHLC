@@ -12,6 +12,7 @@
 
 ## 🚀 Features & Usage
 - **[User Guide](setup/USER_GUIDE.md)**: Manual for Charting, Trading Panel, Replay Mode, and Backtesting.
+- **[LLM Setup Guide](setup/LLM_SETUP.md)**: 🆕 Instructions for setting up and running Local LLMs (Ollama).
 - **[Roadmap](ROADMAP.md)**: Feature requirements and status (Journaling, Drawings, Backtesting).
 - **[Journal Requirements](JournalRequirements/trading_journal_requirements.md)**: Detailed requirements for the Trading Journal enhancements.
 

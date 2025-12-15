@@ -90,6 +90,8 @@ web/
 │   ├── trade-actions.ts          # CRUD for trades
 │   ├── analytics-actions.ts      # Analytics queries
 │   ├── market-context-actions.ts # VIX, session, events
+│   ├── watchlist-actions.ts      # Watchlist CRUD + Search
+│   ├── settings-actions.ts       # Account/Strategy/Tag CRUD
 │   ├── csv-actions.ts            # Import/export
 │   └── backtest-exporter.ts      # Backtest import
 │
@@ -218,7 +220,17 @@ model Tag {
   name    String  @unique
   groupId String?
   group   TagGroup? @relation(...)
+  names   String[]
+  groupId String?
+  group   TagGroup? @relation(...)
   trades  Trade[]
+}
+
+model Watchlist {
+  id        String   @id @default(cuid())
+  symbol    String   @unique
+  name      String?
+  createdAt DateTime @default(now())
 }
 ```
 
@@ -263,7 +275,25 @@ model Tag {
 | `detectSession(date)` | Auto-detect session | Session name |
 | `createMarketCondition(data)` | Save market context | MarketCondition |
 | `getEconomicEvents(start, end)` | Get events in range | Event list |
+| `getEconomicEvents(start, end)` | Get events in range | Event list |
 | `linkTradeToEvent(tradeId, eventId)` | Link trade to event | TradeEvent |
+
+### watchlist-actions.ts
+
+| Function | Purpose | Returns |
+|----------|---------|---------|
+| `getWatchlist()` | Get all symbols | Watchlist items |
+| `addToWatchlist(symbol)` | Add symbol (validates w/ Yahoo) | Item or Error |
+| `removeFromWatchlist(id)` | Remove symbol | Success/Error |
+| `searchTicker(query)` | Search Yahoo Finance | Autocomplete results |
+
+### settings-actions.ts
+
+| Function | Purpose |
+|----------|---------|
+| `getAccounts()` / `createAccount`... | Manage trading accounts |
+| `getStrategies()` / `createStrategy`... | Manage strategies |
+| `deleteAllTrades()` / `resetData()` | Danger zone actions |
 
 ---
 
@@ -472,7 +502,10 @@ DATABASE_URL="file:./dev.db"
 | Import/Export | `csv-actions.ts`, `import-export-dialog.tsx` |
 | Trade Review | `trade-review.tsx` |
 | Goals | `goal-tracker.tsx` |
+| Goals | `goal-tracker.tsx` |
 | Playbook | `playbook.tsx` |
+| Watchlist | `watchlist-widget.tsx` (Supports autocomplete) |
+| Settings | `account-manager.tsx`, `strategy-manager.tsx`, `data-manager.tsx` |
 
 ### Database Commands
 

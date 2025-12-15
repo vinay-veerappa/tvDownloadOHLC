@@ -7,16 +7,23 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { TrendingUp, TrendingDown, Minus, RefreshCw, Calendar, Globe, Newspaper } from "lucide-react"
 import { detectSession } from "@/lib/market-utils"
-import { ContextForm } from "@/components/journal/context/context-form" // We'll create this client component
+import { ContextForm } from "@/components/journal/context/context-form"
+import { WatchlistWidget } from "@/components/journal/context/watchlist-widget"
 
 export default async function ContextDashboardPage() {
     const contextResult = await getDashboardContext()
-    const { marketData, news, dailyNote, events } = contextResult.success && contextResult.data ? contextResult.data : {
-        marketData: [], news: [], dailyNote: null, events: []
+    const { marketData, news, dailyNote, events, watchlist } = contextResult.success && contextResult.data ? contextResult.data : {
+        marketData: [], news: [], dailyNote: null, events: [], watchlist: []
     }
 
     const today = new Date()
     const currentSession = detectSession(today)
+
+    // Filter quotes for watchlist items
+    // The marketData array contains everything (Indices + Watchlist), we filter by symbol matching
+    // Note: This matches simple symbols. Yahoo might return ^GSPC for SPY sometimes but usually query matches result.
+    // For simplicity, we pass the whole marketData to the widget and let it find what it needs, or filter here.
+    // Actually, passing the whole marketData array is fine, the widget maps over the watchlist items and finds the quote.
 
     return (
         <div className="space-y-6">
@@ -34,9 +41,9 @@ export default async function ContextDashboardPage() {
                 </div>
             </div>
 
-            {/* Market Overview Grid */}
+            {/* Market Overview Grid (Top Indices) */}
             <div className="grid gap-4 md:grid-cols-4">
-                {marketData.map((quote: YahooQuote) => (
+                {marketData.filter(q => ["^VIX", "^VVIX", "SPY", "QQQ"].includes(q.symbol)).map((quote: YahooQuote) => (
                     <Card key={quote.symbol}>
                         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                             <CardTitle className="text-sm font-medium">
@@ -61,13 +68,18 @@ export default async function ContextDashboardPage() {
             </div>
 
             <div className="grid gap-6 md:grid-cols-12">
-                {/* Left Column: Daily Context Form (Client Component) */}
-                <div className="md:col-span-4 space-y-6">
+                {/* 1. Daily Context Form */}
+                <div className="md:col-span-3 space-y-6">
                     <ContextForm initialNote={dailyNote} />
                 </div>
 
-                {/* Middle Column: Economic Calendar */}
-                <div className="md:col-span-4 space-y-6">
+                {/* 2. Watchlist (New) */}
+                <div className="md:col-span-3 space-y-6">
+                    <WatchlistWidget watchlist={watchlist} quotes={marketData} />
+                </div>
+
+                {/* 3. Economic Calendar */}
+                <div className="md:col-span-3 space-y-6">
                     <Card className="h-full">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
@@ -105,8 +117,8 @@ export default async function ContextDashboardPage() {
                     </Card>
                 </div>
 
-                {/* Right Column: News */}
-                <div className="md:col-span-4 space-y-6">
+                {/* 4. News */}
+                <div className="md:col-span-3 space-y-6">
                     <Card className="h-full">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
