@@ -19,6 +19,7 @@ export interface RangeDefinition {
     fixedMoveValue?: number;
     measuredMoveCount?: number; // default 0 (off)
     measuredMoveColor?: string;
+    measuredMoveStyle?: 'solid' | 'dashed' | 'dotted';
 
     // Style
     lineColor: string;

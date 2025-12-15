@@ -62,6 +62,12 @@ export function AppSidebar() {
             href: "/profiler/reference",
             active: pathname === "/profiler/reference",
         },
+        {
+            label: "Data Manager",
+            icon: Database, // Or HardDrive if imported
+            href: "/data",
+            active: pathname === "/data",
+        },
     ]
 
     return (
