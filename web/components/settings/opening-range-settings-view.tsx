@@ -12,17 +12,36 @@ import { Trash2, Plus } from "lucide-react"
 interface OpeningRangeSettingsViewProps {
     initialOptions: OpeningRangeOptions;
     onChange: (options: Partial<OpeningRangeOptions>) => void;
+    ticker?: string;
 }
 
-export function OpeningRangeSettingsView({ initialOptions, onChange }: OpeningRangeSettingsViewProps) {
+export function OpeningRangeSettingsView({ initialOptions, onChange, ticker = '' }: OpeningRangeSettingsViewProps) {
     if (!initialOptions) return null;
 
     const options = initialOptions;
     const definitions = options.definitions || [];
 
+    const getDefaultFixedPoints = (t: string) => {
+        const cleanTicker = t.toUpperCase();
+        if (cleanTicker.includes('NQ')) return 65;
+        if (cleanTicker.includes('ES')) return 15;
+        if (cleanTicker.includes('GC')) return 45;
+        if (cleanTicker.includes('CL')) return 0.60;
+        return 10;
+    };
+
     const handleUpdateDefinition = (index: number, key: keyof RangeDefinition, value: any) => {
         const newDefs = [...definitions];
-        newDefs[index] = { ...newDefs[index], [key]: value };
+        // Auto-populate logic if switching to fixed
+        if (key === 'measuredMoveType' && value === 'fixed' && !newDefs[index].fixedMoveValue) {
+            newDefs[index] = {
+                ...newDefs[index],
+                [key]: value,
+                fixedMoveValue: getDefaultFixedPoints(ticker)
+            };
+        } else {
+            newDefs[index] = { ...newDefs[index], [key]: value };
+        }
         onChange({ definitions: newDefs });
     };
 
@@ -169,6 +188,75 @@ export function OpeningRangeSettingsView({ initialOptions, onChange }: OpeningRa
                                 )}
                             </div>
 
+                            <div className="flex flex-col gap-2 border-t mt-3 pt-3">
+                                <div className="flex items-center gap-2">
+                                    <Label className="text-xs w-20">Moves</Label>
+                                    <Select
+                                        value={def.measuredMoveType || 'deviation'}
+                                        onValueChange={(v) => handleUpdateDefinition(idx, 'measuredMoveType', v)}
+                                    >
+                                        <SelectTrigger className="h-8 text-xs">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="deviation">Std Dev</SelectItem>
+                                            <SelectItem value="fixed">Fixed</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+
+                                    <Select
+                                        value={def.measuredMoveStyle || 'dashed'}
+                                        onValueChange={(v) => handleUpdateDefinition(idx, 'measuredMoveStyle', v)}
+                                    >
+                                        <SelectTrigger className="h-8 w-24 text-xs">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="solid">Solid</SelectItem>
+                                            <SelectItem value="dashed">Dashed</SelectItem>
+                                            <SelectItem value="dotted">Dotted</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="flex items-center gap-2 pl-[5.5rem]">
+                                    <div className="flex flex-col gap-1">
+                                        <Label className="text-[10px] text-muted-foreground">Count</Label>
+                                        <Input
+                                            type="number"
+                                            className="h-8 w-16 text-xs"
+                                            placeholder="Count"
+                                            min="0"
+                                            value={def.measuredMoveCount ?? 0}
+                                            onChange={(e) => handleUpdateDefinition(idx, 'measuredMoveCount', parseInt(e.target.value) || 0)}
+                                        />
+                                    </div>
+
+                                    {def.measuredMoveType === 'fixed' && (
+                                        <div className="flex flex-col gap-1">
+                                            <Label className="text-[10px] text-muted-foreground">Pts</Label>
+                                            <Input
+                                                type="number"
+                                                className="h-8 w-16 text-xs"
+                                                placeholder="Pts"
+                                                step={def.fixedMoveValue && def.fixedMoveValue < 1 ? "0.01" : "1"}
+                                                value={def.fixedMoveValue ?? 10}
+                                                onChange={(e) => handleUpdateDefinition(idx, 'fixedMoveValue', parseFloat(e.target.value) || 0)}
+                                            />
+                                        </div>
+                                    )}
+
+                                    <div className="flex flex-col gap-1">
+                                        <Label className="text-[10px] text-muted-foreground">Color</Label>
+                                        <Input
+                                            type="color"
+                                            className="w-8 h-8 p-0 border-0"
+                                            value={def.measuredMoveColor || "#FF9800"}
+                                            onChange={(e) => handleUpdateDefinition(idx, 'measuredMoveColor', e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
                             <div className="flex items-center gap-4 border-t pt-3">
                                 <div className="flex items-center gap-2 flex-1">
                                     <Input
@@ -217,6 +305,6 @@ export function OpeningRangeSettingsView({ initialOptions, onChange }: OpeningRa
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 }
