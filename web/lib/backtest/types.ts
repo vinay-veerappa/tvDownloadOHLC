@@ -15,6 +15,14 @@ export interface Trade {
     pnl: number
     result: 'WIN' | 'LOSS'
     metadata?: Record<string, any>
+    exitReason?: string
+
+
+    // Visualization Fields
+    tpPrice?: number
+    slPrice?: number
+    mae?: number // Max Adverse Excursion (Max Loss potential during trade)
+    mfe?: number // Max Favorable Excursion (Max Profit potential during trade)
 }
 
 export interface BacktestResult {

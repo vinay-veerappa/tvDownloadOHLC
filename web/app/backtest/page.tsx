@@ -65,22 +65,27 @@ export default function BacktestPage() {
                 setResult(res.result)
 
                 // Transform trades to markers
-                const newMarkers = res.result.trades.flatMap(t => [
-                    {
-                        time: t.entryDate,
-                        position: t.direction === 'LONG' ? 'belowBar' : 'aboveBar',
-                        color: t.direction === 'LONG' ? '#2196F3' : '#E91E63',
-                        shape: t.direction === 'LONG' ? 'arrowUp' : 'arrowDown',
-                        text: `Entry ${t.direction}`
-                    },
-                    {
-                        time: t.exitDate,
-                        position: t.direction === 'LONG' ? 'aboveBar' : 'belowBar',
-                        color: t.pnl > 0 ? '#4CAF50' : '#F44336',
-                        shape: t.direction === 'LONG' ? 'arrowDown' : 'arrowUp',
-                        text: `Exit (${t.pnl.toFixed(2)})`
-                    }
-                ]).sort((a, b) => (a.time as number) - (b.time as number))
+                const newMarkers = res.result.trades.flatMap(t => {
+                    const maeStr = t.mae ? `MAE: ${t.mae.toFixed(2)}` : ''
+                    const mfeStr = t.mfe ? `MFE: ${t.mfe.toFixed(2)}` : ''
+
+                    return [
+                        {
+                            time: t.entryDate,
+                            position: t.direction === 'LONG' ? 'belowBar' : 'aboveBar',
+                            color: t.direction === 'LONG' ? '#2196F3' : '#E91E63',
+                            shape: t.direction === 'LONG' ? 'arrowUp' : 'arrowDown',
+                            text: `Entry ${t.direction} @ ${t.entryPrice.toFixed(2)}\nTP: ${t.tpPrice?.toFixed(2) || 'N/A'}\nSL: ${t.slPrice?.toFixed(2) || 'N/A'}`
+                        },
+                        {
+                            time: t.exitDate,
+                            position: t.direction === 'LONG' ? 'aboveBar' : 'belowBar',
+                            color: t.pnl > 0 ? '#4CAF50' : '#F44336',
+                            shape: t.direction === 'LONG' ? 'arrowDown' : 'arrowUp',
+                            text: `Exit PnL: ${t.pnl.toFixed(2)}\n${maeStr}\n${mfeStr}`
+                        }
+                    ]
+                }).sort((a, b) => (a.time as number) - (b.time as number))
 
                 setMarkers(newMarkers)
 
@@ -97,7 +102,6 @@ export default function BacktestPage() {
 
     const handleTradeClick = (index: number) => {
         if (!result || !result.trades[index]) return
-
         // Trades in UI are usually reversed (newest first), but we need correct index
         // If we map reversed, index logic should match UI
         // Let's assume passed index matches the `result.trades` array index directly
@@ -154,6 +158,7 @@ export default function BacktestPage() {
 
         // Save markers to localStorage for the chart page to pick up
         localStorage.setItem('backtest_markers_preview', JSON.stringify(markers))
+        localStorage.setItem('backtest_trades_preview', JSON.stringify(result.trades))
 
         // Navigate to chart page with correct ticker/timeframe
         router.push(`/chart?ticker=${config.ticker}&timeframe=${config.timeframe}`)
@@ -176,6 +181,7 @@ export default function BacktestPage() {
                         <div className="space-y-2">
                             <Label>Strategy</Label>
                             <select
+                                aria-label="Strategy Selection"
                                 className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                 value={config.strategy}
                                 onChange={(e) => {
@@ -339,12 +345,14 @@ export default function BacktestPage() {
 
                                 {/* Trade List Preview */}
                                 <div className="border rounded-md max-h-[200px] overflow-y-auto">
-                                    <div className="p-2 bg-muted font-medium grid grid-cols-5 gap-2 text-sm sticky top-0">
+                                    <div className="p-2 bg-muted font-medium grid grid-cols-7 gap-2 text-sm sticky top-0">
                                         <div>Entry Date</div>
                                         <div>Type</div>
                                         <div>Entry</div>
                                         <div>Exit</div>
                                         <div>PnL</div>
+                                        <div>MAE</div>
+                                        <div>MFE</div>
                                     </div>
                                     <div>
                                         {/* Use sortedTrade for display but map click to original data via entryDate look up or just simpler index mapping */}
@@ -357,7 +365,7 @@ export default function BacktestPage() {
                                             return (
                                                 <div
                                                     key={i}
-                                                    className={`p-2 border-t grid grid-cols-5 gap-2 text-sm cursor-pointer ${isSelected ? 'bg-primary/20' : 'hover:bg-muted/50'}`}
+                                                    className={`p-2 border-t grid grid-cols-7 gap-2 text-sm cursor-pointer ${isSelected ? 'bg-primary/20' : 'hover:bg-muted/50'}`}
                                                     onClick={() => handleTradeClick(originalIndex)}
                                                 >
                                                     <div>{new Date(trade.entryDate * 1000).toLocaleDateString()} {new Date(trade.entryDate * 1000).toLocaleTimeString()}</div>
@@ -367,6 +375,8 @@ export default function BacktestPage() {
                                                     <div className={trade.pnl >= 0 ? 'text-green-500' : 'text-red-500'}>
                                                         {trade.pnl.toFixed(2)}
                                                     </div>
+                                                    <div>{trade.mae?.toFixed(2) || '-'}</div>
+                                                    <div>{trade.mfe?.toFixed(2) || '-'}</div>
                                                 </div>
                                             )
                                         })}

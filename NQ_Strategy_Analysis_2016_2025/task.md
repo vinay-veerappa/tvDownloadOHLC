@@ -1,0 +1,30 @@
+# Backtesting Task
+
+- [x] Explore existing backtesting scripts <!-- id: 0 -->
+- [x] Create implementation plan for the 9:30 strategy comparison <!-- id: 1 -->
+- [x] Implement the base 9:30 1-minute strategy <!-- id: 2 -->
+- [x] Implement the modified strategy with the "close inside range" exit <!-- id: 3 -->
+- [x] Create a script to run both strategies and compare results <!-- id: 4 -->
+- [x] Run the backtest for 100 trades and report results <!-- id: 5 -->
+- [x] Analyze the comparison results <!-- id: 6 -->
+- [x] Analyze retracement on cut wins to refine exit logic <!-- id: 7 -->
+- [x] Refactor strategy to support penetration thresholds (0%, 25%, 50%, 75%) <!-- id: 8 -->
+- [x] Run comparison on original set (100 trades) <!-- id: 9 -->
+- [x] Run comparison on new set (next 100 trades) <!-- id: 10 -->
+- [x] Report findings <!-- id: 11 -->
+- [x] Add metadata to Base Strategy <!-- id: 12 -->
+- [x] Create comprehensive analysis script (MFE/MAE, Timing, Range Correlations) <!-- id: 13 -->
+- [x] Run analysis on Batch 1 and Batch 2 <!-- id: 14 -->
+- [x] Generate report <!-- id: 15 -->
+- [x] Re-run analysis with Percentage-based Range metrics <!-- id: 16 -->
+- [x] Modify `Nq1MinCloseInRangeStrategy` to support `max_range_pct` filter <!-- id: 17 -->
+- [x] Create `scripts/multi-year-backtest.ts` <!-- id: 18 -->
+- [x] Run multi-year backtest (2020-2025) <!-- id: 19 -->
+- [x] Report multi-year findings <!-- id: 20 -->
+- [x] Expand multi-year backtest to 10 years (2016-2025) <!-- id: 21 -->
+- [x] Create `scripts/full-scale-backtest.ts` <!-- id: 22 -->
+- [x] Run full scale backtest (5 strategies, 10 years) <!-- id: 23 -->
+- [x] Verify CSV outputs (MAE/MFE, ET Times, Weekdays) <!-- id: 24 -->
+- [x] Create `scripts/trader-analysis.ts` <!-- id: 25 -->
+- [x] Run analysis on `Threshold_0Pct_2016_2025.csv` <!-- id: 26 -->
+- [x] Report "Trader's Insights" <!-- id: 27 -->

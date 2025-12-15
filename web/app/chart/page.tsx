@@ -1,32 +1,39 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { Card } from "@/components/ui/card"
 import { getAvailableData } from "@/actions/data-actions"
 import { ChartPageClient } from "@/components/chart-page-client"
 import { useSearchParams } from "next/navigation"
 
-export default function ChartPage() {
+function ChartPageContent() {
     const searchParams = useSearchParams()
     const [data, setData] = useState<{ tickers: string[]; timeframes: string[]; tickerMap: Record<string, string[]> } | null>(null)
     const [markers, setMarkers] = useState<any[]>([])
+    const [trades, setTrades] = useState<any[]>([])
 
     // Load available data
     useEffect(() => {
         getAvailableData().then(setData)
     }, [])
 
-    // Load markers from localStorage
+    // Load markers and trades from localStorage
     useEffect(() => {
-        const stored = localStorage.getItem('backtest_markers_preview')
-        if (stored) {
+        const storedMarkers = localStorage.getItem('backtest_markers_preview')
+        if (storedMarkers) {
             try {
-                setMarkers(JSON.parse(stored))
-                // Optional: Clear markers after loading? 
-                // localStorage.removeItem('backtest_markers_preview') 
-                // Better to keep them so refresh works.
+                setMarkers(JSON.parse(storedMarkers))
             } catch (e) {
                 console.error("Failed to parse markers", e)
+            }
+        }
+
+        const storedTrades = localStorage.getItem('backtest_trades_preview')
+        if (storedTrades) {
+            try {
+                setTrades(JSON.parse(storedTrades))
+            } catch (e) {
+                console.error("Failed to parse trades", e)
             }
         }
     }, [])
@@ -48,7 +55,17 @@ export default function ChartPage() {
                 style="candles"
                 indicators={indicators}
                 markers={markers}
+                trades={trades}
             />
         </div>
     )
 }
+
+export default function ChartPage() {
+    return (
+        <Suspense fallback={<div className="flex items-center justify-center h-screen">Loading...</div>}>
+            <ChartPageContent />
+        </Suspense>
+    )
+}
+

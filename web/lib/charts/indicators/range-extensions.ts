@@ -347,7 +347,7 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
         }
     }
 
-    public hitTest(x: number, y: number): { hit: boolean, externalId: string, zOrder: string, drawing?: any } | null {
+    public hitTest(x: number, y: number) {
         const timeScale = this._chart.timeScale();
         const time = timeScale.coordinateToTime(x) as number;
         if (!time) return null;

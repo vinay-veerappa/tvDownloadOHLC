@@ -146,6 +146,9 @@ interface UpdateTradeParams {
     quantity?: number
     notes?: string
     strategyId?: string
+    status?: string
+    entryDate?: Date
+    entryPrice?: number
 }
 
 export async function updateTrade(id: string, updates: UpdateTradeParams) {
@@ -158,6 +161,9 @@ export async function updateTrade(id: string, updates: UpdateTradeParams) {
                 quantity: updates.quantity,
                 notes: updates.notes,
                 strategyId: updates.strategyId,
+                status: updates.status,
+                entryDate: updates.entryDate,
+                entryPrice: updates.entryPrice,
             }
         })
 

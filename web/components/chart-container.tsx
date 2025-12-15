@@ -69,6 +69,7 @@ interface ChartContainerProps {
     vwapSettings?: VWAPSettings
     indicatorParams?: Record<string, any>
     onIndicatorParamsChange?: (type: string, params: any) => void
+    trades?: any[] // Backtest trades for visualization
 }
 
 export interface ChartContainerRef {
@@ -98,7 +99,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York',
     selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad,
     onPriceChange, position, pendingOrders, onModifyOrder, onModifyPosition, initialReplayTime,
-    vwapSettings, indicatorParams, onIndicatorParamsChange, theme, onTimeframeChange // Destructure onTimeframeChange
+    vwapSettings, indicatorParams, onIndicatorParamsChange, theme, onTimeframeChange, trades // Destructure trades
 }, ref) => {
 
     // 1. Chart Reference
@@ -481,6 +482,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             if (result) hitDrawing = result.drawing;
             else {
                 // Check generic primitives
+                // Check generic primitives
                 if (primitives?.current) {
                     for (const p of primitives.current) {
                         if (p.hitTest?.(param.point.x, param.point.y)) { hitDrawing = p; break; }
@@ -488,14 +490,18 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 }
 
                 // Check specific indicators if no hit yet
+                // FIX: Check OpeningRange (top-most) FIRST to prevent background profilers from stealing the click
+                if (!hitDrawing && openingRangeRef.current?.hitTest?.(param.point.x, param.point.y)) {
+                    hitDrawing = openingRangeRef.current;
+                }
+                if (!hitDrawing && rangeExtensionsRef.current?.hitTest?.(param.point.x, param.point.y)) {
+                    hitDrawing = rangeExtensionsRef.current;
+                }
                 if (!hitDrawing && sessionRangesRef.current?.hitTest?.(param.point.x, param.point.y)) {
                     hitDrawing = sessionRangesRef.current;
                 }
                 if (!hitDrawing && hourlyProfilerRef.current?.hitTest?.(param.point.x, param.point.y)) {
                     hitDrawing = hourlyProfilerRef.current;
-                }
-                if (!hitDrawing && rangeExtensionsRef.current?.hitTest?.(param.point.x, param.point.y)) {
-                    hitDrawing = rangeExtensionsRef.current;
                 }
 
                 // Check Standard Indicators (LineSeries, etc.)
@@ -559,10 +565,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
     // Helper functions for UI
     const openProperties = (drawing: any) => {
-        console.log('[openProperties] Drawing:', drawing, 'Type:', drawing._type);
         const options = drawing.options ? drawing.options() : {};
         const type = drawing._type || 'anchored-text';
-        console.log('[openProperties] Options:', options, 'Type:', type);
         setSelectedDrawingOptions(options);
         setSelectedDrawingType(type);
         setPropertiesModalOpen(true);
@@ -617,6 +621,12 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             }
             onIndicatorParamsChange?.('range-extensions', options);
             toast.success('Range Extensions updated');
+        } else if (selectedDrawingType === 'opening-range') {
+            if (openingRangeRef.current) {
+                openingRangeRef.current.applyOptions(options);
+            }
+            onIndicatorParamsChange?.('opening-range', options);
+            toast.success('Opening Range updated');
         }
     };
 
@@ -656,6 +666,16 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 const currentParams = indicatorParams?.['range-extensions'] || {};
                 setSelectedDrawingOptions(currentParams);
                 setSelectedDrawingType('range-extensions');
+                setPropertiesModalOpen(true);
+            }
+        } else if (id === 'opening-range') {
+            onSelectionChange?.({ type: 'indicator', id: 'opening-range' });
+            if (openingRangeRef.current) {
+                openProperties(openingRangeRef.current);
+            } else {
+                const currentParams = indicatorParams?.['opening-range'] || {};
+                setSelectedDrawingOptions(currentParams);
+                setSelectedDrawingType('opening-range');
                 setPropertiesModalOpen(true);
             }
         }
@@ -766,7 +786,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     useEffect(() => {
         if (!series || !chart || !ticker || data.length === 0) return;
 
-        const isEnabled = indicators.includes('daily-profiler');
+        const isLowTimeframe = timeframe.endsWith('m') && parseInt(timeframe) < 30;
+        const isEnabled = indicators.includes('daily-profiler') && isLowTimeframe;
 
         if (isEnabled) {
             import('@/lib/charts/indicators/daily-profiler').then(({ DailyProfiler }) => {
@@ -779,14 +800,14 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     sessionRangesRef.current = null;
                 }
 
-                if (!sessionRangesRef.current) {
-                    // See docs/INDICATOR_DEVELOPMENT_STANDARDS.md for performance patterns (Time-Range API)
-                    // Calculate time range (last 14 days)
-                    const LOAD_DAYS = 14;
-                    const SECONDS_PER_DAY = 24 * 60 * 60;
-                    const endTs = data.length > 0 ? data[data.length - 1].time as number : undefined;
-                    const startTs = endTs ? endTs - (LOAD_DAYS * SECONDS_PER_DAY) : undefined;
+                // See docs/INDICATOR_DEVELOPMENT_STANDARDS.md for performance patterns (Time-Range API)
+                // Calculate time range (last 14 days)
+                const LOAD_DAYS = 14;
+                const SECONDS_PER_DAY = 24 * 60 * 60;
+                const endTs = data.length > 0 ? data[data.length - 1].time as number : undefined;
+                const startTs = endTs ? endTs - (LOAD_DAYS * SECONDS_PER_DAY) : undefined;
 
+                if (!sessionRangesRef.current) {
                     sessionRangesRef.current = new DailyProfiler(chart, series, {
                         showAsia: true,
                         extendUntil: "16:00",
@@ -798,21 +819,91 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     series.attachPrimitive(sessionRangesRef.current);
                 } else {
                     // Update options (ticker + saved params), suppress notification to avoid loops
-                    sessionRangesRef.current.applyOptions({ ...dailyParams, ticker }, true);
+                    if (sessionRangesRef.current.applyOptions) {
+                        sessionRangesRef.current.applyOptions({
+                            ...dailyParams,
+                            ticker,
+                            startTs,
+                            endTs
+                        }, true);
+                    }
                 }
             });
         } else {
             if (sessionRangesRef.current) {
-                try {
-                    if (sessionRangesRef.current.destroy) {
-                        sessionRangesRef.current.destroy();
-                    }
-                    series.detachPrimitive(sessionRangesRef.current);
-                } catch (e) { /* ignore */ }
+                // Remove
+                series.detachPrimitive(sessionRangesRef.current);
                 sessionRangesRef.current = null;
             }
         }
-    }, [series, chart, ticker, indicators, indicatorParams, onIndicatorParamsChange, data.length > 0]);
+    }, [series, chart, ticker, data, indicators, indicatorParams, timeframe]);
+
+    // -------------------------------------------------------------------------
+    // 14. Trade Visualizations (Risk/Reward)
+    // -------------------------------------------------------------------------
+    const tradeVisualizationsRef = useRef<any[]>([]);
+
+    useEffect(() => {
+        if (!series || !chart || !trades || trades.length === 0) {
+            // Cleanup if no trades
+            tradeVisualizationsRef.current.forEach(p => series?.detachPrimitive(p));
+            tradeVisualizationsRef.current = [];
+            return;
+        }
+
+        import('@/lib/charts/plugins/risk-reward').then(({ RiskReward }) => {
+            // Cleanup old
+            tradeVisualizationsRef.current.forEach(p => series.detachPrimitive(p));
+            tradeVisualizationsRef.current = [];
+
+            // Performance: Limit to last 50 trades to prevent hanging
+            // Assuming trades are chronological or we take the end of the array
+            const visibleTrades = trades.slice(-50);
+
+            visibleTrades.forEach(trade => {
+                // Ensure we have necessary prices
+                if (!trade.entryPrice) return;
+
+                // Construct points
+                // For closed trades, we want the box to span from Entry Time to Exit Time
+                // Entry Point
+                const entry = { time: trade.entryDate, price: trade.entryPrice };
+
+                // Target Point (controls Width and TP Level)
+                // Use Exit Time for width. Use TP Price for level.
+                // If no TP price (e.g. manual exit), use Exit Price or calculate R?
+                // Let's use trade.tpPrice if available, else exitPrice.
+                const targetPrice = trade.tpPrice || trade.exitPrice || (trade.entryPrice * 1.01);
+                const target = { time: trade.exitDate, price: targetPrice };
+
+                // Stop Point (controls SL Level)
+                // Use Exit Time for consistency? RiskRewardRenderer uses targetX for width.
+                const stopPrice = trade.slPrice || (trade.entryPrice * 0.99);
+                const stop = { time: trade.exitDate, price: stopPrice };
+
+                const rr = new RiskReward(chart, series, entry, stop, target, {
+                    stopOpacity: 0.1,
+                    targetOpacity: 0.1,
+                    lineColor: trade.pnl > 0 ? '#4CAF50' : (trade.pnl < 0 ? '#EF5350' : '#888888'),
+                    showLabels: false // Too noisy for many trades? Maybe true for single trade.
+                });
+
+                // Hack: If we want to show Labels only on Selected trade? 
+                // For now, let's enable labels but maybe compact mode?
+                rr.applyOptions({
+                    showLabels: true,
+                    compactMode: true,
+                    // If trade is a LOSS, color the "Target" zone grey? 
+                    // No, "Target" is where TP WAS. "Stop" is where SL WAS.
+                    // The actual exit is just where the box ends.
+                });
+
+                series.attachPrimitive(rr);
+                tradeVisualizationsRef.current.push(rr);
+            });
+        });
+
+    }, [series, chart, trades]);
 
     // -------------------------------------------------------------------------
     // 14. Range Extensions Integration
@@ -941,6 +1032,53 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             }
         }
     }, [series, chart, ticker, indicators, indicatorParams, theme, data.length > 0]);
+
+    // -------------------------------------------------------------------------
+    // 16. Opening Range Indicator
+    // -------------------------------------------------------------------------
+    const openingRangeRef = useRef<any>(null);
+
+    useEffect(() => {
+        if (!series || !chart || !data || data.length === 0) return;
+
+        // Check for 'opening-range' or 'OR'
+        const isEnabled = indicators.includes('opening-range') || indicators.includes('OR');
+
+        if (isEnabled) {
+            import('@/lib/charts/indicators/opening-range').then(({ OpeningRange }) => {
+                // Recreate if series changed
+                if (openingRangeRef.current && openingRangeRef.current._series !== series) {
+                    series.detachPrimitive(openingRangeRef.current);
+                    openingRangeRef.current = null;
+                }
+
+                if (!openingRangeRef.current) {
+                    openingRangeRef.current = new OpeningRange(chart, series, {
+                        lineColor: theme?.chart?.crosshair || '#2962FF',
+                        fillColor: theme?.chart?.crosshair || '#2962FF',
+                        // Use user params if available
+                        ...indicatorParams?.['opening-range']
+                    });
+                    series.attachPrimitive(openingRangeRef.current);
+                } else {
+                    openingRangeRef.current.applyOptions({
+                        ...indicatorParams?.['opening-range']
+                    });
+                }
+
+                // Update Data
+                openingRangeRef.current.setData(data);
+
+            }).catch(e => {
+                console.error('[ChartContainer] Failed to load OpeningRange:', e);
+            });
+        } else {
+            if (openingRangeRef.current) {
+                series.detachPrimitive(openingRangeRef.current);
+                openingRangeRef.current = null;
+            }
+        }
+    }, [series, chart, data, indicators, indicatorParams, theme]);
 
     return (
         <div className="w-full h-full relative" onContextMenu={(e) => {

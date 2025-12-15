@@ -13,7 +13,7 @@ interface OHLCData {
     high: number;
     low: number;
     close: number;
-    volume: number;
+    volume?: number;
 }
 
 function generateTestData(count: number): OHLCData[] {
