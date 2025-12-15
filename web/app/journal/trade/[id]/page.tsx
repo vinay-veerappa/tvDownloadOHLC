@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { format } from "date-fns"
-import { ArrowLeft, Edit, Trash2, Save, X, Globe, TrendingUp, Clock } from "lucide-react"
+import { ArrowLeft, Edit, Trash2, Save, X, Globe, TrendingUp, Clock, LineChart } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -114,6 +114,19 @@ export default function TradeDetailPage() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                            // Navigate to chart with ticker and date
+                            const entryDate = new Date(trade.entryDate)
+                            const dateStr = format(entryDate, "yyyy-MM-dd")
+                            router.push(`/?ticker=${trade.ticker}&timeframe=5m&date=${dateStr}`)
+                        }}
+                    >
+                        <LineChart className="h-4 w-4 mr-1" />
+                        View on Chart
+                    </Button>
                     <Button variant="outline" size="sm" onClick={handleDelete}>
                         <Trash2 className="h-4 w-4 mr-1" />
                         Delete
