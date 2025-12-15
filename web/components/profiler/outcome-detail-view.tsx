@@ -15,7 +15,6 @@ interface OutcomeDetailViewProps {
     sessions: ProfilerSession[]; // Sessions matching this outcome (e.g. Asia rows)
     allSessions: ProfilerSession[]; // [NEW] All sessions for context
     dailyHodLod?: DailyHodLodResponse | null;
-    dailyHodLod?: DailyHodLodResponse | null;
     ticker: string;
     targetSession: string;
     levelTouches: LevelTouchesResponse | null; // [NEW]

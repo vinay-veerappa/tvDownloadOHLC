@@ -46,14 +46,43 @@ function loadMeta(ticker: string, timeframe: string): ChunkMeta | null {
     return JSON.parse(fs.readFileSync(metaPath, 'utf8'))
 }
 
-// Load a specific chunk
+// Global Cache for loaded chunks to speed up backtests
+// Key: "Ticker_Timeframe_ChunkIndex" -> Value: OHLCData[]
+const CHUNK_CACHE = new Map<string, OHLCData[]>()
+
+// Load a specific chunk with Caching
 function loadChunk(ticker: string, timeframe: string, chunkIndex: number): OHLCData[] {
     const cleanTicker = ticker.replace('!', '')
+    const cacheKey = `${cleanTicker}_${timeframe}_${chunkIndex}`
+
+    // 1. Check Cache
+    if (CHUNK_CACHE.has(cacheKey)) {
+        return CHUNK_CACHE.get(cacheKey)!
+    }
+
     const chunkPath = path.join(getDataDir(), `${cleanTicker}_${timeframe}`, `chunk_${chunkIndex}.json`)
     if (!fs.existsSync(chunkPath)) {
         return []
     }
-    return JSON.parse(fs.readFileSync(chunkPath, 'utf8'))
+
+    // 2. Load and Parse
+    try {
+        const data = JSON.parse(fs.readFileSync(chunkPath, 'utf8'))
+
+        // 3. Store in Cache
+        CHUNK_CACHE.set(cacheKey, data)
+
+        return data
+    } catch (e) {
+        console.error(`Failed to load chunk ${chunkPath}:`, e)
+        return []
+    }
+}
+
+export async function clearCache() {
+    CHUNK_CACHE.clear()
+    console.log("Memory Cache Cleared")
+    return { success: true }
 }
 
 export async function getChartData(ticker: string, timeframe: string, limit: number = 0): Promise<{ success: boolean, data?: OHLCData[], totalRows?: number, chunksLoaded?: number, numChunks?: number, error?: string }> {

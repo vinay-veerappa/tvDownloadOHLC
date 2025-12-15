@@ -62,6 +62,10 @@ const indicators = [
         value: "macd",
         label: "MACD",
     },
+    {
+        value: "opening-range",
+        label: "Opening Range",
+    },
 ]
 
 interface IndicatorsDialogProps {

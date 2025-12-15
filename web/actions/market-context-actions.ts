@@ -12,7 +12,7 @@ const SESSION_HOURS = {
     AFTER_HOURS: { start: 16, end: 18 } // 4pm - 6pm ET
 }
 
-export function detectSession(date: Date): string {
+export async function detectSession(date: Date): Promise<string> {
     const hour = date.getHours()
     const minutes = date.getMinutes()
     const timeDecimal = hour + minutes / 60
@@ -25,7 +25,7 @@ export function detectSession(date: Date): string {
     return "OVERNIGHT"
 }
 
-export function detectTrend(entryPrice: number, prevClose?: number): string {
+export async function detectTrend(entryPrice: number, prevClose?: number): Promise<string> {
     if (!prevClose) return "UNKNOWN"
     const change = ((entryPrice - prevClose) / prevClose) * 100
     if (change > 0.5) return "TRENDING_UP"

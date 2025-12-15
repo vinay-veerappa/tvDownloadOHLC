@@ -18,6 +18,8 @@ import { HourlyProfilerSettingsView } from "./settings/hourly-profiler-settings-
 import { HourlyProfilerOptions } from "@/lib/charts/indicators/hourly-profiler"
 import { RangeExtensionsSettingsView } from "./settings/range-extensions-settings-view"
 import { RangeExtensionsOptions } from "@/lib/charts/indicators/range-extensions"
+import { OpeningRangeSettingsView } from "./settings/opening-range-settings-view"
+import { OpeningRangeOptions } from "@/lib/charts/indicators/opening-range"
 
 interface PropertiesModalProps {
     open: boolean;
@@ -70,6 +72,7 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
     const [dailyProfilerOptions, setDailyProfilerOptions] = useState<DailyProfilerOptions | null>(null);
     const [hourlyProfilerOptions, setHourlyProfilerOptions] = useState<HourlyProfilerOptions | null>(null);
     const [rangeExtensionsOptions, setRangeExtensionsOptions] = useState<RangeExtensionsOptions | null>(null);
+    const [openingRangeOptions, setOpeningRangeOptions] = useState<OpeningRangeOptions | null>(null);
 
     useEffect(() => {
         const opts = initialOptions || {};
@@ -84,6 +87,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
             setHourlyProfilerOptions(opts as HourlyProfilerOptions);
         } else if (drawingType === 'range-extensions') {
             setRangeExtensionsOptions(opts as RangeExtensionsOptions);
+        } else if (drawingType === 'opening-range') {
+            setOpeningRangeOptions(opts as OpeningRangeOptions);
         }
 
         if (opts.lineColor) setLineColorState(parseColor(opts.lineColor));
@@ -108,6 +113,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
             finalOptions = hourlyProfilerOptions;
         } else if (drawingType === 'range-extensions' && rangeExtensionsOptions) {
             finalOptions = rangeExtensionsOptions;
+        } else if (drawingType === 'opening-range' && openingRangeOptions) {
+            finalOptions = openingRangeOptions;
         } else {
             // Construct final options with RGBA colors for generic tools
             finalOptions = {
@@ -228,6 +235,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
                     <HourlyProfilerSettingsView initialOptions={hourlyProfilerOptions} onChange={(updates) => setHourlyProfilerOptions(prev => prev ? ({ ...prev, ...updates } as HourlyProfilerOptions) : null)} />
                 ) : drawingType === 'range-extensions' && rangeExtensionsOptions ? (
                     <RangeExtensionsSettingsView initialOptions={rangeExtensionsOptions} onChange={(updates) => setRangeExtensionsOptions(prev => prev ? ({ ...prev, ...updates } as RangeExtensionsOptions) : null)} />
+                ) : drawingType === 'opening-range' && openingRangeOptions ? (
+                    <OpeningRangeSettingsView initialOptions={openingRangeOptions} onChange={(updates) => setOpeningRangeOptions(prev => prev ? ({ ...prev, ...updates } as OpeningRangeOptions) : null)} />
                 ) : (
                     <Tabs defaultValue="style" className="w-full">
                         <TabsList className="grid w-full grid-cols-3">

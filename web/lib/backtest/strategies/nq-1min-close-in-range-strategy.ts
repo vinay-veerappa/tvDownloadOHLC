@@ -8,8 +8,8 @@ interface DailyState {
     hasTraded: boolean
 }
 
-export class Nq1MinStrategy implements Strategy {
-    name = "NQ_1MIN_STRATEGY"
+export class Nq1MinCloseInRangeStrategy implements Strategy {
+    name = "NQ_1MIN_CLOSE_IN_RANGE_STRATEGY"
 
     async run(data: OHLCData[], params: Record<string, any>): Promise<Trade[]> {
         const trades: Trade[] = []
@@ -28,6 +28,9 @@ export class Nq1MinStrategy implements Strategy {
         const exit_hour = params.exit_hour !== undefined ? params.exit_hour : 9
         const exit_minute = params.exit_minute !== undefined ? params.exit_minute : 44
         const max_trades = params.max_trades !== undefined ? params.max_trades : -1
+        const penetration_threshold = params.penetration_threshold !== undefined ? params.penetration_threshold : 0.0
+        const max_range_pct = params.max_range_pct !== undefined ? params.max_range_pct : 0.0 // Default 0 means disabled
+
 
         // Helper to get ET time parts
         // Reuse formatter for performance (crucial for 5M+ bars)
@@ -75,9 +78,12 @@ export class Nq1MinStrategy implements Strategy {
         let maxFavorable = 0 // Price
 
         for (let i = 0; i < data.length; i++) {
-            if (max_trades > 0 && trades.length >= max_trades) break;
-            const bar = data[i]
+            // Check max trades limit
+            if (max_trades > 0 && trades.length >= max_trades) {
+                break;
+            }
 
+            const bar = data[i]
             const time = getEtTime(bar.time)
 
             // 1. New Day Reset
@@ -103,6 +109,7 @@ export class Nq1MinStrategy implements Strategy {
                             rangeHigh: currentState.rangeHigh,
                             rangeLow: currentState.rangeLow
                         }
+
                     })
                     position = null
                 }
@@ -177,6 +184,8 @@ export class Nq1MinStrategy implements Strategy {
                                 rangeHigh: currentState.rangeHigh,
                                 rangeLow: currentState.rangeLow
                             }
+
+
                         })
                         position = null
                         stoppedOut = true
@@ -202,6 +211,8 @@ export class Nq1MinStrategy implements Strategy {
                                 rangeHigh: currentState.rangeHigh,
                                 rangeLow: currentState.rangeLow
                             }
+
+
                         })
                         position = null
                         stoppedOut = true
@@ -210,7 +221,19 @@ export class Nq1MinStrategy implements Strategy {
 
                 if (stoppedOut) continue
 
-                // B. Check TP1 (Cover the Queen) - 50% exit
+                // B. Check TP1 (Cover the Queen) - 50% exit (Not implemented as separate trades here, standard exit is full close)
+                // The original code handled partials by potentially pushing a trade and keeping position open?
+                // Wait, original code:
+                /*
+                        trades.push({ ... })
+                        tp1Hit = true
+                        stopLoss = entryPrice
+                */
+                // It PUSHES a trade but DOES NOT set position=null. It sets tp1Hit=true and moves SL.
+                // So it treats TP1 as a partial exit event but keeps the loop running for the rest?
+                // Actually the "trades" array implies individual closed trade segments.
+                // But `position` remains not null.
+
                 let tp1Target = currentTpTarget
 
                 if (!tp1Hit) {
@@ -235,6 +258,7 @@ export class Nq1MinStrategy implements Strategy {
                                 rangeHigh: currentState.rangeHigh,
                                 rangeLow: currentState.rangeLow
                             }
+
                         })
                         tp1Hit = true
                         // Move SL to Breakeven
@@ -242,7 +266,61 @@ export class Nq1MinStrategy implements Strategy {
                     }
                 }
 
-                // C. Hard Time Exit (9:44)
+                // C. Check Close Inside Range (NEW LOGIC with Threshold)
+                let closedInsideRange = false
+                const rangeSize = currentState.rangeHigh - currentState.rangeLow
+
+                if (position === 'LONG') {
+                    // Breakout was above RangeHigh. Retracement is going DOWN.
+                    // 0% penetration = RangeHigh
+                    // 100% penetration = RangeLow
+                    // Threshold 0.25 means we tolerate drop to High - (0.25 * Range)
+                    const exitThreshold = currentState.rangeHigh - (rangeSize * penetration_threshold)
+
+                    if (bar.close <= exitThreshold) {
+                        closedInsideRange = true
+                    }
+                } else {
+                    // Breakout was below RangeLow. Retracement is going UP.
+                    // 0% penetration = RangeLow
+                    // 100% penetration = RangeHigh
+                    // Threshold 0.25 means we tolerate rise to Low + (0.25 * Range)
+                    const exitThreshold = currentState.rangeLow + (rangeSize * penetration_threshold)
+
+                    if (bar.close >= exitThreshold) {
+                        closedInsideRange = true
+                    }
+                }
+
+                if (closedInsideRange) {
+                    const exitPrice = bar.close
+                    const pnl = position === 'LONG' ? (exitPrice - entryPrice) : (entryPrice - exitPrice)
+
+                    trades.push({
+                        entryDate: entryTime,
+                        exitDate: bar.time,
+                        entryPrice,
+                        exitPrice,
+                        direction: position!,
+                        pnl: pnl,
+                        result: pnl > 0 ? 'WIN' : 'LOSS',
+                        mae: maxAdverse,
+                        mfe: maxFavorable,
+                        tpPrice: currentTpTarget,
+                        slPrice: stopLoss,
+                        exitReason: 'CLOSE_INSIDE_RANGE',
+                        metadata: {
+                            rangeHigh: currentState.rangeHigh,
+                            rangeLow: currentState.rangeLow
+                        }
+
+                    })
+                    position = null
+                    continue
+                }
+
+
+                // D. Hard Time Exit (9:44)
                 if (isHardExitTime) {
                     // Close Remaining Position
                     const exitPrice = bar.close
@@ -265,6 +343,7 @@ export class Nq1MinStrategy implements Strategy {
                             rangeHigh: currentState.rangeHigh,
                             rangeLow: currentState.rangeLow
                         }
+
                     })
                     position = null
                 }
@@ -274,6 +353,17 @@ export class Nq1MinStrategy implements Strategy {
 
             // --- ENTRY LOGIC ---
             if (isExecutionWindow && !currentState.hasTraded) {
+                // Check Range Filter (if enabled)
+                if (max_range_pct > 0) {
+                    const rangeSize = currentState.rangeHigh - currentState.rangeLow
+                    const rangePct = (rangeSize / bar.close) * 100 // Use current price approx for %
+                    if (rangePct > max_range_pct) {
+                        // Skip day
+                        currentState.hasTraded = true // Mark as "handled" so we don't try every candle
+                        continue
+                    }
+                }
+
                 // Breakout Confirmation: Close outside 9:30 range
 
                 // Long Entry

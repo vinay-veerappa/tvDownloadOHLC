@@ -588,7 +588,7 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
         this._requestUpdate = () => { };
     }
 
-    public hitTest(x: number, y: number): { hit: boolean, externalId: string, zOrder: number, drawing?: any } | null {
+    public hitTest(x: number, y: number) {
         const timeScale = this._chart.timeScale();
         const time = timeScale.coordinateToTime(x) as number;
         if (!time) return null;
@@ -600,7 +600,7 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
         });
 
         if (hit) {
-            return { hit: true, externalId: 'hourly-profiler', zOrder: 'top', drawing: this } as any;
+            return { hit: true, externalId: 'hourly-profiler', zOrder: 'top' as const, drawing: this };
         }
 
         return null;

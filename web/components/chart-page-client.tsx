@@ -19,6 +19,7 @@ interface ChartPageClientProps {
     style: string
     indicators: string[]
     markers?: any[]
+    trades?: any[]
 }
 
 const MAGNET_STORAGE_KEY = 'chart_magnet_mode'
@@ -33,7 +34,8 @@ export function ChartPageClient({
     timeframe,
     style,
     indicators,
-    markers
+    markers,
+    trades
 }: ChartPageClientProps) {
     const [magnetMode, setMagnetMode] = useState<MagnetMode>('off')
     const [displayTimezone, setDisplayTimezone] = useState('America/New_York')
@@ -203,6 +205,7 @@ export function ChartPageClient({
                         onDataLoad={handleDataLoad}
                         initialReplayTime={replayState.isReplayMode ? replayState.currentTime : undefined}
                         vwapSettings={vwapSettings}
+                        trades={trades}
                         onOpenVwapSettings={() => setIsVwapSettingsOpen(true)}
                         onTimeframeChange={(newTf) => {
                             // Use window.location to force a full navigation/refresh state, 

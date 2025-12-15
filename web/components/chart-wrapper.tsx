@@ -56,6 +56,7 @@ interface ChartWrapperProps {
     onOpenVwapSettings?: () => void
     onTimeframeChange?: (tf: string) => void
     markers?: any[]
+    trades?: any[]
 }
 
 export function ChartWrapper(props: ChartWrapperProps) {
@@ -267,6 +268,12 @@ export function ChartWrapper(props: ChartWrapperProps) {
             return;
         }
 
+        // Handle Opening Range (uses PropertiesModal via ChartContainer)
+        if (type === 'opening-range') {
+            chartRef.current?.editDrawing('opening-range');
+            return;
+        }
+
         // Parse existing options from type string (e.g., "sma:9" -> period=9)
         const [indType, param] = type.split(":");
         const existingOptions: Record<string, any> = {};
@@ -328,6 +335,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
         else if (indType === 'daily-profiler') label = 'Daily Profiler';
         else if (indType === 'hourly-profiler') label = 'Hourly Profiler';
         else if (indType === 'range-extensions') label = 'Range Extensions';
+        else if (indType === 'opening-range') label = 'Opening Range';
         return { type: ind.type, label, enabled: ind.enabled };
     });
 
@@ -390,6 +398,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
                         onModifyPosition={modifyPosition}
                         vwapSettings={props.vwapSettings}
                         onTimeframeChange={props.onTimeframeChange}
+                        trades={props.trades}
                     />
                 </div>
                 <RightSidebar

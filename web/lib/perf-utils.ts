@@ -223,22 +223,17 @@ export function withTiming<T extends (...args: any[]) => any>(
     fn: T
 ): T {
     return ((...args: Parameters<T>) => {
-        const start = performance.now();
+        perfMonitor.mark(`__withTiming_${name}`);
         const result = fn(...args);
 
         // Handle async functions
         if (result instanceof Promise) {
             return result.finally(() => {
-                perfMonitor.measure(name);
+                perfMonitor.measure(name, `__withTiming_${name}`);
             });
         }
 
-        perfMonitor.measurements.push({
-            name,
-            duration: performance.now() - start,
-            timestamp: Date.now()
-        });
-
+        perfMonitor.measure(name, `__withTiming_${name}`);
         return result;
     }) as T;
 }
