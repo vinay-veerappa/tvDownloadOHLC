@@ -26,6 +26,14 @@ interface AIChatProps {
     embedded?: boolean // If true, show as sidebar style
 }
 
+// Available Ollama models
+const OLLAMA_MODELS = [
+    { id: "llama3.2:latest", name: "Llama 3.2", description: "Fast, 2GB" },
+    { id: "gemma3:latest", name: "Gemma 3", description: "Google, 3.3GB" },
+    { id: "mistral:latest", name: "Mistral", description: "Coding, 4.4GB" },
+    { id: "qwen3-vl:latest", name: "Qwen3 VL", description: "Vision, 6.1GB" },
+]
+
 const QUICK_PROMPTS = [
     { label: "📊 Summarize today", prompt: "Summarize my trades today" },
     { label: "📉 Losing patterns", prompt: "What patterns do you see in my losing trades?" },
@@ -39,6 +47,7 @@ export function AIChat({ embedded = false }: AIChatProps) {
     const [input, setInput] = useState("")
     const [loading, setLoading] = useState(false)
     const [provider, setProvider] = useState<"gemini" | "ollama">("gemini")
+    const [ollamaModel, setOllamaModel] = useState("llama3.2:latest")
     const [error, setError] = useState<string | null>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
     const inputRef = useRef<HTMLInputElement>(null)
@@ -92,6 +101,7 @@ export function AIChat({ embedded = false }: AIChatProps) {
                         content: m.content
                     })),
                     provider,
+                    model: provider === "ollama" ? ollamaModel : undefined,
                     context
                 })
             })
@@ -134,23 +144,44 @@ export function AIChat({ embedded = false }: AIChatProps) {
                         <Bot className="h-5 w-5" />
                         Trading AI Assistant
                     </CardTitle>
-                    <Select value={provider} onValueChange={(v) => setProvider(v as "gemini" | "ollama")}>
-                        <SelectTrigger className="w-[120px] h-8">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="gemini">
-                                <span className="flex items-center gap-1">
-                                    <Sparkles className="h-3 w-3" /> Gemini
-                                </span>
-                            </SelectItem>
-                            <SelectItem value="ollama">
-                                <span className="flex items-center gap-1">
-                                    <Settings2 className="h-3 w-3" /> Ollama
-                                </span>
-                            </SelectItem>
-                        </SelectContent>
-                    </Select>
+                    <div className="flex items-center gap-2">
+                        {/* Model selector for Ollama */}
+                        {provider === "ollama" && (
+                            <Select value={ollamaModel} onValueChange={setOllamaModel}>
+                                <SelectTrigger className="w-[140px] h-8">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {OLLAMA_MODELS.map(m => (
+                                        <SelectItem key={m.id} value={m.id}>
+                                            <span className="flex flex-col">
+                                                <span>{m.name}</span>
+                                                <span className="text-xs text-muted-foreground">{m.description}</span>
+                                            </span>
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        )}
+                        {/* Provider selector */}
+                        <Select value={provider} onValueChange={(v) => setProvider(v as "gemini" | "ollama")}>
+                            <SelectTrigger className="w-[120px] h-8">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="gemini">
+                                    <span className="flex items-center gap-1">
+                                        <Sparkles className="h-3 w-3" /> Gemini
+                                    </span>
+                                </SelectItem>
+                                <SelectItem value="ollama">
+                                    <span className="flex items-center gap-1">
+                                        <Settings2 className="h-3 w-3" /> Ollama
+                                    </span>
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
                 </div>
             </CardHeader>
             <CardContent className="flex flex-col h-[calc(100%-80px)]">
