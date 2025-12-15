@@ -190,3 +190,81 @@ export async function getLiveEconomicEvents() {
         return { success: false, error: "Failed to fetch events" }
     }
 }
+
+export async function getLatestQuotes(symbols: string[]) {
+    try {
+        if (!symbols || symbols.length === 0) return { success: true, data: [] }
+        const quotes = await fetchMarketData(symbols)
+        return { success: true, data: quotes }
+    } catch (e) {
+        console.error("Market quotes fetch failed", e)
+        return { success: false, error: "Failed to fetch market quotes" }
+    }
+}
+
+export async function getLatestNews(query: string = "stock market") {
+    try {
+        const news = await fetchNews(query)
+
+        // Sync to DB (Fire and forget or await if critical)
+        // We await here to ensure data consistency for the user's request "keep everything in sync"
+        await syncNewsToDb(news, query)
+
+        return { success: true, data: news }
+    } catch (e) {
+        console.error("News fetch failed", e)
+        // Fallback to DB if live fetch fails
+        try {
+            // Try to find some relevant news from DB based on query? 
+            // Querying 'content' or 'relatedTickers' might be hard with just 'query' string.
+            // For now, just return latest 10 items if live fails.
+            const dbNews = await prisma.marketNews.findMany({
+                orderBy: { providerPublishTime: 'desc' },
+                take: 10
+            })
+            // Map back to YahooNewsItem format
+            const mapped = dbNews.map(n => ({
+                uuid: n.uuid,
+                title: n.title,
+                publisher: n.publisher,
+                link: n.link,
+                providerPublishTime: Math.floor(n.providerPublishTime.getTime() / 1000), // convert back to unix seconds
+                type: n.type || "STORY"
+            }))
+            return { success: true, data: mapped, fromDb: true }
+        } catch (dbErr) {
+            console.error("DB fallback failed", dbErr)
+        }
+        return { success: false, error: "Failed to fetch news" }
+    }
+}
+
+async function syncNewsToDb(newsItems: YahooNewsItem[], query: string) {
+    if (!newsItems || newsItems.length === 0) return
+
+    // Extract tickers from query if possible? "SPY NVDA news" -> relatedTickers: "SPY, NVDA"
+    // Heuristic: Split query by space, remove "news", "market", "OR"
+    const relatedTickers = query.replace(/ OR /g, " ").split(" ")
+        .filter(w => !["news", "market", "stock"].includes(w.toLowerCase()) && w.length < 6)
+        .join(",")
+
+    for (const item of newsItems) {
+        try {
+            await prisma.marketNews.upsert({
+                where: { uuid: item.uuid },
+                update: {}, // Don't overwrite if exists
+                create: {
+                    uuid: item.uuid,
+                    title: item.title,
+                    publisher: item.publisher,
+                    link: item.link,
+                    providerPublishTime: new Date(item.providerPublishTime * 1000),
+                    type: item.type,
+                    relatedTickers: relatedTickers
+                }
+            })
+        } catch (e) {
+            console.error(`Failed to sync news item ${item.uuid}`, e)
+        }
+    }
+}

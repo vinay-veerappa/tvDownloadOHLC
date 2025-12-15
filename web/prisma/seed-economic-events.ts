@@ -70,7 +70,7 @@ function parseCsvLine(line: string): string[] {
 }
 
 async function main() {
-    const csvPath = path.join(__dirname, '..', '..', 'data', 'journal', 'economic_calendar.csv')
+    const csvPath = path.join(__dirname, '..', '..', 'docs', 'JournalRequirements', 'us_complete_economic_calendar_2000_2025.csv')
 
     if (!fs.existsSync(csvPath)) {
         console.error(`CSV file not found: ${csvPath}`)
@@ -164,9 +164,13 @@ async function main() {
     console.log(`   Skipped: ${skipped}`)
     console.log(`   Errors: ${errors}`)
 
-    // Show count
+    // Show count and range
     const count = await prisma.economicEvent.count()
+    const first = await prisma.economicEvent.findFirst({ orderBy: { datetime: 'asc' } })
+    const last = await prisma.economicEvent.findFirst({ orderBy: { datetime: 'desc' } })
+
     console.log(`\n📊 Total events in database: ${count}`)
+    console.log(`📅 Date Range: ${first?.datetime.toISOString().split('T')[0]} to ${last?.datetime.toISOString().split('T')[0]}`)
 }
 
 main()

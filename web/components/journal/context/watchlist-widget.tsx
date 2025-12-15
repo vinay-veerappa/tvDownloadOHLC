@@ -3,21 +3,40 @@
 import { useState, useEffect } from "react"
 import { YahooQuote } from "@/lib/yahoo-finance"
 import { addToWatchlist, removeFromWatchlist, searchTicker } from "@/actions/watchlist-actions"
+import { getLatestQuotes } from "@/actions/context-actions"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Plus, Trash2, TrendingUp, TrendingDown, Minus, List } from "lucide-react"
+import { Plus, Trash2, TrendingUp, TrendingDown, Minus, List, RefreshCw } from "lucide-react"
 
 interface WatchlistWidgetProps {
     watchlist: any[]
     quotes: YahooQuote[]
 }
 
-export function WatchlistWidget({ watchlist, quotes }: WatchlistWidgetProps) {
+export function WatchlistWidget({ watchlist, quotes: initialQuotes }: WatchlistWidgetProps) {
+    const [quotes, setQuotes] = useState<YahooQuote[]>(initialQuotes)
+    const [loading, setLoading] = useState(false)
     const [searchQuery, setSearchQuery] = useState("")
     const [searchResults, setSearchResults] = useState<any[]>([])
     const [showResults, setShowResults] = useState(false)
     const [adding, setAdding] = useState(false)
+
+    const fetchQuotes = async () => {
+        if (watchlist.length === 0) return
+        setLoading(true)
+        try {
+            const symbols = watchlist.map(w => w.symbol)
+            const res = await getLatestQuotes(symbols)
+            if (res.success && res.data) {
+                setQuotes(res.data)
+            }
+        } catch (error) {
+            console.error("Failed to refresh watchlist", error)
+        } finally {
+            setLoading(false)
+        }
+    }
 
     // De-bounce search
     useEffect(() => {
@@ -47,6 +66,10 @@ export function WatchlistWidget({ watchlist, quotes }: WatchlistWidgetProps) {
             alert(result.error || "Failed to add symbol")
         } else {
             setSearchQuery("")
+            // Optionally trigger a re-fetch of quotes to include new one if not handled by server revalidation
+            // Since addToWatchlist revalidates path, parent passes new props, 
+            // but we might need to fetch the quote for the NEW item if page doesn't fully reload?
+            // Actually revalidatePath should update the server component props.
         }
         setAdding(false)
     }
@@ -68,12 +91,23 @@ export function WatchlistWidget({ watchlist, quotes }: WatchlistWidgetProps) {
 
     return (
         <Card className="h-full flex flex-col">
-            <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2">
-                    <List className="h-5 w-5" />
-                    Watchlist
-                </CardTitle>
-                <CardDescription>Track key tickers</CardDescription>
+            <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
+                <div className="flex flex-col space-y-1.5">
+                    <CardTitle className="flex items-center gap-2">
+                        <List className="h-5 w-5" />
+                        Watchlist
+                    </CardTitle>
+                    <CardDescription>Track key tickers</CardDescription>
+                </div>
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={fetchQuotes}
+                    disabled={loading}
+                    className="h-8 w-8"
+                >
+                    <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                </Button>
             </CardHeader>
             <CardContent className="space-y-4 flex-1 overflow-hidden flex flex-col">
                 <div className="relative">

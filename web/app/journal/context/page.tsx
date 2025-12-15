@@ -5,11 +5,13 @@ import { YahooQuote, YahooNewsItem } from "@/lib/yahoo-finance"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { TrendingUp, TrendingDown, Minus, RefreshCw, Calendar, Globe, Newspaper } from "lucide-react"
+import { Newspaper } from "lucide-react"
 import { detectSession } from "@/lib/market-utils"
 import { ContextForm } from "@/components/journal/context/context-form"
 import { WatchlistWidget } from "@/components/journal/context/watchlist-widget"
 import { EconomicCalendarWidget } from "@/components/journal/context/economic-calendar-widget"
+import { MarketOverviewWidget } from "@/components/journal/context/market-overview-widget"
+import { MarketNewsWidget } from "@/components/journal/context/market-news-widget"
 
 export default async function ContextDashboardPage() {
     const contextResult = await getDashboardContext()
@@ -20,22 +22,25 @@ export default async function ContextDashboardPage() {
     const today = new Date()
     const currentSession = detectSession(today)
 
-    // Filter quotes for watchlist items
-    // The marketData array contains everything (Indices + Watchlist), we filter by symbol matching
-    // Note: This matches simple symbols. Yahoo might return ^GSPC for SPY sometimes but usually query matches result.
-    // For simplicity, we pass the whole marketData to the widget and let it find what it needs, or filter here.
-    // Actually, passing the whole marketData array is fine, the widget maps over the watchlist items and finds the quote.
+    // Reconstruct news query for consistency with initial fetch
+    const watchlistSymbols = watchlist.map(w => w.symbol)
+    const keySymbols = ["SPY", ...watchlistSymbols.slice(0, 3)]
+    // Use simple space or comma for multiple terms. Yahoo search handles space as flexible match.
+    const newsQuery = keySymbols.join(" ") + " news"
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between space-y-2">
                 <div>
-                    <h2 className="text-3xl font-bold tracking-tight">Market Context</h2>
+                    <h2 className="text-2xl font-bold tracking-tight">Market Context</h2>
                     <p className="text-muted-foreground">
-                        {today.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                        Daily preparation and market overview
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+                <div className="col-span-full flex items-center gap-2">
                     <Badge variant="outline" className="text-sm py-1 px-3">
                         Session: <span className="font-semibold ml-1">{currentSession}</span>
                     </Badge>
@@ -43,30 +48,7 @@ export default async function ContextDashboardPage() {
             </div>
 
             {/* Market Overview Grid (Top Indices) */}
-            <div className="grid gap-4 md:grid-cols-4">
-                {marketData.filter(q => ["^VIX", "^VVIX", "SPY", "QQQ"].includes(q.symbol)).map((quote: YahooQuote) => (
-                    <Card key={quote.symbol}>
-                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <CardTitle className="text-sm font-medium">
-                                {quote.name || quote.symbol}
-                            </CardTitle>
-                            {quote.changePercent > 0 ? (
-                                <TrendingUp className="h-4 w-4 text-green-500" />
-                            ) : quote.changePercent < 0 ? (
-                                <TrendingDown className="h-4 w-4 text-red-500" />
-                            ) : (
-                                <Minus className="h-4 w-4 text-muted-foreground" />
-                            )}
-                        </CardHeader>
-                        <CardContent>
-                            <div className="text-2xl font-bold">{quote.price.toFixed(2)}</div>
-                            <p className={`text-xs ${quote.changePercent >= 0 ? "text-green-500" : "text-red-500"}`}>
-                                {quote.change > 0 ? "+" : ""}{quote.change.toFixed(2)} ({quote.changePercent.toFixed(2)}%)
-                            </p>
-                        </CardContent>
-                    </Card>
-                ))}
-            </div>
+            <MarketOverviewWidget initialQuotes={marketData} />
 
             <div className="grid gap-6 md:grid-cols-12">
                 {/* 1. Daily Context Form */}
@@ -86,36 +68,7 @@ export default async function ContextDashboardPage() {
 
                 {/* 4. News */}
                 <div className="md:col-span-3 space-y-6">
-                    <Card className="h-full">
-                        <CardHeader>
-                            <CardTitle className="flex items-center gap-2">
-                                <Newspaper className="h-5 w-5" />
-                                Market News
-                            </CardTitle>
-                            <CardDescription>Latest headlines</CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="space-y-4">
-                                {news.slice(0, 5).map((item: YahooNewsItem) => (
-                                    <div key={item.uuid} className="group">
-                                        <div className="flex flex-col space-y-1">
-                                            <a href={item.link} target="_blank" rel="noopener noreferrer" className="font-medium text-sm group-hover:underline line-clamp-2">
-                                                {item.title}
-                                            </a>
-                                            <div className="flex items-center justify-between text-xs text-muted-foreground">
-                                                <span>{item.publisher}</span>
-                                                <span>{new Date(item.providerPublishTime * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                            </div>
-                                        </div>
-                                        <Separator className="my-3" />
-                                    </div>
-                                ))}
-                                <a href="https://finance.yahoo.com/news/" target="_blank" rel="noopener noreferrer" className="block text-center text-xs text-muted-foreground hover:underline pt-2">
-                                    View on Yahoo Finance
-                                </a>
-                            </div>
-                        </CardContent>
-                    </Card>
+                    <MarketNewsWidget initialNews={news} defaultQuery={newsQuery} />
                 </div>
             </div>
         </div>
