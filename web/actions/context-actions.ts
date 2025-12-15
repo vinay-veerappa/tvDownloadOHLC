@@ -9,6 +9,7 @@ export interface DashboardContext {
     news: YahooNewsItem[]
     dailyNote: any | null
     events: any[]
+    watchlist: any[]
 }
 
 export async function getDashboardContext(): Promise<{ success: boolean, data?: DashboardContext, error?: string }> {
@@ -17,11 +18,25 @@ export async function getDashboardContext(): Promise<{ success: boolean, data?: 
         const startOfDay = new Date(today.setHours(0, 0, 0, 0))
         const endOfDay = new Date(today.setHours(23, 59, 59, 999))
 
-        // 1. Fetch Market Data (VIX, VVIX, SPY, QQQ)
-        const marketDataIn = fetchMarketData(["^VIX", "^VVIX", "SPY", "QQQ"])
+        // 0. Fetch Watchlist
+        const watchlist = await prisma.watchlist.findMany({
+            orderBy: { createdAt: 'desc' }
+        })
+        const watchlistSymbols = watchlist.map(w => w.symbol)
 
-        // 2. Fetch News (Market general)
-        const newsIn = fetchNews("stock market analysis")
+        // 1. Fetch Market Data (VIX, VVIX, SPY, QQQ + Watchlist)
+        const defaultSymbols = ["^VIX", "^VVIX", "SPY", "QQQ"]
+        // Deduplicate symbols
+        const allSymbols = Array.from(new Set([...defaultSymbols, ...watchlistSymbols]))
+
+        const marketDataIn = fetchMarketData(allSymbols)
+
+        // 2. Fetch News (Prioritize Watchlist + Generals)
+        // Construct query: "SPY OR NVDA OR QQQ news"
+        // Limit query length/complexity: pick top 3 watchlist items + SPY to keep it relevant
+        const keySymbols = ["SPY", ...watchlistSymbols.slice(0, 3)]
+        const newsQuery = keySymbols.join(" OR ") + " market news"
+        const newsIn = fetchNews(newsQuery)
 
         // 3. Fetch Daily Note
         const noteIn = prisma.note.findFirst({
@@ -58,7 +73,8 @@ export async function getDashboardContext(): Promise<{ success: boolean, data?: 
                 marketData,
                 news,
                 dailyNote,
-                events
+                events,
+                watchlist
             }
         }
 

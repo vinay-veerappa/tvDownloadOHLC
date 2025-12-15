@@ -203,3 +203,10 @@ model TagGroup {
   color String @default("#6b7280")
   tags  Tag[]
 }
+
+model Watchlist {
+  id        String   @id @default(cuid())
+  symbol    String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+}

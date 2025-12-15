@@ -27,7 +27,9 @@ A comprehensive trade tracking and analysis system integrated with the chart app
 - ✅ **Chart Integration** - Bidirectional navigation
 - ✅ **CSV Import/Export** - Data portability
 - ✅ **Economic Calendar** - 8,843 events (2000-2025)
-- ✅ **Market Context** - VIX, VVIX, session detection
+- ✅ **Watchlist** - Real-time quotes, autocomplete, news prioritization
+- ✅ **Market Context** - VIX, VVIX, session detection, economic calendar
+- ✅ **Settings Management** - Accounts, Strategies, Tags, Data Reset
 
 ## Environment Setup
 
