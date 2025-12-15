@@ -86,6 +86,9 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     const deferredLevelTouches = useDeferredValue(levelTouches);
     const deferredDailyHodLod = useDeferredValue(dailyHodLod);
 
+    // 6. UI State - MUST be declared before any early returns
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
     // Handlers (Memoized)
     const handleFilterChange = useMemo(() => (s: string, v: string) => setFilters(prev => ({ ...prev, [s]: v })), []);
     const handleBrokenFilterChange = useMemo(() => (s: string, v: string) => setBrokenFilters(prev => ({ ...prev, [s]: v })), []);
@@ -107,8 +110,6 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     const londonDirFilter = filters['London'] || '';
     const londonContext = londonDirFilter.startsWith('Long') ? 'Long' :
         londonDirFilter.startsWith('Short') ? 'Short' : 'None';
-
-    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
     if (filterError) return <div className="p-8 text-center text-red-500">Failed to load profiler data.</div>;
 
