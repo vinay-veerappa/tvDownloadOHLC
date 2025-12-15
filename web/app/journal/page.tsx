@@ -3,7 +3,7 @@ import { AddTradeDialog } from "@/components/journal/add-trade-dialog"
 import { TradeList } from "@/components/journal/trade-list"
 import { ImportExportDialog } from "@/components/journal/import-export-dialog"
 import { Button } from "@/components/ui/button"
-import { BarChart3, Bot } from "lucide-react"
+import { BarChart3, Bot, Settings } from "lucide-react"
 
 export default function JournalPage() {
     return (
@@ -24,6 +24,12 @@ export default function JournalPage() {
                             Analytics
                         </Button>
                     </Link>
+                    <Link href="/journal/settings">
+                        <Button variant="outline">
+                            <Settings className="h-4 w-4 mr-2" />
+                            Settings
+                        </Button>
+                    </Link>
                     <AddTradeDialog />
                 </div>
             </div>
@@ -31,4 +37,3 @@ export default function JournalPage() {
         </div>
     )
 }
-
