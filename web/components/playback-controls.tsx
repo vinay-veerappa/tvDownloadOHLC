@@ -2,9 +2,9 @@
 
 import * as React from "react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Calendar } from "@/components/ui/calendar"
 import { format } from "date-fns"
 import {
     ChevronLeft,
@@ -237,26 +237,24 @@ export function PlaybackControls({
 
     return (
         <div className="flex items-center gap-2">
-            {/* Date Picker (Normal Navigation) */}
-            <Popover open={isDatePopoverOpen} onOpenChange={setIsDatePopoverOpen}>
-                <PopoverTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1">
-                        <CalendarIcon className="h-3 w-3" />
-                        {selectedDate ? format(selectedDate, 'MMM d, yyyy') : 'Go to date'}
-                    </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                        mode="single"
-                        selected={selectedDate}
-                        onSelect={handleDateSelect}
-                        initialFocus
-                        disabled={isDateDisabled}
-                        defaultMonth={selectedDate || maxDate}
-                        fixedWeeks
-                    />
-                </PopoverContent>
-            </Popover>
+            {/* Date Picker (Normal Navigation) - Native date input */}
+            <div className="flex items-center gap-1">
+                <CalendarIcon className="h-3 w-3 text-muted-foreground" />
+                <Input
+                    type="date"
+                    className="h-6 w-[130px] text-xs px-2 border-0 bg-transparent focus-visible:ring-0"
+                    value={selectedDate ? format(selectedDate, 'yyyy-MM-dd') : ''}
+                    min={minDate ? format(minDate, 'yyyy-MM-dd') : undefined}
+                    max={maxDate ? format(maxDate, 'yyyy-MM-dd') : undefined}
+                    onChange={(e) => {
+                        if (e.target.value) {
+                            const date = new Date(e.target.value + 'T09:30:00')
+                            setSelectedDate(date)
+                            onScrollToTime(Math.floor(date.getTime() / 1000))
+                        }
+                    }}
+                />
+            </div>
 
             <div className="h-4 w-[1px] bg-border" />
 
@@ -296,23 +294,24 @@ export function PlaybackControls({
                                         Select bar
                                     </Button>
 
-                                    <div className="space-y-1">
-                                        <Button variant="ghost" size="sm" className="justify-start gap-2 h-8 px-2 w-full" onClick={() => { }}>
-                                            <CalendarIcon className="h-4 w-4" />
-                                            Select date...
-                                        </Button>
-                                        <div className="px-2 pb-2">
-                                            <Calendar
-                                                mode="single"
-                                                selected={replayDate}
-                                                onSelect={handleReplayStartSelect}
-                                                initialFocus
-                                                disabled={isDateDisabled}
-                                                defaultMonth={replayDate || maxDate}
-                                                className="rounded-md border shadow-sm"
-                                                fixedWeeks
-                                            />
-                                        </div>
+                                    <div className="flex items-center gap-2 px-2 py-1">
+                                        <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            type="date"
+                                            className="h-8 flex-1 text-sm"
+                                            value={replayDate ? format(replayDate, 'yyyy-MM-dd') : ''}
+                                            min={minDate ? format(minDate, 'yyyy-MM-dd') : undefined}
+                                            max={maxDate ? format(maxDate, 'yyyy-MM-dd') : undefined}
+                                            onChange={(e) => {
+                                                if (e.target.value && onStartReplay) {
+                                                    const date = new Date(e.target.value + 'T09:30:00')
+                                                    setReplayDate(date)
+                                                    toast.info(`Starting replay from ${format(date, 'MMM d, yyyy')}`)
+                                                    onStartReplay({ time: Math.floor(date.getTime() / 1000) })
+                                                    setIsReplayPopoverOpen(false)
+                                                }
+                                            }}
+                                        />
                                     </div>
 
                                     <Button variant="ghost" size="sm" className="justify-start gap-2 h-8 px-2" onClick={handleFirstAvailable}>
