@@ -1,58 +1,54 @@
-# Trading Journal Documentation
+# Trading Journal
 
-## Overview
+A comprehensive trade tracking and analysis system integrated with the chart application.
 
-The Trading Journal is a comprehensive trade tracking and analysis system integrated with the chart application. It provides features for logging trades, reviewing performance, setting goals, and managing trading playbooks.
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [User Guide](JOURNAL_USER_GUIDE.md) | How to use the journal, workflows, best practices |
+| [Technical Architecture](JOURNAL_TECHNICAL.md) | Schema, actions, components, design decisions |
+
+## Quick Start
+
+1. Navigate to `/journal`
+2. Click **"+ Add Trade"** to record a trade
+3. View **Analytics** for performance insights
+4. Use **AI Assistant** for pattern analysis
 
 ## Features
 
-### Core Journal Features
+- ✅ **Trade Logging** - Entry/exit, P&L tracking
+- ✅ **Analytics Dashboard** - Summary cards, equity curve
+- ✅ **AI Assistant** - Gemini + Ollama support
+- ✅ **Goal Tracking** - Daily/weekly/monthly targets
+- ✅ **Trade Review** - Post-trade questionnaire
+- ✅ **Playbook** - Trading setup library
+- ✅ **Chart Integration** - Bidirectional navigation
+- ✅ **CSV Import/Export** - Data portability
+- ✅ **Economic Calendar** - 8,843 events (2000-2025)
+- ✅ **Market Context** - VIX, VVIX, session detection
 
-| Feature | Description |
-|---------|-------------|
-| **Trade Logging** | Log trades with entry/exit prices, direction, quantity, strategy |
-| **Trade List** | Filterable, sortable list of all trades with pagination |
-| **Trade Detail** | Full trade view with all fields, notes, and market context |
-| **Analytics Dashboard** | Summary cards, equity curve, strategy comparison |
+## Environment Setup
 
-### Advanced Features
+```env
+# Required for AI (Gemini)
+GEMINI_API_KEY=your_api_key
 
-| Feature | Description |
-|---------|-------------|
-| **Trade Review** | Post-trade questionnaire with execution rating, emotional state, lessons learned |
-| **Goal Tracker** | Daily/weekly/monthly P&L targets with progress visualization |
-| **Playbook** | Setup library with entry/exit/risk rules |
-| **Market Context** | VIX, VVIX, ATR, session detection for each trade |
+# Optional for AI (Ollama)
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2
+```
 
-### Integration Features
+## Data Scripts
 
-| Feature | Description |
-|---------|-------------|
-| **Chart → Journal** | Log Trade button in chart toolbar opens Add Trade dialog |
-| **Journal → Chart** | View on Chart button navigates to chart at trade time |
-| **Backtest Import** | Import backtest results as simulated trades |
-| **CSV Import/Export** | Import/export trades in CSV format |
+```bash
+# Fetch VIX/VVIX data
+python scripts/fetch_vix_data.py
 
-## Data Structure
-
-### Trade Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ticker` | String | Trading instrument (e.g., NQ1, ES1) |
-| `direction` | LONG/SHORT | Trade direction |
-| `entryDate` | DateTime | Entry timestamp |
-| `exitDate` | DateTime? | Exit timestamp |
-| `entryPrice` | Float | Entry price |
-| `exitPrice` | Float? | Exit price |
-| `quantity` | Float | Position size |
-| `status` | OPEN/CLOSED | Trade status |
-| `pnl` | Float? | Realized profit/loss |
-| `stopLoss` | Float? | Stop loss price |
-| `takeProfit` | Float? | Take profit price |
-| `strategyId` | String? | Linked strategy |
-| `accountId` | String? | Trading account |
-| `notes` | Text? | Trade notes |
+# Import economic calendar
+cd web && npx tsx prisma/seed-economic-events.ts
+```
 
 ### Economic Calendar
 
