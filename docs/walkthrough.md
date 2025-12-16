@@ -98,3 +98,5 @@ Enable Daily Profiler for new tickers (GC1, CL1, RTY1, YM1) and ensure data inte
 -   **Verification**:
     -   Regenerated all derived data (5m, 15m, 1h, 4h).
     -   Recomputed Profiler statistics and Level Touches.
+    -   **Update**: Fixed silent data loss in Web Chunks. The import script failed to populate the `time` column (Unix timestamp) for new rows.
+    -   **Fix**: Backfilled `time` from Index and re-ran chunk generation. Dec 2025 data now visible.
