@@ -87,6 +87,7 @@ Contains:
 1. **HOD/LOD Time Analysis**
 2. **Global Price Range Distribution** (All sessions combined)
 3. **Daily Price Model** (Median High/Low paths, Full Day 18:00→16:00)
+    *   **UPDATED**: Also displays a **Session Price Model Grid** (4 charts: Asia, London, NY1, NY2) below the daily model for session-by-session flow analysis.
 4. **Daily Levels Analysis** (All reference levels)
 5. **Session HOD/LOD Contribution** (Stats)
 
@@ -97,9 +98,8 @@ Each session tab uses the `SessionAnalysisView` component with:
 |-----|-----------|-------------|
 | 1 | **HOD/LOD Analysis** | Time histograms + zoom |
 | 2 | **Range Distribution** | High/Low % from open |
-| 3 | **Median Price Model** | Session-specific timeframe chart |
-| 4 | **Outcome Grid** | True/False outcome panels |
-| 5 | **Session Levels** | Relevant reference levels |
+| 3 | **Outcome Grid** | True/False outcome panels showing impact on SUBSEQUENT sessions (via **Price Model Grid**) |
+| 4 | **Session Levels** | Relevant reference levels |
 
 ---
 
@@ -127,20 +127,22 @@ When filters are set in the Profiler Wizard:
 
 All times are in **US/Eastern (ET)**.
 
-| Level Name | Definition | Establishment Time | **Valid Touch Window** |
-| :--- | :--- | :--- | :--- |
-| **PDH** | Previous Day High | 18:00 | **18:00 - 17:00** |
-| **PDL** | Previous Day Low | 18:00 | **18:00 - 17:00** |
-| **P12 High** | Overnight High (18:00-06:00) | 06:00 | **06:00 - 17:00** |
-| **P12 Low** | Overnight Low (18:00-06:00) | 06:00 | **06:00 - 17:00** |
-| **P12 Mid** | Overnight Midpoint | 06:00 | **06:00 - 17:00** |
-| **Daily Open** | Globex Open (18:00) | 18:00 | **18:00 - 17:00** |
-| **Midnight Open** | Midnight Price (00:00) | 00:00 | **00:00 - 17:00** |
-| **07:30 Open** | Pre-Market Open | 07:30 | **07:30 - 17:00** |
-| **Asia Mid** | Asia Session Midpoint | 02:00 | **02:00 - 17:00** |
-| **London Mid** | London Session Midpoint | 07:00 | **07:00 - 17:00** |
-| **NY1 Mid** | NY1 Session Midpoint | 12:00 | **12:00 - 17:00** |
-| **NY2 Mid** | NY2 Session Midpoint | 16:00 | (Removed from UI) |
+**Smart Start Times**: To avoid empty space on charts, specific levels have a defined "Chart Start Time" that may override the session start. For example, viewing the "Daily" session (starts 18:00) will still show the "Midnight Open" chart starting at 00:00.
+
+| Level Name | Definition | Establishment Time | **Valid Touch Window** | **Chart Start Time** |
+| :--- | :--- | :--- | :--- | :--- |
+| **PDH** | Previous Day High | 18:00 | **18:00 - 17:00** | 18:00 |
+| **PDL** | Previous Day Low | 18:00 | **18:00 - 17:00** | 18:00 |
+| **P12 High** | Overnight High (18:00-06:00) | 06:00 | **06:00 - 17:00** | **06:00** |
+| **P12 Low** | Overnight Low (18:00-06:00) | 06:00 | **06:00 - 17:00** | **06:00** |
+| **P12 Mid** | Overnight Midpoint | 06:00 | **06:00 - 17:00** | **06:00** |
+| **Daily Open** | Globex Open (18:00) | 18:00 | **18:00 - 17:00** | 18:00 |
+| **Midnight Open** | Midnight Price (00:00) | 00:00 | **00:00 - 17:00** | **00:00** |
+| **07:30 Open** | Pre-Market Open | 07:30 | **07:30 - 17:00** | **07:30** |
+| **Asia Mid** | Asia Session Midpoint | 02:00 | **02:00 - 17:00** | **02:00** |
+| **London Mid** | London Session Midpoint | 07:00 | **07:00 - 17:00** | **07:00** |
+| **NY1 Mid** | NY1 Session Midpoint | 12:00 | **12:00 - 17:00** | **12:00** |
+| **NY2 Mid** | NY2 Session Midpoint | 16:00 | (Removed from UI) | **16:00** |
 
 ### 4.2 Session-Specific Levels
 Each session tab displays only relevant levels:
@@ -167,6 +169,7 @@ For each level, display:
 - **Median Aggregation**: Use median (not mean) for High/Low paths
 - **Session-Trimmed**: Each session chart shows only its relevant timeframe
 - **Daily Model**: Full day view (18:00 → 16:00 next day)
+- **Grid View**: A 2x2 grid displaying Asia, London, NY1, and NY2 models simultaneously.
 
 ### 5.2 Chart Features
 - X-axis: Time (session duration or full day)
@@ -175,7 +178,12 @@ For each level, display:
 - **Red line**: Median Low path
 - Gray shaded region: Session boundary
 
-### 5.3 Tooltip Style
+### 5.3 Chart Interaction (Pop-out)
+- **Expand Button**: All charts (Price Model, Levels, HOD/LOD) must have an "Expand" (Maximize2) button in the header.
+- **Dialog View**: Clicking expands the chart into a modal dialog.
+- **Dimensions**: Dialog must maximize width to **90% of Viewport Width (90vw)** for detailed inspection.
+
+### 5.4 Tooltip Style
 - **Header Info Style**: As user hovers, values appear in fixed header row above chart
 - Keep chart view unobstructed (no floating tooltips)
 
@@ -186,7 +194,7 @@ For each level, display:
 ### 6.1 Panel Structure
 Each outcome panel contains:
 1. **Header**: Outcome name, % probability, sample count
-2. **Average Price Path**: Median High/Low lines
+2. **Session Grid**: 4-Session Price Model Grid showing the visualization of the outcome's flow through the day.
 3. **HOD/LOD Distribution**: Combined histogram
 4. **Range Distribution**: % from open histograms
 5. **Level Touch Rates**: P12 and session-relevant levels
@@ -201,7 +209,7 @@ Each outcome panel contains:
 
 ---
 
-## ✅ Implementation Status (as of Dec 11, 2024)
+## ✅ Implementation Status (as of Dec 16, 2024)
 
 ### Completed ✅
 
@@ -228,6 +236,9 @@ Each outcome panel contains:
 | **Standardized Tooltips** | Unified styling across all Recharts components |
 | **Outcome Panel Grid** | Integrated in session tabs |
 | **Session-Specific Levels** | `limitLevels` prop verified |
+| **Chart Pop-out** | Dialogs for all charts, sized to 90vw width |
+| **Price Model Grid** | 2x2 Session Grid in Overview and Outcome Tabs |
+| **Smart Start Times** | Level charts dynamically start at level creation time (not session start) |
 
 ### Pending ⏳
 
@@ -261,6 +272,7 @@ Each outcome panel contains:
 | `web/components/profiler/profiler-wizard.tsx` | Filter wizard |
 | `web/components/profiler/active-filters-row.tsx` | Filter badge display |
 | `web/components/profiler/price-model-chart.tsx` | Median chart component |
+| `web/components/profiler/price-model-grid.tsx` | **[NEW]** 2x2 Grid component |
 | `web/components/profiler/chart-header-info.tsx` | Header-style tooltip |
 | `web/components/profiler/hod-lod-analysis.tsx` | HOD/LOD histograms |
 | `web/components/profiler/daily-levels.tsx` | Reference levels (with limitLevels) |

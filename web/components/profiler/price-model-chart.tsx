@@ -14,9 +14,17 @@ import {
     CartesianGrid,
     Tooltip,
     ReferenceLine,
+    ReferenceArea,
     Brush
 } from 'recharts';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Maximize2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 
 interface PriceModelChartProps {
     ticker: string;
@@ -47,6 +55,8 @@ export const PriceModelChart = memo(function PriceModelChart({
         high: number;
         low: number;
     } | null>(null);
+
+    const [isExpanded, setIsExpanded] = useState(false);
 
     // Create stable cache key from filter params
     const cacheKey = JSON.stringify({
@@ -190,102 +200,146 @@ export const PriceModelChart = memo(function PriceModelChart({
         );
     }
 
+    // Extracted Chart Content for reuse in Dialog
+    const ChartContent = () => (
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+            <LineChart
+                data={chartData}
+                margin={{ top: 10, right: 10, bottom: 0, left: 10 }}
+                onMouseMove={handleMouseMove}
+                onMouseLeave={handleMouseLeave}
+            >
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <XAxis
+                    dataKey="time_idx"
+                    tickFormatter={formatXAxis}
+                    tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
+                    axisLine={false}
+                    tickLine={false}
+                    ticks={xAxisTicks}
+                    interval={0} // Force show all calculated ticks
+                    type="number"
+                    domain={[0, 'auto']} // Force start at 0 to ensure shading is visible
+                />
+                <YAxis
+                    tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
+                    axisLine={false}
+                    tickLine={false}
+                    domain={['auto', 'auto']}
+                    tickFormatter={(val) => `${val.toFixed(2)}%`}
+                    width={50}
+                />
+                {/* Grey line at 0 */}
+                <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
+
+                {/* Tooltip hidden via opacity to ensure events fire but no popover */}
+                <Tooltip
+                    wrapperStyle={{ opacity: 0 }}
+                    cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '4 4' }}
+                />
+
+                {/* Session Shading (Opening Range / Classification Window) */}
+                {(() => {
+                    let shadeEnd = 0;
+                    if (session === 'Asia') shadeEnd = 90; // 18:00 - 19:30
+                    else if (session === 'London') shadeEnd = 60; // 02:30 - 03:30
+                    else if (session === 'NY1') shadeEnd = 60; // 07:30 - 08:30
+                    else if (session === 'NY2') shadeEnd = 60; // 11:30 - 12:30
+
+                    if (shadeEnd > 0) {
+                        return (
+                            <ReferenceArea
+                                x1={0}
+                                x2={shadeEnd}
+                                fill="#888888"
+                                fillOpacity={0.2}
+                                ifOverflow="extendDomain"
+                            />
+                        );
+                    }
+                    return null;
+                })()}
+
+                <Line
+                    type="monotone"
+                    dataKey="high"
+                    stroke="#10b981"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                    isAnimationActive={false} // Disable animation for performance
+                />
+                <Line
+                    type="monotone"
+                    dataKey="low"
+                    stroke="#ef4444"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                    isAnimationActive={false}
+                />
+                <Brush
+                    dataKey="time_idx"
+                    height={30}
+                    stroke="#8884d8"
+                    tickFormatter={formatXAxis}
+                    travellerWidth={10}
+                    alwaysShowText={false}
+                />
+            </LineChart>
+        </ResponsiveContainer>
+    );
 
     return (
-        <Card className="border border-border/50 shadow-none">
-            <CardContent className="p-0">
-                <div className="pt-2 px-4 flex justify-between items-start">
-                    <ChartHeaderInfo
-                        title=""
-                        subtitle={hoverData ? '' : `${data.count} Sessions`}
-                        items={headerItems} // Fallback text removed completely
-                    />
+        <>
+            <Card className="border border-border/50 shadow-none">
+                <CardContent className="p-0">
+                    <div className="pt-2 px-4 flex justify-between items-start">
+                        <ChartHeaderInfo
+                            title=""
+                            subtitle={hoverData ? '' : `${data.count} Sessions`}
+                            items={headerItems}
+                        />
 
-                    {/* Interval Selector & Tools */}
-                    <div className="flex items-center space-x-2 ml-auto bg-secondary/30 rounded p-1">
-                        <div className="flex space-x-1">
-                            {[1, 5, 15].map((mins) => (
-                                <button
-                                    key={mins}
-                                    onClick={() => setBucketMinutes(mins)}
-                                    className={`text-xs px-2 py-0.5 rounded transition-colors ${bucketMinutes === mins
-                                        ? 'bg-primary text-primary-foreground'
-                                        : 'hover:bg-muted text-muted-foreground'
-                                        }`}
-                                >
-                                    {mins}m
-                                </button>
-                            ))}
+                        {/* Tools: Interval + Expand */}
+                        <div className="flex items-center space-x-2 ml-auto">
+                            <div className="flex space-x-1 bg-secondary/30 rounded p-1">
+                                {[1, 5, 15].map((mins) => (
+                                    <button
+                                        key={mins}
+                                        onClick={() => setBucketMinutes(mins)}
+                                        className={`text-xs px-2 py-0.5 rounded transition-colors ${bucketMinutes === mins
+                                            ? 'bg-primary text-primary-foreground'
+                                            : 'hover:bg-muted text-muted-foreground'
+                                            }`}
+                                    >
+                                        {mins}m
+                                    </button>
+                                ))}
+                            </div>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setIsExpanded(true)}>
+                                <Maximize2 className="h-4 w-4" />
+                            </Button>
                         </div>
                     </div>
-                </div>
-                <div style={{ height: height - 40, width: '100%', minWidth: 0, minHeight: 0 }}>
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                        <LineChart
-                            data={chartData}
-                            margin={{ top: 10, right: 10, bottom: 0, left: 10 }}
-                            onMouseMove={handleMouseMove}
-                            onMouseLeave={handleMouseLeave}
-                        >
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                            <XAxis
-                                dataKey="time_idx"
-                                tickFormatter={formatXAxis}
-                                tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
-                                axisLine={false}
-                                tickLine={false}
-                                ticks={xAxisTicks}
-                                interval={0} // Force show all calculated ticks
-                                type="number"
-                                domain={['dataMin', 'dataMax']}
-                            />
-                            <YAxis
-                                tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
-                                axisLine={false}
-                                tickLine={false}
-                                domain={['auto', 'auto']}
-                                tickFormatter={(val) => `${val.toFixed(2)}%`}
-                                width={50}
-                            />
-                            {/* Grey line at 0 */}
-                            <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
+                    <div style={{ height: height - 40, width: '100%', minWidth: 0, minHeight: 0 }}>
+                        <ChartContent />
+                    </div>
+                </CardContent>
+            </Card>
 
-                            {/* Tooltip hidden via opacity to ensure events fire but no popover */}
-                            <Tooltip
-                                wrapperStyle={{ opacity: 0 }}
-                                cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '4 4' }}
-                            />
-
-                            <Line
-                                type="monotone"
-                                dataKey="high"
-                                stroke="#10b981"
-                                strokeWidth={2}
-                                dot={false}
-                                activeDot={{ r: 4 }}
-                                isAnimationActive={false} // Disable animation for performance
-                            />
-                            <Line
-                                type="monotone"
-                                dataKey="low"
-                                stroke="#ef4444"
-                                strokeWidth={2}
-                                dot={false}
-                                activeDot={{ r: 4 }}
-                                isAnimationActive={false}
-                            />
-                            <Brush
-                                dataKey="time_idx"
-                                height={30}
-                                stroke="#8884d8"
-                                tickFormatter={formatXAxis}
-                                travellerWidth={10}
-                                alwaysShowText={false}
-                            />
-                        </LineChart>
-                    </ResponsiveContainer>
-                </div>
-            </CardContent>
-        </Card>
+            <Dialog open={isExpanded} onOpenChange={setIsExpanded}>
+                <DialogContent className="max-w-[90vw] w-[90vw] h-[85vh] flex flex-col sm:max-w-[90vw]">
+                    <DialogHeader>
+                        <DialogTitle>{session} Price Model ({bucketMinutes}m)</DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-1 w-full min-h-0 mt-4">
+                        <div style={{ height: '100%', width: '100%' }}>
+                            <ChartContent />
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+        </>
     );
 });

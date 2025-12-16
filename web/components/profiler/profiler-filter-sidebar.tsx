@@ -26,7 +26,14 @@ interface FilterSidebarProps {
 }
 
 const SESSIONS = ['Asia', 'London', 'NY1', 'NY2'];
-const AVAILABLE_TICKERS = ['NQ1'];
+const AVAILABLE_TICKERS = [
+    { value: 'NQ1', label: '/NQ: E-mini Nasdaq-100' },
+    { value: 'ES1', label: '/ES: E-mini S&P 500' },
+    { value: 'CL1', label: '/CL: Crude Oil' },
+    { value: 'GC1', label: '/GC: Gold' },
+    { value: 'RTY1', label: '/RTY: E-mini Russell 2000' },
+    { value: 'YM1', label: '/YM: E-mini Dow Jones' },
+];
 
 export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
     stats,
@@ -114,7 +121,7 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
                         </SelectTrigger>
                         <SelectContent>
                             {AVAILABLE_TICKERS.map(t => (
-                                <SelectItem key={t} value={t}>/{t}: E-mini Nasdaq-100</SelectItem>
+                                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
                             ))}
                         </SelectContent>
                     </Select>

@@ -12,6 +12,7 @@ export interface ProfilerSession {
     low_time: string | null;
     high_pct: number;
     low_pct: number;
+    close_pct?: number; // Added for Path Distribution
     status: string;
     status_time: string | null;
     broken: boolean;

@@ -16,6 +16,14 @@ import {
     ReferenceLine
 } from 'recharts';
 import { ChartTooltipFrame, ChartTooltipHeader, ChartTooltipRow } from '@/components/ui/chart-tooltip';
+import { Maximize2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 
 const SESSION_RANGES: Record<string, { start: string; end: string }> = {
     'Asia': { start: '18:00', end: '02:00' },
@@ -24,13 +32,17 @@ const SESSION_RANGES: Record<string, { start: string; end: string }> = {
     'NY2': { start: '12:00', end: '16:00' },
     'P12': { start: '06:00', end: '17:00' },
     'Daily': { start: '18:00', end: '17:00' },
-    // Custom Bounds for specific levels
-    'Midnight': { start: '00:00', end: '17:00' },
-    'Open0730': { start: '07:30', end: '17:00' },
-    'AsiaMid': { start: '02:00', end: '17:00' },
-    'LondonMid': { start: '07:00', end: '17:00' },
-    'NY1Mid': { start: '12:00', end: '17:00' },
-    'NY2Mid': { start: '16:00', end: '17:00' },
+};
+
+// Start times for specific levels to avoid empty space
+const LEVEL_START_TIMES: Record<string, string> = {
+    'p12h': '06:00', 'p12m': '06:00', 'p12l': '06:00',
+    'midnight_open': '00:00',
+    'open_0730': '07:30',
+    'asia_mid': '02:00',   // Asia ends 02:00
+    'london_mid': '07:00', // London ends 07:00
+    'ny1_mid': '12:00',    // NY1 ends 12:00
+    'ny2_mid': '16:00',    // NY2 ends 16:00
 };
 
 interface DailyLevelsProps {
@@ -47,32 +59,69 @@ interface LevelCardProps {
     filteredDates: Set<string>;
     granularity: number;
     color: string;
-    targetSession: string; // Add targetSession prop
+    targetSession: string;
+}
+
+function timeToMinutes(time: string): number {
+    const [h, m] = time.split(':').map(Number);
+    return h * 60 + m;
 }
 
 function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, color, targetSession }: LevelCardProps) {
+    const [isExpanded, setIsExpanded] = useState(false);
+
     const stats = useMemo(() => {
         let touched = 0;
         let total = 0;
 
         const sessionRange = SESSION_RANGES[targetSession as keyof typeof SESSION_RANGES];
+        const [sessionStartH, sessionStartM] = sessionRange.start.split(':').map(Number);
+        const [sessionEndH, sessionEndM] = sessionRange.end.split(':').map(Number);
 
-        // Generate all buckets for the full session range to ensure fixed X-Axis
-        const allBuckets: string[] = [];
+        let startMins = sessionStartH * 60 + sessionStartM;
+        let endMins = sessionEndH * 60 + sessionEndM;
 
-        // Define Start/End minutes for iteration
-        let startMins = 0;
-        let endMins = 24 * 60; // 1440
+        // Handle midnight crossing for session (e.g. 18:00 -> 17:00 next day, or 18:00 -> 02:00)
+        // If end < start, it means it crosses midnight
+        if (endMins < startMins) endMins += 24 * 60;
 
-        if (targetSession !== 'All') {
-            const [sh, sm] = sessionRange.start.split(':').map(Number);
-            const [eh, em] = sessionRange.end.split(':').map(Number);
+        // Apply Level specific start time constraint
+        const specificStart = LEVEL_START_TIMES[levelKey];
+        if (specificStart) {
+            // Need to determine where this specific start falls relative to the session start
+            // We assume the specific start is within the session duration (possibly next day)
 
-            startMins = sh * 60 + sm;
-            endMins = eh * 60 + em;
-            // Handle midnight crossing? e.g. 18:00-02:00
-            if (endMins < startMins) endMins += 24 * 60;
+            const [specH, specM] = specificStart.split(':').map(Number);
+            let specMins = specH * 60 + specM;
+
+            // Adjust specMins to be >= startMins
+            // Case 1: Session starts 18:00, specific is 00:00. 18*60=1080. 00*60=0.
+            // 0 < 1080. But we know 00:00 is "tomorrow". So add 24*60.
+            // Case 2: Session starts 06:00, specific 07:00. 360 < 420. Correct.
+
+            // Heuristic: if specific time < session start time, assume it's next day
+            // UNLESS session crosses midnight and specific time is effectively "late" in day?
+            // Actually simpler: 
+            // 1. Normalize both to 0-1440.
+            // 2. If session crosses midnight (start > end_nom), loop.
+
+            // Robust way:
+            // Calculate offset from session start.
+            let offset = specMins - (sessionStartH * 60 + sessionStartM);
+            if (offset < 0) offset += 24 * 60;
+
+            // New effective start 
+            const newStart = startMins + offset;
+
+            // Only update if newStart is within [startMins, endMins]
+            // and it is actually *later* than current start (which it always is by def)
+            if (newStart < endMins) {
+                startMins = newStart;
+            }
         }
+
+        // Generate all buckets for the ADJUSTED range
+        const allBuckets: string[] = [];
 
         // Populate all buckets
         for (let m = startMins; m < endMins; m += granularity) {
@@ -104,15 +153,28 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
 
                     const [h, m] = firstHit.split(':').map(Number);
                     const mins = h * 60 + m;
-                    const bucketMins = Math.floor(mins / granularity) * granularity;
-                    const bucketH = Math.floor(bucketMins / 60);
-                    const bucketM = bucketMins % 60;
-                    const bucket = `${bucketH.toString().padStart(2, '0')}:${bucketM.toString().padStart(2, '0')}`;
 
-                    if (!filteredHitDates.has(bucket)) {
-                        filteredHitDates.set(bucket, new Set());
+                    // We need to map this hit (HH:MM) to our linear minute timeline [startMins, endMins]
+                    // Calculate offset from session start
+                    let offset = mins - (sessionStartH * 60 + sessionStartM);
+                    if (offset < 0) offset += 24 * 60;
+
+                    const absMins = (sessionStartH * 60 + sessionStartM) + offset;
+
+                    // Only count if within our potentially shortened window
+                    if (absMins >= startMins && absMins < endMins) {
+                        // Bucket logic
+                        const bucketMins = Math.floor(absMins / granularity) * granularity;
+                        // Convert back to HH:MM for map key
+                        const bucketH = Math.floor((bucketMins % (24 * 60)) / 60);
+                        const bucketM = bucketMins % 60;
+                        const bucket = `${bucketH.toString().padStart(2, '0')}:${bucketM.toString().padStart(2, '0')}`;
+
+                        if (!filteredHitDates.has(bucket)) {
+                            filteredHitDates.set(bucket, new Set());
+                        }
+                        filteredHitDates.get(bucket)!.add(date);
                     }
-                    filteredHitDates.get(bucket)!.add(date);
                 }
             }
         });
@@ -150,104 +212,121 @@ function LevelCard({ title, levelKey, levelTouches, filteredDates, granularity, 
         }
 
         return { hitRate, mode, median, total, touched, histData };
-    }, [levelTouches, filteredDates, levelKey, granularity, targetSession]); // Add targetSession to dependency array
+    }, [levelTouches, filteredDates, levelKey, granularity, targetSession]);
+
+    const ChartContent = () => (
+        <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={stats.histData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
+                <XAxis
+                    dataKey="time"
+                    fontSize={10}
+                    tickMargin={5}
+                    minTickGap={30}
+                    height={30}
+                />
+                <YAxis hide />
+                <Tooltip
+                    cursor={{ fill: 'var(--muted)', fillOpacity: 0.2 }}
+                    content={({ active, payload, label }) => {
+                        if (active && payload && payload.length) {
+                            const data = payload[0].payload;
+                            const labelStr = String(label);
+                            const [h, m] = labelStr.split(':').map(Number);
+                            const startMins = h * 60 + m;
+                            const endMins = startMins + granularity;
+                            const endH = Math.floor(endMins / 60) % 24;
+                            const endM = endMins % 60;
+                            const endTime = `${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`;
+
+                            return (
+
+                                <ChartTooltipFrame>
+                                    {/* Header: Level Name */}
+                                    <ChartTooltipHeader color={color}>
+                                        {title}
+                                    </ChartTooltipHeader>
+
+                                    {/* Time Range */}
+                                    <div className="mt-2 text-muted-foreground font-medium text-[10px] uppercase tracking-wider">
+                                        Eastern Time
+                                    </div>
+                                    <div className="text-foreground font-mono text-sm mb-2">
+                                        {label} - {endTime}
+                                    </div>
+
+                                    {/* Stats */}
+                                    <div className="pt-2 border-t border-border">
+                                        <ChartTooltipRow
+                                            label="Probability"
+                                            value={`${Number(data.pct).toFixed(2)}%`}
+                                            subValue={`${data.count} hits`}
+                                        />
+                                    </div>
+                                </ChartTooltipFrame>
+                            );
+                        }
+                        return null;
+                    }}
+                />
+                <Bar dataKey="pct" fill={color} radius={[2, 2, 0, 0]} activeBar={{ fill: color, opacity: 0.8 }} />
+                <ReferenceLine x={stats.median} stroke="white" strokeDasharray="3 3" />
+                <Brush dataKey="time" height={20} stroke={color} opacity={0.5} tickFormatter={() => ''} />
+            </BarChart>
+        </ResponsiveContainer>
+    );
 
     return (
-        <Card>
-            <CardHeader className="pb-2 pt-3">
-                <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm font-medium">{title}</CardTitle>
-                    <div className="flex items-center gap-2">
-                        <div className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
-                        <Badge variant="outline" className="text-lg font-bold border-muted-foreground/20 text-foreground">
-                            {stats.hitRate.toFixed(1)}%
-                        </Badge>
+        <>
+            <Card>
+                <CardHeader className="pb-2 pt-3">
+                    <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+                        <div className="flex items-center gap-2">
+                            <div className="h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
+                            <Badge variant="outline" className="text-lg font-bold border-muted-foreground/20 text-foreground">
+                                {stats.hitRate.toFixed(1)}%
+                            </Badge>
+                            <Button variant="ghost" size="icon" className="h-5 w-5 ml-1" onClick={() => setIsExpanded(true)}>
+                                <Maximize2 className="h-3 w-3" />
+                            </Button>
+                        </div>
                     </div>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                    Mode: <span className="font-mono font-semibold">{stats.mode}</span> •
-                    Median: <span className="font-mono font-semibold">{stats.median}</span> •
-                    {stats.touched}/{stats.total} days
-                    {targetSession !== 'All' && <span className="ml-1 text-[10px] opacity-70">({targetSession})</span>}
-                </div>
-            </CardHeader>
-            <CardContent className="h-[150px] pt-0"> {/* Increased height for Brush */}
-                {stats.histData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={stats.histData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
-                            <XAxis
-                                dataKey="time"
-                                fontSize={10}
-                                tickMargin={5}
-                                minTickGap={30}
-                                height={30}
-                            />
-                            <YAxis hide />
-                            <Tooltip
-                                cursor={{ fill: 'var(--muted)', fillOpacity: 0.2 }}
-                                content={({ active, payload, label }) => {
-                                    if (active && payload && payload.length) {
-                                        const data = payload[0].payload;
-                                        const labelStr = String(label);
-                                        const [h, m] = labelStr.split(':').map(Number);
-                                        const startMins = h * 60 + m;
-                                        const endMins = startMins + granularity;
-                                        const endH = Math.floor(endMins / 60) % 24;
-                                        const endM = endMins % 60;
-                                        const endTime = `${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`;
-
-                                        return (
-
-                                            <ChartTooltipFrame>
-                                                {/* Header: Level Name */}
-                                                <ChartTooltipHeader color={color}>
-                                                    {title}
-                                                </ChartTooltipHeader>
-
-                                                {/* Time Range */}
-                                                <div className="mt-2 text-muted-foreground font-medium text-[10px] uppercase tracking-wider">
-                                                    Eastern Time
-                                                </div>
-                                                <div className="text-foreground font-mono text-sm mb-2">
-                                                    {label} - {endTime}
-                                                </div>
-
-                                                {/* Stats */}
-                                                <div className="pt-2 border-t border-border">
-                                                    <ChartTooltipRow
-                                                        label="Probability"
-                                                        value={`${Number(data.pct).toFixed(2)}%`}
-                                                        subValue={`${data.count} hits`}
-                                                    />
-                                                </div>
-                                            </ChartTooltipFrame>
-                                        );
-                                    }
-                                    return null;
-                                }}
-                            />
-                            <Bar dataKey="pct" fill={color} radius={[2, 2, 0, 0]} activeBar={{ fill: color, opacity: 0.8 }} />
-                            <ReferenceLine x={stats.median} stroke="white" strokeDasharray="3 3" />
-                            <Brush dataKey="time" height={20} stroke={color} opacity={0.5} tickFormatter={() => ''} />
-                        </BarChart>
-                    </ResponsiveContainer>
-                ) : (
-                    <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-                        No touch data
+                    <div className="text-xs text-muted-foreground">
+                        Mode: <span className="font-mono font-semibold">{stats.mode}</span> •
+                        Median: <span className="font-mono font-semibold">{stats.median}</span> •
+                        {stats.touched}/{stats.total} days
+                        {targetSession !== 'All' && <span className="ml-1 text-[10px] opacity-70">({targetSession})</span>}
                     </div>
-                )}
-            </CardContent>
-        </Card>
+                </CardHeader>
+                <CardContent className="h-[150px] pt-0">
+                    {stats.histData.length > 0 ? (
+                        <ChartContent />
+                    ) : (
+                        <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+                            No touch data
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
+            <Dialog open={isExpanded} onOpenChange={setIsExpanded}>
+                <DialogContent className="max-w-[90vw] w-[90vw] h-[85vh] flex flex-col sm:max-w-[90vw]">
+                    <DialogHeader>
+                        <DialogTitle>{title} - Touch Probability ({granularity}m)</DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-1 w-full min-h-0 mt-4">
+                        {stats.histData.length > 0 ? (
+                            <ChartContent />
+                        ) : (
+                            <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+                                No touch data
+                            </div>
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
+        </>
     );
-}
-
-// Export optimized component
-
-interface DailyLevelsProps {
-    levelTouches: LevelTouchesResponse | null;
-    filteredDates: Set<string>;
-    limitLevels?: string[];
-    initialSession?: string; // [NEW]
 }
 
 // Export optimized component

@@ -12,12 +12,13 @@ import { ProfilerFilterSidebar } from './profiler-filter-sidebar';
 import { SessionAnalysisView } from './session-analysis-view';
 import { RangeDistribution } from './range-distribution';
 import { PriceModelChart } from './price-model-chart';
+import { PriceModelGrid } from './price-model-grid';
 import { HodLodAnalysis, HodLodChart, SessionStats } from './hod-lod-analysis';
 import { DailyLevels } from './daily-levels';
 import { LevelProbabilityWidget } from './level-probability-widget';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
-const AVAILABLE_TICKERS = ['NQ1'] as const; // Extensible for future tickers
+const AVAILABLE_TICKERS = ['NQ1', 'ES1', 'CL1', 'GC1', 'RTY1', 'YM1'] as const; // Extensible for future tickers
 
 interface ProfilerViewProps {
     ticker?: string;
@@ -111,12 +112,125 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     const londonContext = londonDirFilter.startsWith('Long') ? 'Long' :
         londonDirFilter.startsWith('Short') ? 'Short' : 'None';
 
+    // --- Memoized Tab Content (Moved up to avoid Hook violation) ---
+    const dailyTabContent = useMemo(() => (
+        <TabsContent value="daily" className="mt-6 space-y-8">
+            {/* 1. HOD/LOD Time Analysis */}
+            <section>
+                <h2 className="text-xl font-semibold mb-4">HOD/LOD Time Analysis</h2>
+                <HodLodChart
+                    sessions={deferredFilteredSessions}
+                    dailyHodLod={deferredDailyHodLod}
+                />
+            </section>
+
+            {/* 2. Global Price Range Distribution */}
+            <section>
+                <h2 className="text-xl font-semibold mb-4">Global Price Range Distribution</h2>
+                <RangeDistribution sessions={deferredFilteredSessions} forcedSession="daily" />
+            </section>
+
+            {/* 3. Daily Price Model */}
+            <section>
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold">Price Models</h2>
+                </div>
+
+                <div className="space-y-8">
+                    {/* 3.1 Aggregate Daily Model */}
+                    <div className="space-y-2">
+                        <h4 className="text-sm font-semibold opacity-70">Daily Aggregate</h4>
+                        <PriceModelChart
+                            ticker={debouncedTicker}
+                            session="Daily"
+                            targetSession={debouncedTargetSession} // NY1 derived
+                            filters={debouncedFilters}
+                            brokenFilters={debouncedBrokenFilters}
+                            intraState={intraState}
+                            height={400}
+                        />
+                    </div>
+
+                    {/* 3.2 Session Breakdowns (Grid) */}
+                    <div className="space-y-2">
+                        <h4 className="text-sm font-semibold opacity-70">Session Breakdown</h4>
+                        <PriceModelGrid
+                            ticker={debouncedTicker}
+                            targetSession={debouncedTargetSession}
+                            filters={debouncedFilters}
+                            brokenFilters={debouncedBrokenFilters}
+                            intraState={intraState}
+                        />
+                    </div>
+                </div>
+            </section>
+
+            {/* 4. Daily Levels Analysis */}
+            <section>
+                <h2 className="text-xl font-semibold mb-4">Daily Levels Analysis</h2>
+                <DailyLevels
+                    levelTouches={deferredLevelTouches}
+                    filteredDates={filteredDates}
+                />
+            </section>
+
+            {/* 5. Session Contribution Stats */}
+            <section>
+                <h2 className="text-xl font-semibold mb-4">Session HOD/LOD Contribution</h2>
+                <SessionStats sessions={deferredFilteredSessions} />
+            </section>
+        </TabsContent>
+    ), [
+        deferredFilteredSessions,
+        deferredDailyHodLod,
+        debouncedTicker,
+        debouncedTargetSession,
+        debouncedFilters,
+        debouncedBrokenFilters,
+        intraState,
+        deferredLevelTouches,
+        filteredDates
+    ]);
+
+    const sessionTabsContent = useMemo(() => (
+        <>
+            {['asia', 'london', 'ny1', 'ny2'].map(sessKey => {
+                const sessName = sessKey === 'asia' ? 'Asia' : sessKey === 'london' ? 'London' : sessKey === 'ny1' ? 'NY1' : 'NY2';
+                return (
+                    <TabsContent key={sessKey} value={sessKey} className="mt-6">
+                        <SessionAnalysisView
+                            session={sessName}
+                            sessions={deferredFilteredSessions}
+                            allSessions={deferredFilteredSessions}
+                            dailyHodLod={deferredDailyHodLod || null}
+                            filteredDates={filteredDates}
+                            ticker={debouncedTicker}
+                            levelTouches={deferredLevelTouches}
+                            filters={debouncedFilters}
+                            brokenFilters={debouncedBrokenFilters}
+                            intraState={intraState}
+                        />
+                    </TabsContent>
+                );
+            })}
+        </>
+    ), [
+        deferredFilteredSessions,
+        deferredDailyHodLod,
+        filteredDates,
+        debouncedTicker,
+        deferredLevelTouches,
+        debouncedFilters,
+        debouncedBrokenFilters,
+        intraState
+    ]);
+
     if (filterError) return <div className="p-8 text-center text-red-500">Failed to load profiler data.</div>;
 
     return (
         <div className="flex items-start gap-4">
-            {/* 1. Sidebar (Sticky) */}
-            <div className={`sticky top-4 flex-none z-10 transition-all duration-300 ${isSidebarCollapsed ? 'w-[60px]' : 'w-[280px]'} space-y-4`}>
+            {/* 1. Sidebar (Sticky) with fixed height for independent scrolling */}
+            <div className={`sticky top-4 flex-none z-10 transition-all duration-300 ${isSidebarCollapsed ? 'w-[60px]' : 'w-[280px]'} h-[calc(100vh-2rem)] space-y-4`}>
                 <ProfilerFilterSidebar
                     stats={sidebarStats}
                     filters={filters}
@@ -149,97 +263,10 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                     </TabsList>
 
                     {/* --- Tab 1: Daily Overview (Memoized) --- */}
-                    {useMemo(() => (
-                        <TabsContent value="daily" className="mt-6 space-y-8">
-                            {/* 1. HOD/LOD Time Analysis */}
-                            <section>
-                                <h2 className="text-xl font-semibold mb-4">HOD/LOD Time Analysis</h2>
-                                <HodLodChart
-                                    sessions={deferredFilteredSessions}
-                                    dailyHodLod={deferredDailyHodLod}
-                                />
-                            </section>
-
-                            {/* 2. Global Price Range Distribution */}
-                            <section>
-                                <h2 className="text-xl font-semibold mb-4">Global Price Range Distribution</h2>
-                                <RangeDistribution sessions={deferredFilteredSessions} forcedSession="daily" />
-                            </section>
-
-                            {/* 3. Daily Price Model */}
-                            <section>
-                                <h2 className="text-xl font-semibold mb-4">Daily Price Model</h2>
-                                <PriceModelChart
-                                    ticker={debouncedTicker}
-                                    session="Daily"
-                                    targetSession={debouncedTargetSession} // NY1 derived
-                                    filters={debouncedFilters}
-                                    brokenFilters={debouncedBrokenFilters}
-                                    intraState={intraState}
-                                    height={400}
-                                />
-                            </section>
-
-                            {/* 4. Daily Levels Analysis */}
-                            <section>
-                                <h2 className="text-xl font-semibold mb-4">Daily Levels Analysis</h2>
-                                <DailyLevels
-                                    levelTouches={deferredLevelTouches}
-                                    filteredDates={filteredDates}
-                                />
-                            </section>
-
-                            {/* 5. Session Contribution Stats */}
-                            <section>
-                                <h2 className="text-xl font-semibold mb-4">Session HOD/LOD Contribution</h2>
-                                <SessionStats sessions={deferredFilteredSessions} />
-                            </section>
-                        </TabsContent>
-                    ), [
-                        deferredFilteredSessions,
-                        deferredDailyHodLod,
-                        debouncedTicker,
-                        debouncedTargetSession,
-                        debouncedFilters,
-                        debouncedBrokenFilters,
-                        intraState,
-                        deferredLevelTouches,
-                        filteredDates
-                    ])}
+                    {dailyTabContent}
 
                     {/* --- Session Tabs (Memoized) --- */}
-                    {useMemo(() => (
-                        <>
-                            {['asia', 'london', 'ny1', 'ny2'].map(sessKey => {
-                                const sessName = sessKey === 'asia' ? 'Asia' : sessKey === 'london' ? 'London' : sessKey === 'ny1' ? 'NY1' : 'NY2';
-                                return (
-                                    <TabsContent key={sessKey} value={sessKey} className="mt-6">
-                                        <SessionAnalysisView
-                                            session={sessName}
-                                            sessions={deferredFilteredSessions}
-                                            allSessions={deferredFilteredSessions}
-                                            dailyHodLod={deferredDailyHodLod || null}
-                                            filteredDates={filteredDates}
-                                            ticker={debouncedTicker}
-                                            levelTouches={deferredLevelTouches}
-                                            filters={debouncedFilters}
-                                            brokenFilters={debouncedBrokenFilters}
-                                            intraState={intraState}
-                                        />
-                                    </TabsContent>
-                                );
-                            })}
-                        </>
-                    ), [
-                        deferredFilteredSessions,
-                        deferredDailyHodLod,
-                        filteredDates,
-                        debouncedTicker,
-                        deferredLevelTouches,
-                        debouncedFilters,
-                        debouncedBrokenFilters,
-                        intraState
-                    ])}
+                    {sessionTabsContent}
                 </Tabs>
             </div>
         </div>

@@ -1,4 +1,3 @@
-
 "use client"
 
 import { useMemo, useState, memo } from 'react';
@@ -7,8 +6,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Brush } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { TrendingUp, TrendingDown } from 'lucide-react';
+import { TrendingUp, TrendingDown, Maximize2 } from 'lucide-react';
 import { ChartTooltipFrame, ChartTooltipHeader, ChartTooltipRow } from '@/components/ui/chart-tooltip';
+import { Button } from '@/components/ui/button';
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 
 interface Props {
     sessions: ProfilerSession[];
@@ -51,6 +57,7 @@ function mode(arr: string[]): string {
 
 export const HodLodChart = memo(function HodLodChart({ sessions, dailyHodLod }: Props) {
     const [granularity, setGranularity] = useState<number>(15);
+    const [isExpanded, setIsExpanded] = useState(false);
 
     // Get unique dates from filtered sessions
     const filteredDates = useMemo(() => {
@@ -173,115 +180,139 @@ export const HodLodChart = memo(function HodLodChart({ sessions, dailyHodLod }: 
         { value: 60, label: '1h' },
     ];
 
-    return (
-        <Card>
-            <CardHeader className="pb-2 pt-3">
-                <div className="flex items-center justify-between">
-                    <CardTitle className="text-base">High and Low of Day Times</CardTitle>
-                    <Select value={granularity.toString()} onValueChange={(v) => setGranularity(parseInt(v))}>
-                        <SelectTrigger className="w-[70px] h-8">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {granularityOptions.map(o => (
-                                <SelectItem key={o.value} value={o.value.toString()}>{o.label}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
-                <div className="flex gap-6 mt-2 text-sm">
-                    <div className="flex items-center gap-2 bg-green-50 dark:bg-green-950 px-3 py-1 rounded">
-                        <TrendingUp className="h-4 w-4 text-green-600" />
-                        <span className="font-medium text-green-700 dark:text-green-400">HOD</span>
-                        <span className="text-muted-foreground">Mode:</span>
-                        <span className="font-mono font-bold">{hodStats?.mode || '-'}</span>
-                        <span className="text-muted-foreground">Med:</span>
-                        <span className="font-mono">{hodStats?.median || '-'}</span>
-                        <Badge variant="outline" className="ml-1">{hodStats?.count || 0}</Badge>
-                    </div>
-                    <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950 px-3 py-1 rounded">
-                        <TrendingDown className="h-4 w-4 text-red-600" />
-                        <span className="font-medium text-red-700 dark:text-red-400">LOD</span>
-                        <span className="text-muted-foreground">Mode:</span>
-                        <span className="font-mono font-bold">{lodStats?.mode || '-'}</span>
-                        <span className="text-muted-foreground">Med:</span>
-                        <span className="font-mono">{lodStats?.median || '-'}</span>
-                        <Badge variant="outline" className="ml-1">{lodStats?.count || 0}</Badge>
-                    </div>
-                </div>
-            </CardHeader>
-            <CardContent className="h-[280px] pt-0">
-                <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={timeHistogramData} margin={{ top: 10, right: 10, bottom: 30, left: 10 }}>
-                        <XAxis
-                            dataKey="time"
-                            fontSize={12}
-                            interval={0} // Force show provided ticks
-                            ticks={useMemo(() => {
-                                // Calculate explicit ticks to show (e.g. every hour or 30 mins)
-                                // timeHistogramData has "HH:MM" strings
-                                if (timeHistogramData.length === 0) return undefined;
+    const ChartContent = () => (
+        <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={timeHistogramData} margin={{ top: 10, right: 10, bottom: 30, left: 10 }} stackOffset="sign">
+                <XAxis
+                    dataKey="time"
+                    fontSize={12}
+                    interval={0} // Force show provided ticks
+                    ticks={useMemo(() => {
+                        // Calculate explicit ticks to show (e.g. every hour or 30 mins)
+                        // timeHistogramData has "HH:MM" strings
+                        if (!timeHistogramData || timeHistogramData.length === 0) return undefined;
 
-                                const stepMinutes = 60; // Target ~60m spacing for labels
-                                return timeHistogramData
-                                    .filter(d => {
-                                        const [h, m] = d.time.split(':').map(Number);
-                                        // Show if minute is 0 (top of hour)
-                                        // If granularity is > 60 (unlikely), show all
-                                        if (granularity >= 60) return true;
-                                        if (granularity === 30) return m === 0; // Show 18:00, 19:00...
-                                        // For 15m/5m, show top of hour
-                                        return m === 0;
-                                    })
-                                    .map(d => d.time);
-                            }, [timeHistogramData, granularity])}
-                            angle={-45}
-                            textAnchor="end"
-                            height={60}
-                        />
-                        <YAxis
-                            fontSize={12} // Increased from 10 to 12
-                            tickFormatter={(v) => `${Math.abs(v).toFixed(0)}%`}
-                            domain={['auto', 'auto']}
-                        />
-                        <Tooltip
-                            cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
-                            content={({ active, payload, label }) => {
-                                if (!active || !payload || !payload.length) return null;
-                                return (
-                                    <ChartTooltipFrame>
-                                        <ChartTooltipHeader>{label}</ChartTooltipHeader>
-                                        {payload.map((entry: any, index: number) => {
-                                            const isHod = entry.name === 'HOD';
-                                            const count = isHod ? entry.payload.hodCount : entry.payload.lodCount;
-                                            return (
-                                                <ChartTooltipRow
-                                                    key={index}
-                                                    label={entry.name}
-                                                    value={`${Math.abs(Number(entry.value)).toFixed(1)}%`}
-                                                    subValue={`${count} days`}
-                                                    indicatorColor={entry.fill}
-                                                />
-                                            );
-                                        })}
-                                    </ChartTooltipFrame>
-                                );
-                            }}
-                        />
-                        <ReferenceLine y={0} stroke="hsl(var(--border))" />
-                        <Bar dataKey="hodPercent" name="HOD" fill="#22c55e" radius={[2, 2, 0, 0]} />
-                        <Bar dataKey="lodPercent" name="LOD" fill="#ef4444" radius={[0, 0, 2, 2]} />
-                        <Brush
-                            dataKey="time"
-                            height={30}
-                            stroke="#8884d8"
-                            travellerWidth={10}
-                            alwaysShowText={false}
-                        />
-                    </ComposedChart>
-                </ResponsiveContainer>
-            </CardContent>
-        </Card>
+                        return timeHistogramData
+                            .filter(d => {
+                                const [h, m] = d.time.split(':').map(Number);
+                                // Show if minute is 0 (top of hour)
+                                // If granularity is > 60 (unlikely), show all
+                                if (granularity >= 60) return true;
+                                if (granularity === 30) return m === 0; // Show 18:00, 19:00...
+                                // For 15m/5m, show top of hour
+                                return m === 0;
+                            })
+                            .map(d => d.time);
+                    }, [timeHistogramData, granularity])}
+                    angle={-45}
+                    textAnchor="end"
+                    height={60}
+                />
+                <YAxis
+                    fontSize={12} // Increased from 10 to 12
+                    tickFormatter={(v) => `${Math.abs(v).toFixed(0)}%`}
+                    domain={['auto', 'auto']}
+                />
+                <Tooltip
+                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                    content={({ active, payload, label }) => {
+                        if (!active || !payload || !payload.length) return null;
+                        return (
+                            <ChartTooltipFrame>
+                                <ChartTooltipHeader>{label}</ChartTooltipHeader>
+                                {payload.map((entry: any, index: number) => {
+                                    const isHod = entry.name === 'HOD';
+                                    const count = isHod ? entry.payload.hodCount : entry.payload.lodCount;
+                                    return (
+                                        <ChartTooltipRow
+                                            key={index}
+                                            label={entry.name}
+                                            value={`${Math.abs(Number(entry.value)).toFixed(1)}%`}
+                                            subValue={`${count} days`}
+                                            indicatorColor={entry.fill}
+                                        />
+                                    );
+                                })}
+                            </ChartTooltipFrame>
+                        );
+                    }}
+                />
+                <ReferenceLine x="00:00" stroke="#6b7280" strokeDasharray="3 3" opacity={0.5} strokeWidth={1} label={{ value: "00:00", position: "insideTop", fontSize: 9, fill: "#6b7280" }} />
+                <ReferenceLine x="09:30" stroke="#f59e0b" strokeDasharray="3 3" opacity={0.8} strokeWidth={1} label={{ value: "09:30", position: "insideTop", fontSize: 9, fill: "#f59e0b" }} />
+                <ReferenceLine y={0} stroke="hsl(var(--border))" />
+                <Bar dataKey="hodPercent" name="HOD" fill="#22c55e" radius={[2, 2, 0, 0]} stackId="stack" />
+                <Bar dataKey="lodPercent" name="LOD" fill="#ef4444" radius={[0, 0, 2, 2]} stackId="stack" />
+                <Brush
+                    dataKey="time"
+                    height={30}
+                    stroke="#8884d8"
+                    travellerWidth={10}
+                    alwaysShowText={false}
+                />
+            </ComposedChart>
+        </ResponsiveContainer>
+    );
+
+    return (
+        <>
+            <Card>
+                <CardHeader className="pb-2 pt-3">
+                    <div className="flex items-center justify-between">
+                        <CardTitle className="text-base">High and Low of Day Times</CardTitle>
+
+                        <div className="flex items-center gap-2">
+                            <Select value={granularity.toString()} onValueChange={(v) => setGranularity(parseInt(v))}>
+                                <SelectTrigger className="w-[70px] h-8">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {granularityOptions.map(o => (
+                                        <SelectItem key={o.value} value={o.value.toString()}>{o.label}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setIsExpanded(true)}>
+                                <Maximize2 className="h-4 w-4" />
+                            </Button>
+                        </div>
+                    </div>
+                    <div className="flex gap-6 mt-2 text-sm">
+                        <div className="flex items-center gap-2 bg-green-50 dark:bg-green-950 px-3 py-1 rounded">
+                            <TrendingUp className="h-4 w-4 text-green-600" />
+                            <span className="font-medium text-green-700 dark:text-green-400">HOD</span>
+                            <span className="text-muted-foreground">Mode:</span>
+                            <span className="font-mono font-bold">{hodStats?.mode || '-'}</span>
+                            <span className="text-muted-foreground">Med:</span>
+                            <span className="font-mono">{hodStats?.median || '-'}</span>
+                            <Badge variant="outline" className="ml-1">{hodStats?.count || 0}</Badge>
+                        </div>
+                        <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950 px-3 py-1 rounded">
+                            <TrendingDown className="h-4 w-4 text-red-600" />
+                            <span className="font-medium text-red-700 dark:text-red-400">LOD</span>
+                            <span className="text-muted-foreground">Mode:</span>
+                            <span className="font-mono font-bold">{lodStats?.mode || '-'}</span>
+                            <span className="text-muted-foreground">Med:</span>
+                            <span className="font-mono">{lodStats?.median || '-'}</span>
+                            <Badge variant="outline" className="ml-1">{lodStats?.count || 0}</Badge>
+                        </div>
+                    </div>
+                </CardHeader>
+                <CardContent className="h-[280px] pt-0">
+                    <ChartContent />
+                </CardContent>
+            </Card>
+
+            <Dialog open={isExpanded} onOpenChange={setIsExpanded}>
+                <DialogContent className="max-w-[90vw] w-[90vw] h-[85vh] flex flex-col sm:max-w-[90vw]">
+                    <DialogHeader>
+                        <DialogTitle>High and Low of Day Times ({granularity}m)</DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-1 w-full min-h-0 mt-4">
+                        <ChartContent />
+                    </div>
+                </DialogContent>
+            </Dialog>
+        </>
     );
 });
 

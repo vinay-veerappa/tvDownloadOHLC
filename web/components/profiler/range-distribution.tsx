@@ -1,5 +1,3 @@
-
-
 "use client"
 
 import { useMemo, useState, useEffect, memo } from 'react';
@@ -9,26 +7,43 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ComposedChart, Bar, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { TrendingUp, TrendingDown, Layers } from 'lucide-react';
+import { TrendingUp, TrendingDown, Layers, Maximize2 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { ChartTooltipFrame, ChartTooltipHeader, ChartTooltipRow } from '@/components/ui/chart-tooltip';
+import { Button } from '@/components/ui/button';
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 
 interface Props {
     sessions: ProfilerSession[];
     forcedSession?: string;
 }
 
-function median(arr: number[]): number {
-    if (arr.length === 0) return 0;
-    const sorted = [...arr].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+// Helper to get bin range string (e.g. "0.2 to 0.3 %")
+function getBinRangeResult(binStart: number, bucketSize: number = 0.1): string {
+    if (binStart >= 5.0) return "> 5 %";
+    if (binStart <= -5.0) return "< -5 %";
+    const start = binStart.toFixed(1);
+    const end = (binStart + bucketSize).toFixed(1);
+    return `${start} to ${end} %`;
 }
 
-function mode(arr: number[], bucketSize: number = 0.1, referenceDist?: Record<string, number>): number | null {
+function medianBin(arr: number[], bucketSize: number = 0.1): number {
+    if (arr.length === 0) return 0;
+    const sorted = [...arr].sort((a, b) => a - b);
+    const midIndex = Math.floor(sorted.length / 2);
+    const medianVal = sorted[midIndex];
+    // Return the start of the bin containing the median
+    return Math.floor(medianVal / bucketSize) * bucketSize;
+}
+
+function modeBin(arr: number[], bucketSize: number = 0.1, referenceDist?: Record<string, number>): number | null {
     if (referenceDist) {
-        // If reference provided, return its mode bucket key
         const sorted = Object.entries(referenceDist).sort((a, b) => b[1] - a[1]);
         return sorted.length > 0 ? parseFloat(sorted[0][0]) : null;
     }
@@ -36,7 +51,7 @@ function mode(arr: number[], bucketSize: number = 0.1, referenceDist?: Record<st
     if (arr.length === 0) return null;
     const counts: Record<string, number> = {};
     arr.forEach(v => {
-        const bucket = (Math.round(v / bucketSize) * bucketSize).toFixed(1);
+        const bucket = (Math.floor(v / bucketSize) * bucketSize).toFixed(1);
         counts[bucket] = (counts[bucket] || 0) + 1;
     });
     const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
@@ -45,7 +60,9 @@ function mode(arr: number[], bucketSize: number = 0.1, referenceDist?: Record<st
 
 export const RangeDistribution = memo(function RangeDistribution({ sessions, forcedSession }: Props) {
     const [selectedSession, setSelectedSession] = useState<string>(forcedSession || 'daily');
-
+    const [isExpandedHigh, setIsExpandedHigh] = useState(false);
+    const [isExpandedLow, setIsExpandedLow] = useState(false);
+    const bucketSize = 0.1;
 
     useEffect(() => {
         if (forcedSession) setSelectedSession(forcedSession);
@@ -82,7 +99,7 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
                 const dailyLow = asiaSess.daily_low;
 
                 // CRITICAL: If we have explicit daily stats (e.g. synthetic sessions or enriched data), 
-                // we don't need to enforce having \u003e= 2 sessions.
+                // we don't need to enforce having >= 2 sessions.
                 const hasExplicitDaily = dailyOpen !== undefined && dailyHigh !== undefined;
 
                 if (daySessions.length < 2 && !hasExplicitDaily) return;
@@ -113,24 +130,26 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
     }, [sessions, selectedSession]);
 
     function buildDistribution(highPcts: number[], lowPcts: number[]) {
-        const bucketSize = 0.1;
+        // Clamp values to [-5, 5] for aggregation
+        const clampedHigh = highPcts.map(v => Math.max(-5.0, Math.min(5.0, v)));
+        const clampedLow = lowPcts.map(v => Math.max(-5.0, Math.min(5.0, v)));
 
         // Build histogram data (My Data)
         const highBuckets: Record<string, number> = {};
         const lowBuckets: Record<string, number> = {};
 
-        highPcts.forEach(v => {
-            const bucket = (Math.round(v / bucketSize) * bucketSize).toFixed(1);
+        clampedHigh.forEach(v => {
+            const bucket = (Math.floor(v / bucketSize) * bucketSize).toFixed(1);
             highBuckets[bucket] = (highBuckets[bucket] || 0) + 1;
         });
 
-        lowPcts.forEach(v => {
-            const bucket = (Math.round(v / bucketSize) * bucketSize).toFixed(1);
+        clampedLow.forEach(v => {
+            const bucket = (Math.floor(v / bucketSize) * bucketSize).toFixed(1);
             lowBuckets[bucket] = (lowBuckets[bucket] || 0) + 1;
         });
 
-        const totalHigh = highPcts.length || 1;
-        const totalLow = lowPcts.length || 1;
+        const totalHigh = clampedHigh.length || 1;
+        const totalLow = clampedLow.length || 1;
 
         const highData = Object.keys(highBuckets).map(pctStr => {
             const pct = parseFloat(pctStr);
@@ -154,17 +173,104 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
             highData,
             lowData,
             highStats: {
-                median: median(highPcts),
-                mode: mode(highPcts),
-                count: highPcts.length,
+                medianBin: medianBin(clampedHigh),
+                modeBin: modeBin(clampedHigh),
+                count: clampedHigh.length,
             },
             lowStats: {
-                median: median(lowPcts),
-                mode: mode(lowPcts),
-                count: lowPcts.length,
+                medianBin: medianBin(clampedLow),
+                modeBin: modeBin(clampedLow),
+                count: clampedLow.length,
             }
         };
     }
+
+    const HighChart = () => (
+        <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={highData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                <XAxis
+                    dataKey="pct"
+                    fontSize={9}
+                    tickFormatter={(v) => {
+                        if (v >= 5) return '>5%';
+                        if (v <= -5) return '<-5%';
+                        return `${v}%`;
+                    }}
+                    interval="preserveStartEnd"
+                />
+                <YAxis
+                    fontSize={10}
+                    tickFormatter={(v) => `${v.toFixed(0)}%`}
+                />
+                <Tooltip
+                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                    content={({ active, payload, label }) => {
+                        if (!active || !payload || !payload.length) return null;
+                        return (
+                            <ChartTooltipFrame>
+                                <ChartTooltipHeader>High: {getBinRangeResult(Number(label))}</ChartTooltipHeader>
+                                {payload.map((entry: any, index: number) => (
+                                    <ChartTooltipRow
+                                        key={index}
+                                        label="Distribution"
+                                        value={`${Number(entry.value).toFixed(1)}%`}
+                                        subValue={`${entry.payload.count} days`}
+                                        indicatorColor={entry.fill}
+                                    />
+                                ))}
+                            </ChartTooltipFrame>
+                        );
+                    }}
+                />
+                {highStats?.medianBin && <ReferenceLine x={highStats.medianBin} stroke="#22c55e" strokeDasharray="3 3" />}
+                <Bar dataKey="percent" fill="#22c55e" radius={[2, 2, 0, 0]} name="Current" opacity={0.8} barSize={100} />
+            </ComposedChart>
+        </ResponsiveContainer>
+    );
+
+    const LowChart = () => (
+        <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={lowData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                <XAxis
+                    dataKey="pct"
+                    fontSize={9}
+                    tickFormatter={(v) => {
+                        if (v >= 5) return '>5%';
+                        if (v <= -5) return '<-5%';
+                        return `${v}%`;
+                    }}
+                    interval="preserveStartEnd"
+                />
+                <YAxis
+                    fontSize={10}
+                    tickFormatter={(v) => `${v.toFixed(0)}%`}
+                />
+                <Tooltip
+                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                    content={({ active, payload, label }) => {
+                        if (!active || !payload || !payload.length) return null;
+                        return (
+                            <ChartTooltipFrame>
+                                <ChartTooltipHeader>Low: {getBinRangeResult(Number(label))}</ChartTooltipHeader>
+                                {payload.map((entry: any, index: number) => (
+                                    <ChartTooltipRow
+                                        key={index}
+                                        label="Distribution"
+                                        value={`${Number(entry.value).toFixed(1)}%`}
+                                        subValue={`${entry.payload.count} days`}
+                                        indicatorColor={entry.fill}
+                                    />
+                                ))}
+                            </ChartTooltipFrame>
+                        );
+                    }}
+                />
+                {lowStats?.medianBin && <ReferenceLine x={lowStats.medianBin} stroke="#ef4444" strokeDasharray="3 3" />}
+                <Bar dataKey="percent" fill="#ef4444" radius={[2, 2, 0, 0]} name="Current" opacity={0.8} barSize={100} />
+            </ComposedChart>
+        </ResponsiveContainer>
+    );
+
 
     return (
         <div className="space-y-4">
@@ -188,143 +294,102 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* High Distribution */}
                 <Card className="border-green-200">
-                    <CardHeader className="pb-2 pt-3">
-                        <CardTitle className="text-base flex items-center gap-2">
-                            <TrendingUp className="h-4 w-4 text-green-600" />
-                            High Distribution (from Open)
-                        </CardTitle>
-                        <div className="flex flex-col gap-2 mt-1">
-                            <div className="flex gap-4 text-sm">
-                                <div className="flex items-center gap-2 bg-green-50 dark:bg-green-950 px-2 py-1 rounded">
-                                    <span className="text-muted-foreground">Mode:</span>
-                                    <span className="font-mono font-bold">{highStats?.mode?.toFixed(1) ?? '-'}%</span>
+                    <CardHeader className="pb-2 pt-3 flex flex-row items-center justify-between space-y-0">
+                        <div>
+                            <CardTitle className="text-base flex items-center gap-2">
+                                <TrendingUp className="h-4 w-4 text-green-600" />
+                                High Distribution
+                            </CardTitle>
+                            <div className="flex flex-col gap-2 mt-1">
+                                <div className="flex gap-8 text-sm pt-2">
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Mode</span>
+                                        <span className="font-mono text-sm tabular-nums text-foreground/90">
+                                            {highStats?.modeBin !== null && highStats?.modeBin !== undefined
+                                                ? getBinRangeResult(highStats.modeBin)
+                                                : '-'}
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Median</span>
+                                        <span className="font-mono text-sm tabular-nums text-muted-foreground">
+                                            {highStats?.medianBin !== null && highStats?.medianBin !== undefined
+                                                ? getBinRangeResult(highStats.medianBin)
+                                                : '-'}
+                                        </span>
+                                    </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-muted-foreground">Median:</span>
-                                    <span className="font-mono">{highStats?.median?.toFixed(2) ?? '-'}%</span>
-                                </div>
-                                <Badge variant="outline">{highStats?.count ?? 0} days</Badge>
                             </div>
-                            {/* Reference Stats */}
-                            {/* @ts-ignore - refStats added to return object */}
-
                         </div>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 -mt-2 -mr-2" onClick={() => setIsExpandedHigh(true)}>
+                            <Maximize2 className="h-4 w-4" />
+                        </Button>
                     </CardHeader>
                     <CardContent className="h-[220px] pt-0">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={highData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
-                                <XAxis
-                                    dataKey="pct"
-                                    fontSize={9}
-                                    tickFormatter={(v) => `${v}%`}
-                                    interval="preserveStartEnd"
-                                />
-                                <YAxis
-                                    fontSize={10}
-                                    tickFormatter={(v) => `${v.toFixed(0)}%`}
-                                />
-                                <Tooltip
-                                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
-                                    content={({ active, payload, label }) => {
-                                        if (!active || !payload || !payload.length) return null;
-                                        return (
-                                            <ChartTooltipFrame>
-                                                <ChartTooltipHeader>High: +{label}% from open</ChartTooltipHeader>
-                                                {payload.map((entry: any, index: number) => (
-                                                    <ChartTooltipRow
-                                                        key={index}
-                                                        label="Distribution"
-                                                        value={`${Number(entry.value).toFixed(1)}%`}
-                                                        subValue={`${entry.payload.count} days`}
-                                                        indicatorColor={entry.fill}
-                                                    />
-                                                ))}
-                                            </ChartTooltipFrame>
-                                        );
-                                    }}
-                                />
-                                {highStats?.median && <ReferenceLine x={highStats.median} stroke="#22c55e" strokeDasharray="3 3" />}
-                                {/* @ts-ignore */}
-
-                                <Bar dataKey="percent" fill="#22c55e" radius={[2, 2, 0, 0]} name="Current" opacity={0.8} />
-                            </ComposedChart>
-                        </ResponsiveContainer>
+                        <HighChart />
                     </CardContent>
                 </Card>
 
                 {/* Low Distribution */}
                 <Card className="border-red-200">
-                    <CardHeader className="pb-2 pt-3">
-                        <CardTitle className="text-base flex items-center gap-2">
-                            <TrendingDown className="h-4 w-4 text-red-600" />
-                            Low Distribution (from Open)
-                        </CardTitle>
-                        <div className="flex flex-col gap-2 mt-1">
-                            <div className="flex gap-4 text-sm">
-                                <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950 px-2 py-1 rounded">
-                                    <span className="text-muted-foreground">Mode:</span>
-                                    <span className="font-mono font-bold">{lowStats?.mode?.toFixed(1) ?? '-'}%</span>
+                    <CardHeader className="pb-2 pt-3 flex flex-row items-center justify-between space-y-0">
+                        <div>
+                            <CardTitle className="text-base flex items-center gap-2">
+                                <TrendingDown className="h-4 w-4 text-red-600" />
+                                Low Distribution
+                            </CardTitle>
+                            <div className="flex flex-col gap-2 mt-1">
+                                <div className="flex gap-8 text-sm pt-2">
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Mode</span>
+                                        <span className="font-mono text-sm tabular-nums text-foreground/90">
+                                            {lowStats?.modeBin !== null && lowStats?.modeBin !== undefined
+                                                ? getBinRangeResult(lowStats.modeBin)
+                                                : '-'}
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Median</span>
+                                        <span className="font-mono text-sm tabular-nums text-muted-foreground">
+                                            {lowStats?.medianBin !== null && lowStats?.medianBin !== undefined
+                                                ? getBinRangeResult(lowStats.medianBin)
+                                                : '-'}
+                                        </span>
+                                    </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-muted-foreground">Median:</span>
-                                    <span className="font-mono">{lowStats?.median?.toFixed(2) ?? '-'}%</span>
-                                </div>
-                                <Badge variant="outline">{lowStats?.count ?? 0} days</Badge>
                             </div>
-                            {/* Reference Stats */}
-                            {/* @ts-ignore - refStats added to return object */}
-                            {lowStats?.refStats?.low && showReference && (
-                                <div className="flex gap-4 text-xs text-muted-foreground pl-1 border-l-2 border-indigo-200">
-                                    <span className="font-medium text-indigo-600">Reference:</span>
-                                    <span>Mode: {(lowStats as any).refStats.low.mode}%</span>
-                                    <span>Median: {(lowStats as any).refStats.low.median}%</span>
-                                </div>
-                            )}
                         </div>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 -mt-2 -mr-2" onClick={() => setIsExpandedLow(true)}>
+                            <Maximize2 className="h-4 w-4" />
+                        </Button>
                     </CardHeader>
                     <CardContent className="h-[220px] pt-0">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={lowData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
-                                <XAxis
-                                    dataKey="pct"
-                                    fontSize={9}
-                                    tickFormatter={(v) => `${v}%`}
-                                    interval="preserveStartEnd"
-                                />
-                                <YAxis
-                                    fontSize={10}
-                                    tickFormatter={(v) => `${v.toFixed(0)}%`}
-                                />
-                                <Tooltip
-                                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
-                                    content={({ active, payload, label }) => {
-                                        if (!active || !payload || !payload.length) return null;
-                                        return (
-                                            <ChartTooltipFrame>
-                                                <ChartTooltipHeader>Low: {label}% from open</ChartTooltipHeader>
-                                                {payload.map((entry: any, index: number) => (
-                                                    <ChartTooltipRow
-                                                        key={index}
-                                                        label="Distribution"
-                                                        value={`${Number(entry.value).toFixed(1)}%`}
-                                                        subValue={`${entry.payload.count} days`}
-                                                        indicatorColor={entry.fill}
-                                                    />
-                                                ))}
-                                            </ChartTooltipFrame>
-                                        );
-                                    }}
-                                />
-                                {lowStats?.median && <ReferenceLine x={lowStats.median} stroke="#ef4444" strokeDasharray="3 3" />}
-                                {/* @ts-ignore */}
-                                {(lowStats as any)?.refStats?.low?.median && showReference && <ReferenceLine x={(lowStats as any).refStats.low.median} stroke="#6366f1" strokeDasharray="3 3" label={{ value: 'Ref', position: 'insideTopRight', fill: '#6366f1', fontSize: 10 }} />}
-
-                                <Bar dataKey="percent" fill="#ef4444" radius={[2, 2, 0, 0]} name="Current" opacity={0.8} />
-                            </ComposedChart>
-                        </ResponsiveContainer>
+                        <LowChart />
                     </CardContent>
                 </Card>
             </div>
+
+            <Dialog open={isExpandedHigh} onOpenChange={setIsExpandedHigh}>
+                <DialogContent className="max-w-[90vw] w-[90vw] h-[85vh] flex flex-col sm:max-w-[90vw]">
+                    <DialogHeader>
+                        <DialogTitle>High Distribution ({selectedSession})</DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-1 w-full min-h-0 mt-4">
+                        <HighChart />
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={isExpandedLow} onOpenChange={setIsExpandedLow}>
+                <DialogContent className="max-w-[90vw] w-[90vw] h-[85vh] flex flex-col sm:max-w-[90vw]">
+                    <DialogHeader>
+                        <DialogTitle>Low Distribution ({selectedSession})</DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-1 w-full min-h-0 mt-4">
+                        <LowChart />
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div >
     );
 });
