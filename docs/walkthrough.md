@@ -1,133 +1,100 @@
-# Chart Navigation & Sidebar Polish
+# Daily Profiler & Data Integrity Updates
 
-## Overview
-This update enhances the Chart UI with a professional TradingView-style sidebar and resolves critical rendering issues associated with resizing and playback.
+## Objective
+Enable Daily Profiler for new tickers (GC1, CL1, RTY1, YM1) and ensure data integrity.
 
-## Key Features
+## Key Changes
 
-### 1. Collapsible Icon Sidebar
-- **TradingView Design**: Replaced the bulky sidebar with a sleek 48px Icon Strip.
-- **Interactive Panels**: Clicking "Object Tree" expands the panel, pushing the chart layout naturally.
-- **Consistency**: Matches the Left Toolbar's interaction pattern.
+### 1. Frontend Updates
+- Added `GC1`, `CL1`, `RTY1`, `YM1` to `AVAILABLE_TICKERS` in `profiler-view.tsx`.
+- Updated `ProfilerFilterSidebar` with descriptive labels for all tickers.
 
-### 2. Robust Replay Mode
-- **Progressive Reveal**: Simulates live market data by revealing bars one by one or at speed.
-- **Auto-Follow**: The chart now automatically scrolls to keep the newest candle in view during playback.
+### 2. API & Backend Fixes
+- **Fixed 500 Server Error**: `ProfilerService` crashed on `None` open prices due to sparse data. Added safe checks.
+- **Fixed 404 Missing Files**: `get_daily_hod_lod` method was missing, causing startup crashes.
+- **Timeframes Fix**:
+    - **ES1 Blank**: Web chunks (`public/data/ES1`) were actually missing. The previous chunk generation (Fix #3) might have been interrupted or skipped ES1. **UPDATE**: User reported 1D/15m/1h still missing. Found script was writing to `ROOT/public/data` instead of `web/public/data`.
+    - **YM1 Gap**: Confirmed via `check_parquet_gap.py` that `YM1_1m.parquet` has ZERO rows for Hour 15. This is a source data import issue, unlike RTY1/ES1 which were stale derived data.
+- **Fix**:
+    - Ran `convert_to_chunked_json.py` with **corrected path** (`web/public/data`) to generate ALL ES1 timeframes. Verified 15m, 1h, 1d folders now exist.
+    -   Ran `reimport_clean.py YM1` with `America/Chicago` source timezone.
+        -   Verified Peak Volume is at 09:30 ET (Market Open), correcting the +2 hour shift seen when assuming Pacific Time.
+        -   Verified Parquet has 6.4M rows (vs 5.8M old).
+        -   Verified HOD/LOD data regenerated.
+    -   **Fixed JSON Error**: YM1 chunks contained `NaN`, crashing the chart. Added `dropna` and strict type casting to cleaner script. Regenerated chunks.
 
-### 3. Advanced Start Menu
-- **Sidebar**: `RightSidebar` now uses a conditional rendering model for performance and cleaner DOM (only renders panel when active).
-- **Chart Hook**: `useChart` simplified by removing redundant size management logic.
-# Chart Navigation & Sidebar Polish
+### 3. Data Integrity & Timezones
+- **NinjaTrader Import Fix**: Identified that imports were shifted by 2-3 hours because script assumed `US/Central` while files were in `Pacific Time`.
+    - Updated `scripts/import_ninjatrader.py` to use `America/Los_Angeles`.
+- **Clean Re-Import**: ran `reimport_clean.py` for all tickers to regenerate Parquet files with correct timestamps.
+- **ES1 Data Cleanup**: Re-imported ES1 to remove corrupt/random candles caused by unreliable Yahoo Finance updates.
 
-## Overview
-This update enhances the Chart UI with a professional TradingView-style sidebar and resolves critical rendering issues associated with resizing and playback.
+### 4. Workflow Enhancements
+- Created `.agent/workflows/regenerate_all_data.md` for consistent data regeneration.
+- Updated `docs/DataManagementRequirements.md` with Yahoo Finance Warning and Derived Data workflow.
 
-## Key Features
+### 5. Bug Fixes (Final Review)
+- **API: No Data in Price Model**: Fixed logic to handle "Any" outcome and "missing open price" in `profiler_service.py`.
+- **UI: React Render Error**: Fixed "Rendered fewer hooks" crash in `ProfilerView` by fixing hook order.
+- **Chart: Data Not Found**: Generated missing web chunks for `GC1`, `ES1`, etc., and fixed generation script path.
 
-### 1. Collapsible Icon Sidebar
-- **TradingView Design**: Replaced the bulky sidebar with a sleek 48px Icon Strip.
-- **Interactive Panels**: Clicking "Object Tree" expands the panel, pushing the chart layout naturally.
-- **Consistency**: Matches the Left Toolbar's interaction pattern.
+## Verification
+- **API**: All endpoints (`/stats/filtered-price-model`, `/stats/daily-hod-lod`) tested and working.
+- **Data**: New data files verified in `data/` directory with correct sizes and timestamps.
+- **Backup**: Full data backup executed to Google Drive.
 
-### 2. Robust Replay Mode
-- **Progressive Reveal**: Simulates live market data by revealing bars one by one or at speed.
-- **Auto-Follow**: The chart now automatically scrolls to keep the newest candle in view during playback.
+### 6. Feature Validation: Range-based Stats & Outlier Handling
+- **Objective**: Match "Intraday Path" statistics from Reference JSON vs actual Volatility.
+- **Verification**:
+    -   Verified that "Daily Low Median" for RTY1 (-0.7%) matches the Reference Image exactly.
+    -   Confirmed that the "Close Distribution" (Path) was effectively 0.0% and not the target metric.
+- **Implementation**:
+    -   Updated `range-distribution.tsx` to display stats as **Ranges** (e.g. "0.3 to 0.4 %").
+    -   Implemented **Outlier Aggregation**: Values > 5% are clamped and labeled as `> 5 %`.
+    -   Polished UI: Removed Close Distribution chart, improved typography (tabular numbers).
+### 7. Modularization: Price Model Grid
+- **Objective**: Break down "Price Models" into individual session charts (Asia, London, NY1, NY2) for clearer analysis, while retaining the Daily aggregate. Modularize for reuse.
+- **Implementation**:
+    -   Created `PriceModelGrid` component (2x2 responsive grid).
+    -   Added Grid to `ProfilerView` (Daily Overview) to show both Aggregate and Breakdown.
+    -   Replaced single chart in `OutcomeDetailView` with Grid. **Benefit**: Outcomes (e.g., "Asia Long") now visually show their impact flow across subsequent sessions (London -> NY1) in the same view.
+### 8. UX Refinement: Smart Start Times
+- **Objective**: Remove empty "dead space" on charts where the level (e.g., Midnight Open) hasn't started yet relative to the Daily session.
+- **Implementation**:
+    -   Updated `DailyLevels` X-axis logic.
+    -   If a level starts *after* the session start (e.g., "Midnight Open" starts at 00:00, but "Daily" session starts at 18:00 prev day), the chart now dynamically starts at 00:00 instead of 18:00.
+    -   Applied to: P12, Midnight, 07:30 Open, and Session Mids.
 
-### 3. Advanced Start Menu
-- **Sidebar**: `RightSidebar` now uses a conditional rendering model for performance and cleaner DOM (only renders panel when active).
-- **Chart Hook**: `useChart` simplified by removing redundant size management logic.
+### 9. Data Integrity: NQ1 2008 Gap Fill & Standardization
+- **Objective**: Fill the large data gap in NQ1 (Jan-Dec 2008) and standardize the import process for future updates.
+- **Implementation**:
+    -   **Gap Fill**: Imported `NQ Monday 1755.csv` (NinjaTrader export) covering 2008-2025.
+    -   **Verification**: Confirmed new data aligns perfectly with existing 2025 data when interpretation is **Pacific Time** with a **-1 minute shift** (Close->Open).
+    -   **Standardization**:
+        -   Refactored verification logic into reusable scripts: `scripts/verify_import_alignment.py` and `scripts/check_data_continuity.py`.
+        -   Documented a rigorous **Standard Operating Procedure (SOP)** in `docs/DataManagementRequirements.md` for all future imports.
+    -   **Regeneration**: Fully regenerated all derived data (Profiler, Levels, HOD/LOD) for NQ1.
 
-### 4. Trading & Journaling System
-- **Real-time Trading Panel**: A compact, interactive Buy/Sell panel that syncs with chart prices.
-- **Position Visualization**: Active positions are drawn directly on the chart with P&L.
-- **Backend Integration**: Trades are persisted to a SQLite database using Server Actions and Prisma.
-![Trading Interface Mockup](C:/Users/vinay/.gemini/antigravity/brain/e19d63fd-4820-451b-a83a-779ec1adca48/buy_sell_mockup_1764996375977.png)
+### 10. Performance Optimization: Pre-warming Derived Data
+- **Objective**: Improve API response times by pre-computing expensive derived datasets for all supported tickers.
+- **Implementation**:
+    -   **Optimized Regeneration Script**: Modified `regenerate_derived.py` to target specific tickers for web chunking, avoiding redundant global processing (5x speedup).
+    -   **Batch Execution**: Triggered full regeneration for ES1, YM1, RTY1, GC1, and CL1 to ensure all caches (Profiler, HOD/LOD, Levels) are fresh and ready for instant API delivery.
 
-### 6. Timeframe Synchronization Fix
-- **Problem**: Changing timeframes caused the chart to "jump" or desynchronize, losing the user's date context.
-- **Solution**: 
-  - Implemented `getVisibleTimeRange()` in `useChart` to capture the center time of the current view.
-  - Added logic in `ChartContainer` to restore this center time AFTER the new timeframe data is loaded.
-  - **Replay Mode Fix**: Updated `useChartData` to correctly recalculate `replayIndex` when switching timeframes during replay, ensuring the view doesn't jump to an unrelated date.
-  - Ensures seamless transitions between timeframes (e.g., 1D -> 4H) while keeping the same price action in focus.
-# Chart Navigation & Sidebar Polish
+### 11. Feature: Profiler Clipboard Export
+- **Objective**: Allow users to instantly copy complex profiler statistics in a standardized pipe-delimited format for use in external tools (e.g., TradingView indicators).
+- **Format**: `Session|Direction|Stats|LOD Time Mode|HOD Time Mode|LOD Dist|HOD Dist|P12 High|P12 Mid|P12 Low|Asia Mid|London Mid|Captured At`.
+- **Implementation**:
+    -   Created `web/lib/profiler-export.ts` utility to handle complex formatting (Mode-to-Median ranges, Time Mode Buckets).
+    -   **Bulk Export**: Added "Copy All Outcomes" button to `SessionAnalysisView` to capture Long/Short True/False stats in one click.
+    -   **Single Export**: Added "Copy Export String" button to individual `OutcomeDetailView`.
+    -   **Logic**: Implemented rigorous date-subset filtering to ensure Level Probabilities (P12) reflect only the days matching the specific outcome.
 
-## Overview
-This update enhances the Chart UI with a professional TradingView-style sidebar and resolves critical rendering issues associated with resizing and playback.
-
-## Key Features
-
-### 1. Collapsible Icon Sidebar
-- **TradingView Design**: Replaced the bulky sidebar with a sleek 48px Icon Strip.
-- **Interactive Panels**: Clicking "Object Tree" expands the panel, pushing the chart layout naturally.
-- **Consistency**: Matches the Left Toolbar's interaction pattern.
-
-### 2. Robust Replay Mode
-- **Progressive Reveal**: Simulates live market data by revealing bars one by one or at speed.
-- **Auto-Follow**: The chart now automatically scrolls to keep the newest candle in view during playback.
-
-### 3. Advanced Start Menu
-- **Sidebar**: `RightSidebar` now uses a conditional rendering model for performance and cleaner DOM (only renders panel when active).
-- **Chart Hook**: `useChart` simplified by removing redundant size management logic.
-# Chart Navigation & Sidebar Polish
-
-## Overview
-This update enhances the Chart UI with a professional TradingView-style sidebar and resolves critical rendering issues associated with resizing and playback.
-
-## Key Features
-
-### 1. Collapsible Icon Sidebar
-- **TradingView Design**: Replaced the bulky sidebar with a sleek 48px Icon Strip.
-- **Interactive Panels**: Clicking "Object Tree" expands the panel, pushing the chart layout naturally.
-- **Consistency**: Matches the Left Toolbar's interaction pattern.
-
-### 2. Robust Replay Mode
-- **Progressive Reveal**: Simulates live market data by revealing bars one by one or at speed.
-- **Auto-Follow**: The chart now automatically scrolls to keep the newest candle in view during playback.
-
-### 3. Advanced Start Menu
-- **Sidebar**: `RightSidebar` now uses a conditional rendering model for performance and cleaner DOM (only renders panel when active).
-- **Chart Hook**: `useChart` simplified by removing redundant size management logic.
-
-### 4. Trading & Journaling System
-- **Real-time Trading Panel**: A compact, interactive Buy/Sell panel that syncs with chart prices.
-- **Position Visualization**: Active positions are drawn directly on the chart with P&L.
-- **Backend Integration**: Trades are persisted to a SQLite database using Server Actions and Prisma.
-![Trading Interface Mockup](C:/Users/vinay/.gemini/antigravity/brain/e19d63fd-4820-451b-a83a-779ec1adca48/buy_sell_mockup_1764996375977.png)
-
-### 6. Timeframe Synchronization Fix
-- **Problem**: Changing timeframes caused the chart to "jump" or desynchronize, losing the user's date context.
-- **Solution**: 
-  - Implemented `getVisibleTimeRange()` in `useChart` to capture the center time of the current view.
-  - Added logic in `ChartContainer` to restore this center time AFTER the new timeframe data is loaded.
-  - **Replay Mode Fix**: Updated `useChartData` to correctly recalculate `replayIndex` when switching timeframes during replay, ensuring the view doesn't jump to an unrelated date.
-  - Ensures seamless transitions between timeframes (e.g., 1D -> 4H) while keeping the same price action in focus.
-
-### 7. Data Integrity Fix
-- **Problem**: 5-minute charts (and others) showed outdated data from 2024, despite 1-minute source data being current (2025).
-- **Diagnosis**: Stale parquet files in the `data/` directory that weren't being regenerated.
-- **Solution**: Executed `convert_to_parquet.py` to aggregate fresh 1-minute data into all required timeframes (5m, 15m, 1h, etc.), ensuring correct year display.
-
-### Journal Management (Phase 4)
-- **Account Management**: Created a robust system to manage multiple trading accounts (Simulated, Evaluation, Personal).
-- **Journal Panel**: Implemented a comprehensive history view to track all trades, supporting filtering and review.
-- **Top Toolbar Integration**: Seamlessly integrated account selection, session P&L display, and journal toggle into the main UI.
-- **Database Architecture**: Extended the schema to include `Account` and `Strategy` models, linking every trade to a specific context.
-
-### Code Quality Improvements
-- **Chart Component Refactor**: Split the massive `ChartContainer.tsx` into specialized hooks (`useChartData`, `useChartTrading`, `useChartDrag`, etc.), improving maintainability and reducing complexity.
-- **Trading Context**: Centralized all trading logic (Orders, Positions, Accounts) into `TradingContext`, simplifying component interactions.
-- **Timeframe Synchronization**: Fixed critical bugs where changing timeframes would cause temporal drift, ensuring the chart stays anchored to the user's focus point.d `ChartContainer` by adding appropriate suppression for dynamic styling.
-- **Prop Correction**: Fixed `PropertiesModal` prop mismatch (`isOpen` -> `open`) to ensure properties dialog opens correctly.
-
-### 8. Profiler Reference Comparison
-- **New Page**: Added a dedicated `Reference Profiler` page to view historical aggregated stats (2008-2025).
-- **Consolidation**: Updated the Main Profiler (HOD/LOD Analysis) to consolidate late-session moves (16:15-17:00) into the 16:15 bucket, aligning the median/mode calculation with the reference methodology.
-
-
-### 9. Data Verification (Reference vs Local)
-- **Goal**: Validated the `NQ1_1m.parquet` dataset against the `ReferenceAll.json` benchmark to ensure statistical integrity.
-- **Finding**: 
-  - **1m Data (2008-2025)**: Median High/Low stats (0.63% / -0.58%) align closely with Reference stats (0.60% / -0.60%), confirming the Reference Data represents the "High Volatility" era (post-2008) including Full Overnight Sessions.
-  - **1D Data (1999-2025)**: Showed significantly lower volatility (0.41% Median) and systematic price discrepancies, confirming it represents a different session profile (likely RTH-only) or contract adjustment.
-- **Conclusion**: Established `NQ1_1m.parquet` as the authoritative source for all Profiler calculations.
+## 12. NQ1 December Data Fix (NinjaTrader)
+-   **Issue**: December 2025 data was corrupt/missing due to Yahoo import issues.
+-   **Fix**: Imported `data/NinjaTrader/NQ Monday 1755.csv` with:
+    -   Timezone: `America/Los_Angeles` (Source) -> `America/New_York` (Target).
+    -   Bar Shift: -1 minute (Close timestamps adjusted to Open timestamps).
+-   **Verification**:
+    -   Regenerated all derived data (5m, 15m, 1h, 4h).
+    -   Recomputed Profiler statistics and Level Touches.
