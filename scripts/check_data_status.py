@@ -56,7 +56,8 @@ def get_file_info(filepath):
                     # It's often named 'datetime', 'time', 'Date', 'Time' or '__index_level_0__'
                     names = pf.schema.names
                     for i, name in enumerate(names):
-                        if name.lower() in ['datetime', 'time', 'date', '__index_level_0__']:
+                        # print(f"DEBUG: {filepath} Col {i}: {name}")
+                        if name.lower() in ['datetime', 'time', 'date', 'timestamp', 'index', '__index_level_0__']:
                             col_idx = i
                             break
                     
@@ -106,9 +107,46 @@ def get_file_info(filepath):
                     info["endDate"] = parse_and_format(end_val)
                     
                 except Exception as range_err:
-                    # info["startDate"] = f"Err: {str(range_err)}" # Debug
-                    info["startDate"] = "-"
-                    info["endDate"] = "-"
+                    # Fallback: Read actual first/last rows using Pandas (slower but reliable)
+                    try:
+                        # minimal read
+                        # We need to find the time column name first
+                        time_col = None
+                        for name in names:
+                            if name.lower() in ['time', 'datetime', 'date', 'timestamp']:
+                                time_col = name
+                                break
+                        
+                        if time_col:
+                            # Read first and last row? Hard with parquet efficiently without reading whole file or row groups
+                            # Actually, we can read just the head and tail if we treat it as a dataset?
+                            # Simplest "robust" way for moderate files (<1GB) on local SSD is just reading specific columns
+                            # But that's slow.
+                            # Better: use the index if it exists.
+                            
+                            # Let's try reading schema from pandas
+                            pf_pd = pd.read_parquet(filepath, columns=[time_col]) # Still reads full column
+                            if not pf_pd.empty:
+                                start_val = pf_pd[time_col].iloc[0]
+                                end_val = pf_pd[time_col].iloc[-1]
+                                info["startDate"] = parse_and_format(start_val)
+                                info["endDate"] = parse_and_format(end_val)
+                            else:
+                                 info["startDate"] = "-"
+                                 info["endDate"] = "-"
+                        else:
+                             # Try reading index
+                             pf_pd = pd.read_parquet(filepath) 
+                             if isinstance(pf_pd.index, pd.DatetimeIndex):
+                                 info["startDate"] = parse_and_format(pf_pd.index[0])
+                                 info["endDate"] = parse_and_format(pf_pd.index[-1])
+                             else:
+                                 info["startDate"] = "?"
+                                 info["endDate"] = "?"
+                                 
+                    except Exception as fb_err:
+                        info["startDate"] = "-" # f"Err: {str(range_err)} | FB: {str(fb_err)}"
+                        info["endDate"] = "-"
                     
         except Exception as e:
             info["rows"] = "Error reading"

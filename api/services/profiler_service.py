@@ -41,7 +41,7 @@ class ProfilerService:
 
 
     @staticmethod
-    def analyze_profiler_stats(ticker: str, days: int = 50) -> Dict:
+    def analyze_profiler_stats(ticker: str, days: int = 50, force: bool = False) -> Dict:
         """
         Get Profiler Stats.
         PRIORITY 1: Pre-computed JSON file (Instant)
@@ -53,8 +53,8 @@ class ProfilerService:
         from api.services.data_loader import DATA_DIR
         json_path = DATA_DIR / f"{ticker}_profiler.json"
         
-        # 1. Try Loading Pre-computed JSON
-        if json_path.exists():
+        # 1. Try Loading Pre-computed JSON (if not forced)
+        if json_path.exists() and not force:
             # Check memory cache first
             if ticker in ProfilerService._json_cache:
                 all_sessions = ProfilerService._json_cache[ticker]
@@ -111,21 +111,6 @@ class ProfilerService:
                     }
                 }
 
-    @staticmethod
-    def get_level_stats(ticker: str) -> Dict:
-        """
-        Get pre-computed level statistics (Hit Rate, Timing) from JSON.
-        """
-        from api.services.data_loader import DATA_DIR
-        json_path = DATA_DIR / f"{ticker}_level_stats.json"
-        
-        if json_path.exists():
-            try:
-                with open(json_path, 'r') as f:
-                    return json.load(f)
-            except Exception as e:
-                return {"error": str(e)}
-        return {"error": "Stats not found"}
 
         # 2. Fallback to Calculation (Original Logic)
         # ... (Previous implementation below, kept as fallback)
@@ -235,6 +220,10 @@ class ProfilerService:
                 high_pct = round(((high - sess_open) / sess_open) * 100, 2) if sess_open > 0 else 0
                 low_pct = round(((low - sess_open) / sess_open) * 100, 2) if sess_open > 0 else 0
                 
+                # Close % (Path)
+                sess_close = float(sess_data.iloc[-1]['close'])
+                close_pct = round(((sess_close - sess_open) / sess_open) * 100, 2) if sess_open > 0 else 0
+                
                 mon_start = end_ts
                 next_start_time = sess['next_start']
                 
@@ -323,6 +312,7 @@ class ProfilerService:
                     "low_time": low_time,
                     "high_pct": high_pct,
                     "low_pct": low_pct,
+                    "close_pct": close_pct,
                     "status": status,
                     "status_time": status_time,
                     "broken": broken,
@@ -352,6 +342,22 @@ class ProfilerService:
         }
 
     @staticmethod
+    def get_level_stats(ticker: str) -> Dict:
+        """
+        Get pre-computed level statistics (Hit Rate, Timing) from JSON.
+        """
+        from api.services.data_loader import DATA_DIR
+        json_path = DATA_DIR / f"{ticker}_level_stats.json"
+        
+        if json_path.exists():
+            try:
+                with open(json_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                return {"error": str(e)}
+        return {"error": "Stats not found"}
+
+    @staticmethod
     def get_price_model_data(ticker: str, session_name: str, outcome_name: str, days: int = 50) -> Dict:
         """
         Calculate Price Model (Composite High/Low paths) for a specific outcome.
@@ -369,7 +375,8 @@ class ProfilerService:
         target_sessions = [
             s for s in all_sessions 
             if s['session'] == session_name and 
-            (s['status'] == outcome_name or 
+            (outcome_name == "Any" or 
+             s['status'] == outcome_name or 
              (outcome_name == "Long" and "Long" in s['status']) or 
              (outcome_name == "Short" and "Short" in s['status']))
         ]
@@ -467,7 +474,7 @@ class ProfilerService:
                 continue
                 
             sess_open = valid_sessions[i]['open']
-            if sess_open <= 0: continue
+            if sess_open is None or sess_open <= 0: continue
             
             # Slicing numpy array is FAST
             chunk_ts = np_index[start_idx:end_idx]
@@ -570,6 +577,22 @@ class ProfilerService:
             "extreme": ext_path,
             "count": len(sessions)
         }
+    @staticmethod
+    def get_daily_hod_lod(ticker: str) -> Dict:
+        """
+        Get pre-computed true daily HOD/LOD times (from 1-minute data).
+        """
+        from api.services.data_loader import DATA_DIR
+        json_path = DATA_DIR / f"{ticker}_daily_hod_lod.json"
+        
+        if json_path.exists():
+            try:
+                with open(json_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                return {"error": str(e)}
+        return {"error": f"Daily HOD/LOD data for {ticker} not found (File missing: {json_path.name})"}
+
     @staticmethod
     def get_custom_price_model(ticker: str, target_session: str, dates: List[str], bucket_minutes: int = 1):
         """
@@ -834,7 +857,7 @@ class ProfilerService:
                 'low_pct': s.get('low_pct'),
                 'start_time': s.get('start_time'), # Required for PriceModel path generation
                 'end_time': s.get('end_time'),
-                'open': s.get('open'), # Required for PriceModel normalization
+                'open': s.get('open') or s.get('price'), # Required for PriceModel normalization
                 'range_high': s.get('range_high'), # Required for Daily range calc
                 'range_low': s.get('range_low'),
                 'mid': s.get('mid'),
@@ -895,18 +918,59 @@ class ProfilerService:
             return stats
         
         # 2. Extract matched sessions or dates
-        # get_filtered_stats returns 'sessions' (filtered list)
-        matched_sessions = stats.get('sessions', [])
+        # get_filtered_stats returns 'sessions' (filtered list of ALL sessions on matched dates)
+        all_matched_sessions = stats.get('sessions', [])
         
-        # 3. Generate Composite Path
+        # 3. Filter for specific target session or construct Daily
+        matched_sessions = []
+        
+        if target_session == 'Daily':
+            # Construct synthetic Daily sessions (18:00 -> 16:00 next day)
+            # We need to find the unique dates and build a daily session for each
+            unique_dates = sorted(list(set(s['date'] for s in all_matched_sessions)))
+            
+            # We need 'Asia' sessions to get the correct open price and start time (18:00 prev day)
+            # Find Asia session for each date
+            asia_map = {s['date']: s for s in all_matched_sessions if s['session'] == 'Asia'}
+            
+            for d in unique_dates:
+                # If we have the Asia session, use its open/start
+                # If not (maybe filtered out?), we might need to look it up or skip
+                # But get_filtered_stats returns sessions for *matched dates*. 
+                # If Asia was part of the filter criteria, it should be there.
+                # If filter was "NY1 Long", Asia might be present if we returned all sessions for that date.
+                # Yes, get_filtered_stats returns all sessions for the date.
+                
+                if d in asia_map:
+                    asia = asia_map[d]
+                    matched_sessions.append({
+                        'start_time': asia['start_time'], 
+                        # Daily duration ~22h. End time is mostly for reference in generator bounds check
+                        'end_time': (pd.Timestamp(asia['end_time']) + pd.Timedelta(hours=22)).isoformat(), 
+                        'open': asia['open'],
+                        'session': 'Daily',
+                        'date': d
+                    })
+        else:
+            # Strict filter for the requested session type
+            matched_sessions = [s for s in all_matched_sessions if s.get('session') == target_session]
+
+        if not matched_sessions:
+            return {"median": [], "extreme": [], "count": 0}
+
+        # 4. Generate Composite Path
         # Determine duration
         duration = 7.0
         if target_session == 'Daily':
             duration = 22.0
         elif target_session == 'Asia':
-            duration = 8.0
+            duration = 8.0 # 18:00 - 02:00
         elif target_session == 'London':
             duration = 6.0
+        elif target_session == 'NY1':
+            duration = 6.0 # 07:30 - 13:30? (Usually 4-6h is enough for view)
+        elif target_session == 'NY2':
+            duration = 5.0 # 11:30 - 16:30
             
         result = ProfilerService.generate_composite_path(
             ticker, matched_sessions, duration_hours=duration, bucket_minutes=bucket_minutes

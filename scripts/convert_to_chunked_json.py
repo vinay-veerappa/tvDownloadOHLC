@@ -26,9 +26,30 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
     print(f"Converting {parquet_path.name}...")
     
     # Load data
-    df = pd.read_parquet(parquet_path)
-    df.reset_index(inplace=True)
+    try:
+        df = pd.read_parquet(parquet_path)
+    except Exception as e:
+        print(f"FAILED to read {parquet_path}: {e}")
+        return 0, 0
+    
+    # Normalize columns to lowercase
     df.columns = [c.lower() for c in df.columns]
+    
+    # Check if 'time' (or variant) is already a column
+    has_time_col = False
+    for col in ['time', 'date', 'datetime']:
+        if col in df.columns:
+            has_time_col = True
+            break
+            
+    if has_time_col:
+        # If time column exists, we can drop the index to avoid conflicts
+        df.reset_index(drop=True, inplace=True)
+    else:
+        # If no time column, the index likely holds the time
+        df.reset_index(inplace=True)
+        # Re-normalize columns because reset_index might have introduced a capitalized column (e.g. 'Datetime')
+        df.columns = [c.lower() for c in df.columns]
     
     if 'datetime' in df.columns:
         df.rename(columns={'datetime': 'time'}, inplace=True)
@@ -36,6 +57,7 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
         df.rename(columns={'date': 'time'}, inplace=True)
     elif 'index' in df.columns:
         df.rename(columns={'index': 'time'}, inplace=True)
+    
     
     if pd.api.types.is_datetime64_any_dtype(df['time']):
         df['time'] = (df['time'].astype('int64') // 10**9).astype(int)
@@ -77,6 +99,19 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
         print(f"  Deduplicated {timeframe}: {len(df)} bars (1 per {'day' if timeframe == '1D' else 'week'})")
     
     df = df[['time', 'open', 'high', 'low', 'close']]
+    
+    # Sanitize: Drop NaNs in critical columns
+    df.dropna(subset=['time', 'close'], inplace=True)
+    
+    # Ensure time is int (Unix timestamp)
+    if not pd.api.types.is_integer_dtype(df['time']):
+         # Try converting to int, coercing errors
+         df['time'] = pd.to_numeric(df['time'], errors='coerce')
+         df.dropna(subset=['time'], inplace=True)
+         df['time'] = df['time'].astype(int)
+         
+    # Final sort
+    df.sort_values('time', inplace=True)
 
     
     total_bars = len(df)
@@ -141,8 +176,27 @@ def main():
     for f in output_dir.glob("*.json"):
         f.unlink()
     
+    import sys
+    
+    # Check for specific tickers
+    specific_tickers = sys.argv[1:]
+    
     # Find all parquet files
-    parquet_files = list(data_dir.glob("*.parquet"))
+    all_parquet_files = list(data_dir.glob("*.parquet"))
+    
+    if specific_tickers:
+        parquet_files = []
+        for pat in specific_tickers:
+            # Handle "YM1" -> match "YM1_*.parquet"
+            # We need to be careful not to match "YM1" vs "YM1_1m" overlapping.
+            # glob search likely safer.
+            # Actually just filter the list.
+            for p in all_parquet_files:
+                if p.name.startswith(pat + "_"):
+                    parquet_files.append(p)
+        print(f"Filtering for {specific_tickers} -> Found {len(parquet_files)} files")
+    else:
+        parquet_files = all_parquet_files
     
     print(f"Found {len(parquet_files)} parquet files")
     print(f"Chunk size: {CHUNK_SIZE:,} bars per chunk\n")

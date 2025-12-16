@@ -53,10 +53,18 @@ def load_parquet(ticker: str, timeframe: str) -> Optional[pd.DataFrame]:
         df = df.reset_index()
     
     # Rename datetime column to time if needed
+    # Rename datetime column to time if needed
     if 'datetime' in df.columns:
-        df = df.rename(columns={'datetime': 'time'})
+        if 'time' in df.columns:
+            # Drop duplicative datetime column if time already exists
+            df = df.drop(columns=['datetime'])
+        else:
+            df = df.rename(columns={'datetime': 'time'})
     elif 'timestamp' in df.columns:
-        df = df.rename(columns={'timestamp': 'time'})
+        if 'time' in df.columns:
+             df = df.drop(columns=['timestamp'])
+        else:
+             df = df.rename(columns={'timestamp': 'time'})
     
     # Convert datetime to Unix timestamp (seconds) if needed
     if 'time' in df.columns and pd.api.types.is_datetime64_any_dtype(df['time']):

@@ -5,10 +5,13 @@ import { ProfilerSession, DailyHodLodResponse, LevelTouchesResponse } from '@/li
 import { HodLodChart, SessionStats } from './hod-lod-analysis';
 import { RangeDistribution } from './range-distribution';
 import { PriceModelChart } from './price-model-chart';
+import { PriceModelGrid } from './price-model-grid';
 import { DailyLevels } from './daily-levels'; // [NEW]
 import { SESSION_LEVELS } from './session-analysis-view'; // [NEW]
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Copy } from 'lucide-react';
 
 interface OutcomeDetailViewProps {
     outcome: string; // "Long True", "Short True", etc.
@@ -99,7 +102,7 @@ export const OutcomeDetailView = memo(function OutcomeDetailView({
                 <Badge variant="outline" className="text-base px-4 py-1">
                     Count: {sessions.length}
                 </Badge>
-                {/* Could add win rate or other stats here if passed */}
+
             </div>
 
             {/* 1. HOD/LOD Analysis (Daily Context) */}
@@ -121,15 +124,14 @@ export const OutcomeDetailView = memo(function OutcomeDetailView({
 
             {/* 3. Price Model (Median) */}
             <section>
-                <h3 className="text-lg font-semibold mb-3">Median Price Model  ({outcome})</h3>
-                <PriceModelChart
+                <h3 className="text-lg font-semibold mb-3">Median Price Model ({outcome})</h3>
+                <p className="text-xs text-muted-foreground mb-4">Showing price path for <strong>all sessions</strong> when this outcome occurs.</p>
+                <PriceModelGrid
                     ticker={ticker}
-                    session={targetSession}
                     targetSession={targetSession}
-                    filters={mergedFilters} // <--- Critical: use merged filters
+                    filters={mergedFilters} // <--- Critical: use merged filters so ALL charts in grid reflect the outcome
                     brokenFilters={brokenFilters}
                     intraState={intraState}
-                    height={400}
                 />
             </section>
 

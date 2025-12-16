@@ -4,6 +4,7 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 import data_utils
+import numpy as np
 
 # Configuration
 # Map custom ticker names to Yahoo Finance tickers
@@ -20,10 +21,14 @@ TICKER_MAP = {
     "VVIX": "^VVIX"
 }
 
+def update_ticker_intraday(ticker_key, interval, period):
     # Map Yahoo interval to App Convention (1wk -> 1W)
     file_interval = interval
     if interval == '1wk':
+        # Yahoo requires '1wk', but we save as '1W'
         file_interval = '1W'
+    elif interval == '1d':
+        file_interval = '1d' # ensure lowercase standard if needed (or 1D)
         
     filename = f"{ticker_key}_{file_interval}.parquet"
     filepath = os.path.join(data_utils.DATA_DIR, filename)
@@ -41,28 +46,24 @@ TICKER_MAP = {
             old_df = pd.read_parquet(filepath)
             # Ensure index is Datetime
             if not isinstance(old_df.index, pd.DatetimeIndex):
-                 # Try to find a date column if index is not set
                  if 'date' in old_df.columns:
-                     old_df['datetime'] = pd.to_datetime(old_df['date']) # Assuming 'date' holds datetime
+                     old_df['datetime'] = pd.to_datetime(old_df['date'])
                      old_df.set_index('datetime', inplace=True)
-                 elif 'time' in old_df.columns: # Sometimes 'time'
+                 elif 'time' in old_df.columns:
                       old_df['datetime'] = pd.to_datetime(old_df['time'])
                       old_df.set_index('datetime', inplace=True)
                       
             last_date = old_df.index.max()
             print(f"Existing data end: {last_date}")
             
-            # Create Backup before doing anything else
             data_utils.create_backup(filepath)
             
         except Exception as e:
             print(f"Error reading existing file: {e}")
             old_df = pd.DataFrame()
-            last_date = None
     else:
         print("No existing file found. Creating new.")
         old_df = pd.DataFrame()
-        last_date = None
 
     # 2. Fetch New Data
     print(f"Fetching recent data for {yahoo_ticker} (Period: {period})...")
@@ -73,32 +74,25 @@ TICKER_MAP = {
             print("No data fetched.")
             return
 
-        # Flatten MultiIndex columns if present (Yahoo often returns (Price, Ticker))
+        # Flatten MultiIndex columns if present
         if isinstance(new_df.columns, pd.MultiIndex):
             new_df.columns = new_df.columns.get_level_values(0)
             
-        # Standardize columns
         new_df.rename(columns={
             "Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"
         }, inplace=True)
         
         # Timezone Alignment
-        # The existing file usually has a timezone (e.g. America/New_York or UTC)
-        # We must align new data to match old data's timezone before concat.
-        
         target_tz = None
         if not old_df.empty and isinstance(old_df.index, pd.DatetimeIndex):
             target_tz = old_df.index.tz
             
         if target_tz is not None:
-             # Convert new data to match existing file's timezone
              if new_df.index.tz is None:
-                 # Assume fetched data is UTC if naive (unlikely with yfinance, usually returns localized)
                  new_df.index = new_df.index.tz_localize("UTC").tz_convert(target_tz)
              else:
                  new_df.index = new_df.index.tz_convert(target_tz)
         else:
-            # If old data is naive, strip timezone from new data
             if new_df.index.tz is not None:
                  new_df.index = new_df.index.tz_localize(None)
 
@@ -110,10 +104,10 @@ TICKER_MAP = {
 
     # 3. Merge
     if not old_df.empty:
-        # Combine
         combined = pd.concat([old_df, new_df])
-        # Deduplicate by index (datetime)
-        combined = combined[~combined.index.duplicated(keep='last')]
+        combined = combined[~combined.index.duplicated(keep='last')] # Prefer (latest) Yahoo fetch for overlaps? 
+        # Actually logic is confusing. If old_df is local history and new_df is recent.
+        # We generally trust the new fetch for the recent period.
         combined.sort_index(inplace=True)
     else:
         combined = new_df
@@ -121,6 +115,7 @@ TICKER_MAP = {
     # 4. Save
     data_utils.safe_save_parquet(combined, filepath)
     print(f"Update complete. New count: {len(combined)} rows.")
+
 
 def upsample_from_1m(ticker_key):
     """
@@ -134,10 +129,8 @@ def upsample_from_1m(ticker_key):
     print(f"\n--- Upsampling {ticker_key} from 1m ---")
     try:
         df_1m = pd.read_parquet(source_file)
-        if df_1m.empty:
-            return
+        if df_1m.empty: return
             
-        # Define Targets
         targets = [
             ("5m", "5min"),
             ("15m", "15min"),
@@ -147,8 +140,7 @@ def upsample_from_1m(ticker_key):
         
         for interval_name, rule in targets:
             print(f"  > Creating {interval_name}...")
-            # Resample
-            # Standard OHLCV aggregation
+            # OHLCV aggregation
             agg_dict = {
                 'open': 'first',
                 'high': 'max',
@@ -157,11 +149,7 @@ def upsample_from_1m(ticker_key):
                 'volume': 'sum'
             }
             
-            # Pandas resample. 
-            # TradingView/Yahoo typically label with start time (left).
             resampled = df_1m.resample(rule, label='left', closed='left').agg(agg_dict)
-            
-            # Drop NaN rows (e.g. gaps)
             resampled.dropna(inplace=True)
             
             if not resampled.empty:
@@ -173,21 +161,12 @@ def upsample_from_1m(ticker_key):
         print(f"Upsample failed for {ticker_key}: {e}")
 
 def main():
-    # Update all mapped tickers
     tickets_to_update = TICKER_MAP.keys()
     
     for ticker in tickets_to_update:
-        # 1. Intraday 1m (Last 5 days) + Direct Downloads
         update_ticker_intraday(ticker, "1m", "5d")
-        
-        # 2. Daily 1D (Last 1 month) - Direct for Settlement
         update_ticker_intraday(ticker, "1d", "1mo")
-        
-        # 3. Weekly 1W (Last 3 months) - Direct for Settlement
-        # Yahoo interval is '1wk'
         update_ticker_intraday(ticker, "1wk", "3mo")
-        
-        # 4. Upsample Intermediate Timeframes (5m, 15m, 1h, 4h)
         upsample_from_1m(ticker)
 
 if __name__ == "__main__":

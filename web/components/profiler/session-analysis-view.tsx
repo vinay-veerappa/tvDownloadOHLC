@@ -90,7 +90,28 @@ export const SessionAnalysisView = memo(function SessionAnalysisView({ session, 
 
             {/* Row 4: Outcome Analysis (Tabs) */}
             <section>
-                <h3 className="text-lg font-semibold mb-3">Outcome Detailed Analysis</h3>
+                <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-lg font-semibold">Outcome Detailed Analysis</h3>
+                    <button
+                        className="text-xs bg-muted hover:bg-muted/80 px-3 py-1 rounded flex items-center gap-2 transition-colors border"
+                        onClick={() => {
+                            import('@/lib/profiler-export').then(({ generateBulkExportString }) => {
+                                const str = generateBulkExportString({
+                                    ticker,
+                                    targetSession: session,
+                                    allSessions,
+                                    dailyHodLod,
+                                    levelTouches,
+                                    validOutcomes // [NEW] Only export what is visible in tabs
+                                });
+                                navigator.clipboard.writeText(str);
+                                alert("Copied All Outcomes to clipboard!");
+                            });
+                        }}
+                    >
+                        <span>📋</span> Copy All Outcomes
+                    </button>
+                </div>
                 <Tabs defaultValue={validOutcomes[0]} className="w-full">
                     <TabsList className="w-full justify-start h-auto p-1 bg-muted/20 mb-4 overflow-x-auto">
                         {validOutcomes.map(outcome => {

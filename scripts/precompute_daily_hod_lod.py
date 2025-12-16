@@ -76,48 +76,33 @@ def compute_daily_hod_lod(ticker: str) -> dict:
 
 
 def main():
-    ticker = 'NQ1'
-    print(f"Computing daily HOD/LOD times for {ticker}...")
-    
-    results = compute_daily_hod_lod(ticker)
-    
-    print(f"Computed HOD/LOD for {len(results)} trading days")
-    
-    # Show sample
-    sample_dates = sorted(results.keys())[-5:]
-    print("\nSample (last 5 days):")
-    for d in sample_dates:
-        r = results[d]
-        print(f"  {d}: HOD={r['hod_time']} @ {r['hod_price']:.2f}, LOD={r['lod_time']} @ {r['lod_price']:.2f}")
-    
-    # Show distribution by hour
-    from collections import defaultdict
-    hod_hours = defaultdict(int)
-    lod_hours = defaultdict(int)
-    
-    for r in results.values():
-        hod_h = int(r['hod_time'].split(':')[0])
-        lod_h = int(r['lod_time'].split(':')[0])
-        hod_hours[hod_h] += 1
-        lod_hours[lod_h] += 1
-    
-    print("\nHOD distribution by hour:")
-    for h in sorted(hod_hours.keys()):
-        pct = 100 * hod_hours[h] / len(results)
-        bar = '█' * int(pct)
-        print(f"  {h:02d}:00 - {hod_hours[h]:4d} ({pct:5.1f}%) {bar}")
-    
-    print("\nLOD distribution by hour:")
-    for h in sorted(lod_hours.keys()):
-        pct = 100 * lod_hours[h] / len(results)
-        bar = '█' * int(pct)
-        print(f"  {h:02d}:00 - {lod_hours[h]:4d} ({pct:5.1f}%) {bar}")
-    
-    # Save to JSON
-    output_path = DATA_DIR / f'{ticker}_daily_hod_lod.json'
-    with open(output_path, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"\nSaved to {output_path}")
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("tickers", nargs="*", default=["NQ1"], help="Tickers to process")
+    args = parser.parse_args()
+
+    for ticker in args.tickers:
+        print(f"\n=== Computing daily HOD/LOD times for {ticker} ===")
+        try:
+            results = compute_daily_hod_lod(ticker)
+            
+            print(f"Computed HOD/LOD for {len(results)} trading days")
+            
+            # Show sample
+            sample_dates = sorted(results.keys())[-5:]
+            print("Sample (last 5 days):")
+            for d in sample_dates:
+                r = results[d]
+                print(f"  {d}: HOD={r['hod_time']} @ {r['hod_price']:.2f}, LOD={r['lod_time']} @ {r['lod_price']:.2f}")
+            
+            # Save to JSON
+            output_path = DATA_DIR / f'{ticker}_daily_hod_lod.json'
+            with open(output_path, 'w') as f:
+                json.dump(results, f, indent=2)
+            print(f"Saved to {output_path}")
+
+        except Exception as e:
+            print(f"Error processing {ticker}: {e}")
 
 
 if __name__ == '__main__':

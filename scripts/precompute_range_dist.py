@@ -173,5 +173,9 @@ def precompute_range_distribution(ticker="NQ1"):
 if __name__ == "__main__":
     import time
     start = time.time()
-    precompute_range_distribution("NQ1")
+    
+    import sys
+    ticker = sys.argv[1] if len(sys.argv) > 1 else "NQ1"
+    
+    precompute_range_distribution(ticker)
     print(f"Completed in {time.time() - start:.2f}s")

@@ -27,7 +27,7 @@ def precompute_ticker(ticker="NQ1"):
     start = time.time()
     
     # Note: ensure api.services.data_loader DATA_DIR is correct relative to CWD
-    result = ProfilerService.analyze_profiler_stats(ticker, days=10000)
+    result = ProfilerService.analyze_profiler_stats(ticker, days=10000, force=True)
     
     if "error" in result:
         print(f"Error: {result['error']}")
@@ -69,4 +69,18 @@ def precompute_ticker(ticker="NQ1"):
     print(f"Saved to {output_file}")
 
 if __name__ == "__main__":
-    precompute_ticker("NQ1")
+    import sys
+    
+    tickers = ["NQ1", "ES1", "GC1", "CL1", "RTY1", "YM1"]
+    
+    if len(sys.argv) > 1:
+        target = sys.argv[1]
+        if target.upper() == "ALL":
+            for t in tickers:
+                precompute_ticker(t)
+        else:
+            precompute_ticker(target)
+    else:
+        # Default to NQ1 for backward compatibility/testing, or maybe all?
+        # Let's default to ES1 as that's the current problem child.
+        precompute_ticker("ES1")
