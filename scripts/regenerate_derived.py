@@ -40,6 +40,12 @@ def ensure_time_column(ticker):
             
         df['time'] = df.index.astype(int) // 10**9
         dirty = True
+    elif df['time'].isna().any():
+        print("  Found NaNs in 'time' column. Backfilling from Index...")
+        fill_values = pd.Series(df.index.astype(int) // 10**9, index=df.index)
+        df['time'] = df['time'].fillna(fill_values)
+        df['time'] = df['time'].astype(int)
+        dirty = True
         
     if dirty:
         data_utils.safe_save_parquet(df, str(file_path))

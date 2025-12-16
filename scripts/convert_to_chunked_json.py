@@ -101,13 +101,20 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
     df = df[['time', 'open', 'high', 'low', 'close']]
     
     # Sanitize: Drop NaNs in critical columns
+    before_drop = len(df)
     df.dropna(subset=['time', 'close'], inplace=True)
-    
+    after_time_drop = len(df)
+    if before_drop != after_time_drop:
+        print(f"  WARNING: Dropped {before_drop - after_time_drop} rows due to NaN time/close")
+
     # Ensure time is int (Unix timestamp)
     if not pd.api.types.is_integer_dtype(df['time']):
          # Try converting to int, coercing errors
          df['time'] = pd.to_numeric(df['time'], errors='coerce')
          df.dropna(subset=['time'], inplace=True)
+         after_coerce = len(df)
+         if after_time_drop != after_coerce:
+            print(f"  WARNING: Dropped {after_time_drop - after_coerce} rows due to invalid Time format")
          df['time'] = df['time'].astype(int)
          
     # Final sort
