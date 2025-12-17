@@ -1,0 +1,1343 @@
+{
+    "ticker": "rty",
+    "medians": [
+        {
+            "time": "00:00:00",
+            "med_high_pct": 0.0403,
+            "med_low_pct": 0.0056
+        },
+        {
+            "time": "00:05:00",
+            "med_high_pct": 0.0338,
+            "med_low_pct": 0.0059
+        },
+        {
+            "time": "00:10:00",
+            "med_high_pct": 0.0389,
+            "med_low_pct": 0.0125
+        },
+        {
+            "time": "00:15:00",
+            "med_high_pct": 0.0386,
+            "med_low_pct": 0.0136
+        },
+        {
+            "time": "00:20:00",
+            "med_high_pct": 0.0396,
+            "med_low_pct": 0.0109
+        },
+        {
+            "time": "00:25:00",
+            "med_high_pct": 0.0434,
+            "med_low_pct": 0.0107
+        },
+        {
+            "time": "00:30:00",
+            "med_high_pct": 0.046,
+            "med_low_pct": 0.0101
+        },
+        {
+            "time": "00:35:00",
+            "med_high_pct": 0.039,
+            "med_low_pct": 0.0164
+        },
+        {
+            "time": "00:40:00",
+            "med_high_pct": 0.0396,
+            "med_low_pct": 0.0139
+        },
+        {
+            "time": "00:45:00",
+            "med_high_pct": 0.0389,
+            "med_low_pct": 0.0144
+        },
+        {
+            "time": "00:50:00",
+            "med_high_pct": 0.037,
+            "med_low_pct": 0.0169
+        },
+        {
+            "time": "00:55:00",
+            "med_high_pct": 0.0393,
+            "med_low_pct": 0.0129
+        },
+        {
+            "time": "01:00:00",
+            "med_high_pct": 0.0472,
+            "med_low_pct": 0.0066
+        },
+        {
+            "time": "01:05:00",
+            "med_high_pct": 0.0438,
+            "med_low_pct": 0.007
+        },
+        {
+            "time": "01:10:00",
+            "med_high_pct": 0.0428,
+            "med_low_pct": 0.0069
+        },
+        {
+            "time": "01:15:00",
+            "med_high_pct": 0.0392,
+            "med_low_pct": 0.0056
+        },
+        {
+            "time": "01:20:00",
+            "med_high_pct": 0.0393,
+            "med_low_pct": 0.0096
+        },
+        {
+            "time": "01:25:00",
+            "med_high_pct": 0.0445,
+            "med_low_pct": 0.0108
+        },
+        {
+            "time": "01:30:00",
+            "med_high_pct": 0.0472,
+            "med_low_pct": 0.0102
+        },
+        {
+            "time": "01:35:00",
+            "med_high_pct": 0.0396,
+            "med_low_pct": 0.0063
+        },
+        {
+            "time": "01:40:00",
+            "med_high_pct": 0.043,
+            "med_low_pct": 0.0057
+        },
+        {
+            "time": "01:45:00",
+            "med_high_pct": 0.0434,
+            "med_low_pct": 0.0088
+        },
+        {
+            "time": "01:50:00",
+            "med_high_pct": 0.0423,
+            "med_low_pct": 0.0054
+        },
+        {
+            "time": "01:55:00",
+            "med_high_pct": 0.0443,
+            "med_low_pct": 0.0064
+        },
+        {
+            "time": "02:00:00",
+            "med_high_pct": 0.0591,
+            "med_low_pct": -0.0047
+        },
+        {
+            "time": "02:05:00",
+            "med_high_pct": 0.0504,
+            "med_low_pct": 0.005
+        },
+        {
+            "time": "02:10:00",
+            "med_high_pct": 0.0498,
+            "med_low_pct": 0.0055
+        },
+        {
+            "time": "02:15:00",
+            "med_high_pct": 0.0535,
+            "med_low_pct": 0.0065
+        },
+        {
+            "time": "02:20:00",
+            "med_high_pct": 0.0535,
+            "med_low_pct": 0.011
+        },
+        {
+            "time": "02:25:00",
+            "med_high_pct": 0.0543,
+            "med_low_pct": 0.0129
+        },
+        {
+            "time": "02:30:00",
+            "med_high_pct": 0.0521,
+            "med_low_pct": 0.0065
+        },
+        {
+            "time": "02:35:00",
+            "med_high_pct": 0.0514,
+            "med_low_pct": 0.0092
+        },
+        {
+            "time": "02:40:00",
+            "med_high_pct": 0.0533,
+            "med_low_pct": 0.0131
+        },
+        {
+            "time": "02:45:00",
+            "med_high_pct": 0.058,
+            "med_low_pct": 0.0142
+        },
+        {
+            "time": "02:50:00",
+            "med_high_pct": 0.0551,
+            "med_low_pct": 0.0155
+        },
+        {
+            "time": "02:55:00",
+            "med_high_pct": 0.0572,
+            "med_low_pct": 0.0077
+        },
+        {
+            "time": "03:00:00",
+            "med_high_pct": 0.0776,
+            "med_low_pct": -0.0219
+        },
+        {
+            "time": "03:05:00",
+            "med_high_pct": 0.0776,
+            "med_low_pct": -0.0111
+        },
+        {
+            "time": "03:10:00",
+            "med_high_pct": 0.0734,
+            "med_low_pct": -0.011
+        },
+        {
+            "time": "03:15:00",
+            "med_high_pct": 0.0719,
+            "med_low_pct": -0.003
+        },
+        {
+            "time": "03:20:00",
+            "med_high_pct": 0.0741,
+            "med_low_pct": -0.0057
+        },
+        {
+            "time": "03:25:00",
+            "med_high_pct": 0.0693,
+            "med_low_pct": -0.0034
+        },
+        {
+            "time": "03:30:00",
+            "med_high_pct": 0.0696,
+            "med_low_pct": -0.0038
+        },
+        {
+            "time": "03:35:00",
+            "med_high_pct": 0.0642,
+            "med_low_pct": -0.0025
+        },
+        {
+            "time": "03:40:00",
+            "med_high_pct": 0.0638,
+            "med_low_pct": 0.0029
+        },
+        {
+            "time": "03:45:00",
+            "med_high_pct": 0.0632,
+            "med_low_pct": 0.0027
+        },
+        {
+            "time": "03:50:00",
+            "med_high_pct": 0.0621,
+            "med_low_pct": 0.0063
+        },
+        {
+            "time": "03:55:00",
+            "med_high_pct": 0.059,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "04:00:00",
+            "med_high_pct": 0.0673,
+            "med_low_pct": -0.0083
+        },
+        {
+            "time": "04:05:00",
+            "med_high_pct": 0.0734,
+            "med_low_pct": 0.0032
+        },
+        {
+            "time": "04:10:00",
+            "med_high_pct": 0.0799,
+            "med_low_pct": 0.0088
+        },
+        {
+            "time": "04:15:00",
+            "med_high_pct": 0.0778,
+            "med_low_pct": 0.0134
+        },
+        {
+            "time": "04:20:00",
+            "med_high_pct": 0.0799,
+            "med_low_pct": 0.0156
+        },
+        {
+            "time": "04:25:00",
+            "med_high_pct": 0.0782,
+            "med_low_pct": 0.0188
+        },
+        {
+            "time": "04:30:00",
+            "med_high_pct": 0.0799,
+            "med_low_pct": 0.0175
+        },
+        {
+            "time": "04:35:00",
+            "med_high_pct": 0.0829,
+            "med_low_pct": 0.0204
+        },
+        {
+            "time": "04:40:00",
+            "med_high_pct": 0.0733,
+            "med_low_pct": 0.0204
+        },
+        {
+            "time": "04:45:00",
+            "med_high_pct": 0.0709,
+            "med_low_pct": 0.0161
+        },
+        {
+            "time": "04:50:00",
+            "med_high_pct": 0.0745,
+            "med_low_pct": 0.0229
+        },
+        {
+            "time": "04:55:00",
+            "med_high_pct": 0.0757,
+            "med_low_pct": 0.0215
+        },
+        {
+            "time": "05:00:00",
+            "med_high_pct": 0.0808,
+            "med_low_pct": 0.0111
+        },
+        {
+            "time": "05:05:00",
+            "med_high_pct": 0.07,
+            "med_low_pct": 0.0187
+        },
+        {
+            "time": "05:10:00",
+            "med_high_pct": 0.0699,
+            "med_low_pct": 0.0192
+        },
+        {
+            "time": "05:15:00",
+            "med_high_pct": 0.0751,
+            "med_low_pct": 0.0245
+        },
+        {
+            "time": "05:20:00",
+            "med_high_pct": 0.0771,
+            "med_low_pct": 0.0206
+        },
+        {
+            "time": "05:25:00",
+            "med_high_pct": 0.07,
+            "med_low_pct": 0.0215
+        },
+        {
+            "time": "05:30:00",
+            "med_high_pct": 0.071,
+            "med_low_pct": 0.0162
+        },
+        {
+            "time": "05:35:00",
+            "med_high_pct": 0.0728,
+            "med_low_pct": 0.0203
+        },
+        {
+            "time": "05:40:00",
+            "med_high_pct": 0.0729,
+            "med_low_pct": 0.0236
+        },
+        {
+            "time": "05:45:00",
+            "med_high_pct": 0.0761,
+            "med_low_pct": 0.0253
+        },
+        {
+            "time": "05:50:00",
+            "med_high_pct": 0.0801,
+            "med_low_pct": 0.0269
+        },
+        {
+            "time": "05:55:00",
+            "med_high_pct": 0.0745,
+            "med_low_pct": 0.0307
+        },
+        {
+            "time": "06:00:00",
+            "med_high_pct": 0.0841,
+            "med_low_pct": 0.0247
+        },
+        {
+            "time": "06:05:00",
+            "med_high_pct": 0.083,
+            "med_low_pct": 0.0252
+        },
+        {
+            "time": "06:10:00",
+            "med_high_pct": 0.0756,
+            "med_low_pct": 0.0274
+        },
+        {
+            "time": "06:15:00",
+            "med_high_pct": 0.0788,
+            "med_low_pct": 0.0198
+        },
+        {
+            "time": "06:20:00",
+            "med_high_pct": 0.0737,
+            "med_low_pct": 0.0196
+        },
+        {
+            "time": "06:25:00",
+            "med_high_pct": 0.0704,
+            "med_low_pct": 0.0227
+        },
+        {
+            "time": "06:30:00",
+            "med_high_pct": 0.0684,
+            "med_low_pct": 0.0159
+        },
+        {
+            "time": "06:35:00",
+            "med_high_pct": 0.068,
+            "med_low_pct": 0.018
+        },
+        {
+            "time": "06:40:00",
+            "med_high_pct": 0.0713,
+            "med_low_pct": 0.0228
+        },
+        {
+            "time": "06:45:00",
+            "med_high_pct": 0.0736,
+            "med_low_pct": 0.0202
+        },
+        {
+            "time": "06:50:00",
+            "med_high_pct": 0.0698,
+            "med_low_pct": 0.0245
+        },
+        {
+            "time": "06:55:00",
+            "med_high_pct": 0.072,
+            "med_low_pct": 0.0255
+        },
+        {
+            "time": "07:00:00",
+            "med_high_pct": 0.0824,
+            "med_low_pct": 0.0193
+        },
+        {
+            "time": "07:05:00",
+            "med_high_pct": 0.0805,
+            "med_low_pct": 0.0249
+        },
+        {
+            "time": "07:10:00",
+            "med_high_pct": 0.0795,
+            "med_low_pct": 0.0263
+        },
+        {
+            "time": "07:15:00",
+            "med_high_pct": 0.0823,
+            "med_low_pct": 0.0314
+        },
+        {
+            "time": "07:20:00",
+            "med_high_pct": 0.0821,
+            "med_low_pct": 0.0279
+        },
+        {
+            "time": "07:25:00",
+            "med_high_pct": 0.0802,
+            "med_low_pct": 0.0254
+        },
+        {
+            "time": "07:30:00",
+            "med_high_pct": 0.0618,
+            "med_low_pct": -0.0032
+        },
+        {
+            "time": "07:35:00",
+            "med_high_pct": 0.0571,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "07:40:00",
+            "med_high_pct": 0.0578,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "07:45:00",
+            "med_high_pct": 0.055,
+            "med_low_pct": 0.0032
+        },
+        {
+            "time": "07:50:00",
+            "med_high_pct": 0.0538,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "07:55:00",
+            "med_high_pct": 0.0575,
+            "med_low_pct": 0.0011
+        },
+        {
+            "time": "08:00:00",
+            "med_high_pct": 0.0662,
+            "med_low_pct": -0.0026
+        },
+        {
+            "time": "08:05:00",
+            "med_high_pct": 0.0671,
+            "med_low_pct": 0.0031
+        },
+        {
+            "time": "08:10:00",
+            "med_high_pct": 0.0643,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "08:15:00",
+            "med_high_pct": 0.066,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "08:20:00",
+            "med_high_pct": 0.0648,
+            "med_low_pct": -0.0064
+        },
+        {
+            "time": "08:25:00",
+            "med_high_pct": 0.0745,
+            "med_low_pct": -0.0036
+        },
+        {
+            "time": "08:30:00",
+            "med_high_pct": 0.1093,
+            "med_low_pct": -0.0326
+        },
+        {
+            "time": "08:35:00",
+            "med_high_pct": 0.0808,
+            "med_low_pct": -0.0032
+        },
+        {
+            "time": "08:40:00",
+            "med_high_pct": 0.0845,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "08:45:00",
+            "med_high_pct": 0.0849,
+            "med_low_pct": 0.0025
+        },
+        {
+            "time": "08:50:00",
+            "med_high_pct": 0.0796,
+            "med_low_pct": 0.008
+        },
+        {
+            "time": "08:55:00",
+            "med_high_pct": 0.0787,
+            "med_low_pct": 0.0051
+        },
+        {
+            "time": "09:00:00",
+            "med_high_pct": 0.0857,
+            "med_low_pct": -0.0026
+        },
+        {
+            "time": "09:05:00",
+            "med_high_pct": 0.0803,
+            "med_low_pct": 0.0034
+        },
+        {
+            "time": "09:10:00",
+            "med_high_pct": 0.0809,
+            "med_low_pct": 0.0066
+        },
+        {
+            "time": "09:15:00",
+            "med_high_pct": 0.0818,
+            "med_low_pct": 0.003
+        },
+        {
+            "time": "09:20:00",
+            "med_high_pct": 0.0849,
+            "med_low_pct": 0.0066
+        },
+        {
+            "time": "09:25:00",
+            "med_high_pct": 0.1003,
+            "med_low_pct": -0.0092
+        },
+        {
+            "time": "09:30:00",
+            "med_high_pct": 0.2001,
+            "med_low_pct": -0.1242
+        },
+        {
+            "time": "09:35:00",
+            "med_high_pct": 0.1542,
+            "med_low_pct": -0.1063
+        },
+        {
+            "time": "09:40:00",
+            "med_high_pct": 0.1444,
+            "med_low_pct": -0.1033
+        },
+        {
+            "time": "09:45:00",
+            "med_high_pct": 0.1397,
+            "med_low_pct": -0.1073
+        },
+        {
+            "time": "09:50:00",
+            "med_high_pct": 0.1269,
+            "med_low_pct": -0.0997
+        },
+        {
+            "time": "09:55:00",
+            "med_high_pct": 0.1076,
+            "med_low_pct": -0.0879
+        },
+        {
+            "time": "10:00:00",
+            "med_high_pct": 0.1319,
+            "med_low_pct": -0.0993
+        },
+        {
+            "time": "10:05:00",
+            "med_high_pct": 0.1171,
+            "med_low_pct": -0.0938
+        },
+        {
+            "time": "10:10:00",
+            "med_high_pct": 0.1162,
+            "med_low_pct": -0.0858
+        },
+        {
+            "time": "10:15:00",
+            "med_high_pct": 0.1192,
+            "med_low_pct": -0.075
+        },
+        {
+            "time": "10:20:00",
+            "med_high_pct": 0.1202,
+            "med_low_pct": -0.0641
+        },
+        {
+            "time": "10:25:00",
+            "med_high_pct": 0.1086,
+            "med_low_pct": -0.0685
+        },
+        {
+            "time": "10:30:00",
+            "med_high_pct": 0.1065,
+            "med_low_pct": -0.0677
+        },
+        {
+            "time": "10:35:00",
+            "med_high_pct": 0.1093,
+            "med_low_pct": -0.075
+        },
+        {
+            "time": "10:40:00",
+            "med_high_pct": 0.1036,
+            "med_low_pct": -0.0674
+        },
+        {
+            "time": "10:45:00",
+            "med_high_pct": 0.1058,
+            "med_low_pct": -0.0614
+        },
+        {
+            "time": "10:50:00",
+            "med_high_pct": 0.0993,
+            "med_low_pct": -0.0659
+        },
+        {
+            "time": "10:55:00",
+            "med_high_pct": 0.0804,
+            "med_low_pct": -0.077
+        },
+        {
+            "time": "11:00:00",
+            "med_high_pct": 0.0904,
+            "med_low_pct": -0.0754
+        },
+        {
+            "time": "11:05:00",
+            "med_high_pct": 0.087,
+            "med_low_pct": -0.0825
+        },
+        {
+            "time": "11:10:00",
+            "med_high_pct": 0.0842,
+            "med_low_pct": -0.0772
+        },
+        {
+            "time": "11:15:00",
+            "med_high_pct": 0.0887,
+            "med_low_pct": -0.0637
+        },
+        {
+            "time": "11:20:00",
+            "med_high_pct": 0.0916,
+            "med_low_pct": -0.0501
+        },
+        {
+            "time": "11:25:00",
+            "med_high_pct": 0.081,
+            "med_low_pct": -0.051
+        },
+        {
+            "time": "11:30:00",
+            "med_high_pct": 0.0747,
+            "med_low_pct": -0.0659
+        },
+        {
+            "time": "11:35:00",
+            "med_high_pct": 0.0808,
+            "med_low_pct": -0.0577
+        },
+        {
+            "time": "11:40:00",
+            "med_high_pct": 0.0696,
+            "med_low_pct": -0.0508
+        },
+        {
+            "time": "11:45:00",
+            "med_high_pct": 0.0737,
+            "med_low_pct": -0.056
+        },
+        {
+            "time": "11:50:00",
+            "med_high_pct": 0.0717,
+            "med_low_pct": -0.0554
+        },
+        {
+            "time": "11:55:00",
+            "med_high_pct": 0.0748,
+            "med_low_pct": -0.0591
+        },
+        {
+            "time": "12:00:00",
+            "med_high_pct": 0.0737,
+            "med_low_pct": -0.0606
+        },
+        {
+            "time": "12:05:00",
+            "med_high_pct": 0.0708,
+            "med_low_pct": -0.0521
+        },
+        {
+            "time": "12:10:00",
+            "med_high_pct": 0.0725,
+            "med_low_pct": -0.0543
+        },
+        {
+            "time": "12:15:00",
+            "med_high_pct": 0.0686,
+            "med_low_pct": -0.0499
+        },
+        {
+            "time": "12:20:00",
+            "med_high_pct": 0.0696,
+            "med_low_pct": -0.049
+        },
+        {
+            "time": "12:25:00",
+            "med_high_pct": 0.0596,
+            "med_low_pct": -0.0576
+        },
+        {
+            "time": "12:30:00",
+            "med_high_pct": 0.0655,
+            "med_low_pct": -0.0683
+        },
+        {
+            "time": "12:35:00",
+            "med_high_pct": 0.0546,
+            "med_low_pct": -0.0542
+        },
+        {
+            "time": "12:40:00",
+            "med_high_pct": 0.0613,
+            "med_low_pct": -0.0548
+        },
+        {
+            "time": "12:45:00",
+            "med_high_pct": 0.0602,
+            "med_low_pct": -0.0524
+        },
+        {
+            "time": "12:50:00",
+            "med_high_pct": 0.0674,
+            "med_low_pct": -0.0415
+        },
+        {
+            "time": "12:55:00",
+            "med_high_pct": 0.0674,
+            "med_low_pct": -0.033
+        },
+        {
+            "time": "13:00:00",
+            "med_high_pct": 0.0802,
+            "med_low_pct": -0.0481
+        },
+        {
+            "time": "13:05:00",
+            "med_high_pct": 0.0857,
+            "med_low_pct": -0.0324
+        },
+        {
+            "time": "13:10:00",
+            "med_high_pct": 0.0932,
+            "med_low_pct": -0.0218
+        },
+        {
+            "time": "13:15:00",
+            "med_high_pct": 0.0958,
+            "med_low_pct": -0.0237
+        },
+        {
+            "time": "13:20:00",
+            "med_high_pct": 0.0814,
+            "med_low_pct": -0.0284
+        },
+        {
+            "time": "13:25:00",
+            "med_high_pct": 0.0659,
+            "med_low_pct": -0.0267
+        },
+        {
+            "time": "13:30:00",
+            "med_high_pct": 0.0791,
+            "med_low_pct": -0.0271
+        },
+        {
+            "time": "13:35:00",
+            "med_high_pct": 0.086,
+            "med_low_pct": -0.0139
+        },
+        {
+            "time": "13:40:00",
+            "med_high_pct": 0.0943,
+            "med_low_pct": -0.0133
+        },
+        {
+            "time": "13:45:00",
+            "med_high_pct": 0.0945,
+            "med_low_pct": -0.0177
+        },
+        {
+            "time": "13:50:00",
+            "med_high_pct": 0.1006,
+            "med_low_pct": -0.016
+        },
+        {
+            "time": "13:55:00",
+            "med_high_pct": 0.0956,
+            "med_low_pct": -0.0216
+        },
+        {
+            "time": "14:00:00",
+            "med_high_pct": 0.1026,
+            "med_low_pct": -0.0372
+        },
+        {
+            "time": "14:05:00",
+            "med_high_pct": 0.1009,
+            "med_low_pct": -0.0204
+        },
+        {
+            "time": "14:10:00",
+            "med_high_pct": 0.0983,
+            "med_low_pct": -0.0226
+        },
+        {
+            "time": "14:15:00",
+            "med_high_pct": 0.1084,
+            "med_low_pct": -0.0221
+        },
+        {
+            "time": "14:20:00",
+            "med_high_pct": 0.1054,
+            "med_low_pct": -0.013
+        },
+        {
+            "time": "14:25:00",
+            "med_high_pct": 0.1106,
+            "med_low_pct": -0.011
+        },
+        {
+            "time": "14:30:00",
+            "med_high_pct": 0.1168,
+            "med_low_pct": -0.0036
+        },
+        {
+            "time": "14:35:00",
+            "med_high_pct": 0.1102,
+            "med_low_pct": -0.0097
+        },
+        {
+            "time": "14:40:00",
+            "med_high_pct": 0.1212,
+            "med_low_pct": -0.0097
+        },
+        {
+            "time": "14:45:00",
+            "med_high_pct": 0.1222,
+            "med_low_pct": -0.0148
+        },
+        {
+            "time": "14:50:00",
+            "med_high_pct": 0.1125,
+            "med_low_pct": -0.0083
+        },
+        {
+            "time": "14:55:00",
+            "med_high_pct": 0.1178,
+            "med_low_pct": -0.0066
+        },
+        {
+            "time": "15:00:00",
+            "med_high_pct": 0.1098,
+            "med_low_pct": -0.0146
+        },
+        {
+            "time": "15:05:00",
+            "med_high_pct": 0.1007,
+            "med_low_pct": -0.0185
+        },
+        {
+            "time": "15:10:00",
+            "med_high_pct": 0.0996,
+            "med_low_pct": -0.0188
+        },
+        {
+            "time": "15:15:00",
+            "med_high_pct": 0.1017,
+            "med_low_pct": -0.0169
+        },
+        {
+            "time": "15:20:00",
+            "med_high_pct": 0.1101,
+            "med_low_pct": -0.0101
+        },
+        {
+            "time": "15:25:00",
+            "med_high_pct": 0.1103,
+            "med_low_pct": -0.0073
+        },
+        {
+            "time": "15:30:00",
+            "med_high_pct": 0.1162,
+            "med_low_pct": -0.0191
+        },
+        {
+            "time": "15:35:00",
+            "med_high_pct": 0.1018,
+            "med_low_pct": -0.0136
+        },
+        {
+            "time": "15:40:00",
+            "med_high_pct": 0.0858,
+            "med_low_pct": -0.0203
+        },
+        {
+            "time": "15:45:00",
+            "med_high_pct": 0.1007,
+            "med_low_pct": -0.0249
+        },
+        {
+            "time": "15:50:00",
+            "med_high_pct": 0.113,
+            "med_low_pct": -0.0454
+        },
+        {
+            "time": "15:55:00",
+            "med_high_pct": 0.1063,
+            "med_low_pct": -0.0624
+        },
+        {
+            "time": "16:00:00",
+            "med_high_pct": 0.1017,
+            "med_low_pct": -0.0399
+        },
+        {
+            "time": "16:05:00",
+            "med_high_pct": 0.0835,
+            "med_low_pct": -0.0028
+        },
+        {
+            "time": "16:10:00",
+            "med_high_pct": 0.0901,
+            "med_low_pct": -0.0049
+        },
+        {
+            "time": "18:00:00",
+            "med_high_pct": 0.0567,
+            "med_low_pct": -0.049
+        },
+        {
+            "time": "18:05:00",
+            "med_high_pct": 0.0293,
+            "med_low_pct": -0.0249
+        },
+        {
+            "time": "18:10:00",
+            "med_high_pct": 0.0265,
+            "med_low_pct": -0.0175
+        },
+        {
+            "time": "18:15:00",
+            "med_high_pct": 0.0309,
+            "med_low_pct": -0.0121
+        },
+        {
+            "time": "18:20:00",
+            "med_high_pct": 0.0279,
+            "med_low_pct": -0.0114
+        },
+        {
+            "time": "18:25:00",
+            "med_high_pct": 0.0267,
+            "med_low_pct": -0.0091
+        },
+        {
+            "time": "18:30:00",
+            "med_high_pct": 0.0317,
+            "med_low_pct": -0.0065
+        },
+        {
+            "time": "18:35:00",
+            "med_high_pct": 0.0259,
+            "med_low_pct": -0.0056
+        },
+        {
+            "time": "18:40:00",
+            "med_high_pct": 0.0259,
+            "med_low_pct": -0.0053
+        },
+        {
+            "time": "18:45:00",
+            "med_high_pct": 0.0259,
+            "med_low_pct": -0.0059
+        },
+        {
+            "time": "18:50:00",
+            "med_high_pct": 0.0265,
+            "med_low_pct": -0.006
+        },
+        {
+            "time": "18:55:00",
+            "med_high_pct": 0.0285,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "19:00:00",
+            "med_high_pct": 0.0368,
+            "med_low_pct": -0.0091
+        },
+        {
+            "time": "19:05:00",
+            "med_high_pct": 0.0297,
+            "med_low_pct": -0.0067
+        },
+        {
+            "time": "19:10:00",
+            "med_high_pct": 0.0289,
+            "med_low_pct": -0.0069
+        },
+        {
+            "time": "19:15:00",
+            "med_high_pct": 0.0273,
+            "med_low_pct": -0.0065
+        },
+        {
+            "time": "19:20:00",
+            "med_high_pct": 0.0299,
+            "med_low_pct": -0.0049
+        },
+        {
+            "time": "19:25:00",
+            "med_high_pct": 0.0295,
+            "med_low_pct": -0.0047
+        },
+        {
+            "time": "19:30:00",
+            "med_high_pct": 0.0331,
+            "med_low_pct": -0.0057
+        },
+        {
+            "time": "19:35:00",
+            "med_high_pct": 0.0333,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "19:40:00",
+            "med_high_pct": 0.0315,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "19:45:00",
+            "med_high_pct": 0.0337,
+            "med_low_pct": -0.0049
+        },
+        {
+            "time": "19:50:00",
+            "med_high_pct": 0.0334,
+            "med_low_pct": -0.0054
+        },
+        {
+            "time": "19:55:00",
+            "med_high_pct": 0.0329,
+            "med_low_pct": -0.0093
+        },
+        {
+            "time": "20:00:00",
+            "med_high_pct": 0.0444,
+            "med_low_pct": -0.0264
+        },
+        {
+            "time": "20:05:00",
+            "med_high_pct": 0.0346,
+            "med_low_pct": -0.0182
+        },
+        {
+            "time": "20:10:00",
+            "med_high_pct": 0.0353,
+            "med_low_pct": -0.013
+        },
+        {
+            "time": "20:15:00",
+            "med_high_pct": 0.0381,
+            "med_low_pct": -0.0172
+        },
+        {
+            "time": "20:20:00",
+            "med_high_pct": 0.0354,
+            "med_low_pct": -0.0124
+        },
+        {
+            "time": "20:25:00",
+            "med_high_pct": 0.032,
+            "med_low_pct": -0.0099
+        },
+        {
+            "time": "20:30:00",
+            "med_high_pct": 0.04,
+            "med_low_pct": -0.0138
+        },
+        {
+            "time": "20:35:00",
+            "med_high_pct": 0.0396,
+            "med_low_pct": -0.0113
+        },
+        {
+            "time": "20:40:00",
+            "med_high_pct": 0.0397,
+            "med_low_pct": -0.0052
+        },
+        {
+            "time": "20:45:00",
+            "med_high_pct": 0.0367,
+            "med_low_pct": -0.0064
+        },
+        {
+            "time": "20:50:00",
+            "med_high_pct": 0.0366,
+            "med_low_pct": -0.0063
+        },
+        {
+            "time": "20:55:00",
+            "med_high_pct": 0.038,
+            "med_low_pct": -0.0045
+        },
+        {
+            "time": "21:00:00",
+            "med_high_pct": 0.0421,
+            "med_low_pct": -0.0087
+        },
+        {
+            "time": "21:05:00",
+            "med_high_pct": 0.0382,
+            "med_low_pct": -0.006
+        },
+        {
+            "time": "21:10:00",
+            "med_high_pct": 0.0391,
+            "med_low_pct": -0.0042
+        },
+        {
+            "time": "21:15:00",
+            "med_high_pct": 0.0414,
+            "med_low_pct": -0.0061
+        },
+        {
+            "time": "21:20:00",
+            "med_high_pct": 0.0355,
+            "med_low_pct": -0.0053
+        },
+        {
+            "time": "21:25:00",
+            "med_high_pct": 0.0365,
+            "med_low_pct": -0.0047
+        },
+        {
+            "time": "21:30:00",
+            "med_high_pct": 0.0443,
+            "med_low_pct": -0.0089
+        },
+        {
+            "time": "21:35:00",
+            "med_high_pct": 0.0432,
+            "med_low_pct": -0.005
+        },
+        {
+            "time": "21:40:00",
+            "med_high_pct": 0.0414,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "21:45:00",
+            "med_high_pct": 0.0412,
+            "med_low_pct": -0.0044
+        },
+        {
+            "time": "21:50:00",
+            "med_high_pct": 0.0405,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "21:55:00",
+            "med_high_pct": 0.0389,
+            "med_low_pct": 0.0041
+        },
+        {
+            "time": "22:00:00",
+            "med_high_pct": 0.0389,
+            "med_low_pct": -0.0021
+        },
+        {
+            "time": "22:05:00",
+            "med_high_pct": 0.0353,
+            "med_low_pct": -0.0047
+        },
+        {
+            "time": "22:10:00",
+            "med_high_pct": 0.0346,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "22:15:00",
+            "med_high_pct": 0.0364,
+            "med_low_pct": 0.0
+        },
+        {
+            "time": "22:20:00",
+            "med_high_pct": 0.0385,
+            "med_low_pct": 0.005
+        },
+        {
+            "time": "22:25:00",
+            "med_high_pct": 0.0376,
+            "med_low_pct": 0.0055
+        },
+        {
+            "time": "22:30:00",
+            "med_high_pct": 0.0428,
+            "med_low_pct": 0.0064
+        },
+        {
+            "time": "22:35:00",
+            "med_high_pct": 0.0399,
+            "med_low_pct": 0.0055
+        },
+        {
+            "time": "22:40:00",
+            "med_high_pct": 0.0392,
+            "med_low_pct": 0.0112
+        },
+        {
+            "time": "22:45:00",
+            "med_high_pct": 0.0407,
+            "med_low_pct": 0.0108
+        },
+        {
+            "time": "22:50:00",
+            "med_high_pct": 0.0438,
+            "med_low_pct": 0.0142
+        },
+        {
+            "time": "22:55:00",
+            "med_high_pct": 0.0373,
+            "med_low_pct": 0.011
+        },
+        {
+            "time": "23:00:00",
+            "med_high_pct": 0.0406,
+            "med_low_pct": 0.0066
+        },
+        {
+            "time": "23:05:00",
+            "med_high_pct": 0.038,
+            "med_low_pct": 0.0106
+        },
+        {
+            "time": "23:10:00",
+            "med_high_pct": 0.0405,
+            "med_low_pct": 0.0132
+        },
+        {
+            "time": "23:15:00",
+            "med_high_pct": 0.0397,
+            "med_low_pct": 0.0133
+        },
+        {
+            "time": "23:20:00",
+            "med_high_pct": 0.0402,
+            "med_low_pct": 0.0167
+        },
+        {
+            "time": "23:25:00",
+            "med_high_pct": 0.0426,
+            "med_low_pct": 0.0174
+        },
+        {
+            "time": "23:30:00",
+            "med_high_pct": 0.0412,
+            "med_low_pct": 0.0128
+        },
+        {
+            "time": "23:35:00",
+            "med_high_pct": 0.0419,
+            "med_low_pct": 0.0102
+        },
+        {
+            "time": "23:40:00",
+            "med_high_pct": 0.0395,
+            "med_low_pct": 0.0148
+        },
+        {
+            "time": "23:45:00",
+            "med_high_pct": 0.0399,
+            "med_low_pct": 0.0125
+        },
+        {
+            "time": "23:50:00",
+            "med_high_pct": 0.0379,
+            "med_low_pct": 0.0126
+        },
+        {
+            "time": "23:55:00",
+            "med_high_pct": 0.04,
+            "med_low_pct": 0.0129
+        }
+    ],
+    "cache_hit": true,
+    "rows_processed": 552701,
+    "filter_matched_dates": 2103
+}
