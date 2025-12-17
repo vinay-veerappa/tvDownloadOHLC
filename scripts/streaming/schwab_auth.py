@@ -38,8 +38,11 @@ def authenticate():
         
         # Test a simple call
         print("Testing Account Fetch...")
-        account_numbers = client.account_linked().json()
-        print(f"Linked Accounts: {account_numbers}")
+        resp = client.get_account_numbers()
+        if resp.status_code == 200:
+            print(f"Linked Accounts: {resp.json()}")
+        else:
+            print(f"Fetch Failed: {resp.status_code} - {resp.text}")
         
     except Exception as e:
         print(f"\n❌ Authentication Failed: {e}")

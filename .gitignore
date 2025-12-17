@@ -40,6 +40,9 @@ tradingview-selenium-data/
 
 # Credentials
 credentials.json
+token.json
+secrets.json
+token_backup.json
 
 # Temp
 temp_repo/

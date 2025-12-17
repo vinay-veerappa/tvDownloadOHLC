@@ -3,7 +3,22 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BarChart3, BookOpen, History, Settings, ChevronLeft, ChevronRight, Bell, User, LineChart, Database } from "lucide-react"
+import {
+    BarChart3,
+    BookOpen,
+    History,
+    Settings,
+    ChevronLeft,
+    ChevronRight,
+    Bell,
+    User,
+    Activity,
+    Database,
+    Zap,
+    Radio,
+    HardDrive,
+    Library
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
@@ -52,31 +67,31 @@ export function AppSidebar() {
         },
         {
             label: "Profiler",
-            icon: LineChart,
+            icon: Activity,
             href: "/profiler",
             active: pathname === "/profiler",
         },
         {
             label: "Reference",
-            icon: Database,
+            icon: Library,
             href: "/profiler/reference",
             active: pathname === "/profiler/reference",
         },
         {
             label: "Data Manager",
-            icon: Database, // Or HardDrive if imported
+            icon: HardDrive,
             href: "/data",
             active: pathname === "/data",
         },
         {
             label: "Expected Move",
-            icon: LineChart,
+            icon: Zap,
             href: "/tools/expected-move",
             active: pathname === "/tools/expected-move",
         },
         {
             label: "Live Chart",
-            icon: LineChart,
+            icon: Radio,
             href: "/tools/live-chart",
             active: pathname === "/tools/live-chart",
         },
@@ -94,6 +109,7 @@ export function AppSidebar() {
                     size="icon"
                     className="h-8 w-8"
                     onClick={() => setCollapsed(!collapsed)}
+                    title={collapsed ? "Expand Sidebar" : "Collapse Sidebar"}
                 >
                     {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
                 </Button>
@@ -104,15 +120,22 @@ export function AppSidebar() {
                         key={route.href}
                         variant={route.active ? "secondary" : "ghost"}
                         className={cn(
-                            "w-full",
+                            "w-full relative group",
                             route.active && "bg-secondary",
                             collapsed ? "justify-center px-2" : "justify-start"
                         )}
                         asChild
+                        title={collapsed ? route.label : ""}
                     >
                         <Link href={route.href}>
                             <route.icon className={cn("h-5 w-5", !collapsed && "mr-2")} />
                             {!collapsed && <span>{route.label}</span>}
+                            {/* Simple CSS Tooltip for collapsed state */}
+                            {collapsed && (
+                                <div className="absolute left-full ml-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded border shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                                    {route.label}
+                                </div>
+                            )}
                         </Link>
                     </Button>
                 ))}
@@ -120,24 +143,42 @@ export function AppSidebar() {
             <div className="p-2 border-t space-y-1">
                 <Button
                     variant="ghost"
-                    className={cn("w-full", collapsed ? "justify-center px-2" : "justify-start")}
+                    className={cn("w-full relative group", collapsed ? "justify-center px-2" : "justify-start")}
+                    title={collapsed ? "Notifications" : ""}
                 >
                     <Bell className={cn("h-5 w-5", !collapsed && "mr-2")} />
                     {!collapsed && "Notifications"}
+                    {collapsed && (
+                        <div className="absolute left-full ml-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded border shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                            Notifications
+                        </div>
+                    )}
                 </Button>
                 <Button
                     variant="ghost"
-                    className={cn("w-full", collapsed ? "justify-center px-2" : "justify-start")}
+                    className={cn("w-full relative group", collapsed ? "justify-center px-2" : "justify-start")}
+                    title={collapsed ? "Profile" : ""}
                 >
                     <User className={cn("h-5 w-5", !collapsed && "mr-2")} />
                     {!collapsed && "Profile"}
+                    {collapsed && (
+                        <div className="absolute left-full ml-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded border shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                            Profile
+                        </div>
+                    )}
                 </Button>
                 <Button
                     variant="ghost"
-                    className={cn("w-full", collapsed ? "justify-center px-2" : "justify-start")}
+                    className={cn("w-full relative group", collapsed ? "justify-center px-2" : "justify-start")}
+                    title={collapsed ? "Settings" : ""}
                 >
                     <Settings className={cn("h-5 w-5", !collapsed && "mr-2")} />
                     {!collapsed && "Settings"}
+                    {collapsed && (
+                        <div className="absolute left-full ml-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded border shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                            Settings
+                        </div>
+                    )}
                 </Button>
             </div>
         </div>
