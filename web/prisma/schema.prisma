@@ -223,3 +223,23 @@ model MarketNews {
   
   createdAt           DateTime @default(now())
 }
+
+model ExpectedMove {
+  id              Int      @id @default(autoincrement())
+  ticker          String
+  calculationDate DateTime // The date the calculation targets (e.g. today's date for current expiry view)
+  expiryDate      DateTime
+  
+  price           Float
+  straddle        Float
+  em365           Float
+  em252           Float
+  adjEm           Float
+  
+  manualEm        Float?   // User override/addition
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([ticker, calculationDate, expiryDate])
+}

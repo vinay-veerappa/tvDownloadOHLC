@@ -177,3 +177,9 @@
 - [x] Bug: YM1 SyntaxError (NaN in JSON)
     - Root cause: `convert_to_chunked_json.py` didn't sanitize `NaN` values, resulting in invalid JSON output when YM1 data contained missing values (likely from new import).
     - Fix: Added explicit `dropna` and integer type enforcement for `time` column in conversion script. Regenerated YM1.
+
+- [x] **Feature: Batch Expected Moves**
+    - [x] Create `scripts/fetch_batch_em.py` to handle specific date/ticker list.
+    - [x] Execute for User Request (NVDA, TSLA, AAPL, SPY @ 2025-12-19).
+    - [x] Compare against Standard Formula (365/252 days).
+    - [x] Compute Custom Metric: 0.85 * Avg(Straddle, EM365, EM252).
