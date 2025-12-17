@@ -7,12 +7,16 @@ import json
 
 # Assumes you've already created a token. See the authentication page for more
 # information.
+import os
+with open("secrets.json", "r") as f:
+    secrets = json.load(f)
+
 client = easy_client(
-        api_key='h0R0afB9sjKVRZsjmgoQTtsXwLM6z0ffq9LOAarsA0d7dl0d',
-        app_secret='P9G0ZzUyGtYFrVX9UPwenDBtn8EljzCmNa5PmspBxdARfpn1D5N0lQt3Y4cqlBSm',
+        api_key=secrets["app_key"],
+        app_secret=secrets["app_secret"],
         callback_url='https://127.0.0.1:8182',
         token_path='token.json')
-stream_client = StreamClient(client, account_id=48382579)
+stream_client = StreamClient(client, account_id='BB4E515511E76B8B035DC72194CA615919766D183922871CF062DB9ACA6E0EBD')
 
 async def read_stream():
     await stream_client.login()

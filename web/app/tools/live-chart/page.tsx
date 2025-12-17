@@ -4,27 +4,37 @@ import React, { useEffect, useState, useRef } from 'react';
 import { getLiveChartData } from '@/actions/get-live-chart';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Play, Square } from 'lucide-react';
+import { Loader2, Play, Square, Activity } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickSeries } from 'lightweight-charts';
+import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickSeries, Time } from 'lightweight-charts';
+import { cn } from '@/lib/utils';
 
 export default function LiveChartPage() {
     const [loading, setLoading] = useState(true);
     const [running, setRunning] = useState(true);
-    const [lastPrice, setLastPrice] = useState<string>("---");
+    const [livePrice, setLivePrice] = useState<number | null>(null);
+    const [lastUpdate, setLastUpdate] = useState<string>("");
     const [symbol, setSymbol] = useState<string>("---");
 
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
     const isFirstLoad = useRef(true);
+    const runningRef = useRef(running);
+
+    useEffect(() => { runningRef.current = running; }, [running]);
 
     const fetchData = async () => {
-        const res = await getLiveChartData();
-        if (res.success && res.data) {
+        try {
+            const res = await getLiveChartData();
+            if (res.success && res.data) {
+                setSymbol(res.data.symbol);
+                setLivePrice(res.data.live_price);
+                setLastUpdate(res.data.last_update);
+                updateChart(res.data.candles, res.data.live_price);
+            }
+        } finally {
             setLoading(false);
-            setSymbol(res.data.symbol);
-            updateChart(res.data.candles);
         }
     };
 
@@ -36,16 +46,37 @@ export default function LiveChartPage() {
             layout: {
                 background: { type: ColorType.Solid, color: 'transparent' },
                 textColor: '#9ca3af',
+                fontSize: 12,
+            },
+            localization: {
+                locale: 'en-US',
+                // Lightweight charts uses UTC if we don't override formatters
+                // For EST, we can use a custom formatter or just rely on the browser local time
+                // if the user's PC is set to EST. To FORCE EST:
+                timeFormatter: (tick: number) => {
+                    return new Date(tick * 1000).toLocaleString('en-US', {
+                        timeZone: 'America/New_York',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    });
+                }
             },
             grid: {
-                vertLines: { color: '#334155', style: 0 },
-                horzLines: { color: '#334155', style: 0 },
+                vertLines: { color: 'rgba(51, 65, 85, 0.5)', style: 1 },
+                horzLines: { color: 'rgba(51, 65, 85, 0.5)', style: 1 },
             },
             width: chartContainerRef.current.clientWidth,
-            height: 500,
+            height: 550,
             timeScale: {
                 timeVisible: true,
                 secondsVisible: false,
+                barSpacing: 10, // Wider candles
+                rightOffset: 12, // Space on the right
+            },
+            crosshair: {
+                mode: 0,
             },
         });
 
@@ -68,11 +99,11 @@ export default function LiveChartPage() {
         };
         window.addEventListener('resize', handleResize);
 
-        // Start Polling
+        // Start Polling (2000ms for rate limit safety: 30 calls/min)
         fetchData();
         const id = setInterval(() => {
-            if (running) fetchData();
-        }, 1000);
+            if (runningRef.current) fetchData();
+        }, 2000);
 
         return () => {
             window.removeEventListener('resize', handleResize);
@@ -81,63 +112,70 @@ export default function LiveChartPage() {
         };
     }, []); // Run once on mount
 
-    // Effect to toggle running state impact?
-    // Actually the interval checks the state ref, but state in interval closure is stale.
-    // We need a ref for running or restart interval.
-    // Simplest is to just check a ref.
-    const runningRef = useRef(running);
-    useEffect(() => { runningRef.current = running; }, [running]);
+    interface RawCandle {
+        time: number;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+    }
 
-    // Override the interval to use ref
-    useEffect(() => {
-        const id = setInterval(() => {
-            if (runningRef.current) fetchData();
-        }, 1000);
-        return () => clearInterval(id);
-    }, []);
+    const lastCandleRef = useRef<number | null>(null);
 
-
-    const updateChart = (candles: any[]) => {
+    const updateChart = (candles: RawCandle[], live_price: number | null) => {
         if (!seriesRef.current || !candles.length) return;
 
         // Transform data
-        // Schwab gives epoch ms. Lightweight charts likes seconds or date strings?
-        // It accepts timestamps in seconds.
         const formatted = candles.map(c => ({
-            time: c.time / 1000,
+            time: (c.time / 1000) as Time,
             open: c.open,
             high: c.high,
             low: c.low,
             close: c.close
         }));
 
-        // Sort just in case
-        formatted.sort((a, b) => a.time - b.time);
+        formatted.sort((a, b) => (Number(a.time) - Number(b.time)));
 
-        // If first load, set data. Else update last candle.
-        // Actually, for simplicity in this MVP, we can just setData() if array is small < 1000.
-        // But lightweight charts setData might flicker if done every second? No, it's fine.
-        // Better: Check if we have new bars.
-
-        seriesRef.current.setData(formatted);
-
+        // Initial load: Bring in all the session history found in the buffer
         if (isFirstLoad.current) {
+            seriesRef.current.setData(formatted);
             chartRef.current?.timeScale().fitContent();
             isFirstLoad.current = false;
         }
 
-        const last = formatted[formatted.length - 1];
-        if (last) setLastPrice(last.close.toFixed(2));
+        // Real-time Fluid Update: 
+        // We use series.update() which gracefully handles:
+        // 1. Updating the current candle (same timestamp)
+        // 2. Adding a new candle (new timestamp)
+        if (live_price !== null) {
+            const latestRaw = formatted[formatted.length - 1];
+            const updatedCandle = { ...latestRaw };
+            updatedCandle.close = live_price;
+
+            // Sync High/Low with the live price
+            if (live_price > updatedCandle.high) updatedCandle.high = live_price;
+            if (live_price < updatedCandle.low) updatedCandle.low = live_price;
+
+            seriesRef.current.update(updatedCandle);
+        }
     };
 
     return (
         <div className="container mx-auto p-6 space-y-6">
             <div className="flex justify-between items-center">
                 <div className="flex items-center gap-4">
-                    <h1 className="text-3xl font-bold tracking-tight">Live Chart Experiment</h1>
-                    <Badge variant={running ? "default" : "secondary"}>
-                        {running ? "LIVE" : "PAUSED"}
-                    </Badge>
+                    <h1 className="text-3xl font-bold tracking-tight">Live Chart</h1>
+                    <div className="flex items-center gap-2">
+                        <Badge variant={running ? "default" : "secondary"} className={cn(running && "bg-green-600 hover:bg-green-700 animate-pulse")}>
+                            {running ? "LIVE" : "PAUSED"}
+                        </Badge>
+                        {lastUpdate && (
+                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                <Activity className="h-3 w-3" />
+                                {new Date(lastUpdate).toLocaleTimeString()}
+                            </span>
+                        )}
+                    </div>
                 </div>
                 <Button onClick={() => setRunning(!running)} variant="outline">
                     {running ? <Square className="h-4 w-4 mr-2 fill-current" /> : <Play className="h-4 w-4 mr-2" />}
@@ -145,26 +183,63 @@ export default function LiveChartPage() {
                 </Button>
             </div>
 
-            <Card className="bg-slate-950 border-slate-800">
-                <CardHeader>
-                    <CardTitle className="flex justify-between text-slate-100">
-                        <span>{symbol}</span>
-                        <span className="font-mono text-2xl">${lastPrice}</span>
+            <Card className="bg-slate-950 border-slate-800 overflow-hidden">
+                <CardHeader className="border-b border-slate-800 bg-slate-900/50 py-4">
+                    <CardTitle className="flex justify-between items-baseline text-slate-100">
+                        <div className="flex flex-col">
+                            <span className="text-sm font-medium text-slate-400">Futures Index</span>
+                            <span className="text-2xl font-bold tracking-wider">{symbol}</span>
+                        </div>
+                        <div className="flex flex-col items-end">
+                            <span className="text-sm font-medium text-slate-400">Current Price</span>
+                            <span className={cn(
+                                "font-mono text-4xl transition-all duration-300",
+                                running ? "text-green-400" : "text-slate-300"
+                            )}>
+                                ${livePrice?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "---"}
+                            </span>
+                        </div>
                     </CardTitle>
                 </CardHeader>
-                <CardContent className="p-0">
-                    <div ref={chartContainerRef} className="w-full h-[500px]" />
+                <CardContent className="p-0 relative">
+                    <div ref={chartContainerRef} className="w-full h-[550px]" />
                     {loading && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                            <Loader2 className="h-8 w-8 animate-spin text-white" />
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10 transition-opacity">
+                            <div className="text-center p-8 bg-slate-900/80 rounded-2xl border border-slate-700 backdrop-blur-sm shadow-2xl">
+                                <Loader2 className="h-10 w-10 animate-spin text-blue-500 mx-auto mb-4" />
+                                <p className="text-white font-medium">Syncing Ledger...</p>
+                                <p className="text-slate-400 text-xs mt-2 uppercase tracking-widest">establishing connection</p>
+                            </div>
+                        </div>
+                    )}
+                    {!loading && symbol === "---" && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10 backdrop-blur-[2px]">
+                            <div className="text-center p-8 bg-slate-900/90 rounded-2xl border border-slate-700 shadow-2xl max-w-sm">
+                                <Activity className="h-12 w-12 text-amber-500 mx-auto mb-6 opacity-80" />
+                                <h3 className="text-xl font-semibold text-white mb-2">Data Stream Offline</h3>
+                                <p className="text-slate-400 text-sm mb-8 leading-relaxed">
+                                    The persistent storage buffer is empty. Launch the Schwab streamer to begin data collection.
+                                </p>
+                                <div className="space-y-3">
+                                    <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Terminal Command</p>
+                                    <code className="block p-3 bg-black/50 border border-slate-800 rounded-lg text-amber-400 text-xs font-mono text-left overflow-x-auto whitespace-nowrap">
+                                        python scripts/streaming/stream_chart.py
+                                    </code>
+                                </div>
+                            </div>
                         </div>
                     )}
                 </CardContent>
             </Card>
 
-            <div className="text-sm text-muted-foreground">
-                <p>To run the backend:</p>
-                <code className="bg-muted p-1 rounded">python scripts/streaming/stream_chart.py</code>
+            <div className="flex items-center justify-between text-[10px] uppercase tracking-tighter text-slate-500 font-bold px-1">
+                <div className="flex items-center gap-4">
+                    <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" /> Schwab Trader API</span>
+                    <span>Polling: 2000ms (Safe Limit)</span>
+                </div>
+                <div>
+                    Storage: data/live_storage.parquet
+                </div>
             </div>
         </div>
     );
