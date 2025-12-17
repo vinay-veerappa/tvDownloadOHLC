@@ -68,6 +68,18 @@ export function AppSidebar() {
             href: "/data",
             active: pathname === "/data",
         },
+        {
+            label: "Expected Move",
+            icon: LineChart,
+            href: "/tools/expected-move",
+            active: pathname === "/tools/expected-move",
+        },
+        {
+            label: "Live Chart",
+            icon: LineChart,
+            href: "/tools/live-chart",
+            active: pathname === "/tools/live-chart",
+        },
     ]
 
     return (
