@@ -1,7 +1,7 @@
 # Project Roadmap
 
-**Version:** 0.4.0
-**Last Updated:** December 09, 2025
+**Version:** 0.5.0
+**Last Updated:** December 18, 2025
 
 This document consolidates all planned features, requirements, and known technical debt for the **tvDownloadOHLC** platform.
 
@@ -95,6 +95,12 @@ This document consolidates all planned features, requirements, and known technic
 
 ## 🧪 5. Known Issues / Tech Debt
 
-- **Date Parsing**: Ensure consistent handling of "YYYY-MM-DD" vs Unix Timestamps across Python/JS.
-- **Canvas Coordinates**: `timeScale.timeToCoordinate` can return `null` if off-screen; improved handling needed in some plugins.
-- **Data Gaps**: `DATA_GAPS_REPORT.md` highlights missing chunks in historical data.
+- [x] **Date Parsing**: Ensure consistent handling of "YYYY-MM-DD" vs Unix Timestamps across Python/JS.
+- [ ] **Data Gaps**: `DATA_GAPS_REPORT.md` highlights missing chunks in historical data.
+
+## ✅ Completed (Recent)
+- [x] **Scheduled Expected Move**: Database persistence with Read-First strategy + 09:30/16:15 Cron Job.
+- [x] **Watchlist Management**: Multi-list support (Tech, Indexes, Futures) with Import/Seed.
+- [x] **Dashboard**: "Context" page promoted to Home with Quick Links.
+- [x] **Sidebar**: Reorganized into "Main" and "Tools".
+- [x] **Futures Data**: Fixed `/ES` and `/NQ` data fetching using Proxy sources and Schwab API.
