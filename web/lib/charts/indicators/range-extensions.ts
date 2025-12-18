@@ -313,7 +313,10 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
         const signal = this._abortController.signal;
 
         // Clean ticker
-        const cleanTicker = this._options.ticker.replace('!', ''); // Basic clean
+        // Normalize ticker: /NQ -> NQ1, NQ1! -> NQ1, ES -> ES1
+        let cleanTicker = this._options.ticker.replace(/!/g, '').replace(/\//g, '');
+        const roots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG", "NG", "ZB", "ZN"];
+        if (roots.includes(cleanTicker)) cleanTicker += "1";
 
         try {
             let url = `http://localhost:8000/api/sessions/${encodeURIComponent(cleanTicker)}?range_type=hourly`;

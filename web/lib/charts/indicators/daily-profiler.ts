@@ -678,7 +678,11 @@ export class DailyProfiler implements ISeriesPrimitive {
         this._abortController = new AbortController();
 
         try {
-            const cleanTicker = this._options.ticker.replace('!', '');
+            // Normalize ticker: /NQ -> NQ1, NQ1! -> NQ1, ES -> ES1
+            let cleanTicker = this._options.ticker.replace(/!/g, '').replace(/\//g, '');
+            const roots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG", "NG", "ZB", "ZN"];
+            if (roots.includes(cleanTicker)) cleanTicker += "1";
+
             let url = `http://localhost:8000/api/sessions/${encodeURIComponent(cleanTicker)}?range_type=all`;
 
             // Prevent unbounded fetch: If startTs is missing, default to last 30 days
