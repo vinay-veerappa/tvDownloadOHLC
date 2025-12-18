@@ -635,29 +635,35 @@ class HourlyProfilerRenderer {
                 }
 
                 // 3H Mid Line (Purple Dashed, thicker)
-                const yMid = this._series.priceToCoordinate(period.mid);
-                if (yMid !== null) {
-                    const yMidScaled = yMid * vPR;
-                    ctx.strokeStyle = this._options.threeHourMidColor;
-                    ctx.lineWidth = this._options.threeHourLineWidth * hPR;
-                    ctx.setLineDash([6 * hPR, 3 * hPR]);
-                    ctx.beginPath();
-                    ctx.moveTo(x1Scaled, yMidScaled);
-                    ctx.lineTo(x2Scaled, yMidScaled);
-                    // 3H Close Line (Solid)
-                    const yClose = this._series.priceToCoordinate(period.close);
-                    if (yClose !== null) {
-                        const yCloseScaled = yClose * vPR;
-                        ctx.strokeStyle = this._options.threeHourCloseColor;
+                if (period.mid) {
+                    const yMid = this._series.priceToCoordinate(period.mid);
+                    if (yMid !== null) {
+                        const yMidScaled = yMid * vPR;
+                        ctx.strokeStyle = this._options.threeHourMidColor;
                         ctx.lineWidth = this._options.threeHourLineWidth * hPR;
+                        ctx.setLineDash([6 * hPR, 3 * hPR]);
                         ctx.beginPath();
-                        ctx.moveTo(x1Scaled, yCloseScaled);
-                        ctx.lineTo(x2Scaled, yCloseScaled);
+                        ctx.moveTo(x1Scaled, yMidScaled);
+                        ctx.lineTo(x2Scaled, yMidScaled);
                         ctx.stroke();
+                        ctx.setLineDash([]);
                     }
+                }
+
+                // 3H Close Line (Solid)
+                const yClose = this._series.priceToCoordinate(period.close);
+                if (yClose !== null) {
+                    const yCloseScaled = yClose * vPR;
+                    ctx.strokeStyle = this._options.threeHourCloseColor;
+                    ctx.lineWidth = this._options.threeHourLineWidth * hPR;
+                    ctx.beginPath();
+                    ctx.moveTo(x1Scaled, yCloseScaled);
+                    ctx.lineTo(x2Scaled, yCloseScaled);
+                    ctx.stroke();
                 }
             }
         }
+    }
 
     private _hexToRgba(color: string, alpha: number): string {
         if (!color || color === 'transparent') return 'rgba(0, 0, 0, 0)';
