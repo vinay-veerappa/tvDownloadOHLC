@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { normalizeResolution } from "@/lib/resolution"
 import { useDataLoading } from "./use-data-loading"
+import { useLiveDataLoading } from "./use-live-data-loading"
 import { useReplay } from "./use-replay"
 
 interface UseChartDataProps {
@@ -13,6 +14,7 @@ interface UseChartDataProps {
     onPriceChange?: (price: number, ticker: string) => void
     getVisibleTimeRange?: () => { start: number, end: number, center: number } | null
     initialReplayTime?: number
+    mode?: 'historical' | 'live'
 }
 
 export function useChartData({
@@ -21,19 +23,28 @@ export function useChartData({
     onDataLoad,
     onReplayStateChange,
     onPriceChange,
-    initialReplayTime
+    initialReplayTime,
+    mode = 'historical'
 }: UseChartDataProps) {
 
     const timeframe = useMemo(() => normalizeResolution(rawTimeframe), [rawTimeframe])
 
     const currentReplayTimeRef = useRef<number | null>(null)
 
-    const loading = useDataLoading({
+    const histLoading = useDataLoading({
         ticker,
         timeframe,
         onDataLoad,
         onPrepend: (count) => replay.adjustIndex(count)
     })
+
+    const liveLoading = useLiveDataLoading({
+        ticker,
+        timeframe,
+        onDataLoad
+    })
+
+    const loading = mode === 'live' ? liveLoading : histLoading
 
     const replay = useReplay({
         fullData: loading.fullData,
@@ -52,20 +63,41 @@ export function useChartData({
         }
     }, [replay.replayMode, replay.data])
 
+    const data = useMemo(() => {
+        const baseData = replay.data
+        if (mode === 'live' && baseData.length > 0) {
+            const liveStore = loading as any
+            if (liveStore.livePrice !== null && liveStore.livePrice !== undefined) {
+                const enriched = [...baseData]
+                const lastIdx = enriched.length - 1
+                const lastCandle = { ...enriched[lastIdx] }
+                const price = liveStore.livePrice as number
+
+                lastCandle.close = price
+                if (price > lastCandle.high) lastCandle.high = price
+                if (price < lastCandle.low) lastCandle.low = price
+
+                enriched[lastIdx] = lastCandle
+                return enriched
+            }
+        }
+        return baseData
+    }, [replay.data, mode, (loading as any).livePrice])
+
     useEffect(() => {
         if (!loading.isLoading && loading.fullData.length > 0) {
-            if (replay.replayMode && currentReplayTimeRef.current) {
+            if (mode === 'historical' && replay.replayMode && currentReplayTimeRef.current) {
                 const newIdx = replay.findIndexForTime(currentReplayTimeRef.current)
                 if (newIdx !== -1) {
                     replay.setReplayIndex(newIdx)
                 }
             }
         }
-    }, [loading.isLoading, loading.fullData.length])
+    }, [loading.isLoading, loading.fullData.length, mode])
 
     return {
         fullData: loading.fullData,
-        data: replay.data,
+        data, // Use the enriched data
 
         replayMode: replay.replayMode,
         replayIndex: replay.replayIndex,

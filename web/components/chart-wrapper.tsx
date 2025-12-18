@@ -57,6 +57,7 @@ interface ChartWrapperProps {
     onTimeframeChange?: (tf: string) => void
     markers?: any[]
     trades?: any[]
+    mode?: 'historical' | 'live'
 }
 
 export function ChartWrapper(props: ChartWrapperProps) {
@@ -399,6 +400,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
                         vwapSettings={props.vwapSettings}
                         onTimeframeChange={props.onTimeframeChange}
                         trades={props.trades}
+                        mode={props.mode}
                     />
                 </div>
                 <RightSidebar

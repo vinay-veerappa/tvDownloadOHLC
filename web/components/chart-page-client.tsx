@@ -20,6 +20,7 @@ interface ChartPageClientProps {
     indicators: string[]
     markers?: any[]
     trades?: any[]
+    mode?: 'historical' | 'live'
 }
 
 const MAGNET_STORAGE_KEY = 'chart_magnet_mode'
@@ -35,7 +36,8 @@ export function ChartPageClient({
     style,
     indicators,
     markers,
-    trades
+    trades,
+    mode = 'historical'
 }: ChartPageClientProps) {
     const [magnetMode, setMagnetMode] = useState<MagnetMode>('off')
     const [displayTimezone, setDisplayTimezone] = useState('America/New_York')
@@ -214,6 +216,7 @@ export function ChartPageClient({
                             params.set('timeframe', newTf)
                             window.location.search = params.toString()
                         }}
+                        mode={mode}
                     />
                 </div>
 

@@ -243,3 +243,16 @@ model ExpectedMove {
 
   @@unique([ticker, calculationDate, expiryDate])
 }
+
+model SchwabToken {
+  id           String   @id @default("schwab-primary")
+  accessToken  String
+  refreshToken String
+  expiresAt    Int      // Unix timestamp
+  idToken      String?
+  tokenType    String
+  scope        String?
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
