@@ -53,6 +53,7 @@ export interface HourlyProfilerOptions {
     threeHourBoxOpacity: number;
     threeHourOpenColor: string;
     threeHourMidColor: string;
+    threeHourCloseColor: string;
     threeHourLineWidth: number;
 
     // History
@@ -99,6 +100,7 @@ export const DEFAULT_HOURLY_PROFILER_OPTIONS: HourlyProfilerOptions = {
     threeHourBoxOpacity: 0.08,
     threeHourOpenColor: '#9C27B0',   // Purple
     threeHourMidColor: '#AB47BC',    // Purple
+    threeHourCloseColor: '#9C27B0',  // Purple
     threeHourLineWidth: 2,
 
     // History
@@ -141,6 +143,7 @@ export const getHourlyProfilerDefaults = (theme: ThemeParams): HourlyProfilerOpt
         threeHourBoxOpacity: 0.08,
         threeHourOpenColor: theme.indicators.sessions.london,
         threeHourMidColor: theme.indicators.sessions.ny,       // Another distinct color
+        threeHourCloseColor: theme.indicators.sessions.london,
         threeHourLineWidth: 2,
 
         maxHours: 48,
@@ -421,9 +424,56 @@ class HourlyProfilerRenderer {
                 ctx.lineTo(x2Scaled, yBottom);
                 ctx.stroke();
             }
+
+            // 3. Draw Hourly Lines (Open, Mid, Close)
+
+            // Open (Solid)
+            const yOpen = this._series.priceToCoordinate(period.open);
+            if (yOpen !== null) {
+                const yOpenScaled = yOpen * vPR;
+                ctx.strokeStyle = this._options.hourlyOpenColor;
+                ctx.lineWidth = 1 * hPR;
+                ctx.beginPath();
+                ctx.moveTo(x1Scaled, yOpenScaled);
+                ctx.lineTo(x2Scaled, yOpenScaled);
+                ctx.stroke();
+            }
+
+            // Mid (Dashed)
+            if (period.mid) {
+                const yMid = this._series.priceToCoordinate(period.mid);
+                if (yMid !== null) {
+                    const yMidScaled = yMid * vPR;
+                    ctx.strokeStyle = this._options.hourlyMidColor;
+                    ctx.lineWidth = 1 * hPR;
+                    ctx.setLineDash([4 * hPR, 4 * hPR]); // Dashed
+                    ctx.beginPath();
+                    ctx.moveTo(x1Scaled, yMidScaled);
+                    ctx.lineTo(x2Scaled, yMidScaled);
+                    ctx.stroke();
+                    ctx.setLineDash([]); // Reset
+                }
+            }
+
+            // Close (Solid - usually matches next open, but good for visual verification)
+            // Only draw close if the hour is "closed" or maybe just always?
+            // "Close" for a developing candle is the current price. 
+            // Drawing a line for it might be noisy if it's moving. 
+            // But 'period.close' is updated live. 
+            // Let's draw it if it's distinct or maybe user requested it. 
+            // The options exist, so let's draw it but maybe thinner?
+            const yClose = this._series.priceToCoordinate(period.close);
+            if (yClose !== null) {
+                const yCloseScaled = yClose * vPR;
+                ctx.strokeStyle = this._options.hourlyCloseColor;
+                ctx.lineWidth = 1 * hPR;
+                ctx.beginPath();
+                ctx.moveTo(x1Scaled, yCloseScaled);
+                ctx.lineTo(x2Scaled, yCloseScaled);
+                ctx.stroke();
+            }
         }
     }
-
 
 
     private _binarySearch(data: HourlyPeriod[], time: number): number {
@@ -594,12 +644,20 @@ class HourlyProfilerRenderer {
                     ctx.beginPath();
                     ctx.moveTo(x1Scaled, yMidScaled);
                     ctx.lineTo(x2Scaled, yMidScaled);
-                    ctx.stroke();
-                    ctx.setLineDash([]);
+                    // 3H Close Line (Solid)
+                    const yClose = this._series.priceToCoordinate(period.close);
+                    if (yClose !== null) {
+                        const yCloseScaled = yClose * vPR;
+                        ctx.strokeStyle = this._options.threeHourCloseColor;
+                        ctx.lineWidth = this._options.threeHourLineWidth * hPR;
+                        ctx.beginPath();
+                        ctx.moveTo(x1Scaled, yCloseScaled);
+                        ctx.lineTo(x2Scaled, yCloseScaled);
+                        ctx.stroke();
+                    }
                 }
             }
         }
-    }
 
     private _hexToRgba(color: string, alpha: number): string {
         if (!color || color === 'transparent') return 'rgba(0, 0, 0, 0)';

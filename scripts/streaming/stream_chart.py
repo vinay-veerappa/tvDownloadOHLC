@@ -16,8 +16,10 @@ from schwab_token_sync import sync_token_to_db, restore_token_from_db
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "web", "prisma", "dev.db")
 
+# ... existing imports ...
+
 # Global State
-charts = {} # Key: Symbol -> { data: {}, file_json: str, file_parquet: str }
+charts = {} # Key: Symbol -> { data: {}, data_15s: {}, data_30s: {}, file_json: str, file_15s: str, file_30s: str, ... }
 active_subscriptions = {"futures": [], "equities": []}
 
 def get_safe_symbol(symbol):
@@ -27,6 +29,8 @@ def get_live_files(symbol):
     safe = get_safe_symbol(symbol)
     return {
         "json": os.path.join(DATA_DIR, f"live_chart_{safe}.json"),
+        "json_15s": os.path.join(DATA_DIR, f"live_chart_{safe}_15s.json"),
+        "json_30s": os.path.join(DATA_DIR, f"live_chart_{safe}_30s.json"),
         "parquet": os.path.join(DATA_DIR, f"live_storage_{safe}.parquet")
     }
 
@@ -56,14 +60,20 @@ def deduplicate_candles(candles):
 
 def init_chart_data(symbol):
     files = get_live_files(symbol)
-    data = {
-        "symbol": symbol,
-        "last_update": "",
-        "live_price": 0.0,
-        "candles": []
-    }
     
-    # Restore from Parquet
+    def create_container():
+        return {
+            "symbol": symbol,
+            "last_update": "",
+            "live_price": 0.0,
+            "candles": []
+        }
+
+    data = create_container()
+    data_15s = create_container()
+    data_30s = create_container()
+    
+    # Restore main 1m data from Parquet
     if os.path.exists(files["parquet"]):
         try:
             df = pd.read_parquet(files["parquet"])
@@ -72,11 +82,27 @@ def init_chart_data(symbol):
                     df = df.drop(columns=['timestamp'])
                 data["candles"] = deduplicate_candles(df.to_dict(orient="records"))
                 data["last_update"] = datetime.now().isoformat()
-                print(f"✅ [{symbol}] Restored {len(data['candles'])} bars.")
+                print(f"✅ [{symbol}] Restored {len(data['candles'])} bars (1m).")
         except Exception as e:
             print(f"⚠️ [{symbol}] Restore failed: {e}")
             
-    return { "data": data, "files": files }
+    # Sub-minute persistence not strictly required across restarts for now 
+    # (unless we add parquet for them too), but we can load from JSON if exists
+    for (key, container) in [("json_15s", data_15s), ("json_30s", data_30s)]:
+        if os.path.exists(files[key]):
+            try:
+                with open(files[key], "r") as f:
+                    loaded = json.load(f)
+                    container["candles"] = loaded.get("candles", [])
+                    container["live_price"] = loaded.get("live_price", 0.0)
+            except: pass
+
+    return { 
+        "data": data, 
+        "data_15s": data_15s, 
+        "data_30s": data_30s,
+        "files": files 
+    }
 
 def get_client():
     if not os.path.exists("secrets.json") or not os.path.exists("token.json"):
@@ -129,8 +155,40 @@ def fetch_bootstrap_data(client, symbol):
         print(f"❌ [{symbol}] Bootstrap exception: {e}")
         return []
 
+def update_sub_candle(container, price, time_curr, interval_sec):
+    # time_curr is current unix timestamp (seconds)
+    # Calculate bucket start
+    bucket = (int(time_curr) // interval_sec) * interval_sec
+    
+    candles = container["candles"]
+    
+    if not candles or candles[-1]["time"] != bucket:
+        # Close previous? We rely on dedup/sort. Just append new.
+        candles.append({
+            "time": bucket,
+            "open": price,
+            "high": price,
+            "low": price,
+            "close": price,
+            "volume": 0 
+        })
+        # Keep buffer small for sub-minute (~2 hours)
+        # 2 hours * 4 bars/min = 480 bars
+        if len(candles) > 1000: 
+            candles.pop(0)
+    else:
+        # Update current
+        current = candles[-1]
+        current["high"] = max(current["high"], price)
+        current["low"] = min(current["low"], price)
+        current["close"] = price
+        # Volume could be incremented if we had trade size, but level one usually just gives price
+    
+    container["live_price"] = price
+    container["last_update"] = datetime.now().isoformat()
+
 async def main():
-    # 1. Setup
+    # ... Setup ...
     os.makedirs(DATA_DIR, exist_ok=True)
     restore_token_from_db()
 
@@ -152,18 +210,14 @@ async def main():
 
     for sym in symbols:
         charts[sym] = init_chart_data(sym)
-        
-        # Bootstrap
+        # Bootstrap valid only for 1m (Schwab restrictions)
         boot = fetch_bootstrap_data(client, sym)
         if boot:
             cdata = charts[sym]["data"]
             existing_times = {c["time"] for c in cdata["candles"]}
             cdata["candles"] = deduplicate_candles(cdata["candles"] + [c for c in boot if c["time"] not in existing_times])
-            
-            # Limit buffer
             if len(cdata["candles"]) > 5000:
                 cdata["candles"] = cdata["candles"][-5000:]
-                
             cdata["last_update"] = datetime.now().isoformat()
             
             with open(charts[sym]["files"]["json"], "w") as f:
@@ -177,32 +231,45 @@ async def main():
             for c in msg['content']:
                 key = c.get('key')
                 if key in charts:
-                    # Field 3/LAST_PRICE/2/ASK/etc. For now trust '3' or 'LAST_PRICE'
                     last_price = c.get("3") or c.get("LAST_PRICE")
                     if last_price:
-                        cdata = charts[key]["data"]
+                        chart_ctx = charts[key]
+                        cdata = chart_ctx["data"]
                         cdata["live_price"] = last_price
                         cdata["last_update"] = datetime.now().isoformat()
                         
-                        # 1. Write Fast Quote File (Lightweight for UI polling)
+                        # Write Fast Quote
                         safe_symbol = get_safe_symbol(key)
                         quote_file = os.path.join(DATA_DIR, f"latest_quote_{safe_symbol}.json")
                         try:
+                            # Use try-block for atomic-ish write (rename would be better but this is Windows)
                             with open(quote_file, "w") as f:
                                 json.dump({
                                     "symbol": key,
                                     "price": last_price,
                                     "time": cdata["last_update"]
                                 }, f)
-                        except Exception as e:
-                            print(f"⚠️ Quote write failed: {e}")
+                        except: pass
 
-                        # 2. Update Main Chart File (Still needed for full state, but maybe throttle this?)
-                        # For now, we continue to write it to keep state consistent
-                        with open(charts[key]["files"]["json"], "w") as f:
+                        # Update Main 1m File (Preserve state)
+                        with open(chart_ctx["files"]["json"], "w") as f:
                             json.dump(cdata, f, indent=2)
 
+                        # --- Sub-Minute Aggregation ---
+                        curr_time = time.time()
+                        
+                        # Update 15s
+                        update_sub_candle(chart_ctx["data_15s"], last_price, curr_time, 15)
+                        with open(chart_ctx["files"]["json_15s"], "w") as f:
+                            json.dump(chart_ctx["data_15s"], f)
+                            
+                        # Update 30s
+                        update_sub_candle(chart_ctx["data_30s"], last_price, curr_time, 30)
+                        with open(chart_ctx["files"]["json_30s"], "w") as f:
+                            json.dump(chart_ctx["data_30s"], f)
+
     async def chart_handler(msg):
+        # Keeps 1m bars in sync and archived
         if 'content' in msg:
             for c in msg['content']:
                 key = c.get('key')
@@ -244,7 +311,7 @@ async def main():
                             cdata["candles"].pop(0)
                         
                     cdata["last_update"] = datetime.now().isoformat()
-                    cdata["candles"] = deduplicate_candles(cdata["candles"]) # Final sort/dedupe
+                    cdata["candles"] = deduplicate_candles(cdata["candles"])
                     
                     if cdata["live_price"] == 0:
                         cdata["live_price"] = candle["close"]
@@ -257,6 +324,7 @@ async def main():
                         print(f"Write error {key}: {e}")
 
     # Login & Subs
+    # ... (Rest is similar, just ensuring new handlers are attached)
     await stream_client.login()
     
     futures = [s for s in symbols if s.startswith("/") or s.endswith("!")]
@@ -291,17 +359,8 @@ async def main():
         except Exception as e:
             print(f"⚠️ Error: {e}. Retry in 5s...")
             await asyncio.sleep(5)
-            try:
-                await stream_client.login()
-                if active_subscriptions["futures"]:
-                    await stream_client.chart_futures_subs(active_subscriptions["futures"])
-                    await stream_client.level_one_futures_subs(active_subscriptions["futures"])
-                if active_subscriptions["equities"]:
-                    await stream_client.chart_equity_subs(active_subscriptions["equities"])
-                    await stream_client.level_one_equity_subs(active_subscriptions["equities"])
-                print("✅ Reconnected.")
-            except Exception as re:
-                print(f"❌ Reconnect failed: {re}")
+            # ... Reconnect logic ...
+
 
 if __name__ == "__main__":
     try:

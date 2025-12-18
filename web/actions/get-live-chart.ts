@@ -2,7 +2,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 
-export async function getLiveChartData(ticker: string = "/NQ") {
+export async function getLiveChartData(ticker: string = "/NQ", timeframe: string = "1") {
     try {
         // Normalization Logic (Mirroring frontend/hooks)
         let safeTicker = ticker;
@@ -11,13 +11,16 @@ export async function getLiveChartData(ticker: string = "/NQ") {
         const root = clean.replace(/\d+$/, "");
 
         if (roots.includes(root)) {
-            // If it matches a known future root, force the /Root format
             safeTicker = "/" + root;
         }
 
-        // Sanitize ticker to match python script logic (replace / with -)
         safeTicker = safeTicker.replace(/\//g, "-");
-        const filename = `live_chart_${safeTicker}.json`;
+
+        let suffix = "";
+        if (timeframe === "15s") suffix = "_15s";
+        if (timeframe === "30s") suffix = "_30s";
+
+        const filename = `live_chart_${safeTicker}${suffix}.json`;
         const filePath = path.join(process.cwd(), '..', 'data', filename);
 
         try {

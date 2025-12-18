@@ -416,7 +416,7 @@ export async function getAvailableData() {
         }
 
         // Sort timeframes logically
-        const tfOrder = ['1m', '3m', '5m', '15m', '30m', '1H', '2H', '4H', '6H', '8H', '12H', '1D', '3D', '1W', '1M']
+        const tfOrder = ['15s', '30s', '1m', '3m', '5m', '15m', '30m', '1H', '2H', '4H', '6H', '8H', '12H', '1D', '3D', '1W', '1M']
         const sortedTimeframes = Array.from(allTimeframes).sort((a, b) => {
             const indexA = tfOrder.indexOf(a)
             const indexB = tfOrder.indexOf(b)
@@ -425,6 +425,22 @@ export async function getAvailableData() {
             if (indexB !== -1) return 1
             return a.localeCompare(b)
         })
+
+        // Always add 15s and 30s for Live Mode availability
+        if (!sortedTimeframes.includes('15s')) sortedTimeframes.unshift('15s');
+        if (!sortedTimeframes.includes('30s')) {
+            const idx = sortedTimeframes.indexOf('15s');
+            sortedTimeframes.splice(idx + 1, 0, '30s');
+        }
+
+        // Add to ticker maps as well
+        Object.keys(tickerMap).forEach(k => {
+            if (!tickerMap[k].includes('15s')) tickerMap[k].unshift('15s');
+            if (!tickerMap[k].includes('30s')) {
+                const idx = tickerMap[k].indexOf('15s');
+                tickerMap[k].splice(idx + 1, 0, '30s');
+            }
+        });
 
         return {
             success: true,

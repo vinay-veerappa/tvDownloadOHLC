@@ -1,7 +1,7 @@
 ﻿"use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
-import { normalizeResolution } from "@/lib/resolution"
+import { normalizeResolution, getResolutionInMinutes } from "@/lib/resolution"
 import { useDataLoading } from "./use-data-loading"
 import { useLiveDataLoading } from "./use-live-data-loading"
 import { useReplay } from "./use-replay"
@@ -67,22 +67,60 @@ export function useChartData({
         const baseData = replay.data
         if (mode === 'live' && baseData.length > 0) {
             const liveStore = loading as any
-            if (liveStore.livePrice !== null && liveStore.livePrice !== undefined) {
+            const livePrice = liveStore.livePrice
+            const lastUpdate = liveStore.lastUpdate // ISO String
+
+            if (livePrice !== null && livePrice !== undefined) {
                 const enriched = [...baseData]
                 const lastIdx = enriched.length - 1
                 const lastCandle = { ...enriched[lastIdx] }
-                const price = liveStore.livePrice as number
 
-                lastCandle.close = price
-                if (price > lastCandle.high) lastCandle.high = price
-                if (price < lastCandle.low) lastCandle.low = price
+                // Determine if we should project a NEW candle
+                let shouldProjectNew = false
+                let newCandleTime = 0
 
-                enriched[lastIdx] = lastCandle
+                if (lastUpdate) {
+                    const lastBarTime = lastCandle.time
+                    const liveTime = Math.floor(new Date(lastUpdate).getTime() / 1000)
+                    const resolutionMins = getResolutionInMinutes(timeframe) // 0.25 for 15s
+                    const resolutionSecs = resolutionMins * 60
+
+                    // Check if liveTime belongs to a future interval
+                    // If lastBarTime is 9:00:00 (1m), next is 9:01:00
+                    // If liveTime is 9:01:05, we need a new bar
+
+                    if (liveTime >= lastBarTime + resolutionSecs) {
+                        // Align to grid
+                        newCandleTime = Math.floor(liveTime / resolutionSecs) * resolutionSecs
+                        if (newCandleTime > lastBarTime) {
+                            shouldProjectNew = true
+                        }
+                    }
+                }
+
+                if (shouldProjectNew) {
+                    // Start new candle
+                    enriched.push({
+                        time: newCandleTime,
+                        open: lastCandle.close, // Gapless? Or use livePrice? Usually open = last close or livePrice
+                        high: livePrice,
+                        low: livePrice,
+                        close: livePrice,
+                        volume: 0
+                    })
+                } else {
+                    // Update existing last candle
+                    lastCandle.close = livePrice
+                    if (livePrice > lastCandle.high) lastCandle.high = livePrice
+                    if (livePrice < lastCandle.low) lastCandle.low = livePrice
+                    enriched[lastIdx] = lastCandle
+                }
+
                 return enriched
             }
         }
         return baseData
-    }, [replay.data, mode, (loading as any).livePrice])
+    }, [replay.data, mode, (loading as any).livePrice, (loading as any).lastUpdate, timeframe])
 
     useEffect(() => {
         if (!loading.isLoading && loading.fullData.length > 0) {

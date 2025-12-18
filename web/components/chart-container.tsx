@@ -613,7 +613,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             toast.success('Daily Profiler updated');
         } else if (selectedDrawingType === 'hourly-profiler') {
             if (hourlyProfilerRef.current) {
-                hourlyProfilerRef.current.updateOptions(options);
+                hourlyProfilerRef.current.applyOptions(options);
             }
             onIndicatorParamsChange?.('hourly-profiler', options);
             toast.success('Hourly Profiler updated');
