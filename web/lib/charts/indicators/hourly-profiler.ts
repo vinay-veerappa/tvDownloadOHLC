@@ -26,8 +26,11 @@ export interface HourlyProfilerOptions {
     hourlyBoxColor: string;
     hourlyBoxOpacity: number;
     hourlyOpenColor: string;
+    showHourlyOpen: boolean;
     hourlyCloseColor: string;
+    showHourlyClose: boolean;
     hourlyMidColor: string;
+    showHourlyMid: boolean;
 
     // Opening Range Settings
     showOpeningRange: boolean;
@@ -52,8 +55,11 @@ export interface HourlyProfilerOptions {
     threeHourBoxColor: string;
     threeHourBoxOpacity: number;
     threeHourOpenColor: string;
+    show3HourOpen: boolean;
     threeHourMidColor: string;
+    show3HourMid: boolean;
     threeHourCloseColor: string;
+    show3HourClose: boolean;
     threeHourLineWidth: number;
 
     // History
@@ -73,8 +79,11 @@ export const DEFAULT_HOURLY_PROFILER_OPTIONS: HourlyProfilerOptions = {
     hourlyBoxColor: '#90A4AE',
     hourlyBoxOpacity: 0.08,
     hourlyOpenColor: '#4CAF50',      // Green
+    showHourlyOpen: true,
     hourlyCloseColor: '#F44336',     // Red
+    showHourlyClose: true,
     hourlyMidColor: '#FF9800',       // Orange
+    showHourlyMid: true,
 
     // Opening Range
     showOpeningRange: true,
@@ -99,8 +108,11 @@ export const DEFAULT_HOURLY_PROFILER_OPTIONS: HourlyProfilerOptions = {
     threeHourBoxColor: '#BA68C8',    // Purple
     threeHourBoxOpacity: 0.08,
     threeHourOpenColor: '#9C27B0',   // Purple
+    show3HourOpen: true,
     threeHourMidColor: '#AB47BC',    // Purple
+    show3HourMid: true,
     threeHourCloseColor: '#9C27B0',  // Purple
+    show3HourClose: true,
     threeHourLineWidth: 2,
 
     // History
@@ -116,8 +128,11 @@ export const getHourlyProfilerDefaults = (theme: ThemeParams): HourlyProfilerOpt
         hourlyBoxColor: theme.indicators.sessions.midnight, // Use midnight/neutral color
         hourlyBoxOpacity: 0.08,
         hourlyOpenColor: theme.candle.upBody,      // Match candle up
+        showHourlyOpen: true,
         hourlyCloseColor: theme.candle.downBody,   // Match candle down
+        showHourlyClose: true,
         hourlyMidColor: theme.indicators.profiler.poc, // POC color
+        showHourlyMid: true,
 
         // Opening Range
         showOpeningRange: true,
@@ -142,8 +157,11 @@ export const getHourlyProfilerDefaults = (theme: ThemeParams): HourlyProfilerOpt
         threeHourBoxColor: theme.indicators.sessions.london,    // Distinct session color
         threeHourBoxOpacity: 0.08,
         threeHourOpenColor: theme.indicators.sessions.london,
+        show3HourOpen: true,
         threeHourMidColor: theme.indicators.sessions.ny,       // Another distinct color
+        show3HourMid: true,
         threeHourCloseColor: theme.indicators.sessions.london,
+        show3HourClose: true,
         threeHourLineWidth: 2,
 
         maxHours: 48,
@@ -428,19 +446,21 @@ class HourlyProfilerRenderer {
             // 3. Draw Hourly Lines (Open, Mid, Close)
 
             // Open (Solid)
-            const yOpen = this._series.priceToCoordinate(period.open);
-            if (yOpen !== null) {
-                const yOpenScaled = yOpen * vPR;
-                ctx.strokeStyle = this._options.hourlyOpenColor;
-                ctx.lineWidth = 1 * hPR;
-                ctx.beginPath();
-                ctx.moveTo(x1Scaled, yOpenScaled);
-                ctx.lineTo(x2Scaled, yOpenScaled);
-                ctx.stroke();
+            if (this._options.showHourlyOpen) {
+                const yOpen = this._series.priceToCoordinate(period.open);
+                if (yOpen !== null) {
+                    const yOpenScaled = yOpen * vPR;
+                    ctx.strokeStyle = this._options.hourlyOpenColor;
+                    ctx.lineWidth = 1 * hPR;
+                    ctx.beginPath();
+                    ctx.moveTo(x1Scaled, yOpenScaled);
+                    ctx.lineTo(x2Scaled, yOpenScaled);
+                    ctx.stroke();
+                }
             }
 
             // Mid (Dashed)
-            if (period.mid) {
+            if (this._options.showHourlyMid && period.mid) {
                 const yMid = this._series.priceToCoordinate(period.mid);
                 if (yMid !== null) {
                     const yMidScaled = yMid * vPR;
@@ -455,22 +475,18 @@ class HourlyProfilerRenderer {
                 }
             }
 
-            // Close (Solid - usually matches next open, but good for visual verification)
-            // Only draw close if the hour is "closed" or maybe just always?
-            // "Close" for a developing candle is the current price. 
-            // Drawing a line for it might be noisy if it's moving. 
-            // But 'period.close' is updated live. 
-            // Let's draw it if it's distinct or maybe user requested it. 
-            // The options exist, so let's draw it but maybe thinner?
-            const yClose = this._series.priceToCoordinate(period.close);
-            if (yClose !== null) {
-                const yCloseScaled = yClose * vPR;
-                ctx.strokeStyle = this._options.hourlyCloseColor;
-                ctx.lineWidth = 1 * hPR;
-                ctx.beginPath();
-                ctx.moveTo(x1Scaled, yCloseScaled);
-                ctx.lineTo(x2Scaled, yCloseScaled);
-                ctx.stroke();
+            // Close (Solid)
+            if (this._options.showHourlyClose) {
+                const yClose = this._series.priceToCoordinate(period.close);
+                if (yClose !== null) {
+                    const yCloseScaled = yClose * vPR;
+                    ctx.strokeStyle = this._options.hourlyCloseColor;
+                    ctx.lineWidth = 1 * hPR;
+                    ctx.beginPath();
+                    ctx.moveTo(x1Scaled, yCloseScaled);
+                    ctx.lineTo(x2Scaled, yCloseScaled);
+                    ctx.stroke();
+                }
             }
         }
     }
@@ -623,19 +639,21 @@ class HourlyProfilerRenderer {
             // 2. Draw 3H Lines (if enabled)
             if (this._options.show3HourLines) {
                 // 3H Open Line (Purple, thicker)
-                const yOpen = this._series.priceToCoordinate(period.open);
-                if (yOpen !== null) {
-                    const yOpenScaled = yOpen * vPR;
-                    ctx.strokeStyle = this._options.threeHourOpenColor;
-                    ctx.lineWidth = this._options.threeHourLineWidth * hPR;
-                    ctx.beginPath();
-                    ctx.moveTo(x1Scaled, yOpenScaled);
-                    ctx.lineTo(x2Scaled, yOpenScaled);
-                    ctx.stroke();
+                if (this._options.show3HourOpen) {
+                    const yOpen = this._series.priceToCoordinate(period.open);
+                    if (yOpen !== null) {
+                        const yOpenScaled = yOpen * vPR;
+                        ctx.strokeStyle = this._options.threeHourOpenColor;
+                        ctx.lineWidth = this._options.threeHourLineWidth * hPR;
+                        ctx.beginPath();
+                        ctx.moveTo(x1Scaled, yOpenScaled);
+                        ctx.lineTo(x2Scaled, yOpenScaled);
+                        ctx.stroke();
+                    }
                 }
 
                 // 3H Mid Line (Purple Dashed, thicker)
-                if (period.mid) {
+                if (this._options.show3HourMid && period.mid) {
                     const yMid = this._series.priceToCoordinate(period.mid);
                     if (yMid !== null) {
                         const yMidScaled = yMid * vPR;
@@ -651,15 +669,17 @@ class HourlyProfilerRenderer {
                 }
 
                 // 3H Close Line (Solid)
-                const yClose = this._series.priceToCoordinate(period.close);
-                if (yClose !== null) {
-                    const yCloseScaled = yClose * vPR;
-                    ctx.strokeStyle = this._options.threeHourCloseColor;
-                    ctx.lineWidth = this._options.threeHourLineWidth * hPR;
-                    ctx.beginPath();
-                    ctx.moveTo(x1Scaled, yCloseScaled);
-                    ctx.lineTo(x2Scaled, yCloseScaled);
-                    ctx.stroke();
+                if (this._options.show3HourClose) {
+                    const yClose = this._series.priceToCoordinate(period.close);
+                    if (yClose !== null) {
+                        const yCloseScaled = yClose * vPR;
+                        ctx.strokeStyle = this._options.threeHourCloseColor;
+                        ctx.lineWidth = this._options.threeHourLineWidth * hPR;
+                        ctx.beginPath();
+                        ctx.moveTo(x1Scaled, yCloseScaled);
+                        ctx.lineTo(x2Scaled, yCloseScaled);
+                        ctx.stroke();
+                    }
                 }
             }
         }
