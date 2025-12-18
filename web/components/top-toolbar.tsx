@@ -31,6 +31,7 @@ import { normalizeResolution } from "@/lib/resolution"
 import { ThemeSwitcher } from "@/components/theme-switcher"
 import { VWAPSettings } from "@/lib/indicator-api"
 import { VWAPSettingsDialog } from "./vwap-settings-dialog"
+import { addToWatchlist } from "@/actions/watchlist-actions"
 
 interface TopToolbarProps {
     tickers: string[]
@@ -112,6 +113,8 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
 
     const availableTimeframesForTicker = currentTicker ? (tickerMap[currentTicker] || []) : timeframes
 
+    const [inputValue, setInputValue] = React.useState("")
+
     return (
         <div className="h-12 border-b border-border bg-background flex items-center justify-between px-4 select-none shrink-0 z-50 relative">
 
@@ -134,15 +137,39 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                     </PopoverTrigger>
                     <PopoverContent className="w-[200px] p-0 bg-popover border-border">
                         <Command className="bg-popover">
-                            <CommandInput placeholder="Search ticker..." className="text-foreground" />
+                            <CommandInput
+                                placeholder="Search ticker..."
+                                className="text-foreground"
+                                value={inputValue}
+                                onValueChange={setInputValue}
+                            />
                             <CommandList>
-                                <CommandEmpty>No ticker found.</CommandEmpty>
+                                <CommandEmpty>
+                                    <div
+                                        className="py-2 px-4 text-sm cursor-pointer hover:bg-muted text-foreground"
+                                        onClick={() => {
+                                            let finalTicker = inputValue.toUpperCase().trim()
+
+                                            // Client-side normalization for Futures
+                                            const roots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG"]
+                                            let clean = finalTicker.replace("!", "")
+                                            if (roots.includes(clean)) {
+                                                finalTicker = "/" + clean
+                                            }
+
+                                            handleTickerChange(finalTicker)
+                                            addToWatchlist(finalTicker)
+                                        }}
+                                    >
+                                        Use "{inputValue.toUpperCase()}"
+                                    </div>
+                                </CommandEmpty>
                                 <CommandGroup>
                                     {tickers.map((ticker) => (
                                         <CommandItem
                                             key={ticker}
                                             value={ticker}
-                                            onSelect={handleTickerChange}
+                                            onSelect={(val) => handleTickerChange(val)}
                                             className="text-foreground aria-selected:bg-muted"
                                         >
                                             <Check

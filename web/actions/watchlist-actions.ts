@@ -18,7 +18,21 @@ export async function getWatchlist() {
 
 export async function addToWatchlist(symbol: string) {
     try {
-        const cleanSymbol = symbol.toUpperCase().trim()
+        let cleanSymbol = symbol.toUpperCase().trim()
+
+        // Common Futures Validation
+        // If user types "NQ" or "ES" or "NQ1!", normalize to "/NQ" for Schwab API
+        const futuresRoots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG"]
+
+        // Remove '!' if present (e.g. from TradingView style input)
+        if (cleanSymbol.includes("!")) {
+            cleanSymbol = cleanSymbol.replace("!", "")
+        }
+
+        // If it matches a known root exactly, prepend '/'
+        if (futuresRoots.includes(cleanSymbol)) {
+            cleanSymbol = "/" + cleanSymbol
+        }
 
         // check if exists to avoid error (though unique constraint handles it)
         const existing = await prisma.watchlist.findUnique({

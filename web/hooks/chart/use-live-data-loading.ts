@@ -29,7 +29,7 @@ export function useLiveDataLoading({
 
     const fetchData = useCallback(async () => {
         try {
-            const res = await getLiveChartData()
+            const res = await getLiveChartData(ticker)
             if (res.success && res.data) {
                 const rawCandles = res.data.candles || []
 
