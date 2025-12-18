@@ -8,6 +8,7 @@ import { useSearchParams } from "next/navigation"
 
 function ChartPageContent() {
     const searchParams = useSearchParams()
+    const mode = (searchParams.get('mode') as 'historical' | 'live') || 'historical'
     const [data, setData] = useState<{ tickers: string[]; timeframes: string[]; tickerMap: Record<string, string[]> } | null>(null)
     const [markers, setMarkers] = useState<any[]>([])
     const [trades, setTrades] = useState<any[]>([])
@@ -17,8 +18,14 @@ function ChartPageContent() {
         getAvailableData().then(setData)
     }, [])
 
-    // Load markers and trades from localStorage
+    // Load markers and trades from localStorage (Only in Historical Mode)
     useEffect(() => {
+        if (mode === 'live') {
+            setMarkers([])
+            setTrades([])
+            return
+        }
+
         const storedMarkers = localStorage.getItem('backtest_markers_preview')
         if (storedMarkers) {
             try {
@@ -36,14 +43,13 @@ function ChartPageContent() {
                 console.error("Failed to parse trades", e)
             }
         }
-    }, [])
+    }, [mode])
 
     if (!data) return <div className="flex items-center justify-center h-screen">Loading Chart...</div>
 
     const ticker = searchParams.get('ticker') || "ES1!"
     const timeframe = searchParams.get('timeframe') || "1m"
     const indicators = searchParams.get('indicators')?.split(',') || []
-    const mode = (searchParams.get('mode') as 'historical' | 'live') || 'historical'
 
     return (
         <div className="flex flex-col h-screen overflow-hidden">
