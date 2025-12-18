@@ -43,6 +43,7 @@ function ChartPageContent() {
     const ticker = searchParams.get('ticker') || "ES1!"
     const timeframe = searchParams.get('timeframe') || "1m"
     const indicators = searchParams.get('indicators')?.split(',') || []
+    const mode = (searchParams.get('mode') as 'historical' | 'live') || 'historical'
 
     return (
         <div className="flex flex-col h-screen overflow-hidden">
@@ -56,6 +57,7 @@ function ChartPageContent() {
                 indicators={indicators}
                 markers={markers}
                 trades={trades}
+                mode={mode}
             />
         </div>
     )

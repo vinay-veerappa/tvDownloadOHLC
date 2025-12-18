@@ -316,7 +316,7 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
         const cleanTicker = this._options.ticker.replace('!', ''); // Basic clean
 
         try {
-            let url = `http://localhost:8000/api/sessions/${cleanTicker}?range_type=hourly`;
+            let url = `http://localhost:8000/api/sessions/${encodeURIComponent(cleanTicker)}?range_type=hourly`;
             if (this._options.startTs) url += `&start_ts=${this._options.startTs}`;
             if (this._options.endTs) url += `&end_ts=${this._options.endTs}`;
 
