@@ -98,13 +98,56 @@ export const DEFAULT_HOURLY_PROFILER_OPTIONS: HourlyProfilerOptions = {
     threeHourBoxColor: '#BA68C8',    // Purple
     threeHourBoxOpacity: 0.08,
     threeHourOpenColor: '#9C27B0',   // Purple
-    threeHourMidColor: '#9C27B0',
+    threeHourMidColor: '#AB47BC',    // Purple
     threeHourLineWidth: 2,
 
     // History
-    maxHours: 30,
+    maxHours: 48,
 };
 
+export const getHourlyProfilerDefaults = (theme: ThemeParams): HourlyProfilerOptions => {
+    return {
+        ticker: 'ES1',
+
+        // Hourly
+        showHourly: true,
+        hourlyBoxColor: theme.indicators.sessions.midnight, // Use midnight/neutral color
+        hourlyBoxOpacity: 0.08,
+        hourlyOpenColor: theme.candle.upBody,      // Match candle up
+        hourlyCloseColor: theme.candle.downBody,   // Match candle down
+        hourlyMidColor: theme.indicators.profiler.poc, // POC color
+
+        // Opening Range
+        showOpeningRange: true,
+        orBoxColor: theme.indicators.levels.pdh, // Use a neutral level color
+        orBoxOpacity: 0.10,
+
+        // Quarters
+        showQuarters: true,
+        quarterEvenColor: theme.indicators.sessions.asia, // Use a subtle session color
+        quarterOddColor: 'transparent',
+        quarterOpacity: 0.05,
+
+        // Hourly Bounds
+        showHourBounds: true,
+        hourBoundColor: theme.chart.grid, // Match grid or slightly darker
+        hourBoundWidth: 1,
+
+        // 3-Hour
+        show3Hour: true,
+        show3HourBox: true,
+        show3HourLines: true,
+        threeHourBoxColor: theme.indicators.sessions.london,    // Distinct session color
+        threeHourBoxOpacity: 0.08,
+        threeHourOpenColor: theme.indicators.sessions.london,
+        threeHourMidColor: theme.indicators.sessions.ny,       // Another distinct color
+        threeHourLineWidth: 2,
+
+        maxHours: 48,
+        startTs: undefined,
+        endTs: undefined
+    };
+};
 class HourlyProfilerRenderer {
     constructor(
         private _data1H: HourlyPeriod[],
@@ -606,21 +649,10 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
         this._series = series;
         if (theme) {
             this._theme = theme;
-            const themeOptions: Partial<HourlyProfilerOptions> = {
-                hourlyBoxColor: theme.ui.decoration,
-                hourlyOpenColor: theme.candle.upBody,
-                hourlyCloseColor: theme.candle.downBody,
-                hourlyMidColor: theme.tools.secondary,
-                orBoxColor: theme.tools.transparentFill,
-                quarterEvenColor: theme.ui.decoration,
-                quarterOddColor: 'transparent',
-                quarterOpacity: 0.1,
-                hourBoundColor: theme.chart.grid,
-                threeHourBoxColor: theme.tools.secondary,
-                threeHourOpenColor: theme.tools.secondary,
-                threeHourMidColor: theme.tools.secondary,
-            };
-            this._options = { ...DEFAULT_HOURLY_PROFILER_OPTIONS, ...themeOptions, ...options };
+            // Use centralized defaults
+            const themeDefaults = getHourlyProfilerDefaults(theme);
+            // Merge: Default -> Theme Defaults -> User Overrides
+            this._options = { ...DEFAULT_HOURLY_PROFILER_OPTIONS, ...themeDefaults, ...options };
         } else {
             this._options = { ...DEFAULT_HOURLY_PROFILER_OPTIONS, ...options };
         }
@@ -871,11 +903,36 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
         this._data3H = periods3H;
     }
 
-    updateOptions(options: Partial<HourlyProfilerOptions>) {
+    applyOptions(options: Partial<HourlyProfilerOptions>) {
         this._options = { ...this._options, ...options };
-        // No fetch needed. Just re-render.
-        this._updateRenderer();
-        this._requestUpdate();
+        this._triggerRedraw();
+    }
+
+    setTheme(theme: ThemeParams) {
+        const newDefaults = getHourlyProfilerDefaults(theme);
+
+        // Update only color/visual fields, preserving logic toggles if user changed them
+        this.applyOptions({
+            hourlyBoxColor: newDefaults.hourlyBoxColor,
+            hourlyOpenColor: newDefaults.hourlyOpenColor,
+            hourlyCloseColor: newDefaults.hourlyCloseColor,
+            hourlyMidColor: newDefaults.hourlyMidColor,
+            orBoxColor: newDefaults.orBoxColor,
+            quarterEvenColor: newDefaults.quarterEvenColor,
+            hourBoundColor: newDefaults.hourBoundColor,
+            threeHourBoxColor: newDefaults.threeHourBoxColor,
+            threeHourOpenColor: newDefaults.threeHourOpenColor,
+            threeHourMidColor: newDefaults.threeHourMidColor,
+        });
+    }
+
+    private _triggerRedraw() {
+        // Trigger a redraw
+        this._series.applyOptions({}); // Force modification to trigger update
+        this._chart.timeScale().applyOptions({});
+
+        // Also call the official callback if attached
+        if (this._requestUpdate) this._requestUpdate();
     }
 
     private _renderer: HourlyProfilerRenderer | null = null;

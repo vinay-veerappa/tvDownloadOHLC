@@ -91,76 +91,99 @@ export interface DailyProfilerOptions {
     maxDays: number;
 }
 
+// Returns defaults based on the provided theme, fallback to Institutional Dark if missing
+export const getDailyProfilerDefaults = (theme: ThemeParams): DailyProfilerOptions => {
+    return {
+        ticker: '',
+        extendUntil: "16:00",
+
+        showAsia: true,
+        showAsiaLabel: true,
+        asiaColor: theme.indicators.sessions.asia,
+        asiaOpacity: theme.indicators.sessions.opacity,
+        extendAsia: true,
+
+        showLondon: true,
+        showLondonLabel: true,
+        londonColor: theme.indicators.sessions.london,
+        londonOpacity: theme.indicators.sessions.opacity,
+        extendLondon: true,
+
+        showNY1: true,
+        showNY1Label: true,
+        ny1Color: theme.indicators.sessions.ny,
+        ny1Opacity: theme.indicators.sessions.opacity,
+        extendNY1: true,
+
+        showNY2: true,
+        showNY2Label: true,
+        ny2Color: theme.indicators.sessions.ny, // NY2 uses same color for now, or could define separate
+        ny2Opacity: theme.indicators.sessions.opacity,
+        extendNY2: true,
+
+        showMidnightOpen: true,
+        showMidnightOpenLabel: true,
+        midnightOpenColor: theme.indicators.sessions.midnight,
+
+        showOpeningRange: true,
+        showOpeningRangeLabel: false,
+        openingRangeColor: theme.indicators.levels.open,
+        extendOpeningRange: true,
+
+        showOpeningSignal: true,
+        openingSignalColor: theme.indicators.levels.settlement, // Re-using settlement or similar high-vis
+
+        // New Levels
+        showPDH: true,
+        showPDHLabel: true,
+        pdhColor: theme.indicators.levels.pdh,
+
+        showGlobex: true,
+        showGlobexLabel: true,
+        globexColor: theme.indicators.sessions.asia, // Globex often aligns with Asia/Overnight
+
+        showWeeklyClose: true,
+        showWeeklyCloseLabel: true,
+        weeklyCloseColor: theme.indicators.levels.close,
+
+        showP12: true,
+        showP12Label: true,
+        p12Color: theme.indicators.levels.pdh, // P12 is a pivot, re-use level color
+        extendP12: true,
+
+        show730: true,
+        show730Label: true,
+        color730: theme.indicators.levels.open,
+
+        showSettlement: true,
+        showSettlementLabel: true,
+        settlementColor: theme.indicators.levels.settlement,
+
+        showLabels: true,
+        showLines: true,
+
+        maxDays: 30
+    }
+};
+
 export const DEFAULT_DAILY_PROFILER_OPTIONS: DailyProfilerOptions = {
+    // Legacy fallback using static values (Institutional Dark)
     ticker: '',
     extendUntil: "16:00",
-
-    showAsia: true,
-    showAsiaLabel: true,
-    asiaColor: "#90A4AE",
-    asiaOpacity: 0.15,
-    extendAsia: true,
-
-    showLondon: true,
-    showLondonLabel: true,
-    londonColor: "#FFB74D",
-    londonOpacity: 0.15,
-    extendLondon: true,
-
-    showNY1: true,
-    showNY1Label: true,
-    ny1Color: "#42A5F5",
-    ny1Opacity: 0.15,
-    extendNY1: true,
-
-    showNY2: true,
-    showNY2Label: true,
-    ny2Color: "#AB47BC",
-    ny2Opacity: 0.15,
-    extendNY2: true,
-
-    showMidnightOpen: true,
-    showMidnightOpenLabel: true,
-    midnightOpenColor: "#CFD8DC",
-
-    showOpeningRange: true,
-    showOpeningRangeLabel: false, // Default off per user request "Remove the opening range label"
-    openingRangeColor: "#26A69A",
-    extendOpeningRange: true,
-
-    showOpeningSignal: true,
-    openingSignalColor: "#FFEA00",
-
-    // New Defaults
-    showPDH: true,
-    showPDHLabel: true,
-    pdhColor: "#B0BEC5",
-
-    showGlobex: true,
-    showGlobexLabel: true,
-    globexColor: "#FF8A65",
-
-    showWeeklyClose: true,
-    showWeeklyCloseLabel: true,
-    weeklyCloseColor: "#DCE775",
-
-    showP12: true,
-    showP12Label: true,
-    p12Color: "#BA68C8",
-    extendP12: true,
-
-    show730: true,
-    show730Label: true,
-    color730: "#4DB6AC",
-
-    showSettlement: true,
-    showSettlementLabel: true,
-    settlementColor: "#FFD54F",
-
-    showLabels: true,
-    showLines: true,
-
-    maxDays: 30
+    showAsia: true, showAsiaLabel: true, asiaColor: "#90A4AE", asiaOpacity: 0.15, extendAsia: true,
+    showLondon: true, showLondonLabel: true, londonColor: "#FFB74D", londonOpacity: 0.15, extendLondon: true,
+    showNY1: true, showNY1Label: true, ny1Color: "#42A5F5", ny1Opacity: 0.15, extendNY1: true,
+    showNY2: true, showNY2Label: true, ny2Color: "#AB47BC", ny2Opacity: 0.15, extendNY2: true,
+    showMidnightOpen: true, showMidnightOpenLabel: true, midnightOpenColor: "#CFD8DC",
+    showOpeningRange: true, showOpeningRangeLabel: false, openingRangeColor: "#26A69A", extendOpeningRange: true,
+    showOpeningSignal: true, openingSignalColor: "#FFEA00",
+    showPDH: true, showPDHLabel: true, pdhColor: "#B0BEC5",
+    showGlobex: true, showGlobexLabel: true, globexColor: "#FF8A65",
+    showWeeklyClose: true, showWeeklyCloseLabel: true, weeklyCloseColor: "#DCE775",
+    showP12: true, showP12Label: true, p12Color: "#BA68C8", extendP12: true,
+    show730: true, show730Label: true, color730: "#4DB6AC",
+    showSettlement: true, showSettlementLabel: true, settlementColor: "#FFD54F",
+    showLabels: true, showLines: true, maxDays: 30
 };
 
 class DailyProfilerRenderer {
