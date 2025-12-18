@@ -608,4 +608,8 @@ export class RectangleDrawingTool {
 
         return closest;
     }
+
+    public updateData(data: any[]) {
+        this._ohlcData = data || [];
+    }
 }

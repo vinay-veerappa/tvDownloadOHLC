@@ -357,7 +357,11 @@ export class MeasureTool {
         this._active = false;
         this._chart.unsubscribeClick(this._listeners.click);
         this._chart.unsubscribeCrosshairMove(this._listeners.move);
-        this._drawing = null;
+
+        if (this._drawing) {
+            this._series.detachPrimitive(this._drawing);
+            this._drawing = null;
+        }
     }
 
     _handleClick(param: MouseEventParams) {
@@ -378,6 +382,9 @@ export class MeasureTool {
             // Second click: Finish
             this._drawing.updatePoints(this._drawing._p1, { time: param.time as Time, price: coordinatePrice });
             this._onDrawingCreated(this._drawing);
+
+            // Prevent cleanup
+            this._drawing = null;
             this.stopDrawing();
         }
     }

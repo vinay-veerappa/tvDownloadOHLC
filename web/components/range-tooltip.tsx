@@ -31,9 +31,12 @@ export function RangeTooltip({ session, x, y, accountBalance, riskPercent, tickV
 
     const range = high - low;
     const riskAmount = accountBalance * (riskPercent / 100);
+    // tickValue prop is now passed as PointValue ($20)
     const riskPerContract = range * tickValue;
+    const riskPerMicro = range * (tickValue / microMultiplier);
+
     const contracts = riskPerContract > 0 ? Math.floor(riskAmount / riskPerContract) : 0;
-    const micros = contracts * microMultiplier;
+    const micros = riskPerMicro > 0 ? Math.floor(riskAmount / riskPerMicro) : 0;
 
     // Position tooltip near crosshair but offset
     // Ensure it doesn't go off screen
@@ -48,7 +51,7 @@ export function RangeTooltip({ session, x, y, accountBalance, riskPercent, tickV
             <div className="font-bold mb-0.5 text-muted-foreground">{label} Session</div>
             <div>Range: <span className="text-foreground">{range.toFixed(2)} pts</span></div>
             <div>Risk/Con: <span className="text-foreground">${riskPerContract.toFixed(0)}</span></div>
-            <div>Contracts: <span className="text-yellow-400">{contracts}</span> <span className="text-muted-foreground text-[10px]">({micros} mic)</span></div>
+            <div>Contracts: <span className="text-yellow-400">{contracts}</span> <span className="text-cyan-400 font-bold">/ {micros} &#181;</span></div>
             <div className="mt-1 text-[10px] text-muted-foreground">
                 H: {high.toFixed(2)} L: {low.toFixed(2)}
             </div>

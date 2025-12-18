@@ -52,6 +52,11 @@ export interface RangeExtensionsOptions {
     // Time filtering (optional)
     startTs?: number;
     endTs?: number;
+    displayTimezone?: string;
+
+    // API Colors
+    rthColor?: string;
+    hourlyColor?: string;
 }
 
 export const DEFAULT_RANGE_EXTENSIONS_OPTIONS: RangeExtensionsOptions = {
@@ -65,7 +70,9 @@ export const DEFAULT_RANGE_EXTENSIONS_OPTIONS: RangeExtensionsOptions = {
     showExtensions: true,
     extensionMode: 'price-percent',
     extensionValues: [0.05, 0.10], // Default to Price Percent
-    extensionColor: '#FFD700', // Gold
+    extensionColor: '#FFD700', // Gold (Main Default)
+    rthColor: '#00FF00', // Green
+    hourlyColor: '#FFD700', // Gold
     extensionOpacity: 0.6,
     extensionLineStyle: 2, // Dashed
 
@@ -148,17 +155,41 @@ class RangeExtensionsRenderer implements IPrimitivePaneRenderer {
                     // 1. Draw Info Table
                     if (this._options.showInfoTable) {
                         // Risk Amount = Balance * (Risk% / 100)
-                        const riskAmount = this._options.accountBalance * (this._options.riskPercent / 100);
-                        // Risk Per Contract = RangePoints * TickValue
-                        const riskPerContract = rangeSize * this._options.tickValue;
+                        const accountBalance = Number(this._options.accountBalance);
+                        const riskPercent = Number(this._options.riskPercent);
 
-                        let contracts = 0;
-                        if (riskPerContract > 0) {
-                            contracts = Math.floor(riskAmount / riskPerContract);
+                        // Auto-detect based on ticker
+                        const { pointValue, microMultiplier } = getContractSpecs(this._options.ticker);
+
+                        console.log('[RangeExtensions] Ticker:', this._options.ticker, 'Specs:', pointValue, microMultiplier); // DEBUG
+
+                        const riskAmount = accountBalance * (riskPercent / 100);
+
+                        // Risk Per Contract (Mini) = RangePoints * PointValue
+                        const riskPerMini = rangeSize * pointValue;
+
+                        // Risk Per Contract (Micro) = RangePoints * (PointValue / MicroMult)
+                        const tickValueMicro = pointValue / microMultiplier;
+                        const riskPerMicro = rangeSize * tickValueMicro;
+
+                        let contractsMini = 0;
+                        let contractsMicro = 0;
+
+                        if (riskPerMini > 0) {
+                            contractsMini = Math.floor(riskAmount / riskPerMini);
+                        }
+                        if (riskPerMicro > 0) {
+                            contractsMicro = Math.floor(riskAmount / riskPerMicro);
                         }
 
-                        // Format: "RTH 1m | 5.25 pts | 2 Con"
-                        const text = `${label} | ${rangeSize.toFixed(2)} pts | ${contracts} Con`;
+                        // DEBUG LOG (Throttled ideally, but for now just log to verify logic one-off if needed, or browser console)
+                        // console.log('[RangeCalc] Bal:', accountBalance, 'Risk%:', riskPercent, 'Range:', rangeSize.toFixed(2), 
+                        //    'RiskAmt:', riskAmount.toFixed(2), 'MiniRisk:', riskPerMini.toFixed(2), 'MicroRisk:', riskPerMicro.toFixed(2),
+                        //    'MaxMini:', contractsMini, 'MaxMicro:', contractsMicro);
+
+                        // Format: "RTH 1m | 5.25 pts | 2 M / 20 µ"
+                        // DEBUG: Append spec info to help diagnose 0/0
+                        const text = `${label} | ${rangeSize.toFixed(2)} pts | ${contractsMini} / ${contractsMicro} µ [${this._options.ticker || 'NoTkr'} PV:${pointValue} $${riskAmount.toFixed(0)}]`;
 
                         // Draw slightly above the box top (rangeHigh)
                         const yHigh = this._series.priceToCoordinate(rangeHigh);
@@ -201,7 +232,12 @@ class RangeExtensionsRenderer implements IPrimitivePaneRenderer {
                         const yExtHigh = this._series.priceToCoordinate(extHigh);
                         const yExtLow = this._series.priceToCoordinate(extLow);
 
-                        ctx.strokeStyle = this._hexToRgba(this._options.extensionColor, this._options.extensionOpacity);
+                        // Colors: "RTH 1m" uses rthColor, "Hourly" uses hourlyColor
+                        let lineColor = this._options.extensionColor;
+                        if (label === "RTH 1m" && this._options.rthColor) lineColor = this._options.rthColor;
+                        if (label === "Hourly" && this._options.hourlyColor) lineColor = this._options.hourlyColor;
+
+                        ctx.strokeStyle = this._hexToRgba(lineColor, this._options.extensionOpacity);
                         ctx.lineWidth = 1 * hPR;
 
                         // Line Dash config
@@ -231,13 +267,26 @@ class RangeExtensionsRenderer implements IPrimitivePaneRenderer {
         });
     }
 
-    // Helper
     private _hexToRgba(hex: string, alpha: number): string {
         const r = parseInt(hex.slice(1, 3), 16);
         const g = parseInt(hex.slice(3, 5), 16);
         const b = parseInt(hex.slice(5, 7), 16);
         return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
+}
+
+// Helper to determine contract specs from ticker
+export function getContractSpecs(ticker: string): { pointValue: number, microMultiplier: number } {
+    const t = (ticker || '').toUpperCase();
+    if (t.includes('ES') || t.includes('MES')) return { pointValue: 50, microMultiplier: 10 }; // ES/MES
+    if (t.includes('NQ') || t.includes('MNQ')) return { pointValue: 20, microMultiplier: 10 }; // NQ/MNQ
+    if (t.includes('YM') || t.includes('U2')) return { pointValue: 5, microMultiplier: 10 };  // YM
+    if (t.includes('RTY')) return { pointValue: 50, microMultiplier: 10 }; // RTY
+    if (t.includes('CL')) return { pointValue: 1000, microMultiplier: 10 }; // CL
+    if (t.includes('GC')) return { pointValue: 100, microMultiplier: 10 };  // GC
+    if (t.includes('6E')) return { pointValue: 12.5, microMultiplier: 10 }; // Euro FX
+    // Fallback default
+    return { pointValue: 50, microMultiplier: 10 };
 }
 
 export class RangeExtensions implements ISeriesPrimitive<Time> {
@@ -268,12 +317,15 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
 
     attached({ requestUpdate }: { requestUpdate: () => void }) {
         this._requestUpdate = requestUpdate;
-        this.fetchData();
     }
 
     detached() {
         this._requestUpdate = () => { };
         this.destroy();
+    }
+
+    public options(): RangeExtensionsOptions {
+        return this._options;
     }
 
     public destroy() {
@@ -284,12 +336,8 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
     }
 
     updateOptions(options: Partial<RangeExtensionsOptions>) {
-        const prevTicker = this._options.ticker;
+        // const prevTicker = this._options.ticker;
         this._options = { ...this._options, ...options };
-
-        if (options.ticker && options.ticker !== prevTicker) {
-            this.fetchData();
-        }
         this._requestUpdate();
     }
 
@@ -302,52 +350,129 @@ export class RangeExtensions implements ISeriesPrimitive<Time> {
     }
 
     // --- DATA ---
-    async fetchData() {
-        if (!this._options.ticker) return;
+    // --- DATA ---
+    public setData(data: any[]) {
+        this.calculateRanges(data);
+    }
 
-        // Abort previous request
-        if (this._abortController) {
-            this._abortController.abort();
-        }
-        this._abortController = new AbortController();
-        const signal = this._abortController.signal;
+    private calculateRanges(data: any[]) {
+        if (!data || data.length === 0) return;
 
-        // Clean ticker
-        // Normalize ticker: /NQ -> NQ1, NQ1! -> NQ1, ES -> ES1
-        let cleanTicker = this._options.ticker.replace(/!/g, '').replace(/\//g, '');
-        const roots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG", "NG", "ZB", "ZN"];
-        if (roots.includes(cleanTicker)) cleanTicker += "1";
+        const tz = this._options.displayTimezone || 'America/New_York';
 
-        try {
-            let url = `http://localhost:8000/api/sessions/${encodeURIComponent(cleanTicker)}?range_type=hourly`;
-            if (this._options.startTs) url += `&start_ts=${this._options.startTs}`;
-            if (this._options.endTs) url += `&end_ts=${this._options.endTs}`;
+        // Helper to get time Parts in Timezone
+        const getTimeParts = (unixTime: number) => {
+            const date = new Date(unixTime * 1000);
+            try {
+                const parts = new Intl.DateTimeFormat('en-US', {
+                    timeZone: tz,
+                    hour: 'numeric',
+                    minute: 'numeric',
+                    second: 'numeric',
+                    hour12: false
+                }).formatToParts(date);
 
-            const res = await fetch(url, { signal });
-            if (!res.ok) throw new Error('Failed to fetch range data');
-
-            const rawData = await res.json();
-
-            // Map start_time to time (Unix Seconds)
-            this._data = rawData.map((item: any) => {
-                // Parse ISO string to Unix Timestamp (Seconds)
-                // item.start_time is "2024-01-01T09:00:00"
-                const time = Math.floor(new Date(item.start_time).getTime() / 1000) as Time;
+                const getPart = (type: string) => parts.find(p => p.type === type)?.value;
                 return {
-                    ...item,
-                    time: time
+                    hour: parseInt(getPart('hour') || '0'),
+                    minute: parseInt(getPart('minute') || '0'),
+                    second: parseInt(getPart('second') || '0')
                 };
-            }).sort((a: any, b: any) => (a.time as number) - (b.time as number));
+            } catch (e) {
+                return { hour: date.getUTCHours(), minute: date.getUTCMinutes(), second: date.getUTCSeconds() };
+            }
+        };
 
-            // Request update
-            this._requestUpdate();
+        const result: RangeExtensionPeriod[] = [];
+        let currentPeriod: RangeExtensionPeriod | null = null;
 
-        } catch (e: any) {
-            if (e.name === 'AbortError') return;
-            console.error("RangeExtensions Fetch Error", e);
-        } finally {
-            this._abortController = null;
+        // We need to group by Hour for "Hourly" and identify 09:30 for "RTH 1m".
+        // Logic:
+        // Iterate bars.
+        // For each bar, check Time.
+        // 1. RTH 1m Check: Is this bar 09:30? (Hour 9, Minute 30)
+        //    If yes, store its High/Low as rth_1m_high/low.
+        // 2. Hourly Check: 
+        //    Are we in a new Hour? (Prev hour != Curr hour)
+        //    If yes, start tracking strict "First 5 Mins".
+        //    We need to accumulate High/Low of bars where minute < 5.
+        //    Store this in a temporary object and once minute >= 5 (or hour changes), finalize it.
+
+        // Since we need to output "RangeExtensionPeriod" which maps to the "Hour" usually?
+        // Actually, the renderer draws based on `period.time`.
+        // If we want to draw a box for the whole hour, we need one entry per hour?
+        // The previous API likely returned ONE object per Hour (start_time: 09:00, etc).
+        // Let's stick to that: One entry per Hour.
+
+        // But RTH 1M is a specific box at 09:30.
+        // Does the renderer draw TWO boxes?
+        // Renderer logic:
+        // if show0930 && per.rth_high... draw RTH logic.
+        // else if showHourly && per.or_high... draw Hourly logic.
+        // It seems mutually exclusive per period in the draw loop?
+        // "if ... else if ..."
+
+        // So for the 09:00 hour, if we have RTH data, does it override Hourly data?
+        // Yes. `if (show0930 && rth) ... else if (showHourly && or) ...`
+        // So at 09:00, we prioritize RTH 1m.
+        // At 10:00, we use Hourly.
+
+        // Bucket data by Hour.
+        const hourMap = new Map<number, RangeExtensionPeriod>();
+
+        for (let i = 0; i < data.length; i++) {
+            const bar = data[i];
+            const time = bar.time as number;
+            const parts = getTimeParts(time);
+
+            // Align to start of hour for the key
+            const hourStart = time - (parts.minute * 60) - parts.second;
+
+            if (!hourMap.has(hourStart)) {
+                hourMap.set(hourStart, {
+                    time: hourStart as Time,
+                    open: bar.open,
+                    high: bar.high,
+                    low: bar.low,
+                    close: bar.close,
+                    mid: (bar.high + bar.low) / 2
+                });
+            }
+
+            const period = hourMap.get(hourStart)!;
+
+            // Update period H/L (for the whole hour context if needed, but mainly we need ranges)
+            period.high = Math.max(period.high, bar.high);
+            period.low = Math.min(period.low, bar.low);
+            period.close = bar.close;
+            period.mid = (period.high + period.low) / 2;
+
+            // 1. RTH 1m Logic (09:30)
+            if (parts.hour === 9 && parts.minute === 30) {
+                // exact 1m bar
+                // If data is 5m, this bar covers 09:30-09:35. We use it.
+                // If data is 1m, this is 09:30-09:31. We use it.
+                // We overwrite if we encounter multiple bars in 09:30 (e.g. seconds data?)
+                // For now, simple assignment.
+                period.rth_1m_high = bar.high;
+                period.rth_1m_low = bar.low;
+            }
+
+            // 2. Hourly Open Range Logic (First 5 mins)
+            // If minutes < 5, contribute to OR
+            if (parts.minute < 5) {
+                if (period.or_high === undefined || period.or_high === null) {
+                    period.or_high = bar.high;
+                    period.or_low = bar.low;
+                } else {
+                    period.or_high = Math.max(period.or_high, bar.high);
+                    period.or_low = Math.min(period.or_low!, bar.low);
+                }
+            }
         }
+
+        this._data = Array.from(hourMap.values()).sort((a, b) => (a.time as number) - (b.time as number));
+        this._requestUpdate();
     }
 
     public hitTest(x: number, y: number) {

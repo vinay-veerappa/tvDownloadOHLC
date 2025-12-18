@@ -1,6 +1,7 @@
-"use server" // Ensure this is a server component to fetch initial data
+"use server"
 
 import { getDashboardContext } from "@/actions/context-actions"
+import { getWatchlistGroups } from "@/actions/watchlist-actions"
 import { YahooQuote, YahooNewsItem } from "@/lib/yahoo-finance"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -14,10 +15,16 @@ import { MarketOverviewWidget } from "@/components/journal/context/market-overvi
 import { MarketNewsWidget } from "@/components/journal/context/market-news-widget"
 
 export default async function ContextDashboardPage() {
-    const contextResult = await getDashboardContext()
+    const [contextResult, groupsResult] = await Promise.all([
+        getDashboardContext(),
+        getWatchlistGroups()
+    ])
+
     const { marketData, news, dailyNote, events, watchlist } = contextResult.success && contextResult.data ? contextResult.data : {
         marketData: [], news: [], dailyNote: null, events: [], watchlist: []
     }
+
+    const groups = groupsResult.success && groupsResult.data ? groupsResult.data : []
 
     const today = new Date()
     const currentSession = detectSession(today)
@@ -25,7 +32,7 @@ export default async function ContextDashboardPage() {
     // Reconstruct news query for consistency with initial fetch
     const watchlistSymbols = watchlist.map(w => w.symbol)
     const keySymbols = ["SPY", ...watchlistSymbols.slice(0, 3)]
-    // Use simple space or comma for multiple terms. Yahoo search handles space as flexible match.
+    // Use simple space or comma for multiple terms
     const newsQuery = keySymbols.join(" ") + " news"
 
     return (
@@ -58,7 +65,11 @@ export default async function ContextDashboardPage() {
 
                 {/* 2. Watchlist (New) */}
                 <div className="md:col-span-3 space-y-6">
-                    <WatchlistWidget watchlist={watchlist} quotes={marketData} />
+                    <WatchlistWidget
+                        initialGroups={groups}
+                        initialItems={watchlist}
+                        initialQuotes={marketData}
+                    />
                 </div>
 
                 {/* 3. Economic Calendar */}

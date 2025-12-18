@@ -155,7 +155,8 @@ export function useDrawingInteraction({
             if (newPriceVal !== null) { // Time might be null (price-only drags), so checked later
 
                 // 1. Custom 'movePoint' support (Rectangle resizing, etc.)
-                if (drawing.movePoint) {
+                // Delegate to tool UNLESS it's a body drag (which standard logic handles better with delta)
+                if (drawing.movePoint && target.hitType !== 'body') {
                     // If tool supports movePoint, delegate entirely.
                     // We need to pass { time, price } but handle time being null if appropriate?
                     // Most tools need time. If time is null (outside bars), maybe use coordinate?

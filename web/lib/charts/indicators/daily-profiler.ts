@@ -695,6 +695,8 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
         this._requestUpdate();
     }
 
+
+
     destroy() {
         if (typeof window !== 'undefined') {
             window.removeEventListener('theme-changed', this._handleThemeChange.bind(this) as EventListener);

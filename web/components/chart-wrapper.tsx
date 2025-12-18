@@ -165,11 +165,13 @@ export function ChartWrapper(props: ChartWrapperProps) {
 
     // Save params from child components
     const handleIndicatorParamsChange = useCallback((type: string, newParams: any) => {
+        console.log(`[ChartWrapper] Updating Params for ${type}:`, newParams); // DEBUG
         setIndicatorParams(prev => ({ ...prev, [type]: newParams }));
 
         // Use targeted update to avoid overwriting entire storage with potentially stale list
         const success = IndicatorStorage.updateIndicatorParams(chartId, type, newParams);
         if (!success) {
+            console.log(`[ChartWrapper] Indicator ${type} not found in storage, adding it.`); // DEBUG
             IndicatorStorage.addIndicator(chartId, {
                 type,
                 params: newParams,
