@@ -137,14 +137,14 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                     <button
                         onClick={() => handleModeChange("live")}
                         className={cn(
-                            "px-3 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1.5",
+                            "px-3 py-1 text-xs font-bold rounded-md transition-all flex items-center gap-2 border",
                             currentMode === "live"
-                                ? "bg-background text-primary shadow-sm"
-                                : "text-muted-foreground hover:text-foreground"
+                                ? "bg-emerald-600 text-white border-emerald-600 shadow-[0_0_10px_rgba(5,150,105,0.4)]"
+                                : "text-muted-foreground border-transparent hover:text-foreground hover:bg-accent"
                         )}
                     >
-                        <div className={cn("w-1.5 h-1.5 rounded-full", currentMode === "live" ? "bg-green-500 animate-pulse" : "bg-muted-foreground")} />
-                        Live
+                        <div className={cn("w-2 h-2 rounded-full", currentMode === "live" ? "bg-white animate-pulse shadow-[0_0_8px_rgba(255,255,255,0.8)]" : "bg-muted-foreground")} />
+                        LIVE
                     </button>
                 </div>
 
@@ -157,16 +157,16 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                             variant="ghost"
                             role="combobox"
                             aria-expanded={open}
-                            className="justify-between font-bold text-foreground hover:bg-muted gap-2"
+                            className="justify-between font-bold text-foreground hover:bg-muted gap-2 h-9"
                         >
-                            <span>
+                            <span className="text-sm">
                                 {currentTicker
                                     ? (tickers.find((t) => t === currentTicker) || tickers.find(t => t === `${currentTicker}!`) || currentTicker)
                                     : "Select ticker..."}
                             </span>
                             {/* Fast Live Price Badge */}
                             {currentMode === 'live' && livePrice && (
-                                <span className="ml-2 text-xs font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded animate-in fade-in">
+                                <span className="ml-2 text-sm font-mono font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 shadow-[0_0_8px_rgba(16,185,129,0.2)] animate-in fade-in slide-in-from-left-2">
                                     {livePrice.toFixed(2)}
                                 </span>
                             )}
