@@ -31,7 +31,10 @@ import { normalizeResolution } from "@/lib/resolution"
 import { ThemeSwitcher } from "@/components/theme-switcher"
 import { VWAPSettings } from "@/lib/indicator-api"
 import { VWAPSettingsDialog } from "./vwap-settings-dialog"
+import { useLiveQuote } from "@/hooks/use-live-quote"
 import { addToWatchlist } from "@/actions/watchlist-actions"
+
+const KNOWN_FUTURES_ROOTS = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG", "NG", "ZB", "ZN"]
 
 interface TopToolbarProps {
     tickers: string[]
@@ -52,6 +55,10 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
     const currentTicker = searchParams.get("ticker") || "ES1"
     const currentTimeframe = searchParams.get("timeframe") || "1D"
     const currentStyle = searchParams.get("style") || "candles"
+    const currentMode = searchParams.get("mode") || "historical"
+
+    // Fast Live Price Hook
+    const { price: livePrice } = useLiveQuote(currentTicker, currentMode === 'live')
 
     const [open, setOpen] = React.useState(false)
     const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
@@ -63,35 +70,29 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
     const { activeAccount, sessionPnl } = useTrading()
     const pnlColor = sessionPnl >= 0 ? "text-[#00C853]" : "text-[#ef5350]"
 
+    const handleModeChange = (mode: string) => {
+        const params = new URLSearchParams(searchParams.toString())
+        params.set("mode", mode)
+        router.push(`?${params.toString()}`)
+    }
+
     const handleTickerChange = (currentValue: string) => {
         // Normalize: Find the actual ticker with correct casing from our list
-        // This fixes the issue where CommandItem returns value in lowercase
         const normalizedTicker = tickers.find(t => t.toLowerCase() === currentValue.toLowerCase()) || currentValue
 
         const params = new URLSearchParams(searchParams.toString())
         params.set("ticker", normalizedTicker)
 
         const availableForTicker = tickerMap[normalizedTicker] || []
-
-        // Normalize for comparison (e.g., "1h" vs "60")
         const normalizedCurrent = normalizeResolution(currentTimeframe)
         const availableNormalized = availableForTicker.map(tf => normalizeResolution(tf))
-
         const matchIndex = availableNormalized.indexOf(normalizedCurrent)
 
         if (matchIndex !== -1) {
-            // Timeframe is available! 
-            // Update to the specific string from availableForTicker to ensure UI consistency (e.g. "1h" instead of "60")
-            console.log('[TopToolbar] Timeframe available, switching to matched format:', availableForTicker[matchIndex])
             params.set("timeframe", availableForTicker[matchIndex])
         } else {
-            // Not available, switch to default
-            console.log('[TopToolbar] Timeframe not available (normalized), switching needed.')
             if (availableForTicker.length > 0) {
-                console.log('[TopToolbar] Switching to default:', availableForTicker[0])
                 params.set("timeframe", availableForTicker[0])
-            } else {
-                console.warn('[TopToolbar] No available timeframes found for ticker!')
             }
         }
 
@@ -120,6 +121,35 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
 
             {/* Left: Ticker & Timeframe */}
             <div className="flex items-center gap-1 overflow-x-auto">
+                {/* Mode Toggle */}
+                <div className="flex items-center bg-muted/50 p-1 rounded-lg border border-border mr-2">
+                    <button
+                        onClick={() => handleModeChange("historical")}
+                        className={cn(
+                            "px-3 py-1 text-xs font-medium rounded-md transition-all",
+                            currentMode === "historical"
+                                ? "bg-background text-foreground shadow-sm"
+                                : "text-muted-foreground hover:text-foreground"
+                        )}
+                    >
+                        History
+                    </button>
+                    <button
+                        onClick={() => handleModeChange("live")}
+                        className={cn(
+                            "px-3 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1.5",
+                            currentMode === "live"
+                                ? "bg-background text-primary shadow-sm"
+                                : "text-muted-foreground hover:text-foreground"
+                        )}
+                    >
+                        <div className={cn("w-1.5 h-1.5 rounded-full", currentMode === "live" ? "bg-green-500 animate-pulse" : "bg-muted-foreground")} />
+                        Live
+                    </button>
+                </div>
+
+                <div className="h-4 w-[1px] bg-border mx-2" />
+
                 {/* Ticker Combobox */}
                 <Popover open={open} onOpenChange={setOpen}>
                     <PopoverTrigger asChild>
@@ -127,11 +157,19 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                             variant="ghost"
                             role="combobox"
                             aria-expanded={open}
-                            className="w-[100px] justify-between font-bold text-foreground hover:bg-muted"
+                            className="justify-between font-bold text-foreground hover:bg-muted gap-2"
                         >
-                            {currentTicker
-                                ? (tickers.find((t) => t === currentTicker) || tickers.find(t => t === `${currentTicker}!`) || currentTicker)
-                                : "Select ticker..."}
+                            <span>
+                                {currentTicker
+                                    ? (tickers.find((t) => t === currentTicker) || tickers.find(t => t === `${currentTicker}!`) || currentTicker)
+                                    : "Select ticker..."}
+                            </span>
+                            {/* Fast Live Price Badge */}
+                            {currentMode === 'live' && livePrice && (
+                                <span className="ml-2 text-xs font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded animate-in fade-in">
+                                    {livePrice.toFixed(2)}
+                                </span>
+                            )}
                             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>
                     </PopoverTrigger>
@@ -151,9 +189,8 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                                             let finalTicker = inputValue.toUpperCase().trim()
 
                                             // Client-side normalization for Futures
-                                            const roots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG"]
                                             let clean = finalTicker.replace("!", "")
-                                            if (roots.includes(clean)) {
+                                            if (KNOWN_FUTURES_ROOTS.includes(clean)) {
                                                 finalTicker = "/" + clean
                                             }
 

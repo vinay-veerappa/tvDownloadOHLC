@@ -611,7 +611,7 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
             const cleanTicker = this._options.ticker.replace('!', '');
 
             // Build URL with optional time filtering
-            let url = `http://localhost:8000/api/sessions/${cleanTicker}?range_type=hourly`;
+            let url = `http://localhost:8000/api/sessions/${encodeURIComponent(cleanTicker)}?range_type=hourly`;
             if (this._options.startTs) {
                 url += `&start_ts=${this._options.startTs}`;
             }

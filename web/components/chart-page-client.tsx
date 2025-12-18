@@ -194,7 +194,7 @@ export function ChartPageClient({
                 {/* Chart Wrapper (Flex Grow) */}
                 <div className="flex-1 min-h-0 relative">
                     <ChartWrapper
-                        key={`${ticker}-${timeframe}`} // Force hard remount to prevent state leakage/double-rendering artifacts
+                        key={`${ticker}-${timeframe}-${mode}`} // Force hard remount to prevent state leakage/double-rendering artifacts
                         ticker={ticker}
                         timeframe={timeframe}
                         style={style}

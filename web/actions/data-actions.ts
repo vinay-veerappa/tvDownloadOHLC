@@ -36,9 +36,26 @@ function getDataDir() {
     return path.join(process.cwd(), "public", "data")
 }
 
+// Helper to normalize ticker to folder name prefix
+// e.g. "NQ1!" -> "NQ1", "/NQ" -> "NQ1", "ES" -> "ES1"
+function normalizeTickerForFolder(ticker: string): string {
+    let clean = ticker.replace(/!/g, '').replace(/\//g, '');
+
+    // Map known roots to continuous contract 1
+    const roots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG", "NG", "ZB", "ZN"];
+
+    // Exact match check (e.g. "NQ" -> "NQ1")
+    if (roots.includes(clean)) {
+        return clean + "1";
+    }
+
+    // If it already ends in 1 (e.g. NQ1), keep it
+    return clean;
+}
+
 // Load chunk metadata for a ticker/timeframe
 function loadMeta(ticker: string, timeframe: string): ChunkMeta | null {
-    const cleanTicker = ticker.replace('!', '')
+    const cleanTicker = normalizeTickerForFolder(ticker)
     const metaPath = path.join(getDataDir(), `${cleanTicker}_${timeframe}`, "meta.json")
     if (!fs.existsSync(metaPath)) {
         return null
@@ -52,7 +69,7 @@ const CHUNK_CACHE = new Map<string, OHLCData[]>()
 
 // Load a specific chunk with Caching
 function loadChunk(ticker: string, timeframe: string, chunkIndex: number): OHLCData[] {
-    const cleanTicker = ticker.replace('!', '')
+    const cleanTicker = normalizeTickerForFolder(ticker)
     const cacheKey = `${cleanTicker}_${timeframe}_${chunkIndex}`
 
     // 1. Check Cache

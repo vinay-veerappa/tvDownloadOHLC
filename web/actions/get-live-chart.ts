@@ -4,8 +4,19 @@ import path from 'path';
 
 export async function getLiveChartData(ticker: string = "/NQ") {
     try {
+        // Normalization Logic (Mirroring frontend/hooks)
+        let safeTicker = ticker;
+        const roots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG", "NG", "ZB", "ZN"];
+        const clean = ticker.replace(/[^a-zA-Z]/g, "").toUpperCase(); // Remove '1', '!', '/'
+        const root = clean.replace(/\d+$/, "");
+
+        if (roots.includes(root)) {
+            // If it matches a known future root, force the /Root format
+            safeTicker = "/" + root;
+        }
+
         // Sanitize ticker to match python script logic (replace / with -)
-        const safeTicker = ticker.replace(/\//g, "-");
+        safeTicker = safeTicker.replace(/\//g, "-");
         const filename = `live_chart_${safeTicker}.json`;
         const filePath = path.join(process.cwd(), '..', 'data', filename);
 

@@ -184,7 +184,21 @@ async def main():
                         cdata["live_price"] = last_price
                         cdata["last_update"] = datetime.now().isoformat()
                         
-                        # Throttle writes? For now write on every tick
+                        # 1. Write Fast Quote File (Lightweight for UI polling)
+                        safe_symbol = get_safe_symbol(key)
+                        quote_file = os.path.join(DATA_DIR, f"latest_quote_{safe_symbol}.json")
+                        try:
+                            with open(quote_file, "w") as f:
+                                json.dump({
+                                    "symbol": key,
+                                    "price": last_price,
+                                    "time": cdata["last_update"]
+                                }, f)
+                        except Exception as e:
+                            print(f"⚠️ Quote write failed: {e}")
+
+                        # 2. Update Main Chart File (Still needed for full state, but maybe throttle this?)
+                        # For now, we continue to write it to keep state consistent
                         with open(charts[key]["files"]["json"], "w") as f:
                             json.dump(cdata, f, indent=2)
 
