@@ -47,6 +47,7 @@ interface ChartContainerProps {
     onPriceChange?: (price: number) => void
     initialReplayTime?: number // Timestamp to restore replay position after remount
     onTimeframeChange?: (tf: string) => void // New Prop for shortcuts
+    mode?: 'historical' | 'live'
 
     // Trading Props
     position?: {
@@ -99,7 +100,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York',
     selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad,
     onPriceChange, position, pendingOrders, onModifyOrder, onModifyPosition, initialReplayTime,
-    vwapSettings, indicatorParams, onIndicatorParamsChange, theme, onTimeframeChange, trades // Destructure trades
+    vwapSettings, indicatorParams, onIndicatorParamsChange, theme, onTimeframeChange, trades, mode // Destructure mode
 }, ref) => {
 
     // 1. Chart Reference
@@ -122,7 +123,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     } = useChartData({
         ticker, timeframe, onDataLoad, onReplayStateChange, onPriceChange,
         getVisibleTimeRange: () => getVisibleTimeRangeRef.current?.() ?? null,
-        initialReplayTime
+        initialReplayTime,
+        mode // Pass mode
     })
 
     // 3. Core Chart Initialization (Hook)

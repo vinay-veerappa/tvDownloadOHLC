@@ -46,5 +46,19 @@ The system provides a real-time bridge between the Schwab Streaming API and a lo
 - Add order submission (Buy/Sell) capabilities via the Schwab Trader API.
 - Implement a real-time Stop Loss / Take Profit manager (Trailing Stops).
 
+### Phase 4: Unified Charting Interface (Planned)
+The goal is to create a single, high-performance charting application that consolidates all existing tools.
+
+#### 🎯 Objectives:
+1. **Dynamic Context Switching**: Dropdown or command-palette to switch tickers (/NQ, /ES, etc.) and timeframes (1m, 5m, 15m) without page reloads.
+2. **Indicator Library**: A plugin architecture to toggle existing indicators (Standard Deviations, ICT FVGs, Price Models) over live data.
+3. **Data Fusion**: Seamlessly blending historical Parquet data (multiple years) with the live "hot buffer" for a continuous scrolling experience.
+
+#### 🛠️ Technical Hurdles:
+- **State Management**: Handling large datasets (>100k points) across timeframe switches without memory leaks.
+- **API Multiplexing**: If switching tickers, the Python streamer must dynamically (un)subscribe to avoid Schwab rate limits and bandwidth waste.
+- **Worker Threads**: Offloading indicator calculations (e.g., SD bands) to Web Workers to keep the UI at 60fps.
+- **Syncing Tools**: Ensuring drawings and annotations persist across ticker/timeframe switches.
+
 ---
 *Created: December 2025*
