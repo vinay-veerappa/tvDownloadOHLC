@@ -89,8 +89,6 @@ export interface DailyProfilerOptions {
     showLines: boolean;
 
     maxDays: number;
-    startTs?: number;
-    endTs?: number;
 }
 
 export const DEFAULT_DAILY_PROFILER_OPTIONS: DailyProfilerOptions = {
@@ -171,6 +169,7 @@ class DailyProfilerRenderer {
         private _options: DailyProfilerOptions,
         private _chart: IChartApi,
         private _series: ISeriesApi<any>,
+        private _barInterval: number,
         private _theme: ThemeParams
     ) { }
 
@@ -186,29 +185,30 @@ class DailyProfilerRenderer {
     }
 
     draw(target: any): void {
-        const timeScale = this._chart.timeScale();
-        // Robust Visible Range Logic (matches HourlyProfiler)
-        // Convert visible logical indices to timestamps to ensure we have valid Time values
-        const visibleLogical = timeScale.getVisibleLogicalRange();
-        if (!visibleLogical) return;
-
-        const startLogical = Math.floor(visibleLogical.from) as any;
-        const endLogical = Math.ceil(visibleLogical.to) as any;
-        const startCoord = timeScale.logicalToCoordinate(startLogical);
-        const endCoord = timeScale.logicalToCoordinate(endLogical);
-
-        // Safety Fallback: Use getVisibleRange() if coordinate conversion fails (e.g. no candles)
-        const rangeTime = timeScale.getVisibleRange();
-        const startTime = startCoord !== null ? (timeScale.coordinateToTime(startCoord) as number) : (rangeTime?.from as number) || 0;
-        const endTime = endCoord !== null ? (timeScale.coordinateToTime(endCoord) as number) : (rangeTime?.to as number) || Number.MAX_SAFE_INTEGER;
-
-        // Look back 500 items to capture long-duration sessions (Weekly/Monthly levels)
-        // Look back buffer to capture long-duration sessions
-        // Look back buffer to capture long-duration sessions
-        const startIndex = Math.max(0, this._binarySearch(startTime) - 50);
-
         target.useBitmapCoordinateSpace((scope: any) => {
-            const ctx = scope.context;
+            const ctx = scope.context as CanvasRenderingContext2D;
+            if (!ctx) return;
+
+            // Debug Log: Check if data exists and interval is sane
+            console.log('[DailyProfilerRenderer] Drawing. Sessions:', this._data.length, 'Interval:', this._barInterval);
+
+            const timeScale = this._chart.timeScale();
+            const visibleLogical = timeScale.getVisibleLogicalRange();
+            if (!visibleLogical) return;
+
+            const startLogical = Math.floor(visibleLogical.from) as any;
+            const endLogical = Math.ceil(visibleLogical.to) as any;
+            const startCoord = timeScale.logicalToCoordinate(startLogical);
+            const endCoord = timeScale.logicalToCoordinate(endLogical);
+
+            // Safety Fallback: Use getVisibleRange() if coordinate conversion fails (e.g. no candles)
+            const rangeTime = timeScale.getVisibleRange();
+            const startTime = startCoord !== null ? (timeScale.coordinateToTime(startCoord) as number) : (rangeTime?.from as number) || 0;
+            const endTime = endCoord !== null ? (timeScale.coordinateToTime(endCoord) as number) : (rangeTime?.to as number) || Number.MAX_SAFE_INTEGER;
+
+            // Look back 500 items
+            const startIndex = Math.max(0, this._binarySearch(startTime) - 50);
+
             const hPR = scope.horizontalPixelRatio;
             const vPR = scope.verticalPixelRatio;
 
@@ -356,27 +356,24 @@ class DailyProfilerRenderer {
                 let x2 = timeScale.timeToCoordinate(extendUnix as Time);
 
                 // Get interval used for logical projection
-                // We use the pre-calculated minDelta from top of (draw)
+                // We use fixed barInterval
                 // If x2 is null (future/missing), we project using logical indices
                 if (x2 === null) {
-                    // Removed redundant minDelta loop here
-
                     if (x1 !== null) {
                         // Case 1: Start is visible
                         const startLogical = timeScale.coordinateToLogical(x1);
                         if (startLogical !== null) {
-                            const bars = (extendUnix - (startUnix as number)) / minDelta;
-                            const endLogical = startLogical + bars;
-                            x2 = timeScale.logicalToCoordinate(endLogical as any);
+                            const bars = (extendUnix - (startUnix as number)) / this._barInterval;
+                            const endLogical = (startLogical + bars) as Logical;
+                            x2 = timeScale.logicalToCoordinate(endLogical);
                         }
                     } else {
                         // Case 2: Start is off-screen (likely Left)
-                        // Anchor to Visible Start
-                        // bars = (extend - visibleStart) / interval
-                        // endLogical = visibleLogical + bars
-                        const barsFromVisible = (extendUnix - startTime) / minDelta;
-                        const endLogical = visibleLogical.from + barsFromVisible;
-                        x2 = timeScale.logicalToCoordinate(endLogical as any);
+                        // Project from Visible Start
+                        // barsDelta = (extendUnix - startTime) / barInterval
+                        const barsFromVisible = (extendUnix - startTime) / this._barInterval;
+                        const endLogical = (visibleLogical.from + barsFromVisible) as Logical;
+                        x2 = timeScale.logicalToCoordinate(endLogical);
                     }
                 }
 
@@ -599,13 +596,17 @@ class DailyProfilerRenderer {
     }
 }
 
-export class DailyProfiler implements ISeriesPrimitive {
+export class DailyProfiler implements ISeriesPrimitive<Time> {
+    public _type = 'daily-profiler'; // Fix: Added type for cleaner identification
     _chart: IChartApi;
     _series: ISeriesApi<any>;
     _options: DailyProfilerOptions;
     _data: SessionData[] = [];
     _onOptionsChange?: (options: DailyProfilerOptions) => void;
     _theme: ThemeParams;
+    _requestUpdate: () => void = () => { };
+
+    private _nyFormatter: Intl.DateTimeFormat;
 
     constructor(
         chart: IChartApi,
@@ -627,7 +628,26 @@ export class DailyProfiler implements ISeriesPrimitive {
             window.addEventListener('theme-changed', this._handleThemeChange.bind(this) as EventListener);
         }
 
-        this.fetchData();
+        // Initialize Time Formatter (NY)
+        this._nyFormatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/New_York',
+            hour12: false,
+            year: 'numeric',
+            month: 'numeric',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: 'numeric',
+            second: 'numeric'
+        });
+    }
+
+    attached({ requestUpdate }: { requestUpdate: () => void }) {
+        this._requestUpdate = requestUpdate;
+        if (this._data.length > 0) this._requestUpdate();
+    }
+
+    detached() {
+        this._requestUpdate = () => { };
     }
 
     private _handleThemeChange = (e: CustomEvent<string>) => {
@@ -639,100 +659,478 @@ export class DailyProfiler implements ISeriesPrimitive {
     }
 
     applyOptions(options: Partial<DailyProfilerOptions>, suppressCallback?: boolean) {
-        const PrevTicker = this._options.ticker;
-        // Merge options carefully to preserve defaults
+        // Merge options
         this._options = { ...this._options, ...options };
 
         if (!suppressCallback) {
             this._onOptionsChange?.(this._options);
         }
 
-        // Always pre-compute extensions if options changed (e.g. extendUntil)
+        // Re-calculate extensions (requires startUnix to be set)
         this._precomputeExtensions();
-
-        if (options.ticker && options.ticker !== PrevTicker) {
-            this.fetchData();
-        } else {
-            this._requestUpdate();
-        }
+        this._requestUpdate();
     }
-
-    _abortController: AbortController | null = null;
 
     destroy() {
         if (typeof window !== 'undefined') {
             window.removeEventListener('theme-changed', this._handleThemeChange.bind(this) as EventListener);
         }
-        if (this._abortController) {
-            this._abortController.abort();
-            this._abortController = null;
-        }
     }
 
-    async fetchData() {
-        if (!this._options.ticker) return;
+    // --- Client-Side Calculation ---
 
-        if (this._abortController) {
-            this._abortController.abort();
+    private _barInterval: number = 60;
+
+    public setData(data: any[]) {
+        if (!data || data.length === 0) return;
+
+        if (data.length > 1) {
+            const diff = data[1].time - data[0].time;
+            this._barInterval = diff > 0 ? diff : 60;
         }
-        this._abortController = new AbortController();
 
-        try {
-            // Normalize ticker: /NQ -> NQ1, NQ1! -> NQ1, ES -> ES1
-            let cleanTicker = this._options.ticker.replace(/!/g, '').replace(/\//g, '');
-            const roots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG", "NG", "ZB", "ZN"];
-            if (roots.includes(cleanTicker)) cleanTicker += "1";
+        this._calculateSessions(data);
+        this._precomputeExtensions();
+        this._requestUpdate();
+    }
 
-            let url = `http://localhost:8000/api/sessions/${encodeURIComponent(cleanTicker)}?range_type=all`;
+    private _calculateSessions(data: any[]) {
+        if (data.length === 0) return;
 
-            // Prevent unbounded fetch: If startTs is missing, default to last 30 days
-            if (!this._options.startTs) {
-                const now = Math.floor(Date.now() / 1000);
-                const thirtyDaysAgo = now - (30 * 24 * 60 * 60);
-                url += `&start_ts=${thirtyDaysAgo}`;
-                // If endTs is missing, it implicitly goes to "now" or end of data
+        // 1. Group by Trading Date
+        // Trading Day: Starts 18:00 ET previous day -> Ends 17:59 ET current day.
+        // We use string key "YYYY-MM-DD" representing the 'Current' day.
+        // e.g. 2023-10-25 18:00 -> Trading Date 2023-10-26.
+
+        const days = new Map<string, any[]>();
+
+        for (const bar of data) {
+            // If I take (Time + 6 Hours) -> 
+            // 18:00 + 6 = 24:00 (00:00 Next Day).
+            // 17:00 + 6 = 23:00 (Same Day).
+            // So (Time + 6h) formatted to NY gives the correct Trading Date!
+            const shifted = new Date((bar.time + 6 * 3600) * 1000);
+            const sp = this._nyFormatter.formatToParts(shifted);
+            const sy = sp.find(p => p.type === 'year')?.value || '1970';
+            const sm = sp.find(p => p.type === 'month')?.value || '01';
+            const sd = sp.find(p => p.type === 'day')?.value || '01';
+            const dateStr = `${sy}-${sm.padStart(2, '0')}-${sd.padStart(2, '0')}`;
+
+            if (!days.has(dateStr)) days.set(dateStr, []);
+            days.get(dateStr)!.push(bar);
+        }
+
+        const sortedDays = Array.from(days.keys()).sort();
+        const results: SessionData[] = [];
+
+        // Helper Map to store Day -> Stats (High/Low) for PDH/PDL
+        const dayStats = new Map<string, { high: number, low: number, mid: number, close: number, midnightUnix: number | undefined }>();
+
+        // Process Each Day
+        for (const dateStr of sortedDays) {
+            const bars = days.get(dateStr)!;
+            // Bars are sorted by time (chart data assumption: sorted)
+
+            // Calculate Day Stats
+            let dHigh = -Infinity;
+            let dLow = Infinity;
+
+            // Also need Close. Last current bar.
+            const dClose = bars[bars.length - 1].close;
+
+            // Session Trackers
+            const sessions: { [key: string]: { h: number, l: number, startUnix: number, endUnix: number, set: boolean } } = {
+                'Asia': { h: -Infinity, l: Infinity, startUnix: 0, endUnix: 0, set: false },
+                'London': { h: -Infinity, l: Infinity, startUnix: 0, endUnix: 0, set: false },
+                'NY1': { h: -Infinity, l: Infinity, startUnix: 0, endUnix: 0, set: false },
+                'NY2': { h: -Infinity, l: Infinity, startUnix: 0, endUnix: 0, set: false },
+                'OpeningRange': { h: -Infinity, l: Infinity, startUnix: 0, endUnix: 0, set: false },
+            };
+
+            const singles: { [key: string]: { price: number, unix: number } } = {};
+            let midnightOpenUnix: number | undefined;
+
+            for (const bar of bars) {
+                dHigh = Math.max(dHigh, bar.high);
+                dLow = Math.min(dLow, bar.low);
+
+                const date = new Date(bar.time * 1000);
+                const parts = this._nyFormatter.formatToParts(date);
+                const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
+                const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
+
+                const hm = h * 100 + m;
+
+                // Asia: 18:00 (1800) to 19:30 (1930). (Only valid if D-1, i.e., h >= 18)
+                if (h >= 18) {
+                    if (hm >= 1800 && hm < 1930) {
+                        this._updateSession(sessions['Asia'], bar);
+                    }
+                    // Globex: First bar detected in Asia => Globex.
+                    if (hm >= 1800 && !singles['GlobexOpen']) {
+                        singles['GlobexOpen'] = { price: bar.open, unix: bar.time };
+                    }
+                } else {
+                    // Current Calendar Day
+                    // Midnight: 00:00
+                    if (hm === 0 && !singles['MidnightOpen']) {
+                        singles['MidnightOpen'] = { price: bar.open, unix: bar.time };
+                        midnightOpenUnix = bar.time;
+                    }
+                    // London: 02:30 - 03:30 (0230 - 0330)
+                    if (hm >= 230 && hm < 330) {
+                        this._updateSession(sessions['London'], bar);
+                    }
+                    // NY1: 07:30 - 08:30 (730 - 830)
+                    if (hm >= 730 && hm < 830) {
+                        this._updateSession(sessions['NY1'], bar);
+                    }
+                    // Open730: 07:30 (730)
+                    if (hm === 730 && !singles['Open730']) {
+                        singles['Open730'] = { price: bar.open, unix: bar.time };
+                    }
+                    // NY2: 11:30 - 12:30 (1130 - 1230)
+                    if (hm >= 1130 && hm < 1230) {
+                        this._updateSession(sessions['NY2'], bar);
+                    }
+                    // OR: 09:30 (930) - Duration 1m
+                    if (hm === 930) {
+                        this._updateSession(sessions['OpeningRange'], bar);
+                    }
+                }
+            }
+
+            // Store Day Stats
+            dayStats.set(dateStr, { high: dHigh, low: dLow, mid: (dHigh + dLow) / 2, close: dClose, midnightUnix: midnightOpenUnix });
+
+            // Push Results for this Day
+            // 1. Sessions
+            for (const [name, s] of Object.entries(sessions)) {
+                if (s.set) {
+                    results.push({
+                        session: name,
+                        start_time: '', // Not used by renderer, but part of interface
+                        startUnix: s.startUnix,
+                        endUnix: s.endUnix,
+                        high: s.h,
+                        low: s.l,
+                        mid: (s.h + s.l) / 2
+                    });
+                }
+            }
+            // 2. Singles
+            for (const [name, s] of Object.entries(singles)) {
+                results.push({
+                    session: name,
+                    start_time: '', // Not used by renderer
+                    startUnix: s.unix,
+                    price: s.price
+                });
+            }
+        }
+
+        // Pass 2: PDH/PDL and Levels dependent on Previous Day
+        const finalResults: SessionData[] = [...results];
+
+        for (let i = 0; i < sortedDays.length; i++) {
+            const dateStr = sortedDays[i];
+            const prevDateStr = i > 0 ? sortedDays[i - 1] : null;
+
+            if (prevDateStr && dayStats.has(prevDateStr)) {
+                const p = dayStats.get(prevDateStr)!;
+                // Add PDH/PDL for *Current* date (Start Time = Midnight)
+                // Use MidnightOpen unix if available for current day, otherwise approximate.
+                const currentDayStats = dayStats.get(dateStr);
+                const epoch = currentDayStats?.midnightUnix || this._getNyMidnightUnixApprox(dateStr);
+
+                if (epoch) {
+                    finalResults.push({ session: 'PDH', start_time: '', startUnix: epoch, price: p.high });
+                    finalResults.push({ session: 'PDL', start_time: '', startUnix: epoch, price: p.low });
+                    finalResults.push({ session: 'PDMid', start_time: '', startUnix: epoch, price: p.mid });
+                }
+            }
+        }
+
+        // P12 Generation (Simplified: 12h blocks)
+        // P12 is "Previous 12h". So we display stats of *finished* block.
+        // Shift logic: If Block A (06-18) finishes, we draw P12 lines starting at 18:00.
+
+        let p12StartUnix = -1;
+        let p12EndUnix = -1;
+        let p12H = -Infinity;
+        let p12L = Infinity;
+
+        for (const bar of data) {
+            // Determine 12h block start
+            // Block 1: 06:00 - 18:00
+            // Block 2: 18:00 - 06:00 (next day)
+
+            // Shift so 06:00 becomes 00:00 for block calculation
+            const tShift = bar.time - (6 * 3600);
+            const blockId = Math.floor(tShift / (12 * 3600));
+            const currentBlockStartUnix = blockId * (12 * 3600) + (6 * 3600);
+            const currentBlockEndUnix = currentBlockStartUnix + (12 * 3600);
+
+            if (p12StartUnix === -1) { // First bar, initialize
+                p12StartUnix = currentBlockStartUnix;
+                p12EndUnix = currentBlockEndUnix;
+                p12H = bar.high;
+                p12L = bar.low;
+            } else if (currentBlockStartUnix !== p12StartUnix) {
+                // New Block started, push previous block's P12 data
+                finalResults.push({
+                    session: 'P12',
+                    start_time: '',
+                    startUnix: p12EndUnix, // P12 lines start at the end of the previous 12h block
+                    endUnix: p12EndUnix + (12 * 3600), // This is just for duration, not actual end of box
+                    high: p12H,
+                    low: p12L,
+                    mid: (p12H + p12L) / 2
+                });
+
+                // Reset for new block
+                p12StartUnix = currentBlockStartUnix;
+                p12EndUnix = currentBlockEndUnix;
+                p12H = bar.high;
+                p12L = bar.low;
             } else {
-                url += `&start_ts=${this._options.startTs}`;
+                // Continue current block
+                p12H = Math.max(p12H, bar.high);
+                p12L = Math.min(p12L, bar.low);
             }
-
-            if (this._options.endTs) url += `&end_ts=${this._options.endTs}`;
-
-            const res = await fetch(url, {
-                signal: this._abortController.signal
+        }
+        // Push the last P12 block if any
+        if (p12StartUnix !== -1) {
+            finalResults.push({
+                session: 'P12',
+                start_time: '',
+                startUnix: p12EndUnix,
+                endUnix: p12EndUnix + (12 * 3600),
+                high: p12H,
+                low: p12L,
+                mid: (p12H + p12L) / 2
             });
-            if (res.ok) {
-                const data = await res.json();
-                // Pre-process timestamps
-                this._data = data.map((d: any) => ({
-                    ...d,
-                    startUnix: new Date(d.start_time).getTime() / 1000,
-                    endUnix: d.end_time ? new Date(d.end_time).getTime() / 1000 : undefined
-                })).sort((a: any, b: any) => (a.startUnix || 0) - (b.startUnix || 0));
+        }
 
-                this._precomputeExtensions();
-                this._requestUpdate();
-            }
-        } catch (e: any) {
-            if (e.name === 'AbortError') return;
-            console.error("Failed to fetch session ranges", e);
-        } finally {
-            this._abortController = null;
+        this._data = finalResults.sort((a: any, b: any) => (a.startUnix || 0) - (b.startUnix || 0));
+    }
+
+    private _updateSession(s: any, bar: any) {
+        if (!s.set) {
+            s.startUnix = bar.time;
+            s.endUnix = bar.time + 60; // Min duration (1-minute bar)
+            s.h = bar.high;
+            s.l = bar.low;
+            s.set = true;
+        } else {
+            s.h = Math.max(s.h, bar.high);
+            s.l = Math.min(s.l, bar.low);
+            s.endUnix = bar.time + 60; // Extend to end of current bar
         }
     }
 
-    _requestUpdate() {
-        this._chart.timeScale().applyOptions({});
+    private _getNyMidnightUnixApprox(dateStr: string): number | null {
+        // dateStr is YYYY-MM-DD (Trading Day)
+        // We need 00:00:00 of this date in NY time.
+        try {
+            // Construct a Date object in NY timezone for 00:00:00
+            // This is tricky due to DST.
+            // A robust way would be to use a library like `luxon` or `moment-timezone`.
+            // For a simple approximation, we can try to parse it directly.
+            // Example: "2023-10-26T00:00:00-04:00" (EDT) or "-05:00" (EST)
+            // Since we don't know the exact offset for the date, this is an approximation.
+            // Let's try to construct a date string that `new Date()` can parse with timezone.
+            // This is still prone to local system timezone interpretation.
+
+            // A more reliable way without external libs:
+            // Get the Y, M, D from dateStr.
+            const [year, month, day] = dateStr.split('-').map(Number);
+
+            // Create a date object in UTC for the target NY midnight.
+            // Then adjust for NY timezone. This is complex.
+
+            // Simpler: Use the formatter to get the current date's 00:00:00 in NY.
+            // Create a dummy date, then format it to parts, then reconstruct.
+            const dummyDate = new Date(year, month - 1, day, 0, 0, 0); // This is local time
+            const nyParts = this._nyFormatter.formatToParts(dummyDate);
+
+            const nyYear = nyParts.find(p => p.type === 'year')?.value;
+            const nyMonth = nyParts.find(p => p.type === 'month')?.value;
+            const nyDay = nyParts.find(p => p.type === 'day')?.value;
+
+            // Reconstruct a string that `new Date()` can parse as NY time.
+            // This is still not guaranteed to be perfectly accurate across all environments/DST.
+            // The most reliable way is to have a bar at 00:00 NY.
+            const nyMidnightString = `${nyYear}-${nyMonth}-${nyDay}T00:00:00-05:00`; // Assume EST for simplicity
+            const nyMidnightDate = new Date(nyMidnightString);
+
+            // If the parsed date's day matches the target day in NY, it's likely correct.
+            const checkParts = this._nyFormatter.formatToParts(nyMidnightDate);
+            const checkDay = checkParts.find(p => p.type === 'day')?.value;
+            if (parseInt(checkDay || '0') === day) {
+                return nyMidnightDate.getTime() / 1000;
+            }
+
+            // Fallback if the above is too complex or unreliable:
+            // Just use the startUnix of the first bar of the day, or a fixed offset.
+            // For now, return null and rely on `MidnightOpen` if present.
+            return null;
+        } catch (e) {
+            console.error("Error approximating NY midnight:", e);
+            return null;
+        }
+    }
+
+    // --- Extension Logic ---
+
+    private _precomputeExtensions() {
+        if (!this._data) return;
+
+        // Parse extendUntil (HH:MM)
+        const [eH, eM] = this._options.extendUntil.split(':').map(Number);
+
+        for (const s of this._data) {
+            if (!s.startUnix) continue;
+
+            // Get NY hour and minute of the session's startUnix
+            const date = new Date(s.startUnix * 1000);
+            const parts = this._nyFormatter.formatToParts(date);
+            const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
+            const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
+
+            // Calculate difference in seconds to target HH:MM on the same calendar day
+            let diffSec = (eH - h) * 3600 + (eM - m) * 60;
+
+            // If the target time is before the session start time on the same calendar day,
+            // it means the extension should go to the target time on the *next* calendar day.
+            if (diffSec <= 0) {
+                diffSec += 24 * 3600; // Add 24 hours
+            }
+
+            s.untilUnix = s.startUnix + diffSec;
+        }
     }
 
     paneViews() {
         return [{
-            renderer: () => new DailyProfilerRenderer(this._data, this._options, this._chart, this._series, this._theme)
+            renderer: () => new DailyProfilerRenderer(this._data, this._options, this._chart, this._series, this._barInterval, this._theme)
         }];
     }
 
-    updateAllViews() { }
+    updateAllViews() { this._requestUpdate(); }
+    autoscaleInfo(startTimePoint: Logical, endTimePoint: Logical): AutoscaleInfo | null { return null; }
+    hitTest(x: number, y: number): any {
+        if (!this._data || this._data.length === 0) return null;
 
-    autoscaleInfo(startTimePoint: Logical, endTimePoint: Logical): AutoscaleInfo | null {
+        const timeScale = this._chart.timeScale();
+        const mouseLogical = timeScale.coordinateToLogical(x);
+        if (mouseLogical === null) return null;
+
+        // Anchor Strategy:
+        // Pick a point on screen to serve as the "Time/Logical" anchor.
+        // We use the middle of the screen or the latest visible bar.
+        const visibleLogical = timeScale.getVisibleLogicalRange();
+        if (!visibleLogical) return null;
+
+        const anchorLogical = visibleLogical.from;
+        const anchorCoord = timeScale.logicalToCoordinate(anchorLogical);
+        let anchorTime = timeScale.coordinateToTime(anchorCoord as any);
+
+        // Fallback: if anchor is somehow invalid, use the 'to' edge
+        if (!anchorTime) {
+            const l2 = visibleLogical.to;
+            const c2 = timeScale.logicalToCoordinate(l2);
+            anchorTime = timeScale.coordinateToTime(c2 as any);
+        }
+
+        // If we still can't find an anchor time (e.g. no bars visible?), we can't reliably project.
+        if (!anchorTime) return null;
+
+        // Optimization: rough filtering
+        // We iterate data. Since we rely on computed logicals, we can't binary search easily by "time" if we are in void.
+        // But we can binary search by session start time vs anchorTime roughly.
+        // Let's just iterate a safe subset. 200 items around the anchor? 
+        // Actually, just iterating relevant recent sessions is fast enough (JS is fast).
+        // Let's iterate backwards from end? Or binary search 'startUnix' <= 'mouseTime-ish'?
+
+        // Let's stick to the previous optimization: search for sessions roughly near visible window.
+        // But since we want to catch extended lines from LONG AGO (e.g. weekly levels), we should iterate more safely.
+        // Iterate last 100 sessions? 
+        const startIndex = Math.max(0, this._data.length - 100);
+
+        for (let i = startIndex; i < this._data.length; i++) {
+            const session = this._data[i];
+
+            // Check Visibility
+            let visible = false;
+            if (session.session === 'Asia') visible = this._options.showAsia;
+            if (session.session === 'London') visible = this._options.showLondon;
+            if (session.session === 'OpeningRange') visible = this._options.showOpeningRange;
+            if (session.session === 'NY1') visible = this._options.showNY1;
+            if (session.session === 'NY2') visible = this._options.showNY2;
+            if (session.session === 'MidnightOpen') visible = this._options.showMidnightOpen;
+            if (session.session === 'Open730') visible = this._options.show730;
+            if (session.session === 'GlobexOpen') visible = this._options.showGlobex;
+            if (session.session === 'P12') visible = this._options.showP12;
+            if (session.session === 'PDH' || session.session === 'PDL' || session.session === 'PDMid') visible = this._options.showPDH;
+            if (session.session === 'PWeeklyClose') visible = this._options.showWeeklyClose;
+
+            if (!visible) continue;
+
+            const startUnix = session.startUnix as number;
+
+            // Calculate Logical Start and End relative to Anchor
+            // deltaSeconds = startUnix - anchorTime
+            // deltaBars = deltaSeconds / barInterval
+            // logicalStart = anchorLogical + deltaBars
+            const deltaBarsStart = (startUnix - (anchorTime as number)) / this._barInterval;
+            const logicalStart = anchorLogical + deltaBarsStart;
+
+            // Calculate End
+            let extendUnix = session.untilUnix || (session.endUnix as number);
+            if (!extendUnix) extendUnix = session.endUnix || (startUnix + 3600);
+
+            const deltaBarsEnd = (extendUnix - (anchorTime as number)) / this._barInterval;
+            const logicalEnd = anchorLogical + deltaBarsEnd;
+
+            // Check if Mouse is within Logical Range (with small tolerance)
+            const toleranceLogical = 2; // ~2 bars tolerance
+            if (mouseLogical >= logicalStart - toleranceLogical && mouseLogical <= logicalEnd + toleranceLogical) {
+                // Check Y Coordinate
+                if (session.high !== undefined && session.low !== undefined) {
+                    const y1 = this._series.priceToCoordinate(session.high);
+                    const y2 = this._series.priceToCoordinate(session.low);
+                    if (y1 !== null && y2 !== null) {
+                        const top = Math.min(y1, y2);
+                        const bottom = Math.max(y1, y2);
+                        if (y >= top && y <= bottom) {
+                            return {
+                                hit: true,
+                                externalId: 'daily-profiler',
+                                zOrder: 'top',
+                                drawing: this,
+                                toolTip: `${session.session}: ${session.high?.toFixed(2)} - ${session.low?.toFixed(2)}`
+                            };
+                        }
+                    }
+                } else if (session.price !== undefined) {
+                    const yCoord = this._series.priceToCoordinate(session.price);
+                    if (yCoord !== null) {
+                        const tolerancePx = 5;
+                        if (Math.abs(y - yCoord) <= tolerancePx) {
+                            return {
+                                hit: true,
+                                externalId: 'daily-profiler',
+                                zOrder: 'top',
+                                drawing: this,
+                                cursorStyle: 'pointer',
+                                toolTip: `${session.session}: ${session.price.toFixed(2)}`
+                            };
+                        }
+                    }
+                }
+            }
+        }
         return null;
     }
 
@@ -747,95 +1145,7 @@ export class DailyProfiler implements ISeriesPrimitive {
         return Math.max(0, l - 1);
     }
 
-    hitTest(x: number, y: number): any {
-        if (!this._data || this._data.length === 0) return null;
-        const timeScale = this._chart.timeScale();
-        const time = timeScale.coordinateToTime(x);
-        if (!time) return null;
-
-        // Optimization: Find start index using binary search
-        // Look back 10 sessions to cover overlaps
-        const startIndex = Math.max(0, this._binarySearch(time as number) - 10);
-
-        // Scan forward but not too far (max 50 items or until start > time)
-        for (let i = startIndex; i < this._data.length; i++) {
-            const session = this._data[i];
-
-            // If session starts more than 24h after current time, stop (impossible to overlap)
-            // Or strictly: if startUnix > time, we can stop? No, because cursor is AT 'time'.
-            // If session starts AFTER 'time', cursor cannot be inside it.
-            if ((session.startUnix || 0) > (time as number)) break;
-
-            let visible = false;
-            // Matches draw logic visibility
-            if (session.session === 'Asia') visible = this._options.showAsia;
-            if (session.session === 'London') visible = this._options.showLondon;
-            if (session.session === 'OpeningRange') visible = this._options.showOpeningRange;
-            if (session.session === 'NY1') visible = this._options.showNY1;
-            if (session.session === 'NY2') visible = this._options.showNY2;
-            if (session.session === 'MidnightOpen') visible = this._options.showMidnightOpen;
-
-            if (!visible) continue;
-
-            const startUnix = session.startUnix as Time; // Use Pre-calc
-
-            // Simple extension check for hit test
-            const x1 = timeScale.timeToCoordinate(startUnix);
-            if (x1 === null) continue;
-
-            // Box Y check
-            if (session.high !== undefined && session.low !== undefined) {
-                const y1 = this._series.priceToCoordinate(session.high);
-                const y2 = this._series.priceToCoordinate(session.low);
-                if (y1 !== null && y2 !== null) {
-                    const top = Math.min(y1, y2);
-                    const bottom = Math.max(y1, y2);
-                    // Hit if cursor is within Y range and to the right of start
-                    // Technically should check end time too (extendUntil), but checking X >= x1 is a decent approx for 'inside'
-                    // For precision we could calculate xEnd, but "session box" interaction is usually just clicking the label/box.
-                    // Let's assume infinite width to right or strictly within box?
-                    // Previous logic: x >= x1. It assumes box extends indefinitely or user clicked right of start.
-                    if (y >= top && y <= bottom && x >= x1) {
-                        // Refine X check: If cursor is *too* far right (> 24h), maybe ignore? 
-                        // But for now, preserving original logic "x >= x1" but efficiently.
-                        return { hit: true, drawing: this, cursorStyle: 'pointer' };
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    _type = 'daily-profiler';
     id() { return 'daily-profiler'; }
     options() { return this._options; }
     setSelected(selected: boolean) { }
-
-    private _precomputeExtensions() {
-        if (!this._data) return;
-        const extendUntil = this._options.extendUntil || "16:00";
-
-        this._data.forEach(session => {
-            if (!session.start_time) return;
-
-            // Logic moved from draw() loop
-            const iso = session.start_time;
-            const T_split = iso.split('T');
-            if (T_split.length === 2) {
-                const datePart = T_split[0];
-                const timeAndOffset = T_split[1];
-                const offsetMatch = timeAndOffset.match(/([+-]\d{2}:?\d{2}|Z)$/);
-                const offset = offsetMatch ? offsetMatch[0] : '-05:00'; // Default EST
-
-                const newIso = `${datePart}T${extendUntil}:00${offset}`;
-                let uUnix = new Date(newIso).getTime() / 1000;
-
-                // If calculated time is before start, assume next day
-                if (session.startUnix && uUnix < session.startUnix) {
-                    uUnix += 86400;
-                }
-                session.untilUnix = uUnix;
-            }
-        });
-    }
 }

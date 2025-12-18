@@ -786,7 +786,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const sessionRangesRef = useRef<any>(null);
 
     useEffect(() => {
-        if (!series || !chart || !ticker || data.length === 0) return;
+        if (!series || !chart || !ticker) return;
 
         const isLowTimeframe = timeframe.endsWith('m') && parseInt(timeframe) < 30;
         const isEnabled = indicators.includes('daily-profiler') && isLowTimeframe;
@@ -802,43 +802,48 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     sessionRangesRef.current = null;
                 }
 
-                // See docs/INDICATOR_DEVELOPMENT_STANDARDS.md for performance patterns (Time-Range API)
-                // Calculate time range (last 14 days)
-                const LOAD_DAYS = 14;
-                const SECONDS_PER_DAY = 24 * 60 * 60;
-                const endTs = data.length > 0 ? data[data.length - 1].time as number : undefined;
-                const startTs = endTs ? endTs - (LOAD_DAYS * SECONDS_PER_DAY) : undefined;
-
                 if (!sessionRangesRef.current) {
                     sessionRangesRef.current = new DailyProfiler(chart, series, {
                         showAsia: true,
                         extendUntil: "16:00",
                         ...dailyParams,
-                        ticker, // START: Fix ticker override
-                        startTs,
-                        endTs
-                    }, (newOpts) => onIndicatorParamsChange?.('daily-profiler', newOpts));
+                        ticker
+                    }, (newOpts) => onIndicatorParamsChange?.('daily-profiler', newOpts)); // Pass callback correctly
+
                     series.attachPrimitive(sessionRangesRef.current);
+
+                    // Initial Data Push
+                    if (data && data.length > 0) {
+                        sessionRangesRef.current.setData(data);
+                    }
                 } else {
-                    // Update options (ticker + saved params), suppress notification to avoid loops
+                    // Update options
                     if (sessionRangesRef.current.applyOptions) {
                         sessionRangesRef.current.applyOptions({
                             ...dailyParams,
-                            ticker,
-                            startTs,
-                            endTs
+                            ticker
                         }, true);
                     }
                 }
             });
         } else {
             if (sessionRangesRef.current) {
-                // Remove
+                if (sessionRangesRef.current.destroy) sessionRangesRef.current.destroy();
                 series.detachPrimitive(sessionRangesRef.current);
                 sessionRangesRef.current = null;
             }
         }
-    }, [series, chart, ticker, data, indicators, indicatorParams, timeframe]);
+    }, [series, chart, ticker, indicators, indicatorParams, timeframe, theme]);
+
+    // Data Sync Effect for Daily Profiler
+    useEffect(() => {
+        if (sessionRangesRef.current && data && data.length > 0) {
+            // console.log('[ChartContainer] Syncing data to DailyProfiler', data.length);
+            sessionRangesRef.current.setData(data);
+        } else if (!data || data.length === 0) {
+            // console.log('[ChartContainer] No data to sync to DailyProfiler');
+        }
+    }, [data]);
 
     // -------------------------------------------------------------------------
     // 14. Trade Visualizations (Risk/Reward)

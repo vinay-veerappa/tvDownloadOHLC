@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState, useMemo } from "react"
+import { normalizeResolution, getResolutionInMinutes } from "@/lib/resolution"
 import {
     createChart,
     ColorType,
@@ -112,7 +113,10 @@ export function useChart(
             autoSize: true,
             timeScale: {
                 timeVisible: true,
-                rightOffset: 5,
+                rightOffset: 50,
+                // fixRightEdge: true,
+                //shiftVisibleRangeOnNewBar: true,
+                //allowShiftVisibleRangeOnWhitespaceReplacement: true,
                 tickMarkFormatter: (time: number) => formatTimeForTimezoneLocal(time),
                 borderColor: isDark ? '#2a2e39' : '#e0e0e0',
             },
@@ -230,7 +234,28 @@ export function useChart(
             setSeriesInstance(newSeries)
 
             if (data.length > 0) {
-                const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
+                // Clone data to avoid mutations and allow whitespace appending
+                const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : [...data];
+
+                // Add Whitespace (Future empty bars) for smoother scrolling
+                if (chartData.length > 0) {
+                    const lastBar = chartData[chartData.length - 1];
+                    // Ensure time is number (UNIX)
+                    const lastTime = lastBar.time as number;
+
+                    // Calculate interval in seconds
+                    const res = normalizeResolution(timeframe);
+                    const intervalSeconds = getResolutionInMinutes(res) * 60;
+
+                    // Append 50 whitespace bars (empty space)
+                    const whitespaceCount = 500;
+                    for (let i = 1; i <= whitespaceCount; i++) {
+                        chartData.push({
+                            time: (lastTime + (i * intervalSeconds)) as any
+                        });
+                    }
+                }
+
                 newSeries.setData(chartData)
                 chartInstance.timeScale().fitContent()
 
@@ -267,7 +292,23 @@ export function useChart(
             const isFirstLoad = isFirstLoadRef.current || prevDataLengthRef.current === 0
 
             // Set the new data
-            const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : data
+            let chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : [...data];
+
+            // Add Whitespace (Future empty bars)
+            if (chartData.length > 0) {
+                const lastBar = chartData[chartData.length - 1];
+                const lastTime = lastBar.time as number;
+                const res = normalizeResolution(timeframe);
+                const intervalSeconds = getResolutionInMinutes(res) * 60;
+                const whitespaceCount = 500;
+
+                for (let i = 1; i <= whitespaceCount; i++) {
+                    chartData.push({
+                        time: (lastTime + (i * intervalSeconds)) as any
+                    });
+                }
+            }
+
             seriesInstance.setData(chartData)
 
             // Only fitContent on first load - chart auto-preserves on subsequent updates

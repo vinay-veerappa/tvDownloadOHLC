@@ -1,5 +1,5 @@
-import { ISeriesApi, IChartApi, ISeriesPrimitive, Time } from 'lightweight-charts';
-import { THEMES } from '../../themes';
+import { IChartApi, ISeriesApi, ISeriesPrimitive, Time, AutoscaleInfo, Logical } from 'lightweight-charts';
+import { THEMES, ThemeParams } from '../../themes';
 
 // Hourly Data Structure
 interface HourlyPeriod {
@@ -106,36 +106,22 @@ export const DEFAULT_HOURLY_PROFILER_OPTIONS: HourlyProfilerOptions = {
 };
 
 class HourlyProfilerRenderer {
-    private _data1H: HourlyPeriod[];
-    private _data3H: HourlyPeriod[];
-    private _options: HourlyProfilerOptions;
-    private _chart: IChartApi;
-    private _series: ISeriesApi<'Candlestick'>;
-    private _theme: typeof THEMES.dark | null = null;
-
     constructor(
-        data1H: HourlyPeriod[],
-        data3H: HourlyPeriod[],
-        options: HourlyProfilerOptions,
-        chart: IChartApi,
-        series: ISeriesApi<'Candlestick'>,
-        theme?: typeof THEMES.dark
+        private _data1H: HourlyPeriod[],
+        private _data3H: HourlyPeriod[],
+        private _options: HourlyProfilerOptions,
+        private _chart: IChartApi,
+        private _series: ISeriesApi<any>,
+        private _barInterval: number,
+        private _theme?: ThemeParams
     ) {
-        this._data1H = data1H;
-        this._data3H = data3H;
-        this._options = options;
-        this._chart = chart;
-        this._series = series;
-        if (theme) this._theme = theme;
-
         // 1. Merge User Options with Defaults
-        // If user hasn't set specific colors, we can try to derive them from the theme if provided
         const themeDefaults = this._theme ? this._getThemeDefaults(this._theme) : {};
 
         this._options = {
             ...DEFAULT_HOURLY_PROFILER_OPTIONS,
             ...themeDefaults,
-            ...options
+            ...this._options
         };
 
         // OPTIMIZATION: Pre-calculate colors
@@ -264,13 +250,48 @@ class HourlyProfilerRenderer {
             const xStartCenter = timeScale.timeToCoordinate(startUnix);
             const xEndCenter = timeScale.timeToCoordinate(endUnix);
 
-            if (xStartCenter === null || xEndCenter === null) {
-                continue;
-            }
+            // Handle Null Coordinates (Off-screen)
+            if (xStartCenter === null && xEndCenter === null) continue;
 
             // Apply Edge Offset: Shift left by half bar width
-            const x1 = xStartCenter - halfBarWidth;
-            const x2 = xEndCenter - halfBarWidth;
+            let x1: number, x2: number;
+
+            if (xStartCenter === null) {
+                // Start is off-screen left
+                x1 = -100;
+            } else {
+                x1 = xStartCenter - halfBarWidth;
+            }
+
+            if (xEndCenter === null) {
+                // End is off-screen right (Future)
+                // Try Logical Projection from Start if it's visible
+                if (xStartCenter !== null) {
+                    const l1 = timeScale.coordinateToLogical(xStartCenter);
+                    if (l1 !== null) {
+                        // Estimate duration in bars (assuming 1m bars for now, or use time diff)
+                        // 1 bar = 60s approx.
+                        const durationSeconds = (endUnix as number) - (startUnix as number);
+                        // Use minDelta to estimate seconds/bar if available, else 60
+                        // We don't have minDelta here easily unless passed.
+                        // Use passed barInterval to estimate bars
+                        const bars = durationSeconds / this._barInterval;
+                        const l2 = (l1 + bars) as Logical;
+                        const projectedX2 = timeScale.logicalToCoordinate(l2);
+                        if (projectedX2 !== null) {
+                            x2 = projectedX2 - halfBarWidth;
+                        } else {
+                            x2 = scope.mediaSize.width + 100;
+                        }
+                    } else {
+                        x2 = scope.mediaSize.width + 100;
+                    }
+                } else {
+                    x2 = scope.mediaSize.width + 100;
+                }
+            } else {
+                x2 = xEndCenter - halfBarWidth;
+            }
 
             drawnItems++;
 
@@ -434,13 +455,53 @@ class HourlyProfilerRenderer {
             const xStartCenter = timeScale.timeToCoordinate(startUnix);
             const xEndCenter = timeScale.timeToCoordinate(endUnix);
 
-            if (xStartCenter === null || xEndCenter === null) {
-                continue;
-            }
+            // Handle Overlap Logic:
+            // Only skip if the ENTIRE session is strictly outside the visible window.
+            // If xStartCenter is null (could be left or right) and xEndCenter is null (could be left or right).
+            // But we already filtered by time in the loop (startUnix > endTime breaks).
+            // We need to check if endUnix < startTime.
+            if ((endUnix as number) < startTime) continue;
+
+            // If we are here, we have overlap.
+            // Continue to draw, projecting if needed.
 
             // Apply Edge Offset
-            const x1 = xStartCenter - halfBarWidth;
-            const x2 = xEndCenter - halfBarWidth;
+            let x1: number, x2: number;
+
+            if (xStartCenter === null) {
+                x1 = -100;
+            } else {
+                x1 = xStartCenter - halfBarWidth;
+            }
+
+            if (xEndCenter === null) {
+                // End is off-screen right (Future)
+                // Try Logical Projection from Start if it's visible
+                if (xStartCenter !== null) {
+                    const l1 = timeScale.coordinateToLogical(xStartCenter);
+                    if (l1 !== null) {
+                        const durationSeconds = (endUnix as number) - (startUnix as number);
+                        const bars = durationSeconds / this._barInterval;
+                        const l2 = (l1 + bars) as Logical;
+                        const projectedX2 = timeScale.logicalToCoordinate(l2);
+                        if (projectedX2 !== null) {
+                            if (projectedX2 > scope.mediaSize.width * 10) {
+                                x2 = scope.mediaSize.width + 100;
+                            } else {
+                                x2 = projectedX2 - halfBarWidth;
+                            }
+                        } else {
+                            x2 = scope.mediaSize.width + 100;
+                        }
+                    } else {
+                        x2 = scope.mediaSize.width + 100;
+                    }
+                } else {
+                    x2 = scope.mediaSize.width + 100;
+                }
+            } else {
+                x2 = xEndCenter - halfBarWidth;
+            }
 
             drawnItems++;
 
@@ -607,10 +668,17 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
     }
 
     // Client-side Data Set
+    private _barInterval: number = 60; // Default 1m
+
     public setData(data: any[]) {
         if (!data || data.length === 0) return;
 
-        // Calculate Profiles from Data
+        // Estimate bar interval from first 2 points
+        if (data.length > 1) {
+            const diff = data[1].time - data[0].time;
+            this._barInterval = diff > 0 ? diff : 60;
+        }
+
         this._calculateProfiles(data);
 
         // Update Renderer
@@ -667,7 +735,7 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
             let hour = parseInt(hourPart);
             if (hour === 24) hour = 0; // Fix edge case if any
 
-            const key = `${yearPart}-${monthPart}-${dayPart}-${hour}`;
+            const key = `${yearPart} -${monthPart} -${dayPart} -${hour} `;
 
             if (!current1H || current1H.key !== key) {
                 // Finalize previous
@@ -768,7 +836,7 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
 
             // 3H Block Index: 0, 3, 6, 9...
             const blockStartHour = Math.floor(hour / 3) * 3;
-            const key = `${day}-${blockStartHour}`;
+            const key = `${day} -${blockStartHour} `;
 
             if (!current3H || current3HKey !== key) {
                 if (current3H) periods3H.push(current3H);
@@ -819,6 +887,7 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
             this._options,
             this._chart,
             this._series,
+            this._barInterval, // Pass interval
             this._theme || undefined
         );
     }

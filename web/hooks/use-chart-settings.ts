@@ -16,7 +16,8 @@ export interface ChartSettings {
     // Scale
     rightOffset: number
     autoScale: boolean
-
+    shiftVisibleRangeOnNewBar: boolean
+    allowShiftVisibleRangeOnWhitespaceReplacement: boolean
     // Crosshair
     crosshairMode: 'normal' | 'magnet' | 'hidden'
 }
@@ -28,8 +29,10 @@ const DEFAULT_SETTINGS: ChartSettings = {
     wickDownColor: '#ef5350',
     gridVisible: true,
     gridColor: 'rgba(255, 255, 255, 0.1)',
-    rightOffset: 5,
+    rightOffset: 50,
     autoScale: true,
+    shiftVisibleRangeOnNewBar: true,
+    allowShiftVisibleRangeOnWhitespaceReplacement: true,
     crosshairMode: 'normal'
 }
 
