@@ -80,6 +80,45 @@ def load_parquet(ticker: str, timeframe: str) -> Optional[pd.DataFrame]:
     # Sort by time
     df = df.sort_values('time').reset_index(drop=True)
     
+    # --- Live Data Fusion (Only for 1m data) ---
+    if timeframe == "1m":
+        live_path = None
+        
+        # Map back to Live Symbol format
+        # NQ1 -> /NQ -> -NQ (Filename format)
+        if clean_ticker == "NQ1":
+            live_path = DATA_DIR / "live_storage_-NQ.parquet"
+        elif clean_ticker == "ES1":
+            live_path = DATA_DIR / "live_storage_-ES.parquet"
+        elif clean_ticker == "YM1":
+            live_path = DATA_DIR / "live_storage_-YM.parquet"
+        elif clean_ticker == "RTY1":
+            live_path = DATA_DIR / "live_storage_-RTY.parquet"
+        else:
+            # Standard Equities (e.g. QQQ -> live_storage_QQQ.parquet)
+            live_path = DATA_DIR / f"live_storage_{clean_ticker}.parquet"
+            
+        if live_path and live_path.exists():
+            try:
+                live_df = pd.read_parquet(live_path)
+                if not live_df.empty:
+                    # Normalize columns if needed (live parquet should match, but verify)
+                    if 'timestamp' in live_df.columns and 'time' not in live_df.columns:
+                         live_df = live_df.rename(columns={'timestamp': 'time'})
+                         
+                    # Determine columns to keep
+                    cols = [c for c in expected_cols if c in live_df.columns]
+                    live_df = live_df[cols]
+                    
+                    # Concat and Dedupe
+                    # Keep LAST (Live) version of overlapping 1m bars
+                    df = pd.concat([df, live_df])
+                    df = df.drop_duplicates(subset=['time'], keep='last')
+                    df = df.sort_values('time').reset_index(drop=True)
+                    # print(f"Fused live data for {ticker}: +{len(live_df)} bars")
+            except Exception as e:
+                print(f"Failed to merge live data for {ticker}: {e}")
+
     return df
 
 

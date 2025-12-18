@@ -524,14 +524,15 @@ class HourlyProfilerRenderer {
 export class HourlyProfiler implements ISeriesPrimitive<Time> {
     public _type = 'hourly-profiler';
     private _data: HourlyPeriod[] = [];
-    private _data1H: HourlyPeriod[] = []; // Optimization: Split data
+    private _data1H: HourlyPeriod[] = [];
     private _data3H: HourlyPeriod[] = [];
     private _options: HourlyProfilerOptions;
     private _chart: IChartApi;
     private _series: ISeriesApi<'Candlestick'>;
-    private _abortController: AbortController = new AbortController();
     private _theme: typeof THEMES.dark | null = null;
     private _requestUpdate: () => void = () => { };
+
+    private _nyFormatter: Intl.DateTimeFormat;
 
     constructor(
         chart: IChartApi,
@@ -544,25 +545,16 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
         this._series = series;
         if (theme) {
             this._theme = theme;
-            // Apply theme colors
             const themeOptions: Partial<HourlyProfilerOptions> = {
                 hourlyBoxColor: theme.ui.decoration,
                 hourlyOpenColor: theme.candle.upBody,
                 hourlyCloseColor: theme.candle.downBody,
                 hourlyMidColor: theme.tools.secondary,
-
                 orBoxColor: theme.tools.transparentFill,
-
-                // Quarter Alternating Colors
-                // First Q (0-15 [0]) and Third Q (30-45 [2]) are EVEN indices.
-                // We want these bounded/colored.
                 quarterEvenColor: theme.ui.decoration,
                 quarterOddColor: 'transparent',
-                quarterOpacity: 0.1, // Explicit opacity
-
-                // Horizontal Bounds
+                quarterOpacity: 0.1,
                 hourBoundColor: theme.chart.grid,
-
                 threeHourBoxColor: theme.tools.secondary,
                 threeHourOpenColor: theme.tools.secondary,
                 threeHourMidColor: theme.tools.secondary,
@@ -572,13 +564,22 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
             this._options = { ...DEFAULT_HOURLY_PROFILER_OPTIONS, ...options };
         }
 
-        this.fetchData();
+        // Initialize Formatter for NY Time
+        this._nyFormatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/New_York',
+            hour: 'numeric',
+            hour12: false,
+            year: 'numeric',
+            month: 'numeric',
+            day: 'numeric'
+        });
+
+        // Initial render (empty)
         this._updateRenderer();
     }
 
     attached({ requestUpdate }: { requestUpdate: () => void }) {
         this._requestUpdate = requestUpdate;
-        // Request update immediately in case data is already there
         if (this._data.length > 0) {
             this._requestUpdate();
         }
@@ -593,7 +594,6 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
         const time = timeScale.coordinateToTime(x) as number;
         if (!time) return null;
 
-        // Find session/hour covering this time
         const hit = this._data.some(d => {
             if (!d.startUnix || !d.endUnix) return false;
             return time >= d.startUnix && time <= d.endUnix;
@@ -606,66 +606,208 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
         return null;
     }
 
-    async fetchData() {
-        try {
-            const cleanTicker = this._options.ticker.replace('!', '');
+    // Client-side Data Set
+    public setData(data: any[]) {
+        if (!data || data.length === 0) return;
 
-            // Build URL with optional time filtering
-            let url = `http://localhost:8000/api/sessions/${encodeURIComponent(cleanTicker)}?range_type=hourly`;
-            if (this._options.startTs) {
-                url += `&start_ts=${this._options.startTs}`;
-            }
-            if (this._options.endTs) {
-                url += `&end_ts=${this._options.endTs}`;
-            }
+        // Calculate Profiles from Data
+        this._calculateProfiles(data);
 
-            const res = await fetch(url, {
-                signal: this._abortController.signal
-            });
+        // Update Renderer
+        this._updateRenderer();
+        this._requestUpdate();
+    }
 
-            if (res.ok) {
-                const rawData = await res.json();
-                if (rawData.length === 0) {
-                    console.warn('[HourlyProfiler] Data array is empty!');
+    private _calculateProfiles(data: any[]) {
+        if (data.length === 0) return;
+
+        const periods1H: HourlyPeriod[] = [];
+        const periods3H: HourlyPeriod[] = [];
+
+        // Helper to get NY parts
+        // Intl.DateTimeFormat parts: 3/14/2024, 09
+        // We need a stable key for grouping.
+        // We can just use the Hour and Date.
+
+        // State for aggregation
+        let current1H: {
+            startUnix: number; // Start of the hour (aligned)
+            endUnix: number;   // End of the hour (aligned)
+            open: number;
+            high: number;
+            low: number;
+            close: number;
+            orHigh: number | null;
+            orLow: number | null;
+            bars: number;
+            key: string;
+        } | null = null;
+
+        // Note: 3H logic can be derived from 1H periods or raw data.
+        // Let's do 1H first.
+
+        for (const bar of data) {
+            const time = bar.time; // Unix seconds
+            // Get NY Time Components
+            // We need to determine the "Hour Bucket".
+            // Convert to Milliseconds
+            const date = new Date(time * 1000);
+
+            // Format parts: "MM/DD/YYYY, HH"
+            // Note: "24" hour cycle in options -> 0-23
+            const parts = this._nyFormatter.formatToParts(date);
+            const hourPart = parts.find(p => p.type === 'hour')?.value;
+            const dayPart = parts.find(p => p.type === 'day')?.value;
+            const monthPart = parts.find(p => p.type === 'month')?.value;
+            const yearPart = parts.find(p => p.type === 'year')?.value;
+
+            if (!hourPart || !dayPart) continue; // Should not happen
+
+            // Normalize Hour (0-23)
+            let hour = parseInt(hourPart);
+            if (hour === 24) hour = 0; // Fix edge case if any
+
+            const key = `${yearPart}-${monthPart}-${dayPart}-${hour}`;
+
+            if (!current1H || current1H.key !== key) {
+                // Finalize previous
+                if (current1H) {
+                    periods1H.push({
+                        type: '1H',
+                        start_time: '', // Not used in renderer, but required by interface?
+                        end_time: '',
+                        startUnix: current1H.startUnix,
+                        endUnix: current1H.endUnix,
+                        open: current1H.open,
+                        high: current1H.high,
+                        low: current1H.low,
+                        close: current1H.close,
+                        mid: (current1H.high + current1H.low) / 2,
+                        or_high: current1H.orHigh,
+                        or_low: current1H.orLow
+                    });
                 }
 
-                // OPTIMIZATION: Process data once
-                this._data = rawData.map((p: any) => {
-                    // Pre-calculate unix timestamps (seconds)
-                    p.startUnix = new Date(p.start_time).getTime() / 1000;
-                    p.endUnix = new Date(p.end_time).getTime() / 1000;
-                    return p;
-                });
+                // Start new
+                // Calculate aligned timestamp for the start of this hour in NY?
+                // Actually, just use the first bar's time? 
+                // Better: Use the bar time, but align to :00?
+                // Renderer uses startUnix to draw. Ideally should be aligned 00:00.
+                // But getting exact unix for "Current NY Hour Start" is tricky without timezone math.
+                // Approximation: first bar time - (first bar minutes * 60).
 
-                // Split data for faster rendering access
-                this._data1H = this._data.filter(p => p.type === '1H').sort((a, b) => (a.startUnix || 0) - (b.startUnix || 0));
-                this._data3H = this._data.filter(p => p.type === '3H').sort((a, b) => (a.startUnix || 0) - (b.startUnix || 0));
+                // Let's stick to first bar time for now, effectively "Session Start".
+                // Or better: Use the bar time.
+                const barStart = time;
 
-                this._updateRenderer();
-                this._requestUpdate();
-            } else {
-                const errorText = await res.text();
-                console.error('[HourlyProfiler] Failed to fetch data:', res.status, res.statusText, 'Body:', errorText);
+                current1H = {
+                    key,
+                    startUnix: barStart,
+                    endUnix: barStart + 3600, // Look ahead 1h
+                    open: bar.open,
+                    high: bar.high,
+                    low: bar.low,
+                    close: bar.close,
+                    orHigh: null,
+                    orLow: null,
+                    bars: 0
+                };
             }
-        } catch (error) {
-            if (error instanceof Error && error.name !== 'AbortError') {
-                console.error('[HourlyProfiler] Fetch error:', error.message, error.stack);
-            } else if (error instanceof Error) {
-                // Fetch aborted (expected on cleanup)
+
+            // Update Current 1H
+            if (current1H) {
+                current1H.high = Math.max(current1H.high, bar.high);
+                current1H.low = Math.min(current1H.low, bar.low);
+                current1H.close = bar.close;
+                current1H.bars++;
+
+                // OR Logic: First 5 bars (assuming 1m data)
+                // Or checking timestamp diff < 5 * 60
+                if (time < current1H.startUnix + (5 * 60)) {
+                    current1H.orHigh = current1H.orHigh === null ? bar.high : Math.max(current1H.orHigh, bar.high);
+                    current1H.orLow = current1H.orLow === null ? bar.low : Math.min(current1H.orLow, bar.low);
+                }
+
+                // Keep extending end time to cover latest bar
+                // (Optional, renderer might use fixed width)
+                current1H.endUnix = Math.max(current1H.endUnix, time + 60);
             }
         }
+
+        // Push last
+        if (current1H) {
+            periods1H.push({
+                type: '1H',
+                start_time: '',
+                end_time: '',
+                startUnix: current1H.startUnix,
+                endUnix: current1H.endUnix,
+                open: current1H.open,
+                high: current1H.high,
+                low: current1H.low,
+                close: current1H.close,
+                mid: (current1H.high + current1H.low) / 2,
+                or_high: current1H.orHigh,
+                or_low: current1H.orLow
+            });
+        }
+
+        // 3H Logic (Aggregate 1H periods)
+        // Groups: 0-2, 3-5, 6-8...
+        // Need to parse hour from 1H startUnix again or use stored metadata.
+        // Let's iterate `periods1H` using the same formatter.
+
+        let current3H: HourlyPeriod | null = null;
+        let current3HKey = "";
+
+        for (const p of periods1H) {
+            const date = new Date((p.startUnix || 0) * 1000);
+            const parts = this._nyFormatter.formatToParts(date);
+            const hour = parseInt(parts.find(x => x.type === 'hour')?.value || "0");
+            const day = parts.find(x => x.type === 'day')?.value;
+
+            // 3H Block Index: 0, 3, 6, 9...
+            const blockStartHour = Math.floor(hour / 3) * 3;
+            const key = `${day}-${blockStartHour}`;
+
+            if (!current3H || current3HKey !== key) {
+                if (current3H) periods3H.push(current3H);
+
+                current3HKey = key;
+                current3H = {
+                    type: '3H',
+                    start_time: '',
+                    end_time: '',
+                    startUnix: p.startUnix,
+                    endUnix: (p.startUnix || 0) + (3 * 3600),
+                    open: p.open,
+                    high: p.high!, // 1H has high
+                    low: p.low!,
+                    close: p.close,
+                    mid: 0
+                };
+            }
+
+            if (current3H) {
+                current3H.high = Math.max(current3H.high!, p.high!);
+                current3H.low = Math.min(current3H.low!, p.low!);
+                current3H.close = p.close;
+                current3H.endUnix = Math.max(current3H.endUnix!, p.endUnix!);
+                current3H.mid = (current3H.high! + current3H.low!) / 2;
+            }
+        }
+        if (current3H) periods3H.push(current3H);
+
+        this._data = [...periods1H, ...periods3H];
+        this._data1H = periods1H;
+        this._data3H = periods3H;
     }
 
     updateOptions(options: Partial<HourlyProfilerOptions>) {
-        const prevTicker = this._options.ticker;
         this._options = { ...this._options, ...options };
-
-        if (options.ticker && options.ticker !== prevTicker) {
-            this.fetchData();
-        }
-
-        // Recreate renderer with new options
+        // No fetch needed. Just re-render.
         this._updateRenderer();
+        this._requestUpdate();
     }
 
     private _renderer: HourlyProfilerRenderer | null = null;
@@ -696,6 +838,6 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
     }
 
     destroy() {
-        this._abortController.abort();
+        // No abort controller needed
     }
 }
