@@ -796,10 +796,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         const isEnabled = indicators.includes('daily-profiler') && isLowTimeframe;
         //console.log('[ChartContainer] Effect triggered. Timeframe:', timeframe, 'isLow?', isLowTimeframe, 'Indicators:', indicators, 'Enabled?', isEnabled);
 
-        if (isEnabled) {
+        if (isEnabled && theme) {
             //console.log('[ChartContainer] DailyProfiler ENABLED. Importing...');
-            import('@/lib/charts/indicators/daily-profiler').then(({ DailyProfiler }) => {
-                const dailyParams = indicatorParams?.['daily-profiler'] || {};
+            import('@/lib/charts/indicators/daily-profiler').then(({ DailyProfiler, getDailyProfilerDefaults }) => {
+                const defaults = getDailyProfilerDefaults(theme);
+                const dailyParams = { ...defaults, ...(indicatorParams?.['daily-profiler'] || {}) };
                 //console.log('[ChartContainer] DailyProfiler Module Loaded. Params:', dailyParams);
 
                 // Recreate if series/chart instance changed (e.g. timeframe change)
@@ -811,8 +812,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
                 if (!sessionRangesRef.current) {
                     sessionRangesRef.current = new DailyProfiler(chart, series, {
-                        showAsia: true,
-                        extendUntil: "16:00",
                         ...dailyParams,
                         ticker
                     }, (newOpts) => onIndicatorParamsChange?.('daily-profiler', newOpts)); // Pass callback correctly
@@ -852,6 +851,14 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             //console.log('[ChartContainer] No data to sync to DailyProfiler');
         }
     }, [data]);
+
+    // Theme Sync Effect for Daily Profiler
+    useEffect(() => {
+        if (sessionRangesRef.current && theme && sessionRangesRef.current.setTheme) {
+            //console.log('[ChartContainer] Syncing Theme to DailyProfiler');
+            sessionRangesRef.current.setTheme(theme);
+        }
+    }, [theme]);
 
     // -------------------------------------------------------------------------
     // 14. Trade Visualizations (Risk/Reward)
@@ -1025,7 +1032,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         hourlyProfilerRef.current.setData(data);
                     }
                 } else {
-                    hourlyProfilerRef.current.updateOptions({ ...hourlyParams, ticker });
+                    hourlyProfilerRef.current.applyOptions({ ...hourlyParams, ticker });
                 }
             }).catch(err => {
                 console.error('[ChartContainer] Failed to load HourlyProfiler module:', err);
@@ -1045,12 +1052,20 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         }
     }, [series, chart, ticker, indicators, indicatorParams, theme]);
 
+
     // Data Sync Effect for Hourly Profiler
     useEffect(() => {
         if (hourlyProfilerRef.current && data && data.length > 0) {
             hourlyProfilerRef.current.setData(data);
         }
     }, [data]);
+
+    // Theme Sync Effect for Hourly Profiler
+    useEffect(() => {
+        if (hourlyProfilerRef.current && theme && hourlyProfilerRef.current.setTheme) {
+            hourlyProfilerRef.current.setTheme(theme);
+        }
+    }, [theme]);
 
     // -------------------------------------------------------------------------
     // 16. Opening Range Indicator
@@ -1098,6 +1113,59 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             }
         }
     }, [series, chart, data, indicators, indicatorParams, theme]);
+
+    // -------------------------------------------------------------------------
+    // 17. Session Highlighting Integration
+    // -------------------------------------------------------------------------
+    const sessionHighlightingRef = useRef<any>(null);
+
+    useEffect(() => {
+        if (!series || !chart || !data || data.length === 0) return;
+
+        // Check aliases
+        const isEnabled = indicators.includes('session-highlighting') || indicators.includes('sessions');
+
+        if (isEnabled) {
+            import('@/lib/charts/plugins/session-highlighting').then(({ SessionHighlighting, getSessionHighlightingDefaults }) => {
+                // Recreate if series changed
+                if (sessionHighlightingRef.current && sessionHighlightingRef.current._series !== series) {
+                    series.detachPrimitive(sessionHighlightingRef.current);
+                    sessionHighlightingRef.current = null;
+                }
+
+                if (!sessionHighlightingRef.current) {
+                    // Use theme for defaults
+                    sessionHighlightingRef.current = new SessionHighlighting(
+                        indicatorParams?.['session-highlighting'],
+                        theme
+                    );
+                    series.attachPrimitive(sessionHighlightingRef.current);
+                } else {
+                    // Just update theme if needed, but options usually don't change dynamically like this without theme
+                }
+
+                // Trigger calculation if data exists
+                if (sessionHighlightingRef.current.requestUpdate) {
+                    sessionHighlightingRef.current.requestUpdate();
+                }
+
+            }).catch(e => {
+                console.error('[ChartContainer] Failed to load SessionHighlighting:', e);
+            });
+        } else {
+            if (sessionHighlightingRef.current) {
+                series.detachPrimitive(sessionHighlightingRef.current);
+                sessionHighlightingRef.current = null;
+            }
+        }
+    }, [series, chart, data, indicators, indicatorParams, theme]);
+
+    // Theme Sync for Session Highlighting
+    useEffect(() => {
+        if (sessionHighlightingRef.current && theme && sessionHighlightingRef.current.setTheme) {
+            sessionHighlightingRef.current.setTheme(theme);
+        }
+    }, [theme]);
 
     return (
         <div className="w-full h-full relative" onContextMenu={(e) => {

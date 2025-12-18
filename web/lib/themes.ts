@@ -22,6 +22,28 @@ export type ThemeParams = {
         secondary: string; // Accents, selection, levels
         transparentFill: string; // Standard opacity fill (e.g. 10-20%)
     };
+    indicators: {
+        sessions: {
+            asia: string;
+            london: string;
+            ny: string;
+            midnight: string;
+            opacity: number;
+        };
+        profiler: {
+            poc: string;
+            valueArea: string;
+            up: string;
+            down: string;
+        };
+        levels: {
+            pdh: string;
+            pdl: string;
+            open: string;
+            close: string;
+            settlement: string;
+        };
+    };
 };
 
 export const THEMES: Record<string, ThemeParams> = {
@@ -47,6 +69,28 @@ export const THEMES: Record<string, ThemeParams> = {
             primary: '#FFFFFF',
             secondary: '#2962FF',
             transparentFill: 'rgba(41, 98, 255, 0.15)',
+        },
+        indicators: {
+            sessions: {
+                asia: '#00E5FF',  // Electric Cyan
+                london: '#FF6D00', // Vivid Orange
+                ny: '#2962FF',    // Royal Blue
+                midnight: '#ECEFF1', // White/Silver
+                opacity: 0.25      // Increased from 0.15
+            },
+            profiler: {
+                poc: '#FF1744',   // Bright Red
+                valueArea: '#2979FF', // Bright Blue
+                up: '#00E676',    // Bright Green
+                down: '#FF1744'   // Bright Red
+            },
+            levels: {
+                pdh: '#B0BEC5',
+                pdl: '#B0BEC5',
+                open: '#1DE9B6',  // Teal Accent
+                close: '#FFEA00', // Yellow Accent
+                settlement: '#FF9100' // Orange Accent
+            }
         }
     },
     'clean-slate': {
@@ -71,6 +115,28 @@ export const THEMES: Record<string, ThemeParams> = {
             primary: '#000000',
             secondary: '#FF9800',
             transparentFill: 'rgba(255, 152, 0, 0.15)',
+        },
+        indicators: {
+            sessions: {
+                asia: '#006064', // Deep Teal (High Contrast on White)
+                london: '#E65100', // Deep Orange
+                ny: '#1565C0', // Deep Blue
+                midnight: '#455A64', // Dark Grey
+                opacity: 0.20 // Increased from 0.12
+            },
+            profiler: {
+                poc: '#D50000',
+                valueArea: '#0D47A1',
+                up: '#00695C',
+                down: '#C62828'
+            },
+            levels: {
+                pdh: '#546E7A',
+                pdl: '#546E7A',
+                open: '#004D40',
+                close: '#F9A825',
+                settlement: '#FF6F00'
+            }
         }
     },
     'monochrome-slate': { // Dark
@@ -95,6 +161,28 @@ export const THEMES: Record<string, ThemeParams> = {
             primary: '#cfd8dc',
             secondary: '#78909c',
             transparentFill: 'rgba(120, 144, 156, 0.1)',
+        },
+        indicators: {
+            sessions: {
+                asia: '#90A4AE', // Slate Blue
+                london: '#E0E0E0', // Light Grey/Silver
+                ny: '#FFFFFF',    // White
+                midnight: '#CFD8DC',
+                opacity: 0.25     // Increased
+            },
+            profiler: {
+                poc: '#FFFFFF',
+                valueArea: '#90A4AE',
+                up: '#cfd8dc',
+                down: '#546e7a'
+            },
+            levels: {
+                pdh: '#ECEFF1',
+                pdl: '#ECEFF1',
+                open: '#B0BEC5',
+                close: '#90A4AE',
+                settlement: '#78909C'
+            }
         }
     },
     'institutional-blue': { // Bloomberg Dark
@@ -119,6 +207,28 @@ export const THEMES: Record<string, ThemeParams> = {
             primary: '#b0bec5',
             secondary: '#2962ff',
             transparentFill: 'rgba(41, 98, 255, 0.15)',
+        },
+        indicators: {
+            sessions: {
+                asia: '#651FFF',  // Deep Purple/Electric
+                london: '#FFD600', // Bright Yellow
+                ny: '#00B0FF',    // Electric Light Blue
+                midnight: '#B0BEC5',
+                opacity: 0.25
+            },
+            profiler: {
+                poc: '#FFAB00',
+                valueArea: '#2962FF',
+                up: '#2962FF',
+                down: '#B0BEC5'
+            },
+            levels: {
+                pdh: '#82B1FF',
+                pdl: '#82B1FF',
+                open: '#00E676',
+                close: '#FFFF00',
+                settlement: '#FF9100'
+            }
         }
     },
     'muted-earth': { // Dark
@@ -143,6 +253,28 @@ export const THEMES: Record<string, ThemeParams> = {
             primary: '#dcedc8',
             secondary: '#ffccbc',
             transparentFill: 'rgba(220, 237, 200, 0.1)',
+        },
+        indicators: {
+            sessions: {
+                asia: '#00E676',  // Bright Green
+                london: '#FFEA00', // Bright Yellow
+                ny: '#2979FF',    // Bright Blue
+                midnight: '#CFD8DC',
+                opacity: 0.25
+            },
+            profiler: {
+                poc: '#FF6E40',   // Deep Orange
+                valueArea: '#69F0AE',
+                up: '#69F0AE',
+                down: '#FF5252'
+            },
+            levels: {
+                pdh: '#F4FF81',
+                pdl: '#F4FF81',
+                open: '#64FFDA',
+                close: '#FFFF00',
+                settlement: '#FFAB40'
+            }
         }
     }
 };

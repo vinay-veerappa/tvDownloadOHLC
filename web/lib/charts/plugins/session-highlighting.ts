@@ -15,6 +15,8 @@ import {
 } from 'lightweight-charts';
 import { PluginBase } from './plugin-base';
 
+import { THEMES, ThemeParams } from '../../themes';
+
 // --- Types ---
 
 export interface SessionDefinition {
@@ -150,6 +152,39 @@ const DEFAULT_SESSIONS: SessionDefinition[] = [
     },
 ];
 
+export const getSessionHighlightingDefaults = (theme: ThemeParams): SessionHighlightingOptions => {
+    return {
+        sessions: [
+            {
+                name: 'Tokyo',
+                startHour: 18, // 18:00 EST approx or 9:00 JST? Implementation seems to imply JST (9-15).
+                // Wait, default says "startHour: 9, timezone: Asia/Tokyo". That's 9am Tokyo.
+                // Let's keep logic but swap color.
+                endHour: 15, // 3pm Tokyo
+                color: theme.indicators.sessions.asia,
+                timezone: 'Asia/Tokyo',
+                daysOfWeek: [1, 2, 3, 4, 5],
+            },
+            {
+                name: 'London',
+                startHour: 8,
+                endHour: 16, // 8am-4pm London
+                color: theme.indicators.sessions.london,
+                timezone: 'Europe/London',
+                daysOfWeek: [1, 2, 3, 4, 5],
+            },
+            {
+                name: 'New York',
+                startHour: 9,
+                endHour: 16, // 9:30 - 16:00 NY? Defaults said 9-16.
+                color: theme.indicators.sessions.ny,
+                timezone: 'America/New_York',
+                daysOfWeek: [1, 2, 3, 4, 5],
+            },
+        ]
+    }
+};
+
 export class SessionHighlighting extends PluginBase implements ISeriesPrimitive<Time> {
     _paneViews: SessionHighlightingPaneView[];
     _backgroundColors: BackgroundData[] = [];
@@ -159,10 +194,17 @@ export class SessionHighlighting extends PluginBase implements ISeriesPrimitive<
     public _type = 'session-highlighting';
     public _id: string;
 
-    constructor(options?: Partial<SessionHighlightingOptions>) {
+    constructor(options?: Partial<SessionHighlightingOptions>, theme?: ThemeParams) {
         super();
+
+        let defaults = { sessions: DEFAULT_SESSIONS };
+        if (theme) {
+            defaults = getSessionHighlightingDefaults(theme);
+        }
+
         this._options = {
-            sessions: options?.sessions || DEFAULT_SESSIONS,
+            ...defaults,
+            ...options
         };
         this._paneViews = [new SessionHighlightingPaneView(this)];
         this._id = Math.random().toString(36).substring(7);
@@ -195,6 +237,26 @@ export class SessionHighlighting extends PluginBase implements ISeriesPrimitive<
 
     // Override from PluginBase - called when data changes
     protected dataUpdated(_scope: DataChangedScope) {
+        this._calculateBackgroundColors();
+        this.requestUpdate();
+    }
+
+    public setTheme(theme: ThemeParams) {
+        const newDefaults = getSessionHighlightingDefaults(theme);
+
+        // Update colors for existing sessions if names match
+        // Or just replace sessions entirely if user hasn't customized them?
+        // Let's iterate and update colors for matching session names.
+
+        const updatedSessions = this._options.sessions.map(s => {
+            const defaultSession = newDefaults.sessions.find(ds => ds.name === s.name);
+            if (defaultSession) {
+                return { ...s, color: defaultSession.color };
+            }
+            return s;
+        });
+
+        this._options.sessions = updatedSessions;
         this._calculateBackgroundColors();
         this.requestUpdate();
     }
