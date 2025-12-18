@@ -29,7 +29,7 @@ export function useLiveDataLoading({
 
     const fetchData = useCallback(async () => {
         try {
-            const res = await getLiveChartData(ticker)
+            const res = await getLiveChartData(ticker, timeframe)
             if (res.success && res.data) {
                 const rawCandles = res.data.candles || []
 
@@ -73,7 +73,7 @@ export function useLiveDataLoading({
         fetchData()
         const id = setInterval(() => {
             if (isRunningRef.current) fetchData()
-        }, 2000)
+        }, 500)
         return () => clearInterval(id)
     }, [fetchData])
 

@@ -15,8 +15,12 @@ export function normalizeResolution(input: string): Resolution {
     if (input.toUpperCase().endsWith('W')) return input.toUpperCase() // "1W"
     if (input.toUpperCase().endsWith('M') && !input.endsWith('m')) return input.toUpperCase() // "1M" (Month)
 
-    // Handle minutes/hours
+    // Handle minutes/hours/seconds
     const lower = input.toLowerCase()
+
+    if (lower.endsWith('s')) {
+        return input.toLowerCase() // "15s", "30s"
+    }
 
     if (lower.endsWith('h')) {
         const hours = parseInt(lower.replace('h', ''))
@@ -41,9 +45,10 @@ export function normalizeResolution(input: string): Resolution {
  * - "60" -> "1h"
  * - "240" -> "4h"
  * - "1D" -> "1D"
+ * - "15s" -> "15s"
  */
 export function formatResolution(res: Resolution): string {
-    if (res.endsWith('D') || res.endsWith('W') || res.endsWith('M')) {
+    if (res.endsWith('D') || res.endsWith('W') || res.endsWith('M') || res.endsWith('s')) {
         return res
     }
 
@@ -68,6 +73,9 @@ export function resolutionToFolderName(res: Resolution): string {
     if (res.endsWith('D') || res.endsWith('W') || res.endsWith('M')) {
         return res
     }
+    if (res.endsWith('s')) {
+        return res // Folders for seconds if we ever need them
+    }
 
     const mins = parseInt(res)
     if (isNaN(mins)) return res
@@ -88,6 +96,7 @@ export function getResolutionInMinutes(res: Resolution): number {
     if (res.endsWith('D')) return parseInt(res) * 1440
     if (res.endsWith('W')) return parseInt(res) * 10080
     if (res.endsWith('M')) return parseInt(res) * 43200 // Approx
+    if (res.endsWith('s')) return parseInt(res) / 60
 
     return parseInt(res) || 1
 }
