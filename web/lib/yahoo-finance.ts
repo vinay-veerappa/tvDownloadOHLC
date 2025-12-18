@@ -19,13 +19,22 @@ export interface YahooNewsItem {
 const YAHOO_BASE_URL = "https://query1.finance.yahoo.com/v8/finance"
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+
+function formatToYahoo(symbol: string): string {
+    if (symbol.startsWith("/")) {
+        return symbol.substring(1) + "=F"
+    }
+    return symbol
+}
+
 export async function fetchMarketData(symbols: string[]): Promise<YahooQuote[]> {
     const results: YahooQuote[] = []
 
     for (const symbol of symbols) {
         try {
+            const querySymbol = formatToYahoo(symbol)
             // Using chart API as it's more stable than quote API without auth cookie sometimes
-            const url = `${YAHOO_BASE_URL}/chart/${symbol}?interval=1d&range=2d`
+            const url = `${YAHOO_BASE_URL}/chart/${encodeURIComponent(querySymbol)}?interval=1d&range=2d`
 
             const response = await fetch(url, {
                 headers: {
@@ -35,7 +44,7 @@ export async function fetchMarketData(symbols: string[]): Promise<YahooQuote[]> 
             })
 
             if (!response.ok) {
-                console.error(`Failed to fetch data for ${symbol}: ${response.status}`)
+                console.error(`Failed to fetch data for ${symbol} (query: ${querySymbol}): ${response.status}`)
                 continue
             }
 
@@ -51,8 +60,8 @@ export async function fetchMarketData(symbols: string[]): Promise<YahooQuote[]> 
             const changePercent = (change / prevClose) * 100
 
             results.push({
-                symbol: meta.symbol,
-                name: meta.symbol, // Meta doesn't always have full name in chart endpoint w/o params
+                symbol: symbol, // Return original symbol so UI can match it
+                name: meta.shortName || meta.symbol,
                 price,
                 change,
                 changePercent,
@@ -66,6 +75,7 @@ export async function fetchMarketData(symbols: string[]): Promise<YahooQuote[]> 
 
     return results
 }
+
 
 export async function fetchNews(query: string = "stock market"): Promise<YahooNewsItem[]> {
     try {

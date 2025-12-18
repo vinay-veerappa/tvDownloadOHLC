@@ -18,11 +18,23 @@ export async function getDashboardContext(): Promise<{ success: boolean, data?: 
         const startOfDay = new Date(today.setHours(0, 0, 0, 0))
         const endOfDay = new Date(today.setHours(23, 59, 59, 999))
 
-        // 0. Fetch Watchlist
-        const watchlist = await prisma.watchlist.findMany({
-            orderBy: { createdAt: 'desc' }
-        })
-        const watchlistSymbols = watchlist.map(w => w.symbol)
+        // 0. Fetch Watchlist (Default Group)
+        let watchlistSymbols: string[] = []
+        let watchlist: any[] = []
+
+        try {
+            const defaultGroup = await prisma.watchlistGroup.findFirst({
+                where: { isDefault: true },
+                include: { items: true }
+            })
+
+            if (defaultGroup && defaultGroup.items) {
+                watchlist = defaultGroup.items
+                watchlistSymbols = defaultGroup.items.map(w => w.symbol)
+            }
+        } catch (err) {
+            console.error("Failed to load watchlist context", err)
+        }
 
         // 1. Fetch Market Data (VIX, VVIX, SPY, QQQ + Watchlist)
         const defaultSymbols = ["^VIX", "^VVIX", "SPY", "QQQ"]

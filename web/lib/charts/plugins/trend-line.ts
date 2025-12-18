@@ -416,9 +416,12 @@ export class TrendLineTool {
     }
 
     stopDrawing() {
+        if (this._activeDrawing) {
+            this._series.detachPrimitive(this._activeDrawing);
+            this._activeDrawing = null;
+        }
         this._drawing = false;
         this._startPoint = null;
-        this._activeDrawing = null;
         this._shiftPressed = false;
         this._chart.unsubscribeClick(this._clickHandler);
         this._chart.unsubscribeCrosshairMove(this._moveHandler);
@@ -471,6 +474,8 @@ export class TrendLineTool {
                     this._onDrawingCreated(this._activeDrawing);
                 }
 
+                // Prevent cleanup of successful drawing
+                this._activeDrawing = null;
                 this.stopDrawing();
             }
         }
@@ -529,5 +534,9 @@ export class TrendLineTool {
         }
 
         return closest;
+    }
+
+    public updateData(data: any[]) {
+        this._ohlcData = data || [];
     }
 }

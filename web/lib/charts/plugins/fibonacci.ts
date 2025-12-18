@@ -415,9 +415,12 @@ export class FibonacciTool {
     }
 
     stopDrawing() {
+        if (this._activeDrawing) {
+            this._series.detachPrimitive(this._activeDrawing);
+            this._activeDrawing = null;
+        }
         this._drawing = false;
         this._startPoint = null;
-        this._activeDrawing = null;
         this._chart.unsubscribeClick(this._clickHandler);
         this._chart.unsubscribeCrosshairMove(this._moveHandler);
     }
@@ -444,6 +447,9 @@ export class FibonacciTool {
             if (this._activeDrawing) {
                 this._activeDrawing.updateEnd({ time: param.time, price: priceValue });
                 if (this._onDrawingCreated) this._onDrawingCreated(this._activeDrawing);
+
+                // Prevent cleanup
+                this._activeDrawing = null;
                 this.stopDrawing();
             }
         }
@@ -477,5 +483,9 @@ export class FibonacciTool {
             if (minDist > priceRange * 0.3) return null;
         }
         return closest;
+    }
+
+    public updateData(data: any[]) {
+        this._ohlcData = data || [];
     }
 }

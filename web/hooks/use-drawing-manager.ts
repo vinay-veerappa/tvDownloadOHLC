@@ -148,6 +148,8 @@ export function useDrawingManager(
         }
     }, [series, ticker, timeframe, onDrawingDeleted]);
 
+    const activeToolNameRef = useRef<DrawingTool | null>(null);
+
     // Handle tool initiation
     const initiateTool = useCallback((
         selectedTool: DrawingTool,
@@ -158,12 +160,21 @@ export function useDrawingManager(
     ) => {
         if (!chart || !series) return;
 
+        // If reusing the same tool, just update data if supported
+        if (activeToolRef.current && activeToolNameRef.current === selectedTool) {
+            if (typeof activeToolRef.current.updateData === 'function' && data) {
+                activeToolRef.current.updateData(data);
+            }
+            return;
+        }
+
         // Stop previous tool if any
         if (activeToolRef.current) {
             if (typeof activeToolRef.current.stopDrawing === 'function') {
                 activeToolRef.current.stopDrawing()
             }
-            activeToolRef.current = null
+            activeToolRef.current = null;
+            activeToolNameRef.current = null;
         }
 
         if (selectedTool === 'cursor') return;
@@ -268,6 +279,7 @@ export function useDrawingManager(
 
             tool.startDrawing();
             activeToolRef.current = tool;
+            activeToolNameRef.current = selectedTool;
         }
 
     }, [chart, series, ticker, timeframe, onDrawingCreated]);

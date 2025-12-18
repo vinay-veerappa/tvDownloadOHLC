@@ -23,7 +23,7 @@ import { ThemeParams } from "@/lib/themes"
 import { ColorType } from "lightweight-charts"
 import { RangeInfoPanel } from "./range-info-panel"
 import { RangeTooltip } from "./range-tooltip"
-import { RangeExtensionPeriod } from "@/lib/charts/indicators/range-extensions"
+import { RangeExtensions, RangeExtensionPeriod, getContractSpecs } from "@/lib/charts/indicators/range-extensions"
 import { useKeyboardShortcuts } from "@/hooks/chart/use-keyboard-shortcuts"
 
 interface ChartContainerProps {
@@ -610,14 +610,17 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             toast.success('Watermark updated');
         } else if (sessionRangesRef.current && selectedDrawingType === 'daily-profiler') {
             sessionRangesRef.current.applyOptions(options);
+            onIndicatorParamsChange?.('daily-profiler', options); // FIX: Persist settings
             toast.success('Daily Profiler updated');
         } else if (selectedDrawingType === 'hourly-profiler') {
+            // ...
             if (hourlyProfilerRef.current) {
                 hourlyProfilerRef.current.applyOptions(options);
             }
             onIndicatorParamsChange?.('hourly-profiler', options);
             toast.success('Hourly Profiler updated');
         } else if (selectedDrawingType === 'range-extensions') {
+            console.log('[ChartContainer] Saving Range Extensions:', options); // DEBUG
             if (rangeExtensionsRef.current) {
                 rangeExtensionsRef.current.updateOptions(options);
             }
@@ -959,24 +962,22 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
                     rangeExtensionsRef.current = new RangeExtensions(chart, series, {
                         ...params,
-                        ticker, // START: Fix ticker override
+                        ticker,
+                        displayTimezone, // Pass timezone
                         startTs,
                         endTs
                     });
                     series.attachPrimitive(rangeExtensionsRef.current);
+
+                    // Initial Data Push
+                    if (data && data.length > 0) {
+                        rangeExtensionsRef.current.setData(data);
+                    }
                 } else {
-                    rangeExtensionsRef.current.updateOptions({ ...params, ticker });
+                    rangeExtensionsRef.current.updateOptions({ ...params, ticker, displayTimezone });
                 }
                 setRangeExtensionsActive(true);
-                // We might not have data yet (async fetch), but set active.
-                // Data will come later via internal update, but primitive doesn't auto-push data out.
-                // We rely on polling or just update when we interact?
-                // For now, let's just set blank, it will populate on next interaction or we can add a callback.
-                // But ChartContainer doesn't control the fetch.
-                // Ideally RangeExtensions calls a callback 'onDataUpdate'.
-                // For this iteration, let's just trust crosshair update to catch data 
-                // OR add an interval/timeout to sync initially? 
-                // Or just modify RangeExtensions to accept onDataChanged.
+                // We trust crosshair or explicit update for continuous data
 
                 // Let's add a quick sync after a delay to catch initial load
                 setTimeout(() => {
@@ -1176,8 +1177,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 const params = indicatorParams?.['range-extensions'] || {};
                 const accountBalance = params.accountBalance ?? 50000;
                 const riskPercent = params.riskPercent ?? 1.0;
-                const tickValue = params.tickValue ?? 50;
-                const microMultiplier = params.microMultiplier ?? 10;
+
+                // Auto-detect specs from ticker
+                const { pointValue, microMultiplier: mm } = getContractSpecs(ticker);
+                const tickValue = pointValue; // Use Point Value for Logic
+                const microMultiplier = mm;
 
                 return (
                     <>
@@ -1185,13 +1189,15 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                             data={rangeData}
                             accountBalance={accountBalance}
                             riskPercent={riskPercent}
-                            tickValue={tickValue}
+                            tickValue={tickValue} // Now passing Point Value
                             microMultiplier={microMultiplier}
                         />
                         <ChartCursorOverlay
                             chart={chart}
                             rangeExtensionsRef={rangeExtensionsRef as any}
                             indicatorParams={indicatorParams}
+                            tickValue={tickValue} // Pass corrected Point Value
+                            microMultiplier={microMultiplier} // Pass corrected Multiplier
                         />
                     </>
                 );

@@ -10,12 +10,16 @@ interface ChartCursorOverlayProps {
     chart: IChartApi | null
     rangeExtensionsRef: React.MutableRefObject<RangeExtensions | null>
     indicatorParams?: Record<string, any>
+    tickValue?: number
+    microMultiplier?: number
 }
 
 export function ChartCursorOverlay({
     chart,
     rangeExtensionsRef,
-    indicatorParams
+    indicatorParams,
+    tickValue: propTickValue,
+    microMultiplier: propMicroMultiplier
 }: ChartCursorOverlayProps) {
     const [cursorPos, setCursorPos] = useState<{ x: number, y: number } | null>(null)
     const [hoveredRangePeriod, setHoveredRangePeriod] = useState<RangeExtensionPeriod | null>(null)
@@ -73,8 +77,9 @@ export function ChartCursorOverlay({
     const params = indicatorParams?.['range-extensions'] || {}
     const accountBalance = params.accountBalance ?? 50000
     const riskPercent = params.riskPercent ?? 1.0
-    const tickValue = params.tickValue ?? 50
-    const microMultiplier = params.microMultiplier ?? 10
+    // Use props if available (which come from auto-detection), else fallback
+    const tickValue = propTickValue ?? params.tickValue ?? 50
+    const microMultiplier = propMicroMultiplier ?? params.microMultiplier ?? 10
 
     return (
         <RangeTooltip

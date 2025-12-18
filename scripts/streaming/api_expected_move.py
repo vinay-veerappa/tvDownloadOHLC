@@ -5,10 +5,41 @@ import sys
 import datetime
 import math
 import argparse
+import copy
 
 # --- Constants ---
-DEFAULT_TICKERS = ["NVDA", "TSLA", "AAPL", "SPY", "GOOGL", "AVGO", "META", "NFLX", "QQQ", "/ES", "/NQ"]
+DEFAULT_TICKERS = [
+    # Indices/ETFs
+    "SPY", "QQQ", "IWM", "DIA", "TLT", "GLD", "SLV", "USO", "UNG",
+    # Futures
+    "/ES", "/NQ", "/YM", "/RTY", "/GC", "/CL", "/SI", "/NG",
+    # Mag 7 / Big Tech
+    "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
+    # AI / Data Center / Semi / Cloud
+    "PLTR", "MU", "SMCI", "ARM", "VRT", "DELL", "ORCL",
+    "CRWD", "NBIS", "ANET", "PSTG", "WDC", "SOUN", "AI",
+    # Banks / Financials
+    "JPM", "GS", "MS", "BAC", "C",
+    # High Beta / Popular
+    "NFLX", "COIN", "MSTR", "AVGO"
+]
 CACHE_FILE = "data/expected_moves.json"
+
+# --- Proxy Map ---
+# Maps Futures -> { index: UnderlyingIndex, etf: UnderlyingETF }
+# For Commodities (Gold, Oil), we map Index to the Future itself (for spot price) and ETF to the liquid ETF.
+PROXY_MAP = {
+    "/ES": {"index": "$SPX", "etf": "SPY"},
+    "/NQ": {"index": "$NDX", "etf": "QQQ"},
+    "/YM": {"index": "$DJI", "etf": "DIA"},
+    "/RTY": {"index": "$RUT", "etf": "IWM"},
+    
+    # Commodities
+    "/GC": {"index": "/GC", "etf": "GLD"},
+    "/CL": {"index": "/CL", "etf": "USO"},
+    "/SI": {"index": "/SI", "etf": "SLV"},
+    "/NG": {"index": "/NG", "etf": "UNG"},
+}
 
 def get_iv(o):
     # Schwab keys for volatility
@@ -42,266 +73,341 @@ def save_cache(data):
     except Exception as e:
         print(f"Cache Save Error: {e}", file=sys.stderr)
 
-def fetch_expected_moves(tickers=None, force_refresh=False):
-    if not tickers:
-        tickers = DEFAULT_TICKERS
+def get_closest_expiry_key(call_map, date_obj):
+    """Find the expiry key matching the given date."""
+    d_str = date_obj.strftime("%Y-%m-%d")
+    for k in call_map.keys():
+        if k.startswith(d_str):
+            return k
+    return None
+
+def calculate_straddle_cost(call_map, put_map, expiry_key, strike_price):
+    """Calculates ATM straddle cost for a specific strike."""
+    if not expiry_key: return 0
     
-    # Standardize tickers (caps)
+    raw_calls = call_map.get(expiry_key, {})
+    raw_puts = put_map.get(expiry_key, {})
+    
+    # Schwab structure: { "expiry_key": { "strike_price": [ {option_obj} ] } }
+    # Flatten to list of option objects
+    calls = []
+    for s_key, q_list in raw_calls.items():
+        if q_list: calls.append(q_list[0])
+
+    puts = []
+    for s_key, q_list in raw_puts.items():
+        if q_list: puts.append(q_list[0])
+    
+    # Find closest strike options
+    # Sort by distance to strike_price
+    calls.sort(key=lambda x: abs(float(x['strikePrice']) - strike_price))
+    puts.sort(key=lambda x: abs(float(x['strikePrice']) - strike_price))
+    
+    if not calls or not puts: return 0
+
+    atm_call = calls[0]
+    atm_put = puts[0]
+    
+    # Verify strikes are reasonably close (e.g. within 1%)
+    # If nearest strike is far away, data might be missing, but we proceed anyway.
+    
+    call_mark = get_mark(atm_call)
+    put_mark = get_mark(atm_put)
+    
+    return call_mark + put_mark
+
+
+
+def calculate_em_values(chain_resp, date_obj, reference_price):
+    """
+    Calculates Expected Move values based on a reference price.
+    Returns dict: { straddle, em_365, em_252, adj_em }
+    """
+    call_map = chain_resp.get('callExpDateMap', {})
+    put_map = chain_resp.get('putExpDateMap', {})
+    expiry_key = get_closest_expiry_key(call_map, date_obj)
+    
+    if not expiry_key or not reference_price or reference_price == 0:
+        return {"straddle": 0, "em_365": 0, "em_252": 0, "adj_em": 0}
+
+    # 1. Straddle Cost
+    straddle = calculate_straddle_cost(call_map, put_map, expiry_key, reference_price)
+    
+    # 2. IV Calculation (EM Formula)
+    # Get IV from ATM option
+    raw_calls = call_map.get(expiry_key, {})
+    calls = []
+    for s_key, q_list in raw_calls.items():
+        if q_list: calls.append(q_list[0])
+        
+    iv = 0
+    dte = 0
+    if calls:
+        # Re-sort for IV extraction
+        calls.sort(key=lambda x: abs(float(x['strikePrice']) - reference_price))
+        atm_opt = calls[0]
+        iv = get_iv(atm_opt) / 100.0 # Convert to decimal
+        
+        # Parse DTE from key: "YYYY-MM-DD:Days"
+        try:
+             parts = expiry_key.split(':')
+             if len(parts) > 1:
+                 dte = int(parts[1])
+             else:
+                 # Fallback if DTE missing in key
+                 dte = (date_obj - datetime.date.today()).days
+        except: dte = 0
+
+    # Avoid div by 0
+    em_365 = 0
+    em_252 = 0
+    
+    # Standard Rule of 16 (IV / 16 * Price * Sqrt(DTE)) - roughly
+    # Text book: Price * IV * Sqrt(DTE/365)
+    if dte >= 0:
+        em_365 = reference_price * iv * math.sqrt(dte / 365.0)
+        em_252 = reference_price * iv * math.sqrt(dte / 252.0)
+    
+    # Adjusted EM (85% of Straddle or similar rule of thumb)
+    # User's logic: 0.85 * Straddle
+    adj_em = straddle * 0.85
+
+    return {
+        "straddle": straddle,
+        "em_365": round(em_365, 2),
+        "em_252": round(em_252, 2),
+        "adj_em": round(adj_em, 2)
+    }
+
+def fetch_ticker_data(client, symbol, target_fridays):
+    """
+    Fetches Quote and Chain for a symbol. 
+    Returns: { quote_obj, chain_obj_map } where chain_obj_map is keyed by date.
+    """
+    # 1. Get Quote
+    quote_obj = {}
+    try:
+        resp = client.get_quote(symbol).json()
+        found_key = None
+        if isinstance(resp, dict):
+            for k in resp.keys():
+                if k.upper() == symbol.upper(): found_key = k; break
+            if not found_key and len(resp) > 0: found_key = list(resp.keys())[0]
+        
+        if found_key and isinstance(resp[found_key], dict):
+             quote_obj = resp[found_key].get('quote', {})
+    except Exception as e:
+        print(f"  Quote Error {symbol}: {e}", file=sys.stderr)
+
+    # 2. Get Chain for target dates
+    chain_obj_map = {}
+    for d in target_fridays:
+        try:
+            chain_resp = client.get_option_chain(
+                symbol, strike_count=20, strategy='ANALYTICAL', from_date=d, to_date=d
+            ).json()
+            if chain_resp.get('status') == 'SUCCESS':
+                chain_obj_map[d] = chain_resp
+        except Exception as e:
+            print(f"  Chain Error {symbol} {d}: {e}", file=sys.stderr)
+            
+    return quote_obj, chain_obj_map
+
+
+def fetch_expected_moves(tickers=None, force_refresh=False):
+    if not tickers: tickers = DEFAULT_TICKERS
     tickers = [t.upper() for t in tickers]
     
-    cached_data = [] # List of dicts
+    # Cache Check
     if not force_refresh:
         loaded = load_cache()
         if loaded:
-            cached_data = loaded
-            
-    # Map cache by ticker for easy lookup
-    cache_map = {item['ticker']: item for item in cached_data}
-    
-    missing_tickers = []
-    final_results = []
-    
-    for t in tickers:
-        if t in cache_map:
-            final_results.append(cache_map[t])
-        else:
-            missing_tickers.append(t)
-            
-    if not missing_tickers:
-        # print("All tickers served from cache.")
-        return final_results
+             # Check if ALL requested tickers are present
+             loaded_tickers = set(item['ticker'] for item in loaded)
+             requested = set(tickers)
+             if requested.issubset(loaded_tickers):
+                 # Filter and return only requested
+                 return [item for item in loaded if item['ticker'] in requested]
+             # If missing some, we could partial return, but simpler to just refresh all or missing.
+             # For now, let's just proceed to fetch if we need specific tickers not in cache.
+             pass
 
-    print(f"Fetching missing tickers: {missing_tickers}", file=sys.stderr)
-    
-    # ... Fetch logic for missing_tickers ...
-    # Reuse existing fetch logic but only for missing_tickers
-    
-    # Define paths
-    # Script is now in scripts/streaming/, so root is ../../..
+    # Setup Client
     ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    DATA_DIR = os.path.join(ROOT_DIR, "data")
-    # Load Secrets
     if not os.path.exists("secrets.json") or not os.path.exists("token.json"):
         return {"error": "Missing credentials"}
-
-    with open("secrets.json", "r") as f:
-        secrets = json.load(f)
-        
+    with open("secrets.json", "r") as f: secrets = json.load(f)
+    
     try:
         client = schwab.auth.client_from_token_file(
-            token_path="token.json",
-            api_key=secrets["app_key"],
-            app_secret=secrets["app_secret"],
-            enforce_enums=False
+            token_path="token.json", api_key=secrets["app_key"], app_secret=secrets["app_secret"], enforce_enums=False
         )
     except Exception as e:
-        return {"error": f"Auth failed: {str(e)}"}
+         return {"error": f"Auth failed: {str(e)}"}
 
+    # Date Logic
     today = datetime.date.today()
     friday = today + datetime.timedelta(days=(4 - today.weekday() + 7) % 7)
-    
     current_weekday = today.weekday() 
-    if current_weekday >= 4:
-        target_friday = today + datetime.timedelta(days=(4 - current_weekday + 7))
-    else:
-        target_friday = friday
-
-    print(f"Targeting Week Ending: {target_friday}", file=sys.stderr)
+    target_friday = today + datetime.timedelta(days=(4 - current_weekday + 7)) if current_weekday >= 4 else friday
     
-    new_results = []
-    for symbol in missing_tickers:
-        print(f"Processing {symbol}...", file=sys.stderr)
-        
-        # ... COPY PASTE FETCH LOGIC BELOW (Simplified for diff) ...
-        # I need to preserve the fetch body.
-        # Ideally I would have refactored fetch_one() but I will just inline for now or careful edit.
-        
-        if symbol == 'SPX' and not symbol.startswith('$'):
-            symbol = '$SPX'
-        
-        # 1. Get Quote
-        try:
-            resp = client.get_quote(symbol).json()
-            
-            # Handle list response
-            if isinstance(resp, list):
-                 found_key = None
-                 if len(resp) > 0: found_key = list(resp[0].keys())[0] # Maybe?
-                 # Actually list usually implies error or search results
-                 # Let's skip list for now or assume first item
-                 # print(f"Quote returned list for {symbol}, handling incomplete")
-                 pass
+    # We will fetch only ONE Friday for now as per original script logic
+    target_dates = [target_friday]
 
-            found_key = None
-            if isinstance(resp, dict):
-                for k in resp.keys():
-                    if k.upper() == symbol.upper():
-                        found_key = k
-                        break
-                if not found_key and len(resp) > 0:
-                    found_key = list(resp.keys())[0]
-            
-            if not found_key:
-                print(f"  Quote not found for {symbol}", file=sys.stderr)
-                continue
-            
-            quote_val = resp[found_key]
-            if not isinstance(quote_val, dict): continue
-            
-            quote_obj = quote_val.get('quote', {})
-            current_price = quote_obj.get('lastPrice')
-            
-            if not current_price:
-                 continue
-
-        except Exception as e:
-            print(f"  Quote Error {symbol}: {e}", file=sys.stderr)
-            continue
-
-        # 2. Get Chain
-        # Loop over days to ensure we get data (Range requests failing)
-        symbol_results = []
+    final_results = []
+    
+    for req_ticker in tickers:
+        print(f"Processing {req_ticker}...", file=sys.stderr)
         
-        # Calculate days to iterate
-        # from today to target_friday
-        delta = (target_friday - today).days
-        date_list = [today + datetime.timedelta(days=i) for i in range(delta + 1)]
+        is_proxy = req_ticker in PROXY_MAP
         
-        for d in date_list:
-            if d.weekday() >= 5: continue # Skip weekend
+        # Prepare data containers
+        # We need data for: 
+        # 1. The ticker itself (if not proxy, or if explicitly requested)
+        # 2. The Index Proxy (if proxy)
+        # 3. The ETF Proxy (if proxy)
+        
+        output_item = {
+            "ticker": req_ticker,
+            "price": 0,
+            "expirations": []
+        }
+        
+        if is_proxy:
+            # Dual Proxy Mode
+            p_map = PROXY_MAP[req_ticker]
+            idx_sym = p_map['index']
+            etf_sym = p_map['etf']
             
-            # print(f"  Fetching for {d}...")
-            try:
-                # Reuse working logic from batch script
-                chain_resp = client.get_option_chain(
-                    symbol,
-                    strike_count=20, 
-                    strategy='ANALYTICAL',
-                    from_date=d,
-                    to_date=d # Single Day
-                ).json()
+            # Fetch Index
+            idx_quote, idx_chains = fetch_ticker_data(client, idx_sym, target_dates)
+            # Fetch ETF
+            etf_quote, etf_chains = fetch_ticker_data(client, etf_sym, target_dates)
+            
+            # Reference Prices (Index)
+            idx_last = idx_quote.get('lastPrice', 0)
+            idx_open = idx_quote.get('openPrice', idx_last) # Fallback
+            idx_close = idx_quote.get('closePrice', idx_last) # Settlement
+            
+            output_item['price'] = idx_last # Main display price is Index Spot
+            
+            # Reference Prices (ETF)
+            etf_last = etf_quote.get('lastPrice', 1) # Avoid div0
+            etf_open = etf_quote.get('openPrice', etf_last)
+            etf_close = etf_quote.get('closePrice', etf_last)
+            
+            for d in target_dates:
+                # 1. Index Calcs (Primary)
+                idx_chain = idx_chains.get(d, {})
+                idx_res_last = calculate_em_values(idx_chain, d, idx_last)
+                idx_res_open = calculate_em_values(idx_chain, d, idx_open)
+                idx_res_close = calculate_em_values(idx_chain, d, idx_close)
                 
-                if chain_resp.get('status') == 'FAILED':
-                    print(f"    Failed for {d}: {chain_resp}", file=sys.stderr)
-                    continue
+                # 2. ETF Calcs (Secondary)
+                etf_chain = etf_chains.get(d, {})
+                etf_res_last = calculate_em_values(etf_chain, d, etf_last)
+                etf_res_open = calculate_em_values(etf_chain, d, etf_open)
+                etf_res_close = calculate_em_values(etf_chain, d, etf_close)
                 
-                call_map = chain_resp.get('callExpDateMap', {})
-                put_map = chain_resp.get('putExpDateMap', {})
-                # print(f"    Raw Keys for {d}: {list(call_map.keys())}", file=sys.stderr)
+                # 3. Normalization (ETF % -> Index Price)
+                # Form: ETF_EM / ETF_Ref * Index_Ref
                 
-                # Check for expirations on THIS day
-                # Keys are "YYYY-MM-DD:Days"
-                d_str = d.strftime("%Y-%m-%d")
-                target_key = None
-                for k in call_map.keys():
-                    if k.startswith(d_str):
-                        target_key = k
-                        break
-                
-                if not target_key: 
-                    # print(f"    No match for {d_str} in {list(call_map.keys())}")
-                    continue
-                
-                # print(f"    Found {target_key} for {d_str}")
-                
-                # ... Calculation Logic ...
-                strikes = []
-                # call_map[target_key] is Dict[Strike, List[Option]]
-                for k in call_map[target_key]:
-                    try: strikes.append(float(k))
-                    except: pass
-                
-                if not strikes: 
-                    # print(f"    No strikes found for {target_key}", file=sys.stderr)
-                    continue
-                
-                closest_strike = min(strikes, key=lambda x: abs(x - current_price))
-                # print(f"    Target Found: {target_key}. Closest Strike: {closest_strike} (Price: {current_price})", file=sys.stderr)
-                
-                strike_key = next((k for k in call_map[target_key] if abs(float(k) - closest_strike) < 0.001), None)
-                if not strike_key: 
-                    # print(f"    Strike Key not found for {closest_strike}", file=sys.stderr)
-                    continue
-                
-                c_opt = call_map[target_key][strike_key][0]
-                if target_key in put_map and strike_key in put_map[target_key]:
-                    p_opt = put_map[target_key][strike_key][0]
-                else: 
-                     # print(f"    Put Map Missing Key: {target_key} in {list(put_map.keys())} OR Strike {strike_key}", file=sys.stderr)
-                     continue
+                def normalize(val, etf_ref, idx_ref):
+                    if etf_ref == 0: return 0
+                    pct = val / etf_ref
+                    return round(pct * idx_ref, 2)
 
-                straddle = get_mark(c_opt) + get_mark(p_opt)
-                c_iv = get_iv(c_opt) 
-                p_iv = get_iv(p_opt)
-                avg_iv = (c_iv + p_iv) / 2 / 100.0 if (c_iv > 0 and p_iv > 0) else 0
+                # Normalized Values
+                norm_open = normalize(etf_res_open['adj_em'], etf_open, idx_open)
+                norm_close = normalize(etf_res_close['adj_em'], etf_close, idx_close)
+                norm_last = normalize(etf_res_last['adj_em'], etf_last, idx_last)
                 
-                dte = (d - today).days
-                if dte == 0: dte = 0.5 
+                # Construct Expiration Object
+                # Base fields use Index-Close/Last (Standard)
+                # Extended fields inside 'details'
                 
-                em_365 = 0; em_252 = 0
-                if avg_iv > 0:
-                    em_365 = current_price * avg_iv * math.sqrt(dte / 365.0)
-                    em_252 = current_price * avg_iv * math.sqrt(dte / 252.0)
-                
-                if dte < 1:
-                    if em_365 == 0: em_365 = straddle
-                    if em_252 == 0: em_252 = straddle
+                dte = 0
+                # Extract DTE from one of the results or recalc
+                if d >= today: dte = (d - today).days
 
-                avg_em = (straddle + em_365 + em_252) / 3
-                adj_em = avg_em * 0.85
-                
-                symbol_results.append({
-                    "date": d_str,
+                exp_data = {
+                    "date": d.strftime("%Y-%m-%d"),
                     "dte": dte,
-                    "straddle": round(straddle, 2),
-                    "em_365": round(em_365, 2),
-                    "em_252": round(em_252, 2),
-                    "adj_em": round(adj_em, 2)
-                })
+                    
+                    # Standard View (Index Close/Settlement is usually the benchmark)
+                    "straddle": idx_res_close['straddle'], 
+                    "em_365": idx_res_close['em_365'],
+                    "em_252": idx_res_close['em_252'], 
+                    "adj_em": idx_res_close['adj_em'], 
+                    
+                    # Extended Data
+                    "basis": {
+                        "open": {
+                            "price": idx_open,
+                            "index_em": idx_res_open['adj_em'],
+                            "etf_em": norm_open
+                        },
+                        "close": {
+                            "price": idx_close,
+                            "index_em": idx_res_close['adj_em'],
+                            "etf_em": norm_close
+                        },
+                        "last": {
+                            "price": idx_last,
+                            "index_em": idx_res_last['adj_em'],
+                            "etf_em": norm_last
+                        }
+                    },
+                    "note": f"Proxies: {idx_sym} & {etf_sym}"
+                }
+                output_item['expirations'].append(exp_data)
+                
+        else:
+            # Standard Ticker
+            quote, chains = fetch_ticker_data(client, req_ticker, target_dates)
+            
+            last = quote.get('lastPrice', 0)
+            opn = quote.get('openPrice', last)
+            cls = quote.get('closePrice', last)
+            
+            output_item['price'] = last
+            
+            for d in target_dates:
+                 chain = chains.get(d, {})
+                 
+                 res_last = calculate_em_values(chain, d, last)
+                 res_open = calculate_em_values(chain, d, opn)
+                 res_close = calculate_em_values(chain, d, cls)
+                 
+                 dte = (d - today).days if d >= today else 0
 
-            except Exception as e:
-                 print(f"    Error {d}: {e}", file=sys.stderr)
-                 continue
-
-        new_results.append({
-            "ticker": symbol,
-            "price": round(current_price, 2),
-            "expirations": symbol_results
-        })
-
-
-    # Merge and Save
-    # We update the cache_map with new results
-    for item in new_results:
-        cache_map[item['ticker']] = item
+                 exp_data = {
+                    "date": d.strftime("%Y-%m-%d"),
+                    "dte": dte,
+                    "straddle": res_close['straddle'], # Default to Close/Settlement
+                    "em_365": res_close['em_365'],
+                    "em_252": res_close['em_252'],
+                    "adj_em": res_close['adj_em'],
+                    
+                    "basis": {
+                        "open": { "price": opn, "index_em": res_open['adj_em'] },
+                        "close": { "price": cls, "index_em": res_close['adj_em'] },
+                        "last": { "price": last, "index_em": res_last['adj_em'] }
+                    }
+                 }
+                 output_item['expirations'].append(exp_data)
+                 
+        final_results.append(output_item)
         
-    # Re-construct list
-    final_data = list(cache_map.values())
+    save_cache(final_results)
     
-    if new_results:
-        save_cache(final_data)
-        
-    # Filter return to only requested tickers
-    output = [cache_map[t] for t in tickers if t in cache_map]
-    return output
+    return final_results
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tickers", nargs="+", help="List of tickers to fetch")
-    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--tickers", nargs="+", help="Tickers to fetch")
     parser.add_argument("--refresh", action="store_true", help="Force refresh cache")
     args = parser.parse_args()
     
-    data = fetch_expected_moves(tickers=args.tickers, force_refresh=args.refresh)
-    
-    if args.json:
-        print(json.dumps(data))
-    else:
-        # Pretty Print
-        print(f"Source: {'Cache/Partial' if not args.refresh else 'Live API'}")
-        for item in data:
-            print(f"\n=== {item['ticker']} (${item['price']}) ===")
-            print(f"{'Date':<12} {'DTE':<4} {'Straddle':<10} {'EM365':<10} {'EM252':<10} {'Adj(85%)':<10}")
-            print("-" * 60)
-            for exp in item['expirations']:
-                print(f"{exp['date']:<12} {exp['dte']:<4} ${exp['straddle']:<9} ${exp['em_365']:<9} ${exp['em_252']:<9} ${exp['adj_em']:<9}")
+    data = fetch_expected_moves(args.tickers, args.refresh)
+    print(json.dumps(data))
