@@ -17,7 +17,9 @@ import {
     Zap,
     Radio,
     HardDrive,
-    Library
+    Library,
+    LayoutDashboard,
+    AreaChart
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -46,42 +48,24 @@ export function AppSidebar() {
         return <div className="w-16 h-full border-r bg-background" /> // Static placeholder to prevent shift
     }
 
-    const routes = [
+    const mainRoutes = [
         {
-            label: "Chart",
-            icon: BarChart3,
-            href: "/",
-            active: pathname === "/",
-        },
-        {
-            label: "Journal",
-            icon: BookOpen,
-            href: "/journal",
-            active: pathname === "/journal",
-        },
-        {
-            label: "Backtest",
-            icon: History,
-            href: "/backtest",
-            active: pathname === "/backtest",
+            label: "Dashboard",
+            icon: LayoutDashboard,
+            href: "/journal/context",
+            active: pathname === "/journal/context",
         },
         {
             label: "Profiler",
-            icon: Activity,
+            icon: AreaChart,
             href: "/profiler",
             active: pathname === "/profiler",
         },
         {
-            label: "Reference",
-            icon: Library,
-            href: "/profiler/reference",
-            active: pathname === "/profiler/reference",
-        },
-        {
-            label: "Data Manager",
-            icon: HardDrive,
-            href: "/data",
-            active: pathname === "/data",
+            label: "Chart",
+            icon: Radio, // Using Radio/Signal for Live Chart concept
+            href: "/tools/live-chart",
+            active: pathname === "/tools/live-chart",
         },
         {
             label: "Expected Move",
@@ -90,10 +74,37 @@ export function AppSidebar() {
             active: pathname === "/tools/expected-move",
         },
         {
-            label: "Live Chart",
-            icon: Radio,
-            href: "/tools/live-chart",
-            active: pathname === "/tools/live-chart",
+            label: "Journal",
+            icon: BookOpen,
+            href: "/journal",
+            active: pathname === "/journal",
+        },
+    ]
+
+    const toolRoutes = [
+        {
+            label: "Historical Chart",
+            icon: BarChart3,
+            href: "/",
+            active: pathname === "/",
+        },
+        {
+            label: "Backtest",
+            icon: History,
+            href: "/backtest",
+            active: pathname === "/backtest",
+        },
+        {
+            label: "Data Manager",
+            icon: HardDrive,
+            href: "/data",
+            active: pathname === "/data",
+        },
+        {
+            label: "Reference",
+            icon: Library,
+            href: "/profiler/reference",
+            active: pathname === "/profiler/reference",
         },
     ]
 
@@ -114,31 +125,68 @@ export function AppSidebar() {
                     {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
                 </Button>
             </div>
-            <div className="flex-1 px-2 space-y-2">
-                {routes.map((route) => (
-                    <Button
-                        key={route.href}
-                        variant={route.active ? "secondary" : "ghost"}
-                        className={cn(
-                            "w-full relative group",
-                            route.active && "bg-secondary",
-                            collapsed ? "justify-center px-2" : "justify-start"
-                        )}
-                        asChild
-                        title={collapsed ? route.label : ""}
-                    >
-                        <Link href={route.href}>
-                            <route.icon className={cn("h-5 w-5", !collapsed && "mr-2")} />
-                            {!collapsed && <span>{route.label}</span>}
-                            {/* Simple CSS Tooltip for collapsed state */}
-                            {collapsed && (
-                                <div className="absolute left-full ml-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded border shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-                                    {route.label}
-                                </div>
+
+            <div className="flex-1 px-2 space-y-2 overflow-y-auto">
+                {/* Main Section */}
+                <div className="space-y-1">
+                    {mainRoutes.map((route) => (
+                        <Button
+                            key={route.href}
+                            variant={route.active ? "secondary" : "ghost"}
+                            className={cn(
+                                "w-full relative group",
+                                route.active && "bg-secondary",
+                                collapsed ? "justify-center px-2" : "justify-start"
                             )}
-                        </Link>
-                    </Button>
-                ))}
+                            asChild
+                            title={collapsed ? route.label : ""}
+                        >
+                            <Link href={route.href}>
+                                <route.icon className={cn("h-5 w-5", !collapsed && "mr-2")} />
+                                {!collapsed && <span>{route.label}</span>}
+                                {collapsed && (
+                                    <div className="absolute left-full ml-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded border shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                                        {route.label}
+                                    </div>
+                                )}
+                            </Link>
+                        </Button>
+                    ))}
+                </div>
+
+                {/* Tools Section */}
+                <div className="pt-4 mt-4 border-t border-border">
+                    {!collapsed && (
+                        <h4 className="px-2 mb-2 text-xs font-semibold text-muted-foreground tracking-wider uppercase">
+                            Tools
+                        </h4>
+                    )}
+                    <div className="space-y-1">
+                        {toolRoutes.map((route) => (
+                            <Button
+                                key={route.href}
+                                variant={route.active ? "secondary" : "ghost"}
+                                className={cn(
+                                    "w-full relative group",
+                                    route.active && "bg-secondary",
+                                    collapsed ? "justify-center px-2" : "justify-start"
+                                )}
+                                asChild
+                                title={collapsed ? route.label : ""}
+                            >
+                                <Link href={route.href}>
+                                    <route.icon className={cn("h-5 w-5", !collapsed && "mr-2")} />
+                                    {!collapsed && <span>{route.label}</span>}
+                                    {collapsed && (
+                                        <div className="absolute left-full ml-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded border shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                                            {route.label}
+                                        </div>
+                                    )}
+                                </Link>
+                            </Button>
+                        ))}
+                    </div>
+                </div>
             </div>
             <div className="p-2 border-t space-y-1">
                 <Button

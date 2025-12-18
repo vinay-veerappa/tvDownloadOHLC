@@ -24,8 +24,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog"
 
 interface WatchlistWidgetProps {
-    initialGroups?: any[] // Groups passed from parent if possible, else fetch
-    // We might need to fetch internal if parent doesn't provide
+    initialGroups?: any[]
+    initialItems?: any[]
+    initialQuotes?: YahooQuote[]
 }
 
 export function WatchlistWidget({ }: WatchlistWidgetProps) {
