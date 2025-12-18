@@ -1221,6 +1221,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 drawingType={selectedDrawingType as any}
                 initialOptions={selectedDrawingOptions}
                 onSave={handlePropertiesSave}
+                ticker={ticker}
             />
         </div>
     )

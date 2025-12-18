@@ -140,7 +140,7 @@ export function VWAPSettingsDialog({ settings, onSave, open: controlledOpen, onO
                         Adjust Anchor Period, Time, Bands, and Styles.
                     </DialogDescription>
                 </DialogHeader>
-                <div className="grid gap-4 py-4">
+                <div className="grid gap-4 py-4 max-h-[60vh] overflow-y-auto px-1">
 
                     <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="anchor" className="text-right">
@@ -155,24 +155,27 @@ export function VWAPSettingsDialog({ settings, onSave, open: controlledOpen, onO
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="session">Session (Daily)</SelectItem>
+                                <SelectItem value="rth">RTH Session (09:30)</SelectItem>
                                 <SelectItem value="week">Week</SelectItem>
                                 <SelectItem value="month">Month</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
 
-                    <div className="grid grid-cols-4 items-center gap-4">
-                        <Label htmlFor="anchor_time" className="text-right">
-                            Anchor Time
-                        </Label>
-                        <Input
-                            id="anchor_time"
-                            value={localSettings.anchor_time || "09:30"}
-                            onChange={(e) => setLocalSettings({ ...localSettings, anchor_time: e.target.value })}
-                            className="col-span-3"
-                            placeholder="09:30"
-                        />
-                    </div>
+                    {localSettings.anchor !== 'rth' && (
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label htmlFor="anchor_time" className="text-right">
+                                Anchor Time
+                            </Label>
+                            <Input
+                                id="anchor_time"
+                                value={localSettings.anchor_time || "09:30"}
+                                onChange={(e) => setLocalSettings({ ...localSettings, anchor_time: e.target.value })}
+                                className="col-span-3"
+                                placeholder="09:30"
+                            />
+                        </div>
+                    )}
 
                     {/* Main VWAP Style */}
                     <div className="grid grid-cols-4 items-center gap-4">

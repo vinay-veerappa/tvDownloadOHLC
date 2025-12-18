@@ -29,7 +29,7 @@ export function RiskRewardSettingsView({ options, onChange }: RiskRewardSettings
     }
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-4 px-6">
             <Tabs defaultValue="inputs" className="w-full">
                 <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="inputs">Inputs</TabsTrigger>
@@ -161,6 +161,8 @@ export function RiskRewardSettingsView({ options, onChange }: RiskRewardSettings
                                     className="w-full"
                                     value={options.stopOpacity}
                                     onChange={(e) => handleNumberChange('stopOpacity', e)}
+                                    title="Stop Zone Opacity"
+                                    aria-label="Stop Zone Opacity"
                                 />
                             </div>
                         </div>
@@ -191,6 +193,8 @@ export function RiskRewardSettingsView({ options, onChange }: RiskRewardSettings
                                     className="w-full"
                                     value={options.targetOpacity}
                                     onChange={(e) => handleNumberChange('targetOpacity', e)}
+                                    title="Target Zone Opacity"
+                                    aria-label="Target Zone Opacity"
                                 />
                             </div>
                         </div>

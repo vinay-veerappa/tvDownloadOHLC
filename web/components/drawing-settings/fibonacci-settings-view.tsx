@@ -90,7 +90,7 @@ export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsVi
                 <TabsTrigger value="visibility">Visibility</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="style" className="space-y-4 py-4 h-[400px] overflow-y-auto pr-2">
+            <TabsContent value="style" className="space-y-4 py-4 h-[400px] overflow-y-auto px-6">
 
                 {/* Levels Grid */}
                 <div className="grid grid-cols-2 gap-x-8 gap-y-2">

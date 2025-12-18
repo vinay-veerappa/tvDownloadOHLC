@@ -120,3 +120,21 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Minimal Scrollbar Utility */
+.scrollbar-minimal::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scrollbar-minimal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-minimal::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/20 rounded-full transition-colors;
+}
+
+.scrollbar-minimal::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/40;
+}

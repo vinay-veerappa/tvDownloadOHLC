@@ -10,6 +10,7 @@ export interface IndicatorContext {
     vwapSettings?: VWAPSettings;
     resolvedTheme?: string;
     theme?: ThemeParams;
+    displayTimezone?: string;
 }
 
 export interface ChartIndicator {
