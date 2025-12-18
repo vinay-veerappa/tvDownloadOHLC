@@ -13,6 +13,7 @@ import { WatchlistWidget } from "@/components/journal/context/watchlist-widget"
 import { EconomicCalendarWidget } from "@/components/journal/context/economic-calendar-widget"
 import { MarketOverviewWidget } from "@/components/journal/context/market-overview-widget"
 import { MarketNewsWidget } from "@/components/journal/context/market-news-widget"
+import { QuickLinksWidget } from "@/components/journal/context/quick-links-widget"
 
 export default async function ContextDashboardPage() {
     const [contextResult, groupsResult] = await Promise.all([
@@ -44,6 +45,11 @@ export default async function ContextDashboardPage() {
                         Daily preparation and market overview
                     </p>
                 </div>
+            </div>
+
+            {/* Quick Navigation Links */}
+            <div className="w-full">
+                <QuickLinksWidget />
             </div>
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
