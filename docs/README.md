@@ -1,7 +1,7 @@
 # 📚 Documentation Index
 
-**Version:** 0.4.0
-**Last Updated:** December 09, 2025
+**Version:** 0.5.0
+**Last Updated:** December 18, 2025
 
 ---
 
@@ -12,7 +12,9 @@
 
 ## 🚀 Features & Usage
 - **[User Guide](setup/USER_GUIDE.md)**: Manual for Charting, Trading Panel, Replay Mode, and Backtesting.
-- **[LLM Setup Guide](setup/LLM_SETUP.md)**: 🆕 Instructions for setting up and running Local LLMs (Ollama).
+- **[Configuration](setup/CONFIGURATION.md)**: 🆕 Setup guide for Schwab API, Secrets, and Scheduled Jobs.
+- **[UX Guidelines](ui/UX_GUIDELINES.md)**: 🆕 Design patterns for Modals, Settings, and Review.
+- **[LLM Setup Guide](setup/LLM_SETUP.md)**: Instructions for setting up and running Local LLMs (Ollama).
 - **[Roadmap](ROADMAP.md)**: Feature requirements and status (Journaling, Drawings, Backtesting).
 - **[Journal Requirements](JournalRequirements/trading_journal_requirements.md)**: Detailed requirements for the Trading Journal enhancements.
 
