@@ -190,7 +190,8 @@ class DailyProfilerRenderer {
             if (!ctx) return;
 
             // Debug Log: Check if data exists and interval is sane
-            console.log('[DailyProfilerRenderer] Drawing. Sessions:', this._data.length, 'Interval:', this._barInterval);
+            //console.log('[DailyProfilerRenderer] Drawing. Sessions:', this._data.length, 'Interval:', this._barInterval);
+            //console.log('[DailyProfilerRenderer] Draw Options:', this._options);
 
             const timeScale = this._chart.timeScale();
             const visibleLogical = timeScale.getVisibleLogicalRange();

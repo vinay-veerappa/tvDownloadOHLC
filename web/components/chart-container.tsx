@@ -269,7 +269,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             // If less than 50 bars to the left and we have more data to load
             if (barsInfo && barsInfo.barsBefore !== null && barsInfo.barsBefore < 50) {
                 if (hasMoreData && !isLoadingMore) {
-                    console.log('[LOAD] Triggering loadMoreData, barsBefore:', barsInfo.barsBefore)
+                    //console.log('[LOAD] Triggering loadMoreData, barsBefore:', barsInfo.barsBefore)
                     lastLoadTimeRef.current = now
                     loadMoreData()
                 }
@@ -788,16 +788,23 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     useEffect(() => {
         if (!series || !chart || !ticker) return;
 
-        const isLowTimeframe = timeframe.endsWith('m') && parseInt(timeframe) < 30;
+        // Check for low timeframe (1-29 minutes)
+        // TradingView/Our app uses "1", "5", "15" for minutes. "1D" etc for days.
+        const isMinute = /^\d+$/.test(timeframe);
+        const minutes = isMinute ? parseInt(timeframe) : (timeframe.endsWith('m') ? parseInt(timeframe) : 9999);
+        const isLowTimeframe = minutes < 30;
         const isEnabled = indicators.includes('daily-profiler') && isLowTimeframe;
+        //console.log('[ChartContainer] Effect triggered. Timeframe:', timeframe, 'isLow?', isLowTimeframe, 'Indicators:', indicators, 'Enabled?', isEnabled);
 
         if (isEnabled) {
+            //console.log('[ChartContainer] DailyProfiler ENABLED. Importing...');
             import('@/lib/charts/indicators/daily-profiler').then(({ DailyProfiler }) => {
                 const dailyParams = indicatorParams?.['daily-profiler'] || {};
+                //console.log('[ChartContainer] DailyProfiler Module Loaded. Params:', dailyParams);
 
                 // Recreate if series/chart instance changed (e.g. timeframe change)
                 if (sessionRangesRef.current && (sessionRangesRef.current._series !== series || sessionRangesRef.current._chart !== chart)) {
-                    console.log('[ChartContainer] Series changed, recreating DailyProfiler');
+                    //console.log('[ChartContainer] Series changed, recreating DailyProfiler');
                     if (sessionRangesRef.current.destroy) sessionRangesRef.current.destroy();
                     sessionRangesRef.current = null;
                 }
@@ -810,6 +817,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         ticker
                     }, (newOpts) => onIndicatorParamsChange?.('daily-profiler', newOpts)); // Pass callback correctly
 
+                    //console.log('[ChartContainer] DailyProfiler Instantiated. Attaching primitive...');
                     series.attachPrimitive(sessionRangesRef.current);
 
                     // Initial Data Push
@@ -838,10 +846,10 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     // Data Sync Effect for Daily Profiler
     useEffect(() => {
         if (sessionRangesRef.current && data && data.length > 0) {
-            // console.log('[ChartContainer] Syncing data to DailyProfiler', data.length);
+            //console.log('[ChartContainer] Syncing data to DailyProfiler', data.length);
             sessionRangesRef.current.setData(data);
         } else if (!data || data.length === 0) {
-            // console.log('[ChartContainer] No data to sync to DailyProfiler');
+            //console.log('[ChartContainer] No data to sync to DailyProfiler');
         }
     }, [data]);
 
