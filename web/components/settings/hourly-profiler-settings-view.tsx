@@ -53,14 +53,14 @@ export function HourlyProfilerSettingsView({ initialOptions, onChange }: HourlyP
     }
 
     return (
-        <Tabs defaultValue="hourly" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
+        <Tabs defaultValue="hourly" className="w-full h-full flex flex-col min-h-0">
+            <TabsList className="grid w-full grid-cols-3 shrink-0">
                 <TabsTrigger value="hourly">Hourly</TabsTrigger>
                 <TabsTrigger value="3hour">3-Hour</TabsTrigger>
                 <TabsTrigger value="global">Global</TabsTrigger>
             </TabsList>
 
-            <div className="max-h-[70vh] overflow-y-auto pr-2">
+            <div className="flex-1 overflow-y-auto scrollbar-minimal px-6 py-1">
                 {/* --- HOURLY TAB --- */}
                 <TabsContent value="hourly" className="space-y-4 pt-4">
                     {/* Show Hourly */}

@@ -27,6 +27,7 @@ interface PropertiesModalProps {
     drawingType: string;
     initialOptions: any;
     onSave: (options: any) => void;
+    ticker?: string;
 }
 
 // Helper to convert Hex + Alpha (0-1) to RGBA string
@@ -59,8 +60,32 @@ const parseColor = (color: string) => {
     return { hex: '#000000', alpha: 1 };
 }
 
-export function PropertiesModal({ open, onOpenChange, drawingType, initialOptions, onSave }: PropertiesModalProps) {
-    const [options, setOptions] = useState(initialOptions || {});
+// Helper to get display title from drawing type
+const getTitle = (type: string) => {
+    const map: Record<string, string> = {
+        'hourly-profiler': 'Hourly Profiler',
+        'daily-profiler': 'Daily Profiler',
+        'fibonacci': 'Fib Retracement',
+        'risk-reward': 'Risk/Reward',
+        'range-extensions': 'Range Extensions',
+        'opening-range': 'Opening Range',
+        'anchored-text': 'Anchored Text',
+        'trend-line': 'Trend Line',
+        'horizontal-line': 'Horizontal Line',
+        'vertical-line': 'Vertical Line',
+        'cross-line': 'Cross Line',
+        'text': 'Text'
+    };
+    if (map[type]) return map[type];
+
+    // Fallback: kebab-case to Title Case
+    return type.split('-')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
+export function PropertiesModal({ open, onOpenChange, drawingType, initialOptions, onSave, ticker }: PropertiesModalProps) {
+    const [options, setOptions] = useState<any>(initialOptions || {});
     // Local state for color inputs to handle hex/alpha split
     const [lineColorState, setLineColorState] = useState({ hex: '#000000', alpha: 1 });
     const [fillColorState, setFillColorState] = useState({ hex: '#000000', alpha: 1 });
@@ -74,93 +99,89 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
     const [rangeExtensionsOptions, setRangeExtensionsOptions] = useState<RangeExtensionsOptions | null>(null);
     const [openingRangeOptions, setOpeningRangeOptions] = useState<OpeningRangeOptions | null>(null);
 
-    useEffect(() => {
-        const opts = initialOptions || {};
-        setOptions(opts);
-        if (drawingType === 'fibonacci') {
-            setFibOptions(opts as FibonacciOptions);
-        } else if (drawingType === 'risk-reward') {
-            setRiskRewardOptions(opts as RiskRewardOptions);
-        } else if (drawingType === 'daily-profiler') {
-            setDailyProfilerOptions(opts as DailyProfilerOptions);
-        } else if (drawingType === 'hourly-profiler') {
-            setHourlyProfilerOptions(opts as HourlyProfilerOptions);
-        } else if (drawingType === 'range-extensions') {
-            setRangeExtensionsOptions(opts as RangeExtensionsOptions);
-        } else if (drawingType === 'opening-range') {
-            setOpeningRangeOptions(opts as OpeningRangeOptions);
-        }
-
-        if (opts.lineColor) setLineColorState(parseColor(opts.lineColor));
-        else if (opts.color) setLineColorState(parseColor(opts.color));
-
-        if (opts.fillColor) setFillColorState(parseColor(opts.fillColor));
-
-        if (opts.textColor) setTextColorState(parseColor(opts.textColor));
-        // Fallback for TextLabel which might use 'color' if it's just a label tool, but usually it's 'textColor' in complex shapes
-    }, [initialOptions, open, drawingType]);
-
-    const handleSave = () => {
-        let finalOptions;
-
-        if (drawingType === 'fibonacci' && fibOptions) {
-            finalOptions = fibOptions;
-        } else if (drawingType === 'risk-reward' && riskRewardOptions) {
-            finalOptions = riskRewardOptions;
-        } else if (drawingType === 'daily-profiler' && dailyProfilerOptions) {
-            finalOptions = dailyProfilerOptions;
-        } else if (drawingType === 'hourly-profiler' && hourlyProfilerOptions) {
-            finalOptions = hourlyProfilerOptions;
-        } else if (drawingType === 'range-extensions' && rangeExtensionsOptions) {
-            finalOptions = rangeExtensionsOptions;
-        } else if (drawingType === 'opening-range' && openingRangeOptions) {
-            finalOptions = openingRangeOptions;
-        } else {
-            // Construct final options with RGBA colors for generic tools
-            finalOptions = {
-                ...options,
-                lineColor: hexToRgba(lineColorState.hex, lineColorState.alpha),
-                color: hexToRgba(lineColorState.hex, lineColorState.alpha), // Sync both for compatibility
-                fillColor: options.fillColor ? hexToRgba(fillColorState.hex, fillColorState.alpha) : undefined,
-                textColor: hexToRgba(textColorState.hex, textColorState.alpha)
-            };
-        }
-
-        onSave(finalOptions);
-        onOpenChange(false);
-    };
-
-    const handleChange = (key: string, value: any) => {
-        setOptions((prev: any) => ({ ...prev, [key]: value }));
-    };
-
     // Template management state
     const [templates, setTemplates] = useState<any[]>([]);
     const [selectedTemplate, setSelectedTemplate] = useState<string>("");
     const [newTemplateName, setNewTemplateName] = useState("");
     const [showSaveDialog, setShowSaveDialog] = useState(false);
 
-    // Load templates on mount
+    // Initialize state when initialOptions or drawingType changes
     useEffect(() => {
-        const loadedTemplates = TemplateManager.getTemplates(drawingType);
-        setTemplates(loadedTemplates);
-    }, [drawingType, open]);
+        setOptions(initialOptions || {});
+        setTemplates(TemplateManager.getTemplates(drawingType));
+        // Reset specific options
+        setFibOptions(null);
+        setRiskRewardOptions(null);
+        setDailyProfilerOptions(null);
+        setHourlyProfilerOptions(null);
+        setRangeExtensionsOptions(null);
+        setOpeningRangeOptions(null);
+
+        if (initialOptions) {
+            if (drawingType === 'fibonacci') setFibOptions(initialOptions as FibonacciOptions);
+            if (drawingType === 'risk-reward') setRiskRewardOptions(initialOptions as RiskRewardOptions);
+            if (drawingType === 'daily-profiler') setDailyProfilerOptions(initialOptions as DailyProfilerOptions);
+            if (drawingType === 'hourly-profiler') setHourlyProfilerOptions(initialOptions as HourlyProfilerOptions);
+            if (drawingType === 'range-extensions') setRangeExtensionsOptions(initialOptions as RangeExtensionsOptions);
+            if (drawingType === 'opening-range') setOpeningRangeOptions(initialOptions as OpeningRangeOptions);
+        }
+    }, [initialOptions, drawingType, open]);
+
+    // Sync color state
+    useEffect(() => {
+        const opts = initialOptions || {};
+        if (opts.lineColor) setLineColorState(parseColor(opts.lineColor));
+        else if (opts.color) setLineColorState(parseColor(opts.color));
+
+        if (opts.fillColor) setFillColorState(parseColor(opts.fillColor));
+
+        if (opts.textColor) setTextColorState(parseColor(opts.textColor));
+    }, [initialOptions, open, drawingType]);
+
+
+    const handleChange = (key: string, value: any) => {
+        setOptions((prev: any) => ({ ...prev, [key]: value }));
+    };
+
+    const handleSave = () => {
+        if (drawingType === 'fibonacci' && fibOptions) onSave(fibOptions);
+        else if (drawingType === 'risk-reward' && riskRewardOptions) onSave(riskRewardOptions);
+        else if (drawingType === 'daily-profiler' && dailyProfilerOptions) onSave(dailyProfilerOptions);
+        else if (drawingType === 'hourly-profiler' && hourlyProfilerOptions) onSave(hourlyProfilerOptions);
+        else if (drawingType === 'range-extensions' && rangeExtensionsOptions) onSave(rangeExtensionsOptions);
+        else if (drawingType === 'opening-range' && openingRangeOptions) onSave(openingRangeOptions);
+        else {
+            // Construct final options with RGBA colors for generic tools
+            const finalOptions = {
+                ...options,
+                lineColor: hexToRgba(lineColorState.hex, lineColorState.alpha),
+                color: hexToRgba(lineColorState.hex, lineColorState.alpha), // Sync both for compatibility
+                fillColor: options.fillColor ? hexToRgba(fillColorState.hex, fillColorState.alpha) : undefined,
+                textColor: hexToRgba(textColorState.hex, textColorState.alpha)
+            };
+            onSave(finalOptions);
+        }
+        onOpenChange(false);
+    };
 
     const handleLoadTemplate = (templateName: string) => {
         const template = TemplateManager.getTemplate(drawingType, templateName);
         if (template) {
-            const tOps = template.options;
-            setOptions(tOps);
-            if (drawingType === 'fibonacci') {
-                setFibOptions(tOps as FibonacciOptions);
-            }
-            if (drawingType === 'risk-reward') {
-                setRiskRewardOptions(tOps as RiskRewardOptions);
-            }
-            if (tOps.lineColor) setLineColorState(parseColor(tOps.lineColor));
-            if (tOps.fillColor) setFillColorState(parseColor(tOps.fillColor));
-            if (tOps.textColor) setTextColorState(parseColor(tOps.textColor));
             setSelectedTemplate(templateName);
+            setOptions(template.options);
+            if (drawingType === 'fibonacci') setFibOptions(template.options as FibonacciOptions);
+            if (drawingType === 'risk-reward') setRiskRewardOptions(template.options as RiskRewardOptions);
+            if (drawingType === 'daily-profiler') setDailyProfilerOptions(template.options as DailyProfilerOptions);
+            if (drawingType === 'hourly-profiler') setHourlyProfilerOptions(template.options as HourlyProfilerOptions);
+            if (drawingType === 'range-extensions') setRangeExtensionsOptions(template.options as RangeExtensionsOptions);
+            if (drawingType === 'opening-range') setOpeningRangeOptions(template.options as OpeningRangeOptions);
+
+            // Sync colors from template
+            if (template.options.lineColor) setLineColorState(parseColor(template.options.lineColor));
+            else if (template.options.color) setLineColorState(parseColor(template.options.color));
+            if (template.options.fillColor) setFillColorState(parseColor(template.options.fillColor));
+            if (template.options.textColor) setTextColorState(parseColor(template.options.textColor));
+
             toast.success(`Template "${templateName}" loaded`);
         }
     };
@@ -170,19 +191,25 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
             toast.error("Please enter a template name");
             return;
         }
-        let currentOptions;
-        if (drawingType === 'fibonacci' && fibOptions) {
-            currentOptions = fibOptions;
-        } else if (drawingType === 'risk-reward' && riskRewardOptions) {
-            currentOptions = riskRewardOptions;
-        } else {
+
+        let currentOptions = options;
+        if (drawingType === 'fibonacci' && fibOptions) currentOptions = fibOptions;
+        else if (drawingType === 'risk-reward' && riskRewardOptions) currentOptions = riskRewardOptions;
+        else if (drawingType === 'daily-profiler' && dailyProfilerOptions) currentOptions = dailyProfilerOptions;
+        else if (drawingType === 'hourly-profiler' && hourlyProfilerOptions) currentOptions = hourlyProfilerOptions;
+        else if (drawingType === 'range-extensions' && rangeExtensionsOptions) currentOptions = rangeExtensionsOptions;
+        else if (drawingType === 'opening-range' && openingRangeOptions) currentOptions = openingRangeOptions;
+        else {
             currentOptions = {
                 ...options,
                 lineColor: hexToRgba(lineColorState.hex, lineColorState.alpha),
+                color: hexToRgba(lineColorState.hex, lineColorState.alpha),
                 fillColor: options.fillColor ? hexToRgba(fillColorState.hex, fillColorState.alpha) : undefined,
                 textColor: hexToRgba(textColorState.hex, textColorState.alpha)
             };
         }
+
+        // Fix argument order: Name, Type, Options
         TemplateManager.saveTemplate(newTemplateName, drawingType, currentOptions);
         toast.success(`Template "${newTemplateName}" saved`);
         setTemplates(TemplateManager.getTemplates(drawingType));
@@ -191,19 +218,23 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
     };
 
     const handleSetDefault = () => {
-        let currentOptions;
-        if (drawingType === 'fibonacci' && fibOptions) {
-            currentOptions = fibOptions;
-        } else if (drawingType === 'risk-reward' && riskRewardOptions) {
-            currentOptions = riskRewardOptions;
-        } else {
+        let currentOptions = options;
+        if (drawingType === 'fibonacci' && fibOptions) currentOptions = fibOptions;
+        else if (drawingType === 'risk-reward' && riskRewardOptions) currentOptions = riskRewardOptions;
+        else if (drawingType === 'daily-profiler' && dailyProfilerOptions) currentOptions = dailyProfilerOptions;
+        else if (drawingType === 'hourly-profiler' && hourlyProfilerOptions) currentOptions = hourlyProfilerOptions;
+        else if (drawingType === 'range-extensions' && rangeExtensionsOptions) currentOptions = rangeExtensionsOptions;
+        else if (drawingType === 'opening-range' && openingRangeOptions) currentOptions = openingRangeOptions;
+        else {
             currentOptions = {
                 ...options,
                 lineColor: hexToRgba(lineColorState.hex, lineColorState.alpha),
+                color: hexToRgba(lineColorState.hex, lineColorState.alpha),
                 fillColor: options.fillColor ? hexToRgba(fillColorState.hex, fillColorState.alpha) : undefined,
                 textColor: hexToRgba(textColorState.hex, textColorState.alpha)
             };
         }
+
         TemplateManager.saveDefault(drawingType, currentOptions);
         toast.success("Saved as default");
     };
@@ -217,493 +248,504 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[500px]">
-                <DialogHeader>
-                    <DialogTitle>{drawingType === 'fibonacci' ? 'Fib Retracement' : `${drawingType} Properties`}</DialogTitle>
+            <DialogContent className="sm:max-w-[500px] max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
+                <DialogHeader className="p-6 pb-2 border-b flex-none">
+                    <DialogTitle>{getTitle(drawingType)} Properties</DialogTitle>
                     <DialogDescription>
                         Modify the properties of the selected {drawingType.toLowerCase()}.
                     </DialogDescription>
                 </DialogHeader>
 
-                {drawingType === 'fibonacci' && fibOptions ? (
-                    <FibonacciSettingsView options={fibOptions} onChange={setFibOptions} />
-                ) : drawingType === 'risk-reward' && riskRewardOptions ? (
-                    <RiskRewardSettingsView options={riskRewardOptions} onChange={(updates) => setRiskRewardOptions(prev => prev ? ({ ...prev, ...updates } as RiskRewardOptions) : null)} />
-                ) : drawingType === 'daily-profiler' && dailyProfilerOptions ? (
-                    <DailyProfilerSettingsView initialOptions={dailyProfilerOptions} onChange={(updates) => setDailyProfilerOptions(prev => prev ? ({ ...prev, ...updates } as DailyProfilerOptions) : null)} />
-                ) : drawingType === 'hourly-profiler' && hourlyProfilerOptions ? (
-                    <HourlyProfilerSettingsView initialOptions={hourlyProfilerOptions} onChange={(updates) => setHourlyProfilerOptions(prev => prev ? ({ ...prev, ...updates } as HourlyProfilerOptions) : null)} />
-                ) : drawingType === 'range-extensions' && rangeExtensionsOptions ? (
-                    <RangeExtensionsSettingsView initialOptions={rangeExtensionsOptions} onChange={(updates) => setRangeExtensionsOptions(prev => prev ? ({ ...prev, ...updates } as RangeExtensionsOptions) : null)} />
-                ) : drawingType === 'opening-range' && openingRangeOptions ? (
-                    <OpeningRangeSettingsView initialOptions={openingRangeOptions} onChange={(updates) => setOpeningRangeOptions(prev => prev ? ({ ...prev, ...updates } as OpeningRangeOptions) : null)} />
-                ) : (
-                    <Tabs defaultValue="style" className="w-full">
-                        <TabsList className="grid w-full grid-cols-3">
-                            <TabsTrigger value="style">Style</TabsTrigger>
-                            <TabsTrigger value="text">Text</TabsTrigger>
-                            <TabsTrigger value="coords">Coordinates</TabsTrigger>
-                        </TabsList>
+                <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
 
-                        {/* STYLE TAB */}
-                        <TabsContent value="style" className="space-y-6 py-4">
-                            <div className="space-y-4">
-                                <Label>Line Style</Label>
-                                <div className="grid grid-cols-4 items-center gap-4">
-                                    <Label className="text-right text-xs">Style</Label>
-                                    <Select
-                                        value={options.lineStyle?.toString() || "0"}
-                                        onValueChange={(val) => handleChange('lineStyle', parseInt(val))}
-                                    >
-                                        <SelectTrigger className="col-span-3 h-8" aria-label="Line Style">
-                                            <SelectValue placeholder="Select style" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="0">Solid</SelectItem>
-                                            <SelectItem value="1">Dotted</SelectItem>
-                                            <SelectItem value="2">Dashed</SelectItem>
-                                            <SelectItem value="3">Large Dashed</SelectItem>
-                                            <SelectItem value="4">Sparse Dotted</SelectItem>
-                                        </SelectContent>
-                                    </Select>
+                    {drawingType === 'fibonacci' && fibOptions ? (
+                        <FibonacciSettingsView options={fibOptions} onChange={setFibOptions} />
+                    ) : drawingType === 'risk-reward' && riskRewardOptions ? (
+                        <RiskRewardSettingsView options={riskRewardOptions} onChange={(updates) => setRiskRewardOptions(prev => prev ? ({ ...prev, ...updates } as RiskRewardOptions) : null)} />
+                    ) : drawingType === 'daily-profiler' && dailyProfilerOptions ? (
+                        <DailyProfilerSettingsView initialOptions={dailyProfilerOptions} onChange={(updates) => setDailyProfilerOptions(prev => prev ? ({ ...prev, ...updates } as DailyProfilerOptions) : null)} />
+                    ) : drawingType === 'hourly-profiler' && hourlyProfilerOptions ? (
+                        <HourlyProfilerSettingsView initialOptions={hourlyProfilerOptions} onChange={(updates) => setHourlyProfilerOptions(prev => prev ? ({ ...prev, ...updates } as HourlyProfilerOptions) : null)} />
+                    ) : drawingType === 'range-extensions' && rangeExtensionsOptions ? (
+                        <RangeExtensionsSettingsView initialOptions={rangeExtensionsOptions} onChange={(updates) => setRangeExtensionsOptions(prev => prev ? ({ ...prev, ...updates } as RangeExtensionsOptions) : null)} />
+                    ) : drawingType === 'opening-range' && openingRangeOptions ? (
+                        <OpeningRangeSettingsView initialOptions={openingRangeOptions} onChange={(updates) => setOpeningRangeOptions(prev => prev ? ({ ...prev, ...updates } as OpeningRangeOptions) : null)} ticker={ticker} />
+                    ) : (
+                        <Tabs defaultValue="style" className="w-full flex-1 flex flex-col min-h-0">
+                            <TabsList className="grid w-full grid-cols-3 shrink-0">
+                                <TabsTrigger value="style">Style</TabsTrigger>
+                                <TabsTrigger value="text">Text</TabsTrigger>
+                                <TabsTrigger value="coords">Coordinates</TabsTrigger>
+                            </TabsList>
 
-                                    <Label htmlFor="lineColor" className="text-right text-xs">Color</Label>
-                                    <div className="col-span-3 flex items-center gap-2">
-                                        <Input
-                                            id="lineColor"
-                                            type="color"
-                                            value={lineColorState.hex}
-                                            onChange={(e) => setLineColorState(p => ({ ...p, hex: e.target.value }))}
-                                            className="w-12 h-8 p-1"
-                                        />
-                                        <div className="flex-1 flex items-center gap-2">
-                                            <span className="text-xs text-muted-foreground">Opacity</span>
-                                            <input
-                                                type="range"
-                                                min="0"
-                                                max="1"
-                                                step="0.1"
-                                                value={lineColorState.alpha}
-                                                onChange={(e) => setLineColorState(p => ({ ...p, alpha: parseFloat(e.target.value) }))}
-                                                title="Opacity"
-                                                aria-label="Line Opacity"
-                                                className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
+                            <div className="flex-1 overflow-y-auto scrollbar-minimal p-1 pr-2">
+
+                                {/* STYLE TAB */}
+                                <TabsContent value="style" className="space-y-6 py-4 px-6">
+                                    <div className="space-y-4">
+                                        <Label>Line Style</Label>
+                                        <div className="grid grid-cols-4 items-center gap-4">
+                                            <Label className="text-right text-xs">Style</Label>
+                                            <Select
+                                                value={options.lineStyle?.toString() || "0"}
+                                                onValueChange={(val) => handleChange('lineStyle', parseInt(val))}
+                                            >
+                                                <SelectTrigger className="col-span-3 h-8" aria-label="Line Style">
+                                                    <SelectValue placeholder="Select style" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="0">Solid</SelectItem>
+                                                    <SelectItem value="1">Dotted</SelectItem>
+                                                    <SelectItem value="2">Dashed</SelectItem>
+                                                    <SelectItem value="3">Large Dashed</SelectItem>
+                                                    <SelectItem value="4">Sparse Dotted</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+
+                                            <Label htmlFor="lineColor" className="text-right text-xs">Color</Label>
+                                            <div className="col-span-3 flex items-center gap-2">
+                                                <Input
+                                                    id="lineColor"
+                                                    type="color"
+                                                    value={lineColorState.hex}
+                                                    onChange={(e) => setLineColorState(p => ({ ...p, hex: e.target.value }))}
+                                                    className="w-12 h-8 p-1"
+                                                />
+                                                <div className="flex-1 flex items-center gap-2">
+                                                    <span className="text-xs text-muted-foreground">Opacity</span>
+                                                    <input
+                                                        type="range"
+                                                        min="0"
+                                                        max="1"
+                                                        step="0.1"
+                                                        value={lineColorState.alpha}
+                                                        onChange={(e) => setLineColorState(p => ({ ...p, alpha: parseFloat(e.target.value) }))}
+                                                        title="Opacity"
+                                                        aria-label="Line Opacity"
+                                                        className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
+                                                    />
+                                                    <span className="text-xs w-8 text-right">{Math.round(lineColorState.alpha * 100)}%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-4 items-center gap-4">
+                                            <Label htmlFor="lineWidth" className="text-right text-xs">Width</Label>
+                                            <Input
+                                                id="lineWidth"
+                                                type="number"
+                                                min="1"
+                                                max="10"
+                                                value={options.lineWidth || options.width || 1}
+                                                onChange={(e) => {
+                                                    const val = parseInt(e.target.value);
+                                                    handleChange('lineWidth', val);
+                                                    handleChange('width', val);
+                                                }}
+                                                className="col-span-3"
                                             />
-                                            <span className="text-xs w-8 text-right">{Math.round(lineColorState.alpha * 100)}%</span>
                                         </div>
                                     </div>
-                                </div>
 
-                                <div className="grid grid-cols-4 items-center gap-4">
-                                    <Label htmlFor="lineWidth" className="text-right text-xs">Width</Label>
-                                    <Input
-                                        id="lineWidth"
-                                        type="number"
-                                        min="1"
-                                        max="10"
-                                        value={options.lineWidth || options.width || 1}
-                                        onChange={(e) => {
-                                            const val = parseInt(e.target.value);
-                                            handleChange('lineWidth', val);
-                                            handleChange('width', val);
-                                        }}
-                                        className="col-span-3"
-                                    />
-                                </div>
-                            </div>
+                                    {(options.fillColor !== undefined) && (
+                                        <div className="space-y-4 pt-4 border-t">
+                                            <Label>Fill & Border</Label>
+                                            <div className="grid grid-cols-4 items-center gap-4">
+                                                <Label htmlFor="fillColor" className="text-right text-xs">Fill</Label>
+                                                <div className="col-span-3 flex items-center gap-2">
+                                                    <Input
+                                                        id="fillColor"
+                                                        type="color"
+                                                        value={fillColorState.hex}
+                                                        onChange={(e) => setFillColorState(p => ({ ...p, hex: e.target.value }))}
+                                                        className="w-12 h-8 p-1"
+                                                    />
+                                                    <div className="flex-1 flex items-center gap-2">
+                                                        <span className="text-xs text-muted-foreground">Opacity</span>
+                                                        <input
+                                                            type="range"
+                                                            min="0"
+                                                            max="1"
+                                                            step="0.1"
+                                                            value={fillColorState.alpha}
+                                                            onChange={(e) => setFillColorState(p => ({ ...p, alpha: parseFloat(e.target.value) }))}
+                                                            title="Fill Opacity"
+                                                            aria-label="Fill Opacity"
+                                                            className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
+                                                        />
+                                                        <span className="text-xs w-8 text-right">{Math.round(fillColorState.alpha * 100)}%</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            {drawingType === 'rectangle' && (
+                                                <>
+                                                    <div className="grid grid-cols-4 items-center gap-4">
+                                                        <Label htmlFor="borderColor" className="text-right text-xs">Border</Label>
+                                                        <div className="col-span-3 flex items-center gap-2">
+                                                            <Input
+                                                                id="borderColor"
+                                                                type="color"
+                                                                value={options.borderColor || '#2962FF'}
+                                                                onChange={(e) => handleChange('borderColor', e.target.value)}
+                                                                className="w-12 h-8 p-1"
+                                                                title="Border Color"
+                                                                aria-label="Border Color"
+                                                            />
+                                                            <Input
+                                                                type="number"
+                                                                min="0"
+                                                                max="10"
+                                                                value={options.borderWidth || 0}
+                                                                onChange={(e) => handleChange('borderWidth', parseInt(e.target.value))}
+                                                                className="w-20"
+                                                                placeholder="Width"
+                                                                title="Border Width"
+                                                                aria-label="Border Width"
+                                                            />
+                                                        </div>
+                                                    </div>
 
-                            {(options.fillColor !== undefined) && (
-                                <div className="space-y-4 pt-4 border-t">
-                                    <Label>Fill & Border</Label>
-                                    <div className="grid grid-cols-4 items-center gap-4">
-                                        <Label htmlFor="fillColor" className="text-right text-xs">Fill</Label>
-                                        <div className="col-span-3 flex items-center gap-2">
-                                            <Input
-                                                id="fillColor"
-                                                type="color"
-                                                value={fillColorState.hex}
-                                                onChange={(e) => setFillColorState(p => ({ ...p, hex: e.target.value }))}
-                                                className="w-12 h-8 p-1"
+                                                    <div className="grid grid-cols-4 gap-4">
+                                                        <Label className="text-right text-xs pt-2">Extend</Label>
+                                                        <div className="col-span-3 flex gap-4">
+                                                            <div className="flex items-center space-x-2">
+                                                                <input type="checkbox" id="extLeft" checked={options.extendLeft} onChange={(e) => handleChange('extendLeft', e.target.checked)} title="Extend Left" aria-label="Extend Left" />
+                                                                <Label htmlFor="extLeft" className="text-xs">Left</Label>
+                                                            </div>
+                                                            <div className="flex items-center space-x-2">
+                                                                <input type="checkbox" id="extRight" checked={options.extendRight} onChange={(e) => handleChange('extendRight', e.target.checked)} title="Extend Right" aria-label="Extend Right" />
+                                                                <Label htmlFor="extRight" className="text-xs">Right</Label>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="grid grid-cols-4 gap-4 pt-2 border-t">
+                                                        <Label className="text-right text-xs pt-2">Internal</Label>
+                                                        <div className="col-span-3 space-y-2">
+                                                            <div className="flex items-center gap-2">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={options.midline?.visible}
+                                                                    onChange={(e) => handleChange('midline', { ...options.midline, visible: e.target.checked })}
+                                                                    title="Midline Visibility"
+                                                                    aria-label="Midline Visibility"
+                                                                />
+                                                                <span className="text-xs w-16">Midline</span>
+                                                                <Input type="color" title="Midline Color" aria-label="Midline Color" value={options.midline?.color || '#2962FF'} onChange={(e) => handleChange('midline', { ...options.midline, color: e.target.value })} className="w-8 h-6 p-0" />
+                                                                <select
+                                                                    className="h-6 text-xs border rounded"
+                                                                    value={options.midline?.width || 1}
+                                                                    onChange={(e) => handleChange('midline', { ...options.midline, width: parseInt(e.target.value) })}
+                                                                    title="Midline Width"
+                                                                    aria-label="Midline Width"
+                                                                >
+                                                                    {[1, 2, 3, 4].map(w => <option key={w} value={w}>{w}px</option>)}
+                                                                </select>
+                                                            </div>
+                                                            <div className="flex items-center gap-2">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={options.quarterLines?.visible}
+                                                                    onChange={(e) => handleChange('quarterLines', { ...options.quarterLines, visible: e.target.checked })}
+                                                                    title="Quarters Visibility"
+                                                                    aria-label="Quarters Visibility"
+                                                                />
+                                                                <span className="text-xs w-16">Quarters</span>
+                                                                <Input type="color" title="Quarters Color" aria-label="Quarters Color" value={options.quarterLines?.color || '#2962FF'} onChange={(e) => handleChange('quarterLines', { ...options.quarterLines, color: e.target.value })} className="w-8 h-6 p-0" />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
+                                </TabsContent>
+
+                                {/* TEXT TAB */}
+                                <TabsContent value="text" className="space-y-6 py-4 px-6">
+                                    <div className="flex items-center space-x-2">
+                                        <input
+                                            type="checkbox"
+                                            id="showText"
+                                            checked={(options.showLabels !== undefined ? options.showLabels : options.showLabel) !== false && options.visible !== false}
+                                            onChange={(e) => {
+                                                handleChange('showLabels', e.target.checked);
+                                                handleChange('showLabel', e.target.checked);
+                                                handleChange('visible', e.target.checked);
+                                            }}
+                                            className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                            title="Show Text"
+                                            aria-label="Show Text"
+                                        />
+                                        <Label htmlFor="showText">Show Text</Label>
+                                    </div>
+
+                                    <div className="space-y-4 pt-4 border-t">
+                                        <div className="flex items-center space-x-2">
+                                            <input
+                                                type="checkbox"
+                                                id="showBorder"
+                                                checked={options.borderVisible === true}
+                                                onChange={(e) => handleChange('borderVisible', e.target.checked)}
+                                                className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                                title="Show Border"
+                                                aria-label="Show Border"
                                             />
-                                            <div className="flex-1 flex items-center gap-2">
-                                                <span className="text-xs text-muted-foreground">Opacity</span>
+                                            <Label htmlFor="showBorder">Show Border</Label>
+                                        </div>
+
+                                        {options.borderVisible && (
+                                            <div className="grid grid-cols-2 gap-4 pl-6">
+                                                <div className="space-y-2">
+                                                    <Label className="text-xs">Border Color</Label>
+                                                    <div className="flex items-center gap-2">
+                                                        <Input
+                                                            type="color"
+                                                            value={options.borderColor || '#FFFFFF'}
+                                                            onChange={(e) => handleChange('borderColor', e.target.value)}
+                                                            className="w-full h-8 p-1"
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <Label className="text-xs">Border Width</Label>
+                                                    <Input
+                                                        type="number"
+                                                        min="1"
+                                                        max="10"
+                                                        value={options.borderWidth || 1}
+                                                        onChange={(e) => handleChange('borderWidth', parseInt(e.target.value))}
+                                                        className="h-8"
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <textarea
+                                            value={options.text || ''}
+                                            onChange={(e) => handleChange('text', e.target.value)}
+                                            placeholder="Enter text..."
+                                            className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                        />
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        {/* Color & Opacity */}
+                                        <div className="space-y-2">
+                                            <Label className="text-xs">Color</Label>
+                                            <div className="flex items-center gap-2">
+                                                <Input
+                                                    type="color"
+                                                    value={textColorState.hex}
+                                                    onChange={(e) => setTextColorState(p => ({ ...p, hex: e.target.value }))}
+                                                    className="w-10 h-8 p-1"
+                                                />
                                                 <input
                                                     type="range"
                                                     min="0"
                                                     max="1"
                                                     step="0.1"
-                                                    value={fillColorState.alpha}
-                                                    onChange={(e) => setFillColorState(p => ({ ...p, alpha: parseFloat(e.target.value) }))}
-                                                    title="Fill Opacity"
-                                                    aria-label="Fill Opacity"
-                                                    className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
-                                                />
-                                                <span className="text-xs w-8 text-right">{Math.round(fillColorState.alpha * 100)}%</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    {drawingType === 'rectangle' && (
-                                        <>
-                                            <div className="grid grid-cols-4 items-center gap-4">
-                                                <Label htmlFor="borderColor" className="text-right text-xs">Border</Label>
-                                                <div className="col-span-3 flex items-center gap-2">
-                                                    <Input
-                                                        id="borderColor"
-                                                        type="color"
-                                                        value={options.borderColor || '#2962FF'}
-                                                        onChange={(e) => handleChange('borderColor', e.target.value)}
-                                                        className="w-12 h-8 p-1"
-                                                        title="Border Color"
-                                                        aria-label="Border Color"
-                                                    />
-                                                    <Input
-                                                        type="number"
-                                                        min="0"
-                                                        max="10"
-                                                        value={options.borderWidth || 0}
-                                                        onChange={(e) => handleChange('borderWidth', parseInt(e.target.value))}
-                                                        className="w-20"
-                                                        placeholder="Width"
-                                                        title="Border Width"
-                                                        aria-label="Border Width"
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            <div className="grid grid-cols-4 gap-4">
-                                                <Label className="text-right text-xs pt-2">Extend</Label>
-                                                <div className="col-span-3 flex gap-4">
-                                                    <div className="flex items-center space-x-2">
-                                                        <input type="checkbox" id="extLeft" checked={options.extendLeft} onChange={(e) => handleChange('extendLeft', e.target.checked)} title="Extend Left" aria-label="Extend Left" />
-                                                        <Label htmlFor="extLeft" className="text-xs">Left</Label>
-                                                    </div>
-                                                    <div className="flex items-center space-x-2">
-                                                        <input type="checkbox" id="extRight" checked={options.extendRight} onChange={(e) => handleChange('extendRight', e.target.checked)} title="Extend Right" aria-label="Extend Right" />
-                                                        <Label htmlFor="extRight" className="text-xs">Right</Label>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div className="grid grid-cols-4 gap-4 pt-2 border-t">
-                                                <Label className="text-right text-xs pt-2">Internal</Label>
-                                                <div className="col-span-3 space-y-2">
-                                                    <div className="flex items-center gap-2">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={options.midline?.visible}
-                                                            onChange={(e) => handleChange('midline', { ...options.midline, visible: e.target.checked })}
-                                                            title="Midline Visibility"
-                                                            aria-label="Midline Visibility"
-                                                        />
-                                                        <span className="text-xs w-16">Midline</span>
-                                                        <Input type="color" title="Midline Color" aria-label="Midline Color" value={options.midline?.color || '#2962FF'} onChange={(e) => handleChange('midline', { ...options.midline, color: e.target.value })} className="w-8 h-6 p-0" />
-                                                        <select
-                                                            className="h-6 text-xs border rounded"
-                                                            value={options.midline?.width || 1}
-                                                            onChange={(e) => handleChange('midline', { ...options.midline, width: parseInt(e.target.value) })}
-                                                            title="Midline Width"
-                                                            aria-label="Midline Width"
-                                                        >
-                                                            {[1, 2, 3, 4].map(w => <option key={w} value={w}>{w}px</option>)}
-                                                        </select>
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={options.quarterLines?.visible}
-                                                            onChange={(e) => handleChange('quarterLines', { ...options.quarterLines, visible: e.target.checked })}
-                                                            title="Quarters Visibility"
-                                                            aria-label="Quarters Visibility"
-                                                        />
-                                                        <span className="text-xs w-16">Quarters</span>
-                                                        <Input type="color" title="Quarters Color" aria-label="Quarters Color" value={options.quarterLines?.color || '#2962FF'} onChange={(e) => handleChange('quarterLines', { ...options.quarterLines, color: e.target.value })} className="w-8 h-6 p-0" />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </>
-                                    )}
-                                </div>
-                            )}
-                        </TabsContent>
-
-                        {/* TEXT TAB */}
-                        <TabsContent value="text" className="space-y-6 py-4">
-                            <div className="flex items-center space-x-2">
-                                <input
-                                    type="checkbox"
-                                    id="showText"
-                                    checked={(options.showLabels !== undefined ? options.showLabels : options.showLabel) !== false && options.visible !== false}
-                                    onChange={(e) => {
-                                        handleChange('showLabels', e.target.checked);
-                                        handleChange('showLabel', e.target.checked);
-                                        handleChange('visible', e.target.checked);
-                                    }}
-                                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                                    title="Show Text"
-                                    aria-label="Show Text"
-                                />
-                                <Label htmlFor="showText">Show Text</Label>
-                            </div>
-
-                            <div className="space-y-4 pt-4 border-t">
-                                <div className="flex items-center space-x-2">
-                                    <input
-                                        type="checkbox"
-                                        id="showBorder"
-                                        checked={options.borderVisible === true}
-                                        onChange={(e) => handleChange('borderVisible', e.target.checked)}
-                                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                                    />
-                                    <Label htmlFor="showBorder">Show Border</Label>
-                                </div>
-
-                                {options.borderVisible && (
-                                    <div className="grid grid-cols-2 gap-4 pl-6">
-                                        <div className="space-y-2">
-                                            <Label className="text-xs">Border Color</Label>
-                                            <div className="flex items-center gap-2">
-                                                <Input
-                                                    type="color"
-                                                    value={options.borderColor || '#FFFFFF'}
-                                                    onChange={(e) => handleChange('borderColor', e.target.value)}
-                                                    className="w-full h-8 p-1"
+                                                    value={textColorState.alpha}
+                                                    onChange={(e) => setTextColorState(p => ({ ...p, alpha: parseFloat(e.target.value) }))}
+                                                    title="Text Opacity"
+                                                    aria-label="Text Opacity"
+                                                    className="flex-1 h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
                                                 />
                                             </div>
                                         </div>
+
+                                        {/* Font Size */}
                                         <div className="space-y-2">
-                                            <Label className="text-xs">Border Width</Label>
-                                            <Input
-                                                type="number"
-                                                min="1"
-                                                max="10"
-                                                value={options.borderWidth || 1}
-                                                onChange={(e) => handleChange('borderWidth', parseInt(e.target.value))}
-                                                className="h-8"
-                                            />
+                                            <Label className="text-xs">Size</Label>
+                                            <Select
+                                                value={(options.fontSize || 12).toString()}
+                                                onValueChange={(val) => handleChange('fontSize', parseInt(val))}
+                                            >
+                                                <SelectTrigger className="h-8">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {[10, 12, 14, 16, 20, 24, 28, 32, 40].map(s => (
+                                                        <SelectItem key={s} value={s.toString()}>{s}px</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
                                         </div>
                                     </div>
-                                )}
-                            </div>
 
-                            <div className="space-y-2">
-                                <textarea
-                                    value={options.text || ''}
-                                    onChange={(e) => handleChange('text', e.target.value)}
-                                    placeholder="Enter text..."
-                                    className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                                />
-                            </div>
+                                    <div className="flex justify-between items-center bg-secondary/20 p-2 rounded-md">
+                                        {/* Formatting */}
+                                        <div className="flex gap-1">
+                                            <Button
+                                                variant={options.bold ? "secondary" : "ghost"}
+                                                size="icon"
+                                                className="h-8 w-8"
+                                                onClick={() => handleChange('bold', !options.bold)}
+                                            >
+                                                <Bold className="h-4 w-4" />
+                                            </Button>
+                                            <Button
+                                                variant={options.italic ? "secondary" : "ghost"}
+                                                size="icon"
+                                                className="h-8 w-8"
+                                                onClick={() => handleChange('italic', !options.italic)}
+                                            >
+                                                <Italic className="h-4 w-4" />
+                                            </Button>
+                                        </div>
 
+                                        {/* Orientation (for lines) */}
+                                        {(drawingType === 'trend-line' || drawingType === 'vertical-line') && (
+                                            <div className="flex gap-1 border-l pl-2 ml-2">
+                                                <Button
+                                                    variant={options.orientation !== 'along-line' ? "secondary" : "ghost"}
+                                                    size="sm"
+                                                    className="h-8 text-xs"
+                                                    onClick={() => handleChange('orientation', 'horizontal')}
+                                                    title="Horizontal Text"
+                                                >
+                                                    Horiz
+                                                </Button>
+                                                <Button
+                                                    variant={options.orientation === 'along-line' ? "secondary" : "ghost"}
+                                                    size="sm"
+                                                    className="h-8 text-xs"
+                                                    onClick={() => handleChange('orientation', 'along-line')}
+                                                    title="Along Line"
+                                                >
+                                                    Along
+                                                </Button>
+                                            </div>
+                                        )}
+
+                                        {/* Alignment */}
+                                        <div className="flex gap-1 border-l pl-2 ml-2">
+                                            {/* Vertical */}
+                                            <Button variant={options.alignment?.vertical === 'top' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, vertical: 'top' })} title="Top">
+                                                <ArrowUpToLine className="h-4 w-4" />
+                                            </Button>
+                                            <Button variant={options.alignment?.vertical === 'middle' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, vertical: 'middle' })} title="Middle">
+                                                <AlignVerticalJustifyCenter className="h-4 w-4" />
+                                            </Button>
+                                            <Button variant={options.alignment?.vertical === 'bottom' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, vertical: 'bottom' })} title="Bottom">
+                                                <ArrowDownToLine className="h-4 w-4" />
+                                            </Button>
+                                        </div>
+                                        <div className="flex gap-1 border-l pl-2 ml-2">
+                                            {/* Horizontal */}
+                                            <Button variant={options.alignment?.horizontal === 'left' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, horizontal: 'left' })} title="Left">
+                                                <AlignLeft className="h-4 w-4" />
+                                            </Button>
+                                            <Button variant={options.alignment?.horizontal === 'center' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, horizontal: 'center' })} title="Center">
+                                                <AlignCenter className="h-4 w-4" />
+                                            </Button>
+                                            <Button variant={options.alignment?.horizontal === 'right' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, horizontal: 'right' })} title="Right">
+                                                <AlignRight className="h-4 w-4" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </TabsContent>
+
+                                <TabsContent value="coords">
+                                    <div className="py-4 text-center text-sm text-muted-foreground">
+                                        Coordinates editing coming soon.
+                                    </div>
+                                </TabsContent>
+                            </div>
+                        </Tabs>
+                    )}
+
+                    {drawingType === 'anchored-text' && (
+                        <div className="border-t pt-4 mt-4">
+                            <Label className="mb-2 block">Position Offsets</Label>
                             <div className="grid grid-cols-2 gap-4">
-                                {/* Color & Opacity */}
-                                <div className="space-y-2">
-                                    <Label className="text-xs">Color</Label>
-                                    <div className="flex items-center gap-2">
-                                        <Input
-                                            type="color"
-                                            value={textColorState.hex}
-                                            onChange={(e) => setTextColorState(p => ({ ...p, hex: e.target.value }))}
-                                            className="w-10 h-8 p-1"
-                                        />
-                                        <input
-                                            type="range"
-                                            min="0"
-                                            max="1"
-                                            step="0.1"
-                                            value={textColorState.alpha}
-                                            onChange={(e) => setTextColorState(p => ({ ...p, alpha: parseFloat(e.target.value) }))}
-                                            title="Text Opacity"
-                                            aria-label="Text Opacity"
-                                            className="flex-1 h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
-                                        />
-                                    </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Top</Label>
+                                    <Input type="number" value={options.topOffset || 0} onChange={(e) => handleChange('topOffset', parseInt(e.target.value))} />
                                 </div>
-
-                                {/* Font Size */}
-                                <div className="space-y-2">
-                                    <Label className="text-xs">Size</Label>
-                                    <Select
-                                        value={(options.fontSize || 12).toString()}
-                                        onValueChange={(val) => handleChange('fontSize', parseInt(val))}
-                                    >
-                                        <SelectTrigger className="h-8">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {[10, 12, 14, 16, 20, 24, 28, 32, 40].map(s => (
-                                                <SelectItem key={s} value={s.toString()}>{s}px</SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Bottom</Label>
+                                    <Input type="number" value={options.bottomOffset || 0} onChange={(e) => handleChange('bottomOffset', parseInt(e.target.value))} />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Left</Label>
+                                    <Input type="number" value={options.leftOffset || 0} onChange={(e) => handleChange('leftOffset', parseInt(e.target.value))} />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Right</Label>
+                                    <Input type="number" value={options.rightOffset || 0} onChange={(e) => handleChange('rightOffset', parseInt(e.target.value))} />
                                 </div>
                             </div>
-
-                            <div className="flex justify-between items-center bg-secondary/20 p-2 rounded-md">
-                                {/* Formatting */}
-                                <div className="flex gap-1">
-                                    <Button
-                                        variant={options.bold ? "secondary" : "ghost"}
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        onClick={() => handleChange('bold', !options.bold)}
-                                    >
-                                        <Bold className="h-4 w-4" />
-                                    </Button>
-                                    <Button
-                                        variant={options.italic ? "secondary" : "ghost"}
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        onClick={() => handleChange('italic', !options.italic)}
-                                    >
-                                        <Italic className="h-4 w-4" />
-                                    </Button>
-                                </div>
-
-                                {/* Orientation (for lines) */}
-                                {(drawingType === 'trend-line' || drawingType === 'vertical-line') && (
-                                    <div className="flex gap-1 border-l pl-2 ml-2">
-                                        <Button
-                                            variant={options.orientation !== 'along-line' ? "secondary" : "ghost"}
-                                            size="sm"
-                                            className="h-8 text-xs"
-                                            onClick={() => handleChange('orientation', 'horizontal')}
-                                            title="Horizontal Text"
-                                        >
-                                            Horiz
-                                        </Button>
-                                        <Button
-                                            variant={options.orientation === 'along-line' ? "secondary" : "ghost"}
-                                            size="sm"
-                                            className="h-8 text-xs"
-                                            onClick={() => handleChange('orientation', 'along-line')}
-                                            title="Along Line"
-                                        >
-                                            Along
-                                        </Button>
-                                    </div>
-                                )}
-
-                                {/* Alignment */}
-                                <div className="flex gap-1 border-l pl-2 ml-2">
-                                    {/* Vertical */}
-                                    <Button variant={options.alignment?.vertical === 'top' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, vertical: 'top' })} title="Top">
-                                        <ArrowUpToLine className="h-4 w-4" />
-                                    </Button>
-                                    <Button variant={options.alignment?.vertical === 'middle' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, vertical: 'middle' })} title="Middle">
-                                        <AlignVerticalJustifyCenter className="h-4 w-4" />
-                                    </Button>
-                                    <Button variant={options.alignment?.vertical === 'bottom' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, vertical: 'bottom' })} title="Bottom">
-                                        <ArrowDownToLine className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                                <div className="flex gap-1 border-l pl-2 ml-2">
-                                    {/* Horizontal */}
-                                    <Button variant={options.alignment?.horizontal === 'left' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, horizontal: 'left' })} title="Left">
-                                        <AlignLeft className="h-4 w-4" />
-                                    </Button>
-                                    <Button variant={options.alignment?.horizontal === 'center' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, horizontal: 'center' })} title="Center">
-                                        <AlignCenter className="h-4 w-4" />
-                                    </Button>
-                                    <Button variant={options.alignment?.horizontal === 'right' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, horizontal: 'right' })} title="Right">
-                                        <AlignRight className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                            </div>
-                        </TabsContent>
-
-                        <TabsContent value="coords">
-                            <div className="py-4 text-center text-sm text-muted-foreground">
-                                Coordinates editing coming soon.
-                            </div>
-                        </TabsContent>
-                    </Tabs>
-                )}
-
-                {drawingType === 'anchored-text' && (
-                    <div className="border-t pt-4 mt-4">
-                        <Label className="mb-2 block">Position Offsets</Label>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-1">
-                                <Label className="text-xs">Top</Label>
-                                <Input type="number" value={options.topOffset || 0} onChange={(e) => handleChange('topOffset', parseInt(e.target.value))} />
-                            </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs">Bottom</Label>
-                                <Input type="number" value={options.bottomOffset || 0} onChange={(e) => handleChange('bottomOffset', parseInt(e.target.value))} />
-                            </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs">Left</Label>
-                                <Input type="number" value={options.leftOffset || 0} onChange={(e) => handleChange('leftOffset', parseInt(e.target.value))} />
-                            </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs">Right</Label>
-                                <Input type="number" value={options.rightOffset || 0} onChange={(e) => handleChange('rightOffset', parseInt(e.target.value))} />
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* TEMPLATE CONTROLS */}
-                <div className="border-t pt-4 space-y-3">
-                    <Label className="text-sm font-semibold">Templates</Label>
-                    <div className="flex gap-2">
-                        <Select value={selectedTemplate} onValueChange={handleLoadTemplate}>
-                            <SelectTrigger className="flex-1">
-                                <SelectValue placeholder="Load template..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {templates.length === 0 ? (
-                                    <SelectItem value="_none" disabled>No templates saved</SelectItem>
-                                ) : (
-                                    templates.map(t => (
-                                        <SelectItem key={t.name} value={t.name}>{t.name}</SelectItem>
-                                    ))
-                                )}
-                            </SelectContent>
-                        </Select>
-                        {selectedTemplate && (
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleDeleteTemplate(selectedTemplate)}
-                                title="Delete template"
-                            >
-                                <Trash2 className="h-4 w-4" />
-                            </Button>
-                        )}
-                    </div>
-
-                    {showSaveDialog ? (
-                        <div className="flex gap-2">
-                            <Input
-                                placeholder="Template name..."
-                                value={newTemplateName}
-                                onChange={(e) => setNewTemplateName(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && handleSaveTemplate()}
-                            />
-                            <Button onClick={handleSaveTemplate} size="sm">
-                                <Save className="h-4 w-4 mr-1" />
-                                Save
-                            </Button>
-                            <Button variant="ghost" size="sm" onClick={() => setShowSaveDialog(false)}>
-                                Cancel
-                            </Button>
-                        </div>
-                    ) : (
-                        <div className="flex gap-2">
-                            <Button variant="outline" size="sm" onClick={() => setShowSaveDialog(true)} className="flex-1">
-                                <Save className="h-4 w-4 mr-1" />
-                                Save as Template
-                            </Button>
-                            <Button variant="outline" size="sm" onClick={handleSetDefault}>
-                                <Star className="h-4 w-4 mr-1" />
-                                Set as Default
-                            </Button>
                         </div>
                     )}
+
+                    {/* TEMPLATE CONTROLS */}
+                    <div className="border-t pt-4 space-y-3 px-6">
+                        <Label className="text-sm font-semibold">Templates</Label>
+                        <div className="flex gap-2">
+                            <div className="flex gap-2">
+                                <Select value={selectedTemplate} onValueChange={handleLoadTemplate}>
+                                    <SelectTrigger className="flex-1">
+                                        <SelectValue placeholder="Load template..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {templates.length === 0 ? (
+                                            <SelectItem value="_none" disabled>No templates saved</SelectItem>
+                                        ) : (
+                                            templates.map(t => (
+                                                <SelectItem key={t.name} value={t.name}>{t.name}</SelectItem>
+                                            ))
+                                        )}
+                                    </SelectContent>
+                                </Select>
+                                {selectedTemplate && (
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => handleDeleteTemplate(selectedTemplate)}
+                                        title="Delete template"
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                )}
+                            </div>
+
+                            {showSaveDialog ? (
+                                <div className="flex gap-2">
+                                    <Input
+                                        placeholder="Template name..."
+                                        value={newTemplateName}
+                                        onChange={(e) => setNewTemplateName(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleSaveTemplate()}
+                                    />
+                                    <Button onClick={handleSaveTemplate} size="sm">
+                                        <Save className="h-4 w-4 mr-1" />
+                                        Save
+                                    </Button>
+                                    <Button variant="ghost" size="sm" onClick={() => setShowSaveDialog(false)}>
+                                        Cancel
+                                    </Button>
+                                </div>
+                            ) : (
+                                <div className="flex gap-2">
+                                    <Button variant="outline" size="sm" onClick={() => setShowSaveDialog(true)} className="flex-1">
+                                        <Save className="h-4 w-4 mr-1" />
+                                        Save as Template
+                                    </Button>
+                                    <Button variant="outline" size="sm" onClick={handleSetDefault}>
+                                        <Star className="h-4 w-4 mr-1" />
+                                        Set as Default
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
+
+                    </div>
                 </div>
 
-                <DialogFooter>
+                <DialogFooter className="p-6 pt-2 border-t flex-none mt-auto">
                     <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
                     <Button onClick={handleSave}>Save</Button>
                 </DialogFooter>
@@ -711,4 +753,3 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
         </Dialog>
     )
 }
-

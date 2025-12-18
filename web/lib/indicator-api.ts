@@ -22,7 +22,7 @@ export interface LineStyle {
 }
 
 export interface VWAPSettings {
-    anchor?: "session" | "week" | "month"
+    anchor?: "session" | "week" | "month" | "rth"
     anchor_time?: string // "09:30"
     anchor_timezone?: string // "America/New_York"
     bands?: number[] // [1.0, 2.0]

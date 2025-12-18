@@ -380,7 +380,8 @@ export function useChart(
                         ticker,
                         vwapSettings,
                         resolvedTheme,
-                        theme // Pass ThemeParams
+                        theme, // Pass ThemeParams
+                        displayTimezone
                     }, params, oscillatorPaneIndex);
 
                     renderPromise.then(({ series, paneIndexIncrement }: { series: any[], paneIndexIncrement: number }) => {
