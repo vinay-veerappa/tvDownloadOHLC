@@ -217,6 +217,7 @@ export function ChartPageClient({
                         onDataLoad={handleDataLoad}
                         initialReplayTime={replayState.isReplayMode ? replayState.currentTime : undefined}
                         vwapSettings={vwapSettings}
+                        emSettings={emSettings}
                         trades={trades}
                         onOpenVwapSettings={() => setIsVwapSettingsOpen(true)}
                         onTimeframeChange={(newTf) => {
