@@ -46,10 +46,11 @@ interface TopToolbarProps {
     onMagnetModeChange?: (mode: MagnetMode) => void
     sessionType?: SessionType
     onSessionChange?: (type: SessionType) => void
+    onOpenEMSettings?: () => void
     children?: React.ReactNode
 }
 
-export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off', onMagnetModeChange, sessionType = 'ETH', onSessionChange, children }: TopToolbarProps) {
+export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off', onMagnetModeChange, sessionType = 'ETH', onSessionChange, onOpenEMSettings, children }: TopToolbarProps) {
 
 
     const router = useRouter()
@@ -291,6 +292,16 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                     </Button>
                 </IndicatorsDialog>
 
+                {/* Expected Move Settings */}
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 text-foreground hover:bg-muted text-xs font-medium"
+                    onClick={onOpenEMSettings}
+                    title="Expected Move Levels"
+                >
+                    EM
+                </Button>
 
             </div>
 

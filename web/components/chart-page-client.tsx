@@ -9,6 +9,7 @@ import { BottomPanel } from './trading/bottom-panel'
 import { TradingProvider } from '@/context/trading-context'
 import type { MagnetMode } from '@/lib/charts/magnet-utils'
 import { VWAPSettingsDialog } from './vwap-settings-dialog'
+import { EMSettingsDialog, type EMSettings } from './em-settings-dialog'
 
 interface ChartPageClientProps {
     tickers: string[]
@@ -49,6 +50,10 @@ export function ChartPageClient({
         bands: [1.0, 2.0, 3.0]
     })
     const [isVwapSettingsOpen, setIsVwapSettingsOpen] = useState(false)
+
+    // EM Settings State
+    const [isEMSettingsOpen, setIsEMSettingsOpen] = useState(false)
+    const [emSettings, setEMSettings] = useState<EMSettings | null>(null)
 
     // Update VWAP settings when ticker changes (Futures vs Stocks)
     useEffect(() => {
@@ -191,6 +196,7 @@ export function ChartPageClient({
                         onMagnetModeChange={handleMagnetModeChange}
                         sessionType={sessionType}
                         onSessionChange={setSessionType}
+                        onOpenEMSettings={() => setIsEMSettingsOpen(true)}
                     />
                 </div>
 
@@ -261,6 +267,11 @@ export function ChartPageClient({
                     open={isVwapSettingsOpen}
                     onOpenChange={setIsVwapSettingsOpen}
                     showTrigger={false}
+                />
+                <EMSettingsDialog
+                    open={isEMSettingsOpen}
+                    onOpenChange={setIsEMSettingsOpen}
+                    onSettingsChange={setEMSettings}
                 />
             </div>
         </TradingProvider>
