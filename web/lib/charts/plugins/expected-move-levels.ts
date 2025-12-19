@@ -388,8 +388,27 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                 if (!emData) continue;
 
                 for (const mult of this._options.levelMultiples) {
-                    const levelUpper = emData.anchor + emData.emValue * mult;
-                    const levelLower = emData.anchor - emData.emValue * mult;
+                    // For open-anchored methods, use the CHART's open price, not the CSV's anchor
+                    // Apply EM as a percentage: emPercent = emValue / csvAnchor
+                    // This allows SPY EM data to work correctly on ES/SPX charts
+                    let actualAnchor: number;
+                    let emValueForChart: number;
+
+                    if (emData.anchorType === 'open') {
+                        // Use chart's open price, scale EM proportionally
+                        actualAnchor = bucket.open;
+                        // EM percentage from SPY data
+                        const emPercent = emData.emValue / emData.anchor;
+                        emValueForChart = actualAnchor * emPercent;
+                    } else {
+                        // Close-anchored: use previous day's close (from CSV for now)
+                        // TODO: Could also scale this for cross-ticker use
+                        actualAnchor = emData.anchor;
+                        emValueForChart = emData.emValue;
+                    }
+
+                    const levelUpper = actualAnchor + emValueForChart * mult;
+                    const levelLower = actualAnchor - emValueForChart * mult;
 
                     // Calculate if price stayed within this level
                     const touchedUpper = bucket.high >= levelUpper;
@@ -399,7 +418,7 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                     levels.push({
                         startUnix: bucket.start,
                         endUnix: bucket.end,
-                        anchor: emData.anchor,
+                        anchor: actualAnchor,
                         anchorType: emData.anchorType,
                         methodId: methodConfig.id,
                         methodName: methodConfig.name,
