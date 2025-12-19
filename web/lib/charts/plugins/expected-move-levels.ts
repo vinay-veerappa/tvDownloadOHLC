@@ -1,304 +1,339 @@
+/**
+ * Enhanced Expected Move Levels Indicator
+ * 
+ * Supports multiple EM calculation methods with toggles:
+ * - Straddle 0.85x / 1.0x (Close and Open anchored)
+ * - IV-365 / IV-252
+ * - VIX Scaled 2.0x
+ * - Synthetic VIX (9:30 AM Open)
+ * 
+ * Works with ES, SPY, SPX
+ */
 
-import { IChartApi, ISeriesApi, ISeriesPrimitive, Time, Logical } from 'lightweight-charts';
+import { IChartApi, ISeriesApi, ISeriesPrimitive, Time } from 'lightweight-charts';
 import { THEMES, ThemeParams } from '../../themes';
 
-export interface HistoricalVolatilityPoint {
-    date: string; // YYYY-MM-DD
-    iv: number;
-    closePrice?: number | null; // From DB (Previous Close)
+// ==========================================
+// Types
+// ==========================================
+
+export interface EMData {
+    date: string;
+    anchor: number;        // Base price (open or prev_close)
+    emValue: number;       // EM value in price terms
+    anchorType: 'close' | 'open';
+}
+
+export interface EMMethodConfig {
+    id: string;
+    name: string;
+    color: string;
+    enabled: boolean;
+    anchorType: 'close' | 'open';
 }
 
 export interface ExpectedMoveLevelsOptions {
     ticker: string;
-    lineColor: string;
-    anchorColor: string; // New option
-    labelColor: string;
-    show365: boolean;
-    show252: boolean;
     showLabels: boolean;
-    basis: 'close' | 'open' | 'both';
+    labelFontSize: number;
+
+    // Method toggles
+    methods: {
+        straddle085Close: EMMethodConfig;
+        straddle100Close: EMMethodConfig;
+        straddle085Open: EMMethodConfig;
+        straddle100Open: EMMethodConfig;
+        iv365: EMMethodConfig;
+        iv252: EMMethodConfig;
+        vixScaled: EMMethodConfig;
+        synthVix085: EMMethodConfig;
+        synthVix100: EMMethodConfig;
+    };
+
+    // Level multiples to show
+    levelMultiples: number[];
+
+    // Styling
+    anchorLineColor: string;
+    anchorLineWidth: number;
 }
 
-const DEFAULT_OPTIONS: ExpectedMoveLevelsOptions = {
-    ticker: '',
-    lineColor: '#FF5252',
-    anchorColor: '#B2B5BE', // Default Grey/Whiteish
-    labelColor: '#FF5252',
-    show365: true,
-    show252: true, // Show both by default now
-    showLabels: true,
-    basis: 'close'
+const DEFAULT_METHODS: ExpectedMoveLevelsOptions['methods'] = {
+    straddle085Close: { id: 'straddle085Close', name: 'Straddle 0.85x (Close)', color: '#FF5252', enabled: false, anchorType: 'close' },
+    straddle100Close: { id: 'straddle100Close', name: 'Straddle 1.0x (Close)', color: '#FF8A80', enabled: false, anchorType: 'close' },
+    straddle085Open: { id: 'straddle085Open', name: 'Straddle 0.85x (Open)', color: '#4CAF50', enabled: false, anchorType: 'open' },
+    straddle100Open: { id: 'straddle100Open', name: 'Straddle 1.0x (Open)', color: '#81C784', enabled: false, anchorType: 'open' },
+    iv365: { id: 'iv365', name: 'IV-365', color: '#2196F3', enabled: false, anchorType: 'close' },
+    iv252: { id: 'iv252', name: 'IV-252', color: '#64B5F6', enabled: false, anchorType: 'close' },
+    vixScaled: { id: 'vixScaled', name: 'VIX Scaled 2.0x', color: '#FF9800', enabled: false, anchorType: 'close' },
+    synthVix085: { id: 'synthVix085', name: 'Synth VIX 0.85x (9:30)', color: '#9C27B0', enabled: false, anchorType: 'open' },
+    synthVix100: { id: 'synthVix100', name: 'Synth VIX 1.0x (9:30)', color: '#BA68C8', enabled: true, anchorType: 'open' }  // Default ON
 };
 
-interface LevelData {
+const DEFAULT_OPTIONS: ExpectedMoveLevelsOptions = {
+    ticker: 'SPY',
+    showLabels: true,
+    labelFontSize: 10,
+    methods: DEFAULT_METHODS,
+    levelMultiples: [0.5, 1.0, 1.5],  // 50%, 100%, 150%
+    anchorLineColor: '#B2B5BE',
+    anchorLineWidth: 2
+};
+
+// ==========================================
+// Level Data Structure
+// ==========================================
+
+interface ComputedLevel {
     startUnix: number;
     endUnix: number;
-    basePrice: number;
-    em365: number;
-    em252: number;
-    type: 'close' | 'open';
+    anchor: number;
+    anchorType: 'close' | 'open';
+    methodId: string;
+    methodName: string;
+    methodColor: string;
+    multiple: number;
+    levelUpper: number;
+    levelLower: number;
 }
 
-class ExpectedMoveRenderer {
+// ==========================================
+// Renderer
+// ==========================================
+
+class EMRenderer {
     constructor(
-        private _data: LevelData[],
+        private _levels: ComputedLevel[],
         private _options: ExpectedMoveLevelsOptions,
         private _chart: IChartApi,
-        private _series: ISeriesApi<any>,
-        private _theme: ThemeParams
+        private _series: ISeriesApi<any>
     ) { }
 
     draw(target: any) {
         target.useBitmapCoordinateSpace((scope: any) => {
             const ctx = scope.context as CanvasRenderingContext2D;
-            if (!ctx || this._data.length === 0) return;
+            if (!ctx || this._levels.length === 0) return;
 
             const timeScale = this._chart.timeScale();
-            const visibleLogical = timeScale.getVisibleLogicalRange();
-            if (!visibleLogical) return;
-
             const hPR = scope.horizontalPixelRatio;
             const vPR = scope.verticalPixelRatio;
 
-            for (const item of this._data) {
-                // ... coords ...
-                const x1 = timeScale.timeToCoordinate(item.startUnix as Time);
-                const x2 = timeScale.timeToCoordinate(item.endUnix as Time);
+            // Group by date for anchor lines
+            const anchors = new Map<string, { x1: number, x2: number, price: number, type: string }>();
+
+            for (const level of this._levels) {
+                const x1 = timeScale.timeToCoordinate(level.startUnix as Time);
+                const x2 = timeScale.timeToCoordinate(level.endUnix as Time);
                 if (x1 === null && x2 === null) continue;
+
                 const xStart = (x1 !== null) ? x1 * hPR : 0;
                 const xEnd = (x2 !== null) ? x2 * hPR : scope.mediaSize.width * hPR;
 
-                // 1. Draw Base Line (Previous Close) - Use anchorColor
-                this._drawLevel(ctx, item.basePrice, xStart, xEnd, `Anchor: ${item.basePrice.toFixed(2)}`, vPR, hPR, true, false, this._options.anchorColor);
+                // Draw level line
+                const yUpper = this._series.priceToCoordinate(level.levelUpper);
+                const yLower = this._series.priceToCoordinate(level.levelLower);
 
-                // 2. Draw EM Levels (365 - Calendar)
-                if (this._options.show365) {
-                    const up1 = item.basePrice + item.em365;
-                    const dn1 = item.basePrice - item.em365;
-                    const up05 = item.basePrice + (item.em365 * 0.5);
-                    const dn05 = item.basePrice - (item.em365 * 0.5);
-
-                    this._drawLevel(ctx, up1, xStart, xEnd, 'EM 365 (+1)', vPR, hPR, false, false, this._options.lineColor);
-                    this._drawLevel(ctx, dn1, xStart, xEnd, 'EM 365 (-1)', vPR, hPR, false, false, this._options.lineColor);
-                    this._drawLevel(ctx, up05, xStart, xEnd, '0.5', vPR, hPR, false, true, this._options.lineColor);
-                    this._drawLevel(ctx, dn05, xStart, xEnd, '-0.5', vPR, hPR, false, true, this._options.lineColor);
+                if (yUpper !== null) {
+                    this._drawLevelLine(ctx, yUpper * vPR, xStart, xEnd, level.methodColor, level.multiple, hPR);
+                    if (this._options.showLabels) {
+                        this._drawLabel(ctx, yUpper * vPR, xEnd,
+                            `${level.methodName} +${level.multiple * 100}%`,
+                            level.levelUpper, level.methodColor, hPR, vPR);
+                    }
                 }
 
-                // 3. Draw EM Levels (252 - Trading Days) - Dashed/Subtle
-                if (this._options.show252) {
-                    const up1 = item.basePrice + item.em252;
-                    const dn1 = item.basePrice - item.em252;
-                    // Use Orange-ish for 252 or just same color? 
-                    // Let's use same lineColor but dashed (isHalf=true)
-                    // Or maybe a slight variation?
-                    // User asked for "two sets", implies distinction.
-                    // Dashed lines with 'EM 252' label is good.
-                    this._drawLevel(ctx, up1, xStart, xEnd, 'EM 252 (+1)', vPR, hPR, false, true, '#FFB74D');
-                    this._drawLevel(ctx, dn1, xStart, xEnd, 'EM 252 (-1)', vPR, hPR, false, true, '#FFB74D');
+                if (yLower !== null) {
+                    this._drawLevelLine(ctx, yLower * vPR, xStart, xEnd, level.methodColor, level.multiple, hPR);
+                    if (this._options.showLabels) {
+                        this._drawLabel(ctx, yLower * vPR, xEnd,
+                            `${level.methodName} -${level.multiple * 100}%`,
+                            level.levelLower, level.methodColor, hPR, vPR);
+                    }
+                }
+
+                // Track anchor for one line per day
+                const dateKey = `${level.startUnix}-${level.anchorType}`;
+                if (!anchors.has(dateKey)) {
+                    anchors.set(dateKey, { x1: xStart, x2: xEnd, price: level.anchor, type: level.anchorType });
+                }
+            }
+
+            // Draw anchor lines
+            for (const [key, anch] of anchors) {
+                const yAnchor = this._series.priceToCoordinate(anch.price);
+                if (yAnchor === null) continue;
+
+                ctx.beginPath();
+                ctx.strokeStyle = this._options.anchorLineColor;
+                ctx.lineWidth = this._options.anchorLineWidth * hPR;
+                ctx.setLineDash([]);
+                ctx.moveTo(anch.x1, yAnchor * vPR);
+                ctx.lineTo(anch.x2, yAnchor * vPR);
+                ctx.stroke();
+
+                if (this._options.showLabels) {
+                    ctx.font = `${this._options.labelFontSize * hPR}px sans-serif`;
+                    ctx.fillStyle = this._options.anchorLineColor;
+                    ctx.textAlign = 'right';
+                    ctx.fillText(`Anchor (${anch.type}): ${anch.price.toFixed(2)}`, anch.x2 - 5 * hPR, yAnchor * vPR - 5 * vPR);
                 }
             }
         });
     }
 
-    private _drawLevel(
-        ctx: CanvasRenderingContext2D,
-        price: number,
-        x1: number,
-        x2: number,
-        label: string,
-        vPR: number,
-        hPR: number,
-        isBase: boolean = false,
-        isHalf: boolean = false,
-        colorOverride?: string // New param
-    ) {
-        const y = this._series.priceToCoordinate(price);
-        if (y === null) return;
-
-        const yScaled = y * vPR;
-
+    private _drawLevelLine(ctx: CanvasRenderingContext2D, y: number, x1: number, x2: number, color: string, mult: number, hPR: number) {
         ctx.beginPath();
-        ctx.strokeStyle = colorOverride || this._options.lineColor; // Use override
-        ctx.lineWidth = isBase ? 2 * hPR : 1 * hPR;
-
-        if (isHalf) ctx.setLineDash([4 * hPR, 4 * hPR]);
-        else ctx.setLineDash([]);
-
-        ctx.moveTo(x1, yScaled);
-        ctx.lineTo(x2, yScaled);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = (mult === 1.0 ? 1.5 : 1) * hPR;
+        ctx.setLineDash(mult < 1.0 ? [4 * hPR, 4 * hPR] : []);
+        ctx.moveTo(x1, y);
+        ctx.lineTo(x2, y);
         ctx.stroke();
+    }
 
-        if (this._options.showLabels) {
-            ctx.font = `${10 * hPR}px sans-serif`;
-            ctx.fillStyle = this._options.labelColor;
-            ctx.textAlign = 'right';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(label, x2 - 5 * hPR, yScaled - 5 * hPR);
-            // Add Value
-            ctx.fillText(price.toFixed(2), x2 - 5 * hPR, yScaled + 8 * hPR);
-        }
+    private _drawLabel(ctx: CanvasRenderingContext2D, y: number, x: number, label: string, price: number, color: string, hPR: number, vPR: number) {
+        ctx.font = `${this._options.labelFontSize * hPR}px sans-serif`;
+        ctx.fillStyle = color;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, x - 5 * hPR, y - 8 * vPR);
+        ctx.fillText(price.toFixed(2), x - 5 * hPR, y + 6 * vPR);
     }
 }
+
+// ==========================================
+// Main Plugin Class
+// ==========================================
 
 export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
     _chart: IChartApi;
     _series: ISeriesApi<any>;
     _options: ExpectedMoveLevelsOptions;
-    _ivData: HistoricalVolatilityPoint[] = [];
-    _computedLevels: LevelData[] = [];
-    _theme: ThemeParams;
+    _computedLevels: ComputedLevel[] = [];
     _requestUpdate: () => void = () => { };
-    _dailyBars: { time: number, close: number }[] = [];
+
+    // Raw data store by method
+    _methodData: Map<string, EMData[]> = new Map();
 
     constructor(
         chart: IChartApi,
         series: ISeriesApi<any>,
-        options: Partial<ExpectedMoveLevelsOptions>
+        options: Partial<ExpectedMoveLevelsOptions> = {}
     ) {
         this._chart = chart;
         this._series = series;
-        this._options = { ...DEFAULT_OPTIONS, ...options };
-        this._theme = THEMES['institutional-dark']; // Default
+        this._options = {
+            ...DEFAULT_OPTIONS,
+            ...options,
+            methods: { ...DEFAULT_METHODS, ...(options.methods || {}) }
+        };
     }
 
     attached({ requestUpdate }: { requestUpdate: () => void }) {
         this._requestUpdate = requestUpdate;
-        this._recalculate();
     }
 
     detached() {
         this._requestUpdate = () => { };
     }
 
-    // ...
+    // ==========================================
+    // Public API
+    // ==========================================
 
-    // API to set Daily Bars (Authoritative Settlement)
-    public setDailyBars(bars: { time: number, close: number }[]) {
-        this._dailyBars = bars.sort((a, b) => a.time - b.time);
+    /**
+     * Set EM data for a specific method
+     * @param methodId - Method identifier (e.g., 'synthVix100')
+     * @param data - Array of EMData points
+     */
+    public setMethodData(methodId: string, data: EMData[]) {
+        this._methodData.set(methodId, data);
         this._recalculate();
     }
 
-    // API to set IV Data externally
-    public setVolatilityData(data: HistoricalVolatilityPoint[]) {
-        this._ivData = data;
+    /**
+     * Toggle a method on/off
+     */
+    public toggleMethod(methodId: keyof ExpectedMoveLevelsOptions['methods'], enabled: boolean) {
+        if (this._options.methods[methodId]) {
+            this._options.methods[methodId].enabled = enabled;
+            this._recalculate();
+        }
+    }
+
+    /**
+     * Set which level multiples to display
+     */
+    public setLevelMultiples(multiples: number[]) {
+        this._options.levelMultiples = multiples;
         this._recalculate();
     }
 
-    // Main logic: correlate Bars -> Dates -> IV -> EM Levels
-    public updateFromBars(bars: any[]) {
-        if (!bars || bars.length === 0 || this._ivData.length === 0) return;
+    /**
+     * Bulk update from daily bar data
+     * Call this with the chart's bar data to derive time ranges
+     */
+    public updateFromBars(bars: { time: number, open: number, close: number }[]) {
+        if (!bars || bars.length === 0) return;
 
-        // Group bars by Trading Day
         const sortedBars = [...bars].sort((a, b) => a.time - b.time);
-        const dayBuckets = new Map<string, { start: number, end: number, close: number, foundSettlement: boolean }>();
-        const dates: string[] = [];
 
-        sortedBars.forEach(b => {
-            const d = new Date(b.time * 1000);
-            // Futures Logic: Sunday -> Monday
-            if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1);
+        // Build day buckets
+        const dayBuckets = new Map<string, { start: number, end: number, open: number, close: number }>();
+
+        for (const bar of sortedBars) {
+            const d = new Date(bar.time * 1000);
+            if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1); // Sunday -> Monday
             const dateStr = d.toISOString().split('T')[0];
 
             if (!dayBuckets.has(dateStr)) {
-                dayBuckets.set(dateStr, {
-                    start: b.time,
-                    end: b.time,
-                    close: b.close, // Fallback
-                    foundSettlement: false
-                });
-                dates.push(dateStr);
+                dayBuckets.set(dateStr, { start: bar.time, end: bar.time, open: bar.open, close: bar.close });
             } else {
-                const r = dayBuckets.get(dateStr)!;
-                if (b.time < r.start) r.start = b.time;
-                if (b.time > r.end) r.end = b.time;
-
-                // Intraday Logic (Fallback)
-                const hours = d.getHours();
-                const minutes = d.getMinutes();
-                if (!r.foundSettlement) {
-                    if (hours === 16 && minutes <= 15) {
-                        r.close = b.close;
-                        r.foundSettlement = true;
-                    } else if (hours < 16) {
-                        r.close = b.close;
-                    }
+                const bucket = dayBuckets.get(dateStr)!;
+                if (bar.time < bucket.start) {
+                    bucket.start = bar.time;
+                    bucket.open = bar.open;
+                }
+                if (bar.time > bucket.end) {
+                    bucket.end = bar.time;
+                    bucket.close = bar.close;
                 }
             }
-        });
+        }
 
-        const levels: LevelData[] = [];
-        // Map Daily Bars to Date String for O(1) lookup
-        const dailyMap = new Map<string, number>();
-        this._dailyBars.forEach(db => {
-            const dStr = new Date(db.time * 1000).toISOString().split('T')[0];
-            dailyMap.set(dStr, db.close);
-        });
+        // Compute levels
+        const levels: ComputedLevel[] = [];
 
-        for (const dateStr of dates) {
-            const bucket = dayBuckets.get(dateStr)!;
-            const relevantRow = this._findLastRowBefore(dateStr);
+        for (const [methodKey, methodConfig] of Object.entries(this._options.methods)) {
+            if (!methodConfig.enabled) continue;
 
-            // Determine Base Price (Previous Close)
-            // Priority 1: Official Daily Close from _dailyBars for the PREVIOUS Trading Day
-            // Priority 2: Intraday "Found Settlement" from previous bucket loop (fallback)
+            const methodData = this._methodData.get(methodConfig.id);
+            if (!methodData || methodData.length === 0) continue;
 
-            let base: number | null = null;
+            // Build lookup
+            const dataMap = new Map<string, EMData>();
+            for (const d of methodData) {
+                dataMap.set(d.date, d);
+            }
 
-            // Look for "Yesterday" in dailyMap
-            // Simple approach: Iterate back from dateStr date-1...date-7?
-            // Or use the findLastRow logic but for daily bars?
-            // Since we iterate generic dates, we should find the Daily Bar closest-before current dateStr.
+            for (const [dateStr, bucket] of dayBuckets) {
+                const emData = dataMap.get(dateStr);
+                if (!emData) continue;
 
-            // Optimization: _dailyBars is sorted. Find last preceeding.
-            // But we already built a Map. We need the date string of the previous trading day.
-            // Getting "Previous Trading Day" correctly requires calendar logic.
-            // Robust method: Loop _dailyBars. Find last bar where time < bucket.start.
-
-            let prevDailyClose = null;
-            // Iterate backwards from end to find first bar < current bucket start
-            // (Assuming _dailyBars covers the range)
-            for (let i = this._dailyBars.length - 1; i >= 0; i--) {
-                const dbTime = this._dailyBars[i].time;
-                // Compare dates strictly. 
-                // Note: dbTime (Daily) usually 00:00 UTC? or 21:00 UTC previous day?
-                // Let's assume Daily Bar Time is roughly the "Session Date".
-                // If dbTime < bucket.start (roughly), is it the previous day?
-                // Yes, if sorted.
-                // We want the Close of the most recent Daily Bar that strictly precedes this session.
-
-                // Safety: bucket.start is e.g. Nov 5 09:30.
-                // Daily bar for Nov 4 is usually Nov 4 00:00 or Nov 4 23:59??
-                // TV Daily bars usually start at 00:00 UTC of the day.
-                // So Nov 4 Daily Bar < Nov 5 Intraday. Correct.
-                // Nov 5 Daily Bar (current day) < Nov 5 Intraday? Maybe. 
-                // We want T-1.
-
-                // Check Date String equality
-                const dbDateStr = new Date(dbTime * 1000).toISOString().split('T')[0];
-                if (dbDateStr < dateStr) {
-                    prevDailyClose = this._dailyBars[i].close;
-                    break;
+                for (const mult of this._options.levelMultiples) {
+                    levels.push({
+                        startUnix: bucket.start,
+                        endUnix: bucket.end,
+                        anchor: emData.anchor,
+                        anchorType: emData.anchorType,
+                        methodId: methodConfig.id,
+                        methodName: methodConfig.name,
+                        methodColor: methodConfig.color,
+                        multiple: mult,
+                        levelUpper: emData.anchor + emData.emValue * mult,
+                        levelLower: emData.anchor - emData.emValue * mult
+                    });
                 }
-            }
-
-            if (prevDailyClose !== null) {
-                base = prevDailyClose;
-            } else if (relevantRow && relevantRow.closePrice) {
-                // Fallback to "DB" close (which might be same source basically)
-                base = relevantRow.closePrice;
-            }
-
-            if (base !== null && relevantRow) {
-                const em365 = base * relevantRow.iv * Math.sqrt(1 / 365);
-                const em252 = base * relevantRow.iv * Math.sqrt(1 / 252);
-                levels.push({
-                    startUnix: bucket.start,
-                    endUnix: bucket.end,
-                    basePrice: base,
-                    em365,
-                    em252,
-                    type: 'close' // Anchored to Close
-                });
             }
         }
 
@@ -306,42 +341,63 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
         this._requestUpdate();
     }
 
-    // Finds the latest IV row strictly before dateStr
-    private _findLastRowBefore(dateStr: string): HistoricalVolatilityPoint | null {
-        // IV Data is sorted asc (guaranteed by fetching).
-        // Iterate backwards
-        for (let i = this._ivData.length - 1; i >= 0; i--) {
-            if (this._ivData[i].date < dateStr) {
-                return this._ivData[i];
-            }
-        }
-        return null;
-    }
-
-
     private _recalculate() {
-        // We need existing bars to recalc. 
-        // We can't access bars directly from series unless we passed them or attached logic traps.
-        // We'll rely on updateFromBars being called by the consumer component initially.
         this._requestUpdate();
     }
 
+    // ==========================================
     // ISeriesPrimitive Interface
+    // ==========================================
+
     paneViews() {
         return [{
-            renderer: () => new ExpectedMoveRenderer(
+            renderer: () => new EMRenderer(
                 this._computedLevels,
                 this._options,
                 this._chart,
-                this._series,
-                this._theme
+                this._series
             ),
-            zOrder: () => 'bottom' as const // Below candles
+            zOrder: () => 'bottom' as const
         }];
     }
+
     updateAllViews() { this._requestUpdate(); }
     axisViews() { return []; }
     priceAxisViews() { return []; }
     autoscaleInfo() { return null; }
     hitTest() { return null; }
+}
+
+// ==========================================
+// Helper: Load EM Data from CSV
+// ==========================================
+
+export async function loadEMDataFromCSV(ticker: 'SPY' | 'ES' | 'SPX'): Promise<Map<string, EMData[]>> {
+    const result = new Map<string, EMData[]>();
+
+    // Path based on ticker
+    let csvPath = '/api/em-levels';  // Adjust to your API route
+
+    try {
+        const resp = await fetch(`${csvPath}?ticker=${ticker}`);
+        const data = await resp.json();
+
+        // Group by method
+        for (const row of data) {
+            const methodId = row.method;
+            if (!result.has(methodId)) {
+                result.set(methodId, []);
+            }
+            result.get(methodId)!.push({
+                date: row.date,
+                anchor: row.anchor,
+                emValue: row.em_value,
+                anchorType: row.method.includes('open') ? 'open' : 'close'
+            });
+        }
+    } catch (e) {
+        console.error('Failed to load EM data:', e);
+    }
+
+    return result;
 }
