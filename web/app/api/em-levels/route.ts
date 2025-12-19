@@ -17,14 +17,24 @@ function parseCSV(content: string): any[] {
     const headers = lines[0].split(',');
     const result: any[] = [];
 
+    // Headers that should remain as strings
+    const stringHeaders = new Set(['date', 'method']);
+
     for (let i = 1; i < lines.length; i++) {
         const values = lines[i].split(',');
         const row: any = {};
         for (let j = 0; j < headers.length; j++) {
+            const header = headers[j].trim();
             const val = values[j]?.trim();
-            // Try to parse as number
-            const numVal = parseFloat(val);
-            row[headers[j].trim()] = isNaN(numVal) ? val : numVal;
+
+            // Keep dates and method names as strings
+            if (stringHeaders.has(header)) {
+                row[header] = val;
+            } else {
+                // Try to parse as number
+                const numVal = parseFloat(val);
+                row[header] = isNaN(numVal) ? val : numVal;
+            }
         }
         result.push(row);
     }
