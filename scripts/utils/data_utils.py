@@ -4,7 +4,8 @@ import glob
 from datetime import datetime
 import pandas as pd
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+# Go up 3 levels: scripts/utils/data_utils.py -> scripts/utils -> scripts -> root
+DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data"))
 BACKUP_DIR = os.path.join(DATA_DIR, "backup")
 
 def ensure_backup_dir():
