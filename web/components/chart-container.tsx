@@ -972,7 +972,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             emPluginRef.current.updateFromSettings({
                 methods: emSettings.methods,
                 levelMultiples: emSettings.levelMultiples,
-                showLabels: emSettings.showLabels
+                showLabels: emSettings.showLabels,
+                showWeeklyClose: emSettings.showWeeklyClose
             });
             // Re-render with current bar data
             if (dataRef.current.length > 0) {
