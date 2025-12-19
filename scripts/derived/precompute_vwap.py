@@ -15,7 +15,8 @@ import time
 from pathlib import Path
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from api.services.data_loader import load_parquet, get_available_data
 from api.services.vwap import calculate_vwap_with_settings
@@ -51,7 +52,7 @@ def is_futures(ticker: str) -> bool:
 
 def get_output_path(ticker: str, timeframe: str) -> Path:
     """Get output path for pre-computed VWAP"""
-    data_dir = Path(__file__).parent.parent / 'data' / 'indicators'
+    data_dir = PROJECT_ROOT / 'data' / 'indicators'
     data_dir.mkdir(parents=True, exist_ok=True)
     clean_ticker = ticker.replace('!', '')
     return data_dir / f'{clean_ticker}_{timeframe}_vwap.parquet'

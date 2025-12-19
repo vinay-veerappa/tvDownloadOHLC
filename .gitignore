@@ -15,6 +15,7 @@ debug_files/
 *.csv
 data/*.parquet
 !web/components/data/
+!docs/data/
 web/public/data/
 
 # Chrome

@@ -16,6 +16,9 @@ ticker_map = {
     "BATS_QQQ": "QQQ",
     "BATS_SPY": "SPY",
     "SP_SPX": "SPX",
+    "CBOE_DLY_SPX": "SPX",
+    "TVC_VIX": "VIX",
+    "CBOE_DLY_VVIX": "VVIX",
 }
 
 interval_map = {
@@ -60,7 +63,7 @@ def process_csv(csv_file: Path) -> tuple:
 
 # Collect all files to process
 files_to_process = []
-for csv_file in sorted(source_dir.glob("*.csv")):
+for csv_file in sorted(source_dir.rglob("*.csv")):
     result = process_csv(csv_file)
     if result:
         files_to_process.append(result)
@@ -82,11 +85,17 @@ for ticker, timeframe, csv_file in files_to_process:
         
         if "volume" not in df.columns:
             df["volume"] = 0
+        else:
+            df["volume"] = df["volume"].fillna(0)
         
         df["datetime"] = pd.to_datetime(df["time"], unit="s")
         df = df.set_index("datetime")
         df = df.drop(columns=["time"])
         
+        # Normalize timeframe for the key (1D -> 1d)
+        timeframe_norm = timeframe.lower()
+        key = f"{ticker}_{timeframe_norm}"
+
         if key in processed:
             processed[key] = pd.concat([processed[key], df])
         else:
@@ -98,30 +107,31 @@ for ticker, timeframe, csv_file in files_to_process:
 # Merge with existing and save
 for key, df in processed.items():
     output_path = output_dir / f"{key}.parquet"
+    timeframe = key.split("_")[-1]
     
     # Merge with existing if present
     if output_path.exists():
-        try:
-            existing = pd.read_parquet(output_path)
-            # Ensure index is datetime
-            if not isinstance(existing.index, pd.DatetimeIndex):
-                if 'time' in existing.columns:
-                     existing['datetime'] = pd.to_datetime(existing['time'], unit='s') if pd.api.types.is_numeric_dtype(existing['time']) else pd.to_datetime(existing['time'])
-                     existing = existing.set_index('datetime')
-                elif 'datetime' in existing.columns:
-                     existing = existing.set_index('datetime')
-            
-            # Ensure new df has compatible columns (lower case)
-            # (Done above for new df, but good to ensure existing matches)
-            
-            df = pd.concat([existing, df])
-        except Exception as e:
-            print(f"Warning: Could not merge with existing {output_path}: {e}")
-            # If merge fails, maybe overwrite or skip? 
-            # Ideally we want to concat. If index is broken, we might just append.
-            pass
+        if timeframe in ["1d", "1w"]:
+            print(f"  Overwriting {output_path} with new Official TV data...")
+        else:
+            try:
+                existing = pd.read_parquet(output_path)
+                # Ensure existing has no timezone
+                if existing.index.tz is not None:
+                    existing.index = existing.index.tz_localize(None)
+                
+                # Ensure new df has no timezone
+                if df.index.tz is not None:
+                    df.index = df.index.tz_localize(None)
+                    
+                df = pd.concat([existing, df])
+            except Exception as e:
+                print(f"Warning: Could not merge with existing {output_path}: {e}")
+                pass
     
     # Remove duplicates and sort
+    if df.index.tz is not None:
+        df.index = df.index.tz_localize(None)
     df = df[~df.index.duplicated(keep="last")]
     df = df.sort_index()
     

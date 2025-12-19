@@ -3,11 +3,12 @@ from pathlib import Path
 import os
 
 DATA_DIR = Path("data")
-TIMEFRAMES = ["1h", "4h"] # Target timeframes
+TIMEFRAMES = ["5m", "15m", "1h", "4h"] # Target timeframes (excl 1d/1w as they need settlement)
 
-def resample_and_save(source_path, ticker):
+def resample_and_save(source_path, source_tf, ticker):
     try:
         df = pd.read_parquet(source_path)
+        
         # Ensure DatetimeIndex
         if not isinstance(df.index, pd.DatetimeIndex):
              # Try column
@@ -20,13 +21,25 @@ def resample_and_save(source_path, ticker):
                  print(f"Skipping {source_path}: No datetime index or column.")
                  return
 
+        # Helper to convert TF string to minutes
+        def tf_to_min(tf_str):
+            if tf_str == '1m': return 1
+            if tf_str == '5m': return 5
+            if tf_str == '15m': return 15
+            if tf_str == '1h': return 60
+            if tf_str == '1d': return 1440
+            return 9999
+
+        source_min = tf_to_min(source_tf)
+
         for tf in TIMEFRAMES:
-            # Pandas rule: '1h', '4h'. 
-            # Note 'h' is deprecated in strict pandas, 'h' -> 'H'? No, 'h' is usually fine or 'H'.
-            # 'h' is lower case alias. 'H' is standard.
-            rule = tf.upper().replace('M', 'T') # 1h -> 1H, 4h -> 4H. 
+            target_min = tf_to_min(tf)
+            if target_min <= source_min:
+                continue # Don't downsample or equal sample
             
-            print(f"  Resampling {ticker} to {tf}...")
+            rule = tf.upper().replace('M', 'T') # 1h -> 1H, 1d -> 1D
+            
+            print(f"  Resampling {ticker} ({source_tf} -> {tf})...")
             
             resampled = df.resample(rule).agg({
                 'open': 'first',
@@ -41,9 +54,7 @@ def resample_and_save(source_path, ticker):
                 continue
 
             output_path = DATA_DIR / f"{ticker}_{tf}.parquet"
-            # Overwrite or Merge?
-            # Ideally overwrite if source is authoritative. 
-            # User said "upsample it".
+            # Overwrite since source (usually 1m or 5m) is authoritative
             resampled.to_parquet(output_path)
             print(f"    Saved {output_path} ({len(resampled)} bars)")
 
@@ -53,11 +64,7 @@ def resample_and_save(source_path, ticker):
 def main():
     print(f"Scanning {DATA_DIR} for high-res parquet...")
     
-    # gather files
     files = list(DATA_DIR.glob("*.parquet"))
-    
-    # Group by Ticker
-    # Files: TICKER_TF.parquet
     ticker_sources = {}
     
     for f in files:
@@ -66,17 +73,16 @@ def main():
         tf = parts[-1]
         ticker = "_".join(parts[:-1])
         
-        if tf in ['5m', '15m']:
+        # Support 1m, 5m, 15m as sources
+        if tf in ['1m', '5m', '15m']:
             if ticker not in ticker_sources:
                 ticker_sources[ticker] = []
             ticker_sources[ticker].append((tf, f))
             
     for ticker, sources in ticker_sources.items():
-        # Pick best source: 5m > 15m
-        # Sort by resolution (low numeric value of minutes is better)
-        # 5m = 5, 15m = 15.
-        
+        # Pick best source: 1m > 5m > 15m
         def tf_weight(t):
+            if t[0] == '1m': return 1
             if t[0] == '5m': return 5
             if t[0] == '15m': return 15
             return 999
@@ -85,7 +91,7 @@ def main():
         best_source_tf, best_source_path = sources[0]
         
         print(f"Processing {ticker} using source: {best_source_tf}")
-        resample_and_save(best_source_path, ticker)
+        resample_and_save(best_source_path, best_source_tf, ticker)
 
 if __name__ == "__main__":
     main()

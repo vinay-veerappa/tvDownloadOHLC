@@ -3,7 +3,7 @@ import sys
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
-import data_utils
+from scripts.utils import data_utils
 import numpy as np
 
 # Configuration
