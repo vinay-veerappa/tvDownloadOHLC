@@ -20,6 +20,7 @@ import { ChartLegend, ChartLegendRef } from "@/components/chart/chart-legend"
 import { ChartCursorOverlay } from "@/components/chart-cursor-overlay"
 import { VWAPSettings } from "@/lib/indicator-api"
 import { ThemeParams } from "@/lib/themes"
+import type { EMSettings } from './em-settings-dialog'
 import { ColorType } from "lightweight-charts"
 import { RangeInfoPanel } from "./range-info-panel"
 import { RangeTooltip } from "./range-tooltip"
@@ -71,6 +72,7 @@ interface ChartContainerProps {
     onModifyOrder?: (id: string, updates: any) => void
     onModifyPosition?: (updates: any) => void
     vwapSettings?: VWAPSettings
+    emSettings?: EMSettings | null
     indicatorParams?: Record<string, any>
     onIndicatorParamsChange?: (type: string, params: any) => void
     trades?: any[] // Backtest trades for visualization

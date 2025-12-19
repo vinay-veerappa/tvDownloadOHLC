@@ -17,6 +17,7 @@ import { useTheme } from "@/context/theme-context"
 
 // ... imports
 import { VWAPSettings } from "@/lib/indicator-api"
+import type { EMSettings } from './em-settings-dialog'
 
 const ChartContainer = dynamic(
     () => import('./chart-container').then((mod) => mod.ChartContainer),
@@ -56,6 +57,7 @@ interface ChartWrapperProps {
     onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
     initialReplayTime?: number // Timestamp to restore replay position after remount
     vwapSettings?: VWAPSettings
+    emSettings?: EMSettings | null
     onOpenVwapSettings?: () => void
     onTimeframeChange?: (tf: string) => void
     markers?: any[]

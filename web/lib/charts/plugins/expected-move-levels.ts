@@ -95,6 +95,12 @@ interface ComputedLevel {
     multiple: number;
     levelUpper: number;
     levelLower: number;
+    // Performance data
+    contained: boolean;       // Did price stay within this level?
+    touchedUpper: boolean;    // Did price touch upper level?
+    touchedLower: boolean;    // Did price touch lower level?
+    dayHigh: number;          // Day's high for tooltip
+    dayLow: number;           // Day's low for tooltip
 }
 
 // ==========================================
@@ -118,8 +124,9 @@ class EMRenderer {
             const hPR = scope.horizontalPixelRatio;
             const vPR = scope.verticalPixelRatio;
 
-            // Group by date for anchor lines
+            // Group by date for anchor lines and status badges
             const anchors = new Map<string, { x1: number, x2: number, price: number, type: string }>();
+            const dayStatus = new Map<string, { x: number, yAnchor: number, contained: boolean, mult: number }>();
 
             for (const level of this._levels) {
                 const x1 = timeScale.timeToCoordinate(level.startUnix as Time);
@@ -129,25 +136,37 @@ class EMRenderer {
                 const xStart = (x1 !== null) ? x1 * hPR : 0;
                 const xEnd = (x2 !== null) ? x2 * hPR : scope.mediaSize.width * hPR;
 
+                // Determine line color based on containment
+                // Green if contained, red if breached, original color with alpha
+                let lineColor = level.methodColor;
+                if (level.multiple === 1.0) {
+                    // Only show containment status for 100% levels
+                    lineColor = level.contained ? '#22C55E' : '#EF4444';
+                }
+
                 // Draw level line
                 const yUpper = this._series.priceToCoordinate(level.levelUpper);
                 const yLower = this._series.priceToCoordinate(level.levelLower);
 
                 if (yUpper !== null) {
-                    this._drawLevelLine(ctx, yUpper * vPR, xStart, xEnd, level.methodColor, level.multiple, hPR);
+                    const wasTouched = level.touchedUpper;
+                    this._drawLevelLine(ctx, yUpper * vPR, xStart, xEnd, lineColor, level.multiple, hPR, wasTouched);
                     if (this._options.showLabels) {
+                        const statusIcon = level.multiple === 1.0 ? (level.touchedUpper ? ' ✗' : ' ✓') : '';
                         this._drawLabel(ctx, yUpper * vPR, xEnd,
-                            `${level.methodName} +${level.multiple * 100}%`,
-                            level.levelUpper, level.methodColor, hPR, vPR);
+                            `${level.methodName} +${level.multiple * 100}%${statusIcon}`,
+                            level.levelUpper, lineColor, hPR, vPR);
                     }
                 }
 
                 if (yLower !== null) {
-                    this._drawLevelLine(ctx, yLower * vPR, xStart, xEnd, level.methodColor, level.multiple, hPR);
+                    const wasTouched = level.touchedLower;
+                    this._drawLevelLine(ctx, yLower * vPR, xStart, xEnd, lineColor, level.multiple, hPR, wasTouched);
                     if (this._options.showLabels) {
+                        const statusIcon = level.multiple === 1.0 ? (level.touchedLower ? ' ✗' : ' ✓') : '';
                         this._drawLabel(ctx, yLower * vPR, xEnd,
-                            `${level.methodName} -${level.multiple * 100}%`,
-                            level.levelLower, level.methodColor, hPR, vPR);
+                            `${level.methodName} -${level.multiple * 100}%${statusIcon}`,
+                            level.levelLower, lineColor, hPR, vPR);
                     }
                 }
 
@@ -155,6 +174,17 @@ class EMRenderer {
                 const dateKey = `${level.startUnix}-${level.anchorType}`;
                 if (!anchors.has(dateKey)) {
                     anchors.set(dateKey, { x1: xStart, x2: xEnd, price: level.anchor, type: level.anchorType });
+                }
+
+                // Track daily containment status (for 100% level only)
+                if (level.multiple === 1.0) {
+                    const dayKey = `${level.startUnix}`;
+                    if (!dayStatus.has(dayKey)) {
+                        const yAnch = this._series.priceToCoordinate(level.anchor);
+                        if (yAnch !== null) {
+                            dayStatus.set(dayKey, { x: xStart, yAnchor: yAnch * vPR, contained: level.contained, mult: level.multiple });
+                        }
+                    }
                 }
             }
 
@@ -178,10 +208,34 @@ class EMRenderer {
                     ctx.fillText(`Anchor (${anch.type}): ${anch.price.toFixed(2)}`, anch.x2 - 5 * hPR, yAnchor * vPR - 5 * vPR);
                 }
             }
+
+            // Draw containment status badges at start of each day
+            for (const [key, status] of dayStatus) {
+                this._drawStatusBadge(ctx, status.x, status.yAnchor, status.contained, hPR, vPR);
+            }
         });
     }
 
-    private _drawLevelLine(ctx: CanvasRenderingContext2D, y: number, x1: number, x2: number, color: string, mult: number, hPR: number) {
+    private _drawStatusBadge(ctx: CanvasRenderingContext2D, x: number, y: number, contained: boolean, hPR: number, vPR: number) {
+        const size = 12 * hPR;
+        const bgColor = contained ? '#22C55E' : '#EF4444';
+        const symbol = contained ? '✓' : '✗';
+
+        // Draw background circle
+        ctx.beginPath();
+        ctx.fillStyle = bgColor;
+        ctx.arc(x + size, y, size / 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw symbol
+        ctx.font = `bold ${8 * hPR}px sans-serif`;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(symbol, x + size, y);
+    }
+
+    private _drawLevelLine(ctx: CanvasRenderingContext2D, y: number, x1: number, x2: number, color: string, mult: number, hPR: number, wasTouched?: boolean) {
         ctx.beginPath();
         ctx.strokeStyle = color;
         ctx.lineWidth = (mult === 1.0 ? 1.5 : 1) * hPR;
@@ -273,21 +327,31 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
      * Bulk update from daily bar data
      * Call this with the chart's bar data to derive time ranges
      */
-    public updateFromBars(bars: { time: number, open: number, close: number }[]) {
+    public updateFromBars(bars: { time: number, open: number, high?: number, low?: number, close: number }[]) {
         if (!bars || bars.length === 0) return;
 
         const sortedBars = [...bars].sort((a, b) => a.time - b.time);
 
-        // Build day buckets
-        const dayBuckets = new Map<string, { start: number, end: number, open: number, close: number }>();
+        // Build day buckets with high/low tracking
+        const dayBuckets = new Map<string, { start: number, end: number, open: number, high: number, low: number, close: number }>();
 
         for (const bar of sortedBars) {
             const d = new Date(bar.time * 1000);
             if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1); // Sunday -> Monday
             const dateStr = d.toISOString().split('T')[0];
 
+            const barHigh = bar.high ?? bar.close;
+            const barLow = bar.low ?? bar.close;
+
             if (!dayBuckets.has(dateStr)) {
-                dayBuckets.set(dateStr, { start: bar.time, end: bar.time, open: bar.open, close: bar.close });
+                dayBuckets.set(dateStr, {
+                    start: bar.time,
+                    end: bar.time,
+                    open: bar.open,
+                    high: barHigh,
+                    low: barLow,
+                    close: bar.close
+                });
             } else {
                 const bucket = dayBuckets.get(dateStr)!;
                 if (bar.time < bucket.start) {
@@ -298,10 +362,13 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                     bucket.end = bar.time;
                     bucket.close = bar.close;
                 }
+                // Track day high/low
+                if (barHigh > bucket.high) bucket.high = barHigh;
+                if (barLow < bucket.low) bucket.low = barLow;
             }
         }
 
-        // Compute levels
+        // Compute levels with performance data
         const levels: ComputedLevel[] = [];
 
         for (const [methodKey, methodConfig] of Object.entries(this._options.methods)) {
@@ -321,6 +388,14 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                 if (!emData) continue;
 
                 for (const mult of this._options.levelMultiples) {
+                    const levelUpper = emData.anchor + emData.emValue * mult;
+                    const levelLower = emData.anchor - emData.emValue * mult;
+
+                    // Calculate if price stayed within this level
+                    const touchedUpper = bucket.high >= levelUpper;
+                    const touchedLower = bucket.low <= levelLower;
+                    const contained = !touchedUpper && !touchedLower;
+
                     levels.push({
                         startUnix: bucket.start,
                         endUnix: bucket.end,
@@ -330,8 +405,13 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                         methodName: methodConfig.name,
                         methodColor: methodConfig.color,
                         multiple: mult,
-                        levelUpper: emData.anchor + emData.emValue * mult,
-                        levelLower: emData.anchor - emData.emValue * mult
+                        levelUpper,
+                        levelLower,
+                        contained,
+                        touchedUpper,
+                        touchedLower,
+                        dayHigh: bucket.high,
+                        dayLow: bucket.low
                     });
                 }
             }
