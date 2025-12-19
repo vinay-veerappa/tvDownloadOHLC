@@ -36,16 +36,20 @@ import { addToWatchlist } from "@/actions/watchlist-actions"
 
 const KNOWN_FUTURES_ROOTS = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG", "NG", "ZB", "ZN"]
 
+export type SessionType = 'ETH' | 'RTH'
+
 interface TopToolbarProps {
     tickers: string[]
     timeframes: string[]
     tickerMap: Record<string, string[]>
     magnetMode?: MagnetMode
     onMagnetModeChange?: (mode: MagnetMode) => void
+    sessionType?: SessionType
+    onSessionChange?: (type: SessionType) => void
     children?: React.ReactNode
 }
 
-export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off', onMagnetModeChange, children }: TopToolbarProps) {
+export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off', onMagnetModeChange, sessionType = 'ETH', onSessionChange, children }: TopToolbarProps) {
 
 
     const router = useRouter()
@@ -232,6 +236,36 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                     availableTimeframes={availableTimeframesForTicker}
                     onTimeframeChange={handleTimeframeChange}
                 />
+
+                <div className="h-4 w-[1px] bg-border mx-2" />
+
+                {/* Session Toggle (RTH/ETH) */}
+                <div className="flex items-center bg-muted/50 p-0.5 rounded-lg border border-border mx-2">
+                    <button
+                        onClick={() => onSessionChange?.('ETH')}
+                        className={cn(
+                            "px-2 py-0.5 text-[10px] font-bold rounded-md transition-all",
+                            sessionType === 'ETH'
+                                ? "bg-background text-foreground shadow-sm"
+                                : "text-muted-foreground hover:text-foreground"
+                        )}
+                        title="Extended Trading Hours (Full Session)"
+                    >
+                        ETH
+                    </button>
+                    <button
+                        onClick={() => onSessionChange?.('RTH')}
+                        className={cn(
+                            "px-2 py-0.5 text-[10px] font-bold rounded-md transition-all",
+                            sessionType === 'RTH'
+                                ? "bg-background text-foreground shadow-sm"
+                                : "text-muted-foreground hover:text-foreground"
+                        )}
+                        title="Regular Trading Hours (09:30 - 16:00)"
+                    >
+                        RTH
+                    </button>
+                </div>
 
                 <div className="h-4 w-[1px] bg-border mx-2" />
 

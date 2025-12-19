@@ -66,6 +66,10 @@ const indicators = [
         value: "opening-range",
         label: "Opening Range",
     },
+    {
+        value: "expected-move",
+        label: "Historical Expected Move",
+    },
 ]
 
 interface IndicatorsDialogProps {

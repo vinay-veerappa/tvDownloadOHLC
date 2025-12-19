@@ -6,6 +6,8 @@ import { useDataLoading } from "./use-data-loading"
 import { useLiveDataLoading } from "./use-live-data-loading"
 import { useReplay } from "./use-replay"
 
+import { SessionType } from "@/components/top-toolbar"
+
 interface UseChartDataProps {
     ticker: string
     timeframe: string
@@ -15,6 +17,45 @@ interface UseChartDataProps {
     getVisibleTimeRange?: () => { start: number, end: number, center: number } | null
     initialReplayTime?: number
     mode?: 'historical' | 'live'
+    sessionType?: SessionType
+}
+
+// Cached formatter for performance
+const nyTimeFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false
+});
+
+function isRTH(time: number, isFuture: boolean): boolean {
+    // time is seconds
+    const d = new Date(time * 1000);
+    const parts = nyTimeFormatter.formatToParts(d);
+    let hour = 0;
+    let minute = 0;
+    for (const p of parts) {
+        if (p.type === 'hour') hour = parseInt(p.value);
+        if (p.type === 'minute') minute = parseInt(p.value);
+    }
+
+    // RTH: 09:30 - 16:00 (Stocks) / 16:15 (Futures)
+    const t = hour * 100 + minute;
+
+    if (t < 930) return false;
+
+    const end = isFuture ? 1615 : 1600;
+    if (t >= end) return false; // Strict inequality? 16:00 is usually the CLOSE bar time.
+
+    // Wait, bar time is OPEN time usually for candles?
+    // If bar time is 15:59, it closes at 16:00 -> Included.
+    // If bar time is 16:00, it closes at 16:01 -> Excluded for stocks? 
+    // TV timestamp is usually Open Time.
+    // So 15:59 is the last 1m bar.
+    // 16:00 bar is After Hours.
+    // So `t < end` is correct if `end` is 1600.
+
+    return true;
 }
 
 export function useChartData({
@@ -24,11 +65,11 @@ export function useChartData({
     onReplayStateChange,
     onPriceChange,
     initialReplayTime,
-    mode = 'historical'
+    mode = 'historical',
+    sessionType = 'ETH'
 }: UseChartDataProps) {
 
     const timeframe = useMemo(() => normalizeResolution(rawTimeframe), [rawTimeframe])
-
     const currentReplayTimeRef = useRef<number | null>(null)
 
     const histLoading = useDataLoading({
@@ -46,8 +87,18 @@ export function useChartData({
 
     const loading = mode === 'live' ? liveLoading : histLoading
 
+    // Filter for RTH if needed
+    const effectiveFullData = useMemo(() => {
+        // Skip filtering if mode is ETH or if timeframe is Daily or higher (not intraday)
+        const isIntraday = getResolutionInMinutes(timeframe) < 1440;
+        if (sessionType === 'ETH' || !isIntraday) return loading.fullData;
+
+        const isFuture = ticker.includes('!');
+        return loading.fullData.filter(bar => isRTH(bar.time, isFuture));
+    }, [loading.fullData, sessionType, ticker, timeframe]);
+
     const replay = useReplay({
-        fullData: loading.fullData,
+        fullData: effectiveFullData,
         ticker,
         initialReplayTime,
         onReplayStateChange,

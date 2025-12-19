@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { TopToolbar } from './top-toolbar'
+import { TopToolbar, type SessionType } from './top-toolbar'
 import { useTheme } from "next-themes"
 import { ChartWrapper, type NavigationFunctions } from './chart-wrapper'
 import { BottomBar } from './bottom-bar'
@@ -41,6 +41,7 @@ export function ChartPageClient({
 }: ChartPageClientProps) {
     const [magnetMode, setMagnetMode] = useState<MagnetMode>('off')
     const [displayTimezone, setDisplayTimezone] = useState('America/New_York')
+    const [sessionType, setSessionType] = useState<SessionType>('ETH')
     // VWAP Settings State
     const [vwapSettings, setVwapSettings] = useState<any>({
         anchor: 'session',
@@ -188,13 +189,15 @@ export function ChartPageClient({
                         tickerMap={tickerMap}
                         magnetMode={magnetMode}
                         onMagnetModeChange={handleMagnetModeChange}
+                        sessionType={sessionType}
+                        onSessionChange={setSessionType}
                     />
                 </div>
 
                 {/* Chart Wrapper (Flex Grow) */}
                 <div className="flex-1 min-h-0 relative">
                     <ChartWrapper
-                        key={`${ticker}-${timeframe}-${mode}`} // Force hard remount to prevent state leakage/double-rendering artifacts
+                        key={`${ticker}-${timeframe}-${mode}-${sessionType}`} // Remount on session change to reprocessing
                         ticker={ticker}
                         timeframe={timeframe}
                         style={style}
@@ -202,6 +205,7 @@ export function ChartPageClient({
                         markers={markers}
                         magnetMode={magnetMode}
                         displayTimezone={displayTimezone}
+                        sessionType={sessionType}
                         onNavigationReady={handleNavigationReady}
                         onReplayStateChange={handleReplayStateChange}
                         onDataLoad={handleDataLoad}

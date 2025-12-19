@@ -41,6 +41,8 @@ export interface NavigationFunctions {
     getTotalBars: () => number
 }
 
+import type { SessionType } from './top-toolbar'
+
 interface ChartWrapperProps {
     ticker: string
     timeframe: string
@@ -48,6 +50,7 @@ interface ChartWrapperProps {
     indicators: string[]
     magnetMode?: MagnetMode
     displayTimezone?: string
+    sessionType?: SessionType
     onNavigationReady?: (nav: NavigationFunctions) => void
     onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number, currentTime?: number }) => void
     onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void

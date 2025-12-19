@@ -26,6 +26,8 @@ import { RangeTooltip } from "./range-tooltip"
 import { RangeExtensions, RangeExtensionPeriod, getContractSpecs } from "@/lib/charts/indicators/range-extensions"
 import { useKeyboardShortcuts } from "@/hooks/chart/use-keyboard-shortcuts"
 
+import type { SessionType } from './top-toolbar'
+
 interface ChartContainerProps {
     ticker: string
     timeframe: string
@@ -39,6 +41,7 @@ interface ChartContainerProps {
     markers?: any[]
     magnetMode?: MagnetMode
     displayTimezone?: string
+    sessionType?: SessionType
     selection?: { type: 'drawing' | 'indicator', id: string } | null
     onSelectionChange?: (selection: { type: 'drawing' | 'indicator', id: string } | null) => void
     onDeleteSelection?: () => void
@@ -97,7 +100,7 @@ export interface ChartContainerRef {
 
 export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({
     ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted,
-    indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York',
+    indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', sessionType = 'ETH',
     selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad,
     onPriceChange, position, pendingOrders, onModifyOrder, onModifyPosition, initialReplayTime,
     vwapSettings, indicatorParams, onIndicatorParamsChange, theme, onTimeframeChange, trades, mode // Destructure mode
@@ -124,7 +127,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         ticker, timeframe, onDataLoad, onReplayStateChange, onPriceChange,
         getVisibleTimeRange: () => getVisibleTimeRangeRef.current?.() ?? null,
         initialReplayTime,
-        mode // Pass mode
+        mode, // Pass mode
+        sessionType // Pass sessionType
     })
 
     // 3. Core Chart Initialization (Hook)
@@ -799,6 +803,9 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         const isEnabled = indicators.includes('daily-profiler') && isLowTimeframe;
         //console.log('[ChartContainer] Effect triggered. Timeframe:', timeframe, 'isLow?', isLowTimeframe, 'Indicators:', indicators, 'Enabled?', isEnabled);
 
+
+
+
         if (isEnabled && theme) {
             //console.log('[ChartContainer] DailyProfiler ENABLED. Importing...');
             import('@/lib/charts/indicators/daily-profiler').then(({ DailyProfiler, getDailyProfilerDefaults }) => {
@@ -862,6 +869,82 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             sessionRangesRef.current.setTheme(theme);
         }
     }, [theme]);
+
+    // -------------------------------------------------------------------------
+    // 14. Expected Move Levels (New)
+    // -------------------------------------------------------------------------
+    const emPluginRef = useRef<any>(null);
+    // ...
+    // Import server action (ensure this import exists at top of file, I'll add it here for context but I should actually add it to the top imports block if I can't rely on auto-import)
+    // Actually I better add it to the top. But for now I'll use dynamic import to be safe? 
+    // No, Server Actions are best imported at top.
+    // I'll assume I can edit the top block OR use a dynamic import. 
+    // "import { getChartData } from '@/actions/data-actions'"
+
+    useEffect(() => {
+        if (!series || !chart || !ticker) return;
+
+        // Enable if 'expected-move' or 'em' is in indicators list
+        const showEM = indicators.includes('expected-move') || indicators.includes('em');
+
+        if (showEM) {
+            const load = async () => {
+                try {
+                    const { ExpectedMoveLevels } = await import('@/lib/charts/plugins/expected-move-levels');
+                    const { getHistoricalVolatility } = await import('@/actions/get-historical-volatility');
+                    // Dynamic import for server action to avoid top-level clutter/cycles?
+                    const { getChartData } = await import('@/actions/data-actions');
+
+                    if (!emPluginRef.current) {
+                        emPluginRef.current = new ExpectedMoveLevels(chart, series, {
+                            ticker,
+                            show365: true,
+                            show252: true,
+                            lineColor: theme?.indicators?.levels?.close || '#ef5350', // Red-ish
+                            labelColor: theme?.ui?.text || '#ef5350'
+                        });
+                        series.attachPrimitive(emPluginRef.current);
+                    }
+
+                    // Parallel Fetch: IV + Daily Data
+                    const end = new Date();
+                    const start = new Date();
+                    start.setDate(start.getDate() - 100);
+
+                    const [ivData, dailyRes] = await Promise.all([
+                        getHistoricalVolatility(ticker, start, end),
+                        getChartData(ticker, "1d") // Fetch Daily Bars for Anchor
+                    ]);
+
+                    if (emPluginRef.current) {
+                        if (dailyRes && dailyRes.data) {
+                            emPluginRef.current.setDailyBars(dailyRes.data);
+                        }
+                        emPluginRef.current.setVolatilityData(ivData);
+
+                        if (dataRef.current.length > 0) {
+                            emPluginRef.current.updateFromBars(dataRef.current);
+                        }
+                    }
+                } catch (e) {
+                    console.error("Failed to load EM Plugin", e);
+                }
+            };
+            load();
+        } else {
+            // Cleanup/Detach if it exists but shouldn't be shown
+            if (emPluginRef.current) {
+                series.detachPrimitive(emPluginRef.current);
+                emPluginRef.current = null;
+            }
+        }
+    }, [series, chart, ticker, theme, indicators]);
+
+    useEffect(() => {
+        if (emPluginRef.current && data.length > 0) {
+            emPluginRef.current.updateFromBars(data);
+        }
+    }, [data, timeframe]);
 
     // -------------------------------------------------------------------------
     // 14. Trade Visualizations (Risk/Reward)
