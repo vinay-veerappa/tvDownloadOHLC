@@ -874,12 +874,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     // 14. Expected Move Levels (New)
     // -------------------------------------------------------------------------
     const emPluginRef = useRef<any>(null);
-    // ...
-    // Import server action (ensure this import exists at top of file, I'll add it here for context but I should actually add it to the top imports block if I can't rely on auto-import)
-    // Actually I better add it to the top. But for now I'll use dynamic import to be safe? 
-    // No, Server Actions are best imported at top.
-    // I'll assume I can edit the top block OR use a dynamic import. 
-    // "import { getChartData } from '@/actions/data-actions'"
 
     useEffect(() => {
         if (!series || !chart || !ticker) return;
@@ -891,9 +885,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             const load = async () => {
                 try {
                     const { ExpectedMoveLevels } = await import('@/lib/charts/plugins/expected-move-levels');
-                    const { getHistoricalVolatility } = await import('@/actions/get-historical-volatility');
-                    // Dynamic import for server action to avoid top-level clutter/cycles?
-                    const { getChartData } = await import('@/actions/data-actions');
 
                     if (!emPluginRef.current) {
                         emPluginRef.current = new ExpectedMoveLevels(chart, series, {
@@ -903,26 +894,54 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         series.attachPrimitive(emPluginRef.current);
                     }
 
-                    // Parallel Fetch: IV + Daily Data
-                    const end = new Date();
-                    const start = new Date();
-                    start.setDate(start.getDate() - 100);
+                    // Fetch EM levels from API
+                    // Map ticker to API format (ES1 -> ES, SPX -> SPX, SPY -> SPY)
+                    let apiTicker = ticker;
+                    if (ticker.includes('ES') || ticker.includes('/ES')) apiTicker = 'ES';
+                    else if (ticker.includes('SPX') || ticker === '$SPX') apiTicker = 'SPX';
+                    else if (ticker.includes('SPY')) apiTicker = 'SPY';
 
-                    const [ivData, dailyRes] = await Promise.all([
-                        getHistoricalVolatility(ticker, start, end),
-                        getChartData(ticker, "1d") // Fetch Daily Bars for Anchor
-                    ]);
+                    const resp = await fetch(`/api/em-levels?ticker=${apiTicker}`);
+                    if (!resp.ok) {
+                        console.warn('EM Levels API returned error:', resp.status);
+                        return;
+                    }
 
-                    if (emPluginRef.current) {
-                        if (dailyRes && dailyRes.data) {
-                            emPluginRef.current.setDailyBars(dailyRes.data);
+                    const result = await resp.json();
+                    if (!result.data || result.data.length === 0) {
+                        console.warn('No EM data available for ticker:', apiTicker);
+                        return;
+                    }
+
+                    // Group data by method
+                    const methodDataMap = new Map<string, any[]>();
+                    for (const row of result.data) {
+                        const methodId = row.method;
+                        if (!methodDataMap.has(methodId)) {
+                            methodDataMap.set(methodId, []);
                         }
-                        emPluginRef.current.setVolatilityData(ivData);
-
-                        if (dataRef.current.length > 0) {
-                            emPluginRef.current.updateFromBars(dataRef.current);
+                        // Only store unique dates (first multiple entry per date)
+                        const existing = methodDataMap.get(methodId)!;
+                        if (!existing.find((e: any) => e.date === row.date)) {
+                            methodDataMap.get(methodId)!.push({
+                                date: row.date,
+                                anchor: row.anchor,
+                                emValue: row.em_value,
+                                anchorType: row.method.includes('open') ? 'open' : 'close'
+                            });
                         }
                     }
+
+                    // Load each method's data
+                    for (const [methodId, data] of methodDataMap) {
+                        emPluginRef.current.setMethodData(methodId, data);
+                    }
+
+                    // Trigger initial update with bar data
+                    if (dataRef.current.length > 0) {
+                        emPluginRef.current.updateFromBars(dataRef.current);
+                    }
+
                 } catch (e) {
                     console.error("Failed to load EM Plugin", e);
                 }
