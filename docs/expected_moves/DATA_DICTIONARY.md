@@ -15,12 +15,23 @@ This document describes the comprehensive Expected Move (EM) datasets generated 
 
 | File | Rows | Description |
 | :--- | :--- | :--- |
-| `em_daily_levels.csv` | 31,542 | Daily EM levels for each method at each multiple |
+| `em_daily_levels.csv` | 31,542 | Daily EM levels for SPY |
+| `em_daily_levels_ES.csv` | 23,814 | Daily EM levels for /ES (extrapolated) |
+| `em_daily_levels_SPX.csv` | 31,542 | Daily EM levels for SPX (extrapolated) |
 | `em_daily_performance.csv` | 31,542 | Daily realized performance vs each EM level |
 | `em_level_touches.csv` | 2,244 | 5-minute intraday touch/reversal data |
 | `em_method_summary.csv` | 70 | Summary statistics for each method/level combo |
+| `em_method_summary_all.csv` | 210 | Combined summary for SPY, ES, SPX |
 | `em_master_dataset.csv` | 502 | Raw daily data with all EM calculations |
 | `em_multimethod_results.csv` | 49 | Multi-method comparison results |
+
+### Scaling Factors (for Extrapolation)
+
+| Ticker | Scale Factor | Notes |
+| :--- | :--- | :--- |
+| SPY | 1.0 | Base ticker |
+| /ES | ~10.47x | SPY * 10.47 |
+| SPX | ~10.03x | SPY * 10.03 |
 
 ---
 
