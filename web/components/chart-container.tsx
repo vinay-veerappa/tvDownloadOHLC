@@ -898,10 +898,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     if (!emPluginRef.current) {
                         emPluginRef.current = new ExpectedMoveLevels(chart, series, {
                             ticker,
-                            show365: true,
-                            show252: true,
-                            lineColor: theme?.indicators?.levels?.close || '#ef5350', // Red-ish
-                            labelColor: theme?.ui?.text || '#ef5350'
+                            showLabels: true
                         });
                         series.attachPrimitive(emPluginRef.current);
                     }
