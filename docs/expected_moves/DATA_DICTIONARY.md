@@ -24,14 +24,18 @@ This document describes the comprehensive Expected Move (EM) datasets generated 
 | `em_method_summary_all.csv` | 210 | Combined summary for SPY, ES, SPX |
 | `em_master_dataset.csv` | 502 | Raw daily data with all EM calculations |
 | `em_multimethod_results.csv` | 49 | Multi-method comparison results |
+| `em_overnight_es.csv` | 1,116 | ES overnight session (16:00-09:30) analysis |
+| `em_overnight_summary.csv` | 4 | Overnight session summary statistics |
 
 ### Scaling Factors (for Extrapolation)
 
-| Ticker | Scale Factor | Notes |
+| Ticker | Approach | Notes |
 | :--- | :--- | :--- |
 | SPY | 1.0 | Base ticker |
-| /ES | ~10.47x | SPY * 10.47 |
-| SPX | ~10.03x | SPY * 10.03 |
+| /ES | **Per-day exact ratio** | `ES_Close / SPY_Close` for each day |
+| SPX | **Per-day exact ratio** | `SPX_Close / SPY_Close` for each day |
+
+> **Note**: The scaling is performed using the **exact per-day ratio** from that day's closing prices, not a fixed average. For example, if SPY closed at $600 and ES closed at 6,300 on a given day, the scale is exactly 10.5x for that day's levels.
 
 ---
 
