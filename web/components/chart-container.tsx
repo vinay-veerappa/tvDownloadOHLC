@@ -12,6 +12,7 @@ import { toast } from "sonner"
 import { useDrawingManager } from "@/hooks/use-drawing-manager"
 // New Hooks
 import { useChartData } from "@/hooks/chart/use-chart-data"
+import { useDataLoading } from "@/hooks/chart/use-data-loading"
 import { useChartTrading } from "@/hooks/chart/use-chart-trading"
 import { useChartDrag } from "@/hooks/chart/use-chart-drag"
 import { useDrawingInteraction } from "@/hooks/chart/use-drawing-interaction"
@@ -973,7 +974,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 methods: emSettings.methods,
                 levelMultiples: emSettings.levelMultiples,
                 showLabels: emSettings.showLabels,
-                showWeeklyClose: emSettings.showWeeklyClose
+                showWeeklyClose: emSettings.showWeeklyClose,
+                labelFontSize: emSettings.labelFontSize
             });
             // Re-render with current bar data
             if (dataRef.current.length > 0) {
@@ -981,6 +983,24 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             }
         }
     }, [emSettings]);
+
+    // -------------------------------------------------------------------------
+    // 13.5 Daily Settlement Data for EM Anchoring (ES Futures)
+    // -------------------------------------------------------------------------
+
+    // Fetch daily data unconditionally for the current ticker to get accurate settlement closes
+    const dailyDataLogic = useDataLoading({
+        ticker,
+        timeframe: '1D',
+        // No callbacks needed, just need the data
+    });
+
+    // Pass Daily Settlements to Plugin
+    useEffect(() => {
+        if (emPluginRef.current && dailyDataLogic.fullData.length > 0) {
+            emPluginRef.current.setDailySettlements(dailyDataLogic.fullData);
+        }
+    }, [dailyDataLogic.fullData]);
 
     // -------------------------------------------------------------------------
     // 14. Trade Visualizations (Risk/Reward)

@@ -170,9 +170,8 @@ class EMRenderer {
                     const statusIcon = this._getStatusIcon(level.upperStatus);
                     this._drawLevelLine(ctx, yUpper * vPR, xStart, xEnd, upperColor, level.multiple, hPR, level.upperStatus !== 'none');
                     if (this._options.showLabels) {
-                        this._drawLabel(ctx, yUpper * vPR, xEnd,
-                            `+${level.multiple * 100}%${statusIcon}`,
-                            level.levelUpper, upperColor, hPR, vPR);
+                        const labelText = `${this._getShortMethodName(level.methodName)} +${level.multiple * 100}%${statusIcon}`;
+                        this._drawLabel(ctx, yUpper * vPR, xEnd, labelText, level.levelUpper, upperColor, hPR, vPR);
                     }
                 }
 
@@ -182,9 +181,8 @@ class EMRenderer {
                     const statusIcon = this._getStatusIcon(level.lowerStatus);
                     this._drawLevelLine(ctx, yLower * vPR, xStart, xEnd, lowerColor, level.multiple, hPR, level.lowerStatus !== 'none');
                     if (this._options.showLabels) {
-                        this._drawLabel(ctx, yLower * vPR, xEnd,
-                            `-${level.multiple * 100}%${statusIcon}`,
-                            level.levelLower, lowerColor, hPR, vPR);
+                        const labelText = `${this._getShortMethodName(level.methodName)} -${level.multiple * 100}%${statusIcon}`;
+                        this._drawLabel(ctx, yLower * vPR, xEnd, labelText, level.levelLower, lowerColor, hPR, vPR);
                     }
                 }
 
@@ -248,6 +246,21 @@ class EMRenderer {
         }
     }
 
+    private _getShortMethodName(fullName: string): string {
+        // Map long names to short codes
+        if (fullName.includes('Straddle 0.85x (Close)')) return 'Strad 0.85C';
+        if (fullName.includes('Straddle 1.0x (Close)')) return 'Strad 1.0C';
+        if (fullName.includes('Straddle 0.85x (Open)')) return 'Strad 0.85O';
+        if (fullName.includes('Straddle 1.0x (Open)')) return 'Strad 1.0O';
+        if (fullName.includes('IV-365')) return 'IV365';
+        if (fullName.includes('IV-252')) return 'IV252';
+        if (fullName.includes('VIX Scaled')) return 'VIX2.0';
+        if (fullName.includes('Synth VIX 0.85x')) return 'SynVIX 0.85';
+        if (fullName.includes('Synth VIX 1.0x')) return 'SynVIX 1.0';
+
+        return fullName.substring(0, 10); // Fallback
+    }
+
     private _drawStatusBadge(ctx: CanvasRenderingContext2D, x: number, y: number, contained: boolean, hPR: number, vPR: number) {
         const size = 12 * hPR;
         const bgColor = contained ? '#22C55E' : '#6B7280';  // Green if reversal, gray otherwise
@@ -301,6 +314,9 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
     // Raw data store by method
     _methodData: Map<string, EMData[]> = new Map();
 
+    // Store Daily Settlement Closes (Date -> Close)
+    _dailySettlements: Map<string, number> = new Map();
+
     constructor(
         chart: IChartApi,
         series: ISeriesApi<any>,
@@ -338,6 +354,21 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
     }
 
     /**
+     * Provide Daily Settlement data (Date -> Close)
+     * Used for accurate anchoring of Close-based EMs for Futures
+     */
+    public setDailySettlements(bars: { time: number, close: number }[]) {
+        this._dailySettlements.clear();
+        for (const bar of bars) {
+            const d = new Date(bar.time * 1000);
+            if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1); // Normalize Sunday opens to Monday
+            const dateStr = d.toISOString().split('T')[0];
+            this._dailySettlements.set(dateStr, bar.close);
+        }
+        this._recalculate();
+    }
+
+    /**
      * Toggle a method on/off
      */
     public toggleMethod(methodId: keyof ExpectedMoveLevelsOptions['methods'], enabled: boolean) {
@@ -364,6 +395,7 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
         levelMultiples: number[];
         showLabels: boolean;
         showWeeklyClose: boolean;
+        labelFontSize?: number;
     }) {
         // Update enabled state for each method based on settings
         for (const settingsMethod of settings.methods) {
@@ -379,6 +411,9 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
         this._options.levelMultiples = settings.levelMultiples;
         this._options.showLabels = settings.showLabels;
         this._options.showWeeklyClose = settings.showWeeklyClose;
+        if (settings.labelFontSize) {
+            this._options.labelFontSize = settings.labelFontSize;
+        }
         this._recalculate();
     }
 
@@ -449,11 +484,12 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
         const levels: ComputedLevel[] = [];
 
         // Pass 1: Build daily context (previous close, weekly close) & Weekly Levels
-        const dailyContext = new Map<string, { prevDailyClose: number | null, prevWeeklyClose: number | null }>();
+        const dailyContext = new Map<string, { prevDailyClose: number | null, prevWeeklyClose: number | null, prevDateStr: string | null }>();
 
         let lastDailyClose: number | null = null;
         let lastWeeklyClose: number | null = null;
         let currentWeekNum = -1;
+        let lastDateStr: string | null = null;
 
         // Helper to get ISO week number
         const getWeek = (d: Date) => {
@@ -476,11 +512,13 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
 
             dailyContext.set(dateStr, {
                 prevDailyClose: lastDailyClose,
-                prevWeeklyClose: lastWeeklyClose
+                prevWeeklyClose: lastWeeklyClose,
+                prevDateStr: lastDateStr
             });
 
             // Update last daily close for next iteration
             lastDailyClose = bucket.close;
+            lastDateStr = dateStr;
 
             // Add Weekly Close Level if enabled
             if (this._options.showWeeklyClose && lastWeeklyClose !== null) {
@@ -538,14 +576,26 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                         const emPercent = emData.emValue / emData.anchor;
                         emValueForChart = actualAnchor * emPercent;
                     } else {
-                        // Close-anchored: use previous day's close from CHART if available
-                        if (context.prevDailyClose !== null) {
-                            actualAnchor = context.prevDailyClose;
+                        // Close-anchored
+                        // Default to prevDailyClose (from intraday)
+                        let targetAnchor = context.prevDailyClose;
+
+                        // If ES/Futures -> Try to use explicitly provided Daily Settlement from Map
+                        // We use prevDateStr to find the previous day's settlement
+                        if (this._options.ticker === 'ES' && context.prevDateStr) {
+                            const settlement = this._dailySettlements.get(context.prevDateStr);
+                            if (settlement !== undefined) {
+                                targetAnchor = settlement;
+                            }
+                        }
+
+                        if (targetAnchor !== null) {
+                            actualAnchor = targetAnchor;
                             // EM percentage from SPY data
                             const emPercent = emData.emValue / emData.anchor;
                             emValueForChart = actualAnchor * emPercent;
                         } else {
-                            // Fallback to CSV anchor (likely wrong for ES/SPX but best we have for first day)
+                            // Fallback to CSV anchor
                             actualAnchor = emData.anchor;
                             emValueForChart = emData.emValue;
                         }

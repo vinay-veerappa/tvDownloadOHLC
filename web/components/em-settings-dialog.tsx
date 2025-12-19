@@ -1,12 +1,22 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from "@/components/ui/dialog"
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
+import { Input } from "@/components/ui/input"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { ExpectedMoveLevelsOptions, EMMethodConfig } from "@/lib/charts/plugins/expected-move-levels";
 
 // ==========================================
 // Types
@@ -21,14 +31,15 @@ export interface EMMethodState {
 }
 
 export interface EMSettings {
-    methods: EMMethodState[]
-    levelMultiples: number[]
-    showLabels: boolean
-    showWeeklyClose: boolean  // Show Friday close line extending to next week
-    ticker: 'SPY' | 'ES' | 'SPX'
+    methods: EMMethodConfig[];
+    levelMultiples: number[];
+    showLabels: boolean;
+    labelFontSize: number;
+    showWeeklyClose: boolean;
+    ticker: 'SPY' | 'ES' | 'SPX';
 }
 
-const DEFAULT_METHODS: EMMethodState[] = [
+const DEFAULT_METHODS: EMMethodConfig[] = [
     { id: 'straddle_085_close', name: 'Straddle 0.85x (Close)', color: '#FF5252', enabled: false, anchorType: 'close' },
     { id: 'straddle_100_close', name: 'Straddle 1.0x (Close)', color: '#FF8A80', enabled: false, anchorType: 'close' },
     { id: 'straddle_085_open', name: 'Straddle 0.85x (Open)', color: '#4CAF50', enabled: false, anchorType: 'open' },
@@ -62,6 +73,7 @@ function loadSettings(): EMSettings {
             methods: DEFAULT_METHODS,
             levelMultiples: [0.5, 1.0, 1.5],
             showLabels: true,
+            labelFontSize: 10,
             showWeeklyClose: true,
             ticker: 'SPY'
         }
@@ -78,7 +90,8 @@ function loadSettings(): EMSettings {
             })
             return {
                 ...parsed,
-                methods
+                methods,
+                labelFontSize: parsed.labelFontSize || 10
             }
         }
     } catch (e) {
@@ -89,6 +102,7 @@ function loadSettings(): EMSettings {
         methods: DEFAULT_METHODS,
         levelMultiples: [0.5, 1.0, 1.5],
         showLabels: true,
+        labelFontSize: 10,
         showWeeklyClose: true,
         ticker: 'SPY'
     }
@@ -212,15 +226,17 @@ export function EMSettingsDialog({ open, onOpenChange, onSettingsChange }: EMSet
         }
     }, [open])
 
+    const dialogStyle = {
+        transform: `translate(${position.x}px, ${position.y}px)`,
+        cursor: isDragging ? 'grabbing' : 'default'
+    }
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent
                 ref={dialogRef}
                 className="max-w-2xl max-h-[80vh] overflow-y-auto"
-                style={{
-                    transform: `translate(${position.x}px, ${position.y}px)`,
-                    cursor: isDragging ? 'grabbing' : 'default'
-                }}
+                style={dialogStyle}
                 onMouseDown={handleMouseDown}
             >
                 <DialogHeader className="dialog-header cursor-grab">
@@ -311,10 +327,10 @@ export function EMSettingsDialog({ open, onOpenChange, onSettingsChange }: EMSet
                             {AVAILABLE_LEVELS.map(level => (
                                 <div
                                     key={level.value}
-                                    className={`flex items-center justify-between rounded-lg border p-3 cursor-pointer transition-colors ${settings.levelMultiples.includes(level.value)
+                                    className={`flex items - center justify - between rounded - lg border p - 3 cursor - pointer transition - colors ${settings.levelMultiples.includes(level.value)
                                         ? 'bg-primary/10 border-primary'
                                         : 'hover:bg-muted'
-                                        }`}
+                                        } `}
                                     onClick={() => toggleLevel(level.value)}
                                 >
                                     <Label className="font-normal cursor-pointer">
@@ -343,6 +359,41 @@ export function EMSettingsDialog({ open, onOpenChange, onSettingsChange }: EMSet
                                         setSettings(prev => ({ ...prev, showLabels: checked }))
                                     }
                                 />
+                            </div>
+                            <div className="flex items-center justify-between rounded-lg border p-3">
+                                <Label htmlFor="showWeeklyClose" className="font-normal">
+                                    Show Weekly Close
+                                </Label>
+                                <Switch
+                                    id="showWeeklyClose"
+                                    checked={settings.showWeeklyClose}
+                                    onCheckedChange={(checked) =>
+                                        setSettings(prev => ({ ...prev, showWeeklyClose: checked }))
+                                    }
+                                />
+                            </div>
+
+                            <div className="flex items-center justify-between rounded-lg border p-3">
+                                <Label htmlFor="fontSize" className="font-normal">
+                                    Label Font Size
+                                </Label>
+                                <div className="flex items-center gap-2">
+                                    <Input
+                                        id="fontSize"
+                                        type="number"
+                                        min={8}
+                                        max={24}
+                                        className="w-20"
+                                        value={settings.labelFontSize || 10}
+                                        onChange={(e) => {
+                                            const val = parseInt(e.target.value);
+                                            if (!isNaN(val)) {
+                                                setSettings(prev => ({ ...prev, labelFontSize: val }));
+                                            }
+                                        }}
+                                    />
+                                    <span className="text-sm text-muted-foreground">px</span>
+                                </div>
                             </div>
 
                             <div>
@@ -374,6 +425,7 @@ export function EMSettingsDialog({ open, onOpenChange, onSettingsChange }: EMSet
                                 methods: DEFAULT_METHODS,
                                 levelMultiples: [0.5, 1.0, 1.5],
                                 showLabels: true,
+                                labelFontSize: 10,
                                 showWeeklyClose: true,
                                 ticker: 'SPY'
                             })
