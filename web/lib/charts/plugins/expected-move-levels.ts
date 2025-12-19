@@ -304,15 +304,10 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
         // Compute levels
         const levels: ComputedLevel[] = [];
 
-        console.log('[EM] updateFromBars - dayBuckets:', dayBuckets.size);
-        console.log('[EM] updateFromBars - methods:', Object.entries(this._options.methods).map(([k, v]) => ({ key: k, id: v.id, enabled: v.enabled })));
-        console.log('[EM] updateFromBars - methodData keys:', [...this._methodData.keys()]);
-
         for (const [methodKey, methodConfig] of Object.entries(this._options.methods)) {
             if (!methodConfig.enabled) continue;
 
             const methodData = this._methodData.get(methodConfig.id);
-            console.log(`[EM] Method ${methodConfig.id}: has data?`, !!methodData, methodData?.length);
             if (!methodData || methodData.length === 0) continue;
 
             // Build lookup
@@ -321,12 +316,10 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                 dataMap.set(d.date, d);
             }
 
-            let matchCount = 0;
             for (const [dateStr, bucket] of dayBuckets) {
                 const emData = dataMap.get(dateStr);
                 if (!emData) continue;
 
-                matchCount++;
                 for (const mult of this._options.levelMultiples) {
                     levels.push({
                         startUnix: bucket.start,
@@ -342,10 +335,8 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                     });
                 }
             }
-            console.log(`[EM] Method ${methodConfig.id}: matched ${matchCount} days, created ${matchCount * this._options.levelMultiples.length} levels`);
         }
 
-        console.log('[EM] Total computed levels:', levels.length);
         this._computedLevels = levels;
         this._requestUpdate();
     }
