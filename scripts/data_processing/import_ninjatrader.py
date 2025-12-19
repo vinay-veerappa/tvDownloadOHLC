@@ -45,9 +45,13 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
     try:
         if has_headers:
             # Flexible reading
-            df = pd.read_csv(csv_path, sep=delimiter)
+            df = pd.read_csv(csv_path, sep=delimiter, low_memory=False)
             # Normalize column names
             df.columns = [c.strip().lower() for c in df.columns]
+
+            # Filter out repeated headers
+            if 'date' in df.columns:
+                df = df[df['date'].astype(str).str.lower() != 'date'].copy()
             
             # Map columns
             rename_map = {
@@ -55,6 +59,11 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
                 'vol': 'volume', 'date': 'date_str', 'time': 'time_str'
             }
             df.rename(columns=rename_map, inplace=True)
+
+            # Ensure numeric types for OHLCV
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
             
             # Parse DateTime
             if 'date_str' in df.columns and 'time_str' in df.columns:

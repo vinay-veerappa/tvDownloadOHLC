@@ -28,7 +28,7 @@ from api.services.data_loader import load_parquet, get_available_data
 from api.services.session_service import SessionService
 
 # Output directories
-SESSIONS_DIR = PROJECT_ROOT / 'data' / 'sessions'
+SESSIONS_DIR = PROJECT_ROOT.parent / 'data' / 'sessions'
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 

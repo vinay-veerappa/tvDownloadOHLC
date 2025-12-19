@@ -15,7 +15,7 @@ from datetime import datetime, time, timedelta
 import pytz
 from collections import defaultdict
 
-DATA_DIR = Path(__file__).parent.parent / 'data'
+DATA_DIR = Path(__file__).parent.parent.parent / 'data'
 ET = pytz.timezone('US/Eastern')
 
 

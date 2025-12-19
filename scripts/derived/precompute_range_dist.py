@@ -23,11 +23,11 @@ SESSIONS = [
     {"name": "NY2", "start": "12:00", "end": "16:00"},
 ]
 
-def precompute_range_distribution(ticker="NQ1"):
+def precompute_range_distribution(ticker="NQ1", timeframe="1m"):
     from api.services.data_loader import DATA_DIR
     
-    print(f"Loading 1m data for {ticker}...")
-    file_path = DATA_DIR / f"{ticker}_1m.parquet"
+    print(f"Loading {timeframe} data for {ticker}...")
+    file_path = DATA_DIR / f"{ticker}_{timeframe}.parquet"
     
     if not file_path.exists():
         print(f"Error: {file_path} not found")

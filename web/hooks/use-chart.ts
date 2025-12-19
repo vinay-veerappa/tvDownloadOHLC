@@ -70,6 +70,7 @@ export function useChart(
         try {
             return date.toLocaleString('en-US', {
                 timeZone: tz,
+                year: 'numeric',
                 month: 'short',
                 day: 'numeric',
                 hour: '2-digit',

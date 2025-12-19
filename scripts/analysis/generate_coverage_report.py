@@ -4,10 +4,10 @@ from datetime import datetime
 import os
 
 # Configuration
-BASE_DIR = Path(__file__).parent.parent
+BASE_DIR = Path(__file__).parent.parent.parent
 DATA_DIR = BASE_DIR / "data"
 DOCS_DIR = BASE_DIR / "docs"
-REPORT_FILE = DOCS_DIR / "DATA_COVERAGE_REPORT.md"
+REPORT_FILE = DOCS_DIR / "data" / "DATA_COVERAGE_REPORT.md"
 
 def get_parquet_stats(filepath):
     try:
@@ -26,6 +26,7 @@ def get_parquet_stats(filepath):
         if 'time' in df.columns: time_col = 'time'
         elif 'datetime' in df.columns: time_col = 'datetime'
         elif 'date' in df.columns: time_col = 'date'
+        elif 'index' in df.columns: time_col = 'index'
         
         start_date = "N/A"
         end_date = "N/A"
