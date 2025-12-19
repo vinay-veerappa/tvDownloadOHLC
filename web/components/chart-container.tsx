@@ -879,7 +879,9 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         if (!series || !chart || !ticker) return;
 
         // Enable if 'expected-move' or 'em' is in indicators list
-        const showEM = indicators.includes('expected-move') || indicators.includes('em');
+        // OR if the ticker is SPY, ES, or SPX (auto-enable for these)
+        const isEMTicker = ticker.includes('SPY') || ticker.includes('ES') || ticker.includes('SPX');
+        const showEM = indicators.includes('expected-move') || indicators.includes('em') || isEMTicker;
 
         if (showEM) {
             const load = async () => {
