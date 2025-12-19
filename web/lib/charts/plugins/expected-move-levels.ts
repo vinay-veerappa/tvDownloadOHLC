@@ -59,15 +59,15 @@ export interface ExpectedMoveLevelsOptions {
 }
 
 const DEFAULT_METHODS: ExpectedMoveLevelsOptions['methods'] = {
-    straddle085Close: { id: 'straddle085Close', name: 'Straddle 0.85x (Close)', color: '#FF5252', enabled: false, anchorType: 'close' },
-    straddle100Close: { id: 'straddle100Close', name: 'Straddle 1.0x (Close)', color: '#FF8A80', enabled: false, anchorType: 'close' },
-    straddle085Open: { id: 'straddle085Open', name: 'Straddle 0.85x (Open)', color: '#4CAF50', enabled: false, anchorType: 'open' },
-    straddle100Open: { id: 'straddle100Open', name: 'Straddle 1.0x (Open)', color: '#81C784', enabled: false, anchorType: 'open' },
-    iv365: { id: 'iv365', name: 'IV-365', color: '#2196F3', enabled: false, anchorType: 'close' },
-    iv252: { id: 'iv252', name: 'IV-252', color: '#64B5F6', enabled: false, anchorType: 'close' },
-    vixScaled: { id: 'vixScaled', name: 'VIX Scaled 2.0x', color: '#FF9800', enabled: false, anchorType: 'close' },
-    synthVix085: { id: 'synthVix085', name: 'Synth VIX 0.85x (9:30)', color: '#9C27B0', enabled: false, anchorType: 'open' },
-    synthVix100: { id: 'synthVix100', name: 'Synth VIX 1.0x (9:30)', color: '#BA68C8', enabled: true, anchorType: 'open' }  // Default ON
+    straddle085Close: { id: 'straddle_085_close', name: 'Straddle 0.85x (Close)', color: '#FF5252', enabled: false, anchorType: 'close' },
+    straddle100Close: { id: 'straddle_100_close', name: 'Straddle 1.0x (Close)', color: '#FF8A80', enabled: false, anchorType: 'close' },
+    straddle085Open: { id: 'straddle_085_open', name: 'Straddle 0.85x (Open)', color: '#4CAF50', enabled: false, anchorType: 'open' },
+    straddle100Open: { id: 'straddle_100_open', name: 'Straddle 1.0x (Open)', color: '#81C784', enabled: false, anchorType: 'open' },
+    iv365: { id: 'iv365_close', name: 'IV-365', color: '#2196F3', enabled: false, anchorType: 'close' },
+    iv252: { id: 'iv252_close', name: 'IV-252', color: '#64B5F6', enabled: false, anchorType: 'close' },
+    vixScaled: { id: 'vix_scaled_close', name: 'VIX Scaled 2.0x', color: '#FF9800', enabled: false, anchorType: 'close' },
+    synthVix085: { id: 'synth_vix_085_open', name: 'Synth VIX 0.85x (9:30)', color: '#9C27B0', enabled: false, anchorType: 'open' },
+    synthVix100: { id: 'synth_vix_100_open', name: 'Synth VIX 1.0x (9:30)', color: '#BA68C8', enabled: true, anchorType: 'open' }  // Default ON
 };
 
 const DEFAULT_OPTIONS: ExpectedMoveLevelsOptions = {
@@ -304,10 +304,15 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
         // Compute levels
         const levels: ComputedLevel[] = [];
 
+        console.log('[EM] updateFromBars - dayBuckets:', dayBuckets.size);
+        console.log('[EM] updateFromBars - methods:', Object.entries(this._options.methods).map(([k, v]) => ({ key: k, id: v.id, enabled: v.enabled })));
+        console.log('[EM] updateFromBars - methodData keys:', [...this._methodData.keys()]);
+
         for (const [methodKey, methodConfig] of Object.entries(this._options.methods)) {
             if (!methodConfig.enabled) continue;
 
             const methodData = this._methodData.get(methodConfig.id);
+            console.log(`[EM] Method ${methodConfig.id}: has data?`, !!methodData, methodData?.length);
             if (!methodData || methodData.length === 0) continue;
 
             // Build lookup
@@ -316,10 +321,12 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                 dataMap.set(d.date, d);
             }
 
+            let matchCount = 0;
             for (const [dateStr, bucket] of dayBuckets) {
                 const emData = dataMap.get(dateStr);
                 if (!emData) continue;
 
+                matchCount++;
                 for (const mult of this._options.levelMultiples) {
                     levels.push({
                         startUnix: bucket.start,
@@ -335,8 +342,10 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                     });
                 }
             }
+            console.log(`[EM] Method ${methodConfig.id}: matched ${matchCount} days, created ${matchCount * this._options.levelMultiples.length} levels`);
         }
 
+        console.log('[EM] Total computed levels:', levels.length);
         this._computedLevels = levels;
         this._requestUpdate();
     }
