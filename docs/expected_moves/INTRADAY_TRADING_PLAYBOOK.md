@@ -17,7 +17,8 @@ This playbook provides data-driven strategies for intraday trading using Expecte
 
 | Method | Formula | Containment @ 100% | Best For |
 | :--- | :--- | :--- | :--- |
-| **Synth VIX 1.0x (Open)** | `Open * (VIX_930/100) * sqrt(1/252) * 2.0` | **97.8%** | All-purpose intraday |
+| **Synth VIX 1.0x (Open)** | `Open * (VIX_930/100) * sqrt(1/252) * 2.0` | **97.8%** | SPY Intraday |
+| **Straddle 1.0x (Close)** | `Close * (Straddle_Premium/Close)` | **100.0%** | ES Futures (Hard Wall) |
 | Straddle 1.0x (Open) | `Open * (Straddle%_from_Close)` | 99.3% | Conservative boundary |
 
 ---

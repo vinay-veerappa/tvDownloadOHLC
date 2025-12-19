@@ -17,30 +17,28 @@ This analysis evaluates how the previous day's EM levels perform during the ES f
 ## Summary Results
 
 ### Anchor: Previous Day's Close
-
 | Level | Containment | Touch Upper | Touch Lower | Median MFE | Median MAE |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **50% EM** | 31.9% | 62.4% | 9.0% | 0.179 | 0.135 |
-| **100% EM** | **90.0%** | 9.0% | 1.1% | 0.179 | 0.135 |
+| **50% EM** | 33.9% | 63.7% | 4.1% | 0.148 | 0.128 |
+| **100% EM** | **95.6%** | 4.1% | 0.3% | 0.148 | 0.128 |
 
 ### Anchor: Previous Day's Open
-
 | Level | Containment | Touch Upper | Touch Lower | Median MFE | Median MAE |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **50% EM** | 29.7% | 68.5% | 5.4% | 0.179 | 0.135 |
-| **100% EM** | **92.1%** | 7.2% | 0.7% | 0.179 | 0.135 |
+| **50% EM** | 29.2% | 63.9% | 7.7% | 0.148 | 0.128 |
+| **100% EM** | 83.6% | 15.0% | 1.4% | 0.148 | 0.128 |
 
 ---
 
 ## Key Findings
 
-1. **Previous Open is Better for Overnight**: The `prev_open` anchor achieves **92.1% containment** vs 90.0% for `prev_close` at 100% EM.
+1. **Previous Close is King for Overnight**: The `prev_close` anchor achieves **95.6% containment** vs 83.6% for `prev_open`. The futures market respects the settlement close significantly more than the prior open during overnight sessions.
 
-2. **50% EM is a Magnet**: The upper 50% level is touched on **62-68% of overnight sessions**, making it a high-probability target.
+2. **50% EM is a Magnet**: The upper 50% level is touched on **~64% of overnight sessions**, making it a high-probability target.
 
-3. **Strong Upward Bias Overnight**: Touch upper rates (62-68%) far exceed touch lower rates (5-9%), indicating the overnight session has a bullish bias.
+3. **Strong Upward Bias Overnight**: Touch upper rates (64%) far exceed touch lower rates (4%), widely confirming the "Overnight Drift" phenomenon.
 
-4. **100% EM is the Overnight Boundary**: Only ~8-10% of overnight sessions breach the 100% EM level.
+4. **100% EM is the Hard Limit**: Less than 5% of overnight sessions breach the Close-Anchored 100% EM.
 
 ---
 

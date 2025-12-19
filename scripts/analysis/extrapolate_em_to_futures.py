@@ -30,7 +30,18 @@ def extrapolate_to_futures_and_spx():
     if spx_df.index.name == 'datetime': spx_df = spx_df.reset_index()
     
     spy_df['date'] = pd.to_datetime(spy_df['datetime']).dt.strftime('%Y-%m-%d')
-    es_df['date'] = pd.to_datetime(es_df['datetime']).dt.strftime('%Y-%m-%d')
+    
+    # Correction: Futures daily bars often start the previous evening (e.g., 23:00 UTC / 18:00 ET)
+    # If the bar refers to the session starting "Nov 30 23:00", it is the "Dec 1" trading day.
+    # We must shift dates if the hour is > 16 (4 PM)
+    def normalize_trade_date(dt):
+        if dt.hour > 16:
+            return (dt + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+        return dt.strftime('%Y-%m-%d')
+
+    es_df['datetime_obj'] = pd.to_datetime(es_df['datetime'])
+    es_df['date'] = es_df['datetime_obj'].apply(normalize_trade_date)
+    
     spx_df['date'] = pd.to_datetime(spx_df['datetime']).dt.strftime('%Y-%m-%d')
     
     # Get overlapping dates in our analysis range
@@ -62,6 +73,10 @@ def extrapolate_to_futures_and_spx():
             'es_scale': es_scale,
             'spx_scale': spx_scale
         })
+        
+    print(f"Debug: SPY Sample Dates: {spy_df['date'].head().tolist()}")
+    print(f"Debug: ES Sample Dates: {es_df['date'].head().tolist()}")
+    print(f"Debug: Analysis Dates matches in ES: {es_df['date'].isin(analysis_dates).sum()} / {len(analysis_dates)}")
     
     scale_df = pd.DataFrame(scaling_data)
     
