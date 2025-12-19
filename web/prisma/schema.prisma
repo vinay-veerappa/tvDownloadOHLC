@@ -5,6 +5,11 @@ generator client {
   provider = "prisma-client-js"
 }
 
+generator py_client {
+  provider = "C:/Users/vinay/AppData/Roaming/Python/Python314/Scripts/prisma-client-py.exe"
+  interface = "asyncio"
+}
+
 datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")
@@ -288,6 +293,31 @@ model HistoricalVolatility {
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@unique([ticker, date])
+  @@index([ticker])
+}
+
+model ExpectedMoveHistory {
+  id              Int      @id @default(autoincrement())
+  ticker          String
+  date            DateTime
+  closePrice      Float
+
+  // Straddle Data
+  straddlePrice   Float?
+  emStraddle      Float? // Expected Move based on Straddle (e.g. 0.85 * Straddle)
+
+  // IV Data
+  iv365           Float?
+  em365           Float?
+  iv252           Float?
+  em252           Float?
+
+  source          String? // "historical", "manual", "computed"
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@unique([ticker, date])
   @@index([ticker])

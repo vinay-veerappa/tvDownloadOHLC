@@ -4,7 +4,7 @@ import pandas as pd
 import os
 
 DATA_DIR = "C:/Users/vinay/tvDownloadOHLC/data"
-TICKERS = ["SPY", "QQQ", "IWM"]
+TICKERS = ["DIA"]
 
 def fetch_daily():
     if not os.path.exists(DATA_DIR):
@@ -13,8 +13,8 @@ def fetch_daily():
     for ticker in TICKERS:
         print(f"Fetching Daily for {ticker}...")
         try:
-            # Fetch 2y history
-            df = yf.download(ticker, period="2y", interval="1d", progress=False)
+            # Fetch 5y history
+            df = yf.download(ticker, period="5y", interval="1d", progress=False)
             
             if df.empty:
                 print(f"No data for {ticker}")
