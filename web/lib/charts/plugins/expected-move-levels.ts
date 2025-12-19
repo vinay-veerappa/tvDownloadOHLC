@@ -56,6 +56,7 @@ export interface ExpectedMoveLevelsOptions {
     // Styling
     anchorLineColor: string;
     anchorLineWidth: number;
+    showWeeklyClose: boolean;
 }
 
 const DEFAULT_METHODS: ExpectedMoveLevelsOptions['methods'] = {
@@ -77,7 +78,8 @@ const DEFAULT_OPTIONS: ExpectedMoveLevelsOptions = {
     methods: DEFAULT_METHODS,
     levelMultiples: [0.5, 1.0, 1.5],  // 50%, 100%, 150%
     anchorLineColor: '#B2B5BE',
-    anchorLineWidth: 2
+    anchorLineWidth: 2,
+    showWeeklyClose: true
 };
 
 // ==========================================
@@ -85,9 +87,9 @@ const DEFAULT_OPTIONS: ExpectedMoveLevelsOptions = {
 // ==========================================
 
 interface ComputedLevel {
-    startUnix: number;
-    endUnix: number;
-    anchor: number;
+    startUnix: number;        // Start of day
+    endUnix: number;          // End of day
+    anchor: number;           // Calculated anchor
     anchorType: 'close' | 'open';
     methodId: string;
     methodName: string;
@@ -95,12 +97,14 @@ interface ComputedLevel {
     multiple: number;
     levelUpper: number;
     levelLower: number;
+
     // Performance data - REVERSAL focused (not containment)
     upperStatus: 'reversal' | 'touch' | 'none';  // Did price reverse off upper?
     lowerStatus: 'reversal' | 'touch' | 'none';  // Did price reverse off lower?
     dayHigh: number;          // Day's high for tooltip
     dayLow: number;           // Day's low for tooltip
     dayClose: number;         // Day's close for reversal detection
+    isWeeklyClose?: boolean;  // Is this a weekly close line?
 }
 
 // ==========================================
@@ -135,6 +139,26 @@ class EMRenderer {
 
                 const xStart = (x1 !== null) ? x1 * hPR : 0;
                 const xEnd = (x2 !== null) ? x2 * hPR : scope.mediaSize.width * hPR;
+
+                // SPECIAL HANDLING: Weekly Close Line
+                if (level.isWeeklyClose) {
+                    const y = this._series.priceToCoordinate(level.anchor); // anchor stores the price
+                    if (y !== null) {
+                        ctx.beginPath();
+                        ctx.strokeStyle = '#FFFFFF'; // White line for weekly close
+                        ctx.lineWidth = 1 * hPR;
+                        ctx.setLineDash([8 * hPR, 4 * hPR]); // Dashed
+                        ctx.moveTo(xStart, y * vPR);
+                        ctx.lineTo(xEnd, y * vPR);
+                        ctx.stroke();
+
+                        if (this._options.showLabels) {
+                            this._drawLabel(ctx, y * vPR, xEnd, 'Prev Weekly Close', level.anchor, '#FFFFFF', hPR, vPR);
+                        }
+                    }
+                    // Skip regular rendering for this level
+                    continue;
+                }
 
                 // Draw level line
                 const yUpper = this._series.priceToCoordinate(level.levelUpper);
@@ -192,20 +216,14 @@ class EMRenderer {
                 ctx.beginPath();
                 ctx.strokeStyle = this._options.anchorLineColor;
                 ctx.lineWidth = this._options.anchorLineWidth * hPR;
-                ctx.setLineDash([]);
+                // Dashed line for anchor
+                ctx.setLineDash([2 * hPR, 4 * hPR]);
                 ctx.moveTo(anch.x1, yAnchor * vPR);
                 ctx.lineTo(anch.x2, yAnchor * vPR);
                 ctx.stroke();
-
-                if (this._options.showLabels) {
-                    ctx.font = `${this._options.labelFontSize * hPR}px sans-serif`;
-                    ctx.fillStyle = this._options.anchorLineColor;
-                    ctx.textAlign = 'right';
-                    ctx.fillText(`Anchor (${anch.type}): ${anch.price.toFixed(2)}`, anch.x2 - 5 * hPR, yAnchor * vPR - 5 * vPR);
-                }
             }
 
-            // Draw containment status badges at start of each day
+            // Draw containment badges
             for (const [key, status] of dayStatus) {
                 this._drawStatusBadge(ctx, status.x, status.yAnchor, status.contained, hPR, vPR);
             }
@@ -345,6 +363,7 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
         methods: Array<{ id: string; enabled: boolean }>;
         levelMultiples: number[];
         showLabels: boolean;
+        showWeeklyClose: boolean;
     }) {
         // Update enabled state for each method based on settings
         for (const settingsMethod of settings.methods) {
@@ -359,6 +378,7 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
 
         this._options.levelMultiples = settings.levelMultiples;
         this._options.showLabels = settings.showLabels;
+        this._options.showWeeklyClose = settings.showWeeklyClose;
         this._recalculate();
     }
 
@@ -428,6 +448,64 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
         // Compute levels with performance data
         const levels: ComputedLevel[] = [];
 
+        // Pass 1: Build daily context (previous close, weekly close) & Weekly Levels
+        const dailyContext = new Map<string, { prevDailyClose: number | null, prevWeeklyClose: number | null }>();
+
+        let lastDailyClose: number | null = null;
+        let lastWeeklyClose: number | null = null;
+        let currentWeekNum = -1;
+
+        // Helper to get ISO week number
+        const getWeek = (d: Date) => {
+            const date = new Date(d.getTime());
+            date.setHours(0, 0, 0, 0);
+            date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
+            const week1 = new Date(date.getFullYear(), 0, 4);
+            return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+        };
+
+        for (const [dateStr, bucket] of dayBuckets) {
+            const bucketDate = new Date(bucket.start * 1000);
+            const thisWeekNum = getWeek(bucketDate);
+
+            // Detect new week
+            if (currentWeekNum !== -1 && thisWeekNum !== currentWeekNum) {
+                lastWeeklyClose = lastDailyClose;
+            }
+            currentWeekNum = thisWeekNum;
+
+            dailyContext.set(dateStr, {
+                prevDailyClose: lastDailyClose,
+                prevWeeklyClose: lastWeeklyClose
+            });
+
+            // Update last daily close for next iteration
+            lastDailyClose = bucket.close;
+
+            // Add Weekly Close Level if enabled
+            if (this._options.showWeeklyClose && lastWeeklyClose !== null) {
+                levels.push({
+                    startUnix: bucket.start,
+                    endUnix: bucket.end,
+                    anchor: lastWeeklyClose,
+                    anchorType: 'close',
+                    methodId: 'weekly_close',
+                    methodName: 'Prev Week Close',
+                    methodColor: '#FFFFFF',
+                    multiple: 0,
+                    levelUpper: lastWeeklyClose, // Flat line
+                    levelLower: lastWeeklyClose,
+                    upperStatus: 'none',
+                    lowerStatus: 'none',
+                    dayHigh: bucket.high,
+                    dayLow: bucket.low,
+                    dayClose: bucket.close,
+                    isWeeklyClose: true
+                });
+            }
+        }
+
+        // Pass 2: Method Levels
         for (const [methodKey, methodConfig] of Object.entries(this._options.methods)) {
             if (!methodConfig.enabled) continue;
 
@@ -442,7 +520,9 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
 
             for (const [dateStr, bucket] of dayBuckets) {
                 const emData = dataMap.get(dateStr);
-                if (!emData) continue;
+                const context = dailyContext.get(dateStr);
+
+                if (!emData || !context) continue;
 
                 for (const mult of this._options.levelMultiples) {
                     // For open-anchored methods, use the CHART's RTH open (9:30 AM) price
@@ -458,10 +538,17 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                         const emPercent = emData.emValue / emData.anchor;
                         emValueForChart = actualAnchor * emPercent;
                     } else {
-                        // Close-anchored: use previous day's close (from CSV for now)
-                        // TODO: Could also scale this for cross-ticker use
-                        actualAnchor = emData.anchor;
-                        emValueForChart = emData.emValue;
+                        // Close-anchored: use previous day's close from CHART if available
+                        if (context.prevDailyClose !== null) {
+                            actualAnchor = context.prevDailyClose;
+                            // EM percentage from SPY data
+                            const emPercent = emData.emValue / emData.anchor;
+                            emValueForChart = actualAnchor * emPercent;
+                        } else {
+                            // Fallback to CSV anchor (likely wrong for ES/SPX but best we have for first day)
+                            actualAnchor = emData.anchor;
+                            emValueForChart = emData.emValue;
+                        }
                     }
 
                     const levelUpper = actualAnchor + emValueForChart * mult;

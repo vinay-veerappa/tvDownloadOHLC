@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -24,6 +24,7 @@ export interface EMSettings {
     methods: EMMethodState[]
     levelMultiples: number[]
     showLabels: boolean
+    showWeeklyClose: boolean  // Show Friday close line extending to next week
     ticker: 'SPY' | 'ES' | 'SPX'
 }
 
@@ -61,6 +62,7 @@ function loadSettings(): EMSettings {
             methods: DEFAULT_METHODS,
             levelMultiples: [0.5, 1.0, 1.5],
             showLabels: true,
+            showWeeklyClose: true,
             ticker: 'SPY'
         }
     }
@@ -87,6 +89,7 @@ function loadSettings(): EMSettings {
         methods: DEFAULT_METHODS,
         levelMultiples: [0.5, 1.0, 1.5],
         showLabels: true,
+        showWeeklyClose: true,
         ticker: 'SPY'
     }
 }
@@ -155,10 +158,72 @@ export function EMSettingsDialog({ open, onOpenChange, onSettingsChange }: EMSet
     const closeMethods = settings.methods.filter(m => m.anchorType === 'close')
     const openMethods = settings.methods.filter(m => m.anchorType === 'open')
 
+    // Drag state for movable dialog
+    const [position, setPosition] = useState({ x: 0, y: 0 })
+    const [isDragging, setIsDragging] = useState(false)
+    const dragRef = useRef<{ startX: number; startY: number; startPosX: number; startPosY: number } | null>(null)
+    const dialogRef = useRef<HTMLDivElement>(null)
+
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        // Only drag from the header area
+        if ((e.target as HTMLElement).closest('.dialog-header')) {
+            setIsDragging(true)
+            dragRef.current = {
+                startX: e.clientX,
+                startY: e.clientY,
+                startPosX: position.x,
+                startPosY: position.y
+            }
+            e.preventDefault()
+        }
+    }, [position])
+
+    const handleMouseMove = useCallback((e: MouseEvent) => {
+        if (isDragging && dragRef.current) {
+            const dx = e.clientX - dragRef.current.startX
+            const dy = e.clientY - dragRef.current.startY
+            setPosition({
+                x: dragRef.current.startPosX + dx,
+                y: dragRef.current.startPosY + dy
+            })
+        }
+    }, [isDragging])
+
+    const handleMouseUp = useCallback(() => {
+        setIsDragging(false)
+        dragRef.current = null
+    }, [])
+
+    useEffect(() => {
+        if (isDragging) {
+            window.addEventListener('mousemove', handleMouseMove)
+            window.addEventListener('mouseup', handleMouseUp)
+            return () => {
+                window.removeEventListener('mousemove', handleMouseMove)
+                window.removeEventListener('mouseup', handleMouseUp)
+            }
+        }
+    }, [isDragging, handleMouseMove, handleMouseUp])
+
+    // Reset position when dialog opens
+    useEffect(() => {
+        if (open) {
+            setPosition({ x: 0, y: 0 })
+        }
+    }, [open])
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-                <DialogHeader>
+            <DialogContent
+                ref={dialogRef}
+                className="max-w-2xl max-h-[80vh] overflow-y-auto"
+                style={{
+                    transform: `translate(${position.x}px, ${position.y}px)`,
+                    cursor: isDragging ? 'grabbing' : 'default'
+                }}
+                onMouseDown={handleMouseDown}
+            >
+                <DialogHeader className="dialog-header cursor-grab">
                     <DialogTitle>Expected Move Levels</DialogTitle>
                     <DialogDescription>
                         Configure which EM calculation methods and levels to display on the chart.
@@ -247,8 +312,8 @@ export function EMSettingsDialog({ open, onOpenChange, onSettingsChange }: EMSet
                                 <div
                                     key={level.value}
                                     className={`flex items-center justify-between rounded-lg border p-3 cursor-pointer transition-colors ${settings.levelMultiples.includes(level.value)
-                                            ? 'bg-primary/10 border-primary'
-                                            : 'hover:bg-muted'
+                                        ? 'bg-primary/10 border-primary'
+                                        : 'hover:bg-muted'
                                         }`}
                                     onClick={() => toggleLevel(level.value)}
                                 >
@@ -309,6 +374,7 @@ export function EMSettingsDialog({ open, onOpenChange, onSettingsChange }: EMSet
                                 methods: DEFAULT_METHODS,
                                 levelMultiples: [0.5, 1.0, 1.5],
                                 showLabels: true,
+                                showWeeklyClose: true,
                                 ticker: 'SPY'
                             })
                         }}
