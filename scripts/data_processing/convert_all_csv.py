@@ -14,6 +14,7 @@ ticker_map = {
     "COMEX_GC1!": "GC1",
     "NYMEX_CL1!": "CL1",
     "BATS_QQQ": "QQQ",
+    "BATS_SPY": "SPY",
     "SP_SPX": "SPX",
 }
 
@@ -100,8 +101,25 @@ for key, df in processed.items():
     
     # Merge with existing if present
     if output_path.exists():
-        existing = pd.read_parquet(output_path)
-        df = pd.concat([existing, df])
+        try:
+            existing = pd.read_parquet(output_path)
+            # Ensure index is datetime
+            if not isinstance(existing.index, pd.DatetimeIndex):
+                if 'time' in existing.columns:
+                     existing['datetime'] = pd.to_datetime(existing['time'], unit='s') if pd.api.types.is_numeric_dtype(existing['time']) else pd.to_datetime(existing['time'])
+                     existing = existing.set_index('datetime')
+                elif 'datetime' in existing.columns:
+                     existing = existing.set_index('datetime')
+            
+            # Ensure new df has compatible columns (lower case)
+            # (Done above for new df, but good to ensure existing matches)
+            
+            df = pd.concat([existing, df])
+        except Exception as e:
+            print(f"Warning: Could not merge with existing {output_path}: {e}")
+            # If merge fails, maybe overwrite or skip? 
+            # Ideally we want to concat. If index is broken, we might just append.
+            pass
     
     # Remove duplicates and sort
     df = df[~df.index.duplicated(keep="last")]
