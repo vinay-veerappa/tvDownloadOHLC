@@ -324,6 +324,31 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
     }
 
     /**
+     * Update plugin from EMSettings (from the dialog)
+     * This enables/disables methods based on the settings
+     */
+    public updateFromSettings(settings: {
+        methods: Array<{ id: string; enabled: boolean }>;
+        levelMultiples: number[];
+        showLabels: boolean;
+    }) {
+        // Update enabled state for each method based on settings
+        for (const settingsMethod of settings.methods) {
+            // Find matching method in options by id
+            for (const [key, config] of Object.entries(this._options.methods)) {
+                if (config.id === settingsMethod.id) {
+                    config.enabled = settingsMethod.enabled;
+                    break;
+                }
+            }
+        }
+
+        this._options.levelMultiples = settings.levelMultiples;
+        this._options.showLabels = settings.showLabels;
+        this._recalculate();
+    }
+
+    /**
      * Bulk update from daily bar data
      * Call this with the chart's bar data to derive time ranges
      */
@@ -333,7 +358,13 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
         const sortedBars = [...bars].sort((a, b) => a.time - b.time);
 
         // Build day buckets with high/low tracking
-        const dayBuckets = new Map<string, { start: number, end: number, open: number, high: number, low: number, close: number }>();
+        // For futures, track RTH open (9:30 AM ET) separately from overnight session
+        const dayBuckets = new Map<string, {
+            start: number, end: number,
+            open: number,           // First bar of day (may be overnight)
+            rthOpen: number | null, // 9:30 AM open (Regular Trading Hours)
+            high: number, low: number, close: number
+        }>();
 
         for (const bar of sortedBars) {
             const d = new Date(bar.time * 1000);
@@ -343,11 +374,19 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
             const barHigh = bar.high ?? bar.close;
             const barLow = bar.low ?? bar.close;
 
+            // Check if this bar is at/after 9:30 AM ET (14:30 UTC in winter, 13:30 in summer)
+            // Simple heuristic: hour between 13-15 UTC is likely RTH open window
+            const utcHour = d.getUTCHours();
+            const utcMinute = d.getUTCMinutes();
+            const is930Window = (utcHour === 14 && utcMinute >= 30 && utcMinute <= 35) ||
+                (utcHour === 13 && utcMinute >= 30 && utcMinute <= 35);
+
             if (!dayBuckets.has(dateStr)) {
                 dayBuckets.set(dateStr, {
                     start: bar.time,
                     end: bar.time,
                     open: bar.open,
+                    rthOpen: is930Window ? bar.open : null,
                     high: barHigh,
                     low: barLow,
                     close: bar.close
@@ -361,6 +400,10 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                 if (bar.time > bucket.end) {
                     bucket.end = bar.time;
                     bucket.close = bar.close;
+                }
+                // Track RTH open (first bar in 9:30 window)
+                if (is930Window && bucket.rthOpen === null) {
+                    bucket.rthOpen = bar.open;
                 }
                 // Track day high/low
                 if (barHigh > bucket.high) bucket.high = barHigh;
@@ -388,15 +431,15 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                 if (!emData) continue;
 
                 for (const mult of this._options.levelMultiples) {
-                    // For open-anchored methods, use the CHART's open price, not the CSV's anchor
+                    // For open-anchored methods, use the CHART's RTH open (9:30 AM) price
                     // Apply EM as a percentage: emPercent = emValue / csvAnchor
                     // This allows SPY EM data to work correctly on ES/SPX charts
                     let actualAnchor: number;
                     let emValueForChart: number;
 
                     if (emData.anchorType === 'open') {
-                        // Use chart's open price, scale EM proportionally
-                        actualAnchor = bucket.open;
+                        // Use RTH open (9:30 AM) if available, otherwise fall back to session open
+                        actualAnchor = bucket.rthOpen ?? bucket.open;
                         // EM percentage from SPY data
                         const emPercent = emData.emValue / emData.anchor;
                         emValueForChart = actualAnchor * emPercent;

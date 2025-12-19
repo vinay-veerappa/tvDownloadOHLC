@@ -105,7 +105,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', sessionType = 'ETH',
     selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad,
     onPriceChange, position, pendingOrders, onModifyOrder, onModifyPosition, initialReplayTime,
-    vwapSettings, indicatorParams, onIndicatorParamsChange, theme, onTimeframeChange, trades, mode // Destructure mode
+    vwapSettings, emSettings, indicatorParams, onIndicatorParamsChange, theme, onTimeframeChange, trades, mode // Destructure mode
 }, ref) => {
 
     // 1. Chart Reference
@@ -965,6 +965,21 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             emPluginRef.current.updateFromBars(data);
         }
     }, [data, timeframe]);
+
+    // Update EM plugin when settings change from the dialog
+    useEffect(() => {
+        if (emPluginRef.current && emSettings) {
+            emPluginRef.current.updateFromSettings({
+                methods: emSettings.methods,
+                levelMultiples: emSettings.levelMultiples,
+                showLabels: emSettings.showLabels
+            });
+            // Re-render with current bar data
+            if (dataRef.current.length > 0) {
+                emPluginRef.current.updateFromBars(dataRef.current);
+            }
+        }
+    }, [emSettings]);
 
     // -------------------------------------------------------------------------
     // 14. Trade Visualizations (Risk/Reward)
