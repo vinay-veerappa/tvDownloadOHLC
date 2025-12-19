@@ -95,12 +95,12 @@ interface ComputedLevel {
     multiple: number;
     levelUpper: number;
     levelLower: number;
-    // Performance data
-    contained: boolean;       // Did price stay within this level?
-    touchedUpper: boolean;    // Did price touch upper level?
-    touchedLower: boolean;    // Did price touch lower level?
+    // Performance data - REVERSAL focused (not containment)
+    upperStatus: 'reversal' | 'touch' | 'none';  // Did price reverse off upper?
+    lowerStatus: 'reversal' | 'touch' | 'none';  // Did price reverse off lower?
     dayHigh: number;          // Day's high for tooltip
     dayLow: number;           // Day's low for tooltip
+    dayClose: number;         // Day's close for reversal detection
 }
 
 // ==========================================
@@ -136,37 +136,31 @@ class EMRenderer {
                 const xStart = (x1 !== null) ? x1 * hPR : 0;
                 const xEnd = (x2 !== null) ? x2 * hPR : scope.mediaSize.width * hPR;
 
-                // Determine line color based on containment
-                // Green if contained, red if breached, original color with alpha
-                let lineColor = level.methodColor;
-                if (level.multiple === 1.0) {
-                    // Only show containment status for 100% levels
-                    lineColor = level.contained ? '#22C55E' : '#EF4444';
-                }
-
                 // Draw level line
                 const yUpper = this._series.priceToCoordinate(level.levelUpper);
                 const yLower = this._series.priceToCoordinate(level.levelLower);
 
+                // Draw upper level with status color
                 if (yUpper !== null) {
-                    const wasTouched = level.touchedUpper;
-                    this._drawLevelLine(ctx, yUpper * vPR, xStart, xEnd, lineColor, level.multiple, hPR, wasTouched);
+                    const upperColor = this._getStatusColor(level.upperStatus, level.methodColor);
+                    const statusIcon = this._getStatusIcon(level.upperStatus);
+                    this._drawLevelLine(ctx, yUpper * vPR, xStart, xEnd, upperColor, level.multiple, hPR, level.upperStatus !== 'none');
                     if (this._options.showLabels) {
-                        const statusIcon = level.multiple === 1.0 ? (level.touchedUpper ? ' ✗' : ' ✓') : '';
                         this._drawLabel(ctx, yUpper * vPR, xEnd,
-                            `${level.methodName} +${level.multiple * 100}%${statusIcon}`,
-                            level.levelUpper, lineColor, hPR, vPR);
+                            `+${level.multiple * 100}%${statusIcon}`,
+                            level.levelUpper, upperColor, hPR, vPR);
                     }
                 }
 
+                // Draw lower level with status color
                 if (yLower !== null) {
-                    const wasTouched = level.touchedLower;
-                    this._drawLevelLine(ctx, yLower * vPR, xStart, xEnd, lineColor, level.multiple, hPR, wasTouched);
+                    const lowerColor = this._getStatusColor(level.lowerStatus, level.methodColor);
+                    const statusIcon = this._getStatusIcon(level.lowerStatus);
+                    this._drawLevelLine(ctx, yLower * vPR, xStart, xEnd, lowerColor, level.multiple, hPR, level.lowerStatus !== 'none');
                     if (this._options.showLabels) {
-                        const statusIcon = level.multiple === 1.0 ? (level.touchedLower ? ' ✗' : ' ✓') : '';
                         this._drawLabel(ctx, yLower * vPR, xEnd,
-                            `${level.methodName} -${level.multiple * 100}%${statusIcon}`,
-                            level.levelLower, lineColor, hPR, vPR);
+                            `-${level.multiple * 100}%${statusIcon}`,
+                            level.levelLower, lowerColor, hPR, vPR);
                     }
                 }
 
@@ -176,13 +170,15 @@ class EMRenderer {
                     anchors.set(dateKey, { x1: xStart, x2: xEnd, price: level.anchor, type: level.anchorType });
                 }
 
-                // Track daily containment status (for 100% level only)
+                // Track daily status for badge (for 100% level only)
                 if (level.multiple === 1.0) {
                     const dayKey = `${level.startUnix}`;
                     if (!dayStatus.has(dayKey)) {
                         const yAnch = this._series.priceToCoordinate(level.anchor);
+                        // Show reversal badge if either level had a reversal
+                        const hasReversal = level.upperStatus === 'reversal' || level.lowerStatus === 'reversal';
                         if (yAnch !== null) {
-                            dayStatus.set(dayKey, { x: xStart, yAnchor: yAnch * vPR, contained: level.contained, mult: level.multiple });
+                            dayStatus.set(dayKey, { x: xStart, yAnchor: yAnch * vPR, contained: hasReversal, mult: level.multiple });
                         }
                     }
                 }
@@ -216,10 +212,28 @@ class EMRenderer {
         });
     }
 
+    // Get color based on reversal status
+    private _getStatusColor(status: 'reversal' | 'touch' | 'none', defaultColor: string): string {
+        switch (status) {
+            case 'reversal': return '#22C55E';  // Green - actionable reversal
+            case 'touch': return '#F59E0B';     // Yellow/amber - touched but no reversal
+            case 'none': return defaultColor;   // Original color - not reached
+        }
+    }
+
+    // Get icon based on reversal status
+    private _getStatusIcon(status: 'reversal' | 'touch' | 'none'): string {
+        switch (status) {
+            case 'reversal': return ' ↩';   // Reversal arrow
+            case 'touch': return ' ⟶';      // Through arrow  
+            case 'none': return '';          // No icon
+        }
+    }
+
     private _drawStatusBadge(ctx: CanvasRenderingContext2D, x: number, y: number, contained: boolean, hPR: number, vPR: number) {
         const size = 12 * hPR;
-        const bgColor = contained ? '#22C55E' : '#EF4444';
-        const symbol = contained ? '✓' : '✗';
+        const bgColor = contained ? '#22C55E' : '#6B7280';  // Green if reversal, gray otherwise
+        const symbol = contained ? '↩' : '—';
 
         // Draw background circle
         ctx.beginPath();
@@ -453,10 +467,24 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                     const levelUpper = actualAnchor + emValueForChart * mult;
                     const levelLower = actualAnchor - emValueForChart * mult;
 
-                    // Calculate if price stayed within this level
+                    // Calculate reversal status for each level
+                    // Reversal = touched level AND closed back inside (actionable!)
+                    // Touch = touched level but closed outside (not actionable)
+                    // None = never reached this level
                     const touchedUpper = bucket.high >= levelUpper;
                     const touchedLower = bucket.low <= levelLower;
-                    const contained = !touchedUpper && !touchedLower;
+
+                    let upperStatus: 'reversal' | 'touch' | 'none' = 'none';
+                    if (touchedUpper) {
+                        // Reversed if closed back below the upper level
+                        upperStatus = bucket.close < levelUpper ? 'reversal' : 'touch';
+                    }
+
+                    let lowerStatus: 'reversal' | 'touch' | 'none' = 'none';
+                    if (touchedLower) {
+                        // Reversed if closed back above the lower level
+                        lowerStatus = bucket.close > levelLower ? 'reversal' : 'touch';
+                    }
 
                     levels.push({
                         startUnix: bucket.start,
@@ -469,11 +497,11 @@ export class ExpectedMoveLevels implements ISeriesPrimitive<Time> {
                         multiple: mult,
                         levelUpper,
                         levelLower,
-                        contained,
-                        touchedUpper,
-                        touchedLower,
+                        upperStatus,
+                        lowerStatus,
                         dayHigh: bucket.high,
-                        dayLow: bucket.low
+                        dayLow: bucket.low,
+                        dayClose: bucket.close
                     });
                 }
             }
