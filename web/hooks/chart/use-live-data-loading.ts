@@ -8,12 +8,14 @@ import { toast } from "sonner"
 interface UseLiveDataLoadingProps {
     ticker: string
     timeframe: string
+    enabled?: boolean
     onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
 }
 
 export function useLiveDataLoading({
     ticker,
     timeframe,
+    enabled = true,
     onDataLoad
 }: UseLiveDataLoadingProps) {
     const [fullData, setFullData] = useState<OHLCData[]>([])
@@ -70,12 +72,15 @@ export function useLiveDataLoading({
     }, [onDataLoad])
 
     useEffect(() => {
+        // Skip if not enabled (historical mode)
+        if (!enabled) return;
+
         fetchData()
         const id = setInterval(() => {
             if (isRunningRef.current) fetchData()
         }, 500)
         return () => clearInterval(id)
-    }, [fetchData])
+    }, [fetchData, enabled])
 
     return {
         fullData,

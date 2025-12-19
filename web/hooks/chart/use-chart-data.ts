@@ -82,6 +82,7 @@ export function useChartData({
     const liveLoading = useLiveDataLoading({
         ticker,
         timeframe,
+        enabled: mode === 'live',
         onDataLoad
     })
 
