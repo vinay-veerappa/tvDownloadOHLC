@@ -276,3 +276,19 @@ model SchwabToken {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
+
+model HistoricalVolatility {
+  id          Int      @id @default(autoincrement())
+  ticker      String
+  date        DateTime
+  iv          Float    // iv_current (Implied Volatility)
+  hv          Float?   // hv_current (Historical Volatility)
+  
+  closePrice  Float?   // Underlying close price (to be filled during ingestion or later)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([ticker, date])
+  @@index([ticker])
+}
