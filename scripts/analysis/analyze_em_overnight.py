@@ -32,7 +32,15 @@ def analyze_overnight_em():
     # Load ES daily for scaling
     es_daily = pd.read_parquet('data/ES1_1d.parquet')
     if es_daily.index.name == 'datetime': es_daily = es_daily.reset_index()
-    es_daily['date'] = pd.to_datetime(es_daily['datetime']).dt.strftime('%Y-%m-%d')
+    
+    # Correction: Futures daily bars often start the previous evening
+    def normalize_trade_date(dt):
+        if dt.hour > 16:
+            return (dt + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+        return dt.strftime('%Y-%m-%d')
+
+    es_daily['datetime_obj'] = pd.to_datetime(es_daily['datetime'])
+    es_daily['date'] = es_daily['datetime_obj'].apply(normalize_trade_date)
     
     # Load SPY daily for scaling
     spy_daily = pd.read_parquet('data/SPY_1d.parquet')

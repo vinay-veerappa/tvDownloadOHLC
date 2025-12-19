@@ -4,11 +4,11 @@ This analysis evaluates how Expected Move (EM) levels (specifically the Straddle
 
 ## Level Interaction Statistics
 
-| Level Factor | Total Touches | Immediate Reversal Rate (%) | Session Quality (HOD/LOD %) |
-| :--- | :--- | :--- | :--- |
-| **50% EM** | 191 | **48.7%** | 1.0% |
-| **100% EM** | 51 | **51.0%** | 2.0% |
-| **150% EM** | 3 | 66.7% | 0.0% |
+| Method | Touches (ES) | Bounce Rate (Hold) | Break Rate (Fail) | Behavior |
+| :--- | :--- | :--- | :--- | :--- |
+| **Straddle 1.0x (Close)** | 4.5% Rate | **100.0%** | 0.0% | Hard Wall |
+| **Straddle 0.85x (Close)** | 13.0% Rate | **88.5%** | 11.5% | Strong Defense |
+| **Open 1.0x (Synth)** | 2.3% Rate | **36.4%** | 63.6% | Breakout Trigger |
 
 ### Definitions
 - **Touch**: Price traded through the level within a 5-minute bar.
