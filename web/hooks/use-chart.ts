@@ -115,6 +115,7 @@ export function useChart(
             timeScale: {
                 timeVisible: true,
                 rightOffset: 50,
+                minBarSpacing: 0.02, // Allow zooming out to see more history (e.g. days/weeks of 1m data)
                 // tickMarkFormatter: REMOVED to allow auto-scaling (concise ticks)
                 borderColor: isDark ? '#2a2e39' : '#e0e0e0',
             },
