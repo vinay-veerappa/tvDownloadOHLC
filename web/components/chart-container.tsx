@@ -1549,7 +1549,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     fontSize={inlineTextEditing.options?.fontSize || 14}
                     fontFamily={inlineTextEditing.options?.fontFamily || 'Arial'}
                     color={inlineTextEditing.options?.textColor || inlineTextEditing.options?.color || '#FFFFFF'}
-                    backgroundColor={inlineTextEditing.options?.backgroundEnabled ? inlineTextEditing.options?.backgroundColor : undefined}
+                    backgroundColor={inlineTextEditing.options?.backgroundVisible ? inlineTextEditing.options?.backgroundColor : undefined}
                     onSave={(newText) => {
                         const drawing = drawingManager.getDrawing(inlineTextEditing.drawingId);
                         if (drawing && typeof drawing.applyOptions === 'function') {
@@ -1578,9 +1578,9 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     italic: selectedDrawingOptions?.italic,
                     visibleTimeframes: selectedDrawingOptions?.visibleTimeframes,
                     backgroundColor: selectedDrawingOptions?.backgroundColor,
-                    backgroundEnabled: selectedDrawingOptions?.backgroundEnabled,
+                    backgroundVisible: selectedDrawingOptions?.backgroundVisible,
                     borderColor: selectedDrawingOptions?.borderColor,
-                    borderEnabled: selectedDrawingOptions?.borderEnabled,
+                    borderVisible: selectedDrawingOptions?.borderVisible,
                     textWrap: selectedDrawingOptions?.textWrap,
                 }}
                 onSave={(opts) => {
