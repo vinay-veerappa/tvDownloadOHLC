@@ -72,8 +72,8 @@ class VertLinePaneRenderer {
             if (this._textLabel) {
                 // Draw text near the top of the line
                 // We need to update Y coordinate since vertical line doesn't store Y
-                // Let's put it at 10% from top
-                const y = scope.bitmapSize.height * 0.1 / vPR;
+                // Position it higher (20px from top) to avoid interfering with chart content
+                const y = 20 / vPR;
                 this._textLabel.update(this._x, y);
                 this._textLabel.draw(ctx, hPR, vPR);
             }
