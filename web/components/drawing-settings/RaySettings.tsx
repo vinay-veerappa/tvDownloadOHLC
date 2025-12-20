@@ -45,7 +45,8 @@ export const DEFAULT_RAY_OPTIONS: RaySettingsOptions = {
     textColor: '#AB47BC',
     fontSize: 14,
     bold: false,
-    italic: false
+    italic: false,
+    alignmentHorizontal: 'left'
 };
 
 // ===== Settings Dialog Component =====

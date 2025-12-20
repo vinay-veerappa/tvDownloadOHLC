@@ -120,7 +120,7 @@ export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsT
 
                     {/* Horizontal Alignment */}
                     <Select
-                        value={options.alignmentHorizontal || 'center'}
+                        value={options.alignmentHorizontal || 'left'}
                         onValueChange={(v) => onChange({ alignmentHorizontal: v })}
                         disabled={isLineTool && !options.showLabel}
                     >

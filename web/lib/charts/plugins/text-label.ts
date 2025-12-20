@@ -97,8 +97,11 @@ export class TextLabel {
                     offsetX = halfWidth - maxWidth - innerPadding;
                 }
             } else {
+                // Debug alignment
+                console.log(`[TextLabel] Align: ${horizontal}, MaxWidth: ${maxWidth}, Offset before: ${offsetX}`);
                 if (horizontal === 'right') offsetX = -maxWidth;
                 else if (horizontal === 'center') offsetX = -maxWidth / 2;
+                console.log(`[TextLabel] Offset after: ${offsetX}`);
             }
 
             // Vertical alignment
