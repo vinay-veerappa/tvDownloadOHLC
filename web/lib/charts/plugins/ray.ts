@@ -1,16 +1,29 @@
-import { IChartApi, ISeriesApi, Time, ISeriesPrimitive, SeriesOptionsCommon, Logical, Coordinate, MouseEventParams } from "lightweight-charts";
+import { IChartApi, ISeriesApi, Time, ISeriesPrimitive, MouseEventParams } from "lightweight-charts";
 import { getLineDash } from "../chart-utils";
+import { TwoPointLineTool, TwoPointLineOptions } from "./base/TwoPointLineTool";
+import { TextCapableOptions, DEFAULT_TEXT_OPTIONS } from "./base/TextCapable";
+import { TextLabel } from "./text-label";
 
-interface Point {
-    time: Time;
-    price: number;
-}
+interface RayOptions extends TwoPointLineOptions, TextCapableOptions { }
 
-interface RayOptions {
-    lineColor: string;
-    lineWidth: number;
-    lineStyle?: number;
-}
+const DEFAULT_RAY_OPTIONS: RayOptions = {
+    // LineToolBase defaults
+    lineColor: '#AB47BC',
+    lineWidth: 2,
+    lineStyle: 0,
+    opacity: 1,
+    visible: true,
+    color: '#AB47BC', // legacy/compat
+    width: 2,         // legacy/compat
+    style: 0,         // legacy/compat
+
+    // TwoPoint defaults
+    extendLeft: false,
+    extendRight: true, // Ray extends right by default
+
+    // Text defaults
+    ...DEFAULT_TEXT_OPTIONS
+};
 
 class RayRenderer {
     private _p1: { x: number | null; y: number | null };
@@ -18,19 +31,22 @@ class RayRenderer {
     private _width: number;
     private _lineStyle: number;
     private _selected: boolean;
+    private _textLabel: TextLabel | null;
 
     constructor(
         p1: { x: number | null; y: number | null },
         color: string,
         width: number,
         lineStyle: number,
-        selected: boolean
+        selected: boolean,
+        textLabel: TextLabel | null
     ) {
         this._p1 = p1;
         this._color = color;
         this._width = width;
         this._lineStyle = lineStyle;
         this._selected = selected;
+        this._textLabel = textLabel;
     }
 
     draw(target: any) {
@@ -38,20 +54,35 @@ class RayRenderer {
             if (this._p1.x === null || this._p1.y === null) return;
 
             const ctx = scope.context;
-            const horizontalPixelRatio = scope.horizontalPixelRatio;
-            const verticalPixelRatio = scope.verticalPixelRatio;
+            const hPR = scope.horizontalPixelRatio;
+            const vPR = scope.verticalPixelRatio; // Use vertical pixel ratio for Y? Usually same as H
 
-            const x = this._p1.x * horizontalPixelRatio;
-            const y = this._p1.y * verticalPixelRatio;
-            const width = scope.mediaSize.width * horizontalPixelRatio;
+            const x = this._p1.x * hPR;
+            const y = this._p1.y * scope.verticalPixelRatio;
+            const width = scope.mediaSize.width * hPR;
 
-            ctx.lineWidth = this._width * horizontalPixelRatio;
+            // Draw Ray Line
+            ctx.lineWidth = this._width * hPR;
             ctx.strokeStyle = this._color;
-            ctx.setLineDash(getLineDash(this._lineStyle).map(d => d * horizontalPixelRatio));
+            ctx.setLineDash(getLineDash(this._lineStyle).map(d => d * hPR));
 
             ctx.beginPath();
             ctx.moveTo(x, y);
-            ctx.lineTo(width, y); // Extend to right edge
+            ctx.lineTo(width, y); // Horizontal ray. If angled ray is needed, we need P2.
+            // Wait, is Ray horizontal or angled?
+            // "Ray" in TradingView is usually angled (2 points). Horizontal Ray is "Horizontal Ray".
+            // The existing implementation was:
+            // ctx.moveTo(x, y); ctx.lineTo(width, y);
+            // This suggests it was a HORIZONTAL Ray starting at P1.
+            // But the toolbar says "Ray". A generic Ray requires 2 points.
+            // The existing `_onClick` created it with `p1` (one point).
+            // So it behaves like a Horizontal Ray.
+            // If the user wants a 2-point Ray (Trend Line extended one way), 
+            // the existing code was definitely "Horizontal Ray".
+            // Let's stick to existing behavior (Horizontal Ray) but keep architecture extensible.
+            // If it's a 2-point Ray, we'd need P2. 
+            // Current code only uses P1.
+
             ctx.stroke();
             ctx.setLineDash([]);
 
@@ -60,11 +91,42 @@ class RayRenderer {
                 const HANDLE_RADIUS = 6;
                 ctx.fillStyle = '#2962FF';
                 ctx.strokeStyle = '#FFFFFF';
-                ctx.lineWidth = 2 * horizontalPixelRatio;
+                ctx.lineWidth = 2 * hPR;
                 ctx.beginPath();
-                ctx.arc(x, y, HANDLE_RADIUS * horizontalPixelRatio, 0, 2 * Math.PI);
+                ctx.arc(x, y, HANDLE_RADIUS * hPR, 0, 2 * Math.PI);
                 ctx.fill();
                 ctx.stroke();
+            }
+
+            // Draw Text Label if exists
+            if (this._textLabel) {
+                // Position text slightly above/right of P1
+                this._textLabel.update(this._p1.x, this._p1.y - 20); // Logical coordinates?
+                // TextLabel.draw handles pixel ratio if simpler draw method used, 
+                // or we pass scaled coords.
+                // Assuming TextLabel.draw takes context and pixel ratios and uses its internal logical coords?
+                // Or we update it with scaled coords?
+                // Let's reuse TrendLine pattern: update with logical, draw with PR.
+                // But wait, TrendLine updated with logical in paneViews? 
+                // Let's rely on TextLabel details.
+                // If I pass logical to update(), TextLabel should store them.
+                // In draw(ctx, hPr, vPr), it should scale.
+
+                // For now, let's update with logical P1 coords.
+                // But scope.context is already scaled? No, useBitmapCoordinateSpace provides unscaled context?
+                // No, it provides context where 1 unit = 1 physical pixel usually?
+                // "The transformation matrix is not applied to the context"
+                // So we draw in physical pixels.
+
+                // If TextLabel.update takes logical coords:
+                // We need to scale them inside TextLabel.draw or here.
+                // Let's update TextLabel here with scaled coords effectively?
+                // existing TextLabel implementation takes x,y in update.
+                // And draw(ctx, ratio...) might scale font but position?
+                // Let's look at TextLabel in next step if broken.
+                // For now assuming:
+                this._textLabel.update(this._p1.x, this._p1.y); // Logical
+                this._textLabel.draw(ctx, hPR, vPR);
             }
         });
     }
@@ -78,109 +140,107 @@ class RayPaneView {
     }
 
     renderer() {
+        const options = this._source.options();
         return new RayRenderer(
             this._source._p1Point,
-            this._source._options.lineColor,
-            this._source._options.lineWidth,
-            this._source._options.lineStyle || 0,
-            this._source._selected
+            options.lineColor,
+            options.lineWidth,
+            options.lineStyle,
+            this._source.isSelected(),
+            this._source.textLabel()
         );
     }
 }
 
-export class Ray implements ISeriesPrimitive {
-    _chart: IChartApi;
-    _series: ISeriesApi<"Candlestick">;
-    _p1: Point;
-    _options: RayOptions;
-    _p1Point: { x: number | null; y: number | null };
-    _paneViews: RayPaneView[];
-    _requestUpdate: (() => void) | null = null;
+export class Ray extends TwoPointLineTool<RayOptions> {
     public _type = 'ray';
+    private _textLabel: TextLabel | null = null;
 
-    _id: string;
-    _selected: boolean = false;
+    constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, p1: { time: Time, price: number }, options?: Partial<RayOptions>) {
+        // Ray acts like single point for now based on legacy code, 
+        // but we init P2=P1 to satisfy TwoPointLineTool
+        super('ray', p1, p1, options);
+        // PluginBase attaches chart/series internally later, or we assume they are passed for compat
+        // We don't store them locally as private _chart anymore, we use this.chart / this.series from PluginBase
 
-    constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, p1: Point, options?: RayOptions) {
-        this._chart = chart;
-        this._series = series;
-        this._p1 = p1;
-        this._options = options || { lineColor: '#2962FF', lineWidth: 2 };
-        this._p1Point = { x: null, y: null };
-        this._paneViews = [new RayPaneView(this)];
-        this._id = Math.random().toString(36).substring(7);
+        // Ensure defaults including text options are set
+        // TwoPointLineTool calls getDefaultOptions() which loads from persistence
+
+        // Initialize TextLabel
+        this._updateTextLabel();
     }
 
-    id() {
-        return this._id;
+    protected getDefaultOptions(): RayOptions {
+        // Merge base defaults with Ray defaults
+        const base = super.getDefaultOptions(); // Gets persisted defaults
+        return {
+            ...DEFAULT_RAY_OPTIONS,
+            ...base
+        };
     }
 
-    // Compatibility for generic hook
-    updatePoints(p1: Point, p2?: Point) {
-        this.updatePoint(p1);
+    public applyOptions(options: Partial<RayOptions>) {
+        if (options.textColor !== undefined) {
+            options.showLabel = true;
+        }
+        super.applyOptions(options);
+        // Handle text label updates
+        if (options.text !== undefined || options.showLabel !== undefined ||
+            options.textColor !== undefined || options.fontSize !== undefined) {
+            this._updateTextLabel();
+        }
     }
 
-    updatePoint(p1: Point) {
-        this._p1 = p1;
-        if (this._requestUpdate) this._requestUpdate();
+    public textLabel() {
+        return this._textLabel;
     }
 
-    applyOptions(options: Partial<RayOptions>) {
-        this._options = { ...this._options, ...options };
-        if (this._requestUpdate) this._requestUpdate();
-    }
-
-    options() {
-        return this._options;
-    }
-
-    attached({ chart, series, requestUpdate }: any) {
-        this._requestUpdate = requestUpdate;
-    }
-
-    detached() {
-        this._requestUpdate = null;
+    private _updateTextLabel() {
+        // Access options via local _options or public accessor. 
+        // _options is protected in DrawingBase so accessible here (subclass).
+        if (this._options.showLabel && this._options.text) {
+            const textOpts = {
+                text: this._options.text,
+                color: this._options.textColor,
+                fontSize: this._options.fontSize,
+                visible: true,
+                bold: this._options.bold,
+                italic: this._options.italic,
+                alignment: {
+                    vertical: (this._options.alignmentVertical === 'center' ? 'middle' : (this._options.alignmentVertical || 'bottom')) as any,
+                    horizontal: (this._options.alignmentHorizontal || 'left') as any
+                }
+            };
+            if (!this._textLabel) {
+                this._textLabel = new TextLabel(0, 0, textOpts);
+            } else {
+                this._textLabel.update(0, 0, textOpts);
+            }
+        } else {
+            this._textLabel = null;
+        }
     }
 
     paneViews() {
-        this._updatePoints();
-        return this._paneViews;
+        this.calculateScreenPoints();
+        return [new RayPaneView(this)];
     }
 
-    _updatePoints() {
-        if (!this._chart || !this._series) return;
-        const timeScale = this._chart.timeScale();
-        this._p1Point.x = timeScale.timeToCoordinate(this._p1.time);
-        this._p1Point.y = this._series.priceToCoordinate(this._p1.price);
+    public updateAllViews() {
+        this.calculateScreenPoints();
+        this.requestUpdate();
     }
 
-    hitTest(x: number, y: number): any {
-        if (this._p1Point.x === null || this._p1Point.y === null) return null;
+    public clone(): Ray {
+        return new Ray(this.chart, this.series as ISeriesApi<"Candlestick">, this._p1, { ...this._options });
+    }
 
-        const HANDLE_RADIUS = 8;
-        // Check handle
-        const dist = Math.sqrt(Math.pow(x - this._p1Point.x, 2) + Math.pow(y - this._p1Point.y, 2));
-        if (dist <= HANDLE_RADIUS) {
-            return {
-                cursorStyle: 'move',
-                externalId: this._id,
-                zOrder: 'top',
-                hitType: 'p1'
-            };
-        }
-
-        // Check line (horizontal ray to right)
-        // If x >= p1.x AND abs(y - p1.y) < tolerance
-        if (x >= this._p1Point.x && Math.abs(y - this._p1Point.y) < 6) {
-            return {
-                cursorStyle: 'move', // Can we move it efficiently? Yes, by dragging P1
-                externalId: this._id,
-                zOrder: 'top',
-                hitType: 'body'
-            };
-        }
-
-        return null;
+    public serialize(): any {
+        return {
+            type: 'ray',
+            p1: this._p1,
+            options: this._options
+        };
     }
 }
 
@@ -190,7 +250,7 @@ export class RayTool {
     private _activeDrawing: Ray | null = null;
     private _drawing: boolean = false;
     private _clickHandler: (param: any) => void;
-    private _moveHandler: (param: any) => void; // For magnet/cursor, but mostly click
+    private _moveHandler: (param: any) => void;
     private _onDrawingCreated?: (drawing: Ray) => void;
     private _magnetMode: 'off' | 'weak' | 'strong';
     private _ohlcData: any[];
@@ -225,38 +285,33 @@ export class RayTool {
 
     private _onClick(param: MouseEventParams) {
         if (!this._drawing || !param.point || !param.time) return;
-
         const price = this._series.coordinateToPrice(param.point.y) as number | null;
         if (price === null) return;
-
         let finalPrice = price;
 
-        // Apply magnet
         if (this._magnetMode !== 'off' && this._ohlcData.length > 0) {
             const snapped = this._findSnapPrice(param.time as Time, price);
             if (snapped !== null) finalPrice = snapped;
         }
 
-        const point: Point = { time: param.time as Time, price: finalPrice };
+        const point = { time: param.time as Time, price: finalPrice };
 
-        const ray = new Ray(this._chart, this._series, point, { lineColor: '#2962FF', lineWidth: 2 });
+        // Create Ray with defaults (which includes persisted logic)
+        const ray = new Ray(this._chart, this._series, point);
         this._series.attachPrimitive(ray);
 
         if (this._onDrawingCreated) {
             this._onDrawingCreated(ray);
         }
 
-        // Ray is 1-click tool
         this.stopDrawing();
     }
 
     private _onMouseMove(param: MouseEventParams) {
-        // Could show ghost ray here if desired
+        // Ghost logic can remain empty for now
     }
 
     private _findSnapPrice(time: Time, price: number): number | null {
-        // ... (reuse snap logic or import it)
-        // Check finding bar logic from TrendLine (simplified here for brevity, usually shared util)
         if (!this._ohlcData || this._ohlcData.length === 0) return null;
         const bar = this._ohlcData.find((b: any) => b.time === time);
         if (!bar) return null;

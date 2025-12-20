@@ -13,16 +13,22 @@ interface RectangleOptions {
     previewFillColor: string;
     borderColor: string;
     borderWidth: number;
+    borderStyle: number;
     lineStyle?: number;
     labelColor: string;
     labelTextColor: string;
     showLabels: boolean;
     text?: string;
     textColor?: string;
+    fontSize?: number;
+    bold?: boolean;
+    italic?: boolean;
     extendLeft: boolean;
     extendRight: boolean;
     midline: { visible: boolean; color: string; width: number; style: number }; // 0=Solid, 1=Dotted
     quarterLines: { visible: boolean; color: string; width: number; style: number };
+    alignmentVertical?: 'top' | 'center' | 'bottom';
+    alignmentHorizontal?: 'left' | 'center' | 'right';
 }
 
 const defaultOptions: RectangleOptions = {
@@ -37,6 +43,8 @@ const defaultOptions: RectangleOptions = {
     extendRight: false,
     midline: { visible: false, color: "#2962FF", width: 1, style: 1 },
     quarterLines: { visible: false, color: "#2962FF", width: 1, style: 1 },
+    alignmentVertical: 'center',
+    alignmentHorizontal: 'center'
 };
 
 class RectangleRenderer {
@@ -101,7 +109,7 @@ class RectangleRenderer {
             if (this._options.borderWidth > 0) {
                 ctx.lineWidth = this._options.borderWidth * hPR;
                 ctx.strokeStyle = this._options.borderColor;
-                ctx.setLineDash(getLineDash(this._options.lineStyle || 0).map(d => d * hPR));
+                ctx.setLineDash(getLineDash(this._options.borderStyle || 0).map(d => d * hPR));
                 ctx.strokeRect(left, top, width, height);
                 ctx.setLineDash([]);
             }
@@ -222,7 +230,8 @@ export class Rectangle implements ISeriesPrimitive {
         if (this._options.text) {
             this._textLabel = new TextLabel(0, 0, {
                 text: this._options.text,
-                color: this._options.textColor || this._options.labelTextColor
+                color: this._options.textColor || this._options.labelTextColor,
+                visible: this._options.showLabels
             });
         }
     }
@@ -251,15 +260,21 @@ export class Rectangle implements ISeriesPrimitive {
     }
 
     applyOptions(options: Partial<RectangleOptions>) {
+        if (options.textColor !== undefined) {
+            options.showLabels = true;
+        }
         this._options = { ...this._options, ...options };
         if (this._options.text) {
             const textOptions = {
                 text: this._options.text,
                 color: this._options.textColor || this._options.labelTextColor,
-                fontSize: (this._options as any).fontSize,
-                bold: (this._options as any).bold,
-                italic: (this._options as any).italic,
-                alignment: (this._options as any).alignment,
+                fontSize: this._options.fontSize,
+                bold: this._options.bold,
+                italic: this._options.italic,
+                alignment: {
+                    vertical: (this._options.alignmentVertical === 'center' || !this._options.alignmentVertical) ? 'middle' : (this._options.alignmentVertical as any),
+                    horizontal: (this._options.alignmentHorizontal || 'center') as any
+                },
                 visible: this._options.showLabels
             };
             if (!this._textLabel) {

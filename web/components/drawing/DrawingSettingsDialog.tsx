@@ -189,20 +189,26 @@ export function DrawingSettingsDialog({
                 <Tabs defaultValue="style" className="w-full">
                     <TabsList className="grid w-full grid-cols-4">
                         <TabsTrigger value="style">Style</TabsTrigger>
+                        <TabsTrigger value="text" disabled={!textTab}>
+                            Text
+                        </TabsTrigger>
                         <TabsTrigger value="coords" disabled={!coordinatesTab}>
                             Coordinates
                         </TabsTrigger>
                         <TabsTrigger value="visibility" disabled={!visibilityTab}>
                             Visibility
                         </TabsTrigger>
-                        <TabsTrigger value="text" disabled={!textTab}>
-                            Text
-                        </TabsTrigger>
                     </TabsList>
 
                     <TabsContent value="style" className="max-h-[400px] overflow-y-auto pr-2">
                         {styleTab}
                     </TabsContent>
+
+                    {textTab && (
+                        <TabsContent value="text" className="max-h-[400px] overflow-y-auto pr-2">
+                            {textTab}
+                        </TabsContent>
+                    )}
 
                     {coordinatesTab && (
                         <TabsContent value="coords" className="max-h-[400px] overflow-y-auto pr-2">
@@ -213,12 +219,6 @@ export function DrawingSettingsDialog({
                     {visibilityTab && (
                         <TabsContent value="visibility" className="max-h-[400px] overflow-y-auto pr-2">
                             {visibilityTab}
-                        </TabsContent>
-                    )}
-
-                    {textTab && (
-                        <TabsContent value="text" className="max-h-[400px] overflow-y-auto pr-2">
-                            {textTab}
                         </TabsContent>
                     )}
                 </Tabs>

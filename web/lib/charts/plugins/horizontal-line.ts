@@ -16,10 +16,10 @@ export interface HorizontalLineOptions {
 }
 
 const defaultOptions: HorizontalLineOptions = {
-    color: '#2962FF',
+    color: '#FF9800', // Orange
     width: 1,
-    lineStyle: 1, // Dotted by default
-    labelBackgroundColor: '#2962FF',
+    lineStyle: 0, // Solid
+    labelBackgroundColor: '#FF9800',
     labelTextColor: 'white',
     showLabel: true,
     labelText: '',
@@ -174,8 +174,10 @@ export class HorizontalLine implements ISeriesPrimitive {
                 color: this._options.textColor || this._options.color,
                 fontSize: parseInt((this._options.font || '12').replace('px', '')),
                 visible: this._options.showLabel,
-                alignment: (this._options as any).alignment,
-                orientation: (this._options as any).orientation
+                alignment: (this._options as any).alignmentHorizontal ? {
+                    vertical: (this._options as any).alignmentVertical || 'middle',
+                    horizontal: (this._options as any).alignmentHorizontal || 'center'
+                } : (this._options as any).alignment,
             };
             this._textLabel = new TextLabel(0, 0, textOptions);
         }
@@ -198,8 +200,10 @@ export class HorizontalLine implements ISeriesPrimitive {
                 color: this._options.textColor || this._options.color,
                 fontSize: parseInt((this._options.font || '12').replace('px', '')), // parse if needed or add fontSize prop to HLine
                 visible: this._options.showLabel,
-                alignment: (this._options as any).alignment, // Explicitly pass alignment
-                orientation: (this._options as any).orientation
+                alignment: (this._options as any).alignmentHorizontal ? {
+                    vertical: (this._options as any).alignmentVertical || 'middle',
+                    horizontal: (this._options as any).alignmentHorizontal || 'center'
+                } : (this._options as any).alignment,
             };
 
             if (!this._textLabel) {

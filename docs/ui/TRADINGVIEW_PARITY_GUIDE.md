@@ -496,6 +496,23 @@ const TRADINGVIEW_SIZES = {
 
 ---
 
+## Toolbar Design Patterns
+
+### Button Representation
+**Rule**: Toolbar buttons must NEVER fallback to displaying their property name (e.g., "Width", "Style") as text. They must always communicate via Icons or Visual Values.
+
+**Implementation**:
+1.  **Always Configured Icons**: Every button in `toolbar-configs.ts` (including `select` types) must have an `icon` property defined.
+2.  **Icon-First Rendering**: The `SelectButton` component must always render the `icon` if present.
+3.  **Visual Over Text**: If a value is selected (e.g., 2px), preferential treatment should be given to a visual representation (graphical line) over text ("2px"). Text labels are a fallback for specific values, but the generic property name (Tooltip) should never be the button's face content.
+4.  **State Hydration**: The parent container (e.g., `ChartContainer`) MUST synchronize the `selectedDrawingOptions` state with the active drawing's potential values immediately upon selection. Passing an empty or default object will trigger the "text fallback" anti-pattern.
+
+**Anti-Pattern to Avoid**:
+- Relying on `tooltip` as the default `label` when `value` is undefined.
+- Omitting `icon` for dropdown triggers.
+
+---
+
 ## Implementation Roadmap
 
 ### Phase 1: Universal Components (Week 1)

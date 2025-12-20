@@ -148,6 +148,15 @@ export class TextDrawing implements ISeriesPrimitive {
     }
 
     paneViews() { return this._paneViews; }
+
+    // Get current screen coordinates for inline editing
+    getScreenPosition(): { x: number; y: number } | null {
+        const timeScale = this._chart.timeScale();
+        const x = timeScale.timeToCoordinate(this._time);
+        const y = this._series.priceToCoordinate(this._price);
+        if (x === null || y === null) return null;
+        return { x, y };
+    }
 }
 
 export class TextTool {

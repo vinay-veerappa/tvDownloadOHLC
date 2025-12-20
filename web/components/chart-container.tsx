@@ -33,6 +33,8 @@ import { RectangleSettingsDialog, RectangleSettingsOptions, DEFAULT_RECTANGLE_OP
 import { VerticalLineSettingsDialog, VerticalLineSettingsOptions, DEFAULT_VERTICAL_OPTIONS } from "@/components/drawing-settings/VerticalLineSettings"
 import { RaySettingsDialog, RaySettingsOptions, DEFAULT_RAY_OPTIONS } from "@/components/drawing-settings/RaySettings"
 import { FloatingToolbar } from "@/components/drawing/FloatingToolbar"
+import { InlineTextEditor } from "@/components/drawing/InlineTextEditor"
+import { TextSettings } from "@/components/drawing-settings/TextSettings"
 
 import type { SessionType } from './top-toolbar'
 
@@ -335,6 +337,13 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const [toolbarPosition, setToolbarPosition] = useState<{ x: number; y: number } | null>(null)
     const [isDrawingLocked, setIsDrawingLocked] = useState(false)
     const [isDrawingHidden, setIsDrawingHidden] = useState(false)
+    const [textSettingsOpen, setTextSettingsOpen] = useState(false)  // Text settings dialog
+    const [inlineTextEditing, setInlineTextEditing] = useState<{
+        drawingId: string;
+        position: { x: number; y: number };
+        text: string;
+        options: any;
+    } | null>(null)
     const lastClickRef = useRef<number>(0)
     const lastClickIdRef = useRef<string | null>(null)
 
@@ -359,6 +368,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 setSelectedDrawingId(selection.id);
                 // Also update the drawing type for settings dialog
                 setSelectedDrawingType(drawing._type || selection.type);
+                // Sync options for Toolbar
+                setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
             }
         } else {
             // For indicators or other types, just deselect any drawing
@@ -370,6 +381,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         if (selectedDrawingRef.current?.setSelected) selectedDrawingRef.current.setSelected(false);
         selectedDrawingRef.current = null;
         setSelectedDrawingId(null);
+        setSelectedDrawingOptions({});
     };
 
     // 7. Trading Visuals (Hook)
@@ -406,8 +418,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
         // Also update points if strictly needed (DrawingStorage usually handles options, but points are separate?)
         // DrawingStorage.updateDrawingOptions stores "options". 
-        // Most drawings store points in options or separate? 
-        // Looking at drawing-storage.ts: updateDrawingOptions saves "options". 
         // Does it save points? 
         // Standard Lightweight Charts primitives usually keep points in private fields, 
         // but our wrappers might expose them in options() or we need a separate savePoints?
@@ -434,6 +444,12 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
     const handleDrawingClicked = (id: string, drawing: any) => {
         onSelectionChange?.({ type: 'drawing', id });
+        // Sync options for toolbar (handleDrawingClicked is fired by Interaction hook)
+        if (drawing) {
+            setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
+            setSelectedDrawingType(drawing._type || 'drawing');
+            setToolbarPosition(drawing.getScreenPosition ? drawing.getScreenPosition() : null); // Or mouse pos?
+        }
     };
 
     useDrawingInteraction({
@@ -458,7 +474,45 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 setSelectedDrawingType(drawing._type || selectedTool);
                 // Only open properties for text or if configured to do so (Fibonacci usually doesn't auto-open, but we can if desired)
                 // For now, let's keep the behavior consistent but correct the type.
-                if (selectedTool === 'text' || selectedTool === 'fibonacci') {
+                // Auto-open settings or inline editor
+                if (selectedTool === 'text') {
+                    // Activate inline editor for new text drawings
+                    setTimeout(() => {
+                        const screenPos = drawing.getScreenPosition ? drawing.getScreenPosition(data[data.length - 1].time, data[data.length - 1].close) : { x: 500, y: 300 }; // Fallback if no position yet
+                        // Ideally we get the position of the created point. drawing.getPoints()?
+                        // Let's assume the drawing object has the points.
+                        const points = drawing.getPoints ? drawing.getPoints() : [];
+                        const lastPoint = points.length > 0 ? points[points.length - 1] : null;
+
+                        let pos = { x: 500, y: 300 };
+                        if (lastPoint && chart) {
+                            const timeScale = chart.timeScale();
+                            const x = timeScale.timeToCoordinate(lastPoint.time);
+                            const seriesApi = series; // Ref
+                            if (seriesApi) {
+                                const y = seriesApi.priceToCoordinate(lastPoint.price);
+                                if (x && y) pos = { x, y };
+                            }
+                        }
+
+                        // Actually drawing.getScreenPosition should handle this if implemented correctly
+                        if (drawing.getScreenPosition && points.length > 0 && chart) {
+                            // We need to pass x,y coordinates, not time/price to getScreenPosition if it expects screen coords?
+                            // Wait, getScreenPosition in TextDrawing usually returns the position based on its internal time/price.
+                            // Let's check TextDrawning implementation.
+                            // If it takes no args, it returns current screen pos.
+                            pos = drawing.getScreenPosition();
+                        }
+
+                        setInlineTextEditing({
+                            drawingId: id,
+                            position: pos,
+                            text: '',
+                            options: drawing.options ? drawing.options() : {}
+                        });
+                    }, 50);
+                } else if (selectedTool === 'fibonacci') {
+                    // For Fib, we might want to keep properties closed or open specific settings
                     setPropertiesModalOpen(true);
                 }
             }
@@ -505,9 +559,29 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 setToolbarPosition({ x: param.point.x, y: param.point.y });
                 setIsDrawingLocked(hitDrawing._locked || false);
                 setIsDrawingHidden(hitDrawing._visible === false);
+                // Sync options!
+                setSelectedDrawingOptions(hitDrawing.options ? hitDrawing.options() : {});
+                setSelectedDrawingType(hitDrawing._type || 'drawing');
+
+                // Inline Text Edit: Activate on single click for text drawings
+                if (hitDrawing._type === 'text') {
+                    // Slight delay to allow selection to update
+                    setTimeout(() => {
+                        const screenPos = hitDrawing.getScreenPosition ? hitDrawing.getScreenPosition(param.point.x, param.point.y) : { x: param.point.x, y: param.point.y };
+                        const opts = hitDrawing.options ? hitDrawing.options() : {};
+
+                        setInlineTextEditing({
+                            drawingId: id,
+                            position: screenPos,
+                            text: opts.text || '',
+                            options: opts
+                        });
+                    }, 50);
+                }
             } else {
                 deselectDrawing();
                 setToolbarPosition(null);
+                setInlineTextEditing(null);
             }
         }
 
@@ -618,6 +692,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             setVerticalLineSettingsOpen(true);
         } else if (type === 'ray') {
             setRaySettingsOpen(true);
+        } else if (type === 'text') {
+            setTextSettingsOpen(true);
         } else {
             // Fallback to generic PropertiesModal
             setPropertiesModalOpen(true);
@@ -1434,6 +1510,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     drawingId={selectedDrawingId || ''}
                     drawingType={selectedDrawingType}
                     position={toolbarPosition}
+                    options={selectedDrawingOptions || {}}
                     isLocked={isDrawingLocked}
                     isHidden={isDrawingHidden}
                     onSettings={openDrawingSettings}
@@ -1441,6 +1518,13 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     onLock={toggleDrawingLock}
                     onDelete={deleteSelectedDrawing}
                     onToggleVisibility={toggleDrawingVisibility}
+                    onOptionsChange={(updates) => {
+                        if (selectedDrawingRef.current && typeof selectedDrawingRef.current.applyOptions === 'function') {
+                            selectedDrawingRef.current.applyOptions(updates);
+                            setSelectedDrawingOptions((prev: Record<string, any> | null) => ({ ...prev, ...updates }));
+                        }
+                    }}
+                    onPositionChange={(pos) => setToolbarPosition(pos)}
                 />
             )}
 
@@ -1451,6 +1535,42 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 initialOptions={selectedDrawingOptions}
                 onSave={handlePropertiesSave}
                 ticker={ticker}
+            />
+
+            {/* Inline Text Editor Overlay */}
+            {inlineTextEditing && (
+                <InlineTextEditor
+                    position={inlineTextEditing.position}
+                    initialText={inlineTextEditing.text}
+                    placeholder="Add text"
+                    fontSize={inlineTextEditing.options?.fontSize || 14}
+                    fontFamily={inlineTextEditing.options?.fontFamily || 'Arial'}
+                    color={inlineTextEditing.options?.color || '#FFFFFF'}
+                    backgroundColor={inlineTextEditing.options?.backgroundEnabled ? inlineTextEditing.options?.backgroundColor : undefined}
+                    onSave={(newText) => {
+                        const drawing = drawingManager.getDrawing(inlineTextEditing.drawingId);
+                        if (drawing && typeof drawing.applyOptions === 'function') {
+                            drawing.applyOptions({ text: newText });
+                        }
+                        setInlineTextEditing(null);
+                    }}
+                    onCancel={() => setInlineTextEditing(null)}
+                />
+            )}
+
+            {/* Text Settings Dialog */}
+            <TextSettings
+                open={textSettingsOpen}
+                onOpenChange={setTextSettingsOpen}
+                options={selectedDrawingOptions || {}}
+                onSave={(opts) => {
+                    if (selectedDrawingRef.current && typeof selectedDrawingRef.current.applyOptions === 'function') {
+                        selectedDrawingRef.current.applyOptions(opts);
+                        setSelectedDrawingOptions((prev: Record<string, any> | null) => ({ ...prev, ...opts }));
+                    }
+                    setTextSettingsOpen(false);
+                }}
+                onCancel={() => setTextSettingsOpen(false)}
             />
 
             {/* New TrendLine Settings Dialog */}

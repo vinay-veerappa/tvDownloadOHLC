@@ -17,7 +17,7 @@ import { StyleTab } from "@/components/drawing/tabs/StyleTab";
 import { DrawingSettingsDialog } from "@/components/drawing/DrawingSettingsDialog";
 import { CoordinatesTab } from "@/components/drawing/tabs/CoordinatesTab";
 import { VisibilityTab } from "@/components/drawing/tabs/VisibilityTab";
-import { TextTab } from "@/components/drawing/tabs/TextTab";
+import { TextSettingsTab } from "@/components/drawing-settings/TextSettingsTab";
 import type { Time } from "lightweight-charts";
 
 // ===== Options Interface =====
@@ -38,6 +38,7 @@ export interface TrendLineSettingsOptions {
     fontSize?: number;
     bold?: boolean;
     italic?: boolean;
+    showLabel?: boolean;
     alignment?: 'left' | 'center' | 'right';
     visibleTimeframes?: string[];
 }
@@ -203,23 +204,26 @@ export function TrendLineSettingsDialog({
 
     // ===== Text Tab =====
     const textTab = (
-        <TextTab
+        <TextSettingsTab
             options={{
                 text: localOptions.text || '',
                 fontSize: localOptions.fontSize,
                 bold: localOptions.bold,
                 italic: localOptions.italic,
-                color: localOptions.textColor,
-                alignment: localOptions.alignment,
+                textColor: localOptions.textColor,
+                showLabel: localOptions.showLabel !== false,
             }}
-            onChange={(updates) => handleChange({
-                text: updates.text,
-                textColor: updates.color,
-                fontSize: updates.fontSize,
-                bold: updates.bold,
-                italic: updates.italic,
-                alignment: updates.alignment,
-            })}
+            onChange={(updates) => {
+                const newOptions: Partial<TrendLineSettingsOptions> = { ...updates };
+                // Filter out undefined values
+                Object.keys(newOptions).forEach(key => {
+                    if (newOptions[key as keyof TrendLineSettingsOptions] === undefined) {
+                        delete newOptions[key as keyof TrendLineSettingsOptions];
+                    }
+                });
+                handleChange(newOptions);
+            }}
+            isLineTool={true}
         />
     );
 
@@ -230,9 +234,9 @@ export function TrendLineSettingsDialog({
             title="Trend Line Settings"
             toolType="trend-line"
             styleTab={styleTabContent}
+            textTab={textTab}
             coordinatesTab={coordinatesTab}
             visibilityTab={visibilityTab}
-            textTab={textTab}
             currentOptions={localOptions}
             onApplyTemplate={(templateOptions) => {
                 setLocalOptions(prev => ({ ...prev, ...templateOptions }));

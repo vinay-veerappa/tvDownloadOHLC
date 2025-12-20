@@ -18,7 +18,7 @@ import { StyleTab } from "@/components/drawing/tabs/StyleTab";
 import { DrawingSettingsDialog } from "@/components/drawing/DrawingSettingsDialog";
 import { SinglePriceTab } from "@/components/drawing/tabs/CoordinatesTab";
 import { VisibilityTab } from "@/components/drawing/tabs/VisibilityTab";
-import { TextTab } from "@/components/drawing/tabs/TextTab";
+import { TextSettingsTab } from "@/components/drawing-settings/TextSettingsTab";
 
 // ===== Options Interface =====
 
@@ -40,12 +40,12 @@ export interface HorizontalLineSettingsOptions {
 }
 
 export const DEFAULT_HORIZONTAL_OPTIONS: HorizontalLineSettingsOptions = {
-    color: '#2962FF',
+    color: '#FF9800', // Orange
     width: 1,
-    style: 1, // Dotted by default
+    style: 0, // Solid (User screenshot shows solid)
     opacity: 1,
     showLabel: true,
-    labelBackgroundColor: '#2962FF',
+    labelBackgroundColor: '#FF9800',
     labelTextColor: '#FFFFFF',
     visibleTimeframes: ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w', '1M'],
 };
@@ -157,23 +157,36 @@ export function HorizontalLineSettingsDialog({
 
     // ===== Text Tab =====
     const textTab = (
-        <TextTab
+        <TextSettingsTab
             options={{
                 text: localOptions.text || '',
                 fontSize: localOptions.fontSize,
                 bold: localOptions.bold,
                 italic: localOptions.italic,
-                color: localOptions.textColor,
-                alignment: localOptions.alignment,
+                textColor: localOptions.textColor, // Note: TextSettingsTab uses 'textColor'
+                alignmentVertical: (localOptions as any).alignmentVertical,     // HorizontalLine might store these differently, but we shouldn't cast if possible. 
+                // Ideally we map from localOptions.alignment (legacy) to split if needed?
+                // For now, let's assume specific HLine props or map legacy 'alignment'
+                alignmentHorizontal: localOptions.alignment as any, // HLine has 'alignment' which is usually horizontal
+                showLabel: localOptions.showLabel
             }}
-            onChange={(updates) => handleChange({
-                text: updates.text,
-                textColor: updates.color,
-                fontSize: updates.fontSize,
-                bold: updates.bold,
-                italic: updates.italic,
-                alignment: updates.alignment,
-            })}
+            onChange={(updates) => {
+                const newOptions: Partial<HorizontalLineSettingsOptions> = {};
+                if (updates.text !== undefined) newOptions.text = updates.text;
+                if (updates.textColor !== undefined) newOptions.textColor = updates.textColor;
+                if (updates.color !== undefined) newOptions.textColor = updates.color; // Handle both
+                if (updates.fontSize !== undefined) newOptions.fontSize = updates.fontSize;
+                if (updates.bold !== undefined) newOptions.bold = updates.bold;
+                if (updates.italic !== undefined) newOptions.italic = updates.italic;
+
+                // Map alignment updates back to simple alignment if compatible, or extended props
+                if (updates.alignmentHorizontal !== undefined) newOptions.alignment = updates.alignmentHorizontal;
+
+                if (updates.showLabel !== undefined) newOptions.showLabel = updates.showLabel;
+
+                handleChange(newOptions);
+            }}
+            isLineTool={true}
         />
     );
 
