@@ -32,3 +32,26 @@ export function ensureDefined<T>(value: T | undefined | null): T {
     }
     return value;
 }
+
+/**
+ * Standardized date/time formatter for chart elements.
+ * Defaults to New York time to align with futures trading sessions.
+ */
+import { Time } from "lightweight-charts";
+
+export function formatChartDateTime(time: Time, timeZone: string = 'America/New_York'): string {
+    const timestamp = typeof time === 'number' ? time * 1000 : new Date(time as string).getTime();
+    if (isNaN(timestamp)) return '';
+
+    try {
+        return new Intl.DateTimeFormat('en-US', {
+            timeZone,
+            year: 'numeric', month: 'numeric', day: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+            hour12: false // Standardize on 24h for clarity, or can be made option
+        }).format(new Date(timestamp));
+    } catch (e) {
+        // Fallback to UTC if timezone is invalid
+        return new Date(timestamp).toISOString().replace('T', ' ').substring(0, 16);
+    }
+}
