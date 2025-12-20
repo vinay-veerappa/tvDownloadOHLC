@@ -14,6 +14,7 @@ import { toast } from "sonner"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { useTrading } from "@/context/trading-context"
 import { useTheme } from "@/context/theme-context"
+import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 
 // ... imports
 import { VWAPSettings } from "@/lib/indicator-api"
@@ -95,6 +96,30 @@ export function ChartWrapper(props: ChartWrapperProps) {
     const [indicatorSettingsOpen, setIndicatorSettingsOpen] = useState(false)
     const [editingIndicator, setEditingIndicator] = useState<string | null>(null)
     const [indicatorOptions, setIndicatorOptions] = useState<Record<string, any>>({})
+
+    // Global Selection State - must be defined before useKeyboardShortcuts
+    const [selection, setSelection] = useState<{ type: 'drawing' | 'indicator' | string, id: string } | null>(null);
+    const selectionRef = useRef(selection);
+    useEffect(() => { selectionRef.current = selection }, [selection]);
+
+    // Known drawing types (not indicators)
+    const DRAWING_TYPES = ['trend-line', 'ray', 'fibonacci', 'rectangle', 'vertical-line', 'horizontal-line', 'text', 'risk-reward', 'measure', 'drawing'];
+
+    // Keyboard Shortcuts (Alt+T for trendline, Alt+H for horizontal, Delete, Escape, etc.)
+    useKeyboardShortcuts({
+        onToolChange: setSelectedTool,
+        onDeleteSelected: () => {
+            const current = selectionRef.current;
+            if (!current) return;
+
+            if (DRAWING_TYPES.includes(current.type)) {
+                handleDeleteDrawing(current.id);
+            } else if (current.type === 'indicator') {
+                handleDeleteIndicator(current.id);
+            }
+        },
+        enabled: true,
+    });
 
     // Notify parent when navigation is ready (only once)
     const navReadyRef = useRef(false)
@@ -184,13 +209,6 @@ export function ChartWrapper(props: ChartWrapperProps) {
             });
         }
     }, [chartId]);
-
-    // Global Selection State
-    const [selection, setSelection] = useState<{ type: 'drawing' | 'indicator', id: string } | null>(null);
-
-    // Use ref to access current selection in callbacks without adding dependencies
-    const selectionRef = useRef(selection);
-    useEffect(() => { selectionRef.current = selection }, [selection]);
 
     // Validated order execution - only allows trading in replay mode
     const validatedExecuteOrder = useCallback((params: Parameters<typeof executeOrder>[0]) => {

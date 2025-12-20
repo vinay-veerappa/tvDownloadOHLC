@@ -27,6 +27,12 @@ import { RangeInfoPanel } from "./range-info-panel"
 import { RangeTooltip } from "./range-tooltip"
 import { RangeExtensions, RangeExtensionPeriod, getContractSpecs } from "@/lib/charts/indicators/range-extensions"
 import { useKeyboardShortcuts } from "@/hooks/chart/use-keyboard-shortcuts"
+import { TrendLineSettingsDialog, TrendLineSettingsOptions, DEFAULT_TRENDLINE_OPTIONS } from "@/components/drawing-settings/TrendLineSettings"
+import { HorizontalLineSettingsDialog, HorizontalLineSettingsOptions, DEFAULT_HORIZONTAL_OPTIONS } from "@/components/drawing-settings/HorizontalLineSettings"
+import { RectangleSettingsDialog, RectangleSettingsOptions, DEFAULT_RECTANGLE_OPTIONS } from "@/components/drawing-settings/RectangleSettings"
+import { VerticalLineSettingsDialog, VerticalLineSettingsOptions, DEFAULT_VERTICAL_OPTIONS } from "@/components/drawing-settings/VerticalLineSettings"
+import { RaySettingsDialog, RaySettingsOptions, DEFAULT_RAY_OPTIONS } from "@/components/drawing-settings/RaySettings"
+import { FloatingToolbar } from "@/components/drawing/FloatingToolbar"
 
 import type { SessionType } from './top-toolbar'
 
@@ -44,8 +50,8 @@ interface ChartContainerProps {
     magnetMode?: MagnetMode
     displayTimezone?: string
     sessionType?: SessionType
-    selection?: { type: 'drawing' | 'indicator', id: string } | null
-    onSelectionChange?: (selection: { type: 'drawing' | 'indicator', id: string } | null) => void
+    selection?: { type: string, id: string } | null
+    onSelectionChange?: (selection: { type: string, id: string } | null) => void
     onDeleteSelection?: () => void
     onReplayStateChange?: (state: { isReplayMode: boolean, index: number, total: number, currentTime?: number }) => void
     onDataLoad?: (range: { start: number; end: number; totalBars: number }) => void
@@ -319,26 +325,43 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const selectedDrawingRef = useRef<any>(null)
     const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
     const [propertiesModalOpen, setPropertiesModalOpen] = useState(false)
+    const [trendLineSettingsOpen, setTrendLineSettingsOpen] = useState(false) // New TrendLine dialog
+    const [horizontalLineSettingsOpen, setHorizontalLineSettingsOpen] = useState(false) // New Horizontal dialog
+    const [rectangleSettingsOpen, setRectangleSettingsOpen] = useState(false) // New Rectangle dialog
+    const [verticalLineSettingsOpen, setVerticalLineSettingsOpen] = useState(false) // New Vertical dialog
+    const [raySettingsOpen, setRaySettingsOpen] = useState(false) // New Ray dialog
     const [selectedDrawingOptions, setSelectedDrawingOptions] = useState<any>(null)
     const [selectedDrawingType, setSelectedDrawingType] = useState<string>('')
+    const [toolbarPosition, setToolbarPosition] = useState<{ x: number; y: number } | null>(null)
+    const [isDrawingLocked, setIsDrawingLocked] = useState(false)
+    const [isDrawingHidden, setIsDrawingHidden] = useState(false)
     const lastClickRef = useRef<number>(0)
     const lastClickIdRef = useRef<string | null>(null)
 
-    // Sync external selection
+
+    // Known drawing types (for selection sync)
+    const DRAWING_TYPES = ['trend-line', 'ray', 'fibonacci', 'rectangle', 'vertical-line', 'horizontal-line', 'text', 'risk-reward', 'measure', 'drawing'];
+
+    // Sync external selection  
     useEffect(() => {
         if (!selection) {
             deselectDrawing();
             return;
         }
-        if (selection.type === 'drawing') {
+        // Check if it's a drawing type
+        const isDrawingType = DRAWING_TYPES.includes(selection.type);
+        if (isDrawingType) {
             const drawing = drawingManager.getDrawing(selection.id);
             if (drawing) {
                 if (selectedDrawingRef.current?.setSelected) selectedDrawingRef.current.setSelected(false);
                 if (drawing.setSelected) drawing.setSelected(true);
                 selectedDrawingRef.current = drawing;
                 setSelectedDrawingId(selection.id);
+                // Also update the drawing type for settings dialog
+                setSelectedDrawingType(drawing._type || selection.type);
             }
         } else {
+            // For indicators or other types, just deselect any drawing
             deselectDrawing();
         }
     }, [selection, drawingManager]);
@@ -478,8 +501,13 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             if (hitDrawing) {
                 const id = typeof hitDrawing.id === 'function' ? hitDrawing.id() : hitDrawing.id;
                 onSelectionChange?.({ type: hitDrawing._type || 'drawing', id });
+                // Set toolbar position near click point
+                setToolbarPosition({ x: param.point.x, y: param.point.y });
+                setIsDrawingLocked(hitDrawing._locked || false);
+                setIsDrawingHidden(hitDrawing._visible === false);
             } else {
                 deselectDrawing();
+                setToolbarPosition(null);
             }
         }
 
@@ -578,7 +606,22 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         const type = drawing._type || 'anchored-text';
         setSelectedDrawingOptions(options);
         setSelectedDrawingType(type);
-        setPropertiesModalOpen(true);
+
+        // Type-specific settings dialogs
+        if (type === 'trend-line') {
+            setTrendLineSettingsOpen(true);
+        } else if (type === 'horizontal-line') {
+            setHorizontalLineSettingsOpen(true);
+        } else if (type === 'rectangle') {
+            setRectangleSettingsOpen(true);
+        } else if (type === 'vertical-line') {
+            setVerticalLineSettingsOpen(true);
+        } else if (type === 'ray') {
+            setRaySettingsOpen(true);
+        } else {
+            // Fallback to generic PropertiesModal
+            setPropertiesModalOpen(true);
+        }
     }
 
     const openDrawingSettings = () => {
@@ -586,11 +629,36 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     };
 
     const deleteSelectedDrawing = () => {
-        if (onDeleteSelection) onDeleteSelection();
-        else if (selectedDrawingRef.current) {
+        // Always perform the deletion if there's a selected drawing
+        if (selectedDrawingRef.current) {
             const id = typeof selectedDrawingRef.current.id === 'function' ? selectedDrawingRef.current.id() : selectedDrawingRef.current.id;
             drawingManager.deleteDrawing(id);
+            toast.success('Drawing deleted');
             deselectDrawing();
+        }
+        // Also notify parent if callback exists
+        if (onDeleteSelection) onDeleteSelection();
+        setToolbarPosition(null);
+    };
+
+    const cloneSelectedDrawing = () => {
+        if (selectedDrawingRef.current && !isDrawingLocked) {
+            // Clone functionality - TODO: implement in drawingManager
+            toast.info('Clone: Coming soon');
+        }
+    };
+
+    const toggleDrawingLock = () => {
+        setIsDrawingLocked(prev => !prev);
+        if (selectedDrawingRef.current?.applyOptions) {
+            selectedDrawingRef.current.applyOptions({ locked: !isDrawingLocked });
+        }
+    };
+
+    const toggleDrawingVisibility = () => {
+        setIsDrawingHidden(prev => !prev);
+        if (selectedDrawingRef.current?.setVisible) {
+            selectedDrawingRef.current.setVisible(!isDrawingHidden);
         }
     };
 
@@ -1360,6 +1428,22 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 onSettings={openDrawingSettings}
             />
 
+            {/* FloatingToolbar - appears on drawing selection */}
+            {selectedDrawingId && toolbarPosition && (
+                <FloatingToolbar
+                    drawingId={selectedDrawingId || ''}
+                    drawingType={selectedDrawingType}
+                    position={toolbarPosition}
+                    isLocked={isDrawingLocked}
+                    isHidden={isDrawingHidden}
+                    onSettings={openDrawingSettings}
+                    onClone={cloneSelectedDrawing}
+                    onLock={toggleDrawingLock}
+                    onDelete={deleteSelectedDrawing}
+                    onToggleVisibility={toggleDrawingVisibility}
+                />
+            )}
+
             <PropertiesModal
                 open={propertiesModalOpen}
                 onOpenChange={setPropertiesModalOpen}
@@ -1367,6 +1451,182 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 initialOptions={selectedDrawingOptions}
                 onSave={handlePropertiesSave}
                 ticker={ticker}
+            />
+
+            {/* New TrendLine Settings Dialog */}
+            <TrendLineSettingsDialog
+                open={trendLineSettingsOpen}
+                onOpenChange={setTrendLineSettingsOpen}
+                options={{
+                    ...DEFAULT_TRENDLINE_OPTIONS,
+                    color: selectedDrawingOptions?.lineColor || '#2962FF',
+                    width: selectedDrawingOptions?.lineWidth || 2,
+                    style: selectedDrawingOptions?.lineStyle || 0,
+                    opacity: selectedDrawingOptions?.opacity || 1,
+                    extendLeft: selectedDrawingOptions?.extendLeft || false,
+                    extendRight: selectedDrawingOptions?.extendRight || false,
+                    showAngle: selectedDrawingOptions?.showAngle || false,
+                    showDistance: selectedDrawingOptions?.showDistance || false,
+                    showPriceRange: selectedDrawingOptions?.showPriceRange || false,
+                    showBarsRange: selectedDrawingOptions?.showBarsRange || false,
+                    text: selectedDrawingOptions?.text,
+                    textColor: selectedDrawingOptions?.textColor,
+                    fontSize: selectedDrawingOptions?.fontSize,
+                    bold: selectedDrawingOptions?.bold,
+                    italic: selectedDrawingOptions?.italic,
+                    alignment: selectedDrawingOptions?.alignment,
+                }}
+                points={selectedDrawingRef.current?._p1 && selectedDrawingRef.current?._p2 ? {
+                    p1: selectedDrawingRef.current._p1,
+                    p2: selectedDrawingRef.current._p2
+                } : undefined}
+                onApply={(opts) => {
+                    // Convert back to TrendLine format
+                    handlePropertiesSave({
+                        lineColor: opts.color,
+                        lineWidth: opts.width,
+                        lineStyle: opts.style,
+                        opacity: opts.opacity,
+                        extendLeft: opts.extendLeft,
+                        extendRight: opts.extendRight,
+                        showAngle: opts.showAngle,
+                        showDistance: opts.showDistance,
+                        showPriceRange: opts.showPriceRange,
+                        showBarsRange: opts.showBarsRange,
+                        text: opts.text,
+                        textColor: opts.textColor,
+                        fontSize: opts.fontSize,
+                        bold: opts.bold,
+                        italic: opts.italic,
+                        alignment: opts.alignment,
+                    });
+                }}
+                onCancel={() => { }}
+            />
+
+            {/* Horizontal Line Settings Dialog */}
+            <HorizontalLineSettingsDialog
+                open={horizontalLineSettingsOpen}
+                onOpenChange={setHorizontalLineSettingsOpen}
+                options={{
+                    ...DEFAULT_HORIZONTAL_OPTIONS,
+                    color: selectedDrawingOptions?.color || '#2962FF',
+                    width: selectedDrawingOptions?.width || 1,
+                    style: selectedDrawingOptions?.lineStyle || 1,
+                    showLabel: selectedDrawingOptions?.showLabel ?? true,
+                    labelBackgroundColor: selectedDrawingOptions?.labelBackgroundColor || '#2962FF',
+                    labelTextColor: selectedDrawingOptions?.labelTextColor || '#FFFFFF',
+                    text: selectedDrawingOptions?.text,
+                    textColor: selectedDrawingOptions?.textColor,
+                }}
+                price={selectedDrawingRef.current?._price}
+                onApply={(opts, price) => {
+                    handlePropertiesSave({
+                        color: opts.color,
+                        width: opts.width,
+                        lineStyle: opts.style,
+                        showLabel: opts.showLabel,
+                        labelBackgroundColor: opts.labelBackgroundColor,
+                        labelTextColor: opts.labelTextColor,
+                        text: opts.text,
+                        textColor: opts.textColor,
+                    });
+                }}
+                onCancel={() => { }}
+            />
+
+            {/* Rectangle Settings Dialog */}
+            <RectangleSettingsDialog
+                open={rectangleSettingsOpen}
+                onOpenChange={setRectangleSettingsOpen}
+                options={{
+                    ...DEFAULT_RECTANGLE_OPTIONS,
+                    borderColor: selectedDrawingOptions?.borderColor || '#2962FF',
+                    borderWidth: selectedDrawingOptions?.borderWidth || 1,
+                    borderStyle: selectedDrawingOptions?.borderStyle || 0,
+                    fillColor: selectedDrawingOptions?.fillColor || '#2962FF',
+                    fillOpacity: selectedDrawingOptions?.fillOpacity ?? 0.1,
+                    showMidline: selectedDrawingOptions?.showMidline || false,
+                    showQuarterLines: selectedDrawingOptions?.showQuarterLines || false,
+                    text: selectedDrawingOptions?.text,
+                    textColor: selectedDrawingOptions?.textColor,
+                }}
+                points={selectedDrawingRef.current?._p1 && selectedDrawingRef.current?._p2 ? {
+                    p1: selectedDrawingRef.current._p1,
+                    p2: selectedDrawingRef.current._p2
+                } : undefined}
+                onApply={(opts) => {
+                    handlePropertiesSave({
+                        borderColor: opts.borderColor,
+                        borderWidth: opts.borderWidth,
+                        borderStyle: opts.borderStyle,
+                        fillColor: opts.fillColor,
+                        fillOpacity: opts.fillOpacity,
+                        showMidline: opts.showMidline,
+                        showQuarterLines: opts.showQuarterLines,
+                        text: opts.text,
+                        textColor: opts.textColor,
+                    });
+                }}
+                onCancel={() => { }}
+            />
+
+            {/* Vertical Line Settings Dialog */}
+            <VerticalLineSettingsDialog
+                open={verticalLineSettingsOpen}
+                onOpenChange={setVerticalLineSettingsOpen}
+                options={{
+                    ...DEFAULT_VERTICAL_OPTIONS,
+                    color: selectedDrawingOptions?.color || '#2962FF',
+                    width: selectedDrawingOptions?.width || 2,
+                    style: selectedDrawingOptions?.lineStyle || 0,
+                    showLabel: selectedDrawingOptions?.showLabel ?? true,
+                    labelBackgroundColor: selectedDrawingOptions?.labelBackgroundColor || '#2962FF',
+                    labelTextColor: selectedDrawingOptions?.labelTextColor || '#FFFFFF',
+                    text: selectedDrawingOptions?.text,
+                    textColor: selectedDrawingOptions?.textColor,
+                    orientation: selectedDrawingOptions?.orientation || 'horizontal',
+                }}
+                time={selectedDrawingRef.current?._time}
+                onApply={(opts) => {
+                    handlePropertiesSave({
+                        color: opts.color,
+                        width: opts.width,
+                        lineStyle: opts.style,
+                        showLabel: opts.showLabel,
+                        labelBackgroundColor: opts.labelBackgroundColor,
+                        labelTextColor: opts.labelTextColor,
+                        text: opts.text,
+                        textColor: opts.textColor,
+                        orientation: opts.orientation,
+                    });
+                }}
+                onCancel={() => { }}
+            />
+
+            {/* Ray Settings Dialog */}
+            <RaySettingsDialog
+                open={raySettingsOpen}
+                onOpenChange={setRaySettingsOpen}
+                options={{
+                    ...DEFAULT_RAY_OPTIONS,
+                    color: selectedDrawingOptions?.lineColor || '#2962FF',
+                    width: selectedDrawingOptions?.lineWidth || 2,
+                    style: selectedDrawingOptions?.lineStyle || 0,
+                    text: selectedDrawingOptions?.text,
+                    textColor: selectedDrawingOptions?.textColor,
+                }}
+                point={selectedDrawingRef.current?._p1}
+                onApply={(opts) => {
+                    handlePropertiesSave({
+                        lineColor: opts.color,
+                        lineWidth: opts.width,
+                        lineStyle: opts.style,
+                        text: opts.text,
+                        textColor: opts.textColor,
+                    });
+                }}
+                onCancel={() => { }}
             />
         </div>
     )
