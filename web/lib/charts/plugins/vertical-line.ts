@@ -2,7 +2,7 @@ import { IChartApi, ISeriesApi, Time, ISeriesPrimitive, Coordinate } from "light
 
 
 import { TextLabel } from "./text-label";
-import { getLineDash } from "../chart-utils";
+import { getLineDash, formatChartDateTime } from "../chart-utils";
 
 interface VertLineOptions {
     color: string;
@@ -253,9 +253,7 @@ export class VertLine implements ISeriesPrimitive {
         this._time = time;
         // Update label text if showing label
         if (this._options.showLabel) {
-            const dateStr = new Date((this._time as number) * 1000).toLocaleString(undefined, {
-                year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
-            });
+            const dateStr = formatChartDateTime(this._time);
             this.applyOptions({ labelText: dateStr });
         } else {
             this.updateAllViews();
@@ -311,9 +309,7 @@ export class VertLineTool {
         // Create Vertical Line
         const vl = new VertLine(this._chart, this._series, param.time, {
             color: '#2962FF',
-            labelText: new Date((param.time as number) * 1000).toLocaleString(undefined, {
-                year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
-            }),
+            labelText: formatChartDateTime(param.time),
             showLabel: true
         });
         this._series.attachPrimitive(vl);
