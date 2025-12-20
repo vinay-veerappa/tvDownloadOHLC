@@ -140,7 +140,7 @@ export class TrendLine extends TwoPointLineTool<TrendLineOptions> {
     }
 
     public applyOptions(options: Partial<TrendLineOptions>) {
-        if (options.textColor !== undefined) {
+        if (options.textColor !== undefined || (options.text !== undefined && options.text !== '')) {
             options.showLabel = true;
         }
         super.applyOptions(options);

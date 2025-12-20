@@ -270,7 +270,7 @@ export class Rectangle implements ISeriesPrimitive {
         if (options.showLabels !== undefined) options.showLabel = options.showLabels;
         if (options.labelTextColor !== undefined) options.textColor = options.labelTextColor;
 
-        if (options.textColor !== undefined) {
+        if (options.textColor !== undefined || (options.text !== undefined && options.text !== '')) {
             options.showLabel = true;
         }
 

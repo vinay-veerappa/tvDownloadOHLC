@@ -97,7 +97,7 @@ export class TextLabel {
                     offsetX = halfWidth - maxWidth - innerPadding;
                 }
             } else {
-                if (horizontal === 'left') offsetX = -maxWidth;
+                if (horizontal === 'right') offsetX = -maxWidth;
                 else if (horizontal === 'center') offsetX = -maxWidth / 2;
             }
 

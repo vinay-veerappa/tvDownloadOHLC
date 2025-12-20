@@ -156,7 +156,7 @@ export class Ray extends TwoPointLineTool<RayOptions> {
     }
 
     public applyOptions(options: Partial<RayOptions>) {
-        if (options.textColor !== undefined) {
+        if (options.textColor !== undefined || (options.text !== undefined && options.text !== '')) {
             options.showLabel = true;
         }
         super.applyOptions(options);
