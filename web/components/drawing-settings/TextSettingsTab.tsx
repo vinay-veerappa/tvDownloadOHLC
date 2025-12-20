@@ -95,7 +95,6 @@ export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsT
                 onChange={(e) => onChange({ text: e.target.value })}
                 placeholder="Add text"
                 className="min-h-[100px] resize-none"
-                disabled={isLineTool && !options.showLabel}
             />
 
             {/* Alignment Options */}

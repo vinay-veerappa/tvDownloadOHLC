@@ -100,8 +100,22 @@ class RayRenderer {
 
             // Draw Text Label if exists
             if (this._textLabel) {
-                // Update with logical P1 coords. TextLabel handles offsets based on alignment.
-                this._textLabel.update(this._p1.x, this._p1.y);
+                // Determine label X position based on alignment relative to visual ray
+                // Ray (Horizontal) goes from P1 (left) to Screen Edge (right)
+                const startX = this._p1.x; // Logical media coordinate
+                const endX = scope.mediaSize.width; // Logical media coordinate
+                const alignment = this._textLabel.options.alignment?.horizontal || 'left';
+
+                let labelX = startX;
+
+                if (alignment === 'right') {
+                    labelX = endX;
+                } else if (alignment === 'center') {
+                    labelX = (startX + endX) / 2;
+                }
+
+                // Update text label position. Vertical position remains at P1.y
+                this._textLabel.update(labelX, this._p1.y);
                 this._textLabel.draw(ctx, hPR, vPR);
             }
         });
