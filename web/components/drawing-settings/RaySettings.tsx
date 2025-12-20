@@ -30,6 +30,8 @@ export interface RaySettingsOptions {
     bold?: boolean;
     italic?: boolean;
     showLabel?: boolean;
+    alignmentVertical?: 'top' | 'center' | 'bottom';
+    alignmentHorizontal?: 'left' | 'center' | 'right';
     visibleTimeframes?: string[];
 }
 
@@ -139,6 +141,8 @@ export function RaySettingsDialog({
                 italic: localOptions.italic,
                 textColor: localOptions.textColor,
                 showLabel: localOptions.showLabel !== false,
+                alignmentVertical: localOptions.alignmentVertical,
+                alignmentHorizontal: localOptions.alignmentHorizontal,
             }}
             onChange={(updates) => {
                 const newOptions: Partial<RaySettingsOptions> = { ...updates };

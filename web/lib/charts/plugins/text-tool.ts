@@ -7,6 +7,10 @@ export interface TextDrawingOptions extends TextLabelOptions {
     borderColor?: string;
     borderWidth?: number;
     lineStyle?: number;
+    // Standardized keys
+    textColor?: string;
+    alignmentVertical?: 'top' | 'center' | 'bottom';
+    alignmentHorizontal?: 'left' | 'center' | 'right';
 }
 
 class TextDrawingPaneRenderer {
@@ -79,9 +83,15 @@ export class TextDrawing implements ISeriesPrimitive {
         this._options = options;
         this._id = Math.random().toString(36).substring(7);
 
+        // Map standardized `textColor` to TextLabel's `color`
         this._textLabel = new TextLabel(0, 0, {
             ...options,
-            borderStyle: options.lineStyle
+            color: options.textColor || options.color || '#FFFFFF',
+            borderStyle: options.lineStyle,
+            alignment: {
+                vertical: (options.alignmentVertical as any) || 'middle',
+                horizontal: (options.alignmentHorizontal as any) || 'center'
+            }
         });
         this._paneViews = [new TextDrawingPaneView(this)];
     }
@@ -91,9 +101,15 @@ export class TextDrawing implements ISeriesPrimitive {
 
     applyOptions(options: Partial<TextDrawingOptions>) {
         this._options = { ...this._options, ...options };
+        // Map standardized `textColor` to TextLabel's `color`
         this._textLabel.update(0, 0, {
             ...this._options,
-            borderStyle: this._options.lineStyle
+            color: this._options.textColor || this._options.color || '#FFFFFF',
+            borderStyle: this._options.lineStyle,
+            alignment: {
+                vertical: (this._options.alignmentVertical as any) || 'middle',
+                horizontal: (this._options.alignmentHorizontal as any) || 'center'
+            }
         });
         this.updateAllViews();
     }
@@ -129,12 +145,6 @@ export class TextDrawing implements ISeriesPrimitive {
     }
 
     hitTest(x: number, y: number): any {
-        // Delegate to TextLabel hitTest
-        // We need to provide the current screen coordinates of the anchor to the TextLabel if strictly needed,
-        // but TextLabel stores its last drawn position. 
-        // The issue is hitTest is called often. 
-        // TextLabel.hitTest uses stored _x/_y which are updated in draw().
-
         if (this._textLabel.hitTest(x, y)) {
             return {
                 hit: true,
@@ -195,7 +205,7 @@ export class TextTool {
 
         const td = new TextDrawing(this._chart, this._series, param.time, price as number, {
             text: text,
-            color: '#FFFFFF',
+            textColor: '#FFFFFF', // Use standardized key
             fontSize: 14,
             visible: true
         });

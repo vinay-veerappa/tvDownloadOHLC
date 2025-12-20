@@ -18,6 +18,8 @@ interface VertLineOptions {
     bold?: boolean;
     italic?: boolean;
     orientation?: 'horizontal' | 'along-line';
+    alignmentVertical?: 'top' | 'center' | 'bottom';
+    alignmentHorizontal?: 'left' | 'center' | 'right';
 }
 
 const defaultOptions: VertLineOptions = {
@@ -194,7 +196,11 @@ export class VertLine implements ISeriesPrimitive {
                 // Vertical lines don't traditionally use the same alignment options as boxes, 
                 // but we can pass them if we add them to the interface. For now, defaulting.
                 visible: true,
-                rotation: rotation
+                rotation: rotation,
+                alignment: {
+                    vertical: this._options.alignmentVertical as any || 'middle',
+                    horizontal: this._options.alignmentHorizontal as any || 'center'
+                }
             };
             if (!this._textLabel) {
                 this._textLabel = new TextLabel(0, 0, textOptions);

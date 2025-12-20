@@ -15,17 +15,21 @@ interface RectangleOptions {
     borderWidth: number;
     borderStyle: number;
     lineStyle?: number;
-    labelColor: string;
-    labelTextColor: string;
-    showLabels: boolean;
+    // Standardized Text Options
     text?: string;
     textColor?: string;
     fontSize?: number;
     bold?: boolean;
     italic?: boolean;
+    showLabel?: boolean; // Standardized singular
+    // Legacy/Deprecated
+    showLabels?: boolean;
+    labelColor?: string;
+    labelTextColor?: string;
+
     extendLeft: boolean;
     extendRight: boolean;
-    midline: { visible: boolean; color: string; width: number; style: number }; // 0=Solid, 1=Dotted
+    midline: { visible: boolean; color: string; width: number; style: number };
     quarterLines: { visible: boolean; color: string; width: number; style: number };
     alignmentVertical?: 'top' | 'center' | 'bottom';
     alignmentHorizontal?: 'left' | 'center' | 'right';
@@ -36,9 +40,11 @@ const defaultOptions: RectangleOptions = {
     previewFillColor: "rgba(41, 98, 255, 0.1)",
     borderColor: "#2962FF",
     borderWidth: 2,
+    borderStyle: 0,
     labelColor: "rgba(41, 98, 255, 1)",
     labelTextColor: "white",
-    showLabels: true,
+    showLabels: true, // Legacy default
+    showLabel: true,  // Standard default
     extendLeft: false,
     extendRight: false,
     midline: { visible: false, color: "#2962FF", width: 1, style: 1 },
@@ -114,7 +120,6 @@ class RectangleRenderer {
                 ctx.setLineDash([]);
             }
 
-
             // Internal Lines
             const drawInternalLine = (y: number, styles: { color: string, width: number, style: number }) => {
                 ctx.beginPath();
@@ -144,12 +149,10 @@ class RectangleRenderer {
                 ctx.strokeStyle = '#FFFFFF';
                 ctx.lineWidth = 2 * hPR;
 
-                // Corner handles (circles) at TL, TR, BL, BR
+                // Corner handles
                 const corners = [
-                    { x: left, y: top },
-                    { x: right, y: top },
-                    { x: left, y: bottom },
-                    { x: right, y: bottom }
+                    { x: left, y: top }, { x: right, y: top },
+                    { x: left, y: bottom }, { x: right, y: bottom }
                 ];
                 for (const c of corners) {
                     ctx.beginPath();
@@ -158,19 +161,17 @@ class RectangleRenderer {
                     ctx.stroke();
                 }
 
-                // Edge handles (squares) at T, B, L, R
+                // Edge handles
                 const edges = [
-                    { x: midX, y: top },
-                    { x: midX, y: bottom },
-                    { x: left, y: midY },
-                    { x: right, y: midY }
+                    { x: midX, y: top }, { x: midX, y: bottom },
+                    { x: left, y: midY }, { x: right, y: midY }
                 ];
                 for (const e of edges) {
                     ctx.fillRect(e.x - HANDLE_SIZE / 2, e.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
                     ctx.strokeRect(e.x - HANDLE_SIZE / 2, e.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
                 }
 
-                // Center handle (square)
+                // Center handle
                 ctx.fillRect(midX - HANDLE_SIZE / 2, midY - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
                 ctx.strokeRect(midX - HANDLE_SIZE / 2, midY - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
             }
@@ -227,11 +228,16 @@ export class Rectangle implements ISeriesPrimitive {
         this._paneViews = [new RectanglePaneView(this)];
         this._id = Math.random().toString(36).substring(7);
 
+        // Normalize options
+        if (this._options.showLabels !== undefined && this._options.showLabel === undefined) {
+            this._options.showLabel = this._options.showLabels;
+        }
+
         if (this._options.text) {
             this._textLabel = new TextLabel(0, 0, {
                 text: this._options.text,
-                color: this._options.textColor || this._options.labelTextColor,
-                visible: this._options.showLabels
+                color: this._options.textColor || this._options.labelTextColor || '#FFFFFF',
+                visible: this._options.showLabel !== false
             });
         }
     }
@@ -260,14 +266,20 @@ export class Rectangle implements ISeriesPrimitive {
     }
 
     applyOptions(options: Partial<RectangleOptions>) {
+        // Map legacy keys
+        if (options.showLabels !== undefined) options.showLabel = options.showLabels;
+        if (options.labelTextColor !== undefined) options.textColor = options.labelTextColor;
+
         if (options.textColor !== undefined) {
-            options.showLabels = true;
+            options.showLabel = true;
         }
+
         this._options = { ...this._options, ...options };
+
         if (this._options.text) {
             const textOptions = {
                 text: this._options.text,
-                color: this._options.textColor || this._options.labelTextColor,
+                color: this._options.textColor || this._options.labelTextColor || '#FFFFFF',
                 fontSize: this._options.fontSize,
                 bold: this._options.bold,
                 italic: this._options.italic,
@@ -275,7 +287,7 @@ export class Rectangle implements ISeriesPrimitive {
                     vertical: (this._options.alignmentVertical === 'center' || !this._options.alignmentVertical) ? 'middle' : (this._options.alignmentVertical as any),
                     horizontal: (this._options.alignmentHorizontal || 'center') as any
                 },
-                visible: this._options.showLabels
+                visible: this._options.showLabel !== false
             };
             if (!this._textLabel) {
                 this._textLabel = new TextLabel(0, 0, textOptions);

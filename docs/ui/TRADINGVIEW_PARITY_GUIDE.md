@@ -511,6 +511,88 @@ const TRADINGVIEW_SIZES = {
 - Relying on `tooltip` as the default `label` when `value` is undefined.
 - Omitting `icon` for dropdown triggers.
 
+### Text Entry Patterns
+**Rule**: Text changes from any source (Inline Editor, Settings Dialog) must propagate to the central state immediately.
+
+**Implementation**:
+1.  **State Hydration**: When `InlineTextEditor` saves, it MUST update `selectedDrawingOptions` in `ChartContainer` if the edited drawing is currently selected.
+2.  **Property Standardization**: All text-capable tools must use `textColor` (not `color`) for text styling to match the standardized `TextSettingsTab` interface.
+
+### Standard Properties Reference
+
+To prevent property mismatches, all Drawing Tools must strictly adhere to the following naming conventions. Do not use legacy or tool-specific variations (e.g., `labelColor`, `showLabels`).
+
+| capabilities | Property Name | Type | Description |
+| :--- | :--- | :--- | :--- |
+| **Line** | `lineColor` | string | Main line color |
+| | `lineWidth` | number | Line width in px |
+| | `lineStyle` | number | 0=Solid, 1=Dotted, 2=Dashed |
+| **Text** | `text` | string | The text content |
+| | `textColor` | string | Color of the text (NOT `color`) |
+| | `fontSize` | number | Size in px (default 14) |
+| | `showLabel` | boolean | Toggle visibility (Singular!) |
+| | `bold` | boolean | |
+| | `italic` | boolean | |
+| **Fill** | `fillColor` | string | Background fill color |
+| | `fillOpacity` | number | 0-1 opacity multiplier |
+
+> [!IMPORTANT]
+> **Inheritance vs Composition**: While tools inherit from `DrawingBase`, standardized features like Text and Fill are composed via interfaces (`TextCapableOptions`, `FillableOptions`). Strict adherence to these property names allows the `FloatingToolbar` and `SettingsDialog` to be polymorphic and reusable.
+
+### Drawing Systems Architecture
+
+To ensure long-term maintainability and consistency, the drawing system follows a strict architecture involving inheritance for core behavior and composition for capabilities.
+
+#### 1. Class Hierarchy
+
+All drawing tools should inherit from a base class that handles common rendering lifecycle events (`attached`, `detached`, `updateAllViews`).
+
+*   **`DrawingBase` (Abstract)**: The root class. Handles ID generation, selection state (`isSelected`, `setSelected`), serialization (`toJSON`), and common options management.
+    *   **`TwoPointLineTool`**: Extends `DrawingBase`. Specialized for tools defined by a start and end point (e.g., `TrendLine`, `Ray`, `Arrow`). Handles common point updates and hit testing for lines.
+        *   `TrendLine`
+        *   `Ray`
+        *   `Arrow`
+    *   **`MultipointDrawing`** (Conceptual): For tools with >2 points (e.g., `Triangle`, `Path`).
+    *   **`Standalone Primitive`**: Tools that implement `ISeriesPrimitive` directly without `DrawingBase` (e.g., `Rectangle`). *Note: Future refactors should aim to migrate these to `DrawingBase` for consistency.*
+
+#### 2. Composition (Capabilities)
+
+Features shared across disparate tools (like Text or Fills) are defined as **Interfaces** and composed into the tool's Options interface. They are NOT inherited.
+
+*   **`TextCapableOptions`**:
+    *   `text` (string)
+    *   `textColor` (string) - **CRITICAL**: Do NOT use `color` or `labelColor`.
+    *   `fontSize` (number)
+    *   `showLabel` (boolean) - **CRITICAL**: Singular, not `showLabels`.
+    *   `bold`, `italic` (boolean)
+    *   `alignmentVertical`, `alignmentHorizontal`
+*   **`FillableOptions`**:
+    *   `fillColor` (string)
+    *   `fillOpacity` (number)
+
+**Example Usage**:
+```typescript
+interface MyToolOptions extends DrawingOptions, TextCapableOptions, FillableOptions {
+    // Tool specific props
+    lineWidth: number;
+}
+```
+
+#### 3. Naming Conventions
+
+*   **Classes**: PascalCase (e.g., `TrendLine`, `TextDrawing`).
+*   **Files**: Kebab-case (e.g., `trend-line.ts`, `text-drawing.ts`).
+*   **Properties**: camelCase.
+    *   **Colors**: Suffix with `Color` (e.g., `lineColor`, `textColor`, `fillColor`). Avoid generic `color`.
+    *   **Booleans**: Prefix with `show`, `enable`, or `is` (e.g., `showLabel`, `isLocked`).
+    *   **Handlers**: Prefix with `on` (e.g., `onDrawingCreated`).
+
+#### 4. Best Practices
+
+1.  **State Hydration**: When a tool's options change (via Toolbar or Settings), the `ChartContainer`'s `selectedDrawingOptions` state MUST be updated immediately. This ensures the Toolbar reflects the new reality.
+2.  **Renderer Separation**: logic should be split into a logical class (e.g., `TrendLine`) and a renderer class (e.g., `TrendLineRenderer`) that handles the raw Canvas 2D API. The logical class passes simple data structures (points, resolved options) to the renderer.
+3.  **Hit Testing**: Implement `hitTest` in the logical class, not the renderer. Return standard hit objects (`cursorStyle`, `hitType`, `externalId`).
+
 ---
 
 ## Implementation Roadmap
