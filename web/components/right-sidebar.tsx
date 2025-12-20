@@ -26,8 +26,8 @@ interface RightSidebarProps {
     onToggleIndicator?: (type: string) => void
     onEditDrawing?: (id: string) => void
     onEditIndicator?: (type: string) => void
-    selection?: { type: 'drawing' | 'indicator', id: string } | null
-    onSelect?: (selection: { type: 'drawing' | 'indicator', id: string } | null) => void
+    selection?: { type: string, id: string } | null
+    onSelect?: (selection: { type: string, id: string } | null) => void
     onOpenSettings?: () => void
 }
 

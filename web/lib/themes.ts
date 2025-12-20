@@ -276,6 +276,236 @@ export const THEMES: Record<string, ThemeParams> = {
                 settlement: '#FFAB40'
             }
         }
+    },
+    'ict-midnight': { // ICT - Pure Black with Neon Accents
+        chart: {
+            background: '#000000',
+            grid: '#1a1a1a',
+            crosshair: '#00ff88',
+        },
+        candle: {
+            upBody: '#00ff88',      // Neon Green
+            upWick: '#00ff88',
+            upBorder: '#00ff88',
+            downBody: '#ff0055',    // Neon Pink/Red
+            downWick: '#ff0055',
+            downBorder: '#ff0055',
+        },
+        ui: {
+            text: '#ffffff',
+            decoration: '#2a2a2a',
+        },
+        tools: {
+            primary: '#00ddff',     // Cyan - High visibility for trendlines
+            secondary: '#ffaa00',   // Orange - For FVGs and zones
+            transparentFill: 'rgba(0, 221, 255, 0.12)',
+        },
+        indicators: {
+            sessions: {
+                asia: '#9d00ff',    // Purple
+                london: '#ffdd00',  // Yellow
+                ny: '#00ddff',      // Cyan
+                midnight: '#666666',
+                opacity: 0.18
+            },
+            profiler: {
+                poc: '#ff0055',     // Neon Pink
+                valueArea: '#00ddff',
+                up: '#00ff88',
+                down: '#ff0055'
+            },
+            levels: {
+                pdh: '#00ddff',     // Cyan for previous levels
+                pdl: '#00ddff',
+                open: '#ffaa00',    // Orange for open
+                close: '#ffdd00',   // Yellow for close
+                settlement: '#9d00ff' // Purple for settlement
+            }
+        }
+    },
+    'ict-terminal': { // ICT - Classic Terminal Green
+        chart: {
+            background: '#0a0e0a',  // Very dark green-black
+            grid: '#1a2e1a',
+            crosshair: '#33ff33',
+        },
+        candle: {
+            upBody: '#00ff00',      // Bright Green
+            upWick: '#66ff66',
+            upBorder: '#00ff00',
+            downBody: '#ff3333',    // Bright Red
+            downWick: '#ff6666',
+            downBorder: '#ff3333',
+        },
+        ui: {
+            text: '#33ff33',
+            decoration: '#1a2e1a',
+        },
+        tools: {
+            primary: '#00ffff',     // Cyan - Excellent contrast
+            secondary: '#ffff00',   // Yellow - For zones
+            transparentFill: 'rgba(0, 255, 255, 0.15)',
+        },
+        indicators: {
+            sessions: {
+                asia: '#ff00ff',    // Magenta
+                london: '#ffff00',  // Yellow
+                ny: '#00ffff',      // Cyan
+                midnight: '#66ff66',
+                opacity: 0.20
+            },
+            profiler: {
+                poc: '#ffff00',     // Yellow POC
+                valueArea: '#00ffff',
+                up: '#00ff00',
+                down: '#ff3333'
+            },
+            levels: {
+                pdh: '#00ffff',
+                pdl: '#00ffff',
+                open: '#ffff00',
+                close: '#ff00ff',
+                settlement: '#ff9900'
+            }
+        }
+    },
+    'ict-ocean': { // ICT - Deep Blue Professional
+        chart: {
+            background: '#0a1628',  // Deep navy
+            grid: '#1a2d4a',
+            crosshair: '#64b5f6',
+        },
+        candle: {
+            upBody: '#26c6da',      // Cyan
+            upWick: '#4dd0e1',
+            upBorder: '#26c6da',
+            downBody: '#ff6b6b',    // Coral Red
+            downWick: '#ff8787',
+            downBorder: '#ff6b6b',
+        },
+        ui: {
+            text: '#b0c4de',        // Light steel blue
+            decoration: '#1a2d4a',
+        },
+        tools: {
+            primary: '#ffd700',     // Gold - Stands out beautifully
+            secondary: '#ff69b4',   // Hot Pink - For zones
+            transparentFill: 'rgba(255, 215, 0, 0.12)',
+        },
+        indicators: {
+            sessions: {
+                asia: '#ba68c8',    // Purple
+                london: '#ffa726',  // Orange
+                ny: '#42a5f5',      // Blue
+                midnight: '#78909c',
+                opacity: 0.22
+            },
+            profiler: {
+                poc: '#ffd700',     // Gold
+                valueArea: '#42a5f5',
+                up: '#26c6da',
+                down: '#ff6b6b'
+            },
+            levels: {
+                pdh: '#ffd700',
+                pdl: '#ffd700',
+                open: '#26c6da',
+                close: '#ff69b4',
+                settlement: '#ffa726'
+            }
+        }
+    },
+    'ict-paper': { // ICT - High Contrast Light Theme
+        chart: {
+            background: '#fafafa',  // Off-white (easier on eyes than pure white)
+            grid: '#d0d0d0',
+            crosshair: '#1976d2',
+        },
+        candle: {
+            upBody: '#00897b',      // Teal
+            upWick: '#00695c',
+            upBorder: '#00695c',
+            downBody: '#d32f2f',    // Deep Red
+            downWick: '#b71c1c',
+            downBorder: '#b71c1c',
+        },
+        ui: {
+            text: '#212121',
+            decoration: '#e0e0e0',
+        },
+        tools: {
+            primary: '#1976d2',     // Blue - Clear on white
+            secondary: '#f57c00',   // Deep Orange - For zones
+            transparentFill: 'rgba(25, 118, 210, 0.08)',
+        },
+        indicators: {
+            sessions: {
+                asia: '#7b1fa2',    // Purple
+                london: '#f57c00',  // Orange
+                ny: '#1976d2',      // Blue
+                midnight: '#616161',
+                opacity: 0.12
+            },
+            profiler: {
+                poc: '#d32f2f',     // Red
+                valueArea: '#1976d2',
+                up: '#00897b',
+                down: '#d32f2f'
+            },
+            levels: {
+                pdh: '#1976d2',
+                pdl: '#1976d2',
+                open: '#00897b',
+                close: '#f57c00',
+                settlement: '#7b1fa2'
+            }
+        }
+    },
+    'ict-charcoal': { // ICT - Dark Grey with Vibrant Highlights
+        chart: {
+            background: '#1c1c1e',  // Dark charcoal
+            grid: '#2c2c2e',
+            crosshair: '#ff9f0a',
+        },
+        candle: {
+            upBody: '#30d158',      // iOS Green
+            upWick: '#32d74b',
+            upBorder: '#30d158',
+            downBody: '#ff453a',    // iOS Red
+            downWick: '#ff6961',
+            downBorder: '#ff453a',
+        },
+        ui: {
+            text: '#e5e5e7',
+            decoration: '#38383a',
+        },
+        tools: {
+            primary: '#0a84ff',     // iOS Blue - Perfect contrast
+            secondary: '#ff9f0a',   // iOS Orange - For zones
+            transparentFill: 'rgba(10, 132, 255, 0.15)',
+        },
+        indicators: {
+            sessions: {
+                asia: '#bf5af2',    // iOS Purple
+                london: '#ff9f0a',  // iOS Orange
+                ny: '#0a84ff',      // iOS Blue
+                midnight: '#8e8e93',
+                opacity: 0.20
+            },
+            profiler: {
+                poc: '#ff453a',     // iOS Red
+                valueArea: '#0a84ff',
+                up: '#30d158',
+                down: '#ff453a'
+            },
+            levels: {
+                pdh: '#64d2ff',     // iOS Cyan
+                pdl: '#64d2ff',
+                open: '#30d158',
+                close: '#ff9f0a',
+                settlement: '#bf5af2'
+            }
+        }
     }
 };
 

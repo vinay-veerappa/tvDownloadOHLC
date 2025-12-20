@@ -11,8 +11,20 @@ interface TrendLineOptions {
     lineColor: string;
     lineWidth: number;
     lineStyle?: number;
+    opacity?: number;
+    extendLeft?: boolean;
+    extendRight?: boolean;
+    showAngle?: boolean;
+    showDistance?: boolean;
+    showPriceRange?: boolean;
+    showBarsRange?: boolean;
     text?: string;
     textColor?: string;
+    fontSize?: number;
+    bold?: boolean;
+    italic?: boolean;
+    alignment?: 'left' | 'center' | 'right';
+    visibleTimeframes?: string[];
 }
 
 class TrendLineRenderer {
