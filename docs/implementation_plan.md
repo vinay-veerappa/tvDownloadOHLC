@@ -40,8 +40,26 @@ Implement full support for multiple Trading Accounts and Strategies, and provide
 - Connect dropdowns to real context data.
 - Trigger `AccountManagerDialog`.
 
+### Text Tool Parity
+#### [MODIFY] [text-tool.ts](file:///c:/Users/vinay/tvDownloadOHLC/web/lib/charts/plugins/text-tool.ts)
+- Update `TextDrawingOptions` to include:
+    - `backgroundColor`, `backgroundVisible`, `backgroundOpacity`
+    - `borderColor`, `borderVisible`, `borderWidth`
+    - `fontFamily`
+
+#### [MODIFY] [TextSettingsTab.tsx](file:///c:/Users/vinay/tvDownloadOHLC/web/components/drawing-settings/TextSettingsTab.tsx)
+- Add UI sections for:
+    - **Background**: Checkbox + ColorPicker
+    - **Border**: Checkbox + ColorPicker + Width Select
+    - **Font**: Family Select (optional, sticking to Arial default for now if complexity is high)
+
+#### [MODIFY] [text-label.ts](file:///c:/Users/vinay/tvDownloadOHLC/web/lib/charts/plugins/text-label.ts)
+- Update `draw` method to handle `backgroundOpacity` (convert hex to rgba or use globalAlpha?). *Decision: Use globalAlpha for fill if needed, or stick to solid colors for now.*
+
 ## Verification Plan
-1. **Schema Migration**: Verify DB updates without data loss (or clean reset).
-2. **Account Creation**: Create "Evaluation Account" and ensure it appears in dropdown.
-3. **Trade Linking**: Place a trade, verify it saves with the correct `accountId`.
-4. **History**: Open Journal Panel and verify the new trade appears there.
+1. **Manual Verification**:
+    - Draw Text.
+    - Open Settings.
+    - Enable Background -> Change Color.
+    - Enable Border -> Change Color/Width.
+    - Verify visual output on chart.

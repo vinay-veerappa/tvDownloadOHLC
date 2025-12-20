@@ -10,6 +10,8 @@ export interface TextLabelOptions {
     borderStyle?: number; // 0=Solid, 1=Dotted, etc
     borderColor?: string;
     backgroundColor?: string;
+    backgroundVisible?: boolean;
+    backgroundOpacity?: number;
     padding?: number;
     visible?: boolean;
     bold?: boolean;
@@ -42,6 +44,8 @@ export class TextLabel {
             borderVisible: false,
             borderWidth: 1,
             borderColor: '#FFFFFF',
+            backgroundVisible: false,
+            backgroundOpacity: 1,
             ...options
         };
     }
@@ -102,10 +106,10 @@ export class TextLabel {
                 }
             } else {
                 // Debug alignment
-                console.log(`[TextLabel] Align: ${horizontal}, MaxWidth: ${maxWidth}, Offset before: ${offsetX}`);
+                // console.log(`[TextLabel] Align: ${horizontal}, MaxWidth: ${maxWidth}, Offset before: ${offsetX}`);
                 if (horizontal === 'right') offsetX = -maxWidth;
                 else if (horizontal === 'center') offsetX = -maxWidth / 2;
-                console.log(`[TextLabel] Offset after: ${offsetX}`);
+                // console.log(`[TextLabel] Offset after: ${offsetX}`);
             }
 
             // Vertical alignment
@@ -142,7 +146,11 @@ export class TextLabel {
         y += offsetY;
 
         // Draw background if specified
-        if (this._options.backgroundColor) {
+        if (this._options.backgroundVisible && this._options.backgroundColor) {
+            const originalAlpha = ctx.globalAlpha;
+            if (this._options.backgroundOpacity !== undefined) {
+                ctx.globalAlpha = this._options.backgroundOpacity;
+            }
             ctx.fillStyle = this._options.backgroundColor;
             ctx.fillRect(
                 x - padding,
@@ -150,6 +158,7 @@ export class TextLabel {
                 maxWidth + (padding * 2),
                 totalHeight + (padding * 2)
             );
+            ctx.globalAlpha = originalAlpha;
         }
 
         // Draw Border

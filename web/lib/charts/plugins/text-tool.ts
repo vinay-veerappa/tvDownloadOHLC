@@ -11,6 +11,13 @@ export interface TextDrawingOptions extends TextLabelOptions {
     textColor?: string;
     alignmentVertical?: 'top' | 'center' | 'bottom';
     alignmentHorizontal?: 'left' | 'center' | 'right';
+    fontFamily?: string;
+    // Background
+    backgroundColor?: string;
+    backgroundVisible?: boolean;
+    backgroundOpacity?: number;
+    // Border overrides (TextDrawingOptions already has generic border/lineStyle, but let's be explicit for the tool)
+    dashed?: boolean; // mapped to lineStyle
 }
 
 class TextDrawingPaneRenderer {
@@ -91,7 +98,27 @@ export class TextDrawing implements ISeriesPrimitive {
             alignment: {
                 vertical: (options.alignmentVertical as any) || 'middle',
                 horizontal: (options.alignmentHorizontal as any) || 'center'
-            }
+            },
+            // Pass through new options
+            backgroundColor: options.backgroundColor,
+            // mapping backgroundVisible to nothing? TextLabel uses generic visibility. 
+            // Wait, TextLabelOptions has backgroundColor. If undefined, no bg.
+            // But we have backgroundVisible toggle. 
+            // We should strip backgroundColor if backgroundVisible is false? 
+            // OR pass explicit backgroundVisible to TextLabel if it supports it.
+            // TextLabel has `backgroundColor` string. Let's look at TextLabelOptions in text-label.ts.
+            // It has `backgroundColor?: string`.
+            // It currently checks `if (this._options.backgroundColor)`.
+            // So if visible is false, we should pass undefined or handle it in TextLabel.
+            // Better to handle it here:
+            // Actually, let's update TextLabel to support backgroundVisible/Opacity.
+            // For now, let's pass them through, assuming we update TextLabel next.
+            backgroundVisible: options.backgroundVisible,
+            backgroundOpacity: options.backgroundOpacity,
+            borderColor: options.borderColor,
+            borderVisible: options.borderVisible,
+            borderWidth: options.borderWidth,
+            fontFamily: options.fontFamily
         });
         this._paneViews = [new TextDrawingPaneView(this)];
     }
@@ -109,7 +136,13 @@ export class TextDrawing implements ISeriesPrimitive {
             alignment: {
                 vertical: (this._options.alignmentVertical as any) || 'middle',
                 horizontal: (this._options.alignmentHorizontal as any) || 'center'
-            }
+            },
+            backgroundVisible: this._options.backgroundVisible,
+            backgroundOpacity: this._options.backgroundOpacity,
+            borderColor: this._options.borderColor,
+            borderVisible: this._options.borderVisible,
+            borderWidth: this._options.borderWidth,
+            fontFamily: this._options.fontFamily
         });
         this.updateAllViews();
     }

@@ -326,13 +326,13 @@ This document provides a comprehensive comparison between our current drawing to
 
 **Our Status:**
 - ✅ Basic text placement
-- ❌ No font options
-- ❌ No styling (B/I/U)
-- ❌ No background
-- ❌ No border
-- ❌ No alignment
+- ✅ Font Size / Color / B/I
+- ✅ Background (Fill + Color + Opacity)
+- ✅ Border (Color + Width)
+- ✅ Alignment support
+- ⚠️ Font Family (Default Arial)
 
-**Gap Priority:** HIGH
+**Gap Priority:** LOW (Parity achieved)
 
 ---
 
@@ -534,7 +534,14 @@ To prevent property mismatches, all Drawing Tools must strictly adhere to the fo
 | | `showLabel` | boolean | Toggle visibility (Singular!) |
 | | `bold` | boolean | |
 | | `italic` | boolean | |
-| **Fill** | `fillColor` | string | Background fill color |
+| | `fontFamily` | string | e.g. 'Arial', 'Verdana' |
+| **Background**| `backgroundColor`| string | Text background color |
+| | `showBackground` | boolean | Toggle background visibility |
+| | `backgroundOpacity`| number | 0-1 opacity |
+| **Border** | `borderColor` | string | Border color |
+| | `showBorder` | boolean | Toggle border visibility |
+| | `borderWidth` | number | Width in px |
+| **Fill** | `fillColor` | string | Shape fill color (Rect/Circle) |
 | | `fillOpacity` | number | 0-1 opacity multiplier |
 
 > [!IMPORTANT]

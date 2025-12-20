@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Bold, Italic } from "lucide-react";
 
 interface TextSettingsTabProps {
@@ -17,6 +18,12 @@ interface TextSettingsTabProps {
         showLabel?: boolean; // For line tools toggle
         alignmentVertical?: 'top' | 'center' | 'bottom';
         alignmentHorizontal?: 'left' | 'center' | 'right';
+        backgroundColor?: string;
+        backgroundVisible?: boolean;
+        backgroundOpacity?: number;
+        borderColor?: string;
+        borderVisible?: boolean;
+        borderWidth?: number;
         [key: string]: any;
     };
     onChange: (updates: any) => void;
@@ -113,6 +120,57 @@ export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsT
                             <SelectItem value="left">Left</SelectItem>
                             <SelectItem value="center">Center</SelectItem>
                             <SelectItem value="right">Right</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
+            </div>
+            {/* Background & Border */}
+            <div className="space-y-3 pt-2">
+                {/* Background */}
+                <div className="flex items-center gap-2">
+                    <Checkbox
+                        id="bg-visible"
+                        checked={options.backgroundVisible || false}
+                        onCheckedChange={(c) => onChange({ backgroundVisible: c === true })}
+                    />
+                    <Label htmlFor="bg-visible" className="text-sm cursor-pointer w-24">Background</Label>
+                    <Input
+                        type="color"
+                        value={options.backgroundColor || '#2962FF'}
+                        onChange={(e) => onChange({ backgroundColor: e.target.value })}
+                        disabled={!options.backgroundVisible}
+                        className="w-8 h-8 p-0 border-0 rounded-full cursor-pointer disabled:opacity-50"
+                    />
+                    {/* Opacity slider could go here in future */}
+                </div>
+
+                {/* Border */}
+                <div className="flex items-center gap-2">
+                    <Checkbox
+                        id="border-visible"
+                        checked={options.borderVisible || false}
+                        onCheckedChange={(c) => onChange({ borderVisible: c === true })}
+                    />
+                    <Label htmlFor="border-visible" className="text-sm cursor-pointer w-24">Border</Label>
+                    <Input
+                        type="color"
+                        value={options.borderColor || '#FFFFFF'}
+                        onChange={(e) => onChange({ borderColor: e.target.value })}
+                        disabled={!options.borderVisible}
+                        className="w-8 h-8 p-0 border-0 rounded-full cursor-pointer disabled:opacity-50"
+                    />
+                    <Select
+                        value={String(options.borderWidth || 1)}
+                        onValueChange={(v) => onChange({ borderWidth: parseInt(v) })}
+                        disabled={!options.borderVisible}
+                    >
+                        <SelectTrigger className="w-16 h-8">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {[1, 2, 3, 4].map(w => (
+                                <SelectItem key={w} value={String(w)}>{w}px</SelectItem>
+                            ))}
                         </SelectContent>
                     </Select>
                 </div>
