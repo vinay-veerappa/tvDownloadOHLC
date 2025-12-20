@@ -17,7 +17,7 @@ import { Separator } from "@/components/ui/separator";
 import { StyleTab } from "@/components/drawing/tabs/StyleTab";
 import { DrawingSettingsDialog } from "@/components/drawing/DrawingSettingsDialog";
 import { VisibilityTab } from "@/components/drawing/tabs/VisibilityTab";
-import { TextTab } from "@/components/drawing/tabs/TextTab";
+import { TextSettingsTab } from "@/components/drawing-settings/TextSettingsTab";
 import type { Time } from "lightweight-charts";
 
 // ===== Options Interface =====
@@ -164,21 +164,26 @@ export function VerticalLineSettingsDialog({
     // ===== Text Tab =====
     const textTab = (
         <div className="space-y-4">
-            <TextTab
+            <TextSettingsTab
                 options={{
                     text: localOptions.text || '',
                     fontSize: localOptions.fontSize,
                     bold: localOptions.bold,
                     italic: localOptions.italic,
-                    color: localOptions.textColor,
+                    textColor: localOptions.textColor,
+                    showLabel: true, // Vertical lines typically assume label implies text? Or use showLabel prop
                 }}
-                onChange={(updates) => handleChange({
-                    text: updates.text,
-                    textColor: updates.color,
-                    fontSize: updates.fontSize,
-                    bold: updates.bold,
-                    italic: updates.italic,
-                })}
+                onChange={(updates) => {
+                    const newOptions: Partial<VerticalLineSettingsOptions> = {};
+                    if (updates.text !== undefined) newOptions.text = updates.text;
+                    if (updates.textColor !== undefined) newOptions.textColor = updates.textColor;
+                    if (updates.color !== undefined) newOptions.textColor = updates.color;
+                    if (updates.fontSize !== undefined) newOptions.fontSize = updates.fontSize;
+                    if (updates.bold !== undefined) newOptions.bold = updates.bold;
+                    if (updates.italic !== undefined) newOptions.italic = updates.italic;
+                    handleChange(newOptions);
+                }}
+                isLineTool={false} // Hide the "Show Text" toggle inside, since we have "Show Time Label" separate or implicit
             />
             {/* Orientation option for vertical lines */}
             <Separator />

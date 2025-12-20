@@ -314,8 +314,30 @@ export class FibonacciRetracement implements ISeriesPrimitive {
         this._p2 = p2;
         if (this._requestUpdate) this._requestUpdate();
     }
-    applyOptions(options: Partial<FibonacciOptions>) {
-        this._options = { ...this._options, ...options };
+    applyOptions(options: Partial<FibonacciOptions> & { color?: string; width?: number; style?: number }) {
+        const { color, width, style, ...rest } = options;
+
+        // Handle flat updates from toolbar by mapping to trendLine
+        if (color !== undefined) {
+            this._options.trendLine.color = color;
+            // Also update levels line color if desired, or just trendline? Usually primary.
+        }
+        if (width !== undefined) {
+            this._options.trendLine.width = width;
+            this._options.levelsLine.width = width; // Update both for consistency?
+        }
+        if (style !== undefined) {
+            this._options.trendLine.style = style;
+        }
+
+        this._options = { ...this._options, ...rest };
+
+        // Deep merge logic would be better but simple mapping works for the toolbar
+        if (options.trendLine) this._options.trendLine = { ...this._options.trendLine, ...options.trendLine };
+        if (options.levelsLine) this._options.levelsLine = { ...this._options.levelsLine, ...options.levelsLine };
+        // levels array is replaced if provided
+        if (options.levels) this._options.levels = options.levels;
+
         if (this._requestUpdate) this._requestUpdate();
     }
 

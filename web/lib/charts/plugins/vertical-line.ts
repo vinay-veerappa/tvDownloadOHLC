@@ -14,6 +14,10 @@ interface VertLineOptions {
     showLabel: boolean;
     text?: string;
     textColor?: string;
+    fontSize?: number;
+    bold?: boolean;
+    italic?: boolean;
+    orientation?: 'horizontal' | 'along-line';
 }
 
 const defaultOptions: VertLineOptions = {
@@ -178,19 +182,19 @@ export class VertLine implements ISeriesPrimitive {
         this._options = { ...this._options, ...options };
         if (this._options.text) {
             // For vertical lines, "along-line" means vertical text (rotated -90 degrees)
-            const orientation = (this._options as any).orientation || 'horizontal';
+            const orientation = this._options.orientation || 'horizontal';
             const rotation = orientation === 'along-line' ? -Math.PI / 2 : 0;
 
             const textOptions = {
                 text: this._options.text,
                 color: this._options.textColor || this._options.color,
-                fontSize: (this._options as any).fontSize,
-                bold: (this._options as any).bold,
-                italic: (this._options as any).italic,
-                alignment: (this._options as any).alignment,
-                orientation: orientation,
-                rotation: rotation,
-                visible: true
+                fontSize: this._options.fontSize,
+                bold: this._options.bold,
+                italic: this._options.italic,
+                // Vertical lines don't traditionally use the same alignment options as boxes, 
+                // but we can pass them if we add them to the interface. For now, defaulting.
+                visible: true,
+                rotation: rotation
             };
             if (!this._textLabel) {
                 this._textLabel = new TextLabel(0, 0, textOptions);

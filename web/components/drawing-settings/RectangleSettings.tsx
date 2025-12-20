@@ -19,7 +19,7 @@ import { StyleTab } from "@/components/drawing/tabs/StyleTab";
 import { DrawingSettingsDialog } from "@/components/drawing/DrawingSettingsDialog";
 import { CoordinatesTab } from "@/components/drawing/tabs/CoordinatesTab";
 import { VisibilityTab } from "@/components/drawing/tabs/VisibilityTab";
-import { TextTab } from "@/components/drawing/tabs/TextTab";
+import { TextSettingsTab } from "@/components/drawing-settings/TextSettingsTab";
 import type { Time } from "lightweight-charts";
 
 // ===== Options Interface =====
@@ -37,7 +37,9 @@ export interface RectangleSettingsOptions {
     fontSize?: number;
     bold?: boolean;
     italic?: boolean;
-    alignment?: 'left' | 'center' | 'right';
+    alignmentVertical?: 'top' | 'center' | 'bottom';
+    alignmentHorizontal?: 'left' | 'center' | 'right';
+    showLabels?: boolean;
     visibleTimeframes?: string[];
 }
 
@@ -50,6 +52,8 @@ export const DEFAULT_RECTANGLE_OPTIONS: RectangleSettingsOptions = {
     showMidline: false,
     showQuarterLines: false,
     visibleTimeframes: ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w', '1M'],
+    alignmentVertical: 'center',
+    alignmentHorizontal: 'center'
 };
 
 // ===== Settings Dialog Component =====
@@ -193,23 +197,29 @@ export function RectangleSettingsDialog({
 
     // ===== Text Tab =====
     const textTab = (
-        <TextTab
+        <TextSettingsTab
             options={{
                 text: localOptions.text || '',
                 fontSize: localOptions.fontSize,
                 bold: localOptions.bold,
                 italic: localOptions.italic,
                 color: localOptions.textColor,
-                alignment: localOptions.alignment,
+                alignmentVertical: localOptions.alignmentVertical,
+                alignmentHorizontal: localOptions.alignmentHorizontal,
+                showLabel: localOptions.showLabels
             }}
-            onChange={(updates) => handleChange({
-                text: updates.text,
-                textColor: updates.color,
-                fontSize: updates.fontSize,
-                bold: updates.bold,
-                italic: updates.italic,
-                alignment: updates.alignment,
-            })}
+            onChange={(updates) => {
+                const newOptions: Partial<RectangleSettingsOptions> = {};
+                if (updates.text !== undefined) newOptions.text = updates.text;
+                if (updates.color !== undefined) newOptions.textColor = updates.color;
+                if (updates.fontSize !== undefined) newOptions.fontSize = updates.fontSize;
+                if (updates.bold !== undefined) newOptions.bold = updates.bold;
+                if (updates.italic !== undefined) newOptions.italic = updates.italic;
+                if (updates.alignmentVertical !== undefined) newOptions.alignmentVertical = updates.alignmentVertical;
+                if (updates.alignmentHorizontal !== undefined) newOptions.alignmentHorizontal = updates.alignmentHorizontal;
+                if (updates.showLabel !== undefined) newOptions.showLabels = updates.showLabel;
+                handleChange(newOptions);
+            }}
         />
     );
 

@@ -23,8 +23,8 @@ import {
 import { ensureDefined } from '../chart-utils';
 
 export abstract class PluginBase implements ISeriesPrimitive<Time> {
-    private _chart: IChartApi | undefined = undefined;
-    private _series: ISeriesApi<keyof SeriesOptionsMap> | undefined = undefined;
+    protected _chart: IChartApi | undefined = undefined;
+    protected _series: ISeriesApi<keyof SeriesOptionsMap> | undefined = undefined;
     private _requestUpdate?: () => void;
 
     /**

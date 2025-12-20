@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { StyleTab } from "@/components/drawing/tabs/StyleTab";
 import { DrawingSettingsDialog } from "@/components/drawing/DrawingSettingsDialog";
 import { VisibilityTab } from "@/components/drawing/tabs/VisibilityTab";
-import { TextTab } from "@/components/drawing/tabs/TextTab";
+import { TextSettingsTab } from "@/components/drawing-settings/TextSettingsTab";
 import type { Time } from "lightweight-charts";
 
 // ===== Options Interface =====
@@ -29,15 +29,21 @@ export interface RaySettingsOptions {
     fontSize?: number;
     bold?: boolean;
     italic?: boolean;
+    showLabel?: boolean;
     visibleTimeframes?: string[];
 }
 
 export const DEFAULT_RAY_OPTIONS: RaySettingsOptions = {
-    color: '#2962FF',
+    color: '#AB47BC', // Purple
     width: 2,
     style: 0, // Solid
     opacity: 1,
     visibleTimeframes: ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w', '1M'],
+    showLabel: false,
+    textColor: '#AB47BC',
+    fontSize: 14,
+    bold: false,
+    italic: false
 };
 
 // ===== Settings Dialog Component =====
@@ -125,21 +131,26 @@ export function RaySettingsDialog({
 
     // ===== Text Tab =====
     const textTab = (
-        <TextTab
+        <TextSettingsTab
             options={{
                 text: localOptions.text || '',
                 fontSize: localOptions.fontSize,
                 bold: localOptions.bold,
                 italic: localOptions.italic,
-                color: localOptions.textColor,
+                textColor: localOptions.textColor,
+                showLabel: localOptions.showLabel !== false,
             }}
-            onChange={(updates) => handleChange({
-                text: updates.text,
-                textColor: updates.color,
-                fontSize: updates.fontSize,
-                bold: updates.bold,
-                italic: updates.italic,
-            })}
+            onChange={(updates) => {
+                const newOptions: Partial<RaySettingsOptions> = { ...updates };
+                // Filter out undefined values to avoid clearing existing state
+                Object.keys(newOptions).forEach(key => {
+                    if (newOptions[key as keyof RaySettingsOptions] === undefined) {
+                        delete newOptions[key as keyof RaySettingsOptions];
+                    }
+                });
+                handleChange(newOptions);
+            }}
+            isLineTool={true}
         />
     );
 
@@ -150,9 +161,9 @@ export function RaySettingsDialog({
             title="Ray Settings"
             toolType="ray"
             styleTab={styleTabContent}
+            textTab={textTab}
             coordinatesTab={coordinatesTab}
             visibilityTab={visibilityTab}
-            textTab={textTab}
             currentOptions={localOptions}
             onApplyTemplate={(templateOptions) => {
                 setLocalOptions(prev => ({ ...prev, ...templateOptions }));
