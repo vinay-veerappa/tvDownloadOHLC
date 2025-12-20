@@ -205,8 +205,9 @@ This document provides a comprehensive comparison between our current drawing to
 - ✅ Basic drawing
 - ✅ Selection handles
 - ✅ Magnet snapping (hidden)
-- ❌ No settings dialog
-- ❌ No extend options
+- ✅ Extended line support (Left/Right)
+- ✅ Extended hit testing
+- ❌ No settings dialog (In Progress)
 - ❌ No stats display
 - ❌ No keyboard shortcut
 
@@ -631,6 +632,28 @@ interface MyToolOptions extends DrawingOptions, TextCapableOptions, FillableOpti
 - Settings tabs for each tool
 - Stats display components
 - Coordinate editors
+
+---
+
+### 9. Ray Tool
+
+**TradingView Features:**
+
+**Style Tab:**
+- Color + Opacity
+- Thickness (1-4)
+- Style (Solid/Dashed/Dotted)
+- ☑ Show Text
+- Text Alignment (Left/Center/Right, Top/Middle/Bottom)
+
+**Our Status:**
+- ✅ Basic drawing
+- ✅ Settings dialog (Text & Style)
+- ✅ Viewport-aware text alignment
+- ✅ Infinite line hit testing
+- ✅ Keyboard shortcuts (via global system)
+
+**Gap Priority:** LOW (parity achieved)
 
 ---
 
