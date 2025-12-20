@@ -446,7 +446,10 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         onSelectionChange?.({ type: 'drawing', id });
         // Sync options for toolbar (handleDrawingClicked is fired by Interaction hook)
         if (drawing) {
-            setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
+            const opts = drawing.options ? drawing.options() : {};
+            console.log('[ChartContainer.handleDrawingClicked] Clicked drawing type:', drawing._type);
+            console.log('[ChartContainer.handleDrawingClicked] Extracted options:', opts);
+            setSelectedDrawingOptions(opts);
             setSelectedDrawingType(drawing._type || 'drawing');
             setToolbarPosition(drawing.getScreenPosition ? drawing.getScreenPosition() : null); // Or mouse pos?
         }
@@ -1545,12 +1548,17 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     placeholder="Add text"
                     fontSize={inlineTextEditing.options?.fontSize || 14}
                     fontFamily={inlineTextEditing.options?.fontFamily || 'Arial'}
-                    color={inlineTextEditing.options?.color || '#FFFFFF'}
+                    color={inlineTextEditing.options?.textColor || inlineTextEditing.options?.color || '#FFFFFF'}
                     backgroundColor={inlineTextEditing.options?.backgroundEnabled ? inlineTextEditing.options?.backgroundColor : undefined}
                     onSave={(newText) => {
                         const drawing = drawingManager.getDrawing(inlineTextEditing.drawingId);
                         if (drawing && typeof drawing.applyOptions === 'function') {
                             drawing.applyOptions({ text: newText });
+
+                            // Sync state if this is the currently selected drawing
+                            if (selectedDrawingId === inlineTextEditing.drawingId) {
+                                setSelectedDrawingOptions((prev: Record<string, any> | null) => ({ ...prev, text: newText }));
+                            }
                         }
                         setInlineTextEditing(null);
                     }}
@@ -1562,7 +1570,19 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             <TextSettings
                 open={textSettingsOpen}
                 onOpenChange={setTextSettingsOpen}
-                options={selectedDrawingOptions || {}}
+                options={{
+                    text: selectedDrawingOptions?.text,
+                    textColor: selectedDrawingOptions?.textColor || selectedDrawingOptions?.color,
+                    fontSize: selectedDrawingOptions?.fontSize,
+                    bold: selectedDrawingOptions?.bold,
+                    italic: selectedDrawingOptions?.italic,
+                    visibleTimeframes: selectedDrawingOptions?.visibleTimeframes,
+                    backgroundColor: selectedDrawingOptions?.backgroundColor,
+                    backgroundEnabled: selectedDrawingOptions?.backgroundEnabled,
+                    borderColor: selectedDrawingOptions?.borderColor,
+                    borderEnabled: selectedDrawingOptions?.borderEnabled,
+                    textWrap: selectedDrawingOptions?.textWrap,
+                }}
                 onSave={(opts) => {
                     if (selectedDrawingRef.current && typeof selectedDrawingRef.current.applyOptions === 'function') {
                         selectedDrawingRef.current.applyOptions(opts);
@@ -1595,6 +1615,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     bold: selectedDrawingOptions?.bold,
                     italic: selectedDrawingOptions?.italic,
                     alignment: selectedDrawingOptions?.alignment,
+                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                 }}
                 points={selectedDrawingRef.current?._p1 && selectedDrawingRef.current?._p2 ? {
                     p1: selectedDrawingRef.current._p1,
@@ -1619,6 +1641,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         bold: opts.bold,
                         italic: opts.italic,
                         alignment: opts.alignment,
+                        alignmentVertical: opts.alignmentVertical,
+                        alignmentHorizontal: opts.alignmentHorizontal,
                     });
                 }}
                 onCancel={() => { }}
@@ -1638,6 +1662,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     labelTextColor: selectedDrawingOptions?.labelTextColor || '#FFFFFF',
                     text: selectedDrawingOptions?.text,
                     textColor: selectedDrawingOptions?.textColor,
+                    fontSize: selectedDrawingOptions?.fontSize,
+                    bold: selectedDrawingOptions?.bold,
+                    italic: selectedDrawingOptions?.italic,
+                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                 }}
                 price={selectedDrawingRef.current?._price}
                 onApply={(opts, price) => {
@@ -1650,6 +1679,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         labelTextColor: opts.labelTextColor,
                         text: opts.text,
                         textColor: opts.textColor,
+                        fontSize: opts.fontSize,
+                        bold: opts.bold,
+                        italic: opts.italic,
+                        alignmentVertical: opts.alignmentVertical,
+                        alignmentHorizontal: opts.alignmentHorizontal,
                     });
                 }}
                 onCancel={() => { }}
@@ -1670,6 +1704,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     showQuarterLines: selectedDrawingOptions?.showQuarterLines || false,
                     text: selectedDrawingOptions?.text,
                     textColor: selectedDrawingOptions?.textColor,
+                    fontSize: selectedDrawingOptions?.fontSize,
+                    bold: selectedDrawingOptions?.bold,
+                    italic: selectedDrawingOptions?.italic,
+                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                 }}
                 points={selectedDrawingRef.current?._p1 && selectedDrawingRef.current?._p2 ? {
                     p1: selectedDrawingRef.current._p1,
@@ -1686,6 +1725,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         showQuarterLines: opts.showQuarterLines,
                         text: opts.text,
                         textColor: opts.textColor,
+                        fontSize: opts.fontSize,
+                        bold: opts.bold,
+                        italic: opts.italic,
+                        alignmentVertical: opts.alignmentVertical,
+                        alignmentHorizontal: opts.alignmentHorizontal,
                     });
                 }}
                 onCancel={() => { }}
@@ -1705,6 +1749,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     labelTextColor: selectedDrawingOptions?.labelTextColor || '#FFFFFF',
                     text: selectedDrawingOptions?.text,
                     textColor: selectedDrawingOptions?.textColor,
+                    fontSize: selectedDrawingOptions?.fontSize,
+                    bold: selectedDrawingOptions?.bold,
+                    italic: selectedDrawingOptions?.italic,
+                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                     orientation: selectedDrawingOptions?.orientation || 'horizontal',
                 }}
                 time={selectedDrawingRef.current?._time}
@@ -1718,6 +1767,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         labelTextColor: opts.labelTextColor,
                         text: opts.text,
                         textColor: opts.textColor,
+                        fontSize: opts.fontSize,
+                        bold: opts.bold,
+                        italic: opts.italic,
+                        alignmentVertical: opts.alignmentVertical,
+                        alignmentHorizontal: opts.alignmentHorizontal,
                         orientation: opts.orientation,
                     });
                 }}
@@ -1735,6 +1789,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     style: selectedDrawingOptions?.lineStyle || 0,
                     text: selectedDrawingOptions?.text,
                     textColor: selectedDrawingOptions?.textColor,
+                    fontSize: selectedDrawingOptions?.fontSize,
+                    bold: selectedDrawingOptions?.bold,
+                    italic: selectedDrawingOptions?.italic,
+                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                 }}
                 point={selectedDrawingRef.current?._p1}
                 onApply={(opts) => {
@@ -1744,6 +1803,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         lineStyle: opts.style,
                         text: opts.text,
                         textColor: opts.textColor,
+                        fontSize: opts.fontSize,
+                        bold: opts.bold,
+                        italic: opts.italic,
+                        alignmentVertical: opts.alignmentVertical,
+                        alignmentHorizontal: opts.alignmentHorizontal,
                     });
                 }}
                 onCancel={() => { }}

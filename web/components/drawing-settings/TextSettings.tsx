@@ -28,6 +28,7 @@ interface TextSettingsProps {
     options: {
         text?: string;
         color?: string;
+        textColor?: string;
         fontSize?: number;
         fontFamily?: string;
         bold?: boolean;

@@ -40,6 +40,8 @@ export interface TrendLineSettingsOptions {
     italic?: boolean;
     showLabel?: boolean;
     alignment?: 'left' | 'center' | 'right';
+    alignmentVertical?: 'top' | 'center' | 'bottom';
+    alignmentHorizontal?: 'left' | 'center' | 'right';
     visibleTimeframes?: string[];
 }
 
@@ -92,7 +94,7 @@ export function TrendLineSettingsDialog({
     const handlePointsChange = (newPoints: Array<{ time: Time; price: number }>) => {
         // Points changes would need to be passed back to parent
         // For now, just log (actual implementation would call back)
-        console.log('Points changed:', newPoints);
+
     };
 
     const handleApply = () => {
@@ -212,6 +214,8 @@ export function TrendLineSettingsDialog({
                 italic: localOptions.italic,
                 textColor: localOptions.textColor,
                 showLabel: localOptions.showLabel !== false,
+                alignmentVertical: localOptions.alignmentVertical,
+                alignmentHorizontal: localOptions.alignmentHorizontal,
             }}
             onChange={(updates) => {
                 const newOptions: Partial<TrendLineSettingsOptions> = { ...updates };

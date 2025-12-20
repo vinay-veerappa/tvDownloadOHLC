@@ -7,22 +7,33 @@ export interface HorizontalLineOptions {
     width: number;
     lineStyle?: number;
     labelBackgroundColor: string;
-    labelTextColor: string;
-    showLabel: boolean;
-    labelText: string; // Dynamic based on price usually
-    text?: string;     // Custom annotation
-    font?: string;
+    // Standardized Text Options
+    text?: string;
     textColor?: string;
+    fontSize?: number;
+    bold?: boolean;
+    italic?: boolean;
+    showLabel?: boolean;
+    alignmentVertical?: 'top' | 'center' | 'bottom';
+    alignmentHorizontal?: 'left' | 'center' | 'right';
+
+    // Legacy mapping
+    labelTextColor?: string;
+    labelText?: string;
+    font?: string;
 }
 
 const defaultOptions: HorizontalLineOptions = {
-    color: '#FF9800', // Orange
+    color: '#FF9800',
     width: 1,
-    lineStyle: 0, // Solid
+    lineStyle: 0,
     labelBackgroundColor: '#FF9800',
-    labelTextColor: 'white',
+    labelTextColor: '#FFFFFF', // Legacy default kept for axis view fallback
+    textColor: '#FFFFFF',      // Standard default
     showLabel: true,
-    labelText: '',
+    fontSize: 12,
+    alignmentVertical: 'center',
+    alignmentHorizontal: 'center'
 };
 
 class HorizontalLinePaneRenderer {
@@ -51,17 +62,13 @@ class HorizontalLinePaneRenderer {
             ctx.beginPath();
             ctx.strokeStyle = this._options.color;
             ctx.lineWidth = this._options.width * vPR;
-            ctx.setLineDash(getLineDash(this._options.lineStyle || 1).map(d => d * hPR));
+            ctx.setLineDash(getLineDash(this._options.lineStyle || 0).map(d => d * hPR));
             ctx.moveTo(0, y);
             ctx.lineTo(scope.bitmapSize.width, y);
             ctx.stroke();
             ctx.setLineDash([]);
 
-            // Draw selection handle (circle) at the right or left? 
-            // Usually simply highlighting the line is enough, but handles help indicate "selected"
             if (this._selected) {
-                // Draw a handle at some visible X (e.g. center or mouse X if we tracked it)
-                // For now, let's just make the line thicker or draw a handle at the right edge
                 ctx.setLineDash([]);
                 ctx.fillStyle = this._options.color;
                 const handleX = width - (20 * hPR);
@@ -72,18 +79,13 @@ class HorizontalLinePaneRenderer {
             }
 
             if (this._textLabel) {
-                // Update TextLabel with container sizing for proper alignment
                 const width = scope.bitmapSize.width;
                 const containerWidth = width / hPR; // CSS pixels
-
-                // Position anchor at the center horizontally, and on the line vertically
-                // TextLabel handles the alignment offsets (left/right/center) relative to this container
                 const centerX = containerWidth / 2;
                 const lineY = this._y;
 
                 this._textLabel.update(centerX, lineY, {
                     containerWidth: containerWidth
-                    // containerHeight left undefined so vertical alignment is relative to the line (top/bottom/middle of line)
                 });
 
                 this._textLabel.draw(ctx, hPR, vPR);
@@ -121,11 +123,11 @@ class HorizontalLineAxisView {
     update() { }
 
     visible() {
-        return this._source._options.showLabel;
+        return !!this._source._options.showLabel;
     }
 
     tickVisible() {
-        return this._source._options.showLabel;
+        return !!this._source._options.showLabel;
     }
 
     coordinate() {
@@ -134,11 +136,11 @@ class HorizontalLineAxisView {
     }
 
     text() {
-        return this._source._price.toFixed(2); // Format usually handled by chart but we can do basic
+        return this._source._price.toFixed(2);
     }
 
     textColor() {
-        return this._source._options.labelTextColor;
+        return this._source._options.textColor || this._source._options.labelTextColor || '#FFFFFF';
     }
 
     backColor() {
@@ -165,52 +167,77 @@ export class HorizontalLine implements ISeriesPrimitive {
         this._options = { ...defaultOptions, ...options };
         this._id = Math.random().toString(36).substring(7);
 
+
+
+        // Normalize options
+        if (this._options.labelTextColor && !this._options.textColor) {
+            this._options.textColor = this._options.labelTextColor;
+        }
+
         this._paneViews = [new HorizontalLinePaneView(this)];
         this._priceAxisViews = [new HorizontalLineAxisView(this)];
 
         if (this._options.text) {
-            const textOptions = {
+            this._textLabel = new TextLabel(0, 0, {
                 text: this._options.text,
-                color: this._options.textColor || this._options.color,
-                fontSize: parseInt((this._options.font || '12').replace('px', '')),
-                visible: this._options.showLabel,
-                alignment: (this._options as any).alignmentHorizontal ? {
-                    vertical: (this._options as any).alignmentVertical || 'middle',
-                    horizontal: (this._options as any).alignmentHorizontal || 'center'
-                } : (this._options as any).alignment,
-            };
-            this._textLabel = new TextLabel(0, 0, textOptions);
+                color: this._options.textColor || '#FFFFFF',
+                fontSize: this._options.fontSize || 12,
+                bold: this._options.bold,
+                italic: this._options.italic,
+                visible: this._options.showLabel !== false,
+                alignment: {
+                    vertical: (this._options.alignmentVertical === 'center' || !this._options.alignmentVertical) ? 'middle' : (this._options.alignmentVertical as any),
+                    horizontal: (this._options.alignmentHorizontal || 'center') as any
+                }
+            });
         }
     }
 
     updateAllViews() {
-        this._chart.applyOptions({}); // Trigger redraw
+        this._chart.applyOptions({});
     }
 
     id() { return this._id; }
 
-    options() { return this._options; }
+    options() {
+
+        return this._options;
+    }
 
     applyOptions(options: Partial<HorizontalLineOptions>) {
+
+        // Map legacy only if strictly necessary and not conflicting
+        if (options.labelTextColor && options.textColor === undefined) {
+            options.textColor = options.labelTextColor;
+        }
+        if (options.font) options.fontSize = parseInt(options.font.replace('px', ''));
+
         this._options = { ...this._options, ...options };
+
+
         if (this._options.text) {
-            // Pass alignment and other style options to TextLabel
             const textOptions = {
                 text: this._options.text,
-                color: this._options.textColor || this._options.color,
-                fontSize: parseInt((this._options.font || '12').replace('px', '')), // parse if needed or add fontSize prop to HLine
-                visible: this._options.showLabel,
-                alignment: (this._options as any).alignmentHorizontal ? {
-                    vertical: (this._options as any).alignmentVertical || 'middle',
-                    horizontal: (this._options as any).alignmentHorizontal || 'center'
-                } : (this._options as any).alignment,
+                color: this._options.textColor || '#FFFFFF',
+                fontSize: this._options.fontSize || 12,
+                bold: this._options.bold,
+                italic: this._options.italic,
+                visible: this._options.showLabel !== false,
+                alignment: {
+                    vertical: (this._options.alignmentVertical === 'center' || !this._options.alignmentVertical) ? 'middle' : (this._options.alignmentVertical as any),
+                    horizontal: (this._options.alignmentHorizontal || 'center') as any
+                }
             };
+
+
 
             if (!this._textLabel) {
                 this._textLabel = new TextLabel(0, 0, textOptions);
             } else {
                 this._textLabel.update(0, 0, textOptions);
             }
+        } else {
+            this._textLabel = null;
         }
         this.updateAllViews();
     }

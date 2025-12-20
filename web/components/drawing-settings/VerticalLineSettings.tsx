@@ -35,6 +35,8 @@ export interface VerticalLineSettingsOptions {
     bold?: boolean;
     italic?: boolean;
     orientation?: 'horizontal' | 'along-line';
+    alignmentVertical?: 'top' | 'center' | 'bottom';
+    alignmentHorizontal?: 'left' | 'center' | 'right';
     visibleTimeframes?: string[];
 }
 
@@ -171,19 +173,15 @@ export function VerticalLineSettingsDialog({
                     bold: localOptions.bold,
                     italic: localOptions.italic,
                     textColor: localOptions.textColor,
-                    showLabel: true, // Vertical lines typically assume label implies text? Or use showLabel prop
+                    showLabel: true,
+                    alignmentVertical: localOptions.alignmentVertical,
+                    alignmentHorizontal: localOptions.alignmentHorizontal,
                 }}
                 onChange={(updates) => {
-                    const newOptions: Partial<VerticalLineSettingsOptions> = {};
-                    if (updates.text !== undefined) newOptions.text = updates.text;
-                    if (updates.textColor !== undefined) newOptions.textColor = updates.textColor;
-                    if (updates.color !== undefined) newOptions.textColor = updates.color;
-                    if (updates.fontSize !== undefined) newOptions.fontSize = updates.fontSize;
-                    if (updates.bold !== undefined) newOptions.bold = updates.bold;
-                    if (updates.italic !== undefined) newOptions.italic = updates.italic;
+                    const newOptions: Partial<VerticalLineSettingsOptions> = { ...updates };
                     handleChange(newOptions);
                 }}
-                isLineTool={false} // Hide the "Show Text" toggle inside, since we have "Show Time Label" separate or implicit
+                isLineTool={false}
             />
             {/* Orientation option for vertical lines */}
             <Separator />

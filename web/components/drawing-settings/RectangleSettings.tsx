@@ -32,14 +32,16 @@ export interface RectangleSettingsOptions {
     fillOpacity: number;
     showMidline: boolean;
     showQuarterLines: boolean;
+    // Standardized Text Options
     text?: string;
     textColor?: string;
     fontSize?: number;
     bold?: boolean;
     italic?: boolean;
+    showLabel?: boolean;
     alignmentVertical?: 'top' | 'center' | 'bottom';
     alignmentHorizontal?: 'left' | 'center' | 'right';
-    showLabels?: boolean;
+
     visibleTimeframes?: string[];
 }
 
@@ -203,21 +205,25 @@ export function RectangleSettingsDialog({
                 fontSize: localOptions.fontSize,
                 bold: localOptions.bold,
                 italic: localOptions.italic,
-                color: localOptions.textColor,
+                textColor: localOptions.textColor, // Standardized
+                showLabel: localOptions.showLabel !== false, // Standardized
                 alignmentVertical: localOptions.alignmentVertical,
-                alignmentHorizontal: localOptions.alignmentHorizontal,
-                showLabel: localOptions.showLabels
+                alignmentHorizontal: localOptions.alignmentHorizontal
             }}
             onChange={(updates) => {
-                const newOptions: Partial<RectangleSettingsOptions> = {};
-                if (updates.text !== undefined) newOptions.text = updates.text;
-                if (updates.color !== undefined) newOptions.textColor = updates.color;
-                if (updates.fontSize !== undefined) newOptions.fontSize = updates.fontSize;
-                if (updates.bold !== undefined) newOptions.bold = updates.bold;
-                if (updates.italic !== undefined) newOptions.italic = updates.italic;
-                if (updates.alignmentVertical !== undefined) newOptions.alignmentVertical = updates.alignmentVertical;
-                if (updates.alignmentHorizontal !== undefined) newOptions.alignmentHorizontal = updates.alignmentHorizontal;
-                if (updates.showLabel !== undefined) newOptions.showLabels = updates.showLabel;
+                const newOptions: Partial<RectangleSettingsOptions> = { ...updates };
+                // Ensure mappings if TextSettingsTab sends mismatched keys (e.g. color vs textColor)
+                if (updates.color !== undefined) {
+                    newOptions.textColor = updates.color;
+                    delete newOptions['color' as keyof RectangleSettingsOptions];
+                }
+
+                // Filter out undefined values
+                Object.keys(newOptions).forEach(key => {
+                    if (newOptions[key as keyof RectangleSettingsOptions] === undefined) {
+                        delete newOptions[key as keyof RectangleSettingsOptions];
+                    }
+                });
                 handleChange(newOptions);
             }}
         />

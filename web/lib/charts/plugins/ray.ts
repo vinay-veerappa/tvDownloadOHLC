@@ -100,32 +100,8 @@ class RayRenderer {
 
             // Draw Text Label if exists
             if (this._textLabel) {
-                // Position text slightly above/right of P1
-                this._textLabel.update(this._p1.x, this._p1.y - 20); // Logical coordinates?
-                // TextLabel.draw handles pixel ratio if simpler draw method used, 
-                // or we pass scaled coords.
-                // Assuming TextLabel.draw takes context and pixel ratios and uses its internal logical coords?
-                // Or we update it with scaled coords?
-                // Let's reuse TrendLine pattern: update with logical, draw with PR.
-                // But wait, TrendLine updated with logical in paneViews? 
-                // Let's rely on TextLabel details.
-                // If I pass logical to update(), TextLabel should store them.
-                // In draw(ctx, hPr, vPr), it should scale.
-
-                // For now, let's update with logical P1 coords.
-                // But scope.context is already scaled? No, useBitmapCoordinateSpace provides unscaled context?
-                // No, it provides context where 1 unit = 1 physical pixel usually?
-                // "The transformation matrix is not applied to the context"
-                // So we draw in physical pixels.
-
-                // If TextLabel.update takes logical coords:
-                // We need to scale them inside TextLabel.draw or here.
-                // Let's update TextLabel here with scaled coords effectively?
-                // existing TextLabel implementation takes x,y in update.
-                // And draw(ctx, ratio...) might scale font but position?
-                // Let's look at TextLabel in next step if broken.
-                // For now assuming:
-                this._textLabel.update(this._p1.x, this._p1.y); // Logical
+                // Update with logical P1 coords. TextLabel handles offsets based on alignment.
+                this._textLabel.update(this._p1.x, this._p1.y);
                 this._textLabel.draw(ctx, hPR, vPR);
             }
         });
@@ -201,7 +177,7 @@ export class Ray extends TwoPointLineTool<RayOptions> {
         if (this._options.showLabel && this._options.text) {
             const textOpts = {
                 text: this._options.text,
-                color: this._options.textColor,
+                color: this._options.textColor || this._options.color, // Fallback for legacy
                 fontSize: this._options.fontSize,
                 visible: true,
                 bold: this._options.bold,

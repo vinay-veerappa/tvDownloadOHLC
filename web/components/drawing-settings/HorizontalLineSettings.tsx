@@ -30,23 +30,28 @@ export interface HorizontalLineSettingsOptions {
     showLabel: boolean;
     labelBackgroundColor: string;
     labelTextColor: string;
+    // Standardized Text Options
     text?: string;
     textColor?: string;
     fontSize?: number;
     bold?: boolean;
     italic?: boolean;
-    alignment?: 'left' | 'center' | 'right';
+    // showLabel is already defined above
+    alignmentVertical?: 'top' | 'center' | 'bottom';
+    alignmentHorizontal?: 'left' | 'center' | 'right';
+
     visibleTimeframes?: string[];
 }
 
 export const DEFAULT_HORIZONTAL_OPTIONS: HorizontalLineSettingsOptions = {
     color: '#FF9800', // Orange
     width: 1,
-    style: 0, // Solid (User screenshot shows solid)
+    style: 0,
     opacity: 1,
     showLabel: true,
     labelBackgroundColor: '#FF9800',
     labelTextColor: '#FFFFFF',
+    textColor: '#FFFFFF',
     visibleTimeframes: ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w', '1M'],
 };
 
@@ -75,6 +80,7 @@ export function HorizontalLineSettingsDialog({
     // Reset local options when dialog opens
     useEffect(() => {
         if (open) {
+
             setLocalOptions(options);
             setLocalPrice(price || 0);
         }
@@ -100,8 +106,8 @@ export function HorizontalLineSettingsDialog({
             onChange={handleChange}
             showOpacity={false}
         >
-            {/* Label Options */}
-            <div className="space-y-3">
+            {/* Axis Label Options */}
+            <div className="space-y-3 pt-4 border-t">
                 <div className="flex items-center space-x-2">
                     <Checkbox
                         id="showLabel"
@@ -109,14 +115,14 @@ export function HorizontalLineSettingsDialog({
                         onCheckedChange={(checked) => handleChange({ showLabel: !!checked })}
                     />
                     <Label htmlFor="showLabel" className="text-sm cursor-pointer">
-                        Show Price Label
+                        Show Axis Label
                     </Label>
                 </div>
 
                 {localOptions.showLabel && (
                     <div className="pl-6 space-y-2">
                         <div className="flex items-center justify-between">
-                            <Label className="text-xs text-muted-foreground">Background</Label>
+                            <Label className="text-xs text-muted-foreground">Axis Background</Label>
                             <Input
                                 type="color"
                                 value={localOptions.labelBackgroundColor}
@@ -125,7 +131,7 @@ export function HorizontalLineSettingsDialog({
                             />
                         </div>
                         <div className="flex items-center justify-between">
-                            <Label className="text-xs text-muted-foreground">Text Color</Label>
+                            <Label className="text-xs text-muted-foreground">Axis Text Color</Label>
                             <Input
                                 type="color"
                                 value={localOptions.labelTextColor}
@@ -163,27 +169,13 @@ export function HorizontalLineSettingsDialog({
                 fontSize: localOptions.fontSize,
                 bold: localOptions.bold,
                 italic: localOptions.italic,
-                textColor: localOptions.textColor, // Note: TextSettingsTab uses 'textColor'
-                alignmentVertical: (localOptions as any).alignmentVertical,     // HorizontalLine might store these differently, but we shouldn't cast if possible. 
-                // Ideally we map from localOptions.alignment (legacy) to split if needed?
-                // For now, let's assume specific HLine props or map legacy 'alignment'
-                alignmentHorizontal: localOptions.alignment as any, // HLine has 'alignment' which is usually horizontal
-                showLabel: localOptions.showLabel
+                textColor: localOptions.textColor,
+                showLabel: localOptions.showLabel !== false,
+                alignmentVertical: localOptions.alignmentVertical,
+                alignmentHorizontal: localOptions.alignmentHorizontal
             }}
             onChange={(updates) => {
-                const newOptions: Partial<HorizontalLineSettingsOptions> = {};
-                if (updates.text !== undefined) newOptions.text = updates.text;
-                if (updates.textColor !== undefined) newOptions.textColor = updates.textColor;
-                if (updates.color !== undefined) newOptions.textColor = updates.color; // Handle both
-                if (updates.fontSize !== undefined) newOptions.fontSize = updates.fontSize;
-                if (updates.bold !== undefined) newOptions.bold = updates.bold;
-                if (updates.italic !== undefined) newOptions.italic = updates.italic;
-
-                // Map alignment updates back to simple alignment if compatible, or extended props
-                if (updates.alignmentHorizontal !== undefined) newOptions.alignment = updates.alignmentHorizontal;
-
-                if (updates.showLabel !== undefined) newOptions.showLabel = updates.showLabel;
-
+                const newOptions: Partial<HorizontalLineSettingsOptions> = { ...updates };
                 handleChange(newOptions);
             }}
             isLineTool={true}
