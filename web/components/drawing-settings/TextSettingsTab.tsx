@@ -4,7 +4,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Bold, Italic } from "lucide-react";
 
@@ -29,17 +28,7 @@ const FONT_SIZES = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48];
 export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsTabProps) {
     return (
         <div className="space-y-4 pt-4">
-            {/* Show Label Toggle for Line Tools */}
-            {isLineTool && (
-                <div className="flex items-center gap-2 mb-2">
-                    <Checkbox
-                        id="showLabel"
-                        checked={options.showLabel}
-                        onCheckedChange={(c) => onChange({ showLabel: !!c })}
-                    />
-                    <Label htmlFor="showLabel">Show Text</Label>
-                </div>
-            )}
+            {/* Show Text toggle hidden per user request */}
 
             {/* Colors & Font Styles */}
             <div className="flex items-center gap-2">
@@ -49,12 +38,10 @@ export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsT
                     onChange={(e) => onChange({ textColor: e.target.value })}
                     className="w-10 h-10 p-1 cursor-pointer"
                     title="Text color"
-                    disabled={isLineTool && !options.showLabel}
                 />
                 <Select
                     value={String(options.fontSize || 14)}
                     onValueChange={(v) => onChange({ fontSize: parseInt(v) })}
-                    disabled={isLineTool && !options.showLabel}
                 >
                     <SelectTrigger className="w-20">
                         <SelectValue />
@@ -71,7 +58,6 @@ export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsT
                         size="icon"
                         onClick={() => onChange({ bold: !options.bold })}
                         className="h-8 w-8"
-                        disabled={isLineTool && !options.showLabel}
                         title="Bold"
                     >
                         <Bold className="h-4 w-4" />
@@ -81,7 +67,6 @@ export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsT
                         size="icon"
                         onClick={() => onChange({ italic: !options.italic })}
                         className="h-8 w-8"
-                        disabled={isLineTool && !options.showLabel}
                         title="Italic"
                     >
                         <Italic className="h-4 w-4" />
@@ -105,7 +90,6 @@ export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsT
                     <Select
                         value={options.alignmentVertical || 'center'}
                         onValueChange={(v) => onChange({ alignmentVertical: v })}
-                        disabled={isLineTool && !options.showLabel}
                     >
                         <SelectTrigger className="w-full">
                             <SelectValue placeholder="Vertical" />
@@ -121,7 +105,6 @@ export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsT
                     <Select
                         value={options.alignmentHorizontal || 'left'}
                         onValueChange={(v) => onChange({ alignmentHorizontal: v })}
-                        disabled={isLineTool && !options.showLabel}
                     >
                         <SelectTrigger className="w-full">
                             <SelectValue placeholder="Horizontal" />

@@ -3,6 +3,7 @@ import { getLineDash } from "../chart-utils";
 import { TwoPointLineTool, TwoPointLineOptions } from "./base/TwoPointLineTool";
 import { TextCapableOptions, DEFAULT_TEXT_OPTIONS } from "./base/TextCapable";
 import { TextLabel } from "./text-label";
+import { HitTestResult, distanceToPoint } from "./base/DrawingBase";
 
 interface TrendLineOptions extends TwoPointLineOptions, TextCapableOptions { }
 
@@ -200,6 +201,84 @@ export class TrendLine extends TwoPointLineTool<TrendLineOptions> {
             p2: this._p2,
             options: this.options()
         };
+    }
+
+    public hitTest(x: number, y: number): any {
+        if (!this._p1Point.x || !this._p1Point.y || !this._p2Point.x || !this._p2Point.y) return null;
+        if (this._options.visible === false) return null;
+
+        const HANDLE_RADIUS = 8;
+
+        // Check Handles
+        if (distanceToPoint(x, y, this._p1Point.x, this._p1Point.y) <= HANDLE_RADIUS) {
+            return { cursorStyle: 'nwse-resize', externalId: this.id(), zOrder: 'top', hitType: 'p1' };
+        }
+        if (distanceToPoint(x, y, this._p2Point.x, this._p2Point.y) <= HANDLE_RADIUS) {
+            return { cursorStyle: 'nwse-resize', externalId: this.id(), zOrder: 'top', hitType: 'p2' };
+        }
+
+        // Check Body with Extensions
+        const x1 = this._p1Point.x;
+        const y1 = this._p1Point.y;
+        const x2 = this._p2Point.x;
+        const y2 = this._p2Point.y;
+
+        // Vector math to find projection parameter t
+        // P = P1 + t * (P2 - P1)
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len_sq = dx * dx + dy * dy;
+
+        if (len_sq === 0) {
+            // Points are same, exact match only
+            if (distanceToPoint(x, y, x1, y1) < 10) {
+                return { cursorStyle: 'move', externalId: this.id(), zOrder: 'top', hitType: 'body' };
+            }
+            return null;
+        }
+
+        const t = ((x - x1) * dx + (y - y1) * dy) / len_sq;
+
+        // Check constraints based on extensions
+        let allowed = false;
+        if (this._options.extendLeft && this._options.extendRight) {
+            allowed = true; // Infinite line
+        } else if (this._options.extendLeft) {
+            allowed = t <= 1 + 0.01; // Allow slight tolerance? Standard is strictly <= 1 for segment, but extendLeft means -inf to 1
+            // Actually extendLeft is -inf to 1?
+            // "Left" usually means "before P1". So t < 0.
+            // If extended left, we allow t < 0. We also assume the segment itself (0..1) is valid.
+            // So allowed if t <= 1?
+            // Wait, extending LEFT means P2 -> P1 -> infinity. So t < 0 is allowed.
+            // Correct range: (-inf, 1]
+            allowed = t <= 1;
+        } else if (this._options.extendRight) {
+            // Right means P1 -> P2 -> infinity. So t > 1 is allowed.
+            // Correct range: [0, inf)
+            allowed = t >= 0;
+        } else {
+            // No extension: [0, 1]
+            allowed = t >= 0 && t <= 1;
+        }
+
+        // If t is within valid range, calculate distance to infinite line
+        if (allowed) {
+            // Project point onto line
+            const projX = x1 + t * dx;
+            const projY = y1 + t * dy;
+            const dist = Math.sqrt(Math.pow(x - projX, 2) + Math.pow(y - projY, 2));
+
+            if (dist < 10) {
+                return { cursorStyle: 'move', externalId: this.id(), zOrder: 'top', hitType: 'body' };
+            }
+        }
+
+        // Text Hit Test
+        if (this._textLabel && this._textLabel.options.visible && this._textLabel.hitTest(x, y)) {
+            return { cursorStyle: 'move', externalId: this.id(), zOrder: 'top', hitType: 'text' };
+        }
+
+        return null;
     }
 }
 
