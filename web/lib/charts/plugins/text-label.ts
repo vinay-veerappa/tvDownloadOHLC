@@ -54,6 +54,10 @@ export class TextLabel {
         }
     }
 
+    get options(): TextLabelOptions {
+        return this._options;
+    }
+
     draw(ctx: CanvasRenderingContext2D, horizontalPixelRatio: number, verticalPixelRatio: number) {
         if (!this._options.visible || !this._options.text) return;
 
