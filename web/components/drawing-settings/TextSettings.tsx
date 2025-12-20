@@ -34,9 +34,9 @@ interface TextSettingsProps {
         bold?: boolean;
         italic?: boolean;
         backgroundColor?: string;
-        backgroundEnabled?: boolean;
+        backgroundVisible?: boolean;
         borderColor?: string;
-        borderEnabled?: boolean;
+        borderVisible?: boolean;
         textWrap?: boolean;
         visibleTimeframes?: string[];
     };
