@@ -115,15 +115,14 @@ export function useChart(
             timeScale: {
                 timeVisible: true,
                 rightOffset: 50,
-                // fixRightEdge: true,
-                //shiftVisibleRangeOnNewBar: true,
-                //allowShiftVisibleRangeOnWhitespaceReplacement: true,
-                tickMarkFormatter: (time: number) => formatTimeForTimezoneLocal(time),
+                // tickMarkFormatter: REMOVED to allow auto-scaling (concise ticks)
                 borderColor: isDark ? '#2a2e39' : '#e0e0e0',
             },
             localization: {
                 locale: 'en-US',
                 dateFormat: 'yyyy-MM-dd',
+                // Crosshair: Use full format
+                timeFormatter: (time: number) => formatTimeForTimezoneLocal(time),
             },
             rightPriceScale: {
                 borderColor: isDark ? '#2a2e39' : '#e0e0e0',
@@ -173,12 +172,30 @@ export function useChart(
         try {
             chartInstance.applyOptions({
                 localization: {
-                    timeFormatter: formatter,
+                    // Crosshair Label: Show Full Date & Time
+                    timeFormatter: (time: number) => {
+                        const date = new Date(time * 1000);
+                        return displayTimezone === 'UTC'
+                            ? date.toISOString().substring(0, 16).replace('T', ' ')
+                            : date.toLocaleString('en-US', {
+                                timeZone: displayTimezone === 'local' ? undefined : displayTimezone,
+                                year: 'numeric', month: 'short', day: 'numeric',
+                                hour: '2-digit', minute: '2-digit', hour12: false
+                            });
+                    },
                     dateFormat: 'yyyy-MM-dd',
-                    locale: 'en-US', // Enforce US locale
+                    locale: 'en-US',
                 },
                 timeScale: {
-                    tickMarkFormatter: formatter,
+                    // Axis Ticks: Keep concise (handled by default smart formatting or explicit short format)
+                    // We REMOVE the tickMarkFormatter override here to let LightweightCharts smart scale take over,
+                    // OR we provide a smart concise one.
+                    // The user said "time scale should shows only the time or day ... depending on how much we are zoomed out".
+                    // The default behavior of LWC does exactly this if we DON'T provide a tickMarkFormatter.
+                    // Previously we were FORCING full date/time on ticks which caused cramping.
+                    // So we remove tickMarkFormatter from here to restore default smart scaling behavior.
+
+                    // tickMarkFormatter: formatter, // REMOVED
                 }
             })
         } catch (e) {
