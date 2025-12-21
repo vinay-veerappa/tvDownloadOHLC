@@ -193,6 +193,21 @@ export function FloatingToolbar({
                 {/* Separator */}
                 <div className="w-px h-5 bg-border mx-0.5" />
 
+                {/* Settings Button - Always visible */}
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={onSettings}
+                        >
+                            <Settings className="h-3.5 w-3.5" />
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs">Settings</TooltipContent>
+                </Tooltip>
+
                 {/* Common Buttons */}
                 {config.commonButtons.includes('target') && (
                     <Tooltip>
