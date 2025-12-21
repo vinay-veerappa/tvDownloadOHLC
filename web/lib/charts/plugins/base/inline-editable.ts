@@ -22,6 +22,10 @@ export interface EditorLayout {
     padding: number;
     /** Line height for text rendering */
     lineHeight: number;
+    /** Horizontal text alignment (for bounded mode) */
+    alignmentHorizontal?: 'left' | 'center' | 'right';
+    /** Vertical text alignment (for bounded mode) */
+    alignmentVertical?: 'top' | 'center' | 'bottom';
 }
 
 /**
