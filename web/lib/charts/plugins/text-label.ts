@@ -143,11 +143,46 @@ export class TextLabel {
         let x = this._x * horizontalPixelRatio;
         let y = this._y * verticalPixelRatio;
 
-        // Apply Alignment - Simplified: Default to top-left like TradingView
+        // Apply Alignment using container dimensions if available
+        // When container dimensions are provided, the anchor (x,y) is at the center of the container
         let offsetX = 0;
         let offsetY = 0;
-        // Text simply starts at the anchor point (x, y) and expands down/right.
-        // No vertical/horizontal centering by default.
+
+        const containerWidth = (this._options.containerWidth || 0) * horizontalPixelRatio;
+        const containerHeight = (this._options.containerHeight || 0) * verticalPixelRatio;
+        const alignment = this._options.alignment;
+
+        if (containerWidth > 0 && containerHeight > 0 && alignment) {
+            // Horizontal alignment within container (anchor is at center)
+            switch (alignment.horizontal) {
+                case 'left':
+                    offsetX = -containerWidth / 2 + padding;
+                    break;
+                case 'right':
+                    offsetX = containerWidth / 2 - maxWidth - padding;
+                    break;
+                case 'center':
+                default:
+                    offsetX = -maxWidth / 2;
+                    break;
+            }
+
+            // Vertical alignment within container (anchor is at center)
+            switch (alignment.vertical) {
+                case 'top':
+                    offsetY = -containerHeight / 2 + padding;
+                    break;
+                case 'bottom':
+                    offsetY = containerHeight / 2 - totalHeight - padding;
+                    break;
+                case 'middle':
+                default:
+                    offsetY = -totalHeight / 2;
+                    break;
+            }
+        }
+        // For non-container text (TextDrawing), anchor is top-left, so no offset needed
+
 
         // Apply rotation if specified
         const rotation = this._options.rotation || 0;

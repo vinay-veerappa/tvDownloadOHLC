@@ -44,7 +44,8 @@ const defaultOptions: RectangleOptions = {
     borderWidth: 2,
     borderStyle: 0,
     labelColor: "rgba(41, 98, 255, 1)",
-    labelTextColor: "white",
+    labelTextColor: "#2962FF", // Match border color for consistency
+    textColor: "#2962FF", // Default text color - matches border
     showLabels: true, // Legacy default
     showLabel: true,  // Standard default
     extendLeft: false,
@@ -238,8 +239,12 @@ export class Rectangle implements ISeriesPrimitive, InlineEditable {
         if (this._options.text) {
             this._textLabel = new TextLabel(0, 0, {
                 text: this._options.text,
-                color: this._options.textColor || this._options.labelTextColor || '#FFFFFF',
-                visible: this._options.showLabel !== false
+                color: this._options.textColor || this._options.labelTextColor || '#2962FF',
+                visible: this._options.showLabel !== false,
+                alignment: {
+                    vertical: (this._options.alignmentVertical === 'center' || !this._options.alignmentVertical) ? 'middle' : this._options.alignmentVertical as any,
+                    horizontal: (this._options.alignmentHorizontal || 'center') as any
+                }
             });
         }
     }
@@ -281,7 +286,7 @@ export class Rectangle implements ISeriesPrimitive, InlineEditable {
         if (this._options.text) {
             const textOptions = {
                 text: this._options.text,
-                color: this._options.textColor || this._options.labelTextColor || '#FFFFFF',
+                color: this._options.textColor || this._options.labelTextColor || '#2962FF',
                 fontSize: this._options.fontSize,
                 bold: this._options.bold,
                 italic: this._options.italic,
