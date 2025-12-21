@@ -90,36 +90,16 @@ export class TextDrawing implements ISeriesPrimitive {
         this._options = options;
         this._id = Math.random().toString(36).substring(7);
 
-        // Map standardized `textColor` to TextLabel's `color`
+        this._id = Math.random().toString(36).substring(7);
+
+        // Initialize TextLabel
         this._textLabel = new TextLabel(0, 0, {
-            ...options,
-            color: options.textColor || options.color || '#FFFFFF',
-            borderStyle: options.lineStyle,
-            alignment: {
-                vertical: (options.alignmentVertical as any) || 'middle',
-                horizontal: (options.alignmentHorizontal as any) || 'center'
-            },
-            // Pass through new options
-            backgroundColor: options.backgroundColor,
-            // mapping backgroundVisible to nothing? TextLabel uses generic visibility. 
-            // Wait, TextLabelOptions has backgroundColor. If undefined, no bg.
-            // But we have backgroundVisible toggle. 
-            // We should strip backgroundColor if backgroundVisible is false? 
-            // OR pass explicit backgroundVisible to TextLabel if it supports it.
-            // TextLabel has `backgroundColor` string. Let's look at TextLabelOptions in text-label.ts.
-            // It has `backgroundColor?: string`.
-            // It currently checks `if (this._options.backgroundColor)`.
-            // So if visible is false, we should pass undefined or handle it in TextLabel.
-            // Better to handle it here:
-            // Actually, let's update TextLabel to support backgroundVisible/Opacity.
-            // For now, let's pass them through, assuming we update TextLabel next.
-            backgroundVisible: options.backgroundVisible,
-            backgroundOpacity: options.backgroundOpacity,
-            borderColor: options.borderColor,
-            borderVisible: options.borderVisible,
-            borderWidth: options.borderWidth,
-            fontFamily: options.fontFamily
+            text: options.text || '',
+            visible: true
         });
+
+        // Initial update
+        this._updateTextLabel();
         this._paneViews = [new TextDrawingPaneView(this)];
     }
 
@@ -128,28 +108,44 @@ export class TextDrawing implements ISeriesPrimitive {
 
     applyOptions(options: Partial<TextDrawingOptions>) {
         console.log('[TextDrawing.applyOptions] Received:', options);
-        console.log('[TextDrawing.applyOptions] Current State (pre-update):', { time: this._time, price: this._price });
-
         this._options = { ...this._options, ...options };
-        // Map standardized `textColor` to TextLabel's `color`
+        this._updateTextLabel();
+        console.log('[TextDrawing.applyOptions] Updated options:', this._options);
+        this.updateAllViews();
+    }
+
+    private _updateTextLabel() {
+        if (!this._textLabel) return;
+
         this._textLabel.update(0, 0, {
             ...this._options,
+            text: this._options.text,
+            // Map standardized `textColor` to TextLabel's `color`
             color: this._options.textColor || this._options.color || '#FFFFFF',
+
+            // Font & Style
+            fontSize: this._options.fontSize,
+            fontFamily: this._options.fontFamily,
+            bold: this._options.bold,
+            italic: this._options.italic,
+
+            // Border & Line
             borderStyle: this._options.lineStyle,
-            alignment: {
-                vertical: (this._options.alignmentVertical as any) || 'middle',
-                horizontal: (this._options.alignmentHorizontal as any) || 'center'
-            },
-            backgroundVisible: this._options.backgroundVisible,
-            backgroundOpacity: this._options.backgroundOpacity,
             borderColor: this._options.borderColor,
             borderVisible: this._options.borderVisible,
             borderWidth: this._options.borderWidth,
-            fontFamily: this._options.fontFamily
-        });
 
-        console.log('[TextDrawing.applyOptions] State (post-update):', { time: this._time, price: this._price });
-        this.updateAllViews();
+            // Background
+            backgroundColor: this._options.backgroundColor,
+            backgroundVisible: this._options.backgroundVisible,
+            backgroundOpacity: this._options.backgroundOpacity,
+
+            // Alignment - Robust mapping
+            alignment: {
+                vertical: (this._options.alignmentVertical === 'center' ? 'middle' : (this._options.alignmentVertical || 'middle')) as any,
+                horizontal: (this._options.alignmentHorizontal || 'center') as any
+            }
+        });
     }
 
     updateAllViews() {
