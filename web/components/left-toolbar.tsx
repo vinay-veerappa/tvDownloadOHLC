@@ -1,10 +1,10 @@
 import * as React from "react"
-import { MousePointer2, TrendingUp, Menu, Square, Columns, Minus, Type, Ruler, ArrowRight, DollarSign, BookMarked } from "lucide-react"
+import { MousePointer2, TrendingUp, Menu, Square, Columns, Minus, Type, Ruler, ArrowRight, DollarSign, BookMarked, Tag, MoveVertical, CalendarRange, TrendingDown, Hash } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 
-export type DrawingTool = "cursor" | "trend-line" | "ray" | "fibonacci" | "rectangle" | "vertical-line" | "horizontal-line" | "text" | "measure" | "risk-reward"
+export type DrawingTool = "cursor" | "trend-line" | "ray" | "fibonacci" | "rectangle" | "vertical-line" | "horizontal-line" | "text" | "measure" | "risk-reward" | "price-label" | "price-range" | "date-range"
 
 interface LeftToolbarProps {
     selectedTool: DrawingTool
@@ -77,6 +77,36 @@ export function LeftToolbar({ selectedTool, onToolSelect, showTrading, onToggleT
                 title="Measure"
             >
                 <Ruler className="h-4 w-4" />
+            </Button>
+
+            <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-8 w-8", selectedTool === "price-label" && "bg-accent text-accent-foreground")}
+                onClick={() => onToolSelect("price-label")}
+                title="Price Label"
+            >
+                <Tag className="h-4 w-4" />
+            </Button>
+
+            <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-8 w-8", selectedTool === "price-range" && "bg-accent text-accent-foreground")}
+                onClick={() => onToolSelect("price-range")}
+                title="Price Range"
+            >
+                <MoveVertical className="h-4 w-4" />
+            </Button>
+
+            <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-8 w-8", selectedTool === "date-range" && "bg-accent text-accent-foreground")}
+                onClick={() => onToolSelect("date-range")}
+                title="Date Range"
+            >
+                <CalendarRange className="h-4 w-4" />
             </Button>
 
             <Button

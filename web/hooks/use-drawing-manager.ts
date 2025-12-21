@@ -16,6 +16,9 @@ import { TextTool } from "@/lib/charts/plugins/text-tool";
 import { MeasureTool, Measure } from "@/lib/charts/plugins/measuring-tool";
 import { RayTool, Ray } from "@/lib/charts/plugins/ray";
 import { RiskRewardDrawingTool, RiskReward } from "@/lib/charts/plugins/risk-reward";
+import { PriceLabelDrawingTool, PriceLabel } from "@/lib/charts/plugins/price-label";
+import { PriceRangeDrawingTool, PriceRange } from "@/lib/charts/plugins/price-range";
+import { DateRangeDrawingTool, DateRange } from "@/lib/charts/plugins/date-range";
 
 // Drawing Classes for restoration
 import { TrendLine } from "@/lib/charts/plugins/trend-line";
@@ -102,6 +105,15 @@ export function useDrawingManager(
                     case 'measure':
                         drawing = new Measure(chart, series, { ...saved.p1, time: saved.p1.time as Time }, { ...saved.p2, time: saved.p2.time as Time }, saved.options as any);
                         break;
+                    case 'price-label':
+                        drawing = new PriceLabel(chart, series, { ...saved.p1, time: saved.p1.time as Time }, { ...saved.p2, time: saved.p2.time as Time }, saved.options as any);
+                        break;
+                    case 'price-range':
+                        drawing = new PriceRange(chart, series, { ...saved.p1, time: saved.p1.time as Time }, { ...saved.p2, time: saved.p2.time as Time }, saved.options as any);
+                        break;
+                    case 'date-range':
+                        drawing = new DateRange(chart, series, { ...saved.p1, time: saved.p1.time as Time }, { ...saved.p2, time: saved.p2.time as Time }, saved.options as any);
+                        break;
                 }
 
                 if (drawing) {
@@ -172,12 +184,16 @@ export function useDrawingManager(
             case 'text': ToolClass = TextTool; break;
             case 'measure': ToolClass = MeasureTool; break;
             case 'risk-reward': ToolClass = RiskRewardDrawingTool; break;
+            case 'price-label': ToolClass = PriceLabelDrawingTool; break;
+            case 'price-range': ToolClass = PriceRangeDrawingTool; break;
+            case 'date-range': ToolClass = DateRangeDrawingTool; break;
         }
 
         if (ToolClass) {
-            const magnetOptions = selectedTool !== 'vertical-line' && selectedTool !== 'horizontal-line' && selectedTool !== 'text' && selectedTool !== 'measure'
-                ? { magnetMode, ohlcData: data }
-                : undefined;
+            // Magnet mode applies to tools that snap to OHLC prices
+            // Exclude: vertical-line (time only), horizontal-line (price only, no time), text, measure, price-range, date-range
+            const useMagnet = !['vertical-line', 'horizontal-line', 'text', 'measure', 'price-range', 'date-range'].includes(selectedTool);
+            const magnetOptions = useMagnet ? { magnetMode, ohlcData: data } : undefined;
 
             const tool = new ToolClass(chart, series, (drawing: any) => {
                 const id = typeof drawing.id === 'function' ? drawing.id() : drawing._id;
@@ -231,7 +247,7 @@ export function useDrawingManager(
         const type = drawing._type;
         const opts = drawing.options ? drawing.options() : {};
         const base = { id, type: type as any, options: opts, createdAt: Date.now() };
-        const validTypes = ['trend-line', 'ray', 'fibonacci', 'rectangle', 'vertical-line', 'horizontal-line', 'text', 'risk-reward', 'measure'];
+        const validTypes = ['trend-line', 'ray', 'fibonacci', 'rectangle', 'vertical-line', 'horizontal-line', 'text', 'risk-reward', 'measure', 'price-label', 'price-range', 'date-range'];
 
         if (validTypes.includes(type as string) && type !== 'risk-reward') {
             return { ...base, p1: drawing._p1, p2: drawing._p2 };

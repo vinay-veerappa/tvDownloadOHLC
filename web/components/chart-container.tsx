@@ -353,7 +353,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
 
     // Known drawing types (for selection sync)
-    const DRAWING_TYPES = ['trend-line', 'ray', 'fibonacci', 'rectangle', 'vertical-line', 'horizontal-line', 'text', 'risk-reward', 'measure', 'drawing'];
+    const DRAWING_TYPES = ['trend-line', 'ray', 'fibonacci', 'rectangle', 'vertical-line', 'horizontal-line', 'text', 'risk-reward', 'measure', 'price-label', 'price-range', 'date-range', 'drawing'];
 
     // Sync external selection  
     useEffect(() => {

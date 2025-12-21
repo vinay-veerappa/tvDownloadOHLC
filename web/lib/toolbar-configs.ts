@@ -180,6 +180,64 @@ export const TOOLBAR_CONFIGS: Record<string, ToolbarConfig> = {
         overflowItems: COMMON_OVERFLOW_ITEMS,
     },
 
+    // Price Label
+    'price-label': {
+        quickActions: [
+            { id: 'lineColor', type: 'color', tooltip: 'Line color', colorProp: 'lineColor', icon: 'Pen' },
+            { id: 'textColor', type: 'color', tooltip: 'Text color', colorProp: 'textColor', icon: 'Type' },
+            { id: 'backgroundColor', type: 'color', tooltip: 'Background', colorProp: 'backgroundColor', icon: 'PaintBucket' },
+            { id: 'fontSize', type: 'select', tooltip: 'Font size', selectProp: 'fontSize', options: FONT_SIZE_OPTIONS, icon: 'Type' },
+        ],
+        commonButtons: ['settings', 'lock', 'delete'],
+        overflowItems: COMMON_OVERFLOW_ITEMS,
+    },
+
+    // Price Range
+    'price-range': {
+        quickActions: [
+            { id: 'lineColor', type: 'color', tooltip: 'Line color', colorProp: 'lineColor', icon: 'Pen' },
+            { id: 'fillColor', type: 'color', tooltip: 'Fill color', colorProp: 'fillColor', icon: 'PaintBucket' },
+            { id: 'textColor', type: 'color', tooltip: 'Text color', colorProp: 'textColor', icon: 'Type' },
+            { id: 'lineWidth', type: 'select', tooltip: 'Width', selectProp: 'lineWidth', options: LINE_WIDTH_OPTIONS, icon: 'Minus' },
+        ],
+        commonButtons: ['settings', 'lock', 'delete'],
+        overflowItems: COMMON_OVERFLOW_ITEMS,
+    },
+
+    // Date Range
+    'date-range': {
+        quickActions: [
+            { id: 'lineColor', type: 'color', tooltip: 'Line color', colorProp: 'lineColor', icon: 'Pen' },
+            { id: 'fillColor', type: 'color', tooltip: 'Fill color', colorProp: 'fillColor', icon: 'PaintBucket' },
+            { id: 'textColor', type: 'color', tooltip: 'Text color', colorProp: 'textColor', icon: 'Type' },
+            { id: 'lineWidth', type: 'select', tooltip: 'Width', selectProp: 'lineWidth', options: LINE_WIDTH_OPTIONS, icon: 'Minus' },
+        ],
+        commonButtons: ['settings', 'lock', 'delete'],
+        overflowItems: COMMON_OVERFLOW_ITEMS,
+    },
+
+    // Measure
+    'measure': {
+        quickActions: [
+            { id: 'lineColor', type: 'color', tooltip: 'Line color', colorProp: 'lineColor', icon: 'Pen' },
+            { id: 'fillColor', type: 'color', tooltip: 'Fill color', colorProp: 'fillColor', icon: 'PaintBucket' },
+            { id: 'textColor', type: 'color', tooltip: 'Text color', colorProp: 'textColor', icon: 'Type' },
+        ],
+        commonButtons: ['settings', 'lock', 'delete'],
+        overflowItems: COMMON_OVERFLOW_ITEMS,
+    },
+
+    // Risk/Reward
+    'risk-reward': {
+        quickActions: [
+            { id: 'stopColor', type: 'color', tooltip: 'Stop color', colorProp: 'stopColor', icon: 'Square' },
+            { id: 'targetColor', type: 'color', tooltip: 'Target color', colorProp: 'targetColor', icon: 'Square' },
+            { id: 'textColor', type: 'color', tooltip: 'Text color', colorProp: 'textColor', icon: 'Type' },
+        ],
+        commonButtons: ['settings', 'lock', 'delete'],
+        overflowItems: COMMON_OVERFLOW_ITEMS,
+    },
+
     // Default fallback for unknown types
     'default': {
         quickActions: [],
