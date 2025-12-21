@@ -1582,6 +1582,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     borderColor: selectedDrawingOptions?.borderColor,
                     borderVisible: selectedDrawingOptions?.borderVisible,
                     textWrap: selectedDrawingOptions?.textWrap,
+                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                 }}
                 onSave={(opts) => {
                     if (selectedDrawingRef.current && typeof selectedDrawingRef.current.applyOptions === 'function') {

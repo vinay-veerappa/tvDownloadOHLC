@@ -92,12 +92,12 @@ export function InlineTextEditor({
         >
             <div
                 className={cn(
-                    "relative border-2 border-primary/50 rounded-md shadow-lg flex flex-col",
+                    "relative border-2 border-input rounded-md shadow-xl flex flex-col",
                     "min-w-[150px] overflow-hidden",
-                    "bg-popover text-popover-foreground" // Use popover colors for high contrast/opacity
+                    "bg-background text-foreground" // Use standard opaque background
                 )}
                 style={{
-                    // Override background only if explicitly set, otherwise popover default (usually opaque)
+                    // Override background only if explicitly set
                     backgroundColor: backgroundColor,
                 }}
             >
