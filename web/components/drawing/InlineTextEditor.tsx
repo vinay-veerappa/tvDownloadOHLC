@@ -32,6 +32,7 @@ interface InlineTextEditorProps {
     fontFamily?: string;
     color?: string;
     backgroundColor?: string;
+    bounded?: boolean; // If true, constrain editor to layout dimensions (for rectangles)
     onSave: (text: string, width?: number) => void;
     onChange?: (text: string) => void;
     onCancel: () => void;
@@ -46,6 +47,7 @@ export function InlineTextEditor({
     fontFamily = "Arial",
     color = "#FFFFFF",
     backgroundColor,
+    bounded = false,
     onSave,
     onChange,
     onCancel,
@@ -101,11 +103,20 @@ export function InlineTextEditor({
             <div
                 style={{
                     position: 'relative',
-                    minWidth: layout ? layout.width : 200,
+                    width: bounded && layout ? layout.width : undefined,
+                    minWidth: (!bounded && layout) ? layout.width : 200,
+                    height: bounded && layout ? layout.height : undefined,
                     border: '1px solid #2962FF',
                     borderRadius: '2px',
                     backgroundColor: backgroundColor || 'transparent',
                     boxSizing: 'border-box',
+                    display: bounded ? 'flex' : 'block',
+                    flexDirection: 'column',
+                    // Vertical alignment for bounded mode
+                    justifyContent: bounded ? (
+                        layout?.alignmentVertical === 'bottom' ? 'flex-end' :
+                            layout?.alignmentVertical === 'center' ? 'center' : 'flex-start'
+                    ) : undefined,
                 }}
             >
                 <textarea
@@ -115,8 +126,8 @@ export function InlineTextEditor({
                         const val = e.target.value;
                         setText(val);
                         onChange?.(val);
-                        // Auto-resize the textarea height
-                        if (textareaRef.current) {
+                        // Auto-resize the textarea height (only for non-bounded mode)
+                        if (!bounded && textareaRef.current) {
                             textareaRef.current.style.height = 'auto';
                             textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
                         }
@@ -138,12 +149,16 @@ export function InlineTextEditor({
                         whiteSpace: "pre-wrap",
                         wordBreak: "break-word",
                         overflowWrap: "break-word",
-                        textAlign: 'left',
-                        resize: 'horizontal',
-                        minHeight: '24px',
-                        height: 'auto',
-                        minWidth: layout ? `${layout.width}px` : '200px',
-                        overflow: 'hidden',
+                        // Use alignment from layout for bounded mode
+                        textAlign: layout?.alignmentHorizontal || 'left',
+                        // Disable resize for bounded mode
+                        resize: bounded ? 'none' : 'horizontal',
+                        minHeight: bounded ? undefined : '24px',
+                        height: bounded ? 'auto' : 'auto',
+                        maxHeight: bounded && layout ? `${layout.height - (layout.padding * 2)}px` : undefined,
+                        minWidth: (!bounded && layout) ? `${layout.width}px` : '200px',
+                        // Show scrollbar for bounded mode when content overflows
+                        overflow: bounded ? 'auto' : 'hidden',
                         boxSizing: 'border-box',
                         display: 'block',
                     }}
@@ -152,3 +167,4 @@ export function InlineTextEditor({
         </div>
     );
 }
+

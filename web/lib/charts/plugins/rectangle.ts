@@ -7,6 +7,7 @@ interface Point {
 }
 
 import { TextLabel } from "./text-label";
+import { InlineEditable, EditorLayout } from "./base/inline-editable";
 
 interface RectangleOptions {
     fillColor: string;
@@ -33,6 +34,7 @@ interface RectangleOptions {
     quarterLines: { visible: boolean; color: string; width: number; style: number };
     alignmentVertical?: 'top' | 'center' | 'bottom';
     alignmentHorizontal?: 'left' | 'center' | 'right';
+    editing?: boolean; // For inline text editing
 }
 
 const defaultOptions: RectangleOptions = {
@@ -201,7 +203,7 @@ class RectanglePaneView {
     }
 }
 
-export class Rectangle implements ISeriesPrimitive {
+export class Rectangle implements ISeriesPrimitive, InlineEditable {
     _chart: IChartApi;
     _series: ISeriesApi<"Candlestick">;
     _p1: Point;
@@ -479,7 +481,63 @@ export class Rectangle implements ISeriesPrimitive {
 
         return null;
     }
+
+    // InlineEditable interface implementation
+    getScreenPosition(): { x: number; y: number } | null {
+        if (this._p1Point.x === null || this._p1Point.y === null ||
+            this._p2Point.x === null || this._p2Point.y === null) return null;
+
+        const minX = Math.min(this._p1Point.x, this._p2Point.x);
+        const minY = Math.min(this._p1Point.y, this._p2Point.y);
+
+        return { x: minX, y: minY };
+    }
+
+    getEditorLayout(): EditorLayout | null {
+        if (this._p1Point.x === null || this._p1Point.y === null ||
+            this._p2Point.x === null || this._p2Point.y === null) return null;
+
+        const minX = Math.min(this._p1Point.x, this._p2Point.x);
+        const minY = Math.min(this._p1Point.y, this._p2Point.y);
+        const width = Math.abs(this._p2Point.x - this._p1Point.x);
+        const height = Math.abs(this._p2Point.y - this._p1Point.y);
+        const fontSize = this._options.fontSize || 12;
+
+        return {
+            x: minX,
+            y: minY,
+            width: width,
+            height: height,
+            padding: 4,
+            lineHeight: fontSize * 1.2,
+            alignmentHorizontal: this._options.alignmentHorizontal || 'center',
+            alignmentVertical: this._options.alignmentVertical || 'center'
+        };
+    }
+
+
+    setEditing(editing: boolean): void {
+        this._options.editing = editing;
+        if (this._textLabel) {
+            this._textLabel.update(null, null, { editing });
+        }
+        this.updateAllViews();
+    }
+
+    isEditing(): boolean {
+        return this._options.editing ?? false;
+    }
+
+    getText(): string {
+        return this._options.text || '';
+    }
+
+    setText(text: string): void {
+        this._options.text = text;
+        // Don't update canvas during editing - changes will apply when setEditing(false) is called
+    }
 }
+
 
 interface RectangleToolOptions {
     magnetMode?: 'off' | 'weak' | 'strong';

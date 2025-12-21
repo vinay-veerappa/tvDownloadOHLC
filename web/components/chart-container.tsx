@@ -346,6 +346,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         layout?: any;
         text: string;
         options: any;
+        drawingType?: string; // For bounded mode (rectangle vs text)
     } | null>(null)
     const lastClickRef = useRef<number>(0)
     const lastClickIdRef = useRef<string | null>(null)
@@ -513,9 +514,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                             position: pos,
                             layout: drawing.getEditorLayout ? drawing.getEditorLayout() : null,
                             text: '',
-                            options: drawing.options ? drawing.options() : {}
+                            options: drawing.options ? drawing.options() : {},
+                            drawingType: drawing._type || 'text'
                         });
                     }, 50);
+
                 } else if (selectedTool === 'fibonacci') {
                     // For Fib, we might want to keep properties closed or open specific settings
                     setPropertiesModalOpen(true);
@@ -581,9 +584,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         position: layout ? { x: layout.x, y: layout.y } : { x: param.point.x, y: param.point.y },
                         layout: layout,
                         text: text,
-                        options: (hitDrawing as any).options ? (hitDrawing as any).options() : {}
+                        options: (hitDrawing as any).options ? (hitDrawing as any).options() : {},
+                        drawingType: (hitDrawing as any)._type || 'unknown'
                     });
                 }
+
             } else {
                 deselectDrawing();
                 setToolbarPosition(null);
@@ -1554,14 +1559,15 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     fontFamily={inlineTextEditing.options?.fontFamily || 'Arial'}
                     color={inlineTextEditing.options?.textColor || inlineTextEditing.options?.color || '#FFFFFF'}
                     backgroundColor={inlineTextEditing.options?.backgroundVisible ? inlineTextEditing.options?.backgroundColor : undefined}
+                    bounded={inlineTextEditing.drawingType === 'rectangle'}
                     onSave={(newText, width) => {
                         const drawing = drawingManager.getDrawing(inlineTextEditing.drawingId);
                         if (isInlineEditable(drawing) && typeof (drawing as any).applyOptions === 'function') {
-                            // Combine all updates into one applyOptions call for proper sync
+                            const isRectangle = inlineTextEditing.drawingType === 'rectangle';
+                            // For rectangles, don't save wordWrapWidth (width is determined by rectangle bounds)
                             const updatedOptions = {
                                 text: newText,
-                                wordWrapWidth: width || 200,
-                                wordWrap: true,
+                                ...(isRectangle ? {} : { wordWrapWidth: width || 200, wordWrap: true }),
                                 editing: false
                             };
                             (drawing as any).applyOptions(updatedOptions);
@@ -1580,12 +1586,13 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                                     ...prev,
                                     text: newText,
                                     editing: false,
-                                    wordWrapWidth: width || 200
+                                    ...(isRectangle ? {} : { wordWrapWidth: width || 200 })
                                 }));
                             }
                         }
                         setInlineTextEditing(null);
                     }}
+
 
                     onChange={(newText) => {
                         const drawing = drawingManager.getDrawing(inlineTextEditing.drawingId);
