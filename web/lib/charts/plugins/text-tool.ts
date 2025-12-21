@@ -127,6 +127,9 @@ export class TextDrawing implements ISeriesPrimitive {
     options() { return this._options; }
 
     applyOptions(options: Partial<TextDrawingOptions>) {
+        console.log('[TextDrawing.applyOptions] Received:', options);
+        console.log('[TextDrawing.applyOptions] Current State (pre-update):', { time: this._time, price: this._price });
+
         this._options = { ...this._options, ...options };
         // Map standardized `textColor` to TextLabel's `color`
         this._textLabel.update(0, 0, {
@@ -144,6 +147,8 @@ export class TextDrawing implements ISeriesPrimitive {
             borderWidth: this._options.borderWidth,
             fontFamily: this._options.fontFamily
         });
+
+        console.log('[TextDrawing.applyOptions] State (post-update):', { time: this._time, price: this._price });
         this.updateAllViews();
     }
 
