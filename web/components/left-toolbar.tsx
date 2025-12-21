@@ -1,5 +1,5 @@
 import * as React from "react"
-import { MousePointer2, TrendingUp, Menu, Square, Columns, Minus, Type, Ruler, ArrowRight, DollarSign, BookMarked, Tag, MoveVertical, CalendarRange, TrendingDown, Hash } from "lucide-react"
+import { MousePointer2, TrendingUp, Square, Columns, Minus, Type, Ruler, ArrowRight, DollarSign, BookMarked, MoveVertical, CalendarRange, BadgeDollarSign, Tally5 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
@@ -86,7 +86,7 @@ export function LeftToolbar({ selectedTool, onToolSelect, showTrading, onToggleT
                 onClick={() => onToolSelect("price-label")}
                 title="Price Label"
             >
-                <Tag className="h-4 w-4" />
+                <BadgeDollarSign className="h-4 w-4" />
             </Button>
 
             <Button
@@ -116,7 +116,7 @@ export function LeftToolbar({ selectedTool, onToolSelect, showTrading, onToggleT
                 onClick={() => onToolSelect("fibonacci")}
                 title="Fibonacci Retracement"
             >
-                <Menu className="h-4 w-4" />
+                <Tally5 className="h-4 w-4" />
             </Button>
 
             <Button
