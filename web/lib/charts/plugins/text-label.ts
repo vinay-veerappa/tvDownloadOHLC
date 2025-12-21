@@ -24,6 +24,9 @@ export interface TextLabelOptions {
     containerHeight?: number; // Height of containing shape (for edge alignment)
     rotation?: number; // Rotation angle in radians
     orientation?: 'horizontal' | 'along-line'; // Text orientation mode
+    wordWrap?: boolean;
+    wordWrapWidth?: number;
+    editing?: boolean;
 }
 
 export class TextLabel {
@@ -50,9 +53,9 @@ export class TextLabel {
         };
     }
 
-    update(x: number, y: number, options?: Partial<TextLabelOptions>) {
-        this._x = x;
-        this._y = y;
+    update(x: number | null, y: number | null, options?: Partial<TextLabelOptions>) {
+        if (x !== null) this._x = x;
+        if (y !== null) this._y = y;
         if (options) {
             this._options = { ...this._options, ...options };
         }
@@ -64,6 +67,10 @@ export class TextLabel {
 
     draw(ctx: CanvasRenderingContext2D, horizontalPixelRatio: number, verticalPixelRatio: number) {
         if (!this._options.visible || !this._options.text) return;
+        // When editing, skip ALL canvas rendering - DOM editor handles everything
+        if (this._options.editing) return;
+
+
 
         const fontSize = (this._options.fontSize || 12) * verticalPixelRatio;
         const fontStyle = this._options.italic ? 'italic ' : '';
@@ -71,9 +78,58 @@ export class TextLabel {
         const fontFamily = this._options.fontFamily || 'Arial';
         ctx.font = `${fontStyle}${fontWeight}${fontSize}px ${fontFamily}`;
 
-        // Split text into lines for multi-line support
-        const lines = this._options.text.split('\n');
+        // Split text into lines and handle word wrap
+        let lines: string[] = [];
+        const rawLines = this._options.text.split('\n');
         const lineHeight = fontSize * 1.2;
+
+        if (this._options.wordWrap && this._options.wordWrapWidth) {
+            const maxWidthPx = this._options.wordWrapWidth * horizontalPixelRatio;
+            rawLines.forEach(rawLine => {
+                const words = rawLine.split(' ');
+                let currentLine = '';
+
+                words.forEach(word => {
+                    // Check if the word itself is too long - if so, break it character by character
+                    const wordWidth = ctx.measureText(word).width;
+                    if (wordWidth > maxWidthPx) {
+                        // Word is too long, break it character by character
+                        if (currentLine) {
+                            lines.push(currentLine);
+                            currentLine = '';
+                        }
+                        let charLine = '';
+                        for (const char of word) {
+                            const testCharLine = charLine + char;
+                            if (ctx.measureText(testCharLine).width > maxWidthPx && charLine) {
+                                lines.push(charLine);
+                                charLine = char;
+                            } else {
+                                charLine = testCharLine;
+                            }
+                        }
+                        currentLine = charLine; // Remaining chars become current line
+                    } else {
+                        // Normal word wrapping
+                        const testLine = currentLine ? currentLine + ' ' + word : word;
+                        const testWidth = ctx.measureText(testLine).width;
+
+                        if (testWidth > maxWidthPx && currentLine) {
+                            lines.push(currentLine);
+                            currentLine = word;
+                        } else {
+                            currentLine = testLine;
+                        }
+                    }
+                });
+                if (currentLine) {
+                    lines.push(currentLine);
+                }
+            });
+
+        } else {
+            lines = rawLines;
+        }
 
         // Measure all lines to get max width
         const lineMetrics = lines.map(line => ({
@@ -87,46 +143,11 @@ export class TextLabel {
         let x = this._x * horizontalPixelRatio;
         let y = this._y * verticalPixelRatio;
 
-        // Apply Alignment
+        // Apply Alignment - Simplified: Default to top-left like TradingView
         let offsetX = 0;
         let offsetY = 0;
-        if (this._options.alignment) {
-            const { horizontal, vertical } = this._options.alignment;
-            const innerPadding = padding * 2;
-
-            // Horizontal alignment
-            if (this._options.containerWidth) {
-                const halfWidth = (this._options.containerWidth * horizontalPixelRatio) / 2;
-                if (horizontal === 'left') {
-                    offsetX = -halfWidth + innerPadding;
-                } else if (horizontal === 'center') {
-                    offsetX = -maxWidth / 2;
-                } else if (horizontal === 'right') {
-                    offsetX = halfWidth - maxWidth - innerPadding;
-                }
-            } else {
-                // Debug alignment
-                // console.log(`[TextLabel] Align: ${horizontal}, MaxWidth: ${maxWidth}, Offset before: ${offsetX}`);
-                if (horizontal === 'right') offsetX = -maxWidth;
-                else if (horizontal === 'center') offsetX = -maxWidth / 2;
-                // console.log(`[TextLabel] Offset after: ${offsetX}`);
-            }
-
-            // Vertical alignment
-            if (this._options.containerHeight) {
-                const halfHeight = (this._options.containerHeight * verticalPixelRatio) / 2;
-                if (vertical === 'top') {
-                    offsetY = -halfHeight + innerPadding;
-                } else if (vertical === 'middle') {
-                    offsetY = -totalHeight / 2;
-                } else if (vertical === 'bottom') {
-                    offsetY = halfHeight - totalHeight - innerPadding;
-                }
-            } else {
-                if (vertical === 'top') offsetY = -totalHeight;
-                else if (vertical === 'middle') offsetY = -totalHeight / 2;
-            }
-        }
+        // Text simply starts at the anchor point (x, y) and expands down/right.
+        // No vertical/horizontal centering by default.
 
         // Apply rotation if specified
         const rotation = this._options.rotation || 0;
@@ -176,13 +197,16 @@ export class TextLabel {
         }
 
         // Draw each line of text
-        ctx.fillStyle = this._options.color || '#FFFFFF';
-        ctx.textBaseline = 'top';
+        if (!this._options.editing) {
+            const color = this._options.color || '#FFFFFF';
+            ctx.fillStyle = color;
+            ctx.textBaseline = 'top';
 
-        lines.forEach((line, index) => {
-            const lineY = y + (index * lineHeight);
-            ctx.fillText(line, x, lineY);
-        });
+            lines.forEach((line, index) => {
+                const lineY = y + (index * lineHeight);
+                ctx.fillText(line, x, lineY);
+            });
+        }
 
         // Store bounding box for hit testing (in pixels relative to origin 0,0)
         // We need to convert back to CSS pixels potentially or just store what we used here?
@@ -190,9 +214,10 @@ export class TextLabel {
         // Better to store the computed rect relative to (x, y) anchor and then apply that during hit test.
 
         // Rect relative to anchor (this._x, this._y)
+        // The background/border is drawn at (x - padding, y - padding), so offset must include that
         this._box = {
-            offsetX: offsetX / horizontalPixelRatio,
-            offsetY: offsetY / verticalPixelRatio,
+            offsetX: (offsetX - padding) / horizontalPixelRatio,
+            offsetY: (offsetY - padding) / verticalPixelRatio,
             width: (maxWidth + padding * 2) / horizontalPixelRatio,
             height: (totalHeight + padding * 2) / verticalPixelRatio,
             padding: padding / horizontalPixelRatio
@@ -206,11 +231,24 @@ export class TextLabel {
     hitTest(x: number, y: number): boolean {
         if (!this._box || !this._options.visible) return false;
 
-        const left = this._x + this._box.offsetX - this._box.padding;
-        const top = this._y + this._box.offsetY - this._box.padding;
+        // Offset already includes the negative padding, so just add offset directly
+        const left = this._x + this._box.offsetX;
+        const top = this._y + this._box.offsetY;
         const right = left + this._box.width;
         const bottom = top + this._box.height;
 
         return x >= left && x <= right && y >= top && y <= bottom;
+    }
+
+    getBoundingBox(): { x: number; y: number; width: number; height: number; padding: number; lineHeight: number } | null {
+        if (!this._box) return null;
+        return {
+            x: this._x + this._box.offsetX,
+            y: this._y + this._box.offsetY,
+            width: this._box.width,
+            height: this._box.height,
+            padding: this._box.padding,
+            lineHeight: (this._options.fontSize || 12) * 1.2
+        };
     }
 }

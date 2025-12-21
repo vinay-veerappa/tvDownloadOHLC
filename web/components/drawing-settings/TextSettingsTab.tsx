@@ -24,6 +24,8 @@ interface TextSettingsTabProps {
         borderColor?: string;
         borderVisible?: boolean;
         borderWidth?: number;
+        wordWrap?: boolean;
+        wordWrapWidth?: number;
         [key: string]: any;
     };
     onChange: (updates: any) => void;
@@ -86,7 +88,13 @@ export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsT
                 value={options.text || ''}
                 onChange={(e) => onChange({ text: e.target.value })}
                 placeholder="Add text"
-                className="min-h-[100px] resize-none"
+                className="min-h-[100px] max-h-[200px] resize-none"
+                style={{
+                    wordBreak: 'break-word',
+                    overflowWrap: 'break-word',
+                    whiteSpace: 'pre-wrap',
+                    overflowY: 'auto'
+                }}
             />
 
             {/* Alignment Options */}
@@ -174,6 +182,7 @@ export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsT
                         </SelectContent>
                     </Select>
                 </div>
+
             </div>
         </div>
     );

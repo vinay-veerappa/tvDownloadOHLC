@@ -95,7 +95,7 @@ export const TOOLBAR_CONFIGS: Record<string, ToolbarConfig> = {
     // Text Tool
     'text': {
         quickActions: [
-            { id: 'textColor', type: 'color', tooltip: 'Text color', colorProp: 'color', icon: 'Type' },
+            { id: 'textColor', type: 'color', tooltip: 'Text color', colorProp: 'textColor', icon: 'Type' },
             { id: 'fillColor', type: 'color', tooltip: 'Background', colorProp: 'backgroundColor', icon: 'PaintBucket' },
             { id: 'fontSize', type: 'select', tooltip: 'Font size', selectProp: 'fontSize', options: FONT_SIZE_OPTIONS, icon: 'Type' },
         ],

@@ -31,10 +31,12 @@ export function useDrawingManager(
     ticker: string,
     timeframe: string,
     onDrawingCreated: (d: Drawing) => void,
-    onDrawingDeleted?: (id: string) => void
+    onDrawingDeleted?: (id: string) => void,
+    theme?: any // ThemeParams
 ) {
     const drawingsRef = useRef<Map<string, any>>(new Map());
     const activeToolRef = useRef<any>(null);
+    const activeToolNameRef = useRef<DrawingTool | null>(null);
 
     // Load saved drawings from storage
     const loadDrawings = useCallback((data: any[]) => {
@@ -73,12 +75,8 @@ export function useDrawingManager(
                             break;
                         }
                         const opts = saved.options || {};
-                        // Restore from p1(Entry), p2(Target), options.stopPoint(Stop)
-                        // If stopPoint is missing, fallback to 1% below entry
                         const entryPrice = saved.p1.price as number;
                         const safeStop = opts.stopPoint || { time: saved.p1.time, price: entryPrice ? entryPrice * 0.99 : 0 };
-
-                        // Ensure Target also exists, or fallback
                         const safeTarget = saved.p2 || { time: saved.p1.time, price: entryPrice ? entryPrice * 1.02 : 0 };
 
                         drawing = new RiskReward(
@@ -99,7 +97,7 @@ export function useDrawingManager(
                         drawing = new HorizontalLine(chart, series, hPrice, saved.options as any);
                         break;
                     case 'text':
-                        drawing = new TextDrawing(chart, series, saved.p1.time as Time, saved.p1.price, saved.options as any);
+                        drawing = new TextDrawing(chart, series, saved.p1.time as Time, saved.p1.price, saved.options as any, theme);
                         break;
                     case 'measure':
                         drawing = new Measure(chart, series, { ...saved.p1, time: saved.p1.time as Time }, { ...saved.p2, time: saved.p2.time as Time }, saved.options as any);
@@ -107,12 +105,9 @@ export function useDrawingManager(
                 }
 
                 if (drawing) {
-                    // Manually assign the same ID
                     drawing._id = saved.id;
                     series.attachPrimitive(drawing);
                     drawingsRef.current.set(saved.id, drawing);
-
-                    // Track for notifying parent
                     restoredDrawings.push({
                         id: saved.id,
                         type: saved.type,
@@ -124,13 +119,11 @@ export function useDrawingManager(
             }
         });
 
-        // Notify parent about all restored drawings
         restoredDrawings.forEach(d => onDrawingCreated(d));
-
         if (savedDrawings.length > 0) {
             toast.success(`Loaded ${savedDrawings.length} drawing(s)`);
         }
-    }, [chart, series, ticker, timeframe, onDrawingCreated]);
+    }, [chart, series, ticker, timeframe, onDrawingCreated, theme]);
 
     const deleteDrawing = useCallback((id: string) => {
         if (!series) return;
@@ -138,19 +131,12 @@ export function useDrawingManager(
         if (drawing) {
             series.detachPrimitive(drawing);
             drawingsRef.current.delete(id);
-            // Remove from storage
             DrawingStorage.deleteDrawing(ticker, timeframe, id);
-
-            if (onDrawingDeleted) {
-                onDrawingDeleted(id);
-            }
+            if (onDrawingDeleted) onDrawingDeleted(id);
             toast.success('Drawing deleted');
         }
     }, [series, ticker, timeframe, onDrawingDeleted]);
 
-    const activeToolNameRef = useRef<DrawingTool | null>(null);
-
-    // Handle tool initiation
     const initiateTool = useCallback((
         selectedTool: DrawingTool,
         magnetMode: MagnetMode,
@@ -160,7 +146,6 @@ export function useDrawingManager(
     ) => {
         if (!chart || !series) return;
 
-        // If reusing the same tool, just update data if supported
         if (activeToolRef.current && activeToolNameRef.current === selectedTool) {
             if (typeof activeToolRef.current.updateData === 'function' && data) {
                 activeToolRef.current.updateData(data);
@@ -168,18 +153,15 @@ export function useDrawingManager(
             return;
         }
 
-        // Stop previous tool if any
         if (activeToolRef.current) {
-            if (typeof activeToolRef.current.stopDrawing === 'function') {
-                activeToolRef.current.stopDrawing()
-            }
+            if (typeof activeToolRef.current.stopDrawing === 'function') activeToolRef.current.stopDrawing();
             activeToolRef.current = null;
             activeToolNameRef.current = null;
         }
 
         if (selectedTool === 'cursor') return;
 
-        let ToolClass: any
+        let ToolClass: any;
         switch (selectedTool) {
             case 'trend-line': ToolClass = TrendLineTool; break;
             case 'ray': ToolClass = RayTool; break;
@@ -188,109 +170,56 @@ export function useDrawingManager(
             case 'vertical-line': ToolClass = VertLineTool; break;
             case 'horizontal-line': ToolClass = HorizontalLineTool; break;
             case 'text': ToolClass = TextTool; break;
-            case 'text': ToolClass = TextTool; break;
             case 'measure': ToolClass = MeasureTool; break;
             case 'risk-reward': ToolClass = RiskRewardDrawingTool; break;
         }
 
         if (ToolClass) {
-            console.log('Instantiating tool:', selectedTool);
-            // Prepare magnet options for tools that support it
             const magnetOptions = selectedTool !== 'vertical-line' && selectedTool !== 'horizontal-line' && selectedTool !== 'text' && selectedTool !== 'measure'
                 ? { magnetMode, ohlcData: data }
                 : undefined;
 
             const tool = new ToolClass(chart, series, (drawing: any) => {
-                console.log('Drawing created callback triggered', drawing);
-                // Store drawing instance
-                const id = typeof drawing.id === 'function' ? drawing.id() : drawing.id;
-
+                const id = typeof drawing.id === 'function' ? drawing.id() : drawing._id;
                 if (id) {
-                    console.log('Registering drawing with ID:', id, 'Type:', drawing._type);
-                    drawingsRef.current.set(id, drawing)
-
-                    // Serialize and save to storage
+                    drawingsRef.current.set(id, drawing);
                     let serialized: SerializedDrawing;
+                    const type = (drawing._type || selectedTool) as any;
+
                     if (selectedTool === 'ray') {
-                        serialized = {
-                            id,
-                            type: (drawing._type || selectedTool) as any,
-                            p1: drawing._p1,
-                            p2: drawing._p1, // Reuse P1 for structure compatibility
-                            options: drawing._options,
-                            createdAt: Date.now()
-                        };
+                        serialized = { id, type, p1: drawing._p1, p2: drawing._p1, options: drawing._options, createdAt: Date.now() };
                     } else if (selectedTool === 'vertical-line') {
-                        serialized = {
-                            id,
-                            type: (drawing._type || selectedTool) as any,
-                            p1: { time: drawing._time, price: 0 },
-                            p2: { time: drawing._time, price: 0 },
-                            options: drawing._options,
-                            createdAt: Date.now()
-                        };
+                        serialized = { id, type, p1: { time: drawing._time, price: 0 }, p2: { time: drawing._time, price: 0 }, options: drawing._options, createdAt: Date.now() };
                     } else if (selectedTool === 'horizontal-line') {
-                        serialized = {
-                            id,
-                            type: (drawing._type || selectedTool) as any,
-                            p1: { time: 0, price: drawing._price },
-                            p2: { time: 0, price: drawing._price },
-                            options: drawing._options,
-                            createdAt: Date.now()
-                        };
+                        serialized = { id, type, p1: { time: 0, price: drawing._price }, p2: { time: 0, price: drawing._price }, options: drawing._options, createdAt: Date.now() };
                     } else if (selectedTool === 'text') {
-                        serialized = {
-                            id,
-                            type: (drawing._type || selectedTool) as any,
-                            p1: { time: drawing._time, price: drawing._price },
-                            p2: { time: drawing._time, price: drawing._price },
-                            options: drawing._options,
-                            createdAt: Date.now()
-                        };
+                        serialized = { id, type, p1: { time: drawing._time, price: drawing._price }, p2: { time: drawing._time, price: drawing._price }, options: drawing._options, createdAt: Date.now() };
                     } else {
-                        serialized = {
-                            id,
-                            type: (drawing._type || selectedTool) as any,
-                            p1: drawing._p1,
-                            p2: drawing._p2,
-                            options: drawing._options,
-                            createdAt: Date.now()
-                        };
+                        serialized = { id, type, p1: drawing._p1, p2: drawing._p2, options: drawing._options, createdAt: Date.now() };
                     }
+
                     DrawingStorage.addDrawing(ticker, timeframe, serialized);
-                    toast.success(`Drawing saved`);
+                    onDrawingCreated({ id, type, createdAt: Date.now() });
 
-                    // Notify parent
-                    onDrawingCreated({
-                        id: id,
-                        type: (drawing._type || selectedTool) as any,
-                        createdAt: Date.now()
-                    });
-
-                    // Call the instance-specific callback (passed from initiateTool)
-                    if (onTextCreated) {
+                    if (selectedTool === 'text' && onTextCreated) {
                         onTextCreated(id, drawing);
                     }
                 }
-
                 if (onComplete) onComplete();
-
             }, magnetOptions);
 
             tool.startDrawing();
+            if (tool.setTheme && theme) tool.setTheme(theme);
             activeToolRef.current = tool;
             activeToolNameRef.current = selectedTool;
         }
-
-    }, [chart, series, ticker, timeframe, onDrawingCreated]);
+    }, [chart, series, ticker, timeframe, onDrawingCreated, theme]);
 
     const hitTest = useCallback((x: number, y: number) => {
         for (const [id, drawing] of drawingsRef.current.entries()) {
             if (drawing.hitTest) {
-                const hit = drawing.hitTest(x, y)
-                if (hit) {
-                    return { drawing, hit };
-                }
+                const hit = drawing.hitTest(x, y);
+                if (hit) return { drawing, hit };
             }
         }
         return null;
@@ -299,43 +228,20 @@ export function useDrawingManager(
     const serializeDrawing = useCallback((drawing: any): SerializedDrawing | null => {
         const id = typeof drawing.id === 'function' ? drawing.id() : drawing._id;
         if (!id) return null;
-
         const type = drawing._type;
         const opts = drawing.options ? drawing.options() : {};
-
-        // Base Props
-        const base = { id, type: type as any, options: opts, createdAt: Date.now() }; // ideally preserve createdAt?
-
+        const base = { id, type: type as any, options: opts, createdAt: Date.now() };
         const validTypes = ['trend-line', 'ray', 'fibonacci', 'rectangle', 'vertical-line', 'horizontal-line', 'text', 'risk-reward', 'measure'];
 
-        // Type specific serialization
         if (validTypes.includes(type as string) && type !== 'risk-reward') {
-            return {
-                ...base,
-                p1: drawing._p1,
-                p2: drawing._p2
-            };
+            return { ...base, p1: drawing._p1, p2: drawing._p2 };
         } else if (type === 'risk-reward') {
-            return {
-                ...base,
-                p1: drawing._entry,
-                p2: drawing._target,
-                options: {
-                    ...opts,
-                    stopPoint: drawing._stop // Persist Stop Point in options
-                }
-            };
-        } else if (type === 'anchored-text') {
-            return null; // Don't serialize watermark
+            return { ...base, p1: drawing._entry, p2: drawing._target, options: { ...opts, stopPoint: drawing._stop } };
         }
-
-        // Fallback or unknown
         return null;
     }, []);
 
-    const getDrawing = useCallback((id: string) => {
-        return drawingsRef.current.get(id);
-    }, []);
+    const getDrawing = useCallback((id: string) => drawingsRef.current.get(id), []);
 
     return useMemo(() => ({
         loadDrawings,
@@ -344,6 +250,6 @@ export function useDrawingManager(
         hitTest,
         getDrawing,
         serializeDrawing,
-        activeToolRef // exposed if needed for cleanup
+        activeToolRef
     }), [loadDrawings, deleteDrawing, initiateTool, hitTest, getDrawing, serializeDrawing]);
 }

@@ -1,6 +1,8 @@
 import { IChartApi, ISeriesApi, ISeriesPrimitive, Time } from "lightweight-charts";
 import { TextLabel, TextLabelOptions } from "./text-label";
 import { getLineDash } from "../chart-utils";
+import { ThemeParams } from "../../../lib/themes";
+import { InlineEditable, EditorLayout } from "./base/inline-editable";
 
 export interface TextDrawingOptions extends TextLabelOptions {
     borderVisible?: boolean;
@@ -16,8 +18,9 @@ export interface TextDrawingOptions extends TextLabelOptions {
     backgroundColor?: string;
     backgroundVisible?: boolean;
     backgroundOpacity?: number;
-    // Border overrides (TextDrawingOptions already has generic border/lineStyle, but let's be explicit for the tool)
     dashed?: boolean; // mapped to lineStyle
+    wordWrap?: boolean;
+    wordWrapWidth?: number;
 }
 
 class TextDrawingPaneRenderer {
@@ -43,6 +46,34 @@ class TextDrawingPaneRenderer {
 
             this._textLabel.update(this._x, this._y);
             this._textLabel.draw(ctx, hPR, vPR);
+
+            // Draw handles if selected
+            if (this._selected) {
+                const box = this._textLabel.getBoundingBox();
+                if (box) {
+                    const HANDLE_SIZE = 6 * hPR;
+                    ctx.fillStyle = '#2962FF';
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 2 * hPR;
+
+                    const left = box.x * hPR;
+                    const right = (box.x + box.width) * hPR;
+                    const centerY = (box.y + box.height / 2) * vPR;
+
+                    // Horizontal handles for word wrap
+                    const handles = [
+                        { x: left, y: centerY },
+                        { x: right, y: centerY }
+                    ];
+
+                    for (const h of handles) {
+                        ctx.beginPath();
+                        ctx.arc(h.x, h.y, HANDLE_SIZE, 0, 2 * Math.PI);
+                        ctx.fill();
+                        ctx.stroke();
+                    }
+                }
+            }
         });
     }
 }
@@ -81,14 +112,23 @@ export class TextDrawing implements ISeriesPrimitive {
     public _type = 'text';
     _id: string;
     _selected: boolean = false;
+    _theme?: ThemeParams;
 
-    constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, time: Time, price: number, options: TextDrawingOptions) {
+    constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, time: Time, price: number, options: TextDrawingOptions, theme?: ThemeParams) {
         this._chart = chart;
         this._series = series;
         this._time = time;
         this._price = price;
-        this._options = options;
-        this._id = Math.random().toString(36).substring(7);
+        this._theme = theme;
+
+        // Ensure options have a reasonable default color if not provided
+        const defaultColor = theme?.tools.primary || '#FFFFFF';
+        this._options = {
+            textColor: defaultColor,
+            alignmentVertical: 'top',
+            alignmentHorizontal: 'left',
+            ...options
+        };
 
         this._id = Math.random().toString(36).substring(7);
 
@@ -107,18 +147,25 @@ export class TextDrawing implements ISeriesPrimitive {
     options() { return this._options; }
 
     applyOptions(options: Partial<TextDrawingOptions>) {
-        console.log('[TextDrawing.applyOptions] Received:', options);
+        // Handle both standardized `textColor` and toolbar's `color` keys
+        if (options.color && !options.textColor) {
+            options.textColor = options.color;
+        }
+
+        // Auto-enable background if a color is set from toolbar
+        if (options.backgroundColor && options.backgroundVisible === undefined) {
+            options.backgroundVisible = true;
+        }
+
         this._options = { ...this._options, ...options };
         this._updateTextLabel();
-        console.log('[TextDrawing.applyOptions] Updated options:', this._options);
         this.updateAllViews();
     }
 
     private _updateTextLabel() {
         if (!this._textLabel) return;
 
-        this._textLabel.update(0, 0, {
-            ...this._options,
+        this._textLabel.update(null, null, {
             text: this._options.text,
             // Map standardized `textColor` to TextLabel's `color`
             color: this._options.textColor || this._options.color || '#FFFFFF',
@@ -128,6 +175,7 @@ export class TextDrawing implements ISeriesPrimitive {
             fontFamily: this._options.fontFamily,
             bold: this._options.bold,
             italic: this._options.italic,
+            visible: true,
 
             // Border & Line
             borderStyle: this._options.lineStyle,
@@ -144,7 +192,10 @@ export class TextDrawing implements ISeriesPrimitive {
             alignment: {
                 vertical: (this._options.alignmentVertical === 'center' ? 'middle' : (this._options.alignmentVertical || 'middle')) as any,
                 horizontal: (this._options.alignmentHorizontal || 'center') as any
-            }
+            },
+            wordWrap: this._options.wordWrap,
+            wordWrapWidth: this._options.wordWrapWidth,
+            editing: this._options.editing
         });
     }
 
@@ -179,6 +230,32 @@ export class TextDrawing implements ISeriesPrimitive {
     }
 
     hitTest(x: number, y: number): any {
+        if (!this._textLabel) return null;
+
+        const box = this._textLabel.getBoundingBox();
+        if (!box) return null;
+
+        if (this._selected) {
+            const HANDLE_RADIUS = 10;
+            const centerY = box.y + box.height / 2;
+            const handles = [
+                { x: box.x, y: centerY, type: 'l', cursor: 'ew-resize' },
+                { x: box.x + box.width, y: centerY, type: 'r', cursor: 'ew-resize' }
+            ];
+
+            for (const h of handles) {
+                const dist = Math.sqrt(Math.pow(x - h.x, 2) + Math.pow(y - h.y, 2));
+                if (dist <= HANDLE_RADIUS) {
+                    return {
+                        cursorStyle: h.cursor,
+                        externalId: this._id,
+                        zOrder: 'top',
+                        hitType: h.type
+                    };
+                }
+            }
+        }
+
         if (this._textLabel.hitTest(x, y)) {
             return {
                 hit: true,
@@ -191,6 +268,30 @@ export class TextDrawing implements ISeriesPrimitive {
         return null;
     }
 
+    // New method for interactive resizing
+    movePoint(hitType: string, newPoint: { time: Time, price: number }) {
+        if (!this._textLabel) return;
+        const timeScale = this._chart.timeScale();
+        const newX = timeScale.timeToCoordinate(newPoint.time);
+        if (newX === null) return;
+
+        const box = this._textLabel.getBoundingBox();
+        if (!box) return;
+
+        let newWidth = this._options.wordWrapWidth || box.width;
+
+        if (hitType === 'r') {
+            newWidth = Math.max(50, newX - box.x);
+        } else if (hitType === 'l') {
+            newWidth = Math.max(50, (box.x + box.width) - newX);
+        }
+
+        this.applyOptions({
+            wordWrap: true,
+            wordWrapWidth: newWidth
+        });
+    }
+
     paneViews() { return this._paneViews; }
 
     // Get current screen coordinates for inline editing
@@ -201,6 +302,49 @@ export class TextDrawing implements ISeriesPrimitive {
         if (x === null || y === null) return null;
         return { x, y };
     }
+
+    getEditorLayout(): EditorLayout | null {
+        // Use the screen position as the stable anchor point
+        const screenPos = this.getScreenPosition();
+        if (!screenPos) return null;
+
+        const padding = this._options.padding || 4;
+        const fontSize = this._options.fontSize || 12;
+        const lineHeight = fontSize * 1.2;
+        const width = this._options.wordWrapWidth || 200;
+
+        // Editor anchors at the drawing position (top-left of text area)
+        // minus padding so text aligns with where it would be rendered
+        return {
+            x: screenPos.x - padding,
+            y: screenPos.y - padding,
+            width: width,
+            height: lineHeight + padding * 2,
+            padding: padding,
+            lineHeight: lineHeight
+        };
+    }
+
+
+    // InlineEditable interface methods
+    setEditing(editing: boolean): void {
+        this.applyOptions({ editing });
+        this.updateAllViews();
+    }
+
+    isEditing(): boolean {
+        return this._options.editing || false;
+    }
+
+    getText(): string {
+        return this._options.text || '';
+    }
+
+    setText(text: string): void {
+        // Only update the internal options, don't trigger any canvas updates
+        this._options.text = text;
+        // Canvas will use this text when editing ends and setEditing(false) is called
+    }
 }
 
 export class TextTool {
@@ -209,12 +353,18 @@ export class TextTool {
     private _drawing: boolean = false;
     private _clickHandler: (param: any) => void;
     private _onDrawingCreated?: (drawing: TextDrawing) => void;
+    private _theme?: ThemeParams;
 
-    constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, onDrawingCreated?: (drawing: TextDrawing) => void) {
+    constructor(chart: IChartApi, series: ISeriesApi<"Candlestick">, onDrawingCreated?: (drawing: TextDrawing) => void, theme?: ThemeParams) {
         this._chart = chart;
         this._series = series;
         this._onDrawingCreated = onDrawingCreated;
+        this._theme = theme;
         this._clickHandler = this._onClick.bind(this);
+    }
+
+    setTheme(theme: ThemeParams) {
+        this._theme = theme;
     }
 
     startDrawing() {
@@ -234,15 +384,18 @@ export class TextTool {
         const price = this._series.coordinateToPrice(param.point.y);
         if (price === null) return;
 
-        // Create with default text and let the UI open the modal
-        const text = "Text";
+        // Create with empty text so placeholder shows, user can type immediately
+        const text = "";
+        const defaultColor = this._theme?.tools.primary || '#FFFFFF';
 
         const td = new TextDrawing(this._chart, this._series, param.time, price as number, {
             text: text,
-            textColor: '#FFFFFF', // Use standardized key
+            textColor: defaultColor, // Use theme-aware default
             fontSize: 14,
-            visible: true
-        });
+            visible: true,
+            wordWrap: true,
+            wordWrapWidth: 200
+        }, this._theme);
 
         this._series.attachPrimitive(td);
 

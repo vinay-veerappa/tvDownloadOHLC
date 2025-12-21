@@ -35,6 +35,7 @@ import { RaySettingsDialog, RaySettingsOptions, DEFAULT_RAY_OPTIONS } from "@/co
 import { FloatingToolbar } from "@/components/drawing/FloatingToolbar"
 import { InlineTextEditor } from "@/components/drawing/InlineTextEditor"
 import { TextSettings } from "@/components/drawing-settings/TextSettings"
+import { isInlineEditable } from "@/lib/charts/plugins/base/inline-editable"
 
 import type { SessionType } from './top-toolbar'
 
@@ -320,7 +321,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     // 5. Drawing Manager
     const drawingManager = useDrawingManager(
         chart, series, ticker, timeframe,
-        onDrawingCreated, onDrawingDeleted
+        onDrawingCreated, onDrawingDeleted,
+        theme
     );
 
     // 6. Selection State Management
@@ -341,6 +343,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const [inlineTextEditing, setInlineTextEditing] = useState<{
         drawingId: string;
         position: { x: number; y: number };
+        layout?: any;
         text: string;
         options: any;
     } | null>(null)
@@ -447,8 +450,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         // Sync options for toolbar (handleDrawingClicked is fired by Interaction hook)
         if (drawing) {
             const opts = drawing.options ? drawing.options() : {};
-            console.log('[ChartContainer.handleDrawingClicked] Clicked drawing type:', drawing._type);
-            console.log('[ChartContainer.handleDrawingClicked] Extracted options:', opts);
             setSelectedDrawingOptions(opts);
             setSelectedDrawingType(drawing._type || 'drawing');
             setToolbarPosition(drawing.getScreenPosition ? drawing.getScreenPosition() : null); // Or mouse pos?
@@ -510,6 +511,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                         setInlineTextEditing({
                             drawingId: id,
                             position: pos,
+                            layout: drawing.getEditorLayout ? drawing.getEditorLayout() : null,
                             text: '',
                             options: drawing.options ? drawing.options() : {}
                         });
@@ -566,20 +568,21 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 setSelectedDrawingOptions(hitDrawing.options ? hitDrawing.options() : {});
                 setSelectedDrawingType(hitDrawing._type || 'drawing');
 
-                // Inline Text Edit: Activate on single click for text drawings
-                if (hitDrawing._type === 'text') {
-                    // Slight delay to allow selection to update
-                    setTimeout(() => {
-                        const screenPos = hitDrawing.getScreenPosition ? hitDrawing.getScreenPosition(param.point.x, param.point.y) : { x: param.point.x, y: param.point.y };
-                        const opts = hitDrawing.options ? hitDrawing.options() : {};
+                // Inline Text Edit: Activate on single click for inline-editable drawings
+                if (isInlineEditable(hitDrawing)) {
+                    // Set editing flag to hide canvas text
+                    hitDrawing.setEditing(true);
 
-                        setInlineTextEditing({
-                            drawingId: id,
-                            position: screenPos,
-                            text: opts.text || '',
-                            options: opts
-                        });
-                    }, 50);
+                    const layout = hitDrawing.getEditorLayout();
+                    const text = hitDrawing.getText();
+
+                    setInlineTextEditing({
+                        drawingId: id,
+                        position: layout ? { x: layout.x, y: layout.y } : { x: param.point.x, y: param.point.y },
+                        layout: layout,
+                        text: text,
+                        options: (hitDrawing as any).options ? (hitDrawing as any).options() : {}
+                    });
                 }
             } else {
                 deselectDrawing();
@@ -1544,25 +1547,61 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             {inlineTextEditing && (
                 <InlineTextEditor
                     position={inlineTextEditing.position}
+                    layout={inlineTextEditing.layout}
                     initialText={inlineTextEditing.text}
                     placeholder="Add text"
                     fontSize={inlineTextEditing.options?.fontSize || 14}
                     fontFamily={inlineTextEditing.options?.fontFamily || 'Arial'}
                     color={inlineTextEditing.options?.textColor || inlineTextEditing.options?.color || '#FFFFFF'}
                     backgroundColor={inlineTextEditing.options?.backgroundVisible ? inlineTextEditing.options?.backgroundColor : undefined}
-                    onSave={(newText) => {
+                    onSave={(newText, width) => {
                         const drawing = drawingManager.getDrawing(inlineTextEditing.drawingId);
-                        if (drawing && typeof drawing.applyOptions === 'function') {
-                            drawing.applyOptions({ text: newText });
+                        if (isInlineEditable(drawing) && typeof (drawing as any).applyOptions === 'function') {
+                            // Combine all updates into one applyOptions call for proper sync
+                            const updatedOptions = {
+                                text: newText,
+                                wordWrapWidth: width || 200,
+                                wordWrap: true,
+                                editing: false
+                            };
+                            (drawing as any).applyOptions(updatedOptions);
+
+                            // Persist the updated options to storage
+                            DrawingStorage.updateDrawingOptions(
+                                ticker,
+                                timeframe,
+                                inlineTextEditing.drawingId,
+                                updatedOptions
+                            );
 
                             // Sync state if this is the currently selected drawing
                             if (selectedDrawingId === inlineTextEditing.drawingId) {
-                                setSelectedDrawingOptions((prev: Record<string, any> | null) => ({ ...prev, text: newText }));
+                                setSelectedDrawingOptions((prev: Record<string, any> | null) => ({
+                                    ...prev,
+                                    text: newText,
+                                    editing: false,
+                                    wordWrapWidth: width || 200
+                                }));
                             }
                         }
                         setInlineTextEditing(null);
                     }}
-                    onCancel={() => setInlineTextEditing(null)}
+
+                    onChange={(newText) => {
+                        const drawing = drawingManager.getDrawing(inlineTextEditing.drawingId);
+                        if (isInlineEditable(drawing)) {
+                            drawing.setText(newText);
+                            // Just update the text state, no need to sync layout since anchor is stable
+                            setInlineTextEditing(prev => prev ? { ...prev, text: newText } : null);
+                        }
+                    }}
+                    onCancel={() => {
+                        const drawing = drawingManager.getDrawing(inlineTextEditing.drawingId);
+                        if (isInlineEditable(drawing)) {
+                            drawing.setEditing(false);
+                        }
+                        setInlineTextEditing(null);
+                    }}
                 />
             )}
 
@@ -1581,7 +1620,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     backgroundVisible: selectedDrawingOptions?.backgroundVisible,
                     borderColor: selectedDrawingOptions?.borderColor,
                     borderVisible: selectedDrawingOptions?.borderVisible,
-                    textWrap: selectedDrawingOptions?.textWrap,
+                    wordWrap: selectedDrawingOptions?.wordWrap,
                     alignmentVertical: selectedDrawingOptions?.alignmentVertical,
                     alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                 }}
