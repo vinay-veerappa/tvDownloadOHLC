@@ -1,5 +1,5 @@
 import * as React from "react"
-import { MousePointer2, TrendingUp, Square, Columns, Minus, Type, Ruler, ArrowRight, DollarSign, BookMarked, MoveVertical, CalendarRange, BadgeDollarSign, Tally5 } from "lucide-react"
+import { MousePointer2, TrendingUp, Square, Minus, Type, Ruler, ArrowRight, DollarSign, BookMarked, MoveVertical, CalendarRange, BadgeDollarSign, Tally5, SeparatorVertical } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
@@ -146,7 +146,7 @@ export function LeftToolbar({ selectedTool, onToolSelect, showTrading, onToggleT
                 onClick={() => onToolSelect("vertical-line")}
                 title="Vertical Line"
             >
-                <Columns className="h-4 w-4" />
+                <SeparatorVertical className="h-4 w-4" />
             </Button>
 
             <div className="flex-1" />
