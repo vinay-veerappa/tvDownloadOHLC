@@ -54,6 +54,8 @@ export function ColorPickerButton({
                         {PRESET_COLORS.map((presetColor) => (
                             <button
                                 key={presetColor}
+                                title={`Select color ${presetColor}`}
+                                aria-label={`Select color ${presetColor}`}
                                 className={cn(
                                     "w-6 h-6 rounded border border-border hover:scale-110 transition-transform",
                                     color === presetColor && "ring-2 ring-primary ring-offset-1"
@@ -75,6 +77,8 @@ export function ColorPickerButton({
                             value={color}
                             onChange={(e) => onChange(e.target.value)}
                             className="w-8 h-8 cursor-pointer rounded border-0 p-0"
+                            title="Custom color picker"
+                            aria-label="Custom color picker"
                         />
                         <input
                             type="text"
