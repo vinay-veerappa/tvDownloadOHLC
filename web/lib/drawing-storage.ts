@@ -5,7 +5,7 @@
 
 export interface SerializedDrawing {
     id: string;
-    type: 'trend-line' | 'ray' | 'rectangle' | 'fibonacci' | 'vertical-line' | 'horizontal-line' | 'text' | 'measure' | 'risk-reward';
+    type: 'trend-line' | 'ray' | 'rectangle' | 'fibonacci' | 'vertical-line' | 'horizontal-line' | 'text' | 'measure' | 'risk-reward' | 'price-label' | 'price-range' | 'date-range';
     p1: { time: number; price: number };
     p2: { time: number; price: number };
     options: Record<string, any>;

@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 
 export interface Drawing {
     id: string
-    type: 'trend-line' | 'ray' | 'fibonacci' | 'rectangle' | 'vertical-line' | 'horizontal-line' | 'text' | 'measure' | 'risk-reward'
+    type: 'trend-line' | 'ray' | 'fibonacci' | 'rectangle' | 'vertical-line' | 'horizontal-line' | 'text' | 'measure' | 'risk-reward' | 'price-label' | 'price-range' | 'date-range'
     createdAt: number
 }
 
@@ -203,6 +203,9 @@ function getDrawingLabel(type: string): string {
         case 'text': return "Text"
         case 'measure': return "Measure"
         case 'risk-reward': return "Long Position"
+        case 'price-label': return "Price Label"
+        case 'price-range': return "Price Range"
+        case 'date-range': return "Date Range"
         default: return type
     }
 }

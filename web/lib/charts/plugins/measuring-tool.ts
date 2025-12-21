@@ -12,6 +12,8 @@ export interface MeasureOptions {
     lineWidth: number;
     textColor: string;
     fillColor: string;
+    fillOpacity: number;
+    showFill: boolean;
     fontSize: number;
 }
 
@@ -19,7 +21,9 @@ const defaultOptions: MeasureOptions = {
     lineColor: '#2962FF',
     lineWidth: 1,
     textColor: '#FFFFFF',
-    fillColor: 'rgba(41, 98, 255, 0.9)',
+    fillColor: '#2962FF',
+    fillOpacity: 0.08,
+    showFill: true,
     fontSize: 12,
 };
 
@@ -44,6 +48,20 @@ class MeasurePaneRenderer {
             const p2 = this._p2;
 
             ctx.save();
+
+            // Calculate bounding box
+            const minX = Math.min(p1.x, p2.x);
+            const maxX = Math.max(p1.x, p2.x);
+            const minY = Math.min(p1.y, p2.y);
+            const maxY = Math.max(p1.y, p2.y);
+
+            // --- Shaded fill (bounded by the two points) ---
+            if (this._options.showFill) {
+                ctx.globalAlpha = this._options.fillOpacity;
+                ctx.fillStyle = this._options.fillColor;
+                ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+                ctx.globalAlpha = 1;
+            }
 
             // --- TradingView Style: Dashed guide lines ---
             ctx.setLineDash([4, 4]);
