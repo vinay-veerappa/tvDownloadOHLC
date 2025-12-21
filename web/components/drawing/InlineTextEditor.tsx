@@ -84,23 +84,17 @@ export function InlineTextEditor({
             style={{
                 left: position.x,
                 top: position.y,
-                transform: "translate(0, 0)", // Align top-left to click position matching standard text behavior?
-                // Actually TextTool centers or top-lefts?
-                // TextDrawing uses P1 as anchor. 
-                // Let's stick to current positioning but maybe adjust if user complains of jumpiness.
-                // Current was translate(-50%, -50%). Let's keep it for now but maybe alignment matters?
-                // If text is left-aligned, we should anchor top-left.
-                // Let's allow the user to resize freely.
+                transform: "translate(0, 0)",
             }}
             onMouseDown={handleMouseDown}
         >
             <div
                 className={cn(
-                    "relative border border-blue-500 rounded bg-background/80",
-                    "shadow-md"
+                    "relative border border-blue-500 rounded bg-card shadow-md flex flex-col",
+                    "min-w-[150px]"
                 )}
                 style={{
-                    backgroundColor: backgroundColor || "rgba(30, 34, 45, 0.8)", // Default dark background if none
+                    backgroundColor: backgroundColor, // Use provided bg if explicitly set
                 }}
             >
                 <textarea
@@ -111,22 +105,23 @@ export function InlineTextEditor({
                     onBlur={handleBlur}
                     placeholder={placeholder}
                     className={cn(
-                        "w-full h-full px-2 py-1 bg-transparent border-0 outline-none",
+                        "w-full h-full px-3 py-2 bg-transparent border-0 outline-none",
                         "placeholder:text-muted-foreground/50",
-                        "resize min-w-[100px] min-h-[40px]" // Enable native resize
+                        "resize", // Allow manual resize
+                        "overflow-hidden" // Hide scrollbars
                     )}
                     style={{
                         fontSize: `${fontSize}px`,
                         fontFamily,
-                        color,
-                        minHeight: `${fontSize * 1.5}px`,
-                        whiteSpace: "pre" // Ensure newlines are respected visually
+                        color: color || 'inherit',
+                        minHeight: `${fontSize * 2 + 10}px`,
+                        whiteSpace: "pre"
                     }}
                 />
 
-                {/* Helper text */}
-                <div className="absolute -bottom-5 right-0 text-[10px] text-muted-foreground whitespace-nowrap pointer-events-none">
-                    Ctrl+Enter to save
+                {/* Save Hint */}
+                <div className="absolute right-2 bottom-1 text-[10px] text-muted-foreground/40 pointer-events-none select-none">
+                    Ctrl+Enter
                 </div>
             </div>
         </div>

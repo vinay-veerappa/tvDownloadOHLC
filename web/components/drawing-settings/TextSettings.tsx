@@ -56,10 +56,8 @@ export function TextSettings({
     const [options, setOptions] = useState(initialOptions);
 
     useEffect(() => {
-        if (open) {
-            setOptions(initialOptions);
-        }
-    }, [open, initialOptions]);
+        setOptions(initialOptions);
+    }, [initialOptions]);
 
     const handleChange = useCallback((updates: Partial<typeof options>) => {
         setOptions(prev => ({ ...prev, ...updates }));
