@@ -110,7 +110,7 @@ export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsT
 
                     {/* Horizontal Alignment */}
                     <Select
-                        value={options.alignmentHorizontal || 'left'}
+                        value={options.alignmentHorizontal || 'center'}
                         onValueChange={(v) => onChange({ alignmentHorizontal: v })}
                     >
                         <SelectTrigger className="w-full">

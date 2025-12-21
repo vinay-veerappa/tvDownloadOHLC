@@ -42,6 +42,8 @@ export function InlineTextEditor({
 
     // Auto-focus and select text on mount
     useEffect(() => {
+        console.log('[InlineTextEditor] Mounted with styles: bg-popover, text-popover-foreground');
+        console.log('[InlineTextEditor] Props:', { position, color, backgroundColor, fontSize });
         if (textareaRef.current) {
             textareaRef.current.focus();
             textareaRef.current.select();
