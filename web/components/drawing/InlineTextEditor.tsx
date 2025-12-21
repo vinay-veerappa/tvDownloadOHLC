@@ -90,11 +90,13 @@ export function InlineTextEditor({
         >
             <div
                 className={cn(
-                    "relative border border-blue-500 rounded bg-card shadow-md flex flex-col",
-                    "min-w-[150px]"
+                    "relative border-2 border-primary/50 rounded-md shadow-lg flex flex-col",
+                    "min-w-[150px] overflow-hidden",
+                    "bg-popover text-popover-foreground" // Use popover colors for high contrast/opacity
                 )}
                 style={{
-                    backgroundColor: backgroundColor, // Use provided bg if explicitly set
+                    // Override background only if explicitly set, otherwise popover default (usually opaque)
+                    backgroundColor: backgroundColor,
                 }}
             >
                 <textarea
@@ -107,20 +109,20 @@ export function InlineTextEditor({
                     className={cn(
                         "w-full h-full px-3 py-2 bg-transparent border-0 outline-none",
                         "placeholder:text-muted-foreground/50",
-                        "resize", // Allow manual resize
-                        "overflow-hidden" // Hide scrollbars
+                        "resize",
+                        "overflow-hidden"
                     )}
                     style={{
                         fontSize: `${fontSize}px`,
                         fontFamily,
-                        color: color || 'inherit',
+                        color: color || 'inherit', // Text color from drawing or theme
                         minHeight: `${fontSize * 2 + 10}px`,
                         whiteSpace: "pre"
                     }}
                 />
 
                 {/* Save Hint */}
-                <div className="absolute right-2 bottom-1 text-[10px] text-muted-foreground/40 pointer-events-none select-none">
+                <div className="absolute right-2 bottom-1 text-[10px] text-muted-foreground/60 pointer-events-none select-none bg-popover/80 px-1 rounded">
                     Ctrl+Enter
                 </div>
             </div>
