@@ -70,6 +70,15 @@ export class TextLabel {
         // When editing, skip ALL canvas rendering - DOM editor handles everything
         if (this._options.editing) return;
 
+        // Hide text in very small containers (< 30px in either dimension)
+        const cWidth = this._options.containerWidth || 0;
+        const cHeight = this._options.containerHeight || 0;
+        const minSize = 30;
+        if (cWidth > 0 && cHeight > 0 &&
+            (cWidth < minSize || cHeight < minSize)) {
+            return; // Container too small, skip rendering
+        }
+
 
 
         const fontSize = (this._options.fontSize || 12) * verticalPixelRatio;

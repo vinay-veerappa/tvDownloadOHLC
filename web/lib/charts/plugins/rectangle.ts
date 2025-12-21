@@ -295,7 +295,9 @@ export class Rectangle implements ISeriesPrimitive, InlineEditable {
                     horizontal: (this._options.alignmentHorizontal || 'center') as any
                 },
                 visible: this._options.showLabel !== false,
-                editing: this._options.editing ?? false // Critical: pass editing flag to show/hide text
+                editing: this._options.editing ?? false, // Critical: pass editing flag to show/hide text
+                wordWrap: true,  // Enable word wrap for rectangles
+                // wordWrapWidth is set dynamically in _updatePoints using containerWidth
             };
             if (!this._textLabel) {
                 this._textLabel = new TextLabel(0, 0, textOptions);
@@ -348,9 +350,14 @@ export class Rectangle implements ISeriesPrimitive, InlineEditable {
             const rectWidth = Math.abs(this._p2Point.x - this._p1Point.x);
             const rectHeight = Math.abs(this._p2Point.y - this._p1Point.y);
 
+            // For word wrap, use width minus padding (8px on each side)
+            const padding = 8;
+            const wordWrapWidth = Math.max(rectWidth - padding * 2, 20); // Min 20px
+
             this._textLabel.update(centerX, centerY, {
                 containerWidth: rectWidth,
-                containerHeight: rectHeight
+                containerHeight: rectHeight,
+                wordWrapWidth: wordWrapWidth,
             });
         }
     }
