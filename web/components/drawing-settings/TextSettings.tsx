@@ -37,7 +37,10 @@ interface TextSettingsProps {
         backgroundVisible?: boolean;
         borderColor?: string;
         borderVisible?: boolean;
-        textWrap?: boolean;
+        wordWrap?: boolean;
+        wordWrapWidth?: number;
+        alignmentVertical?: 'top' | 'center' | 'bottom';
+        alignmentHorizontal?: 'left' | 'center' | 'right';
         visibleTimeframes?: string[];
     };
     onSave: (options: any) => void;
@@ -55,9 +58,12 @@ export function TextSettings({
 }: TextSettingsProps) {
     const [options, setOptions] = useState(initialOptions);
 
+    // Only reset options when the dialog opens, not on every render
     useEffect(() => {
-        setOptions(initialOptions);
-    }, [initialOptions]);
+        if (open) {
+            setOptions(initialOptions);
+        }
+    }, [open]);
 
     const handleChange = useCallback((updates: Partial<typeof options>) => {
         setOptions(prev => ({ ...prev, ...updates }));
