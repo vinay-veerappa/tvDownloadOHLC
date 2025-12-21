@@ -294,13 +294,15 @@ export class Rectangle implements ISeriesPrimitive, InlineEditable {
                     vertical: (this._options.alignmentVertical === 'center' || !this._options.alignmentVertical) ? 'middle' : (this._options.alignmentVertical as any),
                     horizontal: (this._options.alignmentHorizontal || 'center') as any
                 },
-                visible: this._options.showLabel !== false
+                visible: this._options.showLabel !== false,
+                editing: this._options.editing ?? false // Critical: pass editing flag to show/hide text
             };
             if (!this._textLabel) {
                 this._textLabel = new TextLabel(0, 0, textOptions);
             } else {
                 this._textLabel.update(0, 0, textOptions);
             }
+
         } else {
             this._textLabel = null;
         }
