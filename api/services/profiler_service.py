@@ -116,28 +116,10 @@ class ProfilerService:
         # ... (Previous implementation below, kept as fallback)
         
         # Load Data (with Cache)
-        df = ProfilerService._cache.get(ticker)
+        df = ProfilerService._load_df(ticker)
         
-        if df is None:
-            try:
-                from api.services.data_loader import DATA_DIR
-                file_path = DATA_DIR / f"{ticker}_1m.parquet"
-                if not file_path.exists():
-                    return {"error": f"Data file for {ticker} not found"}
-                
-                df = pd.read_parquet(file_path)
-                df = df.sort_index()
-                
-                # Handle Timezone (Standardize to US/Eastern)
-                if df.index.tz is None:
-                    df = df.tz_localize('UTC').tz_convert('US/Eastern')
-                else:
-                    df = df.tz_convert('US/Eastern')
-                
-                ProfilerService._cache[ticker] = df # Store in cache
-                
-            except Exception as e:
-                return {"error": f"Failed to load data: {str(e)}"}
+        if df is None or df.empty:
+            return {"error": f"Data file for {ticker} not found or empty"}
         
         # ... (Rest of the calculation logic)
         # For brevity in this edit, I will call the internal method _calculate_from_df
@@ -210,6 +192,19 @@ class ProfilerService:
                 low = sess_data['low'].min()
                 mid = (high + low) / 2
                 
+                # Prior Close (for V14/V24 anchoring)
+                # Find the close of the bar exactly before start_ts
+                prior_close = sess_open # Fallback
+                try:
+                    prior_bar_idx = df_slice.index.get_indexer([start_ts], method='pad')[0]
+                    if prior_bar_idx >= 0:
+                        # Ensure we don't pick a bar from a completely different day if there's a huge gap
+                        # Pad finds the nearest previous. If it's 10 mins before, it's fine.
+                        prior_ts = df_slice.index[prior_bar_idx]
+                        if (start_ts - prior_ts) < timedelta(hours=24):
+                            prior_close = float(df_slice.iloc[prior_bar_idx]['close'])
+                except:
+                    pass
                 # Time when high/low occurred
                 high_idx = sess_data['high'].idxmax()
                 low_idx = sess_data['low'].idxmin()
@@ -305,6 +300,7 @@ class ProfilerService:
                     "date": trading_date_str,
                     "session": sess['name'],
                     "open": sess_open,
+                    "prior_close": prior_close,
                     "range_high": float(high),
                     "range_low": float(low),
                     "mid": float(mid),
@@ -323,16 +319,9 @@ class ProfilerService:
 
         collected_stats.sort(key=lambda x: x['start_time'])
         
-        # --- SAVE TO DISK (PERSISTENT CACHE) ---
-        try:
-            with open(json_path, 'w') as f:
-                json.dump(collected_stats, f, indent=2)
-            print(f"[Profiling] Saved {len(collected_stats)} sessions to {json_path}")
-            # Update In-Memory Cache
-            ProfilerService._json_cache[ticker] = collected_stats
-        except Exception as e:
-            print(f"Error saving JSON: {e}")
-            
+        # --- UPDATE IN-MEMORY CACHE ONLY ---
+        ProfilerService._json_cache[ticker] = collected_stats
+        
         elapsed = time.time() - start_time
 
         return {
@@ -404,21 +393,8 @@ class ProfilerService:
         # (lines 364-453 unchanged)
 
         # 1. Load 1-minute DataFrame (Cached)
-        df = ProfilerService._cache.get(ticker)
-        if df is None:
-            try:
-                from api.services.data_loader import DATA_DIR
-                file_path = DATA_DIR / f"{ticker}_1m.parquet"
-                if file_path.exists():
-                    df = pd.read_parquet(file_path)
-                    df = df.sort_index()
-                    if df.index.tz is None: df = df.tz_localize('UTC').tz_convert('US/Eastern')
-                    else: df = df.tz_convert('US/Eastern')
-                    ProfilerService._cache[ticker] = df
-            except Exception as e:
-                print(f"[DEBUG] Error loading parquet: {e}")
-                pass
-            
+        df = ProfilerService._load_df(ticker)
+        
         if df is None: return {"error": "Data not loaded"}
 
         # 2. Prepare Timestamps & Validate
@@ -466,7 +442,9 @@ class ProfilerService:
         # Pre-fetch numpy arrays (Zero Copy views)
         np_high = df['high'].values
         np_low = df['low'].values
-        np_index = df.index.values
+        
+        # Use absolute Unix seconds for the index (converts US/Eastern -> UTC Unix)
+        np_ts_unix = df.index.astype('int64').to_numpy() // 10**9
 
         for i, (start_idx, end_idx) in enumerate(zip(start_locs, end_locs)):
             # Bounds check for searchsorted results
@@ -476,21 +454,70 @@ class ProfilerService:
             sess_open = valid_sessions[i]['open']
             if sess_open is None or sess_open <= 0: continue
             
-            # Slicing numpy array is FAST
-            chunk_ts = np_index[start_idx:end_idx]
-            if len(chunk_ts) == 0: continue
-            base_ts = chunk_ts[0]
+            # Use the integer Unix timestamps from our pre-converted array
+            base_ts_unix = int(valid_starts[i].timestamp())
             
-            # Vectorized time delta calculation
-            # Time delta in minutes
-            time_deltas_m = (chunk_ts - base_ts).astype('timedelta64[m]').astype(int)
+            # Slicing numpy array using Unix seconds
+            # Use searchsorted on the Unix array
+            start_idx_val = np.searchsorted(np_ts_unix, base_ts_unix)
+            end_ts_unix = base_ts_unix + int(duration_hours * 3600)
+            end_idx_val = np.searchsorted(np_ts_unix, end_ts_unix)
             
-            # Vectorized Price Normalization
-            chunk_high = np_high[start_idx:end_idx]
-            chunk_low = np_low[start_idx:end_idx]
+            if start_idx_val >= end_idx_val: continue
             
-            norm_high = ((chunk_high - sess_open) / sess_open) * 100
-            norm_low = ((chunk_low - sess_open) / sess_open) * 100
+            chunk_ts_unix = np_ts_unix[start_idx_val:end_idx_val]
+            chunk_high = np_high[start_idx_val:end_idx_val]
+            chunk_low = np_low[start_idx_val:end_idx_val]
+            
+            # Vectorized time delta calculation in minutes
+            time_deltas_m = (chunk_ts_unix - base_ts_unix) // 60
+            
+            # Use Prior Close as the initial anchor (V14/V24 Gap Logic)
+            sess_anchor = valid_sessions[i].get('prior_close') or sess_open
+            if sess_anchor is None or sess_anchor <= 0: continue
+            
+            # V24 Logic: Chained Session O/U Anchors
+            # 1. Asia O/U (18:00-19:30) -> Mins 0-90. Anchors London (540+)
+            # 2. London O/U (02:30-03:30) -> Mins 510-570. Anchors NY AM (810+)
+            # 3. NY AM O/U (08:00-09:30) -> Mins 840-930. Anchors NY PM (1080+)
+            
+            # (Already extracted above)
+            
+            # Calculate O/U Mids for this specific session instance
+            asia_ou_mid = sess_open # Fallback
+            lon_ou_mid  = sess_open # Fallback
+            ny_ou_mid   = sess_open # Fallback
+            
+            # Asia O/U Mid
+            mask_asia = (time_deltas_m >= 0) & (time_deltas_m < 90)
+            if mask_asia.any():
+                h, l = chunk_high[mask_asia], chunk_low[mask_asia]
+                if len(h) > 0: asia_ou_mid = (h.max() + l.min()) / 2.0
+                
+            # London O/U Mid
+            mask_lon = (time_deltas_m >= 510) & (time_deltas_m < 570)
+            if mask_lon.any():
+                h, l = chunk_high[mask_lon], chunk_low[mask_lon]
+                if len(h) > 0: lon_ou_mid = (h.max() + l.min()) / 2.0
+                
+            # NY AM O/U Mid
+            mask_ny = (time_deltas_m >= 840) & (time_deltas_m < 930)
+            if mask_ny.any():
+                h, l = chunk_high[mask_ny], chunk_low[mask_ny]
+                if len(h) > 0: ny_ou_mid = (h.max() + l.min()) / 2.0
+
+            # Apply Dynamic Anchors (V24 Chain)
+            anchors = np.full(len(chunk_ts_unix), sess_anchor)
+            
+            # London (03:00+) -> Asia O/U Mid
+            anchors[time_deltas_m >= 540] = asia_ou_mid
+            # NY AM (07:30+) -> London O/U Mid
+            anchors[time_deltas_m >= 810] = lon_ou_mid
+            # NY PM (12:00+) -> NY AM O/U Mid
+            anchors[time_deltas_m >= 1080] = ny_ou_mid
+            
+            norm_high = ((chunk_high - anchors) / anchors) * 100
+            norm_low = ((chunk_low - anchors) / anchors) * 100
             
             # Bucketing Logic
             if bucket_minutes > 1:
@@ -532,12 +559,17 @@ class ProfilerService:
         if valid_sessions:
             try:
                 # Parse start time from first session to get base hours/minutes
-                # Assumes all sessions start around same time (e.g. all 'Daily' or all 'NY1')
-                # Handle ISO format with timezone
+                # Parse start time from first session to get base hours/minutes
                 from datetime import datetime, timedelta
                 s_ts = pd.Timestamp(valid_sessions[0]['start_time'])
+                
+                # FORCE US/Eastern for labels to avoid UTC drift in display
+                if s_ts.tz is not None:
+                    s_ts = s_ts.tz_convert('US/Eastern')
+                
                 base_dt = s_ts.replace(year=2000, month=1, day=1) # Normalize date
-            except:
+            except Exception as e:
+                print(f"[DEBUG] Label format error: {e}")
                 pass
 
         # Using sorted index ensures time order
@@ -1159,3 +1191,36 @@ class ProfilerService:
             print(f"[Pre-Warm] Successfully warmed cache for {ticker}")
         except Exception as e:
             print(f"[Pre-Warm] Failed to warm cache: {e}")
+
+    @staticmethod
+    def _load_df(ticker: str) -> Optional[pd.DataFrame]:
+        """
+        Unified method to load OHLCV data with perfect Unix -> EST alignment.
+        """
+        # Check Cache
+        if ticker in ProfilerService._cache:
+            return ProfilerService._cache[ticker]
+            
+        try:
+            # Use robust loader to get synchronized Unix timestamps
+            from api.services.data_loader import load_parquet
+            df = load_parquet(ticker, "1m")
+            
+            if df is None or df.empty:
+                return None
+            
+            # Convert Unix 'time' column to US/Eastern index
+            # This is the absolute source of truth for alignment.
+            df['dt_utc'] = pd.to_datetime(df['time'], unit='s', utc=True)
+            df = df.set_index('dt_utc').tz_convert('US/Eastern')
+            
+            # Defensive: Drop original 'time' (seconds) and replace with 'time' (HH:MM)
+            if 'time' in df.columns:
+                df = df.drop(columns=['time'])
+            df['time'] = df.index.strftime('%H:%M')
+            
+            ProfilerService._cache[ticker] = df
+            return df
+        except Exception as e:
+            print(f"[Profiling] Load error for {ticker}: {e}")
+            return None

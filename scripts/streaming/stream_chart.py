@@ -127,7 +127,7 @@ def fetch_bootstrap_data(client, symbol):
     try:
         resp = client.get_price_history(symbol, 
                                         period_type=Client.PriceHistory.PeriodType.DAY,
-                                        period=Client.PriceHistory.Period.TWO_DAYS,
+                                        period=Client.PriceHistory.Period.MONTH,
                                         frequency_type=Client.PriceHistory.FrequencyType.MINUTE,
                                         frequency=Client.PriceHistory.Frequency.EVERY_MINUTE)
         

@@ -26,21 +26,20 @@ SESSIONS = [
 def precompute_range_distribution(ticker="NQ1", timeframe="1m"):
     from api.services.data_loader import DATA_DIR
     
-    print(f"Loading {timeframe} data for {ticker}...")
-    file_path = DATA_DIR / f"{ticker}_{timeframe}.parquet"
-    
-    if not file_path.exists():
-        print(f"Error: {file_path} not found")
+    # Load data using unified utility
+    from api.services.data_loader import load_parquet
+    df = load_parquet(ticker, timeframe)
+    if df is None or df.empty:
+        print(f"Error: No data found for {ticker}")
         return
     
-    df = pd.read_parquet(file_path)
-    df = df.sort_index()
+    # Standardize on absolute Unix-to-EST synchronization
+    df['dt_utc'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df = df.set_index('dt_utc').tz_convert('US/Eastern')
     
-    # Timezone handling
-    if df.index.tz is None:
-        df = df.tz_localize('UTC').tz_convert('US/Eastern')
-    else:
-        df = df.tz_convert('US/Eastern')
+    # Defensive: purge the original Unix 'time' column
+    if 'time' in df.columns:
+        df = df.drop(columns=['time'])
     
     df['date'] = df.index.date
     
