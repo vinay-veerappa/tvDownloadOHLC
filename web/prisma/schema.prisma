@@ -322,3 +322,30 @@ model ExpectedMoveHistory {
   @@unique([ticker, date])
   @@index([ticker])
 }
+
+model RthExpectedMove {
+  id              Int      @id @default(autoincrement())
+  ticker          String
+  date            DateTime
+  
+  // Market State at Capture (Open)
+  openPrice       Float?
+  vixValue        Float?
+  
+  // 1. ATM Straddle Method
+  straddlePrice   Float?
+  emStraddle      Float?
+  
+  // 2. Implied Volatility Method
+  ivAtOpen        Float?
+  emIv            Float?
+  
+  // 3. VIX Method
+  emVix           Float?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([ticker, date])
+  @@index([ticker])
+}

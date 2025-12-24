@@ -4,17 +4,27 @@ import prisma from "@/lib/prisma";
 
 export async function getTickerHistory(ticker: string) {
     try {
-        const history = await prisma.expectedMove.findMany({
+        // Switch to the Unified History table (cleaner, no duplicates)
+        const history = await prisma.expectedMoveHistory.findMany({
             where: { ticker },
-            orderBy: { calculationDate: 'desc' },
-            take: 30 // Last 30 entries
+            orderBy: { date: 'desc' },
+            take: 90 // Increased history depth
         });
 
-        // Serialize dates
+        // Map History fields to View fields
         const data = history.map(rec => ({
-            ...rec,
-            calculationDate: rec.calculationDate.toISOString(),
-            expiryDate: rec.expiryDate.toISOString(),
+            id: rec.id,
+            ticker: rec.ticker,
+            // Map date -> calculationDate AND expiryDate (since history summarizes the day's outlook)
+            calculationDate: rec.date.toISOString(),
+            expiryDate: rec.date.toISOString(),
+
+            // Map metrics
+            price: rec.closePrice,
+            straddle: rec.straddlePrice || 0,
+            adjEm: rec.emStraddle || 0, // Using emStraddle which is typically Straddle * 0.85
+            manualEm: null,
+
             createdAt: rec.createdAt.toISOString(),
             updatedAt: rec.updatedAt.toISOString(),
         }));
