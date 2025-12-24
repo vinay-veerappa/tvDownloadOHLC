@@ -41,6 +41,7 @@ export interface NavigationFunctions {
     isReplayMode: () => boolean
     getReplayIndex: () => number
     getTotalBars: () => number
+    takeScreenshot: () => HTMLCanvasElement | null
 }
 
 import type { SessionType } from './top-toolbar'
@@ -147,7 +148,8 @@ export function ChartWrapper(props: ChartWrapperProps) {
                     isReplayMode: () => chartRef.current?.isReplayMode() ?? false,
                     getReplayIndex: () => chartRef.current?.getReplayIndex() ?? 0,
                     getTotalBars: () => chartRef.current?.getTotalBars() ?? 0,
-                    startReplaySelection: () => chartRef.current?.startReplaySelection()
+                    startReplaySelection: () => chartRef.current?.startReplaySelection(),
+                    takeScreenshot: () => chartRef.current?.takeScreenshot() ?? null
                 })
             }
         }, 500)
