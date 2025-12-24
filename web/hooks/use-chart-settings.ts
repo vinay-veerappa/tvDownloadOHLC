@@ -20,6 +20,10 @@ export interface ChartSettings {
     allowShiftVisibleRangeOnWhitespaceReplacement: boolean
     // Crosshair
     crosshairMode: 'normal' | 'magnet' | 'hidden'
+
+    // Trading View
+    showTrades?: boolean
+    showTrading?: boolean
 }
 
 const DEFAULT_SETTINGS: ChartSettings = {
@@ -33,7 +37,9 @@ const DEFAULT_SETTINGS: ChartSettings = {
     autoScale: true,
     shiftVisibleRangeOnNewBar: true,
     allowShiftVisibleRangeOnWhitespaceReplacement: true,
-    crosshairMode: 'normal'
+    crosshairMode: 'normal',
+    showTrades: true,
+    showTrading: false
 }
 
 const STORAGE_KEY = 'chart_settings'
@@ -74,6 +80,10 @@ export function useChartSettings() {
         setSettings(prev => ({ ...prev, [key]: value }))
     }, [])
 
+    const updateSettings = useCallback((newSettings: Partial<ChartSettings>) => {
+        setSettings(prev => ({ ...prev, ...newSettings }))
+    }, [])
+
     const resetToDefaults = useCallback(() => {
         setSettings(DEFAULT_SETTINGS)
     }, [])
@@ -81,6 +91,7 @@ export function useChartSettings() {
     return {
         settings,
         updateSetting,
+        updateSettings,
         resetToDefaults,
         isLoaded
     }

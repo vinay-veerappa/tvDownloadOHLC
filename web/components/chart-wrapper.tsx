@@ -15,8 +15,8 @@ import { SettingsDialog } from "@/components/settings-dialog"
 import { useTrading } from "@/context/trading-context"
 import { useTheme } from "@/context/theme-context"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
+import { useChartSettings } from "@/hooks/use-chart-settings"
 
-// ... imports
 import { VWAPSettings } from "@/lib/indicator-api"
 import type { EMSettings } from './em-settings-dialog'
 
@@ -64,12 +64,15 @@ interface ChartWrapperProps {
     markers?: any[]
     trades?: any[]
     mode?: 'historical' | 'live'
+    onOpenEMSettings?: () => void
 }
 
 export function ChartWrapper(props: ChartWrapperProps) {
     const { themeParams } = useTheme()
+    const { settings, updateSetting } = useChartSettings()
+
     const [selectedTool, setSelectedTool] = useState<DrawingTool>("cursor")
-    const [showTrading, setShowTrading] = useState(false)
+    // Note: showTrading is now managed by settings state
     const [settingsOpen, setSettingsOpen] = useState(false)
     const [drawings, setDrawings] = useState<Drawing[]>([])
     const chartRef = useRef<ChartContainerRef>(null)
@@ -300,6 +303,12 @@ export function ChartWrapper(props: ChartWrapperProps) {
             return;
         }
 
+        // Handle Expected Move Settings
+        if (type === 'expected-move' || type === 'em') {
+            props.onOpenEMSettings?.();
+            return;
+        }
+
         // Parse existing options from type string (e.g., "sma:9" -> period=9)
         const [indType, param] = type.split(":");
         const existingOptions: Record<string, any> = {};
@@ -313,7 +322,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
         setEditingIndicator(type);
         setIndicatorOptions(existingOptions);
         setIndicatorSettingsOpen(true);
-    }, [props.onOpenVwapSettings]);
+    }, [props.onOpenVwapSettings, props.onOpenEMSettings]);
 
     const handleSaveIndicatorSettings = useCallback((newOptions: Record<string, any>) => {
         if (!editingIndicator) return;
@@ -362,6 +371,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
         else if (indType === 'hourly-profiler') label = 'Hourly Profiler';
         else if (indType === 'range-extensions') label = 'Range Extensions';
         else if (indType === 'opening-range') label = 'Opening Range';
+        else if (indType === 'expected-move') label = 'Expected Move';
         return { type: ind.type, label, enabled: ind.enabled };
     });
 
@@ -371,12 +381,12 @@ export function ChartWrapper(props: ChartWrapperProps) {
                 <LeftToolbar
                     selectedTool={selectedTool}
                     onToolSelect={setSelectedTool}
-                    showTrading={showTrading}
-                    onToggleTrading={() => setShowTrading(!showTrading)}
+                    showTrading={settings.showTrading}
+                    onToggleTrading={() => updateSetting('showTrading', !settings.showTrading)}
                 />
                 <div className="flex-1 relative min-w-0">
                     {/* Trading Panel Overlay */}
-                    {showTrading && (
+                    {settings.showTrading && (
                         <div className="absolute top-4 left-4 z-20">
                             <BuySellPanel
                                 currentPrice={currentPrice}
@@ -426,6 +436,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
                         onTimeframeChange={props.onTimeframeChange}
                         trades={props.trades}
                         mode={props.mode}
+                        onOpenEMSettings={props.onOpenEMSettings}
                     />
                 </div>
                 <RightSidebar
@@ -446,8 +457,6 @@ export function ChartWrapper(props: ChartWrapperProps) {
             <SettingsDialog
                 open={settingsOpen}
                 onOpenChange={setSettingsOpen}
-                showTrading={showTrading}
-                onToggleTrading={() => setShowTrading(!showTrading)}
             />
 
             {/* Indicator Settings Modal */}

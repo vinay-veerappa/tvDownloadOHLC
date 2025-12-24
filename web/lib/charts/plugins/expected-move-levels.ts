@@ -37,7 +37,6 @@ export interface ExpectedMoveLevelsOptions {
     showLabels: boolean;
     labelFontSize: number;
 
-    // Method toggles
     methods: {
         straddle085Close: EMMethodConfig;
         straddle100Close: EMMethodConfig;
@@ -46,8 +45,8 @@ export interface ExpectedMoveLevelsOptions {
         iv365: EMMethodConfig;
         iv252: EMMethodConfig;
         vixScaled: EMMethodConfig;
-        synthVix085: EMMethodConfig;
-        synthVix100: EMMethodConfig;
+        rthVix085: EMMethodConfig;
+        rthVix100: EMMethodConfig;
     };
 
     // Level multiples to show
@@ -67,8 +66,9 @@ const DEFAULT_METHODS: ExpectedMoveLevelsOptions['methods'] = {
     iv365: { id: 'iv365_close', name: 'IV-365', color: '#2196F3', enabled: false, anchorType: 'close' },
     iv252: { id: 'iv252_close', name: 'IV-252', color: '#64B5F6', enabled: false, anchorType: 'close' },
     vixScaled: { id: 'vix_scaled_close', name: 'VIX Scaled 2.0x', color: '#FF9800', enabled: false, anchorType: 'close' },
-    synthVix085: { id: 'synth_vix_085_open', name: 'Synth VIX 0.85x (9:30)', color: '#9C27B0', enabled: false, anchorType: 'open' },
-    synthVix100: { id: 'synth_vix_100_open', name: 'Synth VIX 1.0x (9:30)', color: '#BA68C8', enabled: true, anchorType: 'open' }  // Default ON
+    // Renamed Synth to RTH
+    rthVix085: { id: 'rth_vix_085_open', name: 'RTH VIX 0.85x (9:30)', color: '#9C27B0', enabled: false, anchorType: 'open' },
+    rthVix100: { id: 'rth_vix_open', name: 'RTH VIX 1.0x (9:30)', color: '#BA68C8', enabled: true, anchorType: 'open' }  // Default ON
 };
 
 const DEFAULT_OPTIONS: ExpectedMoveLevelsOptions = {
@@ -255,8 +255,8 @@ class EMRenderer {
         if (fullName.includes('IV-365')) return 'IV365';
         if (fullName.includes('IV-252')) return 'IV252';
         if (fullName.includes('VIX Scaled')) return 'VIX2.0';
-        if (fullName.includes('Synth VIX 0.85x')) return 'SynVIX 0.85';
-        if (fullName.includes('Synth VIX 1.0x')) return 'SynVIX 1.0';
+        if (fullName.includes('RTH VIX 0.85x')) return 'RTH VIX 0.85';
+        if (fullName.includes('RTH VIX 1.0x')) return 'RTH VIX 1.0';
 
         return fullName.substring(0, 10); // Fallback
     }

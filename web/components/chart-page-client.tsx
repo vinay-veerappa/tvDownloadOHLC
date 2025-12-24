@@ -228,6 +228,7 @@ export function ChartPageClient({
                             window.location.search = params.toString()
                         }}
                         mode={mode}
+                        onOpenEMSettings={() => setIsEMSettingsOpen(true)}
                     />
                 </div>
 

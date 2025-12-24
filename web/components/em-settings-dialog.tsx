@@ -37,6 +37,7 @@ export interface EMSettings {
     labelFontSize: number;
     showWeeklyClose: boolean;
     ticker: 'SPY' | 'ES' | 'SPX';
+    daysToShow?: number; // Limit history
 }
 
 const DEFAULT_METHODS: EMMethodConfig[] = [
@@ -47,8 +48,8 @@ const DEFAULT_METHODS: EMMethodConfig[] = [
     { id: 'iv365_close', name: 'IV-365 (Close)', color: '#2196F3', enabled: false, anchorType: 'close' },
     { id: 'iv252_close', name: 'IV-252 (Close)', color: '#64B5F6', enabled: false, anchorType: 'close' },
     { id: 'vix_scaled_close', name: 'VIX Scaled 2.0x (Close)', color: '#FF9800', enabled: false, anchorType: 'close' },
-    { id: 'synth_vix_085_open', name: 'Synth VIX 0.85x (9:30)', color: '#9C27B0', enabled: false, anchorType: 'open' },
-    { id: 'synth_vix_100_open', name: 'Synth VIX 1.0x (9:30)', color: '#BA68C8', enabled: true, anchorType: 'open' },
+    { id: 'rth_vix_085_open', name: 'RTH VIX 0.85x (9:30)', color: '#9C27B0', enabled: false, anchorType: 'open' },
+    { id: 'rth_vix_100_open', name: 'RTH VIX 1.0x (9:30)', color: '#BA68C8', enabled: true, anchorType: 'open' },
 ]
 
 const AVAILABLE_LEVELS = [
@@ -75,7 +76,8 @@ function loadSettings(): EMSettings {
             showLabels: true,
             labelFontSize: 10,
             showWeeklyClose: true,
-            ticker: 'SPY'
+            ticker: 'SPY',
+            daysToShow: 30
         }
     }
 
@@ -104,7 +106,8 @@ function loadSettings(): EMSettings {
         showLabels: true,
         labelFontSize: 10,
         showWeeklyClose: true,
-        ticker: 'SPY'
+        ticker: 'SPY',
+        daysToShow: 30
     }
 }
 
