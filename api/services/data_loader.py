@@ -110,6 +110,19 @@ def load_parquet(ticker: str, timeframe: str) -> Optional[pd.DataFrame]:
                     cols = [c for c in expected_cols if c in live_df.columns]
                     live_df = live_df[cols]
                     
+                    # Normalize units: ensure both main and live 'time' are in seconds
+                    # Detect 13-digit numbers (ms) or 16-digit (us) and divide
+                    for df_temp in [df, live_df]:
+                        if 'time' in df_temp.columns and not df_temp.empty:
+                            m = df_temp['time'].max()
+                            if m > 1e16: # Nanoseconds (1.7e18)
+                                df_temp['time'] = df_temp['time'] // 10**9
+                            elif m > 1e13: # Microseconds (1.7e15)
+                                df_temp['time'] = df_temp['time'] // 10**6
+                            elif m > 1e10: # Milliseconds (1.7e12)
+                                df_temp['time'] = df_temp['time'] // 10**3
+                            # Else already seconds (1.7e9)
+                    
                     # Concat and Dedupe
                     # Keep LAST (Live) version of overlapping 1m bars
                     df = pd.concat([df, live_df])

@@ -105,9 +105,8 @@ export const PriceModelChart = memo(function PriceModelChart({
         const val = Number(tickItem);
 
         // 1. Try to find the exact data point matching this time_idx
-        // SKIP `match.time` for Daily session to force strict 18:00 alignment
         const match = chartData.find(d => d.time_idx === val);
-        if (session !== 'Daily' && match && match.time) {
+        if (match && match.time) {
             return match.time;
         }
 
@@ -202,7 +201,7 @@ export const PriceModelChart = memo(function PriceModelChart({
 
     // Extracted Chart Content for reuse in Dialog
     const ChartContent = () => (
-        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={150}>
             <LineChart
                 data={chartData}
                 margin={{ top: 10, right: 10, bottom: 0, left: 10 }}
@@ -322,7 +321,7 @@ export const PriceModelChart = memo(function PriceModelChart({
                             </Button>
                         </div>
                     </div>
-                    <div style={{ height: height - 40, width: '100%', minWidth: 0, minHeight: 0 }}>
+                    <div className="w-full" style={{ height: height - 40, minHeight: '200px' }}>
                         <ChartContent />
                     </div>
                 </CardContent>

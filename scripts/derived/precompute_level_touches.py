@@ -40,21 +40,22 @@ def compute_level_touches(ticker: str) -> dict:
     """
     Compute reference level touch data for each trading day.
     """
-    # Load 1-minute data
-    parquet_path = DATA_DIR / f'{ticker}_1m.parquet'
-    if not parquet_path.exists():
-        raise FileNotFoundError(f"Missing {parquet_path}")
-    
-    df = pd.read_parquet(parquet_path)
+    # Load 1-minute data using unified utility
+    from api.services.data_loader import load_parquet
+    df = load_parquet(ticker, '1m')
+    if df is None or df.empty:
+        raise FileNotFoundError(f"No data found for {ticker}")
     
     # Load profiler session data for session mids
     profiler_sessions = load_profiler_sessions(ticker)
     
-    # Ensure datetime index in ET
-    if df.index.tz is None:
-        df.index = df.index.tz_localize('UTC').tz_convert(ET)
-    else:
-        df.index = df.index.tz_convert(ET)
+    # Standardize on absolute Unix-to-EST synchronization
+    df['dt_utc'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df = df.set_index('dt_utc').tz_convert(ET)
+    
+    # Defensive: purge the original Unix 'time' column
+    if 'time' in df.columns:
+        df = df.drop(columns=['time'])
     
     # Add trading_date column (day that starts at 18:00)
     def get_trading_date(ts):

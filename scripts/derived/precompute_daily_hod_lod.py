@@ -21,18 +21,19 @@ def compute_daily_hod_lod(ticker: str) -> dict:
     
     Returns dict mapping date -> {hod_time, lod_time, hod_price, lod_price}
     """
-    # Load 1-minute data
-    parquet_path = DATA_DIR / f'{ticker}_1m.parquet'
-    if not parquet_path.exists():
-        raise FileNotFoundError(f"Missing {parquet_path}")
+    # Load 1-minute data using unified utility
+    from api.services.data_loader import load_parquet
+    df = load_parquet(ticker, '1m')
+    if df is None or df.empty:
+        raise FileNotFoundError(f"No data found for {ticker}")
     
-    df = pd.read_parquet(parquet_path)
+    # Standardize on absolute Unix-to-EST synchronization
+    df['dt_utc'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df = df.set_index('dt_utc').tz_convert(ET)
     
-    # Ensure datetime index in ET
-    if df.index.tz is None:
-        df.index = df.index.tz_localize('UTC').tz_convert(ET)
-    else:
-        df.index = df.index.tz_convert(ET)
+    # Defensive: purge the original Unix 'time' column to avoid any ambiguity
+    if 'time' in df.columns:
+        df = df.drop(columns=['time'])
     
     # Add trading_date column (day that starts at 18:00)
     # If time >= 18:00, trading_date is next calendar day

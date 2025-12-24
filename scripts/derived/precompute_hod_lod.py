@@ -17,26 +17,28 @@ sys.path.append(os.getcwd())
 def precompute_hod_lod(ticker="NQ1"):
     from api.services.data_loader import DATA_DIR
     
-    print(f"Loading 1m data for {ticker}...")
-    file_path = DATA_DIR / f"{ticker}_1m.parquet"
+    from api.services.data_loader import load_parquet
+    df = load_parquet(ticker, "1m")
     
-    if not file_path.exists():
-        print(f"Error: {file_path} not found")
+    if df is None or df.empty:
+        print(f"Error: Data for {ticker} not found or empty")
         return
     
-    df = pd.read_parquet(file_path)
-    df = df.sort_index()
+    # Convert Unix 'time' column to US/Eastern index
+    # This is the absolute source of truth for alignment.
+    df['dt_utc'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df = df.set_index('dt_utc').tz_convert('US/Eastern')
     
-    # Timezone handling
-    if df.index.tz is None:
-        df = df.tz_localize('UTC').tz_convert('US/Eastern')
-    else:
-        df = df.tz_convert('US/Eastern')
-    
-    # Add time columns for grouping
+    # Force drop the old 'time' column to avoid confusion
+    if 'time' in df.columns:
+        df = df.drop(columns=['time'])
+        
+    # Add new EST-based time columns
     df['date'] = df.index.date
     df['time'] = df.index.strftime('%H:%M')
     df['hour'] = df.index.hour
+    
+    print(f"  [DEBUG] Index TZ: {df.index.tz}, Sample Time: {df['time'].iloc[0]}")
     
     # Session definitions (hour ranges for simplicity)
     session_hours = {
@@ -56,6 +58,7 @@ def precompute_hod_lod(ticker="NQ1"):
     hod_times = df.loc[idx_hod.dropna(), 'time'].tolist()
     lod_times = df.loc[idx_lod.dropna(), 'time'].tolist()
     
+    print(f"  [DEBUG] Sample hod_times: {hod_times[:10]}")
     print(f"Daily: {len(hod_times)} HOD samples, {len(lod_times)} LOD samples")
     
     # --- Session High/Low ---

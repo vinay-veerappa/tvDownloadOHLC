@@ -69,6 +69,18 @@ def precompute_vwap(ticker: str, timeframe: str) -> bool:
             print('SKIP (no data)')
             return False
         
+        # Standardize on absolute Unix-to-EST synchronization
+        # This ensures internal consistency before passing to VWAP logic
+        df['dt_utc'] = pd.to_datetime(df['time'], unit='s', utc=True)
+        df = df.set_index('dt_utc').tz_convert('US/Eastern')
+        
+        # Defensive: ensure the Unix 'time' column is present for VWAP calculation if it needs it 
+        # (vwap service uses the 'time' column for its own datetime conversion)
+        # But for the output, we want to be sure it's the right one.
+        if 'time' not in df.columns:
+             # If someone accidentally dropped it upstream, restore it from index
+             df['time'] = df.index.astype(int) // 10**9
+        
         # Get appropriate settings
         settings = DEFAULT_SETTINGS['futures'] if is_futures(ticker) else DEFAULT_SETTINGS['stocks']
         

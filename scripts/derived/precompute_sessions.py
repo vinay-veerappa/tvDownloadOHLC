@@ -45,13 +45,14 @@ def precompute_hourly_sessions(ticker: str, timeframe: str = '1m') -> bool:
         return False
     
     # Prepare DataFrame for SessionService
+    # Standardize on absolute Unix-to-EST synchronization
+    df['dt_utc'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df = df.set_index('dt_utc').tz_convert('US/Eastern')
+    
+    # Defensive: Drop original 'time' to avoid collision
     if 'time' in df.columns:
-        df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
-        df = df.set_index('datetime')
-        df.index = df.index.tz_convert('US/Eastern')
-    else:
-        print(f"  [Hourly] Missing time column for {ticker}")
-        return False
+        df = df.drop(columns=['time'])
+    df['time'] = df.index.astype(int) // 10**9 # Keep Unix for backend compat if needed, but localized index is source
     
     print(f"  [Hourly] Computing hourly sessions ({len(df):,} rows)...")
     
@@ -107,13 +108,14 @@ def precompute_daily_sessions(ticker: str, timeframe: str = '1m') -> bool:
         return False
     
     # Prepare DataFrame for SessionService
+    # Standardize on absolute Unix-to-EST synchronization
+    df['dt_utc'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df = df.set_index('dt_utc').tz_convert('US/Eastern')
+    
+    # Defensive: Drop original 'time' 
     if 'time' in df.columns:
-        df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
-        df = df.set_index('datetime')
-        df.index = df.index.tz_convert('US/Eastern')
-    else:
-        print(f"  [Daily] Missing time column for {ticker}")
-        return False
+        df = df.drop(columns=['time'])
+    df['time'] = df.index.astype(int) // 10**9
     
     print(f"  [Daily] Computing daily sessions ({len(df):,} rows)...")
     

@@ -192,9 +192,10 @@ export function OutcomePanel({ outcomeName, sessions, outcomeDates, totalInCateg
 
         const formatTimeTick = (minutes: number) => {
             const [h, m] = config.start.split(':').map(Number);
-            const date = new Date();
-            date.setHours(h, m + minutes, 0, 0);
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+            const totalMinutes = h * 60 + m + minutes;
+            const hour = Math.floor((totalMinutes / 60) % 24);
+            const min = totalMinutes % 60;
+            return `${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
         };
 
         // Dynamic ticks based on duration (15m for <= 3h, 30m for <= 6h)
