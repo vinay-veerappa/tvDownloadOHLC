@@ -10,6 +10,7 @@ import { TradingProvider } from '@/context/trading-context'
 import type { MagnetMode } from '@/lib/charts/magnet-utils'
 import { VWAPSettingsDialog } from './vwap-settings-dialog'
 import { EMSettingsDialog, type EMSettings } from './em-settings-dialog'
+import { toast } from "sonner"
 
 interface ChartPageClientProps {
     tickers: string[]
@@ -176,10 +177,45 @@ export function ChartPageClient({
     // Bottom Panel state
     const [isPanelOpen, setIsPanelOpen] = useState(false)
 
-    // Save panel state to localStorage when it changes
-    useEffect(() => {
-        localStorage.setItem(BOTTOM_PANEL_STORAGE_KEY, isPanelOpen.toString())
-    }, [isPanelOpen])
+    // Chart Capture Logic
+    const handleTakeScreenshot = useCallback(async (action: 'copy' | 'save' | 'open') => {
+        if (!navigation?.takeScreenshot) return
+
+        const canvas = navigation.takeScreenshot()
+        if (!canvas) {
+            toast.error("Failed to capture chart")
+            return
+        }
+
+        try {
+            if (action === 'copy') {
+                canvas.toBlob(blob => {
+                    if (!blob) return
+                    navigator.clipboard.write([
+                        new ClipboardItem({ 'image/png': blob })
+                    ])
+                    toast.success("Chart copied to clipboard")
+                })
+            } else if (action === 'save') {
+                const url = canvas.toDataURL('image/png')
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `chart-${ticker}-${timeframe}-${new Date().toISOString().slice(0, 10)}.png`
+                a.click()
+                toast.success("Chart saved")
+            } else if (action === 'open') {
+                const url = canvas.toDataURL('image/png')
+                const win = window.open()
+                if (win) {
+                    win.document.write(`<img src="${url}" style="max-width: 100%; height: auto;" />`)
+                    win.document.title = `Chart Capture - ${ticker}`
+                }
+            }
+        } catch (e) {
+            console.error(e)
+            toast.error("Screenshot failed")
+        }
+    }, [navigation, ticker, timeframe])
 
     const { resolvedTheme } = useTheme()
 
@@ -197,6 +233,7 @@ export function ChartPageClient({
                         sessionType={sessionType}
                         onSessionChange={setSessionType}
                         onOpenEMSettings={() => setIsEMSettingsOpen(true)}
+                        onTakeScreenshot={handleTakeScreenshot}
                     />
                 </div>
 

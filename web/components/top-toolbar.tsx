@@ -1,12 +1,18 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronsUpDown, CandlestickChart, BarChart, Activity, Magnet, Settings, ChevronDown } from "lucide-react"
+import { Check, ChevronsUpDown, CandlestickChart, BarChart, Activity, Magnet, Settings, ChevronDown, Camera, Copy, Download, ExternalLink } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useTrading } from "@/context/trading-context"
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
     Command,
     CommandEmpty,
@@ -47,10 +53,11 @@ interface TopToolbarProps {
     sessionType?: SessionType
     onSessionChange?: (type: SessionType) => void
     onOpenEMSettings?: () => void
+    onTakeScreenshot?: (action: 'copy' | 'save' | 'open') => void
     children?: React.ReactNode
 }
 
-export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off', onMagnetModeChange, sessionType = 'ETH', onSessionChange, onOpenEMSettings, children }: TopToolbarProps) {
+export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off', onMagnetModeChange, sessionType = 'ETH', onSessionChange, onOpenEMSettings, onTakeScreenshot, children }: TopToolbarProps) {
 
 
     const router = useRouter()
@@ -332,6 +339,29 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
 
             {/* Right: Settings */}
             <div className="flex items-center gap-1">
+                {/* Screenshot Menu */}
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-foreground hover:bg-muted" title="Chart Capture">
+                            <Camera className="w-4 h-4" />
+                        </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => onTakeScreenshot?.('copy')}>
+                            <Copy className="mr-2 h-4 w-4" />
+                            <span>Copy Image</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onTakeScreenshot?.('save')}>
+                            <Download className="mr-2 h-4 w-4" />
+                            <span>Save Image</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onTakeScreenshot?.('open')}>
+                            <ExternalLink className="mr-2 h-4 w-4" />
+                            <span>Open in New Tab</span>
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+
                 <ThemeSwitcher />
                 {/* Settings */}
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-foreground hover:bg-muted" onClick={() => setIsSettingsOpen(true)} title="Settings">

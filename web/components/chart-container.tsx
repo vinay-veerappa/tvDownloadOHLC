@@ -109,6 +109,8 @@ export interface ChartContainerRef {
     isReplayMode: () => boolean;
     getReplayIndex: () => number;
     getTotalBars: () => number;
+    // Capture
+    takeScreenshot: () => HTMLCanvasElement | null;
 }
 
 
@@ -895,7 +897,11 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         stopReplay,
         isReplayMode: () => replayMode,
         getReplayIndex: () => replayIndex,
-        getTotalBars: () => fullData.length
+        getTotalBars: () => fullData.length,
+        takeScreenshot: () => {
+            if (!chart) return null;
+            return chart.takeScreenshot();
+        }
     }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart, fullDataRange, jumpToTime])
 
 
