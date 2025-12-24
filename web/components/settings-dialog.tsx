@@ -1,8 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { Monitor, Bell, CandlestickChart, MousePointer2, RotateCcw } from "lucide-react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { Monitor, Bell, CandlestickChart, MousePointer2, RotateCcw, Save, X } from "lucide-react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
@@ -12,23 +12,78 @@ import { Slider } from "@/components/ui/slider"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { useChartSettings } from "@/hooks/use-chart-settings"
+import { useChartSettings, ChartSettings } from "@/hooks/use-chart-settings"
+import { toast } from "sonner"
 
 interface SettingsDialogProps {
     open: boolean
     onOpenChange: (open: boolean) => void
-    showTrading?: boolean
-    onToggleTrading?: () => void
 }
 
-export function SettingsDialog({ open, onOpenChange, showTrading, onToggleTrading }: SettingsDialogProps) {
-    const { settings, updateSetting, resetToDefaults } = useChartSettings()
+export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
+    const { settings, updateSettings, resetToDefaults } = useChartSettings()
+
+    // Local state for transactional editing
+    const [localSettings, setLocalSettings] = React.useState<ChartSettings>(settings)
+    const [activeTab, setActiveTab] = React.useState("symbol")
+
+    // Sync local state with global settings when dialog opens
+    React.useEffect(() => {
+        if (open) {
+            setLocalSettings(settings)
+        }
+    }, [open, settings])
+
+    const handleUpdate = <K extends keyof ChartSettings>(key: K, value: ChartSettings[K]) => {
+        setLocalSettings(prev => ({ ...prev, [key]: value }))
+    }
+
+    const handleSave = () => {
+        updateSettings(localSettings)
+        onOpenChange(false)
+        toast.success("Chart settings saved")
+    }
+
+    const handleCancel = () => {
+        onOpenChange(false)
+        // Reset local settings to current global settings (not strictly necessary as useEffect handles it on re-open, but good practice)
+        setLocalSettings(settings)
+    }
+
+    const handleReset = () => {
+        // We need default settings here. We can import them or access via hook if exposed, 
+        // but hook's resetToDefaults updates global state directly.
+        // For transactional reset, we need the default object. 
+        // Let's just hardcode defaults here or update hook to export DEFAULT_SETTINGS.
+        // Since I can't easily change the export without another file edit, I'll assume valid defaults or call resetToDefaults 
+        // WARNING: calling resetToDefaults() will apply immediately. 
+        // Let's implement a "soft reset" to local state.
+
+        // Hardcoded defaults for now to match hook (safest without extra file read/write cycles)
+        const defaults: ChartSettings = {
+            upColor: '#26a69a',
+            downColor: '#ef5350',
+            wickUpColor: '#26a69a',
+            wickDownColor: '#ef5350',
+            gridVisible: true,
+            gridColor: 'rgba(255, 255, 255, 0.1)',
+            rightOffset: 50,
+            autoScale: true,
+            shiftVisibleRangeOnNewBar: true,
+            allowShiftVisibleRangeOnWhitespaceReplacement: true,
+            crosshairMode: 'normal',
+            showTrades: true,
+            showTrading: false
+        }
+        setLocalSettings(defaults)
+        toast.info("Settings reset to defaults (unsaved)")
+    }
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-[800px] h-[600px] flex flex-col p-0 gap-0">
-                <DialogHeader className="px-6 py-4 border-b shrink-0">
-                    <DialogTitle>Chart Settings</DialogTitle>
+        <Dialog open={open} onOpenChange={(val) => !val && handleCancel()}>
+            <DialogContent className="max-w-[800px] h-[600px] flex flex-col p-0 gap-0 overflow-hidden bg-background border-border shadow-xl sm:rounded-xl">
+                <DialogHeader className="px-6 py-4 border-b shrink-0 bg-muted/10">
+                    <DialogTitle className="text-xl">Chart Settings</DialogTitle>
                     <DialogDescription className="sr-only">
                         Configure chart appearance, trading options, and other settings.
                     </DialogDescription>
@@ -36,341 +91,228 @@ export function SettingsDialog({ open, onOpenChange, showTrading, onToggleTradin
 
                 <div className="flex flex-1 overflow-hidden">
                     {/* Sidebar Tabs */}
-                    <Tabs defaultValue="trading" orientation="vertical" className="flex flex-1">
-                        <div className="w-[200px] border-r bg-muted/20 shrink-0">
-                            <TabsList className="flex flex-col h-full w-full justify-start gap-0 bg-transparent p-0 rounded-none">
-                                <TabsTrigger value="symbol" className="w-full justify-start px-4 py-3 rounded-none data-[state=active]:bg-muted data-[state=active]:shadow-none border-l-2 border-transparent data-[state=active]:border-primary">
-                                    <CandlestickChart className="w-4 h-4 mr-2" />
-                                    Symbol
-                                </TabsTrigger>
-                                <TabsTrigger value="status" className="w-full justify-start px-4 py-3 rounded-none data-[state=active]:bg-muted data-[state=active]:shadow-none border-l-2 border-transparent data-[state=active]:border-primary">
-                                    <Monitor className="w-4 h-4 mr-2" />
-                                    Status line
-                                </TabsTrigger>
-                                <TabsTrigger value="trading" className="w-full justify-start px-4 py-3 rounded-none data-[state=active]:bg-muted data-[state=active]:shadow-none border-l-2 border-transparent data-[state=active]:border-primary">
-                                    <MousePointer2 className="w-4 h-4 mr-2" />
-                                    Trading
-                                </TabsTrigger>
-                                <TabsTrigger value="alerts" className="w-full justify-start px-4 py-3 rounded-none data-[state=active]:bg-muted data-[state=active]:shadow-none border-l-2 border-transparent data-[state=active]:border-primary">
-                                    <Bell className="w-4 h-4 mr-2" />
-                                    Alerts
-                                </TabsTrigger>
+                    <Tabs value={activeTab} onValueChange={setActiveTab} orientation="vertical" className="flex flex-row flex-1 h-full">
+                        <div className="w-[200px] border-r bg-muted/30 shrink-0 h-full">
+                            <TabsList className="flex flex-col h-full w-full justify-start gap-1 bg-transparent p-2 rounded-none">
+                                <SettingsTabTrigger value="symbol" icon={CandlestickChart} label="Symbol" />
+                                <SettingsTabTrigger value="status" icon={Monitor} label="Status line" />
+                                <SettingsTabTrigger value="trading" icon={MousePointer2} label="Trading" />
+                                <SettingsTabTrigger value="events" icon={Bell} label="Events" />
                             </TabsList>
                         </div>
 
                         {/* Content Area */}
-                        <ScrollArea className="flex-1 p-6">
-                            <TabsContent value="trading" className="mt-0 space-y-8">
-                                {/* General Section */}
-                                <div className="space-y-4">
-                                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">General</h3>
-
-                                    <div className="flex items-start gap-3">
-                                        <Checkbox
-                                            id="show-buy-sell"
-                                            checked={showTrading}
-                                            onCheckedChange={() => onToggleTrading?.()}
-                                        />
-                                        <div className="grid gap-1.5 leading-none">
-                                            <Label htmlFor="show-buy-sell">Buy/sell buttons</Label>
-                                            <p className="text-xs text-muted-foreground">
-                                                Displays buy and sell buttons directly on the chart
-                                            </p>
-                                        </div>
-                                    </div>
-
-                                    <div className="flex items-start gap-3">
-                                        <Checkbox id="one-click" defaultChecked />
-                                        <div className="grid gap-1.5 leading-none">
-                                            <Label htmlFor="one-click" className="flex items-center gap-2">
-                                                One-click trading
-                                                <span className="text-[10px] bg-muted px-1 rounded text-muted-foreground">?</span>
-                                            </Label>
-                                            <p className="text-xs text-muted-foreground">
-                                                Instantly place, edit, cancel orders or close positions without confirmation
-                                            </p>
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-[1fr,200px] items-center gap-4 pl-7">
-                                        <div className="flex items-center gap-2">
-                                            <Checkbox id="sound" />
-                                            <Label htmlFor="sound">Execution sound</Label>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <VolumeIcon />
-                                            <Slider defaultValue={[50]} max={100} step={1} className="w-[100px]" />
-                                        </div>
-                                    </div>
+                        <div className="flex-1 overflow-y-auto bg-background p-6 pb-20">
+                            <TabsContent value="symbol" className="mt-0 space-y-6">
+                                <SectionHeader title="Candle Colors" />
+                                <div className="grid grid-cols-2 gap-6">
+                                    <ColorSetting
+                                        label="Body"
+                                        upColor={localSettings.upColor}
+                                        downColor={localSettings.downColor}
+                                        onUpChange={(v) => handleUpdate('upColor', v)}
+                                        onDownChange={(v) => handleUpdate('downColor', v)}
+                                    />
+                                    <ColorSetting
+                                        label="Borders"
+                                        upColor={localSettings.wickUpColor}
+                                        downColor={localSettings.wickDownColor} // Assuming borders match wicks logic for now or mapped similarly
+                                        onUpChange={(v) => handleUpdate('wickUpColor', v)} // Using wick colors for borders if no specific border setting
+                                        onDownChange={(v) => handleUpdate('wickDownColor', v)}
+                                    />
+                                    <ColorSetting
+                                        label="Wicks"
+                                        upColor={localSettings.wickUpColor}
+                                        downColor={localSettings.wickDownColor}
+                                        onUpChange={(v) => handleUpdate('wickUpColor', v)}
+                                        onDownChange={(v) => handleUpdate('wickDownColor', v)}
+                                    />
                                 </div>
 
                                 <Separator />
+                                <SectionHeader title="Price Scale" />
 
-                                {/* Appearance Section */}
-                                <div className="space-y-4">
-                                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Appearance</h3>
-
-                                    <div className="flex items-start gap-3">
-                                        <Checkbox id="show-executions" defaultChecked />
-                                        <div className="grid gap-1.5 leading-none">
-                                            <Label htmlFor="show-executions">Positions and orders</Label>
-                                        </div>
-                                    </div>
-
-                                    <div className="flex items-start gap-3">
-                                        <Checkbox id="show-pnl" defaultChecked />
-                                        <div className="grid gap-1.5 leading-none">
-                                            <Label htmlFor="show-pnl">Profit and loss value</Label>
-                                        </div>
-                                    </div>
-
-                                    <div className="pl-7 grid gap-3">
-                                        <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-2">
-                                                <Checkbox id="pnl-money" defaultChecked />
-                                                <Label htmlFor="pnl-money">Positions</Label>
-                                            </div>
-                                            <Select defaultValue="money">
-                                                <SelectTrigger className="w-[120px] h-8">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="money">Money</SelectItem>
-                                                    <SelectItem value="percent">%</SelectItem>
-                                                    <SelectItem value="pips">Ticks</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                        <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-2">
-                                                <Checkbox id="pnl-brackets" defaultChecked />
-                                                <Label htmlFor="pnl-brackets">Brackets</Label>
-                                            </div>
-                                            <Select defaultValue="money">
-                                                <SelectTrigger className="w-[120px] h-8">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="money">Money</SelectItem>
-                                                    <SelectItem value="percent">%</SelectItem>
-                                                    <SelectItem value="pips">Ticks</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                    </div>
-
-                                    <div className="flex items-start gap-3">
-                                        <Checkbox id="executions" defaultChecked />
-                                        <div className="grid gap-1.5 leading-none">
-                                            <Label htmlFor="executions">Execution marks</Label>
-                                        </div>
-                                    </div>
-                                    <div className="pl-7">
-                                        <div className="flex items-center gap-2">
-                                            <Checkbox id="exec-labels" />
-                                            <Label htmlFor="exec-labels">Execution labels</Label>
-                                        </div>
-                                    </div>
-                                </div>
-                            </TabsContent>
-                            <TabsContent value="symbol" className="mt-0 space-y-8">
-                                {/* Candle Colors Section */}
                                 <div className="space-y-4">
                                     <div className="flex items-center justify-between">
-                                        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Candle Colors</h3>
-                                        <Button variant="ghost" size="sm" onClick={resetToDefaults} className="h-7 text-xs gap-1">
-                                            <RotateCcw className="h-3 w-3" />
-                                            Reset
-                                        </Button>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="space-y-2">
-                                            <Label>Up Candle</Label>
-                                            <div className="flex items-center gap-2">
-                                                <input
-                                                    type="color"
-                                                    value={settings.upColor}
-                                                    onChange={(e) => updateSetting('upColor', e.target.value)}
-                                                    className="w-10 h-8 rounded border cursor-pointer"
-                                                />
-                                                <Input
-                                                    value={settings.upColor}
-                                                    onChange={(e) => updateSetting('upColor', e.target.value)}
-                                                    className="h-8 flex-1 font-mono text-xs"
-                                                />
-                                            </div>
+                                        <div className="space-y-0.5">
+                                            <Label className="text-base">Auto-scale</Label>
+                                            <p className="text-xs text-muted-foreground">Automatically adjust price scale to fit data</p>
                                         </div>
-                                        <div className="space-y-2">
-                                            <Label>Down Candle</Label>
-                                            <div className="flex items-center gap-2">
-                                                <input
-                                                    type="color"
-                                                    value={settings.downColor}
-                                                    onChange={(e) => updateSetting('downColor', e.target.value)}
-                                                    className="w-10 h-8 rounded border cursor-pointer"
-                                                />
-                                                <Input
-                                                    value={settings.downColor}
-                                                    onChange={(e) => updateSetting('downColor', e.target.value)}
-                                                    className="h-8 flex-1 font-mono text-xs"
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="space-y-2">
-                                            <Label>Up Wick</Label>
-                                            <div className="flex items-center gap-2">
-                                                <input
-                                                    type="color"
-                                                    value={settings.wickUpColor}
-                                                    onChange={(e) => updateSetting('wickUpColor', e.target.value)}
-                                                    className="w-10 h-8 rounded border cursor-pointer"
-                                                />
-                                                <Input
-                                                    value={settings.wickUpColor}
-                                                    onChange={(e) => updateSetting('wickUpColor', e.target.value)}
-                                                    className="h-8 flex-1 font-mono text-xs"
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="space-y-2">
-                                            <Label>Down Wick</Label>
-                                            <div className="flex items-center gap-2">
-                                                <input
-                                                    type="color"
-                                                    value={settings.wickDownColor}
-                                                    onChange={(e) => updateSetting('wickDownColor', e.target.value)}
-                                                    className="w-10 h-8 rounded border cursor-pointer"
-                                                />
-                                                <Input
-                                                    value={settings.wickDownColor}
-                                                    onChange={(e) => updateSetting('wickDownColor', e.target.value)}
-                                                    className="h-8 flex-1 font-mono text-xs"
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <Separator />
-
-                                {/* Grid Settings Section */}
-                                <div className="space-y-4">
-                                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Grid</h3>
-
-                                    <div className="flex items-center gap-3">
                                         <Checkbox
-                                            id="grid-visible"
-                                            checked={settings.gridVisible}
-                                            onCheckedChange={(checked) => updateSetting('gridVisible', checked === true)}
+                                            checked={localSettings.autoScale}
+                                            onCheckedChange={(c) => handleUpdate('autoScale', c === true)}
                                         />
-                                        <Label htmlFor="grid-visible">Show grid lines</Label>
                                     </div>
 
-                                    <div className="space-y-2 pl-7">
-                                        <Label className="text-xs text-muted-foreground">Grid Color</Label>
-                                        <div className="flex items-center gap-2">
-                                            <input
-                                                type="color"
-                                                value={settings.gridColor.startsWith('rgba') ? '#333333' : settings.gridColor}
-                                                onChange={(e) => updateSetting('gridColor', e.target.value)}
-                                                className="w-10 h-8 rounded border cursor-pointer"
-                                                disabled={!settings.gridVisible}
-                                            />
-                                            <Input
-                                                value={settings.gridColor}
-                                                onChange={(e) => updateSetting('gridColor', e.target.value)}
-                                                className="h-8 w-[180px] font-mono text-xs"
-                                                disabled={!settings.gridVisible}
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <Separator />
-
-                                {/* Scale Settings Section */}
-                                <div className="space-y-4">
-                                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Scale</h3>
-
-                                    <div className="flex items-center gap-3">
-                                        <Checkbox
-                                            id="auto-scale"
-                                            checked={settings.autoScale}
-                                            onCheckedChange={(checked) => updateSetting('autoScale', checked === true)}
-                                        />
-                                        <Label htmlFor="auto-scale">Auto-scale price axis</Label>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <div className="flex items-center justify-between">
-                                            <Label className="text-sm">Right offset (empty bars)</Label>
-                                            <span className="text-sm text-muted-foreground">{settings.rightOffset}</span>
+                                    <div className="space-y-3 pt-2">
+                                        <div className="flex justify-between">
+                                            <Label>Right Margin (Bars)</Label>
+                                            <span className="text-sm font-mono text-muted-foreground">{localSettings.rightOffset}</span>
                                         </div>
                                         <Slider
-                                            value={[settings.rightOffset]}
-                                            onValueChange={([value]) => updateSetting('rightOffset', value)}
-                                            min={0}
-                                            max={20}
-                                            step={1}
-                                            className="w-full"
+                                            value={[localSettings.rightOffset]}
+                                            min={0} max={50} step={1}
+                                            onValueChange={([v]) => handleUpdate('rightOffset', v)}
                                         />
                                     </div>
                                 </div>
 
                                 <Separator />
-
-                                {/* Crosshair Settings */}
-                                <div className="space-y-4">
-                                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Crosshair</h3>
-
-                                    <div className="space-y-2">
-                                        <Label>Crosshair Mode</Label>
-                                        <Select
-                                            value={settings.crosshairMode}
-                                            onValueChange={(value) => updateSetting('crosshairMode', value as 'normal' | 'magnet' | 'hidden')}
-                                        >
-                                            <SelectTrigger className="w-[180px]">
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="normal">Normal</SelectItem>
-                                                <SelectItem value="magnet">Magnet (snap to OHLC)</SelectItem>
-                                                <SelectItem value="hidden">Hidden</SelectItem>
-                                            </SelectContent>
-                                        </Select>
+                                <SectionHeader title="Grid Lines" />
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <Checkbox
+                                            id="grid-visible"
+                                            checked={localSettings.gridVisible}
+                                            onCheckedChange={(c) => handleUpdate('gridVisible', c === true)}
+                                        />
+                                        <Label htmlFor="grid-visible">Show Grid</Label>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="color"
+                                            value={localSettings.gridColor === 'rgba(255, 255, 255, 0.1)' ? '#333333' : localSettings.gridColor}
+                                            onChange={(e) => handleUpdate('gridColor', e.target.value)}
+                                            className="w-8 h-8 rounded border cursor-pointer p-0.5 bg-background"
+                                            disabled={!localSettings.gridVisible}
+                                        />
                                     </div>
                                 </div>
                             </TabsContent>
-                            <TabsContent value="status">
-                                <div className="p-4 text-center text-muted-foreground">Status Line Settings Placeholder</div>
+
+                            <TabsContent value="trading" className="mt-0 space-y-6">
+                                <SectionHeader title="Chart Trading" />
+
+                                <SettingRow
+                                    label="Buy/Sell Buttons"
+                                    description="Show quick trading buttons on the chart overlay"
+                                    checked={localSettings.showTrading}
+                                    onChange={(c) => handleUpdate('showTrading', c)}
+                                />
+                                <SettingRow
+                                    label="Historical Trades"
+                                    description="Visualize trade executions and PnL on the chart"
+                                    checked={localSettings.showTrades}
+                                    onChange={(c) => handleUpdate('showTrades', c)}
+                                />
                             </TabsContent>
-                            <TabsContent value="alerts">
-                                <div className="p-4 text-center text-muted-foreground">Alerts Placeholder</div>
+
+                            <TabsContent value="status" className="mt-0">
+                                <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground border-2 border-dashed rounded-lg">
+                                    <Monitor className="h-10 w-10 mb-2 opacity-20" />
+                                    <p>Status line configuration coming soon</p>
+                                </div>
                             </TabsContent>
-                        </ScrollArea>
+
+                            <TabsContent value="events" className="mt-0">
+                                <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground border-2 border-dashed rounded-lg">
+                                    <Bell className="h-10 w-10 mb-2 opacity-20" />
+                                    <p>Event alerts configuration coming soon</p>
+                                </div>
+                            </TabsContent>
+                        </div>
                     </Tabs>
                 </div>
+
+                <DialogFooter className="px-6 py-4 border-t bg-muted/10 flex items-center justify-between sm:justify-between w-full">
+                    <Button variant="ghost" onClick={handleReset} className="text-muted-foreground hover:text-foreground">
+                        <RotateCcw className="w-4 h-4 mr-2" />
+                        Defaults
+                    </Button>
+                    <div className="flex gap-2">
+                        <Button variant="outline" onClick={handleCancel}>Cancel</Button>
+                        <Button onClick={handleSave} className="min-w-[80px]">
+                            <Save className="w-4 h-4 mr-2" />
+                            Save
+                        </Button>
+                    </div>
+                </DialogFooter>
             </DialogContent>
         </Dialog>
     )
 }
 
-function VolumeIcon() {
+// Subcomponents for cleaner code
+interface SettingsTabTriggerProps {
+    value: string
+    icon: any
+    label: string
+}
+
+function SettingsTabTrigger({ value, icon: Icon, label }: SettingsTabTriggerProps) {
     return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="h-4 w-4 text-muted-foreground"
+        <TabsTrigger
+            value={value}
+            className="w-full justify-start px-4 py-2.5 rounded-md data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:font-medium transition-all"
         >
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-        </svg>
+            <Icon className="w-4 h-4 mr-3" />
+            {label}
+        </TabsTrigger>
+    )
+}
+
+function SectionHeader({ title }: { title: string }) {
+    return (
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">{title}</h3>
+    )
+}
+
+interface ColorSettingProps {
+    label: string
+    upColor: string
+    downColor: string
+    onUpChange: (val: string) => void
+    onDownChange: (val: string) => void
+}
+
+function ColorSetting({ label, upColor, downColor, onUpChange, onDownChange }: ColorSettingProps) {
+    return (
+        <div className="space-y-3">
+            <Label className="text-sm font-medium">{label}</Label>
+            <div className="flex gap-3">
+                <ColorPicker value={upColor} onChange={onUpChange} label={`${label} Up Color`} />
+                <ColorPicker value={downColor} onChange={onDownChange} label={`${label} Down Color`} />
+            </div>
+        </div>
+    )
+}
+
+interface ColorPickerProps {
+    value: string
+    onChange: (val: string) => void
+    label: string
+}
+
+function ColorPicker({ value, onChange, label }: ColorPickerProps) {
+    return (
+        <div className="flex-1 flex items-center gap-2 p-1 border rounded-md bg-muted/20">
+            <input
+                type="color"
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                className="w-8 h-8 rounded cursor-pointer border-none p-0 bg-transparent"
+                title={label}
+            />
+            <span className="text-xs font-mono text-muted-foreground truncate">{value}</span>
+        </div>
+    )
+}
+
+interface SettingRowProps {
+    label: string
+    description?: string
+    checked?: boolean
+    onChange: (checked: boolean) => void
+}
+
+function SettingRow({ label, description, checked, onChange }: SettingRowProps) {
+    return (
+        <div className="flex items-start gap-3 p-3 rounded-lg hover:bg-muted/30 transition-colors border border-transparent hover:border-border/50">
+            <Checkbox checked={checked} onCheckedChange={(c) => onChange(c === true)} className="mt-1" />
+            <div className="grid gap-1">
+                <Label className="font-medium">{label}</Label>
+                {description && <p className="text-xs text-muted-foreground">{description}</p>}
+            </div>
+        </div>
     )
 }

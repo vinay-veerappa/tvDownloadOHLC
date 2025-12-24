@@ -20,6 +20,7 @@ import { ChartContextMenu } from "@/components/chart/chart-context-menu"
 import { ChartLegend, ChartLegendRef } from "@/components/chart/chart-legend"
 import { ChartCursorOverlay } from "@/components/chart-cursor-overlay"
 import { VWAPSettings } from "@/lib/indicator-api"
+import { useChartSettings } from "@/hooks/use-chart-settings"
 import { ThemeParams } from "@/lib/themes"
 import type { EMSettings } from './em-settings-dialog'
 import { ColorType } from "lightweight-charts"
@@ -86,6 +87,7 @@ interface ChartContainerProps {
     indicatorParams?: Record<string, any>
     onIndicatorParamsChange?: (type: string, params: any) => void
     trades?: any[] // Backtest trades for visualization
+    onOpenEMSettings?: () => void
 }
 
 export interface ChartContainerRef {
@@ -115,10 +117,13 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', sessionType = 'ETH',
     selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad,
     onPriceChange, position, pendingOrders, onModifyOrder, onModifyPosition, initialReplayTime,
-    vwapSettings, emSettings, indicatorParams, onIndicatorParamsChange, theme, onTimeframeChange, trades, mode // Destructure mode
+    vwapSettings, emSettings, indicatorParams, onIndicatorParamsChange, theme, onTimeframeChange, trades, mode, // Destructure mode
+    onOpenEMSettings
 }, ref) => {
 
-    // 1. Chart Reference
+    // 0. Global Chart Settings
+    const { settings: chartSettings } = useChartSettings()
+    const { showTrades } = chartSettings
     const chartContainerRef = useRef<HTMLDivElement>(null)
 
     // Bridge for lazy access to chart methods
@@ -845,6 +850,12 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 setSelectedDrawingType('opening-range');
                 setPropertiesModalOpen(true);
             }
+        } else if (id === 'expected-move') {
+            onSelectionChange?.({ type: 'indicator', id: 'expected-move' });
+            // Custom dialog for EM
+            if (onOpenEMSettings) {
+                onOpenEMSettings();
+            }
         }
     };
 
@@ -1036,10 +1047,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     useEffect(() => {
         if (!series || !chart || !ticker) return;
 
-        // Enable if 'expected-move' or 'em' is in indicators list
-        // OR if the ticker is SPY, ES, or SPX (auto-enable for these)
-        const isEMTicker = ticker.includes('SPY') || ticker.includes('ES') || ticker.includes('SPX');
-        const showEM = indicators.includes('expected-move') || indicators.includes('em') || isEMTicker;
+        // Strict enable via indicators list
+        const showEM = indicators.includes('expected-move') || indicators.includes('em');
 
         if (showEM) {
             const load = async () => {
@@ -1055,13 +1064,29 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     }
 
                     // Fetch EM levels from API
-                    // Map ticker to API format (ES1 -> ES, SPX -> SPX, SPY -> SPY)
-                    let apiTicker = ticker;
-                    if (ticker.includes('ES') || ticker.includes('/ES')) apiTicker = 'ES';
-                    else if (ticker.includes('SPX') || ticker === '$SPX') apiTicker = 'SPX';
-                    else if (ticker.includes('SPY')) apiTicker = 'SPY';
+                    // Map ticker if needed, but respect Settings ticker if provided?
+                    // Usually we want to load data for the CHART ticker, but if user overrides in settings (Proxy), use that.
+                    // Note: emSettings.ticker might be 'SPY' by default, so be careful not to override valid chart ticker 'ES'.
+                    // Use chart ticker unless it's not a standard index?
+                    // Let's stick to the mapped chart ticker for now to avoid confusion.
+                    // Or check if emSettings.ticker matches one of the expected types.
 
-                    const resp = await fetch(`/api/em-levels?ticker=${apiTicker}`);
+                    let apiTicker = ticker;
+                    // Logic to prioritize emSettings ticker if user explicitly set it?
+                    // If emSettings?.ticker is set, use it.
+                    if (emSettings?.ticker) {
+                        apiTicker = emSettings.ticker;
+                    } else {
+                        // Fallback mapping
+                        if (ticker.includes('ES') || ticker.includes('/ES')) apiTicker = 'ES';
+                        else if (ticker.includes('SPX') || ticker === '$SPX') apiTicker = 'SPX';
+                        else if (ticker.includes('SPY')) apiTicker = 'SPY';
+                    }
+
+                    // Limit days if setting exists
+                    const daysLimit = emSettings?.daysToShow || 30;
+
+                    const resp = await fetch(`/api/em-levels?ticker=${apiTicker}&days=${daysLimit}`);
                     if (!resp.ok) {
                         console.warn('EM Levels API returned error:', resp.status);
                         return;
@@ -1093,6 +1118,9 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                     }
 
                     // Load each method's data
+                    // Clear existing data first?
+                    // The plugin's setMethodData overwrites.
+
                     for (const [methodId, data] of methodDataMap) {
                         emPluginRef.current.setMethodData(methodId, data);
                     }
@@ -1114,7 +1142,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
                 emPluginRef.current = null;
             }
         }
-    }, [series, chart, ticker, theme, indicators]);
+    }, [series, chart, ticker, theme, indicators, emSettings?.daysToShow, emSettings?.ticker]);
 
     useEffect(() => {
         if (emPluginRef.current && data.length > 0) {
@@ -1163,8 +1191,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
     const tradeVisualizationsRef = useRef<any[]>([]);
 
     useEffect(() => {
-        if (!series || !chart || !trades || trades.length === 0) {
-            // Cleanup if no trades
+        if (!series || !chart || !trades || trades.length === 0 || !showTrades) {
+            // Cleanup if no trades or disabled
             tradeVisualizationsRef.current.forEach(p => series?.detachPrimitive(p));
             tradeVisualizationsRef.current = [];
             return;
@@ -1222,7 +1250,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             });
         });
 
-    }, [series, chart, trades]);
+    }, [series, chart, trades, showTrades]);
 
     // -------------------------------------------------------------------------
     // 14. Range Extensions Integration
