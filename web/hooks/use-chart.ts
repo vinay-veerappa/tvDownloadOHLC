@@ -458,9 +458,14 @@ export function useChart(
 
                         activeSeries.push(...series);
 
-                        // Populate exposed ref for hit testing [New]
-                        // We store the series along with its definition ID for context if needed
-                        series.forEach(s => indicatorsRef.current.push({ series: s, id: baseId }));
+                        // Populate exposed ref for dynamic updates and hit testing
+                        // Store paired data for update() calls
+                        indicatorsRef.current.push({
+                            id: baseId,
+                            param,
+                            series: series,
+                            renderer: indicatorRenderer
+                        });
 
                         oscillatorPaneIndex += paneIndexIncrement;
 
@@ -503,6 +508,74 @@ export function useChart(
             indicatorsRef.current = [];
         }
     }, [chartInstance, seriesInstance, indicatorsKey, dataTimeRangeKey, vwapSettings, ticker, resolvedTheme])
+
+    // Dynamic Updates on Scroll
+    useEffect(() => {
+        if (!chartInstance || isDisposedRef.current) return;
+
+        const handleVisibleRangeChange = async () => {
+            if (indicatorsRef.current.length === 0) return;
+
+            // Get Visible Range
+            const range = chartInstance.timeScale().getVisibleLogicalRange();
+            if (!range) return;
+
+            // Convert to Time Range
+            const data = dataRef.current;
+            if (!data || data.length === 0) return;
+
+            const leftIndex = Math.floor(Math.max(0, range.from));
+            const rightIndex = Math.ceil(Math.min(data.length - 1, range.to));
+
+            if (leftIndex > rightIndex) return;
+
+            const visibleRange = {
+                start: data[leftIndex].time as number,
+                end: data[rightIndex].time as number
+            };
+
+
+            // Iterate indicators and call update if available
+            for (const ind of indicatorsRef.current) {
+                if (ind.renderer && typeof ind.renderer.update === 'function') {
+                    // console.log(`[Dynamic] Triggering update for ${ind.id}`);
+                    try {
+                        const ctx = {
+                            chart: chartInstance,
+                            data: data,
+                            timeframe,
+                            ticker,
+                            vwapSettings,
+                            resolvedTheme,
+                            theme,
+                            displayTimezone,
+                            visibleRange
+                        };
+                        await ind.renderer.update(ctx, ind.series, { ...INDICATOR_DEFINITIONS[ind.id], period: ind.param });
+                    } catch (e) {
+                        console.error(`[Dynamic] Update failed for ${ind.id}: `, e);
+                    }
+                }
+            }
+        };
+
+        // Throttle
+        let timeoutId: any = null;
+        const throttledHandler = () => {
+            if (timeoutId) return;
+            timeoutId = setTimeout(() => {
+                handleVisibleRangeChange();
+                timeoutId = null;
+            }, 100); // 100ms throttle
+        };
+
+        chartInstance.timeScale().subscribeVisibleLogicalRangeChange(throttledHandler);
+
+        return () => {
+            chartInstance.timeScale().unsubscribeVisibleLogicalRangeChange(throttledHandler);
+            if (timeoutId) clearTimeout(timeoutId);
+        };
+    }, [chartInstance, timeframe, ticker, vwapSettings, resolvedTheme, theme, displayTimezone]);
 
     // Manage Primitives (Sessions, Watermark) - NO data dependency
     useEffect(() => {
@@ -630,8 +703,6 @@ export function useChart(
         scrollToStart,
         scrollToEnd,
         getDataRange,
-        getVisibleBarIndex,
-        getVisibleTimeRange,
         getVisibleBarIndex,
         getVisibleTimeRange,
         indicators: indicatorsRef, // Expose indicators ref

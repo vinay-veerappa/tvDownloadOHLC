@@ -11,6 +11,7 @@ export interface IndicatorContext {
     resolvedTheme?: string;
     theme?: ThemeParams;
     displayTimezone?: string;
+    visibleRange?: { start: number; end: number } | null;
 }
 
 export interface ChartIndicator {
@@ -22,4 +23,9 @@ export interface ChartIndicator {
         series: ISeriesApi<any>[];
         paneIndexIncrement: number;
     }>;
+    update?: (
+        ctx: IndicatorContext,
+        series: ISeriesApi<any>[],
+        config: any
+    ) => Promise<void>;
 }
