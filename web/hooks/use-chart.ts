@@ -287,27 +287,8 @@ export function useChart(
             setSeriesInstance(newSeries)
 
             if (data.length > 0) {
-                // Clone data to avoid mutations and allow whitespace appending
+                // Clone data to avoid mutations (whitespace added in data update effect)
                 const chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : [...data];
-
-                // Add Whitespace (Future empty bars) for smoother scrolling
-                if (chartData.length > 0) {
-                    const lastBar = chartData[chartData.length - 1];
-                    // Ensure time is number (UNIX)
-                    const lastTime = lastBar.time as number;
-
-                    // Calculate interval in seconds
-                    const res = normalizeResolution(timeframe);
-                    const intervalSeconds = getResolutionInMinutes(res) * 60;
-
-                    // Append 50 whitespace bars (empty space)
-                    const whitespaceCount = 500;
-                    for (let i = 1; i <= whitespaceCount; i++) {
-                        chartData.push({
-                            time: (lastTime + (i * intervalSeconds)) as any
-                        });
-                    }
-                }
 
                 newSeries.setData(chartData)
                 chartInstance.timeScale().fitContent()
@@ -353,7 +334,7 @@ export function useChart(
                 const lastTime = lastBar.time as number;
                 const res = normalizeResolution(timeframe);
                 const intervalSeconds = getResolutionInMinutes(res) * 60;
-                const whitespaceCount = 500;
+                const whitespaceCount = 100; // Reduced from 500 for performance
 
                 // Log whitespace gen
                 // console.log(`[useChart] Generating ${whitespaceCount} whitespace bars. Last: ${lastTime}, Interval: ${intervalSeconds}`)
