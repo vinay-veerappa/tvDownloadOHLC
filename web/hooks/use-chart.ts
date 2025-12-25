@@ -317,34 +317,38 @@ export function useChart(
     const isFirstLoadRef = useRef(true)
     const prevDataLengthRef = useRef(0)
 
+    // Memoize chart data transformation (Heiken Ashi + whitespace)
+    const chartData = useMemo(() => {
+        if (!data.length) return [];
+
+        // Calculate base data (Heiken Ashi or raw OHLC)
+        let result = style === 'heiken-ashi' ? calculateHeikenAshi(data) : [...data];
+
+        // Add whitespace bars
+        if (result.length > 0) {
+            const lastBar = result[result.length - 1];
+            const lastTime = lastBar.time as number;
+            const res = normalizeResolution(timeframe);
+            const intervalSeconds = getResolutionInMinutes(res) * 60;
+            const whitespaceCount = 100;
+
+            for (let i = 1; i <= whitespaceCount; i++) {
+                result.push({
+                    time: (lastTime + (i * intervalSeconds)) as any
+                });
+            }
+        }
+
+        return result;
+    }, [data, style, timeframe]);
+
     // Update Data when data changes
     useEffect(() => {
-        if (!seriesInstance || !data.length || isDisposedRef.current || !chartInstance) return
+        if (!seriesInstance || !chartData.length || isDisposedRef.current || !chartInstance) return
 
         try {
             const timeScale = chartInstance.timeScale()
             const isFirstLoad = isFirstLoadRef.current || prevDataLengthRef.current === 0
-
-            // Set the new data
-            let chartData = style === 'heiken-ashi' ? calculateHeikenAshi(data) : [...data];
-
-            // Add Whitespace (Future empty bars)
-            if (chartData.length > 0) {
-                const lastBar = chartData[chartData.length - 1];
-                const lastTime = lastBar.time as number;
-                const res = normalizeResolution(timeframe);
-                const intervalSeconds = getResolutionInMinutes(res) * 60;
-                const whitespaceCount = 100; // Reduced from 500 for performance
-
-                // Log whitespace gen
-                // console.log(`[useChart] Generating ${whitespaceCount} whitespace bars. Last: ${lastTime}, Interval: ${intervalSeconds}`)
-
-                for (let i = 1; i <= whitespaceCount; i++) {
-                    chartData.push({
-                        time: (lastTime + (i * intervalSeconds)) as any
-                    });
-                }
-            }
 
             //console.log(`[useChart] calling setData with ${chartData.length} items. First:`, chartData[0], 'Last:', chartData[chartData.length-1])
             try {
