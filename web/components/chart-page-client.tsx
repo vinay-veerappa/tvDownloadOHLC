@@ -191,12 +191,30 @@ export function ChartPageClient({
             }
 
             // Capture with html2canvas
+            // Note: html2canvas doesn't support oklch/lab colors, so we use onclone to handle them
             const canvas = await html2canvas(element, {
                 useCORS: true,
                 allowTaint: true,
-                backgroundColor: null, // Preserve transparency
+                backgroundColor: '#131722', // Dark theme background - fallback for oklch
                 scale: window.devicePixelRatio || 1, // High DPI support
-                logging: false
+                logging: false,
+                // Handle unsupported color formats by converting them in the cloned DOM
+                onclone: (clonedDoc) => {
+                    // Convert oklch/lab colors to fallback hex values
+                    const style = clonedDoc.createElement('style')
+                    style.textContent = `
+                        * {
+                            --background: #131722 !important;
+                            --foreground: #d1d4dc !important;
+                            --card: #1e222d !important;
+                            --card-foreground: #d1d4dc !important;
+                            --muted: #2a2e39 !important;
+                            --muted-foreground: #787b86 !important;
+                            --border: rgba(255,255,255,0.1) !important;
+                        }
+                    `
+                    clonedDoc.head.appendChild(style)
+                }
             })
 
             if (action === 'copy') {
