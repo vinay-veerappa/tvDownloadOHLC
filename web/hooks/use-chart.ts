@@ -513,6 +513,10 @@ export function useChart(
     useEffect(() => {
         if (!chartInstance || isDisposedRef.current) return;
 
+        // Track last calculated range to avoid redundant updates
+        let lastVisibleStart = 0;
+        let lastVisibleEnd = 0;
+
         const handleVisibleRangeChange = async () => {
             if (indicatorsRef.current.length === 0) return;
 
@@ -534,11 +538,16 @@ export function useChart(
                 end: data[rightIndex].time as number
             };
 
+            // Skip if range is unchanged (performance optimization)
+            if (visibleRange.start === lastVisibleStart && visibleRange.end === lastVisibleEnd) {
+                return;
+            }
+            lastVisibleStart = visibleRange.start;
+            lastVisibleEnd = visibleRange.end;
 
             // Iterate indicators and call update if available
             for (const ind of indicatorsRef.current) {
                 if (ind.renderer && typeof ind.renderer.update === 'function') {
-                    // console.log(`[Dynamic] Triggering update for ${ind.id}`);
                     try {
                         const ctx = {
                             chart: chartInstance,
@@ -559,20 +568,20 @@ export function useChart(
             }
         };
 
-        // Throttle
+        // Debounce (only fire after scrolling stops for 500ms)
         let timeoutId: any = null;
-        const throttledHandler = () => {
-            if (timeoutId) return;
+        const debouncedHandler = () => {
+            if (timeoutId) clearTimeout(timeoutId);
             timeoutId = setTimeout(() => {
                 handleVisibleRangeChange();
                 timeoutId = null;
-            }, 100); // 100ms throttle
+            }, 500); // 500ms debounce
         };
 
-        chartInstance.timeScale().subscribeVisibleLogicalRangeChange(throttledHandler);
+        chartInstance.timeScale().subscribeVisibleLogicalRangeChange(debouncedHandler);
 
         return () => {
-            chartInstance.timeScale().unsubscribeVisibleLogicalRangeChange(throttledHandler);
+            chartInstance.timeScale().unsubscribeVisibleLogicalRangeChange(debouncedHandler);
             if (timeoutId) clearTimeout(timeoutId);
         };
     }, [chartInstance, timeframe, ticker, vwapSettings, resolvedTheme, theme, displayTimezone]);
