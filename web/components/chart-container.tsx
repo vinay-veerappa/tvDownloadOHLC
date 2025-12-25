@@ -1665,13 +1665,14 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
             {/* Chart canvas container - innerHTML gets cleared by useChart */}
             <div ref={chartContainerRef} className="w-full h-full" />
 
-            {/* OHLC Legend Overlay - outside chartContainerRef so it survives */}
+            {/* OHLC Legend - Now using Canvas-based legend (see ohlc-legend.ts)
             <ChartLegend
                 ref={legendRef}
                 ticker={ticker}
                 timeframe={timeframe}
                 className="absolute top-2 left-2 z-50 bg-background/80 backdrop-blur-sm px-2 py-1 rounded pointer-events-none"
             />
+            */}
 
             <ChartContextMenu
                 containerRef={chartContainerRef}
