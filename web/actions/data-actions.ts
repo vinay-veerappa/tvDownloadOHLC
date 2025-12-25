@@ -102,11 +102,10 @@ export async function clearCache() {
     return { success: true }
 }
 
-// Helper to merge chunks (sorting required - chunks stored newest-first)
+// Helper to merge chunks (reverse order: chunk_0=newest, so oldest chunk should come first)
 function mergeChunks(chunks: OHLCData[][]): OHLCData[] {
-    const flat = chunks.filter(Boolean).flat();
-    // Sort by time ascending (chunks are stored in reverse order)
-    return flat.sort((a, b) => a.time - b.time);
+    // Reverse so oldest chunk is first, then flatten - no sort needed!
+    return chunks.filter(Boolean).reverse().flat();
 }
 
 export async function getChartData(ticker: string, timeframe: string, limit: number = 0): Promise<{ success: boolean, data?: OHLCData[], totalRows?: number, chunksLoaded?: number, numChunks?: number, error?: string }> {
