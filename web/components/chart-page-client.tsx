@@ -177,46 +177,10 @@ export function ChartPageClient({
     // Bottom Panel state
     const [isPanelOpen, setIsPanelOpen] = useState(false)
 
-    // Chart Capture Logic - uses html2canvas to capture full container including overlays
+    // Chart Capture Logic - uses html2canvas with fallback to LWC takeScreenshot
     const handleTakeScreenshot = useCallback(async (action: 'copy' | 'save' | 'open') => {
-        try {
-            // Dynamically import html2canvas to avoid SSR issues
-            const html2canvas = (await import('html2canvas')).default
-
-            // Target the chart capture area which includes canvas + overlays
-            const element = document.getElementById('chart-capture-area')
-            if (!element) {
-                toast.error("Chart area not found")
-                return
-            }
-
-            // Capture with html2canvas
-            // Note: html2canvas doesn't support oklch/lab colors, so we use onclone to handle them
-            const canvas = await html2canvas(element, {
-                useCORS: true,
-                allowTaint: true,
-                backgroundColor: '#131722', // Dark theme background - fallback for oklch
-                scale: window.devicePixelRatio || 1, // High DPI support
-                logging: false,
-                // Handle unsupported color formats by converting them in the cloned DOM
-                onclone: (clonedDoc) => {
-                    // Convert oklch/lab colors to fallback hex values
-                    const style = clonedDoc.createElement('style')
-                    style.textContent = `
-                        * {
-                            --background: #131722 !important;
-                            --foreground: #d1d4dc !important;
-                            --card: #1e222d !important;
-                            --card-foreground: #d1d4dc !important;
-                            --muted: #2a2e39 !important;
-                            --muted-foreground: #787b86 !important;
-                            --border: rgba(255,255,255,0.1) !important;
-                        }
-                    `
-                    clonedDoc.head.appendChild(style)
-                }
-            })
-
+        // Helper function to process canvas result
+        const processCanvas = (canvas: HTMLCanvasElement) => {
             if (action === 'copy') {
                 canvas.toBlob(blob => {
                     if (!blob) {
@@ -232,7 +196,6 @@ export function ChartPageClient({
                 const url = canvas.toDataURL('image/png')
                 const a = document.createElement('a')
                 a.href = url
-                // Format: chart-ES1-1D-2023-10-27_14-30-05.png
                 const date = new Date()
                 const dateStr = date.toISOString().slice(0, 10)
                 const timeStr = date.toTimeString().slice(0, 8).replace(/:/g, '-')
@@ -247,11 +210,48 @@ export function ChartPageClient({
                     win.document.title = `Chart Capture - ${ticker}`
                 }
             }
-        } catch (e) {
-            console.error('Screenshot failed:', e)
-            toast.error("Screenshot failed")
         }
-    }, [ticker, timeframe])
+
+        try {
+            // Try html2canvas first for full capture including overlays
+            const html2canvas = (await import('html2canvas')).default
+            const element = document.getElementById('chart-capture-area')
+
+            if (element) {
+                const canvas = await html2canvas(element, {
+                    useCORS: true,
+                    allowTaint: true,
+                    backgroundColor: '#131722',
+                    scale: window.devicePixelRatio || 1,
+                    logging: false,
+                    // Skip SVG elements that may have unsupported oklch/lab colors
+                    ignoreElements: (el) => {
+                        // Skip SVG icons from Lucide (they often have lab() colors)
+                        if (el.tagName === 'svg' && el.classList.contains('lucide')) {
+                            return true
+                        }
+                        return false
+                    }
+                })
+                processCanvas(canvas)
+                return
+            }
+        } catch (e) {
+            console.warn('html2canvas failed, falling back to LWC takeScreenshot:', e)
+        }
+
+        // Fallback to Lightweight Charts native screenshot (canvas only, no overlays)
+        if (navigation?.takeScreenshot) {
+            const canvas = navigation.takeScreenshot()
+            if (canvas) {
+                processCanvas(canvas)
+                toast.info("Screenshot captured (without overlays)")
+                return
+            }
+        }
+
+        toast.error("Screenshot failed")
+    }, [ticker, timeframe, navigation])
 
     const { resolvedTheme } = useTheme()
 
