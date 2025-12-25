@@ -1,6 +1,9 @@
 import pandas as pd
 import argparse
 from pathlib import Path
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'utils')))
 import data_utils
 import shutil
 import numpy as np

@@ -114,6 +114,8 @@ export interface ChartContainerRef {
 }
 
 
+
+
 export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({
     ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted,
     indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', sessionType = 'ETH',
@@ -149,6 +151,8 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         mode, // Pass mode
         sessionType // Pass sessionType
     })
+
+
 
     // 3. Core Chart Initialization (Hook)
     const {
@@ -288,6 +292,7 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
 
             // Use barsInLogicalRange to check how many bars are to the left of visible area
             const barsInfo = series.barsInLogicalRange(logicalRange)
+            // console.log('[ChartContainer] Visible Range changed:', logicalRange, 'BarsInfo:', barsInfo, 'HasMore:', hasMoreData)
 
             // If less than 50 bars to the left and we have more data to load
             if (barsInfo && barsInfo.barsBefore !== null && barsInfo.barsBefore < 50) {
@@ -1500,13 +1505,13 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
         <div className="w-full h-full relative" onContextMenu={(e) => {
             // Keep native React onContextMenu as backup
         }}>
+
             {/* Range Extensions UI */}
             {rangeExtensionsActive && (() => {
                 const params = indicatorParams?.['range-extensions'] || {};
                 const accountBalance = params.accountBalance ?? 50000;
                 const riskPercent = params.riskPercent ?? 1.0;
 
-                // Auto-detect specs from ticker
                 const { pointValue, microMultiplier: mm } = getContractSpecs(ticker);
                 const tickValue = pointValue; // Use Point Value for Logic
                 const microMultiplier = mm;

@@ -96,6 +96,7 @@ export function useDataLoading({
                     setHasMoreData((result.chunksLoaded || 0) < (result.numChunks || 0))
 
                     if (finalData.length > 0) {
+
                         onDataLoad?.({
                             start: finalData[0].time,
                             end: finalData[finalData.length - 1].time,
@@ -171,13 +172,29 @@ export function useDataLoading({
 
                 // Check if we need to evict data from the END (newest)
                 setFullData(prev => {
-                    let combined = [...newData, ...prev]
+                    // Filter overlaps in newData against prev[0]
+                    // newData is OLDER data (historical). prev is CURRENT/NEWER data.
+                    // So we want [newData ... prev]
+                    // But duplicates might exist at newData[end] and prev[start]
+
+                    let cleanNewData = newData
+                    if (prev.length > 0 && newData.length > 0) {
+                        const firstExistingDataTime = prev[0].time
+                        // If duplicates exist, they will be at end of newData
+                        // Filter newData to only include items < firstExistingDataTime
+                        if (newData[newData.length - 1].time >= firstExistingDataTime) {
+                            // console.log('[useDataLoading] Filtered overlapping bars from history load')
+                            cleanNewData = newData.filter(d => d.time < firstExistingDataTime)
+                        }
+                    }
+
+                    let combined = [...cleanNewData, ...prev]
 
                     if (combined.length > EVICT_WHEN_OVER) {
                         const overflow = combined.length - EVICT_TO
                         if (overflow > 0 && overflow < combined.length) {
                             combined = combined.slice(0, combined.length - overflow)
-                            console.log(`[EVICT] Dropped ${overflow} newest bars`)
+
                         }
                     }
                     return combined

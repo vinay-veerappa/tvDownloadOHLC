@@ -418,6 +418,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
                         ref={chartRef}
                         {...props}
                         theme={themeParams}
+                        displayTimezone={props.displayTimezone || 'America/New_York'}
                         selectedTool={selectedTool}
                         onToolSelect={setSelectedTool}
                         onDrawingCreated={handleDrawingCreated}

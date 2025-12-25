@@ -32,9 +32,9 @@ export const VWAPIndicator: ChartIndicator = {
                 bands: [1.0]
             };
 
-            // Limit to last 14 days of data for performance
-            // 14 days = ~12k rows, 850KB, 33ms (vs 240k rows, 32MB, 3s for 8 months)
-            const VWAP_LOAD_DAYS = 14;
+            // Limit to last 60 days of data for performance
+            // 60 days = ~50k rows
+            const VWAP_LOAD_DAYS = 60;
             const SECONDS_PER_DAY = 24 * 60 * 60;
 
             // Get end time from chart data, then calculate start time as 14 days before
