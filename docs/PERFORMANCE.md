@@ -10,6 +10,16 @@ This document describes the performance optimizations implemented to improve cha
 - **Description**: VWAP calculation now runs in a Web Worker, keeping the main thread responsive during scroll updates
 - **Fallback**: Automatically falls back to main thread if worker fails
 
+---
+
+## DailyProfiler Optimizations
+
+### Web Worker Off-Thread Calculation
+- **Location**: `web/lib/charts/indicators/profiler.worker.ts`, `profiler-worker-manager.ts`
+- **Impact**: High
+- **Description**: Session calculation (`_calculateSessions`) now runs in a Web Worker, improving responsiveness when profiler is enabled
+- **Fallback**: Automatically falls back to main thread if worker fails
+
 ### Cached DateTimeFormat
 - **Location**: `web/lib/charts/indicators/vwap.ts`
 - **Impact**: High
