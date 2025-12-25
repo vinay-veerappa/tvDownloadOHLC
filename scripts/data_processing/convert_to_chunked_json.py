@@ -98,8 +98,15 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
         
         print(f"  Deduplicated {timeframe}: {len(df)} bars (1 per {'day' if timeframe == '1D' else 'week'})")
     
-    df = df[['time', 'open', 'high', 'low', 'close']]
+    # Select columns (include volume if available)
+    cols = ['time', 'open', 'high', 'low', 'close']
+    if 'volume' in df.columns:
+        cols.append('volume')
+        # Fill NaNs in volume with 0
+        df['volume'] = df['volume'].fillna(0)
     
+    df = df[cols]
+
     # Sanitize: Drop NaNs in critical columns
     before_drop = len(df)
     df.dropna(subset=['time', 'close'], inplace=True)
