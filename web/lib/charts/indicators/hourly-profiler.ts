@@ -795,11 +795,32 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
             this._barInterval = diff > 0 ? diff : 60;
         }
 
-        this._calculateProfiles(data);
-
-        // Update Renderer
-        this._updateRenderer();
-        this._requestUpdate();
+        // Try Web Worker first for better UI responsiveness
+        if (typeof Worker !== 'undefined') {
+            import('./hourly-profiler-worker-manager').then(({ getHourlyProfilerWorker }) => {
+                const worker = getHourlyProfilerWorker();
+                worker.calculate({ data }).then((result) => {
+                    this._data1H = result.periods1H as HourlyPeriod[];
+                    this._data3H = result.periods3H as HourlyPeriod[];
+                    this._data = [...this._data1H, ...this._data3H];
+                    this._updateRenderer();
+                    this._requestUpdate();
+                }).catch((e) => {
+                    console.warn('[HourlyProfiler] Worker failed, using main thread:', e);
+                    this._calculateProfiles(data);
+                    this._updateRenderer();
+                    this._requestUpdate();
+                });
+            }).catch(() => {
+                this._calculateProfiles(data);
+                this._updateRenderer();
+                this._requestUpdate();
+            });
+        } else {
+            this._calculateProfiles(data);
+            this._updateRenderer();
+            this._requestUpdate();
+        }
     }
 
     private _calculateProfiles(data: any[]) {
