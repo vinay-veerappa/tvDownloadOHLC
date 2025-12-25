@@ -102,6 +102,37 @@ export async function clearCache() {
     return { success: true }
 }
 
+// Helper to sanitize data: Sort by time and remove duplicates
+function sanitizeData(data: OHLCData[], context: string): OHLCData[] {
+    if (!data || data.length === 0) return []
+
+    // 1. Sort by time asc
+    data.sort((a, b) => a.time - b.time)
+
+    // 2. Remove duplicates
+    const unique: OHLCData[] = []
+    let lastTime = -1
+
+    for (const bar of data) {
+        if (bar.time > lastTime) {
+            unique.push(bar)
+            lastTime = bar.time
+        }
+    }
+
+    return unique
+}
+
+// Helper to merge chunks and then sanitize
+function mergeAndSanitize(chunks: OHLCData[][], context: string): OHLCData[] {
+    // Flatten
+    let flat: OHLCData[] = []
+    for (const chunk of chunks) {
+        if (chunk) flat = flat.concat(chunk)
+    }
+    return sanitizeData(flat, context)
+}
+
 export async function getChartData(ticker: string, timeframe: string, limit: number = 0): Promise<{ success: boolean, data?: OHLCData[], totalRows?: number, chunksLoaded?: number, numChunks?: number, error?: string }> {
     try {
         // Try direct folder (for legacy support like 'folder_3m') OR converted folder name
@@ -140,23 +171,8 @@ export async function getChartData(ticker: string, timeframe: string, limit: num
         // Combine chunks: oldest chunk first, then newer chunks
         // Chunk 0 is newest, Chunk N is oldest.
         // We want data sorted by time (oldest to newest).
-        // So we want Chunk N, Chunk N-1, ... Chunk 0.
 
-        // Efficient flattening
-        const validChunks = allChunks.filter(c => c && c.length > 0)
-        let totalLen = 0
-        for (const c of validChunks) totalLen += c.length
-
-        const data = new Array(totalLen)
-        let offset = 0
-
-        // Iterate backwards (from oldest chunk to newest chunk)
-        for (let i = validChunks.length - 1; i >= 0; i--) {
-            const chunk = validChunks[i]
-            for (let j = 0; j < chunk.length; j++) {
-                data[offset++] = chunk[j]
-            }
-        }
+        const data = mergeAndSanitize(allChunks, `getChartData(${ticker}, ${timeframe})`)
 
         return {
             success: true,
@@ -286,10 +302,7 @@ export async function loadChunksForTime(
         }
 
         // Combine: reverse so oldest chunk is first (for correct time ordering)
-        let data: OHLCData[] = []
-        for (let i = allChunks.length - 1; i >= 0; i--) {
-            data = [...data, ...allChunks[i]]
-        }
+        const data = mergeAndSanitize(allChunks, `loadChunksForTime(${ticker}, ${timeframe}, ${targetTime})`)
 
         return {
             success: true,
@@ -342,21 +355,8 @@ export async function loadNextChunks(
             allChunks.push(chunkData)
         }
 
-        // Combine chunks
-        // Chunks are loaded from newest to oldest (index 0 is newest)
-        // Inside each chunk, data is oldest to newest
-        // We want the resulting array to be continuous time, oldest to newest
-        // So we append chunks: Chunk X+4, Chunk X+3, ... Chunk X
-        // WAIT: Chunks are contiguous in index order. Chunk 0 is newest. Chunk 1 is older.
-        // If we load Chunk 1 and Chunk 2.
-        // Chunk 2 contains older data than Chunk 1.
-        // We want [Older Data, Newer Data].
-        // So we want [Chunk 2 data, Chunk 1 data].
-
-        let data: OHLCData[] = []
-        for (let i = allChunks.length - 1; i >= 0; i--) {
-            data = [...data, ...allChunks[i]]
-        }
+        // Combine chunks with deduplication and sanitization
+        const data = mergeAndSanitize(allChunks, `loadNextChunks(${ticker}, ${timeframe}, ${startIndex})`)
 
         return {
             success: true,

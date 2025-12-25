@@ -200,7 +200,11 @@ export function ChartPageClient({
                 const url = canvas.toDataURL('image/png')
                 const a = document.createElement('a')
                 a.href = url
-                a.download = `chart-${ticker}-${timeframe}-${new Date().toISOString().slice(0, 10)}.png`
+                // Format: chart-ES1-1D-2023-10-27_14-30-05.png
+                const date = new Date()
+                const dateStr = date.toISOString().slice(0, 10)
+                const timeStr = date.toTimeString().slice(0, 8).replace(/:/g, '-')
+                a.download = `chart-${ticker}-${timeframe}-${dateStr}_${timeStr}.png`
                 a.click()
                 toast.success("Chart saved")
             } else if (action === 'open') {

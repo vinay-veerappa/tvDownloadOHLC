@@ -12,6 +12,7 @@ import {
     BarSeries,
     LineSeries,
     AreaSeries,
+    TickMarkType,
     createSeriesMarkers
 } from "lightweight-charts"
 
@@ -45,6 +46,7 @@ export function useChart(
     const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
     const [seriesInstance, setSeriesInstance] = useState<ISeriesApi<any> | null>(null)
 
+
     // Track chart lifecycle to prevent "disposed" errors in Strict Mode
     const chartRef = useRef<IChartApi | null>(null)
     const isDisposedRef = useRef(false)
@@ -54,36 +56,12 @@ export function useChart(
     // Let's check utils.ts again. 
     // utils.ts: export function formatTimeForTimezone(time: number): string { ... } - NO timezone arg.
     // So I need to UPDATE utils.ts to accept timezone, OR keep the local one but fix it to use toLocaleString (Date+Time).
-
-    // Let's fix the local one to be safe and immediate, or update utils.
-    // Updating utils is cleaner.
-    // BUT for now, to ensure I don't break other calls, I will fix the LOCAL one to show Date + Time.
+    // Update: utils.ts WAS updated to accept timezone.
 
     const formatTimeForTimezoneLocal = (time: number) => {
-        const date = new Date(time * 1000)
-        // Explicitly handle UTC
-        if (displayTimezone === 'UTC') {
-            return date.toISOString().substring(0, 16).replace('T', ' ')
-        }
-
-        const tz = displayTimezone === 'local' ? undefined : displayTimezone
-        try {
-            return date.toLocaleString('en-US', {
-                timeZone: tz,
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false
-            })
-        } catch (e) {
-            console.warn(`[Chart] Timezone error for ${tz}:`, e)
-            return date.toISOString().substring(0, 16).replace('T', ' ')
-        }
+        // Use the utility function which now supports timezone
+        return formatTimeForTimezone(time, displayTimezone)
     }
-
-
 
     // Create Chart Instance
     useEffect(() => {
@@ -115,15 +93,58 @@ export function useChart(
             timeScale: {
                 timeVisible: true,
                 rightOffset: 50,
-                minBarSpacing: 0.02, // Allow zooming out to see more history (e.g. days/weeks of 1m data)
-                // tickMarkFormatter: REMOVED to allow auto-scaling (concise ticks)
+                minBarSpacing: 0.02, // Allow zooming out to see more history
                 borderColor: isDark ? '#2a2e39' : '#e0e0e0',
+                tickMarkFormatter: (time: number, tickMarkType: TickMarkType, locale: string) => {
+                    const date = new Date(time * 1000);
+                    // Force using the generic formatter with specific options for each type
+                    // preventing manual construction errors
+                    // use 'en-US' strictly to avoid browser locale variations
+
+                    const tz = displayTimezone === 'local' ? undefined : displayTimezone;
+
+                    try {
+                        // Date parts
+                        if (tickMarkType === TickMarkType.Year) {
+                            return date.toLocaleDateString('en-US', { timeZone: tz, year: 'numeric' });
+                        }
+                        if (tickMarkType === TickMarkType.Month) {
+                            return date.toLocaleDateString('en-US', { timeZone: tz, month: 'short' });
+                        }
+                        if (tickMarkType === TickMarkType.DayOfMonth) {
+                            return date.toLocaleDateString('en-US', { timeZone: tz, day: 'numeric', month: 'short' });
+                        }
+
+                        // Time parts
+                        const formatted = date.toLocaleTimeString('en-US', {
+                            timeZone: tz,
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false,
+                            timeZoneName: 'short'
+                        });
+
+                        // Debug log for user to check input timestamp vs output
+
+
+
+
+                        return formatted;
+
+                    } catch (e) {
+                        // Fallback to UTC if timezone is invalid
+                        console.error('Timezone error', e);
+                        return date.toISOString().substring(11, 16);
+                    }
+                }
             },
             localization: {
                 locale: 'en-US',
                 dateFormat: 'yyyy-MM-dd',
-                // Crosshair: Use full format
-                timeFormatter: (time: number) => formatTimeForTimezoneLocal(time),
+                // Crosshair matching the Tick Mark logic
+                timeFormatter: (time: number) => {
+                    return formatTimeForTimezone(time, displayTimezone)
+                },
             },
             rightPriceScale: {
                 borderColor: isDark ? '#2a2e39' : '#e0e0e0',
@@ -142,11 +163,21 @@ export function useChart(
                 mouseWheel: true,
                 pinch: true,
             },
+            watermark: {
+                visible: !!ticker,
+                fontSize: 48,
+                horzAlign: 'center',
+                vertAlign: 'center',
+                color: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+                text: `${ticker || ''} • ${timeframe || ''}`,
+            },
         })
 
 
         chartRef.current = chart
         setChartInstance(chart)
+
+
 
         return () => {
 
@@ -168,41 +199,44 @@ export function useChart(
     useEffect(() => {
         if (!chartInstance) return
 
-        const formatter = (time: number) => formatTimeForTimezoneLocal(time)
-
         try {
             chartInstance.applyOptions({
                 localization: {
                     // Crosshair Label: Show Full Date & Time
                     timeFormatter: (time: number) => {
-                        const date = new Date(time * 1000);
-                        return displayTimezone === 'UTC'
-                            ? date.toISOString().substring(0, 16).replace('T', ' ')
-                            : date.toLocaleString('en-US', {
-                                timeZone: displayTimezone === 'local' ? undefined : displayTimezone,
-                                year: 'numeric', month: 'short', day: 'numeric',
-                                hour: '2-digit', minute: '2-digit', hour12: false
-                            });
+                        return formatTimeForTimezone(time, displayTimezone)
                     },
                     dateFormat: 'yyyy-MM-dd',
                     locale: 'en-US',
                 },
                 timeScale: {
-                    // Axis Ticks: Keep concise (handled by default smart formatting or explicit short format)
-                    // We REMOVE the tickMarkFormatter override here to let LightweightCharts smart scale take over,
-                    // OR we provide a smart concise one.
-                    // The user said "time scale should shows only the time or day ... depending on how much we are zoomed out".
-                    // The default behavior of LWC does exactly this if we DON'T provide a tickMarkFormatter.
-                    // Previously we were FORCING full date/time on ticks which caused cramping.
-                    // So we remove tickMarkFormatter from here to restore default smart scaling behavior.
-
-                    // tickMarkFormatter: formatter, // REMOVED
+                    // Update Tick Formatter on change too
+                    tickMarkFormatter: (time: number, tickMarkType: TickMarkType, locale: string) => {
+                        const date = new Date(time * 1000);
+                        const tz = displayTimezone === 'local' ? undefined : displayTimezone;
+                        try {
+                            if (tickMarkType === TickMarkType.Year) return date.toLocaleDateString('en-US', { timeZone: tz, year: 'numeric' });
+                            if (tickMarkType === TickMarkType.Month) return date.toLocaleDateString('en-US', { timeZone: tz, month: 'short' });
+                            if (tickMarkType === TickMarkType.DayOfMonth) return date.toLocaleDateString('en-US', { timeZone: tz, day: 'numeric', month: 'short' });
+                            return date.toLocaleTimeString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' });
+                        } catch (e) { return date.toISOString().substring(11, 16); }
+                    }
                 }
             })
         } catch (e) {
             console.warn('Failed to apply timezone options', e)
         }
     }, [chartInstance, displayTimezone])
+
+    // Update Watermark when ticker/timeframe changes
+    useEffect(() => {
+        if (!chartInstance) return
+        chartInstance.applyOptions({
+            watermark: {
+                text: `${ticker || ''} • ${timeframe || ''}`,
+            }
+        })
+    }, [chartInstance, ticker, timeframe])
 
     useEffect(() => {
         if (!chartInstance || isDisposedRef.current) return
@@ -321,6 +355,9 @@ export function useChart(
                 const intervalSeconds = getResolutionInMinutes(res) * 60;
                 const whitespaceCount = 500;
 
+                // Log whitespace gen
+                // console.log(`[useChart] Generating ${whitespaceCount} whitespace bars. Last: ${lastTime}, Interval: ${intervalSeconds}`)
+
                 for (let i = 1; i <= whitespaceCount; i++) {
                     chartData.push({
                         time: (lastTime + (i * intervalSeconds)) as any
@@ -328,11 +365,18 @@ export function useChart(
                 }
             }
 
-            seriesInstance.setData(chartData)
+            //console.log(`[useChart] calling setData with ${chartData.length} items. First:`, chartData[0], 'Last:', chartData[chartData.length-1])
+            try {
+                seriesInstance.setData(chartData)
+                //console.log('[useChart] setData success')
+            } catch (err) {
+                console.error('[useChart] setData FAILED:', err)
+            }
 
             // Only fitContent on first load - chart auto-preserves on subsequent updates
             if (isFirstLoad) {
                 isFirstLoadRef.current = false
+                console.log('[useChart] First load - executing fitContent()')
                 requestAnimationFrame(() => {
                     try {
                         if (!isDisposedRef.current) {
@@ -588,6 +632,9 @@ export function useChart(
         getDataRange,
         getVisibleBarIndex,
         getVisibleTimeRange,
-        indicators: indicatorsRef // Expose indicators ref
+        getVisibleBarIndex,
+        getVisibleTimeRange,
+        indicators: indicatorsRef, // Expose indicators ref
+
     }
 }
