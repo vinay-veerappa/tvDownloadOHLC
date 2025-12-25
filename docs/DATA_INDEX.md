@@ -50,7 +50,10 @@
 ### Common Commands
 
 ```powershell
-# Import NinjaTrader Data (ALWAYS use this for NinjaTrader)
+# Fresh Import from NinjaTrader CSV (Complete replacement - use for clean slate)
+python scripts/fresh_ticker_import.py ES1 "data/NinjaTrader/24Dec2025/ES Thursday 857.csv"
+
+# Incremental Import (Merges with existing data)
 python scripts/data_processing/import_ninjatrader.py "path/to/file.csv" ES1 1m
 
 # Regenerate ALL derived data after import (MANDATORY)
@@ -64,6 +67,7 @@ python scripts/validation/check_data_continuity.py ES1
 
 ## Related Documents
 
+- [DATA_ANOMALY_REPORT.md](reports/DATA_ANOMALY_REPORT.md) - **Documented anomaly dates for verification**
 - [DATA_COVERAGE_REPORT.md](reports/DATA_COVERAGE_REPORT.md) - Current data availability
 - [DATA_GAPS_REPORT.md](reports/DATA_GAPS_REPORT.md) - Known gaps in history
 - [DATA_SOURCES.md](data/DATA_SOURCES.md) - Vendor information
