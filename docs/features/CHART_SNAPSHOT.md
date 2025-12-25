@@ -109,6 +109,58 @@ This enables:
 
 ---
 
+## Known Limitations
+
+### Elements NOT Captured by `takeScreenshot()`
+
+| Element | Reason | Status |
+|---------|--------|--------|
+| **OHLC Legend** | HTML overlay (`<div>` elements) - not part of canvas | ⚠️ Not captured |
+| **Ticker/Timeframe Label** | HTML overlay | ⚠️ Not captured |
+| **Drawing Handles** | May be HTML overlay during edit mode | ⚠️ Not captured |
+
+### Elements SHOULD Be Captured
+
+| Element | Implementation | Status |
+|---------|---------------|--------|
+| **Trend Lines** | `ISeriesPrimitive` canvas rendering | ✅ Should work |
+| **Vertical Lines** | `ISeriesPrimitive` canvas rendering | ✅ Should work |
+| **Text Drawings** | `ISeriesPrimitive` canvas rendering | ✅ Should work |
+| **Profiler Lines** | `ISeriesPrimitive` canvas rendering | ✅ Should work |
+
+### Root Cause
+
+Lightweight Charts `chart.takeScreenshot()` only captures content rendered on the `<canvas>` element. Any HTML elements positioned over the chart (overlays) are not included.
+
+**Current overlays in our app:**
+- `components/chart/chart-legend.tsx` - OHLC values + ticker name (HTML `<div>`)
+- Drawing handles/anchors during edit mode
+
+---
+
+## Future Enhancements
+
+### Option 1: Composite Screenshot (Recommended)
+Use `html2canvas` or similar library to capture the entire chart container (canvas + HTML overlays):
+
+```typescript
+import html2canvas from 'html2canvas';
+
+const handleTakeScreenshot = async () => {
+    const container = document.getElementById('chart-container');
+    const canvas = await html2canvas(container);
+    // ... rest of logic
+}
+```
+
+### Option 2: Canvas-based Legend
+Re-implement OHLC legend as a Lightweight Charts primitive that renders directly to canvas.
+
+### Option 3: Pre-render Overlay
+Before taking screenshot, copy overlay content to a temporary canvas layer, merge with chart canvas, then capture.
+
+---
+
 ## Browser Support
 
 | Feature | Chrome | Firefox | Safari | Edge |
