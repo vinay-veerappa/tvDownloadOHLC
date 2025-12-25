@@ -46,6 +46,14 @@ We use **Lightweight Charts v5** extended with custom "Primitives" and "Pane Vie
 -   **Hourly Profiler**: A custom renderer implementing `ISeriesPrimitive` to draw complex box/line profiles directly on the canvas.
 -   **Session Highlighting**: Custom canvas rendering for background session colors.
 
+### 2.5 Data Timezone Contract (Hybrid)
+To support both legacy logic and seamless timezone switching:
+*   **Charts**: Expect Naive UTC inputs, which are displayed in `America/New_York` by default but can be offset.
+*   **Derived JSONs**: Provide a **Hybrid Output**:
+    *   `_time` fields (e.g. `hod_time`): **NY-based Strings** ("09:30") for legacy compatibility.
+    *   `_ts` fields (e.g. `hod_ts`): **Unix Timestamps** (UTC) for frontend flexibility.
+*   **Indicators**: Should prefer `_ts` fields when drawing markers to ensure they align with the chart's time scale regardless of display settings.
+
 ---
 
 ## 3. Backend Architecture (`api/`)

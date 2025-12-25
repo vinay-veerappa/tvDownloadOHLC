@@ -43,6 +43,10 @@ const indicators = [
         label: "Daily Profiler",
     },
     {
+        value: "truth-profiler",
+        label: "Truth Profiler (API)",
+    },
+    {
         value: "hourly-profiler",
         label: "Hourly Profiler",
     },

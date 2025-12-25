@@ -348,9 +348,8 @@ class DailyProfilerRenderer {
                 if (!visible) continue;
 
                 drawnItems++;
-                // Safety brake (higher limit than Hourly as these are daily sessions, maybe 50 is enough for a view?)
-                // Actually 100 is safe.
-                if (drawnItems > 100) break;
+                // Increase limit to 500 to handle many levels across visible days
+                if (drawnItems > 500) break;
 
                 // Time Coordinates (Pre-calculated)
                 const startUnix = session.startUnix as Time;
@@ -655,6 +654,7 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
         // Initialize Time Formatter (NY)
         this._nyFormatter = new Intl.DateTimeFormat('en-US', {
             timeZone: 'America/New_York',
+            hourCycle: 'h23',
             hour12: false,
             year: 'numeric',
             month: 'numeric',
@@ -776,7 +776,7 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
         const results: SessionData[] = [];
 
         // Helper Map to store Day -> Stats (High/Low) for PDH/PDL
-        const dayStats = new Map<string, { high: number, low: number, mid: number, close: number, midnightUnix: number | undefined }>();
+        const dayStats = new Map<string, { high: number, low: number, mid: number, close: number, sessionStartUnix: number | undefined, midnightUnix: number | undefined }>();
 
         // Process Each Day
         for (const dateStr of sortedDays) {
@@ -815,6 +815,7 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
 
                 // Asia: 18:00 (1800) to 19:30 (1930). (Only valid if D-1, i.e., h >= 18)
                 if (h >= 18) {
+                    // Asia: 18:00 (1800) to 19:30 (1930)
                     if (hm >= 1800 && hm < 1930) {
                         this._updateSession(sessions['Asia'], bar);
                     }
@@ -829,22 +830,27 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
                         singles['MidnightOpen'] = { price: bar.open, unix: bar.time };
                         midnightOpenUnix = bar.time;
                     }
-                    // London: 02:30 - 03:30 (0230 - 0330)
+
+                    // London: 02:30 - 03:30
                     if (hm >= 230 && hm < 330) {
                         this._updateSession(sessions['London'], bar);
                     }
-                    // NY1: 07:30 - 08:30 (730 - 830)
+
+                    // NY1: 07:30 - 08:30
                     if (hm >= 730 && hm < 830) {
                         this._updateSession(sessions['NY1'], bar);
                     }
+
                     // Open730: 07:30 (730)
                     if (hm === 730 && !singles['Open730']) {
                         singles['Open730'] = { price: bar.open, unix: bar.time };
                     }
-                    // NY2: 11:30 - 12:30 (1130 - 1230)
+
+                    // NY2: 11:30 - 12:30
                     if (hm >= 1130 && hm < 1230) {
                         this._updateSession(sessions['NY2'], bar);
                     }
+
                     // OR: 09:30 (930) - Duration 1m
                     if (hm === 930) {
                         this._updateSession(sessions['OpeningRange'], bar);
@@ -853,7 +859,14 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
             }
 
             // Store Day Stats
-            dayStats.set(dateStr, { high: dHigh, low: dLow, mid: (dHigh + dLow) / 2, close: dClose, midnightUnix: midnightOpenUnix });
+            dayStats.set(dateStr, {
+                high: dHigh,
+                low: dLow,
+                mid: (dHigh + dLow) / 2,
+                close: dClose,
+                sessionStartUnix: sessions['Asia'].set ? sessions['Asia'].startUnix : (bars.length > 0 ? bars[0].time : undefined),
+                midnightUnix: midnightOpenUnix
+            });
 
             // Push Results for this Day
             // 1. Sessions
@@ -891,9 +904,9 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
             if (prevDateStr && dayStats.has(prevDateStr)) {
                 const p = dayStats.get(prevDateStr)!;
                 // Add PDH/PDL for *Current* date (Start Time = Midnight)
-                // Use MidnightOpen unix if available for current day, otherwise approximate.
+                // Use session start unix if available (typically 18:00 ET of prev day)
                 const currentDayStats = dayStats.get(dateStr);
-                const epoch = currentDayStats?.midnightUnix || this._getNyMidnightUnixApprox(dateStr);
+                const epoch = currentDayStats?.sessionStartUnix;
 
                 if (epoch) {
                     finalResults.push({ session: 'PDH', start_time: '', startUnix: epoch, price: p.high });
@@ -904,60 +917,63 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
         }
 
         // P12 Generation (Simplified: 12h blocks)
-        // P12 is "Previous 12h". So we display stats of *finished* block.
-        // Shift logic: If Block A (06-18) finishes, we draw P12 lines starting at 18:00.
-
         let p12StartUnix = -1;
-        let p12EndUnix = -1;
+        let p12BlockKey = "";
         let p12H = -Infinity;
         let p12L = Infinity;
+        const p12History = new Set<string>();
 
         for (const bar of data) {
-            // Determine 12h block start
-            // Block 1: 06:00 - 18:00
-            // Block 2: 18:00 - 06:00 (next day)
+            const date = new Date(bar.time * 1000);
+            const parts = this._nyFormatter.formatToParts(date);
+            const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
 
-            // Shift so 06:00 becomes 00:00 for block calculation
-            const tShift = bar.time - (6 * 3600);
-            const blockId = Math.floor(tShift / (12 * 3600));
-            const currentBlockStartUnix = blockId * (12 * 3600) + (6 * 3600);
-            const currentBlockEndUnix = currentBlockStartUnix + (12 * 3600);
+            const isEvening = h >= 18 || h < 6;
+            const currentBlockType = isEvening ? 'Evening' : 'Morning';
 
-            if (p12StartUnix === -1) { // First bar, initialize
-                p12StartUnix = currentBlockStartUnix;
-                p12EndUnix = currentBlockEndUnix;
+            // Use trading day shift for keying
+            const tradingTime = new Date((bar.time + 6 * 3600) * 1000);
+            const tParts = this._nyFormatter.formatToParts(tradingTime);
+            const sy = tParts.find(p => p.type === 'year')?.value;
+            const sm = tParts.find(p => p.type === 'month')?.value;
+            const sd = tParts.find(p => p.type === 'day')?.value;
+            const blockKey = `${sy}-${sm}-${sd}-${currentBlockType}`;
+
+            if (p12StartUnix === -1) {
+                p12StartUnix = bar.time;
+                p12BlockKey = blockKey;
                 p12H = bar.high;
                 p12L = bar.low;
-            } else if (currentBlockStartUnix !== p12StartUnix) {
-                // New Block started, push previous block's P12 data
-                finalResults.push({
-                    session: 'P12',
-                    start_time: '',
-                    startUnix: p12EndUnix, // P12 lines start at the end of the previous 12h block
-                    endUnix: p12EndUnix + (12 * 3600), // This is just for duration, not actual end of box
-                    high: p12H,
-                    low: p12L,
-                    mid: (p12H + p12L) / 2
-                });
-
-                // Reset for new block
-                p12StartUnix = currentBlockStartUnix;
-                p12EndUnix = currentBlockEndUnix;
+            } else if (blockKey !== p12BlockKey) {
+                // Push finished block
+                if (!p12History.has(p12BlockKey)) {
+                    finalResults.push({
+                        session: 'P12',
+                        start_time: '',
+                        startUnix: bar.time,
+                        endUnix: bar.time + (11 * 3600 + 59 * 60),
+                        high: p12H,
+                        low: p12L,
+                        mid: (p12H + p12L) / 2
+                    });
+                    p12History.add(p12BlockKey);
+                }
+                p12StartUnix = bar.time;
+                p12BlockKey = blockKey;
                 p12H = bar.high;
                 p12L = bar.low;
             } else {
-                // Continue current block
                 p12H = Math.max(p12H, bar.high);
                 p12L = Math.min(p12L, bar.low);
             }
         }
-        // Push the last P12 block if any
-        if (p12StartUnix !== -1) {
+        // Last block
+        if (p12StartUnix !== -1 && !p12History.has(p12BlockKey)) {
             finalResults.push({
                 session: 'P12',
                 start_time: '',
-                startUnix: p12EndUnix,
-                endUnix: p12EndUnix + (12 * 3600),
+                startUnix: p12StartUnix + (12 * 3600),
+                endUnix: p12StartUnix + (24 * 3600),
                 high: p12H,
                 low: p12L,
                 mid: (p12H + p12L) / 2
@@ -970,14 +986,14 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
     private _updateSession(s: any, bar: any) {
         if (!s.set) {
             s.startUnix = bar.time;
-            s.endUnix = bar.time + 60; // Min duration (1-minute bar)
+            s.endUnix = bar.time + this._barInterval;
             s.h = bar.high;
             s.l = bar.low;
             s.set = true;
         } else {
             s.h = Math.max(s.h, bar.high);
             s.l = Math.min(s.l, bar.low);
-            s.endUnix = bar.time + 60; // Extend to end of current bar
+            s.endUnix = bar.time + this._barInterval;
         }
     }
 
@@ -1065,6 +1081,7 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
 
     paneViews() {
         return [{
+            zOrder: () => 'top' as any,
             renderer: () => new DailyProfilerRenderer(this._data, this._options, this._chart, this._series, this._barInterval, this._theme)
         }];
     }
@@ -1108,9 +1125,14 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
         // Let's stick to the previous optimization: search for sessions roughly near visible window.
         // But since we want to catch extended lines from LONG AGO (e.g. weekly levels), we should iterate more safely.
         // Iterate last 100 sessions? 
-        const startIndex = Math.max(0, this._data.length - 100);
+        // Optimization: Use binary search to find sessions near the anchor time
+        const mouseTime = timeScale.coordinateToTime(x) || anchorTime;
+        const startIndex = this._binarySearch(mouseTime as number);
 
-        for (let i = startIndex; i < this._data.length; i++) {
+        // Look back up to 200 items to catch levels that started in the past but extend over the current time (e.g. PDH)
+        const startFrom = Math.max(0, startIndex - 200);
+
+        for (let i = startFrom; i < this._data.length; i++) {
             const session = this._data[i];
 
             // Check Visibility

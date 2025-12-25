@@ -29,5 +29,10 @@ This document outlines the data storage strategy for the Trading Platform. We ha
 *   **DuckDB Integration:** Replace Python scripts with DuckDB for faster in-process querying of Parquet files.
 *   **TimescaleDB Migration:** If the dataset grows too large for file-based management, we may migrate OHLC data to TimescaleDB.
 
+## 3. Timezone Standards
+*   **Storage (Source of Truth):** UTC (Naive). All Parquet files must be timezone-naive, implicitly representing UTC.
+*   **Application (View Layer):** America/New_York (EST/EDT). All data is converted to NY time upon loading for analysis/display.
+*   **Rationale:** UTC storage ensures mathematical continuity and prevents ambiguity (DST shifts). NY display ensures alignment with market hours (09:30 Open).
+
 ## Decision Log
 *   **2025-12-04:** Decided to stick with Parquet for OHLC data to expedite Backtesting implementation. Database will be used for user data only.

@@ -17,11 +17,26 @@ class ProfilerService:
     _level_touches_cache = {}
     _daily_hod_lod_cache = {}
     _filtered_stats_cache = {} # Cache for filtered stats results
+    
+    @staticmethod
+    def _normalize_ticker(ticker: str) -> str:
+        """Standardize ticker for file resolution: ES1! -> ES1, NQ -> NQ1"""
+        clean = ticker.replace("!", "")
+        aliases = {
+            "NQ": "NQ1",
+            "ES": "ES1",
+            "CL": "CL1",
+            "RTY": "RTY1",
+            "YM": "YM1",
+            "GC": "GC1"
+        }
+        return aliases.get(clean, clean)
 
     @staticmethod
     def clear_cache(ticker: str = None):
         """Clear the in-memory cache. If ticker is specified, only clear that ticker."""
         if ticker:
+            ticker = ProfilerService._normalize_ticker(ticker)
             ProfilerService._cache.pop(ticker, None)
             ProfilerService._json_cache.pop(ticker, None)
             ProfilerService._level_touches_cache.pop(ticker, None)
@@ -50,6 +65,7 @@ class ProfilerService:
         start_time = time.time()
         
         # --- PATH CHECK ---
+        ticker = ProfilerService._normalize_ticker(ticker)
         from api.services.data_loader import DATA_DIR
         json_path = DATA_DIR / f"{ticker}_profiler.json"
         
@@ -249,6 +265,7 @@ class ProfilerService:
                 status = 'None'
                 triggered_side = None
                 status_time = None
+                status_ts = None
                 
                 if not status_data.empty:
                     for ts, row in status_data.iterrows():
@@ -270,18 +287,19 @@ class ProfilerService:
                                     status = 'Short False'  # Started high, went down first
                                 triggered_side = 'Both'
                                 status_time = ts.isoformat()
+                                status_ts = int(ts.timestamp())
                                 break
                             elif broke_high:
-                                triggered_side = 'High'; status = 'Long True'; status_time = ts.isoformat() 
+                                triggered_side = 'High'; status = 'Long True'; status_time = ts.isoformat(); status_ts = int(ts.timestamp())
                             elif broke_low:
-                                triggered_side = 'Low'; status = 'Short True'; status_time = ts.isoformat()
+                                triggered_side = 'Low'; status = 'Short True'; status_time = ts.isoformat(); status_ts = int(ts.timestamp())
                         else:
                             if triggered_side == 'High':
                                 if broke_low:
-                                    status = 'Long False'; status_time = ts.isoformat(); break 
+                                    status = 'Long False'; status_time = ts.isoformat(); status_ts = int(ts.timestamp()); break 
                             elif triggered_side == 'Low':
                                 if broke_high:
-                                    status = 'Short False'; status_time = ts.isoformat(); break
+                                    status = 'Short False'; status_time = ts.isoformat(); status_ts = int(ts.timestamp()); break
 
                 try: broken_data = df_slice.loc[broken_start : broken_end - timedelta(seconds=1)]
                 except KeyError: broken_data = pd.DataFrame()
@@ -294,7 +312,13 @@ class ProfilerService:
                     break_mask = (broken_data['low'] <= mid) & (broken_data['high'] >= mid)
                     if break_mask.any():
                         broken = True
-                        broken_time = break_mask.idxmax().strftime('%H:%M')
+                        broken_idx = break_mask.idxmax()
+                        broken_time = broken_idx.strftime('%H:%M')
+                        broken_ts = int(broken_idx.timestamp())
+                    else:
+                        broken_ts = None
+                else:
+                    broken_ts = None
 
                 collected_stats.append({
                     "date": trading_date_str,
@@ -313,8 +337,14 @@ class ProfilerService:
                     "status_time": status_time,
                     "broken": broken,
                     "broken_time": broken_time,
+                    "broken_ts": broken_ts,
                     "start_time": start_ts.isoformat(),
-                    "end_time": end_ts.isoformat()
+                    "start_ts": int(start_ts.timestamp()),
+                    "end_time": end_ts.isoformat(),
+                    "end_ts": int(end_ts.timestamp()),
+                    "high_ts": int(high_idx.timestamp()) if pd.notna(high_idx) else None,
+                    "low_ts": int(low_idx.timestamp()) if pd.notna(low_idx) else None,
+                    "status_ts": status_ts
                 })
 
         collected_stats.sort(key=lambda x: x['start_time'])
@@ -335,6 +365,7 @@ class ProfilerService:
         """
         Get pre-computed level statistics (Hit Rate, Timing) from JSON.
         """
+        ticker = ProfilerService._normalize_ticker(ticker)
         from api.services.data_loader import DATA_DIR
         json_path = DATA_DIR / f"{ticker}_level_stats.json"
         
@@ -808,6 +839,7 @@ class ProfilerService:
         Get pre-aggregated stats for filtered sessions.
         Returns matched dates, distribution, and aggregated statistics.
         """
+        ticker = ProfilerService._normalize_ticker(ticker)
         # Create cache key
         cache_key = (
             ticker, 
@@ -928,6 +960,7 @@ class ProfilerService:
         """
         Generate price model using filter criteria instead of explicit date list.
         """
+        ticker = ProfilerService._normalize_ticker(ticker)
         # Create cache key
         cache_key = (
             ticker, 
@@ -1018,6 +1051,7 @@ class ProfilerService:
         Get pre-computed true daily HOD/LOD times.
         Buffered in memory to avoid repeated disk I/O (1MB+).
         """
+        ticker = ProfilerService._normalize_ticker(ticker)
         if ticker in ProfilerService._daily_hod_lod_cache:
             return ProfilerService._daily_hod_lod_cache[ticker]
             
@@ -1041,6 +1075,7 @@ class ProfilerService:
         Buffered in memory to avoid repeated disk I/O.
         OPTIMIZED: Returns only the first hit per session to reduce payload size.
         """
+        ticker = ProfilerService._normalize_ticker(ticker)
         if ticker in ProfilerService._level_touches_cache:
             return ProfilerService._level_touches_cache[ticker]
             

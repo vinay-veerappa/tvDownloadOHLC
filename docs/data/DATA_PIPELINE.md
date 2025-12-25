@@ -1,7 +1,7 @@
 # Data Pipeline Documentation
 
-**Version:** 0.4.0
-**Last Updated:** December 09, 2025
+**Version:** 0.5.0
+**Last Updated:** December 25, 2025
 
 This document serves as the Single Source of Truth for acquiring, processing, and storing OHLC market data.
 
@@ -27,6 +27,23 @@ We support two primary sources, each with specific "quirks" handled by our scrip
     *   No header row.
 *   **Handling Script:** `scripts/convert_backtestmarket.py`
     *   *Logic:* identifying these files automatically or manual selection required.
+
+---
+
+## 1.1 Timezone Strategy (Critical)
+
+We strictly adhere to a **"Store as UTC, Consume as NY"** architecture.
+
+### Storage Layer (Parquet)
+*   **Format:** Naive UTC (Implicit).
+*   **Data:** Timestamps are stored as Unix Seconds or Naive Datetime objects representing UTC.
+*   **Rule:** Parquet files must **NEVER** contain timezone-aware objects (e.g. `America/New_York`). They must be clean UTC.
+
+### Consumption Layer (Scripts/App)
+*   **Input:** Scripts read Naive UTC Parquet.
+*   **Conversion:** Immediately localize to `UTC` then convert to `America/New_York` (Target Trading Timezone).
+*   **Logic:** All trading logic (Session definitions, HOD/LOD, Day Breaks) operates on the converted **NY Time**.
+*   **Output:** Derived JSONs/APIs typically return **NY-based** labels (e.g. "09:30") or explicit Unix timestamps, but logically aligned to NY trading days.
 
 ---
 

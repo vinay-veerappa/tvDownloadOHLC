@@ -47,21 +47,25 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
     
     try:
         if has_headers:
-            # Flexible reading
-            df = pd.read_csv(csv_path, sep=delimiter, low_memory=False)
-            # Normalize column names
+            # Flexible reading with forced column names to handle ragged rows (e.g. 7 cols then 8 cols)
+            # We assume standard order: Date, Time, Open, High, Low, Close, Volume, (TickCount/OI)
+            # We provide enough names to catch all fields.
+            col_names = ['date_str', 'time_str', 'open', 'high', 'low', 'close', 'volume', 'aux1', 'aux2', 'aux3']
+            
+            # Read with header=0 to skip the file's header, but use OUR names
+            df = pd.read_csv(csv_path, sep=delimiter, on_bad_lines='skip', names=col_names, skiprows=1, engine='python', index_col=False)
+            
+            # Normalize column names (not needed since we set them, but for safety if logic changes)
             df.columns = [c.strip().lower() for c in df.columns]
 
-            # Filter out repeated headers
-            if 'date' in df.columns:
-                df = df[df['date'].astype(str).str.lower() != 'date'].copy()
+            # Filter out repeated headers (if file was concatenated)
+            if 'date_str' in df.columns:
+                 # Check if 'date_str' column contains the word 'Date' or 'date'
+                df = df[~df['date_str'].astype(str).str.contains('Date|date', case=False, na=False)].copy()
             
-            # Map columns
-            rename_map = {
-                'open': 'open', 'high': 'high', 'low': 'low', 'close': 'close', 'volume': 'volume',
-                'vol': 'volume', 'date': 'date_str', 'time': 'time_str'
-            }
-            df.rename(columns=rename_map, inplace=True)
+            # Map columns (Already named correctly by our list, but logic below expects them)
+            # We just ensure we keep the ones we want
+            pass # names are already set
 
             # Ensure numeric types for OHLCV
             for col in ['open', 'high', 'low', 'close', 'volume']:
@@ -70,10 +74,11 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
             
             # Parse DateTime
             if 'date_str' in df.columns and 'time_str' in df.columns:
-                first_date = str(df['date_str'].iloc[0])
+                first_date = str(df['date_str'].dropna().iloc[0])
                 date_fmt = '%m/%d/%Y' if '/' in first_date else '%Y%m%d'
                 
-                first_time = str(df['time_str'].iloc[0])
+                # Check first time
+                first_time = str(df['time_str'].dropna().iloc[0])
                 if ':' in first_time:
                      time_fmt = '%H:%M:%S'
                 else:
@@ -97,9 +102,13 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
     # 2. Handle Timezone & Shift
     # A. Timezone Conversion (User Local -> America/New_York)
     if df.index.tz is None:
-        print(f"  Converting from Local Time ({timezone}) to America/New_York...")
+        print(f"  Converting from Local Time ({timezone}) to UTC (Naive)...")
+        # 1. Localize to Input TZ
         df.index = df.index.tz_localize(timezone, ambiguous='infer')
-        df.index = df.index.tz_convert('America/New_York')
+        # 2. Convert to UTC
+        df.index = df.index.tz_convert('UTC')
+        # 3. Make Naive (Strip TZ info, keep UTC time)
+        df.index = df.index.tz_localize(None)
 
     # B. Shift Close-Time to Open-Time
     if shift_to_open:
@@ -147,8 +156,21 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
         data_utils.create_backup(str(target_path))
         df_old = pd.read_parquet(target_path)
         
-        if df_old.index.tz != df.index.tz:
-             df.index = df.index.tz_convert(df_old.index.tz)
+        # Align Timezones safely
+        tz_new = df.index.tz
+        tz_old = df_old.index.tz
+        
+        if tz_new != tz_old:
+            print(f"  Adjusting Timezone: New({tz_new}) -> Old({tz_old})")
+            if tz_new is None:
+                # New is Naive, Old is Aware. Assume New is UTC-Naive.
+                df.index = df.index.tz_localize('UTC').tz_convert(tz_old)
+            elif tz_old is None:
+                 # New is Aware, Old is Naive. Convert New to UTC and strip.
+                 df.index = df.index.tz_convert('UTC').tz_localize(None)
+            else:
+                 # Both Aware
+                 df.index = df.index.tz_convert(tz_old)
 
         # Merge: df (History) + df_old (Recent)
         # We want to PRESERVE df_old values where they exist (Trusted Source)

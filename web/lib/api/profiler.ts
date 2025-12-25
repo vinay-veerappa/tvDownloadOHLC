@@ -30,6 +30,14 @@ export interface ProfilerResponse {
     };
 }
 
+export async function fetchProfilerStats(ticker: string): Promise<ProfilerResponse> {
+    const res = await fetch(`${API_BASE_URL}/stats/profiler/${ticker}`);
+    if (!res.ok) {
+        throw new Error('Failed to fetch profiler stats');
+    }
+    return res.json();
+}
+
 
 
 // HOD/LOD Types

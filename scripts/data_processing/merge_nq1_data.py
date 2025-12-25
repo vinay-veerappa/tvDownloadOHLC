@@ -40,7 +40,9 @@ for csv_name, timeframe in csv_files.items():
     # Load new CSV (TradingView format with Unix timestamps)
     new_df = pd.read_csv(csv_path)
     new_df.columns = [c.lower() for c in new_df.columns]
-    new_df["datetime"] = pd.to_datetime(new_df["time"], unit="s")
+    # Unix timestamp is UTC. 
+    # 1. Localize to UTC. 2. Convert to UTC (no-op but safe). 3. Strip TZ to match Naive history.
+    new_df["datetime"] = pd.to_datetime(new_df["time"], unit="s").dt.tz_localize("UTC").dt.tz_convert("UTC").dt.tz_localize(None)
     new_df = new_df.set_index("datetime")
     new_df = new_df[["open", "high", "low", "close", "volume"]]
     new_df = new_df.sort_index()
