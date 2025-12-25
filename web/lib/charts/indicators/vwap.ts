@@ -363,12 +363,49 @@ export const VWAPIndicator: ChartIndicator = {
         const tz = displayTimezone || 'America/New_York';
         const settings = vwapSettings || { anchor: 'session', bands: [1.0] };
 
-        // Recalculate based on new visible range
-        const { vwapSeriesData, bandsSeriesData } = calculateVWAPData(data, settings, ticker, tz, visibleRange.start);
+        // Check if Web Worker is available
+        if (typeof Worker !== 'undefined') {
+            try {
+                const { getVWAPWorker } = await import('./vwap-worker-manager');
+                const worker = getVWAPWorker();
 
-        // Map series index to data. 
-        // Order in render: Main, Upper1, Lower1, Upper2, Lower2...
-        // We assume series order is preserved.
+                const result = await worker.calculate({
+                    data: data as any,
+                    settings,
+                    ticker,
+                    timezone: tz,
+                    visibleStart: visibleRange.start
+                });
+
+                // Update series with worker results
+                if (series.length > 0) {
+                    series[0].setData(result.vwapData as any);
+                }
+
+                let sIdx = 1;
+                const bandsToCheck = settings.bands || [1.0, 2.0, 3.0];
+                bandsToCheck.forEach((mult: number, index: number) => {
+                    const isEnabled = settings.bandsEnabled ? settings.bandsEnabled[index] : true;
+                    if (!isEnabled) return;
+                    const k = mult.toFixed(1).replace('.', '_');
+
+                    if (sIdx < series.length && result.upperBands[k]) {
+                        series[sIdx++].setData(result.upperBands[k] as any);
+                    }
+                    if (sIdx < series.length && result.lowerBands[k]) {
+                        series[sIdx++].setData(result.lowerBands[k] as any);
+                    }
+                });
+
+                return; // Worker succeeded
+            } catch (e) {
+                console.warn('[VWAP] Worker failed, falling back to main thread:', e);
+                // Fall through to synchronous calculation
+            }
+        }
+
+        // Fallback: Calculate on main thread (original behavior)
+        const { vwapSeriesData, bandsSeriesData } = calculateVWAPData(data, settings, ticker, tz, visibleRange.start);
 
         if (series.length > 0) series[0].setData(vwapSeriesData);
 
