@@ -719,18 +719,19 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
     private _series: ISeriesApi<'Candlestick'>;
     private _theme: typeof THEMES.dark | null = null;
     private _requestUpdate: () => void = () => { };
-
     private _nyFormatter: Intl.DateTimeFormat;
+    private _onOptionsChange?: (options: HourlyProfilerOptions) => void;
 
     constructor(
         chart: IChartApi,
         series: ISeriesApi<'Candlestick'>,
         options: Partial<HourlyProfilerOptions> = {},
-        theme?: typeof THEMES.dark
+        theme?: typeof THEMES.dark,
+        onOptionsChange?: (options: HourlyProfilerOptions) => void
     ) {
-
         this._chart = chart;
         this._series = series;
+        this._onOptionsChange = onOptionsChange;
         if (theme) {
             this._theme = theme;
             // Use centralized defaults
@@ -1008,8 +1009,11 @@ export class HourlyProfiler implements ISeriesPrimitive<Time> {
         this._data3H = periods3H;
     }
 
-    applyOptions(options: Partial<HourlyProfilerOptions>) {
+    applyOptions(options: Partial<HourlyProfilerOptions>, suppressCallback?: boolean) {
         this._options = { ...this._options, ...options };
+        if (!suppressCallback) {
+            this._onOptionsChange?.(this._options);
+        }
         this._triggerRedraw();
     }
 

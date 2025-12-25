@@ -7,6 +7,19 @@ import json
 router = APIRouter()
 
 
+@router.get("/stats/profiler/{ticker}", tags=["Stats"])
+async def get_profiler_stats(ticker: str, days: int = Query(50)):
+    """
+    Get pre-computed profiler sessions.
+    PRIORITY 1: Pre-computed JSON
+    PRIORITY 2: Calculate from Parquet (Cached)
+    """
+    result = ProfilerService.analyze_profiler_stats(ticker, days=days)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
 
 
 @router.post("/stats/profiler/{ticker}/filtered", tags=["Stats"])
@@ -71,6 +84,7 @@ async def get_hod_lod_stats(ticker: str):
     """
     Get pre-computed HOD/LOD time statistics.
     """
+    ticker = ProfilerService._normalize_ticker(ticker)
     json_path = DATA_DIR / f"{ticker}_hod_lod.json"
     
     if not json_path.exists():
@@ -99,6 +113,7 @@ async def get_range_distribution(ticker: str):
     """
     Get pre-computed price range distribution (high/low relative to open).
     """
+    ticker = ProfilerService._normalize_ticker(ticker)
     json_path = DATA_DIR / f"{ticker}_range_dist.json"
     
     if not json_path.exists():

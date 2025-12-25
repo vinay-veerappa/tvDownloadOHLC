@@ -126,6 +126,12 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
          
     # Final sort
     df.sort_values('time', inplace=True)
+    
+    # Deduplicate by time (keep last bar for each timestamp)
+    before_dedup = len(df)
+    df.drop_duplicates(subset=['time'], keep='last', inplace=True)
+    if before_dedup != len(df):
+        print(f"  Deduplicated: removed {before_dedup - len(df)} duplicate timestamps")
 
     
     total_bars = len(df)

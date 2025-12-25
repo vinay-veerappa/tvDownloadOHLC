@@ -63,9 +63,15 @@ def compute_daily_hod_lod(ticker: str) -> dict:
         lod_price = group.loc[lod_idx, 'low']
         lod_time = lod_idx.strftime('%H:%M')
         
+        # Calculate Unix timestamps for frontend flexibility (Timezone Switching)
+        hod_ts = int(hod_idx.timestamp())
+        lod_ts = int(lod_idx.timestamp())
+        
         results[str(trading_date)] = {
             'hod_time': hod_time,
             'lod_time': lod_time,
+            'hod_ts': hod_ts,
+            'lod_ts': lod_ts,
             'hod_price': float(hod_price),
             'lod_price': float(lod_price),
             'daily_high': float(group['high'].max()),

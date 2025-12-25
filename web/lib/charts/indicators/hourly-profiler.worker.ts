@@ -34,11 +34,12 @@ function getHourlyNYFormatter(): Intl.DateTimeFormat {
     if (!hourlyNyFormatter) {
         hourlyNyFormatter = new Intl.DateTimeFormat('en-US', {
             timeZone: 'America/New_York',
-            hour: 'numeric',
+            hourCycle: 'h23',
             hour12: false,
             year: 'numeric',
             month: 'numeric',
-            day: 'numeric'
+            day: 'numeric',
+            hour: 'numeric'
         });
     }
     return hourlyNyFormatter;

@@ -20,6 +20,8 @@ import { RangeExtensionsSettingsView } from "./settings/range-extensions-setting
 import { RangeExtensionsOptions } from "@/lib/charts/indicators/range-extensions"
 import { OpeningRangeSettingsView } from "./settings/opening-range-settings-view"
 import { OpeningRangeOptions } from "@/lib/charts/indicators/opening-range"
+import { TruthProfilerSettingsView } from "./settings/truth-profiler-settings-view"
+import { TruthProfilerOptions } from "@/lib/charts/indicators/truth-profiler"
 
 interface PropertiesModalProps {
     open: boolean;
@@ -63,6 +65,7 @@ const parseColor = (color: string) => {
 // Helper to get display title from drawing type
 const getTitle = (type: string) => {
     const map: Record<string, string> = {
+        'truth-profiler': 'Truth Profiler',
         'hourly-profiler': 'Hourly Profiler',
         'daily-profiler': 'Daily Profiler',
         'fibonacci': 'Fib Retracement',
@@ -98,6 +101,7 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
     const [hourlyProfilerOptions, setHourlyProfilerOptions] = useState<HourlyProfilerOptions | null>(null);
     const [rangeExtensionsOptions, setRangeExtensionsOptions] = useState<RangeExtensionsOptions | null>(null);
     const [openingRangeOptions, setOpeningRangeOptions] = useState<OpeningRangeOptions | null>(null);
+    const [truthProfilerOptions, setTruthProfilerOptions] = useState<TruthProfilerOptions | null>(null);
 
     // Template management state
     const [templates, setTemplates] = useState<any[]>([]);
@@ -116,6 +120,7 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
         setHourlyProfilerOptions(null);
         setRangeExtensionsOptions(null);
         setOpeningRangeOptions(null);
+        setTruthProfilerOptions(null);
 
         if (initialOptions) {
             if (drawingType === 'fibonacci') setFibOptions(initialOptions as FibonacciOptions);
@@ -124,6 +129,7 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
             if (drawingType === 'hourly-profiler') setHourlyProfilerOptions(initialOptions as HourlyProfilerOptions);
             if (drawingType === 'range-extensions') setRangeExtensionsOptions(initialOptions as RangeExtensionsOptions);
             if (drawingType === 'opening-range') setOpeningRangeOptions(initialOptions as OpeningRangeOptions);
+            if (drawingType === 'truth-profiler') setTruthProfilerOptions(initialOptions as TruthProfilerOptions);
         }
     }, [initialOptions, drawingType, open]);
 
@@ -150,6 +156,7 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
         else if (drawingType === 'hourly-profiler' && hourlyProfilerOptions) onSave(hourlyProfilerOptions);
         else if (drawingType === 'range-extensions' && rangeExtensionsOptions) onSave(rangeExtensionsOptions);
         else if (drawingType === 'opening-range' && openingRangeOptions) onSave(openingRangeOptions);
+        else if (drawingType === 'truth-profiler' && truthProfilerOptions) onSave(truthProfilerOptions);
         else {
             // Construct final options with RGBA colors for generic tools
             const finalOptions = {
@@ -175,6 +182,7 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
             if (drawingType === 'hourly-profiler') setHourlyProfilerOptions(template.options as HourlyProfilerOptions);
             if (drawingType === 'range-extensions') setRangeExtensionsOptions(template.options as RangeExtensionsOptions);
             if (drawingType === 'opening-range') setOpeningRangeOptions(template.options as OpeningRangeOptions);
+            if (drawingType === 'truth-profiler') setTruthProfilerOptions(template.options as TruthProfilerOptions);
 
             // Sync colors from template
             if (template.options.lineColor) setLineColorState(parseColor(template.options.lineColor));
@@ -270,6 +278,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
                         <RangeExtensionsSettingsView initialOptions={rangeExtensionsOptions} onChange={(updates) => setRangeExtensionsOptions(prev => prev ? ({ ...prev, ...updates } as RangeExtensionsOptions) : null)} />
                     ) : drawingType === 'opening-range' && openingRangeOptions ? (
                         <OpeningRangeSettingsView initialOptions={openingRangeOptions} onChange={(updates) => setOpeningRangeOptions(prev => prev ? ({ ...prev, ...updates } as OpeningRangeOptions) : null)} ticker={ticker} />
+                    ) : drawingType === 'truth-profiler' && truthProfilerOptions ? (
+                        <TruthProfilerSettingsView initialOptions={truthProfilerOptions} onChange={(updates) => setTruthProfilerOptions(prev => prev ? ({ ...prev, ...updates } as TruthProfilerOptions) : null)} />
                     ) : (
                         <Tabs defaultValue="style" className="w-full flex-1 flex flex-col min-h-0">
                             <TabsList className="grid w-full grid-cols-3 shrink-0">

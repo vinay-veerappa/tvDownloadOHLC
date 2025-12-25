@@ -37,6 +37,7 @@ import { FloatingToolbar } from "@/components/drawing/FloatingToolbar"
 import { InlineTextEditor } from "@/components/drawing/InlineTextEditor"
 import { TextSettings } from "@/components/drawing-settings/TextSettings"
 import { isInlineEditable } from "@/lib/charts/plugins/base/inline-editable"
+import { fetchProfilerStats, fetchLevelTouches, ProfilerSession, LevelTouchesResponse } from "@/lib/api/profiler"
 
 import type { SessionType } from './top-toolbar'
 
@@ -136,6 +137,11 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     // Range UI State
     const [rangeExtensionsActive, setRangeExtensionsActive] = useState(false);
     const [rangeData, setRangeData] = useState<RangeExtensionPeriod[]>([]);
+
+    // 2. Truth Profiler State
+    const [truthSessions, setTruthSessions] = useState<ProfilerSession[]>([]);
+    const [truthLevels, setTruthLevels] = useState<LevelTouchesResponse>({});
+    const truthProfilerRef = useRef<any>(null);
 
 
     // 2. Data & Replay Logic (Hook)
@@ -637,6 +643,9 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 if (!hitDrawing && hourlyProfilerRef.current?.hitTest?.(param.point.x, param.point.y)) {
                     hitDrawing = hourlyProfilerRef.current;
                 }
+                if (!hitDrawing && truthProfilerRef.current?.hitTest?.(param.point.x, param.point.y)) {
+                    hitDrawing = truthProfilerRef.current;
+                }
 
                 // Check Standard Indicators (LineSeries, etc.)
                 if (!hitDrawing && activeIndicatorsRef?.current) {
@@ -806,6 +815,12 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
             }
             onIndicatorParamsChange?.('opening-range', options);
             toast.success('Opening Range updated');
+        } else if (selectedDrawingType === 'truth-profiler') {
+            if (truthProfilerRef.current) {
+                truthProfilerRef.current.applyOptions(options);
+            }
+            onIndicatorParamsChange?.('truth-profiler', options);
+            toast.success('Truth Profiler updated');
         }
     };
 
@@ -855,6 +870,16 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 const currentParams = indicatorParams?.['opening-range'] || {};
                 setSelectedDrawingOptions(currentParams);
                 setSelectedDrawingType('opening-range');
+                setPropertiesModalOpen(true);
+            }
+        } else if (id === 'truth-profiler') {
+            onSelectionChange?.({ type: 'indicator', id: 'truth-profiler' });
+            if (truthProfilerRef.current) {
+                openProperties(truthProfilerRef.current);
+            } else {
+                const currentParams = indicatorParams?.['truth-profiler'] || {};
+                setSelectedDrawingOptions(currentParams);
+                setSelectedDrawingType('truth-profiler');
                 setPropertiesModalOpen(true);
             }
         } else if (id === 'expected-move') {
@@ -971,6 +996,74 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     // 13. Session Ranges Integration
     // -------------------------------------------------------------------------
     const sessionRangesRef = useRef<any>(null);
+
+    // 13. Truth Profiler Data Fetching
+    useEffect(() => {
+        if (!ticker) return;
+
+        const loadData = async () => {
+            try {
+                // Fetch in parallel
+                const [sessionsRes, levelsRes] = await Promise.all([
+                    fetchProfilerStats(ticker),
+                    fetchLevelTouches(ticker)
+                ]);
+
+                setTruthSessions(sessionsRes.sessions);
+                setTruthLevels(levelsRes);
+
+                if (truthProfilerRef.current) {
+                    truthProfilerRef.current.setRemoteData(sessionsRes.sessions, levelsRes);
+                }
+            } catch (err) {
+                console.error('[ChartContainer] Failed to fetch Truth Profiler data:', err);
+            }
+        };
+
+        loadData();
+    }, [ticker]);
+
+    // 14. Truth Profiler Lifecycle
+    useEffect(() => {
+        if (!chart || !series || !theme) return;
+
+        const isEnabled = indicators.includes('truth-profiler');
+
+        if (isEnabled) {
+            import('@/lib/charts/indicators/truth-profiler').then(({ TruthProfiler }) => {
+                if (!truthProfilerRef.current) {
+                    truthProfilerRef.current = new TruthProfiler(
+                        chart,
+                        series,
+                        indicatorParams?.['truth-profiler'] || {},
+                        theme,
+                        () => { } // Redraw handled by internal primitive updates
+                    );
+                    series.attachPrimitive(truthProfilerRef.current);
+
+                    // Push data if already loaded
+                    if (truthSessions.length > 0) {
+                        truthProfilerRef.current.setRemoteData(truthSessions, truthLevels);
+                    }
+                } else {
+                    // Update options
+                    truthProfilerRef.current.applyOptions(indicatorParams?.['truth-profiler'] || {});
+                }
+            });
+        } else {
+            if (truthProfilerRef.current) {
+                series.detachPrimitive(truthProfilerRef.current);
+                truthProfilerRef.current = null;
+            }
+        }
+    }, [chart, series, indicators, theme, indicatorParams]);
+
+    // Theme Sync for Truth Profiler
+    useEffect(() => {
+        if (truthProfilerRef.current && theme) {
+            truthProfilerRef.current.updateTheme(theme);
+        }
+    }, [theme]);
 
     useEffect(() => {
         if (!series || !chart || !ticker) return;
@@ -1358,7 +1451,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     hourlyProfilerRef.current = new HourlyProfiler(chart, series, {
                         ...hourlyParams,
                         ticker,
-                    }, theme);
+                    }, theme, (newOpts) => onIndicatorParamsChange?.('hourly-profiler', newOpts));
                     series.attachPrimitive(hourlyProfilerRef.current);
 
                     // Initial Data Push
@@ -1366,7 +1459,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                         hourlyProfilerRef.current.setData(data);
                     }
                 } else {
-                    hourlyProfilerRef.current.applyOptions({ ...hourlyParams, ticker });
+                    hourlyProfilerRef.current.applyOptions({ ...hourlyParams, ticker }, true);
                 }
             }).catch(err => {
                 console.error('[ChartContainer] Failed to load HourlyProfiler module:', err);
