@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from "react"
+import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle, memo } from "react"
 import { useChart } from "@/hooks/use-chart"
 import { DrawingTool } from "./left-toolbar"
 import { Drawing } from "./right-sidebar"
@@ -116,7 +116,7 @@ export interface ChartContainerRef {
 
 
 
-export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>(({
+export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerProps>(({
     ticker, timeframe, style, selectedTool, onToolSelect, onDrawingCreated, onDrawingDeleted,
     indicators, markers, magnetMode = 'off', displayTimezone = 'America/New_York', sessionType = 'ETH',
     selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad,
@@ -1901,6 +1901,6 @@ export const ChartContainer = forwardRef<ChartContainerRef, ChartContainerProps>
             />
         </div>
     )
-})
+}))
 
 ChartContainer.displayName = "ChartContainer"
