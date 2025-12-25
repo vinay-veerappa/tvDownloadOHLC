@@ -2,12 +2,12 @@ import { LineSeries, ISeriesApi } from "lightweight-charts";
 import { toLineSeriesData } from "@/lib/indicator-api";
 import { ChartIndicator, IndicatorContext } from "./types";
 
-// Helper to get time Parts in Timezone
-const getTimeParts = (unixTime: number, timezone: string) => {
-    const date = new Date(unixTime * 1000);
-    try {
-        // Use Intl.DateTimeFormat for robust TZ handling
-        const parts = new Intl.DateTimeFormat('en-US', {
+// Cache for DateTimeFormat instances (expensive to create)
+const formatterCache = new Map<string, Intl.DateTimeFormat>();
+
+const getFormatter = (timezone: string): Intl.DateTimeFormat => {
+    if (!formatterCache.has(timezone)) {
+        formatterCache.set(timezone, new Intl.DateTimeFormat('en-US', {
             timeZone: timezone,
             hour: 'numeric',
             minute: 'numeric',
@@ -17,7 +17,17 @@ const getTimeParts = (unixTime: number, timezone: string) => {
             day: 'numeric',
             month: 'numeric',
             year: 'numeric'
-        }).formatToParts(date);
+        }));
+    }
+    return formatterCache.get(timezone)!;
+};
+
+// Helper to get time Parts in Timezone (optimized)
+const getTimeParts = (unixTime: number, timezone: string) => {
+    const date = new Date(unixTime * 1000);
+    try {
+        const formatter = getFormatter(timezone);
+        const parts = formatter.formatToParts(date);
 
         const getPart = (type: string) => parts.find(p => p.type === type)?.value;
         return {
@@ -100,25 +110,21 @@ const calculateVWAPData = (data: any[], settings: any, ticker: string, tz: strin
     let startIndex = 0;
 
     if (visibleStart && data.length > 0) {
-        // Binary search for visibleStart index could be faster, but simple find is ok for now?
-        // Let's assume data is sorted.
-        // Find approximate index of visibleStart
-        // Optimization: Start searching from end if we assume we are looking at recent data, or binary search.
-        // For simplicity:
-        let visibleIdx = data.findIndex(d => d.time >= visibleStart);
-        if (visibleIdx === -1) visibleIdx = data.length - 1;
+        // Binary search for visibleStart index (O(log n) vs O(n))
+        let lo = 0, hi = data.length - 1;
+        while (lo < hi) {
+            const mid = Math.floor((lo + hi) / 2);
+            if (data[mid].time < visibleStart) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let visibleIdx = lo;
 
-        // Backtrack to find Anchor Reset
-        // Heuristic limit: Look back max 10,000 bars? Or until reset found.
-        // If we don't find a reset, we must start from 0 to be accurate.
-        // But for "Session" anchor, reset is frequent (daily).
-        // For "Month", it's far.
-
-        // Safety cap: Scan back max 5000 bars. If not found, fall back to 0 or accept slight inaccuracy?
-        // User wants "max number".
-
+        // Backtrack to find Anchor Reset (reduced lookback for performance)
         let searchIdx = visibleIdx;
-        const MAX_LOOKBACK = 15000; // Cap
+        const MAX_LOOKBACK = 2000; // Reduced from 15000 for better responsiveness
         let steps = 0;
 
         while (searchIdx > 0 && steps < MAX_LOOKBACK) {
@@ -133,15 +139,8 @@ const calculateVWAPData = (data: any[], settings: any, ticker: string, tz: strin
             steps++;
         }
 
-        // If we exhausted lookback and didn't find reset, calculating from middle is wrong.
-        // But if steps hit MAX_LOOKBACK, we might just have to calc from there and accept it's a "local" VWAP 
-        // or force start=0 if we want pure accuracy.
-        // Given user request "just use visible data", starting from visibleIdx - lookback is probably acceptable
-        // behavior effectively effectively giving "Rolling VWAP" if no anchor found.
-        // But if we found startIndex, we are Golden.
+        // If lookback exhausted, start from the limit point
         if (startIndex === 0 && steps === MAX_LOOKBACK) {
-            // Fallback: Start from searchIdx anyway?
-            // No, let's start from searchIdx (the lookback limit) to save perf.
             startIndex = searchIdx;
         }
     }
