@@ -163,14 +163,8 @@ export function useChart(
                 mouseWheel: true,
                 pinch: true,
             },
-            watermark: {
-                visible: !!ticker,
-                fontSize: 48,
-                horzAlign: 'center',
-                vertAlign: 'center',
-                color: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-                text: `${ticker || ''} • ${timeframe || ''}`,
-            },
+            // Note: watermark was removed in lightweight-charts v5
+            // Use createTextWatermark plugin if watermark is needed
         })
 
 
@@ -228,15 +222,7 @@ export function useChart(
         }
     }, [chartInstance, displayTimezone])
 
-    // Update Watermark when ticker/timeframe changes
-    useEffect(() => {
-        if (!chartInstance) return
-        chartInstance.applyOptions({
-            watermark: {
-                text: `${ticker || ''} • ${timeframe || ''}`,
-            }
-        })
-    }, [chartInstance, ticker, timeframe])
+    // Note: watermark update removed - watermark is a plugin in v5
 
     useEffect(() => {
         if (!chartInstance || isDisposedRef.current) return
