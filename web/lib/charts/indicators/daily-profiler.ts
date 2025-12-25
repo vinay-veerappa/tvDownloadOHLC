@@ -715,9 +715,35 @@ export class DailyProfiler implements ISeriesPrimitive<Time> {
             this._barInterval = diff > 0 ? diff : 60;
         }
 
-        this._calculateSessions(data);
-        this._precomputeExtensions();
-        this._requestUpdate();
+        // Try Web Worker first for better UI responsiveness
+        if (typeof Worker !== 'undefined') {
+            import('./profiler-worker-manager').then(({ getProfilerWorker }) => {
+                const worker = getProfilerWorker();
+                worker.calculate({
+                    data: data,
+                    extendUntil: this._options.extendUntil,
+                    barInterval: this._barInterval
+                }).then((result) => {
+                    this._data = result.sessions as SessionData[];
+                    this._requestUpdate();
+                }).catch((e) => {
+                    console.warn('[DailyProfiler] Worker failed, using main thread:', e);
+                    this._calculateSessions(data);
+                    this._precomputeExtensions();
+                    this._requestUpdate();
+                });
+            }).catch(() => {
+                // Fallback to main thread
+                this._calculateSessions(data);
+                this._precomputeExtensions();
+                this._requestUpdate();
+            });
+        } else {
+            // No Worker support, use main thread
+            this._calculateSessions(data);
+            this._precomputeExtensions();
+            this._requestUpdate();
+        }
     }
 
     private _calculateSessions(data: any[]) {
