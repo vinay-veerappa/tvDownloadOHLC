@@ -177,25 +177,21 @@ export function ChartPageClient({
     // Bottom Panel state
     const [isPanelOpen, setIsPanelOpen] = useState(false)
 
-    // Chart Capture Logic - uses html2canvas with fallback to LWC takeScreenshot
+    // Chart Capture Logic - uses dom-to-image-more for full DOM capture
     const handleTakeScreenshot = useCallback(async (action: 'copy' | 'save' | 'open') => {
-        // Helper function to process canvas result
-        const processCanvas = (canvas: HTMLCanvasElement) => {
+        // Helper function to process result
+        const processImage = async (dataUrl: string) => {
             if (action === 'copy') {
-                canvas.toBlob(blob => {
-                    if (!blob) {
-                        toast.error("Failed to create image")
-                        return
-                    }
-                    navigator.clipboard.write([
-                        new ClipboardItem({ 'image/png': blob })
-                    ])
-                    toast.success("Chart copied to clipboard")
-                })
+                // Convert data URL to blob for clipboard
+                const response = await fetch(dataUrl)
+                const blob = await response.blob()
+                navigator.clipboard.write([
+                    new ClipboardItem({ 'image/png': blob })
+                ])
+                toast.success("Chart copied to clipboard")
             } else if (action === 'save') {
-                const url = canvas.toDataURL('image/png')
                 const a = document.createElement('a')
-                a.href = url
+                a.href = dataUrl
                 const date = new Date()
                 const dateStr = date.toISOString().slice(0, 10)
                 const timeStr = date.toTimeString().slice(0, 8).replace(/:/g, '-')
@@ -203,54 +199,47 @@ export function ChartPageClient({
                 a.click()
                 toast.success("Chart saved")
             } else if (action === 'open') {
-                const url = canvas.toDataURL('image/png')
                 const win = window.open()
                 if (win) {
-                    win.document.write(`<img src="${url}" style="max-width: 100%; height: auto;" />`)
+                    win.document.write(`<img src="${dataUrl}" style="max-width: 100%; height: auto;" />`)
                     win.document.title = `Chart Capture - ${ticker}`
                 }
             }
         }
 
         try {
-            // Try html2canvas first for full capture including overlays
-            const html2canvas = (await import('html2canvas')).default
+            // Use modern-screenshot for robust DOM capture including canvas layers
+            // Recommended by monday.com engineering for best CSS/canvas handling
+            const { domToPng } = await import('modern-screenshot')
             const element = document.getElementById('chart-capture-area')
 
-            if (element) {
-                const canvas = await html2canvas(element, {
-                    useCORS: true,
-                    allowTaint: true,
-                    backgroundColor: '#131722',
-                    scale: window.devicePixelRatio || 1,
-                    logging: false,
-                    // Skip SVG elements that may have unsupported oklch/lab colors
-                    ignoreElements: (el) => {
-                        // Skip SVG icons from Lucide (they often have lab() colors)
-                        if (el.tagName === 'svg' && el.classList.contains('lucide')) {
-                            return true
-                        }
-                        return false
-                    }
-                })
-                processCanvas(canvas)
+            if (!element) {
+                toast.error("Chart area not found")
                 return
             }
+
+            const dataUrl = await domToPng(element, {
+                backgroundColor: '#131722', // Dark theme background
+                scale: window.devicePixelRatio || 1 // High DPI support
+            })
+
+            await processImage(dataUrl)
         } catch (e) {
-            console.warn('html2canvas failed, falling back to LWC takeScreenshot:', e)
-        }
+            console.error('Screenshot failed:', e)
 
-        // Fallback to Lightweight Charts native screenshot (canvas only, no overlays)
-        if (navigation?.takeScreenshot) {
-            const canvas = navigation.takeScreenshot()
-            if (canvas) {
-                processCanvas(canvas)
-                toast.info("Screenshot captured (without overlays)")
-                return
+            // Fallback to LWC native screenshot
+            if (navigation?.takeScreenshot) {
+                const canvas = navigation.takeScreenshot()
+                if (canvas) {
+                    const dataUrl = canvas.toDataURL('image/png')
+                    await processImage(dataUrl)
+                    toast.info("Screenshot captured (canvas only)")
+                    return
+                }
             }
-        }
 
-        toast.error("Screenshot failed")
+            toast.error("Screenshot failed")
+        }
     }, [ticker, timeframe, navigation])
 
     const { resolvedTheme } = useTheme()
