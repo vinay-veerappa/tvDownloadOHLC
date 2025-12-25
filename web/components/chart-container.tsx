@@ -18,6 +18,7 @@ import { useChartDrag } from "@/hooks/chart/use-chart-drag"
 import { useDrawingInteraction } from "@/hooks/chart/use-drawing-interaction"
 import { ChartContextMenu } from "@/components/chart/chart-context-menu"
 import { ChartLegend, ChartLegendRef } from "@/components/chart/chart-legend"
+import { OHLCLegend } from "@/lib/charts/plugins/ohlc-legend"
 import { ChartCursorOverlay } from "@/components/chart-cursor-overlay"
 import { VWAPSettings } from "@/lib/indicator-api"
 import { useChartSettings } from "@/hooks/use-chart-settings"
@@ -224,6 +225,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
 
     // 4b. OHLC Legend - use ref to avoid re-render loops
     const legendRef = useRef<ChartLegendRef>(null)
+    const canvasLegendRef = useRef<OHLCLegend | null>(null)
     const dataRef = useRef(data)
     const seriesRef = useRef(series)
     const isSubscribedRef = useRef(false)
@@ -236,29 +238,57 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     useEffect(() => {
         if (!chart || !series || isSubscribedRef.current) return
 
+        // Create canvas legend and attach to series
+        if (!canvasLegendRef.current) {
+            const formatPrice = (price: number) => {
+                // Use ticker-appropriate decimal places
+                const isFutures = ticker.includes('!')
+                const decimals = isFutures ? 2 : 2
+                return price.toFixed(decimals)
+            }
+
+            canvasLegendRef.current = new OHLCLegend(chart, series, {
+                ticker: ticker.replace('!', ''),
+                timeframe: timeframe,
+                upColor: theme?.candle.upBody || '#26a69a',
+                downColor: theme?.candle.downBody || '#ef5350',
+                textColor: theme?.ui.text || '#d1d4dc'
+            }, formatPrice)
+
+            series.attachPrimitive(canvasLegendRef.current)
+        }
+
         const handleCrosshairMove = (param: any) => {
             const currentData = dataRef.current
             const currentSeries = seriesRef.current
             if (!currentData || currentData.length === 0 || !currentSeries) return
 
+            let ohlcData = null
+
             if (!param || !param.time) {
                 // Mouse left chart - show latest candle
                 const lastBar = currentData[currentData.length - 1]
                 if (lastBar) {
-                    legendRef.current?.updateOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
+                    ohlcData = { open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close }
                 }
-                return
+            } else {
+                // Get the candle data at crosshair position
+                const candleData = param.seriesData.get(currentSeries)
+                if (candleData) {
+                    ohlcData = {
+                        open: candleData.open,
+                        high: candleData.high,
+                        low: candleData.low,
+                        close: candleData.close
+                    }
+                }
             }
 
-            // Get the candle data at crosshair position
-            const candleData = param.seriesData.get(currentSeries)
-            if (candleData) {
-                legendRef.current?.updateOHLC({
-                    open: candleData.open,
-                    high: candleData.high,
-                    low: candleData.low,
-                    close: candleData.close
-                })
+            if (ohlcData) {
+                // Update canvas legend
+                canvasLegendRef.current?.updateOHLC(ohlcData)
+                // Update HTML legend (will be removed later)
+                legendRef.current?.updateOHLC(ohlcData)
             }
         }
 
@@ -270,7 +300,9 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
             const currentData = dataRef.current
             if (currentData && currentData.length > 0) {
                 const lastBar = currentData[currentData.length - 1]
-                legendRef.current?.updateOHLC({ open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close })
+                const ohlcData = { open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close }
+                canvasLegendRef.current?.updateOHLC(ohlcData)
+                legendRef.current?.updateOHLC(ohlcData)
             }
         }, 100)
 
@@ -278,8 +310,9 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
             clearTimeout(timer)
             chart.unsubscribeCrosshairMove(handleCrosshairMove)
             isSubscribedRef.current = false
+            // Don't detach canvas legend here - it persists with the series
         }
-    }, [chart, series])
+    }, [chart, series, ticker, timeframe, theme])
 
     // 4c. Load more data when scrolling near the left edge (oldest data)
     // Uses official Lightweight Charts pattern: barsInLogicalRange().barsBefore
