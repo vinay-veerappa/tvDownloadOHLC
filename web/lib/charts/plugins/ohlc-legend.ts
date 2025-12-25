@@ -3,7 +3,7 @@
  * Renders ticker, timeframe, and OHLC values directly on the chart canvas.
  * This ensures the legend is always captured in screenshots.
  */
-import { IChartApi, ISeriesApi, ISeriesPrimitivePaneView, ISeriesPrimitivePaneRenderer, ISeriesPrimitive } from "lightweight-charts";
+import { IChartApi, ISeriesApi, IPrimitivePaneView, IPrimitivePaneRenderer, ISeriesPrimitive } from "lightweight-charts";
 
 interface OHLCData {
     open: number;
@@ -25,7 +25,7 @@ interface OHLCLegendOptions {
     textColor?: string;
 }
 
-class OHLCLegendRenderer implements ISeriesPrimitivePaneRenderer {
+class OHLCLegendRenderer implements IPrimitivePaneRenderer {
     private _options: OHLCLegendOptions;
     private _ohlc: OHLCData | null;
     private _formatPrice: (price: number) => string;
@@ -44,54 +44,85 @@ class OHLCLegendRenderer implements ISeriesPrimitivePaneRenderer {
             const hPR = scope.horizontalPixelRatio;
             const vPR = scope.verticalPixelRatio;
 
-            // Position
-            const x = (this._options.x || 10) * hPR;
-            let y = (this._options.y || 20) * vPR;
+            // Settings
+            const padding = 8 * hPR;
+            const baseX = (this._options.x || 10) * hPR;
+            const baseY = (this._options.y || 10) * vPR;
+            const fontSize = (this._options.fontSize || 13) * Math.min(hPR, vPR);
+            const lineHeight = fontSize * 1.5;
+            const fontFamily = this._options.fontFamily || '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
-            // Font settings
-            const fontSize = (this._options.fontSize || 12) * Math.min(hPR, vPR);
-            const fontFamily = this._options.fontFamily || 'Menlo, Monaco, monospace';
-            ctx.font = `bold ${fontSize}px ${fontFamily}`;
-            ctx.textBaseline = 'top';
+            // Prepare text
+            const tickerText = `${this._options.ticker} · ${this._options.timeframe}`;
+            let ohlcText = '';
+            let isUp = true;
 
-            // Draw ticker and timeframe
+            if (this._ohlc) {
+                isUp = this._ohlc.close >= this._ohlc.open;
+                ohlcText = `O ${this._formatPrice(this._ohlc.open)}   H ${this._formatPrice(this._ohlc.high)}   L ${this._formatPrice(this._ohlc.low)}   C ${this._formatPrice(this._ohlc.close)}`;
+            }
+
+            // Measure text widths
+            ctx.font = `600 ${fontSize}px ${fontFamily}`;
+            const tickerWidth = ctx.measureText(tickerText).width;
+            ctx.font = `500 ${fontSize}px ${fontFamily}`;
+            const ohlcWidth = this._ohlc ? ctx.measureText(ohlcText).width : 0;
+
+            // Calculate box dimensions
+            const textWidth = Math.max(tickerWidth, ohlcWidth);
+            const boxWidth = textWidth + padding * 2;
+            const boxHeight = (this._ohlc ? lineHeight * 2 : lineHeight) + padding * 1.5;
+
+            // Draw semi-transparent background
+            ctx.fillStyle = 'rgba(19, 23, 34, 0.85)';
+            ctx.beginPath();
+            const radius = 4 * hPR;
+            const bx = baseX;
+            const by = baseY;
+            // Rounded rectangle
+            ctx.moveTo(bx + radius, by);
+            ctx.lineTo(bx + boxWidth - radius, by);
+            ctx.quadraticCurveTo(bx + boxWidth, by, bx + boxWidth, by + radius);
+            ctx.lineTo(bx + boxWidth, by + boxHeight - radius);
+            ctx.quadraticCurveTo(bx + boxWidth, by + boxHeight, bx + boxWidth - radius, by + boxHeight);
+            ctx.lineTo(bx + radius, by + boxHeight);
+            ctx.quadraticCurveTo(bx, by + boxHeight, bx, by + boxHeight - radius);
+            ctx.lineTo(bx, by + radius);
+            ctx.quadraticCurveTo(bx, by, bx + radius, by);
+            ctx.closePath();
+            ctx.fill();
+
+            // Draw ticker line
+            const textX = baseX + padding;
+            let textY = baseY + padding + fontSize * 0.85;
+            ctx.font = `600 ${fontSize}px ${fontFamily}`;
             ctx.fillStyle = this._options.textColor || '#d1d4dc';
-            ctx.fillText(`${this._options.ticker} · ${this._options.timeframe}`, x, y);
+            ctx.textBaseline = 'middle';
+            ctx.fillText(tickerText, textX, textY);
 
             if (!this._ohlc) return;
 
-            // Move to next line
-            y += fontSize * 1.4;
-
-            // Determine color based on bar direction
-            const isUp = this._ohlc.close >= this._ohlc.open;
+            // Draw OHLC line
+            textY += lineHeight;
             const valueColor = isUp
                 ? (this._options.upColor || '#26a69a')
                 : (this._options.downColor || '#ef5350');
 
+            ctx.font = `500 ${fontSize}px ${fontFamily}`;
             ctx.fillStyle = valueColor;
-            ctx.font = `${fontSize}px ${fontFamily}`;
-
-            // Format OHLC line
-            const ohlcText =
-                `O ${this._formatPrice(this._ohlc.open)}  ` +
-                `H ${this._formatPrice(this._ohlc.high)}  ` +
-                `L ${this._formatPrice(this._ohlc.low)}  ` +
-                `C ${this._formatPrice(this._ohlc.close)}`;
-
-            ctx.fillText(ohlcText, x, y);
+            ctx.fillText(ohlcText, textX, textY);
         });
     }
 }
 
-class OHLCLegendPaneView implements ISeriesPrimitivePaneView {
+class OHLCLegendPaneView implements IPrimitivePaneView {
     private _source: OHLCLegend;
 
     constructor(source: OHLCLegend) {
         this._source = source;
     }
 
-    renderer(): ISeriesPrimitivePaneRenderer {
+    renderer(): IPrimitivePaneRenderer {
         return new OHLCLegendRenderer(
             this._source._options,
             this._source._ohlc,
