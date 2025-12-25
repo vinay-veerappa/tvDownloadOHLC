@@ -386,7 +386,7 @@ export function ChartWrapper(props: ChartWrapperProps) {
                     showTrading={settings.showTrading}
                     onToggleTrading={() => updateSetting('showTrading', !settings.showTrading)}
                 />
-                <div className="flex-1 relative min-w-0">
+                <div id="chart-capture-area" className="flex-1 relative min-w-0">
                     {/* Trading Panel Overlay */}
                     {settings.showTrading && (
                         <div className="absolute top-4 left-4 z-20">

@@ -177,20 +177,34 @@ export function ChartPageClient({
     // Bottom Panel state
     const [isPanelOpen, setIsPanelOpen] = useState(false)
 
-    // Chart Capture Logic
+    // Chart Capture Logic - uses html2canvas to capture full container including overlays
     const handleTakeScreenshot = useCallback(async (action: 'copy' | 'save' | 'open') => {
-        if (!navigation?.takeScreenshot) return
-
-        const canvas = navigation.takeScreenshot()
-        if (!canvas) {
-            toast.error("Failed to capture chart")
-            return
-        }
-
         try {
+            // Dynamically import html2canvas to avoid SSR issues
+            const html2canvas = (await import('html2canvas')).default
+
+            // Target the chart capture area which includes canvas + overlays
+            const element = document.getElementById('chart-capture-area')
+            if (!element) {
+                toast.error("Chart area not found")
+                return
+            }
+
+            // Capture with html2canvas
+            const canvas = await html2canvas(element, {
+                useCORS: true,
+                allowTaint: true,
+                backgroundColor: null, // Preserve transparency
+                scale: window.devicePixelRatio || 1, // High DPI support
+                logging: false
+            })
+
             if (action === 'copy') {
                 canvas.toBlob(blob => {
-                    if (!blob) return
+                    if (!blob) {
+                        toast.error("Failed to create image")
+                        return
+                    }
                     navigator.clipboard.write([
                         new ClipboardItem({ 'image/png': blob })
                     ])
@@ -216,10 +230,10 @@ export function ChartPageClient({
                 }
             }
         } catch (e) {
-            console.error(e)
+            console.error('Screenshot failed:', e)
             toast.error("Screenshot failed")
         }
-    }, [navigation, ticker, timeframe])
+    }, [ticker, timeframe])
 
     const { resolvedTheme } = useTheme()
 
