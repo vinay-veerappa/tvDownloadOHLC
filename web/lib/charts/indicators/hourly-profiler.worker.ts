@@ -28,11 +28,11 @@ interface HourlyProfilerResult {
 }
 
 // NY Timezone Formatter (cached)
-let nyFormatter: Intl.DateTimeFormat | null = null;
+let hourlyNyFormatter: Intl.DateTimeFormat | null = null;
 
-function getNYFormatter(): Intl.DateTimeFormat {
-    if (!nyFormatter) {
-        nyFormatter = new Intl.DateTimeFormat('en-US', {
+function getHourlyNYFormatter(): Intl.DateTimeFormat {
+    if (!hourlyNyFormatter) {
+        hourlyNyFormatter = new Intl.DateTimeFormat('en-US', {
             timeZone: 'America/New_York',
             hour: 'numeric',
             hour12: false,
@@ -41,13 +41,13 @@ function getNYFormatter(): Intl.DateTimeFormat {
             day: 'numeric'
         });
     }
-    return nyFormatter;
+    return hourlyNyFormatter;
 }
 
 function calculateProfiles(data: any[]): HourlyProfilerResult {
     if (data.length === 0) return { periods1H: [], periods3H: [] };
 
-    const formatter = getNYFormatter();
+    const formatter = getHourlyNYFormatter();
     const periods1H: HourlyPeriod[] = [];
     const periods3H: HourlyPeriod[] = [];
 
