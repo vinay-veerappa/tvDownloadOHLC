@@ -102,35 +102,9 @@ export async function clearCache() {
     return { success: true }
 }
 
-// Helper to sanitize data: Sort by time and remove duplicates
-function sanitizeData(data: OHLCData[], context: string): OHLCData[] {
-    if (!data || data.length === 0) return []
-
-    // 1. Sort by time asc
-    data.sort((a, b) => a.time - b.time)
-
-    // 2. Remove duplicates
-    const unique: OHLCData[] = []
-    let lastTime = -1
-
-    for (const bar of data) {
-        if (bar.time > lastTime) {
-            unique.push(bar)
-            lastTime = bar.time
-        }
-    }
-
-    return unique
-}
-
-// Helper to merge chunks and then sanitize
-function mergeAndSanitize(chunks: OHLCData[][], context: string): OHLCData[] {
-    // Flatten
-    let flat: OHLCData[] = []
-    for (const chunk of chunks) {
-        if (chunk) flat = flat.concat(chunk)
-    }
-    return sanitizeData(flat, context)
+// Helper to merge chunks (sanitization removed - data is clean at source)
+function mergeChunks(chunks: OHLCData[][]): OHLCData[] {
+    return chunks.filter(Boolean).flat();
 }
 
 export async function getChartData(ticker: string, timeframe: string, limit: number = 0): Promise<{ success: boolean, data?: OHLCData[], totalRows?: number, chunksLoaded?: number, numChunks?: number, error?: string }> {
@@ -172,7 +146,7 @@ export async function getChartData(ticker: string, timeframe: string, limit: num
         // Chunk 0 is newest, Chunk N is oldest.
         // We want data sorted by time (oldest to newest).
 
-        const data = mergeAndSanitize(allChunks, `getChartData(${ticker}, ${timeframe})`)
+        const data = mergeChunks(allChunks)
 
         return {
             success: true,
@@ -302,7 +276,7 @@ export async function loadChunksForTime(
         }
 
         // Combine: reverse so oldest chunk is first (for correct time ordering)
-        const data = mergeAndSanitize(allChunks, `loadChunksForTime(${ticker}, ${timeframe}, ${targetTime})`)
+        const data = mergeChunks(allChunks)
 
         return {
             success: true,
@@ -356,7 +330,7 @@ export async function loadNextChunks(
         }
 
         // Combine chunks with deduplication and sanitization
-        const data = mergeAndSanitize(allChunks, `loadNextChunks(${ticker}, ${timeframe}, ${startIndex})`)
+        const data = mergeChunks(allChunks)
 
         return {
             success: true,
