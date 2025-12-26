@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 
 export interface Drawing {
     id: string
-    type: 'trend-line' | 'ray' | 'fibonacci' | 'rectangle' | 'vertical-line' | 'horizontal-line' | 'text' | 'measure' | 'risk-reward' | 'price-label' | 'price-range' | 'date-range'
+    type: 'trend-line' | 'ray' | 'fibonacci' | 'rectangle' | 'vertical-line' | 'horizontal-line' | 'text' | 'measure' | 'risk-reward' | 'price-label' | 'price-range' | 'date-range' | 'brush' | 'path' | 'highlighter' | 'callout' | 'arrow' | 'extended-line' | 'horizontal-ray' | 'cross-line' | 'circle' | 'triangle' | 'parallel-channel' | 'long-short-position'
     createdAt: number
 }
 

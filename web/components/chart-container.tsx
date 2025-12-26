@@ -9,13 +9,12 @@ import { DrawingStorage, SerializedDrawing } from "@/lib/drawing-storage"
 import type { MagnetMode } from "@/lib/charts/magnet-utils"
 import { useTradeContext } from "@/components/journal/trade-context"
 import { toast } from "sonner"
-import { useDrawingManager } from "@/hooks/use-drawing-manager"
 // New Hooks
 import { useChartData } from "@/hooks/chart/use-chart-data"
 import { useDataLoading } from "@/hooks/chart/use-data-loading"
 import { useChartTrading } from "@/hooks/chart/use-chart-trading"
 import { useChartDrag } from "@/hooks/chart/use-chart-drag"
-import { useDrawingInteraction } from "@/hooks/chart/use-drawing-interaction"
+// import { useDrawingInteraction } from "@/hooks/chart/use-drawing-interaction" // Removed Legacy
 import { ChartContextMenu } from "@/components/chart/chart-context-menu"
 import { ChartLegend, ChartLegendRef } from "@/components/chart/chart-legend"
 import { OHLCLegend } from "@/lib/charts/plugins/ohlc-legend"
@@ -37,8 +36,10 @@ import { RaySettingsDialog, RaySettingsOptions, DEFAULT_RAY_OPTIONS } from "@/co
 import { FloatingToolbar } from "@/components/drawing/FloatingToolbar"
 import { InlineTextEditor } from "@/components/drawing/InlineTextEditor"
 import { TextSettings } from "@/components/drawing-settings/TextSettings"
-import { isInlineEditable } from "@/lib/charts/plugins/base/inline-editable"
+// import { isInlineEditable } from "@/lib/charts/plugins/base/inline-editable"
 import { fetchProfilerStats, fetchLevelTouches, ProfilerSession, LevelTouchesResponse } from "@/lib/api/profiler"
+import { useChartPreferences } from "@/hooks/use-chart-preferences"
+import { V2SandboxManager } from "@/lib/charts/v2/sandbox-manager"
 
 import type { SessionType } from './top-toolbar'
 
@@ -130,7 +131,9 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     // 0. Global Chart Settings
     const { settings: chartSettings } = useChartSettings()
     const { showTrades } = chartSettings
+    const { experimentalDrawingV2 } = useChartPreferences()
     const chartContainerRef = useRef<HTMLDivElement>(null)
+    const v2SandboxRef = useRef<V2SandboxManager<any> | null>(null)
 
     // Bridge for lazy access to chart methods
     const getVisibleTimeRangeRef = useRef<(() => { start: number, end: number, center: number } | null) | null>(null)
@@ -369,12 +372,6 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         isReplayMode: replayMode
     })
 
-    // 5. Drawing Manager
-    const drawingManager = useDrawingManager(
-        chart, series, ticker, timeframe,
-        onDrawingCreated, onDrawingDeleted,
-        theme
-    );
 
     // 6. Selection State Management
     const selectedDrawingRef = useRef<any>(null)
@@ -415,22 +412,13 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         // Check if it's a drawing type
         const isDrawingType = DRAWING_TYPES.includes(selection.type);
         if (isDrawingType) {
-            const drawing = drawingManager.getDrawing(selection.id);
-            if (drawing) {
-                if (selectedDrawingRef.current?.setSelected) selectedDrawingRef.current.setSelected(false);
-                if (drawing.setSelected) drawing.setSelected(true);
-                selectedDrawingRef.current = drawing;
-                setSelectedDrawingId(selection.id);
-                // Also update the drawing type for settings dialog
-                setSelectedDrawingType(drawing._type || selection.type);
-                // Sync options for Toolbar
-                setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
-            }
+            // V1 Drawing sync removed.
+            // TODO: Add V2 Selection Sync
         } else {
             // For indicators or other types, just deselect any drawing
             deselectDrawing();
         }
-    }, [selection, drawingManager]);
+    }, [selection]);
 
     const deselectDrawing = () => {
         if (selectedDrawingRef.current?.setSelected) selectedDrawingRef.current.setSelected(false);
@@ -466,117 +454,202 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         onModifyOrder, onModifyPosition
     })
 
-    const handleDrawingModified = (id: string, drawing: any) => {
-        // Persist
-        const opts = drawing.options ? drawing.options() : {};
-        if (id) DrawingStorage.updateDrawingOptions(ticker, timeframe, id, opts);
+    // Legacy handleDrawingModified removed
 
-        // Also update points if strictly needed (DrawingStorage usually handles options, but points are separate?)
-        // DrawingStorage.updateDrawingOptions stores "options". 
-        // Does it save points? 
-        // Standard Lightweight Charts primitives usually keep points in private fields, 
-        // but our wrappers might expose them in options() or we need a separate savePoints?
-
-        // For Fib/TrendLine, points are usually part of the serialized state.
-        // DrawingStorage.saveDrawing saves the whole object.
-        // updateDrawingOptions only updates the "options" object.
-
-        // If we drag, points change. We should probably use drawingManager.saveDrawings() or similar?
-        // Or specific update method.
-
-        // Let's check drawingManager. 
-        // drawingManager doesn't expose granular updates easily.
-        // But DrawingStorage has updateDrawing (full replace?).
-
-        // Let's assume for now we can just save all drawings or update specific one.
-        // Better: DrawingStorage.updateDrawing(ticker, timeframe, serializedDrawing);
-
-        const serialized = drawingManager.serializeDrawing(drawing);
-        if (serialized) {
-            DrawingStorage.updateDrawing(ticker, timeframe, serialized.id, serialized);
-        }
-    };
-
-    const handleDrawingClicked = (id: string, drawing: any) => {
-        onSelectionChange?.({ type: 'drawing', id });
-        // Sync options for toolbar (handleDrawingClicked is fired by Interaction hook)
-        if (drawing) {
-            const opts = drawing.options ? drawing.options() : {};
-            setSelectedDrawingOptions(opts);
-            setSelectedDrawingType(drawing._type || 'drawing');
-            setToolbarPosition(drawing.getScreenPosition ? drawing.getScreenPosition() : null); // Or mouse pos?
-        }
-    };
-
-    useDrawingInteraction({
-        chartContainerRef,
-        chart,
-        series,
-        drawingManager,
-        onDrawingModified: handleDrawingModified,
-        onDrawingClicked: handleDrawingClicked,
-        isTradingDragActive: false // Placeholder until we wire up shared state
-    });
 
 
     // 9. Tool Initiation
+    // 9. Tool Initiation
     useEffect(() => {
-        drawingManager.initiateTool(
-            selectedTool, magnetMode, data,
-            () => onToolSelect('cursor'),
-            (id, drawing) => {
-                onSelectionChange?.({ type: 'drawing', id });
-                setSelectedDrawingOptions(drawing.options ? drawing.options() : {});
-                setSelectedDrawingType(drawing._type || selectedTool);
-                // Only open properties for text or if configured to do so (Fibonacci usually doesn't auto-open, but we can if desired)
-                // For now, let's keep the behavior consistent but correct the type.
-                // Auto-open settings or inline editor
-                if (selectedTool === 'text') {
-                    // Activate inline editor for new text drawings
-                    setTimeout(() => {
-                        const screenPos = drawing.getScreenPosition ? drawing.getScreenPosition(data[data.length - 1].time, data[data.length - 1].close) : { x: 500, y: 300 }; // Fallback if no position yet
-                        // Ideally we get the position of the created point. drawing.getPoints()?
-                        // Let's assume the drawing object has the points.
-                        const points = drawing.getPoints ? drawing.getPoints() : [];
-                        const lastPoint = points.length > 0 ? points[points.length - 1] : null;
+        // Legacy V1 initiation removed.
+        // V2 handles tools via V2SandboxManager.
+    }, [selectedTool, magnetMode, data, onToolSelect, onSelectionChange]);
 
-                        let pos = { x: 500, y: 300 };
-                        if (lastPoint && chart) {
-                            const timeScale = chart.timeScale();
-                            const x = timeScale.timeToCoordinate(lastPoint.time);
-                            const seriesApi = series; // Ref
-                            if (seriesApi) {
-                                const y = seriesApi.priceToCoordinate(lastPoint.price);
-                                if (x && y) pos = { x, y };
-                            }
-                        }
-
-                        // Actually drawing.getScreenPosition should handle this if implemented correctly
-                        if (drawing.getScreenPosition && points.length > 0 && chart) {
-                            // We need to pass x,y coordinates, not time/price to getScreenPosition if it expects screen coords?
-                            // Wait, getScreenPosition in TextDrawing usually returns the position based on its internal time/price.
-                            // Let's check TextDrawning implementation.
-                            // If it takes no args, it returns current screen pos.
-                            pos = drawing.getScreenPosition();
-                        }
-
-                        setInlineTextEditing({
-                            drawingId: id,
-                            position: pos,
-                            layout: drawing.getEditorLayout ? drawing.getEditorLayout() : null,
-                            text: '',
-                            options: drawing.options ? drawing.options() : {},
-                            drawingType: drawing._type || 'text'
-                        });
-                    }, 50);
-
-                } else if (selectedTool === 'fibonacci') {
-                    // For Fib, we might want to keep properties closed or open specific settings
-                    setPropertiesModalOpen(true);
-                }
+    // 9.2 V2 Sandbox Tool Initiation
+    useEffect(() => {
+        if (!experimentalDrawingV2 || !chart || !series) {
+            if (v2SandboxRef.current) {
+                v2SandboxRef.current.destroy();
+                v2SandboxRef.current = null;
             }
-        );
-    }, [selectedTool, magnetMode, data, drawingManager, onToolSelect, onSelectionChange]);
+            return;
+        }
+
+        if (!v2SandboxRef.current) {
+            console.log('Initializing V2 Drawing Sandbox...');
+
+            // Define Callbacks for Persistence & State Sync
+            // Define Callbacks for Persistence & State Sync
+            const handleDrawingCreated = (exportData: any) => {
+                // The tool argument is ALREADY the export data from core-plugin
+
+                const drawing: SerializedDrawing = {
+                    id: exportData.id,
+                    type: exportData.toolType,
+                    points: exportData.points,
+                    options: exportData.options,
+                    createdAt: Date.now()
+                };
+
+                // console.log('[ChartContainer] V2 Drawing Created:', drawing);
+
+                // 1. Persist to Storage
+                DrawingStorage.addDrawing(ticker, timeframe, drawing);
+
+                // 2. Notify Parent (for Object Tree)
+                // We adapter for legacy interface (RightSidebar) to ensure it appears in the tree
+                if (onDrawingCreated) {
+                    onDrawingCreated({
+                        // Pass full V2 object first
+                        ...drawing,
+                        // Adapter for Legacy Drawing Interface
+                        p1: drawing.points?.[0] || { time: 0, price: 0 },
+                        p2: drawing.points?.[1] || { time: 0, price: 0 },
+                        text: drawing.options.text?.value || '',
+                        type: drawing.type as any
+                    } as any);
+                }
+            };
+
+            const handleDrawingModified = (exportData: any) => {
+                // Update Storage
+                DrawingStorage.updateDrawing(ticker, timeframe, exportData.id, {
+                    points: exportData.points,
+                    options: exportData.options
+                });
+            };
+
+            const handleDrawingDeleted = (id: string) => {
+                DrawingStorage.deleteDrawing(ticker, timeframe, id);
+                onDrawingDeleted?.(id);
+            };
+
+            // NEW: Handle Selection Change Event from V2 Core
+            const handleSelectionChanged = (id: string | null, tool: any | null) => {
+                if (id && tool) {
+                    // Update Internal State
+                    setSelectedDrawingId(id);
+                    selectedDrawingRef.current = tool; // Now points to V2 Tool Instance (proxied by exports usually, but here tool is the actual instance or export?)
+                    // Actually V2SandboxManager passes the tool instance wrapper or export? 
+                    // In sandbox-manager we pass: callbacks.onSelectionChanged?.(tool.id, tool);
+                    // The 'tool' in sandbox manager is the internal tool object (with .options(), id(), etc)
+                    // So we can call methods on it.
+
+                    if (tool.options) {
+                        try {
+                            setSelectedDrawingOptions(tool.options());
+                        } catch (e) {
+                            setSelectedDrawingOptions({});
+                        }
+                    }
+                    const toolType = typeof tool.toolType === 'function' ? tool.toolType() : (tool.toolType || 'drawing');
+                    setSelectedDrawingType(toolType);
+
+                    // Notify Parent
+                    onSelectionChange?.({ type: toolType, id });
+                } else {
+                    // Deselect
+                    setSelectedDrawingId(null);
+                    selectedDrawingRef.current = null;
+                    setSelectedDrawingOptions(null);
+                    onSelectionChange?.(null);
+                }
+            };
+
+
+            v2SandboxRef.current = new V2SandboxManager(chart, series, {
+                onDrawingCreated: handleDrawingCreated,
+                onDrawingModified: handleDrawingModified,
+                onDrawingDeleted: handleDrawingDeleted,
+                onSelectionChanged: handleSelectionChanged
+            });
+
+            // Load Saved Drawings
+            const savedDrawings = DrawingStorage.getDrawings(ticker, timeframe);
+            if (savedDrawings && savedDrawings.length > 0) {
+                // Adapter: Ensure 'points' array exists
+                const adaptedDrawings = savedDrawings.map(d => ({
+                    toolType: d.type,
+                    id: d.id,
+                    options: d.options,
+                    points: d.points || (d.p1 && d.p2 ? [d.p1, d.p2] : [])
+                }));
+                console.log(`[ChartContainer] Loading ${adaptedDrawings.length} saved V2 drawings...`);
+                v2SandboxRef.current.loadTools(adaptedDrawings);
+
+                // MANUALLY SYNC TO OBJECT TREE ON LOAD
+                // Since this component relies on 'onDrawingCreated' to populate the parent's list,
+                // we must fire it for each loaded drawing so the parent (Object Tree) knows about them.
+                // NOTE: This might duplicate items if parent persists state separately, 
+                // but usually parent state is ephemeral on reload or re-fetched.
+                // Ideally Parent should handle persistence loading, but if we handle it here, we must sync up.
+                savedDrawings.forEach(d => {
+                    if (onDrawingCreated) {
+                        onDrawingCreated({
+                            ...d,
+                            p1: d.points?.[0] || d.p1 || { time: 0, price: 0 },
+                            p2: d.points?.[1] || d.p2 || { time: 0, price: 0 },
+                            text: d.options?.text?.value || '',
+                            type: d.type as any
+                        } as any);
+                    }
+                });
+            }
+        }
+
+        const sandbox = v2SandboxRef.current;
+
+        // Map tool selection
+        if (selectedTool === 'trend-line') {
+            sandbox.addTool('TrendLine');
+        } else if (selectedTool === 'rectangle') {
+            sandbox.addTool('Rectangle');
+        } else if (selectedTool === 'horizontal-line') {
+            sandbox.addTool('HorizontalLine');
+        } else if (selectedTool === 'ray') {
+            sandbox.addTool('Ray');
+        } else if (selectedTool === 'vertical-line') {
+            sandbox.addTool('VerticalLine');
+        } else if (selectedTool === 'text') {
+            sandbox.addTool('Text');
+        } else if (selectedTool === 'price-label') {
+            sandbox.addTool('PriceLabel');
+        } else if (selectedTool === 'price-range') {
+            sandbox.addTool('PriceRange');
+        } else if (selectedTool === 'date-range') {
+            sandbox.addTool('DateRange');
+        } else if (selectedTool === 'measure') {
+            sandbox.addTool('Measure');
+        } else if (selectedTool === 'arrow') {
+            sandbox.addTool('Arrow');
+        } else if (selectedTool === 'extended-line') {
+            sandbox.addTool('ExtendedLine');
+        } else if (selectedTool === 'horizontal-ray') {
+            sandbox.addTool('HorizontalRay');
+        } else if (selectedTool === 'cross-line') {
+            sandbox.addTool('CrossLine');
+        } else if (selectedTool === 'circle') {
+            sandbox.addTool('Circle');
+        } else if (selectedTool === 'triangle') {
+            sandbox.addTool('Triangle');
+        } else if (selectedTool === 'parallel-channel') {
+            sandbox.addTool('ParallelChannel');
+        } else if (selectedTool === 'brush') {
+            sandbox.addTool('Brush');
+        } else if (selectedTool === 'path') {
+            sandbox.addTool('Path');
+        } else if (selectedTool === 'highlighter') {
+            sandbox.addTool('Highlighter');
+        } else if (selectedTool === 'callout') {
+            sandbox.addTool('Callout');
+        } else if (selectedTool === 'fibonacci') {
+            sandbox.addTool('FibRetracement');
+        } else if (selectedTool === 'risk-reward') {
+            sandbox.addTool('LongShortPosition');
+        } else if (selectedTool === 'cursor') {
+            // Deselect in V2?
+        }
+    }, [experimentalDrawingV2, chart, series, selectedTool, ticker, timeframe, onDrawingCreated, onDrawingDeleted]);
 
 
     // 10. Load Drawings
@@ -584,10 +657,11 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     useEffect(() => { hasLoadedDrawingsRef.current = false; }, [ticker, timeframe]);
     useEffect(() => {
         if (data && data.length > 0 && !hasLoadedDrawingsRef.current) {
-            drawingManager.loadDrawings(data);
+            // drawingManager.loadDrawings(data); // Removed V1 loading
+            // TODO: V2 Load Drawings
             hasLoadedDrawingsRef.current = true;
         }
-    }, [drawingManager, ticker, timeframe, data]);
+    }, [ticker, timeframe, data]);
 
 
     // 11. Click Handler (Selection)
@@ -603,9 +677,8 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
             }
 
             let hitDrawing: any = null;
-            const result = drawingManager.hitTest(param.point.x, param.point.y);
-            if (result) hitDrawing = result.drawing;
-            else if (primitives?.current) {
+            // V1 hitTest removed
+            if (primitives?.current) {
                 for (const p of primitives.current) {
                     if (p.hitTest?.(param.point.x, param.point.y)) { hitDrawing = p; break; }
                 }
@@ -622,23 +695,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 setSelectedDrawingOptions(hitDrawing.options ? hitDrawing.options() : {});
                 setSelectedDrawingType(hitDrawing._type || 'drawing');
 
-                // Inline Text Edit: Activate on single click for inline-editable drawings
-                if (isInlineEditable(hitDrawing)) {
-                    // Set editing flag to hide canvas text
-                    hitDrawing.setEditing(true);
-
-                    const layout = hitDrawing.getEditorLayout();
-                    const text = hitDrawing.getText();
-
-                    setInlineTextEditing({
-                        drawingId: id,
-                        position: layout ? { x: layout.x, y: layout.y } : { x: param.point.x, y: param.point.y },
-                        layout: layout,
-                        text: text,
-                        options: (hitDrawing as any).options ? (hitDrawing as any).options() : {},
-                        drawingType: (hitDrawing as any)._type || 'unknown'
-                    });
-                }
+                // Inline Text Edit: V1 removed. V2 handles text editing differently.
 
             } else {
                 deselectDrawing();
@@ -651,8 +708,8 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
             if (!param.point) return;
 
             let hitDrawing: any = null;
-            const result = drawingManager.hitTest(param.point.x, param.point.y);
-            if (result) hitDrawing = result.drawing;
+            // V1 hitTest removed
+            if (false) { } // dummy
             else {
                 // Check generic primitives
                 // Check generic primitives
@@ -736,7 +793,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
             // @ts-ignore
             chart.unsubscribeDblClick?.(dblClickHandler)
         }
-    }, [chart, series, drawingManager, onSelectionChange, isSelectingReplayStart]);
+    }, [chart, series, onSelectionChange, isSelectingReplayStart]);
 
 
     // Helper functions for UI
@@ -769,15 +826,44 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         if (selectedDrawingRef.current) openProperties(selectedDrawingRef.current);
     };
 
+    const deleteDrawingInternal = (id: string) => {
+        if (v2SandboxRef.current) {
+            // Remove from V2 Core
+            v2SandboxRef.current.plugin.removeLineToolsById([id]);
+
+            // Update Storage & UI since CorePlugin doesn't emit delete events for programmatic calls
+            DrawingStorage.deleteDrawing(ticker, timeframe, id);
+            onDrawingDeleted?.(id);
+
+            // Also clear selection if this tool was selected
+            if (selectedDrawingId === id) {
+                setSelectedDrawingId(null);
+                setSelectedDrawingOptions({});
+                setIsDrawingLocked(false);
+                setIsDrawingHidden(false);
+                setToolbarPosition(null);
+            }
+        }
+    };
+
     const deleteSelectedDrawing = () => {
         // Always perform the deletion if there's a selected drawing
         if (selectedDrawingRef.current) {
-            const id = typeof selectedDrawingRef.current.id === 'function' ? selectedDrawingRef.current.id() : selectedDrawingRef.current.id;
-            drawingManager.deleteDrawing(id);
-            toast.success('Drawing deleted');
-            deselectDrawing();
+            // Get ID safely
+            let id = null;
+            if (typeof selectedDrawingRef.current.id === 'function') {
+                id = selectedDrawingRef.current.id();
+            } else {
+                id = selectedDrawingRef.current.id || selectedDrawingRef.current._id;
+            }
+
+            if (id) {
+                deleteDrawingInternal(id);
+                // Also ensure it is deselected visually
+                deselectDrawing();
+            }
         }
-        // Also notify parent if callback exists
+        // Also notify parent if callback exists (for indicators etc)
         if (onDeleteSelection) onDeleteSelection();
         setToolbarPosition(null);
     };
@@ -810,14 +896,10 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
             const id = typeof drawing.id === 'function' ? drawing.id() : drawing._id;
 
             if (id) {
-                // Use full serialization to ensure atomic update of options + points (if interconnected)
-                const serialized = drawingManager.serializeDrawing(drawing);
-                if (serialized) {
-                    DrawingStorage.updateDrawing(ticker, timeframe, id, serialized);
-                } else {
-                    // Fallback
-                    DrawingStorage.updateDrawingOptions(ticker, timeframe, id, options);
-                }
+                // Legacy serialization removed.
+                // Assuming V2 updates via plugin or internal state if shared ref?
+                // For now, just save options.
+                DrawingStorage.updateDrawingOptions(ticker, timeframe, id, options);
             }
             toast.success('Properties saved');
         } else if (primitives?.current && selectedDrawingType === 'anchored-text') {
@@ -858,10 +940,10 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     };
 
     const handleEditDrawing = (id: string) => {
-        const drawing = drawingManager.getDrawing(id);
+        // Legacy drawingManager.getDrawing logic removed.
+        const drawing = null;
         if (drawing) {
-            onSelectionChange?.({ type: 'drawing', id });
-            openProperties(drawing);
+            // ...
         } else if (id === 'watermark' && primitives?.current) {
             const p = primitives.current.find((p: any) => p._type === 'anchored-text');
             if (p) {
@@ -930,7 +1012,9 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
 
     // Expose Functions
     useImperativeHandle(ref, () => ({
-        deleteDrawing: (id) => drawingManager?.deleteDrawing(id),
+        deleteDrawing: (id) => {
+            deleteDrawingInternal(id);
+        },
         editDrawing: (id) => handleEditDrawing(id),
         scrollByBars: replayMode ? stepForward : scrollByBars,
         scrollToStart: replayMode ? () => setReplayIndex(0) : scrollToStart,
@@ -1329,64 +1413,12 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
 
     useEffect(() => {
         if (!series || !chart || !trades || trades.length === 0 || !showTrades) {
-            // Cleanup if no trades or disabled
             tradeVisualizationsRef.current.forEach(p => series?.detachPrimitive(p));
             tradeVisualizationsRef.current = [];
             return;
         }
-
-        import('@/lib/charts/plugins/risk-reward').then(({ RiskReward }) => {
-            // Cleanup old
-            tradeVisualizationsRef.current.forEach(p => series.detachPrimitive(p));
-            tradeVisualizationsRef.current = [];
-
-            // Performance: Limit to last 50 trades to prevent hanging
-            // Assuming trades are chronological or we take the end of the array
-            const visibleTrades = trades.slice(-50);
-
-            visibleTrades.forEach(trade => {
-                // Ensure we have necessary prices
-                if (!trade.entryPrice) return;
-
-                // Construct points
-                // For closed trades, we want the box to span from Entry Time to Exit Time
-                // Entry Point
-                const entry = { time: trade.entryDate, price: trade.entryPrice };
-
-                // Target Point (controls Width and TP Level)
-                // Use Exit Time for width. Use TP Price for level.
-                // If no TP price (e.g. manual exit), use Exit Price or calculate R?
-                // Let's use trade.tpPrice if available, else exitPrice.
-                const targetPrice = trade.tpPrice || trade.exitPrice || (trade.entryPrice * 1.01);
-                const target = { time: trade.exitDate, price: targetPrice };
-
-                // Stop Point (controls SL Level)
-                // Use Exit Time for consistency? RiskRewardRenderer uses targetX for width.
-                const stopPrice = trade.slPrice || (trade.entryPrice * 0.99);
-                const stop = { time: trade.exitDate, price: stopPrice };
-
-                const rr = new RiskReward(chart, series, entry, stop, target, {
-                    stopOpacity: 0.1,
-                    targetOpacity: 0.1,
-                    lineColor: trade.pnl > 0 ? '#4CAF50' : (trade.pnl < 0 ? '#EF5350' : '#888888'),
-                    showLabels: false // Too noisy for many trades? Maybe true for single trade.
-                });
-
-                // Hack: If we want to show Labels only on Selected trade? 
-                // For now, let's enable labels but maybe compact mode?
-                rr.applyOptions({
-                    showLabels: true,
-                    compactMode: true,
-                    // If trade is a LOSS, color the "Target" zone grey? 
-                    // No, "Target" is where TP WAS. "Stop" is where SL WAS.
-                    // The actual exit is just where the box ends.
-                });
-
-                series.attachPrimitive(rr);
-                tradeVisualizationsRef.current.push(rr);
-            });
-        });
-
+        // Legacy RiskReward visualization removed (requires V2 port).
+        // TODO: Port Trade Visualization to V2
     }, [series, chart, trades, showTrades]);
 
     // -------------------------------------------------------------------------
@@ -1714,69 +1746,8 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 ticker={ticker}
             />
 
-            {/* Inline Text Editor Overlay */}
-            {inlineTextEditing && (
-                <InlineTextEditor
-                    position={inlineTextEditing.position}
-                    layout={inlineTextEditing.layout}
-                    initialText={inlineTextEditing.text}
-                    placeholder="Add text"
-                    fontSize={inlineTextEditing.options?.fontSize || 14}
-                    fontFamily={inlineTextEditing.options?.fontFamily || 'Arial'}
-                    color={inlineTextEditing.options?.textColor || inlineTextEditing.options?.color || '#FFFFFF'}
-                    backgroundColor={inlineTextEditing.options?.backgroundVisible ? inlineTextEditing.options?.backgroundColor : undefined}
-                    bounded={inlineTextEditing.drawingType === 'rectangle'}
-                    onSave={(newText, width) => {
-                        const drawing = drawingManager.getDrawing(inlineTextEditing.drawingId);
-                        if (isInlineEditable(drawing) && typeof (drawing as any).applyOptions === 'function') {
-                            const isRectangle = inlineTextEditing.drawingType === 'rectangle';
-                            // For rectangles, don't save wordWrapWidth (width is determined by rectangle bounds)
-                            const updatedOptions = {
-                                text: newText,
-                                ...(isRectangle ? {} : { wordWrapWidth: width || 200, wordWrap: true }),
-                                editing: false
-                            };
-                            (drawing as any).applyOptions(updatedOptions);
-
-                            // Persist the updated options to storage
-                            DrawingStorage.updateDrawingOptions(
-                                ticker,
-                                timeframe,
-                                inlineTextEditing.drawingId,
-                                updatedOptions
-                            );
-
-                            // Sync state if this is the currently selected drawing
-                            if (selectedDrawingId === inlineTextEditing.drawingId) {
-                                setSelectedDrawingOptions((prev: Record<string, any> | null) => ({
-                                    ...prev,
-                                    text: newText,
-                                    editing: false,
-                                    ...(isRectangle ? {} : { wordWrapWidth: width || 200 })
-                                }));
-                            }
-                        }
-                        setInlineTextEditing(null);
-                    }}
-
-
-                    onChange={(newText) => {
-                        const drawing = drawingManager.getDrawing(inlineTextEditing.drawingId);
-                        if (isInlineEditable(drawing)) {
-                            drawing.setText(newText);
-                            // Just update the text state, no need to sync layout since anchor is stable
-                            setInlineTextEditing(prev => prev ? { ...prev, text: newText } : null);
-                        }
-                    }}
-                    onCancel={() => {
-                        const drawing = drawingManager.getDrawing(inlineTextEditing.drawingId);
-                        if (isInlineEditable(drawing)) {
-                            drawing.setEditing(false);
-                        }
-                        setInlineTextEditing(null);
-                    }}
-                />
-            )}
+            {/* Inline Text Editor Overlay - Removed Legacy V1 */}
+            {/* V2 Text Tool handles editing internally or will use a new overlay */}
 
             {/* Text Settings Dialog */}
             <TextSettings
