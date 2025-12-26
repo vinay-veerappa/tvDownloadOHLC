@@ -889,6 +889,35 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         }
     };
 
+    // --- Keyboard Shortcut: Delete/Backspace to delete selected drawing ---
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Check if user is typing in an input field
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+                return;
+            }
+
+            // Delete or Backspace key
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (selectedDrawingRef.current) {
+                    e.preventDefault();
+                    deleteSelectedDrawing();
+                }
+            }
+
+            // Escape key to deselect
+            if (e.key === 'Escape') {
+                if (selectedDrawingRef.current) {
+                    deselectDrawing();
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [ticker, timeframe]); // Dependencies to ensure fresh refs
+
     const handlePropertiesSave = (options: any) => {
         if (selectedDrawingRef.current && selectedDrawingType !== 'daily-profiler' && selectedDrawingType !== 'hourly-profiler') {
             const drawing = selectedDrawingRef.current;
