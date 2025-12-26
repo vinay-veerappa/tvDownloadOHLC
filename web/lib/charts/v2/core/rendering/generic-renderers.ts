@@ -30,6 +30,7 @@ import {
 } from '../utils/canvas-helpers';
 import { ensureNotNull, ensureDefined } from '../utils/helpers';
 import { Point, Segment, Box, extendAndClipLineSegment, distanceToSegment, pointInBox, pointInPolygon, rotatePoint, equalPoints } from '../utils/geometry';
+import { colorStringToRgba } from '../utils/helpers';
 import { AnchorPoint } from './line-anchor-renderer';
 export { AnchorPoint };
 import {
@@ -428,12 +429,40 @@ export class PolygonRenderer<HorzScaleItem> implements IPaneRenderer {
  */
 export interface RectangleRendererData {
 	points: [AnchorPoint, AnchorPoint]; // Top-left and bottom-right defining points
-	background?: { color: string; inflation?: { x: number; y: number; } }; // Optional background, including inflation
+	background?: { color: string; opacity?: number; inflation?: { x: number; y: number; } }; // Optional background, including inflation
 	border?: { color: string; width: number; style: LineStyle; radius?: number | number[]; highlight?: boolean }; // Optional border
 	extend?: { left: boolean; right: boolean }; // Optional line extensions
+	showMidline?: boolean;
+	showQuarterLines?: boolean;
 	hitTestBackground?: boolean;
 	toolDefaultHoverCursor?: PaneCursorType; // For hovering over border
 	toolDefaultDragCursor?: PaneCursorType;  // For dragging background
+	text?: TextOptions; // Optional text to render inside the rectangle
+}
+
+/**
+ * Helper to apply opacity to any color string
+ */
+function applyOpacity(color: string, opacity: number | undefined): string {
+	// If opacity is invalid or 1, we still might want to normalize, 
+	// but typically we only care if we need to FORCE a lower opacity.
+	// However, if the color is 'red', we generally want 'rgba(255,0,0, opacity)'.
+
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
+	const [r, g, b, _currentAlpha] = colorStringToRgba(color);
+
+	// Use the provided opacity, or fall back to the color's existing alpha (which we ignored in destructuring but is returned)
+	// Actually colorStringToRgba returns 4th element as alpha.
+	// Let's rely on the exported type or just explicit index access if needed.
+	// But destructing [r,g,b,a] works.
+
+	// Note: colorStringToRgba guarantees valid [r,g,b,a].
+	// If opacity is provided (options.opacity), it overrides.
+	// If NOT provided, we keep the original alpha.
+
+	const finalAlpha = opacity ?? _currentAlpha;
+
+	return `rgba(${r}, ${g}, ${b}, ${finalAlpha})`;
 }
 
 /**
@@ -448,6 +477,7 @@ export class RectangleRenderer<HorzScaleItem> implements IPaneRenderer {
 	protected _data: RectangleRendererData | null = null;
 	private _mediaSize: { width: number; height: number; } = { width: 0, height: 0 };
 	private _hitTest: HitTestResult<LineToolHitTestData>;
+	private _textRenderer = new TextRenderer();
 
 	/**
 	 * Initializes the Rectangle Renderer.
@@ -466,6 +496,25 @@ export class RectangleRenderer<HorzScaleItem> implements IPaneRenderer {
 	 */
 	public setData(data: RectangleRendererData): void {
 		this._data = data;
+
+		if (this._data.points && this._data.points.length >= 2) {
+			const [p1, p2] = this._data.points;
+			const box = new Box(p1, p2);
+
+			// Pass text data to the text renderer if present
+			if (this._data.text) {
+				this._textRenderer.setData({
+					text: this._data.text,
+					box: box
+				});
+			} else {
+				// Clear text renderer if no text
+				this._textRenderer.setData({
+					text: { value: '', font: {}, box: { alignment: { vertical: 'middle', horizontal: 'center' } } },
+					box: box
+				});
+			}
+		}
 	}
 
 	/**
@@ -486,28 +535,73 @@ export class RectangleRenderer<HorzScaleItem> implements IPaneRenderer {
 
 			const borderWidth: number = border?.width as number || 0;
 			const borderColor = border?.color;
-			const backgroundColor = background?.color;
+			const backgroundColor = background?.color ? applyOpacity(background.color, background.opacity) : undefined;
 			const borderStyle = border?.style || LineStyle.Solid;
 			const borderRadius = border?.radius || 0;
 
-			if (borderWidth <= 0 && !backgroundColor) return; // Nothing to draw
+			if (borderWidth <= 0 && !backgroundColor) {
+				// Determine if we should still draw text even if box is invisible
+			} else {
+				// Call fillRectWithBorder, passing all relevant options
+				fillRectWithBorder(
+					ctx,
+					point0,
+					point1,
+					backgroundColor,
+					borderColor,
+					borderWidth,
+					borderStyle,
+					borderRadius,
+					'center', // Border alignment, often 'center' for rects
+					!!extend?.left,
+					!!extend?.right,
+					mediaSize.width
+				);
 
-			// Call fillRectWithBorder, passing all relevant options
-			fillRectWithBorder(
-				ctx,
-				point0,
-				point1,
-				backgroundColor,
-				borderColor,
-				borderWidth,
-				borderStyle,
-				borderRadius,
-				'center', // Border alignment, often 'center' for rects
-				!!extend?.left,
-				!!extend?.right,
-				mediaSize.width
-			);
+				// Draw Internal Lines (Midline / Quarter Lines)
+				const { showMidline, showQuarterLines } = this._data!;
+				if ((showMidline || showQuarterLines) && borderColor && borderWidth > 0) {
+					const minX = Math.min(point0.x, point1.x);
+					const maxX = Math.max(point0.x, point1.x);
+					const minY = Math.min(point0.y, point1.y);
+					const maxY = Math.max(point0.y, point1.y);
+					const height = maxY - minY;
+
+					ctx.beginPath();
+					setLineStyle(ctx, borderStyle);
+					ctx.lineWidth = borderWidth;
+					ctx.strokeStyle = borderColor;
+
+					// Horizontal Midline
+					if (showMidline) {
+						const midY = minY + height / 2;
+						ctx.moveTo(extend?.left ? 0 : minX, midY);
+						ctx.lineTo(extend?.right ? mediaSize.width : maxX, midY);
+					}
+
+					// Horizontal Quarter Lines
+					if (showQuarterLines) {
+						const q1Y = minY + height * 0.25;
+						const q3Y = minY + height * 0.75;
+
+						// Q1
+						ctx.moveTo(extend?.left ? 0 : minX, q1Y);
+						ctx.lineTo(extend?.right ? mediaSize.width : maxX, q1Y);
+
+						// Q3
+						ctx.moveTo(extend?.left ? 0 : minX, q3Y);
+						ctx.lineTo(extend?.right ? mediaSize.width : maxX, q3Y);
+					}
+					ctx.stroke();
+				}
+
+			}
 		});
+
+		// Draw text AFTER the rectangle so it appears on top
+		if (this._data.text) {
+			this._textRenderer.draw(target);
+		}
 	}
 
 	/**
@@ -1190,27 +1284,32 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 		let refY: number = 0;
 
 		// --- Step 1: Determine the Reference Point on the Parent Rectangle ---
-		switch ((data.text?.box?.alignment?.horizontal || '').toLowerCase()) {
+		// --- Step 1: Determine the Reference Point on the Parent Rectangle ---
+		const hAlign = (data.text?.box?.alignment?.horizontal || 'center').toLowerCase();
+		switch (hAlign) {
 			case BoxHorizontalAlignment.Left:
 				refX = rectMinX;
-				break;
-			case BoxHorizontalAlignment.Center:
-				refX = (rectMinX + rectMaxX) / 2;
 				break;
 			case BoxHorizontalAlignment.Right:
 				refX = rectMaxX;
 				break;
+			case BoxHorizontalAlignment.Center:
+			default:
+				refX = (rectMinX + rectMaxX) / 2;
+				break;
 		}
 
-		switch ((data.text?.box?.alignment?.vertical || '').toLowerCase()) {
+		const vAlign = (data.text?.box?.alignment?.vertical || 'middle').toLowerCase();
+		switch (vAlign) {
 			case BoxVerticalAlignment.Top:
 				refY = rectMinY;
 				break;
-			case BoxVerticalAlignment.Middle:
-				refY = (rectMinY + rectMaxY) / 2;
-				break;
 			case BoxVerticalAlignment.Bottom:
 				refY = rectMaxY;
+				break;
+			case BoxVerticalAlignment.Middle:
+			default:
+				refY = (rectMinY + rectMaxY) / 2;
 				break;
 		}
 
@@ -1221,33 +1320,39 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 		let textBoxFinalY = refY;
 
 		// --- Step 2: Position the Text Box's Top-Left based on its own size and alignment to the Reference Point ---
-		switch ((data.text?.box?.alignment?.horizontal || '').toLowerCase()) {
+		// --- Step 2: Position the Text Box's Top-Left based on its own size and alignment to the Reference Point ---
+		switch (hAlign) {
 			case BoxHorizontalAlignment.Left:
 				// Left edge of text box aligns with refX. It expands right.
 				textBoxFinalX = refX;
-				break;
-			case BoxHorizontalAlignment.Center:
-				// Center of text box aligns with refX.
-				textBoxFinalX = refX - boxWidth / 2;
 				break;
 			case BoxHorizontalAlignment.Right:
 				// Right edge of text box aligns with refX. It expands left.
 				textBoxFinalX = refX - boxWidth;
 				break;
+			case BoxHorizontalAlignment.Center:
+			default:
+				// Center of text box aligns with refX.
+				textBoxFinalX = refX - boxWidth / 2;
+				break;
 		}
 
-		switch ((data.text?.box?.alignment?.vertical || '').toLowerCase()) {
+		switch (vAlign) {
 			case BoxVerticalAlignment.Top:
-				// Bottom edge of text box aligns with refY. It expands up.
+				// Top edge of text box aligns with refY. It expands down.
+				// Wait, if alignment is TOP, we usually want text INSIDE the box at the top.
+				// If refY is rectMinY (top of rect), and we want text INSIDE, we should put text box start at refY.
+				textBoxFinalY = refY;
+				break;
+			case BoxVerticalAlignment.Bottom:
+				// Bottom edge of text box aligns with refY. It expands UP if we want it inside.
+				// If refY is rectMaxY (bottom of rect), we want text box to end at refY.
 				textBoxFinalY = refY - boxHeight;
 				break;
 			case BoxVerticalAlignment.Middle:
+			default:
 				// Middle of text box aligns with refY.
 				textBoxFinalY = refY - boxHeight / 2;
-				break;
-			case BoxVerticalAlignment.Bottom:
-				// Top edge of text box aligns with refY. It expands down.
-				textBoxFinalY = refY;
 				break;
 		}
 
@@ -1260,7 +1365,7 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 		//let textAlign = TextAlignment.Start;
 
 		// --- Step 4: Determine internal text alignment within the textbox ---
-		const rawAlignment = (ensureDefined(data.text?.alignment) || 'start').toLowerCase().trim(); // Normalize + fallback to 'start' + trim whitespace
+		const rawAlignment = (data.text?.alignment ?? 'center').toLowerCase().trim(); // FIX: Safe access with default to 'center'
 		let textX: number = inflationPaddingX; // Safe init: padded left (better than 0)
 		let textAlign: TextAlignment = TextAlignment.Start;
 
@@ -1361,7 +1466,9 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 	private _getLinesInfo(): LinesInfo {
 		if (null === this._linesInfo) {
 			const data = ensureNotNull(this._data);
-			let lines = textWrap(ensureDefined(data.text?.value), this.fontStyle(), data.text?.wordWrapWidth);
+			// Defensive: ensure text.value is a string, preventing "Value is undefined" crash
+			const textValue = data.text?.value ?? '';
+			let lines = textWrap(textValue, this.fontStyle(), data.text?.wordWrapWidth);
 
 			if (data.text?.box?.maxHeight !== undefined && data.text.box.maxHeight > 0) {
 				const maxHeight = ensureDefined(data.text?.box?.maxHeight);
@@ -1402,7 +1509,9 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 		if (this._fontInfo === null) {
 			const data = ensureNotNull(this._data);
 			const fontSize = getScaledFontSize(data);
-			const fontStyle = (data.text?.font?.bold ? 'bold ' : '') + (data.text?.font?.italic ? 'italic ' : '') + fontSize + 'px ' + ensureDefined(data.text?.font?.family);
+			// Defensive: ensure font family exists, defaulting to 'Trebuchet MS' (system default)
+			const fontFamily = data.text?.font?.family ?? 'Trebuchet MS';
+			const fontStyle = (data.text?.font?.bold ? 'bold ' : '') + (data.text?.font?.italic ? 'italic ' : '') + fontSize + 'px ' + fontFamily;
 			this._fontInfo = { fontStyle: fontStyle, fontSize: fontSize };
 		}
 		return this._fontInfo;

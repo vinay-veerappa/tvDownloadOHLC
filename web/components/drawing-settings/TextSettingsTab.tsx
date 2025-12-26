@@ -85,7 +85,7 @@ export function TextSettingsTab({ options, onChange, isLineTool }: TextSettingsT
 
             {/* Text Area */}
             <Textarea
-                value={options.text || ''}
+                value={(typeof options.text === 'string' && options.text !== '[object Object]') ? options.text : ''}
                 onChange={(e) => onChange({ text: e.target.value })}
                 placeholder="Add text"
                 className="min-h-[100px] max-h-[200px] resize-none"

@@ -41,6 +41,7 @@ import { TextSettings } from "@/components/drawing-settings/TextSettings"
 import { fetchProfilerStats, fetchLevelTouches, ProfilerSession, LevelTouchesResponse } from "@/lib/api/profiler"
 import { useChartPreferences } from "@/hooks/use-chart-preferences"
 import { V2SandboxManager } from "@/lib/charts/v2/sandbox-manager"
+import { V2OptionAdapter } from "@/lib/charts/v2/utils/v2-option-adapter"
 
 import type { SessionType } from './top-toolbar'
 
@@ -142,6 +143,8 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     // Range UI State
     const [rangeExtensionsActive, setRangeExtensionsActive] = useState(false);
     const [rangeData, setRangeData] = useState<RangeExtensionPeriod[]>([]);
+
+
 
 
     // 2. Truth Profiler State
@@ -386,6 +389,13 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     const [verticalLineSettingsOpen, setVerticalLineSettingsOpen] = useState(false) // New Vertical dialog
     const [raySettingsOpen, setRaySettingsOpen] = useState(false) // New Ray dialog
     const [selectedDrawingOptions, setSelectedDrawingOptions] = useState<any>(null)
+
+    useEffect(() => {
+        // console.log('[ChartContainer] STATE MONITOR: selectedDrawingOptions changed:', JSON.stringify(selectedDrawingOptions));
+    }, [selectedDrawingOptions]);
+
+    // console.log('[ChartContainer RENDER] selectedDrawingOptions:', JSON.stringify(selectedDrawingOptions));
+
     const [selectedDrawingType, setSelectedDrawingType] = useState<string>('')
     const [toolbarPosition, setToolbarPosition] = useState<{ x: number; y: number } | null>(null)
     const [isDrawingLocked, setIsDrawingLocked] = useState(false)
@@ -432,13 +442,22 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
 
                     setSelectedDrawingId(selection.id);
                     selectedDrawingRef.current = tool;
+                    let options = {};
                     if (typeof tool.options === 'function') {
-                        setSelectedDrawingOptions(tool.options());
+                        try {
+                            options = tool.options();
+                        } catch (e) {
+                            console.warn('[ChartContainer] Failed to call tool.options() in effect:', e);
+                        }
                     } else if (tool.options) {
-                        setSelectedDrawingOptions(tool.options);
+                        options = tool.options;
                     }
-                    const toolType = typeof tool.toolType === 'function' ? tool.toolType() : (tool.toolType || 'drawing');
-                    setSelectedDrawingType(toolType);
+
+                    let tType = typeof tool.toolType === 'function' ? tool.toolType() : (tool.toolType || 'drawing');
+                    tType = tType.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+                    console.log('[ChartContainer] useEffect calling Adapter. Options:', JSON.stringify(options));
+                    setSelectedDrawingOptions(V2OptionAdapter.toV1FlatOptions(options, tType));
+                    setSelectedDrawingType(tType);
                 }
             }
         } else {
@@ -583,10 +602,15 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                             options = toolInstance.options;
                         }
 
-                        setSelectedDrawingOptions(options);
+                        let toolType = typeof toolInstance.toolType === 'function' ? toolInstance.toolType() : (toolInstance.toolType || 'drawing');
 
-                        const toolType = typeof toolInstance.toolType === 'function' ? toolInstance.toolType() : (toolInstance.toolType || 'drawing');
+                        // Normalize V2 PascalCase to kebab-case
+                        toolType = toolType.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+
                         setSelectedDrawingType(toolType);
+
+                        console.log('[ChartContainer] Adapting options for selection:', toolType);
+                        setSelectedDrawingOptions(V2OptionAdapter.toV1FlatOptions(options, toolType));
 
                         // Calculate toolbar position from tool's points
                         try {
@@ -887,13 +911,23 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         if (!drawing) return;
 
         // Safely extract options (handle both instance method and plain object)
-        const options = (typeof drawing.options === 'function')
+        let options = (typeof drawing.options === 'function')
             ? drawing.options()
             : (drawing.options || {});
 
-        const type = (typeof drawing.toolType === 'function')
+        let type = (typeof drawing.toolType === 'function')
             ? drawing.toolType()
             : (drawing._type || drawing.toolType || 'anchored-text');
+
+        // Normalize V2 PascalCase to kebab-case for matching
+        // e.g. TrendLine -> trend-line, Rectangle -> rectangle
+        type = type.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+
+        // Adapt V2 options for the V1-style settings dialogs
+        // Always adapt, regardless of how options were retrieved (function or property)
+        console.log('[ChartContainer] Opening Properties. Raw options:', JSON.stringify(options));
+        options = V2OptionAdapter.toV1FlatOptions(options, type);
+        console.log('[ChartContainer] Opening Properties. Adapted options:', JSON.stringify(options));
 
         setSelectedDrawingOptions(options);
         setSelectedDrawingType(type);
@@ -1018,31 +1052,104 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 }
             }
         };
-
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, []); // Empty deps - accessing plugin directly avoids closure issues
 
-    const handlePropertiesSave = (options: any) => {
-        if (selectedDrawingRef.current && selectedDrawingType !== 'daily-profiler' && selectedDrawingType !== 'hourly-profiler') {
-            const drawing = selectedDrawingRef.current;
+    const handlePropertiesSave = (options: any, pointsOrTimeOrPrice?: any) => {
+        const points = pointsOrTimeOrPrice;
+        console.log('[ChartContainer] handlePropertiesSave called. Options:', JSON.stringify(options));
+        const drawing = selectedDrawingRef.current;
+        if (!drawing) {
+            console.warn('[ChartContainer] handlePropertiesSave: No selected drawing!');
+            return;
+        }
+        if (selectedDrawingType !== 'daily-profiler' && selectedDrawingType !== 'hourly-profiler') {
 
-            // For V2 tool instances, apply options directly
-            if (typeof drawing.applyOptions === 'function') {
-                drawing.applyOptions(options);
-                // Also update local state for UI sync if needed
-                setSelectedDrawingOptions(drawing.options());
-            } else if (drawing.applyOptions) {
-                // Legacy fallback
-                drawing.applyOptions(options);
+            console.log(`[ChartContainer] Processing save. Type: ${selectedDrawingType}`);
+            console.log('[ChartContainer] Entering V2 update block.');
+
+            try {
+                // The 'drawing' object here is likely the serialized export data (plain object),
+                // so it won't have the class methods. We need to get the real instance.
+                const toolId = typeof drawing.id === 'function' ? drawing.id() : drawing.id;
+
+                let realTool: any = drawing;
+
+                // Try to resolve the real tool instance from the sandbox plugin
+                if (v2SandboxRef.current && v2SandboxRef.current.plugin && typeof v2SandboxRef.current.plugin.getLineTool === 'function') {
+                    const instance = v2SandboxRef.current.plugin.getLineTool(toolId);
+                    if (instance) {
+                        console.log('[ChartContainer] Resolved real tool instance from plugin.');
+                        realTool = instance;
+                    } else {
+                        console.warn(`[ChartContainer] Could not resolve tool instance for ID: ${toolId}`);
+                    }
+                }
+
+                // For V2 tool instances, apply options directly
+                let v2Options: any = null;
+
+                if (typeof realTool.applyOptions === 'function') {
+                    // Adapt V1 flat options back to V2 nested structure
+                    let type = typeof realTool.toolType === 'function' ? realTool.toolType() : realTool.toolType;
+                    type = type.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+                    console.log(`[ChartContainer] Tool Type for Adapter: ${type}`);
+
+                    // FIX: Merge with current options to prevent partial updates from resetting defaults
+                    // We must fetch the CURRENT options from the tool, flatten them, merge with new updates, then re-nest.
+                    const currentOptions = typeof realTool.options === 'function' ? realTool.options() : {};
+                    const currentFlatOptions = V2OptionAdapter.toV1FlatOptions(currentOptions, type);
+
+                    // Merge incoming updates into current state
+                    const mergedFlatOptions = { ...currentFlatOptions, ...options };
+                    console.log('[ChartContainer] Merged Flat Options:', JSON.stringify(mergedFlatOptions));
+
+                    console.log('[ChartContainer] Calling V2OptionAdapter.toV2NestedOptions...');
+                    v2Options = V2OptionAdapter.toV2NestedOptions(mergedFlatOptions, type);
+
+                    // DEBUG: Log the converted V2 options
+                    console.log('[ChartContainer] Applying V2 Options:', JSON.stringify(v2Options, null, 2));
+
+                    // Apply options to the V2 tool instance
+                    // This will trigger a merge() inside the tool and then an update()
+                    realTool.applyOptions(v2Options);
+
+                    // Handle coordinate updates if provided
+                    if (points !== undefined) {
+                        if (Array.isArray(points)) {
+                            realTool.setPoints(points);
+                        } else if (typeof points === 'number' && type === 'horizontal-line') {
+                            // Single price for horizontal line
+                            const currentPoints = realTool.points();
+                            realTool.setPoints([{ price: points, time: currentPoints[0].time }]);
+                        } else if (type === 'vertical-line') {
+                            // Single time for vertical line
+                            const currentPoints = realTool.points();
+                            realTool.setPoints([{ price: currentPoints[0].price, time: points as any }]);
+                        }
+                    }
+
+                    // Also update local state for UI sync if needed
+                    // Use mergedFlatOptions directly as it represents the latest state we just applied
+                    setSelectedDrawingOptions(mergedFlatOptions);
+                } else if (drawing.applyOptions) {
+                    // Legacy fallback
+                    drawing.applyOptions(options);
+                }
+
+                const id = typeof drawing.id === 'function' ? drawing.id() : (drawing._id || drawing.id);
+                if (id) {
+                    // CRITICAL FIX: Save the nested v2Options to storage, not the flat V1 options.
+                    // The V2 tools expect nested options when reloading from storage.
+                    // Use v2Options if available (for V2 tools), otherwise fallback to flat options (legacy)
+                    DrawingStorage.updateDrawingOptions(ticker, timeframe, id, v2Options || options);
+                }
+                toast.success('Properties saved');
+            } catch (e) {
+                console.error('[ChartContainer] Error saving property:', e);
+                toast.error('Failed to save properties');
             }
-
-            const id = typeof drawing.id === 'function' ? drawing.id() : (drawing._id || drawing.id);
-
-            if (id) {
-                DrawingStorage.updateDrawingOptions(ticker, timeframe, id, options);
-            }
-            toast.success('Properties saved');
         } else if (primitives?.current && selectedDrawingType === 'anchored-text') {
             const primitive = primitives.current.find((p: any) => p._type === 'anchored-text');
             primitive?.applyOptions?.(options);
@@ -1872,10 +1979,8 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                         onDelete={deleteSelectedDrawing}
                         onToggleVisibility={toggleDrawingVisibility}
                         onOptionsChange={(updates) => {
-                            if (selectedDrawingRef.current && typeof selectedDrawingRef.current.applyOptions === 'function') {
-                                selectedDrawingRef.current.applyOptions(updates);
-                                setSelectedDrawingOptions((prev: Record<string, any> | null) => ({ ...prev, ...updates }));
-                            }
+                            // Use the centralized handler to ensure V2 conversion, application to real tool, and storage persistence
+                            handlePropertiesSave(updates);
                         }}
                     />
                 </div>,
@@ -1957,30 +2062,8 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     }
                     return undefined;
                 })()}
-                onApply={(opts) => {
-                    // Convert back to TrendLine format
-                    handlePropertiesSave({
-                        lineColor: opts.color,
-                        lineWidth: opts.width,
-                        lineStyle: opts.style,
-                        opacity: opts.opacity,
-                        extendLeft: opts.extendLeft,
-                        extendRight: opts.extendRight,
-                        showAngle: opts.showAngle,
-                        showDistance: opts.showDistance,
-                        showPriceRange: opts.showPriceRange,
-                        showBarsRange: opts.showBarsRange,
-                        text: opts.text,
-                        textColor: opts.textColor,
-                        fontSize: opts.fontSize,
-                        bold: opts.bold,
-                        italic: opts.italic,
-                        alignment: opts.alignment,
-                        alignmentVertical: opts.alignmentVertical,
-                        alignmentHorizontal: opts.alignmentHorizontal,
-                    });
-                }}
-                onCancel={() => { }}
+                onApply={(opts, pts) => handlePropertiesSave(opts, pts)}
+                onCancel={() => setTrendLineSettingsOpen(false)}
             />
 
             {/* Horizontal Line Settings Dialog */}
@@ -2012,24 +2095,8 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     }
                     return 0;
                 })()}
-                onApply={(opts, price) => {
-                    handlePropertiesSave({
-                        color: opts.color,
-                        width: opts.width,
-                        lineStyle: opts.style,
-                        showLabel: opts.showLabel,
-                        labelBackgroundColor: opts.labelBackgroundColor,
-                        labelTextColor: opts.labelTextColor,
-                        text: opts.text,
-                        textColor: opts.textColor,
-                        fontSize: opts.fontSize,
-                        bold: opts.bold,
-                        italic: opts.italic,
-                        alignmentVertical: opts.alignmentVertical,
-                        alignmentHorizontal: opts.alignmentHorizontal,
-                    });
-                }}
-                onCancel={() => { }}
+                onApply={(opts, price) => handlePropertiesSave(opts, price)}
+                onCancel={() => setHorizontalLineSettingsOpen(false)}
             />
 
             {/* Rectangle Settings Dialog */}
@@ -2062,25 +2129,8 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     }
                     return undefined;
                 })()}
-                onApply={(opts) => {
-                    handlePropertiesSave({
-                        borderColor: opts.borderColor,
-                        borderWidth: opts.borderWidth,
-                        borderStyle: opts.borderStyle,
-                        fillColor: opts.fillColor,
-                        fillOpacity: opts.fillOpacity,
-                        showMidline: opts.showMidline,
-                        showQuarterLines: opts.showQuarterLines,
-                        text: opts.text,
-                        textColor: opts.textColor,
-                        fontSize: opts.fontSize,
-                        bold: opts.bold,
-                        italic: opts.italic,
-                        alignmentVertical: opts.alignmentVertical,
-                        alignmentHorizontal: opts.alignmentHorizontal,
-                    });
-                }}
-                onCancel={() => { }}
+                onApply={(opts, pts) => handlePropertiesSave(opts, pts)}
+                onCancel={() => setRectangleSettingsOpen(false)}
             />
 
             {/* Vertical Line Settings Dialog */}
@@ -2113,25 +2163,8 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     }
                     return 0;
                 })()}
-                onApply={(opts) => {
-                    handlePropertiesSave({
-                        color: opts.color,
-                        width: opts.width,
-                        lineStyle: opts.style,
-                        showLabel: opts.showLabel,
-                        labelBackgroundColor: opts.labelBackgroundColor,
-                        labelTextColor: opts.labelTextColor,
-                        text: opts.text,
-                        textColor: opts.textColor,
-                        fontSize: opts.fontSize,
-                        bold: opts.bold,
-                        italic: opts.italic,
-                        alignmentVertical: opts.alignmentVertical,
-                        alignmentHorizontal: opts.alignmentHorizontal,
-                        orientation: opts.orientation,
-                    });
-                }}
-                onCancel={() => { }}
+                onApply={(opts, time) => handlePropertiesSave(opts, time)}
+                onCancel={() => setVerticalLineSettingsOpen(false)}
             />
 
             {/* Ray Settings Dialog */}
@@ -2151,30 +2184,17 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     alignmentVertical: selectedDrawingOptions?.alignmentVertical,
                     alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                 }}
-                point={(() => {
+                points={(() => {
                     const drawing = selectedDrawingRef.current;
                     if (!drawing) return undefined;
-                    if (drawing._p1) return drawing._p1;
-                    if (drawing.points && drawing.points.length >= 1) {
-                        return drawing.points[0];
+                    if (drawing._p1 && drawing._p2) return { p1: drawing._p1, p2: drawing._p2 };
+                    if (drawing.points && drawing.points.length >= 2) {
+                        return { p1: drawing.points[0], p2: drawing.points[1] };
                     }
                     return undefined;
                 })()}
-                onApply={(opts) => {
-                    handlePropertiesSave({
-                        lineColor: opts.color,
-                        lineWidth: opts.width,
-                        lineStyle: opts.style,
-                        text: opts.text,
-                        textColor: opts.textColor,
-                        fontSize: opts.fontSize,
-                        bold: opts.bold,
-                        italic: opts.italic,
-                        alignmentVertical: opts.alignmentVertical,
-                        alignmentHorizontal: opts.alignmentHorizontal,
-                    });
-                }}
-                onCancel={() => { }}
+                onApply={(opts, pts) => handlePropertiesSave(opts, pts)}
+                onCancel={() => setRaySettingsOpen(false)}
             />
         </div>
     )

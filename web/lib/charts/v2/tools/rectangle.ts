@@ -12,6 +12,7 @@ import {
 import { LineToolPoint } from "../core/api/public-api";
 import {
     RectangleRenderer,
+    TextRenderer,
 } from "../core/rendering/generic-renderers";
 import { deepCopy, merge, DeepPartial } from "../core/utils/helpers";
 import { LineStyle } from 'lightweight-charts';
@@ -20,10 +21,12 @@ import { IChartApiBase, ISeriesApi, SeriesType, IHorzScaleBehavior, Coordinate }
 import { CompositeRenderer } from "../core/rendering/composite-renderer";
 
 class RectanglePaneViewV2<HorzScaleItem> extends LineToolPaneView<HorzScaleItem> {
-    // We use the _rectangleRenderer already defined in LineToolPaneView
-    constructor(tool: RectangleV2<HorzScaleItem>, renderer: RectangleRenderer<HorzScaleItem>) {
+    private _textRenderer: TextRenderer<HorzScaleItem>;
+
+    constructor(tool: RectangleV2<HorzScaleItem>, rectRenderer: RectangleRenderer<HorzScaleItem>, textRenderer: TextRenderer<HorzScaleItem>) {
         super(tool, tool.getChart(), tool.getSeriesOrThrow());
-        this._rectangleRenderer = renderer;
+        this._rectangleRenderer = rectRenderer;
+        this._textRenderer = textRenderer;
     }
 
     protected override _updateImpl(height: number, width: number): void {
@@ -31,6 +34,7 @@ class RectanglePaneViewV2<HorzScaleItem> extends LineToolPaneView<HorzScaleItem>
         if (this._points.length >= 2) {
             const tool = this._tool as RectangleV2<HorzScaleItem>;
             const options = tool.options() as LineToolRectangleOptions & LineToolOptionsCommon;
+
             this._rectangleRenderer.setData({
                 points: [this._points[0], this._points[1]],
                 background: options.rectangle.background,
@@ -41,11 +45,27 @@ class RectanglePaneViewV2<HorzScaleItem> extends LineToolPaneView<HorzScaleItem>
                     radius: options.rectangle.border.radius,
                 },
                 extend: options.rectangle.extend,
-                hitTestBackground: true,
+                showMidline: options.showMidline,
+                showQuarterLines: options.showQuarterLines,
+                hitTestBackground: false, // Let text hit test take precedence or handle background separately? valid point.
+                // Actually, let's keep hitTestBackground true for rect, and text generally sits on top.
                 toolDefaultHoverCursor: options.defaultHoverCursor,
                 toolDefaultDragCursor: options.defaultDragCursor,
             });
-            (this._renderer as CompositeRenderer<HorzScaleItem>).append(this._rectangleRenderer);
+
+            // Update Text Renderer
+            this._textRenderer.setData({
+                text: options.text,
+                points: [this._points[0], this._points[1]], // Text uses the same defining points
+                hitTestBackground: false, // Text box background handles its own hit test if needed
+                toolDefaultHoverCursor: options.defaultHoverCursor,
+                toolDefaultDragCursor: options.defaultDragCursor,
+            });
+
+            const composite = this._renderer as CompositeRenderer<HorzScaleItem>;
+            composite.append(this._rectangleRenderer);
+            // Append text renderer on top
+            composite.append(this._textRenderer);
         }
     }
 
@@ -101,11 +121,15 @@ const defaultOptions: LineToolRectangleOptions & LineToolOptionsCommon = {
     showPriceAxisLabels: true,
     showTimeAxisLabels: false,
     priceAxisLabelAlwaysVisible: false,
+    priceAxisLabelAlwaysVisible: false,
     timeAxisLabelAlwaysVisible: false,
+    showMidline: false,
+    showQuarterLines: false,
 };
 
 export class RectangleV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
     private _rectRenderer = new RectangleRenderer<HorzScaleItem>();
+    private _textRenderer = new TextRenderer<HorzScaleItem>();
 
     constructor(
         coreApi: ILineToolsApi,
@@ -133,7 +157,7 @@ export class RectangleV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
         );
 
         // Setup the pane view
-        const paneView = new RectanglePaneViewV2(this, this._rectRenderer);
+        const paneView = new RectanglePaneViewV2(this, this._rectRenderer, this._textRenderer);
         this._paneViews = [paneView as IUpdatablePaneView];
     }
 
@@ -142,6 +166,10 @@ export class RectangleV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
     }
 
     public _internalHitTest(x: Coordinate, y: Coordinate): HitTestResult<any> | null {
+        // Priority: Text -> Rectangle Border/Background
+        const textHit = this._textRenderer.hitTest(x, y as any);
+        if (textHit) return textHit;
+
         return this._rectRenderer.hitTest(x, (y as any));
     }
 }

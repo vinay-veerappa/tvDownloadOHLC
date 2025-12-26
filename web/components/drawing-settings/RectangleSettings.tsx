@@ -65,7 +65,7 @@ interface RectangleSettingsDialogProps {
     onOpenChange: (open: boolean) => void;
     options: RectangleSettingsOptions;
     points?: { p1: { time: Time; price: number }; p2: { time: Time; price: number } };
-    onApply: (options: RectangleSettingsOptions) => void;
+    onApply: (options: RectangleSettingsOptions, points?: Array<{ time: Time; price: number }>) => void;
     onCancel: () => void;
 }
 
@@ -78,20 +78,29 @@ export function RectangleSettingsDialog({
     onCancel,
 }: RectangleSettingsDialogProps) {
     const [localOptions, setLocalOptions] = useState<RectangleSettingsOptions>(options);
+    const [localPoints, setLocalPoints] = useState<Array<{ time: Time; price: number }>>([]);
 
     // Reset local options when dialog opens
     useEffect(() => {
+        // console.log('[RectangleSettings] Effect Triggered. Open:', open);
         if (open) {
+            //console.log('[RectangleSettings] Syncing options from props:', JSON.stringify(options));
             setLocalOptions(options);
+            if (points) {
+                setLocalPoints([points.p1, points.p2]);
+            }
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, options]);
 
     const handleChange = (updates: Partial<RectangleSettingsOptions>) => {
+        //console.log('[RectangleSettings] Syncing options from handleChange:', JSON.stringify(options));
         setLocalOptions(prev => ({ ...prev, ...updates }));
     };
 
     const handleApply = () => {
-        onApply(localOptions);
+        //console.log('[RectangleSettings] handleApply called. LocalOptions:', JSON.stringify(localOptions));
+        onApply(localOptions, localPoints.length === 2 ? localPoints : undefined);
     };
 
     // ===== Style Tab Content =====
@@ -181,10 +190,10 @@ export function RectangleSettingsDialog({
     );
 
     // ===== Coordinates Tab =====
-    const coordinatesTab = points ? (
+    const coordinatesTab = localPoints.length === 2 ? (
         <CoordinatesTab
-            points={[points.p1, points.p2]}
-            onChange={() => { }}
+            points={localPoints}
+            onChange={setLocalPoints}
             labels={["Top-Left", "Bottom-Right"]}
         />
     ) : undefined;

@@ -63,7 +63,7 @@ export function TextSettings({
         if (open) {
             setOptions(initialOptions);
         }
-    }, [open]);
+    }, [open, initialOptions]);
 
     const handleChange = useCallback((updates: Partial<typeof options>) => {
         setOptions(prev => ({ ...prev, ...updates }));

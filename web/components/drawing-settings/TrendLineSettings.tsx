@@ -66,7 +66,7 @@ interface TrendLineSettingsDialogProps {
     onOpenChange: (open: boolean) => void;
     options: TrendLineSettingsOptions;
     points?: { p1: { time: Time; price: number }; p2: { time: Time; price: number } };
-    onApply: (options: TrendLineSettingsOptions) => void;
+    onApply: (options: TrendLineSettingsOptions, points?: Array<{ time: Time; price: number }>) => void;
     onCancel: () => void;
 }
 
@@ -79,13 +79,17 @@ export function TrendLineSettingsDialog({
     onCancel,
 }: TrendLineSettingsDialogProps) {
     const [localOptions, setLocalOptions] = useState<TrendLineSettingsOptions>(options);
+    const [localPoints, setLocalPoints] = useState<Array<{ time: Time; price: number }>>([]);
 
     // Reset local options when dialog opens
     useEffect(() => {
         if (open) {
             setLocalOptions(options);
+            if (points) {
+                setLocalPoints([points.p1, points.p2]);
+            }
         }
-    }, [open, options]);
+    }, [open, options, points]);
 
     const handleChange = (updates: Partial<TrendLineSettingsOptions>) => {
         setLocalOptions(prev => ({ ...prev, ...updates }));
@@ -98,7 +102,7 @@ export function TrendLineSettingsDialog({
     };
 
     const handleApply = () => {
-        onApply(localOptions);
+        onApply(localOptions, localPoints.length === 2 ? localPoints : undefined);
     };
 
     // ===== Style Tab Content =====
@@ -188,10 +192,10 @@ export function TrendLineSettingsDialog({
     );
 
     // ===== Coordinates Tab =====
-    const coordinatesTab = points ? (
+    const coordinatesTab = localPoints.length > 0 ? (
         <CoordinatesTab
-            points={[points.p1, points.p2]}
-            onChange={handlePointsChange}
+            points={localPoints}
+            onChange={setLocalPoints}
             labels={["Start Point", "End Point"]}
         />
     ) : undefined;

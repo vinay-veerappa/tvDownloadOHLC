@@ -27,66 +27,66 @@ type Rgba = [RedComponent, GreenComponent, BlueComponent, AlphaComponent];
  * @param colorString - The input color string.
  * @returns A tuple `[r, g, b, a]` where components are integers 0-255 (alpha is 0-1).
  */
-function colorStringToRgba(colorString: string): Rgba {
+export function colorStringToRgba(colorString: string): Rgba {
 	colorString = colorString.toLowerCase();
 
-    // Handle 'transparent' keyword
-    if (colorString === 'transparent') {
-        return [0, 0, 0, 0];
-    }
+	// Handle 'transparent' keyword
+	if (colorString === 'transparent') {
+		return [0, 0, 0, 0];
+	}
 
 	// Regex for rgba(r, g, b, a)
 	const rgbaRe = /^rgba\(\s*(-?\d{1,10})\s*,\s*(-?\d{1,10})\s*,\s*(-?\d{1,10})\s*,\s*(-?[\d]{0,10}(?:\.\d+)?)\s*\)$/;
-    let matches = rgbaRe.exec(colorString);
-    if (matches) {
-        return [
-            parseInt(matches[1], 10) as RedComponent,
-            parseInt(matches[2], 10) as GreenComponent,
-            parseInt(matches[3], 10) as BlueComponent,
-            parseFloat(matches[4]) as AlphaComponent,
-        ];
-    }
-    
-    // Regex for rgb(r, g, b) - with default alpha 1
-    const rgbRe = /^rgb\(\s*(-?\d{1,10})\s*,\s*(-?\d{1,10})\s*,\s*(-?\d{1,10})\s*\)$/;
-    matches = rgbRe.exec(colorString);
-    if (matches) {
-        return [
-            parseInt(matches[1], 10) as RedComponent,
-            parseInt(matches[2], 10) as GreenComponent,
-            parseInt(matches[3], 10) as BlueComponent,
-            1 as AlphaComponent,
-        ];
-    }
+	let matches = rgbaRe.exec(colorString);
+	if (matches) {
+		return [
+			parseInt(matches[1], 10) as RedComponent,
+			parseInt(matches[2], 10) as GreenComponent,
+			parseInt(matches[3], 10) as BlueComponent,
+			parseFloat(matches[4]) as AlphaComponent,
+		];
+	}
 
-    // Regex for #RRGGBB or #RGB - with default alpha 1
+	// Regex for rgb(r, g, b) - with default alpha 1
+	const rgbRe = /^rgb\(\s*(-?\d{1,10})\s*,\s*(-?\d{1,10})\s*,\s*(-?\d{1,10})\s*\)$/;
+	matches = rgbRe.exec(colorString);
+	if (matches) {
+		return [
+			parseInt(matches[1], 10) as RedComponent,
+			parseInt(matches[2], 10) as GreenComponent,
+			parseInt(matches[3], 10) as BlueComponent,
+			1 as AlphaComponent,
+		];
+	}
+
+	// Regex for #RRGGBB or #RGB - with default alpha 1
 	const hexRe = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i;
-    matches = hexRe.exec(colorString);
-    if (matches) {
-        return [
-            parseInt(matches[1], 16) as RedComponent,
-            parseInt(matches[2], 16) as GreenComponent,
-            parseInt(matches[3], 16) as BlueComponent,
-            1 as AlphaComponent,
-        ];
-    }
-    const shortHexRe = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i;
-    matches = shortHexRe.exec(colorString);
-    if (matches) {
-        return [
-            parseInt(matches[1] + matches[1], 16) as RedComponent,
-            parseInt(matches[2] + matches[2], 16) as GreenComponent,
-            parseInt(matches[3] + matches[3], 16) as BlueComponent,
-            1 as AlphaComponent,
-        ];
-    }
+	matches = hexRe.exec(colorString);
+	if (matches) {
+		return [
+			parseInt(matches[1], 16) as RedComponent,
+			parseInt(matches[2], 16) as GreenComponent,
+			parseInt(matches[3], 16) as BlueComponent,
+			1 as AlphaComponent,
+		];
+	}
+	const shortHexRe = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i;
+	matches = shortHexRe.exec(colorString);
+	if (matches) {
+		return [
+			parseInt(matches[1] + matches[1], 16) as RedComponent,
+			parseInt(matches[2] + matches[2], 16) as GreenComponent,
+			parseInt(matches[3] + matches[3], 16) as BlueComponent,
+			1 as AlphaComponent,
+		];
+	}
 
-    // Fallback for named colors or other formats -
-    // for simplicity in this port, we'll assume white or transparent if not directly parseable.
-    // In v3.8, it had a large map of named colors. We'll simplify.
-    if (colorString.includes('white') || colorString === '#fff') {
-        return [255, 255, 255, 1];
-    }
+	// Fallback for named colors or other formats -
+	// for simplicity in this port, we'll assume white or transparent if not directly parseable.
+	// In v3.8, it had a large map of named colors. We'll simplify.
+	if (colorString.includes('white') || colorString === '#fff') {
+		return [255, 255, 255, 1];
+	}
 
 	// Default to transparent if parsing fails. This is a simplification.
 	console.warn(`[helpers.ts]Could not parse color: ${colorString}. Defaulting to transparent.`);
@@ -138,13 +138,13 @@ export interface ContrastColors {
  */
 export function generateContrastColors(backgroundColor: string): ContrastColors {
 	const rgb = colorStringToRgba(backgroundColor);
-     // If alpha is 0, foreground could be anything, but 'white' is a safe default.
-    if (rgb[3] === 0) {
-        return {
-            background: `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${rgb[3]})`,
-            foreground: 'white',
-        };
-    }
+	// If alpha is 0, foreground could be anything, but 'white' is a safe default.
+	if (rgb[3] === 0) {
+		return {
+			background: `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${rgb[3]})`,
+			foreground: 'white',
+		};
+	}
 	return {
 		background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`,
 		foreground: rgbaToGrayscale(rgb) > 160 ? 'black' : 'white',
@@ -436,9 +436,9 @@ export interface ISubscription<T1 = void, T2 = void, T3 = void> {
  */
 export class Delegate<T1 = void, T2 = void, T3 = void> implements ISubscription<T1, T2, T3> {
 	/**
-     * Internal list of active subscribers.
-     * @private
-     */
+	 * Internal list of active subscribers.
+	 * @private
+	 */
 	private _listeners: {
 		callback: Callback<T1, T2, T3>;
 		linkedObject?: unknown;
@@ -447,8 +447,8 @@ export class Delegate<T1 = void, T2 = void, T3 = void> implements ISubscription<
 
 	/**
 	 * Subscribes a callback function to the delegate.
-     * 
-     * When the event is fired, this callback will be executed with the provided arguments.
+	 * 
+	 * When the event is fired, this callback will be executed with the provided arguments.
 	 * 
 	 * @param callback - The function to call when the event fires.
 	 * @param linkedObject - An optional object to link the subscription to. This allows removing multiple unrelated subscriptions at once via {@link unsubscribeAll}.
@@ -465,9 +465,9 @@ export class Delegate<T1 = void, T2 = void, T3 = void> implements ISubscription<
 
 	/**
 	 * Unsubscribes a specific callback function from the delegate.
-     * 
-     * If the callback was added multiple times, this typically removes the first occurrence 
-     * depending on implementation, though delegates usually enforce unique callback references per subscription context.
+	 * 
+	 * If the callback was added multiple times, this typically removes the first occurrence 
+	 * depending on implementation, though delegates usually enforce unique callback references per subscription context.
 	 * 
 	 * @param callback - The specific function reference to remove.
 	 */
@@ -480,9 +480,9 @@ export class Delegate<T1 = void, T2 = void, T3 = void> implements ISubscription<
 
 	/**
 	 * Unsubscribes all callbacks that were registered with a specific `linkedObject`.
-     * 
-     * This is useful for cleaning up all event listeners associated with a specific UI component 
-     * or tool instance when it is destroyed.
+	 * 
+	 * This is useful for cleaning up all event listeners associated with a specific UI component 
+	 * or tool instance when it is destroyed.
 	 * 
 	 * @param linkedObject - The object key used during subscription.
 	 */
@@ -492,13 +492,13 @@ export class Delegate<T1 = void, T2 = void, T3 = void> implements ISubscription<
 
 	/**
 	 * Fires the event, calling all subscribed callbacks with the provided arguments.
-     * 
-     * This method takes a snapshot of the listeners array before iterating to ensure that 
-     * if a listener unsubscribes itself during execution, the iteration remains stable.
-     * 
-     * @param param1 - The first event argument.
-     * @param param2 - The second event argument.
-     * @param param3 - The third event argument.
+	 * 
+	 * This method takes a snapshot of the listeners array before iterating to ensure that 
+	 * if a listener unsubscribes itself during execution, the iteration remains stable.
+	 * 
+	 * @param param1 - The first event argument.
+	 * @param param2 - The second event argument.
+	 * @param param3 - The third event argument.
 	 */
 	public fire(param1: T1, param2: T2, param3: T3): void {
 		// Create a snapshot of listeners to prevent issues if listeners modify the array during firing
@@ -510,9 +510,9 @@ export class Delegate<T1 = void, T2 = void, T3 = void> implements ISubscription<
 
 	/**
 	 * Checks if the delegate has any active listeners.
-     * 
-     * This is useful for avoiding expensive calculations if no one is listening to the event.
-     * 
+	 * 
+	 * This is useful for avoiding expensive calculations if no one is listening to the event.
+	 * 
 	 * @returns `true` if there is at least one active subscriber, `false` otherwise.
 	 */
 	public hasListeners(): boolean {
@@ -521,9 +521,9 @@ export class Delegate<T1 = void, T2 = void, T3 = void> implements ISubscription<
 
 	/**
 	 * Clears all listeners and frees up resources.
-     * 
-     * This should be called when the owner of the Delegate (e.g., the Plugin or a Tool) 
-     * is being destroyed to prevent memory leaks.
+	 * 
+	 * This should be called when the owner of the Delegate (e.g., the Plugin or a Tool) 
+	 * is being destroyed to prevent memory leaks.
 	 */
 	public destroy(): void {
 		this._listeners = [];
@@ -562,10 +562,10 @@ export type OmitDistributive<T, K extends PropertyKey> = T extends any ? (T exte
  */
 export type DeepPartial<T> = {
 	[P in keyof T]?: T[P] extends (infer U)[]
-		? DeepPartial<U>[]
-		: T[P] extends readonly (infer X)[]
-			? readonly DeepPartial<X>[]
-			: DeepPartial<T[P]>
+	? DeepPartial<U>[]
+	: T[P] extends readonly (infer X)[]
+	? readonly DeepPartial<X>[]
+	: DeepPartial<T[P]>
 };
 
 /**
@@ -574,8 +574,8 @@ export type DeepPartial<T> = {
  * Useful for sanitizing configuration objects or removing internal flags from public interfaces.
  */
 export type OmitRecursively<T extends any, K extends PropertyKey> = Omit<
-    { [P in keyof T]: OmitDistributive<T[P], K> },
-    K
+	{ [P in keyof T]: OmitDistributive<T[P], K> },
+	K
 >;
 
 // #endregion DeepPartial and OmitRecursively Type Definitions

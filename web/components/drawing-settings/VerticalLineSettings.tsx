@@ -58,7 +58,7 @@ interface VerticalLineSettingsDialogProps {
     onOpenChange: (open: boolean) => void;
     options: VerticalLineSettingsOptions;
     time?: Time;
-    onApply: (options: VerticalLineSettingsOptions) => void;
+    onApply: (options: VerticalLineSettingsOptions, time?: Time) => void;
     onCancel: () => void;
 }
 
@@ -71,20 +71,22 @@ export function VerticalLineSettingsDialog({
     onCancel,
 }: VerticalLineSettingsDialogProps) {
     const [localOptions, setLocalOptions] = useState<VerticalLineSettingsOptions>(options);
+    const [localTime, setLocalTime] = useState<Time>(0 as Time);
 
     // Reset local options when dialog opens
     useEffect(() => {
         if (open) {
             setLocalOptions(options);
+            if (time) setLocalTime(time);
         }
-    }, [open, options]);
+    }, [open, options, time]);
 
     const handleChange = (updates: Partial<VerticalLineSettingsOptions>) => {
         setLocalOptions(prev => ({ ...prev, ...updates }));
     };
 
     const handleApply = () => {
-        onApply(localOptions);
+        onApply(localOptions, localTime);
     };
 
     // Format time for display
@@ -145,11 +147,14 @@ export function VerticalLineSettingsDialog({
         <div className="space-y-4 py-4">
             <div className="space-y-2">
                 <Label className="text-sm font-semibold">Time</Label>
-                <div className="p-3 bg-muted rounded-md">
-                    <span className="text-sm font-mono">{formattedTime}</span>
-                </div>
+                <Input
+                    type="number"
+                    value={localTime as number}
+                    onChange={(e) => setLocalTime(Number(e.target.value) as Time)}
+                    className="font-mono"
+                />
                 <p className="text-xs text-muted-foreground">
-                    Drag the line on the chart to change the time position.
+                    Format: Unix Timestamp (seconds). Drag the line on the chart for easier placement.
                 </p>
             </div>
         </div>
