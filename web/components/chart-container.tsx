@@ -526,10 +526,12 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
 
             // NEW: Handle Selection Change Event from V2 Core
             const handleSelectionChanged = (id: string | null, tool: any | null) => {
+                console.log('[ChartContainer] handleSelectionChanged called. id:', id, 'tool:', tool);
                 if (id && tool) {
                     // Update Internal State
                     setSelectedDrawingId(id);
                     selectedDrawingRef.current = tool; // Now points to V2 Tool Instance (proxied by exports usually, but here tool is the actual instance or export?)
+                    console.log('[ChartContainer] Set selectedDrawingRef.current to:', selectedDrawingRef.current);
                     // Actually V2SandboxManager passes the tool instance wrapper or export? 
                     // In sandbox-manager we pass: callbacks.onSelectionChanged?.(tool.id, tool);
                     // The 'tool' in sandbox manager is the internal tool object (with .options(), id(), etc)
@@ -549,6 +551,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     onSelectionChange?.({ type: toolType, id });
                 } else {
                     // Deselect
+                    console.log('[ChartContainer] Clearing selection');
                     setSelectedDrawingId(null);
                     selectedDrawingRef.current = null;
                     setSelectedDrawingOptions(null);
@@ -898,17 +901,27 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 return;
             }
 
+            // Get selected tool directly from V2 plugin (avoids stale closure issues with ref)
+            const selectedTool = v2SandboxRef.current?.plugin?.getSelectedTool?.() ?? null;
+
+            console.log('[ChartContainer] Key pressed:', e.key, 'Selected tool from plugin:', selectedTool ? selectedTool.id() : 'null');
+
             // Delete or Backspace key
             if (e.key === 'Delete' || e.key === 'Backspace') {
-                if (selectedDrawingRef.current) {
+                if (selectedTool) {
                     e.preventDefault();
-                    deleteSelectedDrawing();
+                    // Delete directly using the tool from the plugin
+                    const toolId = selectedTool.id();
+                    if (toolId) {
+                        deleteDrawingInternal(toolId);
+                        deselectDrawing();
+                    }
                 }
             }
 
             // Escape key to deselect
             if (e.key === 'Escape') {
-                if (selectedDrawingRef.current) {
+                if (selectedTool) {
                     deselectDrawing();
                 }
             }
@@ -916,7 +929,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [ticker, timeframe]); // Dependencies to ensure fresh refs
+    }, []); // Empty deps - accessing plugin directly avoids closure issues
 
     const handlePropertiesSave = (options: any) => {
         if (selectedDrawingRef.current && selectedDrawingType !== 'daily-profiler' && selectedDrawingType !== 'hourly-profiler') {

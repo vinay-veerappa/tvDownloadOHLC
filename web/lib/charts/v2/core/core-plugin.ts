@@ -66,6 +66,15 @@ export class LineToolsCorePlugin<HorzScaleItem> implements ILineToolsApi {
 	}
 
 	/**
+	 * Returns the currently selected tool, if any.
+	 * This is useful for keyboard handlers that need to check selection state.
+	 * @returns The selected tool or null.
+	 */
+	public getSelectedTool(): BaseLineTool<HorzScaleItem> | null {
+		return this._interactionManager.getSelectedTool();
+	}
+
+	/**
 	 * Requests a redraw of the chart.
 	 *
 	 * This method is the primary mechanism for internal components (like the {@link InteractionManager} or individual tools)
