@@ -42,23 +42,21 @@ Example: `chart-ES1-1D-2025-12-25_14-30-05.png`
 ┌─────────────────────────────────────────────────────────────────┐
 │                    ChartPageClient                               │
 │  handleTakeScreenshot(action: 'copy' | 'save' | 'open')         │
-│      ├─ navigation.takeScreenshot() → Canvas                    │
-│      ├─ if 'copy': canvas.toBlob() → ClipboardItem              │
-│      ├─ if 'save': canvas.toDataURL() → Download                │
-│      └─ if 'open': canvas.toDataURL() → window.open()           │
+│      ├─ dynamic import('modern-screenshot')                     │
+│      ├─ domToPng(captureArea)                                   │
+│      ├─ if 'copy': fetch(dataUrl) → Blob → ClipboardItem        │
+│      ├─ if 'save': link click → download                        │
+│      └─ if 'open': window.open() → <img> tag                    │
 └────────────────────────────────────────────────────┬────────────┘
                                                      │
                                                      ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    ChartContainer                                │
-│  Exposes via useImperativeHandle:                               │
-│    takeScreenshot: () => chart.takeScreenshot()                 │
-└────────────────────────────────────────────────────┬────────────┘
-                                                     │
-                                                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                 Lightweight Charts API                           │
-│  chart.takeScreenshot() → HTMLCanvasElement                     │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ OHLCLegend (Canvas Primitive)                             │  │
+│  │ - Renders OHLC on canvas layer                            │  │
+│  │ - Captured natively by LWC takeScreenshot()               │  │
+│  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,97 +65,41 @@ Example: `chart-ES1-1D-2025-12-25_14-30-05.png`
 | File | Role |
 |------|------|
 | `components/top-toolbar.tsx` | UI - Camera button with dropdown menu |
-| `components/chart-page-client.tsx` | Logic - `handleTakeScreenshot()` handler |
-| `components/chart-container.tsx` | Bridge - Exposes `takeScreenshot()` via ref |
+| `components/chart-page-client.tsx` | Logic - `handleTakeScreenshot()` capturing `chart-capture-area` |
+| `lib/charts/plugins/ohlc-legend.ts` | Canvas Plugin - Renders OHLCLegend directly on chart |
+| `components/chart-container.tsx` | Integration - Attaches `OHLCLegend` to chart series |
 
 ### Code Flow
 
 1. User clicks camera icon → selects action from dropdown
-2. `onTakeScreenshot(action)` called from TopToolbar
-3. `handleTakeScreenshot(action)` in ChartPageClient:
-   - Calls `navigation.takeScreenshot()` to get canvas
-   - Based on action:
-     - **copy**: `canvas.toBlob()` → `ClipboardItem` → `navigator.clipboard.write()`
-     - **save**: `canvas.toDataURL()` → create `<a>` element → trigger download
-     - **open**: `canvas.toDataURL()` → `window.open()` → write `<img>` tag
-
----
-
-## Database Integration (Future)
-
-The Trade model includes a `chartSnapshot` field for storing chart images with trade records:
-
-```prisma
-model Trade {
-  // ... other fields
-  chartSnapshot String? // URL or path to snapshot
-}
-```
-
-This enables:
-- Automatic chart capture on trade entry/exit
-- Trade journal with visual context
-- Playbook documentation with examples
+2. `handleTakeScreenshot` in `ChartPageClient` uses `modern-screenshot` to capture `#chart-capture-area`.
+3. `modern-screenshot` clones the DOM, handles `oklch` colors (via bgcolor fallback), and properly captures multiple canvas layers.
+4. The **OHLC Legend** is implemented as a canvas primitive (`ISeriesPrimitive`), ensuring it's always included in the canvas data.
+5. High-DPI support is handled via `scale: window.devicePixelRatio`.
 
 ---
 
 ## Dependencies
 
-- **Lightweight Charts v5**: Provides `chart.takeScreenshot()` API
-- **Clipboard API**: For copy-to-clipboard functionality
-- **Lucide React**: Camera, Copy, Download, ExternalLink icons
+- **modern-screenshot**: For robust DOM-to-image capture (handles CSS variables, SVGs, and nested canvases better than html2canvas).
+- **Lightweight Charts v5**: Charting library.
+- **Clipboard API**: For copy-to-clipboard functionality.
 
 ---
 
 ## Known Limitations
 
-### Elements NOT Captured by `takeScreenshot()`
+| Element | Status |
+|---------|--------|
+| **OHLC Legend** | ✅ Captured (Canvas Implementation) |
+| **Ticker/Timeframe** | ✅ Captured (Canvas Implementation) |
+| **Profiler Lines** | ✅ Captured (Canvas Layer) |
+| **Axis Labels** | ✅ Captured (Canvas Layer) |
+| **Context Menus** | ❌ Not Captured (Transient UI) |
 
-| Element | Reason | Status |
-|---------|--------|--------|
-| **OHLC Legend** | HTML overlay (`<div>` elements) - not part of canvas | ⚠️ Not captured |
-| **Ticker/Timeframe Label** | HTML overlay | ⚠️ Not captured |
-| **Drawing Handles** | May be HTML overlay during edit mode | ⚠️ Not captured |
+### Troubleshooting
 
-### Elements SHOULD Be Captured
-
-| Element | Implementation | Status |
-|---------|---------------|--------|
-| **Trend Lines** | `ISeriesPrimitive` canvas rendering | ✅ Should work |
-| **Vertical Lines** | `ISeriesPrimitive` canvas rendering | ✅ Should work |
-| **Text Drawings** | `ISeriesPrimitive` canvas rendering | ✅ Should work |
-| **Profiler Lines** | `ISeriesPrimitive` canvas rendering | ✅ Should work |
-
-### Root Cause
-
-Lightweight Charts `chart.takeScreenshot()` only captures content rendered on the `<canvas>` element. Any HTML elements positioned over the chart (overlays) are not included.
-
-**Current overlays in our app:**
-- `components/chart/chart-legend.tsx` - OHLC values + ticker name (HTML `<div>`)
-- Drawing handles/anchors during edit mode
-
----
-
-## Future Enhancements
-
-### Option 1: Composite Screenshot (Recommended)
-Use `html2canvas` or similar library to capture the entire chart container (canvas + HTML overlays):
-
-```typescript
-import html2canvas from 'html2canvas';
-
-const handleTakeScreenshot = async () => {
-    const container = document.getElementById('chart-container');
-    const canvas = await html2canvas(container);
-    // ... rest of logic
-}
-```
-
-### Option 2: Canvas-based Legend
-Re-implement OHLC legend as a Lightweight Charts primitive that renders directly to canvas.
-
-### Option 3: Pre-render Overlay
-Before taking screenshot, copy overlay content to a temporary canvas layer, merge with chart canvas, then capture.
+If a screenshot fails with `modern-screenshot`, the app automatically falls back to the native `chart.takeScreenshot()` method which captures only the main chart canvas (without legends).
 
 ---
 

@@ -20,8 +20,6 @@ import { calculateSMA, calculateEMA, calculateRSI, calculateMACD } from "@/lib/c
 import { INDICATOR_DEFINITIONS } from "@/lib/charts/indicator-config"
 import { HistogramSeries } from "lightweight-charts"
 import { calculateHeikenAshi } from "@/lib/charts/heiken-ashi"
-import { AnchoredText } from "@/lib/charts/plugins/anchored-text"
-import { SessionHighlighting } from "@/lib/charts/plugins/session-highlighting"
 import { calculateIndicators, toLineSeriesData, VWAPSettings } from "@/lib/indicator-api"
 import { INDICATOR_REGISTRY } from "@/lib/charts/indicators"
 
@@ -557,50 +555,11 @@ export function useChart(
         };
     }, [chartInstance, timeframe, ticker, vwapSettings, resolvedTheme, theme, displayTimezone]);
 
-    // Manage Primitives (Sessions, Watermark) - NO data dependency
+    // Manage Primitives (Sessions, Watermark) - Removed legacy plugins
     useEffect(() => {
-        if (!chartInstance || !seriesInstance || isDisposedRef.current) return
-
-        const currentIndicators: string[] = indicatorsKey ? JSON.parse(indicatorsKey) : []
-        const primitiveItems: Array<{ primitive: any, series: any }> = []
-        primitivesRef.current = []
-
-        try {
-            currentIndicators.forEach(ind => {
-                const [type, param] = ind.split(":")
-
-                if (type === 'watermark') {
-                    const watermark = new AnchoredText(chartInstance, seriesInstance, {
-                        text: param || 'Watermark',
-                        color: 'rgba(0, 150, 136, 0.5)',
-                        font: 'bold 48px Arial',
-                        horzAlign: 'center',
-                        vertAlign: 'middle'
-                    });
-                    seriesInstance.attachPrimitive(watermark);
-                    primitiveItems.push({ primitive: watermark, series: seriesInstance });
-                    primitivesRef.current.push(watermark);
-                } else if (type === 'sessions') {
-                    const sessions = new SessionHighlighting();
-                    seriesInstance.attachPrimitive(sessions);
-                    primitiveItems.push({ primitive: sessions, series: seriesInstance });
-                    primitivesRef.current.push(sessions);
-                }
-            })
-        } catch (e) {
-            // Chart may be disposed
-            return
-        }
-
-        return () => {
-            if (isDisposedRef.current) return
-            primitiveItems.forEach(item => {
-                try {
-                    item.series.detachPrimitive(item.primitive);
-                } catch (e) { }
-            })
-        }
-    }, [chartInstance, seriesInstance, indicatorsKey]) // NO data dependency!
+        // Legacy primitive management removed as plugins are deleted.
+        // If watermark or sessions are needed, they should be reimplemented as V2 tools or native LWCharts plugins.
+    }, [])
 
     // Navigation functions for replay mode
     const scrollToTime = (time: number) => {

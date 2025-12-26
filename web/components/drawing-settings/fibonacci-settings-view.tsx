@@ -1,7 +1,7 @@
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { DEFAULT_FIB_OPTIONS, FibonacciOptions, FibonacciLevel } from "@/lib/charts/plugins/fibonacci"
+import { DEFAULT_FIB_OPTIONS, FibonacciOptions, FibonacciLevel } from "@/lib/charts/v2/tools/fibonacci"
 import { useEffect, useState } from "react"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -12,16 +12,15 @@ interface FibonacciSettingsViewProps {
 }
 
 // Helper to deep merge options with defaults
+// Helper to deep merge options with defaults
 const mergeWithDefaults = (options: Partial<FibonacciOptions> | undefined): FibonacciOptions => {
     if (!options) return DEFAULT_FIB_OPTIONS;
     return {
         ...DEFAULT_FIB_OPTIONS,
         ...options,
-        trendLine: { ...DEFAULT_FIB_OPTIONS.trendLine, ...options.trendLine },
-        levelsLine: { ...DEFAULT_FIB_OPTIONS.levelsLine, ...options.levelsLine },
+        line: { ...DEFAULT_FIB_OPTIONS.line, ...options.line },
         levels: (options.levels && options.levels.length > 0) ? options.levels : DEFAULT_FIB_OPTIONS.levels,
-        background: { ...DEFAULT_FIB_OPTIONS.background, ...options.background },
-        labels: { ...DEFAULT_FIB_OPTIONS.labels, ...options.labels },
+        extend: { ...DEFAULT_FIB_OPTIONS.extend, ...options.extend },
     };
 };
 
@@ -64,12 +63,9 @@ export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsVi
         onChange(newOptions);
     };
 
-    const updateTrendLine = (updates: Partial<FibonacciOptions['trendLine']>) => {
-        update({ trendLine: { ...localOptions.trendLine, ...updates } });
-    };
-
-    const updateLevelsLine = (updates: Partial<FibonacciOptions['levelsLine']>) => {
-        update({ levelsLine: { ...localOptions.levelsLine, ...updates } });
+    const updateLine = (updates: Partial<FibonacciOptions['line']>) => {
+        if (!localOptions.line) return;
+        update({ line: { ...localOptions.line, ...updates } });
     };
 
     const updateLevel = (index: number, updates: Partial<FibonacciLevel>) => {
@@ -79,7 +75,15 @@ export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsVi
     };
 
     const toggleLevel = (index: number) => {
-        updateLevel(index, { visible: !localOptions.levels[index].visible });
+        // V2 doesn't have 'visible' on levels yet. Use color transparency hack or just ignore.
+        // For now, let's assume we can set opacity to 0 or something. 
+        // Actually, let's just use a local visibility property if possible, but we need to persist it.
+        // Let's toggle opacity between 0 and 1 or current?
+        // Or if we modify the type in V2...
+        // For now, let's just make it visually toggle opacity=0.
+        const current = localOptions.levels[index];
+        const newOpacity = current.opacity === 0 ? 1 : 0;
+        updateLevel(index, { opacity: newOpacity });
     };
 
     return (
@@ -98,14 +102,14 @@ export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsVi
                         <div key={index} className="flex items-center gap-2">
                             <input
                                 type="checkbox"
-                                checked={level.visible}
+                                checked={level.opacity > 0}
                                 onChange={() => toggleLevel(index)}
-                                aria-label={`Toggle Level ${level.level}`}
+                                aria-label={`Toggle Level ${level.coeff}`}
                             />
                             <Input
                                 type="number"
-                                value={level.level}
-                                onChange={(e) => updateLevel(index, { level: parseFloat(e.target.value) })}
+                                value={level.coeff}
+                                onChange={(e) => updateLevel(index, { coeff: parseFloat(e.target.value) })}
                                 className="w-[70px] h-8 p-1 text-right"
                                 step="0.1"
                                 aria-label={`Level ${index} Value`}
@@ -126,57 +130,45 @@ export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsVi
                 <Separator />
 
                 {/* Trend Line */}
+                {/* Trend Line (Diagonal) - Not supported in V2 yet 
                 <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="checkbox"
-                            id="showTrendLine"
-                            checked={localOptions.trendLine.visible}
-                            onChange={(e) => updateTrendLine({ visible: e.target.checked })}
-                            aria-label="Toggle Trend Line"
-                        />
-                        <Label htmlFor="showTrendLine">Trend line</Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <ColorPicker color={localOptions.trendLine.color} onChange={(c) => updateTrendLine({ color: c })} />
-                        <Select value={localOptions.trendLine.width.toString()} onValueChange={(v) => updateTrendLine({ width: parseInt(v) })}>
-                            <SelectTrigger className="w-[60px] h-8" aria-label="Trend Line Width"><SelectValue /></SelectTrigger>
-                            <SelectContent>{[1, 2, 3, 4].map(w => <SelectItem key={w} value={w.toString()}>{w}px</SelectItem>)}</SelectContent>
-                        </Select>
-                        <Select value={localOptions.trendLine.style.toString()} onValueChange={(v) => updateTrendLine({ style: parseInt(v) })}>
-                            <SelectTrigger className="w-[80px] h-8" aria-label="Trend Line Style"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="0">Solid</SelectItem>
-                                <SelectItem value="1">Dotted</SelectItem>
-                                <SelectItem value="2">Dashed</SelectItem>
-                            </SelectContent>
-                        </Select>
-                    </div>
-                </div>
+                     ... 
+                </div> 
+                */}
 
-                {/* Levels Line Global Style */}
-                <div className="flex items-center justify-between">
-                    <Label>Levels line</Label>
-                    <div className="flex items-center gap-2">
-                        <Select value={localOptions.levelsLine.width.toString()} onValueChange={(v) => updateLevelsLine({ width: parseInt(v) })}>
-                            <SelectTrigger className="w-[60px] h-8" aria-label="Levels Line Width"><SelectValue /></SelectTrigger>
-                            <SelectContent>{[1, 2, 3, 4].map(w => <SelectItem key={w} value={w.toString()}>{w}px</SelectItem>)}</SelectContent>
-                        </Select>
-                        <Select value={localOptions.levelsLine.style.toString()} onValueChange={(v) => updateLevelsLine({ style: parseInt(v) })}>
-                            <SelectTrigger className="w-[80px] h-8" aria-label="Levels Line Style"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="0">Solid</SelectItem>
-                                <SelectItem value="1">Dotted</SelectItem>
-                                <SelectItem value="2">Dashed</SelectItem>
-                            </SelectContent>
-                        </Select>
+                {/* Levels Line Style */}
+                {localOptions.line && (
+                    <div className="flex items-center justify-between mt-4">
+                        <Label>Levels line</Label>
+                        <div className="flex items-center gap-2">
+                            <Select value={localOptions.line.width?.toString() || "1"} onValueChange={(v) => updateLine({ width: parseInt(v) })}>
+                                <SelectTrigger className="w-[60px] h-8" aria-label="Levels Line Width"><SelectValue /></SelectTrigger>
+                                <SelectContent>{[1, 2, 3, 4].map(w => <SelectItem key={w} value={w.toString()}>{w}px</SelectItem>)}</SelectContent>
+                            </Select>
+                            <Select value={localOptions.line.style?.toString() || "0"} onValueChange={(v) => updateLine({ style: parseInt(v) })}>
+                                <SelectTrigger className="w-[80px] h-8" aria-label="Levels Line Style"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="0">Solid</SelectItem>
+                                    <SelectItem value="1">Dotted</SelectItem>
+                                    <SelectItem value="2">Dashed</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
                     </div>
-                </div>
+                )}
+
 
                 {/* Extend */}
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between mt-2">
                     <Label id="extend-label">Extend lines</Label>
-                    <Select value={localOptions.extendLines} onValueChange={(v: any) => update({ extendLines: v })}>
+                    <Select
+                        value={localOptions.extend ? (localOptions.extend.left && localOptions.extend.right ? 'both' : (localOptions.extend.left ? 'left' : (localOptions.extend.right ? 'right' : 'none'))) : 'none'}
+                        onValueChange={(v) => {
+                            const left = v === 'left' || v === 'both';
+                            const right = v === 'right' || v === 'both';
+                            update({ extend: { left, right } });
+                        }}
+                    >
                         <SelectTrigger className="w-[180px] h-8" aria-labelledby="extend-label"><SelectValue /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="none">None</SelectItem>
@@ -189,69 +181,22 @@ export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsVi
 
                 <Separator />
 
-                {/* Background */}
+                {/* Background - Not supported in global options, V2 uses level colors 
                 <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="checkbox"
-                            id="showBackground"
-                            checked={localOptions.background.visible}
-                            onChange={(e) => update({ background: { ...localOptions.background, visible: e.target.checked } })}
-                            aria-label="Toggle Background"
-                        />
-                        <Label htmlFor="showBackground">Background</Label>
-                    </div>
-                    <ColorPicker
-                        color={localOptions.background.color}
-                        onChange={(c) => update({ background: { ...localOptions.background, color: c } })}
-                        opacity={localOptions.background.transparency}
-                        onOpacityChange={(t) => update({ background: { ...localOptions.background, transparency: t } })}
-                    />
-                </div>
+                     ... 
+                </div> 
+                */}
 
                 {/* Labels */}
                 <div className="space-y-2 pt-2">
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="checkbox"
-                            id="showLabels"
-                            checked={localOptions.labels.visible}
-                            onChange={(e) => update({ labels: { ...localOptions.labels, visible: e.target.checked } })}
-                            aria-label="Toggle Labels"
-                        />
-                        <Label htmlFor="showLabels">Labels</Label>
+                    <div className="flex items-center justify-between">
+                        <Label htmlFor="showPrices">Show Prices</Label>
+                        <input id="showPrices" type="checkbox" checked={localOptions.showPriceAxisLabels} onChange={(e) => update({ showPriceAxisLabels: e.target.checked })} aria-label="Show Prices" />
                     </div>
-
-                    {localOptions.labels.visible && (
-                        <div className="grid grid-cols-2 gap-4 pl-6">
-                            <div className="flex items-center justify-between">
-                                <Label className="text-xs" htmlFor="showPrices">Prices</Label>
-                                <input id="showPrices" type="checkbox" checked={localOptions.labels.showPrices} onChange={(e) => update({ labels: { ...localOptions.labels, showPrices: e.target.checked } })} aria-label="Show Prices" />
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <Label className="text-xs" htmlFor="showLevels">Levels</Label>
-                                <input id="showLevels" type="checkbox" checked={localOptions.labels.showLevels} onChange={(e) => update({ labels: { ...localOptions.labels, showLevels: e.target.checked } })} aria-label="Show Levels" />
-                            </div>
-
-                            <Select value={localOptions.labels.horzPos} onValueChange={(v: any) => update({ labels: { ...localOptions.labels, horzPos: v } })}>
-                                <SelectTrigger className="h-7 text-xs" aria-label="Horizontal Position"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="left">Left</SelectItem>
-                                    <SelectItem value="center">Center</SelectItem>
-                                    <SelectItem value="right">Right</SelectItem>
-                                </SelectContent>
-                            </Select>
-
-                            <Select value={localOptions.labels.vertPos} onValueChange={(v: any) => update({ labels: { ...localOptions.labels, vertPos: v } })}>
-                                <SelectTrigger className="h-7 text-xs" aria-label="Vertical Position"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="top">Top</SelectItem>
-                                    <SelectItem value="middle">Middle</SelectItem>
-                                    <SelectItem value="bottom">Bottom</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-                    )}
+                    <div className="flex items-center justify-between">
+                        <Label htmlFor="showTime">Show Time</Label>
+                        <input id="showTime" type="checkbox" checked={localOptions.showTimeAxisLabels} onChange={(e) => update({ showTimeAxisLabels: e.target.checked })} aria-label="Show Timeline" />
+                    </div>
                 </div>
 
             </TabsContent>

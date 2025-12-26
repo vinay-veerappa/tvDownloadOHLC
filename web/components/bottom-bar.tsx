@@ -2,8 +2,10 @@
 
 import * as React from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Globe } from "lucide-react"
+import { Globe, Beaker } from "lucide-react"
 import { PlaybackControls } from "./playback-controls"
+import { useChartPreferences } from "@/hooks/use-chart-preferences"
+import { cn } from "@/lib/utils"
 
 const TIMEZONE_STORAGE_KEY = 'chart-timezone'
 
@@ -57,6 +59,7 @@ export function BottomBar({
     replayIndex = 0,
     totalBars = 0
 }: BottomBarProps) {
+    const { experimentalDrawingV2, setExperimentalDrawingV2 } = useChartPreferences()
     const [timezone, setTimezone] = React.useState(externalTimezone || 'America/New_York')
 
     // Load from localStorage on mount
