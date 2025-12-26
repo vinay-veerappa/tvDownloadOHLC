@@ -55,7 +55,21 @@ export class DrawingStorage {
                 updatedAt: Date.now()
             };
 
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(allData));
+            // Helper to handle circular references
+            const getCircularReplacer = () => {
+                const seen = new WeakSet();
+                return (key: string, value: any) => {
+                    if (typeof value === "object" && value !== null) {
+                        if (seen.has(value)) {
+                            return;
+                        }
+                        seen.add(value);
+                    }
+                    return value;
+                };
+            };
+
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(allData, getCircularReplacer()));
             return true;
         } catch (error) {
             console.error('Failed to save drawings:', error);

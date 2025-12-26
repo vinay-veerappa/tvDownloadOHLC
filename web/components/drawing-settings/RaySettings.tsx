@@ -13,6 +13,7 @@ import { useState, useEffect } from "react";
 import { Label } from "@/components/ui/label";
 import { StyleTab } from "@/components/drawing/tabs/StyleTab";
 import { DrawingSettingsDialog } from "@/components/drawing/DrawingSettingsDialog";
+import { CoordinatesTab } from "@/components/drawing/tabs/CoordinatesTab";
 import { VisibilityTab } from "@/components/drawing/tabs/VisibilityTab";
 import { TextSettingsTab } from "@/components/drawing-settings/TextSettingsTab";
 import type { Time } from "lightweight-charts";
@@ -55,8 +56,8 @@ interface RaySettingsDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     options: RaySettingsOptions;
-    point?: { time: Time; price: number };
-    onApply: (options: RaySettingsOptions) => void;
+    points?: { p1: { time: Time; price: number }; p2: { time: Time; price: number } };
+    onApply: (options: RaySettingsOptions, points?: Array<{ time: Time; price: number }>) => void;
     onCancel: () => void;
 }
 
@@ -64,30 +65,34 @@ export function RaySettingsDialog({
     open,
     onOpenChange,
     options,
-    point,
+    points,
     onApply,
     onCancel,
 }: RaySettingsDialogProps) {
     const [localOptions, setLocalOptions] = useState<RaySettingsOptions>(options);
+    const [localPoints, setLocalPoints] = useState<Array<{ time: Time; price: number }>>([]);
 
     // Reset local options when dialog opens
     useEffect(() => {
         if (open) {
             setLocalOptions(options);
+            if (points) {
+                setLocalPoints([points.p1, points.p2]);
+            }
         }
-    }, [open, options]);
+    }, [open, options, points]);
 
     const handleChange = (updates: Partial<RaySettingsOptions>) => {
         setLocalOptions(prev => ({ ...prev, ...updates }));
     };
 
     const handleApply = () => {
-        onApply(localOptions);
+        onApply(localOptions, localPoints.length === 2 ? localPoints : undefined);
     };
 
-    // Format point for display
-    const formattedTime = point?.time ? new Date((point.time as number) * 1000).toLocaleString() : 'N/A';
-    const formattedPrice = point?.price?.toFixed(2) || 'N/A';
+    // Format points for display (not used but kept for legacy if needed, but we use CoordinatesTab now)
+    const formattedTime = localPoints.length > 0 ? new Date((localPoints[0].time as number) * 1000).toLocaleString() : 'N/A';
+    const formattedPrice = localPoints.length > 0 ? localPoints[0].price?.toFixed(2) : 'N/A';
 
     // ===== Style Tab Content =====
     const styleTabContent = (
@@ -103,26 +108,13 @@ export function RaySettingsDialog({
     );
 
     // ===== Coordinates Tab =====
-    const coordinatesTab = (
-        <div className="space-y-4 py-4">
-            <div className="space-y-2">
-                <Label className="text-sm font-semibold">Origin Point</Label>
-                <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">Time</Label>
-                        <div className="p-2 bg-muted rounded text-xs font-mono">{formattedTime}</div>
-                    </div>
-                    <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">Price</Label>
-                        <div className="p-2 bg-muted rounded text-xs font-mono">{formattedPrice}</div>
-                    </div>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                    Ray extends horizontally from the origin point to the right edge.
-                </p>
-            </div>
-        </div>
-    );
+    const coordinatesTab = localPoints.length === 2 ? (
+        <CoordinatesTab
+            points={localPoints}
+            onChange={setLocalPoints}
+            labels={["Origin Point", "Extension Point"]}
+        />
+    ) : undefined;
 
     // ===== Visibility Tab =====
     const visibilityTab = (
