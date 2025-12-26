@@ -75,6 +75,16 @@ export class LineToolsCorePlugin<HorzScaleItem> implements ILineToolsApi {
 	}
 
 	/**
+	 * Returns a specific line tool by its ID.
+	 * @param id - The ID of the tool to retrieve.
+	 * @returns The tool instance or undefined.
+	 */
+	public getLineTool(id: string): BaseLineTool<HorzScaleItem> | undefined {
+		return this._tools.get(id);
+	}
+
+
+	/**
 	 * Requests a redraw of the chart.
 	 *
 	 * This method is the primary mechanism for internal components (like the {@link InteractionManager} or individual tools)

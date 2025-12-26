@@ -107,7 +107,11 @@ export function ChartWrapper(props: ChartWrapperProps) {
     useEffect(() => { selectionRef.current = selection }, [selection]);
 
     // Known drawing types (not indicators)
-    const DRAWING_TYPES = ['trend-line', 'ray', 'fibonacci', 'rectangle', 'vertical-line', 'horizontal-line', 'text', 'risk-reward', 'measure', 'drawing'];
+    const DRAWING_TYPES = [
+        'trend-line', 'ray', 'fibonacci', 'rectangle', 'vertical-line', 'horizontal-line', 'text', 'risk-reward', 'measure', 'drawing',
+        'TrendLine', 'Ray', 'FibRetracement', 'Rectangle', 'VerticalLine', 'HorizontalLine', 'Text', 'LongShortPosition', 'Measure'
+    ];
+
 
     // Keyboard Shortcuts (Alt+T for trendline, Alt+H for horizontal, Delete, Escape, etc.)
     useKeyboardShortcuts({

@@ -1,5 +1,6 @@
 "use client"
 
+import { createPortal } from "react-dom"
 import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle, memo } from "react"
 import { useChart } from "@/hooks/use-chart"
 import { DrawingTool } from "./left-toolbar"
@@ -142,7 +143,9 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     const [rangeExtensionsActive, setRangeExtensionsActive] = useState(false);
     const [rangeData, setRangeData] = useState<RangeExtensionPeriod[]>([]);
 
+
     // 2. Truth Profiler State
+
     const [truthSessions, setTruthSessions] = useState<ProfilerSession[]>([]);
     const [truthLevels, setTruthLevels] = useState<LevelTouchesResponse>({});
     const truthProfilerRef = useRef<any>(null);
@@ -400,32 +403,63 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     const lastClickIdRef = useRef<string | null>(null)
 
 
+
     // Known drawing types (for selection sync)
-    const DRAWING_TYPES = ['trend-line', 'ray', 'fibonacci', 'rectangle', 'vertical-line', 'horizontal-line', 'text', 'risk-reward', 'measure', 'price-label', 'price-range', 'date-range', 'drawing'];
+    const DRAWING_TYPES = [
+        'trend-line', 'ray', 'fibonacci', 'rectangle', 'vertical-line', 'horizontal-line', 'text', 'risk-reward', 'measure', 'price-label', 'price-range', 'date-range', 'drawing',
+        'TrendLine', 'Ray', 'FibRetracement', 'Rectangle', 'VerticalLine', 'HorizontalLine', 'Text', 'LongShortPosition', 'Measure', 'PriceLabel', 'PriceRange', 'DateRange'
+    ];
+
 
     // Sync external selection  
     useEffect(() => {
+        console.log('[ChartContainer] selection prop changed:', selection);
         if (!selection) {
+            console.log('[ChartContainer] selection prop is null, calling deselectDrawing');
             deselectDrawing();
             return;
         }
         // Check if it's a drawing type
         const isDrawingType = DRAWING_TYPES.includes(selection.type);
+        console.log('[ChartContainer] isDrawingType:', isDrawingType, 'type:', selection.type);
+
         if (isDrawingType) {
-            // V1 Drawing sync removed.
-            // TODO: Add V2 Selection Sync
+            // V2 Selection Sync
+            if (selection.id !== selectedDrawingId) {
+                console.log('[ChartContainer] Syncing V2 selection from prop:', selection.id);
+                const tool = v2SandboxRef.current?.plugin.getLineTool(selection.id);
+                if (tool) {
+
+                    setSelectedDrawingId(selection.id);
+                    selectedDrawingRef.current = tool;
+                    if (typeof tool.options === 'function') {
+                        setSelectedDrawingOptions(tool.options());
+                    } else if (tool.options) {
+                        setSelectedDrawingOptions(tool.options);
+                    }
+                    const toolType = typeof tool.toolType === 'function' ? tool.toolType() : (tool.toolType || 'drawing');
+                    setSelectedDrawingType(toolType);
+                }
+            }
         } else {
             // For indicators or other types, just deselect any drawing
+            console.log('[ChartContainer] Not a drawing type, deselecting');
             deselectDrawing();
         }
-    }, [selection]);
+    }, [selection, selectedDrawingId]);
+
 
     const deselectDrawing = () => {
-        if (selectedDrawingRef.current?.setSelected) selectedDrawingRef.current.setSelected(false);
-        selectedDrawingRef.current = null;
+        if (selectedDrawingRef.current?.setSelected) {
+            try { selectedDrawingRef.current.setSelected(false); } catch (e) { }
+        }
         setSelectedDrawingId(null);
-        setSelectedDrawingOptions({});
+        selectedDrawingRef.current = null;
+        setSelectedDrawingOptions(null);
+        setToolbarPosition(null);
+        onSelectionChange?.(null);
     };
+
 
     // 7. Trading Visuals (Hook)
     const { positionLineRef, pendingLinesRef, slLineRef, tpLineRef } = useChartTrading({
@@ -526,36 +560,81 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
 
             // NEW: Handle Selection Change Event from V2 Core
             const handleSelectionChanged = (id: string | null, tool: any | null) => {
-                console.log('[ChartContainer] handleSelectionChanged called. id:', id, 'tool:', tool);
-                if (id && tool) {
-                    // Update Internal State
-                    setSelectedDrawingId(id);
-                    selectedDrawingRef.current = tool; // Now points to V2 Tool Instance (proxied by exports usually, but here tool is the actual instance or export?)
-                    console.log('[ChartContainer] Set selectedDrawingRef.current to:', selectedDrawingRef.current);
-                    // Actually V2SandboxManager passes the tool instance wrapper or export? 
-                    // In sandbox-manager we pass: callbacks.onSelectionChanged?.(tool.id, tool);
-                    // The 'tool' in sandbox manager is the internal tool object (with .options(), id(), etc)
-                    // So we can call methods on it.
+                console.log('[ChartContainer] handleSelectionChanged callback. id:', id, 'tool:', tool?.id);
+                if (id) {
+                    // Try to get the actual tool instance if not provided directly
+                    const toolInstance = tool || v2SandboxRef.current?.plugin.getLineTool(id);
 
-                    if (tool.options) {
-                        try {
-                            setSelectedDrawingOptions(tool.options());
-                        } catch (e) {
-                            setSelectedDrawingOptions({});
+                    if (toolInstance) {
+                        // Update Internal State
+                        console.log('[ChartContainer] Setting selectedDrawingId to:', id);
+                        setSelectedDrawingId(id);
+                        selectedDrawingRef.current = toolInstance;
+
+                        // Retrieve options - V2 tool instances have .options() method
+                        let options = {};
+                        if (typeof toolInstance.options === 'function') {
+                            try {
+                                options = toolInstance.options();
+                            } catch (e) {
+                                console.warn('[ChartContainer] Failed to call tool.options():', e);
+                            }
+                        } else if (toolInstance.options) {
+                            options = toolInstance.options;
                         }
-                    }
-                    const toolType = typeof tool.toolType === 'function' ? tool.toolType() : (tool.toolType || 'drawing');
-                    setSelectedDrawingType(toolType);
 
-                    // Notify Parent
-                    onSelectionChange?.({ type: toolType, id });
-                } else {
-                    // Deselect
-                    console.log('[ChartContainer] Clearing selection');
-                    setSelectedDrawingId(null);
-                    selectedDrawingRef.current = null;
-                    setSelectedDrawingOptions(null);
-                    onSelectionChange?.(null);
+                        setSelectedDrawingOptions(options);
+
+                        const toolType = typeof toolInstance.toolType === 'function' ? toolInstance.toolType() : (toolInstance.toolType || 'drawing');
+                        setSelectedDrawingType(toolType);
+
+                        // Calculate toolbar position from tool's points
+                        try {
+                            const points = toolInstance.points;
+                            if (points && points.length > 0 && chart && series) {
+                                const lastPoint = points[points.length - 1];
+                                const timeScale = chart.timeScale();
+                                const chartElement = chart.chartElement();
+
+                                // V2 tools store points as {timestamp, price} not {time, price}
+                                let timeValue = lastPoint.timestamp || lastPoint.time;
+
+                                // If time is a large number (milliseconds), convert to seconds
+                                if (typeof timeValue === 'number' && timeValue > 1e12) {
+                                    timeValue = Math.floor(timeValue / 1000);
+                                }
+
+                                const x = timeScale.timeToCoordinate(timeValue as any);
+                                const y = series.priceToCoordinate(lastPoint.price);
+
+                                if (x !== null && y !== null) {
+                                    const chartRect = chartElement?.getBoundingClientRect();
+                                    const chartWidth = chartRect?.width ?? 800;
+                                    const chartHeight = chartRect?.height ?? 600;
+
+                                    // Clamp to visible area
+                                    const clampedX = Math.max(50, Math.min(x as number, chartWidth - 150));
+                                    const clampedY = Math.max(50, Math.min(y as number, chartHeight - 50));
+                                    setToolbarPosition({ x: clampedX, y: clampedY });
+                                } else {
+                                    setToolbarPosition({ x: 200, y: 50 }); // Safe default
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('[ChartContainer] Failed to calculate toolbar position:', e);
+                        }
+
+                        // Notify Parent
+                        onSelectionChange?.({ type: toolType, id });
+                    } else {
+                        // Deselect
+                        console.log('[ChartContainer] Clearing selection');
+                        setSelectedDrawingId(null);
+                        selectedDrawingRef.current = null;
+                        setSelectedDrawingOptions(null);
+                        setToolbarPosition(null);
+                        onSelectionChange?.(null);
+                    }
                 }
             };
 
@@ -701,9 +780,13 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 // Inline Text Edit: V1 removed. V2 handles text editing differently.
 
             } else {
-                deselectDrawing();
-                setToolbarPosition(null);
-                setInlineTextEditing(null);
+                // ONLY deselect via legacy handler if V2 is NOT active.
+                // V2 has its own internal InteractionManager that handles its own selection/deselection.
+                if (!experimentalDrawingV2) {
+                    deselectDrawing();
+                    setToolbarPosition(null);
+                    setInlineTextEditing(null);
+                }
             }
         }
 
@@ -801,8 +884,17 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
 
     // Helper functions for UI
     const openProperties = (drawing: any) => {
-        const options = drawing.options ? drawing.options() : {};
-        const type = drawing._type || 'anchored-text';
+        if (!drawing) return;
+
+        // Safely extract options (handle both instance method and plain object)
+        const options = (typeof drawing.options === 'function')
+            ? drawing.options()
+            : (drawing.options || {});
+
+        const type = (typeof drawing.toolType === 'function')
+            ? drawing.toolType()
+            : (drawing._type || drawing.toolType || 'anchored-text');
+
         setSelectedDrawingOptions(options);
         setSelectedDrawingType(type);
 
@@ -934,13 +1026,20 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     const handlePropertiesSave = (options: any) => {
         if (selectedDrawingRef.current && selectedDrawingType !== 'daily-profiler' && selectedDrawingType !== 'hourly-profiler') {
             const drawing = selectedDrawingRef.current;
-            drawing.applyOptions?.(options);
-            const id = typeof drawing.id === 'function' ? drawing.id() : drawing._id;
+
+            // For V2 tool instances, apply options directly
+            if (typeof drawing.applyOptions === 'function') {
+                drawing.applyOptions(options);
+                // Also update local state for UI sync if needed
+                setSelectedDrawingOptions(drawing.options());
+            } else if (drawing.applyOptions) {
+                // Legacy fallback
+                drawing.applyOptions(options);
+            }
+
+            const id = typeof drawing.id === 'function' ? drawing.id() : (drawing._id || drawing.id);
 
             if (id) {
-                // Legacy serialization removed.
-                // Assuming V2 updates via plugin or internal state if shared ref?
-                // For now, just save options.
                 DrawingStorage.updateDrawingOptions(ticker, timeframe, id, options);
             }
             toast.success('Properties saved');
@@ -1755,28 +1854,32 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 onSettings={openDrawingSettings}
             />
 
-            {/* FloatingToolbar - appears on drawing selection */}
-            {selectedDrawingId && toolbarPosition && (
-                <FloatingToolbar
-                    drawingId={selectedDrawingId || ''}
-                    drawingType={selectedDrawingType}
-                    position={toolbarPosition}
-                    options={selectedDrawingOptions || {}}
-                    isLocked={isDrawingLocked}
-                    isHidden={isDrawingHidden}
-                    onSettings={openDrawingSettings}
-                    onClone={cloneSelectedDrawing}
-                    onLock={toggleDrawingLock}
-                    onDelete={deleteSelectedDrawing}
-                    onToggleVisibility={toggleDrawingVisibility}
-                    onOptionsChange={(updates) => {
-                        if (selectedDrawingRef.current && typeof selectedDrawingRef.current.applyOptions === 'function') {
-                            selectedDrawingRef.current.applyOptions(updates);
-                            setSelectedDrawingOptions((prev: Record<string, any> | null) => ({ ...prev, ...updates }));
-                        }
-                    }}
-                    onPositionChange={(pos) => setToolbarPosition(pos)}
-                />
+            {/* Toolbar - appears on drawing selection (Portal to bypass parent CSS constraints) */}
+            {typeof document !== 'undefined' && selectedDrawingId && createPortal(
+                <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[99999] pointer-events-auto">
+
+                    <FloatingToolbar
+                        drawingId={selectedDrawingId || ''}
+                        drawingType={selectedDrawingType}
+                        position={toolbarPosition || { x: 0, y: 0 }}
+                        options={selectedDrawingOptions || {}}
+                        isLocked={isDrawingLocked}
+                        isHidden={isDrawingHidden}
+                        isPinned={true}
+                        onSettings={openDrawingSettings}
+                        onClone={cloneSelectedDrawing}
+                        onLock={toggleDrawingLock}
+                        onDelete={deleteSelectedDrawing}
+                        onToggleVisibility={toggleDrawingVisibility}
+                        onOptionsChange={(updates) => {
+                            if (selectedDrawingRef.current && typeof selectedDrawingRef.current.applyOptions === 'function') {
+                                selectedDrawingRef.current.applyOptions(updates);
+                                setSelectedDrawingOptions((prev: Record<string, any> | null) => ({ ...prev, ...updates }));
+                            }
+                        }}
+                    />
+                </div>,
+                document.body
             )}
 
             <PropertiesModal
@@ -1845,10 +1948,15 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     alignmentVertical: selectedDrawingOptions?.alignmentVertical,
                     alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                 }}
-                points={selectedDrawingRef.current?._p1 && selectedDrawingRef.current?._p2 ? {
-                    p1: selectedDrawingRef.current._p1,
-                    p2: selectedDrawingRef.current._p2
-                } : undefined}
+                points={(() => {
+                    const drawing = selectedDrawingRef.current;
+                    if (!drawing) return undefined;
+                    if (drawing._p1 && drawing._p2) return { p1: drawing._p1, p2: drawing._p2 };
+                    if (drawing.points && drawing.points.length >= 2) {
+                        return { p1: drawing.points[0], p2: drawing.points[1] };
+                    }
+                    return undefined;
+                })()}
                 onApply={(opts) => {
                     // Convert back to TrendLine format
                     handlePropertiesSave({
@@ -1895,7 +2003,15 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     alignmentVertical: selectedDrawingOptions?.alignmentVertical,
                     alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                 }}
-                price={selectedDrawingRef.current?._price}
+                price={(() => {
+                    const drawing = selectedDrawingRef.current;
+                    if (!drawing) return 0;
+                    if (drawing._price !== undefined) return drawing._price;
+                    if (drawing.points && drawing.points.length >= 1) {
+                        return drawing.points[0].price;
+                    }
+                    return 0;
+                })()}
                 onApply={(opts, price) => {
                     handlePropertiesSave({
                         color: opts.color,
@@ -1937,10 +2053,15 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     alignmentVertical: selectedDrawingOptions?.alignmentVertical,
                     alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                 }}
-                points={selectedDrawingRef.current?._p1 && selectedDrawingRef.current?._p2 ? {
-                    p1: selectedDrawingRef.current._p1,
-                    p2: selectedDrawingRef.current._p2
-                } : undefined}
+                points={(() => {
+                    const drawing = selectedDrawingRef.current;
+                    if (!drawing) return undefined;
+                    if (drawing._p1 && drawing._p2) return { p1: drawing._p1, p2: drawing._p2 };
+                    if (drawing.points && drawing.points.length >= 2) {
+                        return { p1: drawing.points[0], p2: drawing.points[1] };
+                    }
+                    return undefined;
+                })()}
                 onApply={(opts) => {
                     handlePropertiesSave({
                         borderColor: opts.borderColor,
@@ -1983,7 +2104,15 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                     orientation: selectedDrawingOptions?.orientation || 'horizontal',
                 }}
-                time={selectedDrawingRef.current?._time}
+                time={(() => {
+                    const drawing = selectedDrawingRef.current;
+                    if (!drawing) return 0;
+                    if (drawing._time !== undefined) return drawing._time;
+                    if (drawing.points && drawing.points.length >= 1) {
+                        return drawing.points[0].timestamp || drawing.points[0].time;
+                    }
+                    return 0;
+                })()}
                 onApply={(opts) => {
                     handlePropertiesSave({
                         color: opts.color,
@@ -2022,7 +2151,15 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     alignmentVertical: selectedDrawingOptions?.alignmentVertical,
                     alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
                 }}
-                point={selectedDrawingRef.current?._p1}
+                point={(() => {
+                    const drawing = selectedDrawingRef.current;
+                    if (!drawing) return undefined;
+                    if (drawing._p1) return drawing._p1;
+                    if (drawing.points && drawing.points.length >= 1) {
+                        return drawing.points[0];
+                    }
+                    return undefined;
+                })()}
                 onApply={(opts) => {
                     handlePropertiesSave({
                         lineColor: opts.color,

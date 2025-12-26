@@ -250,6 +250,43 @@ export const TOOLBAR_CONFIGS: Record<string, ToolbarConfig> = {
 // Helper Functions
 // ============================================================================
 
+// V2 tool types are PascalCase, but configs use kebab-case
+const TOOL_TYPE_ALIASES: Record<string, string> = {
+    'TrendLine': 'trend-line',
+    'HorizontalLine': 'horizontal-line',
+    'VerticalLine': 'vertical-line',
+    'Ray': 'ray',
+    'Rectangle': 'rectangle',
+    'Text': 'text',
+    'PriceLabel': 'price-label',
+    'PriceRange': 'price-range',
+    'DateRange': 'date-range',
+    'Measure': 'measure',
+    'FibRetracement': 'fibonacci',
+    'Arrow': 'trend-line', // Use trend-line config for arrow
+    'ExtendedLine': 'trend-line',
+    'HorizontalRay': 'ray',
+    'CrossLine': 'vertical-line',
+    'Circle': 'rectangle', // Use rectangle config for shapes
+    'Triangle': 'rectangle',
+    'ParallelChannel': 'trend-line',
+    'Brush': 'default',
+    'Path': 'default',
+    'Highlighter': 'default',
+    'Callout': 'text',
+    'LongShortPosition': 'risk-reward',
+};
+
 export function getToolbarConfig(drawingType: string): ToolbarConfig {
-    return TOOLBAR_CONFIGS[drawingType] || TOOLBAR_CONFIGS['default'];
+    // Try direct match first
+    if (TOOLBAR_CONFIGS[drawingType]) {
+        return TOOLBAR_CONFIGS[drawingType];
+    }
+    // Try V2 alias mapping
+    const aliasedType = TOOL_TYPE_ALIASES[drawingType];
+    if (aliasedType && TOOLBAR_CONFIGS[aliasedType]) {
+        return TOOLBAR_CONFIGS[aliasedType];
+    }
+    // Fallback to default
+    return TOOLBAR_CONFIGS['default'];
 }
