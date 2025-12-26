@@ -907,11 +907,11 @@ export class InteractionManager<HorzScaleItem> {
 				handledInteraction = true; // Still marked as handled for the purpose of the final fallback reset
 			}
 		} else {
-			// This was a drag that fell through creation/editing. Likely a drag in empty space.
-			// Such a drag should typically deselect.
-			if (this._isDrag) { // If it was a drag gesture
+			// This was a drag that fell through creation/editing. Likely a drag in empty space (e.g., Panning).
+			// We DO NOT deselect on panning, as it's a common user action that should be transparent to selection.
+			if (this._isDrag) {
 				handledInteraction = true;
-				this.deselectAllTools();
+				// this.deselectAllTools(); // REMOVED: Panning should not deselect
 				this._plugin.requestUpdate();
 			}
 		}

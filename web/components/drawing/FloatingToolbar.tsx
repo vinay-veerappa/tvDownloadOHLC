@@ -37,6 +37,7 @@ interface FloatingToolbarProps {
     onToggleVisibility: () => void;
     onOptionsChange: (updates: Record<string, any>) => void;
     onPositionChange?: (pos: { x: number; y: number }) => void;
+    isPinned?: boolean;
     className?: string;
 }
 
@@ -59,14 +60,17 @@ export function FloatingToolbar({
     onToggleVisibility,
     onOptionsChange,
     onPositionChange,
+    isPinned = false,
     className,
 }: FloatingToolbarProps) {
     const config = getToolbarConfig(drawingType);
+
     const [isDragging, setIsDragging] = React.useState(false);
     const dragStartRef = React.useRef<{ x: number; y: number } | null>(null);
     const startPosRef = React.useRef<{ x: number; y: number } | null>(null);
 
     React.useEffect(() => {
+        if (isPinned) return; // No dragging if pinned
         const handleMouseMove = (e: MouseEvent) => {
             if (!isDragging || !dragStartRef.current || !startPosRef.current || !onPositionChange) return;
 
@@ -94,9 +98,10 @@ export function FloatingToolbar({
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
         };
-    }, [isDragging, onPositionChange]);
+    }, [isDragging, onPositionChange, isPinned]);
 
     const handleDragStart = (e: React.MouseEvent) => {
+        if (isPinned) return;
         e.preventDefault();
         setIsDragging(true);
         dragStartRef.current = { x: e.clientX, y: e.clientY };
@@ -160,14 +165,16 @@ export function FloatingToolbar({
         <TooltipProvider delayDuration={300}>
             <div
                 className={cn(
-                    "absolute z-50 flex items-center gap-0.5 bg-background/95 backdrop-blur-sm border rounded-md shadow-lg p-0.5",
+                    "flex items-center gap-0.5 bg-background/95 backdrop-blur-sm border rounded-md shadow-lg p-0.5 pointer-events-auto",
+                    !isPinned && "absolute z-50",
+                    isPinned ? "relative" : "",
                     className
                 )}
-                style={{
+                style={!isPinned ? {
                     left: position.x + 12,
                     top: position.y - 16,
                     transform: 'translateY(-50%)',
-                }}
+                } : {}}
             >
                 {/* Drag Handle */}
                 <div
