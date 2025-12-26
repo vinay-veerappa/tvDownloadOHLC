@@ -148,6 +148,14 @@ export class InteractionManager<HorzScaleItem> {
 	}
 
 	/**
+	 * Returns the currently selected tool, if any.
+	 * @returns The selected tool or null.
+	 */
+	public getSelectedTool(): BaseLineTool<HorzScaleItem> | null {
+		return this._selectedTool;
+	}
+
+	/**
 	 * Attaches a line tool primitive to the main series for rendering.
 	 *
 	 * This is an internal helper called by the {@link LineToolsCorePlugin} immediately after a tool is constructed.

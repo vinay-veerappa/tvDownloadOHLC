@@ -92,11 +92,15 @@ export class V2SandboxManager<HorzScaleItem> {
         // Subscribe to Selection Events
         this._plugin.subscribeLineToolsSelectionChanged((params: any) => {
             const { selectedLineTools } = params;
+            console.log('[SandboxManager] SelectionChanged callback. selectedLineTools:', selectedLineTools);
             if (selectedLineTools && selectedLineTools.length > 0) {
                 // For now, we only support single selection synchronization
                 const tool = selectedLineTools[0];
-                this._callbacks.onSelectionChanged?.(tool.id, tool);
+                const toolId = typeof tool.id === 'function' ? tool.id() : tool.id;
+                console.log('[SandboxManager] Selected tool:', toolId, tool);
+                this._callbacks.onSelectionChanged?.(toolId, tool);
             } else {
+                console.log('[SandboxManager] No tools selected, clearing selection');
                 this._callbacks.onSelectionChanged?.(null, null);
             }
         });
