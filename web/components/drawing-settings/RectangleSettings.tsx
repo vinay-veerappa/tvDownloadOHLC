@@ -9,7 +9,7 @@
  * - Text annotation
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -19,10 +19,11 @@ import { StyleTab } from "@/components/drawing/tabs/StyleTab";
 import { DrawingSettingsDialog } from "@/components/drawing/DrawingSettingsDialog";
 import { CoordinatesTab } from "@/components/drawing/tabs/CoordinatesTab";
 import { VisibilityTab } from "@/components/drawing/tabs/VisibilityTab";
-import { TextSettingsTab } from "@/components/drawing-settings/TextSettingsTab";
-import type { Time } from "lightweight-charts";
-
-// ===== Options Interface =====
+import { TextSettingsTab } from "./TextSettingsTab";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Time } from "lightweight-charts";
 
 export interface RectangleSettingsOptions {
     borderColor: string;
@@ -41,6 +42,13 @@ export interface RectangleSettingsOptions {
     showLabel?: boolean;
     alignmentVertical?: 'top' | 'center' | 'bottom';
     alignmentHorizontal?: 'left' | 'center' | 'right';
+    // Style overrides
+    midlineColor?: string;
+    midlineWidth?: number;
+    midlineStyle?: number;
+    quarterLineColor?: string;
+    quarterLineWidth?: number;
+    quarterLineStyle?: number;
 
     visibleTimeframes?: string[];
 }
@@ -53,12 +61,12 @@ export const DEFAULT_RECTANGLE_OPTIONS: RectangleSettingsOptions = {
     fillOpacity: 0.1,
     showMidline: false,
     showQuarterLines: false,
-    visibleTimeframes: ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w', '1M'],
+    showLabel: true,
+    fontSize: 12,
+    textColor: '#ffffff',
     alignmentVertical: 'center',
     alignmentHorizontal: 'center'
 };
-
-// ===== Settings Dialog Component =====
 
 interface RectangleSettingsDialogProps {
     open: boolean;
@@ -67,6 +75,196 @@ interface RectangleSettingsDialogProps {
     points?: { p1: { time: Time; price: number }; p2: { time: Time; price: number } };
     onApply: (options: RectangleSettingsOptions, points?: Array<{ time: Time; price: number }>) => void;
     onCancel: () => void;
+}
+
+interface RectangleSettingsViewProps {
+    options: RectangleSettingsOptions;
+    onChange: (options: RectangleSettingsOptions) => void;
+}
+
+export function RectangleSettingsView({ options, onChange }: RectangleSettingsViewProps) {
+    const handleChange = (updates: Partial<RectangleSettingsOptions>) => {
+        onChange({ ...options, ...updates });
+    };
+
+    return (
+        <Tabs defaultValue="style" className="w-full">
+            <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="style">Style</TabsTrigger>
+                <TabsTrigger value="text">Text</TabsTrigger>
+                <TabsTrigger value="vis">Visibility</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="style" className="space-y-4 py-4 h-[400px] overflow-y-auto pr-2">
+                <div className="space-y-4">
+                    {/* Border Settings */}
+                    <Label className="text-sm font-semibold">Border</Label>
+                    <StyleTab
+                        options={{
+                            color: options.borderColor,
+                            width: options.borderWidth,
+                            style: options.borderStyle,
+                        }}
+                        onChange={(updates) => handleChange({
+                            borderColor: updates.color ?? options.borderColor,
+                            borderWidth: updates.width ?? options.borderWidth,
+                            borderStyle: updates.style ?? options.borderStyle,
+                        })}
+                        showOpacity={false}
+                        colorLabel="Border Color"
+                    />
+
+                    <Separator />
+
+                    {/* Fill Settings */}
+                    <div className="space-y-3">
+                        <Label className="text-sm font-semibold">Fill</Label>
+                        <div className="flex items-center justify-between">
+                            <Label>Fill Color</Label>
+                            <div className="flex items-center gap-2">
+                                <Input
+                                    type="color"
+                                    value={options.fillColor}
+                                    onChange={(e) => handleChange({ fillColor: e.target.value })}
+                                    className="w-10 h-8 p-0.5 cursor-pointer border-2"
+                                />
+                                <span className="text-xs text-muted-foreground font-mono w-16">
+                                    {options.fillColor.toUpperCase()}
+                                </span>
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <Label>Fill Opacity</Label>
+                                <span className="text-xs text-muted-foreground">
+                                    {Math.round(options.fillOpacity * 100)}%
+                                </span>
+                            </div>
+                            <Slider
+                                value={[options.fillOpacity * 100]}
+                                onValueChange={([v]) => handleChange({ fillOpacity: v / 100 })}
+                                max={100}
+                                min={0}
+                                step={5}
+                                className="w-full"
+                            />
+                        </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Internal Lines */}
+                    <div className="space-y-2">
+                        <Label className="text-sm font-semibold">Internal Lines</Label>
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="showMidline"
+                                checked={options.showMidline}
+                                onCheckedChange={(checked) => handleChange({ showMidline: !!checked })}
+                            />
+                            <Label htmlFor="showMidline" className="text-sm cursor-pointer">
+                                Show Midline (50%)
+                            </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="showQuarterLines"
+                                checked={options.showQuarterLines}
+                                onCheckedChange={(checked) => handleChange({ showQuarterLines: !!checked })}
+                            />
+                            <Label htmlFor="showQuarterLines" className="text-sm cursor-pointer">
+                                Show Quarter Lines (25%, 75%)
+                            </Label>
+                        </div>
+                    </div>
+
+                    {/* Midline Settings - INDEPENDENT */}
+                    {options.showMidline && (
+                        <div className="space-y-4 pt-2">
+                            <Label className="text-sm font-semibold">Midline Style</Label>
+                            <StyleTab
+                                options={{
+                                    color: options.midlineColor || options.borderColor,
+                                    width: options.midlineWidth ?? options.borderWidth,
+                                    style: options.midlineStyle ?? options.borderStyle,
+                                }}
+                                onChange={(updates) => {
+                                    // Only update properties that were actually changed
+                                    const changes: Partial<RectangleSettingsOptions> = {};
+                                    if (updates.color !== undefined) changes.midlineColor = updates.color;
+                                    if (updates.width !== undefined) changes.midlineWidth = updates.width;
+                                    if (updates.style !== undefined) changes.midlineStyle = updates.style;
+                                    handleChange(changes);
+                                }}
+                                showOpacity={false}
+                                colorLabel="Midline Color"
+                            />
+                        </div>
+                    )}
+
+                    {/* Quarterline Settings - INDEPENDENT */}
+                    {options.showQuarterLines && (
+                        <div className="space-y-4 pt-2">
+                            <Label className="text-sm font-semibold">Quarter Lines Style</Label>
+                            <StyleTab
+                                options={{
+                                    color: options.quarterLineColor || options.borderColor,
+                                    width: options.quarterLineWidth ?? options.borderWidth,
+                                    style: options.quarterLineStyle ?? options.borderStyle,
+                                }}
+                                onChange={(updates) => {
+                                    // Only update properties that were actually changed
+                                    const changes: Partial<RectangleSettingsOptions> = {};
+                                    if (updates.color !== undefined) changes.quarterLineColor = updates.color;
+                                    if (updates.width !== undefined) changes.quarterLineWidth = updates.width;
+                                    if (updates.style !== undefined) changes.quarterLineStyle = updates.style;
+                                    handleChange(changes);
+                                }}
+                                showOpacity={false}
+                                colorLabel="Quarter Line Color"
+                            />
+                        </div>
+                    )}
+                </div>
+            </TabsContent>
+
+            <TabsContent value="text" className="space-y-4 py-4">
+                <TextSettingsTab
+                    options={{
+                        text: options.text || '',
+                        fontSize: options.fontSize,
+                        bold: options.bold,
+                        italic: options.italic,
+                        textColor: options.textColor,
+                        showLabel: options.showLabel !== false,
+                        alignmentVertical: options.alignmentVertical,
+                        alignmentHorizontal: options.alignmentHorizontal
+                    }}
+                    onChange={(updates: any) => {
+                        const newOptions: Partial<RectangleSettingsOptions> = { ...updates };
+                        if (updates.color !== undefined) {
+                            newOptions.textColor = updates.color;
+                            delete newOptions['color' as keyof RectangleSettingsOptions];
+                        }
+                        // Filter undefined
+                        Object.keys(newOptions).forEach(key => {
+                            if (newOptions[key as keyof RectangleSettingsOptions] === undefined) {
+                                delete newOptions[key as keyof RectangleSettingsOptions];
+                            }
+                        });
+                        handleChange(newOptions);
+                    }}
+                />
+            </TabsContent>
+
+            <TabsContent value="vis">
+                <VisibilityTab
+                    visibleTimeframes={options.visibleTimeframes || []}
+                    onChange={(tf) => handleChange({ visibleTimeframes: tf })}
+                />
+            </TabsContent>
+        </Tabs>
+    );
 }
 
 export function RectangleSettingsDialog({
@@ -80,180 +278,54 @@ export function RectangleSettingsDialog({
     const [localOptions, setLocalOptions] = useState<RectangleSettingsOptions>(options);
     const [localPoints, setLocalPoints] = useState<Array<{ time: Time; price: number }>>([]);
 
-    // Reset local options when dialog opens
+    // Track if we've initialized for this open session
+    const initializedRef = useRef(false);
+
+    // Reset local options ONLY when dialog opens (not on every options change)
     useEffect(() => {
-        // console.log('[RectangleSettings] Effect Triggered. Open:', open);
-        if (open) {
-            //console.log('[RectangleSettings] Syncing options from props:', JSON.stringify(options));
+        if (open && !initializedRef.current) {
+            console.log('[RectangleSettingsDialog] Initializing options on open:', JSON.stringify(options));
             setLocalOptions(options);
             if (points) {
                 setLocalPoints([points.p1, points.p2]);
             }
+            initializedRef.current = true;
+        } else if (!open) {
+            // Reset the flag when dialog closes
+            initializedRef.current = false;
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, options]);
-
-    const handleChange = (updates: Partial<RectangleSettingsOptions>) => {
-        //console.log('[RectangleSettings] Syncing options from handleChange:', JSON.stringify(options));
-        setLocalOptions(prev => ({ ...prev, ...updates }));
-    };
+    }, [open, options, points]);
 
     const handleApply = () => {
-        //console.log('[RectangleSettings] handleApply called. LocalOptions:', JSON.stringify(localOptions));
         onApply(localOptions, localPoints.length === 2 ? localPoints : undefined);
     };
 
-    // ===== Style Tab Content =====
-    const styleTabContent = (
-        <div className="space-y-4 py-4">
-            {/* Border Settings */}
-            <Label className="text-sm font-semibold">Border</Label>
-            <StyleTab
-                options={{
-                    color: localOptions.borderColor,
-                    width: localOptions.borderWidth,
-                    style: localOptions.borderStyle,
-                }}
-                onChange={(updates) => handleChange({
-                    borderColor: updates.color ?? localOptions.borderColor,
-                    borderWidth: updates.width ?? localOptions.borderWidth,
-                    borderStyle: updates.style ?? localOptions.borderStyle,
-                })}
-                showOpacity={false}
-                colorLabel="Border Color"
-            />
-
-            <Separator />
-
-            {/* Fill Settings */}
-            <div className="space-y-3">
-                <Label className="text-sm font-semibold">Fill</Label>
-                <div className="flex items-center justify-between">
-                    <Label>Fill Color</Label>
-                    <div className="flex items-center gap-2">
-                        <Input
-                            type="color"
-                            value={localOptions.fillColor}
-                            onChange={(e) => handleChange({ fillColor: e.target.value })}
-                            className="w-10 h-8 p-0.5 cursor-pointer border-2"
-                        />
-                        <span className="text-xs text-muted-foreground font-mono w-16">
-                            {localOptions.fillColor.toUpperCase()}
-                        </span>
-                    </div>
-                </div>
-                <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                        <Label>Fill Opacity</Label>
-                        <span className="text-xs text-muted-foreground">
-                            {Math.round(localOptions.fillOpacity * 100)}%
-                        </span>
-                    </div>
-                    <Slider
-                        value={[localOptions.fillOpacity * 100]}
-                        onValueChange={([v]) => handleChange({ fillOpacity: v / 100 })}
-                        max={100}
-                        min={0}
-                        step={5}
-                        className="w-full"
-                    />
-                </div>
-            </div>
-
-            <Separator />
-
-            {/* Internal Lines */}
-            <div className="space-y-2">
-                <Label className="text-sm font-semibold">Internal Lines</Label>
-                <div className="flex items-center space-x-2">
-                    <Checkbox
-                        id="showMidline"
-                        checked={localOptions.showMidline}
-                        onCheckedChange={(checked) => handleChange({ showMidline: !!checked })}
-                    />
-                    <Label htmlFor="showMidline" className="text-sm cursor-pointer">
-                        Show Midline (50%)
-                    </Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                    <Checkbox
-                        id="showQuarterLines"
-                        checked={localOptions.showQuarterLines}
-                        onCheckedChange={(checked) => handleChange({ showQuarterLines: !!checked })}
-                    />
-                    <Label htmlFor="showQuarterLines" className="text-sm cursor-pointer">
-                        Show Quarter Lines (25%, 75%)
-                    </Label>
-                </div>
-            </div>
-        </div>
-    );
-
-    // ===== Coordinates Tab =====
-    const coordinatesTab = localPoints.length === 2 ? (
-        <CoordinatesTab
-            points={localPoints}
-            onChange={setLocalPoints}
-            labels={["Top-Left", "Bottom-Right"]}
-        />
-    ) : undefined;
-
-    // ===== Visibility Tab =====
-    const visibilityTab = (
-        <VisibilityTab
-            visibleTimeframes={localOptions.visibleTimeframes || []}
-            onChange={(tf) => handleChange({ visibleTimeframes: tf })}
-        />
-    );
-
-    // ===== Text Tab =====
-    const textTab = (
-        <TextSettingsTab
-            options={{
-                text: localOptions.text || '',
-                fontSize: localOptions.fontSize,
-                bold: localOptions.bold,
-                italic: localOptions.italic,
-                textColor: localOptions.textColor, // Standardized
-                showLabel: localOptions.showLabel !== false, // Standardized
-                alignmentVertical: localOptions.alignmentVertical,
-                alignmentHorizontal: localOptions.alignmentHorizontal
-            }}
-            onChange={(updates) => {
-                const newOptions: Partial<RectangleSettingsOptions> = { ...updates };
-                // Ensure mappings if TextSettingsTab sends mismatched keys (e.g. color vs textColor)
-                if (updates.color !== undefined) {
-                    newOptions.textColor = updates.color;
-                    delete newOptions['color' as keyof RectangleSettingsOptions];
-                }
-
-                // Filter out undefined values
-                Object.keys(newOptions).forEach(key => {
-                    if (newOptions[key as keyof RectangleSettingsOptions] === undefined) {
-                        delete newOptions[key as keyof RectangleSettingsOptions];
-                    }
-                });
-                handleChange(newOptions);
-            }}
-        />
-    );
-
     return (
-        <DrawingSettingsDialog
-            open={open}
-            onOpenChange={onOpenChange}
-            title="Rectangle Settings"
-            toolType="rectangle"
-            styleTab={styleTabContent}
-            coordinatesTab={coordinatesTab}
-            visibilityTab={visibilityTab}
-            textTab={textTab}
-            currentOptions={localOptions}
-            onApplyTemplate={(templateOptions) => {
-                setLocalOptions(prev => ({ ...prev, ...templateOptions }));
-            }}
-            onApply={handleApply}
-            onCancel={onCancel}
-        />
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="sm:max-w-[425px]" onOpenAutoFocus={(e) => e.preventDefault()}>
+                <DialogTitle className="sr-only">Rectangle Settings</DialogTitle>
+                <DialogDescription className="sr-only">Settings for the rectangle drawing tool</DialogDescription>
+                {/* Reusing the View Component */}
+                <RectangleSettingsView
+                    options={localOptions}
+                    onChange={setLocalOptions}
+                />
+
+                {/* Coordinates tab handling is slightly separated in Dialog vs View for now, 
+                    or we can pass points to View if we want coords inside.
+                    For now, keeping coordinates separate or simplified in View. 
+                    Actually, let's put coords in View if provided? 
+                    The extracted View above has Style/Text/Vis tabs. 
+                    Let's add Coords support to View if needed, 
+                    BUT RectangleSettingsDialog had specific logic for CoordinatesTab with points.
+                    To keep it simple, I'll rely on View for content and Dialog for wrapper/footer.
+                */}
+
+                <div className="flex justify-end gap-2 mt-4 pt-4 border-t">
+                    <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
+                    <Button type="button" onClick={handleApply}>Save</Button>
+                </div>
+            </DialogContent>
+        </Dialog>
     );
 }

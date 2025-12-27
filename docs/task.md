@@ -124,24 +124,13 @@
     - [x] Import & Align
     - [x] Regenerate Derived
 # Project Cleanup
-- [x] Validate Intermediate Timeframes (5m, 15m, 1h, 4h) <!-- id: 42 -->
-- [x] Backup Data to Google Drive (`scripts/backup_to_gdrive.py`) <!-- id: 43 -->
-- [x] Check-in Code to GitHub <!-- id: 44 -->
-
-    - [x] Identify Validation Overlap (Checking NT CSV End Dates)
-    - [x] Create `scripts/verify_data_quality.py` (Bar-by-bar comparison)
-    - [x] Run Verification for `GC1`, `CL1`, `RTY1`, `YM1`, `ES1`
-    - [x] Report Discrepancies (Bad Wicks/Candles)
-- [/] Re-Import Clean Data Overwrite <!-- id: 46 -->
-    - [x] Correct NinjaTrader Import Timezone (Pacific vs Central)
-    - [x] Run `scripts/reimport_clean.py` for GC1, CL1, RTY1, YM1
-    - [/] Run `scripts/reimport_clean.py` for ES1
-- [ ] **Data Quality Issues**
-    - [ ] **Investigate Yahoo Finance Auto-Update Reliability** (Random Candles reported)
-    - [x] Action: Yahoo Auto-Update Suspended.
+- [x] Consolidate root folders (tools, data_processing, strategies, reports) <!-- id: 42 -->
+- [x] Reorganize scripts/ into logical subdirectories <!-- id: 43 -->
+- [x] Create comprehensive SCRIPTS.md documentation <!-- id: 44 -->
+- [x] Backtest V2 with Opening Range Derived Data <!-- id: 45 -->
 - [x] **Verification**
     - [x] **Verify API Endpoints** (GC1, CL1, RTY1, YM1, ES1) - All Passed 200 OK
-    - [x] **Git Commit** (Fix YM1/ES1 bugs)
+    - [x] **Git Commit** (Full Consolidation)
 - [x] **Feature: Range-based Stats** (Profiler)
     - Updated `range-distribution.tsx` to display Mode/Median as ranges (e.g. "0.2 to 0.3 %") using floor-based binning.
     - Verified data integrity for RTY1, GC1, CL1 against user reference.

@@ -74,10 +74,27 @@ export const V2OptionAdapter = {
             }
         }
 
-        // Map top-level boolean flags for Rectangle internal lines
+        // Map boolean flags and styled internal lines for Rectangle
+        // Prioritize reading from options.rectangle (new structure) with fallback to root (legacy)
         if (type === 'rectangle') {
-            flat.showMidline = v2Options.showMidline;
-            flat.showQuarterLines = v2Options.showQuarterLines;
+            const rect = v2Options.rectangle;
+            // Prefer nested rectangle structure, fallback to root for backward compatibility
+            flat.showMidline = rect?.showMidline ?? v2Options.showMidline;
+            flat.showQuarterLines = rect?.showQuarterLines ?? v2Options.showQuarterLines;
+
+            // Map styled internal lines - prefer nested, fallback to root
+            const midline = rect?.midline || v2Options.midline;
+            if (midline) {
+                flat.midlineColor = toHex(midline.color);
+                flat.midlineWidth = midline.width;
+                flat.midlineStyle = midline.style;
+            }
+            const quarterLine = rect?.quarterLine || v2Options.quarterLine;
+            if (quarterLine) {
+                flat.quarterLineColor = toHex(quarterLine.color);
+                flat.quarterLineWidth = quarterLine.width;
+                flat.quarterLineStyle = quarterLine.style;
+            }
         }
 
         // Handle Text properties
@@ -193,8 +210,25 @@ export const V2OptionAdapter = {
 
         // Special V2 properties
         if (type === 'rectangle') {
-            if (v1Options.showMidline !== undefined) v2.showMidline = v1Options.showMidline;
-            if (v1Options.showQuarterLines !== undefined) v2.showQuarterLines = v1Options.showQuarterLines;
+            const rect = ensure(v2, 'rectangle');
+            if (v1Options.showMidline !== undefined) rect.showMidline = v1Options.showMidline;
+            if (v1Options.showQuarterLines !== undefined) rect.showQuarterLines = v1Options.showQuarterLines;
+
+            // Midline Styling
+            if (v1Options.midlineColor || v1Options.midlineWidth !== undefined || v1Options.midlineStyle !== undefined) {
+                const midline = ensure(v2, 'rectangle.midline');
+                if (v1Options.midlineColor) midline.color = v1Options.midlineColor;
+                if (v1Options.midlineWidth !== undefined) midline.width = v1Options.midlineWidth;
+                if (v1Options.midlineStyle !== undefined) midline.style = v1Options.midlineStyle;
+            }
+
+            // QuarterLine Styling
+            if (v1Options.quarterLineColor || v1Options.quarterLineWidth !== undefined || v1Options.quarterLineStyle !== undefined) {
+                const quarterLine = ensure(v2, 'rectangle.quarterLine');
+                if (v1Options.quarterLineColor) quarterLine.color = v1Options.quarterLineColor;
+                if (v1Options.quarterLineWidth !== undefined) quarterLine.width = v1Options.quarterLineWidth;
+                if (v1Options.quarterLineStyle !== undefined) quarterLine.style = v1Options.quarterLineStyle;
+            }
         }
 
         if (type === 'trend-line') {

@@ -434,6 +434,8 @@ export interface RectangleRendererData {
 	extend?: { left: boolean; right: boolean }; // Optional line extensions
 	showMidline?: boolean;
 	showQuarterLines?: boolean;
+	midline?: { color?: string; width?: number; style?: LineStyle }; // Added
+	quarterLine?: { color?: string; width?: number; style?: LineStyle }; // Added
 	hitTestBackground?: boolean;
 	toolDefaultHoverCursor?: PaneCursorType; // For hovering over border
 	toolDefaultDragCursor?: PaneCursorType;  // For dragging background
@@ -574,13 +576,32 @@ export class RectangleRenderer<HorzScaleItem> implements IPaneRenderer {
 
 					// Horizontal Midline
 					if (showMidline) {
+						const mColor = this._data!.midline?.color || borderColor;
+						const mWidth = this._data!.midline?.width ?? borderWidth;
+						const mStyle = this._data!.midline?.style ?? borderStyle;
+
+						ctx.beginPath(); // New path for style change
+						ctx.lineWidth = mWidth;
+						ctx.strokeStyle = mColor;
+						setLineStyle(ctx, mStyle);
+
 						const midY = minY + height / 2;
 						ctx.moveTo(extend?.left ? 0 : minX, midY);
 						ctx.lineTo(extend?.right ? mediaSize.width : maxX, midY);
+						ctx.stroke();
 					}
 
 					// Horizontal Quarter Lines
 					if (showQuarterLines) {
+						const qColor = this._data!.quarterLine?.color || borderColor;
+						const qWidth = this._data!.quarterLine?.width ?? borderWidth;
+						const qStyle = this._data!.quarterLine?.style ?? borderStyle;
+
+						ctx.beginPath(); // New path for style change
+						ctx.lineWidth = qWidth;
+						ctx.strokeStyle = qColor;
+						setLineStyle(ctx, qStyle);
+
 						const q1Y = minY + height * 0.25;
 						const q3Y = minY + height * 0.75;
 
@@ -588,11 +609,14 @@ export class RectangleRenderer<HorzScaleItem> implements IPaneRenderer {
 						ctx.moveTo(extend?.left ? 0 : minX, q1Y);
 						ctx.lineTo(extend?.right ? mediaSize.width : maxX, q1Y);
 
+						// Need to stroke before moving to Q3 if we want to be safe, but they share style
+						// Actually better to keep one path for same style
+
 						// Q3
 						ctx.moveTo(extend?.left ? 0 : minX, q3Y);
 						ctx.lineTo(extend?.right ? mediaSize.width : maxX, q3Y);
+						ctx.stroke();
 					}
-					ctx.stroke();
 				}
 
 			}

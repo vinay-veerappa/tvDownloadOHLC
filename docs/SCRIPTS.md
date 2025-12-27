@@ -10,14 +10,15 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 
 | Folder | Count | Status |
 |:---|:---:|:---|
-| `analysis/` | 38 | ⚠️ Contains duplicates |
+| `analysis/` | 40 | ⚠️ Contains duplicates |
 | `backtest/` | ~35 | ✅ Organized |
-| `data_processing/` | 40 | ✅ Organized into subfolders |
-| `debug/` | 45 | ⚠️ Many one-off scripts |
+| `data_processing/` | 42 | ✅ Organized into subfolders |
+| `debug/` | 47 | ⚠️ Many one-off scripts |
 | `derived/` | 9 | ✅ Core scripts |
 | `maintenance/` | 7 | ✅ Utilities |
 | `market_data/` | 10 | ✅ Active scripts |
-| `validation/` | 52 | ⚠️ Contains duplicates |
+| `tools/` | ~15 | 🛠️ Downloader tools |
+| `validation/` | 53 | ⚠️ Contains duplicates |
 | `streaming/` | ~12 | ✅ Schwab API |
 | `utils/` | ~10 | ✅ Shared libraries |
 

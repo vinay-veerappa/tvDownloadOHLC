@@ -318,6 +318,10 @@ export interface LineOptions {
 export interface RectangleOptions {
 	background: Omit<BackgroundOptions, 'inflation'>;
 	border: Omit<BorderOptions, 'highlight'>;
+	midline?: Omit<LineOptions, 'cap' | 'end' | 'extend' | 'join'>; // Added for separate styling
+	quarterLine?: Omit<LineOptions, 'cap' | 'end' | 'extend' | 'join'>; // Added for separate styling
+	showMidline?: boolean; // Keep distinct for toggling without losing style
+	showQuarterLines?: boolean;
 	extend: ExtendOptions;
 }
 
