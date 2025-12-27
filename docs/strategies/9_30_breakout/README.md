@@ -42,10 +42,13 @@ We have conducted extensive multi-year research (2016-2025) on the 9:30 breakout
 - **[Risk of Ruin](research/risk_of_ruin.md)**: Position sizing and drawdown analysis for various contract sizes.
 - **[Session Context](research/session_context.md)**: impact of overnight (GLOBEX) gaps and volume regimes on 9:30 breakout success.
 - **[Timing Analysis](research/timing_analysis.md)**: Optimization of the entry window. Best results found by entering only between 09:31 and 09:35 EST.
+- **[Loss Analysis & Mitigation](research/LOSS_ANALYSIS.md)**: Categorizes reasons for the ~38% win rate and identifies the Bear Regime as the primary avoidance zone.
 - **[Position Sizing Calculator](research/position_sizing_calculator.md)**: Practical guide for risk-adjusted contract sizing.
 - **[Detailed Analysis Report](research/analysis_report.md)**: A comprehensive summary of all strategy research findings.
 
 ### Key Performance Rules
+> [!CAUTION]
+> **The Bear Trap**: Win rate drops from **45% in Bull regimes** to just **18% in Bear regimes**. Mitigation research suggests skipping initial breakouts in Bear markets.
 > [!TIP]
 > **Best Exit Time**: Data suggests **10:00 AM EST** is the optimal balance between capturing the impulse and avoiding the mid-morning reversal, though EOD (4:00 PM) maximizes total PnL.
 > **Target Logic**: Setting TP at **80% of the opening candle range** (Dynamic TP) scales with volatility and yields the highest expectancy.
