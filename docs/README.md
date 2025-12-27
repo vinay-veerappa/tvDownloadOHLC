@@ -37,26 +37,29 @@ Main documentation for data acquisition, processing, and storage.
 
 ## 📈 Trading Strategies
 
-Strategy documentation and backtesting results.
+Strategy documentation organized by strategy type.
 
+### Standards
 - **[Backtest Standards](strategies/BACKTEST_STANDARDS.md)**: How to document and validate strategies.
-- **[9:30 NQ Breakout Strategy](strategies/9_30_NQ_STRATEGY.md)**: Opening range breakout for NQ.
-- **[9:30 NQ V2 Strategy](strategies/9_30_NQ_V2_STRATEGY.md)**: Enhanced version with filters.
-- **[Initial Balance Break Strategies](strategies/initial_balance_break/)**: IB break analysis (16 docs).
 
----
+### 9:30 Opening Range Breakout (`strategies/9_30_breakout/`)
+- **[9:30 NQ Strategy](strategies/9_30_breakout/9_30_NQ_STRATEGY.md)**: Original opening range breakout for NQ.
+- **[9:30 NQ V2 Strategy](strategies/9_30_breakout/9_30_NQ_V2_STRATEGY.md)**: Enhanced version with filters.
+- **[NQ 9:30 Backtest](strategies/9_30_breakout/nq_930_breakout.md)**: Backtest results and analysis.
 
-## 🎯 Expected Moves Analysis
+### Initial Balance Break (`strategies/initial_balance_break/`)
+- **[IB Break Strategies](strategies/initial_balance_break/)**: IB break analysis (16 docs).
+
+### Expected Moves (`strategies/expected_moves/`)
 
 Research on expected move calculations and trading applications.
 
-- **[Expected Moves README](expected_moves/README.md)**: Overview of EM methodology.
-- **[Data Dictionary](expected_moves/DATA_DICTIONARY.md)**: EM data fields and calculations.
-- **[Methodology Comparison](expected_moves/METHODOLOGY_COMPARISON.md)**: Straddle vs IV approaches.
-- **[ES Comprehensive Analysis](expected_moves/ES_COMPREHENSIVE_ANALYSIS.md)**: ES-specific findings.
-- **[Intraday Trading Playbook](expected_moves/INTRADAY_TRADING_PLAYBOOK.md)**: EM-based trading strategies.
-- **[Overnight Analysis](expected_moves/OVERNIGHT_ANALYSIS.md)**: Overnight session statistics.
-- **[Intraday S/R Analysis](expected_moves/INTRADAY_SR_ANALYSIS.md)**: Support/Resistance analysis.
+- **[Expected Moves README](strategies/expected_moves/README.md)**: Overview of EM methodology.
+- **[Data Dictionary](strategies/expected_moves/DATA_DICTIONARY.md)**: EM data fields and calculations.
+- **[Methodology Comparison](strategies/expected_moves/METHODOLOGY_COMPARISON.md)**: Straddle vs IV approaches.
+- **[ES Comprehensive Analysis](strategies/expected_moves/ES_COMPREHENSIVE_ANALYSIS.md)**: ES-specific findings.
+- **[Intraday Trading Playbook](strategies/expected_moves/INTRADAY_TRADING_PLAYBOOK.md)**: EM-based trading strategies.
+- **[Overnight Analysis](strategies/expected_moves/OVERNIGHT_ANALYSIS.md)**: Overnight session statistics.
 
 ---
 
@@ -74,7 +77,6 @@ Documentation for the session profiler feature.
 
 | Folder | Contents |
 |:---|:---|
-| `backtest/` | Backtesting system requirements |
 | `features/` | Feature-specific documentation |
 | `reference_data/` | Reference data files |
 | `research/` | Research notes and experiments |
