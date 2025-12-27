@@ -85,6 +85,37 @@ This folder contains documentation for the NQ 9:30 Opening Range Breakout strate
 
 ---
 
+## Research & Analysis
+
+We have conducted extensive multi-year research (2016-2025) on the 9:30 breakout strategy. Detailed reports are available in the [research/](research/) folder:
+
+- **[Win Rate Optimization](research/winrate_optimization.md)**: Analysis of trade frequency vs. quality.
+- **[Time Exit Analysis](research/time_exit_analysis.md)**: Comparing 9:45, 10:00, and EOD exits.
+- **[MFE Profit Targets](research/mfe_profit_targets.md)**: Statistical distribution of maximum favorable excursion.
+- **[Risk of Ruin](research/risk_of_ruin.md)**: Position sizing and drawdown analysis.
+- **[Session Context](research/session_context.md)**: Impact of overnight gaps and volume regimes.
+- [**Position Sizing Calculator**](research/position_sizing_calculator.md): Risk management and contract sizing.
+- **[Timing Analysis](research/timing_analysis.md)**: Optimal entry windows (09:31-09:35).
+
+### Key Research Insights
+> [!TIP]
+> **Best Exit Time**: Data suggests **10:00 AM EST** is the optimal balance between capturing the impulse and avoiding the mid-morning reversal.
+> **Target Logic**: Setting TP at **80% of the opening candle range** yields the highest expectancy across 10 years.
+> **Day Filter**: Tuesdays show a statistically significant lower win rate for pure breakouts; V2 incorporates this as a "No Trade" day.
+
+---
+
+## TradingView Scripts
+
+Custom PineScript indicators and strategies are located in the [pinescript/](pinescript/) folder:
+- **[ORB Indicator](pinescript/ORB_Indicator.pine)**: Visualizes the 9:30 range and expansion levels.
+- **[ORB Strategy](pinescript/ORB_Strategy.pine)**: Backtestable strategy component for TradingView.
+
+---
+
+
+---
+
 ## Implementation
 
 | Component | Path |
