@@ -5,9 +5,6 @@ This folder contains strategy documentation, backtesting results, and research f
 > [!TIP]
 > For backtest standards and data sources, see [BACKTEST_STANDARDS.md](BACKTEST_STANDARDS.md).
 
-> [!NOTE]
-> **TODO:** Reorganize `scripts/backtest/` to match this folder structure (e.g., `scripts/backtest/9_30_breakout/`, `scripts/backtest/initial_balance/`).
-
 ---
 
 ## Strategies Overview
@@ -30,11 +27,11 @@ Trades the breakout of the 9:30 AM opening candle on NQ.
 | [9_30_NQ_V2_STRATEGY.md](9_30_breakout/9_30_NQ_V2_STRATEGY.md) | Enhanced version with filters |
 | [nq_930_breakout.md](9_30_breakout/nq_930_breakout.md) | Backtest results and analysis |
 
-**Scripts:**
-- `scripts/backtest/verify_930_strategy.py` - Quick verification script
-- `scripts/backtest/run_930_v2_strategy.py` - V2 strategy runner
-- `scripts/backtest/compare_930_variants.py` - Variant comparison
-- `scripts/backtest/generate_930_charts.py` - Chart generation
+**Scripts:** (`scripts/backtest/9_30_breakout/`)
+- `verify_930_strategy.py` - Quick verification script
+- `run_930_v2_strategy.py` - V2 strategy runner
+- `compare_930_variants.py` - Variant comparison
+- `generate_930_charts.py` - Chart generation
 - `web/lib/backtest/strategies/nq-1min-strategy.ts` - TypeScript strategy class
 
 ---
