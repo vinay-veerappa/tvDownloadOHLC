@@ -2,6 +2,9 @@
 
 To ensure consistency across all strategy backtests and allow for "apples-to-apples" comparison, all backtest scripts and reports must adhere to the following standards.
 
+> [!TIP]
+> **Data Sources:** See [DERIVED_DATA.md](../data/DERIVED_DATA.md) for precomputed data (HOD/LOD, Profiler, Sessions) and [DATA_SOURCES.md](../data/DATA_SOURCES.md) for raw OHLC formats.
+
 ## 1. Metric Standardization
 All value-based metrics must be captured in **Percentages** relative to the Entry Price (or Open Price for context).
 
@@ -34,6 +37,7 @@ Every backtest run must generate a `details.csv` containing at least:
 *   `MAE_Pct`: Depth of pain.
 *   `MFE_Pct`: Max potential profit.
 *   `Exit_Reason`: TP, SL, TIME, EOD.
+*   `Chart_Link`: *(Future Enhancement)* Path/URL to annotated chart snapshot showing entry, exit, and key levels with metadata (date, time, strategy name, metrics).
 
 ## 3. Visualization Standards (Charts)
 All visual samples must include:
