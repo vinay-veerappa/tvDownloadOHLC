@@ -45,8 +45,10 @@ class RectanglePaneViewV2<HorzScaleItem> extends LineToolPaneView<HorzScaleItem>
                     radius: options.rectangle.border.radius,
                 },
                 extend: options.rectangle.extend,
-                showMidline: options.showMidline,
-                showQuarterLines: options.showQuarterLines,
+                showMidline: options.rectangle.showMidline,
+                showQuarterLines: options.rectangle.showQuarterLines,
+                midline: options.rectangle.midline,
+                quarterLine: options.rectangle.quarterLine,
                 hitTestBackground: false, // Let text hit test take precedence or handle background separately? valid point.
                 // Actually, let's keep hitTestBackground true for rect, and text generally sits on top.
                 toolDefaultHoverCursor: options.defaultHoverCursor,
@@ -54,8 +56,10 @@ class RectanglePaneViewV2<HorzScaleItem> extends LineToolPaneView<HorzScaleItem>
             });
 
             // Update Text Renderer
+            // FIX: Must deep copy text options because BaseLineTool mutates options in-place,
+            // and TextRenderer.setData checks for object equality. Without copy, before/after are same object.
             this._textRenderer.setData({
-                text: options.text,
+                text: deepCopy(options.text),
                 points: [this._points[0], this._points[1]], // Text uses the same defining points
                 hitTestBackground: false, // Text box background handles its own hit test if needed
                 toolDefaultHoverCursor: options.defaultHoverCursor,
@@ -121,10 +125,19 @@ const defaultOptions: LineToolRectangleOptions & LineToolOptionsCommon = {
     showPriceAxisLabels: true,
     showTimeAxisLabels: false,
     priceAxisLabelAlwaysVisible: false,
-    priceAxisLabelAlwaysVisible: false,
     timeAxisLabelAlwaysVisible: false,
     showMidline: false,
+    midline: {
+        color: '#2962FF',
+        width: 1,
+        style: 2, // Dashed
+    },
     showQuarterLines: false,
+    quarterLine: {
+        color: '#2962FF',
+        width: 1,
+        style: 3, // Dotted
+    },
 };
 
 export class RectangleV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {

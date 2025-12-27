@@ -23,6 +23,8 @@ import { ChartCursorOverlay } from "@/components/chart-cursor-overlay"
 import { VWAPSettings } from "@/lib/indicator-api"
 import { useChartSettings } from "@/hooks/use-chart-settings"
 import { ThemeParams } from "@/lib/themes"
+import { V2OptionAdapter } from "@/lib/charts/v2/utils/v2-option-adapter"
+import { BaseLineTool } from "@/lib/charts/v2/core/model/base-line-tool"
 import type { EMSettings } from './em-settings-dialog'
 import { ColorType } from "lightweight-charts"
 import { RangeInfoPanel } from "./range-info-panel"
@@ -41,7 +43,6 @@ import { TextSettings } from "@/components/drawing-settings/TextSettings"
 import { fetchProfilerStats, fetchLevelTouches, ProfilerSession, LevelTouchesResponse } from "@/lib/api/profiler"
 import { useChartPreferences } from "@/hooks/use-chart-preferences"
 import { V2SandboxManager } from "@/lib/charts/v2/sandbox-manager"
-import { V2OptionAdapter } from "@/lib/charts/v2/utils/v2-option-adapter"
 
 import type { SessionType } from './top-toolbar'
 
@@ -1064,8 +1065,46 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
             console.warn('[ChartContainer] handlePropertiesSave: No selected drawing!');
             return;
         }
-        if (selectedDrawingType !== 'daily-profiler' && selectedDrawingType !== 'hourly-profiler') {
 
+        if (selectedDrawingType === 'daily-profiler') {
+            if (sessionRangesRef.current) {
+                sessionRangesRef.current.applyOptions(options);
+            }
+            onIndicatorParamsChange?.('daily-profiler', options); // FIX: Persist settings
+            toast.success('Daily Profiler updated');
+        } else if (selectedDrawingType === 'hourly-profiler') {
+            if (hourlyProfilerRef.current) {
+                hourlyProfilerRef.current.applyOptions(options);
+            }
+            onIndicatorParamsChange?.('hourly-profiler', options);
+            toast.success('Hourly Profiler updated');
+        } else if (selectedDrawingType === 'anchored-text') {
+            if (primitives?.current) {
+                const primitive = primitives.current.find((p: any) => p._type === 'anchored-text');
+                primitive?.applyOptions?.(options);
+                toast.success('Watermark updated');
+            }
+        } else if (selectedDrawingType === 'range-extensions') {
+            console.log('[ChartContainer] Saving Range Extensions:', options); // DEBUG
+            if (rangeExtensionsRef.current) {
+                rangeExtensionsRef.current.updateOptions(options);
+            }
+            onIndicatorParamsChange?.('range-extensions', options);
+            toast.success('Range Extensions updated');
+        } else if (selectedDrawingType === 'opening-range') {
+            if (openingRangeRef.current) {
+                openingRangeRef.current.applyOptions(options);
+            }
+            onIndicatorParamsChange?.('opening-range', options);
+            toast.success('Opening Range updated');
+        } else if (selectedDrawingType === 'truth-profiler') {
+            if (truthProfilerRef.current) {
+                truthProfilerRef.current.applyOptions(options);
+            }
+            onIndicatorParamsChange?.('truth-profiler', options);
+            toast.success('Truth Profiler updated');
+        } else {
+            // General V2 / Standard Tool Logic
             console.log(`[ChartContainer] Processing save. Type: ${selectedDrawingType}`);
             console.log('[ChartContainer] Entering V2 update block.');
 
@@ -1150,106 +1189,100 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 console.error('[ChartContainer] Error saving property:', e);
                 toast.error('Failed to save properties');
             }
-        } else if (primitives?.current && selectedDrawingType === 'anchored-text') {
-            const primitive = primitives.current.find((p: any) => p._type === 'anchored-text');
-            primitive?.applyOptions?.(options);
-            toast.success('Watermark updated');
-        } else if (sessionRangesRef.current && selectedDrawingType === 'daily-profiler') {
-            sessionRangesRef.current.applyOptions(options);
-            onIndicatorParamsChange?.('daily-profiler', options); // FIX: Persist settings
-            toast.success('Daily Profiler updated');
-        } else if (selectedDrawingType === 'hourly-profiler') {
-            // ...
-            if (hourlyProfilerRef.current) {
-                hourlyProfilerRef.current.applyOptions(options);
-            }
-            onIndicatorParamsChange?.('hourly-profiler', options);
-            toast.success('Hourly Profiler updated');
-        } else if (selectedDrawingType === 'range-extensions') {
-            console.log('[ChartContainer] Saving Range Extensions:', options); // DEBUG
-            if (rangeExtensionsRef.current) {
-                rangeExtensionsRef.current.updateOptions(options);
-            }
-            onIndicatorParamsChange?.('range-extensions', options);
-            toast.success('Range Extensions updated');
-        } else if (selectedDrawingType === 'opening-range') {
-            if (openingRangeRef.current) {
-                openingRangeRef.current.applyOptions(options);
-            }
-            onIndicatorParamsChange?.('opening-range', options);
-            toast.success('Opening Range updated');
-        } else if (selectedDrawingType === 'truth-profiler') {
-            if (truthProfilerRef.current) {
-                truthProfilerRef.current.applyOptions(options);
-            }
-            onIndicatorParamsChange?.('truth-profiler', options);
-            toast.success('Truth Profiler updated');
         }
     };
 
     const handleEditDrawing = (id: string) => {
-        // Legacy drawingManager.getDrawing logic removed.
-        const drawing = null;
+        let drawing: any = null;
+
+        // 1. Check Primitives (Drawings, Annotations)
+        if (primitives?.current) {
+            // Some primitives might use a function for ID, others a property
+            drawing = primitives.current.find((p: any) => {
+                const pId = typeof p.id === 'function' ? p.id() : (p._id || p.id);
+                return pId === id;
+            });
+        }
+
+        // 2. Check V2 Tools (Sandbox) - NEW
+        if (!drawing && v2SandboxRef.current) {
+            const tool = v2SandboxRef.current.plugin.getLineTool(id);
+            if (tool) {
+                drawing = tool;
+            }
+        }
+
+        // 3. Check Specific Indicators (Ref-base)
+        if (!drawing) {
+            if (id === 'watermark' && primitives?.current) {
+                drawing = primitives.current.find((p: any) => p._type === 'anchored-text');
+            } else if (id === 'daily-profiler') {
+                drawing = sessionRangesRef.current;
+            } else if (id === 'hourly-profiler') {
+                drawing = hourlyProfilerRef.current;
+            } else if (id === 'range-extensions') {
+                drawing = rangeExtensionsRef.current;
+            } else if (id === 'opening-range') {
+                drawing = openingRangeRef.current;
+            } else if (id === 'truth-profiler') {
+                drawing = truthProfilerRef.current;
+            }
+        }
+
+        // 4. Open Properties or Fallback
         if (drawing) {
-            // ...
-        } else if (id === 'watermark' && primitives?.current) {
-            const p = primitives.current.find((p: any) => p._type === 'anchored-text');
-            if (p) {
-                onSelectionChange?.({ type: 'indicator', id: 'watermark' });
-                openProperties(p);
-            }
-        } else if (id === 'daily-profiler' && sessionRangesRef.current) {
-            // Support editing Daily Profiler
-            onSelectionChange?.({ type: 'indicator', id: 'daily-profiler' });
-            openProperties(sessionRangesRef.current);
-        } else if (id === 'hourly-profiler') {
-            // Support editing Hourly Profiler - even if disabled (ref is null)
-            onSelectionChange?.({ type: 'indicator', id: 'hourly-profiler' });
-            if (hourlyProfilerRef.current) {
-                openProperties(hourlyProfilerRef.current);
+            // Check if it's a V2 tool. BaseLineTool instances have a 'toolType' property and 'options()' method.
+            // We prioritize V2 path if either exists to capture tools found in primitives list.
+            const isV2Tool = (drawing.toolType && typeof drawing.toolType === 'string') ||
+                (typeof drawing.options === 'function');
+
+            if (isV2Tool) {
+                // Determine tool type for adapter
+                const toolType = drawing.toolType || (drawing instanceof BaseLineTool ? (drawing as any).toolType : 'unknown');
+                // For V2 tools, we need to adapt options to V1 flat format for the UI
+                try {
+                    const v2Options = typeof drawing.options === 'function' ? drawing.options() : drawing._options;
+
+                    if (v2Options && toolType) {
+                        if (toolType.toLowerCase() === 'rectangle') {
+                            const flatOptions = V2OptionAdapter.toV1FlatOptions(v2Options, 'rectangle');
+                            setSelectedDrawingOptions(flatOptions);
+                            setSelectedDrawingType('rectangle');
+                            selectedDrawingRef.current = drawing;
+                            setRectangleSettingsOpen(true);
+                        } else {
+                            const flatOptions = V2OptionAdapter.toV1FlatOptions(v2Options, toolType.toLowerCase());
+                            setSelectedDrawingOptions(flatOptions);
+                            setSelectedDrawingType(toolType.toLowerCase());
+                            selectedDrawingRef.current = drawing; // Set reference for save
+                            setPropertiesModalOpen(true);
+                        }
+                    } else {
+                        console.warn('[ChartContainer] V2 Tool found but options or type missing', toolType);
+                        openProperties(drawing); // Fallback
+                    }
+                } catch (e) {
+                    console.error('[ChartContainer] Error opening properties for V2 tool:', e);
+                    openProperties(drawing); // Fallback
+                }
             } else {
-                // Fallback for disabled state
-                const currentParams = indicatorParams?.['hourly-profiler'] || {};
-                setSelectedDrawingOptions(currentParams);
-                setSelectedDrawingType('hourly-profiler');
-                setPropertiesModalOpen(true);
+                // Classic Primitive
+                openProperties(drawing);
             }
-        } else if (id === 'range-extensions') {
-            onSelectionChange?.({ type: 'indicator', id: 'range-extensions' });
-            if (rangeExtensionsRef.current) {
-                openProperties(rangeExtensionsRef.current);
-                setRangeData(rangeExtensionsRef.current.data); // Sync data for panel
-            } else {
-                const currentParams = indicatorParams?.['range-extensions'] || {};
-                setSelectedDrawingOptions(currentParams);
-                setSelectedDrawingType('range-extensions');
-                setPropertiesModalOpen(true);
-            }
-        } else if (id === 'opening-range') {
-            onSelectionChange?.({ type: 'indicator', id: 'opening-range' });
-            if (openingRangeRef.current) {
-                openProperties(openingRangeRef.current);
-            } else {
-                const currentParams = indicatorParams?.['opening-range'] || {};
-                setSelectedDrawingOptions(currentParams);
-                setSelectedDrawingType('opening-range');
-                setPropertiesModalOpen(true);
-            }
-        } else if (id === 'truth-profiler') {
-            onSelectionChange?.({ type: 'indicator', id: 'truth-profiler' });
-            if (truthProfilerRef.current) {
-                openProperties(truthProfilerRef.current);
-            } else {
-                const currentParams = indicatorParams?.['truth-profiler'] || {};
-                setSelectedDrawingOptions(currentParams);
-                setSelectedDrawingType('truth-profiler');
-                setPropertiesModalOpen(true);
-            }
+            onSelectionChange?.({ type: 'drawing', id: id });
         } else if (id === 'expected-move') {
-            onSelectionChange?.({ type: 'indicator', id: 'expected-move' });
-            // Custom dialog for EM
-            if (onOpenEMSettings) {
-                onOpenEMSettings();
+            if (onOpenEMSettings) onOpenEMSettings();
+        } else {
+            // 5. Fallback for Standard Indicators (LineSeries based)
+            // They don't have a "primitive" object usually, but we have their params
+            if (indicatorParams && indicatorParams[id]) {
+                setSelectedDrawingOptions(indicatorParams[id]);
+                setSelectedDrawingType(id);
+                setPropertiesModalOpen(true);
+            } else {
+                console.warn(`[ChartContainer] Could not find drawing or indicator with ID: ${id}`);
+                // Try to open properties modal anyway if we can guess the type?
+                // Better to fail gracefully.
             }
         }
     };
@@ -2026,6 +2059,63 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     setTextSettingsOpen(false);
                 }}
                 onCancel={() => setTextSettingsOpen(false)}
+            />
+
+            {/* Rectangle Settings Dialog */}
+            <RectangleSettingsDialog
+                open={rectangleSettingsOpen}
+                onOpenChange={setRectangleSettingsOpen}
+                options={{
+                    borderColor: selectedDrawingOptions?.borderColor || '#2962FF',
+                    borderWidth: selectedDrawingOptions?.borderWidth ?? 1,
+                    borderStyle: selectedDrawingOptions?.borderStyle ?? 0,
+                    fillColor: selectedDrawingOptions?.fillColor || '#2962FF',
+                    fillOpacity: selectedDrawingOptions?.fillOpacity ?? 0.2,
+                    showMidline: selectedDrawingOptions?.showMidline ?? false,
+                    showQuarterLines: selectedDrawingOptions?.showQuarterLines ?? false,
+                    // Text
+                    text: selectedDrawingOptions?.text,
+                    textColor: selectedDrawingOptions?.textColor,
+                    fontSize: selectedDrawingOptions?.fontSize,
+                    bold: selectedDrawingOptions?.bold,
+                    italic: selectedDrawingOptions?.italic,
+                    showLabel: selectedDrawingOptions?.showLabel,
+                    alignmentVertical: selectedDrawingOptions?.alignmentVertical,
+                    alignmentHorizontal: selectedDrawingOptions?.alignmentHorizontal,
+                    // Internal Style - Add fallbacks to prevent undefined values
+                    midlineColor: selectedDrawingOptions?.midlineColor || selectedDrawingOptions?.borderColor || '#2962FF',
+                    midlineWidth: selectedDrawingOptions?.midlineWidth ?? selectedDrawingOptions?.borderWidth ?? 1,
+                    midlineStyle: selectedDrawingOptions?.midlineStyle ?? selectedDrawingOptions?.borderStyle ?? 0,
+                    quarterLineColor: selectedDrawingOptions?.quarterLineColor || selectedDrawingOptions?.borderColor || '#2962FF',
+                    quarterLineWidth: selectedDrawingOptions?.quarterLineWidth ?? selectedDrawingOptions?.borderWidth ?? 1,
+                    quarterLineStyle: selectedDrawingOptions?.quarterLineStyle ?? selectedDrawingOptions?.borderStyle ?? 0,
+                    visibleTimeframes: selectedDrawingOptions?.visibleTimeframes
+                }}
+                points={(() => {
+                    const drawing = selectedDrawingRef.current;
+                    if (!drawing) return undefined;
+                    // Logic to extract points if needed, or pass undefined to let dialog handle existing logic?
+                    // RectangleSettingsDialog expects {p1, p2} if we want to edit coordinates.
+                    // V2 Rectangles have _p1, _p2 or use points() accessor.
+                    if (drawing.points && typeof drawing.points === 'function') {
+                        const pts = drawing.points();
+                        return (pts && pts.length >= 2) ? { p1: pts[0], p2: pts[1] } : undefined;
+                    }
+                    if (drawing._p1 && drawing._p2) return { p1: drawing._p1, p2: drawing._p2 };
+                    return undefined;
+                })()}
+                onApply={(opts, newPoints) => {
+                    handlePropertiesSave(opts);
+                    // Handle points update if supported
+                    if (newPoints && selectedDrawingRef.current) {
+                        // Update points logic for V2...
+                        // Usually handlePropertiesSave handles options.
+                        // Points might need separate handling or updated V2 method.
+                        // For now just focus on style/options.
+                    }
+                    setRectangleSettingsOpen(false);
+                }}
+                onCancel={() => setRectangleSettingsOpen(false)}
             />
 
             {/* New TrendLine Settings Dialog */}

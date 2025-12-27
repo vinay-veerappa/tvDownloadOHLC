@@ -22,6 +22,7 @@ import { OpeningRangeSettingsView } from "./settings/opening-range-settings-view
 import { OpeningRangeOptions } from "@/lib/charts/indicators/opening-range"
 import { TruthProfilerSettingsView } from "./settings/truth-profiler-settings-view"
 import { TruthProfilerOptions } from "@/lib/charts/indicators/truth-profiler"
+import { RectangleSettingsView } from "./drawing-settings/RectangleSettings"
 
 interface PropertiesModalProps {
     open: boolean;
@@ -280,6 +281,8 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
                         <OpeningRangeSettingsView initialOptions={openingRangeOptions} onChange={(updates) => setOpeningRangeOptions(prev => prev ? ({ ...prev, ...updates } as OpeningRangeOptions) : null)} ticker={ticker} />
                     ) : drawingType === 'truth-profiler' && truthProfilerOptions ? (
                         <TruthProfilerSettingsView initialOptions={truthProfilerOptions} onChange={(updates) => setTruthProfilerOptions(prev => prev ? ({ ...prev, ...updates } as TruthProfilerOptions) : null)} />
+                    ) : drawingType === 'rectangle' ? (
+                        <RectangleSettingsView options={options} onChange={(newOptions) => setOptions(newOptions)} />
                     ) : (
                         <Tabs defaultValue="style" className="w-full flex-1 flex flex-col min-h-0">
                             <TabsList className="grid w-full grid-cols-3 shrink-0">
@@ -435,33 +438,78 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
                                                             <div className="flex items-center gap-2">
                                                                 <input
                                                                     type="checkbox"
-                                                                    checked={options.midline?.visible}
-                                                                    onChange={(e) => handleChange('midline', { ...options.midline, visible: e.target.checked })}
+                                                                    checked={options.showMidline}
+                                                                    onChange={(e) => handleChange('showMidline', e.target.checked)}
                                                                     title="Midline Visibility"
                                                                     aria-label="Midline Visibility"
                                                                 />
                                                                 <span className="text-xs w-16">Midline</span>
-                                                                <Input type="color" title="Midline Color" aria-label="Midline Color" value={options.midline?.color || '#2962FF'} onChange={(e) => handleChange('midline', { ...options.midline, color: e.target.value })} className="w-8 h-6 p-0" />
+                                                                <Input
+                                                                    type="color"
+                                                                    title="Midline Color"
+                                                                    aria-label="Midline Color"
+                                                                    value={options.midlineColor || options.borderColor || '#2962FF'}
+                                                                    onChange={(e) => handleChange('midlineColor', e.target.value)}
+                                                                    className="w-8 h-6 p-0"
+                                                                />
                                                                 <select
                                                                     className="h-6 text-xs border rounded"
-                                                                    value={options.midline?.width || 1}
-                                                                    onChange={(e) => handleChange('midline', { ...options.midline, width: parseInt(e.target.value) })}
+                                                                    value={options.midlineWidth || options.borderWidth || 1}
+                                                                    onChange={(e) => handleChange('midlineWidth', parseInt(e.target.value))}
                                                                     title="Midline Width"
                                                                     aria-label="Midline Width"
                                                                 >
                                                                     {[1, 2, 3, 4].map(w => <option key={w} value={w}>{w}px</option>)}
                                                                 </select>
+                                                                <select
+                                                                    className="h-6 text-xs border rounded"
+                                                                    value={options.midlineStyle !== undefined ? options.midlineStyle : (options.borderStyle || 2)}
+                                                                    onChange={(e) => handleChange('midlineStyle', parseInt(e.target.value))}
+                                                                    title="Midline Style"
+                                                                    aria-label="Midline Style"
+                                                                >
+                                                                    <option value={0}>Solid</option>
+                                                                    <option value={1}>Dotted</option>
+                                                                    <option value={2}>Dashed</option>
+                                                                </select>
                                                             </div>
                                                             <div className="flex items-center gap-2">
                                                                 <input
                                                                     type="checkbox"
-                                                                    checked={options.quarterLines?.visible}
-                                                                    onChange={(e) => handleChange('quarterLines', { ...options.quarterLines, visible: e.target.checked })}
+                                                                    checked={options.showQuarterLines}
+                                                                    onChange={(e) => handleChange('showQuarterLines', e.target.checked)}
                                                                     title="Quarters Visibility"
                                                                     aria-label="Quarters Visibility"
                                                                 />
                                                                 <span className="text-xs w-16">Quarters</span>
-                                                                <Input type="color" title="Quarters Color" aria-label="Quarters Color" value={options.quarterLines?.color || '#2962FF'} onChange={(e) => handleChange('quarterLines', { ...options.quarterLines, color: e.target.value })} className="w-8 h-6 p-0" />
+                                                                <Input
+                                                                    type="color"
+                                                                    title="Quarters Color"
+                                                                    aria-label="Quarters Color"
+                                                                    value={options.quarterLineColor || options.borderColor || '#2962FF'}
+                                                                    onChange={(e) => handleChange('quarterLineColor', e.target.value)}
+                                                                    className="w-8 h-6 p-0"
+                                                                />
+                                                                <select
+                                                                    className="h-6 text-xs border rounded"
+                                                                    value={options.quarterLineWidth || options.borderWidth || 1}
+                                                                    onChange={(e) => handleChange('quarterLineWidth', parseInt(e.target.value))}
+                                                                    title="Quarters Width"
+                                                                    aria-label="Quarters Width"
+                                                                >
+                                                                    {[1, 2, 3, 4].map(w => <option key={w} value={w}>{w}px</option>)}
+                                                                </select>
+                                                                <select
+                                                                    className="h-6 text-xs border rounded"
+                                                                    value={options.quarterLineStyle !== undefined ? options.quarterLineStyle : (options.borderStyle || 1)}
+                                                                    onChange={(e) => handleChange('quarterLineStyle', parseInt(e.target.value))}
+                                                                    title="Quarters Style"
+                                                                    aria-label="Quarters Style"
+                                                                >
+                                                                    <option value={0}>Solid</option>
+                                                                    <option value={1}>Dotted</option>
+                                                                    <option value={2}>Dashed</option>
+                                                                </select>
                                                             </div>
                                                         </div>
                                                     </div>
