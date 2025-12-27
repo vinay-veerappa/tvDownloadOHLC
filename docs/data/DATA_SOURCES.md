@@ -2,6 +2,9 @@
 
 This document describes the various data sources used by the trading platform and how to import data from each.
 
+> [!TIP]
+> For **file locations, date ranges, and data quality issues**, see [DATA_PIPELINE.md](DATA_PIPELINE.md#11-source-file-locations--inventory).
+
 ## Overview
 
 | Source | Format | Timezone | Conversion Script |

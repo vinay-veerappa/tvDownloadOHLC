@@ -68,6 +68,16 @@
     ```
 5.  Open [http://localhost:3000](http://localhost:3000)
 
+### Quick Start Scripts (Windows)
+
+For convenience, use these batch files:
+
+| Script | Purpose |
+|:---|:---|
+| `start_web.bat` | Start Next.js frontend |
+| `start_api.bat` | Start FastAPI backend |
+| `start_llm.bat` | Start Ollama LLM server |
+
 ## 📖 Documentation
 
 See [`docs/README.md`](docs/README.md) for the full documentation index including:
