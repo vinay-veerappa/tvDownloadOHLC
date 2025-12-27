@@ -58,7 +58,7 @@ This strategy is based on the volatility injection at the US Equities Open (9:30
 | :--- | :--- | :--- |
 | **TS Logic** | `web/lib/backtest/strategies/nq-1min-strategy.ts` | Core Strategy Class implementation |
 | **TS Runner** | `scripts/backtest/full-scale-backtest.ts` | 10-Year Backtest Runner |
-| **Verification Script** | `scripts/backtest/verify_930_strategy.py` | Python script for quick logic verification |
+| **Verification Script** | `scripts/backtest/9_30_breakout/verify_930_strategy.py` | Python script for quick logic verification |
 
 ### Verification Results (Dec 2025)
 **Date**: 2025-12-17
