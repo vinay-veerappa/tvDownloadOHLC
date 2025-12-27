@@ -10,14 +10,14 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 
 | Folder | Count | Status |
 |:---|:---:|:---|
-| `analysis/` | 37 | ⚠️ Contains duplicates |
-| `backtest/` | ~15 | ✅ Organized |
-| `data_processing/` | 36 | ✅ Organized into subfolders |
-| `debug/` | 43 | ⚠️ Many one-off scripts |
+| `analysis/` | 38 | ⚠️ Contains duplicates |
+| `backtest/` | ~35 | ✅ Organized |
+| `data_processing/` | 40 | ✅ Organized into subfolders |
+| `debug/` | 45 | ⚠️ Many one-off scripts |
 | `derived/` | 9 | ✅ Core scripts |
 | `maintenance/` | 7 | ✅ Utilities |
 | `market_data/` | 10 | ✅ Active scripts |
-| `validation/` | 50 | ⚠️ Contains duplicates |
+| `validation/` | 52 | ⚠️ Contains duplicates |
 | `streaming/` | ~12 | ✅ Schwab API |
 | `utils/` | ~10 | ✅ Shared libraries |
 
@@ -75,6 +75,7 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 | `enhanced_backtest_engine.py` | Enhanced backtest with more features |
 | `9_30_breakout/verify_930_strategy.py` | 9:30 strategy verification |
 | `9_30_breakout/run_930_v2_strategy.py` | Run V2 strategy |
+| `initial_balance/*.py` | (15 files) IB Break & Pullback logic |
 | `ICT/*.py` | 10 ICT bias strategies |
 
 ---
