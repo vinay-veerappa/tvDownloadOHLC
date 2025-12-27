@@ -566,5 +566,5 @@ The **Initial Balance Break with Fibonacci 38.2% Pullback** strategy is a profit
 
 **Files**:
 - Strategy Code: `strategies/initial_balance_pullback.py`
-- Backtest Engine: `scripts/enhanced_backtest_engine.py`
+- Backtest Engine: `scripts/backtest/enhanced_backtest_engine.py`
 - Results: `docs/strategies/initial_balance_break/`

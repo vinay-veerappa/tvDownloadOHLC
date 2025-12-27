@@ -21,7 +21,7 @@ We support two primary sources, each with specific "quirks" handled by our scrip
 *   **Format:** Comma-delimited (`,`).
 *   **Timezone:** UTC (Unix timestamps).
 *   **Quirk:** Standard format, easiest to work with.
-*   **Handling Script:** `scripts/convert_all_csv.py`
+*   **Handling Script:** `scripts/data_processing/convert/convert_all_csv.py`
 
 ### Source B: BacktestMarket.com
 *   **Origin:** Purchased historical data.
@@ -30,7 +30,7 @@ We support two primary sources, each with specific "quirks" handled by our scrip
 *   **Quirks:**
     *   Date Format is **DD/MM/YYYY** (European). Warning: `09/11/2025` is Nov 9th, not Sep 11th.
     *   No header row.
-*   **Handling Script:** `scripts/convert_backtestmarket.py`
+*   **Handling Script:** `scripts/data_processing/convert/convert_backtestmarket.py`
     *   *Logic:* identifying these files automatically or manual selection required.
 
 ---
@@ -206,7 +206,7 @@ This table provides a Single Source of Truth for all data operations. Use full p
 
 | Category | Task | Script Path | Notes |
 | :--- | :--- | :--- | :--- |
-| **Ingestion** | Bulk TV CSV Import | `scripts/data_processing/convert_all_csv.py` | Handles standard TV exports recursively. |
+| **Ingestion** | Bulk TV CSV Import | `scripts/data_processing/convert/convert_all_csv.py` | Handles standard TV exports recursively. |
 |  | NinjaTrader Import | `scripts/data_processing/import_ninjatrader.py` | SOP for historical high-res data. |
 |  | Intraday Update (YF) | `scripts/market_data/update_intraday.py` | **Suspended** (Dec 2025) in favor of NinjaTrader. |
 | **Processing**| Upsample (1m-4h) | `scripts/data_processing/resample_parquet.py` | Generates intermediate timeframes. |
@@ -214,7 +214,7 @@ This table provides a Single Source of Truth for all data operations. Use full p
 |  | Daily HOD/LOD | `scripts/derived/precompute_daily_hod_lod.py` | Critical for scatter plots. |
 |  | Profiler Stats | `scripts/derived/precompute_profiler.py` | Generates `{ticker}_profiler.json`. |
 |  | Level Touches | `scripts/derived/precompute_level_touches.py` | Generates `{ticker}_level_touches.json`. |
-|  | Web JSON Chunks | `scripts/data_processing/convert_to_chunked_json.py` | Optimizes data for frontend. |
+|  | Web JSON Chunks | `scripts/data_processing/convert/convert_to_chunked_json.py` | Optimizes data for frontend. |
 | **Analysis** | Data Inventory | `scripts/analysis/generate_coverage_report.py` | Updates `DATA_COVERAGE_REPORT.md`. |
 |  | Continuity Check | `scripts/analysis/check_data_continuity.py` | Validates no gaps in history. |
 
