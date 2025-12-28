@@ -373,7 +373,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				double rSize = rHigh - rLow;
 				double rPct = (rSize / BarsArray[0].GetOpen(0)) * 100;
 				double riskAmt = InitialCapital * (RiskPercent / 100);
-				int qty = (int)Math.Max(1, Math.Floor(riskAmt / (rSize * Instrument.MasterInstrument.PointValue)));
+				int dashQty = (int)Math.Max(1, Math.Floor(riskAmt / (rSize * Instrument.MasterInstrument.PointValue)));
 
 				string diagInfo = string.Format("{0} / {1}", isFiltered ? "FILT" : "OK", dashCanTrade ? "YES" : "NO");
 				
@@ -383,7 +383,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				string rangeWarning = isRangeTooBig ? " ⚠️TOO BIG" : "";
 
 				string hud = string.Format("REGIME: {0}\nVVIX: {1:F1} ({2})\nRANGE: {3:F2} pts ({4:F3}%){9}\nMODEL: {5}\nSIZE: {6} Lots\nSTATUS: {7}\nDIAG: {8}", 
-					isBull ? "BULL" : "BEAR", VVIX_Open, vvixStatus, rSize, rPct, EntryModel, qty, status, diagInfo, rangeWarning);
+					isBull ? "BULL" : "BEAR", VVIX_Open, vvixStatus, rSize, rPct, EntryModel, dashQty, status, diagInfo, rangeWarning);
 				
 				Draw.TextFixed(this, "HUD", hud, TextPosition.TopRight, Brushes.White, new Gui.Tools.SimpleFont("Arial", 11), Brushes.Black, Brushes.DimGray, 90);
 
