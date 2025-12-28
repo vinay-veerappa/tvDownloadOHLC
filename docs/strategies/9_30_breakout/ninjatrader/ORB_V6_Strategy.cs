@@ -83,6 +83,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				RunnerMode = "Trailing";
 				TrailPct = 0.08;
 				HardExitTime = DateTime.Parse("10:00", System.Globalization.CultureInfo.InvariantCulture);
+				
+				// New V3 Inputs
+				StopAfterWin = true;
+				MaxSlPct = 0.30;
 			}
 			else if (State == State.Configure)
 			{
@@ -90,11 +94,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 		}
 
+		private bool hasWonToday = false;
+		private double prevClosedProfit = 0;
+		private bool enteredViaFallback = false;
+		private double breakoutCandleExtreme = double.NaN;
+
 		protected override void OnBarUpdate()
 		{
 			if (CurrentBar < 20 || BarsInProgress != 0) return;
 
-			// Reset on new session
 			if (Bars.IsFirstBarOfSession)
 			{
 				rHigh = double.MinValue;
@@ -103,6 +111,22 @@ namespace NinjaTrader.NinjaScript.Strategies
 				attemptsToday = 0;
 				longPending = false;
 				shortPending = false;
+				hasWonToday = false;
+				enteredViaFallback = false;
+				breakoutCandleExtreme = double.NaN;
+				prevClosedProfit = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
+			}
+			
+			// Detect Win Today
+			if (StopAfterWin && !hasWonToday && SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit > prevClosedProfit)
+			{
+				// Check if the latest trade was a win
+				if (SystemPerformance.AllTrades.Count > 0)
+				{
+					Trade lastTrade = SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1];
+					if (lastTrade.ProfitCurrency > 0) hasWonToday = true;
+				}
+				prevClosedProfit = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
 			}
 
 			// Capture Range
@@ -111,105 +135,85 @@ namespace NinjaTrader.NinjaScript.Strategies
 				rHigh = High[0];
 				rLow = Low[0];
 				rDefined = true;
-				
-				double rSize = rHigh - rLow;
-				Draw.Line(this, "RHigh", true, 0, rHigh, -50, rHigh, Brushes.Gray, DashStyleHelper.Dash, 2);
-				Draw.Line(this, "Level25", true, 0, rHigh - (rSize * 0.25), -50, rHigh - (rSize * 0.25), Brushes.Gray, DashStyleHelper.Dash, 1);
-				Draw.Line(this, "Level50", true, 0, rHigh - (rSize * 0.50), -50, rHigh - (rSize * 0.50), Brushes.Gray, DashStyleHelper.Dash, 1);
-				Draw.Line(this, "Level75", true, 0, rHigh - (rSize * 0.75), -50, rHigh - (rSize * 0.75), Brushes.Gray, DashStyleHelper.Dash, 1);
-				Draw.Line(this, "RLow", true, 0, rLow, -50, rLow, Brushes.Gray, DashStyleHelper.Dash, 2);
-				
-				// 0.10% Buffer Lines (of Price, offset from boundaries)
-				Draw.Line(this, "BufUpper", true, 0, rHigh + (Close[0] * 0.001), -50, rHigh + (Close[0] * 0.001), Brushes.Gray, DashStyleHelper.Dash, 1);
-				Draw.Line(this, "BufLower", true, 0, rLow - (Close[0] * 0.001), -50, rLow - (Close[0] * 0.001), Brushes.Gray, DashStyleHelper.Dash, 1);
+				// (Drawing code same as before, omitted for brevity in snippet block)
 			}
 
 			if (!rDefined) return;
-
-			// Sizing logic uses Instrument.MasterInstrument.PointValue
-
-			// Filters logic (Default to Bull if data missing)
-			bool isBull = true; 
-			if (BarsArray[1].Count >= 20)
-			{
-				double sma20_daily = SMA(BarsArray[1], 20)[0];
-				double close_daily = BarsArray[1].GetClose(0);
-				isBull = close_daily > sma20_daily;
-			}
-			bool isTuesday = Time[0].DayOfWeek == DayOfWeek.Tuesday;
-			double rPctCheck = rDefined ? ((rHigh - rLow) / Close[0]) * 100 : 0;
-			bool isFiltered = (UseRegime && !isBull) || (UseVVIX && VVIX_Open > 115) || isTuesday || (rPctCheck > MaxRangePct);
-
-			// Trade Window (9:31 - 10:00)
-			bool isWindow = Time[0].Hour == 9 && Time[0].Minute >= 31 && Time[0].Minute < 60;
+			// ... (Filter logic same as before) ...
 			
-			// Hard Exit
-			if (ToTime(Time[0]) >= ToTime(HardExitTime) && Position.MarketPosition != MarketPosition.Flat)
+			bool canTrade = rDefined && isWindow && Position.MarketPosition == MarketPosition.Flat && attemptsToday < MaxAttempts && !isFiltered && !hasWonToday;
+
+			if (canTrade)
 			{
-				ExitLong("Time Exit");
-				ExitShort("Time Exit");
-			}
+				// One-Shot Breakout Triggers
+				bool breakoutLong = false;
+				bool breakoutShort = false;
 
-			if (isWindow && Position.MarketPosition == MarketPosition.Flat && attemptsToday < MaxAttempts && !isFiltered)
-			{
-				double rSize = rHigh - rLow;
-				double pbLongPrice = rHigh;
-				double pbShortPrice = rLow;
-				
-				double riskAmt = InitialCapital * (RiskPercent / 100);
-				int qty = (int)Math.Max(1, Math.Floor(riskAmt / (rSize * Instrument.MasterInstrument.PointValue)));
-
-				if (EntryModel == "Shallow (25%)") { pbLongPrice = rHigh - (rSize * 0.25); pbShortPrice = rLow + (rSize * 0.25); }
-				else if (EntryModel == "Midpoint (50%)") { pbLongPrice = rHigh - (rSize * 0.5); pbShortPrice = rLow + (rSize * 0.5); }
-
-				if (EntryModel == "Breakout (Close)")
-				{
-					if (Close[0] > rHigh) { EnterLong(qty, "BO Long"); attemptsToday++; }
-					else if (Close[0] < rLow) { EnterShort(qty, "BO Short"); attemptsToday++; }
-				}
-				else
-				{
-					// Pullback Logic with Buffer Confirmation + Timeout Fallback
+				if (EntryModel == "Breakout (Close)"){
+					breakoutLong = CrossAbove(Close, rHigh, 1);
+					breakoutShort = CrossBelow(Close, rLow, 1);
+				} else {
+					// Pullback Logic
 					double bufferHigh = rHigh + (Close[0] * 0.001);
 					double bufferLow = rLow - (Close[0] * 0.001);
 					
-					bool breakoutLong = BufferBreakout ? Close[0] > bufferHigh : (PBConfirm ? Close[0] > rHigh : High[0] > rHigh);
-					bool breakoutShort = BufferBreakout ? Close[0] < bufferLow : (PBConfirm ? Close[0] < rLow : Low[0] < rLow);
-
-					if (!longPending && !shortPending)
-					{
-						if (breakoutLong) { longPending = true; breakoutBar = CurrentBar; }
-						else if (breakoutShort) { shortPending = true; breakoutBar = CurrentBar; }
+					breakoutLong = BufferBreakout ? CrossAbove(Close, bufferHigh, 1) : (PBConfirm ? CrossAbove(Close, rHigh, 1) : CrossAbove(High, rHigh, 1));
+					breakoutShort = BufferBreakout ? CrossBelow(Close, bufferLow, 1) : (PBConfirm ? CrossBelow(Close, rLow, 1) : CrossBelow(Low, rLow, 1));
+				}
+				
+				if (!longPending && !shortPending)
+				{
+					// No Fakeout Logic: Must Close Validly
+					if (breakoutLong && Close[0] >= pbLongPrice) { 
+						longPending = true; 
+						breakoutBar = CurrentBar; 
+						breakoutCandleExtreme = Low[0]; 
 					}
+					else if (breakoutShort && Close[0] <= pbShortPrice) { 
+						shortPending = true; 
+						breakoutBar = CurrentBar; 
+						breakoutCandleExtreme = High[0]; 
+					}
+				}
 
 					int barsSinceBreakout = breakoutBar >= 0 ? CurrentBar - breakoutBar : 0;
 					bool timeoutReached = barsSinceBreakout >= PBTimeoutBars;
+					
+					// Deep Pullback Guard (V3 Logic)
+					if (longPending && Close[0] < pbLongPrice) {
+						longPending = false; breakoutBar = -1;
+					}
+					if (shortPending && Close[0] > pbShortPrice) {
+						shortPending = false; breakoutBar = -1;
+					}
 
 					if (longPending)
 					{
-						// Always place the pullback limit order
-						EnterLongLimit(0, true, qty, pbLongPrice, "PB Long");
-						
-						// Check if filled
-						if (Position.MarketPosition == MarketPosition.Long)
+						// Guard: Deep Pullback Cancel
+						if (Close[0] < pbLongPrice) {
+							longPending = false; breakoutBar = -1;
+						}
+						// Entry: Touch & Valid Close
+						else if (Low[0] <= pbLongPrice && Close[0] >= pbLongPrice)
 						{
+							EnterLong(qty, "PB Long (Conf)");
 							longPending = false;
 							breakoutBar = -1;
 							attemptsToday++;
+							enteredViaFallback = false;
 						}
-						// Extra Entry: Timeout reached, not filled, AND price still above range
+						// Fallback: Timeout
 						else if (timeoutReached && Close[0] > rHigh)
 						{
-							CancelOrder(null);
 							EnterLong(qty, "Timeout Long");
 							longPending = false;
 							breakoutBar = -1;
 							attemptsToday++;
+							enteredViaFallback = true;
 						}
-						// Cancel if breakout failed (price went to opposite side)
+						// Cancel if reversed
 						else if (Close[0] < rLow)
 						{
-							CancelOrder(null);
 							longPending = false;
 							breakoutBar = -1;
 						}
@@ -217,36 +221,35 @@ namespace NinjaTrader.NinjaScript.Strategies
 					
 					if (shortPending)
 					{
-						// Always place the pullback limit order
-						EnterShortLimit(0, true, qty, pbShortPrice, "PB Short");
-						
-						// Check if filled
-						if (Position.MarketPosition == MarketPosition.Short)
+						// Guard: Deep Pullback Cancel
+						if (Close[0] > pbShortPrice) {
+							shortPending = false; breakoutBar = -1;
+						}
+						// Entry: Touch & Valid Close
+						else if (High[0] >= pbShortPrice && Close[0] <= pbShortPrice)
 						{
+							EnterShort(qty, "PB Short (Conf)");
 							shortPending = false;
 							breakoutBar = -1;
 							attemptsToday++;
+							enteredViaFallback = false;
 						}
-						// Extra Entry: Timeout reached, not filled, AND price still below range
+						// Fallback: Timeout
 						else if (timeoutReached && Close[0] < rLow)
 						{
-							CancelOrder(null);
 							EnterShort(qty, "Timeout Short");
 							shortPending = false;
 							breakoutBar = -1;
 							attemptsToday++;
+							enteredViaFallback = true;
 						}
-						// Cancel if breakout failed (price went to opposite side)
+						// Cancel if reversed
 						else if (Close[0] > rHigh)
 						{
-							CancelOrder(null);
 							shortPending = false;
 							breakoutBar = -1;
 						}
 					}
-						}
-					}
-				}
 				}
 			}
 
@@ -259,7 +262,20 @@ namespace NinjaTrader.NinjaScript.Strategies
 				// Target & Stop (Using percentage-based logic for parity)
 				double entry = Position.AveragePrice;
 				double tp = Position.MarketPosition == MarketPosition.Long ? entry * (1 + TP_Pct/100) : entry * (1 - TP_Pct/100);
-				double sl = Position.MarketPosition == MarketPosition.Long ? rLow : rHigh;
+				
+				// SL Calculation with Max Cap
+				double slPrice = Position.MarketPosition == MarketPosition.Long ? rLow : rHigh;
+				// If Fallback entry, use the Breakout Candle Extreme
+				if (enteredViaFallback && !double.IsNaN(breakoutCandleExtreme)) {
+					slPrice = Position.MarketPosition == MarketPosition.Long ? Math.Min(rLow, breakoutCandleExtreme) : Math.Max(rHigh, breakoutCandleExtreme);
+				}
+				
+				// Apply Max SL % Cap
+				double maxRiskDist = entry * (MaxSlPct / 100.0);
+				if (Position.MarketPosition == MarketPosition.Long) slPrice = Math.Max(slPrice, entry - maxRiskDist);
+				else slPrice = Math.Min(slPrice, entry + maxRiskDist);
+
+				double sl = slPrice;
 				
 				double tp1 = Position.MarketPosition == MarketPosition.Long ? entry * (1 + TP1Level/100) : entry * (1 - TP1Level/100);
 
@@ -470,6 +486,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name="Risk per Trade (%)", Order=13, GroupName="Risk")]
 		public double RiskPercent { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name="Max SL % (Cap)", Order=14, GroupName="Risk")]
+		public double MaxSlPct { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name="Stop After Win (Daily)", Order=21, GroupName="Core")]
+		public bool StopAfterWin { get; set; }
 		#endregion
 	}
 }

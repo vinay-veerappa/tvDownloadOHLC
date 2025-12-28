@@ -69,11 +69,17 @@ flowchart TD
     B -->|Pullback| D[Place Limit Order at Target]
     B -->|Pullback + Fallback| E[Limit Order + Timer]
     
-    D --> F{Limit Filled?}
-    F -->|Yes| G[✅ Entry Complete]
-    F -->|No, Window Closed| H[❌ No Entry]
+    D --> K{Price Closes Deeply Inside?}
+    K -->|Yes| H[❌ Cancel Order]
+    K -->|No| F{Limit Filled?}
     
-    E --> I{Limit Filled?}
+    F -->|Yes| G[✅ Entry Complete]
+    F -->|No, Window Closed| H
+    
+    E --> L{Price Closes Deeply Inside?}
+    L -->|Yes| H
+    L -->|No| I{Limit Filled?}
+    
     I -->|Yes| G
     I -->|Timeout & Price Outside| J[Enter at Market]
     I -->|Price Reversed| H
