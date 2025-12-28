@@ -24,7 +24,7 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //This namespace holds Indicators in this folder and is required. Do not change it. 
 namespace NinjaTrader.NinjaScript.Indicators
 {
-	public class ORB_V6_Indicator : Indicator
+	public class ORB_0930_1min_Indicator : Indicator
 	{
 		// State Variables for Pullback Logic
 		private bool longPending = false;
@@ -86,21 +86,26 @@ namespace NinjaTrader.NinjaScript.Indicators
 				pbShortPrice = pbLevel >= 0 ? rLow + (rSize * pbLevel) : rLow;
 			}
 
+			// Filter & State Logic
+			bool isBull = true;
+			if (BarsArray.Length > 1 && BarsArray[1].Count >= 20)
+			{
+				double sma20_daily = SMA(BarsArray[1], 20)[0];
+				double close_daily = BarsArray[1].GetClose(0);
+				isBull = close_daily > sma20_daily;
+			}
+			
+			bool isTuesday = Time[0].DayOfWeek == DayOfWeek.Tuesday;
+			bool isFiltered = (UseVVIX && VVIX_Open > 115) || (UseRegime && !isBull) || (UseTuesday && isTuesday);
+			bool isTradingClosed = UseTimeExit && ToTime(Time[0]) >= ToTime(HardExitTime);
+			bool canTrade = rDefined && !isFiltered && !isTradingClosed && signalsCount < maxSignals;
+			
+			double activeSL = double.NaN;
+			double activeTP = double.NaN;
+
 			// Dashboard & Signals Logic
 			if (IsFirstTickOfBar && rDefined)
 			{
-				bool isBull = true;
-				if (BarsArray[1].Count >= 20)
-				{
-					double sma20_daily = SMA(BarsArray[1], 20)[0];
-					double close_daily = BarsArray[1].GetClose(0);
-					isBull = close_daily > sma20_daily;
-				}
-				
-				bool isTuesday = Time[0].DayOfWeek == DayOfWeek.Tuesday;
-				bool isFiltered = (UseVVIX && VVIX_Open > 115) || (UseRegime && !isBull) || (UseTuesday && isTuesday);
-				bool isTradingClosed = UseTimeExit && ToTime(Time[0]) >= ToTime(HardExitTime);
-				bool canTrade = rDefined && !isFiltered && !isTradingClosed && signalsCount < maxSignals;
 
 				// Visual Signals (State Machine)
 				if (canTrade)
