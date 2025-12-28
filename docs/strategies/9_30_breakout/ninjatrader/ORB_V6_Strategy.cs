@@ -37,6 +37,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private int breakoutBar = -1;
 		private double pbLongPrice = double.NaN;
 		private double pbShortPrice = double.NaN;
+		private TimeZoneInfo estZone;
 
 		protected override void OnStateChange()
 		{
@@ -58,7 +59,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 				TraceOrders									= false;
 				RealtimeErrorHandling						= RealtimeErrorHandling.StopCancelClose;
 				StopTargetHandling							= StopTargetHandling.PerEntryExecution;
+				StopTargetHandling							= StopTargetHandling.PerEntryExecution;
 				BarsRequiredToTrade							= 20;
+
+				try {
+					estZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+				} catch {
+					estZone = TimeZoneInfo.Local; // Fallback
+				}
 				
 				// Inputs
 				EntryModel = "Shallow (25%)";
@@ -105,8 +113,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 			if (CurrentBar < 20 || BarsInProgress != 0) return;
 
-			// CRITICAL: This strategy relies on the Chart Timezone being set to "Exchange" (EST/EDT) or "America/New_York".
-			// The logic below looks for 09:30 Local Chart Time. If chart is UTC, this will trigger at 09:30 UTC which is incorrect.
+			// CRITICAL: This strategy relies on explicit conversion to EST using TimeZoneInfo.
+			// This ensures independence from Chart Timezone settings (Local vs Exchange).
+			
+			DateTime estTime = Time[0];
+			if (estZone != null)
+			{
+				try 
+				{
+					// Convert from the Data Series timezone (TradingHours) -> EST
+					estTime = TimeZoneInfo.ConvertTime(Time[0], Bars.TradingHours.TimeZone, estZone);
+				}
+				catch { /* Fallback to Time[0] if conversion fails */ }
+			}
 
 			if (Bars.IsFirstBarOfSession)
 			{
@@ -135,7 +154,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			// Capture Range
-			if (Time[0].Hour == 9 && Time[0].Minute == 30)
+			if (estTime.Hour == 9 && estTime.Minute == 30)
 			{
 				rHigh = High[0];
 				rLow = Low[0];
@@ -145,7 +164,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (!rDefined) return;
 			// Filter Logic
-			bool isWindow = ToTime(Time[0]) >= 93000 && ToTime(Time[0]) <= 155500;
+			if (!rDefined) return;
+			// Filter Logic
+			int estTimeInt = estTime.Hour * 10000 + estTime.Minute * 100 + estTime.Second;
+			bool isWindow = estTimeInt >= 93000 && estTimeInt <= 155500;
 			
 			// Regime Filter
 			bool isBull = true; 
@@ -367,8 +389,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 			// Dashboard Logic
 			if (IsFirstTickOfBar && rDefined && CurrentBar == BarsArray[0].Count - 1)
 			{
-				bool isTradingClosed = ToTime(Time[0]) >= ToTime(HardExitTime);
-				bool dashIsWindow = Time[0].Hour == 9 && Time[0].Minute >= 31 && Time[0].Minute < 60;
+				bool isTradingClosed = estTime.TimeOfDay >= HardExitTime.TimeOfDay;
+				bool dashIsWindow = estTime.Hour == 9 && estTime.Minute >= 31 && estTime.Minute < 60;
 				bool dashCanTrade = rDefined && dashIsWindow && !isFiltered && attemptsToday < MaxAttempts && Position.MarketPosition == MarketPosition.Flat;
 
 				string status = Position.MarketPosition != MarketPosition.Flat ? "IN TRADE" : isTradingClosed ? "TRADING CLOSED" : isFiltered ? "SKIP (Filtered)" : (EntryModel == "Breakout (Close)" ? "READY: Breakout" : "WAIT: Pullback");
