@@ -229,7 +229,7 @@ if canTrade
         useFallback = entryMode == "Pullback + Fallback"
 
 
-        if longPending
+        if longPending and bar_index > breakoutBar
             // Guard: If we close BELOW the pullback level, the setup is failed (Deep Pullback)
             if close < pb_long
                 longPending := false
@@ -238,7 +238,7 @@ if canTrade
                 
             // Entry: If we touched the level BUT closed ABOVE it (Successful Test)
             // We enter on the Open of the NEXT bar (Market)
-            else if low <= pb_long
+            else if low <= pb_long and close > pb_long
                 qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue)))
                 strategy.entry("Long", strategy.long, qty=qty, comment="PB Long (Conf)")
                 longPending := false
@@ -261,7 +261,7 @@ if canTrade
                 longPending := false
                 breakoutBar := na
         
-        if shortPending
+        if shortPending and bar_index > breakoutBar
             // Guard: If we close ABOVE the pullback level, the setup is failed (Deep Pullback)
             if close > pb_short
                 shortPending := false

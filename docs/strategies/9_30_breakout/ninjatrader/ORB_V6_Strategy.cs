@@ -35,6 +35,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool shortPending = false;
 		private double sigCandleExtreme = double.NaN;
 		private int breakoutBar = -1;
+		private double pbLongPrice = double.NaN;
+		private double pbShortPrice = double.NaN;
 
 		protected override void OnStateChange()
 		{
@@ -139,7 +141,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 			}
 
 			if (!rDefined) return;
-			// ... (Filter logic same as before) ...
+			// Filter Logic
+			bool isWindow = ToTime(Time[0]) >= 93000 && ToTime(Time[0]) <= 155500;
+			
+			// Regime Filter
+			bool isBull = true; 
+			if (UseRegime && BarsArray.Length > 1) {
+				// Assuming SMA(20) on Daily (Series 1)
+				if (CurrentBars[1] > 20)
+					isBull = Closes[1][0] > SMA(BarsArray[1], 20)[0];
+			}
+			
+			bool isFiltered = (UseRegime && !isBull) || (UseVVIX && VVIX_Open > 115) || (UseMAEFilter && false); 
+			int qty = DefaultQuantity;
 			
 			bool canTrade = rDefined && isWindow && Position.MarketPosition == MarketPosition.Flat && attemptsToday < MaxAttempts && !isFiltered && !hasWonToday;
 
@@ -278,7 +292,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				
 				double tp1 = Position.MarketPosition == MarketPosition.Long ? entry * (1 + TP1Level/100) : entry * (1 - TP1Level/100);
 
-				if (CoverQueen)
+				if (EnableMultiTP)
 				{
 					// TP1: Partial Exit
 					int tp1Qty = (int)(Position.Quantity * TP1QtyPct / 100.0);
@@ -351,17 +365,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (IsFirstTickOfBar && rDefined && CurrentBar == BarsArray[0].Count - 1)
 			{
 				bool isTradingClosed = ToTime(Time[0]) >= ToTime(HardExitTime);
-				bool isWindow = Time[0].Hour == 9 && Time[0].Minute >= 31 && Time[0].Minute < 60;
-				bool canTrade = rDefined && isWindow && !isFiltered && attemptsToday < MaxAttempts && Position.MarketPosition == MarketPosition.Flat;
+				bool dashIsWindow = Time[0].Hour == 9 && Time[0].Minute >= 31 && Time[0].Minute < 60;
+				bool dashCanTrade = rDefined && dashIsWindow && !isFiltered && attemptsToday < MaxAttempts && Position.MarketPosition == MarketPosition.Flat;
 
-				string status = Position. MarketPosition != MarketPosition.Flat ? "IN TRADE" : isTradingClosed ? "TRADING CLOSED" : isFiltered ? "SKIP (Filtered)" : (EntryModel == "Breakout (Close)" ? "READY: Breakout" : "WAIT: Pullback");
+				string status = Position.MarketPosition != MarketPosition.Flat ? "IN TRADE" : isTradingClosed ? "TRADING CLOSED" : isFiltered ? "SKIP (Filtered)" : (EntryModel == "Breakout (Close)" ? "READY: Breakout" : "WAIT: Pullback");
 				
 				double rSize = rHigh - rLow;
 				double rPct = (rSize / BarsArray[0].GetOpen(0)) * 100;
 				double riskAmt = InitialCapital * (RiskPercent / 100);
 				int qty = (int)Math.Max(1, Math.Floor(riskAmt / (rSize * Instrument.MasterInstrument.PointValue)));
 
-				string diagInfo = string.Format("{0} / {1}", isFiltered ? "FILT" : "OK", canTrade ? "YES" : "NO");
+				string diagInfo = string.Format("{0} / {1}", isFiltered ? "FILT" : "OK", dashCanTrade ? "YES" : "NO");
 				
 				bool isSweetSpot = UseSweetSpot && VVIX_Open >= 98 && VVIX_Open <= 115;
 				bool isRangeTooBig = rPct > MaxRangePct;
@@ -432,6 +446,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name="Signal Candle Exit", Order=12, GroupName="Addons")]
 		public string SigCandleExit { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name="Use VVIX Filter (Skip if > 115)", Order=10, GroupName="Addons")]
+		public bool UseVVIX { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name="VVIX Open Value", Order=11, GroupName="Addons")]
