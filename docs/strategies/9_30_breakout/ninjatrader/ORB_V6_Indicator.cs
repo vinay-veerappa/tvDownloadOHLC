@@ -36,13 +36,69 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private double rHigh = double.MinValue;
 		private double rLow = double.MaxValue;
 		private bool rDefined = false;
+		private TimeZoneInfo estZone;
+
+		protected override void OnStateChange()
+		{
+			if (State == State.SetDefaults)
+			{
+				Description									= @"9:30 AM ORB V6 Indicator";
+				Name										= "ORB_0930_1min_Indicator";
+				Calculate									= Calculate.OnBarClose;
+				IsOverlay									= true;
+				DisplayInDataBox							= true;
+				DrawOnPricePanel							= true;
+				DrawHorizontalGridLines						= true;
+				DrawVerticalGridLines						= true;
+				PaintPriceMarkers							= true;
+				ScaleJustification							= NinjaTrader.Gui.Chart.ScaleJustification.Right;
+				//Disable this property if your indicator requires custom values that cumulate with each new market data event. 
+				//See Help Guide for additional information.
+				IsSuspendedWhileInactive					= true;
+				
+				// Initialize Inputs
+				EntryModel = "Shallow (25%)";
+				SessionStart = "09:30";
+				SessionEnd = "10:00";
+				UseRegime = true;
+				UseVVIX = true;
+				UseTuesday = true;
+				UseTimeExit = true;
+				HardExitTime = DateTime.Parse("10:00", System.Globalization.CultureInfo.InvariantCulture);
+				VVIX_Open = 100.0;
+				MAE_Threshold = 0.12;
+				RiskPercent = 5.0;
+				InitialCapital = 3000.0;
+				UseSweetSpot = true;
+				ShowExits = true;
+				TPSetting = 0.35;
+
+				try {
+					estZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+				} catch {
+					estZone = TimeZoneInfo.Local; // Fallback
+				}
+			}
+			else if (State == State.Configure)
+			{
+				AddDataSeries(BarsPeriodType.Day, 1);
+			}
+		}
 
 		protected override void OnBarUpdate()
 		{
 			if (CurrentBar < 20) return;
-
-			// CRITICAL: This indicator relies on the Chart Timezone being set to "Exchange" (EST/EDT) or "America/New_York".
-			// The logic below looks for 09:30 Local Chart Time. If chart is UTC, this will trigger at 09:30 UTC which is incorrect.
+			
+			// Explicit EST Conversion
+			DateTime estTime = Time[0];
+			if (estZone != null) 
+			{
+				try 
+				{
+					estTime = TimeZoneInfo.ConvertTime(Time[0], Bars.TradingHours.TimeZone, estZone);
+				}
+				catch { /* Fallback */ }
+			}
 
 			// Logic to capture 9:30 OR
 			if (Bars.IsFirstBarOfSession)
@@ -55,8 +111,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 				signalsCount = 0;
 			}
 
-			// Capture Range (Assuming ET time)
-			if (Time[0].Hour == 9 && Time[0].Minute == 30)
+			// Capture Range
+			if (estTime.Hour == 9 && estTime.Minute == 30)
 			{
 				rHigh = High[0];
 				rLow = Low[0];
@@ -95,9 +151,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 				isBull = close_daily > sma20_daily;
 			}
 			
-			bool isTuesday = Time[0].DayOfWeek == DayOfWeek.Tuesday;
+			bool isTuesday = estTime.DayOfWeek == DayOfWeek.Tuesday;
 			bool isFiltered = (UseVVIX && VVIX_Open > 115) || (UseRegime && !isBull) || (UseTuesday && isTuesday);
-			bool isTradingClosed = UseTimeExit && ToTime(Time[0]) >= ToTime(HardExitTime);
+			bool isTradingClosed = UseTimeExit && estTime.TimeOfDay >= HardExitTime.TimeOfDay;
 			bool canTrade = rDefined && !isFiltered && !isTradingClosed && signalsCount < maxSignals;
 			
 			double activeSL = double.NaN;
