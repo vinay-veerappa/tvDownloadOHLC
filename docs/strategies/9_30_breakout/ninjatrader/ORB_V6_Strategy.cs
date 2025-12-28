@@ -105,6 +105,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 			if (CurrentBar < 20 || BarsInProgress != 0) return;
 
+			// CRITICAL: This strategy relies on the Chart Timezone being set to "Exchange" (EST/EDT) or "America/New_York".
+			// The logic below looks for 09:30 Local Chart Time. If chart is UTC, this will trigger at 09:30 UTC which is incorrect.
+
 			if (Bars.IsFirstBarOfSession)
 			{
 				rHigh = double.MinValue;

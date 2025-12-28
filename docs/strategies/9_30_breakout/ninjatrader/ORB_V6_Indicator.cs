@@ -38,6 +38,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			if (CurrentBar < 20) return;
 
+			// CRITICAL: This indicator relies on the Chart Timezone being set to "Exchange" (EST/EDT) or "America/New_York".
+			// The logic below looks for 09:30 Local Chart Time. If chart is UTC, this will trigger at 09:30 UTC which is incorrect.
+
 			// Logic to capture 9:30 OR
 			if (Bars.IsFirstBarOfSession)
 			{
