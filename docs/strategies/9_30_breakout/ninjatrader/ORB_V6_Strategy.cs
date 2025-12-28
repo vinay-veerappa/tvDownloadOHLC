@@ -25,6 +25,28 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //This namespace holds Strategies in this folder and is required. Do not change it. 
 namespace NinjaTrader.NinjaScript.Strategies
 {
+	public enum EntryMode
+	{
+		[Display(Name="Breakout (Close)")] BreakoutClose,
+		[Display(Name="Retest (0%)")] Retest_0,
+		[Display(Name="Shallow (25%)")] Shallow_25,
+		[Display(Name="Midpoint (50%)")] Midpoint_50
+	}
+
+	public enum CandleExitMode
+	{
+		None,
+		[Display(Name="Candle Close")] CandleClose,
+		Wick
+	}
+
+	public enum RunnerModeType
+	{
+		None,
+		Trailing,
+		Forever
+	}
+
 	public class ORB_V6_Strategy : Strategy
 	{
 		private double rHigh = double.MinValue;
@@ -69,7 +91,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 				
 				// Inputs
-				EntryModel = "Shallow (25%)";
+				EntryModel = EntryMode.Shallow_25;
 				MaxAttempts = 3;
 				PBConfirm = true;
 				BufferBreakout = true;
@@ -83,14 +105,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 				VVIX_Open = 100.0;
 				UseEarlyExit = true;
 				UseMAEFilter = true;
-				SigCandleExit = "None"; // Options: None, Candle Close, Wick
+				SigCandleExit = CandleExitMode.None; // Options: None, Candle Close, Wick
 				MaxRangePct = 0.25;
 				EnableMultiTP = true;
 				TP1Level = 0.10;
 				TP1QtyPct = 50;
 				TP2Level = 0.25;
 				TP2QtyPct = 25;
-				RunnerMode = "Trailing";
+				RunnerMode = RunnerModeType.Trailing;
 				TrailPct = 0.08;
 				HardExitTime = DateTime.Parse("10:00", System.Globalization.CultureInfo.InvariantCulture);
 				
@@ -188,7 +210,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				bool breakoutLong = false;
 				bool breakoutShort = false;
 
-				if (EntryModel == "Breakout (Close)"){
+				if (EntryModel == EntryMode.BreakoutClose){
 					breakoutLong = CrossAbove(Close, rHigh, 1);
 					breakoutShort = CrossBelow(Close, rLow, 1);
 				} else {
@@ -363,11 +385,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				}
 				
 				// Signal Candle Reversal Exit
-				if (SigCandleExit != "None" && !double.IsNaN(sigCandleExtreme))
+				if (SigCandleExit != CandleExitMode.None && !double.IsNaN(sigCandleExtreme))
 				{
 					bool isLong = Position.MarketPosition == MarketPosition.Long;
 					bool sigTrigger = false;
-					if (SigCandleExit == "Wick")
+					if (SigCandleExit == CandleExitMode.Wick)
 						sigTrigger = isLong ? Low[0] < sigCandleExtreme : High[0] > sigCandleExtreme;
 					else // "Candle Close"
 						sigTrigger = isLong ? Close[0] < sigCandleExtreme : Close[0] > sigCandleExtreme;
@@ -393,7 +415,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				bool dashIsWindow = estTime.Hour == 9 && estTime.Minute >= 31 && estTime.Minute < 60;
 				bool dashCanTrade = rDefined && dashIsWindow && !isFiltered && attemptsToday < MaxAttempts && Position.MarketPosition == MarketPosition.Flat;
 
-				string status = Position.MarketPosition != MarketPosition.Flat ? "IN TRADE" : isTradingClosed ? "TRADING CLOSED" : isFiltered ? "SKIP (Filtered)" : (EntryModel == "Breakout (Close)" ? "READY: Breakout" : "WAIT: Pullback");
+				string status = Position.MarketPosition != MarketPosition.Flat ? "IN TRADE" : isTradingClosed ? "TRADING CLOSED" : isFiltered ? "SKIP (Filtered)" : (EntryModel == EntryMode.BreakoutClose ? "READY: Breakout" : "WAIT: Pullback");
 				
 				double rSize = rHigh - rLow;
 				double rPct = (rSize / BarsArray[0].GetOpen(0)) * 100;
@@ -427,7 +449,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#region Properties
 		[NinjaScriptProperty]
 		[Display(Name="Entry Model", Order=1, GroupName="Entry")]
-		public string EntryModel { get; set; }
+		public EntryMode EntryModel { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name="PB Confirmation (Close)", Order=2, GroupName="Entry")]
@@ -470,7 +492,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		[NinjaScriptProperty]
 		[Display(Name="Signal Candle Exit", Order=12, GroupName="Addons")]
-		public string SigCandleExit { get; set; }
+		public CandleExitMode SigCandleExit { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name="Use VVIX Filter (Skip if > 115)", Order=10, GroupName="Addons")]
@@ -515,7 +537,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		[NinjaScriptProperty]
 		[Display(Name="Runner Mode", Order=19, GroupName="Multi-TP")]
-		public string RunnerMode { get; set; }
+		public RunnerModeType RunnerMode { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name="Trail %", Order=20, GroupName="Multi-TP")]

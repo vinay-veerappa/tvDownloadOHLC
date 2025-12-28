@@ -24,6 +24,14 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //This namespace holds Indicators in this folder and is required. Do not change it. 
 namespace NinjaTrader.NinjaScript.Indicators
 {
+	public enum EntryMode
+	{
+		[Display(Name="Breakout (Close)")] BreakoutClose,
+		[Display(Name="Retest (0%)")] Retest_0,
+		[Display(Name="Shallow (25%)")] Shallow_25,
+		[Display(Name="Midpoint (50%)")] Midpoint_50
+	}
+
 	public class ORB_0930_1min_Indicator : Indicator
 	{
 		// State Variables for Pullback Logic
@@ -57,7 +65,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				IsSuspendedWhileInactive					= true;
 				
 				// Initialize Inputs
-				EntryModel = "Shallow (25%)";
+				EntryModel = EntryMode.Shallow_25;
 				SessionStart = "09:30";
 				SessionEnd = "10:00";
 				UseRegime = true;
@@ -134,9 +142,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 				
 				// Calculate Pullback Levels Dynamic
 				double pbLevel = -1.0;
-				if (EntryModel == "Retest (0%)") pbLevel = 0.0;
-				else if (EntryModel == "Shallow (25%)") pbLevel = 0.25;
-				else if (EntryModel == "Midpoint (50%)") pbLevel = 0.50;
+				if (EntryModel == EntryMode.Retest_0) pbLevel = 0.0;
+				else if (EntryModel == EntryMode.Shallow_25) pbLevel = 0.25;
+				else if (EntryModel == EntryMode.Midpoint_50) pbLevel = 0.50;
 				
 				pbLongPrice = pbLevel >= 0 ? rHigh - (rSize * pbLevel) : rHigh;
 				pbShortPrice = pbLevel >= 0 ? rLow + (rSize * pbLevel) : rLow;
@@ -169,7 +177,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 					bool crossUpper = CrossAbove(Close, rHigh, 1);
 					bool crossLower = CrossBelow(Close, rLow, 1);
 					
-					if (EntryModel == "Breakout (Close)")
+					if (EntryModel == EntryMode.BreakoutClose)
 					{
 						if (crossUpper) {
 							Draw.TriangleUp(this, "Buy" + CurrentBar, true, 0, Low[0] - TickSize, Brushes.SpringGreen);
@@ -218,7 +226,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 				if (CurrentBar == BarsArray[0].Count - 1)
 				{
-					string status = isTradingClosed ? "TRADING CLOSED" : isFiltered ? "SKIP (Filtered)" : (EntryModel == "Breakout (Close)" ? "READY: Breakout" : "WAIT: Pullback");
+					string status = isTradingClosed ? "TRADING CLOSED" : isFiltered ? "SKIP (Filtered)" : (EntryModel == EntryMode.BreakoutClose ? "READY: Breakout" : "WAIT: Pullback");
 					Brush statusColor = isTradingClosed ? Brushes.Gray : isFiltered ? Brushes.Red : Brushes.SpringGreen;
 
 					double rSize = rHigh - rLow;
@@ -248,7 +256,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				bool isLongSignal = Close[0] > rHigh;
 				bool isShortSignal = Close[0] < rLow;
 
-				if (isLongSignal && (EntryModel == "Breakout (Close)" || (canTrade && Low[0] <= rHigh - (rHigh-rLow) * 0.25))) // Approximation for PB
+				if (isLongSignal && (EntryModel == EntryMode.BreakoutClose || (canTrade && Low[0] <= rHigh - (rHigh-rLow) * 0.25))) // Approximation for PB
 				{
 					activeSL = rLow;
 					activeTP = Close[0] * (1 + TPSetting / 100);
@@ -270,7 +278,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		#region Properties
 		[NinjaScriptProperty]
 		[Display(Name="Entry Model", Order=0, GroupName="Core")]
-		public string EntryModel { get; set; }
+		public EntryMode EntryModel { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name="Session Start (ET)", Order=1, GroupName="Core")]
