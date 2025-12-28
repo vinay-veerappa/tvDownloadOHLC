@@ -26,62 +26,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 {
 	public class ORB_V6_Indicator : Indicator
 	{
-		private double rHigh = double.MinValue;
-		private double rLow = double.MaxValue;
-		private bool rDefined = false;
-		private DateTime lastDate = DateTime.MinValue;
-		private double activeSL = double.NaN;
-		private double activeTP = double.NaN;
-
-		protected override void OnStateChange()
-		{
-			if (State == State.SetDefaults)
-			{
-				Description									= @"9:30 AM ORB V6 [Unified Specification]";
-				Name										= "ORB_V6_Indicator";
-				Calculate									= Calculate.OnBarClose;
-				IsOverlay									= true;
-				DisplayInDataBox							= true;
-				DrawOnPricePanel							= true;
-				DrawHorizontalGridLines						= true;
-				DrawVerticalGridLines						= true;
-				PaintPriceMarkers							= true;
-				ScaleJustification							= NinjaTrader.Gui.Chart.ScaleJustification.Right;
-				//Disable this property if your indicator requires custom values that cumulate with each new bar
-				IsSuspendedWhileInactive					= true;
-				
-				// Inputs
-				SessionStart = "09:30";
-				SessionEnd = "09:31";
-				
-				EntryModel = "Shallow (25%)";
-				UseRegime = true;
-				UseVVIX = true;
-				UseTuesday = true;
-				UseTimeExit = true;
-				HardExitTime = DateTime.Parse("10:00", System.Globalization.CultureInfo.InvariantCulture);
-				VVIX_Open = 100.0;
-				MAE_Threshold = 0.12;
-				RiskPercent = 1.0;
-				InitialCapital = 100000.0;
-				ShowExits = true;
-				TPSetting = 0.35;
-				UseSweetSpot = true;
-				// PointValue is now retrieved dynamically from Instrument.MasterInstrument.PointValue
-
-				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Dash, 2), PlotStyle.Line, "RangeHigh");
-				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Dash, 1), PlotStyle.Line, "Level25");
-				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Dash, 1), PlotStyle.Line, "Level50");
-				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Dash, 1), PlotStyle.Line, "Level75");
-				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Dash, 2), PlotStyle.Line, "RangeLow");
-				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Dash, 1), PlotStyle.Line, "BufferUpper");
-				AddPlot(new Stroke(Brushes.Gray, DashStyleHelper.Dash, 1), PlotStyle.Line, "BufferLower");
-			}
-			else if (State == State.Configure)
-			{
-				AddDataSeries(BarsPeriodType.Day, 1); // Secondary series for Regime (SMA20)
-			}
-		}
+		// State Variables for Pullback Logic
+		private bool longPending = false;
+		private bool shortPending = false;
+		private double pbLongPrice = double.NaN;
+		private double pbShortPrice = double.NaN;
+		private int signalsCount = 0;
+		private int maxSignals = 3; // Hardcoded for now to match Pine default
 
 		protected override void OnBarUpdate()
 		{
@@ -93,6 +44,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 				rHigh = double.MinValue;
 				rLow = double.MaxValue;
 				rDefined = false;
+				longPending = false;
+				shortPending = false;
+				signalsCount = 0;
 			}
 
 			// Capture Range (Assuming ET time)
@@ -115,6 +69,15 @@ namespace NinjaTrader.NinjaScript.Indicators
 				// 0.10% Buffer Lines (of Price, offset from boundaries)
 				Values[5][0] = rHigh + (Close[0] * 0.001);
 				Values[6][0] = rLow - (Close[0] * 0.001);
+				
+				// Calculate Pullback Levels Dynamic
+				double pbLevel = -1.0;
+				if (EntryModel == "Retest (0%)") pbLevel = 0.0;
+				else if (EntryModel == "Shallow (25%)") pbLevel = 0.25;
+				else if (EntryModel == "Midpoint (50%)") pbLevel = 0.50;
+				
+				pbLongPrice = pbLevel >= 0 ? rHigh - (rSize * pbLevel) : rHigh;
+				pbShortPrice = pbLevel >= 0 ? rLow + (rSize * pbLevel) : rLow;
 			}
 
 			// Dashboard & Signals Logic
@@ -131,15 +94,59 @@ namespace NinjaTrader.NinjaScript.Indicators
 				bool isTuesday = Time[0].DayOfWeek == DayOfWeek.Tuesday;
 				bool isFiltered = (UseVVIX && VVIX_Open > 115) || (UseRegime && !isBull) || (UseTuesday && isTuesday);
 				bool isTradingClosed = UseTimeExit && ToTime(Time[0]) >= ToTime(HardExitTime);
-				bool canTrade = rDefined && !isFiltered && !isTradingClosed;
+				bool canTrade = rDefined && !isFiltered && !isTradingClosed && signalsCount < maxSignals;
 
-				// Visual Signals (Triangles)
+				// Visual Signals (State Machine)
 				if (canTrade)
 				{
-					if (Close[0] > rHigh) 
-						Draw.TriangleUp(this, "Buy" + CurrentBar, true, 0, Low[0] - TickSize, Brushes.SpringGreen);
-					else if (Close[0] < rLow)
-						Draw.TriangleDown(this, "Sell" + CurrentBar, true, 0, High[0] + TickSize, Brushes.Red);
+					bool crossUpper = CrossAbove(Close, rHigh, 1);
+					bool crossLower = CrossBelow(Close, rLow, 1);
+					
+					if (EntryModel == "Breakout (Close)")
+					{
+						if (crossUpper) {
+							Draw.TriangleUp(this, "Buy" + CurrentBar, true, 0, Low[0] - TickSize, Brushes.SpringGreen);
+							signalsCount++;
+						}
+						else if (crossLower) {
+							Draw.TriangleDown(this, "Sell" + CurrentBar, true, 0, High[0] + TickSize, Brushes.Red);
+							signalsCount++;
+						}
+					}
+					else // Pullback Logic
+					{
+						// Arming
+						if (!longPending && !shortPending)
+						{
+							// No Fakeout Logic: Breakout must close validly to arm
+							if (crossUpper && Close[0] >= pbLongPrice) longPending = true;
+							else if (crossLower && Close[0] <= pbShortPrice) shortPending = true;
+						}
+						
+						// Guard: Deep Pullback Cancel
+						if (longPending && Close[0] < pbLongPrice) longPending = false;
+						if (shortPending && Close[0] > pbShortPrice) shortPending = false;
+						
+						// Legacy Safety Reset
+						if (longPending && Low[0] < rLow) longPending = false;
+						if (shortPending && High[0] > rHigh) shortPending = false;
+
+						// Confirmation Signal: Touch + Valid Close
+						if (longPending && Low[0] <= pbLongPrice && Close[0] >= pbLongPrice)
+						{
+							Draw.Text(this, "PB_Buy" + CurrentBar, "PB BUY", 0, Low[0] - 2 * TickSize, Brushes.SpringGreen);
+							Draw.TriangleUp(this, "Buy" + CurrentBar, true, 0, Low[0] - TickSize, Brushes.SpringGreen);
+							longPending = false;
+							signalsCount++;
+						}
+						else if (shortPending && High[0] >= pbShortPrice && Close[0] <= pbShortPrice)
+						{
+							Draw.Text(this, "PB_Sell" + CurrentBar, "PB SELL", 0, High[0] + 2 * TickSize, Brushes.Red);
+							Draw.TriangleDown(this, "Sell" + CurrentBar, true, 0, High[0] + TickSize, Brushes.Red);
+							shortPending = false;
+							signalsCount++;
+						}
+					}
 				}
 
 				if (CurrentBar == BarsArray[0].Count - 1)

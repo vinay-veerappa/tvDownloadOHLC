@@ -39,6 +39,10 @@ tpTargetPct = input.float(0.35, "Final TP (%)", step=0.05, group=grp_mtp)
 grp_risk = "Risk & Sizing"
 initialCapital = input.float(3000.0, "Account Equity ($)", group=grp_risk)
 riskPercent    = input.float(5.0, "Risk per Trade (%)", minval=0.1, step=0.1, group=grp_risk)
+maxSlPct       = input.float(0.30, "Max SL % (Cap)", step=0.05, group=grp_risk)
+
+grp_logic = "Advanced Logic"
+pbTimeoutBars  = input.int(5, "Fallback Timeout Bars", minval=1, group=grp_logic)
 // Point value is now retrieved dynamically from the ticker
 
 // =============================================================================
@@ -80,6 +84,8 @@ if isORBar and not rDefined
 
 rSize = rHigh - rLow
 rPct = (rSize / open) * 100
+rPctCheck = rDefined ? (rSize / close) * 100 : 0
+isRangeTooBig = rPctCheck > maxRangePct
 
 // Pullback Entry Levels
 pbLevel = switch entryModel
@@ -96,12 +102,33 @@ isFiltered = (useRegime and not isBullRegime) or (useVVIX and nz(vvix_open, 0) >
 isTradingClosed = useTimeExit and isPostTrade
 
 // Signal Calculations
-longBreakout  = rDefined and isTradeWindow and not isFiltered and close > rHigh
-shortBreakout = rDefined and isTradeWindow and not isFiltered and close < rLow
+// One-shot detection (hoisted for consistency)
+crossUpper = ta.crossover(close, rHigh)
+crossLower = ta.crossunder(close, rLow)
+
+longBreakout  = rDefined and isTradeWindow and not isFiltered and crossUpper
+shortBreakout = rDefined and isTradeWindow and not isFiltered and crossLower
+
+// Track Breakout Candles for Visuals
+var int breakoutTriggerBar = na
+if longBreakout or shortBreakout
+    breakoutTriggerBar := bar_index
 
 // Pullback Logic for Visuals
+// Note: Indicator shows POTENTIAL entries. Strategy handles actual execution.
 float pb_long_price = pbLevel >= 0 ? rHigh - (rSize * pbLevel) : rHigh
 float pb_short_price = pbLevel >= 0 ? rLow + (rSize * pbLevel) : rLow
+
+// Visual Candle Coloring
+// 1. 09:30 Range Candle
+barcolor(isORBar ? color.yellow : na, title="09:30 Candle")
+
+// 2. Breakout Trigger Candle
+barcolor(bar_index == breakoutTriggerBar ? color.aqua : na, title="Breakout Candle")
+
+// 3. Fallback Entry (Visual Approximation)
+// For indicator, we can't perfectly track "Fallback" state without mimicking strategy engine
+// But we can mark the Breakout Candle distinctively
 
 // =============================================================================
 // 4. CONTRACT SIZING
@@ -128,8 +155,7 @@ if isNewDay
     activeTP := na
 
 // Stateful function calls (Must be at top level)
-crossUpper = ta.crossover(close, rHigh)
-crossLower = ta.crossunder(close, rLow)
+// crossUpper/crossLower now defined at top level for consistent detection
 
 // 1. Detect Breakout (Starts Pending State)
 if rDefined and isTradeWindow and not isFiltered and signalsCount < maxSignals
@@ -152,13 +178,20 @@ if rDefined and isTradeWindow and not isFiltered and signalsCount < maxSignals
             else if close < rLow
                 pendingShort := true
         
-        // Reset if we hit the other side before the pullback
+        // Guard: Cancel if deep pullback
+        if pendingLong and close < pb_long_price
+            pendingLong := false
+        if pendingShort and close > pb_short_price
+            pendingShort := false
+            
+        // Reset if we hit the other side (Legacy safety)
         if pendingLong and low < rLow
             pendingLong := false
         if pendingShort and high > rHigh
             pendingShort := false
 
-        if pendingLong and low <= pb_long_price
+        // Signal: Touch + Valid Close (Confirmed Entry)
+        if pendingLong and low <= pb_long_price and close >= pb_long_price
             signalsCount += 1
             pendingLong := false
             activeSL := rLow
@@ -167,7 +200,7 @@ if rDefined and isTradeWindow and not isFiltered and signalsCount < maxSignals
             activeTP := pb_long_price * (1 + tpTargetPct/100)
             label.new(bar_index, low, "PB BUY", color=color.new(color.green, 20), style=label.style_triangleup, textcolor=color.white, size=size.small, yloc=yloc.belowbar)
         
-        if pendingShort and high >= pb_short_price
+        if pendingShort and high >= pb_short_price and close <= pb_short_price
             signalsCount += 1
             pendingShort := false
             activeSL := rHigh
@@ -212,10 +245,9 @@ if barstate.islast
     entryPriceStr = (entryModel == "Breakout (Close)") ? "On Close" : str.tostring(pbLevel > -1 ? (rHigh - rSize * pbLevel) : rHigh, "#.##")
     table.cell(dashboard, 1, 7, entryPriceStr, text_color=color.gray)
 
-    table.cell(dashboard, 0, 8, "Diag (Filt/CanT)", text_color=color.white, text_halign=text.align_left)
-    canT = rDefined and isTradeWindow and not isFiltered and signalsCount < maxAttempts
-    diagStr = (isFiltered ? "FILT" : "OK") + " / " + (canT ? "YES" : "NO")
-    table.cell(dashboard, 1, 8, diagStr, text_color=canT ? color.green : color.red)
+    table.cell(dashboard, 0, 8, "Risk Guard", text_color=color.white, text_halign=text.align_left)
+    guardStr = "MaxSL " + str.tostring(maxSlPct) + "% / TO " + str.tostring(pbTimeoutBars)
+    table.cell(dashboard, 1, 8, guardStr, text_color=color.orange)
 
 // =============================================================================
 // 6. DRAWING
@@ -252,8 +284,7 @@ plot(showExits ? activeTP : na, "Projected TP (Final)", color=color.new(color.gr
 // Show Pullback Zones
 var box pbBox = na
 isSweetSpot = useSweetSpot and vvix_open >= 98 and vvix_open <= 115
-rPctCheck = rDefined ? (rSize / close) * 100 : 0
-isRangeTooBig = rPctCheck > maxRangePct
+// rPctCheck & isRangeTooBig now defined at top
 // Color priority: Red (too big) > Orange (sweet spot) > Gray (normal)
 boxColor = isRangeTooBig ? color.new(color.red, 80) : isSweetSpot ? color.new(color.orange, 85) : color.new(color.gray, 95)
 borderColor = isRangeTooBig ? color.red : isSweetSpot ? color.orange : na

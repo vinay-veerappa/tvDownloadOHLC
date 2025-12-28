@@ -39,8 +39,12 @@ Determines **how** to enter after breakout confirmation.
 | Mode | Behavior |
 | :--- | :--- |
 | **Immediate** | Enter at market on breakout confirmation |
-| **Pullback Only** | Place limit order at target; no entry if not filled |
-| **Pullback + Fallback** | Limit order + market entry after timeout (if price still outside range) |
+| **Pullback Only** | Wait for price to touch target AND **Close validly** (retest). Enter on next Open. |
+| **Pullback + Fallback** | As above + market entry after timeout (if price still outside range) |
+
+#### Guard Logic (Safety)
+- **No Fakeout Arming**: Breakout candle *must* Close beyond the Pullback Level to arm the trade.
+- **Deep Pullback Cancellation**: If price Closes *deeper* than the Pullback Level (crashing through), the pending trade is **cancelled**.
 
 > [!TIP]
 > See [STRATEGY_BUILDING_BLOCKS.md](STRATEGY_BUILDING_BLOCKS.md) for detailed flowcharts.

@@ -26,6 +26,7 @@ useTimeExit  = input.bool(true, "Enable Time Exit (10:00 AM)", group=grp_addons)
 useSweetSpot = input.bool(true, "Highlight VVIX Sweet Spot (98-115)", group=grp_addons)
 sigCandleExit = input.string("None", "Signal Candle Exit", options=["None", "Candle Close", "Wick"], group=grp_addons)
 showExits    = input.bool(true, "Show Active SL/TP Levels", group=grp_addons)
+showDebug    = input.bool(true, "Show Debug Labels", group=grp_addons)
 
 grp_entry = "Entry Configuration"
 // Breakout Trigger: How to confirm the breakout
@@ -131,6 +132,11 @@ if isNewDay
     breakoutCandleExtreme := na
     enteredViaFallback := false
     breakoutTriggerBar := na
+    
+// Track closed trades for win detection & one-bar scratch detection
+var int prevClosedTrades = 0
+if isNewDay
+    prevClosedTrades := strategy.closedtrades
 
 // 1. Entry Logic
 canTrade = rDefined and isTradeWindow and not inTrade and attempts < maxAttempts and not isFiltered and not hasWonToday
@@ -144,25 +150,48 @@ plot(attempts, "Attempts", display=display.none)
 crossUpper = ta.crossover(close, rHigh)
 crossLower = ta.crossunder(close, rLow)
 
+bool breakoutLong = false
+bool breakoutShort = false
+
+// Debug Counters
+var int guardHit = 0
+var int cleanupHit = 0
+string debugTxt = na
+
 if canTrade
     // Calculate buffer levels for Displacement trigger
     bufferHigh = rHigh + (close * 0.001)
     bufferLow = rLow - (close * 0.001)
     
     // Breakout Trigger Logic based on triggerMode
-    breakoutLong = switch triggerMode
-        "Aggressive"   => high > rHigh                    // Wick touch
-        "Standard"     => close > rHigh                   // Close outside range
-        "Displacement" => close > bufferHigh              // Close beyond 0.10% buffer
-        => close > rHigh
+    // Use one-shot triggers (crossover/crossunder) to prevent re-triggering every bar
+    breakoutLong := switch triggerMode
+        "Aggressive"   => ta.crossover(high, rHigh)           // First wick touch (cross)
+        "Standard"     => ta.crossover(close, rHigh)          // First close outside range
+        "Displacement" => ta.crossover(close, bufferHigh)     // First close beyond buffer
+        => ta.crossover(close, rHigh)
     
-    breakoutShort = switch triggerMode
-        "Aggressive"   => low < rLow                      // Wick touch
-        "Standard"     => close < rLow                    // Close outside range
-        "Displacement" => close < bufferLow               // Close beyond 0.10% buffer
-        => close < rLow
-    
-    // Entry Mode: Immediate
+    breakoutShort := switch triggerMode
+        "Aggressive"   => ta.crossunder(low, rLow)            // First wick touch (cross)
+        "Standard"     => ta.crossunder(close, rLow)          // First close outside range
+        "Displacement" => ta.crossunder(close, bufferLow)     // First close beyond buffer
+        => ta.crossunder(close, rLow)
+        
+    if longPending or shortPending
+        // Deep Pullback Cancellation (Guard)
+        if longPending and close < pb_long
+            strategy.cancel("Long")
+            longPending := false
+            breakoutBar := na
+            guardHit += 1
+            
+        if shortPending and close > pb_short
+            strategy.cancel("Short")
+            shortPending := false
+            breakoutBar := na
+            guardHit += 1
+
+    // Entry Execution Logic
     if entryMode == "Immediate"
         if breakoutLong
             qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue)))
@@ -174,80 +203,117 @@ if canTrade
             strategy.entry("Short", strategy.short, qty=qty, comment="BO Short")
             attempts += 1
             sigCandleExtreme := high
-    
-    // Entry Mode: Pullback (with or without Fallback)
-    else
-        // Set pending on breakout - capture original breakout candle data
+            
+    else // Pullback Modes
+        // Set pending on breakout
         if not longPending and not shortPending
-            if breakoutLong
+            // Ensure we don't arm on a "Fakeout" (Wick out, Close deep inside)
+            // Long: Must close at or above the pullback buy limit
+            if breakoutLong and close >= pb_long
                 longPending := true
                 sigCandleExtreme := low
                 breakoutBar := bar_index
-                breakoutCandleExtreme := low  // Capture for Fallback SL reference
-                breakoutTriggerBar := bar_index  // For visual coloring
-            else if breakoutShort
+                breakoutCandleExtreme := low
+                breakoutTriggerBar := bar_index
+            // Short: Must close at or below the pullback sell limit
+            else if breakoutShort and close <= pb_short
                 shortPending := true
                 sigCandleExtreme := high
                 breakoutBar := bar_index
-                breakoutCandleExtreme := high  // Capture for Fallback SL reference
-                breakoutTriggerBar := bar_index  // For visual coloring
-        
-        // Calculate bars since breakout (for Fallback mode)
+                breakoutCandleExtreme := high
+                breakoutTriggerBar := bar_index
+
+        // Fallback Timeout Logic
         barsSinceBreakout = not na(breakoutBar) ? bar_index - breakoutBar : 0
         timeoutReached = barsSinceBreakout >= pbTimeoutBars
         useFallback = entryMode == "Pullback + Fallback"
-        
+
+
         if longPending
-            qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue)))
-            
-            // Place pullback limit order
-            strategy.entry("Long", strategy.long, stop=na, limit=pb_long, qty=qty, comment="PB Long")
-            
-            // Check if filled (regular pullback)
-            if strategy.position_size > 0
+            // Guard: If we close BELOW the pullback level, the setup is failed (Deep Pullback)
+            if close < pb_long
+                longPending := false
+                breakoutBar := na
+                guardHit += 1 // Debug counter
+                
+            // Entry: If we touched the level BUT closed ABOVE it (Successful Test)
+            // We enter on the Open of the NEXT bar (Market)
+            else if low <= pb_long
+                qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue)))
+                strategy.entry("Long", strategy.long, qty=qty, comment="PB Long (Conf)")
                 longPending := false
                 breakoutBar := na
                 attempts += 1
-                enteredViaFallback := false  // Regular pullback fill
-            // Fallback: Timeout + price still outside + fallback enabled
+                enteredViaFallback := false
+                if strategy.closedtrades > prevClosedTrades
+                    prevClosedTrades := strategy.closedtrades
+
+            // Fallback: Timeout Logic
             else if useFallback and timeoutReached and close > rHigh
-                strategy.cancel("Long")
+                qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue)))
                 strategy.entry("Long Timeout", strategy.long, qty=qty, comment="Fallback Long")
                 longPending := false
                 breakoutBar := na
                 attempts += 1
-                enteredViaFallback := true  // Mark as Fallback entry
-            // Cancel if breakout failed (price reversed)
+                enteredViaFallback := true
+            // Cancel if breakout failed (price reversed completely below range low)
             else if close < rLow
-                strategy.cancel("Long")
                 longPending := false
                 breakoutBar := na
         
         if shortPending
-            qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue)))
-            
-            // Place pullback limit order
-            strategy.entry("Short", strategy.short, stop=na, limit=pb_short, qty=qty, comment="PB Short")
-            
-            // Check if filled (regular pullback)
-            if strategy.position_size < 0
+            // Guard: If we close ABOVE the pullback level, the setup is failed (Deep Pullback)
+            if close > pb_short
+                shortPending := false
+                breakoutBar := na
+                guardHit += 1 // Debug counter
+                
+            // Entry: If we touched the level BUT closed BELOW it (Successful Test)
+            else if high >= pb_short
+                qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue)))
+                strategy.entry("Short", strategy.short, qty=qty, comment="PB Short (Conf)")
                 shortPending := false
                 breakoutBar := na
                 attempts += 1
-                enteredViaFallback := false  // Regular pullback fill
-            // Fallback: Timeout + price still outside + fallback enabled
+                enteredViaFallback := false
+                if strategy.closedtrades > prevClosedTrades
+                    prevClosedTrades := strategy.closedtrades
+
+            // Fallback: Timeout Logic
             else if useFallback and timeoutReached and close < rLow
-                strategy.cancel("Short")
+                qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue)))
                 strategy.entry("Short Timeout", strategy.short, qty=qty, comment="Fallback Short")
                 shortPending := false
                 breakoutBar := na
                 attempts += 1
-                enteredViaFallback := true  // Mark as Fallback entry
-            // Cancel if breakout failed (price reversed)
+                enteredViaFallback := true
+            // Cancel if breakout failed (price reversed completely above range high)
             else if close > rHigh
-                strategy.cancel("Short")
                 shortPending := false
                 breakoutBar := na
+
+// ... (logic continues) ...
+// Update cleanup block
+if not canTrade and not inTrade
+    strategy.cancel_all()
+    longPending := false
+    shortPending := false
+    cleanupHit += 1
+
+// Update label at bottom
+if showDebug
+    debugTxt = "PenL: " + str.tostring(longPending) + "\n" +
+               "BOL: " + str.tostring(breakoutLong) + "\n" +
+               "Cls < PB: " + str.tostring(close < pb_long) + "\n" +
+               "PB Lvl: " + pullbackLevel + "\n" +
+               "PB Px: " + str.tostring(pb_long, "#.##") + "\n" +
+               "RangeH: " + str.tostring(rHigh, "#.##") + "\n" +
+               "RangeL: " + str.tostring(rLow, "#.##") + "\n" +
+               "Close: " + str.tostring(close, "#.##") + "\n" +
+               "GuardHit: " + str.tostring(guardHit) +
+               "CleanHit: " + str.tostring(cleanupHit)
+    label.new(bar_index, high, debugTxt, color=color.black, textcolor=color.white, size=size.small, yloc=yloc.abovebar)
+
 
 // 1.5 Cleanup Pending Orders
 if not canTrade and not inTrade
@@ -257,9 +323,7 @@ if not canTrade and not inTrade
 
 // 1.6 Detect Win (Stop trading after successful trade TODAY)
 // Track trades closed today by checking when a new trade closes
-var int prevClosedTrades = 0
-if isNewDay
-    prevClosedTrades := strategy.closedtrades  // Reset baseline at start of day
+// prevClosedTrades is now declared at top level
 
 // Check if a new trade closed since last bar
 if strategy.closedtrades > prevClosedTrades
@@ -448,3 +512,17 @@ if barstate.islast
     table.cell(dashboard, 0, 7, "Diag (Filt/CanT)", text_color=color.white, text_halign=text.align_left)
     diagStr = (isFiltered ? "FILT" : "OK") + " / " + (canTrade ? "YES" : hasWonToday ? "WON" : "NO")
     table.cell(dashboard, 1, 7, diagStr, text_color=canTrade ? color.green : hasWonToday ? color.lime : color.red)
+// =============================================================================
+// DEBUGGING (Temporary)
+// =============================================================================
+
+if showDebug and (longPending or shortPending or inTrade or strategy.closedtrades > prevClosedTrades)
+    debugTxt = "PenL: " + str.tostring(longPending) + "\n" +
+               "PenS: " + str.tostring(shortPending) + "\n" +
+               "BOL: " + str.tostring(breakoutLong) + "\n" +
+               "Cls < PB: " + str.tostring(close < pb_long) + "\n" +
+               "PB Lvl: " + pullbackLevel + "\n" +
+               "PB Px: " + str.tostring(pb_long, "#.##") + "\n" +
+               "Closed: " + str.tostring(strategy.closedtrades) + "\n" +
+               "Pos: " + str.tostring(strategy.position_size)
+    label.new(bar_index, high, debugTxt, color=color.black, textcolor=color.white, size=size.small, yloc=yloc.abovebar)
