@@ -33,6 +33,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private double pbShortPrice = double.NaN;
 		private int signalsCount = 0;
 		private int maxSignals = 3; // Hardcoded for now to match Pine default
+		private double rHigh = double.MinValue;
+		private double rLow = double.MaxValue;
+		private bool rDefined = false;
 
 		protected override void OnBarUpdate()
 		{
