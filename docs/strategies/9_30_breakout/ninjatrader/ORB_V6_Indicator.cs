@@ -24,7 +24,7 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //This namespace holds Indicators in this folder and is required. Do not change it. 
 namespace NinjaTrader.NinjaScript.Indicators
 {
-	public enum EntryMode
+	public enum ORB_Indicator_EntryMode
 	{
 		[Display(Name="Breakout (Close)")] BreakoutClose,
 		[Display(Name="Retest (0%)")] Retest_0,
@@ -65,7 +65,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				IsSuspendedWhileInactive					= true;
 				
 				// Initialize Inputs
-				EntryModel = EntryMode.Shallow_25;
+				EntryModel = ORB_Indicator_EntryMode.Shallow_25;
 				SessionStart = "09:30";
 				SessionEnd = "10:00";
 				UseRegime = true;
@@ -103,7 +103,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 			{
 				try 
 				{
-					estTime = TimeZoneInfo.ConvertTime(Time[0], Bars.TradingHours.TimeZone, estZone);
+					// CS1503 Fix: Treat TradingHours.TimeZone as string ID based on error report
+					estTime = TimeZoneInfo.ConvertTime(Time[0], TimeZoneInfo.FindSystemTimeZoneById(Bars.TradingHours.TimeZone.ToString()), estZone);
 				}
 				catch { /* Fallback */ }
 			}
@@ -142,9 +143,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 				
 				// Calculate Pullback Levels Dynamic
 				double pbLevel = -1.0;
-				if (EntryModel == EntryMode.Retest_0) pbLevel = 0.0;
-				else if (EntryModel == EntryMode.Shallow_25) pbLevel = 0.25;
-				else if (EntryModel == EntryMode.Midpoint_50) pbLevel = 0.50;
+				if (EntryModel == ORB_Indicator_EntryMode.Retest_0) pbLevel = 0.0;
+				else if (EntryModel == ORB_Indicator_EntryMode.Shallow_25) pbLevel = 0.25;
+				else if (EntryModel == ORB_Indicator_EntryMode.Midpoint_50) pbLevel = 0.50;
 				
 				pbLongPrice = pbLevel >= 0 ? rHigh - (rSize * pbLevel) : rHigh;
 				pbShortPrice = pbLevel >= 0 ? rLow + (rSize * pbLevel) : rLow;
@@ -177,7 +178,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 					bool crossUpper = CrossAbove(Close, rHigh, 1);
 					bool crossLower = CrossBelow(Close, rLow, 1);
 					
-					if (EntryModel == EntryMode.BreakoutClose)
+					if (EntryModel == ORB_Indicator_EntryMode.BreakoutClose)
 					{
 						if (crossUpper) {
 							Draw.TriangleUp(this, "Buy" + CurrentBar, true, 0, Low[0] - TickSize, Brushes.SpringGreen);
@@ -226,7 +227,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 				if (CurrentBar == BarsArray[0].Count - 1)
 				{
-					string status = isTradingClosed ? "TRADING CLOSED" : isFiltered ? "SKIP (Filtered)" : (EntryModel == EntryMode.BreakoutClose ? "READY: Breakout" : "WAIT: Pullback");
+					string status = isTradingClosed ? "TRADING CLOSED" : isFiltered ? "SKIP (Filtered)" : (EntryModel == ORB_Indicator_EntryMode.BreakoutClose ? "READY: Breakout" : "WAIT: Pullback");
 					Brush statusColor = isTradingClosed ? Brushes.Gray : isFiltered ? Brushes.Red : Brushes.SpringGreen;
 
 					double rSize = rHigh - rLow;
@@ -256,7 +257,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				bool isLongSignal = Close[0] > rHigh;
 				bool isShortSignal = Close[0] < rLow;
 
-				if (isLongSignal && (EntryModel == EntryMode.BreakoutClose || (canTrade && Low[0] <= rHigh - (rHigh-rLow) * 0.25))) // Approximation for PB
+				if (isLongSignal && (EntryModel == ORB_Indicator_EntryMode.BreakoutClose || (canTrade && Low[0] <= rHigh - (rHigh-rLow) * 0.25))) // Approximation for PB
 				{
 					activeSL = rLow;
 					activeTP = Close[0] * (1 + TPSetting / 100);
@@ -278,7 +279,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		#region Properties
 		[NinjaScriptProperty]
 		[Display(Name="Entry Model", Order=0, GroupName="Core")]
-		public EntryMode EntryModel { get; set; }
+		public NinjaTrader.NinjaScript.Indicators.ORB_Indicator_EntryMode EntryModel { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name="Session Start (ET)", Order=1, GroupName="Core")]
@@ -330,7 +331,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		public bool UseSweetSpot { get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name="Show Projected Exits", Order=10, GroupName="Addons")]
+		[Display(Name="Show Active SL/TP", Order=10, GroupName="Addons")]
 		public bool ShowExits { get; set; }
 
 		[NinjaScriptProperty]
@@ -367,3 +368,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		#endregion
 	}
 }
+
+
+
+

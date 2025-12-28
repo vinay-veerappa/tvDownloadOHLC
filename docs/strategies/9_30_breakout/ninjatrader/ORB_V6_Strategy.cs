@@ -144,7 +144,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				try 
 				{
 					// Convert from the Data Series timezone (TradingHours) -> EST
-					estTime = TimeZoneInfo.ConvertTime(Time[0], Bars.TradingHours.TimeZone, estZone);
+					// CS1503 Fix: Treat TradingHours.TimeZone as string ID
+					estTime = TimeZoneInfo.ConvertTime(Time[0], TimeZoneInfo.FindSystemTimeZoneById(Bars.TradingHours.TimeZone.ToString()), estZone);
 				}
 				catch { /* Fallback to Time[0] if conversion fails */ }
 			}
@@ -449,7 +450,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#region Properties
 		[NinjaScriptProperty]
 		[Display(Name="Entry Model", Order=1, GroupName="Entry")]
-		public EntryMode EntryModel { get; set; }
+		public NinjaTrader.NinjaScript.Strategies.EntryMode EntryModel { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name="PB Confirmation (Close)", Order=2, GroupName="Entry")]
@@ -492,7 +493,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		[NinjaScriptProperty]
 		[Display(Name="Signal Candle Exit", Order=12, GroupName="Addons")]
-		public CandleExitMode SigCandleExit { get; set; }
+		public NinjaTrader.NinjaScript.Strategies.CandleExitMode SigCandleExit { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name="Use VVIX Filter (Skip if > 115)", Order=10, GroupName="Addons")]
@@ -537,7 +538,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		[NinjaScriptProperty]
 		[Display(Name="Runner Mode", Order=19, GroupName="Multi-TP")]
-		public RunnerModeType RunnerMode { get; set; }
+		public NinjaTrader.NinjaScript.Strategies.RunnerModeType RunnerMode { get; set; }
 
 		[NinjaScriptProperty]
 		[Display(Name="Trail %", Order=20, GroupName="Multi-TP")]
