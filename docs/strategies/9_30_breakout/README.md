@@ -21,6 +21,38 @@ Extensive backtesting over **980+ trades** reveals significant profitability, sp
 
 ---
 
+## 🆕 V3 Features (Dec 2025)
+The latest iteration introduces advanced entry/exit management and visual feedback:
+
+### Entry System
+| Feature | Description |
+|:--------|:------------|
+| **Trigger Mode** | Aggressive (wick), Standard (close), Displacement (0.10% buffer) |
+| **Entry Mode** | Immediate (market), Pullback Only (limit), Pullback + Fallback |
+| **Max Range Filter** | Skip trades if 09:30 range > 0.25% of price |
+
+### Exit Management
+| Feature | Description |
+|:--------|:------------|
+| **Hybrid Multi-TP** | TP1 (0.10%, 50%), TP2 (0.25%, 25%), Runner (25%) |
+| **Runner Modes** | None, Trailing (0.08% trail), or Forever (EOD only) |
+| **Signal Candle Exit** | Exit on breakout candle breach (uses original breakout candle for Fallback entries) |
+| **Stop After Win** | Stop trading for the day after a profitable trade |
+| **Max SL %** | Cap stop loss at 0.30% (prevents excessive loss on Fallback entries) |
+
+### Visual Enhancements
+| Feature | Description |
+|:--------|:------------|
+| **Candle Bar Coloring** | 🟡 Yellow (09:30), 🔵 Cyan (breakout trigger), 🟢 Lime+⚡ (Fallback) |
+| **Range Too Big Visual** | ORB box turns **RED** when range > maxRangePct |
+| **HUD Status** | Shows WON / IN TRADE (PB or ⚡Fallback) / WAIT / FILTERED |
+
+> [!TIP]
+> See [UNIFIED_V3_SPECIFICATION.md](UNIFIED_V3_SPECIFICATION.md) for the complete technical specification.
+> See [STRATEGY_BUILDING_BLOCKS.md](STRATEGY_BUILDING_BLOCKS.md) for modular component flowcharts.
+
+---
+
 ## Strategy Comparison
 
 | Aspect | V1 (Baseline) | V2 (Optimized/Aggressive) |
@@ -73,6 +105,9 @@ We have conducted extensive multi-year research (2016-2025) on the 9:30 breakout
 ---
 
 ## Next Steps / TODO
-- [ ] Implement the **0.25% Range Filter** in the TypeScript runner.
-- [ ] Backtest the **V2 Tuesday Filter** over the full 10-year dataset.
-- [ ] Standardize the **80% Range Dynamic TP** across all futures tickers.
+- [x] Implement the **0.25% Range Filter** in PineScript and NinjaTrader.
+- [x] Add **Hybrid Multi-TP** with trailing runner support.
+- [x] Implement **Buffer Breakout + Timeout Fallback** entry logic.
+- [x] Add **Range Too Big Visual** across all platforms.
+- [ ] Implement V3 features in the TypeScript runner.
+- [ ] Backtest V3 configuration over the full 10-year dataset.

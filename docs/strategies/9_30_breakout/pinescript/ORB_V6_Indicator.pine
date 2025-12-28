@@ -1,0 +1,273 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © vveerappa
+
+//@version=6
+indicator("9:30 AM ORB V6 [Final Optimized]", shorttitle="ORB V6", overlay=true)
+
+// =============================================================================
+// 1. MODULAR INPUTS & TOGGLES
+// =============================================================================
+grp_core = "Core Settings"
+sessionStart = input.session("0930-0931", "Opening Range Session (ET)", group=grp_core)
+tradingEnd   = input.session("0931-1000", "Trading Window (ET)", group=grp_core)
+hardExitTime = input.session("1000-1600", "Hard Exit Time (ET)", group=grp_core)
+
+grp_addons = "Strategy Addons (Logic)"
+useRegime    = input.bool(true, "Enable Regime Filter (SMA20)", group=grp_addons)
+useVVIX      = input.bool(true, "Enable VVIX Filter (>115 Skip)", group=grp_addons)
+useSweetSpot = input.bool(true, "Highlight VVIX Sweet Spot (98-115)", group=grp_addons)
+useTuesday   = input.bool(true, "Enable Tuesday Avoidance", group=grp_addons)
+maxRangePct  = input.float(0.25, "Max Range % (Skip if larger)", step=0.05, group=grp_addons)
+useMAEFilter = input.bool(true, "Enable MAE Heat Filter", group=grp_addons)
+maeThreshold = input.float(0.12, "MAE % Threshold", step=0.01, group=grp_addons)
+useEarlyExit = input.bool(true, "Enable Early Exit (Close Inside)", group=grp_addons)
+useTimeExit  = input.bool(true, "Enable Time Exit (10:00 AM)", group=grp_addons)
+showExits    = input.bool(true, "Show Projected SL/TP Levels", group=grp_addons)
+
+grp_entry = "Entry Efficiency (Pullback Theory)"
+entryModel = input.string("Shallow (25%)", "Entry Model", options=["Breakout (Close)", "Retest (0%)", "Shallow (25%)", "Midpoint (50%)"], group=grp_entry)
+pbConfirm  = input.bool(true, "Pullback Confirmation (Wait for Close)", group=grp_entry)
+maxAttempts = input.int(3, "Max Attempts per Day", minval=1, maxval=5, group=grp_entry)
+maxSignals = input.int(3, "Max Visual Signals on Chart", minval=1, maxval=10, group=grp_entry)
+
+grp_mtp = "Multi-TP (Visual)"
+enableMultiTP = input.bool(true, "Show Multi-TP Levels", group=grp_mtp)
+tp1Level   = input.float(0.10, "TP1 Level (%)", step=0.01, group=grp_mtp)
+tp2Level   = input.float(0.25, "TP2 Level (%)", step=0.01, group=grp_mtp)
+tpTargetPct = input.float(0.35, "Final TP (%)", step=0.05, group=grp_mtp)
+
+grp_risk = "Risk & Sizing"
+initialCapital = input.float(3000.0, "Account Equity ($)", group=grp_risk)
+riskPercent    = input.float(5.0, "Risk per Trade (%)", minval=0.1, step=0.1, group=grp_risk)
+// Point value is now retrieved dynamically from the ticker
+
+// =============================================================================
+// 2. DATA CALCULATIONS & REGIMES
+// =============================================================================
+// Regime Calculation (Daily SMA20)
+sym_close_daily = request.security("", "D", close)
+sym_sma20_daily = request.security("", "D", ta.sma(close, 20))
+isBullRegime = na(sym_sma20_daily) ? true : (sym_close_daily > sym_sma20_daily)
+
+// VVIX Logic
+vvix_open = request.security("CBOE:VVIX", "D", open)
+vvixZone = vvix_open > 115 ? "Extreme" : vvix_open > 98 ? "Elevated" : vvix_open > 85 ? "Mid" : "Low"
+vvixColor = vvix_open > 115 ? color.red : vvix_open > 98 ? color.orange : color.green
+
+// Tuesday Check
+isTuesday = dayofweek == dayofweek.tuesday
+
+// =============================================================================
+// 3. OPENING RANGE & SIGNAL LOGIC
+// =============================================================================
+var float rHigh = na
+var float rLow  = na
+var bool rDefined = false
+
+isORBar = not na(time(timeframe.period, sessionStart, "America/New_York"))
+isTradeWindow = not na(time(timeframe.period, tradingEnd, "America/New_York"))
+isNewDay = ta.change(time("D")) != 0
+
+if isNewDay
+    rHigh := na
+    rLow := na
+    rDefined := false
+
+if isORBar and not rDefined
+    rHigh := high
+    rLow := low
+    rDefined := true
+
+rSize = rHigh - rLow
+rPct = (rSize / open) * 100
+
+// Pullback Entry Levels
+pbLevel = switch entryModel
+    "Retest (0%)"    => 0.0
+    "Shallow (25%)"  => 0.25
+    "Midpoint (50%)" => 0.50
+    => -1.0 // Breakout mode
+
+// Time logic
+isPostTrade = not na(time(timeframe.period, hardExitTime, "America/New_York"))
+
+// Signal Conditions (Pre-Filter)
+isFiltered = (useRegime and not isBullRegime) or (useVVIX and nz(vvix_open, 0) > 115) or (useTuesday and isTuesday)
+isTradingClosed = useTimeExit and isPostTrade
+
+// Signal Calculations
+longBreakout  = rDefined and isTradeWindow and not isFiltered and close > rHigh
+shortBreakout = rDefined and isTradeWindow and not isFiltered and close < rLow
+
+// Pullback Logic for Visuals
+float pb_long_price = pbLevel >= 0 ? rHigh - (rSize * pbLevel) : rHigh
+float pb_short_price = pbLevel >= 0 ? rLow + (rSize * pbLevel) : rLow
+
+// =============================================================================
+// 4. CONTRACT SIZING
+// =============================================================================
+riskAmount = initialCapital * (riskPercent / 100)
+contractSize = (rDefined and rSize > 0) ? math.max(1, math.floor(riskAmount / (rSize * syminfo.pointvalue))) : 0
+
+// =============================================================================
+// 4.5 TRADE SIGNAL TRACKING (State Machine)
+// =============================================================================
+var int signalsCount = 0
+var bool pendingLong = false
+var bool pendingShort = false
+var float activeSL = na
+var float activeTP = na
+var float activeTP1 = na
+var float activeTP2 = na
+
+if isNewDay
+    signalsCount := 0
+    pendingLong := false
+    pendingShort := false
+    activeSL := na
+    activeTP := na
+
+// Stateful function calls (Must be at top level)
+crossUpper = ta.crossover(close, rHigh)
+crossLower = ta.crossunder(close, rLow)
+
+// 1. Detect Breakout (Starts Pending State)
+if rDefined and isTradeWindow and not isFiltered and signalsCount < maxSignals
+    if entryModel == "Breakout (Close)"
+        if crossUpper
+            signalsCount += 1
+            activeSL := rLow
+            activeTP := close * (1 + tpTargetPct/100)
+            label.new(bar_index, low, "BUY", color=color.new(color.green, 20), style=label.style_triangleup, textcolor=color.white, size=size.small, yloc=yloc.belowbar)
+        else if crossLower
+            signalsCount += 1
+            activeSL := rHigh
+            activeTP := close * (1 - tpTargetPct/100)
+            label.new(bar_index, high, "SELL", color=color.new(color.red, 20), style=label.style_triangledown, textcolor=color.white, size=size.small, yloc=yloc.abovebar)
+    else
+        // Pullback Entry Logic
+        if not pendingLong and not pendingShort
+            if close > rHigh
+                pendingLong := true
+            else if close < rLow
+                pendingShort := true
+        
+        // Reset if we hit the other side before the pullback
+        if pendingLong and low < rLow
+            pendingLong := false
+        if pendingShort and high > rHigh
+            pendingShort := false
+
+        if pendingLong and low <= pb_long_price
+            signalsCount += 1
+            pendingLong := false
+            activeSL := rLow
+            activeTP1 := pb_long_price * (1 + tp1Level/100)
+            activeTP2 := pb_long_price * (1 + tp2Level/100)
+            activeTP := pb_long_price * (1 + tpTargetPct/100)
+            label.new(bar_index, low, "PB BUY", color=color.new(color.green, 20), style=label.style_triangleup, textcolor=color.white, size=size.small, yloc=yloc.belowbar)
+        
+        if pendingShort and high >= pb_short_price
+            signalsCount += 1
+            pendingShort := false
+            activeSL := rHigh
+            activeTP1 := pb_short_price * (1 - tp1Level/100)
+            activeTP2 := pb_short_price * (1 - tp2Level/100)
+            activeTP := pb_short_price * (1 - tpTargetPct/100)
+            label.new(bar_index, high, "PB SELL", color=color.new(color.red, 20), style=label.style_triangledown, textcolor=color.white, size=size.small, yloc=yloc.abovebar)
+
+// =============================================================================
+// 5. VISUAL DASHBOARD (V6 TABLE)
+// =============================================================================
+var table dashboard = table.new(position.top_right, 2, 9, bgcolor=color.new(color.black, 20), border_width=1, border_color=color.new(color.gray, 50))
+
+if barstate.islast
+    table.cell(dashboard, 0, 0, "Regime Bias", text_color=color.white, text_halign=text.align_left)
+    table.cell(dashboard, 1, 0, isBullRegime ? "BULL" : "BEAR", text_color=isBullRegime ? color.green : color.red, text_formatting=text.format_bold)
+    
+    table.cell(dashboard, 0, 1, "VVIX Open", text_color=color.white, text_halign=text.align_left)
+    vvixStatus = (useSweetSpot and vvix_open >= 98 and vvix_open <= 115) ? "SWEET SPOT" : vvixZone
+    table.cell(dashboard, 1, 1, str.tostring(vvix_open, "#.##") + " (" + vvixStatus + ")", text_color=vvixColor, text_formatting=text.format_bold)
+    
+    table.cell(dashboard, 0, 2, "09:30 Range", text_color=color.white, text_halign=text.align_left)
+    rangeStatus = isRangeTooBig ? " ⚠️ TOO BIG" : ""
+    rangeColor = isRangeTooBig ? color.red : color.yellow
+    table.cell(dashboard, 1, 2, str.tostring(rSize, "#.##") + " pts (" + str.tostring(rPct, "#.###") + "%)" + rangeStatus, text_color=rangeColor)
+    
+    table.cell(dashboard, 0, 3, "MAE Cut", text_color=color.white, text_halign=text.align_left)
+    table.cell(dashboard, 1, 3, useMAEFilter ? str.tostring(maeThreshold) + "%" : "OFF", text_color=color.orange)
+
+    table.cell(dashboard, 0, 4, "Contract Size", text_color=color.white, text_halign=text.align_left)
+    table.cell(dashboard, 1, 4, str.tostring(contractSize) + " Lots", text_color=color.aqua, text_formatting=text.format_bold)
+    
+    table.cell(dashboard, 0, 5, "Entry Model", text_color=color.white, text_halign=text.align_left)
+    table.cell(dashboard, 1, 5, entryModel, text_color=color.white)
+    
+    table.cell(dashboard, 0, 6, "Trade Status", text_color=color.white, text_halign=text.align_left)
+    statusText = isTradingClosed ? "TRADING CLOSED" : isFiltered ? "SKIP (Filtered)" : (entryModel == "Breakout (Close)" ? "READY: Breakout" : "WAITing: Pullback")
+    statusColor = isTradingClosed ? color.gray : isFiltered ? color.red : color.green
+    table.cell(dashboard, 1, 6, statusText, text_color=statusColor, text_formatting=text.format_bold)
+
+    table.cell(dashboard, 0, 7, "Next Entry", text_color=color.white, text_halign=text.align_left)
+    entryPriceStr = (entryModel == "Breakout (Close)") ? "On Close" : str.tostring(pbLevel > -1 ? (rHigh - rSize * pbLevel) : rHigh, "#.##")
+    table.cell(dashboard, 1, 7, entryPriceStr, text_color=color.gray)
+
+    table.cell(dashboard, 0, 8, "Diag (Filt/CanT)", text_color=color.white, text_halign=text.align_left)
+    canT = rDefined and isTradeWindow and not isFiltered and signalsCount < maxAttempts
+    diagStr = (isFiltered ? "FILT" : "OK") + " / " + (canT ? "YES" : "NO")
+    table.cell(dashboard, 1, 8, diagStr, text_color=canT ? color.green : color.red)
+
+// =============================================================================
+// 6. DRAWING
+// =============================================================================
+plot(rDefined ? rHigh : na, "Range High", color=color.new(color.gray, 50), style=plot.style_linebr)
+plot(rDefined ? rHigh - (rSize * 0.25) : na, "25% Level", color=color.new(color.gray, 80), style=plot.style_linebr)
+plot(rDefined ? rHigh - (rSize * 0.50) : na, "50% Level", color=color.new(color.gray, 80), style=plot.style_linebr)
+plot(rDefined ? rHigh - (rSize * 0.75) : na, "75% Level", color=color.new(color.gray, 80), style=plot.style_linebr)
+plot(rDefined ? rLow : na, "Range Low", color=color.new(color.gray, 50), style=plot.style_linebr)
+
+// 0.10% Buffer Lines (of Price, offset from boundaries)
+bufUpper = rHigh + (close * 0.001)
+bufLower = rLow - (close * 0.001)
+plot(rDefined ? bufUpper : na, "0.10% Buffer Upper", color=color.new(color.gray, 70), style=plot.style_linebr, linewidth=1)
+plot(rDefined ? bufLower : na, "0.10% Buffer Lower", color=color.new(color.gray, 70), style=plot.style_linebr, linewidth=1)
+
+fill(plot(rDefined ? rHigh : na, display=display.none), plot(rDefined ? rLow : na, display=display.none), color=color.new(color.purple, 90))
+
+// Plot Exit Projections
+isPriceNearSL = not na(activeSL) and ((activeSL > activeTP and high >= activeSL) or (activeSL < activeTP and low <= activeSL))
+isPriceNearTP = not na(activeTP) and ((activeTP > activeSL and high >= activeTP) or (activeTP < activeSL and low <= activeTP))
+
+if isPriceNearSL or isPriceNearTP or isPostTrade
+    activeSL := na
+    activeTP := na
+    activeTP1 := na
+    activeTP2 := na
+
+plot(showExits ? activeSL : na, "Projected SL", color=color.new(color.red, 40), style=plot.style_linebr, linewidth=2)
+plot(showExits and enableMultiTP ? activeTP1 : na, "Projected TP1", color=color.new(color.lime, 50), style=plot.style_linebr, linewidth=1)
+plot(showExits and enableMultiTP ? activeTP2 : na, "Projected TP2", color=color.new(color.teal, 50), style=plot.style_linebr, linewidth=1)
+plot(showExits ? activeTP : na, "Projected TP (Final)", color=color.new(color.green, 40), style=plot.style_linebr, linewidth=2)
+
+// Show Pullback Zones
+var box pbBox = na
+isSweetSpot = useSweetSpot and vvix_open >= 98 and vvix_open <= 115
+rPctCheck = rDefined ? (rSize / close) * 100 : 0
+isRangeTooBig = rPctCheck > maxRangePct
+// Color priority: Red (too big) > Orange (sweet spot) > Gray (normal)
+boxColor = isRangeTooBig ? color.new(color.red, 80) : isSweetSpot ? color.new(color.orange, 85) : color.new(color.gray, 95)
+borderColor = isRangeTooBig ? color.red : isSweetSpot ? color.orange : na
+
+if isORBar and rDefined
+    pbBox := box.new(bar_index, rHigh, bar_index+20, rLow, bgcolor=boxColor, border_color=borderColor)
+if rDefined and not na(pbBox)
+    box.set_top(pbBox, rHigh - (rSize * 0.25))
+    box.set_bottom(pbBox, rHigh - (rSize * 0.50))
+    box.set_right(pbBox, bar_index)
+    // Update colors dynamically based on current conditions
+    if isRangeTooBig
+        box.set_bgcolor(pbBox, color.new(color.red, 80))
+        box.set_border_color(pbBox, color.red)
+    else if isSweetSpot
+        box.set_bgcolor(pbBox, color.new(color.orange, 85))
+        box.set_border_color(pbBox, color.orange)
