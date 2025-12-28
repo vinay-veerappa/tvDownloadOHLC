@@ -251,7 +251,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 						}
 					}
 				}
-			}
 
 			// Management
 			if (Position.MarketPosition != MarketPosition.Flat)
