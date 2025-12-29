@@ -30,6 +30,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Display(Name="Breakout (Close)")] BreakoutClose,
 		[Display(Name="Retest (0%)")] Retest_0,
 		[Display(Name="Shallow (25%)")] Shallow_25,
+		[Display(Name="Deep (50%)")] Deep_50,
 		[Display(Name="Midpoint (50%)")] Midpoint_50
 	}
 
@@ -47,8 +48,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		Forever
 	}
 
+
+
 	public class ORB_V6_Strategy : Strategy
 	{
+		private TimeZoneInfo estZone;
+		private TimeZoneInfo chartZone;
+		
+		// Internal Variables
 		private double rHigh = double.MinValue;
 		private double rLow = double.MaxValue;
 		private bool rDefined = false;
@@ -59,20 +66,23 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private int breakoutBar = -1;
 		private double pbLongPrice = double.NaN;
 		private double pbShortPrice = double.NaN;
-		private TimeZoneInfo estZone;
+		private SMA regimeSMA;
+		private int breakoutBarPrimary = -1;
+		private int fallbackBarPrimary = -1;
+		private bool fallbackIsLong = false;
 
 		protected override void OnStateChange()
 		{
 			if (State == State.SetDefaults)
 			{
-				Description									= @"9:30 AM ORB Strategy V6 [Unified Specification]";
+				Description									= @"9:30 AM Breakout Strategy V6";
 				Name										= "ORB_V6_Strategy";
 				Calculate									= Calculate.OnBarClose;
 				EntriesPerDirection							= 1;
 				EntryHandling								= EntryHandling.AllEntries;
 				IsExitOnSessionCloseStrategy				= true;
 				ExitOnSessionCloseSeconds					= 30;
-				IsFillLimitOnTouch							= true;
+				IsFillLimitOnTouch							= false;
 				MaximumBarsLookBack							= MaximumBarsLookBack.TwoHundredFiftySix;
 				OrderFillResolution							= OrderFillResolution.Standard;
 				Slippage									= 0;
@@ -80,7 +90,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 				TimeInForce									= TimeInForce.Gtc;
 				TraceOrders									= false;
 				RealtimeErrorHandling						= RealtimeErrorHandling.StopCancelClose;
-				StopTargetHandling							= StopTargetHandling.PerEntryExecution;
 				StopTargetHandling							= StopTargetHandling.PerEntryExecution;
 				BarsRequiredToTrade							= 20;
 
@@ -90,8 +99,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 					estZone = TimeZoneInfo.Local; // Fallback
 				}
 				
-				// Inputs
-				EntryModel = EntryMode.Shallow_25;
+				try {
+					chartZone = TimeZoneInfo.FindSystemTimeZoneById(ChartTimeZone);
+				} catch {
+					chartZone = TimeZoneInfo.Local; // Fallback
+				}
+				
+				// Initialize Inputs
+				// Initialize Inputs
+				ChartTimeZone = "Pacific Standard Time";
+				OrbDuration = ORB_Duration.OneMinute;
+				EntryModel = EntryMode.BreakoutClose;
 				MaxAttempts = 3;
 				PBConfirm = true;
 				BufferBreakout = true;
@@ -120,9 +138,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 				StopAfterWin = true;
 				MaxSlPct = 0.30;
 			}
+
 			else if (State == State.Configure)
 			{
-				AddDataSeries(BarsPeriodType.Day, 1); // For Regime (Daily SMA20)
+				AddDataSeries(BarsPeriodType.Second, 1); // Index 1: 1-Second Logic
+				AddDataSeries(BarsPeriodType.Day, 1);    // Index 2: Regime Filter
+			}
+			else if (State == State.DataLoaded)
+			{
+				regimeSMA = SMA(BarsArray[2], 20);
 			}
 		}
 
@@ -133,297 +157,275 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 		protected override void OnBarUpdate()
 		{
-			if (CurrentBar < 20 || BarsInProgress != 0) return;
+			// Strict Safety Checks
+			if (CurrentBars[0] < 1) return;
+			if (BarsArray.Length > 1 && CurrentBars[1] < 1) return;
+			if (BarsArray.Length > 2 && CurrentBars[2] < 1) return;
 
-			// CRITICAL: This strategy relies on explicit conversion to EST using TimeZoneInfo.
-			// This ensures independence from Chart Timezone settings (Local vs Exchange).
-			
-			DateTime estTime = Time[0];
-			if (estZone != null)
+			// Ensure we have secondary series
+			if (BarsArray.Length < 2) return;
+
+			// Logic Block: Execute ONLY on 1-Second Series (Index 1)
+			if (BarsInProgress == 1)
 			{
-				try 
+				DateTime estTime;
+				if (chartZone != null) estTime = TimeZoneInfo.ConvertTime(Time[0], chartZone, estZone);
+				else estTime = Time[0];
+
+				if (Bars.IsFirstBarOfSession)
 				{
-					// Convert from the Data Series timezone (TradingHours) -> EST
-					// CS1503 Fix: Treat TradingHours.TimeZone as string ID
-					estTime = TimeZoneInfo.ConvertTime(Time[0], TimeZoneInfo.FindSystemTimeZoneById(Bars.TradingHours.TimeZone.ToString()), estZone);
-				}
-				catch { /* Fallback to Time[0] if conversion fails */ }
-			}
-
-			if (Bars.IsFirstBarOfSession)
-			{
-				rHigh = double.MinValue;
-				rLow = double.MaxValue;
-				rDefined = false;
-				attemptsToday = 0;
-				longPending = false;
-				shortPending = false;
-				hasWonToday = false;
-				enteredViaFallback = false;
-				breakoutCandleExtreme = double.NaN;
-				prevClosedProfit = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
-			}
-			
-			// Detect Win Today
-			if (StopAfterWin && !hasWonToday && SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit > prevClosedProfit)
-			{
-				// Check if the latest trade was a win
-				if (SystemPerformance.AllTrades.Count > 0)
-				{
-					Trade lastTrade = SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1];
-					if (lastTrade.ProfitCurrency > 0) hasWonToday = true;
-				}
-				prevClosedProfit = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
-			}
-
-			// Capture Range
-			if (estTime.Hour == 9 && estTime.Minute == 30)
-			{
-				rHigh = High[0];
-				rLow = Low[0];
-				rDefined = true;
-				// (Drawing code same as before, omitted for brevity in snippet block)
-			}
-
-			if (!rDefined) return;
-			// Filter Logic
-			if (!rDefined) return;
-			// Filter Logic
-			int estTimeInt = estTime.Hour * 10000 + estTime.Minute * 100 + estTime.Second;
-			bool isWindow = estTimeInt >= 93000 && estTimeInt <= 155500;
-			
-			// Regime Filter
-			bool isBull = true; 
-			if (UseRegime && BarsArray.Length > 1) {
-				// Assuming SMA(20) on Daily (Series 1)
-				if (CurrentBars[1] > 20)
-					isBull = Closes[1][0] > SMA(BarsArray[1], 20)[0];
-			}
-			
-			bool isFiltered = (UseRegime && !isBull) || (UseVVIX && VVIX_Open > 115) || (UseMAEFilter && false); 
-			int qty = DefaultQuantity;
-			
-			bool canTrade = rDefined && isWindow && Position.MarketPosition == MarketPosition.Flat && attemptsToday < MaxAttempts && !isFiltered && !hasWonToday;
-
-			if (canTrade)
-			{
-				// One-Shot Breakout Triggers
-				bool breakoutLong = false;
-				bool breakoutShort = false;
-
-				if (EntryModel == EntryMode.BreakoutClose){
-					breakoutLong = CrossAbove(Close, rHigh, 1);
-					breakoutShort = CrossBelow(Close, rLow, 1);
-				} else {
-					// Pullback Logic
-					double bufferHigh = rHigh + (Close[0] * 0.001);
-					double bufferLow = rLow - (Close[0] * 0.001);
+					rHigh = double.MinValue;
+					rLow = double.MaxValue;
+					rDefined = false;
+					attemptsToday = 0;
+					longPending = false;
+					shortPending = false;
+					hasWonToday = false;
+					enteredViaFallback = false;
+					breakoutCandleExtreme = double.NaN;
 					
-					breakoutLong = BufferBreakout ? CrossAbove(Close, bufferHigh, 1) : (PBConfirm ? CrossAbove(Close, rHigh, 1) : CrossAbove(High, rHigh, 1));
-					breakoutShort = BufferBreakout ? CrossBelow(Close, bufferLow, 1) : (PBConfirm ? CrossBelow(Close, rLow, 1) : CrossBelow(Low, rLow, 1));
+					// Re-calculate prevClosedProfit at session start
+					if (SystemPerformance.AllTrades.Count > 0)
+						prevClosedProfit = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
+					else 
+						prevClosedProfit = 0;
 				}
 				
-				if (!longPending && !shortPending)
-				{
-					// No Fakeout Logic: Must Close Validly
-					if (breakoutLong && Close[0] >= pbLongPrice) { 
-						longPending = true; 
-						breakoutBar = CurrentBar; 
-						breakoutCandleExtreme = Low[0]; 
-					}
-					else if (breakoutShort && Close[0] <= pbShortPrice) { 
-						shortPending = true; 
-						breakoutBar = CurrentBar; 
-						breakoutCandleExtreme = High[0]; 
-					}
+				// Reset coloring
+				if (estTime.Hour == 9 && estTime.Minute == 30 && estTime.Second == 0) {
+					breakoutBarPrimary = -1;
+					fallbackBarPrimary = -1;
 				}
 
+				// Reset at 9:30:00 exact
+				if (estTime.Hour == 9 && estTime.Minute == 30 && estTime.Second == 0)
+				{
+					rHigh = double.MinValue;
+					rLow = double.MaxValue;
+					rDefined = false;
+				}
+
+				// Capture Range Window
+				int limitSeconds = (OrbDuration == ORB_Duration.OneMinute) ? 60 : 30;
+				TimeSpan timeOfDay = estTime.TimeOfDay;
+				TimeSpan startTime = new TimeSpan(9, 30, 0);
+				TimeSpan endTime = startTime.Add(TimeSpan.FromSeconds(limitSeconds));
+
+				if (timeOfDay >= startTime && timeOfDay < endTime)
+				{
+					if (High[0] > rHigh) rHigh = High[0];
+					if (Low[0] < rLow) rLow = Low[0];
+				}
+
+				// Finalize ORB
+				if (!rDefined && timeOfDay >= endTime && timeOfDay < endTime.Add(TimeSpan.FromSeconds(5)))
+				{
+					rDefined = rHigh > double.MinValue && rLow < double.MaxValue;
+				}
+
+				// Execution/Management moved to Primary Logic Loop (BiP 0)
+			}
+
+			// Primary Logic Loop (BiP 0)
+			// Runs on Bar Close effectively if Calculate=OnBarClose
+			if (BarsInProgress == 0 && rDefined)
+			{
+				DateTime estTime;
+				if (chartZone != null) estTime = TimeZoneInfo.ConvertTime(Time[0], chartZone, estZone);
+				else estTime = Time[0];
+
+				bool isTradingClosed = estTime.TimeOfDay >= HardExitTime.TimeOfDay;
+				
+				// Re-calc Filter Logic for Execution
+				bool isBull = true; 
+				if (UseRegime && BarsArray.Length > 2 && BarsArray[2].Count >= 20) {
+					isBull = BarsArray[2].GetClose(0) > regimeSMA[0];
+				}
+				bool isTuesday = estTime.DayOfWeek == DayOfWeek.Tuesday;
+				bool isFiltered = (UseVVIX && VVIX_Open > 115) || (UseRegime && !isBull) || (UseTuesday && isTuesday);
+
+				// Common rSize calc for both Logic and HUD
+				double rSize = rHigh - rLow;
+
+				// --- EXECUTION LOGIC START ---
+				// Detect Win Today
+				if (StopAfterWin && !hasWonToday && SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit > prevClosedProfit + 10) 
+					hasWonToday = true;
+
+				bool canTrade = !isFiltered && !isTradingClosed && attemptsToday < MaxAttempts && !hasWonToday && Position.MarketPosition == MarketPosition.Flat;
+
+				// DEBUG SUITE: State Analysis
+				if (!canTrade)
+				{
+					// Only print if we are in the session key hours (9:30 - 16:00) to avoid spam
+					if (estTime.Hour >= 9 && estTime.Hour < 16)
+						Print(string.Format("BLOCKED [{0}]: Filtered={1} Closed={2} Att={3}/{4} Won={5} Pos={6}", 
+							estTime, isFiltered, isTradingClosed, attemptsToday, MaxAttempts, hasWonToday, Position.MarketPosition));
+				}
+				else
+				{
+					Print(string.Format("ACTIVE [{0}]: Close={1} rHigh={2} rLow={3} Model={4}", estTime, Close[0], rHigh, rLow, EntryModel));
+				}
+
+				if (canTrade)
+				{
+					int qty = DefaultQuantity;
+					bool breakoutLong = false;
+					bool breakoutShort = false;
+
+					// Breakout Detection (Primary Close)
+					if (EntryModel == EntryMode.BreakoutClose)
+					{
+						breakoutLong = CrossAbove(Close, rHigh, 1);
+						breakoutShort = CrossBelow(Close, rLow, 1);
+					} 
+					else 
+					{
+						// Pullback Mode
+						double bufferHigh = rHigh + (Close[0] * 0.001);
+						double bufferLow = rLow - (Close[0] * 0.001);
+						
+						breakoutLong = BufferBreakout ? CrossAbove(Close, bufferHigh, 1) : (PBConfirm ? CrossAbove(Close, rHigh, 1) : CrossAbove(High, rHigh, 1));
+						breakoutShort = BufferBreakout ? CrossBelow(Close, bufferLow, 1) : (PBConfirm ? CrossBelow(Close, rLow, 1) : CrossBelow(Low, rLow, 1));
+					}
+					
+					if (breakoutLong || breakoutShort)
+						Print(string.Format("BREAKOUT SIGNAL [{0}]: Long={1} Short={2} Close={3} rHigh={4} rLow={5}", estTime, breakoutLong, breakoutShort, Close[0], rHigh, rLow));
+					
+					// rSize already calculated above
+					double pbLevel = (EntryModel == EntryMode.Retest_0) ? 0.0 : (EntryModel == EntryMode.Shallow_25) ? 0.25 : 0.50;
+					pbLongPrice = rHigh - (rSize * pbLevel);
+					pbShortPrice = rLow + (rSize * pbLevel);
+
+						if (!longPending && !shortPending)
+						{
+							// 1. Immediate Entry (BreakoutClose) - PRIORITIZED
+							if (EntryModel == EntryMode.BreakoutClose)
+							{
+								if (breakoutLong) { EnterLong(0, qty, "BreakoutBuy"); attemptsToday++; breakoutBarPrimary = CurrentBar; Print(string.Format("ENTRY: Breakout Buy @ {0}", Close[0])); }
+								else if (breakoutShort) { EnterShort(0, qty, "BreakoutSell"); attemptsToday++; breakoutBarPrimary = CurrentBar; Print(string.Format("ENTRY: Breakout Sell @ {0}", Close[0])); }
+							}
+							// 2. Arming for Pullback Modes
+							else 
+							{
+								if (breakoutLong && Close[0] >= pbLongPrice) { 
+									longPending = true; breakoutBar = CurrentBar; breakoutCandleExtreme = Low[0]; 
+								}
+								else if (breakoutShort && Close[0] <= pbShortPrice) { 
+									shortPending = true; breakoutBar = CurrentBar; breakoutCandleExtreme = High[0]; 
+								}
+							}
+						}
+					
+					// Pending Logic Debug
+					if (longPending || shortPending)
+						Print(string.Format("PENDING [{0}]: Long={1} Short={2} Close={3} PB_L={4} PB_S={5}", estTime, longPending, shortPending, Close[0], pbLongPrice, pbShortPrice));
+
+					// Pullback State
 					int barsSinceBreakout = breakoutBar >= 0 ? CurrentBar - breakoutBar : 0;
 					bool timeoutReached = barsSinceBreakout >= PBTimeoutBars;
-					
-					// Deep Pullback Guard (V3 Logic)
-					if (longPending && Close[0] < pbLongPrice) {
-						longPending = false; breakoutBar = -1;
-					}
-					if (shortPending && Close[0] > pbShortPrice) {
-						shortPending = false; breakoutBar = -1;
-					}
 
 					if (longPending)
 					{
-						// Guard: Deep Pullback Cancel
-						if (Close[0] < pbLongPrice) {
-							longPending = false; breakoutBar = -1;
+						if (Close[0] < pbLongPrice) { longPending = false; breakoutBar = -1; Print(string.Format("PB CANCEL [{0}]: Long Deep PB. Close={1} < Level={2}", estTime, Close[0], pbLongPrice)); }
+						else if (Low[0] <= pbLongPrice && Close[0] >= pbLongPrice) {
+							EnterLong(0, qty, "PB Long (Conf)");
+							longPending = false; breakoutBar = -1; attemptsToday++; enteredViaFallback = false;
+							Print(string.Format("PB ENTRY [{0}]: Long Confirmed. Low={1} <= Level={2}", estTime, Low[0], pbLongPrice));
 						}
-						// Entry: Touch & Valid Close
-						else if (Low[0] <= pbLongPrice && Close[0] >= pbLongPrice)
-						{
-							EnterLong(qty, "PB Long (Conf)");
-							longPending = false;
-							breakoutBar = -1;
-							attemptsToday++;
-							enteredViaFallback = false;
+						else if (timeoutReached && Close[0] > rHigh) {
+							EnterLong(0, qty, "Timeout Long");
+							longPending = false; breakoutBar = -1; attemptsToday++; enteredViaFallback = true;
+							fallbackBarPrimary = CurrentBar; fallbackIsLong = true;
+							Print(string.Format("PB ENTRY [{0}]: Long Timeout. Bars={1}", estTime, barsSinceBreakout));
 						}
-						// Fallback: Timeout
-						else if (timeoutReached && Close[0] > rHigh)
-						{
-							EnterLong(qty, "Timeout Long");
-							longPending = false;
-							breakoutBar = -1;
-							attemptsToday++;
-							enteredViaFallback = true;
-						}
-						// Cancel if reversed
-						else if (Close[0] < rLow)
-						{
-							longPending = false;
-							breakoutBar = -1;
-						}
+						else if (Close[0] < rLow) { longPending = false; breakoutBar = -1; Print(string.Format("PB CANCEL [{0}]: Long Reverse. Close={1} < rLow={2}", estTime, Close[0], rLow)); }
 					}
 					
 					if (shortPending)
 					{
-						// Guard: Deep Pullback Cancel
-						if (Close[0] > pbShortPrice) {
-							shortPending = false; breakoutBar = -1;
+						if (Close[0] > pbShortPrice) { shortPending = false; breakoutBar = -1; Print(string.Format("PB CANCEL [{0}]: Short Deep PB. Close={1} > Level={2}", estTime, Close[0], pbShortPrice)); }
+						else if (High[0] >= pbShortPrice && Close[0] <= pbShortPrice) {
+							EnterShort(0, qty, "PB Short (Conf)");
+							shortPending = false; breakoutBar = -1; attemptsToday++; enteredViaFallback = false;
+							Print(string.Format("PB ENTRY [{0}]: Short Confirmed. High={1} >= Level={2}", estTime, High[0], pbShortPrice));
 						}
-						// Entry: Touch & Valid Close
-						else if (High[0] >= pbShortPrice && Close[0] <= pbShortPrice)
-						{
-							EnterShort(qty, "PB Short (Conf)");
-							shortPending = false;
-							breakoutBar = -1;
-							attemptsToday++;
-							enteredViaFallback = false;
+						else if (timeoutReached && Close[0] < rLow) {
+							EnterShort(0, qty, "Timeout Short");
+							shortPending = false; breakoutBar = -1; attemptsToday++; enteredViaFallback = true;
+							fallbackBarPrimary = CurrentBar; fallbackIsLong = false;
+							Print(string.Format("PB ENTRY [{0}]: Short Timeout. Bars={1}", estTime, barsSinceBreakout));
 						}
-						// Fallback: Timeout
-						else if (timeoutReached && Close[0] < rLow)
-						{
-							EnterShort(qty, "Timeout Short");
-							shortPending = false;
-							breakoutBar = -1;
-							attemptsToday++;
-							enteredViaFallback = true;
-						}
-						// Cancel if reversed
-						else if (Close[0] > rHigh)
-						{
-							shortPending = false;
-							breakoutBar = -1;
-						}
+						else if (Close[0] > rHigh) { shortPending = false; breakoutBar = -1; Print(string.Format("PB CANCEL [{0}]: Short Reverse. Close={1} > rHigh={2}", estTime, Close[0], rHigh)); }
 					}
 				}
 
-			// Management
-			if (Position.MarketPosition != MarketPosition.Flat)
-			{
-				longPending = false;
-				shortPending = false;
-				
-				// Target & Stop (Using percentage-based logic for parity)
-				double entry = Position.AveragePrice;
-				double tp = Position.MarketPosition == MarketPosition.Long ? entry * (1 + TP_Pct/100) : entry * (1 - TP_Pct/100);
-				
-				// SL Calculation with Max Cap
-				double slPrice = Position.MarketPosition == MarketPosition.Long ? rLow : rHigh;
-				// If Fallback entry, use the Breakout Candle Extreme
-				if (enteredViaFallback && !double.IsNaN(breakoutCandleExtreme)) {
-					slPrice = Position.MarketPosition == MarketPosition.Long ? Math.Min(rLow, breakoutCandleExtreme) : Math.Max(rHigh, breakoutCandleExtreme);
-				}
-				
-				// Apply Max SL % Cap
-				double maxRiskDist = entry * (MaxSlPct / 100.0);
-				if (Position.MarketPosition == MarketPosition.Long) slPrice = Math.Max(slPrice, entry - maxRiskDist);
-				else slPrice = Math.Min(slPrice, entry + maxRiskDist);
-
-				double sl = slPrice;
-				
-				double tp1 = Position.MarketPosition == MarketPosition.Long ? entry * (1 + TP1Level/100) : entry * (1 - TP1Level/100);
-
-				if (EnableMultiTP)
+				// Management (Runs on Primary Bar Close)
+				if (Position.MarketPosition != MarketPosition.Flat)
 				{
-					// TP1: Partial Exit
-					int tp1Qty = (int)(Position.Quantity * TP1QtyPct / 100.0);
-					if (Position.MarketPosition == MarketPosition.Long)
-					{
-						ExitLongLimit(0, true, tp1Qty, tp1, "TP1", "");
-						ExitLongLimit(0, true, Position.Quantity - tp1Qty, tp, "TP2", "");
-						ExitLongStopMarket(0, true, Position.Quantity, sl, "SL", "");
-					}
-					else
-					{
-						ExitShortLimit(0, true, tp1Qty, tp1, "TP1", "");
-						ExitShortLimit(0, true, Position.Quantity - tp1Qty, tp, "TP2", "");
-						ExitShortStopMarket(0, true, Position.Quantity, sl, "SL", "");
-					}
-				}
-				else
-				{
-					// Single Full Exit
-					ExitLongLimit(0, true, Position.Quantity, tp, "Target", "PB Long");
-					ExitLongLimit(0, true, Position.Quantity, tp, "Target", "BO Long");
-					ExitLongStopMarket(0, true, Position.Quantity, sl, "Stop", "PB Long");
-					ExitLongStopMarket(0, true, Position.Quantity, sl, "Stop", "BO Long");
+					longPending = false; shortPending = false;
+					double entry = Position.AveragePrice;
+					double tp = Position.MarketPosition == MarketPosition.Long ? entry * (1 + TP_Pct/100) : entry * (1 - TP_Pct/100);
 					
-					ExitShortLimit(0, true, Position.Quantity, tp, "Target", "PB Short");
-					ExitShortLimit(0, true, Position.Quantity, tp, "Target", "BO Short");
-					ExitShortStopMarket(0, true, Position.Quantity, sl, "Stop", "PB Short");
-					ExitShortStopMarket(0, true, Position.Quantity, sl, "Stop", "BO Short");
-				}
+					double slPrice = Position.MarketPosition == MarketPosition.Long ? rLow : rHigh;
+					if (enteredViaFallback && !double.IsNaN(breakoutCandleExtreme)) {
+						slPrice = Position.MarketPosition == MarketPosition.Long ? Math.Min(rLow, breakoutCandleExtreme) : Math.Max(rHigh, breakoutCandleExtreme);
+					}
+					double maxRiskDist = entry * (MaxSlPct / 100.0);
+					if (Position.MarketPosition == MarketPosition.Long) slPrice = Math.Max(slPrice, entry - maxRiskDist);
+					else slPrice = Math.Min(slPrice, entry + maxRiskDist);
+					double sl = slPrice;
+					double tp1 = Position.MarketPosition == MarketPosition.Long ? entry * (1 + TP1Level/100) : entry * (1 - TP1Level/100);
 
-				if (ShowExits)
-				{
-					Draw.Line(this, "SL_Line", true, 10, sl, -5, sl, Brushes.Red, DashStyleHelper.Dash, 2);
-					Draw.Line(this, "TP_Line", true, 10, tp, -5, tp, Brushes.SpringGreen, DashStyleHelper.Dash, 2);
-				}
-
-				// MAE Heat Filter
-				if (UseMAEFilter)
-				{
-					double heatDist = entry * (MAE_Threshold / 100);
-					if (Position.MarketPosition == MarketPosition.Long && Low[0] < entry - heatDist) ExitLong("MAE Cut");
-					else if (Position.MarketPosition == MarketPosition.Short && High[0] > entry + heatDist) ExitShort("MAE Cut");
-				}
-				
-				// Signal Candle Reversal Exit
-				if (SigCandleExit != CandleExitMode.None && !double.IsNaN(sigCandleExtreme))
-				{
-					bool isLong = Position.MarketPosition == MarketPosition.Long;
-					bool sigTrigger = false;
-					if (SigCandleExit == CandleExitMode.Wick)
-						sigTrigger = isLong ? Low[0] < sigCandleExtreme : High[0] > sigCandleExtreme;
-					else // "Candle Close"
-						sigTrigger = isLong ? Close[0] < sigCandleExtreme : Close[0] > sigCandleExtreme;
-
-					if (sigTrigger)
-					{
-						ExitLong("Sig Candle");
-						ExitShort("Sig Candle");
-						sigCandleExtreme = double.NaN;
+					if (EnableMultiTP) {
+						int tp1Qty = (int)(Position.Quantity * TP1QtyPct / 100.0);
+						if (Position.MarketPosition == MarketPosition.Long) {
+							ExitLongLimit(0, true, tp1Qty, tp1, "TP1", "");
+							ExitLongLimit(0, true, Position.Quantity - tp1Qty, tp, "TP2", "");
+							ExitLongStopMarket(0, true, Position.Quantity, sl, "SL", "");
+						} else {
+							ExitShortLimit(0, true, tp1Qty, tp1, "TP1", "");
+							ExitShortLimit(0, true, Position.Quantity - tp1Qty, tp, "TP2", "");
+							ExitShortStopMarket(0, true, Position.Quantity, sl, "SL", "");
+						}
+					} else {
+						if (Position.MarketPosition == MarketPosition.Long) {
+							ExitLongLimit(0, true, Position.Quantity, tp, "Target", "");
+							ExitLongStopMarket(0, true, Position.Quantity, sl, "Stop", "");
+						} else {
+							ExitShortLimit(0, true, Position.Quantity, tp, "Target", "");
+							ExitShortStopMarket(0, true, Position.Quantity, sl, "Stop", "");
+						}
+					}
+					
+					if (UseMAEFilter) {
+						double heatDist = entry * (MAE_Threshold / 100);
+						if (Position.MarketPosition == MarketPosition.Long && Low[0] < entry - heatDist) ExitLong("MAE Cut");
+						else if (Position.MarketPosition == MarketPosition.Short && High[0] > entry + heatDist) ExitShort("MAE Cut");
+					}
+					
+					if (SigCandleExit != CandleExitMode.None && !double.IsNaN(sigCandleExtreme)) {
+						bool isLong = Position.MarketPosition == MarketPosition.Long;
+						bool sigTrigger = (SigCandleExit == CandleExitMode.Wick) ? (isLong ? Low[0] < sigCandleExtreme : High[0] > sigCandleExtreme)
+																				 : (isLong ? Close[0] < sigCandleExtreme : Close[0] > sigCandleExtreme);
+						if (sigTrigger) { ExitLong("Sig Candle"); ExitShort("Sig Candle"); sigCandleExtreme = double.NaN; }
+					}
+					
+					if (UseEarlyExit) {
+						if (Position.MarketPosition == MarketPosition.Long && Close[0] < rHigh) ExitLong("Early Exit");
+						else if (Position.MarketPosition == MarketPosition.Short && Close[0] > rLow) ExitShort("Early Exit");
 					}
 				}
-				if (UseEarlyExit)
-				{
-					if (Position.MarketPosition == MarketPosition.Long && Close[0] < rHigh) ExitLong("Early Exit");
-					else if (Position.MarketPosition == MarketPosition.Short && Close[0] > rLow) ExitShort("Early Exit");
-				}
-			}
-
-			// Dashboard Logic
-			if (IsFirstTickOfBar && rDefined && CurrentBar == BarsArray[0].Count - 1)
-			{
-				bool isTradingClosed = estTime.TimeOfDay >= HardExitTime.TimeOfDay;
-				bool dashIsWindow = estTime.Hour == 9 && estTime.Minute >= 31 && estTime.Minute < 60;
-				bool dashCanTrade = rDefined && dashIsWindow && !isFiltered && attemptsToday < MaxAttempts && Position.MarketPosition == MarketPosition.Flat;
+				// --- EXECUTION LOGIC END ---
 
 				string status = Position.MarketPosition != MarketPosition.Flat ? "IN TRADE" : isTradingClosed ? "TRADING CLOSED" : isFiltered ? "SKIP (Filtered)" : (EntryModel == EntryMode.BreakoutClose ? "READY: Breakout" : "WAIT: Pullback");
 				
-				double rSize = rHigh - rLow;
+				// rSize calculated at top of block
 				double rPct = (rSize / BarsArray[0].GetOpen(0)) * 100;
 				double riskAmt = InitialCapital * (RiskPercent / 100);
 				int dashQty = (int)Math.Max(1, Math.Floor(riskAmt / (rSize * Instrument.MasterInstrument.PointValue)));
 
-				string diagInfo = string.Format("{0} / {1}", isFiltered ? "FILT" : "OK", dashCanTrade ? "YES" : "NO");
+				string diagInfo = string.Format("{0} / {1}", isFiltered ? "FILT" : "OK", Position.MarketPosition == MarketPosition.Flat ? "YES" : "NO");
 				
 				bool isSweetSpot = UseSweetSpot && VVIX_Open >= 98 && VVIX_Open <= 115;
 				bool isRangeTooBig = rPct > MaxRangePct;
@@ -435,19 +437,64 @@ namespace NinjaTrader.NinjaScript.Strategies
 				
 				Draw.TextFixed(this, "HUD", hud, TextPosition.TopRight, Brushes.White, new Gui.Tools.SimpleFont("Arial", 11), Brushes.Black, Brushes.DimGray, 90);
 
-				// Color priority: Red (too big) > Orange (sweet spot) > Transparent (normal)
-				if (isRangeTooBig)
-				{
-					Draw.Rectangle(this, "RangeBox", true, 20, rHigh, 0, rLow, Brushes.Transparent, Brushes.Red, 10);
+				if (isRangeTooBig) Draw.Rectangle(this, "RangeBox", true, 20, rHigh, 0, rLow, Brushes.Transparent, Brushes.Red, 10);
+				else if (isSweetSpot) Draw.Rectangle(this, "SweetSpot", true, 20, rHigh, 0, rLow, Brushes.Transparent, Brushes.Orange, 10);
+
+				// Visuals Sync: Draw Lines (DeepSkyBlue/OrangeRed) matching Indicator
+				// Start: 9:30:XX EST (converted to Chart Time)
+				int limitSeconds = (OrbDuration == ORB_Duration.OneMinute) ? 60 : 30;
+				// Need date component, strictly today
+				DateTime rangeDate = estTime.Date;
+				DateTime estOpen = rangeDate.Add(new TimeSpan(9, 30, limitSeconds));
+				// End: 16:00:00 EST (End of Session)
+				DateTime estEnd = rangeDate.Add(new TimeSpan(16, 0, 0));
+
+				DateTime chartStart = TimeZoneInfo.ConvertTime(estOpen, estZone, chartZone);
+				DateTime chartEnd = TimeZoneInfo.ConvertTime(estEnd, estZone, chartZone);
+
+				// Extend to current time if before end, but if Historical draw full line
+				DateTime displayEnd = (Time[0] < chartEnd && State == State.Realtime) ? Time[0] : chartEnd;
+				
+				string suffix = rangeDate.ToString("yyyyMMdd");
+				
+				// Main Lines
+				Draw.Line(this, "High"+suffix, false, chartStart, rHigh, displayEnd, rHigh, Brushes.DeepSkyBlue, DashStyleHelper.Solid, 2);
+				Draw.Line(this, "Low"+suffix, false, chartStart, rLow, displayEnd, rLow, Brushes.OrangeRed, DashStyleHelper.Solid, 2);
+				
+				// Labels (At the end of the line)
+				SimpleFont font = new SimpleFont("Arial", 11);
+				Draw.Text(this, "TxtHigh"+suffix, false, "High: " + rHigh.ToString("F2"), displayEnd, rHigh, 10, Brushes.DeepSkyBlue, font, TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+				Draw.Text(this, "TxtLow"+suffix, false, "Low: " + rLow.ToString("F2"), displayEnd, rLow, -10, Brushes.OrangeRed, font, TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+
+				// Inner Levels
+				if (rDefined) {
+					double mid = (rHigh+rLow)/2;
+					Draw.Line(this, "Mid"+suffix, false, chartStart, mid, displayEnd, mid, Brushes.Gold, DashStyleHelper.Dash, 1);
+					Draw.Text(this, "TxtMid"+suffix, false, "Mid: " + mid.ToString("F2"), displayEnd, mid, 0, Brushes.Gold, font, TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
 				}
-				else if (isSweetSpot)
+				
+				// Bar Coloring
+				if (estTime.Hour == 9 && estTime.Minute == 30) BarBrush = Brushes.Yellow;
+				if (CurrentBar == breakoutBarPrimary) BarBrush = Brushes.Cyan;
+				
+				// Fallback Marker (Lightning)
+				if (CurrentBar == fallbackBarPrimary)
 				{
-					Draw.Rectangle(this, "SweetSpot", true, 20, rHigh, 0, rLow, Brushes.Transparent, Brushes.Orange, 10);
+					if (fallbackIsLong) Draw.Text(this, "Bolt"+CurrentBar, "⚡", 0, Low[0] - TickSize, Brushes.Lime);
+					else Draw.Text(this, "Bolt"+CurrentBar, "⚡", 0, High[0] + TickSize, Brushes.Red);
 				}
-			}
 		}
+	}
 
 		#region Properties
+		[NinjaScriptProperty]
+		[Display(Name="Chart Time Zone", Order=0, GroupName="Time")]
+		public string ChartTimeZone { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name="ORB Duration", Order=1, GroupName="Time")]
+		public NinjaTrader.NinjaScript.Indicators.ORB_Duration OrbDuration { get; set; }
+
 		[NinjaScriptProperty]
 		[Display(Name="Entry Model", Order=1, GroupName="Entry")]
 		public NinjaTrader.NinjaScript.Strategies.EntryMode EntryModel { get; set; }
@@ -506,6 +553,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[NinjaScriptProperty]
 		[Display(Name="Use Early Exit (Inside)", Order=10, GroupName="Addons")]
 		public bool UseEarlyExit { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name="Use Time Exit", Order=11, GroupName="Time")]
+		public bool UseTimeExit { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name="Use Tuesday Filter", Order=12, GroupName="Addons")]
+		public bool UseTuesday { get; set; }
 
 		[NinjaScriptProperty]
 		[PropertyEditor("NinjaTrader.Gui.Tools.TimeEditorKey")]
