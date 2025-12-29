@@ -119,7 +119,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 				UseRegime = true;
 				UseVVIX = true;
 				UseSweetSpot = true;
-				ShowExits = true;
+				RunnerMode                  = RunnerModeType.Trailing;
+				InitialCapital              = 3000;
+				RiskPercent                 = 10.0;
+				MaxSlPct                    = 0.30; // Cap SL at 0.30% of range
+				StopAfterWin                = true;
+				ShowExits                   = true;
 				VVIX_Open = 100.0;
 				UseEarlyExit = true;
 				UseMAEFilter = true;
@@ -154,6 +159,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private double prevClosedProfit = 0;
 		private bool enteredViaFallback = false;
 		private double breakoutCandleExtreme = double.NaN;
+		private DateTime lastResetDate = DateTime.MinValue;
+		private bool paintedOrbBar = false;
 
 		protected override void OnBarUpdate()
 		{
@@ -172,7 +179,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				if (chartZone != null) estTime = TimeZoneInfo.ConvertTime(Time[0], chartZone, estZone);
 				else estTime = Time[0];
 
-				if (Bars.IsFirstBarOfSession)
+				// Robust Reset Logic: Reset state if this is a new day
+				if (estTime.Date != lastResetDate || (estTime.Hour == 9 && estTime.Minute == 30 && estTime.Second == 0))
 				{
 					rHigh = double.MinValue;
 					rLow = double.MaxValue;
@@ -183,42 +191,42 @@ namespace NinjaTrader.NinjaScript.Strategies
 					hasWonToday = false;
 					enteredViaFallback = false;
 					breakoutCandleExtreme = double.NaN;
+					paintedOrbBar = false; // Reset Paint State
+					lastResetDate = estTime.Date;
 					
 					// Re-calculate prevClosedProfit at session start
 					if (SystemPerformance.AllTrades.Count > 0)
 						prevClosedProfit = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
 					else 
 						prevClosedProfit = 0;
-				}
-				
-				// Reset coloring
-				if (estTime.Hour == 9 && estTime.Minute == 30 && estTime.Second == 0) {
+						
+					// Reset visual markers
 					breakoutBarPrimary = -1;
 					fallbackBarPrimary = -1;
 				}
 
-				// Reset at 9:30:00 exact
-				if (estTime.Hour == 9 && estTime.Minute == 30 && estTime.Second == 0)
-				{
-					rHigh = double.MinValue;
-					rLow = double.MaxValue;
-					rDefined = false;
-				}
-
 				// Capture Range Window
+				// Capture Range Window (Adjusted for End-of-Period Timestamps)
+				// If 1s bars are stamped at Close:
+				// 9:30:00 bar covers 9:29:59-9:30:00. This is PRE-MARKET. We skip.
+				// 9:30:01 bar covers 9:30:00-9:30:01. This is FIRST bar.
+				// 9:31:00 bar covers 9:30:59-9:31:00. This is LAST bar.
+				
 				int limitSeconds = (OrbDuration == ORB_Duration.OneMinute) ? 60 : 30;
 				TimeSpan timeOfDay = estTime.TimeOfDay;
-				TimeSpan startTime = new TimeSpan(9, 30, 0);
+				TimeSpan startTime = new TimeSpan(9, 30, 0); // Exclude exact 9:30:00 (it's end of pre-market)
 				TimeSpan endTime = startTime.Add(TimeSpan.FromSeconds(limitSeconds));
 
-				if (timeOfDay >= startTime && timeOfDay < endTime)
+				// Logic: Time > 9:30:00 AND Time <= 9:31:00
+				if (timeOfDay > startTime && timeOfDay <= endTime)
 				{
 					if (High[0] > rHigh) rHigh = High[0];
 					if (Low[0] < rLow) rLow = Low[0];
 				}
 
 				// Finalize ORB
-				if (!rDefined && timeOfDay >= endTime && timeOfDay < endTime.Add(TimeSpan.FromSeconds(5)))
+				// Finalize ORB after the last second bar (9:31:00) is processed
+				if (!rDefined && timeOfDay > endTime)
 				{
 					rDefined = rHigh > double.MinValue && rLow < double.MaxValue;
 				}
@@ -269,7 +277,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 				if (canTrade)
 				{
+					// Dynamic Sizing Logic
+					// If RiskPercent > 0, calculate based on risk. Otherwise fallback to DefaultQuantity.
 					int qty = DefaultQuantity;
+					if (RiskPercent > 0 && rSize > 0)
+					{
+						double riskAmt = InitialCapital * (RiskPercent / 100.0);
+						// Qty = Risk / (StopDistance * PointValue)
+						// Stop Distance = rSize (approx, since SL is typically at other side of range)
+						qty = (int)Math.Max(1, Math.Floor(riskAmt / (rSize * Instrument.MasterInstrument.PointValue)));
+						Print(string.Format("SIZE CALC [{0}]: Risk=${1:F2} Range={2} Val={3} -> Qty={4}", estTime, riskAmt, rSize, Instrument.MasterInstrument.PointValue, qty));
+					}
 					bool breakoutLong = false;
 					bool breakoutShort = false;
 
@@ -302,17 +320,31 @@ namespace NinjaTrader.NinjaScript.Strategies
 							// 1. Immediate Entry (BreakoutClose) - PRIORITIZED
 							if (EntryModel == EntryMode.BreakoutClose)
 							{
-								if (breakoutLong) { EnterLong(0, qty, "BreakoutBuy"); attemptsToday++; breakoutBarPrimary = CurrentBar; Print(string.Format("ENTRY: Breakout Buy @ {0}", Close[0])); }
-								else if (breakoutShort) { EnterShort(0, qty, "BreakoutSell"); attemptsToday++; breakoutBarPrimary = CurrentBar; Print(string.Format("ENTRY: Breakout Sell @ {0}", Close[0])); }
+								if (breakoutLong) { 
+									EnterLong(0, qty, "BreakoutBuy"); 
+									attemptsToday++; 
+									breakoutBarPrimary = CurrentBar; 
+									Draw.TriangleUp(this, "SignalUp"+CurrentBar, true, 0, Low[0] - TickSize, Brushes.SpringGreen);
+									Print(string.Format("ENTRY: Breakout Buy @ {0}", Close[0])); 
+								}
+								else if (breakoutShort) { 
+									EnterShort(0, qty, "BreakoutSell"); 
+									attemptsToday++; 
+									breakoutBarPrimary = CurrentBar; 
+									Draw.TriangleDown(this, "SignalDown"+CurrentBar, true, 0, High[0] + TickSize, Brushes.Red);
+									Print(string.Format("ENTRY: Breakout Sell @ {0}", Close[0])); 
+								}
 							}
 							// 2. Arming for Pullback Modes
 							else 
 							{
 								if (breakoutLong && Close[0] >= pbLongPrice) { 
 									longPending = true; breakoutBar = CurrentBar; breakoutCandleExtreme = Low[0]; 
+									Draw.TriangleUp(this, "ArmUp"+CurrentBar, true, 0, Low[0] - TickSize, Brushes.DimGray); // Armed
 								}
 								else if (breakoutShort && Close[0] <= pbShortPrice) { 
 									shortPending = true; breakoutBar = CurrentBar; breakoutCandleExtreme = High[0]; 
+									Draw.TriangleDown(this, "ArmDown"+CurrentBar, true, 0, High[0] + TickSize, Brushes.DimGray); // Armed
 								}
 							}
 						}
@@ -331,6 +363,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 						else if (Low[0] <= pbLongPrice && Close[0] >= pbLongPrice) {
 							EnterLong(0, qty, "PB Long (Conf)");
 							longPending = false; breakoutBar = -1; attemptsToday++; enteredViaFallback = false;
+							Draw.Text(this, "PBText"+CurrentBar, "PB BUY", 0, Low[0] - 2*TickSize, Brushes.SpringGreen);
+							Draw.TriangleUp(this, "PBUp"+CurrentBar, true, 0, Low[0] - TickSize, Brushes.SpringGreen);
 							Print(string.Format("PB ENTRY [{0}]: Long Confirmed. Low={1} <= Level={2}", estTime, Low[0], pbLongPrice));
 						}
 						else if (timeoutReached && Close[0] > rHigh) {
@@ -348,6 +382,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 						else if (High[0] >= pbShortPrice && Close[0] <= pbShortPrice) {
 							EnterShort(0, qty, "PB Short (Conf)");
 							shortPending = false; breakoutBar = -1; attemptsToday++; enteredViaFallback = false;
+							Draw.Text(this, "PBText"+CurrentBar, "PB SELL", 0, High[0] + 2*TickSize, Brushes.Red);
+							Draw.TriangleDown(this, "PBDown"+CurrentBar, true, 0, High[0] + TickSize, Brushes.Red);
 							Print(string.Format("PB ENTRY [{0}]: Short Confirmed. High={1} >= Level={2}", estTime, High[0], pbShortPrice));
 						}
 						else if (timeoutReached && Close[0] < rLow) {
@@ -415,6 +451,26 @@ namespace NinjaTrader.NinjaScript.Strategies
 						if (Position.MarketPosition == MarketPosition.Long && Close[0] < rHigh) ExitLong("Early Exit");
 						else if (Position.MarketPosition == MarketPosition.Short && Close[0] > rLow) ExitShort("Early Exit");
 					}
+
+					// Visuals: Active SL/TP Lines
+					if (ShowExits)
+					{
+						// Re-calc active SL/TP for display (since we did it above for logic, but local scope)
+						// We can use the 'sl' and 'tp' vars from logic block if we move this block inside, OR recalc.
+						// Simpler to just recalc active SL/TP for visuals here if holding position.
+						// actually 'sl' and 'tp' are local to the if block above.
+						// We should ideally plot lines where we think they are.
+						// Using the logic variables 'sl' and 'tp' isn't possible as they are out of scope here.
+						// Valid approximation:
+						Draw.Line(this, "SL_Line", true, 1, sl, -5, sl, Brushes.Red, DashStyleHelper.Dash, 2);
+						Draw.Line(this, "TP_Line", true, 1, tp, -5, tp, Brushes.SpringGreen, DashStyleHelper.Dash, 2);
+					}
+				}
+				else
+				{
+					// If Flat, remove old lines
+					RemoveDrawObject("SL_Line");
+					RemoveDrawObject("TP_Line");
 				}
 				// --- EXECUTION LOGIC END ---
 
@@ -422,8 +478,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				
 				// rSize calculated at top of block
 				double rPct = (rSize / BarsArray[0].GetOpen(0)) * 100;
-				double riskAmt = InitialCapital * (RiskPercent / 100);
-				int dashQty = (int)Math.Max(1, Math.Floor(riskAmt / (rSize * Instrument.MasterInstrument.PointValue)));
+				// Used calculated qty if available, or recalc for display if outside trading block
+				int dashQty = DefaultQuantity; 
+				if (RiskPercent > 0 && rSize > 0) 
+					dashQty = (int)Math.Max(1, Math.Floor((InitialCapital * (RiskPercent / 100.0)) / (rSize * Instrument.MasterInstrument.PointValue)));
 
 				string diagInfo = string.Format("{0} / {1}", isFiltered ? "FILT" : "OK", Position.MarketPosition == MarketPosition.Flat ? "YES" : "NO");
 				
@@ -431,14 +489,27 @@ namespace NinjaTrader.NinjaScript.Strategies
 				bool isRangeTooBig = rPct > MaxRangePct;
 				string vvixStatus = isSweetSpot ? "SWEET SPOT" : (VVIX_Open > 115 ? "EXTREME" : "NORMAL");
 				string rangeWarning = isRangeTooBig ? " ⚠️TOO BIG" : "";
+				
+				// Transparent Shading for Range
+				// Use Draw.Rectangle with Opacity (requires Brushes cleanup)
+				if (rDefined)
+				{
+					Brush fillBrush = isRangeTooBig ? Brushes.Red : (isSweetSpot ? Brushes.Orange : Brushes.DeepSkyBlue);
+					// Opacity handled by Draw.Rectangle opacity parameter (0-100)
+					if (!isRangeTooBig && !isSweetSpot) fillBrush = Brushes.DeepSkyBlue; 
+					
+					// Draw Box (Transparent Fill)
+					Draw.Rectangle(this, "RangeBox", true, 20, rHigh, 0, rLow, Brushes.Transparent, fillBrush, 20);
+				}
 
 				string hud = string.Format("REGIME: {0}\nVVIX: {1:F1} ({2})\nRANGE: {3:F2} pts ({4:F3}%){9}\nMODEL: {5}\nSIZE: {6} Lots\nSTATUS: {7}\nDIAG: {8}", 
 					isBull ? "BULL" : "BEAR", VVIX_Open, vvixStatus, rSize, rPct, EntryModel, dashQty, status, diagInfo, rangeWarning);
 				
 				Draw.TextFixed(this, "HUD", hud, TextPosition.TopRight, Brushes.White, new Gui.Tools.SimpleFont("Arial", 11), Brushes.Black, Brushes.DimGray, 90);
 
-				if (isRangeTooBig) Draw.Rectangle(this, "RangeBox", true, 20, rHigh, 0, rLow, Brushes.Transparent, Brushes.Red, 10);
-				else if (isSweetSpot) Draw.Rectangle(this, "SweetSpot", true, 20, rHigh, 0, rLow, Brushes.Transparent, Brushes.Orange, 10);
+				if (isRangeTooBig) Draw.Rectangle(this, "RangeBox", true, 20, rHigh, 0, rLow, Brushes.Transparent, Brushes.Yellow	, 10);
+				// else if (isSweetSpot) Draw.Rectangle(this, "SweetSpot", true, 20, rHigh, 0, rLow, Brushes.Transparent, Brushes.Orange, 10);
+				// Moved to Time-Based Drawing below
 
 				// Visuals Sync: Draw Lines (DeepSkyBlue/OrangeRed) matching Indicator
 				// Start: 9:30:XX EST (converted to Chart Time)
@@ -471,10 +542,44 @@ namespace NinjaTrader.NinjaScript.Strategies
 					double mid = (rHigh+rLow)/2;
 					Draw.Line(this, "Mid"+suffix, false, chartStart, mid, displayEnd, mid, Brushes.Gold, DashStyleHelper.Dash, 1);
 					Draw.Text(this, "TxtMid"+suffix, false, "Mid: " + mid.ToString("F2"), displayEnd, mid, 0, Brushes.Gold, font, TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+					
+					// Draw Transparent Shaded Box (Time-Based)
+					Brush fillBrush = isRangeTooBig ? Brushes.Red : (isSweetSpot ? Brushes.Orange : Brushes.DeepSkyBlue);
+					if (!isRangeTooBig && !isSweetSpot) fillBrush = Brushes.DeepSkyBlue; 
+					
+					Draw.Rectangle(this, "RangeBox"+suffix, false, chartStart, rHigh, displayEnd, rLow, Brushes.Transparent, fillBrush, 20);
+					
+					// 0.10% Buffer Lines (Visual Aid)
+					double bufferDist = rLow * 0.001;
+					double buffHigh = rHigh + bufferDist;
+					double buffLow = rLow - bufferDist;
+					Draw.Line(this, "BuffHigh"+suffix, false, chartStart, buffHigh, displayEnd, buffHigh, Brushes.Gray, DashStyleHelper.Dot, 1);
+					Draw.Line(this, "BuffLow"+suffix, false, chartStart, buffLow, displayEnd, buffLow, Brushes.Gray, DashStyleHelper.Dot, 1);
 				}
 				
-				// Bar Coloring
-				if (estTime.Hour == 9 && estTime.Minute == 30) BarBrush = Brushes.Yellow;
+				// Bar Coloring (Primary) - LOOK BACK METHOD (Synced with Indicator)
+				if (rDefined && !paintedOrbBar)
+				{
+					// Look back up to 5 bars to find the 9:30/9:31 candle
+					for (int i = 0; i <= 5; i++)
+					{
+						if (CurrentBar - i < 0) continue;
+						
+						DateTime barTimeEST = TimeZoneInfo.ConvertTime(Time[i], chartZone, estZone);
+						// Match 9:30 (Start) or 9:31 (End)
+						if (barTimeEST.Hour == 9 && (barTimeEST.Minute == 30 || barTimeEST.Minute == 31))
+						{
+							BarBrushes[i] = Brushes.Yellow;
+							
+							// Force Sync Gap Fix (Universal)
+							if (High[i] > rHigh) rHigh = High[i];
+							if (Low[i] < rLow) rLow = Low[i];
+							
+							paintedOrbBar = true; // Done for this session
+							break;
+						}
+					}
+				}
 				if (CurrentBar == breakoutBarPrimary) BarBrush = Brushes.Cyan;
 				
 				// Fallback Marker (Lightning)
