@@ -145,6 +145,29 @@ the more the directional bias plays out.
 
 ---
 
+## Simulator Comparison
+
+We tested two simulation approaches:
+
+### Results
+
+| Simulator | Trades | Win Rate | **Return** |
+|-----------|--------|----------|------------|
+| **Custom State Machine** | 2,370 | 68.8% | **+16.90%** ✅ |
+| **Vectorbt** | 1,339 | 74.5% | **-24.05%** ❌ |
+
+### Why the Difference?
+
+| Factor | Custom | Vectorbt |
+|--------|--------|----------|
+| **Partial Exits** | ✅ CTQ 50% partial | ❌ All-or-nothing |
+| **Exit Priority** | TP1 → SL → TIME | SL/TP simultaneous |
+| **Fill Prices** | Exact TP/SL level | Bar close |
+
+**Conclusion**: Vectorbt's simplified mechanics don't handle CTQ partial exits. **Use the custom state machine** (`simulate_trades.py`) for this strategy.
+
+---
+
 ## Files Generated
 
 | File | Description |
