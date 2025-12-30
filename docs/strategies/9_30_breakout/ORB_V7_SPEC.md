@@ -1,6 +1,6 @@
 # ORB V7 Strategy Specification
 
-**Version**: 7.0.0
+**Version**: 7.1.0
 **Date**: December 29, 2025
 **Status**: Candidate (Pending Live Validation)
 
@@ -8,13 +8,15 @@
 
 ## 1. Executive Summary
 
-V7 represents a significant evolution from V6, incorporating findings from extensive parameter optimization and MAE/MFE analysis. Key improvements:
+V7.1 represents the latest evolution, incorporating confirmed breakout entry, optimized filters, and Cover the Queen exits. Key findings from extensive backtesting:
 
-| Metric | V6 (Baseline) | V7 (Optimized) | Improvement |
-|--------|---------------|----------------|-------------|
-| **Gross PnL** | +2.25% | +18.08% | **+703%** |
-| **Profit Factor** | 1.03 | 1.16 | **+12.6%** |
-| Win Rate | 38.2% | 29.8% | -8.4% |
+| Metric | V6 (Baseline) | V7.0 | **V7.1 (Confirmed)** |
+|--------|---------------|------|---------------------|
+| **Gross PnL** | +2.25% | +18.08% | **+34.37%** |
+| **Profit Factor** | 1.03 | 1.16 | **1.27** |
+| Win Rate | 38.2% | 29.8% | **44.1%** |
+
+> **V7.1 achieves 15x higher PnL** than V6 baseline with higher win rate and profit factor.
 
 ---
 
@@ -22,36 +24,41 @@ V7 represents a significant evolution from V6, incorporating findings from exten
 
 ### 2.1 Pre-Trade Filters
 
-| Filter | V6 | V7 | Rationale |
+| Filter | V6 | V7.1 | Rationale |
 |--------|----|----|-----------|
-| **Regime (SMA20)** | ON | **OFF** | +5% PnL by trading all regimes with proper risk management |
+| **Regime (SMA20)** | ON | **OFF** | +5% PnL by trading all regimes |
 | **VVIX > 115** | ON | ON | Prevents trading in extreme volatility |
 | **Tuesday Skip** | ON | ON | Worst day historically |
-| **Wednesday Skip** | OFF | **ON** | Second worst day (-4.27% PnL) |
+| **Wednesday Skip** | OFF | **ON** | Second worst day (-4.27% PnL, 64.7% loss rate) |
 | **Max Range** | 0.25% | 0.25% | Filter extreme opening ranges |
 
 ### 2.2 Entry Logic
 
-| Parameter | V6 | V7 | Rationale |
+| Parameter | V6 | V7.1 | Rationale |
 |-----------|----|----|-----------|
-| **Entry Mode** | PULLBACK_FALLBACK | **IMMEDIATE** | +75% PnL vs pullback |
-| Breakout Trigger | Close > Range High | Close > Range High | No change |
+| **Entry Mode** | PULLBACK_FALLBACK | **CONFIRMED IMMEDIATE** | Filters fake breakouts |
+| **Confirmation Level** | N/A | **0.10%** | Only enter after close 0.10% beyond Range |
+| Breakout Trigger | Close > Range High | Close > Range High × 1.001 | Wait for confirmation |
+
+> **Critical Change**: Instead of entering immediately on breakout, V7.1 waits for price to close **0.10% beyond the Range High/Low**. This filters out 6.8% of trades but improves PnL by 44%.
 
 ### 2.3 Risk Management
 
-| Parameter | V6 | V7 | Rationale |
+| Parameter | V6 | V7.1 | Rationale |
 |-----------|----|----|-----------|
-| **Stop Loss** | 0.30% fixed | **Range High/Low** | Structure-based SL prevents premature exits |
+| **Stop Loss** | 0.30% fixed | **Range High/Low** | Structure-based SL |
 | **Max SL Cap** | 0.30% | **0.25%** | Tighter cap reduces loss magnitude |
+| **Breakeven Trail** | N/A | **NO** | BE trail hurts PnL (cuts runners) |
+
+> **Important**: Do NOT use breakeven trail. Testing showed BE trail increases win rate to 81% but **reduces PnL by 50-70%** because it stops out the runners that provide most profit.
 
 ### 2.4 Exit Strategy (Cover the Queen)
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| **TP1 Level** | 0.10% | First target - "Cover the Queen" |
+| **TP1 Level** | 0.05% | First target - "Cover the Queen" |
 | **TP1 Quantity** | 50% | Take half position off at TP1 |
-| **TP2 Level** | 0.25% | Second target - Runner |
-| **TP2 Quantity** | 50% | Remaining position at TP2 |
+| **TP2 Level** | Runner | Let remaining ride to time exit |
 | **Hard Exit** | 11:00 EST | Time-based exit (was 10:00) |
 
 ---
@@ -60,23 +67,26 @@ V7 represents a significant evolution from V6, incorporating findings from exten
 
 ```mermaid
 flowchart TD
-    A[09:30 Bar Close] --> B{Pass Filters?}
+    A[09:30 Range Captured] --> B{Pass Filters?}
     B -->|No| Z[No Trade]
-    B -->|Yes| C{Breakout?}
-    C -->|Close > Range High| D[LONG Entry]
-    C -->|Close < Range Low| E[SHORT Entry]
+    B -->|Yes| C{Wait for Confirmed Breakout}
+    C -->|Close > Range High × 1.001| D[LONG Entry]
+    C -->|Close < Range Low × 0.999| E[SHORT Entry]
     D --> F[SL = Range Low]
     E --> G[SL = Range High]
-    F --> H{TP1 Hit?}
+    F --> H{TP1 Hit 0.05%?}
     G --> H
-    H -->|Yes| I[Exit 50% at 0.10%]
-    I --> J{TP2 Hit?}
-    J -->|Yes| K[Exit Remaining at 0.25%]
-    J -->|No| L{SL Hit?}
-    L -->|Yes| M[Exit Remaining at SL]
-    L -->|No| N{11:00 EST?}
-    N -->|Yes| O[Exit at Market]
-    H -->|No| L
+    H -->|Yes| I[Exit 50% - Cover Queen]
+    I --> J[Keep SL at Range - NO BE Trail]
+    J --> K{11:00 EST?}
+    K -->|Yes| L[Exit Remaining at Market]
+    K -->|No| M{SL Hit?}
+    M -->|Yes| N[Exit Remaining at SL]
+    M -->|No| K
+    H -->|No| O{SL Hit?}
+    O -->|Yes| P[Full Exit at SL]
+    O -->|No| Q{11:00 EST?}
+    Q -->|Yes| R[Full Exit at Market]
 ```
 
 ---
