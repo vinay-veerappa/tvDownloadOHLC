@@ -25,20 +25,51 @@ The strategy works because runners captured at time exit more than compensate fo
 
 ---
 
-## What We Tested
+## Best Configuration: V7.1 Recommended
 
-### 1. Parameter Optimization (35+ combinations)
+| Parameter | **Recommended Value** | Configurable |
+|-----------|----------------------|--------------|
+| Entry Confirmation | **0.10%** beyond Range | ✅ 0.05-0.15% |
+| Hard Exit Time | **11:00 EST** | ✅ 10:00-11:30 |
+| Day Filter | **Trade ALL Days** | ✅ Skip Tue/Wed optional |
+| SL Type | **Range High/Low** | N/A |
+| Max SL Cap | **0.25%** | ✅ |
+| VVIX Filter | **Skip > 115** | ✅ Threshold configurable |
+| Max Range | **0.25%** | ✅ |
+| CTQ (TP1) | **0.05% (50%)** | ✅ 0.03-0.10% |
+| Engulfing Exit | **ON** | ✅ |
+| BE Trail | **OFF** | ✅ |
 
-| Parameter | Best Value | Impact |
-|-----------|------------|--------|
-| **Entry Confirmation** | **0.10%** beyond Range | +44% PnL vs immediate entry |
-| **Hard Exit Time** | **11:00 EST** | +10x PnL vs 10:00 exit |
-| **Regime Filter** | **OFF** | +5% PnL by trading all conditions |
-| **VVIX Filter** | **ON (> 115)** | Prevents -3.6% losing trades |
-| **Wednesday Skip** | **ON** | Prevents -4.27% losing trades |
-| **Max Range %** | **0.25%** | Filters extreme volatility days |
+**Expected Result: +44.56% PnL, 42.6% WR** (trading all days with confirmed entry)
 
-### 2. Strategy Variants
+---
+
+## Day of Week Analysis (UPDATED)
+
+> ⚠️ **Previous recommendation to skip Tue/Wed was INCORRECT for V7.1 settings.**
+
+| Config | Trades | Win Rate | **PnL** |
+|--------|--------|----------|---------|
+| **Trade ALL Days** | 2,272 | 42.6% | **+44.56%** ✅ |
+| Skip Tuesday | 1,801 | 42.9% | +29.56% |
+| Skip Wednesday | 1,811 | 42.5% | +40.88% |
+| Skip Tue+Wed | 1,340 | 42.8% | +25.89% |
+
+### Per-Day Breakdown
+
+| Day | Trades | Win Rate | **PnL** | **Avg/Trade** |
+|-----|--------|----------|---------|---------------|
+| Mon | 446 | 44.2% | +5.37% | +0.012% |
+| **Tue** | 471 | 41.6% | **+15.00%** | **+0.032%** |
+| Wed | 461 | 43.0% | +3.67% | +0.008% |
+| **Thu** | 457 | 42.5% | **+15.05%** | **+0.033%** |
+| Fri | 437 | 41.9% | +5.47% | +0.013% |
+
+**Key Finding**: Tuesday and Thursday are the **BEST days**, not worst. The earlier analysis used V6 settings (pullback entry, 10:00 exit). With V7.1 (confirmed entry, 11:00 exit), all days are profitable.
+
+---
+
+## Strategy Variants
 
 | Variant | Trades | Win Rate | **PnL** | **PF** |
 |---------|--------|----------|---------|--------|
@@ -46,125 +77,48 @@ The strategy works because runners captured at time exit more than compensate fo
 | **ORB_EngulfingExit** | 2,336 | 66.1% | **+19.86%** | 1.21 |
 | ORB_AggressiveTP (0.03%) | 2,465 | 70.0% | +17.62% | 1.19 |
 | ORB_V7.1 (CTQ 0.05%) | 2,370 | 68.8% | +16.90% | 1.16 |
-| ORB_HighConfirm (0.15%) | 2,122 | 70.6% | +15.99% | 1.16 |
-| ORB_PullbackEntry | 1,685 | 58.2% | +2.95% | 1.03 |
-
-### 3. Loss Analysis Findings
-
-- **99.8%** of trades pull back to entry level (normal, not failure)
-- **Wednesday** has 64.7% loss rate vs 60% other days
-- **45% of losers** saw 0.05%+ profit before losing
-- **Winners have 50% less MAE** than losers (0.08% vs 0.15%)
-- **Engulfing candles predict failure**: 70% hit SL vs 27% without
 
 ---
 
 ## How to Be More Effective
 
-### MUST DO (High Impact)
+### MUST DO ✅
 
-| Action | Expected Impact | Evidence |
-|--------|-----------------|----------|
-| **Wait for 0.10% confirmation** | +44% PnL | Filters weak breakouts |
-| **Hold until 11:00 EST** | +10x PnL | Runners provide all profit |
-| **Skip Tuesday & Wednesday** | +6.5% saved | Worst loss rates |
-| **Use Range High/Low as SL** | Better than fixed % | Structure-based protection |
-| **Exit on engulfing candle** | +3% PnL | 70% of engulfing trades hit SL |
+| Action | Impact |
+|--------|--------|
+| **Wait for 0.10% confirmation** | +44% PnL |
+| **Hold until 11:00 EST** | TIME exits = all profit |
+| **Trade ALL days** | +44% vs +26% skipping Tue/Wed |
+| **Use Range High/Low as SL** | Structure-based |
+| **Exit on engulfing candle** | 70% would hit SL |
 
-### CONSIDER (Moderate Impact)
+### AVOID ❌
 
-| Action | Expected Impact | Trade-off |
-|--------|-----------------|-----------|
-| **No CTQ (full ride)** | +25% PnL vs +17% | Lower win rate (43% vs 69%) |
-| **Lower TP1 to 0.03%** | +17.6% PnL, 70% WR | Slightly better than 0.05% |
-| **Higher confirm (0.15%)** | +16% PnL, 71% WR | Fewer trades |
-
-### AVOID (Negative Impact)
-
-| Action | Expected Impact | Evidence |
-|--------|-----------------|----------|
-| ❌ **Breakeven trail** | -50-70% PnL | Kills runners on normal pullbacks |
-| ❌ **Pullback entry** | +3% vs +17% | Misses breakouts, no edge |
-| ❌ **Fixed % SL** | Higher losses | Range structure works better |
-| ❌ **Exit before 11:00** | Massive PnL reduction | Time exits = profit source |
-| ❌ **Trade VVIX > 115** | -3.6% | High volatility = whipsaws |
+| Action | Why |
+|--------|-----|
+| **Breakeven trail** | Kills 50-70% of profits |
+| **Skip Tuesday/Thursday** | Best PnL days |
+| **Exit before 11:00** | TIME exits = profit source |
+| **Trade VVIX > 115** | High volatility whipsaws |
 
 ---
 
-## Recommended Configuration
-
-### Conservative (Higher Win Rate)
-```
-Entry: 0.10% confirmation
-TP1: 0.05% (exit 50%)
-Runner: Hold to 11:00
-SL: Range High/Low
-Skip: Tue, Wed, VVIX > 115
-
-Expected: +17% PnL, 69% WR, 1.16 PF
-```
-
-### Aggressive (Higher PnL)
-```
-Entry: 0.10% confirmation
-TP1: None (full ride to 11:00)
-SL: Range High/Low
-Exit on: Engulfing candle
-Skip: Tue, Wed, VVIX > 115
-
-Expected: +25% PnL, 43% WR, 1.15 PF
-```
-
----
-
-## Key Mental Model
-
-### Why This Strategy Works
-
-```
-The 9:30 ORB captures the daily directional bias establishment.
-When the market breaks out of the opening range with conviction
-(0.10% confirmation), it's signaling the day's probable direction.
-
-The profit comes from HOLDING through normal pullbacks.
-Winners average +0.23% while losers average -0.15%.
-The R:R is favorable, but only if you let winners run.
-
-Time is your friend. The longer you hold (to 11:00), 
-the more the directional bias plays out.
-```
-
-### The Psychology Challenge
+## Psychology Challenge
 
 | What You'll Feel | What to Do |
 |------------------|------------|
-| "It's pulling back, I should exit" | Don't - 99.8% pull back, 66% continue |
-| "I should move SL to breakeven" | Don't - kills 50-70% of profits |
-| "I should take profit early" | Don't - unless it's TP1 (CTQ) |
-| "Engulfing candle, but I'll hold" | Exit - 70% hit SL after engulfing |
+| "It's pulling back, exit!" | **Don't** - 99.8% pull back, 66% continue |
+| "Move SL to breakeven" | **Don't** - kills profits |
+| "Tuesday will be bad" | **Trade it** - +15% PnL on Tuesdays |
 
 ---
 
 ## Simulator Comparison
 
-We tested two simulation approaches:
-
-### Results
-
-| Simulator | Trades | Win Rate | **Return** |
-|-----------|--------|----------|------------|
-| **Custom State Machine** | 2,370 | 68.8% | **+16.90%** ✅ |
-| **Vectorbt** | 1,339 | 74.5% | **-24.05%** ❌ |
-
-### Why the Difference?
-
-| Factor | Custom | Vectorbt |
-|--------|--------|----------|
-| **Partial Exits** | ✅ CTQ 50% partial | ❌ All-or-nothing |
-| **Exit Priority** | TP1 → SL → TIME | SL/TP simultaneous |
-| **Fill Prices** | Exact TP/SL level | Bar close |
-
-**Conclusion**: Vectorbt's simplified mechanics don't handle CTQ partial exits. **Use the custom state machine** (`simulate_trades.py`) for this strategy.
+| Simulator | Return | Use For |
+|-----------|--------|---------|
+| **Custom State Machine** | **+16.90%** | CTQ, engulfing, complex logic |
+| Vectorbt | -24.05% | Simple strategies only |
 
 ---
 
@@ -172,23 +126,10 @@ We tested two simulation approaches:
 
 | File | Description |
 |------|-------------|
-| `ORB_V7_SPEC.md` | Complete strategy specification |
-| `SIMULATION_GUIDE.md` | Backtesting rules for agents |
-| `BACKTESTING_AGENT_PROMPT.md` | Prompt for future analysis |
-| `variant_comparison_final.csv` | All variant results |
-| `post_breakout_behavior.csv` | Pullback analysis data |
-| `optimization_summary.csv` | Parameter grid search results |
+| `ORB_V7_SPEC.md` | Strategy specification |
+| `SIMULATION_GUIDE.md` | Backtesting rules |
 | `simulate_trades.py` | Extensible simulation framework |
-
----
-
-## Next Steps
-
-1. **Live Paper Trading**: Run V7.1 or NoCTQ variant in NinjaTrader sim
-2. **Weekly Review**: Compare paper trades to backtest expectations
-3. **Refinement**: Adjust based on live market behavior
-4. **Position Sizing**: Implement anti-martingale sizing (reduce after loss)
-5. **Daily Limit**: Stop after 2 consecutive losses or 0.5% drawdown
+| `variant_comparison_final.csv` | All variant results |
 
 ---
 
