@@ -13,9 +13,11 @@ This repository contains the complete Research, Specification, and Implementatio
 
 | Document | Purpose |
 |----------|---------|
-| **[📄 MASTER SPECIFICATION](ORB_STRATEGY_MASTER_SPEC.md)** | **The Source of Truth.** Detailed logic, parameters, visual systems, and configuration for developers. |
-| **[📊 ANALYSIS & RESULTS](ANALYSIS_SUMMARY.md)** | **Performance Summary.** 10-Year Backtest results, strategy evolution (V1 vs V2 vs V6), and research insights. |
-| **[🧪 SCRIPT INVENTORY](research/PYTHON_SCRIPT_INVENTORY.md)** | Catalog of Python scripts used for backtesting and data analysis. |
+| **[📄 V7 SPECIFICATION](ORB_V7_SPEC.md)** | **Latest.** Cover the Queen exits, IMMEDIATE entry, optimized filters. |
+| **[📄 V6 SPECIFICATION](ORB_STRATEGY_MASTER_SPEC.md)** | Previous production version with Pullback + Fallback. |
+| **[📊 ANALYSIS & RESULTS](ANALYSIS_SUMMARY.md)** | 10-Year Backtest results and research insights. |
+| **[🔬 OPTIMIZATION RESULTS](research/OPTIMIZATION_RESULTS.md)** | Parameter grid search and MAE/MFE analysis. |
+| **[🧪 SCRIPT INVENTORY](research/PYTHON_SCRIPT_INVENTORY.md)** | Catalog of Python scripts for backtesting. |
 
 ---
 
