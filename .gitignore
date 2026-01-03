@@ -32,6 +32,7 @@ tradingview-selenium-data/
 !requirements.txt
 !gaps_report.txt
 *.png
+!docs/nqstats/**/*.png
 *.html
 !legacy_chart_ui/chart_ui.html
 !legacy_chart_ui/demo_plugins.html
