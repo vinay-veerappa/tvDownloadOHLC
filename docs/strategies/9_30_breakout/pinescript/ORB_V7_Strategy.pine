@@ -1,0 +1,555 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © vveerappa
+
+//@version=6
+strategy("9:30 AM ORB Strategy V7.1 [Optimized]", shorttitle="ORB V7.1 S", overlay=true,
+          initial_capital=100000, default_qty_type=strategy.fixed, default_qty_value=100,
+          margin_long=0, margin_short=0)
+
+// =============================================================================
+// 1. INPUTS
+// =============================================================================
+grp_core = "Core Settings"
+sessionStart = input.session("0930-0931", "Opening Range Session (ET)", group=grp_core)
+tradingEnd   = input.session("0931-1000", "Trading Window (ET)", group=grp_core)
+hardExitTime = input.session("1100-1600", "Hard Exit Time (ET)", group=grp_core) // V7 Default: 11:00
+
+grp_addons = "Strategy Addons (Logic)"
+useRegime    = input.bool(true, "Enable Regime Filter (SMA20)", group=grp_addons)
+useVVIX      = input.bool(true, "Enable VVIX Filter (>115 Skip)", group=grp_addons)
+useTuesday   = input.bool(false, "Enable Tuesday Avoidance", group=grp_addons) // V7 Default: False
+useWednesday = input.bool(false, "Enable Wednesday Avoidance", group=grp_addons) // V7 New
+maxRangePct  = input.float(0.25, "Max Range % (Skip if larger)", step=0.05, group=grp_addons)
+useMAEFilter = input.bool(true, "Enable MAE Heat Filter", group=grp_addons)
+maeThreshold = input.float(0.12, "MAE % Threshold", step=0.01, group=grp_addons)
+useEarlyExit = input.bool(true, "Enable Early Exit (Close Inside)", group=grp_addons)
+useTimeExit  = input.bool(true, "Enable Time Exit (Hard Exit)", group=grp_addons)
+useSweetSpot = input.bool(true, "Highlight VVIX Sweet Spot (98-115)", group=grp_addons)
+sigCandleExit = input.string("None", "Signal Candle Exit (V6)", options=["None", "Candle Close", "Wick"], group=grp_addons)
+useEngulfingExit = input.bool(true, "Enable Engulfing Exit (V7)", group=grp_addons) // V7 New
+showExits    = input.bool(true, "Show Active SL/TP Levels", group=grp_addons)
+showDebug    = input.bool(false, "Show Debug Labels", group=grp_addons)
+
+grp_entry = "Entry Configuration"
+// Breakout Trigger: How to confirm the breakout
+triggerMode = input.string("Standard", "Breakout Trigger", options=["Aggressive", "Standard", "Displacement"], group=grp_entry)
+// Entry Execution: How to enter after breakout
+entryMode = input.string("Immediate", "Entry Mode", options=["Immediate", "Pullback Only", "Pullback + Fallback"], group=grp_entry) // V7 Default: Immediate
+useConfirmedEntry = input.bool(true, "Use Confirmed Entry (0.10%)", group=grp_entry) // V7 New
+confirmPct = input.float(0.10, "Confirmation %", step=0.01, group=grp_entry) // V7 New
+
+// Pullback Target: Where to place the limit order
+pullbackLevel = input.string("25%", "Pullback Target", options=["0% (Boundary)", "25%", "50%"], group=grp_entry)
+pbTimeoutBars = input.int(5, "Fallback Timeout (Bars)", minval=1, maxval=20, group=grp_entry)
+maxAttempts = input.int(3, "Max Attempts per Day", minval=1, maxval=5, group=grp_entry)
+tpTargetPct = input.float(0.35, "Take Profit (%)", step=0.05, group=grp_entry)
+
+grp_mtp = "Multi-TP (Hybrid)"
+enableMultiTP = input.bool(true, "Enable Multi-TP", group=grp_mtp)
+tp1Level   = input.float(0.15, "TP1 Level (%)", step=0.01, group=grp_mtp) // V7.2 Default: 0.15% to clear noise
+tp1QtyPct  = input.int(50, "TP1 Qty (%)", minval=10, maxval=80, step=10, group=grp_mtp)
+tp2Level   = input.float(0.25, "TP2 Level (%)", step=0.01, group=grp_mtp)
+tp2QtyPct  = input.int(25, "TP2 Qty (%)", minval=10, maxval=40, step=5, group=grp_mtp)
+runnerMode = input.string("Trailing", "Runner Mode", options=["None", "Trailing", "Forever"], group=grp_mtp)
+trailPct   = input.float(0.08, "Trail % (from peak)", step=0.01, group=grp_mtp)
+
+grp_risk = "Risk Management"
+riskPercent    = input.float(1.0, "Risk per Trade (%)", minval=0.1, step=0.1, group=grp_risk)
+slPlacement    = input.string("Range Extreme", "Stop Loss Placement", options=["Range Extreme", "Custom %"], group=grp_risk)
+slCustomPct    = input.float(75, "Custom SL % of Range", minval=10, maxval=100, step=5, group=grp_risk)
+maxSlPct       = input.float(0.30, "Max SL % (cap)", minval=0.1, step=0.05, group=grp_risk)
+
+// =============================================================================
+// 2. DATA & REGIME
+// =============================================================================
+sym_close_daily = request.security("", "D", close)
+sym_sma20_daily = request.security("", "D", ta.sma(close, 20))
+isBullRegime = na(sym_sma20_daily) ? true : (sym_close_daily > sym_sma20_daily)
+vvix_open = request.security("CBOE:VVIX", "D", open)
+isTuesday = dayofweek == dayofweek.tuesday
+isWednesday = dayofweek == dayofweek.wednesday
+isPostTrade = not na(time(timeframe.period, hardExitTime, "America/New_York"))
+isTradingClosed = useTimeExit and isPostTrade
+
+// =============================================================================
+// 3. ORB CALCULATION
+// =============================================================================
+var float rHigh = na
+var float rLow  = na
+var bool rDefined = false
+var int attempts = 0
+
+isORBar = not na(time(timeframe.period, sessionStart, "America/New_York"))
+isTradeWindow = not na(time(timeframe.period, tradingEnd, "America/New_York"))
+isExtraExitTime = not na(time(timeframe.period, "1000-1001", "America/New_York")) // Legacy var, may not be needed if time exit handled generically
+isNewDay = ta.change(time("D")) != 0
+
+if isNewDay
+    rHigh := na
+    rLow := na
+    rDefined := false
+    attempts := 0
+
+if isORBar and not rDefined
+    rHigh := high
+    rLow := low
+    rDefined := true
+
+rSize = rHigh - rLow
+
+// Toggles Logic (after ORB defined)
+rPctCheck = rDefined ? (rSize / close) * 100 : 0
+// V7: Added Wednesday filter check
+isFiltered = (useRegime and not isBullRegime) or (useVVIX and nz(vvix_open, 0) > 115) or (useTuesday and isTuesday) or (useWednesday and isWednesday) or (rPctCheck > maxRangePct)
+
+// Pullback Levels based on pullbackLevel input
+pb_long = switch pullbackLevel
+    "0% (Boundary)" => rHigh
+    "25%"           => rHigh - (rSize * 0.25)
+    "50%"           => rHigh - (rSize * 0.50)
+    => rHigh - (rSize * 0.25)  // default
+
+pb_short = switch pullbackLevel
+    "0% (Boundary)" => rLow
+    "25%"           => rLow + (rSize * 0.25)
+    "50%"           => rLow + (rSize * 0.50)
+    => rLow + (rSize * 0.25)  // default
+
+// =============================================================================
+// 4. STRATEGY EXECUTION
+// =============================================================================
+inTrade = strategy.position_size != 0
+
+// State Variables (must be declared before use)
+var bool longPending = false
+var bool shortPending = false
+var float sigCandleExtreme = na
+var int breakoutBar = na
+var bool hasWonToday = false
+var float breakoutCandleExtreme = na
+var bool enteredViaFallback = false
+var int breakoutTriggerBar = na
+
+// Reset on new day
+if isNewDay
+    longPending := false
+    shortPending := false
+    sigCandleExtreme := na
+    breakoutBar := na
+    hasWonToday := false
+    breakoutCandleExtreme := na
+    enteredViaFallback := false
+    breakoutTriggerBar := na
+    
+// Track closed trades and Daily PnL
+var int prevClosedTrades = 0
+var float dayStartProfit = 0.0
+
+if isNewDay
+    prevClosedTrades := strategy.closedtrades
+    dayStartProfit := strategy.netprofit
+
+// 1. Entry Logic
+canTrade = rDefined and isTradeWindow and not inTrade and attempts < maxAttempts and not isFiltered and not hasWonToday
+
+// Debugging Plots (Visible in Data Window)
+plot(canTrade ? 1 : 0, "Can Trade", display=display.none)
+plot(isFiltered ? 1 : 0, "Filtered", display=display.none)
+plot(attempts, "Attempts", display=display.none)
+
+// Stateful function calls
+crossUpper = ta.crossover(close, rHigh)
+crossLower = ta.crossunder(close, rLow)
+
+bool breakoutLong = false
+bool breakoutShort = false
+
+// Debug Counters
+var int guardHit = 0
+var int cleanupHit = 0
+string debugTxt = na
+
+if canTrade
+    // Calculate buffer levels for Displacement trigger
+    bufferHigh = rHigh + (close * 0.001)
+    bufferLow = rLow - (close * 0.001)
+    
+    // V7.1 Confirmed Entry Logic
+    confirmLong = rHigh * (1 + confirmPct/100)
+    confirmShort = rLow * (1 - confirmPct/100)
+    
+    // Breakout Trigger Logic
+    if useConfirmedEntry
+        // Confirmed: Close beyond confirmation level
+        // To avoid re-triggering, we check if close JUST crossed or was below and now above
+        // But simplified: breakout is signal.
+        // We use crossover of the confirmation level
+        breakoutLong := ta.crossover(close, confirmLong)
+        breakoutShort := ta.crossunder(close, confirmShort)
+    else
+        // V6 Standard Logic
+        breakoutLong := switch triggerMode
+            "Aggressive"   => ta.crossover(high, rHigh)
+            "Standard"     => ta.crossover(close, rHigh)
+            "Displacement" => ta.crossover(close, bufferHigh)
+            => ta.crossover(close, rHigh)
+            
+        breakoutShort := switch triggerMode
+            "Aggressive"   => ta.crossunder(low, rLow)
+            "Standard"     => ta.crossunder(close, rLow)
+            "Displacement" => ta.crossunder(close, bufferLow)
+            => ta.crossunder(close, rLow)
+        
+    if longPending or shortPending
+        // Deep Pullback Cancellation (Guard)
+        if longPending and close < pb_long
+            strategy.cancel("Long")
+            longPending := false
+            breakoutBar := na
+            guardHit += 1
+            
+        if shortPending and close > pb_short
+            strategy.cancel("Short")
+            shortPending := false
+            breakoutBar := na
+            guardHit += 1
+
+    // Entry Execution Logic
+    // Calculate SL Distance based on preference (Applied to all modes)
+    slDist = slPlacement == "Custom %" ? rSize * (slCustomPct / 100) : rSize
+
+    if entryMode == "Immediate"
+        // Calculate SL Distance based on preference
+        // Range Extreme = Full Range. 75% = 0.75 * Range
+        slDist = slPlacement == "75% of Range" ? rSize * 0.75 : rSize
+        
+        if breakoutLong
+            qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (slDist * syminfo.pointvalue)))
+            strategy.entry("Long", strategy.long, qty=qty, comment="BO Long")
+            attempts += 1
+            sigCandleExtreme := low
+            breakoutBar := bar_index // Track for engulfing
+        else if breakoutShort
+            qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (slDist * syminfo.pointvalue)))
+            strategy.entry("Short", strategy.short, qty=qty, comment="BO Short")
+            attempts += 1
+            sigCandleExtreme := high
+            breakoutBar := bar_index
+            
+    else // Pullback Modes
+        // Set pending on breakout
+        if not longPending and not shortPending
+            // Ensure we don't arm on a "Fakeout"
+            if breakoutLong and close >= pb_long
+                longPending := true
+                sigCandleExtreme := low
+                breakoutBar := bar_index
+                breakoutCandleExtreme := low
+                breakoutTriggerBar := bar_index
+            else if breakoutShort and close <= pb_short
+                shortPending := true
+                sigCandleExtreme := high
+                breakoutBar := bar_index
+                breakoutCandleExtreme := high
+                breakoutTriggerBar := bar_index
+
+        // Fallback Timeout Logic
+        barsSinceBreakout = not na(breakoutBar) ? bar_index - breakoutBar : 0
+        timeoutReached = barsSinceBreakout >= pbTimeoutBars
+        useFallback = entryMode == "Pullback + Fallback"
+
+
+        if longPending and bar_index > breakoutBar
+            // Guard: If we close BELOW the pullback level, the setup is failed (Deep Pullback)
+            if close < pb_long
+                longPending := false
+                breakoutBar := na
+                guardHit += 1
+                
+            // Entry: If we touched the level BUT closed ABOVE it (Successful Test)
+            else if low <= pb_long and close > pb_long
+                qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (slDist * syminfo.pointvalue)))
+                strategy.entry("Long", strategy.long, qty=qty, comment="PB Long (Conf)")
+                longPending := false
+                breakoutBar := na
+                attempts += 1
+                enteredViaFallback := false
+                if strategy.closedtrades > prevClosedTrades
+                    prevClosedTrades := strategy.closedtrades
+
+            // Fallback: Timeout Logic
+            else if useFallback and timeoutReached and close > rHigh
+                qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (slDist * syminfo.pointvalue)))
+                strategy.entry("Long Timeout", strategy.long, qty=qty, comment="Fallback Long")
+                longPending := false
+                breakoutBar := na
+                attempts += 1
+                enteredViaFallback := true
+            // Cancel if breakout failed
+            else if close < rLow
+                longPending := false
+                breakoutBar := na
+        
+        if shortPending and bar_index > breakoutBar
+            // Guard: If we close ABOVE the pullback level, the setup is failed (Deep Pullback)
+            if close > pb_short
+                shortPending := false
+                breakoutBar := na
+                guardHit += 1
+                
+            // Entry: If we touched the level BUT closed BELOW it
+            else if high >= pb_short
+                qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (slDist * syminfo.pointvalue)))
+                strategy.entry("Short", strategy.short, qty=qty, comment="PB Short (Conf)")
+                shortPending := false
+                breakoutBar := na
+                attempts += 1
+                enteredViaFallback := false
+                if strategy.closedtrades > prevClosedTrades
+                    prevClosedTrades := strategy.closedtrades
+
+            // Fallback: Timeout Logic
+            else if useFallback and timeoutReached and close < rLow
+                qty = math.max(1, math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue)))
+                strategy.entry("Short Timeout", strategy.short, qty=qty, comment="Fallback Short")
+                shortPending := false
+                breakoutBar := na
+                attempts += 1
+                enteredViaFallback := true
+            // Cancel if breakout failed
+            else if close > rHigh
+                shortPending := false
+                breakoutBar := na
+
+// Update cleanup block
+if not canTrade and not inTrade
+    strategy.cancel_all()
+    longPending := false
+    shortPending := false
+    cleanupHit += 1
+
+// Update label at bottom
+if showDebug
+    debugTxt = "PenL: " + str.tostring(longPending) + "\n" +
+               "BOL: " + str.tostring(breakoutLong) + "\n" +
+               "Mod: " + (useConfirmedEntry ? "CONF" : "STD")
+    label.new(bar_index, high, debugTxt, color=color.black, textcolor=color.white, size=size.small, yloc=yloc.abovebar)
+
+
+// 1.5 Cleanup Pending Orders
+if not canTrade and not inTrade
+    strategy.cancel_all()
+    longPending := false
+    shortPending := false
+
+// 1.6 Detect Win (Stop trading after successful NET PnL increase TODAY)
+// V7.2 Fix: Check if Equity has increased relative to start of day, NOT just last trade
+if strategy.closedtrades > prevClosedTrades
+    // Compare current cumulative Net Profit to the Profit at the start of the day
+    // This handles partial exits correctly:
+    // - If TP1 hits but trade runs, Net Profit increases -> hasWonToday = True (Stop trading)
+    // - If TP1 hits but Runner loses more, Net Profit < Start Profit -> hasWonToday = False (Continue trading)
+    // - Use a small currency buffer (e.g., 10$) to filter out break-even fluff
+    if strategy.netprofit > (dayStartProfit + 10)
+        hasWonToday := true
+    prevClosedTrades := strategy.closedtrades
+    prevClosedTrades := strategy.closedtrades
+
+// 2. Multi-TP Management (Hybrid Ladder + Runner)
+var float runnerPeak = na
+var bool tp1Hit = false
+var bool tp2Hit = false
+
+if inTrade
+    entryPrice = strategy.opentrades.entry_price(0)
+    isLong = strategy.position_size > 0
+    slDistFull = rSize
+    slDistCustom = rSize * (slCustomPct / 100)
+    usedSLDist = slPlacement == "Custom %" ? slDistCustom : slDistFull
+    
+    slPrice = isLong ? entryPrice - usedSLDist : entryPrice + usedSLDist
+
+    targetSLLong  = slPlacement == "Custom %" ? (rHigh - slDistCustom) : rLow
+    targetSLShort = slPlacement == "Custom %" ? (rLow + slDistCustom) : rHigh
+    
+    slPrice := isLong ? targetSLLong : targetSLShort
+    slTicks = math.abs(entryPrice - slPrice) / syminfo.mintick
+
+    tp1Price = isLong ? entryPrice * (1 + tp1Level/100) : entryPrice * (1 - tp1Level/100)
+    tp2Price = isLong ? entryPrice * (1 + tp2Level/100) : entryPrice * (1 - tp2Level/100)
+    tp1Ticks = math.abs(tp1Price - entryPrice) / syminfo.mintick
+    tp2Ticks = math.abs(tp2Price - entryPrice) / syminfo.mintick
+
+    if enableMultiTP
+        // TP1: Partial Exit
+        strategy.exit("TP1", qty_percent=tp1QtyPct, profit=tp1Ticks, loss=slTicks)
+        // TP2: Secondary Exit
+        strategy.exit("TP2", qty_percent=tp1QtyPct + tp2QtyPct, profit=tp2Ticks, loss=slTicks)
+        
+        // Track if TP1 hit to enable runner logic
+        if not tp1Hit and ((isLong and high >= tp1Price) or (not isLong and low <= tp1Price))
+            tp1Hit := true
+        if not tp2Hit and ((isLong and high >= tp2Price) or (not isLong and low <= tp2Price))
+            tp2Hit := true
+            runnerPeak := close
+        
+        // Runner Logic (after TP2)
+        if tp2Hit and runnerMode != "None"
+            if isLong
+                runnerPeak := math.max(nz(runnerPeak, close), high)
+            else
+                runnerPeak := math.min(nz(runnerPeak, close), low)
+            
+            if runnerMode == "Trailing"
+                trailStop = isLong ? runnerPeak * (1 - trailPct/100) : runnerPeak * (1 + trailPct/100)
+                trailOffset = math.abs(close - trailStop) / syminfo.mintick
+                strategy.exit("Runner Trail", qty_percent=100, trail_points=trailOffset, trail_offset=trailOffset, loss=slTicks)
+    else
+        // Single Full Exit (legacy mode)
+        strategy.exit("Exit", qty_percent=100, profit=tp2Ticks, loss=slTicks)
+else
+    // Reset runner state when flat
+    runnerPeak := na
+    tp1Hit := false
+    tp2Hit := false
+
+// 3. Special Filters (Early Exit / Heat Filter)
+if inTrade
+    isLong = strategy.position_size > 0
+    
+    // V7.1 Engulfing Exit
+    if useEngulfingExit and not na(breakoutBar) and bar_index == breakoutBar + 1
+        // Only valid on the NEXT bar after breakout
+        breakoutOpen = open[1] // Previous bar is breakout bar
+        breakoutClose = close[1]
+        
+        isEngulfing = false
+        if isLong
+            // Bearish Engulfing: Close below open, and ranges envelop previous
+            isEngulfing := close < open and close < breakoutOpen and open > breakoutClose
+        else
+            // Bullish Engulfing
+            isEngulfing := close > open and close > breakoutOpen and open < breakoutClose
+            
+        if isEngulfing
+            strategy.close_all("Engulfing Exit")
+    
+    // MAE Heat Filter
+    if useMAEFilter
+        entryPrice = strategy.opentrades.entry_price(0)
+        heatDistance = entryPrice * (maeThreshold / 100)
+        if (isLong and low < entryPrice - heatDistance) or (not isLong and high > entryPrice + heatDistance)
+            strategy.close_all("MAE Filter Hit")
+            
+    // V6 Signal Candle exit (kept for legacy support)
+    exitReference = enteredViaFallback ? breakoutCandleExtreme : sigCandleExtreme
+    if sigCandleExit != "None" and not na(exitReference)
+        isLongPos = strategy.position_size > 0
+        sigExitTrigger = false
+        if sigCandleExit == "Wick"
+            sigExitTrigger := isLongPos ? low < exitReference : high > exitReference
+        else // "Candle Close"
+            sigExitTrigger := isLongPos ? close < exitReference : close > exitReference
+        
+        if sigExitTrigger
+            strategy.close_all("Sig Candle Exit")
+            sigCandleExtreme := na
+
+// 4. Time Exit (Hard Exit + EOD Failsafe)
+isEOD = not na(time(timeframe.period, "1555-1700", "America/New_York"))
+if inTrade and (isPostTrade or isEOD)
+    strategy.close_all("Time/EOD Exit")
+
+// =============================================================================
+// 5. VISUALS
+// =============================================================================
+plot(rDefined ? rHigh : na, "Range High", color=color.new(color.gray, 50), style=plot.style_linebr)
+plot(rDefined ? rHigh - (rSize * 0.25) : na, "25% Level", color=color.new(color.gray, 80), style=plot.style_linebr)
+plot(rDefined ? rHigh - (rSize * 0.50) : na, "50% Level", color=color.new(color.gray, 80), style=plot.style_linebr)
+plot(rDefined ? rHigh - (rSize * 0.75) : na, "75% Level", color=color.new(color.gray, 80), style=plot.style_linebr)
+plot(rDefined ? rLow : na, "Range Low", color=color.new(color.gray, 50), style=plot.style_linebr)
+
+// V7: Plot Confirmation Levels
+plot(rDefined and useConfirmedEntry ? rHigh * (1 + confirmPct/100) : na, "Confirm High", color=color.new(color.green, 70), style=plot.style_circles)
+plot(rDefined and useConfirmedEntry ? rLow * (1 - confirmPct/100) : na, "Confirm Low", color=color.new(color.red, 70), style=plot.style_circles)
+
+// Visual Candle Bar Coloring
+isFallbackEntry = enteredViaFallback and inTrade
+candleColor = isORBar ? color.yellow : bar_index == breakoutTriggerBar ? color.aqua : isFallbackEntry and bar_index == strategy.opentrades.entry_bar_index(0) ? color.lime : na
+barcolor(candleColor)
+
+// Fallback Entry Marker (⚡)
+if enteredViaFallback and inTrade and bar_index == strategy.opentrades.entry_bar_index(0)
+    isLong = strategy.position_size > 0
+    label.new(bar_index, isLong ? low : high, "⚡", style=isLong ? label.style_label_up : label.style_label_down, color=isLong ? color.lime : color.red, textcolor=isLong ? color.black : color.white, size=size.small)
+
+// Plot Active Strategy Exits
+var float activeSL = na
+var float activeTP = na
+
+if inTrade
+    entryPrice = strategy.opentrades.entry_price(0)
+    isLong = strategy.position_size > 0
+    activeTP := isLong ? entryPrice * (1 + tpTargetPct/100) : entryPrice * (1 - tpTargetPct/100)
+    activeSL := isLong ? rLow : rHigh
+else
+    activeSL := na
+    activeTP := na
+
+plot(showExits ? activeSL : na, "Strategy SL", color=color.new(color.red, 40), style=plot.style_linebr, linewidth=2)
+plot(showExits ? activeTP : na, "Strategy TP", color=color.new(color.green, 40), style=plot.style_linebr, linewidth=2)
+plot((showExits and sigCandleExit != "None" and inTrade) ? sigCandleExtreme : na, "Sig Candle Extreme", color=color.new(color.fuchsia, 40), style=plot.style_linebr, linewidth=2)
+
+// ORB Box highlighting
+var box orbBox = na
+isSweetSpot = useSweetSpot and vvix_open >= 98 and vvix_open <= 115
+isRangeTooBig = rPctCheck > maxRangePct
+boxColor = isRangeTooBig ? color.new(color.red, 80) : isSweetSpot ? color.new(color.orange, 85) : color.new(color.purple, 90)
+borderColor = isRangeTooBig ? color.red : isSweetSpot ? color.orange : na
+
+if isORBar and rDefined
+    orbBox := box.new(bar_index, rHigh, bar_index+20, rLow, bgcolor=boxColor, border_color=borderColor)
+if rDefined and not na(orbBox)
+    box.set_right(orbBox, bar_index)
+    if isSweetSpot
+        box.set_bgcolor(orbBox, color.new(color.orange, 85))
+        box.set_border_color(orbBox, color.orange)
+
+// =============================================================================
+// 6. VISUAL DASHBOARD (V7 TABLE)
+// =============================================================================
+var table dashboard = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 20), border_width=1, border_color=color.new(color.gray, 50))
+
+if barstate.islast
+    // VVIX Formatting
+    vvixZone = vvix_open > 115 ? "Extreme" : vvix_open > 98 ? "Elevated" : vvix_open > 85 ? "Mid" : "Low"
+    vvixColor = vvix_open > 115 ? color.red : vvix_open > 98 ? color.orange : color.green
+    rPct = (rDefined and open > 0) ? (rSize / open) * 100 : 0
+    
+    table.cell(dashboard, 0, 0, "Regime Bias", text_color=color.white, text_halign=text.align_left)
+    table.cell(dashboard, 1, 0, isBullRegime ? "BULL" : "BEAR", text_color=isBullRegime ? color.green : color.red, text_formatting=text.format_bold)
+    
+    table.cell(dashboard, 0, 1, "VVIX Open", text_color=color.white, text_halign=text.align_left)
+    vvixStatus = (useSweetSpot and vvix_open >= 98 and vvix_open <= 115) ? "SWEET SPOT" : vvixZone
+    table.cell(dashboard, 1, 1, str.tostring(vvix_open, "#.##") + " (" + vvixStatus + ")", text_color=vvixColor, text_formatting=text.format_bold)
+    
+    table.cell(dashboard, 0, 2, "09:30 Range", text_color=color.white, text_halign=text.align_left)
+    rangeStatus = isRangeTooBig ? " ⚠️ TOO BIG" : ""
+    rangeColor = isRangeTooBig ? color.red : color.yellow
+    table.cell(dashboard, 1, 2, str.tostring(rSize, "#.##") + " pts (" + str.tostring(rPct, "#.###") + "%)" + rangeStatus, text_color=rangeColor)
+    
+    table.cell(dashboard, 0, 3, "Entry Type", text_color=color.white, text_halign=text.align_left)
+    entryTypeText = useConfirmedEntry ? "CONFIRMED (" + str.tostring(confirmPct) + "%)" : "STANDARD (Close)"
+    table.cell(dashboard, 1, 3, entryTypeText, text_color=color.orange)
+
+    table.cell(dashboard, 0, 4, "Entry Config", text_color=color.white, text_halign=text.align_left)
+    table.cell(dashboard, 1, 4, triggerMode + " / " + entryMode, text_color=color.aqua)
+    
+    table.cell(dashboard, 0, 5, "Trade Status", text_color=color.white, text_halign=text.align_left)
+    statusText = hasWonToday ? "✅ WON (Done)" : inTrade ? (enteredViaFallback ? "IN TRADE (⚡Fallback)" : "IN TRADE") : isTradingClosed ? "TRADING CLOSED" : isFiltered ? "SKIP (Filtered)" : attempts >= maxAttempts ? "MAX ATTEMPTS" : (entryMode == "Immediate" ? "READY: Breakout" : "WAIT: Pullback")
+    statusColor = hasWonToday ? color.lime : inTrade ? color.aqua : isTradingClosed ? color.gray : isFiltered ? color.red : attempts >= maxAttempts ? color.orange : color.green
+    table.cell(dashboard, 1, 5, statusText, text_color=statusColor, text_formatting=text.format_bold)
+
+    table.cell(dashboard, 0, 7, "Diag (Filt/CanT)", text_color=color.white, text_halign=text.align_left)
+    diagStr = (isFiltered ? "FILT" : "OK") + " / " + (canTrade ? "YES" : hasWonToday ? "WON" : "NO")
+    table.cell(dashboard, 1, 7, diagStr, text_color=canTrade ? color.green : hasWonToday ? color.lime : color.red)
