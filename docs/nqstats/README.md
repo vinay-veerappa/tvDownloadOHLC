@@ -2,7 +2,10 @@
 
 Systematic verification of trading statistics and scenarios from [nqstats.com](https://nqstats.com). This project uses 10 years of 1-minute OHLCV data (2015-2025) to validate claims made in the NQStats educational videos.
 
-## 📊 Summary of Findings
+## � **[Start Here: Day Trading Playbook](docs/nqstats/TRADING_PLAYBOOK.md)**
+*A consolidated strategy guide synthesizing all verified metrics into a daily workflow.*
+
+## �📊 Summary of Findings
 
 | Metric | Claim | Verification Result | Status |
 | :--- | :--- | :--- | :--- |
