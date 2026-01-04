@@ -1,0 +1,217 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © NQStats_Verified
+
+//@version=6
+strategy("NQStats: The Full Playbook (Smart & Safe)", overlay=true, initial_capital=100000, default_qty_type=strategy.fixed, default_qty_value=1, process_orders_on_close=true, pyramiding=10)
+
+// --- INPUTS ---
+grp_time = "Session Times"
+t_start      = input.time(timestamp("2023-01-01 09:30"), "Backtest Start", group=grp_time)
+t_end        = input.time(timestamp("2025-12-31 16:00"), "Backtest End", group=grp_time)
+exit_h       = input.int(15, "Force Close Hour (0-23)", minval=0, maxval=23, group=grp_time)
+exit_m       = input.int(55, "Force Close Minute (0-59)", minval=0, maxval=59, group=grp_time)
+
+grp_smart = "Smart Playbook Logic"
+use_smart    = input.bool(true, "Use Smart Hourly Personality?", tooltip="Forces Breakout in Exp Hour (9am) and Reversion in Trap Hour (10am).", group=grp_smart)
+trade_ib     = input.bool(true, "Trade 'IB Breakout' (10:30)?", group=grp_smart)
+trade_noon   = input.bool(true, "Trade 'Noon Curve' (12:00)?", group=grp_smart)
+use_gap_rule = input.bool(true, "Use ALN/Gap Defense?", tooltip="If Gap > 20pts (Overnight Move), force Reversion Mode.", group=grp_smart)
+
+grp_risk = "Risk Management (Essential)"
+stop_pts     = input.float(20.0, "Fixed Stop Loss (Points)", minval=1.0, group=grp_risk)
+prof_pts     = input.float(40.0, "Fixed Take Profit (Points)", minval=1.0, group=grp_risk) // Lowered to 40 (2R)
+trail_pts    = input.float(30.0, "Trailing Stop Activation (Points)", minval=5.0, group=grp_risk)
+trail_offset = input.float(10.0, "Trailing Stop Offset (Points)", minval=1.0, group=grp_risk)
+max_pos      = input.int(10, "Max Simultaneous Trades", minval=1, group=grp_risk) // Increased to 10
+max_loss     = input.float(300.0, "Max Daily Loss ($)", minval=0.0, group=grp_risk)
+
+grp_logic = "Manual Fallback Settings"
+bull_mode    = input.string("Breakout (Stop)", "Bull Entry Mode", options=["Breakout (Stop)", "Pullback (Limit)"], group=grp_logic)
+bear_mode    = input.string("Reversion (Fade)", "Bear Entry Mode", options=["Reversion (Fade)", "Breakout (Stop)"], group=grp_logic)
+orb_len      = input.int(5, "ORB Duration (Mins)", minval=1, group=grp_logic)
+sweep_win    = input.int(15, "Sweep Window (Mins)", minval=1, group=grp_logic)
+
+grp_hours = "Hourly Filters (NY Time)"
+trade_h9     = input.bool(true, "Trade 09:00 NY?", group=grp_hours)
+trade_h10    = input.bool(true, "Trade 10:00 NY?", group=grp_hours)
+trade_h11    = input.bool(true, "Trade 11:00 NY?", group=grp_hours)
+trade_h12    = input.bool(true, "Trade 12:00 NY?", group=grp_hours)
+trade_h13    = input.bool(true, "Trade 13:00 NY?", group=grp_hours)
+trade_h14    = input.bool(true, "Trade 14:00 NY?", group=grp_hours)
+trade_h15    = input.bool(true, "Trade 15:00 NY?", group=grp_hours)
+
+// --- GAP ANALYSIS (ALN PROXY) ---
+// We use Daily Gap to measure the Overnight/ALN sentiment.
+[d_open, d_close_prev] = request.security(syminfo.tickerid, "D", [open, close[1]], lookahead=barmerge.lookahead_on)
+float gap_size = math.abs(d_open - d_close_prev)
+bool is_large_gap = gap_size > 20.0
+
+// --- TIMEZONE ENGINE ---
+// Explicitly fetch NY Time
+ny_hour   = hour(time, "America/New_York")
+ny_minute = minute(time, "America/New_York")
+new_ny_hour = (ny_hour != ny_hour[1])
+
+bool hour_allowed = (ny_hour==9 and trade_h9) or (ny_hour==10 and trade_h10) or (ny_hour==11 and trade_h11) or (ny_hour==12 and trade_h12) or (ny_hour==13 and trade_h13) or (ny_hour==14 and trade_h14) or (ny_hour==15 and trade_h15)
+
+// --- DAILY LOSS GUARD ---
+var float day_start_equity = 0.0
+if dayofmonth(time, "America/New_York") != dayofmonth(time[1], "America/New_York") // New Day
+    day_start_equity := strategy.equity
+bool hit_max_loss = (day_start_equity - strategy.equity) > max_loss
+
+// --- HOURLY HIGHS/LOWS TRACKING ---
+// We track 1H High/Low manually to be perfectly aligned with NY Hour
+var float curr_h_high = na
+var float curr_h_low = na
+var float curr_h_open = na
+var float prev_h_high = na
+var float prev_h_low = na
+var float prev_h_close = na
+
+if new_ny_hour
+    prev_h_high  := curr_h_high
+    prev_h_low   := curr_h_low
+    prev_h_close := close[1]
+    curr_h_high := high
+    curr_h_low  := low
+    curr_h_open := open
+else
+    curr_h_high := math.max(curr_h_high, high)
+    curr_h_low  := math.min(curr_h_low, low)
+
+
+// --- 1. IB CALCULATOR (09:30 - 10:30) ---
+var float ib_high = na
+var float ib_low = na
+
+if ny_hour == 9 and ny_minute == 30
+    ib_high := high
+    ib_low  := low
+else if (ny_hour == 9 and ny_minute > 30) or (ny_hour == 10 and ny_minute <= 30)
+    ib_high := math.max(ib_high, high)
+    ib_low  := math.min(ib_low, low)
+
+
+// --- 2. ORB LOGIC ---
+var bool orb_bullish = false
+var bool orb_complete = false
+var bool entry_placed_this_hour = false
+// ORB RESET
+if new_ny_hour
+    orb_complete := false
+    orb_bullish := false
+    entry_placed_this_hour := false
+
+if not orb_complete and ny_minute >= orb_len // e.g. 5 min past hour
+    orb_bullish := (close > curr_h_open)
+    orb_complete := true
+
+
+// ==========================================
+//           EXECUTION LOGIC
+// ==========================================
+
+// EXPOSURE LIMIT CHECK
+bool can_trade = strategy.opentrades < max_pos
+
+if time >= t_start and time <= t_end and not hit_max_loss
+    
+    string h_id = str.tostring(ny_hour)
+
+    // A. HOURLY BOTS (Smart Personality)
+    if hour_allowed and orb_complete and not entry_placed_this_hour and can_trade
+        
+        // DEFAULT MODES
+        string active_bull_mode = bull_mode
+        string active_bear_mode = bear_mode
+        string logic_tag = ""
+
+        // SMART OVERRIDES
+        if use_smart
+            // 1. Hourly Personality
+            if ny_hour == 9
+                active_bull_mode := "Breakout (Stop)"
+                active_bear_mode := "Breakout (Stop)"
+                logic_tag := " (1H Cont)"
+            
+            if ny_hour == 10
+                active_bull_mode := "Pullback (Limit)" 
+                active_bear_mode := "Reversion (Fade)"
+                logic_tag := " (Judas)"
+                
+            // 2. ALN / Gap Defense (Overrides Hourly if massive gap)
+            if use_gap_rule and is_large_gap
+                active_bull_mode := "Pullback (Limit)"
+                active_bear_mode := "Reversion (Fade)"
+                logic_tag := " (Gap Def)"
+        
+        // BULL ENTRY
+        if orb_bullish
+            string txt_id_bull = "Bull_" + h_id
+            if active_bull_mode == "Pullback (Limit)"
+                strategy.entry(txt_id_bull, strategy.long, limit=prev_h_close, comment="Bull H"+h_id+logic_tag+" (PB)")
+            else
+                strategy.entry(txt_id_bull, strategy.long, stop=prev_h_high, comment="Bull H"+h_id+logic_tag+" (BkOut)")
+            
+            // EXIT with Fixed Target (Using Explicit IDs)
+            strategy.exit("Ex_"+h_id, txt_id_bull, loss=stop_pts*100, profit=prof_pts*100, trail_points=trail_pts*100, trail_offset=trail_offset*100)
+            entry_placed_this_hour := true
+            
+        // BEAR ENTRY
+        if not orb_bullish
+            string txt_id_bear = "Bear_" + h_id
+            if active_bear_mode == "Breakout (Stop)"
+                strategy.entry(txt_id_bear, strategy.short, stop=prev_h_low, comment="Bear H"+h_id+logic_tag+" (BkOut)")
+                strategy.exit("Ex_"+h_id, txt_id_bear, loss=stop_pts*100, profit=prof_pts*100, trail_points=trail_pts*100, trail_offset=trail_offset*100)
+                entry_placed_this_hour := true
+            else
+                // Reversion/Fade Logic
+                // We only fade if we sweep.
+                if ny_minute < sweep_win
+                    if high > prev_h_high and close < prev_h_high
+                        strategy.entry(txt_id_bear, strategy.short, comment="Bear H"+h_id+logic_tag+" (Swp High)")
+                        strategy.exit("Ex_"+h_id, txt_id_bear, loss=stop_pts*100, profit=prof_pts*100, trail_points=trail_pts*100, trail_offset=trail_offset*100)
+                        entry_placed_this_hour := true
+                    
+                    if low < prev_h_low and close > prev_h_low
+                        strategy.entry("RevL_"+h_id, strategy.long, comment="Rev H"+h_id+logic_tag+" (Swp Low)")
+                        strategy.exit("ExL_"+h_id, "RevL_"+h_id, loss=stop_pts*100, profit=prof_pts*100, trail_points=trail_pts*100, trail_offset=trail_offset*100)
+                        entry_placed_this_hour := true
+
+
+    // B. IB BREAKOUT (10:30)
+    // Only triggers ONCE at 10:30 if enabled.
+    var bool ib_traded = false
+    if ny_hour == 9
+        ib_traded := false // Reset
+    
+    if trade_ib and ny_hour == 10 and ny_minute == 30 and not ib_traded and can_trade
+        // Place Stops at IB Range
+        strategy.entry("IB_Long", strategy.long, stop=ib_high, comment="IB Break (Long)")
+        strategy.entry("IB_Short", strategy.short, stop=ib_low, comment="IB Break (Short)")
+        
+        strategy.exit("Ex_IB_L", "IB_Long", loss=stop_pts*100, profit=prof_pts*100, trail_points=trail_pts*100, trail_offset=trail_offset*100)
+        strategy.exit("Ex_IB_S", "IB_Short", loss=stop_pts*100, profit=prof_pts*100, trail_points=trail_pts*100, trail_offset=trail_offset*100)
+        ib_traded := true
+
+    // C. NOON CURVE (12:00)
+    // Only triggers at 12:00.
+    if trade_noon and ny_hour == 12 and ny_minute == 0 and can_trade
+        // Check relative position to 09:30 Open
+        // If > 1% change, Fade? Playbook says "Noon Volatility = Breakout".
+        strategy.entry("Noon_L", strategy.long, stop=high, comment="Noon Curve (L)")
+        strategy.entry("Noon_S", strategy.short, stop=low, comment="Noon Curve (S)")
+        strategy.exit("Ex_Noon", loss=stop_pts*100, profit=prof_pts*100, trail_points=trail_pts*100, trail_offset=trail_offset*100)
+
+// --- EOD FORCE CLOSE ---
+if (ny_hour > exit_h) or (ny_hour == exit_h and ny_minute >= exit_m)
+    strategy.close_all(comment="EOD Close")
+    strategy.cancel_all()
+
+// --- VISUALS ---
+var int last_trade_count = 0
+if strategy.opentrades > last_trade_count
+    int i = strategy.opentrades - 1
+    label.new(bar_index, strategy.opentrades.entry_price(i), text=strategy.opentrades.entry_comment(i), color=color.blue, textcolor=color.white, size=size.large)
+    last_trade_count := strategy.opentrades
