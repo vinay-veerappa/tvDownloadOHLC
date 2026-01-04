@@ -189,4 +189,34 @@ Step 7: Disregard midnight/8:30 levels after 11:30 AM
 
 ---
 
-*Document updated January 4, 2026*
+
+---
+
+## Validation Results (January 2026)
+
+We validated these concepts using 2023-2024 NQ 1-minute data (515 trading days).
+
+### Test 1: Simple Premium/Discount Rule
+**Hypothesis**: Above Midnight+8:30 = Bearish (Premium), Below = Bullish (Discount).
+- **Result**: **FAILED (Accuracy ~45%)**
+- The simple rule is statistically invalid. Being in "discount" did not predict a bullish day.
+
+### Test 2: Deep Premium/Discount (Liquidity Layout)
+**Hypothesis**: Adding liquidity pool filters (Above PDH / Below PDL) improves accuracy.
+- **Deep Premium** (Above PDH + Midnight + 8:30): **46.1% Bearish** (Better than random, but still weak)
+- **Deep Discount** (Below PDL + Midnight + 8:30): **40.8% Bullish** (Counter-trend! Market continued lower)
+- **Result**: **FAILED**. The market tended to trend *against* the reversal logic.
+
+### Test 3: Judas Swing (Opposing Run)
+**Hypothesis**: A move *against* the bias zone at 8:30/9:30 predicts a reversal.
+- **9:30 Bearish Setup** (Premium + Move UP): Only **37.4%** reversed to Short.
+- **Result**: **FAILED (Counter-Predictive)**. 
+- **Key Finding**: If price is in a Premium Zone and moves UP at 9:30, it continues HIGHER **62.6% of the time**. It does not reverse as the "Judas" theory suggests.
+
+### Conclusion
+The specific mechanical rules described in these videos (Premium/Discount zones, opposing runs = reversals) did not work on NQ1 during the 2023-2024 period. The market showed strong **continuation** characteristics rather than the mean reversion implied by the strategy.
+
+---
+
+*Verified by `scripts/research/ttrades/validate_time_levels.py`*
+
