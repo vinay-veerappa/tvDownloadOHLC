@@ -1,6 +1,9 @@
-# TTrades Time Levels Strategy
+# ICT Time Levels Strategy
 
-**Source**: [Important Time Levels For Trading](https://www.youtube.com/watch?v=EYzP7c24AwM)  
+**Sources**:  
+- [TTrades: Important Time Levels For Trading](https://www.youtube.com/watch?v=EYzP7c24AwM)  
+- [MMT Trading: How To Trade ICT's 9:30 OPEN](https://www.youtube.com/watch?v=JRyVueQZZbc)  
+
 **Last Updated**: January 4, 2026  
 **Status**: Documented, Awaiting Validation
 
@@ -8,7 +11,10 @@
 
 ## Executive Summary
 
-This strategy uses **key time levels** throughout the trading day to identify bias, premium/discount zones, and Judas swings. The core insight is that certain times consistently produce predictable price behavior.
+This strategy uses **key time levels** (midnight, 8:30, 9:30) to determine bias and identify high-probability trades. Both sources confirm the same core rule:
+
+> **Below midnight + 8:30 = DISCOUNT → Only look for LONGS**  
+> **Above midnight + 8:30 = PREMIUM → Only look for SHORTS**
 
 ---
 
@@ -16,137 +22,171 @@ This strategy uses **key time levels** throughout the trading day to identify bi
 
 | Time | Significance | Primary Use |
 |------|-------------|-------------|
-| **12:00 AM** | New daily candle (midnight open) | Support/resistance, premium/discount |
-| **8:30 AM** | News embargo lifts | Judas swing, order block formation |
-| **9:30 AM** | NYSE opens | Judas swing, volatility, order block |
+| **12:00 AM** | New daily candle (midnight open) | S/R, premium/discount |
+| **8:30 AM** | News embargo lifts | Judas swing, order block |
+| **9:30 AM** | NYSE opens | Order pairing, breaker formation |
 | **10:00 AM** | New 4-hour candle | 4H Power of Three |
+| **11:30 AM** | Cutoff | Midnight/8:30 levels expire |
 | **2:00 PM** | New 4-hour candle | Retracement, continuation |
 
 ---
 
-## Core Concepts
+## Core Rule: Premium vs Discount
 
-### 1. Daily Open High Low Close (OHLC)
+### The "Training Wheels" Rule (MMT Trading)
 
-Use midnight open and daily open as reference:
+| At 9:30 Open | Position | Action |
+|--------------|----------|--------|
+| Below midnight AND below 8:30 | **DISCOUNT** | **ONLY LONGS** |
+| Above midnight AND above 8:30 | **PREMIUM** | **ONLY SHORTS** |
 
-| Bias | Expected Sequence |
-|------|-------------------|
-| **Bullish** | Open → Low → High → Close |
-| **Bearish** | Open → High → Low → Close |
+### Deep Premium / Deep Discount (MMT Trading)
 
-### 2. 4-Hour Power of Three
-
-| Candle | Time | Expected Behavior |
-|--------|------|-------------------|
-| 10:00 AM | Start of 4H | Open → Low → High → Close (if bullish) |
-| 2:00 PM | Start of 4H | Retracement OR continuation |
-
-### 3. Premium / Discount Zones
-
-| Price Position | Interpretation |
-|----------------|----------------|
-| **Above** midnight + 8:30 + daily open | **Deep Premium** → Bearish |
-| **Below** midnight + 8:30 + daily open | **Deep Discount** → Bullish |
-
-### 4. Judas Swing Detection
-
-Look for **opposing runs** at 8:30 and 9:30:
-
-| Setup | What Happens | Result |
-|-------|--------------|--------|
-| **Bullish** | 8:30/9:30 makes run DOWN, closes over | Order block → Expect higher |
-| **Bearish** | 8:30/9:30 makes run UP, closes below | Order block → Expect lower |
+| Condition | Status | Probability |
+|-----------|--------|-------------|
+| Below midnight + 8:30 + below old sell-side | **Deep Discount** | HIGH PROB LONG |
+| Above midnight + 8:30 + above old buy-side | **Deep Premium** | HIGH PROB SHORT |
 
 ---
 
-## Trading Framework
+## Order Pairing & Breakers (MMT Trading)
+
+### What is Order Pairing?
+At 9:30, price often "pairs orders" with liquidity pools from pre-market (runs stops before reversing).
+
+### The Breaker Rule
+> *"Anytime you have orders being paired, you always have a breaker"*
+
+- **Bullish**: Low → High → Low sweep = Bullish Breaker
+- **Bearish**: High → Low → High sweep = Bearish Breaker
+- After breaker forms, trust the PDAs on the right side of the curve
+
+---
+
+## 4-Hour Power of Three (TTrades)
+
+| Candle | Time | Bullish Sequence | Bearish Sequence |
+|--------|------|------------------|------------------|
+| 10:00 AM | 4H start | Open → Low → High → Close | Open → High → Low → Close |
+| 2:00 PM | 4H start | Retracement or continuation | Retracement or continuation |
+
+---
+
+## Time Cutoff (MMT Trading)
+
+> *"Once you get past 11:30 AM, you disregard those openings"*
+
+- Midnight and 8:30 levels are **only valid until 11:30 AM**
+- Exception: FOMC or high-impact news in PM session
+
+---
+
+## Trading Framework (Combined)
 
 ```
-Step 1: Determine daily bias (higher timeframe structure)
-Step 2: Mark levels: Midnight, 8:30, 9:30, 10:00, 2:00
-Step 3: Assess premium/discount relative to these levels
-Step 4: At 8:30 → Watch for Judas swing (opposing run)
-Step 5: At 9:30 → Watch for order block OR continuation
-Step 6: At 10:00 → Trade the 4H OHLC sequence
-Step 7: At 2:00 → Expect retracement or continuation
+Step 1: At 9:30, determine position relative to:
+        - Midnight open
+        - 8:30 open
+        - Old liquidity pools (buy-side/sell-side)
+
+Step 2: Apply the Premium/Discount Rule:
+        - Below both = DISCOUNT → Only LONGS
+        - Above both = PREMIUM → Only SHORTS
+
+Step 3: Watch for 9:30 order pairing (Judas swing into liquidity)
+
+Step 4: After pairing, look for BREAKER formation
+
+Step 5: Enter at breaker OR fair value gap after shift
+
+Step 6: Use 10:00/2:00 for 4H OHLC timing
+
+Step 7: Disregard midnight/8:30 levels after 11:30 AM
 ```
 
 ---
 
 ## Example Patterns
 
-### Bearish Day Pattern
-1. Price above midnight + daily open = **Premium**
-2. 8:30 makes opposing run UP into order block
-3. 9:30 makes another opposing run UP  
-4. Distribution lower begins after 9:30
-5. Midnight is used as **resistance** on retracement
-6. 10:00 4H candle: Open → High → Low → Close
+### High Probability Long Setup (Deep Discount)
+1. Price below midnight open
+2. Price below 8:30 open
+3. Price below old sell-side liquidity
+4. 9:30 sweeps sell-side (pairs orders)
+5. Bullish breaker forms
+6. Enter long at FVG or breaker retest
+7. Target: Buy-side liquidity above
 
-### Bullish Day Pattern
-1. Price below midnight + daily open = **Discount**
-2. 8:30 makes opposing run DOWN
-3. Closes over the down-close candle = **Order block**
-4. 9:30 volatility continues the move higher
-5. Midnight is used as **support**
-6. 10:00 4H candle: Open → Low → High → Close
+### High Probability Short Setup (Deep Premium)
+1. Price above midnight open
+2. Price above 8:30 open
+3. Price above old buy-side liquidity
+4. 9:30 sweeps buy-side (pairs orders)
+5. Bearish breaker forms
+6. Enter short at FVG or breaker retest
+7. Target: Midnight open or sell-side below
 
 ---
 
-## Key Insights
+## Judas Swing Detection (TTrades)
 
-### Midnight Open
-- Acts as **support/resistance** throughout the day
-- Position relative to midnight = **premium or discount**
-- Multi-purpose: Reference for daily OHLC + S/R
+| Setup | What Happens | Result |
+|-------|--------------|--------|
+| **Bullish** | 8:30/9:30 makes run DOWN, closes over | Order block formed → Expect higher |
+| **Bearish** | 8:30/9:30 makes run UP, closes below | Order block formed → Expect lower |
 
-### 8:30 Open
-- **First key time** for Judas swing
-- News can cause volatility
-- Look for opposing runs that form order blocks
+---
 
-### 9:30 Open (NYSE)
-- **Second key time** for Judas swing
-- Often confirms or continues 8:30 move
-- Volatility entry point
+## Source Comparison
 
-### 10:00 and 2:00 (4H Candles)
-- Trade the 4H Power of Three
-- 10:00 = Start of AM session 4H
-- 2:00 = Retracement or continuation
+| Concept | TTrades | MMT Trading | Status |
+|---------|---------|-------------|--------|
+| Midnight as S/R | ✓ | ✓ | **Confirmed** |
+| 8:30 as reference | ✓ | ✓ | **Confirmed** |
+| Premium/Discount rule | ✓ | ✓ | **Confirmed** |
+| Only longs in discount | ✓ | ✓ | **Confirmed** |
+| Only shorts in premium | ✓ | ✓ | **Confirmed** |
+| Judas swing at 9:30 | ✓ | ✓ (order pairing) | **Confirmed** |
+| Breaker formation | Not detailed | **✓ Detailed** | MMT adds detail |
+| 11:30 cutoff | Not mentioned | **✓** | MMT only |
+| 10:00/2:00 4H candles | ✓ | Not mentioned | TTrades only |
 
 ---
 
 ## Validation Tasks (TODO)
 
-1. **Midnight as S/R**: Test if midnight open acts as support/resistance
-2. **8:30 Judas Swing**: Test opposing run frequency and reversal rate
-3. **Premium/Discount**: Test if position relative to levels predicts direction
-4. **4H OHLC**: Validate 10:00 and 2:00 candle behavior
+1. **Premium/Discount → Bias**: Does position at 9:30 predict direction?
+2. **Deep Premium/Discount**: Does adding liquidity pool condition improve accuracy?
+3. **11:30 Cutoff**: Do midnight/8:30 lose predictive power after 11:30?
+4. **Order Pairing**: Does 9:30 sweep predict reversal?
+5. **Breaker Formation**: Detect and track breaker patterns after 9:30
+6. **4H OHLC**: Validate 10:00 and 2:00 candle behavior
 
 ---
 
 ## Overlap with Existing Research
 
-| TTrades Concept | Our Existing Work |
-|-----------------|-------------------|
+| This Strategy | Our Existing Work |
+|---------------|-------------------|
 | Midnight open | ✗ Not tracked yet |
-| 8:30 Judas swing | Similar to Tanja 9:28 analysis |
-| 9:30 order block | ✓ Tanja model, ORB strategy |
-| Premium/discount | ✓ ALN pattern (Asia/London above/below) |
+| 8:30 open | ✗ Not tracked yet |
+| Premium/discount | ✓ Similar to ALN (Asia/London above/below) |
+| 9:30 Judas | ✓ Tanja model (87-90% reversal rate) |
+| Breaker | ✗ Not tracked yet |
 | 4H OHLC | ✗ Not tracked yet |
 
 ---
 
 ## Quick Resume Prompt
 
-> "I'm working on the TTrades Time Levels strategy in `docs/strategies/9_30_breakout/ttrades/TIME_LEVELS.md`.
+> "I'm working on the ICT Time Levels strategy in `docs/strategies/9_30_breakout/ttrades/TIME_LEVELS.md`.
 >
-> Key concepts: Midnight/8:30/9:30 as Judas times, premium/discount zones, 4H OHLC at 10:00/2:00.
+> Sources: TTrades + MMT Trading (both confirm same rules).
 >
-> I want to validate [midnight S/R / 8:30 Judas / premium-discount bias / 4H OHLC]."
+> Key concept: Below midnight+8:30 = ONLY LONGS, Above = ONLY SHORTS.
+>
+> I want to validate [premium-discount bias / 11:30 cutoff / breaker formation / 4H OHLC]."
 
 ---
 
-*Document created January 4, 2026*
+*Document updated January 4, 2026*
