@@ -5,7 +5,7 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # Directory
-DIR = r"c:\Users\vinay\tvDownloadOHLC\docs\strategies\9_30_breakout\0930_AllDay"
+DIR = r"c:\Users\vinay\tvDownloadOHLC\docs\strategies\9_30_breakout\0930_AllDay\old"
 files = glob.glob(os.path.join(DIR, "*.xlsx"))
 
 results = {}

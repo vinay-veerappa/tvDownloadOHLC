@@ -23,21 +23,24 @@ The goal was to improve the V2 "All Day" strategy by addressing "Morning Reversa
     4.  **Fixed TP**: Take profit at fixed percentage targets.
     5.  **Trailing**: Basic trailing stop (User Error test case).
 
-## 3. Results (Corrected Net Profit)
-*Note: Profit figures corrected for data duplication bug.*
+## 3. Results: V3 vs V2 (Corrected Net Profit)
+*Note: All profit figures corrected for data duplication bug (Entry+Exit rows).*
 
-| Rank | Strategy Mode | Net Profit | Trades | Avg/Day | Verdict |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | **Fixed TP** | **$95,343** | 5,514 | 5.0 | **BEST**. Consistent wins (0.15%, 0.25%, 0.50% TPs). |
-| **2** | **Adaptive** | **$84,586** | 5,386 | 4.9 | **VALID**. Beat Baseline (+$1,159). |
-| **3** | **Time Exit** | **$83,427** | 5,408 | 4.9 | **BASELINE**. Stronger than Breakeven. |
-| **4** | **Trailing** | **$68,381** | 5,454 | 5.0 | **POOR**. Trails too early (0.25% Offset). |
-| **5** | **Breakeven** | **$55,424** | 5,344 | 4.9 | **FAIL**. Moving to BE kills EV (-$28k vs Baseline). |
+| Rank | Strategy Version | Mode | Net Profit | Trades | Avg/Day | Verdict |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **1** | **V3 Adaptive** | **Fixed TP** | **$95,343** | 5,514 | 5.0 | **BEST**. +$31k vs V2. Consistent wins. |
+| **2** | **V3 Adaptive** | **Adaptive** | **$84,586** | 5,386 | 4.9 | **STRONG**. +$20k vs V2. Trend follower. |
+| **3** | **V3 Adaptive** | **Time Exit** | **$83,427** | 5,408 | 4.9 | **GOOD**. +$19k vs V2. Validated runner logic. |
+| **4** | **V2 Baseline** | *Original* | **$64,347** | 5,402 | 4.9 | **BASELINE**. Underperforms V3. |
+| **5** | **V3 Adaptive** | **Breakeven** | **$55,424** | 5,344 | 4.9 | **FAIL**. Worse than V2. |
 
 ## 4. Key Findings
 
-### A. "Fixed TP" outperforms "Holding"
-Surprisingly, simply taking profits at fixed levels (`TP1: 0.15%`, `TP2: 0.25%`, `TP3: 0.50%`) generated the highest total return ($95k). This suggests that in the 2023-2026 regime, securing ~75 points (0.50%) was better than risking a reversal for a potential larger home run.
+### A. V3 Outperforms V2 Significantly
+We successfully improved upon the V2 strategy. The best V3 mode (Fixed TP) generated **$95k**, which is **48% higher** than the V2 baseline ($64k). Even the "Time Exit" mode ($83k) beat V2 by $19k.
+
+### B. "Fixed TP" is the Winner
+In the 2023-2026 regime, banking consistent profits (0.50% max) was superior to holding for EOD trends.
 
 ### B. Adaptive Logic is Sound
 The Adaptive mode (Activation 0.50%, Offset 0.25%) did exactly what was intended:
