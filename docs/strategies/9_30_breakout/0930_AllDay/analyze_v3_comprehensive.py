@@ -376,18 +376,59 @@ if __name__ == '__main__':
     print(f"Searching for files: {INPUT_PATTERN}")
     files = glob.glob(INPUT_PATTERN)
     datasets = []
+    
+    # 1. Load All Datasets
     if files:
         for f in files:
-            name = os.path.basename(f).split('_')[-1].replace('.xlsx', '')
-            print(f"Loading {name}...")
-            from concurrent.futures import ThreadPoolExecutor
-            # basic load
-            data = load_strategy_data(f, name)
-            if data: datasets.append(data)
+            # Extract Ticker from filename logic
+            # Format: ORB_V3_Doji_CME_MINI_MNQ1!_2026-01-08...
+            # Split by '_' and find the ticker part (usually index 4 or 5)
+            # We'll use a simple heuristic: Look for the part containing '!' or known tickers
+            parts = os.path.basename(f).split('_')
+            ticker = "UNKNOWN"
+            for p in parts:
+                if "!" in p:
+                    ticker = p
+                    break
             
+            # Fallback if no specific ticker found
+            if ticker == "UNKNOWN":
+                # unexpected format, just treat as generic
+                ticker = "GENERIC"
+
+            name = os.path.basename(f).split('_')[-1].replace('.xlsx', '')
+            print(f"Loading {name} ({ticker})...")
+            
+            data = load_strategy_data(f, name)
+            if data: 
+                data['ticker'] = ticker
+                datasets.append(data)
+            
+    # 2. Group by Ticker & Generate Reports
     if datasets:
-        datasets.sort(key=lambda d: calc_stats_extended(d['merged']).get('Profit Factor', 0), reverse=True)
-        print("Generating hyper-precision report...")
-        with open('V3_Comprehensive_Analysis.md', 'w', encoding='utf-8') as f:
-            f.write(generate_report(datasets))
-        print("DONE.")
+        # Get unique tickers
+        unique_tickers = list(set(d['ticker'] for d in datasets))
+        
+        for t in unique_tickers:
+            print(f"\nProcessing Group: {t}")
+            # Filter for this ticker
+            group = [d for d in datasets if d['ticker'] == t]
+            
+            # Sort by Profit Factor
+            group.sort(key=lambda d: calc_stats_extended(d['merged']).get('Profit Factor', 0), reverse=True)
+            
+            # Generate Report
+            # Clean ticker for filename (remove !, replace special chars)
+            safe_ticker = t.replace('!', '').replace('^', '').replace('/', '')
+            filename = f'V3_Analysis_{safe_ticker}.md'
+            
+            print(f"Generating report: {filename}...")
+            content = generate_report(group)
+            
+            # Add Ticker Header to Report
+            content = f"# {t} Strategy Forensics\n**Ticker**: {t}\n\n" + content
+            
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(content)
+                
+        print("\nALL DONE.")
