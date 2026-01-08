@@ -1,0 +1,547 @@
+// =============================================================================
+// ORB V7F - DUMP POUCH RISK MANAGEMENT
+// =============================================================================
+// 
+// V7F implements the "Dump Pouch" trailing stop system:
+//
+// DUMP POUCH RULES:
+// 1. At TP1 (Pay the Trader): Move SL to 50% of initial risk
+// 2. At 50% of target move: Move SL to Breakeven
+// 3. At 75% of target move: Move SL to 25% of move (lock profit)
+//
+// EXAMPLE (Long entry at 100, initial SL at 99, target move = 1%):
+//   Entry: 100, SL: 99 (1% risk = 100 points on MNQ)
+//   TP1 hit (0.10%): Move SL to 99.50 (50% of risk = 50 points)
+//   50% hit (0.50%): Move SL to 100.00 (Breakeven)
+//   75% hit (0.75%): Move SL to 100.25 (25% of move locked)
+//
+// This progressively reduces risk while letting winners run.
+//
+// =============================================================================
+//@version=6
+// HARMONIZED PARAMETERS (matching V2 baseline for fair comparison):
+// initial_capital=100000, margin_long/short=0, calc_on_every_tick=false
+// Position sizing: Dynamic based on OR range and riskPercent input
+strategy("ORB V7F - Dump Pouch", overlay=true,
+         initial_capital=100000, default_qty_type=strategy.fixed, default_qty_value=1,
+         margin_long=0, margin_short=0, calc_on_every_tick=false)
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+
+grp_session = "Session Settings"
+orStartHour = input.int(9, "OR Start Hour (ET)", minval=0, maxval=23, group=grp_session)
+orStartMin = input.int(30, "OR Start Minute", minval=0, maxval=59, group=grp_session)
+orDurationMins = input.int(1, "OR Duration (minutes)", minval=1, maxval=5, group=grp_session)
+judasEndMin = input.int(45, "Judas Window End (minute)", minval=35, maxval=59, group=grp_session)
+sessionEndHour = input.int(15, "Session End Hour (ET)", minval=12, maxval=16, group=grp_session)
+sessionEndMin = input.int(50, "Session End Minute", minval=0, maxval=59, group=grp_session)
+
+grp_entry = "Entry Settings"
+tradeJudasScalp = input.bool(true, "Trade Judas Scalp (1 contract)", group=grp_entry)
+tradeReversal = input.bool(true, "Trade Reversal (dynamic contracts)", group=grp_entry)
+riskPercent = input.float(1.0, "Risk per Trade %", minval=0.1, maxval=5.0, step=0.1, group=grp_entry,
+     tooltip="Percentage of equity to risk per trade - used to calculate position size")
+maxReversalTrades = input.int(5, "Max Reversal Trades per Day", minval=1, maxval=15, group=grp_entry)
+cooldownBars = input.int(3, "Cooldown Bars After Exit", minval=0, maxval=10, group=grp_entry)
+
+grp_tp = "Take Profit Settings"
+tp1Pct = input.float(0.10, "TP1 % (Pay the Trader)", minval=0.05, maxval=0.20, step=0.01, group=grp_tp,
+     tooltip="First profit target - triggers Dump Pouch Level 1")
+targetMovePct = input.float(1.00, "Target Move % (for trail calc)", minval=0.30, maxval=2.00, step=0.10, group=grp_tp,
+     tooltip="Expected full move size - used to calculate 50%/75% levels")
+
+grp_dump = "Dump Pouch Settings"
+useDumpPouch = input.bool(true, "Enable Dump Pouch Trail", group=grp_dump)
+dp_level1_pct = input.float(50, "Level 1: SL to X% of risk (at TP1)", minval=25, maxval=75, step=5, group=grp_dump,
+     tooltip="At TP1, move SL to reduce risk by this %")
+dp_level2_trigger = input.float(50, "Level 2 Trigger: X% of target move", minval=30, maxval=70, step=5, group=grp_dump,
+     tooltip="When price reaches this % of target, move to BE")
+dp_level3_trigger = input.float(75, "Level 3 Trigger: X% of target move", minval=60, maxval=90, step=5, group=grp_dump,
+     tooltip="When price reaches this % of target, lock 25% profit")
+dp_level3_lock = input.float(25, "Level 3: Lock X% of move", minval=10, maxval=50, step=5, group=grp_dump,
+     tooltip="At Level 3, move SL to lock this % of the move")
+
+grp_sl = "Stop Loss Settings"
+slMode = input.string("Judas Extreme", "Initial SL Mode", options=["Judas Extreme", "OR Boundary", "Fixed %"], group=grp_sl)
+fixedSLPct = input.float(0.20, "Fixed SL %", minval=0.05, maxval=0.40, step=0.01, group=grp_sl)
+slBuffer = input.float(2.0, "SL Buffer (Points)", minval=0, maxval=10, step=0.5, group=grp_sl)
+
+grp_filter = "Filters"
+minRangePct = input.float(0.03, "Min OR Range %", minval=0.01, maxval=0.10, step=0.01, group=grp_filter)
+maxRangePct = input.float(0.25, "Max OR Range %", minval=0.10, maxval=0.50, step=0.01, group=grp_filter)
+useVVIXFilter = input.bool(true, "Use VVIX Filter", group=grp_filter)
+vvixThreshold = input.float(108, "VVIX Threshold", minval=80, maxval=150, step=1, group=grp_filter)
+
+grp_visual = "Visuals"
+showOR = input.bool(true, "Show Opening Range", group=grp_visual)
+showDumpLevels = input.bool(true, "Show Dump Pouch Levels", group=grp_visual)
+showDashboard = input.bool(true, "Show Dashboard", group=grp_visual)
+
+// =============================================================================
+// TIME FUNCTIONS
+// =============================================================================
+
+etHour = hour(time, "America/New_York")
+etMin = minute(time, "America/New_York")
+
+isORSession = etHour == orStartHour and etMin >= orStartMin and etMin < orStartMin + orDurationMins
+isJudasWindow = etHour == orStartHour and etMin >= orStartMin + orDurationMins and etMin < judasEndMin
+isPostJudas = (etHour == orStartHour and etMin >= judasEndMin) or (etHour > orStartHour and etHour < sessionEndHour) or (etHour == sessionEndHour and etMin <= sessionEndMin)
+isTradingSession = (etHour == orStartHour and etMin >= orStartMin) or (etHour > orStartHour and etHour < sessionEndHour) or (etHour == sessionEndHour and etMin <= sessionEndMin)
+isHardExit = etHour == sessionEndHour and etMin >= sessionEndMin
+isNewDay = ta.change(time("D")) != 0
+
+// =============================================================================
+// OPENING RANGE
+// =============================================================================
+
+var float orHigh = na
+var float orLow = na
+var float orMid = na
+var float orRangePct = na
+var bool orFormed = false
+var int orFormedBar = na
+
+if isNewDay
+    orHigh := na
+    orLow := na
+    orMid := na
+    orRangePct := na
+    orFormed := false
+    orFormedBar := na
+
+if isORSession
+    if na(orHigh)
+        orHigh := high
+        orLow := low
+    else
+        orHigh := math.max(orHigh, high)
+        orLow := math.min(orLow, low)
+
+if not isORSession and not na(orHigh) and not orFormed
+    orFormed := true
+    orMid := (orHigh + orLow) / 2
+    orRangePct := (orHigh - orLow) / orMid * 100
+    orFormedBar := bar_index
+
+// Dynamic position sizing based on OR range (matching V2)
+rSize = orFormed ? orHigh - orLow : na
+calcBaseQty() =>
+    math.max(1, math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue)))
+
+reversalContracts = orFormed ? calcBaseQty() : na
+
+// =============================================================================
+// VVIX FILTER
+// =============================================================================
+
+vvixOpen = request.security("CBOE:VVIX", "D", open)
+vvixOK = not useVVIXFilter or na(vvixOpen) or vvixOpen <= vvixThreshold
+
+// =============================================================================
+// STATE VARIABLES
+// =============================================================================
+
+var string currentPhase = "WAITING"
+var int judasDirection = 0
+var float judasHigh = na
+var float judasLow = na
+var bool judasScalpTaken = false
+var int dailyBias = 0
+
+var int attempts = 0
+var int reversalTradeCount = 0
+var string tradeMode = "NONE"
+var float entryPrice = na
+
+// Dump Pouch state
+var int dumpLevel = 0  // 0=Initial, 1=TP1 hit, 2=50% hit, 3=75% hit
+var float initialSLPrice = na
+var float currentSLPrice = na
+var float tp1Price = na
+var float level2Price = na  // 50% of target move
+var float level3Price = na  // 75% of target move
+var float targetPrice = na  // 100% of target move
+var bool wasInsideOR = false
+
+if isNewDay
+    currentPhase := "WAITING"
+    judasDirection := 0
+    judasHigh := na
+    judasLow := na
+    judasScalpTaken := false
+    dailyBias := 0
+    attempts := 0
+    reversalTradeCount := 0
+    tradeMode := "NONE"
+    entryPrice := na
+    dumpLevel := 0
+    initialSLPrice := na
+    currentSLPrice := na
+    tp1Price := na
+    level2Price := na
+    level3Price := na
+    targetPrice := na
+    wasInsideOR := false
+
+// =============================================================================
+// PHASE STATE MACHINE
+// =============================================================================
+
+if isORSession
+    currentPhase := "OR_FORMING"
+
+if orFormed and isJudasWindow
+    if currentPhase == "OR_FORMING"
+        currentPhase := "JUDAS_WINDOW"
+    
+    if judasDirection == 0
+        if close > orHigh
+            judasDirection := 1
+            judasHigh := high
+            judasLow := orLow
+            dailyBias := -1
+        if close < orLow
+            judasDirection := -1
+            judasLow := low
+            judasHigh := orHigh
+            dailyBias := 1
+    
+    if judasDirection == 1
+        judasHigh := math.max(nz(judasHigh, high), high)
+    if judasDirection == -1
+        judasLow := math.min(nz(judasLow, low), low)
+
+if orFormed and isPostJudas
+    if currentPhase == "JUDAS_WINDOW" or currentPhase == "OR_FORMING"
+        currentPhase := "TRADING"
+        if judasDirection == 0
+            dailyBias := close > orMid ? -1 : 1
+
+// =============================================================================
+// ENTRY CONDITIONS
+// =============================================================================
+
+var int lastExitBar = 0
+
+inTrade = strategy.position_size != 0
+rangeOK = orRangePct <= maxRangePct and orRangePct >= minRangePct
+cooldownOK = bar_index >= lastExitBar + cooldownBars
+canEnter = orFormed and isTradingSession and not inTrade and not isHardExit and cooldownOK and vvixOK
+
+bool isInsideOR = close >= orLow and close <= orHigh
+
+if isInsideOR and not wasInsideOR
+    wasInsideOR := true
+
+bool freshBreakoutLong = (close > orHigh and close[1] <= orHigh) or (close > orHigh and wasInsideOR)
+bool freshBreakoutShort = (close < orLow and close[1] >= orLow) or (close < orLow and wasInsideOR)
+
+breakoutLong = freshBreakoutLong
+breakoutShort = freshBreakoutShort
+
+if breakoutLong or breakoutShort
+    wasInsideOR := false
+
+// =============================================================================
+// ENTRY EXECUTION
+// =============================================================================
+
+if canEnter and rangeOK
+    // JUDAS SCALP
+    if tradeJudasScalp and isJudasWindow and not judasScalpTaken
+        if judasDirection == 1 and breakoutLong
+            tradeMode := "JUDAS_SCALP"
+            attempts += 1
+            judasScalpTaken := true
+            strategy.entry("Long", strategy.long, qty=1, comment="JUDAS L")
+            entryPrice := close
+            dumpLevel := 0
+        
+        if judasDirection == -1 and breakoutShort
+            tradeMode := "JUDAS_SCALP"
+            attempts += 1
+            judasScalpTaken := true
+            strategy.entry("Short", strategy.short, qty=1, comment="JUDAS S")
+            entryPrice := close
+            dumpLevel := 0
+    
+    // REVERSAL TRADES
+    if tradeReversal and isPostJudas and reversalTradeCount < maxReversalTrades
+        if dailyBias == 1 and breakoutLong
+            tradeMode := "REVERSAL"
+            attempts += 1
+            reversalTradeCount += 1
+            strategy.entry("Long", strategy.long, qty=reversalContracts, comment="REV L" + str.tostring(reversalTradeCount))
+            entryPrice := close
+            dumpLevel := 0
+            
+            // Calculate all levels for LONG
+            if slMode == "Judas Extreme"
+                initialSLPrice := nz(judasLow, orLow) - slBuffer
+            else if slMode == "OR Boundary"
+                initialSLPrice := orLow - slBuffer
+            else
+                initialSLPrice := close * (1 - fixedSLPct/100)
+            
+            currentSLPrice := initialSLPrice
+            tp1Price := close * (1 + tp1Pct/100)
+            targetPrice := close * (1 + targetMovePct/100)
+            level2Price := close + (targetPrice - close) * (dp_level2_trigger/100)
+            level3Price := close + (targetPrice - close) * (dp_level3_trigger/100)
+        
+        if dailyBias == -1 and breakoutShort
+            tradeMode := "REVERSAL"
+            attempts += 1
+            reversalTradeCount += 1
+            strategy.entry("Short", strategy.short, qty=reversalContracts, comment="REV S" + str.tostring(reversalTradeCount))
+            entryPrice := close
+            dumpLevel := 0
+            
+            // Calculate all levels for SHORT
+            if slMode == "Judas Extreme"
+                initialSLPrice := nz(judasHigh, orHigh) + slBuffer
+            else if slMode == "OR Boundary"
+                initialSLPrice := orHigh + slBuffer
+            else
+                initialSLPrice := close * (1 + fixedSLPct/100)
+            
+            currentSLPrice := initialSLPrice
+            tp1Price := close * (1 - tp1Pct/100)
+            targetPrice := close * (1 - targetMovePct/100)
+            level2Price := close - (close - targetPrice) * (dp_level2_trigger/100)
+            level3Price := close - (close - targetPrice) * (dp_level3_trigger/100)
+
+// =============================================================================
+// DUMP POUCH TRAILING STOP LOGIC
+// =============================================================================
+
+if inTrade and tradeMode == "REVERSAL" and useDumpPouch
+    bool isLong = strategy.position_size > 0
+    float currentEntry = strategy.position_avg_price
+    float riskAmount = math.abs(currentEntry - initialSLPrice)
+    
+    // LEVEL 1: At TP1, move SL to 50% of initial risk
+    if dumpLevel == 0
+        if (isLong and high >= tp1Price) or (not isLong and low <= tp1Price)
+            dumpLevel := 1
+            // Move SL to reduce risk by dp_level1_pct
+            float riskReduction = riskAmount * (dp_level1_pct / 100)
+            if isLong
+                currentSLPrice := initialSLPrice + riskReduction
+            else
+                currentSLPrice := initialSLPrice - riskReduction
+    
+    // LEVEL 2: At 50% of target, move SL to Breakeven
+    if dumpLevel == 1
+        if (isLong and high >= level2Price) or (not isLong and low <= level2Price)
+            dumpLevel := 2
+            currentSLPrice := currentEntry  // Breakeven
+    
+    // LEVEL 3: At 75% of target, lock 25% of move
+    if dumpLevel == 2
+        if (isLong and high >= level3Price) or (not isLong and low <= level3Price)
+            dumpLevel := 3
+            float moveAmount = math.abs(level3Price - currentEntry)
+            float lockAmount = moveAmount * (dp_level3_lock / 100)
+            if isLong
+                currentSLPrice := currentEntry + lockAmount
+            else
+                currentSLPrice := currentEntry - lockAmount
+
+// =============================================================================
+// EXIT LOGIC
+// =============================================================================
+
+if inTrade
+    bool isLong = strategy.position_size > 0
+    float currentEntry = strategy.position_avg_price
+    
+    // JUDAS SCALP: Simple TP1/SL
+    if tradeMode == "JUDAS_SCALP"
+        float tp = isLong ? currentEntry * (1 + tp1Pct/100) : currentEntry * (1 - tp1Pct/100)
+        float sl = na
+        if slMode == "Judas Extreme"
+            sl := isLong ? nz(judasLow, orLow) - slBuffer : nz(judasHigh, orHigh) + slBuffer
+        else if slMode == "OR Boundary"
+            sl := isLong ? orLow - slBuffer : orHigh + slBuffer
+        else
+            sl := isLong ? currentEntry * (1 - fixedSLPct/100) : currentEntry * (1 + fixedSLPct/100)
+        
+        float tpTicks = math.abs(tp - currentEntry) / syminfo.mintick
+        float slTicks = math.abs(currentEntry - sl) / syminfo.mintick
+        strategy.exit("T1", profit=tpTicks, loss=slTicks, comment="T1")
+    
+    // REVERSAL: Dump Pouch or standard exit
+    else if tradeMode == "REVERSAL"
+        if useDumpPouch
+            // Use current Dump Pouch SL level
+            float slTicks = math.abs(currentEntry - currentSLPrice) / syminfo.mintick
+            
+            // Exit 1 contract at TP1
+            if dumpLevel == 0
+                float tp1Ticks = math.abs(tp1Price - currentEntry) / syminfo.mintick
+                float initSLTicks = math.abs(currentEntry - initialSLPrice) / syminfo.mintick
+                strategy.exit("T1", qty=1, profit=tp1Ticks, loss=initSLTicks, comment="T1")
+                strategy.exit("SL_Init", qty=1, loss=initSLTicks, comment="SL")
+            else
+                // Trail with Dump Pouch levels
+                string exitComment = dumpLevel == 1 ? "DP1" : dumpLevel == 2 ? "DP2" : "DP3"
+                strategy.exit("DP_Trail", loss=slTicks, comment=exitComment)
+        else
+            // Standard exit without Dump Pouch
+            float sl = initialSLPrice
+            float slTicks = math.abs(currentEntry - sl) / syminfo.mintick
+            float tp1Ticks = math.abs(tp1Price - currentEntry) / syminfo.mintick
+            strategy.exit("T1", qty=1, profit=tp1Ticks, loss=slTicks, comment="T1")
+            strategy.exit("SL", qty=1, loss=slTicks, comment="SL")
+
+// Track exits
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    lastExitBar := bar_index
+    tradeMode := "NONE"
+    dumpLevel := 0
+
+// Hard EOD exit
+if inTrade and isHardExit
+    strategy.close_all("EOD Exit")
+
+// =============================================================================
+// VISUALS
+// =============================================================================
+
+// Draw OR box
+if orFormed and bar_index == orFormedBar and showOR
+    box.new(orFormedBar, orHigh, orFormedBar + 400, orLow, 
+           border_color=color.new(color.blue, 30), bgcolor=color.new(color.blue, 92), border_width=2)
+
+// Draw Dump Pouch levels
+var line slLine = na
+var line tp1Line = na
+var line level2Line = na
+var line level3Line = na
+
+if showDumpLevels and inTrade and tradeMode == "REVERSAL"
+    // Current SL line
+    if na(slLine)
+        slLine := line.new(bar_index - 1, currentSLPrice, bar_index, currentSLPrice, 
+                          color=color.red, style=line.style_solid, width=2)
+    else
+        line.set_y1(slLine, currentSLPrice)
+        line.set_y2(slLine, currentSLPrice)
+        line.set_x1(slLine, bar_index - 20)
+        line.set_x2(slLine, bar_index)
+    
+    // TP1 line
+    if dumpLevel == 0
+        if na(tp1Line)
+            tp1Line := line.new(bar_index - 1, tp1Price, bar_index, tp1Price, 
+                              color=color.green, style=line.style_dashed, width=1)
+        else
+            line.set_y1(tp1Line, tp1Price)
+            line.set_y2(tp1Line, tp1Price)
+            line.set_x1(tp1Line, bar_index - 20)
+            line.set_x2(tp1Line, bar_index)
+    
+    // Level 2 line (50%)
+    if dumpLevel < 2
+        if na(level2Line)
+            level2Line := line.new(bar_index - 1, level2Price, bar_index, level2Price, 
+                                  color=color.yellow, style=line.style_dotted, width=1)
+        else
+            line.set_y1(level2Line, level2Price)
+            line.set_y2(level2Line, level2Price)
+            line.set_x1(level2Line, bar_index - 20)
+            line.set_x2(level2Line, bar_index)
+    
+    // Level 3 line (75%)
+    if dumpLevel < 3
+        if na(level3Line)
+            level3Line := line.new(bar_index - 1, level3Price, bar_index, level3Price, 
+                                  color=color.orange, style=line.style_dotted, width=1)
+        else
+            line.set_y1(level3Line, level3Price)
+            line.set_y2(level3Line, level3Price)
+            line.set_x1(level3Line, bar_index - 20)
+            line.set_x2(level3Line, bar_index)
+
+// Clear lines when not in trade
+if not inTrade
+    if not na(slLine)
+        line.delete(slLine)
+        slLine := na
+    if not na(tp1Line)
+        line.delete(tp1Line)
+        tp1Line := na
+    if not na(level2Line)
+        line.delete(level2Line)
+        level2Line := na
+    if not na(level3Line)
+        line.delete(level3Line)
+        level3Line := na
+
+// Dashboard
+var table dashboard = na
+if showDashboard
+    if na(dashboard)
+        dashboard := table.new(position.top_right, 2, 18, bgcolor=color.new(color.black, 80))
+    
+    color phaseColor = currentPhase == "JUDAS_WINDOW" ? color.orange : currentPhase == "TRADING" ? color.blue : color.gray
+    string biasText = dailyBias == 1 ? "BULLISH" : dailyBias == -1 ? "BEARISH" : "NEUTRAL"
+    color biasColor = dailyBias == 1 ? color.green : dailyBias == -1 ? color.red : color.gray
+    
+    table.cell(dashboard, 0, 0, "V7F DUMP", text_color=color.yellow, text_size=size.small)
+    table.cell(dashboard, 1, 0, "POUCH", text_color=color.yellow, text_size=size.small)
+    table.cell(dashboard, 0, 1, "Phase", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 1, currentPhase, text_color=phaseColor, text_size=size.small)
+    table.cell(dashboard, 0, 2, "Daily Bias", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 2, biasText, text_color=biasColor, text_size=size.small)
+    
+    // Dump Pouch Status
+    table.cell(dashboard, 0, 3, "═ DUMP POUCH ═", text_color=color.orange, text_size=size.small)
+    table.cell(dashboard, 1, 3, "", text_color=color.orange, text_size=size.small)
+    
+    string dpLevelText = dumpLevel == 0 ? "INITIAL" : dumpLevel == 1 ? "LEVEL 1 (50% risk)" : dumpLevel == 2 ? "LEVEL 2 (BE)" : "LEVEL 3 (PROFIT)"
+    color dpColor = dumpLevel == 0 ? color.gray : dumpLevel == 1 ? color.yellow : dumpLevel == 2 ? color.lime : color.green
+    table.cell(dashboard, 0, 4, "DP Level", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 4, dpLevelText, text_color=dpColor, text_size=size.small)
+    
+    table.cell(dashboard, 0, 5, "Current SL", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 5, str.tostring(currentSLPrice, "#.##"), text_color=color.red, text_size=size.small)
+    
+    table.cell(dashboard, 0, 6, "Initial SL", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 6, str.tostring(initialSLPrice, "#.##"), text_color=color.gray, text_size=size.small)
+    
+    // Levels
+    table.cell(dashboard, 0, 7, "═ LEVELS ═", text_color=color.aqua, text_size=size.small)
+    table.cell(dashboard, 1, 7, "", text_color=color.aqua, text_size=size.small)
+    
+    table.cell(dashboard, 0, 8, "TP1", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 8, str.tostring(tp1Price, "#.##"), text_color=color.green, text_size=size.small)
+    
+    table.cell(dashboard, 0, 9, "50% Target", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 9, str.tostring(level2Price, "#.##"), text_color=color.yellow, text_size=size.small)
+    
+    table.cell(dashboard, 0, 10, "75% Target", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 10, str.tostring(level3Price, "#.##"), text_color=color.orange, text_size=size.small)
+    
+    table.cell(dashboard, 0, 11, "100% Target", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 11, str.tostring(targetPrice, "#.##"), text_color=color.lime, text_size=size.small)
+    
+    // Trade Status
+    table.cell(dashboard, 0, 12, "═ TRADE ═", text_color=color.purple, text_size=size.small)
+    table.cell(dashboard, 1, 12, "", text_color=color.purple, text_size=size.small)
+    
+    table.cell(dashboard, 0, 13, "Mode", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 13, tradeMode, text_color=tradeMode == "REVERSAL" ? color.green : color.orange, text_size=size.small)
+    
+    table.cell(dashboard, 0, 14, "Contracts", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 14, str.tostring(math.abs(strategy.position_size), "#"), text_color=color.white, text_size=size.small)
+    
+    table.cell(dashboard, 0, 15, "Reversals", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 15, str.tostring(reversalTradeCount) + "/" + str.tostring(maxReversalTrades), text_color=color.white, text_size=size.small)
+    
+    table.cell(dashboard, 0, 16, "VVIX", text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 16, str.tostring(vvixOpen, "#.#") + (vvixOK ? " ✓" : " ✗"), text_color=vvixOK ? color.green : color.red, text_size=size.small)

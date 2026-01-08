@@ -1,0 +1,786 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © niharika / claude
+
+//@version=6
+strategy("All-Day ORB Strategy V2 [Multi-TP]", shorttitle="ORB All-Day V2", overlay=true,
+          initial_capital=100000, default_qty_type=strategy.fixed, default_qty_value=1,
+          margin_long=0, margin_short=0, calc_on_every_tick=false)
+
+// =============================================================================
+// 1. INPUTS - HIGHLY CONFIGURABLE FOR TESTING
+// =============================================================================
+
+// --- Core Settings ---
+grp_core = "Core Settings"
+sessionStart    = input.session("0930-0931", "Opening Range Session (ET)", group=grp_core)
+tradingWindow   = input.session("0931-1545", "Trading Window (ET)", group=grp_core, tooltip="When to look for entries")
+hardExitTime    = input.session("1550-1600", "Hard Exit Time (ET)", group=grp_core, tooltip="Force close all positions")
+
+// --- Entry Configuration ---
+grp_entry = "Entry Configuration"
+entryMode = input.string("Immediate", "Entry Mode", 
+    options=["Immediate", "Pullback Only", "Pullback + Fallback"], group=grp_entry)
+minDisplacement = input.float(0.05, "Min Displacement %", step=0.01, group=grp_entry,
+    tooltip="Breakout candle must close at least this % beyond boundary")
+maxPullbackDepth = input.float(25, "Max Pullback Depth (% of Range)", minval=0, maxval=100, step=5, group=grp_entry)
+pbTimeoutBars = input.int(5, "Pullback Timeout (Bars)", minval=1, maxval=20, group=grp_entry)
+fallbackProximity = input.float(0.10, "Fallback Proximity %", step=0.01, group=grp_entry)
+
+// --- Re-entry Rules ---
+grp_reentry = "Re-entry Rules"
+reentryMode = input.string("Fresh Only", "Re-entry Mode", 
+    options=["Immediate", "Fresh Only", "One Per Direction"], group=grp_reentry,
+    tooltip="Immediate=next breakout, Fresh=price must return to range, One Per Dir=max 1L/1S")
+maxAttempts = input.int(5, "Max Attempts per Day", minval=1, maxval=15, group=grp_reentry)
+stopAfterWin = input.bool(false, "Stop Trading After Win", group=grp_reentry)
+cooldownBars = input.int(0, "Cooldown Bars After Exit", minval=0, maxval=30, group=grp_reentry,
+    tooltip="Wait this many bars before next entry (0=no cooldown)")
+
+// =============================================================================
+// MULTI-TP CONFIGURATION (NEW)
+// =============================================================================
+grp_multitp = "Multi-TP Configuration"
+useMultiTP = input.bool(true, "Enable Multi-TP", group=grp_multitp,
+    tooltip="Split position into multiple take-profit levels")
+numTPs = input.int(2, "Number of TP Levels", minval=1, maxval=3, group=grp_multitp)
+
+// TP1 Settings
+tp1Pct = input.float(0.10, "TP1 % (Quick Win)", minval=0.05, maxval=0.30, step=0.01, group=grp_multitp)
+tp1Weight = input.float(50, "TP1 Position %", minval=20, maxval=80, step=10, group=grp_multitp,
+    tooltip="Percentage of position to exit at TP1")
+
+// TP2 Settings
+tp2Pct = input.float(0.25, "TP2 % (Medium)", minval=0.10, maxval=0.50, step=0.01, group=grp_multitp)
+tp2Weight = input.float(50, "TP2 Position %", minval=20, maxval=80, step=10, group=grp_multitp,
+    tooltip="Percentage of position to exit at TP2 (or remaining if 2 TPs)")
+
+// TP3 Settings (Runner)
+tp3Pct = input.float(0.40, "TP3 % (Runner)", minval=0.20, maxval=1.00, step=0.05, group=grp_multitp)
+
+// Runner Management
+grp_runner = "Runner Management"
+runnerMode = input.string("Breakeven", "Runner Mode After TP1", 
+    options=["Fixed TP", "Breakeven", "Trailing", "Time Exit"], group=grp_runner,
+    tooltip="How to manage remaining position after TP1 hit")
+moveToBreakevenAfterTP1 = input.bool(true, "Move SL to Breakeven After TP1", group=grp_runner)
+trailOffsetPct = input.float(0.08, "Trail Offset % (if Trailing)", step=0.01, group=grp_runner,
+    tooltip="Trailing stop distance as % of price")
+trailActivationPct = input.float(0.15, "Trail Activation % (if Trailing)", step=0.01, group=grp_runner,
+    tooltip="Start trailing after this % profit")
+
+// --- Single TP Mode (when Multi-TP disabled) ---
+grp_risk = "Risk Management (Single TP)"
+tpPercent = input.float(0.25, "Take Profit % (Single Mode)", minval=0.05, maxval=0.50, step=0.01, group=grp_risk)
+slMode = input.string("Range Boundary", "Stop Loss Mode", 
+    options=["Range Boundary", "Fixed %", "ATR Multiple"], group=grp_risk)
+slFixedPct = input.float(0.20, "Fixed SL % (if selected)", step=0.01, group=grp_risk)
+useMAEFilter = input.bool(true, "Enable MAE Heat Filter", group=grp_risk)
+maeThreshold = input.float(0.15, "MAE % Threshold", step=0.01, group=grp_risk)
+riskPercent = input.float(1.0, "Risk per Trade %", minval=0.1, step=0.1, group=grp_risk)
+
+// --- Filters ---
+grp_filters = "Filters"
+useVVIX = input.bool(true, "Enable VVIX Filter", group=grp_filters)
+vvixMax = input.float(108, "Max VVIX (Skip if above)", group=grp_filters)
+maxRangePct = input.float(0.25, "Max Range % (Skip if larger)", step=0.01, group=grp_filters)
+minRangePct = input.float(0.03, "Min Range % (Skip if smaller)", step=0.01, group=grp_filters)
+
+// Day of Week Filters
+skipMonday = input.bool(false, "Skip Monday", group=grp_filters)
+skipTuesday = input.bool(false, "Skip Tuesday", group=grp_filters)
+skipWednesday = input.bool(false, "Skip Wednesday", group=grp_filters)
+skipThursday = input.bool(false, "Skip Thursday", group=grp_filters)
+skipFriday = input.bool(false, "Skip Friday", group=grp_filters)
+
+// Time of Day Filters
+skipLunchHour = input.bool(false, "Skip Lunch (11:30-13:00)", group=grp_filters)
+skipAfternoon = input.bool(false, "Skip Afternoon (14:00+)", group=grp_filters)
+
+// --- Visuals ---
+grp_visual = "Visuals & Debug"
+showDashboard = input.bool(true, "Show Dashboard", group=grp_visual)
+showDebugLabels = input.bool(false, "Show Debug Labels", group=grp_visual)
+showRangeBox = input.bool(true, "Show Range Box", group=grp_visual)
+showLevels = input.bool(true, "Show TP/SL Levels", group=grp_visual)
+
+// =============================================================================
+// 2. DATA & CALCULATIONS
+// =============================================================================
+
+// --- External Data ---
+vvix_open = request.security("CBOE:VVIX", "D", open)
+
+// --- Time Checks ---
+isORBar = not na(time(timeframe.period, sessionStart, "America/New_York"))
+isTradingTime = not na(time(timeframe.period, tradingWindow, "America/New_York"))
+isHardExit = not na(time(timeframe.period, hardExitTime, "America/New_York"))
+isNewDay = ta.change(time("D")) != 0
+
+// Time of day checks
+currentHour = hour(time, "America/New_York")
+currentMinute = minute(time, "America/New_York")
+isLunchHour = (currentHour == 11 and currentMinute >= 15) or (currentHour == 12)
+isAfternoon = currentHour >= 14
+
+// Day of week
+dayOfWeek = dayofweek
+isMonday = dayOfWeek == dayofweek.monday
+isTuesday = dayOfWeek == dayofweek.tuesday
+isWednesday = dayOfWeek == dayofweek.wednesday
+isThursday = dayOfWeek == dayofweek.thursday
+isFriday = dayOfWeek == dayofweek.friday
+
+// --- Range Calculation ---
+var float rHigh = na
+var float rLow = na
+var bool rDefined = false
+
+if isNewDay
+    rHigh := na
+    rLow := na
+    rDefined := false
+
+if isORBar and not rDefined
+    rHigh := high
+    rLow := low
+    rDefined := true
+
+rSize = rDefined ? rHigh - rLow : na
+rMid = rDefined ? rLow + rSize / 2 : na
+rPct = rDefined ? (rSize / close) * 100 : 0
+
+// --- Calculated Levels ---
+displacementHigh = rDefined ? rHigh * (1 + minDisplacement / 100) : na
+displacementLow = rDefined ? rLow * (1 - minDisplacement / 100) : na
+maxPBLong = rDefined ? rHigh - (rSize * maxPullbackDepth / 100) : na
+maxPBShort = rDefined ? rLow + (rSize * maxPullbackDepth / 100) : na
+fallbackLongZone = rDefined ? rHigh * (1 + fallbackProximity / 100) : na
+fallbackShortZone = rDefined ? rLow * (1 - fallbackProximity / 100) : na
+
+// =============================================================================
+// 3. FILTER LOGIC
+// =============================================================================
+
+// Day filter
+isDayFiltered = (skipMonday and isMonday) or (skipTuesday and isTuesday) or 
+                 (skipWednesday and isWednesday) or (skipThursday and isThursday) or 
+                 (skipFriday and isFriday)
+
+// Time filter
+isTimeFiltered = (skipLunchHour and isLunchHour) or (skipAfternoon and isAfternoon)
+
+// Range filter
+isRangeFiltered = rPct > maxRangePct or rPct < minRangePct
+
+// VVIX filter
+isVVIXFiltered = useVVIX and nz(vvix_open, 0) > vvixMax
+
+// Combined filter
+isFiltered = isDayFiltered or isTimeFiltered or isRangeFiltered or isVVIXFiltered
+
+// =============================================================================
+// 4. STATE TRACKING
+// =============================================================================
+
+var int attempts = 0
+var int longAttempts = 0
+var int shortAttempts = 0
+var bool hasWonToday = false
+var bool longPending = false
+var bool shortPending = false
+var int breakoutBar = na
+var float sigCandleExtreme = na
+var bool enteredViaFallback = false
+var int lastExitBar = na
+var bool longTakenToday = false
+var bool shortTakenToday = false
+var bool priceReturnedToRange = true
+var int currentAttempt = 0
+var string currentEntryType = ""
+var bool isFreshBreakout = true
+
+// Multi-TP State
+var bool tp1Hit = false
+var bool tp2Hit = false
+var float tradeEntryPrice = na
+var float currentTrailStop = na
+var bool isRunnerActive = false
+
+// Reset on new day
+if isNewDay
+    attempts := 0
+    longAttempts := 0
+    shortAttempts := 0
+    hasWonToday := false
+    longPending := false
+    shortPending := false
+    breakoutBar := na
+    sigCandleExtreme := na
+    enteredViaFallback := false
+    lastExitBar := na
+    longTakenToday := false
+    shortTakenToday := false
+    priceReturnedToRange := true
+    currentAttempt := 0
+    currentEntryType := ""
+    isFreshBreakout := true
+    tp1Hit := false
+    tp2Hit := false
+    tradeEntryPrice := na
+    currentTrailStop := na
+    isRunnerActive := false
+
+// Track if price returns to range (for fresh breakout logic)
+if rDefined and not (strategy.position_size != 0)
+    if close >= rLow and close <= rHigh
+        priceReturnedToRange := true
+
+// =============================================================================
+// 5. ENTRY LOGIC
+// =============================================================================
+
+inTrade = strategy.position_size != 0
+
+// Cooldown check
+cooldownComplete = na(lastExitBar) or (bar_index - lastExitBar) >= cooldownBars
+
+// Re-entry eligibility based on mode
+reentryEligible = switch reentryMode
+    "Immediate" => true
+    "Fresh Only" => priceReturnedToRange
+    "One Per Direction" => true
+    => true
+
+// Direction eligibility (for One Per Direction mode)
+canTakeLong = reentryMode != "One Per Direction" or not longTakenToday
+canTakeShort = reentryMode != "One Per Direction" or not shortTakenToday
+
+// Overall trade eligibility
+canTrade = rDefined and isTradingTime and not isHardExit and not inTrade and 
+           attempts < maxAttempts and not isFiltered and cooldownComplete and
+           reentryEligible and not (stopAfterWin and hasWonToday)
+
+// Breakout detection
+breakoutLong = ta.crossover(close, rHigh)
+breakoutShort = ta.crossunder(close, rLow)
+
+// Displacement validation
+hasDisplacementLong = close >= displacementHigh
+hasDisplacementShort = close <= displacementLow
+
+// Position sizing - for Multi-TP we need base contracts
+calcBaseQty() =>
+    qty =math.max(1, math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue)))
+    math.max(3,qty)    
+//qty < 3? 3: qty
+
+// Generate trade comment for Excel analysis
+getTradeComment(isLong, attemptNum, entryType, fresh) =>
+    dir = isLong ? "L" : "S"
+    hr = str.tostring(currentHour)
+    if currentHour < 10
+        hr := "0" + hr
+    ent = switch entryType
+        "Immediate" => "IM"
+        "Pullback" => "PB"
+        "Fallback" => "FB"
+        => "IM"
+    fr = fresh ? "FR" : "RE"
+    mtp = useMultiTP ? "-MTP" : ""
+    dir + str.tostring(attemptNum) + "-" + hr + "-" + ent + "-" + fr + mtp
+
+// =============================================================================
+// ENTRY EXECUTION
+// =============================================================================
+
+if canTrade
+    // IMMEDIATE MODE
+    if entryMode == "Immediate"
+        if breakoutLong and canTakeLong
+            attempts += 1
+            longAttempts += 1
+            currentAttempt := attempts
+            currentEntryType := "Immediate"
+            isFreshBreakout := priceReturnedToRange
+            comment = getTradeComment(true, attempts, "Immediate", priceReturnedToRange)
+            
+            baseQty = calcBaseQty()
+            strategy.entry("Long", strategy.long, qty=baseQty, comment=comment)
+            
+            tradeEntryPrice := close
+            tp1Hit := false
+            tp2Hit := false
+            isRunnerActive := false
+            currentTrailStop := na
+            sigCandleExtreme := low
+            longTakenToday := true
+            priceReturnedToRange := false
+            enteredViaFallback := false
+            
+        else if breakoutShort and canTakeShort
+            attempts += 1
+            shortAttempts += 1
+            currentAttempt := attempts
+            currentEntryType := "Immediate"
+            isFreshBreakout := priceReturnedToRange
+            comment = getTradeComment(false, attempts, "Immediate", priceReturnedToRange)
+            
+            baseQty = calcBaseQty()
+            strategy.entry("Short", strategy.short, qty=baseQty, comment=comment)
+            
+            tradeEntryPrice := close
+            tp1Hit := false
+            tp2Hit := false
+            isRunnerActive := false
+            currentTrailStop := na
+            sigCandleExtreme := high
+            shortTakenToday := true
+            priceReturnedToRange := false
+            enteredViaFallback := false
+
+    // PULLBACK MODES
+    else
+        // ARM PULLBACK ON VALID BREAKOUT
+        if not longPending and not shortPending
+            if breakoutLong and hasDisplacementLong and canTakeLong
+                longPending := true
+                sigCandleExtreme := low
+                breakoutBar := bar_index
+                isFreshBreakout := priceReturnedToRange
+                
+            else if breakoutShort and hasDisplacementShort and canTakeShort
+                shortPending := true
+                sigCandleExtreme := high
+                breakoutBar := bar_index
+                isFreshBreakout := priceReturnedToRange
+        
+        // MANAGE PENDING LONG
+        if longPending and bar_index > breakoutBar
+            barsSinceBreakout = bar_index - breakoutBar
+            timeoutReached = barsSinceBreakout >= pbTimeoutBars
+            useFallback = entryMode == "Pullback + Fallback"
+            
+            if close < maxPBLong
+                longPending := false
+                breakoutBar := na
+            else if low <= rHigh and close >= maxPBLong
+                attempts += 1
+                longAttempts += 1
+                currentAttempt := attempts
+                currentEntryType := "Pullback"
+                comment = getTradeComment(true, attempts, "Pullback", isFreshBreakout)
+                baseQty = calcBaseQty()
+                strategy.entry("Long", strategy.long, qty=baseQty, comment=comment)
+                tradeEntryPrice := close
+                tp1Hit := false
+                tp2Hit := false
+                isRunnerActive := false
+                longPending := false
+                breakoutBar := na
+                longTakenToday := true
+                priceReturnedToRange := false
+                enteredViaFallback := false
+            else if useFallback and timeoutReached
+                if close <= fallbackLongZone and close > rHigh
+                    attempts += 1
+                    longAttempts += 1
+                    currentAttempt := attempts
+                    currentEntryType := "Fallback"
+                    comment = getTradeComment(true, attempts, "Fallback", isFreshBreakout)
+                    baseQty = calcBaseQty()
+                    strategy.entry("Long", strategy.long, qty=baseQty, comment=comment)
+                    tradeEntryPrice := close
+                    tp1Hit := false
+                    tp2Hit := false
+                    isRunnerActive := false
+                    longPending := false
+                    breakoutBar := na
+                    longTakenToday := true
+                    priceReturnedToRange := false
+                    enteredViaFallback := true
+                else
+                    longPending := false
+                    breakoutBar := na
+            else if close < rLow
+                longPending := false
+                breakoutBar := na
+        
+        // MANAGE PENDING SHORT
+        if shortPending and bar_index > breakoutBar
+            barsSinceBreakout = bar_index - breakoutBar
+            timeoutReached = barsSinceBreakout >= pbTimeoutBars
+            useFallback = entryMode == "Pullback + Fallback"
+            
+            if close > maxPBShort
+                shortPending := false
+                breakoutBar := na
+            else if high >= rLow and close <= maxPBShort
+                attempts += 1
+                shortAttempts += 1
+                currentAttempt := attempts
+                currentEntryType := "Pullback"
+                comment = getTradeComment(false, attempts, "Pullback", isFreshBreakout)
+                baseQty = calcBaseQty()
+                strategy.entry("Short", strategy.short, qty=baseQty, comment=comment)
+                tradeEntryPrice := close
+                tp1Hit := false
+                tp2Hit := false
+                isRunnerActive := false
+                shortPending := false
+                breakoutBar := na
+                shortTakenToday := true
+                priceReturnedToRange := false
+                enteredViaFallback := false
+            else if useFallback and timeoutReached
+                if close >= fallbackShortZone and close < rLow
+                    attempts += 1
+                    shortAttempts += 1
+                    currentAttempt := attempts
+                    currentEntryType := "Fallback"
+                    comment = getTradeComment(false, attempts, "Fallback", isFreshBreakout)
+                    baseQty = calcBaseQty()
+                    strategy.entry("Short", strategy.short, qty=baseQty, comment=comment)
+                    tradeEntryPrice := close
+                    tp1Hit := false
+                    tp2Hit := false
+                    isRunnerActive := false
+                    shortPending := false
+                    breakoutBar := na
+                    shortTakenToday := true
+                    priceReturnedToRange := false
+                    enteredViaFallback := true
+                else
+                    shortPending := false
+                    breakoutBar := na
+            else if close > rHigh
+                shortPending := false
+                breakoutBar := na
+
+// Cleanup pending when can't trade
+if not canTrade and not inTrade
+    strategy.cancel_all()
+    longPending := false
+    shortPending := false
+
+// =============================================================================
+// 6. EXIT LOGIC - MULTI-TP
+// =============================================================================
+
+var int prevClosedTrades = 0
+if isNewDay
+    prevClosedTrades := strategy.closedtrades
+
+// Track wins
+if strategy.closedtrades > prevClosedTrades
+    lastTradeProfit = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    if lastTradeProfit > 0
+        hasWonToday := true
+    lastExitBar := bar_index
+    prevClosedTrades := strategy.closedtrades
+
+// Exit management
+if inTrade
+    entryPrice = strategy.opentrades.entry_price(0)
+    isLong = strategy.position_size > 0
+    posSize = math.abs(strategy.position_size)
+    
+    // Calculate base SL
+    baseSL = switch slMode
+        "Range Boundary" => isLong ? rLow : rHigh
+        "Fixed %" => isLong ? entryPrice * (1 - slFixedPct/100) : entryPrice * (1 + slFixedPct/100)
+        => isLong ? rLow : rHigh
+    
+    if useMultiTP and numTPs >= 2
+        // =================================================================
+        // MULTI-TP EXIT LOGIC
+        // =================================================================
+        
+        // Calculate TP levels
+        float tp1Price = isLong ? entryPrice * (1 + tp1Pct/100) : entryPrice * (1 - tp1Pct/100)
+        float tp2Price = isLong ? entryPrice * (1 + tp2Pct/100) : entryPrice * (1 - tp2Pct/100)
+        float tp3Price = isLong ? entryPrice * (1 + tp3Pct/100) : entryPrice * (1 - tp3Pct/100)
+        
+        // Calculate quantities for each TP
+        int tp1Qty = math.max(1, int(math.floor(posSize * tp1Weight / 100)))
+        int remainingAfterTP1 = int(posSize) - tp1Qty
+        int tp2Qty = numTPs == 2 ? remainingAfterTP1 : math.max(1, int(math.floor(posSize * tp2Weight / 100)))
+        int tp3Qty = numTPs == 3 ? int(posSize) - tp1Qty - tp2Qty : 0
+        
+        // Current SL (may be moved to breakeven)
+        float currentSL = baseSL
+        if tp1Hit and moveToBreakevenAfterTP1
+            currentSL := entryPrice
+        
+        // TP1 Exit
+        if not tp1Hit and tp1Qty > 0
+            float tp1Ticks = math.abs(tp1Price - entryPrice) / syminfo.mintick
+            float slTicks1 = math.abs(entryPrice - baseSL) / syminfo.mintick
+            strategy.exit("TP1", qty=tp1Qty, profit=tp1Ticks, loss=slTicks1)
+        
+        // Check if TP1 was hit (price crossed TP1 level)
+        if not tp1Hit
+            if (isLong and high >= tp1Price) or (not isLong and low <= tp1Price)
+                tp1Hit := true
+                isRunnerActive := true
+                // Initialize trailing stop if using that mode
+                if runnerMode == "Trailing"
+                    currentTrailStop := isLong ? high - (entryPrice * trailOffsetPct / 100) : low + (entryPrice * trailOffsetPct / 100)
+        
+        // Manage runner after TP1 hit
+        if tp1Hit and remainingAfterTP1 > 0
+            // Calculate new SL for runner
+            float runnerSL = currentSL
+            
+            if runnerMode == "Breakeven" and moveToBreakevenAfterTP1
+                runnerSL := entryPrice
+            else if runnerMode == "Trailing"
+                // Update trail stop
+                if isLong
+                    float newTrailStop = high - (entryPrice * trailOffsetPct / 100)
+                    if na(currentTrailStop) or newTrailStop > currentTrailStop
+                        currentTrailStop := newTrailStop
+                    runnerSL := currentTrailStop
+                else
+                    float newTrailStop = low + (entryPrice * trailOffsetPct / 100)
+                    if na(currentTrailStop) or newTrailStop < currentTrailStop
+                        currentTrailStop := newTrailStop
+                    runnerSL := currentTrailStop
+            
+            // TP2 Exit
+            if not tp2Hit and tp2Qty > 0
+                float tp2Ticks = math.abs(tp2Price - entryPrice) / syminfo.mintick
+                float slTicks2 = math.abs(entryPrice - runnerSL) / syminfo.mintick
+                strategy.exit("TP2", qty=tp2Qty, profit=tp2Ticks, loss=slTicks2)
+            
+            // Check if TP2 was hit
+            if not tp2Hit
+                if (isLong and high >= tp2Price) or (not isLong and low <= tp2Price)
+                    tp2Hit := true
+            
+            // TP3 Exit (if 3 TPs)
+            if numTPs == 3 and tp2Hit and tp3Qty > 0
+                if runnerMode == "Time Exit"
+                    // Let it ride to time exit
+                    float slTicks3 = math.abs(entryPrice - runnerSL) / syminfo.mintick
+                    strategy.exit("TP3-SL", qty=tp3Qty, loss=slTicks3)
+                else
+                    float tp3Ticks = math.abs(tp3Price - entryPrice) / syminfo.mintick
+                    float slTicks3 = math.abs(entryPrice - runnerSL) / syminfo.mintick
+                    strategy.exit("TP3", qty=tp3Qty, profit=tp3Ticks, loss=slTicks3)
+            
+            // If 2 TPs and TP2 is runner with Time Exit mode
+            if numTPs == 2 and runnerMode == "Time Exit" and tp1Hit
+                // Just use SL, let time exit handle TP
+                float slTicksR = math.abs(entryPrice - runnerSL) / syminfo.mintick
+                strategy.exit("Runner-SL", qty=remainingAfterTP1, loss=slTicksR)
+    
+    else
+        // =================================================================
+        // SINGLE TP EXIT LOGIC (Original)
+        // =================================================================
+        float tpPrice = isLong ? entryPrice * (1 + tpPercent/100) : entryPrice * (1 - tpPercent/100)
+        float slTicksSingle = math.abs(entryPrice - baseSL) / syminfo.mintick
+        float tpTicksSingle = math.abs(tpPrice - entryPrice) / syminfo.mintick
+        strategy.exit("Exit", profit=tpTicksSingle, loss=slTicksSingle)
+    
+    // MAE Filter (applies to all modes)
+    if useMAEFilter
+        heatDistance = entryPrice * (maeThreshold / 100)
+        if (isLong and low < entryPrice - heatDistance) or (not isLong and high > entryPrice + heatDistance)
+            strategy.close_all("MAE Exit")
+
+// Hard exit (Time Exit)
+if inTrade and isHardExit
+    strategy.close_all("Time Exit")
+
+// =============================================================================
+// 7. VISUALS
+// =============================================================================
+
+// --- Range Box ---
+var box orbBox = na
+if showRangeBox
+    if isORBar and rDefined
+        boxColor = isRangeFiltered ? color.new(color.red, 85) : color.new(color.blue, 90)
+        orbBox := box.new(bar_index, rHigh, bar_index + 50, rLow, bgcolor=boxColor, border_color=color.blue)
+    if rDefined and not na(orbBox)
+        box.set_right(orbBox, bar_index + 10)
+
+// --- Range Lines ---
+plot(rDefined ? rHigh : na, "Range High", color=color.new(color.blue, 50), linewidth=2)
+plot(rDefined ? rLow : na, "Range Low", color=color.new(color.blue, 50), linewidth=2)
+plot(rDefined ? rMid : na, "Range Mid", color=color.new(color.gray, 70), style=plot.style_linebr)
+
+// --- Active Trade Levels ---
+var float activeTP1 = na
+var float activeTP2 = na
+var float activeTP3 = na
+var float activeSL = na
+
+if inTrade
+    entryPrice = strategy.opentrades.entry_price(0)
+    isLong = strategy.position_size > 0
+    
+    if useMultiTP
+        activeTP1 := isLong ? entryPrice * (1 + tp1Pct/100) : entryPrice * (1 - tp1Pct/100)
+        activeTP2 := isLong ? entryPrice * (1 + tp2Pct/100) : entryPrice * (1 - tp2Pct/100)
+        if numTPs == 3
+            activeTP3 := isLong ? entryPrice * (1 + tp3Pct/100) : entryPrice * (1 - tp3Pct/100)
+        else
+            activeTP3 := na
+    else
+        activeTP1 := isLong ? entryPrice * (1 + tpPercent/100) : entryPrice * (1 - tpPercent/100)
+        activeTP2 := na
+        activeTP3 := na
+    
+    activeSL := switch slMode
+        "Range Boundary" => isLong ? rLow : rHigh
+        "Fixed %" => isLong ? entryPrice * (1 - slFixedPct/100) : entryPrice * (1 + slFixedPct/100)
+        => isLong ? rLow : rHigh
+    
+    // Show BE level if TP1 hit
+    if tp1Hit and moveToBreakevenAfterTP1
+        activeSL := entryPrice
+else
+    activeTP1 := na
+    activeTP2 := na
+    activeTP3 := na
+    activeSL := na
+
+plot(showLevels and inTrade ? activeTP1 : na, "TP1 Level", color=color.green, linewidth=2, style=plot.style_linebr)
+plot(showLevels and inTrade and useMultiTP ? activeTP2 : na, "TP2 Level", color=color.lime, linewidth=1, style=plot.style_linebr)
+plot(showLevels and inTrade and useMultiTP and numTPs == 3 ? activeTP3 : na, "TP3 Level", color=color.teal, linewidth=1, style=plot.style_linebr)
+plot(showLevels and inTrade ? activeSL : na, "SL Level", color=color.red, linewidth=2, style=plot.style_linebr)
+
+// --- Bar Coloring ---
+barcolor(isORBar ? color.yellow : na)
+
+// =============================================================================
+// 8. DASHBOARD
+// =============================================================================
+
+if showDashboard and barstate.islast
+    var table dash = table.new(position.top_right, 2, 15, bgcolor=color.new(color.black, 20), 
+                               border_width=1, border_color=color.gray)
+    
+    // Header
+    table.cell(dash, 0, 0, "ALL-DAY ORB V2", text_color=color.white, text_size=size.normal, bgcolor=color.blue)
+    table.cell(dash, 1, 0, useMultiTP ? "MULTI-TP" : "SINGLE-TP", text_color=color.white, text_size=size.normal, bgcolor=useMultiTP ? color.green : color.blue)
+    
+    // Range Info
+    table.cell(dash, 0, 1, "Range", text_color=color.white)
+    rangeText = rDefined ? str.tostring(rSize, "#.##") + " pts (" + str.tostring(rPct, "#.##") + "%)" : "Not Set"
+    rangeColor = isRangeFiltered ? color.red : color.green
+    table.cell(dash, 1, 1, rangeText, text_color=rangeColor)
+    
+    // VVIX
+    table.cell(dash, 0, 2, "VVIX", text_color=color.white)
+    vvixColor = isVVIXFiltered ? color.red : color.green
+    table.cell(dash, 1, 2, str.tostring(vvix_open, "#.#"), text_color=vvixColor)
+    
+    // Attempts
+    table.cell(dash, 0, 3, "Attempts", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(attempts) + "/" + str.tostring(maxAttempts) + 
+               " (L:" + str.tostring(longAttempts) + " S:" + str.tostring(shortAttempts) + ")", 
+               text_color=attempts >= maxAttempts ? color.orange : color.white)
+    
+    // Multi-TP Status
+    table.cell(dash, 0, 4, "TP Mode", text_color=color.white)
+    if useMultiTP
+        tpModeText = str.tostring(numTPs) + " TPs: " + str.tostring(tp1Pct, "#.##") + "%/" + str.tostring(tp2Pct, "#.##") + "%"
+        if numTPs == 3
+            tpModeText := tpModeText + "/" + str.tostring(tp3Pct, "#.##") + "%"
+        table.cell(dash, 1, 4, tpModeText, text_color=color.lime)
+    else
+        table.cell(dash, 1, 4, str.tostring(tpPercent, "#.##") + "%", text_color=color.white)
+    
+    // TP1 Hit Status
+    table.cell(dash, 0, 5, "TP1 Hit", text_color=color.white)
+    table.cell(dash, 1, 5, tp1Hit ? "YES ✓" : "NO", text_color=tp1Hit ? color.lime : color.gray)
+    
+    // Runner Status
+    table.cell(dash, 0, 6, "Runner", text_color=color.white)
+    runnerText = isRunnerActive ? runnerMode : "Inactive"
+    table.cell(dash, 1, 6, runnerText, text_color=isRunnerActive ? color.aqua : color.gray)
+    
+    // Status
+    table.cell(dash, 0, 7, "Status", text_color=color.white)
+    statusText = hasWonToday and stopAfterWin ? "WON - DONE" : 
+                 inTrade ? "IN TRADE #" + str.tostring(currentAttempt) :
+                 longPending ? "PENDING LONG" :
+                 shortPending ? "PENDING SHORT" :
+                 isFiltered ? "FILTERED" :
+                 attempts >= maxAttempts ? "MAX ATTEMPTS" :
+                 canTrade ? "READY" : "WAITING"
+    statusColor = hasWonToday ? color.lime : inTrade ? color.aqua : 
+                  (longPending or shortPending) ? color.yellow :
+                  isFiltered ? color.red : canTrade ? color.green : color.gray
+    table.cell(dash, 1, 7, statusText, text_color=statusColor)
+    
+    // Entry Mode
+    table.cell(dash, 0, 8, "Entry Mode", text_color=color.white)
+    table.cell(dash, 1, 8, entryMode, text_color=color.aqua)
+    
+    // Re-entry Mode
+    table.cell(dash, 0, 9, "Re-entry", text_color=color.white)
+    table.cell(dash, 1, 9, reentryMode, text_color=color.white)
+    
+    // Fresh Breakout Status
+    table.cell(dash, 0, 10, "Fresh BO", text_color=color.white)
+    table.cell(dash, 1, 10, priceReturnedToRange ? "YES" : "NO", 
+               text_color=priceReturnedToRange ? color.green : color.orange)
+    
+    // MAE Filter
+    table.cell(dash, 0, 11, "MAE Filter", text_color=color.white)
+    table.cell(dash, 1, 11, useMAEFilter ? str.tostring(maeThreshold, "#.##") + "%" : "OFF", 
+               text_color=useMAEFilter ? color.yellow : color.gray)
+    
+    // Current Hour
+    table.cell(dash, 0, 12, "Time", text_color=color.white)
+    hourColor = isLunchHour ? color.orange : isAfternoon ? color.yellow : color.green
+    table.cell(dash, 1, 12, str.tostring(currentHour) + ":" + (currentMinute < 10 ? "0" : "") + str.tostring(currentMinute), 
+               text_color=hourColor)
+    
+    // Day
+    table.cell(dash, 0, 13, "Day", text_color=color.white)
+    dayText = isMonday ? "MON" : isTuesday ? "TUE" : isWednesday ? "WED" : 
+              isThursday ? "THU" : isFriday ? "FRI" : "?"
+    table.cell(dash, 1, 13, dayText, text_color=isDayFiltered ? color.red : color.white)
+    
+    // Filters
+    table.cell(dash, 0, 14, "Filters", text_color=color.white)
+    filterList = ""
+    if isDayFiltered
+        filterList += "DAY "
+    if isTimeFiltered
+        filterList += "TIME "
+    if isVVIXFiltered
+        filterList += "VVIX "
+    if isRangeFiltered
+        filterList += "RANGE "
+    if filterList == ""
+        filterList := "NONE"
+    table.cell(dash, 1, 14, filterList, text_color=isFiltered ? color.red : color.green)
+
+// =============================================================================
+// 9. DEBUG LABELS
+// =============================================================================
+
+if showDebugLabels and inTrade
+    debugText = "Entry: $" + str.tostring(tradeEntryPrice, "#.##") + "\n" +
+                 "TP1 Hit: " + str.tostring(tp1Hit) + "\n" +
+                 "TP2 Hit: " + str.tostring(tp2Hit) + "\n" +
+                 "Runner: " + str.tostring(isRunnerActive) + "\n" +
+                 "Trail SL: " + str.tostring(currentTrailStop, "#.##")
+    label.new(bar_index, high, debugText, color=color.black, textcolor=color.white, 
+              size=size.small, yloc=yloc.abovebar)
+
+// =============================================================================
+// 10. PLOTS FOR DATA WINDOW
+// =============================================================================
+
+plot(attempts, "Attempts Today", display=display.data_window)
+plot(currentHour, "Entry Hour", display=display.data_window)
+plot(tp1Hit ? 1 : 0, "TP1 Hit", display=display.data_window)
+plot(tp2Hit ? 1 : 0, "TP2 Hit", display=display.data_window)
+plot(isRunnerActive ? 1 : 0, "Runner Active", display=display.data_window)
