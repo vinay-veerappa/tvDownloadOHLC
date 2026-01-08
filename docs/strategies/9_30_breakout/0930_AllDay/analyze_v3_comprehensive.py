@@ -136,8 +136,17 @@ def calc_stats_extended(df):
     except:
         max_streak_theoretical = 0
         
-    # 8. RISK OF RUIN (RoR)
-    # Uses Normalized Combined Edge: ev_r * pf
+    # 8. DRAWDOWN RISK RATING (DRR)
+    # DRR = MaxDD ($) / Risk ($)
+    # How many R's is the drawdown?
+    drr = abs(max_dd) / risk_r if risk_r > 0 else 0
+        
+    # 9. MAE/MFE
+    avg_mae = df['MAE USD'].mean() if 'MAE USD' in df.columns else 0
+    avg_mfe = df['MFE USD'].mean() if 'MFE USD' in df.columns else 0
+    mae_mfe_ratio = abs(avg_mfe / avg_mae) if avg_mae != 0 else 0
+    
+    # 10. RISK OF RUIN (RoR)
     bankroll_units = 20
     try:
         ror_calc = (1 - combined_edge) / (1 + combined_edge)
@@ -157,16 +166,17 @@ def calc_stats_extended(df):
     elif combined_edge_raw > 0: grade = "D"
     else: grade = "F"
     
-    # Adjust grade based on SQN/RoR (downgrade if dangerous)
+    # Downgrades
     if ror > 5.0: grade = f"{grade} (Dangerous RoR)"
     if sqn < 1.0 and "F" not in grade: grade = f"{grade} (Low Quality)"
+    if drr > 10 and "F" not in grade: grade = f"{grade} (High DRR)"
 
     stats = {
         'Trades': trades,
         'Win Rate %': win_rate * 100,
         'Total P&L': total_pnl,
         'Avg P&L (EV)': ev_dollars,
-        'Avg Loss (R)': risk_r,
+        'Risk ($)': risk_r,
         'Profit Factor': pf,
         'Combined Edge (Norm)': combined_edge,
         'Combined Edge (Raw)': combined_edge_raw,
@@ -174,47 +184,77 @@ def calc_stats_extended(df):
         'SQN': sqn,
         'RoR %': ror,
         'Max Losing Streak (Est)': max_streak_theoretical,
-        'Avg MFE %': df['MFE %'].mean() if 'MFE %' in df.columns else 0
+        'DRR': drr,
+        'Avg MAE ($)': avg_mae,
+        'Avg MFE ($)': avg_mfe,
+        'MAE/MFE Ratio': mae_mfe_ratio,
+        'Max Drawdown ($)': max_dd
     }
     return stats
 
 def get_recommendations(stats):
     recs = []
     
+    # Position Sizing
+    grade = stats['Grade'].split()[0] # Remove comments
+    size_msg = "0%"
+    if "A" in grade: size_msg = "2-5%"
+    elif "B" in grade: size_msg = "1-2%"
+    elif "C" in grade: size_msg = "0.5-1%"
+    elif "D" in grade: size_msg = "0.25-0.5%"
+    
+    recs.append(f"🔵 **Position Size**: {size_msg} Risk (Grade {grade})")
+    
     # EV Fixes
-    if stats['Avg P&L (EV)'] < 20: # Weak EV
-        recs.append("🔴 **Fix EV**: Increase AvgWin (let winners run) or Reduce AvgLoss.")
+    if stats['Avg P&L (EV)'] < 20: 
+        recs.append("🔴 **Fix EV**: Increase AvgWin or Reduce AvgLoss.")
         
     # PF Fixes
     if stats['Profit Factor'] < 1.4:
-        recs.append("🟠 **Fix PF**: Review MAE to cut outlier losses. Tighten stops?")
+        recs.append("🟠 **Fix PF**: Tighten stops to improve efficiency.")
         
-    # RoR Fixes
+    # RoR
     if stats['RoR %'] > 2.0:
-        recs.append("🔴 **Fix RoR (CRITICAL)**: REDUCE RISK PER TRADE immediately.")
+        recs.append("🔴 **Fix RoR**: CRITICAL. Reduce Risk Per Trade.")
         
-    # Combined Edge
-    if stats['Combined Edge (Raw)'] < 50:
-        recs.append("🟡 **Fix Edge**: System is weak (Grade C/D). Needs better filters (Win%).")
-        
-    # SQN
-    if stats['SQN'] < 2.0:
-        recs.append("🟠 **Fix SQN**: Consistency is low. System may be too volatile.")
-        
-    if not recs:
-        recs.append("🟢 **System Healthy**: Consider scaling size (Grade A/B).")
-        
+    # DRR
+    if stats['DRR'] > 10:
+        recs.append("🔴 **Fix DRR**: Drawdown is too deep relative to Risk. Reduce Risk/Trade.")
+
     return recs
+
+def generate_time_table(datasets, key_col, key_label, title):
+    lines = []
+    lines.append(f"### {title}")
+    lines.append("")
+    
+    # Get all unique keys
+    all_keys = sorted(list(set(k for d in datasets for k in d['merged'][key_col].dropna().unique())))
+    
+    # Header
+    names = [d['name'] for d in datasets]
+    lines.append(f"| {key_label} | " + " | ".join(names) + " |")
+    lines.append("|" + "|".join(["---"] * (len(names)+1)) + "|")
+    
+    for k in all_keys:
+        row = [str(k)]
+        for d in datasets:
+            df = d['merged']
+            val = df[df[key_col] == k]['Net P&L USD'].sum()
+            row.append(f"${val:,.0f}")
+        lines.append("| " + " | ".join(row) + " |")
+    lines.append("")
+    return lines
 
 def generate_report(datasets):
     report = []
-    report.append("# V3 Comprehensive Strategy Grade & Analysis")
+    report.append("# Strategy Grade & Comprehensive Metrics")
     report.append(f"## Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     report.append("")
     report.append("---")
     
-    # 1. EXECUTIVE GRADING
-    report.append("## 🏆 SYSTEM GRADING REPORT")
+    # 1. EXECUTIVE GRADING (THE 10 METRICS)
+    report.append("## 🏆 THE EDGE SYSTEM: 10 METRIC CARD")
     report.append("")
     
     headers = ["Metric"] + [d['name'] for d in datasets]
@@ -224,40 +264,74 @@ def generate_report(datasets):
     all_stats = [calc_stats_extended(d['merged']) for d in datasets]
     all_recs = [get_recommendations(s) for s in all_stats]
     
-    grading_metrics = [
-        ('Overall Grade', 'Grade', '{}'),
-        ('Combined Edge (Score)', 'Combined Edge (Raw)', '{:.1f}'),
-        ('SQN (Quality)', 'SQN', '{:.2f}'),
-        ('Profit Factor', 'Profit Factor', '{:.2f}'),
-        ('Calculated RoR', 'RoR %', '{:.4f}%'),
-        ('Expected Value ($)', 'Avg P&L (EV)', '${:.2f}'),
+    # The 10 + Grade
+    metrics_10 = [
+        ('1. Risk ($)', 'Risk ($)', '${:.2f}'),
+        ('2. Expected Value (EV)', 'Avg P&L (EV)', '${:.2f}'),
+        ('3. Profit Factor', 'Profit Factor', '{:.2f}'),
+        ('4. MAE/MFE Ratio', 'MAE/MFE Ratio', '{:.2f}'),
+        ('5. SQN', 'SQN', '{:.2f}'),
+        ('6. Max Streak (Est)', 'Max Losing Streak (Est)', '{:.1f}'),
+        ('7. DRR (Drawdown R)', 'DRR', '{:.1f}'),
+        ('8. Combined Edge (Raw)', 'Combined Edge (Raw)', '{:.1f}'),
+        ('9. Risk of Ruin', 'RoR %', '{:.4f}%'),
+        ('10. Max Drawdown', 'Max Drawdown ($)', '${:,.0f}'),
+        ('FINAL GRADE', 'Grade', '**{}**'),
     ]
 
-    for label, key, fmt in grading_metrics:
+    for label, key, fmt in metrics_10:
         row = [f"**{label}**"]
         for stats in all_stats:
-            row.append(fmt.format(stats.get(key, 0)))
+            val = stats.get(key, 0)
+            if isinstance(val, str):
+                row.append(val)
+            else:
+                row.append(fmt.format(val))
         report.append("| " + " | ".join(row) + " |")
         
     report.append("")
     
-    # 2. ACTIONABLE RECOMMENDATIONS
-    report.append("## 🛠️ ACTIONABLE RECOMMENDATIONS (THE FIX TABLE)")
-    report.append("")
-    
+    # 2. RECOMMENDATIONS
+    report.append("## 🛠️ ACTIONABLE RECOMMENDATIONS")
     for i, d in enumerate(datasets):
         name = d['name']
         recs = all_recs[i]
-        grade = all_stats[i]['Grade']
-        report.append(f"### {name} (Grade: {grade})")
+        report.append(f"### {name}")
         for r in recs:
             report.append(f"- {r}")
         report.append("")
-        
+    
     report.append("---")
     
-    # 3. DETAILED PERFORMANCE (Previous Tables)
-    report.append("## 📊 DETAILED PERFORMANCE METRICS")
+    # 3. GRANULAR TIME ANALYSIS
+    report.append("## ⏰ GRANULAR TIME BREAKDOWN")
+    
+    # 5-Min
+    report.extend(generate_time_table(datasets, '5min_bucket', '5-Min Bucket', '5-Minute Resolution'))
+    
+    # 15-Min
+    report.extend(generate_time_table(datasets, '15min_bucket', '15-Min Bucket', '15-Minute Resolution'))
+    
+    # Hourly
+    report.extend(generate_time_table(datasets, 'Hour', 'Hour', 'Hourly Resolution'))
+    
+    # Daily
+    report.extend(generate_time_table(datasets, 'DayOfWeek', 'Day', 'Day of Week'))
+    
+    report.append("---")
+    report.append("## 📅 PERIODIC BREAKDOWN")
+    
+    # Date helper for buckets
+    for d in datasets:
+        d['merged']['Quarter'] = d['merged']['Entry Time'].dt.to_period('Q')
+    
+    # Quarterly
+    report.extend(generate_time_table(datasets, 'Quarter', 'Quarter', 'Quarterly Performance'))
+    
+    # Yearly
+    report.extend(generate_time_table(datasets, 'Year', 'Year', 'Yearly Performance'))
+
+    return '\n'.join(report)
     # ... rest of report remains similar, just shorter summary
     
     metrics = [
