@@ -1,13 +1,31 @@
 """
-Comprehensive V3 Modes vs V2 Strategy Analysis
-=============================================
-Analyzes and compares 4 strategy variations:
-1. V3 Fixed TP (Winner)
-2. V3 Adaptive (Validated)
-3. V3 Time Exit (Baseline V3)
-4. V2 Baseline (Original)
+Comprehensive Strategy Analysis & Grading Tool (The Edge System)
+============================================================
+Author: AI Assistant
+Date: 2026-01-07
+Purpose: 
+    To load TradingView backtest exports, calculate advanced risk metrics (Edge System), 
+    and generate a graded performance report.
 
-Includes Risk Profiling, Granular Time Analysis, and MFE/MAE stats.
+The "Edge System" Metrics:
+1.  Risk ($): The average loss per trade (used as the base unit 'R').
+2.  Expected Value (EV): Average P&L per trade.
+3.  Profit Factor: Gross Profit / Gross Loss.
+4.  Combined Edge: (EV / Risk) * Profit Factor.
+5.  SQN: System Quality Number (Mean R / Std R * sqrt(N)).
+6.  RoR: Risk of Ruin based on Combined Edge and Bankroll.
+7.  DRR: Drawdown Risk Rating (MaxDD / Risk).
+
+Input:
+    - Excel files (.xlsx) exported from TradingView 'List of Trades'.
+    - Must contain columns: 'Type', 'Signal', 'Date and time', 'Price USD', 'Net P&L USD', 'MAE USD', 'MFE USD'.
+
+Output:
+    - Markdown Report (`V3_Comprehensive_Analysis.md`) containing:
+        - 10-Metric Scorecard
+        - System Grades (A-F)
+        - Actionable Recommendations (Fix Table)
+        - Time Analysis (5m, 15m, Hourly, Daily, Monthly)
 """
 
 import pandas as pd
@@ -19,44 +37,66 @@ import glob
 
 warnings.filterwarnings('ignore')
 
-# Files
+# --- CONFIGURATION: INPUT FILES ---
+# Update these paths to point to new backtest exports
 V3_FIXED_FILE = 'ORB_V3_CME_MINI_MNQ1!_2026-01-07_620dd.xlsx'
 V3_ADAPTIVE_FILE = 'ORB_V3_CME_MINI_MNQ1!_2026-01-07_52358.xlsx'
 V3_TIME_FILE = 'ORB_V3_CME_MINI_MNQ1!_2026-01-07_cfbde.xlsx'
 V2_FILE = r'old\ORB_All-Day_V2_CME_MINI_MNQ1!_2026-01-07_06a7f.xlsx'
 
 def load_strategy_data(filepath, name):
-    """Load and process strategy data from Excel"""
+    """
+    Load and process strategy data from TradingView Excel export.
+    
+    Handles the TradingView export quirk where P&L is duplicated on Entry and Exit rows.
+    Logic:
+    1. Read 'List of trades' sheet.
+    2. Filter 'Exit' rows to get P&L, MFE, MAE.
+    3. Filter 'Entry' rows to get Entry Signal, Price, Time.
+    4. Merge Entry info into Exit rows based on 'Trade #'.
+    
+    Args:
+        filepath (str): Path to .xlsx file.
+        name (str): Display name for the strategy.
+        
+    Returns:
+        dict: {'name': str, 'merged': DataFrame} or None if failed.
+    """
     try:
         xl = pd.ExcelFile(filepath)
     except Exception as e:
         print(f"Error loading {filepath}: {e}")
         return None
     
+    # Locate the correct sheet (usually "List of trades")
     sheet = next((s for s in xl.sheet_names if s.lower() == "list of trades"), "List of trades")
     trade_list = pd.read_excel(xl, sheet_name=sheet)
     trade_list['Date and time'] = pd.to_datetime(trade_list['Date and time'])
     
+    # Split into Entries and Exits
     entries = trade_list[trade_list['Type'].str.contains('Entry', case=False, na=False)].copy()
     exits = trade_list[trade_list['Type'].str.contains('Exit', case=False, na=False)].copy()
     
+    # Prepare Entries (Source of Time/Signal)
     entries = entries[['Trade #', 'Date and time', 'Signal', 'Price USD']].copy()
     entries.columns = ['Trade #', 'Entry Time', 'Entry Signal', 'Entry Price']
     
+    # Prepare Exits (Source of P&L/MAE/MFE)
     cols_to_use = ['Trade #', 'Date and time', 'Type', 'Signal', 'Price USD', 
                    'Net P&L USD', 'Net P&L %', 'MFE USD', 'MFE %', 'MAE USD', 'MAE %']
     cols_to_use = [c for c in cols_to_use if c in exits.columns]
-    
     exits = exits[cols_to_use].copy()
     
+    # Rename for clarity
     rename_map = { 'Date and time': 'Exit Time', 'Price USD': 'Exit Price' }
     exits.rename(columns=rename_map, inplace=True)
     if 'Signal' in exits.columns: exits.rename(columns={'Signal': 'Exit Signal'}, inplace=True)
     
+    # Merge: Final Dataset has one row per trade (Exit) with Entry info attached
     merged = pd.merge(exits, entries, on='Trade #', how='left')
     merged['Strategy'] = name
     
-    # Time Analysis Columns
+    # --- TIME ANALYSIS COLUMNS ---
     merged['Hour'] = merged['Entry Time'].dt.hour
     merged['Minute'] = merged['Entry Time'].dt.minute
     merged['DayOfWeek'] = merged['Entry Time'].dt.day_name()
@@ -65,18 +105,34 @@ def load_strategy_data(filepath, name):
     merged['Date'] = merged['Entry Time'].dt.date
     merged['YearMonth'] = merged['Entry Time'].dt.to_period('M')
     
-    # Buckets
+    # Time Buckets for Granular Analysis
     merged['15min_bucket'] = (merged['Minute'] // 15) * 15
     merged['5min_bucket'] = (merged['Minute'] // 5) * 5
     merged['Hour_Minute'] = merged['Hour'].astype(str).str.zfill(2) + ':' + merged['Minute'].astype(str).str.zfill(2)
     
+    # Helper Flags
     merged['Is_Winner'] = merged['Net P&L USD'] > 0
     merged['Is_Stopped'] = merged['Exit Signal'].astype(str).str.contains('SL|Stop|MAE', case=False, na=False)
     
     return { 'name': name, 'merged': merged }
 
 def calc_stats_extended(df):
-    """Calculate extended stats for risk profiling"""
+    """
+    Calculate the full suite of 'Edge System' metrics for a strategy dataframe.
+    
+    Implements:
+    - EV, PF, Combined Edge
+    - SQN (using R-multiples)
+    - Risk of Ruin (RoR)
+    - Drawdown Risk Rating (DRR)
+    - Grading Logic (A-F)
+    
+    Args:
+        df: DataFrame containing trade data.
+        
+    Returns:
+        dict: A dictionary of calculated statistics.
+    """
     if len(df) == 0: return {}
     
     wins = df[df['Net P&L USD'] > 0]
@@ -90,7 +146,7 @@ def calc_stats_extended(df):
     avg_pnl = df['Net P&L USD'].mean()
     std_pnl = df['Net P&L USD'].std()
     
-    # Drawdown
+    # Drawdown Calculation (Equity Curve)
     df_sorted = df.sort_values('Entry Time')
     equity = df_sorted['Net P&L USD'].cumsum()
     peak = equity.cummax()
@@ -117,10 +173,11 @@ def calc_stats_extended(df):
     # 4. PROFIT FACTOR (PF)
     pf = gross_profit / gross_loss if gross_loss > 0 else 0
     
-    # 5. COMBINED EDGE
+    # 5. COMBINED EDGE (Normalized)
     combined_edge = ev_r * pf
     
     # 6. SQN (Based on R-multiples)
+    # Calculate R for every trade: PnL / Risk
     df['R_Multiple'] = df['Net P&L USD'] / risk_r
     mean_r = df['R_Multiple'].mean()
     std_r = df['R_Multiple'].std()
@@ -131,33 +188,34 @@ def calc_stats_extended(df):
     combined_edge_raw = ev_dollars * pf
     
     # 7. MAX LOSING STREAK (Theoretical)
+    # Formula: ln(N) / ln(1/Loss%)
     try:
         max_streak_theoretical = np.log(trades) / np.log(1 / loss_rate) if loss_rate > 0 else 0
     except:
         max_streak_theoretical = 0
         
     # 8. DRAWDOWN RISK RATING (DRR)
-    # DRR = MaxDD ($) / Risk ($)
-    # How many R's is the drawdown?
+    # DRR = MaxDD ($) / Risk ($) -> "How many R's is the drawdown?"
     drr = abs(max_dd) / risk_r if risk_r > 0 else 0
         
-    # 9. MAE/MFE
+    # 9. MAE/MFE RATIO
     avg_mae = df['MAE USD'].mean() if 'MAE USD' in df.columns else 0
     avg_mfe = df['MFE USD'].mean() if 'MFE USD' in df.columns else 0
     mae_mfe_ratio = abs(avg_mfe / avg_mae) if avg_mae != 0 else 0
     
     # 10. RISK OF RUIN (RoR)
-    bankroll_units = 20
+    # Formula: ((1 - CombinedEdge) / (1 + CombinedEdge)) ^ Bankroll_Units
+    bankroll_units = 20 # Standard assumption
     try:
         ror_calc = (1 - combined_edge) / (1 + combined_edge)
         if ror_calc <= 0:
-            ror = 0.0 
+            ror = 0.0 # Excellent (Edge is so strong RoR is 0)
         else:
             ror = (ror_calc ** bankroll_units) * 100
     except:
         ror = 100.0
 
-    # GRADING LOGIC
+    # GRADING LOGIC (A-F)
     grade = "F"
     if combined_edge_raw > 150: grade = "A+"
     elif combined_edge_raw > 100: grade = "A"
@@ -166,7 +224,7 @@ def calc_stats_extended(df):
     elif combined_edge_raw > 0: grade = "D"
     else: grade = "F"
     
-    # Downgrades
+    # Downgrades for Risk Factors
     if ror > 5.0: grade = f"{grade} (Dangerous RoR)"
     if sqn < 1.0 and "F" not in grade: grade = f"{grade} (Low Quality)"
     if drr > 10 and "F" not in grade: grade = f"{grade} (High DRR)"
@@ -193,10 +251,14 @@ def calc_stats_extended(df):
     return stats
 
 def get_recommendations(stats):
+    """
+    Generate actionable text recommendations based on the 'Fix Table'.
+    Checks EV, PF, RoR, DRR thresholds and suggests specific fixes.
+    """
     recs = []
     
-    # Position Sizing
-    grade = stats['Grade'].split()[0] # Remove comments
+    # Position Sizing Guide
+    grade = stats['Grade'].split()[0] # Remove comments like "(High DRR)"
     size_msg = "0%"
     if "A" in grade: size_msg = "2-5%"
     elif "B" in grade: size_msg = "1-2%"
@@ -207,7 +269,7 @@ def get_recommendations(stats):
     
     # EV Fixes
     if stats['Avg P&L (EV)'] < 20: 
-        recs.append("🔴 **Fix EV**: Increase AvgWin or Reduce AvgLoss.")
+        recs.append("🔴 **Fix EV**: Increase AvgWin (let winners run) or Reduce AvgLoss.")
         
     # PF Fixes
     if stats['Profit Factor'] < 1.4:
@@ -215,20 +277,25 @@ def get_recommendations(stats):
         
     # RoR
     if stats['RoR %'] > 2.0:
-        recs.append("🔴 **Fix RoR**: CRITICAL. Reduce Risk Per Trade.")
+        recs.append("🔴 **Fix RoR (CRITICAL)**: REDUCE RISK PER TRADE immediately.")
         
     # DRR
     if stats['DRR'] > 10:
         recs.append("🔴 **Fix DRR**: Drawdown is too deep relative to Risk. Reduce Risk/Trade.")
 
+    # Healthy System
+    if not recs or len(recs) == 1: # Only pos size
+        recs.append("🟢 **System Healthy**: Consider scaling size.")
+        
     return recs
 
 def generate_time_table(datasets, key_col, key_label, title):
+    """Generates a Markdown table for a specific time breakdown (e.g. Hourly, Daily)."""
     lines = []
     lines.append(f"### {title}")
     lines.append("")
     
-    # Get all unique keys
+    # Get all unique keys for the bucket (Sorted)
     all_keys = sorted(list(set(k for d in datasets for k in d['merged'][key_col].dropna().unique())))
     
     # Header
@@ -247,6 +314,7 @@ def generate_time_table(datasets, key_col, key_label, title):
     return lines
 
 def generate_report(datasets):
+    """Constructs the full Markdown report string."""
     report = []
     report.append("# Strategy Grade & Comprehensive Metrics")
     report.append(f"## Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
