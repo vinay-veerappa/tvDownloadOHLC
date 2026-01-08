@@ -1,12 +1,42 @@
-# V3 Modes vs V2 Comprehensive Analysis (Enhanced)
-## Generated: 2026-01-07 18:32:05
+# V3 Comprehensive Strategy Grade & Analysis
+## Generated: 2026-01-07 18:39:01
 
 ---
-
-## 📊 EXECUTIVE SUMMARY
+## 🏆 SYSTEM GRADING REPORT
 
 | Metric | V3 Fixed TP | V3 Adaptive | V3 Time Exit | V2 Baseline |
 |---|---|---|---|---|
+| **Overall Grade** | C | D | D | D |
+| **Combined Edge (Score)** | 22.0 | 20.0 | 19.6 | 14.8 |
+| **SQN (Quality)** | 5.29 | 4.65 | 4.65 | 4.84 |
+| **Profit Factor** | 1.27 | 1.27 | 1.27 | 1.24 |
+| **Calculated RoR** | 0.0244% | 0.0233% | 0.0249% | 0.0697% |
+| **Expected Value ($)** | $17.29 | $15.70 | $15.43 | $11.91 |
+
+## 🛠️ ACTIONABLE RECOMMENDATIONS (THE FIX TABLE)
+
+### V3 Fixed TP (Grade: C)
+- 🔴 **Fix EV**: Increase AvgWin (let winners run) or Reduce AvgLoss.
+- 🟠 **Fix PF**: Review MAE to cut outlier losses. Tighten stops?
+- 🟡 **Fix Edge**: System is weak (Grade C/D). Needs better filters (Win%).
+
+### V3 Adaptive (Grade: D)
+- 🔴 **Fix EV**: Increase AvgWin (let winners run) or Reduce AvgLoss.
+- 🟠 **Fix PF**: Review MAE to cut outlier losses. Tighten stops?
+- 🟡 **Fix Edge**: System is weak (Grade C/D). Needs better filters (Win%).
+
+### V3 Time Exit (Grade: D)
+- 🔴 **Fix EV**: Increase AvgWin (let winners run) or Reduce AvgLoss.
+- 🟠 **Fix PF**: Review MAE to cut outlier losses. Tighten stops?
+- 🟡 **Fix Edge**: System is weak (Grade C/D). Needs better filters (Win%).
+
+### V2 Baseline (Grade: D)
+- 🔴 **Fix EV**: Increase AvgWin (let winners run) or Reduce AvgLoss.
+- 🟠 **Fix PF**: Review MAE to cut outlier losses. Tighten stops?
+- 🟡 **Fix Edge**: System is weak (Grade C/D). Needs better filters (Win%).
+
+---
+## 📊 DETAILED PERFORMANCE METRICS
 | **Trades** | 5514 | 5386 | 5408 | 5402 |
 | **Total P&L** | $95,343.50 | $84,586.50 | $83,427.50 | $64,347.50 |
 | **Example R (AvgLoss)** | $107.41 | $96.86 | $95.72 | $82.20 |
@@ -20,7 +50,7 @@
 | Metric | V3 Fixed TP | V3 Adaptive | V3 Time Exit | V2 Baseline |
 |---|---|---|---|---|
 | **Profit Factor** | 1.27 | 1.27 | 1.27 | 1.24 |
-| **Combined Edge** | 0.21 | 0.21 | 0.20 | 0.18 |
+| **Combined Edge (Norm)** | 0.21 | 0.21 | 0.20 | 0.18 |
 | **SQN (Trade Quality)** | 5.29 | 4.65 | 4.65 | 4.84 |
 | **Risk of Ruin %** | 0.0244% | 0.0233% | 0.0249% | 0.0697% |
 | **Max Streak (Theory)** | 16.3 | 16.7 | 16.8 | 17.0 |
