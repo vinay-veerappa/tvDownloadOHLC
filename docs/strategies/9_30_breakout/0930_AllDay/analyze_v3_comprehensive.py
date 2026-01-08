@@ -121,31 +121,45 @@ def calc_stats_extended(df):
     combined_edge = ev_r * pf
     
     # 6. SQN (Based on R-multiples)
-    # Calculate R for every trade: PnL / Risk
     df['R_Multiple'] = df['Net P&L USD'] / risk_r
     mean_r = df['R_Multiple'].mean()
     std_r = df['R_Multiple'].std()
     sqn = (mean_r / std_r) * (trades ** 0.5) if std_r > 0 else 0
     
+    # Combined Edge (For Grading - Raw Dollars as per User Text Section 8)
+    # "CombinedEdge = EV * PF" -> grading A > 150
+    combined_edge_raw = ev_dollars * pf
+    
     # 7. MAX LOSING STREAK (Theoretical)
-    # ln(N) / ln(1/Loss%)
     try:
         max_streak_theoretical = np.log(trades) / np.log(1 / loss_rate) if loss_rate > 0 else 0
     except:
         max_streak_theoretical = 0
         
     # 8. RISK OF RUIN (RoR)
-    # Assumes Bankroll = 20 units (User Example: 4500 account / 225 risk)
+    # Uses Normalized Combined Edge: ev_r * pf
     bankroll_units = 20
     try:
         ror_calc = (1 - combined_edge) / (1 + combined_edge)
-        # combined_edge can be negative, ror_calc can be > 1 or < 0
         if ror_calc <= 0:
-            ror = 0.0 # Excellent
+            ror = 0.0 
         else:
-            ror = (ror_calc ** bankroll_units) * 100 # In Percent
+            ror = (ror_calc ** bankroll_units) * 100
     except:
         ror = 100.0
+
+    # GRADING LOGIC
+    grade = "F"
+    if combined_edge_raw > 150: grade = "A+"
+    elif combined_edge_raw > 100: grade = "A"
+    elif combined_edge_raw > 50: grade = "B"
+    elif combined_edge_raw > 20: grade = "C"
+    elif combined_edge_raw > 0: grade = "D"
+    else: grade = "F"
+    
+    # Adjust grade based on SQN/RoR (downgrade if dangerous)
+    if ror > 5.0: grade = f"{grade} (Dangerous RoR)"
+    if sqn < 1.0 and "F" not in grade: grade = f"{grade} (Low Quality)"
 
     stats = {
         'Trades': trades,
@@ -154,7 +168,9 @@ def calc_stats_extended(df):
         'Avg P&L (EV)': ev_dollars,
         'Avg Loss (R)': risk_r,
         'Profit Factor': pf,
-        'Combined Edge': combined_edge,
+        'Combined Edge (Norm)': combined_edge,
+        'Combined Edge (Raw)': combined_edge_raw,
+        'Grade': grade,
         'SQN': sqn,
         'RoR %': ror,
         'Max Losing Streak (Est)': max_streak_theoretical,
@@ -162,16 +178,43 @@ def calc_stats_extended(df):
     }
     return stats
 
+def get_recommendations(stats):
+    recs = []
+    
+    # EV Fixes
+    if stats['Avg P&L (EV)'] < 20: # Weak EV
+        recs.append("🔴 **Fix EV**: Increase AvgWin (let winners run) or Reduce AvgLoss.")
+        
+    # PF Fixes
+    if stats['Profit Factor'] < 1.4:
+        recs.append("🟠 **Fix PF**: Review MAE to cut outlier losses. Tighten stops?")
+        
+    # RoR Fixes
+    if stats['RoR %'] > 2.0:
+        recs.append("🔴 **Fix RoR (CRITICAL)**: REDUCE RISK PER TRADE immediately.")
+        
+    # Combined Edge
+    if stats['Combined Edge (Raw)'] < 50:
+        recs.append("🟡 **Fix Edge**: System is weak (Grade C/D). Needs better filters (Win%).")
+        
+    # SQN
+    if stats['SQN'] < 2.0:
+        recs.append("🟠 **Fix SQN**: Consistency is low. System may be too volatile.")
+        
+    if not recs:
+        recs.append("🟢 **System Healthy**: Consider scaling size (Grade A/B).")
+        
+    return recs
+
 def generate_report(datasets):
     report = []
-    report.append("# V3 Modes vs V2 Comprehensive Analysis (Enhanced)")
+    report.append("# V3 Comprehensive Strategy Grade & Analysis")
     report.append(f"## Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     report.append("")
     report.append("---")
-    report.append("")
     
-    # 1. EXECUTIVE SUMMARY
-    report.append("## 📊 EXECUTIVE SUMMARY")
+    # 1. EXECUTIVE GRADING
+    report.append("## 🏆 SYSTEM GRADING REPORT")
     report.append("")
     
     headers = ["Metric"] + [d['name'] for d in datasets]
@@ -179,6 +222,43 @@ def generate_report(datasets):
     report.append("|" + "|".join(["---"] * len(headers)) + "|")
     
     all_stats = [calc_stats_extended(d['merged']) for d in datasets]
+    all_recs = [get_recommendations(s) for s in all_stats]
+    
+    grading_metrics = [
+        ('Overall Grade', 'Grade', '{}'),
+        ('Combined Edge (Score)', 'Combined Edge (Raw)', '{:.1f}'),
+        ('SQN (Quality)', 'SQN', '{:.2f}'),
+        ('Profit Factor', 'Profit Factor', '{:.2f}'),
+        ('Calculated RoR', 'RoR %', '{:.4f}%'),
+        ('Expected Value ($)', 'Avg P&L (EV)', '${:.2f}'),
+    ]
+
+    for label, key, fmt in grading_metrics:
+        row = [f"**{label}**"]
+        for stats in all_stats:
+            row.append(fmt.format(stats.get(key, 0)))
+        report.append("| " + " | ".join(row) + " |")
+        
+    report.append("")
+    
+    # 2. ACTIONABLE RECOMMENDATIONS
+    report.append("## 🛠️ ACTIONABLE RECOMMENDATIONS (THE FIX TABLE)")
+    report.append("")
+    
+    for i, d in enumerate(datasets):
+        name = d['name']
+        recs = all_recs[i]
+        grade = all_stats[i]['Grade']
+        report.append(f"### {name} (Grade: {grade})")
+        for r in recs:
+            report.append(f"- {r}")
+        report.append("")
+        
+    report.append("---")
+    
+    # 3. DETAILED PERFORMANCE (Previous Tables)
+    report.append("## 📊 DETAILED PERFORMANCE METRICS")
+    # ... rest of report remains similar, just shorter summary
     
     metrics = [
         ('Trades', 'Trades', '{:.0f}'),
@@ -206,7 +286,7 @@ def generate_report(datasets):
 
     risk_metrics = [
         ('Profit Factor', 'Profit Factor', '{:.2f}'),
-        ('Combined Edge', 'Combined Edge', '{:.2f}'),
+        ('Combined Edge (Norm)', 'Combined Edge (Norm)', '{:.2f}'),
         ('SQN (Trade Quality)', 'SQN', '{:.2f}'),
         ('Risk of Ruin %', 'RoR %', '{:.4f}%'),
         ('Max Streak (Theory)', 'Max Losing Streak (Est)', '{:.1f}'),
