@@ -1,5 +1,5 @@
 # V3 Modes vs V2 Comprehensive Analysis (Enhanced)
-## Generated: 2026-01-07 16:47:25
+## Generated: 2026-01-07 16:51:46
 
 ---
 
@@ -20,6 +20,9 @@
 |---|---|---|---|---|
 | **Profit Factor** | 1.27 | 1.27 | 1.27 | 1.24 |
 | **SQN** | 5.29 | 4.65 | 4.65 | 4.84 |
+| **Payoff Ratio** | 1.82 | 1.89 | 1.90 | 1.88 |
+| **Edge** | 0.161 | 0.162 | 0.161 | 0.145 |
+| **Combined Edge** | 0.205 | 0.206 | 0.204 | 0.180 |
 | **Max Drawdown** | $-9,592 | $-9,429 | $-8,922 | $-7,046 |
 | **Return / MaxDD** | 9.94 | 8.97 | 9.35 | 9.13 |
 | **Avg Win** | $195.77 | $183.18 | $181.92 | $154.82 |
@@ -105,3 +108,26 @@
 | **Max MFE %** | 3.200% | 3.200% | 3.200% | 3.200% |
 | **Avg MAE %** | -0.075% | -0.076% | -0.076% | -0.076% |
 | **Min MAE %** | -0.740% | -0.740% | -0.740% | -0.740% |
+
+---
+
+## ⚙️ STRATEGY CONFIGURATION & DIFFERENCES
+
+### Parameter Settings by Mode
+
+| Parameter | V3 Fixed TP (Winner) | V3 Adaptive | V3 Time Exit | V2 Baseline |
+|---|---|---|---|---|
+| **Runner Mode** | `Fixed TP` | `Adaptive (Time + Trail)` | `Time Exit` | `Time Exit` |
+| **TP1** | 0.15% (30%) | 0.15% (30%) | 0.15% (30%) | n/a |
+| **TP2** | 0.25% (30%) | 0.25% (30%) | 0.25% (30%) | n/a |
+| **TP3 / Runner** | 0.50% (40%) | **Adaptive Trail** | **Hold to 15:55** | Hold to 15:55 |
+| **Trail Activation** | n/a | **0.50%** | n/a | n/a |
+| **Trail Offset** | n/a | **0.25%** | n/a | n/a |
+| **Stop Loss** | 0.22% | 0.22% | 0.22% | Market Structure |
+| **Min Contracts** | 3 (Ensures all TPs hit) | 3 | 3 | 1 (Risk of partials) |
+
+### Key Differences
+1.  **V3 Fixed TP**: Takes all risk off the table by 0.50%. Maximizes **Win Rate** and **SQN** by banking profits in the volatile 2023-2025 regime.
+2.  **V3 Adaptive**: Validated logic. Holds for trend but **activates protection** if price hits +0.50%. If price retraces 0.25% from peak, it exits. Captures trends but prevents full giveback.
+3.  **V3 Time Exit**: Pure trend following. Holds the last 40% until 15:55 ET. Vulnerable to afternoon reversals (Giveback).
+4.  **V2 Baseline**: The original strategy. Lower position sizing (1 contract min) and looser filters resulted in lower total profit.
