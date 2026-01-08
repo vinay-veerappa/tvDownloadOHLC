@@ -100,17 +100,31 @@ def calc_stats_extended(df):
     # SQN
     sqn = (avg_pnl / std_pnl) * (trades ** 0.5) if std_pnl > 0 else 0
     
+    # Edge Metrics
+    avg_win = wins['Net P&L USD'].mean() if len(wins) > 0 else 0
+    avg_loss = abs(losses['Net P&L USD'].mean()) if len(losses) > 0 else 0
+    win_rate = len(wins) / trades if trades > 0 else 0
+    loss_rate = 1 - win_rate
+    
+    payoff = avg_win / avg_loss if avg_loss > 0 else 0
+    edge = (win_rate * payoff) - loss_rate
+    pf = gross_profit / gross_loss if gross_loss > 0 else 0
+    combined_edge = edge * pf
+    
     stats = {
         'Trades': trades,
-        'Win Rate %': len(wins) / trades * 100,
+        'Win Rate %': win_rate * 100,
         'Total P&L': total_pnl,
         'Avg P&L': avg_pnl,
-        'Profit Factor': gross_profit / gross_loss if gross_loss > 0 else float('inf'),
+        'Profit Factor': pf,
         'SQN': sqn,
         'Max Drawdown': max_dd,
         'Return/DD': total_pnl / abs(max_dd) if max_dd < 0 else 0,
-        'Avg Win': wins['Net P&L USD'].mean() if len(wins) > 0 else 0,
-        'Avg Loss': losses['Net P&L USD'].mean() if len(losses) > 0 else 0,
+        'Avg Win': avg_win,
+        'Avg Loss': -avg_loss,
+        'Payoff Ratio': payoff,
+        'Edge': edge,
+        'Combined Edge': combined_edge,
         'Avg MFE %': df['MFE %'].mean() if 'MFE %' in df.columns else 0,
         'Avg MAE %': df['MAE %'].mean() if 'MAE %' in df.columns else 0,
         'Stopped %': df['Is_Stopped'].mean() * 100
@@ -161,6 +175,9 @@ def generate_report(datasets):
     risk_metrics = [
         ('Profit Factor', 'Profit Factor', '{:.2f}'),
         ('SQN', 'SQN', '{:.2f}'),
+        ('Payoff Ratio', 'Payoff Ratio', '{:.2f}'),
+        ('Edge', 'Edge', '{:.3f}'),
+        ('Combined Edge', 'Combined Edge', '{:.3f}'),
         ('Max Drawdown', 'Max Drawdown', '${:,.0f}'),
         ('Return / MaxDD', 'Return/DD', '{:.2f}'),
         ('Avg Win', 'Avg Win', '${:.2f}'),
@@ -262,6 +279,32 @@ def generate_report(datasets):
                 row.append("N/A")
         report.append("| " + " | ".join(row) + " |")
         
+    report.append("")
+    report.append("---")
+    report.append("")
+
+    # 5. STRATEGY CONFIGURATION & DIFFERENCES
+    report.append("## ⚙️ STRATEGY CONFIGURATION & DIFFERENCES")
+    report.append("")
+    report.append("### Parameter Settings by Mode")
+    report.append("")
+    report.append("| Parameter | V3 Fixed TP (Winner) | V3 Adaptive | V3 Time Exit | V2 Baseline |")
+    report.append("|---|---|---|---|---|")
+    report.append("| **Runner Mode** | `Fixed TP` | `Adaptive (Time + Trail)` | `Time Exit` | `Time Exit` |")
+    report.append("| **TP1** | 0.15% (30%) | 0.15% (30%) | 0.15% (30%) | n/a |")
+    report.append("| **TP2** | 0.25% (30%) | 0.25% (30%) | 0.25% (30%) | n/a |")
+    report.append("| **TP3 / Runner** | 0.50% (40%) | **Adaptive Trail** | **Hold to 15:55** | Hold to 15:55 |")
+    report.append("| **Trail Activation** | n/a | **0.50%** | n/a | n/a |")
+    report.append("| **Trail Offset** | n/a | **0.25%** | n/a | n/a |")
+    report.append("| **Stop Loss** | 0.22% | 0.22% | 0.22% | Market Structure |")
+    report.append("| **Min Contracts** | 3 (Ensures all TPs hit) | 3 | 3 | 1 (Risk of partials) |")
+    report.append("")
+    report.append("### Key Differences")
+    report.append("1.  **V3 Fixed TP**: Takes all risk off the table by 0.50%. Maximizes **Win Rate** and **SQN** by banking profits in the volatile 2023-2025 regime.")
+    report.append("2.  **V3 Adaptive**: Validated logic. Holds for trend but **activates protection** if price hits +0.50%. If price retraces 0.25% from peak, it exits. Captures trends but prevents full giveback.")
+    report.append("3.  **V3 Time Exit**: Pure trend following. Holds the last 40% until 15:55 ET. Vulnerable to afternoon reversals (Giveback).")
+    report.append("4.  **V2 Baseline**: The original strategy. Lower position sizing (1 contract min) and looser filters resulted in lower total profit.")
+    
     return '\n'.join(report)
 
 if __name__ == '__main__':
@@ -280,7 +323,7 @@ if __name__ == '__main__':
     if len(datasets) > 0:
         print("Generating Enhanced report...")
         report_content = generate_report(datasets)
-        out_file = 'V3_vs_V2_Comprehensive_Analysis.md'
+        out_file = 'V3_Comprehensive_Analysis.md'
         with open(out_file, 'w', encoding='utf-8') as f:
             f.write(report_content)
         print(f"DONE. Report saved to {out_file}")
