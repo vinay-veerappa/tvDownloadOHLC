@@ -97,37 +97,68 @@ def calc_stats_extended(df):
     drawdown = equity - peak
     max_dd = drawdown.min()
     
-    # SQN
-    sqn = (avg_pnl / std_pnl) * (trades ** 0.5) if std_pnl > 0 else 0
+    # --- RISK PROFILE CALCULATIONS (Per User Doc) ---
     
-    # Edge Metrics
-    avg_win = wins['Net P&L USD'].mean() if len(wins) > 0 else 0
-    avg_loss = abs(losses['Net P&L USD'].mean()) if len(losses) > 0 else 0
+    # 1. RISK ($R)
+    # Defined as AvgLoss (absolute). If no losses, use dummy 1 to avoid div/0
+    avg_loss_abs = abs(losses['Net P&L USD'].mean()) if len(losses) > 0 else 1
+    risk_r = avg_loss_abs
+    
+    # 2. EXPECTED VALUE (EV)
     win_rate = len(wins) / trades if trades > 0 else 0
     loss_rate = 1 - win_rate
+    avg_win = wins['Net P&L USD'].mean() if len(wins) > 0 else 0
     
-    payoff = avg_win / avg_loss if avg_loss > 0 else 0
-    edge = (win_rate * payoff) - loss_rate
+    ev_dollars = (win_rate * avg_win) - (loss_rate * risk_r)
+    
+    # 3. NORMALIZED EV (EV_R)
+    ev_r = ev_dollars / risk_r
+    
+    # 4. PROFIT FACTOR (PF)
     pf = gross_profit / gross_loss if gross_loss > 0 else 0
-    combined_edge = edge * pf
     
+    # 5. COMBINED EDGE
+    combined_edge = ev_r * pf
+    
+    # 6. SQN (Based on R-multiples)
+    # Calculate R for every trade: PnL / Risk
+    df['R_Multiple'] = df['Net P&L USD'] / risk_r
+    mean_r = df['R_Multiple'].mean()
+    std_r = df['R_Multiple'].std()
+    sqn = (mean_r / std_r) * (trades ** 0.5) if std_r > 0 else 0
+    
+    # 7. MAX LOSING STREAK (Theoretical)
+    # ln(N) / ln(1/Loss%)
+    try:
+        max_streak_theoretical = np.log(trades) / np.log(1 / loss_rate) if loss_rate > 0 else 0
+    except:
+        max_streak_theoretical = 0
+        
+    # 8. RISK OF RUIN (RoR)
+    # Assumes Bankroll = 20 units (User Example: 4500 account / 225 risk)
+    bankroll_units = 20
+    try:
+        ror_calc = (1 - combined_edge) / (1 + combined_edge)
+        # combined_edge can be negative, ror_calc can be > 1 or < 0
+        if ror_calc <= 0:
+            ror = 0.0 # Excellent
+        else:
+            ror = (ror_calc ** bankroll_units) * 100 # In Percent
+    except:
+        ror = 100.0
+
     stats = {
         'Trades': trades,
         'Win Rate %': win_rate * 100,
         'Total P&L': total_pnl,
-        'Avg P&L': avg_pnl,
+        'Avg P&L (EV)': ev_dollars,
+        'Avg Loss (R)': risk_r,
         'Profit Factor': pf,
-        'SQN': sqn,
-        'Max Drawdown': max_dd,
-        'Return/DD': total_pnl / abs(max_dd) if max_dd < 0 else 0,
-        'Avg Win': avg_win,
-        'Avg Loss': -avg_loss,
-        'Payoff Ratio': payoff,
-        'Edge': edge,
         'Combined Edge': combined_edge,
-        'Avg MFE %': df['MFE %'].mean() if 'MFE %' in df.columns else 0,
-        'Avg MAE %': df['MAE %'].mean() if 'MAE %' in df.columns else 0,
-        'Stopped %': df['Is_Stopped'].mean() * 100
+        'SQN': sqn,
+        'RoR %': ror,
+        'Max Losing Streak (Est)': max_streak_theoretical,
+        'Avg MFE %': df['MFE %'].mean() if 'MFE %' in df.columns else 0
     }
     return stats
 
@@ -152,8 +183,9 @@ def generate_report(datasets):
     metrics = [
         ('Trades', 'Trades', '{:.0f}'),
         ('Total P&L', 'Total P&L', '${:,.2f}'),
+        ('Example R (AvgLoss)', 'Avg Loss (R)', '${:,.2f}'),
         ('Win Rate %', 'Win Rate %', '{:.2f}%'),
-        ('Avg P&L (EV)', 'Avg P&L', '${:.2f}'),
+        ('Expected Value (EV)', 'Avg P&L (EV)', '${:.2f}'),
     ]
     
     for label, key, fmt in metrics:
@@ -166,22 +198,18 @@ def generate_report(datasets):
     report.append("---")
     report.append("")
 
-    # 2. RISK PROFILING
-    report.append("## 🛡️ RISK PROFILING & EFFICIENCY")
+    # 2. RISK PROFILING (ADVANCED)
+    report.append("## 🛡️ RISK PROFILING (PER EDGE SYSTEM)")
     report.append("")
     report.append("| Metric | " + " | ".join([d['name'] for d in datasets]) + " |")
     report.append("|" + "|".join(["---"] * (len(datasets)+1)) + "|")
 
     risk_metrics = [
         ('Profit Factor', 'Profit Factor', '{:.2f}'),
-        ('SQN', 'SQN', '{:.2f}'),
-        ('Payoff Ratio', 'Payoff Ratio', '{:.2f}'),
-        ('Edge', 'Edge', '{:.3f}'),
-        ('Combined Edge', 'Combined Edge', '{:.3f}'),
-        ('Max Drawdown', 'Max Drawdown', '${:,.0f}'),
-        ('Return / MaxDD', 'Return/DD', '{:.2f}'),
-        ('Avg Win', 'Avg Win', '${:.2f}'),
-        ('Avg Loss', 'Avg Loss', '${:.2f}'),
+        ('Combined Edge', 'Combined Edge', '{:.2f}'),
+        ('SQN (Trade Quality)', 'SQN', '{:.2f}'),
+        ('Risk of Ruin %', 'RoR %', '{:.4f}%'),
+        ('Max Streak (Theory)', 'Max Losing Streak (Est)', '{:.1f}'),
     ]
 
     for label, key, fmt in risk_metrics:
@@ -191,9 +219,10 @@ def generate_report(datasets):
         report.append("| " + " | ".join(row) + " |")
 
     report.append("")
-    report.append("### SQN Interpretation")
-    report.append("> **SQN > 3.0** is excellent. **SQN > 5.0** is superb.")
-    report.append("> V3 Fixed TP SQN: **{:.2f}** (Highest Quality)".format(all_stats[0]['SQN']))
+    report.append("### Metric Grades")
+    report.append("> **Combined Edge**: > 50 is Good. > 100 is Excellent.")
+    report.append("> **SQN**: > 2.0 is Good. > 3.0 is Excellent.")
+    report.append("> **RoR**: < 1% is Excellent. > 10% is Dangerous.")
     report.append("")
     report.append("---")
     report.append("")

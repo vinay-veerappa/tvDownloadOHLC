@@ -1,5 +1,5 @@
 # V3 Modes vs V2 Comprehensive Analysis (Enhanced)
-## Generated: 2026-01-07 16:51:46
+## Generated: 2026-01-07 18:32:05
 
 ---
 
@@ -9,28 +9,26 @@
 |---|---|---|---|---|
 | **Trades** | 5514 | 5386 | 5408 | 5402 |
 | **Total P&L** | $95,343.50 | $84,586.50 | $83,427.50 | $64,347.50 |
+| **Example R (AvgLoss)** | $107.41 | $96.86 | $95.72 | $82.20 |
 | **Win Rate %** | 41.13% | 40.20% | 40.03% | 39.71% |
-| **Avg P&L (EV)** | $17.29 | $15.70 | $15.43 | $11.91 |
+| **Expected Value (EV)** | $17.29 | $15.70 | $15.43 | $11.91 |
 
 ---
 
-## 🛡️ RISK PROFILING & EFFICIENCY
+## 🛡️ RISK PROFILING (PER EDGE SYSTEM)
 
 | Metric | V3 Fixed TP | V3 Adaptive | V3 Time Exit | V2 Baseline |
 |---|---|---|---|---|
 | **Profit Factor** | 1.27 | 1.27 | 1.27 | 1.24 |
-| **SQN** | 5.29 | 4.65 | 4.65 | 4.84 |
-| **Payoff Ratio** | 1.82 | 1.89 | 1.90 | 1.88 |
-| **Edge** | 0.161 | 0.162 | 0.161 | 0.145 |
-| **Combined Edge** | 0.205 | 0.206 | 0.204 | 0.180 |
-| **Max Drawdown** | $-9,592 | $-9,429 | $-8,922 | $-7,046 |
-| **Return / MaxDD** | 9.94 | 8.97 | 9.35 | 9.13 |
-| **Avg Win** | $195.77 | $183.18 | $181.92 | $154.82 |
-| **Avg Loss** | $-107.41 | $-96.86 | $-95.72 | $-82.20 |
+| **Combined Edge** | 0.21 | 0.21 | 0.20 | 0.18 |
+| **SQN (Trade Quality)** | 5.29 | 4.65 | 4.65 | 4.84 |
+| **Risk of Ruin %** | 0.0244% | 0.0233% | 0.0249% | 0.0697% |
+| **Max Streak (Theory)** | 16.3 | 16.7 | 16.8 | 17.0 |
 
-### SQN Interpretation
-> **SQN > 3.0** is excellent. **SQN > 5.0** is superb.
-> V3 Fixed TP SQN: **5.29** (Highest Quality)
+### Metric Grades
+> **Combined Edge**: > 50 is Good. > 100 is Excellent.
+> **SQN**: > 2.0 is Good. > 3.0 is Excellent.
+> **RoR**: < 1% is Excellent. > 10% is Dangerous.
 
 ---
 
