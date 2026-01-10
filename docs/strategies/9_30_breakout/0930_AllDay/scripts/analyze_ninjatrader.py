@@ -6,6 +6,8 @@ Purpose: Load NinjaTrader Strategy Analyzer CSV exports and generate
 
 Usage: python analyze_ninjatrader.py [trades_csv] [settings_csv] [summary_csv]
        If no args provided, will auto-detect files matching "NinjaTrader*" pattern.
+
+Note: All times are converted to EST for consistency with TradingView reports.
 """
 
 import pandas as pd
@@ -15,20 +17,19 @@ import warnings
 import os
 import glob
 import sys
+import pytz
 
 warnings.filterwarnings('ignore')
 
-# Import shared report generator functions
-# First try importing from shared module, otherwise define locally
-try:
-    from analyze_v3_comprehensive import (
-        perform_monte_carlo, calc_stats_extended, get_recommendations,
-        generate_entry_timing_analysis, generate_golden_minutes, generate_report
-    )
-    IMPORTED_SHARED = True
-except ImportError:
-    IMPORTED_SHARED = False
-    print("Note: Could not import shared functions, using local implementations")
+# --- TIMEZONE CONFIGURATION ---
+# NinjaTrader exports in local time (Pacific for this user)
+# We convert all times to EST for consistency
+LOCAL_TZ = pytz.timezone('US/Pacific')  # Chart timezone
+EST_TZ = pytz.timezone('US/Eastern')    # Report timezone
+
+# For NinjaTrader, always use local implementations to ensure correct config keys
+# The shared module has TradingView-specific configuration that doesn't match NT
+IMPORTED_SHARED = False
 
 
 # --- MARKET CONTEXT KNOWLEDGE BASE ---
@@ -46,28 +47,38 @@ def load_ninjatrader_settings(filepath):
     """Load NinjaTrader settings CSV into properties dict."""
     props = {}
     try:
-        df = pd.read_csv(filepath, header=0)
-        for _, row in df.iterrows():
-            if pd.notna(row.iloc[0]) and pd.notna(row.iloc[1]):
-                key = str(row.iloc[0]).strip()
-                val = str(row.iloc[1]).strip()
+        # Read CSV with proper handling
+        with open(filepath, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        for line in lines:
+            # Split by comma, handling potential trailing comma
+            parts = line.strip().rstrip(',').split(',')
+            if len(parts) >= 2:
+                key = parts[0].strip()
+                val = parts[1].strip()
                 if key and val:
                     props[key] = val
+        
+        print(f"  Loaded {len(props)} settings parameters")
     except Exception as e:
         print(f"Warning: Could not load settings: {e}")
     return props
 
 
+def convert_to_est(dt_series, source_tz=LOCAL_TZ):
+    """Convert datetime series from source timezone to EST."""
+    # Localize to source timezone, then convert to EST
+    localized = dt_series.dt.tz_localize(source_tz, ambiguous='NaT', nonexistent='NaT')
+    est_times = localized.dt.tz_convert(EST_TZ)
+    # Remove timezone info for cleaner display
+    return est_times.dt.tz_localize(None)
+
+
 def load_ninjatrader_trades(filepath, name="NinjaTrader"):
     """
     Load NinjaTrader trades CSV and convert to common format used by report generator.
-    
-    NinjaTrader columns:
-    - Trade number, Instrument, Account, Strategy, Market pos., Qty
-    - Entry price, Exit price, Entry time, Exit time, Entry name, Exit name
-    - Profit, Cum. net profit, Commission, MAE, MFE, ETD, Bars
-    
-    Returns dict matching TradingView loader format for compatibility.
+    All times are converted to EST.
     """
     try:
         df = pd.read_csv(filepath)
@@ -92,7 +103,7 @@ def load_ninjatrader_trades(filepath, name="NinjaTrader"):
     
     df.rename(columns=rename_map, inplace=True)
     
-    # Parse currency columns (remove $ and parentheses for negatives)
+    # Parse currency columns
     def parse_currency(val):
         if pd.isna(val):
             return 0.0
@@ -108,11 +119,16 @@ def load_ninjatrader_trades(filepath, name="NinjaTrader"):
         if col in df.columns:
             df[col] = df[col].apply(parse_currency)
     
-    # Parse datetime
+    # Parse datetime and convert to EST
     df['Entry Time'] = pd.to_datetime(df['Entry Time'])
     df['Exit Time'] = pd.to_datetime(df['Exit Time'])
     
-    # Add time columns
+    # Convert to EST
+    print("  Converting times to EST...")
+    df['Entry Time'] = convert_to_est(df['Entry Time'])
+    df['Exit Time'] = convert_to_est(df['Exit Time'])
+    
+    # Add time columns (now in EST)
     df['Hour'] = df['Entry Time'].dt.hour
     df['Minute'] = df['Entry Time'].dt.minute
     df['Month'] = df['Entry Time'].dt.month
@@ -153,9 +169,9 @@ def load_ninjatrader_data(trades_path, settings_path=None, name="NinjaTrader"):
         'ticker': df['Instrument'].iloc[0] if 'Instrument' in df.columns else 'UNKNOWN'
     }
 
-
 # ============================================================================
-# LOCAL IMPLEMENTATIONS (if shared module not available)
+# NINJATRADER-SPECIFIC REPORT GENERATION
+# These functions are always used for NinjaTrader reports (not imported from shared)
 # ============================================================================
 
 if not IMPORTED_SHARED:
@@ -233,7 +249,7 @@ if not IMPORTED_SHARED:
 
     def generate_entry_timing_analysis(df, name):
         lines = []
-        lines.append(f"#### {name} Precision Matrices")
+        lines.append(f"#### {name} Precision Matrices (EST)")
         
         lines.append("**Day of Week x Hour Performance ($)**")
         day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
@@ -282,14 +298,14 @@ if not IMPORTED_SHARED:
         best = ts_stats.sort_values('Net P&L USD', ascending=False).head(5)
         worst = ts_stats.sort_values('Net P&L USD', ascending=True).head(5)
         
-        lines.append(f"#### {name} - Golden Minutes (Specific Time)")
-        lines.append("| Time | P&L | Win% | Trades |")
+        lines.append(f"#### {name} - Golden Minutes EST")
+        lines.append("| Time (EST) | P&L | Win% | Trades |")
         lines.append("|---|---|---|---|")
         for _, r in best.iterrows():
             lines.append(f"| **{r['TimeSlot']}** | ${r['Net P&L USD']:,.0f} | {r['Is_Winner']*100:.1f}% | {int(r['Trade #'])} |")
             
-        lines.append(f"#### {name} - Toxic Minutes (Specific Time)")
-        lines.append("| Time | P&L | Win% | Trades |")
+        lines.append(f"#### {name} - Toxic Minutes EST")
+        lines.append("| Time (EST) | P&L | Win% | Trades |")
         lines.append("|---|---|---|---|")
         for _, r in worst.iterrows():
             lines.append(f"| **{r['TimeSlot']}** | ${r['Net P&L USD']:,.0f} | {r['Is_Winner']*100:.1f}% | {int(r['Trade #'])} |")
@@ -300,6 +316,7 @@ if not IMPORTED_SHARED:
         report = []
         report.append("# NinjaTrader Strategy Grade & Comprehensive Metrics")
         report.append(f"## Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report.append("**Note**: All times are in EST for consistency with TradingView reports.")
         report.append("")
         report.append("---")
         
@@ -355,15 +372,17 @@ if not IMPORTED_SHARED:
         report.append("")
         report.append("---")
         
-        # 2. CONFIGURATION VERIFICATION
+        # 2. CONFIGURATION VERIFICATION - Use actual NinjaTrader setting keys
         report.append("## ⚙️ CONFIGURATION VERIFICATION (NinjaTrader)")
         keys_to_check = [
             "Use Immediate Entry", "Min Displacement %",
             "Require Fresh Breakout", "Max Attempts Per Day",
             "Use Single TP", "TP1 %", "TP2 %",
             "Use Trailing Stop", "Use Adaptive Trail", "Move to Breakeven After TP1",
-            "Use Fixed SL", "Risk per Trade %", "Min Contracts", "Max Contracts",
+            "Use Fixed SL", "Fixed SL %", "Risk per Trade %", 
+            "Min Contracts", "Max Contracts",
             "Use MAE Filter", "MAE Threshold %",
+            "Max Range %", "Min Range %",
         ]
         
         report.append("| Parameter | " + " | ".join([d['name'] for d in datasets]) + " |")
@@ -380,7 +399,7 @@ if not IMPORTED_SHARED:
         report.append("---")
         
         # 3. HYPER-PRECISION MATRIX
-        report.append("## ⏰ HYPER-PRECISION TIME ANALYSIS")
+        report.append("## ⏰ HYPER-PRECISION TIME ANALYSIS (EST)")
         
         for d in datasets:
             report.extend(generate_entry_timing_analysis(d['merged'], d['name']))
@@ -391,7 +410,7 @@ if not IMPORTED_SHARED:
             
         # 4. 5-Min Distribution
         for d in datasets:
-            report.append(f"#### {d['name']} 5-Minute Distribution Matrices")
+            report.append(f"#### {d['name']} 5-Minute Distribution Matrices (EST)")
             df = d['merged'].copy()
             df['Bucket5'] = (df['Minute'] // 5) * 5
             
@@ -405,7 +424,7 @@ if not IMPORTED_SHARED:
                 for c in range(0, 60, 5): 
                     if c not in pivot.columns: pivot[c] = 0
                 cols = sorted(list(pivot.columns))
-                ls.append(f"| Hour | {' | '.join([f':{c:02d}' for c in cols])} |")
+                ls.append(f"| Hour (EST) | {' | '.join([f':{c:02d}' for c in cols])} |")
                 ls.append("|---" + "|---" * len(cols) + "|")
                 for h, r in pivot.iterrows():
                     vals = [fmt(r[c]) for c in cols]
@@ -449,20 +468,17 @@ def find_ninjatrader_files(directory="."):
 if __name__ == '__main__':
     print("=== NinjaTrader Strategy Analyzer ===")
     print(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print()
+    print("All times will be converted to EST.\n")
     
     # Determine input files
     if len(sys.argv) >= 2:
-        # Command line args provided
         trades_path = sys.argv[1]
         settings_path = sys.argv[2] if len(sys.argv) > 2 else None
     else:
-        # Auto-detect in current directory
         print("Auto-detecting NinjaTrader files...")
         files = find_ninjatrader_files(".")
         
         if not files['trades']:
-            # Try ninjascript subdirectory
             files = find_ninjatrader_files("ninjascript")
         
         if not files['trades']:
@@ -489,6 +505,7 @@ if __name__ == '__main__':
     print(f"  Loaded {len(data['merged'])} trades")
     print(f"  Ticker: {data['ticker']}")
     print(f"  Date Range: {data['merged']['Entry Time'].min()} to {data['merged']['Entry Time'].max()}")
+    print(f"  Settings loaded: {len(data['props'])} parameters")
     
     # Generate report
     print("\nGenerating comprehensive report...")
@@ -502,6 +519,7 @@ if __name__ == '__main__':
 **Strategy**: {data['props'].get('Label', 'ORBv5Strategy')}
 **Period**: {data['merged']['Entry Time'].min().strftime('%Y-%m-%d')} to {data['merged']['Entry Time'].max().strftime('%Y-%m-%d')}
 **Total Trades**: {len(data['merged'])}
+**Timezone**: All times are in EST
 
 ---
 
