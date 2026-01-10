@@ -205,7 +205,7 @@ def compare_trades(nt_df, tv_df, start_date, end_date):
 if __name__ == '__main__':
     # File paths
     nt_file = r"..\ninjascript\NinjaTrader Grid 2026-01-10 02-38 PM.csv"
-    tv_file = r"..\ninjascript\ORBv5_CME_MINI_MNQ1!_2026-01-10_7758e.xlsx"
+    tv_file = r"..\ninjascript\ORBv5_CME_MINI_MNQ1!_2026-01-10_4e918.xlsx"
     
     print("Loading NinjaTrader trades...")
     nt_df = load_nt_trades(nt_file)
