@@ -2,9 +2,9 @@
 // © niharika / claude
 
 //@version=6
-strategy("All-Day ORB Strategy V3 [Adaptive]", shorttitle="ORB V3", overlay=true,
+strategy("All-Day ORB V3 [Toxic Windows]", shorttitle="ORBv3_ToxWin", overlay=true,
           initial_capital=100000, default_qty_type=strategy.fixed, default_qty_value=1,
-          margin_long=0, margin_short=0, calc_on_every_tick=false)
+          margin_long=0, margin_short=0, calc_on_every_tick=true)
 
 // =============================================================================
 // 1. INPUTS - HIGHLY CONFIGURABLE FOR TESTING
@@ -76,14 +76,31 @@ slMode = input.string("Range Boundary", "Stop Loss Mode",
 slFixedPct = input.float(0.20, "Fixed SL % (if selected)", step=0.01, group=grp_risk)
 useMAEFilter = input.bool(true, "Enable MAE Heat Filter", group=grp_risk)
 maeThreshold = input.float(0.15, "MAE % Threshold", step=0.01, group=grp_risk)
+maeReference = input.string("Entry Price", "MAE Measure From", options=["Entry Price", "Range Boundary"], group=grp_risk,
+    tooltip="Entry Price: Tight. Range Boundary: Wide (from breakout level).")
 riskPercent = input.float(1.0, "Risk per Trade %", minval=0.1, step=0.1, group=grp_risk)
 minContracts = input.int(1, "Min Contracts (Force Size)", minval=1, group=grp_risk,
     tooltip="Force minimum contracts (e.g. 3) to ensure runners are active.")
+maxContracts = input.int(20, "Max Contracts (Ceiling)", minval=1, group=grp_risk,
+    tooltip="Absolute maximum limit for position size.")
+
+
+// --- Risk Management (Daily) ---
+grp_daily_risk = "Daily Risk Limits"
+useMaxDailyLoss = input.bool(true, "Enable Max Daily Loss", group=grp_daily_risk)
+maxDailyLossUSD = input.float(200, "Max Daily Loss ($)", minval=10, step=10, group=grp_daily_risk)
+dailyLossMode = input.string("Fixed", "Daily Loss Mode", options=["Fixed", "Trailing"], group=grp_daily_risk,
+    tooltip="Fixed: Stops at Start Balance - Limit.\nTrailing: Stops at Daily High Equity - Limit.")
+closeOnDailyLimit = input.bool(true, "Close Positions on Limit Hit", group=grp_daily_risk,
+    tooltip="If TRUE, immediately closes active trades when limit is breached. If FALSE, just stops NEW trades.")
 
 // --- Filters ---
 grp_filters = "Filters"
 useVVIX = input.bool(true, "Enable VVIX Filter", group=grp_filters)
 vvixMax = input.float(108, "Max VVIX (Skip if above)", group=grp_filters)
+useCandleBodyFilter = input.bool(true, "Enable Candle Body Filter", group=grp_filters,
+    tooltip="Skip entry if candle is a Doji (Body < 50% of Range)")
+minBodyPct = input.int(50, "Min Body %", minval=10, maxval=100, step=5, group=grp_filters)
 maxRangePct = input.float(0.25, "Max Range % (Skip if larger)", step=0.01, group=grp_filters)
 minRangePct = input.float(0.03, "Min Range % (Skip if smaller)", step=0.01, group=grp_filters)
 
@@ -97,6 +114,17 @@ skipFriday = input.bool(false, "Skip Friday", group=grp_filters)
 // Time of Day Filters
 skipLunchHour = input.bool(false, "Skip Lunch (11:30-13:00)", group=grp_filters)
 skipAfternoon = input.bool(false, "Skip Afternoon (14:00+)", group=grp_filters)
+
+// Toxic Time Windows (based on 6,170 trade analysis)
+grp_toxic = "Toxic Time Windows"
+skip10amNews = input.bool(true, "Skip 10:00 AM News (09:55-10:05)", group=grp_toxic,
+    tooltip="Consumer Confidence, ISM PMI, JOLTS - 24.2% WR")
+skip1030News = input.bool(true, "Skip 10:30 AM News (10:25-10:35)", group=grp_toxic,
+    tooltip="Crude Oil Inventories, Natural Gas - 22.7% WR")
+skipLunchChop = input.bool(true, "Skip Lunch Chop (11:10-11:25)", group=grp_toxic,
+    tooltip="Worst windows at 12-13% WR - pure chop, no news")
+skip1pmNews = input.bool(false, "Skip 1:00 PM News (12:55-13:05)", group=grp_toxic,
+    tooltip="ISM PMI, Factory Orders - 19.2% WR")
 
 // --- Visuals ---
 grp_visual = "Visuals & Debug"
@@ -118,11 +146,45 @@ isTradingTime = not na(time(timeframe.period, tradingWindow, "America/New_York")
 isHardExit = not na(time(timeframe.period, hardExitTime, "America/New_York"))
 isNewDay = ta.change(time("D")) != 0
 
+// --- Daily Risk Tracking ---
+var float dayStartEquity = 0.0
+var float dayHighEquity = 0.0
+var bool isDailyLossHit = false
+
+if isNewDay
+    dayStartEquity := strategy.equity
+    dayHighEquity := strategy.equity
+    isDailyLossHit := false
+
+// Update High Water Mark (for Trailing Mode)
+if strategy.equity > dayHighEquity
+    dayHighEquity := strategy.equity
+
+// Calculate Limit Level
+float dailyLimitLevel = na
+if dailyLossMode == "Fixed"
+    dailyLimitLevel := dayStartEquity - maxDailyLossUSD
+else // Trailing
+    dailyLimitLevel := dayHighEquity - maxDailyLossUSD
+
+// Check Breach
+if useMaxDailyLoss and strategy.equity <= dailyLimitLevel
+    isDailyLossHit := true
+    if closeOnDailyLimit and strategy.position_size != 0
+        strategy.close_all("Daily Loss Limit")
+
+
 // Time of day checks
 currentHour = hour(time, "America/New_York")
 currentMinute = minute(time, "America/New_York")
 isLunchHour = (currentHour == 11 and currentMinute >= 15) or (currentHour == 12)
 isAfternoon = currentHour >= 14
+
+// Toxic Time Windows (based on 6,170 trade analysis of low win rate periods)
+is10amNewsWindow = (currentHour == 9 and currentMinute >= 55) or (currentHour == 10 and currentMinute <= 5)
+is1030NewsWindow = (currentHour == 10 and currentMinute >= 25 and currentMinute <= 35)
+isLunchChopWindow = (currentHour == 11 and currentMinute >= 10 and currentMinute <= 25)
+is1pmNewsWindow = (currentHour == 12 and currentMinute >= 55) or (currentHour == 13 and currentMinute <= 5)
 
 // Day of week
 dayOfWeek = dayofweek
@@ -152,12 +214,19 @@ rMid = rDefined ? rLow + rSize / 2 : na
 rPct = rDefined ? (rSize / close) * 100 : 0
 
 // --- Calculated Levels ---
+// Displacement: % of PRICE - e.g., 0.05% means entry must be 0.05% of price past boundary
 displacementHigh = rDefined ? rHigh * (1 + minDisplacement / 100) : na
 displacementLow = rDefined ? rLow * (1 - minDisplacement / 100) : na
 maxPBLong = rDefined ? rHigh - (rSize * maxPullbackDepth / 100) : na
 maxPBShort = rDefined ? rLow + (rSize * maxPullbackDepth / 100) : na
 fallbackLongZone = rDefined ? rHigh * (1 + fallbackProximity / 100) : na
 fallbackShortZone = rDefined ? rLow * (1 - fallbackProximity / 100) : na
+
+// --- Candle Shape Logic ---
+candleRange = high - low
+bodySize = math.abs(close - open)
+bodyPct = (candleRange > 0) ? (bodySize / candleRange) * 100 : 0
+isDoji = bodyPct < minBodyPct
 
 // =============================================================================
 // 3. FILTER LOGIC
@@ -169,7 +238,9 @@ isDayFiltered = (skipMonday and isMonday) or (skipTuesday and isTuesday) or
                  (skipFriday and isFriday)
 
 // Time filter
-isTimeFiltered = (skipLunchHour and isLunchHour) or (skipAfternoon and isAfternoon)
+isToxicFiltered = (skip10amNews and is10amNewsWindow) or (skip1030News and is1030NewsWindow) or 
+                   (skipLunchChop and isLunchChopWindow) or (skip1pmNews and is1pmNewsWindow)
+isTimeFiltered = (skipLunchHour and isLunchHour) or (skipAfternoon and isAfternoon) or isToxicFiltered
 
 // Range filter
 isRangeFiltered = rPct > maxRangePct or rPct < minRangePct
@@ -178,7 +249,7 @@ isRangeFiltered = rPct > maxRangePct or rPct < minRangePct
 isVVIXFiltered = useVVIX and nz(vvix_open, 0) > vvixMax
 
 // Combined filter
-isFiltered = isDayFiltered or isTimeFiltered or isRangeFiltered or isVVIXFiltered
+isFiltered = isDayFiltered or isTimeFiltered or isRangeFiltered or isVVIXFiltered or (useCandleBodyFilter and isDoji)
 
 // =============================================================================
 // 4. STATE TRACKING
@@ -262,20 +333,22 @@ canTakeShort = reentryMode != "One Per Direction" or not shortTakenToday
 // Overall trade eligibility
 canTrade = rDefined and isTradingTime and not isHardExit and not inTrade and 
            attempts < maxAttempts and not isFiltered and cooldownComplete and
-           reentryEligible and not (stopAfterWin and hasWonToday)
+           reentryEligible and not (stopAfterWin and hasWonToday) and 
+           not isDailyLossHit
 
-// Breakout detection
-breakoutLong = ta.crossover(close, rHigh)
-breakoutShort = ta.crossunder(close, rLow)
+// Breakout detection - use displacement level for entry trigger when enabled
+breakoutLong = minDisplacement > 0 ? ta.crossover(close, displacementHigh) : ta.crossover(close, rHigh)
+breakoutShort = minDisplacement > 0 ? ta.crossunder(close, displacementLow) : ta.crossunder(close, rLow)
 
-// Displacement validation
+// Displacement validation (for pullback modes)
 hasDisplacementLong = close >= displacementHigh
 hasDisplacementShort = close <= displacementLow
 
 // Position sizing - for Multi-TP we need base contracts
 calcBaseQty() =>
     qtyRisk = math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue))
-    math.max(minContracts, qtyRisk)
+    qtyFloored = math.max(minContracts, qtyRisk)
+    math.min(maxContracts, qtyFloored)
 
 // Generate trade comment for Excel analysis
 getTradeComment(isLong, attemptNum, entryType, fresh) =>
@@ -299,6 +372,7 @@ getTradeComment(isLong, attemptNum, entryType, fresh) =>
 if canTrade
     // IMMEDIATE MODE
     if entryMode == "Immediate"
+        // Displacement is built into breakoutLong/Short detection (set minDisplacement=0 to disable)
         if breakoutLong and canTakeLong
             attempts += 1
             longAttempts += 1
@@ -647,14 +721,20 @@ var box orbBox = na
 if showRangeBox
     if isORBar and rDefined
         boxColor = isRangeFiltered ? color.new(color.red, 85) : color.new(color.blue, 90)
-        orbBox := box.new(bar_index, rHigh, bar_index + 50, rLow, bgcolor=boxColor, border_color=color.blue)
-    if rDefined and not na(orbBox)
-        box.set_right(orbBox, bar_index + 10)
+        // Use TIME coordinates (xloc.bar_time) to anchor firmly to the chart
+        // Duration: 60 minutes * 60 seconds * 1000 ms = 3,600,000 ms
+        int boxDuration = 5* 60 * 60 * 1000 
+        orbBox := box.new(time, rHigh, time + boxDuration, rLow, xloc=xloc.bar_time, bgcolor=boxColor, border_color=color.blue)
+    
+    // Dynamic update removed to prevent "Stuck" glitch
+    // if rDefined and not na(orbBox)
+    //    box.set_right(orbBox, bar_index + 10)
 
-// --- Range Lines ---
-plot(rDefined ? rHigh : na, "Range High", color=color.new(color.blue, 50), linewidth=2)
-plot(rDefined ? rLow : na, "Range Low", color=color.new(color.blue, 50), linewidth=2)
-plot(rDefined ? rMid : na, "Range Mid", color=color.new(color.gray, 70), style=plot.style_linebr)
+
+// --- Range Lines (Removed by User Request) ---
+// plot(rDefined ? rHigh : na, "Range High", color=color.new(color.blue, 50), linewidth=2)
+// plot(rDefined ? rLow : na, "Range Low", color=color.new(color.blue, 50), linewidth=2)
+// plot(rDefined ? rMid : na, "Range Mid", color=color.new(color.gray, 70), style=plot.style_linebr)
 
 // --- Active Trade Levels ---
 var float activeTP1 = na
@@ -705,7 +785,7 @@ barcolor(isORBar ? color.yellow : na)
 // =============================================================================
 
 if showDashboard and barstate.islast
-    var table dash = table.new(position.top_right, 2, 16, bgcolor=color.new(color.black, 20), 
+    var table dash = table.new(position.top_right, 2, 20, bgcolor=color.new(color.black, 20), 
                                border_width=1, border_color=color.gray)
     
     // Header
@@ -778,8 +858,8 @@ if showDashboard and barstate.islast
     
     // MAE Filter
     table.cell(dash, 0, 12, "MAE Filter", text_color=color.white)
-    table.cell(dash, 1, 12, useMAEFilter ? str.tostring(maeThreshold, "#.##") + "%" : "OFF", 
-               text_color=useMAEFilter ? color.yellow : color.gray)
+    maeText = useMAEFilter ? str.tostring(maeThreshold, "#.##") + "% (" + (maeReference == "Entry Price" ? "Entry" : "Range") + ")" : "OFF"
+    table.cell(dash, 1, 12, maeText, text_color=useMAEFilter ? color.yellow : color.gray)
     
     // Time
     table.cell(dash, 0, 13, "Time", text_color=color.white)
@@ -792,9 +872,33 @@ if showDashboard and barstate.islast
     dayText = isMonday ? "MON" : isTuesday ? "TUE" : isWednesday ? "WED" : 
               isThursday ? "THU" : isFriday ? "FRI" : "?"
     table.cell(dash, 1, 14, dayText, text_color=isDayFiltered ? color.red : color.white)
+
+    // MAE/MFE Stats
+    table.cell(dash, 0, 15, "Daily P&L", text_color=color.white)
+    float dailyPnL = strategy.equity - dayStartEquity
+    color pnlColor = dailyPnL > 0 ? color.green : dailyPnL < -maxDailyLossUSD*0.8 ? color.orange : color.red
+    if dailyPnL < 0 
+        pnlColor := color.red
+    
+    table.cell(dash, 1, 15, str.tostring(dailyPnL, format.mintick) + " (" + (isDailyLossHit ? "HALTED" : "Active") + ")", 
+               text_color=isDailyLossHit ? color.red : (dailyPnL >= 0 ? color.green : color.orange))
+
+    // Daily Limit Level
+    table.cell(dash, 0, 16, "Risk Limit", text_color=color.white)
+    table.cell(dash, 1, 16, str.tostring(dailyLimitLevel, "#.##"), text_color=color.gray)
+
+    // Position Info
+    table.cell(dash, 0, 17, "Position", text_color=color.white)
+    if strategy.position_size != 0
+        float avgPrice = strategy.position_avg_price
+        float openPL = (close - avgPrice) * strategy.position_size * syminfo.pointvalue
+        table.cell(dash, 1, 17, str.tostring(strategy.position_size) + " @ " + str.tostring(avgPrice, "#.##") + 
+                   " (" + str.tostring(openPL, "#.##") + ")", text_color=openPL >= 0 ? color.lime : color.red)
+    else
+        table.cell(dash, 1, 17, "FLAT", text_color=color.gray)
     
     // Filters
-    table.cell(dash, 0, 15, "Filters", text_color=color.white)
+    table.cell(dash, 0, 18, "Filters", text_color=color.white)
     filterList = ""
     if isDayFiltered
         filterList += "DAY "
@@ -806,7 +910,7 @@ if showDashboard and barstate.islast
         filterList += "RANGE "
     if filterList == ""
         filterList := "NONE"
-    table.cell(dash, 1, 15, filterList, text_color=isFiltered ? color.red : color.green)
+    table.cell(dash, 1, 18, filterList, text_color=isFiltered ? color.red : color.green)
 
 // =============================================================================
 // 9. DEBUG LABELS
