@@ -177,36 +177,59 @@ def main():
             'close': np_close[idx_932]
         }
         
-        # Find 9:32-9:59 session
-        session_mask = date_mask & (np_hour == 9) & (np_minute >= 32) & (np_minute <= 59)
+        # Find 9:30 candle (Opening Range)
+        mask_930 = date_mask & (np_hour == 9) & (np_minute == 30)
+        idx_930 = np.where(mask_930)[0]
+        
+        if len(idx_930) == 0:
+            continue
+            
+        c930_high = np_high[idx_930[0]]
+        c930_low = np_low[idx_930[0]]
+        
+        # Find 9:31-9:44 session (Extension Window)
+        session_mask = date_mask & (np_hour == 9) & (np_minute >= 31) & (np_minute <= 44)
         session_idxs = np.where(session_mask)[0]
         
         if len(session_idxs) < 5:
             continue
         
-        session_open = np_open[session_idxs[0]]
-        session_close = np_close[session_idxs[-1]]
-        pct_move = (session_close - session_open) / session_open * 100
+        # Calculate extensions
+        session_high = np_high[session_idxs].max()
+        session_low = np_low[session_idxs].min()
         
-        # Classify
+        ext_up = max(0, (session_high - c930_high) / c930_high * 100)
+        ext_down = max(0, (c930_low - session_low) / c930_low * 100)
+        
+        # Determine winning side
+        if ext_up > ext_down:
+            win_side = 'UP'
+            win_score = ext_up
+        elif ext_down > ext_up:
+            win_side = 'DOWN'
+            win_score = ext_down
+        else:
+            win_side = 'NEUTRAL'
+            win_score = 0
+
+        # Classify patterns
         c928_dir = classify_928_direction(c928)
         pattern, _ = classify_relationship(c928, c932)
         
-        if session_close > session_open:
-            outcome_dir = 'BULLISH'
-        elif session_close < session_open:
-            outcome_dir = 'BEARISH'
-        else:
-            outcome_dir = 'FLAT'
-        
-        aligned = (c928_dir == outcome_dir)
-        
+        # Check alignment (Bullish pattern -> Up extension?)
+        aligned = False
+        if c928_dir == 'BULLISH' and win_side == 'UP':
+            aligned = True
+        elif c928_dir == 'BEARISH' and win_side == 'DOWN':
+            aligned = True
+            
         results.append({
             'date': str(date),
             'c928_dir': c928_dir,
             'pattern': pattern,
-            'session_dir': outcome_dir,
-            'pct_move': pct_move,
+            'win_side': win_side,
+            'ext_up': ext_up,
+            'ext_down': ext_down,
             'aligned': aligned,
         })
     
@@ -215,23 +238,47 @@ def main():
     
     # Summary by pattern
     print("\n" + "="*70)
-    print("RESULTS BY PATTERN")
+    print("RESULTS BY PATTERN (Predicting 9:30-9:44 Extension %)")
     print("="*70)
+    print("Do these patterns predict which side of the 9:30 range breaks further?")
     
-    print(f"\n{'Pattern':<12} | {'Count':>6} | {'Aligned':>8} | {'Rate':>6} | {'Avg Move':>10}")
-    print("-"*55)
+    print(f"\n{'Pattern':<12} | {'Count':>6} | {'Aligned':>8} | {'Win Rate':>8} | {'Avg Ext (%)':>14}")
+    print("-"*70)
     
     for pattern in ['ON_TOP', 'BELOW', 'KISS', 'ENGULF', 'GAP_UP', 'GAP_DOWN', 'INSIDE']:
         subset = df_results[df_results['pattern'] == pattern]
         if len(subset) == 0:
             continue
         
-        count = len(subset)
-        aligned = subset['aligned'].sum()
-        rate = aligned / count * 100
-        avg_move = subset['pct_move'].abs().mean()
+        # Win Rate calculation
+        # If Pattern implies UP (Bullish), how often did UP win?
+        # We need a 'predicted_direction' logic for this table
         
-        print(f"{pattern:<12} | {count:>6} | {aligned:>8} | {rate:>5.1f}% | {avg_move:>9.3f}%")
+        # Assume standard logic:
+        # ON_TOP, GAP_UP -> Predict UP
+        # BELOW, GAP_DOWN -> Predict DOWN
+        # ENGULF, INSIDE, KISS -> Uncertain (check alignment with 9:28 dir)
+        
+        if pattern in ['ON_TOP', 'GAP_UP']:
+            wins = (subset['win_side'] == 'UP').sum()
+            avg_ext = subset['ext_up'].mean()
+        elif pattern in ['BELOW', 'GAP_DOWN']:
+            wins = (subset['win_side'] == 'DOWN').sum()
+            avg_ext = subset['ext_down'].mean()
+        else:
+            # For neutral patterns, check alignment with 9:28 dir
+            wins = subset['aligned'].sum()
+            # Avg extension of the *aligned* side
+            exts = []
+            for _, row in subset.iterrows():
+                if row['aligned']:
+                    exts.append(row['ext_up'] if row['c928_dir'] == 'BULLISH' else row['ext_down'])
+            avg_ext = np.mean(exts) if exts else 0
+            
+        count = len(subset)
+        rate = wins / count * 100
+        
+        print(f"{pattern:<12} | {count:>6} | {wins:>8} | {rate:>7.1f}% | {avg_ext:>13.3f}%")
     
     # Summary by 9:28 direction
     print("\n" + "="*70)
@@ -243,49 +290,32 @@ def main():
         if len(subset) == 0:
             continue
         
+        if dir_928 == 'BULLISH':
+            correct = (subset['win_side'] == 'UP').sum()
+            avg_win = subset[subset['win_side'] == 'UP']['ext_up'].mean()
+        else:
+            correct = (subset['win_side'] == 'DOWN').sum()
+            avg_win = subset[subset['win_side'] == 'DOWN']['ext_down'].mean()
+
+        rate = correct / len(subset) * 100
         print(f"\n9:28 = {dir_928}")
         print(f"  Total: {len(subset)}")
-        print(f"  Session aligned: {subset['aligned'].sum()} ({subset['aligned'].mean()*100:.1f}%)")
-        print(f"  Avg session move: {subset['pct_move'].mean():.3f}%")
-    
-    # Key insight: ENGULF pattern
+        print(f"  Correct Prediction: {correct} ({rate:.1f}%)")
+        print(f"  Avg Winning Extension: {avg_win:.3f}%")
+
+    # Specific Combo Check
     print("\n" + "="*70)
-    print("KEY INSIGHT: ENGULF (JUDAS) PATTERN")
+    print("GOLDEN COMBO CHECK")
     print("="*70)
     
-    engulf = df_results[df_results['pattern'] == 'ENGULF']
-    non_engulf = df_results[df_results['pattern'] != 'ENGULF']
-    
-    if len(engulf) > 0 and len(non_engulf) > 0:
-        print(f"\nENGULF pattern alignment: {engulf['aligned'].mean()*100:.1f}%")
-        print(f"Non-ENGULF pattern alignment: {non_engulf['aligned'].mean()*100:.1f}%")
-        
-        diff = non_engulf['aligned'].mean() - engulf['aligned'].mean()
-        print(f"\nDifference: {diff*100:+.1f}% better alignment when NOT engulfed")
-    
-    # Confirmation patterns
-    print("\n" + "="*70)
-    print("CONFIRMATION PATTERNS (Best conditions)")
-    print("="*70)
-    
-    # Bullish: 9:28 bullish + ON_TOP
-    bull_confirm = df_results[(df_results['c928_dir'] == 'BULLISH') & (df_results['pattern'] == 'ON_TOP')]
-    if len(bull_confirm) > 0:
-        print(f"\n9:28 BULLISH + ON_TOP: {len(bull_confirm)} days, {bull_confirm['aligned'].mean()*100:.1f}% aligned")
-    
-    # Bearish: 9:28 bearish + BELOW
-    bear_confirm = df_results[(df_results['c928_dir'] == 'BEARISH') & (df_results['pattern'] == 'BELOW')]
-    if len(bear_confirm) > 0:
-        print(f"9:28 BEARISH + BELOW: {len(bear_confirm)} days, {bear_confirm['aligned'].mean()*100:.1f}% aligned")
-    
-    # KISS pattern
-    kiss = df_results[df_results['pattern'] == 'KISS']
-    if len(kiss) > 0:
-        print(f"\nKISS pattern overall: {len(kiss)} days, {kiss['aligned'].mean()*100:.1f}% aligned")
-    
-    print("\n" + "="*70)
-    print("ANALYSIS COMPLETE")
-    print("="*70)
+    bull_combo = df_results[(df_results['c928_dir'] == 'BULLISH') & (df_results['pattern'] == 'ON_TOP')]
+    if len(bull_combo) > 0:
+        wins = (bull_combo['win_side'] == 'UP').sum()
+        rate = wins / len(bull_combo) * 100
+        avg_ext = bull_combo['ext_up'].mean()
+        print(f"9:28 BULLISH + ON_TOP: {len(bull_combo)} trades")
+        print(f"  Extension UP Win Rate: {rate:.1f}%")
+        print(f"  Avg Extension UP: {avg_ext:.3f}%")
     
     # Save results
     output_path = Path("scripts/research/ml_price_curves/output/candle_928_932_results.csv")
