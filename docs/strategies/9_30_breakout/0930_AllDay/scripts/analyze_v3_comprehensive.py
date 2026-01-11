@@ -13,12 +13,11 @@ import numpy as np
 from datetime import datetime
 import warnings
 import os
-import glob
-
-warnings.filterwarnings('ignore')
+import argparse
 
 # --- CONFIGURATION: DYNAMIC INPUT ---
-INPUT_PATTERN = r"ORB_V3_Doji*.xlsx"
+# Default pattern if no argument provided
+DEFAULT_PATTERN = r"ORB_V3_Doji*.xlsx"
 
 # --- MARKET CONTEXT KNOWLEDGE BASE ---
 # Maps (Year, Quarter) to a brief macro tag. 
@@ -307,18 +306,32 @@ def generate_report(datasets):
     
     # 2. CONFIGURATION VERIFICATION
     report.append("## ⚙️ CONFIGURATION VERIFICATION")
-    # Define keys to look for in properties
-    keys_to_check = [
-        "Enable Candle Body Filter", "Min Body %",
-        "Stop Loss Mode", "Entry Mode", "Re-entry Mode",
-        "Max Attempts per Day", "Max Daily Loss ($)", "Daily Loss Mode",
-        "Runner Mode After TP1", "TP3 % (Runner)"
-    ]
     
+    # Dynamic Property Detection
+    all_keys = set()
+    for d in datasets:
+        all_keys.update(d['props'].keys())
+    
+    diff_keys = []
+    important_keys = ["Tanja Mode", "Entry Mode", "Stop Loss Mode", "Bot Mode", "Strategy Mode"]
+    
+    for key in sorted(list(all_keys)):
+        values = [str(d['props'].get(key, "-")) for d in datasets]
+        if len(set(values)) > 1 or key in important_keys:
+             if key in all_keys: # Ensure key exists in at least one
+                diff_keys.append(key)
+    
+    if not diff_keys:
+        diff_keys = ["(No setting differences found)"]
+
     report.append("| Parameter | " + " | ".join([d['name'] for d in datasets]) + " |")
     report.append("|" + "|".join(["---"] * (len(datasets)+1)) + "|")
     
-    for key in keys_to_check:
+    for key in diff_keys:
+        if key == "(No setting differences found)":
+             report.append(f"| {key} | " + " | ".join(["-" for _ in datasets]) + " |")
+             continue
+             
         row = [f"**{key}**"]
         for d in datasets:
             val = d['props'].get(key, "-")
@@ -373,27 +386,36 @@ def generate_report(datasets):
     return '\n'.join(report)
 
 if __name__ == '__main__':
-    print(f"Searching for files: {INPUT_PATTERN}")
-    files = glob.glob(INPUT_PATTERN)
+    parser = argparse.ArgumentParser(description='Trade Analysis Tool')
+    parser.add_argument('pattern', nargs='?', default=DEFAULT_PATTERN, help='File pattern to match (e.g. "MyStrat*.xlsx")')
+    args = parser.parse_args()
+    
+    print(f"Searching for files: {args.pattern}")
+    files = glob.glob(args.pattern)
     datasets = []
     
     # 1. Load All Datasets
     if files:
         for f in files:
             # Extract Ticker from filename logic
-            # Format: ORB_V3_Doji_CME_MINI_MNQ1!_2026-01-08...
-            # Split by '_' and find the ticker part (usually index 4 or 5)
-            # We'll use a simple heuristic: Look for the part containing '!' or known tickers
+            # Format: PREFIX_TICKER_DATE...
             parts = os.path.basename(f).split('_')
             ticker = "UNKNOWN"
+            # Heuristic: Look for '!' or known 3-4 letter codes if needed, or index-based
             for p in parts:
                 if "!" in p:
                     ticker = p
                     break
             
-            # Fallback if no specific ticker found
+            # Fallback
             if ticker == "UNKNOWN":
-                # unexpected format, just treat as generic
+                 # Try to guess common futures/idx tickers
+                 common = ['NQ', 'ES', 'RTY', 'YM', 'SPX', 'NDX']
+                 for p in parts:
+                     if any(c in p for c in common):
+                         ticker = p
+                         break
+            if ticker == "UNKNOWN":
                 ticker = "GENERIC"
 
             name = os.path.basename(f).split('_')[-1].replace('.xlsx', '')
@@ -406,6 +428,31 @@ if __name__ == '__main__':
             
     # 2. Group by Ticker & Generate Reports
     if datasets:
+        # Smart Naming: Check for differentiating properties
+        all_props = set()
+        for d in datasets:
+            all_props.update(d['props'].keys())
+        
+        # Find differentiating keys
+        diff_keys = []
+        for k in all_props:
+            vals = set(str(d['props'].get(k,'')) for d in datasets)
+            if len(vals) > 1:
+                diff_keys.append(k)
+        
+        # If we have differentiating keys, append values to name for clarity
+        # Prioritize "Mode" keys or "Interval" keys
+        priority_keys = [k for k in diff_keys if 'Mode' in k or 'Interval' in k or 'Type' in k]
+        key_to_use = priority_keys[0] if priority_keys else (diff_keys[0] if diff_keys else None)
+        
+        if key_to_use:
+            print(f"Auto-detected differentiating setting: {key_to_use}")
+            for d in datasets:
+                val = d['props'].get(key_to_use, 'Default')
+                # cleanup value
+                if len(val) > 20: val = val[:20] + ".."
+                d['name'] = f"{d['name']} ({val})"
+
         # Get unique tickers
         unique_tickers = list(set(d['ticker'] for d in datasets))
         
@@ -418,15 +465,18 @@ if __name__ == '__main__':
             group.sort(key=lambda d: calc_stats_extended(d['merged']).get('Profit Factor', 0), reverse=True)
             
             # Generate Report
-            # Clean ticker for filename (remove !, replace special chars)
             safe_ticker = t.replace('!', '').replace('^', '').replace('/', '')
-            filename = f'V3_Analysis_{safe_ticker}.md'
+            # Use prefix from pattern if possible or generic
+            prefix = args.pattern.split('*')[0].replace('*.xlsx', '').replace('_', '')
+            if not prefix or prefix == "*": prefix = "Strategy"
+            
+            filename = f'{prefix}_Analysis_{safe_ticker}.md'
             
             print(f"Generating report: {filename}...")
             content = generate_report(group)
             
             # Add Ticker Header to Report
-            content = f"# {t} Strategy Forensics\n**Ticker**: {t}\n\n" + content
+            content = f"# {t} Strategy Forensics\n**Ticker**: {t}\n**Pattern**: {args.pattern}\n\n" + content
             
             with open(filename, 'w', encoding='utf-8') as f:
                 f.write(content)
