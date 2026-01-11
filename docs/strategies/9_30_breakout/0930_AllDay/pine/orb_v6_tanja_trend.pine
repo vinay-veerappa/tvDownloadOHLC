@@ -3,7 +3,7 @@
 // V5 - Modular Refactor with Boolean Flags
 
 //@version=6
-strategy("All-Day ORB V6 [Tanja Trend]", shorttitle="ORBv6-Tanja", overlay=true,
+strategy("All-Day ORB V6 [Tanja Trend]", shorttitle="ORB-Tanja", overlay=true,
           initial_capital=3000, default_qty_type=strategy.fixed, default_qty_value=1,
           margin_long=0, margin_short=0, calc_on_every_tick=true,
           calc_on_order_fills=true, use_bar_magnifier=true)
@@ -804,7 +804,7 @@ if showDashboard and barstate.islast
     
     // Status
     table.cell(dash, 0, 7, "Status", text_color=color.white)
-    statusText = hasWonToday and stopAfterWin ? "WON-DONE" : 
+    statusText = useWinTarget and dailyWins >= targetWins ? "WON-DONE" : 
                  inTrade ? "IN TRADE" :
                  longPending ? "PEND L" :
                  shortPending ? "PEND S" :
