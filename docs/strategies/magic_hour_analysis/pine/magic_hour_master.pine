@@ -1,0 +1,720 @@
+//@version=6
+indicator("VxV::Dokakuri's Magic Hours: Master Playbook", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// =============================================================================
+// 1. STRATEGY CONSTANTS & DATA
+// =============================================================================
+
+// Strategy IDs
+S_0700 = "RANK #1: 07:00 (Golden Hour)"
+S_0800 = "RANK #2: 08:00 (Continuation)"
+S_0600 = "RANK #3: 06:00 (Pre-Market)"
+S_0000 = "RANK #4: 00:00 (Asia Open)"
+S_0100 = "RANK #5: 01:00 (Asia Cont.)"
+S_0200 = "RANK #6: 02:00 (London Pre)"
+S_2300 = "RANK #7: 23:00 (Asia Pre-Game)"
+
+// Group Headings
+GRP_PRE = "--- PRE-MARKET / NY ---"
+GRP_ASIA = "--- ASIA / LONDON ---"
+
+// =============================================================================
+// 2. INPUTS
+// =============================================================================
+
+grp_strat = "STRATEGY SELECTION"
+selectedStrategy = input.string(S_0800, "Select Strategy", options=[GRP_PRE, S_0700, S_0800, S_0600, GRP_ASIA, S_0000, S_0100, S_0200, S_2300], group=grp_strat)
+tzInput = input.string("America/New_York", "Timezone", group=grp_strat)
+
+grp_dash = "MASTER DASHBOARD"
+showDash = input.bool(true, "Show Unified Dashboard", group=grp_dash)
+posInput = input.string("Top Right", "Position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=grp_dash)
+textSizeInput = input.string("Normal", "Text Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_dash)
+textAlignInput = input.string("Right", "Zone Text Alignment", options=["Left", "Center", "Right"], group=grp_dash)
+
+// Visuals
+grp_vis = "VISUALS & COLORS"
+baseTextColor = input.color(color.new(color.white, 0), "Base Text Color", group=grp_vis)
+mhFillColor = input.color(color.new(color.gray, 85), "Magic Hour Fill", group=grp_vis)
+mhLabelColor = input.color(color.new(#d16d1d, 0), "Magic Hour Label Color", group=grp_vis) // Brown/Orange
+neutralLineColor = input.color(color.new(color.gray, 50), "Neutral High/Low Line", group=grp_vis)
+breakColor = input.color(color.new(#2962ff, 0), "Break Color", group=grp_vis) // Blue
+midlineColor = input.color(color.new(#d42cff, 0), "Midline Color", group=grp_vis) // Fuchsia
+inactiveZoneFill = input.color(color.new(color.gray, 95), "Inactive Zone Fill", group=grp_vis)
+showMidlineProp = input.bool(true, "Show Midline", group=grp_vis)
+
+// =============================================================================
+// 3. STATISTICAL DATA STORE
+// =============================================================================
+
+// Struct to hold Strategy Data
+type StrategyData
+    string name
+    int startHour
+    int endHour // Analysis window end, roughly
+    // Dashboard Stats
+    int total_sessions
+    float win_rate
+    float avg_mae
+    string time_fast
+    string time_med
+    string time_slow
+    // Runner Conversion
+    float run_75
+    float run_100
+    float run_125
+    float run_150
+    float run_200
+    // Zone Stats (Reach, Win, Density)
+    float z1_reach
+    float z1_win
+    float z1_dens
+    float z2_reach
+    float z2_win
+    float z2_dens
+    float z3_reach
+    float z3_win
+    float z3_dens
+    float z4_reach
+    float z4_win
+    float z4_dens
+    float z5_reach
+    float z5_win
+    float z5_dens
+    float z6_reach
+    float z6_win
+    float z6_dens
+    // Logic
+    float inv_level // Invalidation Level (e.g. 100 or 75)
+    string hard_stop_time
+
+// Function to populate data based on selection
+get_strategy_data(string sel) =>
+    StrategyData d = StrategyData.new()
+    
+    // Default to Null if header selected
+    if sel == GRP_PRE or sel == GRP_ASIA
+        d.name := "INVALID SELECTION"
+    
+    // RANK #1: 07:00
+    if sel == S_0700
+        d.name := S_0700
+        d.startHour := 7
+        d.total_sessions := 3336
+        d.win_rate := 83.4
+        d.avg_mae := 53.8
+        d.time_fast := "08:12 (+12m)"
+        d.time_med := "08:29 (+29m)"
+        d.time_slow := "09:09 (+69m)"
+        d.run_75 := 90.1
+        d.run_100 := 80.7
+        d.run_125 := 72.0
+        d.run_150 := 64.6
+        d.run_200 := 51.2
+        d.z1_reach := 100.0
+        d.z1_win := 100.0
+        d.z1_dens := 36.5
+        d.z2_reach := 69.5
+        d.z2_win := 99.3
+        d.z2_dens := 20.9
+        d.z3_reach := 52.0
+        d.z3_win := 95.9
+        d.z3_dens := 19.6
+        d.z4_reach := 35.0
+        d.z4_win := 86.8
+        d.z4_dens := 9.5
+        d.z5_reach := 25.8
+        d.z5_win := 63.4
+        d.z5_dens := 11.1
+        d.z6_reach := 11.2
+        d.z6_win := 17.9
+        d.z6_dens := 2.4
+        d.inv_level := 100
+        d.hard_stop_time := "11:00 AM"
+
+    // RANK #2: 08:00
+    if sel == S_0800
+        d.name := S_0800
+        d.startHour := 8
+        d.total_sessions := 3322
+        d.win_rate := 79.7
+        d.avg_mae := 48.2
+        d.time_fast := "09:06 (+6m)"
+        d.time_med := "09:18 (+18m)"
+        d.time_slow := "09:31 (+31m)"
+        d.run_75 := 87.8
+        d.run_100 := 76.5
+        d.run_125 := 67.8
+        d.run_150 := 59.3
+        d.run_200 := 45.0
+        d.z1_reach := 100.0
+        d.z1_win := 99.2
+        d.z1_dens := 40.1
+        d.z2_reach := 67.7
+        d.z2_win := 96.2
+        d.z2_dens := 22.1
+        d.z3_reach := 49.4
+        d.z3_win := 91.6
+        d.z3_dens := 13.1
+        d.z4_reach := 38.0
+        d.z4_win := 79.3
+        d.z4_dens := 16.5
+        d.z5_reach := 21.5
+        d.z5_win := 45.0
+        d.z5_dens := 6.6
+        d.z6_reach := 9.8
+        d.z6_win := 13.2
+        d.z6_dens := 1.6
+        d.inv_level := 75
+        d.hard_stop_time := "12:00 PM"
+        
+    // RANK #3: 06:00
+    if sel == S_0600
+        d.name := S_0600
+        d.startHour := 6
+        d.total_sessions := 3329
+        d.win_rate := 78.7
+        d.avg_mae := 59.3
+        d.time_fast := "07:17 (+17m)"
+        d.time_med := "07:44 (+44m)"
+        d.time_slow := "08:31 (+91m)"
+        d.run_75 := 88.9
+        d.run_100 := 78.3
+        d.run_125 := 68.7
+        d.run_150 := 60.3
+        d.run_200 := 46.5
+        d.z1_reach := 100.0
+        d.z1_win := 99.5
+        d.z1_dens := 38.0
+        d.z2_reach := 68.0
+        d.z2_win := 97.0
+        d.z2_dens := 21.0
+        d.z3_reach := 50.0
+        d.z3_win := 92.7
+        d.z3_dens := 15.0
+        d.z4_reach := 36.0
+        d.z4_win := 75.7
+        d.z4_dens := 10.0
+        d.z5_reach := 24.0
+        d.z5_win := 50.0
+        d.z5_dens := 8.0
+        d.z6_reach := 10.0
+        d.z6_win := 15.0
+        d.z6_dens := 2.0
+        d.inv_level := 100
+        d.hard_stop_time := "10:00 AM"
+
+    // RANK #4: 00:00
+    if sel == S_0000
+        d.name := S_0000
+        d.startHour := 0
+        d.total_sessions := 3326
+        d.win_rate := 76.8
+        d.avg_mae := 55.2
+        d.time_fast := "01:12 (+12m)"
+        d.time_med := "01:31 (+31m)"
+        d.time_slow := "02:02 (+62m)"
+        d.run_75 := 87.0
+        d.run_100 := 75.0
+        d.run_125 := 64.9
+        d.run_150 := 55.5
+        d.run_200 := 40.7
+        d.z1_reach := 100.0
+        d.z1_win := 99.3
+        d.z1_dens := 36.5
+        d.z2_reach := 71.7
+        d.z2_win := 97.0
+        d.z2_dens := 22.8
+        d.z3_reach := 53.7
+        d.z3_win := 89.0
+        d.z3_dens := 21.3
+        d.z4_reach := 35.4
+        d.z4_win := 70.0
+        d.z4_dens := 9.9
+        d.z5_reach := 24.5
+        d.z5_win := 43.3
+        d.z5_dens := 7.9
+        d.z6_reach := 10.5
+        d.z6_win := 12.3
+        d.z6_dens := 1.7
+        d.inv_level := 100
+        d.hard_stop_time := "04:00 AM"
+
+    // RANK #5: 01:00
+    if sel == S_0100
+        d.name := S_0100
+        d.startHour := 1
+        d.total_sessions := 3323
+        d.win_rate := 74.2
+        d.avg_mae := 58.7
+        d.time_fast := "02:10 (+10m)"
+        d.time_med := "02:28 (+28m)"
+        d.time_slow := "03:01 (+61m)"
+        d.run_75 := 84.5
+        d.run_100 := 71.4
+        d.run_125 := 60.5
+        d.run_150 := 51.0
+        d.run_200 := 36.8
+        d.z1_reach := 100.0
+        d.z1_win := 98.9
+        d.z1_dens := 35.0
+        d.z2_reach := 72.0
+        d.z2_win := 95.0
+        d.z2_dens := 23.0
+        d.z3_reach := 55.0
+        d.z3_win := 85.5
+        d.z3_dens := 20.0
+        d.z4_reach := 37.0
+        d.z4_win := 65.3
+        d.z4_dens := 10.0
+        d.z5_reach := 25.0
+        d.z5_win := 35.0
+        d.z5_dens := 7.0
+        d.z6_reach := 11.0
+        d.z6_win := 10.0
+        d.z6_dens := 1.5
+        d.inv_level := 100
+        d.hard_stop_time := "05:00 AM"
+
+    // RANK #6: 02:00
+    if sel == S_0200
+        d.name := S_0200
+        d.startHour := 2
+        d.total_sessions := 3304
+        d.win_rate := 70.9
+        d.avg_mae := 47.7
+        d.time_fast := "03:05 (+5m)"
+        d.time_med := "03:16 (+16m)"
+        d.time_slow := "03:45 (+45m)"
+        d.run_75 := 79.2
+        d.run_100 := 62.8
+        d.run_125 := 51.3
+        d.run_150 := 41.2
+        d.run_200 := 26.4
+        d.z1_reach := 100.0
+        d.z1_win := 98.0
+        d.z1_dens := 42.0
+        d.z2_reach := 65.0
+        d.z2_win := 92.0
+        d.z2_dens := 20.0
+        d.z3_reach := 45.0
+        d.z3_win := 79.5
+        d.z3_dens := 12.0
+        d.z4_reach := 30.0
+        d.z4_win := 51.6
+        d.z4_dens := 15.0
+        d.z5_reach := 18.0
+        d.z5_win := 25.0
+        d.z5_dens := 5.0
+        d.z6_reach := 8.0
+        d.z6_win := 5.0,
+        d.z6_dens := 1.0
+        d.inv_level := 75
+        d.hard_stop_time := "06:00 AM"
+
+    // RANK #7: 23:00
+    if sel == S_2300
+        d.name := S_2300
+        d.startHour := 23
+        d.total_sessions := 3288
+        d.win_rate := 69.5
+        d.avg_mae := 50.0
+        d.time_fast := "00:16 (+16m)"
+        d.time_med := "00:35 (+35m)"
+        d.time_slow := "01:06 (+66m)"
+        d.run_75 := 79.3
+        d.run_100 := 62.8
+        d.run_125 := 50.5
+        d.run_150 := 41.0
+        d.run_200 := 26.5
+        d.z1_reach := 100.0
+        d.z1_win := 98.0
+        d.z1_dens := 40.0
+        d.z2_reach := 66.0
+        d.z2_win := 91.0
+        d.z2_dens := 21.0
+        d.z3_reach := 46.0
+        d.z3_win := 79.6
+        d.z3_dens := 13.0
+        d.z4_reach := 31.0
+        d.z4_win := 51.6
+        d.z4_dens := 14.0
+        d.z5_reach := 19.0
+        d.z5_win := 24.0
+        d.z5_dens := 6.0
+        d.z6_reach := 9.0
+        d.z6_win := 4.0
+        d.z6_dens := 1.0
+        d.inv_level := 75
+        d.hard_stop_time := "03:00 AM"
+
+    d
+
+stat = get_strategy_data(selectedStrategy)
+
+// =============================================================================
+// 4. LOGIC: MAGIC BOX & ZONES
+// =============================================================================
+
+// Time Handling
+t = time(timeframe.period, "0000-0000", tzInput) // Trigger update on tz
+hour_val = hour(time, tzInput)
+min_val = minute(time, tzInput)
+
+// Is Magic Hour?
+isMagic = hour_val == stat.startHour
+// Is Analysis Window (3 hours after)? 
+// Handle day rollover for 23:00 (0, 1, 2)
+isAnalysis = false
+if stat.startHour == 23
+    isAnalysis := hour_val == 0 or hour_val == 1 or hour_val == 2
+else
+    isAnalysis := hour_val > stat.startHour and hour_val <= stat.startHour + 3
+
+// Variables
+var float mhHigh = na
+var float mhLow = na
+var float mhMid = na
+var float mhRng = na
+var box mhBox = na
+var line midLine = na
+var line invLine = na
+var line mhHighLine = na
+var line mhLowLine = na
+var label mhHighLabel = na
+var label mhLowLabel = na
+var string breakSide = "NONE"
+var bool objectiveHit = false
+var label objLabel = na
+
+// -- Visual Arrays --
+var box[] zoneBoxes = array.new_box()
+
+// Colors - Match Reference: Green (Ideal) -> Blue (Prime) -> Green (Deep) -> Orange/Red (Risk) -> Red (Graveyard)
+c_z1 = color.new(#00e676, 80) // Green - IDEAL
+c_z2 = color.new(#4fc3f7, 80) // Light Blue - PRIME  
+c_z3 = color.new(#81c784, 80) // Lighter Green - DEEP
+c_z4 = color.new(#ffcc80, 70) // Orange - RISK
+c_z5 = color.new(#ef9a9a, 65) // Light Red - LAST STAND
+c_z6 = color.new(#e57373, 55) // Red - GRAVEYARD
+
+// -- Global Helpers --
+// Dynamic text size from input
+f_getZoneTextSize() =>
+    textSizeInput == "Tiny" ? size.tiny : textSizeInput == "Small" ? size.small : textSizeInput == "Normal" ? size.normal : size.large
+
+f_getZoneTextAlign() =>
+    textAlignInput == "Left" ? text.align_left : textAlignInput == "Center" ? text.align_center : text.align_right
+
+f_draw(float top, float bot, color c, string txt, int r_idx, box[] boxes, color bg_c, color txt_c) =>
+    zoneSz = f_getZoneTextSize()
+    zoneAlign = f_getZoneTextAlign()
+    b = box.new(bar_index, top, r_idx, bot, bgcolor=bg_c, border_color=na, text=txt, text_color=txt_c, text_size=zoneSz, text_halign=zoneAlign)
+    array.push(boxes, b)
+
+f_row(table t, int r, string z, string rng, string reach, string win, string dens, string status, color bg, string sz) =>
+    table.cell(t, 0, r, z, bgcolor=bg, text_color=color.black, text_size=sz)
+    table.cell(t, 1, r, rng, bgcolor=color.white, text_color=color.black, text_size=sz)
+    table.cell(t, 2, r, reach + "%", bgcolor=color.white, text_color=color.black, text_size=sz)
+    table.cell(t, 3, r, win + "%", bgcolor=color.white, text_color=color.black, text_size=sz)
+    table.cell(t, 4, r, dens + "%", bgcolor=color.white, text_color=color.black, text_size=sz)
+    table.cell(t, 5, r, status, bgcolor=color.white, text_color=color.black, text_size=sz)
+
+// Logic Execution
+if isMagic
+    if not isMagic[1]
+        // Start of Magic Hour - Reset
+        mhHigh := high
+        mhLow := low
+        mhBox := box.new(bar_index, mhHigh, bar_index + 60, mhLow, bgcolor=mhFillColor, border_color=na)
+        breakSide := "NONE"
+        objectiveHit := false
+        // Clear old visuals
+        for b in zoneBoxes
+            box.delete(b)
+        array.clear(zoneBoxes)
+        line.delete(midLine)
+        line.delete(invLine)
+        line.delete(mhHighLine)
+        line.delete(mhLowLine)
+        label.delete(objLabel)
+        label.delete(mhHighLabel)
+        label.delete(mhLowLabel)
+    else
+        // During Magic Hour - Track High/Low
+        mhHigh := math.max(mhHigh, high)
+        mhLow := math.min(mhLow, low)
+        box.set_top(mhBox, mhHigh)
+        box.set_bottom(mhBox, mhLow)
+        box.set_right(mhBox, bar_index + 5)
+        
+else if isAnalysis
+    // Post Magic Hour Logic
+    if isMagic[1]
+        // Magic Hour Just Ended -> Set Levels
+        mhRng := mhHigh - mhLow
+        mhMid := (mhHigh + mhLow) / 2
+        
+        // Draw Midline
+        if showMidlineProp
+            midLine := line.new(bar_index, mhMid, bar_index+1, mhMid, color=midlineColor, style=line.style_solid)
+        
+        // Draw MH High/Low boundary lines
+        mhHighLine := line.new(bar_index, mhHigh, bar_index + 180, mhHigh, color=neutralLineColor, style=line.style_solid, width=1)
+        mhLowLine := line.new(bar_index, mhLow, bar_index + 180, mhLow, color=neutralLineColor, style=line.style_solid, width=1)
+        mhHighLabel := label.new(bar_index + 180, mhHigh, "MH High", color=color.new(color.gray, 90), textcolor=color.gray, style=label.style_label_left, size=f_getZoneTextSize())
+        mhLowLabel := label.new(bar_index + 180, mhLow, "MH Low", color=color.new(color.gray, 90), textcolor=color.gray, style=label.style_label_left, size=f_getZoneTextSize())
+        
+        // Setup Zones (Visuals only appear after break usually, but we draw placeholders)
+        // Actually, report says "After Magic Hour closes, colored zones appear"
+        // We will draw them extending indefinitely or fixed width?
+        // Let's draw 300 bars forward
+        right_idx = bar_index + 180 
+        
+        // Calculate Zone Levels
+        // Upper Zones
+        h_z1 = mhHigh + (mhRng * 0.25)
+        h_z2 = mhHigh + (mhRng * 0.50)
+        h_z3 = mhHigh + (mhRng * 1.00) // Or 0.75 depending on strategy? Using universal 100 for Z3 top implies 100%
+        // Report: Z3 (50-75 or 50-100). INV is split.
+        // Let's use standard:
+        // Z1: 0-25
+        // Z2: 25-50
+        // Z3: 50-100 (Deep)
+        // Z4: 100-150
+        // Z5: 150-300
+        // Z6: >300
+        
+        // Helper to draw
+        // Draw Upper Zones with full stats
+        z1_label = "Z1 (Ideal)\nReach: " + str.tostring(stat.z1_reach, "#.#") + "%\nDens: " + str.tostring(stat.z1_dens, "#.#") + "%\nWin: " + str.tostring(stat.z1_win, "#.#") + "%"
+        z2_label = "Z2 (Prime)\nReach: " + str.tostring(stat.z2_reach, "#.#") + "%\nDens: " + str.tostring(stat.z2_dens, "#.#") + "%\nWin: " + str.tostring(stat.z2_win, "#.#") + "%"
+        z3_label = "Z3 (Deep)\nReach: " + str.tostring(stat.z3_reach, "#.#") + "%\nDens: " + str.tostring(stat.z3_dens, "#.#") + "%\nWin: " + str.tostring(stat.z3_win, "#.#") + "%"
+        z4_label = "Z4 (Risk)\nReach: " + str.tostring(stat.z4_reach, "#.#") + "%\nDens: " + str.tostring(stat.z4_dens, "#.#") + "%\nWin: " + str.tostring(stat.z4_win, "#.#") + "%"
+        z5_label = "Z5 (Last Stand)\nReach: " + str.tostring(stat.z5_reach, "#.#") + "%\nDens: " + str.tostring(stat.z5_dens, "#.#") + "%\nWin: " + str.tostring(stat.z5_win, "#.#") + "%"
+        z6_label = "Z6 (Graveyard)\nReach: " + str.tostring(stat.z6_reach, "#.#") + "%\nDens: " + str.tostring(stat.z6_dens, "#.#") + "%\nWin: " + str.tostring(stat.z6_win, "#.#") + "%"
+        
+        // Draw Upper (only Z1-Z4 typically visible, Z5-Z6 are extreme)
+        f_draw(h_z1, mhHigh, c_z1, z1_label, right_idx, zoneBoxes, inactiveZoneFill, color.black)
+        f_draw(h_z2, h_z1, c_z2, z2_label, right_idx, zoneBoxes, inactiveZoneFill, color.black)
+        f_draw(h_z3, h_z2, c_z3, z3_label, right_idx, zoneBoxes, inactiveZoneFill, color.black) // 50-100
+        h_z4 = mhHigh + (mhRng * 1.50)
+        f_draw(h_z4, h_z3, c_z4, z4_label, right_idx, zoneBoxes, inactiveZoneFill, color.black)
+        h_z5 = mhHigh + (mhRng * 3.00)
+        f_draw(h_z5, h_z4, c_z5, z5_label, right_idx, zoneBoxes, inactiveZoneFill, color.black)
+        h_z6 = mhHigh + (mhRng * 5.00)
+        f_draw(h_z6, h_z5, c_z6, z6_label, right_idx, zoneBoxes, inactiveZoneFill, color.black)
+        
+        // Draw Upper Zone Boundary Lines
+        line.new(bar_index, h_z1, right_idx, h_z1, color=breakColor, style=line.style_solid, width=1)
+        line.new(bar_index, h_z2, right_idx, h_z2, color=breakColor, style=line.style_solid, width=1)
+        line.new(bar_index, h_z3, right_idx, h_z3, color=breakColor, style=line.style_solid, width=1)
+        line.new(bar_index, h_z4, right_idx, h_z4, color=breakColor, style=line.style_solid, width=1)
+        line.new(bar_index, h_z5, right_idx, h_z5, color=breakColor, style=line.style_solid, width=1)
+        
+        // Draw Lower
+        l_z1 = mhLow - (mhRng * 0.25)
+        l_z2 = mhLow - (mhRng * 0.50)
+        l_z3 = mhLow - (mhRng * 1.00)
+        f_draw(mhLow, l_z1, c_z1, z1_label, right_idx, zoneBoxes, inactiveZoneFill, color.black)
+        f_draw(l_z1, l_z2, c_z2, z2_label, right_idx, zoneBoxes, inactiveZoneFill, color.black)
+        f_draw(l_z2, l_z3, c_z3, z3_label, right_idx, zoneBoxes, inactiveZoneFill, color.black)
+        l_z4 = mhLow - (mhRng * 1.50)
+        f_draw(l_z3, l_z4, c_z4, z4_label, right_idx, zoneBoxes, inactiveZoneFill, color.black)
+        l_z5 = mhLow - (mhRng * 3.00)
+        f_draw(l_z4, l_z5, c_z5, z5_label, right_idx, zoneBoxes, inactiveZoneFill, color.black)
+        l_z6 = mhLow - (mhRng * 5.00)
+        f_draw(l_z5, l_z6, c_z6, z6_label, right_idx, zoneBoxes, inactiveZoneFill, color.black)
+        
+        // Draw Lower Zone Boundary Lines
+        line.new(bar_index, l_z1, right_idx, l_z1, color=breakColor, style=line.style_solid, width=1)
+        line.new(bar_index, l_z2, right_idx, l_z2, color=breakColor, style=line.style_solid, width=1)
+        line.new(bar_index, l_z3, right_idx, l_z3, color=breakColor, style=line.style_solid, width=1)
+        line.new(bar_index, l_z4, right_idx, l_z4, color=breakColor, style=line.style_solid, width=1)
+        line.new(bar_index, l_z5, right_idx, l_z5, color=breakColor, style=line.style_solid, width=1)
+        
+        // Draw Invalidation Lines
+        float inv_price_h = na
+        float inv_price_l = na
+        
+        if stat.inv_level == 75
+            inv_price_h := mhHigh + (mhRng * 0.75)
+            inv_price_l := mhLow - (mhRng * 0.75)
+        else
+            inv_price_h := mhHigh + (mhRng * 1.0)
+            inv_price_l := mhLow - (mhRng * 1.0)
+            
+        // Draw invalidation lines (dashed red)
+        invLine := line.new(bar_index, inv_price_h, bar_index + 180, inv_price_h, color=color.red, style=line.style_dashed, width=1)
+        line.new(bar_index, inv_price_l, bar_index + 180, inv_price_l, color=color.red, style=line.style_dashed, width=1)
+        
+        // Create invalidation label
+        label.new(bar_index + 180, inv_price_h, "INVALIDATION (" + str.tostring(stat.inv_level) + "%)", color=color.new(color.red, 80), textcolor=color.red, style=label.style_label_left, size=f_getZoneTextSize())
+        
+    // Break Detection
+    if breakSide == "NONE"
+        if close > mhHigh
+            breakSide := "HIGH"
+        else if close < mhLow
+            breakSide := "LOW"
+            
+    // Update Lines/Boxes
+    if not na(midLine)
+        line.set_x2(midLine, bar_index+5)
+    
+    // Check for Objective Complete (price crosses midline)
+    if breakSide == "HIGH" and low <= mhMid and not objectiveHit
+        objectiveHit := true
+        label.delete(objLabel)
+        objLabel := label.new(bar_index + 180, mhMid, "OBJECTIVE COMPLETE ✓ (Rev: Z" + breakSide + ")", color=#26de81, textcolor=color.white, style=label.style_label_left, size=f_getZoneTextSize())
+    else if breakSide == "LOW" and high >= mhMid and not objectiveHit
+        objectiveHit := true
+        label.delete(objLabel)
+        objLabel := label.new(bar_index + 180, mhMid, "OBJECTIVE COMPLETE ✓ (Rev: Z" + breakSide + ")", color=#26de81, textcolor=color.white, style=label.style_label_left, size=f_getZoneTextSize())
+    
+    // Highlight Active Side
+    if breakSide != "NONE"
+        // Find boxes on active side and color them
+        // This is complex in pine simply iterate 
+        // Index mapping: 0-5 are Upper Z1-Z6, 6-11 are Lower Z1-Z6
+        // If High break, highlight 0-5. If Low break, highlight 6-11.
+        
+        start_idx = breakSide == "HIGH" ? 0 : 6
+        target_colors = array.from(c_z1, c_z2, c_z3, c_z4, c_z5, c_z6)
+        
+        for i = 0 to 5
+            box_idx = start_idx + i
+            if box_idx < array.size(zoneBoxes)
+                b = array.get(zoneBoxes, box_idx)
+                box.set_bgcolor(b, array.get(target_colors, i))
+
+// =============================================================================
+// 5. DASHBOARD
+// =============================================================================
+
+// 6 columns x 17 rows
+var table dash = table.new(posInput == "Top Right" ? position.top_right : posInput == "Bottom Right" ? position.bottom_right : posInput == "Top Left" ? position.top_left : position.bottom_left, 6, 17, border_width=1, border_color=color.new(color.gray, 80))
+
+if barstate.islast and showDash and not na(stat.name) and stat.name != "INVALID SELECTION"
+    sz = textSizeInput == "Tiny" ? size.tiny : textSizeInput == "Small" ? size.small : textSizeInput == "Normal" ? size.normal : size.large
+    
+    // Colors
+    c_dark = #2d3436
+    c_gray = #636e72
+    c_light = #f5f6fa
+    
+    // Row 0: Title (Merged across all columns)
+    table.cell(dash, 0, 0, "MAGIC HOUR MASTER PLAYBOOK (2013-2026) | @Dokakuri on X", bgcolor=c_dark, text_color=color.white, text_size=sz)
+    table.merge_cells(dash, 0, 0, 5, 0)
+    
+    // Row 1: Strategy Name (Merged)
+    table.cell(dash, 0, 1, "STRATEGY: " + stat.name, bgcolor=c_gray, text_color=color.white, text_size=sz)
+    table.merge_cells(dash, 0, 1, 5, 1)
+    
+    // Row 2: Summary Labels
+    table.cell(dash, 0, 2, "TOTAL", bgcolor=c_dark, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 2, str.tostring(stat.total_sessions), bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 2, 2, "WIN RATE", bgcolor=c_dark, text_color=color.white, text_size=sz)
+    table.cell(dash, 3, 2, str.tostring(stat.win_rate, "#.#") + "%", bgcolor=c_light, text_color=#26de81, text_size=sz)
+    table.cell(dash, 4, 2, "AVG MAE", bgcolor=c_dark, text_color=color.white, text_size=sz)
+    table.cell(dash, 5, 2, str.tostring(stat.avg_mae, "#.#") + "%", bgcolor=c_light, text_color=#fc5c65, text_size=sz)
+    
+    // Row 3: Time Header (Merged)
+    table.cell(dash, 0, 3, "TIME EXPECTATIONS (DURATION TO 50% TARGET)", bgcolor=#d16d1d, text_color=color.white, text_size=sz)
+    table.merge_cells(dash, 0, 3, 5, 3)
+    
+    // Row 4: Time Values
+    table.cell(dash, 0, 4, "FAST (25%)", bgcolor=c_dark, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 4, stat.time_fast, bgcolor=c_dark, text_color=color.gray, text_size=sz)
+    table.cell(dash, 2, 4, "MED (50%)", bgcolor=c_dark, text_color=color.white, text_size=sz)
+    table.cell(dash, 3, 4, stat.time_med, bgcolor=c_dark, text_color=color.white, text_size=sz)
+    table.cell(dash, 4, 4, "SLOW (75%)", bgcolor=c_dark, text_color=color.white, text_size=sz)
+    table.cell(dash, 5, 4, stat.time_slow, bgcolor=c_dark, text_color=color.gray, text_size=sz)
+    
+    // Row 5: Runner Header (Merged)
+    table.cell(dash, 0, 5, "RUNNER CONVERSION: Survivors / Base Winners", bgcolor=#3867d6, text_color=color.white, text_size=sz)
+    table.merge_cells(dash, 0, 5, 5, 5)
+    
+    // Row 6: Runner Values Row 1
+    table.cell(dash, 0, 6, "75% EXT", bgcolor=c_dark, text_color=color.gray, text_size=sz)
+    table.cell(dash, 1, 6, str.tostring(stat.run_75, "#.#") + "%", bgcolor=c_dark, text_color=color.white, text_size=sz)
+    table.cell(dash, 2, 6, "100% EXT", bgcolor=c_dark, text_color=color.gray, text_size=sz)
+    table.cell(dash, 3, 6, str.tostring(stat.run_100, "#.#") + "%", bgcolor=c_dark, text_color=color.white, text_size=sz)
+    table.cell(dash, 4, 6, "125% EXT", bgcolor=c_dark, text_color=color.gray, text_size=sz)
+    table.cell(dash, 5, 6, str.tostring(stat.run_125, "#.#") + "%", bgcolor=c_dark, text_color=color.white, text_size=sz)
+    
+    // Row 7: Runner Values Row 2
+    table.cell(dash, 0, 7, "150% EXT", bgcolor=c_dark, text_color=color.gray, text_size=sz)
+    table.cell(dash, 1, 7, str.tostring(stat.run_150, "#.#") + "%", bgcolor=c_dark, text_color=color.white, text_size=sz)
+    table.cell(dash, 2, 7, "200% EXT", bgcolor=c_dark, text_color=color.gray, text_size=sz)
+    table.cell(dash, 3, 7, str.tostring(stat.run_200, "#.#") + "%", bgcolor=c_dark, text_color=color.white, text_size=sz)
+    table.cell(dash, 4, 7, "", bgcolor=c_dark, text_size=sz)
+    table.cell(dash, 5, 7, "", bgcolor=c_dark, text_size=sz)
+    
+    // Row 8: Zone Header
+    table.cell(dash, 0, 8, "ZONE", bgcolor=c_gray, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 8, "RANGE", bgcolor=c_gray, text_color=color.white, text_size=sz)
+    table.cell(dash, 2, 8, "REACH %", bgcolor=c_gray, text_color=color.white, text_size=sz)
+    table.cell(dash, 3, 8, "WIN %", bgcolor=c_gray, text_color=color.white, text_size=sz)
+    table.cell(dash, 4, 8, "DENSITY (N)", bgcolor=c_gray, text_color=color.white, text_size=sz)
+    table.cell(dash, 5, 8, "STATUS", bgcolor=c_gray, text_color=color.white, text_size=sz)
+    
+    // Z1
+    table.cell(dash, 0, 9, "Z1", bgcolor=c_z1, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 9, "0-25%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 2, 9, str.tostring(stat.z1_reach, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 3, 9, str.tostring(stat.z1_win, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 4, 9, str.tostring(stat.z1_dens, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 5, 9, "IDEAL", bgcolor=c_light, text_color=color.black, text_size=sz)
+    
+    // Z2
+    table.cell(dash, 0, 10, "Z2", bgcolor=c_z2, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 10, "25-50%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 2, 10, str.tostring(stat.z2_reach, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 3, 10, str.tostring(stat.z2_win, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 4, 10, str.tostring(stat.z2_dens, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 5, 10, "PRIME", bgcolor=c_light, text_color=color.black, text_size=sz)
+    
+    // Z3
+    table.cell(dash, 0, 11, "Z3", bgcolor=c_z3, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 11, "50-100%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 2, 11, str.tostring(stat.z3_reach, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 3, 11, str.tostring(stat.z3_win, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 4, 11, str.tostring(stat.z3_dens, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 5, 11, "DEEP", bgcolor=c_light, text_color=color.black, text_size=sz)
+    
+    // INV Row
+    table.cell(dash, 0, 12, "INV", bgcolor=color.red, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 12, "> " + str.tostring(stat.inv_level) + "%", bgcolor=color.new(color.red, 90), text_color=color.red, text_size=sz)
+    table.cell(dash, 2, 12, "---", bgcolor=color.new(color.red, 90), text_color=color.red, text_size=sz)
+    table.cell(dash, 3, 12, "---", bgcolor=color.new(color.red, 90), text_color=color.red, text_size=sz)
+    table.cell(dash, 4, 12, "---", bgcolor=color.new(color.red, 90), text_color=color.red, text_size=sz)
+    table.cell(dash, 5, 12, "STOP TRADING", bgcolor=color.new(color.red, 90), text_color=color.red, text_size=sz)
+    
+    // Z4
+    table.cell(dash, 0, 13, "Z4", bgcolor=c_z4, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 13, "100-150%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 2, 13, str.tostring(stat.z4_reach, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 3, 13, str.tostring(stat.z4_win, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 4, 13, str.tostring(stat.z4_dens, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 5, 13, "RISK", bgcolor=c_light, text_color=color.black, text_size=sz)
+    
+    // Z5
+    table.cell(dash, 0, 14, "Z5", bgcolor=c_z5, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 14, "150-300%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 2, 14, str.tostring(stat.z5_reach, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 3, 14, str.tostring(stat.z5_win, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 4, 14, str.tostring(stat.z5_dens, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 5, 14, "LAST STAND", bgcolor=c_light, text_color=color.black, text_size=sz)
+    
+    // Z6
+    table.cell(dash, 0, 15, "Z6", bgcolor=c_z6, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 15, "> 300%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 2, 15, str.tostring(stat.z6_reach, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 3, 15, str.tostring(stat.z6_win, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 4, 15, str.tostring(stat.z6_dens, "#.#") + "%", bgcolor=c_light, text_color=color.black, text_size=sz)
+    table.cell(dash, 5, 15, "GRAVEYARD", bgcolor=c_light, text_color=color.black, text_size=sz)
+    
+    // Footer (Merged)
+    table.cell(dash, 0, 16, "HARD SESSION STOP: " + stat.hard_stop_time, bgcolor=color.new(color.red, 85), text_color=color.red, text_size=sz)
+    table.merge_cells(dash, 0, 16, 5, 16)
