@@ -1,0 +1,619 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © vinay-veerappa
+// GENERIC PERIODIC ORB V1 - Based on ORB V5 Modular
+
+//@version=6
+strategy("Generic Periodic ORB [V1]", shorttitle="GenORB", overlay=true,
+          initial_capital=3000, default_qty_type=strategy.fixed, default_qty_value=1,
+          margin_long=0, margin_short=0, calc_on_every_tick=true,
+          calc_on_order_fills=true, use_bar_magnifier=true)
+
+// =============================================================================
+// 1. INPUTS - PERIODIC SETTINGS
+// =============================================================================
+
+grp_period = "Periodic Settings"
+orbInterval = input.int(60, "Session Interval (Minutes)", minval=5, step=5, group=grp_period,
+    tooltip="How often to reset and look for a new setup. E.g., 60 = Every Hour.")
+orbDuration = input.int(1, "Opening Range Duration (Minutes)", minval=1, group=grp_period,
+    tooltip="How long to build the range. E.g., 1 = First 1 minute of the interval.")
+activeHours = input.string("", "Active Hours (Legacy)", group=grp_period, tooltip="Legacy CSV input. Use checkboxes below if empty.", display=display.none)
+
+// --- Hour Selection Grid ---
+grp_hours = "Active Hours Selection"
+enableAllHours = input.bool(false, "Enable All Hours", group=grp_hours)
+
+h00 = input.bool(false, "12 AM", group=grp_hours, inline="h1", active=not enableAllHours)
+h01 = input.bool(false, "1 AM", group=grp_hours, inline="h1", active=not enableAllHours)
+h02 = input.bool(false, "2 AM", group=grp_hours, inline="h1", active=not enableAllHours)
+h03 = input.bool(false, "3 AM", group=grp_hours, inline="h1", active=not enableAllHours)
+
+h04 = input.bool(false, "4 AM", group=grp_hours, inline="h2", active=not enableAllHours)
+h05 = input.bool(false, "5 AM", group=grp_hours, inline="h2", active=not enableAllHours)
+h06 = input.bool(false, "6 AM", group=grp_hours, inline="h2", active=not enableAllHours)
+h07 = input.bool(false, "7 AM", group=grp_hours, inline="h2", active=not enableAllHours)
+
+h08 = input.bool(true, "8 AM", group=grp_hours, inline="h3", active=not enableAllHours)
+h09 = input.bool(true, "9 AM", group=grp_hours, inline="h3", active=not enableAllHours)
+h10 = input.bool(true, "10 AM", group=grp_hours, inline="h3", active=not enableAllHours)
+h11 = input.bool(true, "11 AM", group=grp_hours, inline="h3", active=not enableAllHours)
+
+h12 = input.bool(true, "12 PM", group=grp_hours, inline="h4", active=not enableAllHours)
+h13 = input.bool(true, "1 PM", group=grp_hours, inline="h4", active=not enableAllHours)
+h14 = input.bool(true, "2 PM", group=grp_hours, inline="h4", active=not enableAllHours)
+h15 = input.bool(true, "3 PM", group=grp_hours, inline="h4", active=not enableAllHours)
+
+h16 = input.bool(false, "4 PM", group=grp_hours, inline="h5", active=not enableAllHours)
+h17 = input.bool(false, "5 PM", group=grp_hours, inline="h5", active=not enableAllHours)
+h18 = input.bool(false, "6 PM", group=grp_hours, inline="h5", active=not enableAllHours)
+h19 = input.bool(false, "7 PM", group=grp_hours, inline="h5", active=not enableAllHours)
+
+h20 = input.bool(false, "8 PM", group=grp_hours, inline="h6", active=not enableAllHours)
+h21 = input.bool(false, "9 PM", group=grp_hours, inline="h6", active=not enableAllHours)
+h22 = input.bool(false, "10 PM", group=grp_hours, inline="h6", active=not enableAllHours)
+h23 = input.bool(false, "11 PM", group=grp_hours, inline="h6", active=not enableAllHours)
+
+closeAtEnd = input.bool(true, "Close at End of Interval", group=grp_period,
+    tooltip="Force close positions when the interval ends.")
+
+// =============================================================================
+// 2. INPUTS - ORB V5 CORE (Retained)
+// =============================================================================
+
+// --- Entry Configuration ---
+grp_entry = "Entry Configuration"
+useImmediateEntry = input.bool(true, "Immediate Entry", group=grp_entry)
+useFallbackEntry = input.bool(false, "Allow Fallback Entry", group=grp_entry, active=not useImmediateEntry)
+minDisplacement = input.float(0.05, "Min Displacement %", step=0.01, group=grp_entry)
+maxPullbackDepth = input.float(25, "Max Pullback Depth %", minval=0, maxval=100, step=5, group=grp_entry, active=not useImmediateEntry)
+pbTimeoutBars = input.int(5, "Pullback Timeout Bars", minval=1, maxval=20, group=grp_entry, active=not useImmediateEntry)
+fallbackProximity = input.float(0.10, "Fallback Proximity %", step=0.01, group=grp_entry, active=not useImmediateEntry and useFallbackEntry)
+
+// --- Re-entry Rules ---
+grp_reentry = "Re-entry Rules"
+requireFreshBreakout = input.bool(false, "Require Fresh Breakout", group=grp_reentry)
+useWickReset = input.bool(true, "Reset on Wick Test", group=grp_reentry, 
+    tooltip="Treat a wick touching the range (without closing inside) as a valid return to range for fresh breakout logic.")
+maxAttempts = input.int(1, "Max Attempts per Session", minval=1, maxval=15, group=grp_reentry,
+    tooltip="Max trades per Interval (Session).")
+
+// --- Take Profit Settings ---
+grp_tp = "Take Profit Settings"
+useSingleTP = input.bool(false, "Single TP Mode", group=grp_tp)
+tp1Pct = input.float(0.10, "TP1 %", minval=0.05, maxval=0.50, step=0.01, group=grp_tp)
+tp1Weight = input.float(50, "TP1 Position %", minval=20, maxval=80, step=10, group=grp_tp, active=not useSingleTP)
+tp2Pct = input.float(0.25, "TP2 %", minval=0.10, maxval=2.50, step=0.05, group=grp_tp, active=not useSingleTP)
+
+// --- Runner Management ---
+grp_runner = "Runner Management"
+useTrailingStop = input.bool(true, "Use Trailing Stop", group=grp_runner, active=not useSingleTP)
+useAdaptiveTrail = input.bool(true, "Adaptive Trail", group=grp_runner, active=not useSingleTP and useTrailingStop)
+moveToBE = input.bool(true, "Move to Breakeven After TP1", group=grp_runner, active=not useSingleTP)
+trailOffsetPct = input.float(0.25, "Trail Offset %", step=0.01, group=grp_runner, active=not useSingleTP and useTrailingStop)
+trailActivationPct = input.float(0.50, "Trail Activation %", step=0.01, group=grp_runner, active=not useSingleTP and useTrailingStop and useAdaptiveTrail)
+
+// --- Stop Loss & Risk ---
+grp_risk = "Stop Loss & Risk"
+useFixedSL = input.bool(false, "Use Fixed % Stop Loss", group=grp_risk)
+slFixedPct = input.float(0.20, "Fixed SL %", step=0.01, group=grp_risk, active=useFixedSL)
+useMAEFilter = input.bool(true, "Enable MAE Filter", group=grp_risk)
+maeThreshold = input.float(0.15, "MAE % Threshold", step=0.01, group=grp_risk, active=useMAEFilter)
+maeFromRangeBoundary = input.bool(false, "MAE From Range Boundary", group=grp_risk, active=useMAEFilter)
+riskPercent = input.float(1.0, "Risk per Trade %", minval=0.1, step=0.1, group=grp_risk)
+minContracts = input.int(1, "Min Contracts", minval=1, group=grp_risk)
+maxContracts = input.int(20, "Max Contracts", minval=1, group=grp_risk)
+
+// Manage Stop Management
+grp_sl_mgmt = "Advanced Stop Management"
+triggerSLMove = input.bool(false, "Move SL on % Gain", group=grp_sl_mgmt, tooltip="Move Stop Loss after reaching X% profit.")
+slTriggerPct = input.float(0.5, "Trigger % Gain", step=0.1, group=grp_sl_mgmt, active=triggerSLMove)
+slTargetLevel = input.string("Breakeven", "Move SL To", options=["Breakeven", "Range Boundary"], group=grp_sl_mgmt, active=triggerSLMove)
+
+
+// --- Filters ---
+grp_filters = "Filters"
+maxRangePct = input.float(0.50, "Max Range %", step=0.01, group=grp_filters)
+minRangePct = input.float(0.01, "Min Range %", step=0.01, group=grp_filters)
+
+// --- Visuals ---
+grp_visual = "Visuals"
+showDashboard = input.bool(true, "Show Dashboard", group=grp_visual)
+showRangeBox = input.bool(true, "Show Range Box", group=grp_visual)
+showLevels = input.bool(true, "Show TP/SL Levels", group=grp_visual)
+showDebug = input.bool(false, "Show Debug Labels", group=grp_visual)
+
+// =============================================================================
+// 3. PERIODIC TIME LOGIC
+// =============================================================================
+
+// Current time in minutes from midnight (New York)
+nyHour = hour(time, "America/New_York")
+nyMinute = minute(time, "America/New_York")
+minsFromMidnight = nyHour * 60 + nyMinute
+
+// Active Hour Check
+isHourChecked = switch nyHour
+    0 => h00
+    1 => h01
+    2 => h02
+    3 => h03
+    4 => h04
+    5 => h05
+    6 => h06
+    7 => h07
+    8 => h08
+    9 => h09
+    10 => h10
+    11 => h11
+    12 => h12
+    13 => h13
+    14 => h14
+    15 => h15
+    16 => h16
+    17 => h17
+    18 => h18
+    19 => h19
+    20 => h20
+    21 => h21
+    22 => h22
+    23 => h23
+    => false
+
+isActiveHour = enableAllHours or isHourChecked
+
+// Session Logic
+sessionId = math.floor(minsFromMidnight / orbInterval) + (dayofweek * 100) 
+
+var int lastSessionId = -1
+var int sessionStartBar = na
+var bool isSessionEnabled = false
+
+isNewSession = sessionId != lastSessionId
+
+// Update Session Status
+if isNewSession
+    lastSessionId := sessionId
+    sessionStartBar := bar_index 
+    // Session is enabled if START hour is checked/active
+    isSessionEnabled := isActiveHour
+
+// Inside Session Timing
+minsInSession = minsFromMidnight % orbInterval
+isORBuild = minsInSession < orbDuration
+
+// Trading Window
+isTradingWindow = minsInSession >= orbDuration and isSessionEnabled
+
+// End of Interval (Close positions)
+isSessionEnd = (minsInSession == orbInterval - 1) or (minsInSession > orbInterval - 1)
+
+// =============================================================================
+// 4. TRADE STATE TRACKING
+// =============================================================================
+
+var int attempts = 0
+var bool hasWonSession = false
+var bool longPending = false
+var bool shortPending = false
+var int breakoutBar = na
+var bool priceReturnedToRange = true
+var bool tp1Hit = false
+var bool tp2Hit = false
+var bool isRunnerActive = false
+var float tradeEntryPrice = na
+var float currentTrailStop = na
+var bool adaptiveTrailActivated = false
+var bool slMoved = false
+
+if isNewSession
+    attempts := 0
+    // hasWonSession reset handled in Range Finalization
+    longPending := false
+    shortPending := false
+    breakoutBar := na
+    priceReturnedToRange := true
+    tp1Hit := false
+    tp2Hit := false
+    isRunnerActive := false
+    tradeEntryPrice := na
+    currentTrailStop := na
+    adaptiveTrailActivated := false
+    slMoved := false
+
+// =============================================================================
+// 5. STATE & RANGE MANAGEMENT
+// =============================================================================
+
+var float rHigh = na
+var float rLow = na
+var bool rDefined = false
+
+// Reset on New Session
+if isNewSession
+    rHigh := na
+    rLow := na
+    rDefined := false
+
+// Build Range
+if isNewSession and isSessionEnabled 
+    rHigh := high
+    rLow := low
+    
+if isORBuild and isSessionEnabled
+    rHigh := math.max(nz(rHigh, high), high)
+    rLow := math.min(nz(rLow, low), low)
+
+// Finalize Range
+if not isORBuild and not rDefined and isSessionEnabled
+    rDefined := true
+    hasWonSession := false // Reset win flag here to avoid catching previous session's close
+
+// Range Properties
+rSize = rDefined ? rHigh - rLow : na
+rPct = rDefined ? (rSize / close) * 100 : 0
+
+// Calculated Levels
+displacementHigh = rDefined ? rHigh * (1 + minDisplacement / 100) : na
+displacementLow = rDefined ? rLow * (1 - minDisplacement / 100) : na
+maxPBLong = rDefined ? rHigh - (rSize * maxPullbackDepth / 100) : na
+maxPBShort = rDefined ? rLow + (rSize * maxPullbackDepth / 100) : na
+fallbackLongZone = rDefined ? rHigh * (1 + fallbackProximity / 100) : na
+fallbackShortZone = rDefined ? rLow * (1 - fallbackProximity / 100) : na
+
+// Return to Range Logic
+if rDefined and strategy.position_size == 0
+    if close >= rLow and close <= rHigh
+        priceReturnedToRange := true
+    else if useWickReset
+        if (close > rHigh and low <= rHigh) or (close < rLow and high >= rLow)
+            priceReturnedToRange := true
+
+// =============================================================================
+// 6. HELPER FUNCTIONS
+// =============================================================================
+
+calcPositionSize(rSize) =>
+    qtyRisk = math.floor((strategy.equity * riskPercent / 100) / (rSize * syminfo.pointvalue))
+    math.min(maxContracts, math.max(minContracts, qtyRisk))
+
+calcTPPrice(entryPrice, tpPct, isLong) =>
+    isLong ? entryPrice * (1 + tpPct/100) : entryPrice * (1 - tpPct/100)
+
+calcSLPrice(entryPrice, rangeLow, rangeHigh, isLong) =>
+    if useFixedSL
+        isLong ? entryPrice * (1 - slFixedPct/100) : entryPrice * (1 + slFixedPct/100)
+    else
+        isLong ? rangeLow : rangeHigh
+
+updateTrailStop(float currentStop, float entryPrice, bool isLong) =>
+    offset = entryPrice * trailOffsetPct / 100
+    if isLong
+        newStop = high - offset
+        na(currentStop) or newStop > currentStop ? newStop : currentStop
+    else
+        newStop = low + offset
+        na(currentStop) or newStop < currentStop ? newStop : currentStop
+
+getTradeComment(isLong, attemptNum, isImmediate, isFresh, isMultiTP) =>
+    dir = isLong ? "L" : "S"
+    ent = isImmediate ? "IM" : "PB"
+    fr = isFresh ? "FR" : "RE"
+    dir + str.tostring(attemptNum) + "-" + ent + "-" + fr
+
+// =============================================================================
+// 7. ENTRY LOGIC
+// =============================================================================
+
+inTrade = strategy.position_size != 0
+cooldownComplete = true 
+reentryEligible = requireFreshBreakout ? priceReturnedToRange : true
+
+// Range Filter
+isRangeFiltered = rPct > maxRangePct or rPct < minRangePct
+
+canTrade = rDefined and isTradingWindow and not inTrade and 
+           attempts < maxAttempts and not isRangeFiltered and
+           reentryEligible and not hasWonSession
+
+// Standard Breakouts
+breakoutLongStandard = minDisplacement > 0 ? ta.crossover(close, displacementHigh) : ta.crossover(close, rHigh)
+breakoutShortStandard = minDisplacement > 0 ? ta.crossunder(close, displacementLow) : ta.crossunder(close, rLow)
+
+// Wick Reset Breakouts
+wickBreakoutLong = useWickReset and priceReturnedToRange and close > rHigh and low <= rHigh and not breakoutLongStandard
+wickBreakoutShort = useWickReset and priceReturnedToRange and close < rLow and high >= rLow and not breakoutShortStandard
+
+breakoutLong = breakoutLongStandard or wickBreakoutLong
+breakoutShort = breakoutShortStandard or wickBreakoutShort
+
+hasDisplacementLong = close >= displacementHigh
+hasDisplacementShort = close <= displacementLow
+
+if canTrade
+    if useImmediateEntry
+        if breakoutLong
+            attempts += 1
+            strategy.entry("Long", strategy.long, qty=calcPositionSize(rSize), 
+                         comment=getTradeComment(true, attempts, true, priceReturnedToRange, not useSingleTP))
+            tradeEntryPrice := close
+            tp1Hit := false
+            tp2Hit := false
+            priceReturnedToRange := false
+            slMoved := false
+        else if breakoutShort
+            attempts += 1
+            strategy.entry("Short", strategy.short, qty=calcPositionSize(rSize), 
+                         comment=getTradeComment(false, attempts, true, priceReturnedToRange, not useSingleTP))
+            tradeEntryPrice := close
+            tp1Hit := false
+            tp2Hit := false
+            priceReturnedToRange := false
+            slMoved := false
+
+    else
+        // PULLBACK ENTRY MODE
+        if not longPending and not shortPending
+            if breakoutLong and hasDisplacementLong
+                longPending := true
+                breakoutBar := bar_index
+            else if breakoutShort and hasDisplacementShort
+                shortPending := true
+                breakoutBar := bar_index
+        
+        // Manage pending long
+        if longPending and not na(breakoutBar) and bar_index > breakoutBar
+            timeoutReached = (bar_index - breakoutBar) >= pbTimeoutBars
+            
+            if close < maxPBLong
+                longPending := false // Failed deep into range
+            else if low <= rHigh and close >= maxPBLong
+                // Perfect Pullback Touch
+                attempts += 1
+                strategy.entry("Long", strategy.long, qty=calcPositionSize(rSize), 
+                             comment=getTradeComment(true, attempts, false, priceReturnedToRange, not useSingleTP))
+                tradeEntryPrice := close
+                tp1Hit := false
+                tp2Hit := false
+                longPending := false
+                priceReturnedToRange := false
+                slMoved := false
+            else if useFallbackEntry and timeoutReached
+                if close <= fallbackLongZone and close > rHigh
+                    attempts += 1
+                    strategy.entry("Long", strategy.long, qty=calcPositionSize(rSize), 
+                                 comment=getTradeComment(true, attempts, false, priceReturnedToRange, not useSingleTP))
+                    tradeEntryPrice := close
+                    tp1Hit := false
+                    tp2Hit := false
+                    longPending := false
+                    priceReturnedToRange := false
+                    slMoved := false
+                else
+                    longPending := false
+            else if close < rLow
+                longPending := false
+        
+        // Manage pending short
+        if shortPending and not na(breakoutBar) and bar_index > breakoutBar
+            timeoutReached = (bar_index - breakoutBar) >= pbTimeoutBars
+            
+            if close > maxPBShort
+                shortPending := false
+            else if high >= rLow and close <= maxPBShort
+                attempts += 1
+                strategy.entry("Short", strategy.short, qty=calcPositionSize(rSize), 
+                             comment=getTradeComment(false, attempts, false, priceReturnedToRange, not useSingleTP))
+                tradeEntryPrice := close
+                tp1Hit := false
+                tp2Hit := false
+                shortPending := false
+                priceReturnedToRange := false
+                slMoved := false
+            else if useFallbackEntry and timeoutReached
+                if close >= fallbackShortZone and close < rLow
+                    attempts += 1
+                    strategy.entry("Short", strategy.short, qty=calcPositionSize(rSize), 
+                                 comment=getTradeComment(false, attempts, false, priceReturnedToRange, not useSingleTP))
+                    tradeEntryPrice := close
+                    tp1Hit := false
+                    tp2Hit := false
+                    shortPending := false
+                    priceReturnedToRange := false
+                    slMoved := false
+                else
+                    shortPending := false
+
+// =============================================================================
+// 8. EXIT LOGIC
+// =============================================================================
+
+// Track Wins
+if strategy.closedtrades > 0 and strategy.closedtrades > nz(strategy.closedtrades[1])
+    exitId = strategy.closedtrades.exit_id(strategy.closedtrades - 1)
+    if strategy.closedtrades.profit(strategy.closedtrades - 1) > 0 and exitId != "Session End"
+        hasWonSession := true
+
+if inTrade
+    entryPrice = strategy.opentrades.entry_price(0)
+    isLong = strategy.position_size > 0
+    posSize = math.abs(strategy.position_size)
+    baseSL = calcSLPrice(entryPrice, rLow, rHigh, isLong)
+    
+    // MAE Filter
+    if useMAEFilter
+        maeRef = maeFromRangeBoundary ? (isLong ? rHigh : rLow) : entryPrice
+        heatDist = maeRef * (maeThreshold / 100)
+        if (isLong and low < maeRef - heatDist) or (not isLong and high > maeRef + heatDist)
+            strategy.close_all("MAE Exit")
+    
+    // Flexible SL Move Logic
+    if triggerSLMove and not slMoved
+        // Calculate Profit Percentage
+        float currentProfitPct = 0.0
+        if isLong
+            if high > entryPrice
+                currentProfitPct := (high - entryPrice) / entryPrice * 100
+        else
+            if low < entryPrice
+                currentProfitPct := (entryPrice - low) / entryPrice * 100
+        
+        if currentProfitPct >= slTriggerPct
+            slMoved := true
+
+    if useSingleTP
+        tpPrice = calcTPPrice(entryPrice, tp1Pct, isLong)
+        slTicks = math.abs(entryPrice - baseSL) / syminfo.mintick
+        tpTicks = math.abs(tpPrice - entryPrice) / syminfo.mintick
+        strategy.exit("Exit", profit=tpTicks, loss=slTicks)
+    else
+        // Multi-TP logic
+        tp1Price = calcTPPrice(entryPrice, tp1Pct, isLong)
+        tp2Price = calcTPPrice(entryPrice, tp2Pct, isLong)
+        
+        tp1Qty = math.max(1, int(math.floor(posSize * tp1Weight / 100)))
+        remQty = int(posSize) - tp1Qty
+        
+        currentSL = baseSL
+        
+        // Move SL Logic (Hybrid: Auto-BE on TP1 OR Flexible Trigger)
+        // Check Move
+        bool shouldMoveSL = false
+        float moveLevel = entryPrice // Default BE
+        
+        // 1. Auto-BE Logic (Legacy)
+        if tp1Hit and moveToBE
+            shouldMoveSL := true
+            moveLevel := entryPrice
+            
+        // 2. Flexible Warning Logic (Overrides if triggered)
+        if slMoved
+            shouldMoveSL := true
+            if slTargetLevel == "Range Boundary"
+                moveLevel := isLong ? rHigh : rLow
+            else
+                moveLevel := entryPrice
+        
+        if shouldMoveSL
+            currentSL := isLong ? math.max(baseSL, moveLevel) : math.min(baseSL, moveLevel)
+
+        // Check TP1
+        if not tp1Hit
+            if (isLong and high >= tp1Price) or (not isLong and low <= tp1Price)
+                tp1Hit := true
+        
+        // Check TP2
+        if not tp2Hit
+            if (isLong and high >= tp2Price) or (not isLong and low <= tp2Price)
+                tp2Hit := true
+                
+        // Trailing
+        if useTrailingStop and tp1Hit
+            if useAdaptiveTrail
+                actPrice = calcTPPrice(entryPrice, trailActivationPct, isLong)
+                activates = (isLong and high >= actPrice) or (not isLong and low <= actPrice)
+                if activates
+                    adaptiveTrailActivated := true
+                if adaptiveTrailActivated
+                    currentTrailStop := updateTrailStop(currentTrailStop, entryPrice, isLong)
+                    currentSL := isLong ? math.max(currentSL, currentTrailStop) : math.min(currentSL, currentTrailStop)
+            else
+                currentTrailStop := updateTrailStop(currentTrailStop, entryPrice, isLong)
+                currentSL := currentTrailStop
+
+        // Exits
+        slTicks = math.abs(entryPrice - currentSL) / syminfo.mintick
+        
+        if not tp1Hit and tp1Qty > 0
+            tp1Ticks = math.abs(tp1Price - entryPrice) / syminfo.mintick
+            strategy.exit("TP1", qty=tp1Qty, profit=tp1Ticks, loss=slTicks)
+            
+        if remQty > 0
+            if not tp2Hit
+                tp2Ticks = math.abs(tp2Price - entryPrice) / syminfo.mintick
+                strategy.exit("TP2", qty=remQty, profit=tp2Ticks, loss=slTicks)
+            else
+                strategy.exit("Runner", qty=remQty, loss=slTicks)
+
+// Close at Session End
+if closeAtEnd and isSessionEnd and inTrade
+    strategy.close_all("Session End")
+
+// =============================================================================
+// 9. VISUALS
+// =============================================================================
+
+// Store Range Open/Close for color coding
+var float rOpen = na
+var float rClose = na
+
+if isNewSession and isSessionEnabled
+    rOpen := open
+    rClose := close // Initialize
+
+if isORBuild and isSessionEnabled
+    rClose := close // Update close until range ends
+
+// Range Box
+var box orbBox = na
+if showRangeBox and rDefined and isTradingWindow
+    if not rDefined[1]
+        // Color based on Range Candle Direction (Close vs Open)
+        // If 5min range: compares 5min Open to 5min Close
+        bool isBullishRange = rClose >= rOpen
+        color boxBg = isBullishRange ? color.new(color.green, 85) : color.new(color.red, 85)
+        color boxBorder = isBullishRange ? color.green : color.red
+        
+        // Draw box from session start
+        orbBox := box.new(sessionStartBar, rHigh, sessionStartBar + orbInterval, rLow, 
+                         bgcolor=boxBg, border_color=boxBorder)
+
+// TP/SL Levels
+var float activeTP1 = na
+var float activeTP2 = na
+var float activeSL = na
+
+if inTrade
+    entryPrice = strategy.opentrades.entry_price(0)
+    isLong = strategy.position_size > 0
+    activeTP1 := calcTPPrice(entryPrice, tp1Pct, isLong)
+    activeTP2 := useSingleTP ? na : calcTPPrice(entryPrice, tp2Pct, isLong)
+    activeSL := calcSLPrice(entryPrice, rLow, rHigh, isLong)
+else
+    activeTP1 := na
+    activeTP2 := na
+    activeSL := na
+
+plot(showLevels and inTrade ? activeTP1 : na, "TP1", color=color.green, linewidth=2, style=plot.style_linebr)
+plot(showLevels and inTrade and not useSingleTP ? activeTP2 : na, "TP2", color=color.lime, linewidth=1, style=plot.style_linebr)
+plot(showLevels and inTrade ? activeSL : na, "SL", color=color.red, linewidth=2, style=plot.style_linebr)
+
+// Dashboard
+if showDashboard and barstate.islast
+    var table dash = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 20))
+    table.cell(dash, 0, 0, "Generic ORB", text_color=color.white, bgcolor=color.blue)
+    table.cell(dash, 1, 0, str.tostring(orbInterval) + "m", text_color=color.white)
+    table.cell(dash, 0, 1, "Status", text_color=color.white)
+    table.cell(dash, 1, 1, isActiveHour ? (rDefined ? "TRADING" : "BUILDING") : "INACTIVE", 
+               text_color=isActiveHour ? color.green : color.gray)
+    table.cell(dash, 0, 2, "Session ID", text_color=color.white)
+    table.cell(dash, 1, 2, str.tostring(sessionId), text_color=color.yellow)
+    table.cell(dash, 0, 3, "Range", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(rSize, "#.##"), text_color=color.aqua)
+
+// Debug (Visuals Section - At the end to access all variables)
+if showDebug and isTradingWindow and barstate.isconfirmed
+    string reason = "OK"
+    if not canTrade
+        if hasWonSession
+            reason := "Won"
+        else if attempts >= maxAttempts
+            reason := "MaxAtt"
+        else if isRangeFiltered
+            reason := "Filt"
+        else if not reentryEligible
+            reason := "ReEnt"
+        else if inTrade
+            reason := "InTrd"
+    
+    if reason != "OK"
+        label.new(bar_index, high*1.0005, reason, textcolor=color.white, style=label.style_none)
