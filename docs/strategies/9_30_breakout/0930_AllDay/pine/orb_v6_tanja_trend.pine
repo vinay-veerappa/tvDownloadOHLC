@@ -45,7 +45,9 @@ useWickReset = input.bool(true, "Reset on Wick Test", group=grp_reentry,
 maxAttempts = input.int(5, "Max Attempts per Day", minval=1, maxval=15, group=grp_reentry)
 useWinTarget = input.bool(false, "Stop After Target Wins", group=grp_reentry)
 targetWins = input.int(1, "Target Daily Wins", minval=1, group=grp_reentry, active=useWinTarget)
-cooldownBars = input.int(0, "Cooldown Bars After Exit", minval=0, maxval=30, group=grp_reentry)
+cooldownBars = input.int(0, "Cooldown Bars", minval=0, maxval=30, group=grp_reentry)
+cooldownTriggerLosses = input.int(1, "Losses to Trigger Cooldown", minval=0, group=grp_reentry, 
+    tooltip="Only apply cooldown after this many consecutive losses. 0 = Always apply.")
 
 // --- Take Profit Settings ---
 grp_tp = "Take Profit Settings"
@@ -347,6 +349,7 @@ var int longAttempts = 0
 var int shortAttempts = 0
 var bool hasWonToday = false
 var int dailyWins = 0
+var int consecutiveLosses = 0
 var bool longPending = false
 var bool shortPending = false
 var int breakoutBar = na
@@ -372,6 +375,7 @@ if isNewDay
     shortAttempts := 0
     hasWonToday := false
     dailyWins := 0
+    consecutiveLosses := 0
     longPending := false
     shortPending := false
     breakoutBar := na
@@ -403,7 +407,9 @@ if rDefined and strategy.position_size == 0
 // =============================================================================
 
 inTrade = strategy.position_size != 0
-cooldownComplete = na(lastExitBar) or (bar_index - lastExitBar) >= cooldownBars
+// Cooldown logic: If consecutive losses < trigger, cooldown is 0. Else use cooldownBars.
+effectiveCooldown = cooldownTriggerLosses == 0 or consecutiveLosses >= cooldownTriggerLosses ? cooldownBars : 0
+cooldownComplete = na(lastExitBar) or (bar_index - lastExitBar) >= effectiveCooldown
 reentryEligible = requireFreshBreakout ? priceReturnedToRange : true
 
 canTrade = rDefined and isTradingTime and not isHardExit and not inTrade and 
@@ -596,6 +602,9 @@ if strategy.closedtrades > prevClosedTrades
     if lastTradeProfit > 0
         hasWonToday := true
         dailyWins += 1
+        consecutiveLosses := 0
+    else if lastTradeProfit < 0
+        consecutiveLosses += 1
     lastExitBar := bar_index
     prevClosedTrades := strategy.closedtrades
 
