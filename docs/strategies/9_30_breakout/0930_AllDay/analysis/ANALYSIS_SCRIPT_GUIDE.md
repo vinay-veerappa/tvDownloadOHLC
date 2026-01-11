@@ -27,12 +27,17 @@ python analyze_ninjatrader.py trades.csv settings.csv
 python analyze_ninjatrader.py
 ```
 
-### TradingView Analysis
+### TradingView Analysis (Generic)
 ```bash
 cd scripts
+python analyze_v3_comprehensive.py "ORB_V3_*.xlsx"
+# Or run without args to use default pattern:
 python analyze_v3_comprehensive.py
-# Uses INPUT_PATTERN = "ORB_V3_*.xlsx"
 ```
+**New Features (v2.2 Generic Edition):**
+*   **Dynamic Pattern**: Pass any file pattern (e.g., `"Tanja*.xlsx"`) as an argument.
+*   **Smart Naming**: The script auto-detects differentiating settings (e.g., "Mode") and appends them to column headers (e.g., `Model_A (Smart Mode)`).
+*   **Forensic Config Check**: The "Configuration Verification" section now dynamically highlights *any* setting that differs between exports, not just hardcoded ones.
 
 **Output**: Generates `*_Analysis_*.md` report file.
 
