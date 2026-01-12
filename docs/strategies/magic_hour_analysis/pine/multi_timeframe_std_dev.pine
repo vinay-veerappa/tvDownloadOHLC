@@ -1,0 +1,226 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © vveerappa
+//@version=6
+indicator('Multi-Timeframe Std Deviation Projections for futures', overlay = true, max_lines_count = 500)
+
+// ————— INPUTS —————
+g_main = 'Main Settings'
+lookbackHours = input.int(10, title = 'Hourly: Display Last X Sets', minval = 1,  inline = 'H1',group = g_main)
+show_H1 = input.bool(true, 'Show Hourly SD', inline = 'H1', group = g_main)
+lookback4H = input.int(4, title = '4-Hour: Display Last X Sets', minval = 1,  inline = 'H4', group = g_main)
+show_H4 = input.bool(true, 'Show 4 Hourly SD', inline = 'H4', group = g_main)
+lookbackDaily = input.int(1, title = 'Daily: Display Last X Sets', minval = 1,inline = 'D', group = g_main)
+show_Daily = input.bool(true, 'Show Daily SD', inline = 'D', group = g_main)
+
+tf_limit            = input.timeframe("30", "Timeframe Limit", tooltip = "Drawings will not appear on timeframes greater than or equal to this", group = g_main)
+
+g_styles = 'Line & Label Styles'
+label_size = input.string(size.small, 'Label Size', options = [size.tiny, size.small, size.normal, size.large], group = g_styles)
+// --- Level Toggles & Styles ---
+show_open = input.bool(true, 'Open', inline='open', group=g_styles)
+color_open = input.color(color.gray, '', inline='open', group=g_styles)
+style_open = input.string(line.style_dashed, '', options=[line.style_solid, line.style_dotted, line.style_dashed], inline='open', group=g_styles)
+width_open = input.int(1, '', minval=1, maxval=5, inline='open', group=g_styles)
+
+show_05 = input.bool(true, '0.5 SD', inline='0.5', group=g_styles)
+color_05_up = input.color(color.new(color.teal, 60), 'Up', inline='0.5', group=g_styles)
+color_05_dn = input.color(color.new(color.purple, 60), 'Dn', inline='0.5', group=g_styles)
+width_05 = input.int(1, '', minval=1, maxval=5, inline='0.5', group=g_styles)
+
+show_10 = input.bool(true, '1.0 SD', inline='1.0', group=g_styles)
+color_10_up = input.color(color.teal, 'Up', inline='1.0', group=g_styles)
+color_10_dn = input.color(color.purple, 'Dn', inline='1.0', group=g_styles)
+width_10 = input.int(2, '', minval=1, maxval=5, inline='1.0', group=g_styles)
+
+show_15 = input.bool(true, '1.5 SD', inline='1.5', group=g_styles)
+color_15_up = input.color(color.new(color.blue, 40), 'Up', inline='1.5', group=g_styles)
+color_15_dn = input.color(color.new(color.red, 40), 'Dn', inline='1.5', group=g_styles)
+width_15 = input.int(1, '', minval=1, maxval=5, inline='1.5', group=g_styles)
+
+show_20 = input.bool(true, '2.0 SD', inline='2.0', group=g_styles)
+color_20_up = input.color(color.blue, 'Up', inline='2.0', group=g_styles)
+color_20_dn = input.color(color.red, 'Dn', inline='2.0', group=g_styles)
+width_20 = input.int(2, '', minval=1, maxval=5, inline='2.0', group=g_styles)
+
+show_25 = input.bool(true, '2.5 SD', inline='2.5', group=g_styles)
+color_25_up = input.color(color.navy, 'Up', inline='2.5', group=g_styles)
+color_25_dn = input.color(color.maroon, 'Dn', inline='2.5', group=g_styles)
+width_25 = input.int(1, '', minval=1, maxval=5, inline='2.5', group=g_styles)
+
+
+// ————— HARDCODED STANDARD DEVIATION VALUES —————
+
+//float sd_daily_value = 0.01376
+
+
+// ————— DATA STRUCTURE for Storing SD values per symbol —————
+type SymbolData
+    array<float> hourly_sds
+    array<float> h4_sds
+    float daily_sd
+
+// ————— HARDCODED STANDARD DEVIATION VALUES per Symbol —————
+// Modify the values in this section directly to update the projections.
+getSymbolData(string root) =>
+    if root == 'NQ' or root == 'MNQ'
+        SymbolData.new(
+              array.from(0.00156, 0.00153, 0.00188, 0.00250, 0.00217, 0.00184, 0.00195, 0.00217, 0.00345, 0.00454, 0.00475, 0.00379, 0.00333, 0.00368, 0.00361, 0.00461, 0.00253, 0.001, 0.00242, 0.00165, 0.00197, 0.00209, 0.00175, 0.00132),
+              array.from(0.005133419851, 0.006640554759, 0.005265151124, 0.003363112588, 0.002652759155,0.0034135586), // Custom 4H sessions: 9, 13, 17, 21, 1, 5
+              0.01376)
+    else if root == 'ES' or root == 'MES'
+        SymbolData.new(
+              array.from(0.001386835407,0.001273932366,0.0009457787375,0.00100817191,0.0007731168462,0.001050806584,0.001150412948,0.001612058219,0.00184977342,0.001485531322,0.00135982075,0.001394406437,0.002838744906,0.003265820266,0.003468842312,0.00312432379,0.002447744797,0.002553797433,0.002842070965,0.003457375024,0.002400275116,0.001609398792,0.001129429032,0.001169732597),
+              array.from(0.004233271831, 0.005568122406, 0.004744938984, 0.003094014126, 0.002444928867,0.003188033394),
+              0.01)
+    else if root == 'YM' or root == 'MYM'
+        SymbolData.new(
+              array.from(0.001200524108,0.001101851751,0.0008077370219,0.0009233429186,0.0006602870866,0.0008132970652,0.001039288679,0.001445021315,0.001641252191,0.001328268661,0.001303200756,0.001243149335,0.002397051991,0.003045050233,0.003125629522,0.002864115668,0.002192702327,0.002309115419,0.002601125053,0.003084941891,0.002072471337,0.00112793739,0.0009712167541,0.0009649758536),
+              array.from(0.004520666819, 0.005550170989, 0.004731552205, 0.003172482559, 0.002469833278, 0.003304051379 ),
+              0.01)
+    else if root == 'RTY' or root == 'M2K'
+        SymbolData.new(
+              array.from(0.001726225075,0.001593074186,0.001190010474,0.001204798957,0.0009561782522,0.001252075248,0.001457486006,0.002034768551,0.002503485938,0.002020126451,0.001839182464,0.001784285226,0.004025117806,0.0055560775,0.005218724715,0.004432684633,0.003382084583,0.003201615926,0.003599546699,0.004175527594,0.002905836519,0.001502868305,0.001507603963,0.001530253467),
+              array.from(0.002, 0.002, 0.003, 0.003, 0.002, 0.002),
+              0.01)
+    else if root == 'GC'  or root == 'MGC'
+        SymbolData.new(
+              array.from(0.001166860063,0.001701800194,0.001178986621,0.0008975224436,0.0008211021442,0.001104210336,0.001302109829,0.001488322753,0.001516059002,0.001286041493,0.001398908087,0.001344643225,0.002494450361,0.002794494767,0.002890823763,0.00225912716,0.001593074646,0.001548692288,0.001621011082,0.001567022854,0.0009634852342,0.0006165069442,0.000949435928,0.001075602993),
+              array.from(0.004106440549, 0.00374114023, 0.002218094229, 0.00254261368, 0.002277638032, 0.002800508812),
+              0.01)
+    else if root == 'CL'   or root == 'MCL'
+        SymbolData.new(
+              array.from(0.004093984477,0.005730727725,0.00394179676,0.002762832869,0.002358181861,0.003514810851,0.004128878293,0.005161913388,0.006347217203,0.006371607884,0.005506553846,0.005473793355,0.0066699517,0.0106855143,0.009764670342,0.009153570029,0.007456941173,0.007937907119,0.006926919463,0.004807664068,0.003500968924,0.00289040994,0.004061599142,0.004014068478),
+              array.from(0.05360615568, 0.05891838453, 0.1270185878, 0.02321541813, 0.02748282406, 0.03545546752),
+              0.01)
+    else
+        na // Return 'na' if the symbol is not supported
+                                    
+
+// ————— INITIALIZATION & GLOBAL VARIABLES —————
+var hourly_lines = array.new_line()
+var hourly_labels = array.new_label()
+var h4_lines = array.new_line()
+var h4_labels = array.new_label()
+var daily_lines = array.new_line()
+var daily_labels = array.new_label()
+var symbolData = getSymbolData(syminfo.root)
+
+// ————— FUNCTIONS —————
+drawLine(price, clr, style, width, lineStart, lineEnd, linesArray) =>
+    array.push(linesArray, line.new(lineStart, price, lineEnd, price, xloc = xloc.bar_time, color = clr, style = style, width = width))
+
+drawLabel(price, labelText, textColor, labelIndex, labelsArray, size) =>
+    array.push(labelsArray, label.new(labelIndex, price, text = labelText, xloc = xloc.bar_time, yloc = yloc.price, style = label.style_none, textcolor = textColor, size = size, textalign = text.align_left, text_font_family = font.family_monospace))
+
+// Master function to draw a full set of projection lines for a given timeframe
+drawProjectionSet(openPrice, sdValue, startTime, endTime, labelPrefix, lineArray, labelArray) =>
+    labelIndex = endTime + (time - time[1]) * 1
+
+   // labelIndex = ta.valuewhen(time(endTime),bar_index,1)+ 3
+    if show_open
+        drawLine(openPrice, color_open, style_open, width_open, startTime, endTime, lineArray)
+        drawLabel(openPrice, labelPrefix + ' Open', color_open, labelIndex, labelArray, label_size)
+    if show_05
+        dev = sdValue * 0.5 * openPrice
+        drawLine(openPrice + dev, color_05_up, line.style_dotted, width_05, startTime, endTime, lineArray)
+        drawLabel(openPrice + dev, '+0.5 SD', color_05_up, labelIndex, labelArray, label_size)
+        drawLine(openPrice - dev, color_05_dn, line.style_dotted, width_05, startTime, endTime, lineArray)
+        drawLabel(openPrice - dev, '-0.5 SD', color_05_dn, labelIndex, labelArray, label_size)
+    if show_10
+        dev = sdValue * 1.0 * openPrice
+        drawLine(openPrice + dev, color_10_up, line.style_solid, width_10, startTime, endTime, lineArray)
+        drawLabel(openPrice + dev, '+1.0 SD', color_10_up, labelIndex, labelArray, label_size)
+        drawLine(openPrice - dev, color_10_dn, line.style_solid, width_10, startTime, endTime, lineArray)
+        drawLabel(openPrice - dev, '-1.0 SD', color_10_dn, labelIndex, labelArray, label_size)
+    if show_15
+        dev = sdValue * 1.5 * openPrice
+        drawLine(openPrice + dev, color_15_up, line.style_dotted, width_15, startTime, endTime, lineArray)
+        drawLabel(openPrice + dev, '+1.5 SD', color_15_up, labelIndex, labelArray, label_size)
+        drawLine(openPrice - dev, color_15_dn, line.style_dotted, width_15, startTime, endTime, lineArray)
+        drawLabel(openPrice - dev, '-1.5 SD', color_15_dn, labelIndex, labelArray, label_size)
+    if show_20
+        dev = sdValue * 2.0 * openPrice
+        drawLine(openPrice + dev, color_20_up, line.style_solid, width_20, startTime, endTime, lineArray)
+        drawLabel(openPrice + dev, '+2.0 SD', color_20_up, labelIndex, labelArray, label_size)
+        drawLine(openPrice - dev, color_20_dn, line.style_solid, width_20, startTime, endTime, lineArray)
+        drawLabel(openPrice - dev, '-2.0 SD', color_20_dn, labelIndex, labelArray, label_size)
+    if show_25
+        dev = sdValue * 2.5 * openPrice
+        drawLine(openPrice + dev, color_25_up, line.style_dotted, width_25, startTime, endTime, lineArray)
+        drawLabel(openPrice + dev, '+2.5 SD', color_25_up, labelIndex, labelArray, label_size)
+        drawLine(openPrice - dev, color_25_dn, line.style_dotted, width_25, startTime, endTime, lineArray)
+        drawLabel(openPrice - dev, '-2.5 SD', color_25_dn, labelIndex, labelArray, label_size)
+        dev := sdValue * 3.0 * openPrice
+        drawLine(openPrice + dev, color_25_up, line.style_dotted, width_25, startTime, endTime, lineArray)
+        drawLabel(openPrice + dev, '+3.0 SD', color_25_up, labelIndex, labelArray, label_size)
+        drawLine(openPrice - dev, color_25_dn, line.style_dotted, width_25, startTime, endTime, lineArray)
+        drawLabel(openPrice - dev, '-3.0 SD', color_25_dn, labelIndex, labelArray, label_size)
+
+// Function to check if the current bar's hour is a custom 4H session start time
+is_h4_start(h) =>
+    h == 9 or h == 13 or h == 17 or h == 21 or h == 1 or h == 5
+// ————— DATA FETCHING for HTF —————
+open_4h = request.security(syminfo.tickerid, '240', open,lookahead = barmerge.lookahead_on)
+open_daily = request.security(syminfo.tickerid, 'D', open,lookahead = barmerge.lookahead_on)
+
+// ————— PLOTTING LOGIC —————
+// Master condition to check if the ticker is NQ or MNQ. Uses syminfo.root for futures.
+bool isTargetTicker = str.contains(syminfo.tickerid, 'NQ')
+
+// ————— PLOTTING LOGIC —————
+if na(symbolData)
+    runtime.error("This symbol is not supported by the indicator. Please use NQ, ES, YM, RTY, GC, or CL.")
+else
+    lines_per_set = (show_open ? 1 : 0) + (show_05 ? 2 : 0) + (show_10 ? 2 : 0) + (show_15 ? 2 : 0) + (show_20 ? 2 : 0) + (show_25 ? 4 : 0)
+
+    // --- Hourly Projections ---
+    
+    if timeframe.change('60') and show_H1 and timeframe.in_seconds("") <= timeframe.in_seconds(tf_limit)
+        sd = array.get(symbolData.hourly_sds, hour)
+        if not na(sd)
+            drawProjectionSet(open, sd, time, time + 3600000, 'H1 ', hourly_lines, hourly_labels)
+            while array.size(hourly_lines) > lookbackHours * lines_per_set
+                line.delete(array.shift(hourly_lines))
+            while array.size(hourly_labels) > lookbackHours * lines_per_set
+                label.delete(array.shift(hourly_labels))
+
+    // --- 4-Hour Projections ---
+    //if timeframe.change('240') and not na(open_4h) and show_H4
+    //if is_h4_start(hour) and not is_h4_start(hour[1]) and show_H4
+    if timeframe.change('240') and show_H4  and timeframe.in_seconds("") <= timeframe.in_seconds(tf_limit)
+        // Determine which 4-hour session index (0-5) we are in
+        // Determine which 4-hour session index we are in based on custom start times
+        int h4_session_index = na
+        if hour == 9 or hour == 10
+            h4_session_index := 0
+        else if hour == 13  or hour == 14
+            h4_session_index := 1
+        else if hour == 17  or hour == 18
+            h4_session_index := 2
+        else if hour == 21  or hour == 22
+            h4_session_index := 3
+        else if hour == 1  or hour == 2
+            h4_session_index := 4
+        else if hour == 5  or hour == 6
+            h4_session_index := 5
+        
+        
+        // Only proceed if the current 4H bar starts at one of our specified times
+        if not na(h4_session_index)
+            float sd = array.get(symbolData.h4_sds, h4_session_index)
+            log.info(" H4 Index {0} hour {1} sd {2,number, #.######}",h4_session_index, hour,sd)
+        
+            if not na(sd)
+                drawProjectionSet(open_4h, sd, time, time + 14400000, "H4 ", h4_lines, h4_labels)
+                while array.size(h4_lines) > lookback4H * lines_per_set
+                    line.delete(array.shift(h4_lines))
+                while array.size(h4_labels) > lookback4H * lines_per_set
+                    label.delete(array.shift(h4_labels))
+
+    // --- Daily Projections ---
+    if timeframe.change('D') and not na(open_daily) and show_Daily  and timeframe.in_seconds("") <= timeframe.in_seconds(tf_limit)
+        drawProjectionSet(open_daily, symbolData.daily_sd, time, time + 86400000, 'D', daily_lines, daily_labels)
+        while array.size(daily_lines) > lookbackDaily * lines_per_set
+            line.delete(array.shift(daily_lines))
+        while array.size(daily_labels) > lookbackDaily * lines_per_set
+            label.delete(array.shift(daily_labels))

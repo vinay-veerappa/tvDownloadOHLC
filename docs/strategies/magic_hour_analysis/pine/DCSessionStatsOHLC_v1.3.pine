@@ -1,0 +1,301 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © dc_77
+
+//@version=6
+indicator("DCSessionStatsOHLC_v1.3_with_Median_and_Shading", overlay=true)
+
+// === Input Definitions ===
+// Session Settings
+session_time = input.string("0000-1600", "Session Time (HHMM-HHMM)", tooltip="Specify session range (e.g., 0000-1600 for midnight to 4:00 PM)")
+time_zone = input.string("UTC", "Time Zone", options=["UTC", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Asia/Tokyo"], tooltip="Set the time zone for session timing")
+hist_sessions = input.int(20, "Historical Sessions", minval=1, tooltip="Number of past sessions for statistical analysis")
+
+// Anchor Settings
+show_anchor = input.bool(true, "Show Session Anchor", inline="anchor", tooltip="Toggle vertical line at session start")
+anchor_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="anchor")
+anchor_color = input.color(color.black, "", inline="anchor")
+anchor_width = input.int(1, "", minval=1, maxval=4, inline="anchor")
+show_anchor_label = input.bool(true, "Show Anchor Label", tooltip="Toggle label for anchor line")
+
+// Session Open Line Settings
+show_session_open = input.bool(true, "Show Session Open Line", inline="session_open", tooltip="Toggle horizontal session open line")
+session_open_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="session_open")
+session_open_color = input.color(color.gray, "", inline="session_open")
+session_open_width = input.int(1, "", minval=1, maxval=4, inline="session_open")
+show_session_open_label = input.bool(true, "Show Session Open Label", tooltip="Toggle label for session open line")
+
+// Manipulation Settings
+show_manipulation = input.bool(true, "Show Manipulation Levels", inline="manipulation", tooltip="Toggle horizontal manipulation levels")
+manipulation_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="manipulation")
+manipulation_color = input.color(color.red, "", inline="manipulation")
+manipulation_width = input.int(1, "", minval=1, maxval=4, inline="manipulation")
+show_manipulation_label = input.bool(true, "Show Manipulation Labels", tooltip="Toggle labels for manipulation levels")
+
+// Distribution Settings
+show_distribution = input.bool(true, "Show Distribution Levels", inline="distribution", tooltip="Toggle horizontal distribution levels")
+distribution_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="distribution")
+distribution_color = input.color(color.blue, "", inline="distribution")
+distribution_width = input.int(1, "", minval=1, maxval=4, inline="distribution")
+show_distribution_label = input.bool(true, "Show Distribution Labels", tooltip="Toggle labels for distribution levels")
+
+// Median Settings
+show_median = input.bool(true, "Show Median Levels", inline="median", tooltip="Toggle horizontal median levels")
+median_style = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], inline="median")
+median_color = input.color(color.blue, "", inline="median")
+median_width = input.int(1, "", minval=1, maxval=4, inline="median")
+show_median_label = input.bool(true, "Show Median Labels", tooltip="Toggle labels for median levels")
+
+// Shading Settings
+show_shading = input.bool(true, "Show Shaded Areas", inline="shading", tooltip="Toggle shaded areas between mean and median")
+shading_manip_color = input.color(color.new(color.gray, 90), "Manipulation Shading", inline="shading")
+shading_dist_color = input.color(color.new(color.blue, 90), "Distribution Shading", inline="shading")
+
+// Display Settings
+projection_offset = input.int(24, "Projection Offset (Bars)", minval=0, tooltip="Number of bars to extend projection lines beyond session start")
+label_size = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal", "Large"], tooltip="Size of labels for all lines")
+show_table = input.bool(true, "Show Session Count Table", tooltip="Toggle table showing bullish/bearish session counts")
+table_position = input.string("Bottom Right", "Table Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"])
+table_size = input.string("Small", "Table Size", options=["Small", "Normal", "Large"])
+
+// === Helper Functions ===
+get_line_style(style_string) =>
+    style_string == "Solid" ? line.style_solid : style_string == "Dashed" ? line.style_dashed : line.style_dotted
+
+get_label_size(size_string) =>
+    size_string == "Tiny" ? size.tiny : size_string == "Small" ? size.small : size_string == "Normal" ? size.normal : size.large
+
+get_label_style() =>
+    label.style_label_left
+
+// === Session Detection ===
+is_in_session = not na(time(timeframe.period, session_time, time_zone))
+is_session_start = is_in_session and not is_in_session[1]
+is_session_end = not is_in_session and is_in_session[1]
+
+// === Session Data Tracking ===
+var float session_open = na
+var float session_high = na
+var float session_low = na
+var float session_close = na
+
+if is_session_start
+    session_open := open
+    session_high := high
+    session_low := low
+    session_close := close
+else if is_in_session
+    session_high := math.max(session_high, high)
+    session_low := math.min(session_low, low)
+    session_close := close
+
+// === Arrays and Counters ===
+var float[] manipulation_distances = array.new_float(0)
+var float[] distribution_distances = array.new_float(0)
+var int[] session_types = array.new_int(0)
+var int bullish_count = 0
+var int bearish_count = 0
+
+if is_session_end
+    int session_type = 0
+    float manipulation = na
+    float distribution = na
+    if session_close > session_open
+        manipulation := session_open - session_low
+        distribution := session_high - session_open
+        session_type := 1
+    else if session_close < session_open
+        manipulation := session_high - session_open
+        distribution := session_open - session_low
+        session_type := -1
+    
+    if session_type != 0
+        array.push(manipulation_distances, manipulation)
+        array.push(distribution_distances, distribution)
+        array.push(session_types, session_type)
+        if session_type == 1
+            bullish_count := bullish_count + 1
+        else
+            bearish_count := bearish_count + 1
+        
+        if array.size(session_types) > hist_sessions
+            int old_type = array.shift(session_types)
+            if old_type == 1
+                bullish_count := bullish_count - 1
+            else
+                bearish_count := bearish_count - 1
+            array.shift(manipulation_distances)
+            array.shift(distribution_distances)
+
+// === Calculate Averages and Medians ===
+avg_manipulation = array.size(manipulation_distances) > 0 ? array.avg(manipulation_distances) : na
+avg_distribution = array.size(distribution_distances) > 0 ? array.avg(distribution_distances) : na
+median_manipulation = array.size(manipulation_distances) > 0 ? array.median(manipulation_distances) : na
+median_distribution = array.size(distribution_distances) > 0 ? array.median(distribution_distances) : na
+
+// === Plotting Levels and Labels ===
+var line anchor_line = na
+var label anchor_label = na
+var line session_open_line = na
+var label session_open_label = na
+var line upper_manipulation_line = na
+var label upper_manipulation_label = na
+var line lower_manipulation_line = na
+var label lower_manipulation_label = na
+var line upper_distribution_line = na
+var label upper_distribution_label = na
+var line lower_distribution_line = na
+var label lower_distribution_label = na
+var line upper_median_manip_line = na
+var label upper_median_manip_label = na
+var line lower_median_manip_line = na
+var label lower_median_manip_label = na
+var line upper_median_dist_line = na
+var label upper_median_dist_label = na
+var line lower_median_dist_line = na
+var label lower_median_dist_label = na
+var box upper_manip_shading = na
+var box lower_manip_shading = na
+var box upper_dist_shading = na
+var box lower_dist_shading = na
+
+if bar_index == 0
+    anchor_line := line.new(bar_index, na, bar_index, na, xloc.bar_index, extend.both, anchor_color, get_line_style(anchor_style), anchor_width)
+    anchor_label := label.new(bar_index, na, "OHLCStats © dc_77", style=label.style_label_right, color=color.new(anchor_color, 100), textcolor=anchor_color, size=get_label_size(label_size))
+    session_open_line := line.new(bar_index, na, bar_index+1, na, color=session_open_color, style=get_line_style(session_open_style), width=session_open_width)
+    session_open_label := label.new(bar_index, na, "s0.00", style=get_label_style(), color=color.new(session_open_color, 100), textcolor=session_open_color, size=get_label_size(label_size))
+    upper_manipulation_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color, style=get_line_style(manipulation_style), width=manipulation_width)
+    upper_manipulation_label := label.new(bar_index, na, "-M", style=get_label_style(), color=color.new(manipulation_color, 100), textcolor=manipulation_color, size=get_label_size(label_size))
+    lower_manipulation_line := line.new(bar_index, na, bar_index+1, na, color=manipulation_color, style=get_line_style(manipulation_style), width=manipulation_width)
+    lower_manipulation_label := label.new(bar_index, na, "+M", style=get_label_style(), color=color.new(manipulation_color, 100), textcolor=manipulation_color, size=get_label_size(label_size))
+    upper_distribution_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color, style=get_line_style(distribution_style), width=distribution_width)
+    upper_distribution_label := label.new(bar_index, na, "+D", style=get_label_style(), color=color.new(distribution_color, 100), textcolor=distribution_color, size=get_label_size(label_size))
+    lower_distribution_line := line.new(bar_index, na, bar_index+1, na, color=distribution_color, style=get_line_style(distribution_style), width=distribution_width)
+    lower_distribution_label := label.new(bar_index, na, "-D", style=get_label_style(), color=color.new(distribution_color, 100), textcolor=distribution_color, size=get_label_size(label_size))
+    upper_median_manip_line := line.new(bar_index, na, bar_index+1, na, color=median_color, style=get_line_style(median_style), width=median_width)
+    upper_median_manip_label := label.new(bar_index, na, "-M Median", style=get_label_style(), color=color.new(median_color, 100), textcolor=median_color, size=get_label_size(label_size))
+    lower_median_manip_line := line.new(bar_index, na, bar_index+1, na, color=median_color, style=get_line_style(median_style), width=median_width)
+    lower_median_manip_label := label.new(bar_index, na, "+M Median", style=get_label_style(), color=color.new(median_color, 100), textcolor=median_color, size=get_label_size(label_size))
+    upper_median_dist_line := line.new(bar_index, na, bar_index+1, na, color=median_color, style=get_line_style(median_style), width=median_width)
+    upper_median_dist_label := label.new(bar_index, na, "+D Median", style=get_label_style(), color=color.new(median_color, 100), textcolor=median_color, size=get_label_size(label_size))
+    lower_median_dist_line := line.new(bar_index, na, bar_index+1, na, color=median_color, style=get_line_style(median_style), width=median_width)
+    lower_median_dist_label := label.new(bar_index, na, "-D Median", style=get_label_style(), color=color.new(median_color, 100), textcolor=median_color, size=get_label_size(label_size))
+    upper_manip_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_manip_color, border_width=0)
+    lower_manip_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_manip_color, border_width=0)
+    upper_dist_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_dist_color, border_width=0)
+    lower_dist_shading := box.new(bar_index, na, bar_index+1, na, bgcolor=shading_dist_color, border_width=0)
+
+// Session Anchor (Vertical Line with Extend Both)
+if is_session_start and show_anchor
+    line.set_xy1(anchor_line, bar_index, session_open)
+    line.set_xy2(anchor_line, bar_index, session_open)
+    if show_anchor_label and not na(avg_distribution)
+        anchor_label_x = bar_index
+        label.set_xy(anchor_label, anchor_label_x, session_open + avg_distribution)
+
+// Session Open Line
+if is_session_start and show_session_open
+    line.set_xy1(session_open_line, bar_index, session_open)
+    line.set_xy2(session_open_line, bar_index + projection_offset, session_open)
+    if show_session_open_label
+        label.set_xy(session_open_label, bar_index + projection_offset, session_open)
+
+// Manipulation Levels
+if is_session_start and not na(avg_manipulation) and not na(avg_distribution) and show_manipulation
+    line.set_xy1(upper_manipulation_line, bar_index, session_open + avg_manipulation)
+    line.set_xy2(upper_manipulation_line, bar_index + projection_offset, session_open + avg_manipulation)
+    line.set_xy1(lower_manipulation_line, bar_index, session_open - avg_manipulation)
+    line.set_xy2(lower_manipulation_line, bar_index + projection_offset, session_open - avg_manipulation)
+    if show_manipulation_label
+        label.set_xy(upper_manipulation_label, bar_index + projection_offset, session_open + avg_manipulation)
+        label.set_xy(lower_manipulation_label, bar_index + projection_offset, session_open - avg_manipulation)
+
+// Distribution Levels
+if is_session_start and not na(avg_manipulation) and not na(avg_distribution) and show_distribution
+    line.set_xy1(upper_distribution_line, bar_index, session_open + avg_distribution)
+    line.set_xy2(upper_distribution_line, bar_index + projection_offset, session_open + avg_distribution)
+    line.set_xy1(lower_distribution_line, bar_index, session_open - avg_distribution)
+    line.set_xy2(lower_distribution_line, bar_index + projection_offset, session_open - avg_distribution)
+    if show_distribution_label
+        label.set_xy(upper_distribution_label, bar_index + projection_offset, session_open + avg_distribution)
+        label.set_xy(lower_distribution_label, bar_index + projection_offset, session_open - avg_distribution)
+
+// Median Levels
+if is_session_start and not na(median_manipulation) and not na(median_distribution) and show_median
+    line.set_xy1(upper_median_manip_line, bar_index, session_open + median_manipulation)
+    line.set_xy2(upper_median_manip_line, bar_index + projection_offset, session_open + median_manipulation)
+    line.set_xy1(lower_median_manip_line, bar_index, session_open - median_manipulation)
+    line.set_xy2(lower_median_manip_line, bar_index + projection_offset, session_open - median_manipulation)
+    line.set_xy1(upper_median_dist_line, bar_index, session_open + median_distribution)
+    line.set_xy2(upper_median_dist_line, bar_index + projection_offset, session_open + median_distribution)
+    line.set_xy1(lower_median_dist_line, bar_index, session_open - median_distribution)
+    line.set_xy2(lower_median_dist_line, bar_index + projection_offset, session_open - median_distribution)
+    if show_median_label
+        label.set_xy(upper_median_manip_label, bar_index + projection_offset, session_open + median_manipulation)
+        label.set_xy(lower_median_manip_label, bar_index + projection_offset, session_open - median_manipulation)
+        label.set_xy(upper_median_dist_label, bar_index + projection_offset, session_open + median_distribution)
+        label.set_xy(lower_median_dist_label, bar_index + projection_offset, session_open - median_distribution)
+    if show_shading
+        box.set_right(upper_manip_shading, bar_index + projection_offset)
+        box.set_right(lower_manip_shading, bar_index + projection_offset)
+        box.set_right(upper_dist_shading, bar_index + projection_offset)
+        box.set_right(lower_dist_shading, bar_index + projection_offset)
+
+// Extend Lines, Labels, and Boxes Beyond Session
+if bar_index > bar_index[1]
+    if show_session_open
+        line.set_x2(session_open_line, bar_index + projection_offset + 3)
+        if show_session_open_label
+            label.set_x(session_open_label, bar_index + projection_offset + 3)
+    if show_manipulation
+        line.set_x2(upper_manipulation_line, bar_index + projection_offset)
+        line.set_x2(lower_manipulation_line, bar_index + projection_offset)
+        if show_manipulation_label
+            label.set_x(upper_manipulation_label, bar_index + projection_offset)
+            label.set_x(lower_manipulation_label, bar_index + projection_offset)
+    if show_distribution
+        line.set_x2(upper_distribution_line, bar_index + projection_offset)
+        line.set_x2(lower_distribution_line, bar_index + projection_offset)
+        if show_distribution_label
+            label.set_x(upper_distribution_label, bar_index + projection_offset)
+            label.set_x(lower_distribution_label, bar_index + projection_offset)
+    if show_median
+        line.set_x2(upper_median_manip_line, bar_index + projection_offset)
+        line.set_x2(lower_median_manip_line, bar_index + projection_offset)
+        line.set_x2(upper_median_dist_line, bar_index + projection_offset)
+        line.set_x2(lower_median_dist_line, bar_index + projection_offset)
+        if show_median_label
+            label.set_x(upper_median_manip_label, bar_index + projection_offset)
+            label.set_x(lower_median_manip_label, bar_index + projection_offset)
+            label.set_x(upper_median_dist_label, bar_index + projection_offset)
+            label.set_x(lower_median_dist_label, bar_index + projection_offset)
+    if show_shading
+        box.set_right(upper_manip_shading, bar_index + projection_offset)
+        box.set_right(lower_manip_shading, bar_index + projection_offset)
+        box.set_right(upper_dist_shading, bar_index + projection_offset)
+        box.set_right(lower_dist_shading, bar_index + projection_offset)
+
+// === Table Display ===
+var table session_table = na
+if bar_index == 0
+    pos = table_position == "Top Left" ? position.top_left : table_position == "Top Right" ? position.top_right : table_position == "Bottom Left" ? position.bottom_left : position.bottom_right
+    session_table := table.new(pos, 2, 2, bgcolor=color.white, border_width=1)
+
+if show_table
+    table.cell(session_table, 0, 0, "Bullish", text_color=color.black, text_size=table_size == "Small" ? size.tiny : table_size == "Normal" ? size.small : size.normal)
+    table.cell(session_table, 1, 0, str.tostring(bullish_count), text_color=color.black, text_size=table_size == "Small" ? size.tiny : table_size == "Normal" ? size.small : size.normal)
+    table.cell(session_table, 0, 1, "Bearish", text_color=color.black, text_size=table_size == "Small" ? size.tiny : table_size == "Normal" ? size.small : size.normal)
+    table.cell(session_table, 1, 1, str.tostring(bearish_count), text_color=color.black, text_size=table_size == "Small" ? size.tiny : table_size == "Normal" ? size.small : size.normal)
+
+// === Alert Condition Booleans ===
+sessionOpenCross = show_session_open and not na(session_open) and ta.cross(close, session_open)
+upperManipCross = show_manipulation and not na(avg_manipulation) and not na(session_open) and ta.cross(close, session_open + avg_manipulation)
+lowerManipCross = show_manipulation and not na(avg_manipulation) and not na(session_open) and ta.cross(close, session_open - avg_manipulation)
+upperDistCross = show_distribution and not na(avg_distribution) and not na(session_open) and ta.cross(close, session_open + avg_distribution)
+lowerDistCross = show_distribution and not na(avg_distribution) and not na(session_open) and ta.cross(close, session_open - avg_distribution)
+
+// === Alert Conditions ===
+alertcondition(sessionOpenCross, title="Session Open Cross", message="Price crossed Session Open at {{close}}")
+alertcondition(upperManipCross, title="Upper Manipulation Cross", message="Price crossed -M at {{close}}")
+alertcondition(lowerManipCross, title="Lower Manipulation Cross", message="Price crossed +M at {{close}}")
+alertcondition(upperDistCross, title="Upper Distribution Cross", message="Price crossed +D at {{close}}")
+alertcondition(lowerDistCross, title="Lower Distribution Cross", message="Price crossed -D at {{close}}")

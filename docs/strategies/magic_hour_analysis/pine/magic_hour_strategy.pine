@@ -1,0 +1,325 @@
+//@version=6
+strategy("VxV::Magic Hour Strategy", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, 
+         default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=50000)
+
+// =============================================================================
+// 1. STRATEGY INPUTS
+// =============================================================================
+
+grp_strat = "STRATEGY SELECTION"
+magicHourInput = input.int(7, "Magic Hour (0-23 ET)", minval=0, maxval=23, group=grp_strat)
+tzInput = input.string("America/New_York", "Timezone", group=grp_strat)
+
+grp_entry = "ENTRY SETTINGS"
+entryMethodInput = input.string("Immediate", "Entry Method", options=["Immediate", "Reversal Bar", "Stall Detection", "Zone Threshold"], group=grp_entry)
+entryZoneInput = input.float(25.0, "Entry Zone Threshold (%)", minval=0, maxval=300, step=5, group=grp_entry, tooltip="For Zone Threshold method: enter when extension reaches this %")
+stallBarsInput = input.int(5, "Stall Bar Count", minval=2, maxval=20, group=grp_entry, tooltip="For Stall Detection method: bars without new high/low")
+
+grp_exit = "EXIT SETTINGS"
+stopLevelInput = input.float(100.0, "Stop Loss Level (%)", options=[75.0, 100.0, 150.0], group=grp_exit, tooltip="Invalidation level as % of Magic Range")
+timeStopHours = input.int(3, "Time Stop (Hours)", minval=1, maxval=6, group=grp_exit)
+
+grp_vis = "VISUALS"
+showZones = input.bool(true, "Show Zones", group=grp_vis)
+showDash = input.bool(false, "Show Dashboard", group=grp_vis)
+textSizeInput = input.string("Normal", "Text Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_vis)
+textAlignInput = input.string("Right", "Zone Text Alignment", options=["Left", "Center", "Right"], group=grp_vis)
+
+// Colors
+mhFillColor = input.color(color.new(color.gray, 85), "Magic Hour Fill", group=grp_vis)
+midlineColor = input.color(color.new(#d42cff, 0), "Midline/Target Color", group=grp_vis)
+zoneLineColor = input.color(color.new(#2962ff, 0), "Zone Line Color", group=grp_vis)
+neutralLineColor = input.color(color.new(color.gray, 50), "MH High/Low Line", group=grp_vis)
+
+grp_filter = "DATE FILTER"
+useFilter = input.bool(false, "Use Date Filter", group=grp_filter)
+startDate = input.time(timestamp("2020-01-01"), "Start Date", group=grp_filter)
+endDate = input.time(timestamp("2025-12-31"), "End Date", group=grp_filter)
+
+// =============================================================================
+// 2. TIME LOGIC
+// =============================================================================
+
+currentHour = hour(time, tzInput)
+isMagicHour = currentHour == magicHourInput
+isAnalysisWindow = currentHour > magicHourInput and currentHour <= (magicHourInput + timeStopHours)
+
+// Handle day rollover for late-night hours
+if magicHourInput >= 21
+    isAnalysisWindow := currentHour > magicHourInput or currentHour <= ((magicHourInput + timeStopHours) % 24)
+
+// Date filter
+inDateRange = not useFilter or (time >= startDate and time <= endDate)
+
+// =============================================================================
+// 3. STATE VARIABLES
+// =============================================================================
+
+var float mhHigh = na
+var float mhLow = na
+var float mhMid = na
+var float mhRng = na
+var box mhBox = na
+var line midLine = na
+var line mhHighLine = na
+var line mhLowLine = na
+var label mhHighLabel = na
+var label mhLowLabel = na
+
+var string breakSide = "NONE"
+var bool entryTriggered = false
+var int barsSinceExtreme = 0
+var float maxExtension = 0.0
+var label objLabel = na
+
+// Zone boxes
+var box[] zoneBoxes = array.new_box()
+
+// Zone colors
+c_z1 = color.new(#00e676, 80) // Green - IDEAL
+c_z2 = color.new(#4fc3f7, 80) // Light Blue - PRIME  
+c_z3 = color.new(#81c784, 80) // Lighter Green - DEEP
+c_z4 = color.new(#ffcc80, 70) // Orange - RISK
+c_z5 = color.new(#ef9a9a, 65) // Light Red - LAST STAND
+c_z6 = color.new(#e57373, 55) // Red - GRAVEYARD
+inactiveZoneFill = color.new(color.gray, 95)
+
+// =============================================================================
+// 4. HELPER FUNCTIONS
+// =============================================================================
+
+f_getTextSize() =>
+    textSizeInput == "Tiny" ? size.tiny : textSizeInput == "Small" ? size.small : textSizeInput == "Normal" ? size.normal : size.large
+
+f_getTextAlign() =>
+    textAlignInput == "Left" ? text.align_left : textAlignInput == "Center" ? text.align_center : text.align_right
+
+f_drawZone(float top, float bot, color c, string txt, int r_idx) =>
+    if showZones
+        zoneSz = f_getTextSize()
+        zoneAlign = f_getTextAlign()
+        b = box.new(bar_index, top, r_idx, bot, bgcolor=inactiveZoneFill, border_color=na, text=txt, text_color=color.black, text_size=zoneSz, text_halign=zoneAlign)
+        array.push(zoneBoxes, b)
+
+// =============================================================================
+// 5. MAGIC HOUR DETECTION & ZONE DRAWING
+// =============================================================================
+
+if isMagicHour and inDateRange
+    if not isMagicHour[1]
+        // Start of Magic Hour - Reset
+        mhHigh := high
+        mhLow := low
+        mhBox := box.new(bar_index, mhHigh, bar_index + 60, mhLow, bgcolor=mhFillColor, border_color=na, text="MAGIC HOUR", text_color=color.gray, text_size=f_getTextSize())
+        breakSide := "NONE"
+        entryTriggered := false
+        barsSinceExtreme := 0
+        maxExtension := 0.0
+        
+        // Clear old visuals
+        for b in zoneBoxes
+            box.delete(b)
+        array.clear(zoneBoxes)
+        line.delete(midLine)
+        line.delete(mhHighLine)
+        line.delete(mhLowLine)
+        label.delete(mhHighLabel)
+        label.delete(mhLowLabel)
+        label.delete(objLabel)
+    else
+        // During Magic Hour - Track High/Low
+        mhHigh := math.max(mhHigh, high)
+        mhLow := math.min(mhLow, low)
+        box.set_top(mhBox, mhHigh)
+        box.set_bottom(mhBox, mhLow)
+        box.set_right(mhBox, bar_index + 5)
+
+else if isAnalysisWindow and inDateRange
+    // Post Magic Hour Logic
+    if isMagicHour[1]
+        // Magic Hour Just Ended -> Set Levels
+        mhRng := mhHigh - mhLow
+        mhMid := (mhHigh + mhLow) / 2
+        
+        // Draw Midline (Target)
+        midLine := line.new(bar_index, mhMid, bar_index + 180, mhMid, color=midlineColor, style=line.style_solid, width=2)
+        
+        // Draw MH High/Low boundary lines
+        mhHighLine := line.new(bar_index, mhHigh, bar_index + 180, mhHigh, color=neutralLineColor, style=line.style_solid, width=1)
+        mhLowLine := line.new(bar_index, mhLow, bar_index + 180, mhLow, color=neutralLineColor, style=line.style_solid, width=1)
+        mhHighLabel := label.new(bar_index + 180, mhHigh, "MH High", color=color.new(color.gray, 90), textcolor=color.gray, style=label.style_label_left, size=f_getTextSize())
+        mhLowLabel := label.new(bar_index + 180, mhLow, "MH Low", color=color.new(color.gray, 90), textcolor=color.gray, style=label.style_label_left, size=f_getTextSize())
+        
+        right_idx = bar_index + 180
+        
+        // Draw Upper Zones
+        h_z1 = mhHigh + (mhRng * 0.25)
+        h_z2 = mhHigh + (mhRng * 0.50)
+        h_z3 = mhHigh + (mhRng * 1.00)
+        h_z4 = mhHigh + (mhRng * 1.50)
+        h_z5 = mhHigh + (mhRng * 3.00)
+        
+        f_drawZone(h_z1, mhHigh, c_z1, "Z1 (Ideal)", right_idx)
+        f_drawZone(h_z2, h_z1, c_z2, "Z2 (Prime)", right_idx)
+        f_drawZone(h_z3, h_z2, c_z3, "Z3 (Deep)", right_idx)
+        f_drawZone(h_z4, h_z3, c_z4, "Z4 (Risk)", right_idx)
+        f_drawZone(h_z5, h_z4, c_z5, "Z5 (Last Stand)", right_idx)
+        
+        // Zone boundary lines
+        line.new(bar_index, h_z1, right_idx, h_z1, color=zoneLineColor, style=line.style_solid, width=1)
+        line.new(bar_index, h_z2, right_idx, h_z2, color=zoneLineColor, style=line.style_solid, width=1)
+        line.new(bar_index, h_z3, right_idx, h_z3, color=zoneLineColor, style=line.style_solid, width=1)
+        line.new(bar_index, h_z4, right_idx, h_z4, color=zoneLineColor, style=line.style_solid, width=1)
+        
+        // Draw Lower Zones
+        l_z1 = mhLow - (mhRng * 0.25)
+        l_z2 = mhLow - (mhRng * 0.50)
+        l_z3 = mhLow - (mhRng * 1.00)
+        l_z4 = mhLow - (mhRng * 1.50)
+        l_z5 = mhLow - (mhRng * 3.00)
+        
+        f_drawZone(mhLow, l_z1, c_z1, "Z1 (Ideal)", right_idx)
+        f_drawZone(l_z1, l_z2, c_z2, "Z2 (Prime)", right_idx)
+        f_drawZone(l_z2, l_z3, c_z3, "Z3 (Deep)", right_idx)
+        f_drawZone(l_z3, l_z4, c_z4, "Z4 (Risk)", right_idx)
+        f_drawZone(l_z4, l_z5, c_z5, "Z5 (Last Stand)", right_idx)
+        
+        // Zone boundary lines
+        line.new(bar_index, l_z1, right_idx, l_z1, color=zoneLineColor, style=line.style_solid, width=1)
+        line.new(bar_index, l_z2, right_idx, l_z2, color=zoneLineColor, style=line.style_solid, width=1)
+        line.new(bar_index, l_z3, right_idx, l_z3, color=zoneLineColor, style=line.style_solid, width=1)
+        line.new(bar_index, l_z4, right_idx, l_z4, color=zoneLineColor, style=line.style_solid, width=1)
+        
+        // Draw Invalidation Lines
+        float inv_price_h = mhHigh + (mhRng * stopLevelInput / 100)
+        float inv_price_l = mhLow - (mhRng * stopLevelInput / 100)
+        line.new(bar_index, inv_price_h, right_idx, inv_price_h, color=color.red, style=line.style_dashed, width=1)
+        line.new(bar_index, inv_price_l, right_idx, inv_price_l, color=color.red, style=line.style_dashed, width=1)
+        label.new(right_idx, inv_price_h, "INVALIDATION (" + str.tostring(stopLevelInput, "#") + "%)", color=color.new(color.red, 80), textcolor=color.red, style=label.style_label_left, size=f_getTextSize())
+        
+    // Update lines
+    if not na(midLine)
+        line.set_x2(midLine, bar_index + 5)
+    if not na(mhHighLine)
+        line.set_x2(mhHighLine, bar_index + 5)
+    if not na(mhLowLine)
+        line.set_x2(mhLowLine, bar_index + 5)
+
+// =============================================================================
+// 6. BREAK DETECTION
+// =============================================================================
+
+if isAnalysisWindow and not na(mhHigh) and breakSide == "NONE" and strategy.position_size == 0
+    if close > mhHigh
+        breakSide := "HIGH"
+        barsSinceExtreme := 0
+        maxExtension := (high - mhHigh) / mhRng * 100
+    else if close < mhLow
+        breakSide := "LOW"
+        barsSinceExtreme := 0
+        maxExtension := (mhLow - low) / mhRng * 100
+
+// =============================================================================
+// 7. ENTRY LOGIC
+// =============================================================================
+
+if isAnalysisWindow and breakSide != "NONE" and not entryTriggered and strategy.position_size == 0 and inDateRange
+    
+    // Calculate current extension
+    float currentExt = 0.0
+    if breakSide == "HIGH"
+        currentExt := (high - mhHigh) / mhRng * 100
+        maxExtension := math.max(maxExtension, currentExt)
+        // Check for new extreme
+        if high >= high[1]
+            barsSinceExtreme := 0
+        else
+            barsSinceExtreme += 1
+    else
+        currentExt := (mhLow - low) / mhRng * 100
+        maxExtension := math.max(maxExtension, currentExt)
+        if low <= low[1]
+            barsSinceExtreme := 0
+        else
+            barsSinceExtreme += 1
+    
+    // Entry conditions by method
+    bool entryCondition = false
+    
+    if entryMethodInput == "Immediate"
+        entryCondition := true
+        
+    else if entryMethodInput == "Reversal Bar"
+        if breakSide == "HIGH"
+            entryCondition := close < open  // Bearish bar
+        else
+            entryCondition := close > open  // Bullish bar
+            
+    else if entryMethodInput == "Stall Detection"
+        entryCondition := barsSinceExtreme >= stallBarsInput
+        
+    else if entryMethodInput == "Zone Threshold"
+        entryCondition := currentExt >= entryZoneInput
+    
+    // Execute entry
+    if entryCondition
+        entryTriggered := true
+        float stopPrice = na
+        float targetPrice = mhMid
+        
+        if breakSide == "HIGH"
+            // SHORT - fade the up break
+            stopPrice := mhHigh + (mhRng * stopLevelInput / 100)
+            strategy.entry("Short", strategy.short)
+            strategy.exit("Short Exit", "Short", limit=targetPrice, stop=stopPrice)
+        else
+            // LONG - fade the down break
+            stopPrice := mhLow - (mhRng * stopLevelInput / 100)
+            strategy.entry("Long", strategy.long)
+            strategy.exit("Long Exit", "Long", limit=targetPrice, stop=stopPrice)
+
+// =============================================================================
+// 8. TIME STOP - Close at end of analysis window
+// =============================================================================
+
+if not isAnalysisWindow and strategy.position_size != 0
+    strategy.close_all(comment="Time Stop")
+    breakSide := "NONE"
+    entryTriggered := false
+
+// =============================================================================
+// 9. OBJECTIVE COMPLETE LABEL
+// =============================================================================
+
+if strategy.position_size == 0 and entryTriggered and strategy.closedtrades > 0
+    lastTrade = strategy.closedtrades - 1
+    if strategy.closedtrades.profit(lastTrade) > 0
+        label.delete(objLabel)
+        objLabel := label.new(bar_index, mhMid, "TARGET HIT ✓", color=#26de81, textcolor=color.white, style=label.style_label_left, size=f_getTextSize())
+
+// =============================================================================
+// 10. SIMPLE DASHBOARD (Optional)
+// =============================================================================
+
+if barstate.islast and showDash
+    var table dash = table.new(position.top_right, 2, 6, border_width=1, border_color=color.gray)
+    sz = f_getTextSize()
+    
+    table.cell(dash, 0, 0, "Magic Hour Strategy", bgcolor=#2d3436, text_color=color.white, text_size=sz)
+    table.merge_cells(dash, 0, 0, 1, 0)
+    
+    table.cell(dash, 0, 1, "Hour", bgcolor=#636e72, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 1, str.tostring(magicHourInput) + ":00 ET", bgcolor=#f5f6fa, text_color=color.black, text_size=sz)
+    
+    table.cell(dash, 0, 2, "Entry Method", bgcolor=#636e72, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 2, entryMethodInput, bgcolor=#f5f6fa, text_color=color.black, text_size=sz)
+    
+    table.cell(dash, 0, 3, "Stop Level", bgcolor=#636e72, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 3, str.tostring(stopLevelInput, "#") + "%", bgcolor=#f5f6fa, text_color=color.black, text_size=sz)
+    
+    table.cell(dash, 0, 4, "Break Side", bgcolor=#636e72, text_color=color.white, text_size=sz)
+    table.cell(dash, 1, 4, breakSide, bgcolor=#f5f6fa, text_color=color.black, text_size=sz)
+    
+    table.cell(dash, 0, 5, "Position", bgcolor=#636e72, text_color=color.white, text_size=sz)
+    posText = strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT"
+    table.cell(dash, 1, 5, posText, bgcolor=#f5f6fa, text_color=strategy.position_size != 0 ? color.blue : color.gray, text_size=sz)
