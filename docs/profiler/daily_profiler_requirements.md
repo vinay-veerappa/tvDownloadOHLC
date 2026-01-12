@@ -39,10 +39,10 @@
 ### 1. Session Definitions
 | Session | Range Window | Status Check Window | Broken Check Window |
 |---------|-------------|---------------------|---------------------|
-| **Asia** | 18:00 - 19:30 | 19:30 → 02:30 (London Start) | 02:30 → 18:00 |
-| **London** | 02:30 - 03:30 | 03:30 → 07:30 (NY1 Start) | 07:30 → 18:00 |
-| **NY1** | 07:30 - 08:30 | 08:30 → 11:30 (NY2 Start) | 11:30 → 18:00 |
-| **NY2** | 11:30 - 12:30 | 12:30 → 17:00 (Market Close) | N/A (End of Day) |
+| **Asia** | 18:00 - 19:29 | 19:30 → 02:29 (London Start) | 02:30 → 17:00 |
+| **London** | 02:30 - 03:29 | 03:30 → 07:29 (NY1 Start) | 07:30 → 17:00 |
+| **NY1** | 07:30 - 08:29 | 08:30 → 11:29 (NY2 Start) | 11:30 → 17:00 |
+| **NY2** | 11:30 - 12:29 | 12:30 → 17:00 (Market Close) | N/A (End of Day) |
 
 - **Mid**: `(Session High + Session Low) / 2`
 
@@ -57,8 +57,10 @@
 | **Short False** | Price breaks Low first, then breaks High (reversal) |
 | **None** | Price remains **inside** Session Range |
 
+*You CANNOT go TRUE in the current session until the next session starts.*
+
 ### 3. "Broken" Logic
-*Window*: **Next Session Start** to **18:00** (Asia Start / End of Cycle).
+*Window*: **Next Session Start** to **18:00** (Asia Start / End of Cycle). It cannot be broken in the same session.
 
 | State | Condition |
 |-------|-----------|

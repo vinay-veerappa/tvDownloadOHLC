@@ -1,0 +1,263 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © vveerappa
+//@version=6
+strategy("NY Session Statistical Strategy", overlay=true, initial_capital=100000, default_qty_type=strategy.fixed, default_qty_value=1, currency=currency.USD)
+
+// ————— INPUTS —————
+grp_strat = "Strategy Settings"
+nyOpenHour = input.int(9, "NY Open Hour", group=grp_strat)
+nyOpenMinute = input.int(30, "NY Open Minute", group=grp_strat)
+
+range10m_enabled = input.bool(true, "Trade 10m Range (9:30-9:40)", group=grp_strat)
+range15m_enabled = input.bool(false, "Trade 15m Range (9:30-9:45)", group=grp_strat)
+range1h_enabled = input.bool(false, "Trade 1h Range (9:00-10:00)", group=grp_strat)
+
+sl_source = input.string("Protected Side", "Stop Loss Placement", options=["Protected Side", "Mid-Range"], group=grp_strat, tooltip="Protected Side = Opposite side of range")
+startTime = input.time(timestamp("01 Jan 2023 00:00 +0000"), "Start Time")
+endTime = input.time(timestamp("01 Jan 2030 00:00 +0000"), "End Time")
+
+grp_sd = "Volatility Filter"
+filter_type = input.string("DC Median", "Filter Type", options=["None", "Hourly SD", "DC Median"], group=grp_sd)
+sd_mult = input.float(1.0, "Multiplier", step=0.1, group=grp_sd, tooltip="Hourly SD uses ~2.0, DC Median uses ~1.0")
+
+grp_vis = "Visuals"
+showRanges = input.bool(true, "Show Ranges", group=grp_vis)
+showProtected = input.bool(true, "Show Protected Side", group=grp_vis)
+showSDBands = input.bool(true, "Show Filter Bands", group=grp_vis)
+
+// ————— SYMBOL DATA (Hardcoded Volatility for Hourly SD) —————
+type SymbolData
+    array<float> hourly_sds
+    array<float> h4_sds
+    float daily_sd
+
+getSymbolData(string root) =>
+    if root == 'NQ' or root == 'MNQ'
+        SymbolData.new(
+              array.from(0.00156, 0.00153, 0.00188, 0.00250, 0.00217, 0.00184, 0.00195, 0.00217, 0.00345, 0.00454, 0.00475, 0.00379, 0.00333, 0.00368, 0.00361, 0.00461, 0.00253, 0.001, 0.00242, 0.00165, 0.00197, 0.00209, 0.00175, 0.00132),
+              array.from(0.005133419851, 0.006640554759, 0.005265151124, 0.003363112588, 0.002652759155,0.0034135586), 
+              0.01376)
+    else if root == 'ES' or root == 'MES'
+        SymbolData.new(
+              array.from(0.001386835407,0.001273932366,0.0009457787375,0.00100817191,0.0007731168462,0.001050806584,0.001150412948,0.001612058219,0.00184977342,0.001485531322,0.00135982075,0.001394406437,0.002838744906,0.003265820266,0.003468842312,0.00312432379,0.002447744797,0.002553797433,0.002842070965,0.003457375024,0.002400275116,0.001609398792,0.001129429032,0.001169732597),
+              array.from(0.004233271831, 0.005568122406, 0.004744938984, 0.003094014126, 0.002444928867,0.003188033394),
+              0.01)
+    else
+        SymbolData.new(array.new_float(24, 0.002), array.new_float(6, 0.005), 0.01)
+
+var symbolData = getSymbolData(syminfo.root)
+
+// ————— TIME HELPERS —————
+t = time(timeframe.period, "0930-1600:23456", "America/New_York")
+is_trading_day = not na(t)
+is_new_day = ta.change(time("D")) != 0
+
+// ————— DC SESSION STATS LOGIC —————
+// Track Full Day (00:00-16:00) Distribution
+var float[] dist_history = array.new_float(0)
+var float sess_high = na
+var float sess_low = na
+var float sess_open = na
+
+// Reset session trackers at start of day (Midnight)
+if is_new_day
+    sess_open := open
+    sess_high := high
+    sess_low := low
+
+// Update during Session (00:00 - 16:00)
+// Accumulate High/Low
+if hour < 16 or (hour == 16 and minute == 0)
+    if not na(sess_high)
+        sess_high := math.max(sess_high, high)
+        sess_low := math.min(sess_low, low)
+
+// At 16:00 (End of Session), Calculate Distribution & Store
+// We use a flag to ensure we only push once
+var bool data_pushed = false
+if is_new_day
+    data_pushed := false
+
+is_end_sess = hour == 16 and minute == 0
+if is_end_sess and not data_pushed and not na(sess_open)
+    float dist = na
+    if close > sess_open
+        dist := sess_high - sess_open // Bullish Dist
+    else
+        dist := sess_open - sess_low // Bearish Dist
+    
+    if not na(dist)
+        array.push(dist_history, dist)
+        if array.size(dist_history) > 20
+            array.shift(dist_history)
+    data_pushed := true
+
+// Calculate Median
+float dc_median = array.size(dist_history) > 0 ? array.median(dist_history) : na
+
+// ————— FILTER CALCULATION —————
+// Get Hourly Open
+float h_open = request.security(syminfo.tickerid, "60", open, lookahead=barmerge.lookahead_on)
+// Get 9:30 Daily Open (for DC Stats) - simplified to h_open if 9:30, or track explicitly
+// Let's use h_open (which at 9:30 IS the daily open equivalent for this purpose)
+
+// Get Current Hour SD (for Hourly SD Mode)
+float h_sd_val = na
+if not na(symbolData) and not na(symbolData.hourly_sds)
+    h_sd_val := array.get(symbolData.hourly_sds, hour)
+
+// Calculate Bands based on Mode
+float sd_upper = na
+float sd_lower = na
+
+if filter_type == "Hourly SD" and not na(h_open) and not na(h_sd_val)
+    sd_upper := h_open + (h_open * h_sd_val * sd_mult)
+    sd_lower := h_open - (h_open * h_sd_val * sd_mult)
+else if filter_type == "DC Median" and not na(h_open) and not na(dc_median)
+    sd_upper := h_open + (dc_median * sd_mult)
+    sd_lower := h_open - (dc_median * sd_mult)
+
+// Filter Flag
+bool filter_long_ok = filter_type == "None" or (not na(sd_upper) and close < sd_upper)
+bool filter_short_ok = filter_type == "None" or (not na(sd_lower) and close > sd_lower)
+
+// ————— RANGE CALCULATIONS —————
+// Detect NY Open (9:30 ET)
+var int ny_open_bar_idx = na
+var float ny_open_price = na
+
+// Range High/Low Variables
+var float r10_high = na, var float r10_low = na
+var float r15_high = na, var float r15_low = na
+var float r1h_high = na, var float r1h_low = na
+
+// Reset daily
+if is_new_day
+    ny_open_bar_idx := na
+    ny_open_price := na
+    r10_high := na, r10_low := na
+    r15_high := na, r15_low := na
+    r1h_high := na, r1h_low := na
+
+// Capture Range Data
+// We need to capture High/Low during the specific windows
+// This is best done by tracking the session time
+
+// Helper to check time window
+in_window(startH, startM, endH, endM) =>
+    time_val = hour * 60 + minute
+    start_val = startH * 60 + startM
+    end_val = endH * 60 + endM
+    time_val >= start_val and time_val < end_val
+
+// 10m Range: 9:30 - 9:40
+if in_window(9, 30, 9, 40)
+    if na(r10_high)
+        r10_high := high
+        r10_low := low
+    else
+        r10_high := math.max(r10_high, high)
+        r10_low := math.min(r10_low, low)
+
+// 15m Range: 9:30 - 9:45
+if in_window(9, 30, 9, 45)
+    if na(r15_high)
+        r15_high := high
+        r15_low := low
+    else
+        r15_high := math.max(r15_high, high)
+        r15_low := math.min(r15_low, low)
+
+// 1h Range: 9:00 - 10:00 (Assuming this is pre-open + open)
+if in_window(9, 0, 10, 0)
+    if na(r1h_high)
+        r1h_high := high
+        r1h_low := low
+    else
+        r1h_high := math.max(r1h_high, high)
+        r1h_low := math.min(r1h_low, low)
+
+// ————— STRATEGY LOGIC —————
+
+// Time filters for entry (after range closes)
+can_trade_10m = hour > 9 or (hour == 9 and minute >= 40)
+can_trade_15m = hour > 9 or (hour == 9 and minute >= 45)
+can_trade_1h = hour >= 10
+
+// Entry Triggers (Only enter once per day per Setup?)
+// For simplicity, let's focus on the first breakout
+
+var bool trade_taken = false
+if is_new_day
+    trade_taken := false
+
+// Strategy 1: 10m Range Breakout
+if range10m_enabled and can_trade_10m and not trade_taken and not na(r10_high)
+    // Long Breakout
+    if close > r10_high
+        // CHECK FILTER
+        if filter_long_ok
+            stop_price = sl_source == "Protected Side" ? r10_low : (r10_high + r10_low)/2
+            strategy.entry("Long 10m", strategy.long)
+            strategy.exit("Exit Long 10m", "Long 10m", stop=stop_price)
+            trade_taken := true
+        
+    // Short Breakout
+    if close < r10_low
+        // CHECK FILTER
+        if filter_short_ok
+            stop_price = sl_source == "Protected Side" ? r10_high : (r10_high + r10_low)/2
+            strategy.entry("Short 10m", strategy.short)
+            strategy.exit("Exit Short 10m", "Short 10m", stop=stop_price)
+            trade_taken := true
+
+// Time Exit (End of Day)
+if hour >= 15 and minute >= 55
+    strategy.close_all(comment="EOD")
+
+// ————— VISUALS —————
+// Draw Ranges
+if showRanges and not na(r10_high)
+    // Draw only for current day to avoid clutter? Or historical
+    // For backtesting, we want historical
+    // Use line.new for persistent drawings if needed, or plot for simplicity
+    
+    // Simple plot for current range if active
+    var box r10_box = na
+    if is_new_day
+        r10_box := box.new(bar_index, r10_high, bar_index, r10_low, border_color=color.gray, border_style=line.style_dotted, bgcolor=color.new(color.gray, 90))
+    
+    if not na(r10_box) and in_window(9, 30, 9, 40)
+        box.set_top(r10_box, r10_high)
+        box.set_bottom(r10_box, r10_low)
+        box.set_right(r10_box, bar_index + 1)
+
+// Draw SD Bands
+plot(showSDBands and filter_type != "None" ? sd_upper : na, "Filter Upper", color=color.new(color.red, 50))
+plot(showSDBands and filter_type != "None" ? sd_lower : na, "Filter Lower", color=color.new(color.green, 50))
+plot(showSDBands and filter_type != "None" ? h_open : na, "Reference Open", color=color.gray)
+
+// Plot Protected Side Logic (Visual Aid)
+// If price breaks High, Protected Side is Low (Green Line)
+// If price breaks Low, Protected Side is High (Red Line)
+
+var line protected_line = na
+if trade_taken and strategy.position_size != 0
+    if na(protected_line)
+        protected_line := line.new(bar_index-1, close, bar_index, close, width=2)
+    
+    // Update line to stop price
+    // Note: This is simplified visualization
+    if strategy.position_size > 0
+        line.set_y1(protected_line, r10_low)
+        line.set_y2(protected_line, r10_low)
+        line.set_color(protected_line, color.green)
+        line.set_x2(protected_line, bar_index)
+    else
+        line.set_y1(protected_line, r10_high)
+        line.set_y2(protected_line, r10_high)
+        line.set_color(protected_line, color.red)
+        line.set_x2(protected_line, bar_index)
+else
+    protected_line := na
+
