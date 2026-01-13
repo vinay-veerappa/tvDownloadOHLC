@@ -22,7 +22,7 @@ def encode_status(status):
 
 def load_data(ticker):
     fname_prof = Path(f"data/{ticker}_profiler.json")
-    fname_hl = Path(f"data/{ticker}_hod_lod.json")
+    fname_hl = Path(f"data/{ticker}_daily_hod_lod.json")
     fname_touch = Path(f"data/{ticker}_level_touches.json")
     
     prof, hl, touch = [], {}, {}
