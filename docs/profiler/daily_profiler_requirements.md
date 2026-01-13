@@ -248,11 +248,58 @@ Each outcome panel contains:
 |---------|----------|
 | **PWH/PWL (Previous Week H/L)** | Medium |
 | **PMH/PML (Previous Month H/L)** | Medium |
-| **Weekly Close** | Low |
 | **Volatility Models** | Low |
 | **Reference Level Filtering** | Low |
 
 ---
+
+## 📝 Part 7: TradingView Pine Script Indicator
+
+> [!NOTE]
+> The Daily Profiler also exists as a standalone TradingView Pine Script indicator located at `scripts/profiler/ProfilerIndicator.pine`.
+
+### 7.1 Indicator Features
+
+| Category | Feature | Description |
+|----------|---------|-------------|
+| **Themes** | 4 Professional Themes | Default, Dark Pro, Light Pro, Neon - all work on dark/light backgrounds |
+| **Sessions** | Session Boxes | Asia, London, NY1, NY2 with configurable colors |
+| **Sessions** | Session Midlines | Dotted lines at session midpoint extending to chart edge |
+| **Sessions** | Last-Day-Only | Session visuals only appear for current trading day |
+| **Levels** | Reference Levels | PDH/L/M, Weekly Close, Settlement, P12 H/M/L, Opens |
+| **Levels** | Origin Tracking | Lines start from establishment time (18:00, 00:00, 06:00, 07:30) |
+| **Levels** | Line Extension | Configurable bars to extend from current candle (default: 20) |
+| **Histograms** | Time Histograms | 15-minute bucket frequency distribution for HOD/LOD times |
+| **Histograms** | Y Positioning | Based on P12 Low/High with configurable displacement |
+| **Tables** | Results Table | Outcome statistics with probabilities and mode times |
+| **Tables** | Status Table | Live session status (Pending, True, False, Broken) |
+| **Prediction** | Prediction Boxes | Visual boxes showing mode time/price for each outcome |
+
+### 7.2 Indicator Inputs
+
+| Group | Input | Type | Description |
+|-------|-------|------|-------------|
+| **Theme** | Color Theme | Dropdown | Default, Dark Pro, Light Pro, Neon |
+| **Tables** | Result Table Position | Dropdown | Position on chart |
+| **Tables** | Status Table Position | Dropdown | Position on chart |
+| **Prediction** | Show Prediction Boxes | Bool | Toggle prediction boxes |
+| **Prediction** | Box Colors | Color | Long, Short, False box colors |
+| **Reference** | Show PDH/PDL/PDM | Bool | Toggle previous day levels |
+| **Reference** | Show P12 H/M/L | Bool | Toggle overnight levels |
+| **Reference** | Show Opens | Bool | Toggle Globex, Midnight, 07:30 opens |
+| **Reference** | Show Weekly Close | Bool | Toggle weekly close level |
+| **Reference** | Show Settlement | Bool | Toggle settlement price |
+| **Reference** | Line Extension (bars) | Int | Bars to extend lines (1-100) |
+| **Histograms** | Show Histogram For | Dropdown | None, Long True, Long False, etc. |
+| **Histograms** | Height Scale | Float | Scale factor for histogram height |
+| **Histograms** | Y Displacement (%) | Float | Offset from P12 Low/High |
+
+### 7.3 Key Implementation Details
+
+- **Buffer Guard**: Prevents "historical offset beyond buffer limit" errors in replay mode
+- **Trading Day**: Starts at 18:00 ET, tracked via `trading_day` variable
+- **Session Cleanup**: Old drawings deleted when new session starts
+- **Theme Functions**: `f_theme_*()` helper functions return colors based on selected theme
 
 ## 📁 Key Files
 
