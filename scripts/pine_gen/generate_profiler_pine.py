@@ -425,38 +425,38 @@ p_stat = input.string("Middle Right", "Status Table Position", options=["Top Rig
 
 grp_box = "Prediction Visuals"
 show_boxes  = input.bool(true, "Show Prediction Boxes", group=grp_box)
-c_box_long   = input.color(color.new(#4CAF50, 40), "Long Box Color", group=grp_box)
-c_box_short  = input.color(color.new(#F44336, 40), "Short Box Color", group=grp_box)
-c_box_false  = input.color(color.new(#9E9E9E, 40), "False/Neutral Box Color", group=grp_box)
+c_box_long   = input.color(#4CAF5066, "Long Box Color", group=grp_box)
+c_box_short  = input.color(#F4433666, "Short Box Color", group=grp_box)
+c_box_false  = input.color(#9E9E9E66, "False/Neutral Box Color", group=grp_box)
 show_labels = input.bool(true, "Show Labels", group=grp_box)
-c_lbl_text   = input.color(color.white, "Label Text Color", group=grp_box)
+c_lbl_text   = input.color(#FFFFFF, "Label Text Color", group=grp_box)
 s_lbl        = input.string("Tiny", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_box)
 
 grp_ref = "Reference Levels"
 get_style(s) => s == "Dotted" ? line.style_dotted : s == "Dashed" ? line.style_dashed : line.style_solid
 
 show_p12 = input.bool(true, "Show P12 Levels", group=grp_ref)
-c_p12    = input.color(f_theme_p12(), "", inline="p12", group=grp_ref)
+c_p12    = input.color(#FBC02D, "", inline="p12", group=grp_ref)
 w_p12    = input.int(1, "", minval=1, inline="p12", group=grp_ref)
 s_p12    = input.string("Dotted", "", options=["Solid", "Dotted", "Dashed"], inline="p12", group=grp_ref)
 
 show_pd  = input.bool(true, "Show Prev Day Levels", group=grp_ref)
-c_pd     = input.color(f_theme_pd(), "", inline="pd", group=grp_ref)
+c_pd     = input.color(#757575, "", inline="pd", group=grp_ref)
 w_pd     = input.int(1, "", minval=1, inline="pd", group=grp_ref)
 s_pd     = input.string("Dotted", "", options=["Solid", "Dotted", "Dashed"], inline="pd", group=grp_ref)
 
 show_open = input.bool(true, "Show Session Opens", group=grp_ref)
-c_open    = input.color(f_theme_open(), "", inline="open", group=grp_ref)
+c_open    = input.color(#BDBDBD, "", inline="open", group=grp_ref)
 w_open    = input.int(1, "", minval=1, inline="open", group=grp_ref)
 s_open    = input.string("Dashed", "", options=["Solid", "Dotted", "Dashed"], inline="open", group=grp_ref)
 
 show_weekly = input.bool(true, "Show Prev Week Close", group=grp_ref)
-c_weekly    = input.color(f_theme_weekly(), "", inline="week", group=grp_ref)
+c_weekly    = input.color(#43A047, "", inline="week", group=grp_ref)
 w_weekly    = input.int(1, "", minval=1, inline="week", group=grp_ref)
 s_weekly    = input.string("Solid", "", options=["Solid", "Dotted", "Dashed"], inline="week", group=grp_ref)
 
 show_settle = input.bool(true, "Show Prior Settlement", group=grp_ref)
-c_settle    = input.color(f_theme_settle(), "", inline="settle", group=grp_ref)
+c_settle    = input.color(#FB8C00, "", inline="settle", group=grp_ref)
 w_settle    = input.int(1, "", minval=1, inline="settle", group=grp_ref)
 s_settle    = input.string("Solid", "", options=["Solid", "Dotted", "Dashed"], inline="settle", group=grp_ref)
 
@@ -467,27 +467,22 @@ grp_pm = "Price Models"
 show_pm     = input.bool(true, "Show Price Models", group=grp_pm)
 pm_outcome  = input.string("Auto", "Outcome Model", options=["Auto", "Long True", "Long False", "Short True", "Short False"], group=grp_pm)
 pm_anchor   = input.string("Prev Mid", "Anchor To", options=["Session Open", "Prev Mid"], group=grp_pm)
-c_pm_high   = input.color(color.new(#4CAF50, 40), "Model High", inline="pm_h", group=grp_pm)
+c_pm_high   = input.color(#4CAF5066, "Model High", inline="pm_h", group=grp_pm)
 w_pm_high   = input.int(2, "Width", minval=1, inline="pm_h", group=grp_pm)
-c_pm_low    = input.color(color.new(#F44336, 40), "Model Low", inline="pm_l", group=grp_pm)
+c_pm_low    = input.color(#F4433666, "Model Low", inline="pm_l", group=grp_pm)
 w_pm_low    = input.int(2, "Width", minval=1, inline="pm_l", group=grp_pm)
 
 grp_hist = "Time Histograms"
 hist_outcome = input.string("None", "Outcome", options=["None", "Long True", "Long False", "Short True", "Short False"], group=grp_hist)
-hist_up_col  = input.color(color.new(#4CAF50, 60), "Up Color", inline="hcol", group=grp_hist)
-hist_dn_col  = input.color(color.new(#F44336, 60), "Down Color", inline="hcol", group=grp_hist)
+hist_up_col  = input.color(#4CAF5099, "Up Color", inline="hcol", group=grp_hist)
+hist_dn_col  = input.color(#F4433699, "Down Color", inline="hcol", group=grp_hist)
 hist_scale   = input.float(0.5, "Height Scale", step=0.1, group=grp_hist)
 hist_disp    = input.float(0.5, "Y Displacement (%)", step=0.1, group=grp_hist)
 
 get_pos(str) => 
-    str == "Top Right" ? position.top_right : 
-    str == "Top Left" ? position.top_left : 
-    str == "Bottom Right" ? position.bottom_right : 
-    str == "Bottom Left" ? position.bottom_left : 
-    str == "Middle Right" ? position.middle_right :
-    str == "Middle Left" ? position.middle_left :
-    str == "Top Center" ? position.top_center :
-    position.bottom_center
+    bool is_tr = str == "Top Right", bool is_tl = str == "Top Left", bool is_br = str == "Bottom Right", bool is_bl = str == "Bottom Left"
+    bool is_mr = str == "Middle Right", bool is_ml = str == "Middle Left", bool is_tc = str == "Top Center"
+    is_tr ? position.top_right : is_tl ? position.top_left : is_br ? position.bottom_right : is_bl ? position.bottom_left : is_mr ? position.middle_right : is_ml ? position.middle_left : is_tc ? position.top_center : position.bottom_center
 
 get_size(str) => str == "Tiny" ? size.tiny : str == "Small" ? size.small : str == "Large" ? size.large : size.normal
 
