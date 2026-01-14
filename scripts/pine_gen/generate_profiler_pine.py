@@ -985,7 +985,7 @@ f_status_str(c, act, bk) =>
     s = c==1?(act?"Long (Pend)":"Long True"): c==2?"Long False": c==3?(act?"Short (Pend)":"Short True"): c==4?"Short False":"Neutral"
     bk ? s + " (BK)" : s
 
-var table tbl_res = table.new(get_pos(p_res), 15, 5, border_width = 1) 
+var table tbl_res = table.new(get_pos(p_res), 16, 5, border_width = 1) 
 var table tbl_stat = table.new(get_pos(p_stat), 2, 5, border_width = 1)
 
 f_match(hc, hb, lc, lb, loose, ignore_bk) =>
@@ -1151,7 +1151,7 @@ if barstate.islast
         v_0730 = time >= t_0730
         v_pd = true 
     
-        table.clear(tbl_res, 0, 0, 16, 4)
+        table.clear(tbl_res, 0, 0, 15, 4)
         table.cell(tbl_res, 0, 0, cached_title, bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 1, 0, "Stats", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 2, 0, "LOD Time", bgcolor=color.black, text_color=color.white, text_size=sz)
