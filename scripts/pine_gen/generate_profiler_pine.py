@@ -460,8 +460,10 @@ c_settle    = input.color(#FB8C00, "", inline="settle", group=grp_ref)
 w_settle    = input.int(1, "", minval=1, inline="settle", group=grp_ref)
 s_settle    = input.string("Solid", "", options=["Solid", "Dotted", "Dashed"], inline="settle", group=grp_ref)
 
-show_ref_lbl  = input.bool(true, "Show Reference Labels", group=grp_ref)
-line_ext_bars = input.int(20, "Line Extension (bars)", minval=1, maxval=100, group=grp_ref)
+show_ref_lbl    = input.bool(true, "Show Reference Labels", group=grp_ref)
+s_ref_lbl       = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_ref)
+ref_lbl_offset  = input.int(5, "Label Offset", minval=0, maxval=50, group=grp_ref)
+line_ext_bars   = input.int(20, "Line Extension (bars)", minval=1, maxval=100, group=grp_ref)
 
 grp_pm = "Price Models"
 show_pm     = input.bool(true, "Show Price Models", group=grp_pm)
@@ -491,7 +493,7 @@ f_draw_lev_bar(price, start_bi, col, style, width, txt, visible) =>
         end_bi = bar_index + line_ext_bars
         line.new(start_bi, price, end_bi, price, xloc=xloc.bar_index, color=col, style=style, width=width)
         if show_ref_lbl
-            label.new(end_bi + 2, price, txt, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_none, textcolor=col, size=size.small, textalign=text.align_left)
+            label.new(end_bi + ref_lbl_offset, price, txt, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_none, textcolor=col, size=get_size(s_ref_lbl), textalign=text.align_left)
 
 // ————— LIVE SESSION LOGIC —————
 t_asia = "1800-1929", t_lon = "0230-0329", t_ny1 = "0730-0829", t_ny2 = "1130-1229"
@@ -670,7 +672,7 @@ f_draw_lev(price, t_start, t_end, col, style, width, txt, visible) =>
         l = line.new(int(t_start), price, int(t_end), price, xloc=xloc.bar_time, color=col, style=style, width=width)
         array.push(a_lines, l)
         if show_ref_lbl
-            lb = label.new(int(t_end) + 2 * timeframe.in_seconds(timeframe.period) * 1000, price, txt, xloc=xloc.bar_time, yloc=yloc.price, style=label.style_none, textcolor=col, size=size.small, textalign=text.align_left)
+            lb = label.new(int(t_end) + ref_lbl_offset * timeframe.in_seconds(timeframe.period) * 1000, price, txt, xloc=xloc.bar_time, yloc=yloc.price, style=label.style_none, textcolor=col, size=get_size(s_ref_lbl), textalign=text.align_left)
             array.push(a_labels, lb)
 
 if barstate.islast
