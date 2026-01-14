@@ -807,7 +807,7 @@ f_draw_box(m_time, m_price, d_open, b_col, row_name, is_high) =>
             txt = row_name + (is_high ? " HOD" : " LOD") + "\\n" + m_price.disp + "\\n" + m_time.disp
             label.new(int((t_start + t_end)/2), p_end, txt, xloc=xloc.bar_time, yloc=yloc.price, color=color.new(c_lbl_text, 100), style=label.style_label_down, textcolor=c_lbl_text, size=get_size(s_lbl))
 
-f_render_row_adv(tbl, r, label, cnt, tot, bg_col, sz, arr_hod_t, arr_lod_t, arr_hod_p, arr_lod_p, cp12h, cp12m, cp12l, casia, clon, cpdh, cpdl, cpdm, d_open, is_long, is_fls, v_p12, v_asia, v_lon, v_pd) =>
+f_render_row_adv(tbl, r, label, cnt, tot, bg_col, sz, arr_hod_t, arr_lod_t, arr_hod_p, arr_lod_p, cp12h, cp12m, cp12l, casia, clon, cmid, c0730, cpdh, cpdl, cpdm, d_open, is_long, is_fls, v_p12, v_asia, v_lon, v_mid, v_0730, v_pd) =>
     b_col = is_fls ? c_box_false : (is_long ? c_box_long : c_box_short)
     if cnt > 0
         pct = 100.0 * cnt / tot
@@ -816,6 +816,8 @@ f_render_row_adv(tbl, r, label, cnt, tot, bg_col, sz, arr_hod_t, arr_lod_t, arr_
         pp12l = 100.0 * cp12l / cnt
         pasia = 100.0 * casia / cnt
         plon = 100.0 * clon / cnt
+        pmid = 100.0 * cmid / cnt
+        p0730 = 100.0 * c0730 / cnt
         ppdh = 100.0 * cpdh / cnt
         ppdl = 100.0 * cpdl / cnt
         ppdm = 100.0 * cpdm / cnt
@@ -838,9 +840,11 @@ f_render_row_adv(tbl, r, label, cnt, tot, bg_col, sz, arr_hod_t, arr_lod_t, arr_
         table.cell(tbl, 8, r, v_p12 ? str.format("{0,number,#.#}%", pp12l) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl, 9, r, v_asia ? str.format("{0,number,#.#}%", pasia) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl, 10, r, v_lon ? str.format("{0,number,#.#}%", plon) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
-        table.cell(tbl, 11, r, v_pd ? str.format("{0,number,#.#}%", ppdh) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
-        table.cell(tbl, 12, r, v_pd ? str.format("{0,number,#.#}%", ppdm) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
-        table.cell(tbl, 13, r, v_pd ? str.format("{0,number,#.#}%", ppdl) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl, 11, r, v_mid ? str.format("{0,number,#.#}%", pmid) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl, 12, r, v_0730 ? str.format("{0,number,#.#}%", p0730) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl, 13, r, v_pd ? str.format("{0,number,#.#}%", ppdh) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl, 14, r, v_pd ? str.format("{0,number,#.#}%", ppdm) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl, 15, r, v_pd ? str.format("{0,number,#.#}%", ppdl) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
 
 // ————— HISTOGRAMS —————
 f_draw_time_hist(arr_times, anchor_p, col, is_up, t_ref) =>
@@ -1132,20 +1136,22 @@ if barstate.islast
         last_bk_ny1 := bk_ny1
         last_bk_ny2 := bk_ny2
 
-    if barstate.islast
         // Viz Logic
         t_start_d = time[bar_index - bi_day_start]
         t_0600 = t_start_d + 12 * 3600000
         t_asia_end = t_start_d + 8 * 3600000 // approx 02:00
-        t_lon_end = t_start_d + 17 * 3600000 // approx 11:00
+        t_lon_end = t_start_d + 14 * 3600000 // approx 08:00
+        t_midnight = t_start_d + 6 * 3600000 // 00:00
+        t_0730 = t_start_d + 13 * 3600000 + 30 * 60000 // 07:30
         
-        // During Asia (before 02:00? before 06:00?) -> Hide P12, Asia, Lon
         v_p12 = time >= t_0600
         v_asia = time >= t_asia_end
         v_lon = time >= t_lon_end
-        v_pd = true // Always valid if data exists
+        v_mid = time >= t_midnight
+        v_0730 = time >= t_0730
+        v_pd = true 
     
-        table.clear(tbl_res, 0, 0, 14, 4)
+        table.clear(tbl_res, 0, 0, 16, 4)
         table.cell(tbl_res, 0, 0, cached_title, bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 1, 0, "Stats", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 2, 0, "LOD Time", bgcolor=color.black, text_color=color.white, text_size=sz)
@@ -1157,14 +1163,16 @@ if barstate.islast
         table.cell(tbl_res, 8, 0, "P12L", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 9, 0, "Asia Mid", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 10, 0, "Lon Mid", bgcolor=color.black, text_color=color.white, text_size=sz)
-        table.cell(tbl_res, 11, 0, "PDH", bgcolor=color.black, text_color=color.white, text_size=sz)
-        table.cell(tbl_res, 12, 0, "PDM", bgcolor=color.black, text_color=color.white, text_size=sz)
-        table.cell(tbl_res, 13, 0, "PDL", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl_res, 11, 0, "Midnight", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl_res, 12, 0, "07:30", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl_res, 13, 0, "PDH", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl_res, 14, 0, "PDM", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl_res, 15, 0, "PDL", bgcolor=color.black, text_color=color.white, text_size=sz)
 
-        f_render_row_adv(tbl_res, 1, "Long True", c_lt, total_cnt, color.green, sz, lt_ht, lt_lt, lt_hp, lt_lp, lt_t_p12h, lt_t_p12m, lt_t_p12l, lt_t_asia, lt_t_lon, lt_t_pdh, lt_t_pdl, lt_t_pdm, d_open, true, false, v_p12, v_asia, v_lon, v_pd)
-        f_render_row_adv(tbl_res, 2, "Long False", c_lf, total_cnt, color.gray, sz, lf_ht, lf_lt, lf_hp, lf_lp, lf_t_p12h, lf_t_p12m, lf_t_p12l, lf_t_asia, lf_t_lon, lf_t_pdh, lf_t_pdl, lf_t_pdm, d_open, false, true, v_p12, v_asia, v_lon, v_pd)
-        f_render_row_adv(tbl_res, 3, "Short True", c_st, total_cnt, color.red, sz, st_ht, st_lt, st_hp, st_lp, st_t_p12h, st_t_p12m, st_t_p12l, st_t_asia, st_t_lon, st_t_pdh, st_t_pdl, st_t_pdm, d_open, false, false, v_p12, v_asia, v_lon, v_pd)
-        f_render_row_adv(tbl_res, 4, "Short False", c_sf, total_cnt, color.gray, sz, sf_ht, sf_lt, sf_hp, sf_lp, sf_t_p12h, sf_t_p12m, sf_t_p12l, sf_t_asia, sf_t_lon, sf_t_pdh, sf_t_pdl, sf_t_pdm, d_open, false, true, v_p12, v_asia, v_lon, v_pd)
+        f_render_row_adv(tbl_res, 1, "Long True", c_lt, total_cnt, color.green, sz, lt_ht, lt_lt, lt_hp, lt_lp, lt_t_p12h, lt_t_p12m, lt_t_p12l, lt_t_asia, lt_t_lon, lt_t_midnight, lt_t_0730, lt_t_pdh, lt_t_pdl, lt_t_pdm, d_open, true, false, v_p12, v_asia, v_lon, v_mid, v_0730, v_pd)
+        f_render_row_adv(tbl_res, 2, "Long False", c_lf, total_cnt, color.gray, sz, lf_ht, lf_lt, lf_hp, lf_lp, lf_t_p12h, lf_t_p12m, lf_t_p12l, lf_t_asia, lf_t_lon, lf_t_midnight, lf_t_0730, lf_t_pdh, lf_t_pdl, lf_t_pdm, d_open, false, true, v_p12, v_asia, v_lon, v_mid, v_0730, v_pd)
+        f_render_row_adv(tbl_res, 3, "Short True", c_st, total_cnt, color.red, sz, st_ht, st_lt, st_hp, st_lp, st_t_p12h, st_t_p12m, st_t_p12l, st_t_asia, st_t_lon, st_t_midnight, st_t_0730, st_t_pdh, st_t_pdl, st_t_pdm, d_open, false, false, v_p12, v_asia, v_lon, v_mid, v_0730, v_pd)
+        f_render_row_adv(tbl_res, 4, "Short False", c_sf, total_cnt, color.gray, sz, sf_ht, sf_lt, sf_hp, sf_lp, sf_t_p12h, sf_t_p12m, sf_t_p12l, sf_t_asia, sf_t_lon, sf_t_midnight, sf_t_0730, sf_t_pdh, sf_t_pdl, sf_t_pdm, d_open, false, true, v_p12, v_asia, v_lon, v_mid, v_0730, v_pd)
         f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, open_asia, open_lon, open_ny, m_lt_t, m_lt_h, m_lt_l, m_lf_t, m_lf_h, m_lf_l, m_st_t, m_st_h, m_st_l, m_sf_t, m_sf_h, m_sf_l)
 
     // Histogram Calls
