@@ -89,10 +89,9 @@ f_theme_weekly()   => theme_sel == "Dark Pro" ? #66BB6A : theme_sel == "Light Pr
 f_theme_settle()   => theme_sel == "Dark Pro" ? #FFA726 : theme_sel == "Light Pro" ? #E65100 : theme_sel == "Neon" ? #FF6D00 : #FB8C00
 
 grp_tbl = "Table Settings"
-tbl_opts = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left", "Top Center", "Bottom Center"]
-p_res  = input.string("Bottom Right", "Result Table Position", options=tbl_opts, group=grp_tbl)
+p_res  = input.string("Bottom Right", "Result Table Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left", "Top Center", "Bottom Center"], group=grp_tbl)
 s_res  = input.string("Tiny", "Result Table Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tbl)
-p_stat = input.string("Middle Right", "Status Table Position", options=tbl_opts, group=grp_tbl)
+p_stat = input.string("Middle Right", "Status Table Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left", "Top Center", "Bottom Center"], group=grp_tbl)
 
 grp_box = "Prediction Visuals"
 show_boxes  = input.bool(true, "Show Prediction Boxes", group=grp_box)
@@ -104,33 +103,32 @@ c_lbl_text   = input.color(color.white, "Label Text Color", group=grp_box)
 s_lbl        = input.string("Tiny", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_box)
 
 grp_ref = "Reference Levels"
-l_styles = ["Solid", "Dotted", "Dashed"]
 get_style(s) => s == "Dotted" ? line.style_dotted : s == "Dashed" ? line.style_dashed : line.style_solid
 
 show_p12 = input.bool(true, "Show P12 Levels", group=grp_ref)
 c_p12    = input.color(f_theme_p12(), "", inline="p12", group=grp_ref)
 w_p12    = input.int(1, "", minval=1, inline="p12", group=grp_ref)
-s_p12    = input.string("Dotted", "", options=l_styles, inline="p12", group=grp_ref)
+s_p12    = input.string("Dotted", "", options=["Solid", "Dotted", "Dashed"], inline="p12", group=grp_ref)
 
 show_pd  = input.bool(true, "Show Prev Day Levels", group=grp_ref)
 c_pd     = input.color(f_theme_pd(), "", inline="pd", group=grp_ref)
 w_pd     = input.int(1, "", minval=1, inline="pd", group=grp_ref)
-s_pd     = input.string("Dotted", "", options=l_styles, inline="pd", group=grp_ref)
+s_pd     = input.string("Dotted", "", options=["Solid", "Dotted", "Dashed"], inline="pd", group=grp_ref)
 
 show_open = input.bool(true, "Show Session Opens", group=grp_ref)
 c_open    = input.color(f_theme_open(), "", inline="open", group=grp_ref)
 w_open    = input.int(1, "", minval=1, inline="open", group=grp_ref)
-s_open    = input.string("Dashed", "", options=l_styles, inline="open", group=grp_ref)
+s_open    = input.string("Dashed", "", options=["Solid", "Dotted", "Dashed"], inline="open", group=grp_ref)
 
 show_weekly = input.bool(true, "Show Prev Week Close", group=grp_ref)
 c_weekly    = input.color(f_theme_weekly(), "", inline="week", group=grp_ref)
 w_weekly    = input.int(1, "", minval=1, inline="week", group=grp_ref)
-s_weekly    = input.string("Solid", "", options=l_styles, inline="week", group=grp_ref)
+s_weekly    = input.string("Solid", "", options=["Solid", "Dotted", "Dashed"], inline="week", group=grp_ref)
 
 show_settle = input.bool(true, "Show Prior Settlement", group=grp_ref)
 c_settle    = input.color(f_theme_settle(), "", inline="settle", group=grp_ref)
 w_settle    = input.int(1, "", minval=1, inline="settle", group=grp_ref)
-s_settle    = input.string("Solid", "", options=l_styles, inline="settle", group=grp_ref)
+s_settle    = input.string("Solid", "", options=["Solid", "Dotted", "Dashed"], inline="settle", group=grp_ref)
 
 show_ref_lbl  = input.bool(true, "Show Reference Labels", group=grp_ref)
 line_ext_bars = input.int(20, "Line Extension (bars)", minval=1, maxval=100, group=grp_ref)
