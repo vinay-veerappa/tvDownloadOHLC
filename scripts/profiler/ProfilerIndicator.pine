@@ -74,66 +74,101 @@ type ModeRange
 grp_theme = "🎨 Theme"
 theme_sel = input.string("Dark Pro", "Color Theme", options=["Default", "Dark Pro", "Light Pro", "Neon"], group=grp_theme)
 
-f_theme_asia_box() => theme_sel == "Dark Pro" ? color.new(#1E88E5, 85) : theme_sel == "Light Pro" ? color.new(#90CAF9, 85) : theme_sel == "Neon" ? color.new(#00BCD4, 85) : color.new(color.blue, 90)
-f_theme_asia_bor() => theme_sel == "Dark Pro" ? color.new(#42A5F5, 40) : theme_sel == "Light Pro" ? color.new(#1976D2, 40) : theme_sel == "Neon" ? color.new(#00E5FF, 20) : color.new(color.blue, 50)
-f_theme_lon_box() => theme_sel == "Dark Pro" ? color.new(#E53935, 85) : theme_sel == "Light Pro" ? color.new(#EF9A9A, 85) : theme_sel == "Neon" ? color.new(#FF1744, 85) : color.new(color.red, 90)
-f_theme_lon_bor() => theme_sel == "Dark Pro" ? color.new(#EF5350, 40) : theme_sel == "Light Pro" ? color.new(#C62828, 40) : theme_sel == "Neon" ? color.new(#FF5252, 20) : color.new(color.red, 50)
-f_theme_ny1_box() => theme_sel == "Dark Pro" ? color.new(#FB8C00, 85) : theme_sel == "Light Pro" ? color.new(#FFCC80, 85) : theme_sel == "Neon" ? color.new(#FF9100, 85) : color.new(color.orange, 90)
-f_theme_ny1_bor() => theme_sel == "Dark Pro" ? color.new(#FFA726, 40) : theme_sel == "Light Pro" ? color.new(#E65100, 40) : theme_sel == "Neon" ? color.new(#FFAB40, 20) : color.new(color.orange, 50)
-f_theme_ny2_box() => theme_sel == "Dark Pro" ? color.new(#8E24AA, 85) : theme_sel == "Light Pro" ? color.new(#CE93D8, 85) : theme_sel == "Neon" ? color.new(#EA80FC, 85) : color.new(color.purple, 90)
-f_theme_ny2_bor() => theme_sel == "Dark Pro" ? color.new(#AB47BC, 40) : theme_sel == "Light Pro" ? color.new(#6A1B9A, 40) : theme_sel == "Neon" ? color.new(#E040FB, 20) : color.new(color.purple, 50)
-f_theme_p12() => theme_sel == "Dark Pro" ? #FFD54F : theme_sel == "Light Pro" ? #F9A825 : theme_sel == "Neon" ? #FFEA00 : color.rgb(255, 235, 59)
-f_theme_pd() => theme_sel == "Dark Pro" ? #9E9E9E : theme_sel == "Light Pro" ? #616161 : theme_sel == "Neon" ? #B0BEC5 : color.gray
-f_theme_open() => theme_sel == "Dark Pro" ? #E0E0E0 : theme_sel == "Light Pro" ? #424242 : theme_sel == "Neon" ? #FFFFFF : color.white
-f_theme_weekly() => theme_sel == "Dark Pro" ? #66BB6A : theme_sel == "Light Pro" ? #2E7D32 : theme_sel == "Neon" ? #00E676 : color.rgb(76, 175, 80)
-f_theme_settle() => theme_sel == "Dark Pro" ? #FFA726 : theme_sel == "Light Pro" ? #E65100 : theme_sel == "Neon" ? #FF6D00 : color.rgb(255, 152, 0)
+f_theme_asia_box() => theme_sel == "Dark Pro" ? color.new(#1E88E5, 85) : theme_sel == "Light Pro" ? color.new(#90CAF9, 70) : theme_sel == "Neon" ? color.new(#00BCD4, 80) : color.new(color.blue, 90)
+f_theme_asia_bor() => theme_sel == "Dark Pro" ? color.new(#42A5F5, 30) : theme_sel == "Light Pro" ? color.new(#1976D2, 30) : theme_sel == "Neon" ? color.new(#00E5FF, 10) : color.new(color.blue, 50)
+f_theme_lon_box()  => theme_sel == "Dark Pro" ? color.new(#E53935, 85) : theme_sel == "Light Pro" ? color.new(#EF9A9A, 70) : theme_sel == "Neon" ? color.new(#FF1744, 80) : color.new(color.red, 90)
+f_theme_lon_bor()  => theme_sel == "Dark Pro" ? color.new(#EF5350, 30) : theme_sel == "Light Pro" ? color.new(#C62828, 30) : theme_sel == "Neon" ? color.new(#FF5252, 10) : color.new(color.red, 50)
+f_theme_ny1_box()  => theme_sel == "Dark Pro" ? color.new(#FB8C00, 85) : theme_sel == "Light Pro" ? color.new(#FFCC80, 70) : theme_sel == "Neon" ? color.new(#FF9100, 80) : color.new(color.orange, 90)
+f_theme_ny1_bor()  => theme_sel == "Dark Pro" ? color.new(#FFA726, 30) : theme_sel == "Light Pro" ? color.new(#E65100, 30) : theme_sel == "Neon" ? color.new(#FFAB40, 10) : color.new(color.orange, 50)
+f_theme_ny2_box()  => theme_sel == "Dark Pro" ? color.new(#8E24AA, 85) : theme_sel == "Light Pro" ? color.new(#CE93D8, 70) : theme_sel == "Neon" ? color.new(#EA80FC, 80) : color.new(color.purple, 90)
+f_theme_ny2_bor()  => theme_sel == "Dark Pro" ? color.new(#AB47BC, 30) : theme_sel == "Light Pro" ? color.new(#6A1B9A, 30) : theme_sel == "Neon" ? color.new(#E040FB, 10) : color.new(color.purple, 50)
+f_theme_p12()      => theme_sel == "Dark Pro" ? #FFD54F : theme_sel == "Light Pro" ? #F9A825 : theme_sel == "Neon" ? #FFEA00 : #FBC02D
+f_theme_pd()       => theme_sel == "Dark Pro" ? #9E9E9E : theme_sel == "Light Pro" ? #616161 : theme_sel == "Neon" ? #B0BEC5 : #757575
+f_theme_open()     => theme_sel == "Dark Pro" ? #E0E0E0 : theme_sel == "Light Pro" ? #424242 : theme_sel == "Neon" ? #FFFFFF : #BDBDBD
+f_theme_weekly()   => theme_sel == "Dark Pro" ? #66BB6A : theme_sel == "Light Pro" ? #2E7D32 : theme_sel == "Neon" ? #00E676 : #43A047
+f_theme_settle()   => theme_sel == "Dark Pro" ? #FFA726 : theme_sel == "Light Pro" ? #E65100 : theme_sel == "Neon" ? #FF6D00 : #FB8C00
 
 grp_tbl = "Table Settings"
-p_res = input.string("Bottom Right", "Result Table Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group=grp_tbl)
-s_res = input.string("Tiny", "Result Table Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tbl)
-p_stat = input.string("Middle Right", "Status Table Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group=grp_tbl)
+tbl_opts = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left", "Top Center", "Bottom Center"]
+p_res  = input.string("Bottom Right", "Result Table Position", options=tbl_opts, group=grp_tbl)
+s_res  = input.string("Tiny", "Result Table Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tbl)
+p_stat = input.string("Middle Right", "Status Table Position", options=tbl_opts, group=grp_tbl)
 
 grp_box = "Prediction Visuals"
-show_boxes = input.bool(true, "Show Prediction Boxes", group=grp_box)
-c_box_long  = input.color(color.new(color.green, 60), "Long Box Color", group=grp_box)
-c_box_short = input.color(color.new(color.red, 60), "Short Box Color", group=grp_box)
-c_box_false = input.color(color.new(color.gray, 60), "False/Neutral Box Color", group=grp_box)
-t_box_fill  = input.int(60, "Box Fill Transparency (0-100)", minval=0, maxval=100, group=grp_box)
+show_boxes  = input.bool(true, "Show Prediction Boxes", group=grp_box)
+c_box_long   = input.color(color.new(#4CAF50, 40), "Long Box Color", group=grp_box)
+c_box_short  = input.color(color.new(#F44336, 40), "Short Box Color", group=grp_box)
+c_box_false  = input.color(color.new(#9E9E9E, 40), "False/Neutral Box Color", group=grp_box)
 show_labels = input.bool(true, "Show Labels", group=grp_box)
-c_lbl_text  = input.color(color.white, "Label Text Color", group=grp_box)
-s_lbl       = input.string("Tiny", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_box)
+c_lbl_text   = input.color(color.white, "Label Text Color", group=grp_box)
+s_lbl        = input.string("Tiny", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_box)
 
 grp_ref = "Reference Levels"
-show_p12     = input.bool(true, "Show P12 (High/Mid/Low)", group=grp_ref)
-show_pd      = input.bool(true, "Show PDH/PDL/PDM", group=grp_ref)
-show_open    = input.bool(true, "Show Opens (Globex, Mid, 7:30)", group=grp_ref)
-show_weekly  = input.bool(true, "Show Weekly Close", group=grp_ref)
-show_settle  = input.bool(true, "Show Prior Settlement", group=grp_ref)
-show_ref_lbl = input.bool(true, "Show Labels", group=grp_ref)
+l_styles = ["Solid", "Dotted", "Dashed"]
+get_style(s) => s == "Dotted" ? line.style_dotted : s == "Dashed" ? line.style_dashed : line.style_solid
+
+show_p12 = input.bool(true, "Show P12 Levels", group=grp_ref)
+c_p12    = input.color(f_theme_p12(), "", inline="p12", group=grp_ref)
+w_p12    = input.int(1, "", minval=1, inline="p12", group=grp_ref)
+s_p12    = input.string("Dotted", "", options=l_styles, inline="p12", group=grp_ref)
+
+show_pd  = input.bool(true, "Show Prev Day Levels", group=grp_ref)
+c_pd     = input.color(f_theme_pd(), "", inline="pd", group=grp_ref)
+w_pd     = input.int(1, "", minval=1, inline="pd", group=grp_ref)
+s_pd     = input.string("Dotted", "", options=l_styles, inline="pd", group=grp_ref)
+
+show_open = input.bool(true, "Show Session Opens", group=grp_ref)
+c_open    = input.color(f_theme_open(), "", inline="open", group=grp_ref)
+w_open    = input.int(1, "", minval=1, inline="open", group=grp_ref)
+s_open    = input.string("Dashed", "", options=l_styles, inline="open", group=grp_ref)
+
+show_weekly = input.bool(true, "Show Prev Week Close", group=grp_ref)
+c_weekly    = input.color(f_theme_weekly(), "", inline="week", group=grp_ref)
+w_weekly    = input.int(1, "", minval=1, inline="week", group=grp_ref)
+s_weekly    = input.string("Solid", "", options=l_styles, inline="week", group=grp_ref)
+
+show_settle = input.bool(true, "Show Prior Settlement", group=grp_ref)
+c_settle    = input.color(f_theme_settle(), "", inline="settle", group=grp_ref)
+w_settle    = input.int(1, "", minval=1, inline="settle", group=grp_ref)
+s_settle    = input.string("Solid", "", options=l_styles, inline="settle", group=grp_ref)
+
+show_ref_lbl  = input.bool(true, "Show Reference Labels", group=grp_ref)
 line_ext_bars = input.int(20, "Line Extension (bars)", minval=1, maxval=100, group=grp_ref)
 
 grp_pm = "Price Models"
 show_pm     = input.bool(true, "Show Price Models", group=grp_pm)
 pm_outcome  = input.string("Auto", "Outcome Model", options=["Auto", "Long True", "Long False", "Short True", "Short False"], group=grp_pm)
 pm_anchor   = input.string("Prev Mid", "Anchor To", options=["Session Open", "Prev Mid"], group=grp_pm)
-pm_opacity  = input.int(50, "Opacity (0-100)", minval=0, maxval=100, group=grp_pm)
-c_pm_high   = input.color(color.green, "Model High Color", group=grp_pm)
-c_pm_low    = input.color(color.red, "Model Low Color", group=grp_pm)
+c_pm_high   = input.color(color.new(#4CAF50, 40), "Model High", inline="pm_h", group=grp_pm)
+w_pm_high   = input.int(2, "Width", minval=1, inline="pm_h", group=grp_pm)
+c_pm_low    = input.color(color.new(#F44336, 40), "Model Low", inline="pm_l", group=grp_pm)
+w_pm_low    = input.int(2, "Width", minval=1, inline="pm_l", group=grp_pm)
 
 grp_hist = "Time Histograms"
-hist_outcome = input.string("None", "Show Histogram For", options=["None", "Long True", "Long False", "Short True", "Short False"], group=grp_hist)
-hist_scale   = input.float(0.5, "Histogram Height Scale", step=0.1, group=grp_hist)
-hist_disp    = input.float(0.5, "Histogram Y Displacement (%)", step=0.1, group=grp_hist)
+hist_outcome = input.string("None", "Outcome", options=["None", "Long True", "Long False", "Short True", "Short False"], group=grp_hist)
+hist_up_col  = input.color(color.new(#4CAF50, 60), "Up Color", inline="hcol", group=grp_hist)
+hist_dn_col  = input.color(color.new(#F44336, 60), "Down Color", inline="hcol", group=grp_hist)
+hist_scale   = input.float(0.5, "Height Scale", step=0.1, group=grp_hist)
+hist_disp    = input.float(0.5, "Y Displacement (%)", step=0.1, group=grp_hist)
 
-get_pos(str) => str == "Top Right" ? position.top_right : str == "Top Left" ? position.top_left : str == "Bottom Right" ? position.bottom_right : str == "Bottom Left" ? position.bottom_left : position.middle_right
+get_pos(str) => 
+    str == "Top Right" ? position.top_right : 
+    str == "Top Left" ? position.top_left : 
+    str == "Bottom Right" ? position.bottom_right : 
+    str == "Bottom Left" ? position.bottom_left : 
+    str == "Middle Right" ? position.middle_right :
+    str == "Middle Left" ? position.middle_left :
+    str == "Top Center" ? position.top_center :
+    position.bottom_center
+
 get_size(str) => str == "Tiny" ? size.tiny : str == "Small" ? size.small : str == "Large" ? size.large : size.normal
 
-f_draw_lev_bar(price, start_bi, col, style, txt, visible) =>
+f_draw_lev_bar(price, start_bi, col, style, width, txt, visible) =>
     if visible and not na(price) and start_bi > 0 and (bar_index - start_bi) < 500
         end_bi = bar_index + line_ext_bars
-        line.new(start_bi, price, end_bi, price, xloc=xloc.bar_index, color=col, style=style)
+        line.new(start_bi, price, end_bi, price, xloc=xloc.bar_index, color=col, style=style, width=width)
         if show_ref_lbl
-            label.new(end_bi, price, txt, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_none, textcolor=col, size=size.small, textalign=text.align_left)
+            label.new(end_bi + 2, price, txt, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_none, textcolor=col, size=size.small, textalign=text.align_left)
 
 // ————— LIVE SESSION LOGIC —————
 t_asia = "1800-1929", t_lon = "0230-0329", t_ny1 = "0730-0829", t_ny2 = "1130-1229"
@@ -178,9 +213,9 @@ if start_asia
     open_asia := open
     b_asia := box.new(time, high, time, low, xloc=xloc.bar_time, border_color=f_theme_asia_bor(), bgcolor=f_theme_asia_box())
     t_close = f_get_1600_et(time)
-    l_asia_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=f_theme_asia_bor(), style=line.style_dotted)
+    l_asia_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=f_theme_asia_bor(), style=line.style_dotted, width=1)
     if show_ref_lbl
-        lb_asia_mid := label.new(t_close, high, "Asia Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=f_theme_asia_bor(), size=size.small, textalign=text.align_left)
+        lb_asia_mid := label.new(t_close + 2 * timeframe.in_seconds(timeframe.period) * 1000, high, "Asia Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=f_theme_asia_bor(), size=size.small, textalign=text.align_left)
 if in_asia
     asia_h := math.max(nz(asia_h, high), high)
     asia_l := math.min(nz(asia_l, low), low)
@@ -205,9 +240,9 @@ if start_lon
     open_lon := open
     b_lon := box.new(time, high, time, low, xloc=xloc.bar_time, border_color=f_theme_lon_bor(), bgcolor=f_theme_lon_box())
     t_close = f_get_1600_et(time)
-    l_lon_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=f_theme_lon_bor(), style=line.style_dotted)
+    l_lon_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=f_theme_lon_bor(), style=line.style_dotted, width=1)
     if show_ref_lbl
-        lb_lon_mid := label.new(t_close, high, "Lon Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=f_theme_lon_bor(), size=size.small, textalign=text.align_left)
+        lb_lon_mid := label.new(t_close + 2 * timeframe.in_seconds(timeframe.period) * 1000, high, "Lon Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=f_theme_lon_bor(), size=size.small, textalign=text.align_left)
 if in_lon
     lon_h := math.max(nz(lon_h, high), high)
     lon_l := math.min(nz(lon_l, low), low)
@@ -232,9 +267,9 @@ if start_ny1
     open_ny := open
     b_ny1 := box.new(time, high, time, low, xloc=xloc.bar_time, border_color=f_theme_ny1_bor(), bgcolor=f_theme_ny1_box())
     t_close = f_get_1600_et(time)
-    l_ny1_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=f_theme_ny1_bor(), style=line.style_dotted)
+    l_ny1_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=f_theme_ny1_bor(), style=line.style_dotted, width=1)
     if show_ref_lbl
-        lb_ny1_mid := label.new(t_close, high, "NY1 Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=f_theme_ny1_bor(), size=size.small, textalign=text.align_left)
+        lb_ny1_mid := label.new(t_close + 2 * timeframe.in_seconds(timeframe.period) * 1000, high, "NY1 Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=f_theme_ny1_bor(), size=size.small, textalign=text.align_left)
 if in_ny1
     ny1_h := math.max(nz(ny1_h, high), high)
     ny1_l := math.min(nz(ny1_l, low), low)
@@ -258,9 +293,9 @@ if start_ny2
     bk_ny2 := false
     b_ny2 := box.new(time, high, time, low, xloc=xloc.bar_time, border_color=f_theme_ny2_bor(), bgcolor=f_theme_ny2_box())
     t_close = f_get_1600_et(time)
-    l_ny2_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=f_theme_ny2_bor(), style=line.style_dotted)
+    l_ny2_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=f_theme_ny2_bor(), style=line.style_dotted, width=1)
     if show_ref_lbl
-        lb_ny2_mid := label.new(t_close, high, "NY2 Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=f_theme_ny2_bor(), size=size.small, textalign=text.align_left)
+        lb_ny2_mid := label.new(t_close + 2 * timeframe.in_seconds(timeframe.period) * 1000, high, "NY2 Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=f_theme_ny2_bor(), size=size.small, textalign=text.align_left)
 if in_ny2
     ny2_h := math.max(nz(ny2_h, high), high)
     ny2_l := math.min(nz(ny2_l, low), low)
@@ -307,12 +342,12 @@ bool is_0730 = (hour(time, "America/New_York") == 7) and (minute(time, "America/
 if is_0730 or (hour(time, "America/New_York") == 7 and minute(time, "America/New_York") >= 30 and minute(time[1], "America/New_York") < 30)
     open_0730 := open
 
-f_draw_lev(price, t_start, t_end, col, style, txt, visible) =>
+f_draw_lev(price, t_start, t_end, col, style, width, txt, visible) =>
     if visible and not na(price)
-        l = line.new(int(t_start), price, int(t_end), price, xloc=xloc.bar_time, color=col, style=style)
+        l = line.new(int(t_start), price, int(t_end), price, xloc=xloc.bar_time, color=col, style=style, width=width)
         array.push(a_lines, l)
         if show_ref_lbl
-            lb = label.new(int(t_end), price, txt, xloc=xloc.bar_time, yloc=yloc.price, style=label.style_none, textcolor=col, size=size.small, textalign=text.align_left)
+            lb = label.new(int(t_end) + 2 * timeframe.in_seconds(timeframe.period) * 1000, price, txt, xloc=xloc.bar_time, yloc=yloc.price, style=label.style_none, textcolor=col, size=size.small, textalign=text.align_left)
             array.push(a_labels, lb)
 
 if barstate.islast
@@ -329,27 +364,26 @@ if barstate.islast
     // t_end_d = t_start_d + 86400000 
     
     if show_pd
-        f_draw_lev(pd_h, t_start_d, t_proj, f_theme_pd(), line.style_dashed, "PDH", true)
-        f_draw_lev(pd_l, t_start_d, t_proj, f_theme_pd(), line.style_dashed, "PDL", true)
-        f_draw_lev(pd_m, t_start_d, t_proj, f_theme_pd(), line.style_dotted, "PDM", true)
+        f_draw_lev(pd_h, t_start_d, t_proj, c_pd, get_style(s_pd), w_pd, "PDH", true)
+        f_draw_lev(pd_l, t_start_d, t_proj, c_pd, get_style(s_pd), w_pd, "PDL", true)
+        f_draw_lev(pd_m, t_start_d, t_proj, c_pd, get_style(s_pd), w_pd, "PDM", true)
     if show_settle
-        f_draw_lev(pd_c, t_start_d, t_proj, f_theme_settle(), line.style_solid, "Settle", true)
+        f_draw_lev(pd_c, t_start_d, t_proj, c_settle, get_style(s_settle), w_settle, "Settle", true)
     if show_weekly
-        f_draw_lev(pw_c, time("W"), t_proj, f_theme_weekly(), line.style_solid, "Weekly", true)
+        f_draw_lev(pw_c, time("W"), t_proj, c_weekly, get_style(s_weekly), w_weekly, "P.Week Close", true)
     if show_open 
-        f_draw_lev(open_glob, t_start_d, t_proj, f_theme_open(), line.style_dashed, "Globex", true)
+        f_draw_lev(open_glob, t_start_d, t_proj, c_open, get_style(s_open), w_open, "Globex", true)
         if not na(open_mid)
-            f_draw_lev(open_mid, t_start_d + 6*3600000, t_proj, f_theme_open(), line.style_dashed, "Midnight", true)
+            f_draw_lev(open_mid, t_start_d + 6*3600000, t_proj, c_open, get_style(s_open), w_open, "Midnight", true)
         if not na(open_0730)
-            f_draw_lev(open_0730, t_start_d + 13.5*3600000, t_proj, f_theme_open(), line.style_dashed, "07:30", true)
+            f_draw_lev(open_0730, t_start_d + 13.5*3600000, t_proj, c_open, get_style(s_open), w_open, "07:30", true)
     if show_p12
         p12_m = (p12_h + p12_l) / 2
         t_0600 = t_start_d + 12*3600000
-        // Only show P12 after it is finalized (06:00 ET)
         if time >= t_0600
-            f_draw_lev(p12_h, t_0600, t_proj, f_theme_p12(), line.style_solid, "P12H", true)
-            f_draw_lev(p12_l, t_0600, t_proj, f_theme_p12(), line.style_solid, "P12L", true)
-            f_draw_lev(p12_m, t_0600, t_proj, f_theme_p12(), line.style_dotted, "P12M", true)
+            f_draw_lev(p12_h, t_0600, t_proj, c_p12, get_style(s_p12), w_p12, "P12H", true)
+            f_draw_lev(p12_l, t_0600, t_proj, c_p12, get_style(s_p12), w_p12, "P12L", true)
+            f_draw_lev(p12_m, t_0600, t_proj, c_p12, get_style(s_p12), w_p12, "P12M", true)
 
 // ————— CORE LOGIC —————
 f_calc_status(s_sess, h, l, c_st) =>
@@ -471,8 +505,7 @@ f_draw_box(m_time, m_price, d_open, b_col, row_name, is_high) =>
             t_end := t_end + 86400000
         p_start = d_open * (1 + m_price.min_val / 100.0)
         p_end   = d_open * (1 + m_price.max_val / 100.0)
-        fill_c = color.new(b_col, t_box_fill)
-        bx = box.new(t_start, p_end, t_end, p_start, xloc=xloc.bar_time, bgcolor=fill_c, border_color=b_col, border_style=line.style_solid)
+        bx = box.new(t_start, p_end, t_end, p_start, xloc=xloc.bar_time, bgcolor=b_col, border_color=b_col, border_style=line.style_solid)
         if show_labels
             txt = row_name + (is_high ? " HOD" : " LOD") + "\n" + m_price.disp + "\n" + m_time.disp
             label.new(int((t_start + t_end)/2), p_end, txt, xloc=xloc.bar_time, yloc=yloc.price, color=color.new(c_lbl_text, 100), style=label.style_label_down, textcolor=c_lbl_text, size=get_size(s_lbl))
@@ -552,7 +585,8 @@ f_draw_time_hist(arr_times, anchor_p, col, is_up, t_ref) =>
                     p_base = anchor_p * (1.0 + y_disp)
                     p_curr = p_base * (1.0 + cnt * scale_fac)
                     
-                    box.new(t_s, p_curr, t_e, p_base, xloc=xloc.bar_time, bgcolor=col, border_width=0)
+                    c_bucket = is_up ? hist_up_col : hist_dn_col
+                    box.new(t_s, p_curr, t_e, p_base, xloc=xloc.bar_time, bgcolor=c_bucket, border_width=0)
 
 // ————— PRICE MODEL —————
 f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, open_asia, open_lon, open_ny, lt_t, lt_h, lt_l, lf_t, lf_h, lf_l, st_t, st_h, st_l, sf_t, sf_h, sf_l) =>
@@ -647,8 +681,8 @@ f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, 
                     polyline.delete(pm_l)
                     label.delete(lbl_pm)
                     label.delete(lbl_debug)
-                    pm_h := polyline.new(pts_h, line_color=color.new(c_pm_high, pm_opacity), xloc=xloc.bar_time, line_width=2)
-                    pm_l := polyline.new(pts_l, line_color=color.new(c_pm_low, pm_opacity), xloc=xloc.bar_time, line_width=2)
+                    pm_h := polyline.new(pts_h, line_color=c_pm_high, xloc=xloc.bar_time, line_width=w_pm_high)
+                    pm_l := polyline.new(pts_l, line_color=c_pm_low, xloc=xloc.bar_time, line_width=w_pm_low)
 
 // ————— TABLES —————
 f_status_str(c, act, bk) =>
