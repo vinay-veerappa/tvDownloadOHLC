@@ -13,6 +13,49 @@ def time_to_min(t_str):
     h, m = map(int, t_str.split(':'))
     return h * 60 + m
 
+# Session Time Ranges (ET) - Start (inclusive), End (exclusive)
+SESSION_RANGES = {
+    'Asia': ('18:00', '02:00'),
+    'London': ('02:00', '07:00'),
+    'NY1': ('08:00', '12:00'),
+    'NY2': ('12:00', '16:00'),
+}
+
+def time_in_session(t_str, session):
+    """Check if time HH:MM falls within session range (handles midnight crossing)."""
+    if not t_str or session not in SESSION_RANGES:
+        return False
+    
+    start_str, end_str = SESSION_RANGES[session]
+    
+    h, m = map(int, t_str.split(':'))
+    t = h * 60 + m
+    
+    sh, sm = map(int, start_str.split(':'))
+    s = sh * 60 + sm
+    
+    eh, em = map(int, end_str.split(':'))
+    e_raw = eh * 60 + em
+    
+    # Handle midnight crossing (e.g. 18:00 -> 02:00)
+    if e_raw < s:
+        e = e_raw + 24 * 60
+        if t < s:
+            t += 24 * 60
+    else:
+        e = e_raw
+    
+    return s <= t < e
+
+def touched_in_session(touch_times, session):
+    """Check if any touch time falls within the session."""
+    if not touch_times:
+        return 0
+    for ts in touch_times:
+        if time_in_session(ts, session):
+            return 1
+    return 0
+
 def encode_status(status):
     if not status: return 0
     s = status.lower()
@@ -95,7 +138,27 @@ def generate_price_model_libraries(ticker, data_map):
         models[short_key] = fetch_price_model(ticker, out)
     return models
 
-def generate_library_code(vname, vdata, vtype):
+def pack_bits(data, bits):
+    """Packs multiple values into 50-bit integers (safe for Pine Script float math)."""
+    vals_per_int = 15
+    packed = []
+    current = 0
+    count = 0
+    for val in data:
+        current = (current * (2**bits)) + (int(val) & ((1 << bits) - 1))
+        count += 1
+        if count == vals_per_int:
+            packed.append(current)
+            current = 0
+            count = 0
+    if count > 0:
+        packed.append(current)
+    return packed
+
+def generate_library_code(vname, vdata, vtype, bits=0):
+    if bits > 0:
+        vdata = pack_bits(vdata, bits)
+        
     chunk_size = 2000
     chunks = [vdata[i:i + chunk_size] for i in range(0, len(vdata), chunk_size)]
     code = []
@@ -154,26 +217,51 @@ def generate_scripts(profiler, hod_lod, touches):
             if d_open and d_open > 0:
                 data_map[d_int]['hod_p'] = round((d_high - d_open) / d_open * 100, 2)
                 data_map[d_int]['lod_p'] = round((d_low - d_open) / d_open * 100, 2)
+            # Store absolute high/low for PDH/PDL calc
+            data_map[d_int]['high_abs'] = d_high
+            data_map[d_int]['low_abs'] = d_low
 
+    # Levels to process for session-specific touches
+    TOUCH_LEVELS = ['p12h', 'p12m', 'p12l', 'pdh', 'pdm', 'pdl', 
+                    'asia_mid', 'london_mid', 'ny1_mid', 'midnight_open', 'open_0730']
+    SESSIONS = ['Asia', 'London', 'NY1', 'NY2']
+    
     for date_str, t_data in touches.items():
         if not date_str[0].isdigit(): continue
         d_int = int(date_str.replace('-', ''))
         if d_int in data_map:
-            def chk(k): return 1 if t_data.get(k, {}).get('touched', False) else 0
-            data_map[d_int]['t_p12h'] = chk('p12h')
-            data_map[d_int]['t_p12m'] = chk('p12m')
-            data_map[d_int]['t_p12l'] = chk('p12l')
-            data_map[d_int]['t_asia_mid'] = chk('asia_mid')
-            data_map[d_int]['t_lon_mid'] = chk('london_mid')
+            # Store touch_times for session-specific calculation
+            for lvl in TOUCH_LEVELS:
+                lvl_data = t_data.get(lvl, {})
+                touch_times = lvl_data.get('touch_times', [])
+                
+                # Calculate session-specific touches
+                for sess in SESSIONS:
+                    key = f't_{lvl}_{sess.lower()}'
+                    data_map[d_int][key] = touched_in_session(touch_times, sess)
+                
+                # Also store daily touch for backward compatibility
+                data_map[d_int][f't_{lvl}'] = 1 if lvl_data.get('touched', False) else 0
+
+
 
     dates = []
     asia, london, ny1, ny2 = [], [], [], []
     bk_asia, bk_london, bk_ny1, bk_ny2 = [], [], [], []
     hod_t, lod_t, hod_p, lod_p = [], [], [], []
-    t_p12h, t_p12m, t_p12l, t_asia_mid, t_lon_mid = [], [], [], [], []
     
-    for d in sorted(data_map.keys()):
+    # Session-specific touch arrays: level_session
+    touch_arrays = {}
+    for lvl in TOUCH_LEVELS:
+        for sess in ['asia', 'london', 'ny1', 'ny2']:
+            touch_arrays[f'{lvl}_{sess}'] = []
+    
+    # Sort dates and build arrays
+    sorted_days = sorted(data_map.keys())
+    
+    for d in sorted_days:
         row = data_map[d]
+            
         dates.append(row['date'])
         asia.append(row['Asia'])
         london.append(row['London'])
@@ -187,38 +275,48 @@ def generate_scripts(profiler, hod_lod, touches):
         lod_t.append(row['lod_t'])
         hod_p.append(row['hod_p'])
         lod_p.append(row['lod_p'])
-        t_p12h.append(row['t_p12h'])
-        t_p12m.append(row['t_p12m'])
-        t_p12l.append(row['t_p12l'])
-        t_asia_mid.append(row['t_asia_mid'])
-        t_lon_mid.append(row['t_lon_mid'])
+        
+        # Append session-specific touches
+        for lvl in TOUCH_LEVELS:
+            for sess in ['asia', 'london', 'ny1', 'ny2']:
+                key = f't_{lvl}_{sess}'
+                touch_arrays[f'{lvl}_{sess}'].append(row.get(key, 0))
         
     pm_ticker = "NQ1"
     price_models = generate_price_model_libraries(pm_ticker, data_map)
 
+    # Build Touches library definition with session-indexed arrays
+    touches_fields = []
+    for lvl in TOUCH_LEVELS:
+        for sess in ['asia', 'london', 'ny1', 'ny2']:
+            arr_name = f'{lvl}_{sess}'
+            touches_fields.append((arr_name, touch_arrays[arr_name], "int"))
+
     libs_def = {
-        "ProfilerData_Asia":   [("dates", dates, "int"), ("asia", asia, "int")],
-        "ProfilerData_London": [("london", london, "int")], 
-        "ProfilerData_NY":     [("ny1", ny1, "int"), ("ny2", ny2, "int")],
-        "ProfilerData_Broken": [("asia", bk_asia, "int"), ("london", bk_london, "int"), ("ny1", bk_ny1, "int"), ("ny2", bk_ny2, "int")],
-        "ProfilerData_Times":  [("hod_time", hod_t, "int"), ("lod_time", lod_t, "int")],
-        "ProfilerData_Levels": [("hod_pct", hod_p, "float"), ("lod_pct", lod_p, "float")],
-        "ProfilerData_Touches":[
-            ("p12h", t_p12h, "int"), ("p12m", t_p12m, "int"), ("p12l", t_p12l, "int"),
-            ("asia_mid", t_asia_mid, "int"), ("lon_mid", t_lon_mid, "int")
-        ],
-        "ProfilerData_Model_LT": [("times", price_models.get('LT', ([],[],[]))[0], "int"), ("high", price_models.get('LT', ([],[],[]))[1], "float"), ("low", price_models.get('LT', ([],[],[]))[2], "float")],
-        "ProfilerData_Model_LF": [("times", price_models.get('LF', ([],[],[]))[0], "int"), ("high", price_models.get('LF', ([],[],[]))[1], "float"), ("low", price_models.get('LF', ([],[],[]))[2], "float")],
-        "ProfilerData_Model_ST": [("times", price_models.get('ST', ([],[],[]))[0], "int"), ("high", price_models.get('ST', ([],[],[]))[1], "float"), ("low", price_models.get('ST', ([],[],[]))[2], "float")],
-        "ProfilerData_Model_SF": [("times", price_models.get('SF', ([],[],[]))[0], "int"), ("high", price_models.get('SF', ([],[],[]))[1], "float"), ("low", price_models.get('SF', ([],[],[]))[2], "float")]
+        "ProfilerData_Asia":   [("dates", dates, "int", 0), ("asia", asia, "int", 3)],
+        "ProfilerData_London": [("london", london, "int", 3)], 
+        "ProfilerData_NY":     [("ny1", ny1, "int", 3), ("ny2", ny2, "int", 3)],
+        "ProfilerData_Broken": [("asia", bk_asia, "int", 1), ("london", bk_london, "int", 1), ("ny1", bk_ny1, "int", 1), ("ny2", bk_ny2, "int", 1)],
+        "ProfilerData_Times":  [("hod_time", hod_t, "int", 0), ("lod_time", lod_t, "int", 0)],
+        "ProfilerData_Levels": [("hod_pct", hod_p, "float", 0), ("lod_pct", lod_p, "float", 0)],
+        "ProfilerData_Touches": touches_fields,
+        "ProfilerData_Model_LT": [("times", price_models.get('LT', ([],[],[]))[0], "int", 0), ("high", price_models.get('LT', ([],[],[]))[1], "float", 0), ("low", price_models.get('LT', ([],[],[]))[2], "float", 0)],
+        "ProfilerData_Model_LF": [("times", price_models.get('LF', ([],[],[]))[0], "int", 0), ("high", price_models.get('LF', ([],[],[]))[1], "float", 0), ("low", price_models.get('LF', ([],[],[]))[2], "float", 0)],
+        "ProfilerData_Model_ST": [("times", price_models.get('ST', ([],[],[]))[0], "int", 0), ("high", price_models.get('ST', ([],[],[]))[1], "float", 0), ("low", price_models.get('ST', ([],[],[]))[2], "float", 0)],
+        "ProfilerData_Model_SF": [("times", price_models.get('SF', ([],[],[]))[0], "int", 0), ("high", price_models.get('SF', ([],[],[]))[1], "float", 0), ("low", price_models.get('SF', ([],[],[]))[2], "float", 0)]
     }
+
+    # Update touches_fields to include bit-packing flag (1 bit)
+    for i in range(len(touches_fields)):
+        touches_fields[i] = list(touches_fields[i]) + [1]
+
     
     for lib_name, fields in libs_def.items():
         fname = OUT_DIR / f"{lib_name}.pine"
         lib_header = f'// © vveerappa\n//@version=6\nlibrary("{lib_name}", overlay=true)\n'
         lib_body = []
-        for (vname, vdata, vtype) in fields:
-            lib_body.append(generate_library_code(vname, vdata, vtype))
+        for (vname, vdata, vtype, vbits) in fields:
+            lib_body.append(generate_library_code(vname, vdata, vtype, vbits))
         full_lib = lib_header + "\n\n".join(lib_body)
         with open(fname, "w", encoding='utf-8') as f:
             f.write(full_lib)
@@ -226,13 +324,13 @@ def generate_scripts(profiler, hod_lod, touches):
 
     # --- Generate Indicator ---
     imports = []
-    imports.append(f"import {IMPORT_BASE}_Asia/1 as LibAsia")
-    imports.append(f"import {IMPORT_BASE}_London/1 as LibLon")
-    imports.append(f"import {IMPORT_BASE}_NY/2 as LibNY")
-    imports.append(f"import {IMPORT_BASE}_Broken/1 as LibBroken")
+    imports.append(f"import {IMPORT_BASE}_Asia/3 as LibAsia")
+    imports.append(f"import {IMPORT_BASE}_London/3 as LibLon")
+    imports.append(f"import {IMPORT_BASE}_NY/4 as LibNY")
+    imports.append(f"import {IMPORT_BASE}_Broken/3 as LibBroken")
     imports.append(f"import {IMPORT_BASE}_Times/1 as LibTimes")
     imports.append(f"import {IMPORT_BASE}_Levels/1 as LibLevels")
-    imports.append(f"import {IMPORT_BASE}_Touches/1 as LibTouches")
+    imports.append(f"import {IMPORT_BASE}_Touches/4 as LibTouches")
     imports.append(f"import {IMPORT_BASE}_Model_LT/3 as LibModelLT")
     imports.append(f"import {IMPORT_BASE}_Model_LF/3 as LibModelLF")
     imports.append(f"import {IMPORT_BASE}_Model_ST/3 as LibModelST")
@@ -259,6 +357,16 @@ max_bars_back(time, 2000)
 
 {chr(10).join(imports)}
 
+f_get_bit(arr, i) =>
+    val = array.get(arr, math.floor(i / 15))
+    pos = 14 - (i % 15)
+    math.floor(val / math.pow(2, pos)) % 2
+
+f_get_code(arr, i) =>
+    val = array.get(arr, math.floor(i / 15))
+    pos = 14 - (i % 15)
+    math.floor(val / math.pow(8, pos)) % 8
+
 // ————— LOAD DATA —————
 var int[] dates = LibAsia.get_dates()
 var int[] asia_stats = LibAsia.get_asia()
@@ -269,15 +377,7 @@ var int[] asia_bk = LibBroken.get_asia()
 var int[] london_bk = LibBroken.get_london()
 var int[] ny1_bk = LibBroken.get_ny1()
 var int[] ny2_bk = LibBroken.get_ny2()
-var int[] hod_times = LibTimes.get_hod_time()
-var int[] lod_times = LibTimes.get_lod_time()
-var float[] hod_pcts = LibLevels.get_hod_pct()
-var float[] lod_pcts = LibLevels.get_lod_pct()
-var int[] t_p12h = LibTouches.get_p12h()
-var int[] t_p12m = LibTouches.get_p12m()
-var int[] t_p12l = LibTouches.get_p12l()
-var int[] t_asia_mid = LibTouches.get_asia_mid()
-var int[] t_lon_mid = LibTouches.get_lon_mid()
+// Load Data Arrays
 
 var int[] m_lt_t = LibModelLT.get_times()
 var float[] m_lt_h = LibModelLT.get_high()
@@ -707,7 +807,7 @@ f_draw_box(m_time, m_price, d_open, b_col, row_name, is_high) =>
             txt = row_name + (is_high ? " HOD" : " LOD") + "\\n" + m_price.disp + "\\n" + m_time.disp
             label.new(int((t_start + t_end)/2), p_end, txt, xloc=xloc.bar_time, yloc=yloc.price, color=color.new(c_lbl_text, 100), style=label.style_label_down, textcolor=c_lbl_text, size=get_size(s_lbl))
 
-f_render_row_adv(tbl, r, label, cnt, tot, bg_col, sz, arr_hod_t, arr_lod_t, arr_hod_p, arr_lod_p, cp12h, cp12m, cp12l, casia, clon, d_open, is_long, is_fls, v_p12, v_asia, v_lon) =>
+f_render_row_adv(tbl, r, label, cnt, tot, bg_col, sz, arr_hod_t, arr_lod_t, arr_hod_p, arr_lod_p, cp12h, cp12m, cp12l, casia, clon, cpdh, cpdl, cpdm, d_open, is_long, is_fls, v_p12, v_asia, v_lon, v_pd) =>
     b_col = is_fls ? c_box_false : (is_long ? c_box_long : c_box_short)
     if cnt > 0
         pct = 100.0 * cnt / tot
@@ -716,6 +816,10 @@ f_render_row_adv(tbl, r, label, cnt, tot, bg_col, sz, arr_hod_t, arr_lod_t, arr_
         pp12l = 100.0 * cp12l / cnt
         pasia = 100.0 * casia / cnt
         plon = 100.0 * clon / cnt
+        ppdh = 100.0 * cpdh / cnt
+        ppdl = 100.0 * cpdl / cnt
+        ppdm = 100.0 * cpdm / cnt
+        
         m_hod_t = f_calc_mode_time(arr_hod_t)
         m_lod_t = f_calc_mode_time(arr_lod_t)
         m_hod_p = f_calc_mode_pct(arr_hod_p)
@@ -734,6 +838,9 @@ f_render_row_adv(tbl, r, label, cnt, tot, bg_col, sz, arr_hod_t, arr_lod_t, arr_
         table.cell(tbl, 8, r, v_p12 ? str.format("{0,number,#.#}%", pp12l) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl, 9, r, v_asia ? str.format("{0,number,#.#}%", pasia) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl, 10, r, v_lon ? str.format("{0,number,#.#}%", plon) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl, 11, r, v_pd ? str.format("{0,number,#.#}%", ppdh) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl, 12, r, v_pd ? str.format("{0,number,#.#}%", ppdm) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl, 13, r, v_pd ? str.format("{0,number,#.#}%", ppdl) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
 
 // ————— HISTOGRAMS —————
 f_draw_time_hist(arr_times, anchor_p, col, is_up, t_ref) =>
@@ -874,12 +981,14 @@ f_status_str(c, act, bk) =>
     s = c==1?(act?"Long (Pend)":"Long True"): c==2?"Long False": c==3?(act?"Short (Pend)":"Short True"): c==4?"Short False":"Neutral"
     bk ? s + " (BK)" : s
 
-var table tbl_res = table.new(get_pos(p_res), 12, 5, border_width = 1) 
+var table tbl_res = table.new(get_pos(p_res), 15, 5, border_width = 1) 
 var table tbl_stat = table.new(get_pos(p_stat), 2, 5, border_width = 1)
 
-f_match(hc, hb, lc, lb) =>
-    s_ok = lc==0 ? true : lc==1 ? (hc==1 or hc==2) : lc==3 ? (hc==3 or hc==4) : (hc==lc)
-    b_ok = lb ? (hb == 1) : true
+f_match(hc, hb, lc, lb, loose, ignore_bk) =>
+    // Status Match
+    s_ok = lc==0 ? true : loose ? (lc==1 ? (hc==1 or hc==2) : lc==3 ? (hc==3 or hc==4) : hc==lc) : (hc==lc)
+    // Broken Match (Old Logic: lb restricts to hb=1. lb=0 allows all)
+    b_ok = ignore_bk ? true : (lb ? (hb == 1) : true)
     s_ok and b_ok
 
 // Caching Variables
@@ -897,10 +1006,32 @@ var int[] lf_ht = array.new_int(0), var int[] lf_lt = array.new_int(0), var floa
 var int[] st_ht = array.new_int(0), var int[] st_lt = array.new_int(0), var float[] st_hp = array.new_float(0), var float[] st_lp = array.new_float(0)
 var int[] sf_ht = array.new_int(0), var int[] sf_lt = array.new_int(0), var float[] sf_hp = array.new_float(0), var float[] sf_lp = array.new_float(0)
 
-var int lt_t_p12h = 0, var int lt_t_p12m = 0, var int lt_t_p12l = 0, var int lt_t_asia = 0, var int lt_t_lon = 0
-var int lf_t_p12h = 0, var int lf_t_p12m = 0, var int lf_t_p12l = 0, var int lf_t_asia = 0, var int lf_t_lon = 0
-var int st_t_p12h = 0, var int st_t_p12m = 0, var int st_t_p12l = 0, var int st_t_asia = 0, var int st_t_lon = 0
-var int sf_t_p12h = 0, var int sf_t_p12m = 0, var int sf_t_p12l = 0, var int sf_t_asia = 0, var int sf_t_lon = 0
+var int lt_t_p12h = 0, var int lt_t_p12m = 0, var int lt_t_p12l = 0, var int lt_t_asia = 0, var int lt_t_lon = 0, var int lt_t_ny1m = 0, var int lt_t_midnight = 0, var int lt_t_0730 = 0
+var int lt_t_pdh = 0, var int lt_t_pdl = 0, var int lt_t_pdm = 0
+var int lf_t_p12h = 0, var int lf_t_p12m = 0, var int lf_t_p12l = 0, var int lf_t_asia = 0, var int lf_t_lon = 0, var int lf_t_ny1m = 0, var int lf_t_midnight = 0, var int lf_t_0730 = 0
+var int lf_t_pdh = 0, var int lf_t_pdl = 0, var int lf_t_pdm = 0
+var int st_t_p12h = 0, var int st_t_p12m = 0, var int st_t_p12l = 0, var int st_t_asia = 0, var int st_t_lon = 0, var int st_t_ny1m = 0, var int st_t_midnight = 0, var int st_t_0730 = 0
+var int st_t_pdh = 0, var int st_t_pdl = 0, var int st_t_pdm = 0
+var int sf_t_p12h = 0, var int sf_t_p12m = 0, var int sf_t_p12l = 0, var int sf_t_asia = 0, var int sf_t_lon = 0, var int sf_t_ny1m = 0, var int sf_t_midnight = 0, var int sf_t_0730 = 0
+var int sf_t_pdh = 0, var int sf_t_pdl = 0, var int sf_t_pdm = 0
+
+// Load Arrays
+var int[] hod_times = LibTimes.get_hod_time(), var int[] lod_times = LibTimes.get_lod_time()
+var float[] hod_pcts = LibLevels.get_hod_pct(), var float[] lod_pcts = LibLevels.get_lod_pct()
+// Load Touches
+var int[] t_p12h = LibTouches.get_p12h_asia() // These are just dummies to establish names, will be selected dynamically
+// Session-indexed touch arrays
+var int[] t_p12h_a = LibTouches.get_p12h_asia(), var int[] t_p12h_l = LibTouches.get_p12h_london(), var int[] t_p12h_n1 = LibTouches.get_p12h_ny1(), var int[] t_p12h_n2 = LibTouches.get_p12h_ny2()
+var int[] t_p12m_a = LibTouches.get_p12m_asia(), var int[] t_p12m_l = LibTouches.get_p12m_london(), var int[] t_p12m_n1 = LibTouches.get_p12m_ny1(), var int[] t_p12m_n2 = LibTouches.get_p12m_ny2()
+var int[] t_p12l_a = LibTouches.get_p12l_asia(), var int[] t_p12l_l = LibTouches.get_p12l_london(), var int[] t_p12l_n1 = LibTouches.get_p12l_ny1(), var int[] t_p12l_n2 = LibTouches.get_p12l_ny2()
+var int[] t_asia_a = LibTouches.get_asia_mid_asia(), var int[] t_asia_l = LibTouches.get_asia_mid_london(), var int[] t_asia_n1 = LibTouches.get_asia_mid_ny1(), var int[] t_asia_n2 = LibTouches.get_asia_mid_ny2()
+var int[] t_lon_a = LibTouches.get_london_mid_asia(), var int[] t_lon_l = LibTouches.get_london_mid_london(), var int[] t_lon_n1 = LibTouches.get_london_mid_ny1(), var int[] t_lon_n2 = LibTouches.get_london_mid_ny2()
+var int[] t_ny1m_a = LibTouches.get_ny1_mid_asia(), var int[] t_ny1m_l = LibTouches.get_ny1_mid_london(), var int[] t_ny1m_n1 = LibTouches.get_ny1_mid_ny1(), var int[] t_ny1m_n2 = LibTouches.get_ny1_mid_ny2()
+var int[] t_midnight_a = LibTouches.get_midnight_open_asia(), var int[] t_midnight_l = LibTouches.get_midnight_open_london(), var int[] t_midnight_n1 = LibTouches.get_midnight_open_ny1(), var int[] t_midnight_n2 = LibTouches.get_midnight_open_ny2()
+var int[] t_0730_a = LibTouches.get_open_0730_asia(), var int[] t_0730_l = LibTouches.get_open_0730_london(), var int[] t_0730_n1 = LibTouches.get_open_0730_ny1(), var int[] t_0730_n2 = LibTouches.get_open_0730_ny2()
+var int[] t_pdh_a = LibTouches.get_pdh_asia(), var int[] t_pdh_l = LibTouches.get_pdh_london(), var int[] t_pdh_n1 = LibTouches.get_pdh_ny1(), var int[] t_pdh_n2 = LibTouches.get_pdh_ny2()
+var int[] t_pdl_a = LibTouches.get_pdl_asia(), var int[] t_pdl_l = LibTouches.get_pdl_london(), var int[] t_pdl_n1 = LibTouches.get_pdl_ny1(), var int[] t_pdl_n2 = LibTouches.get_pdl_ny2()
+var int[] t_pdm_a = LibTouches.get_pdm_asia(), var int[] t_pdm_l = LibTouches.get_pdm_london(), var int[] t_pdm_n1 = LibTouches.get_pdm_ny1(), var int[] t_pdm_n2 = LibTouches.get_pdm_ny2()
 
 d_open = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
 if barstate.islast
@@ -931,10 +1062,10 @@ if barstate.islast
     state_changed = (tgt_idx != last_tgt_idx) or (st_asia != last_st_asia) or (st_lon != last_st_lon) or (st_ny1 != last_st_ny1) or (st_ny2 != last_st_ny2) or (bk_asia != last_bk_asia) or (bk_lon != last_bk_lon) or (bk_ny1 != last_bk_ny1) or (bk_ny2 != last_bk_ny2)
     if state_changed
         c_lt := 0, c_lf := 0, c_st := 0, c_sf := 0, total_cnt := 0
-        lt_t_p12h := 0, lt_t_p12m := 0, lt_t_p12l := 0, lt_t_asia := 0, lt_t_lon := 0
-        lf_t_p12h := 0, lf_t_p12m := 0, lf_t_p12l := 0, lf_t_asia := 0, lf_t_lon := 0
-        st_t_p12h := 0, st_t_p12m := 0, st_t_p12l := 0, st_t_asia := 0, st_t_lon := 0
-        sf_t_p12h := 0, sf_t_p12m := 0, sf_t_p12l := 0, sf_t_asia := 0, sf_t_lon := 0
+        lt_t_p12h := 0, lt_t_p12m := 0, lt_t_p12l := 0, lt_t_asia := 0, lt_t_lon := 0, lt_t_pdh := 0, lt_t_pdl := 0, lt_t_pdm := 0
+        lf_t_p12h := 0, lf_t_p12m := 0, lf_t_p12l := 0, lf_t_asia := 0, lf_t_lon := 0, lf_t_pdh := 0, lf_t_pdl := 0, lf_t_pdm := 0
+        st_t_p12h := 0, st_t_p12m := 0, st_t_p12l := 0, st_t_asia := 0, st_t_lon := 0, st_t_pdh := 0, st_t_pdl := 0, st_t_pdm := 0
+        sf_t_p12h := 0, sf_t_p12m := 0, sf_t_p12l := 0, sf_t_asia := 0, sf_t_lon := 0, sf_t_pdh := 0, sf_t_pdl := 0, sf_t_pdm := 0
         array.clear(lt_ht), array.clear(lt_lt), array.clear(lt_hp), array.clear(lt_lp)
         array.clear(lf_ht), array.clear(lf_lt), array.clear(lf_hp), array.clear(lf_lp)
         array.clear(st_ht), array.clear(st_lt), array.clear(st_hp), array.clear(st_lp)
@@ -942,71 +1073,55 @@ if barstate.islast
         cached_title := title
         for i = 0 to array.size(dates) - 1
             bool ok = true
-            if tgt_idx > 0 and not f_match(array.get(asia_stats, i), array.get(asia_bk, i), st_asia, bk_asia)
+            // Match History with bits
+            if tgt_idx > 0 and not f_match(f_get_code(asia_stats, i), f_get_bit(asia_bk, i), st_asia, bk_asia, false, false)
                 ok := false
-            if tgt_idx > 1 and not f_match(array.get(london_stats, i), array.get(london_bk, i), st_lon, bk_lon)
+            if tgt_idx > 1 and not f_match(f_get_code(london_stats, i), f_get_bit(london_bk, i), st_lon, bk_lon, false, false)
                 ok := false
-            if tgt_idx > 2 and not f_match(array.get(ny1_stats, i), array.get(ny1_bk, i), st_ny1, bk_ny1)
+            if tgt_idx > 2 and not f_match(f_get_code(ny1_stats, i), f_get_bit(ny1_bk, i), st_ny1, bk_ny1, false, false)
                 ok := false
-            int hist_s = tgt_idx==0?array.get(asia_stats, i): tgt_idx==1?array.get(london_stats, i): tgt_idx==2?array.get(ny1_stats, i): array.get(ny2_stats, i)
-            int hist_b = tgt_idx==0?array.get(asia_bk, i): tgt_idx==1?array.get(london_bk, i): tgt_idx==2?array.get(ny1_bk, i): array.get(ny2_bk, i)
+            
+            // Current Session bit-unpacked
+            int hist_s = tgt_idx==0?f_get_code(asia_stats, i): tgt_idx==1?f_get_code(london_stats, i): tgt_idx==2?f_get_code(ny1_stats, i): f_get_code(ny2_stats, i)
+            int hist_b = tgt_idx==0?f_get_bit(asia_bk, i): tgt_idx==1?f_get_bit(london_bk, i): tgt_idx==2?f_get_bit(ny1_bk, i): f_get_bit(ny2_bk, i)
             int live_s = tgt_idx==0?st_asia: tgt_idx==1?st_lon: tgt_idx==2?st_ny1: st_ny2
             bool live_b = tgt_idx==0?bk_asia: tgt_idx==1?bk_lon: tgt_idx==2?bk_ny1: bk_ny2
-            if ok and f_match(hist_s, hist_b, live_s, live_b)
+            bool is_pend = (tgt_idx==0 and not fin_asia) or (tgt_idx==1 and not fin_lon) or (tgt_idx==2 and not fin_ny1) or (tgt_idx==3 and not fin_ny2)
+            
+            if ok and f_match(hist_s, hist_b, live_s, live_b, is_pend, false)
                 total_cnt += 1
-                _ht = array.get(hod_times, i)
-                _lt = array.get(lod_times, i)
-                _hp = array.get(hod_pcts, i)
-                _lp = array.get(lod_pcts, i)
-                _p12h = array.get(t_p12h, i)
-                _p12m = array.get(t_p12m, i)
-                _p12l = array.get(t_p12l, i)
-                _asia = array.get(t_asia_mid, i)
-                _lon = array.get(t_lon_mid, i)
+                _ht = array.get(hod_times, i), _lt = array.get(lod_times, i), _hp = array.get(hod_pcts, i), _lp = array.get(lod_pcts, i)
+                
+                // Select session-indexed arrays for this historical day
+                int[] cur_p12h = tgt_idx==0?t_p12h_a: tgt_idx==1?t_p12h_l: tgt_idx==2?t_p12h_n1: t_p12h_n2
+                int[] cur_p12m = tgt_idx==0?t_p12m_a: tgt_idx==1?t_p12m_l: tgt_idx==2?t_p12m_n1: t_p12m_n2
+                int[] cur_p12l = tgt_idx==0?t_p12l_a: tgt_idx==1?t_p12l_l: tgt_idx==2?t_p12l_n1: t_p12l_n2
+                int[] cur_asia = tgt_idx==0?t_asia_a: tgt_idx==1?t_asia_l: tgt_idx==2?t_asia_n1: t_asia_n2
+                int[] cur_lon = tgt_idx==0?t_lon_a: tgt_idx==1?t_lon_l: tgt_idx==2?t_lon_n1: t_lon_n2
+                int[] cur_ny1m = tgt_idx==0?t_ny1m_a: tgt_idx==1?t_ny1m_l: tgt_idx==2?t_ny1m_n1: t_ny1m_n2
+                int[] cur_midnight = tgt_idx==0?t_midnight_a: tgt_idx==1?t_midnight_l: tgt_idx==2?t_midnight_n1: t_midnight_n2
+                int[] cur_0730 = tgt_idx==0?t_0730_a: tgt_idx==1?t_0730_l: tgt_idx==2?t_0730_n1: t_0730_n2
+                int[] cur_pdh = tgt_idx==0?t_pdh_a: tgt_idx==1?t_pdh_l: tgt_idx==2?t_pdh_n1: t_pdh_n2
+                int[] cur_pdl = tgt_idx==0?t_pdl_a: tgt_idx==1?t_pdl_l: tgt_idx==2?t_pdl_n1: t_pdl_n2
+                int[] cur_pdm = tgt_idx==0?t_pdm_a: tgt_idx==1?t_pdm_l: tgt_idx==2?t_pdm_n1: t_pdm_n2
+
+                _p12h = f_get_bit(cur_p12h, i), _p12m = f_get_bit(cur_p12m, i), _p12l = f_get_bit(cur_p12l, i)
+                _casia = f_get_bit(cur_asia, i), _clon = f_get_bit(cur_lon, i), _cny1m = f_get_bit(cur_ny1m, i)
+                _cmidnight = f_get_bit(cur_midnight, i), _c0730 = f_get_bit(cur_0730, i)
+                _cpdh = f_get_bit(cur_pdh, i), _cpdl = f_get_bit(cur_pdl, i), _cpdm = f_get_bit(cur_pdm, i)
+
                 if hist_s == 1
-                    c_lt += 1
-                    array.push(lt_ht, _ht)
-                    array.push(lt_lt, _lt)
-                    array.push(lt_hp, _hp)
-                    array.push(lt_lp, _lp)
-                    lt_t_p12h += _p12h
-                    lt_t_p12m += _p12m
-                    lt_t_p12l += _p12l
-                    lt_t_asia += _asia
-                    lt_t_lon += _lon
+                    c_lt += 1, array.push(lt_ht, _ht), array.push(lt_lt, _lt), array.push(lt_hp, _hp), array.push(lt_lp, _lp)
+                    lt_t_p12h += _p12h, lt_t_p12m += _p12m, lt_t_p12l += _p12l, lt_t_asia += _casia, lt_t_lon += _clon, lt_t_ny1m += _cny1m, lt_t_midnight += _cmidnight, lt_t_0730 += _c0730, lt_t_pdh += _cpdh, lt_t_pdl += _cpdl, lt_t_pdm += _cpdm
                 else if hist_s == 2
-                    c_lf += 1
-                    array.push(lf_ht, _ht)
-                    array.push(lf_lt, _lt)
-                    array.push(lf_hp, _hp)
-                    array.push(lf_lp, _lp)
-                    lf_t_p12h += _p12h
-                    lf_t_p12m += _p12m
-                    lf_t_p12l += _p12l
-                    lf_t_asia += _asia
-                    lf_t_lon += _lon
+                    c_lf += 1, array.push(lf_ht, _ht), array.push(lf_lt, _lt), array.push(lf_hp, _hp), array.push(lf_lp, _lp)
+                    lf_t_p12h += _p12h, lf_t_p12m += _p12m, lf_t_p12l += _p12l, lf_t_asia += _casia, lf_t_lon += _clon, lf_t_ny1m += _cny1m, lf_t_midnight += _cmidnight, lf_t_0730 += _c0730, lf_t_pdh += _cpdh, lf_t_pdl += _cpdl, lf_t_pdm += _cpdm
                 else if hist_s == 3
-                    c_st += 1
-                    array.push(st_ht, _ht)
-                    array.push(st_lt, _lt)
-                    array.push(st_hp, _hp)
-                    array.push(st_lp, _lp)
-                    st_t_p12h += _p12h
-                    st_t_p12m += _p12m
-                    st_t_p12l += _p12l
-                    st_t_asia += _asia
-                    st_t_lon += _lon
+                    c_st += 1, array.push(st_ht, _ht), array.push(st_lt, _lt), array.push(st_hp, _hp), array.push(st_lp, _lp)
+                    st_t_p12h += _p12h, st_t_p12m += _p12m, st_t_p12l += _p12l, st_t_asia += _casia, st_t_lon += _clon, st_t_ny1m += _cny1m, st_t_midnight += _cmidnight, st_t_0730 += _c0730, st_t_pdh += _cpdh, st_t_pdl += _cpdl, st_t_pdm += _cpdm
                 else if hist_s == 4
-                    c_sf += 1
-                    array.push(sf_ht, _ht)
-                    array.push(sf_lt, _lt)
-                    array.push(sf_hp, _hp)
-                    array.push(sf_lp, _lp)
-                    sf_t_p12h += _p12h
-                    sf_t_p12m += _p12m
-                    sf_t_p12l += _p12l
-                    sf_t_asia += _asia
-                    sf_t_lon += _lon
+                    c_sf += 1, array.push(sf_ht, _ht), array.push(sf_lt, _lt), array.push(sf_hp, _hp), array.push(sf_lp, _lp)
+                    sf_t_p12h += _p12h, sf_t_p12m += _p12m, sf_t_p12l += _p12l, sf_t_asia += _casia, sf_t_lon += _clon, sf_t_ny1m += _cny1m, sf_t_midnight += _cmidnight, sf_t_0730 += _c0730, sf_t_pdh += _cpdh, sf_t_pdl += _cpdl, sf_t_pdm += _cpdm
         last_tgt_idx := tgt_idx
         last_st_asia := st_asia
         last_st_lon := st_lon
@@ -1028,8 +1143,9 @@ if barstate.islast
         v_p12 = time >= t_0600
         v_asia = time >= t_asia_end
         v_lon = time >= t_lon_end
+        v_pd = true // Always valid if data exists
     
-        table.clear(tbl_res, 0, 0, 11, 4)
+        table.clear(tbl_res, 0, 0, 14, 4)
         table.cell(tbl_res, 0, 0, cached_title, bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 1, 0, "Stats", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 2, 0, "LOD Time", bgcolor=color.black, text_color=color.white, text_size=sz)
@@ -1041,11 +1157,14 @@ if barstate.islast
         table.cell(tbl_res, 8, 0, "P12L", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 9, 0, "Asia Mid", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 10, 0, "Lon Mid", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl_res, 11, 0, "PDH", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl_res, 12, 0, "PDM", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl_res, 13, 0, "PDL", bgcolor=color.black, text_color=color.white, text_size=sz)
 
-        f_render_row_adv(tbl_res, 1, "Long True", c_lt, total_cnt, color.green, sz, lt_ht, lt_lt, lt_hp, lt_lp, lt_t_p12h, lt_t_p12m, lt_t_p12l, lt_t_asia, lt_t_lon, d_open, true, false, v_p12, v_asia, v_lon)
-        f_render_row_adv(tbl_res, 2, "Long False", c_lf, total_cnt, color.gray, sz, lf_ht, lf_lt, lf_hp, lf_lp, lf_t_p12h, lf_t_p12m, lf_t_p12l, lf_t_asia, lf_t_lon, d_open, false, true, v_p12, v_asia, v_lon)
-        f_render_row_adv(tbl_res, 3, "Short True", c_st, total_cnt, color.red, sz, st_ht, st_lt, st_hp, st_lp, st_t_p12h, st_t_p12m, st_t_p12l, st_t_asia, st_t_lon, d_open, false, false, v_p12, v_asia, v_lon)
-        f_render_row_adv(tbl_res, 4, "Short False", c_sf, total_cnt, color.gray, sz, sf_ht, sf_lt, sf_hp, sf_lp, sf_t_p12h, sf_t_p12m, sf_t_p12l, sf_t_asia, sf_t_lon, d_open, false, true, v_p12, v_asia, v_lon)
+        f_render_row_adv(tbl_res, 1, "Long True", c_lt, total_cnt, color.green, sz, lt_ht, lt_lt, lt_hp, lt_lp, lt_t_p12h, lt_t_p12m, lt_t_p12l, lt_t_asia, lt_t_lon, lt_t_pdh, lt_t_pdl, lt_t_pdm, d_open, true, false, v_p12, v_asia, v_lon, v_pd)
+        f_render_row_adv(tbl_res, 2, "Long False", c_lf, total_cnt, color.gray, sz, lf_ht, lf_lt, lf_hp, lf_lp, lf_t_p12h, lf_t_p12m, lf_t_p12l, lf_t_asia, lf_t_lon, lf_t_pdh, lf_t_pdl, lf_t_pdm, d_open, false, true, v_p12, v_asia, v_lon, v_pd)
+        f_render_row_adv(tbl_res, 3, "Short True", c_st, total_cnt, color.red, sz, st_ht, st_lt, st_hp, st_lp, st_t_p12h, st_t_p12m, st_t_p12l, st_t_asia, st_t_lon, st_t_pdh, st_t_pdl, st_t_pdm, d_open, false, false, v_p12, v_asia, v_lon, v_pd)
+        f_render_row_adv(tbl_res, 4, "Short False", c_sf, total_cnt, color.gray, sz, sf_ht, sf_lt, sf_hp, sf_lp, sf_t_p12h, sf_t_p12m, sf_t_p12l, sf_t_asia, sf_t_lon, sf_t_pdh, sf_t_pdl, sf_t_pdm, d_open, false, true, v_p12, v_asia, v_lon, v_pd)
         f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, open_asia, open_lon, open_ny, m_lt_t, m_lt_h, m_lt_l, m_lf_t, m_lf_h, m_lf_l, m_st_t, m_st_h, m_st_l, m_sf_t, m_sf_h, m_sf_l)
 
     // Histogram Calls
