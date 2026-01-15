@@ -131,7 +131,7 @@ def regenerate_all(ticker="ES1"):
     
     # 3. CHUNK FOR WEB
     print("\n>> Step 3: Generating Web JSON Chunks (Global)...")
-    cmd = ["python", "scripts/data_processing/convert_to_chunked_json.py", ticker]
+    cmd = ["python", "scripts/data_processing/convert/convert_to_chunked_json.py", ticker]
     subprocess.run(cmd, check=True)
     
     print(f"\n=== REGENERATION COMPLETE FOR {ticker} ===")

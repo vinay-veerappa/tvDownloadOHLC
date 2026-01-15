@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 import pytz
 
 # --- CONFIG ---
-DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
+DATA_DIR = Path(__file__).parent.parent.parent.parent / "data" / "live"
 MODEL_DIR = DATA_DIR / "ml_models"
 
 # Session times in ET

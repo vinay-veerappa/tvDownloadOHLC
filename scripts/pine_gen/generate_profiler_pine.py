@@ -428,6 +428,8 @@ show_boxes  = input.bool(true, "Show Prediction Boxes", group=grp_box)
 c_box_long   = input.color(#4CAF5066, "Long Box Color", group=grp_box)
 c_box_short  = input.color(#F4433666, "Short Box Color", group=grp_box)
 c_box_false  = input.color(#9E9E9E66, "False/Neutral Box Color", group=grp_box)
+show_pm_smooth = input.bool(true, "Smooth Price Model", group=grp_box)
+pm_scale       = input.float(0.3, "Price Model Scale", step=0.1, group=grp_box)
 show_labels = input.bool(true, "Show Labels", group=grp_box)
 c_lbl_text   = input.color(#FFFFFF, "Label Text Color", group=grp_box)
 s_lbl        = input.string("Tiny", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_box)
@@ -488,6 +490,26 @@ get_pos(str) =>
 
 get_size(str) => str == "Tiny" ? size.tiny : str == "Small" ? size.small : str == "Large" ? size.large : size.normal
 
+// ————— THEME RESOLUTION —————
+f_eff_c(manual, theme) => theme_sel == "Default" ? manual : theme
+
+c_asia_bor_eff = f_theme_asia_bor(), c_asia_box_eff = f_theme_asia_box()
+c_lon_bor_eff  = f_theme_lon_bor(),  c_lon_box_eff  = f_theme_lon_box()
+c_ny1_bor_eff  = f_theme_ny1_bor(),  c_ny1_box_eff  = f_theme_ny1_box()
+c_ny2_bor_eff  = f_theme_ny2_bor(),  c_ny2_box_eff  = f_theme_ny2_box()
+
+c_p12_eff    = f_eff_c(c_p12,    f_theme_p12())
+c_pd_eff     = f_eff_c(c_pd,     f_theme_pd())
+c_open_eff   = f_eff_c(c_open,   f_theme_open())
+c_weekly_eff = f_eff_c(c_weekly, f_theme_weekly())
+c_settle_eff = f_eff_c(c_settle, f_theme_settle())
+
+c_hist_up = f_eff_c(hist_up_col, color.new(f_theme_p12(), 85))
+c_hist_dn = f_eff_c(hist_dn_col, color.new(f_theme_pd(), 85))
+
+c_pm_h_eff = f_eff_c(c_pm_high, f_theme_p12())
+c_pm_l_eff = f_eff_c(c_pm_low, f_theme_pd())
+
 f_draw_lev_bar(price, start_bi, col, style, width, txt, visible) =>
     if visible and not na(price) and start_bi > 0 and (bar_index - start_bi) < 500
         end_bi = bar_index + line_ext_bars
@@ -504,6 +526,7 @@ var float asia_h = na, var float asia_l = na, var float lon_h = na, var float lo
 var int st_asia = 0, var int st_lon = 0, var int st_ny1 = 0, var int st_ny2 = 0
 var bool bk_asia = false, var bool bk_lon = false, var bool bk_ny1 = false, var bool bk_ny2 = false
 var float open_asia = na, var float open_lon = na, var float open_ny = na
+var float asia_mid = na, var float lon_mid = na, var float ny1_mid = na
 
 f_update_sess(_sess) =>
     in_s = not na(time(timeframe.period, _sess + ":1234567", "America/New_York"))
@@ -536,22 +559,27 @@ if start_asia
     bk_ny2 := false
     asia_start_bi := bar_index
     open_asia := open
-    b_asia := box.new(time, high, time, low, xloc=xloc.bar_time, border_color=f_theme_asia_bor(), bgcolor=f_theme_asia_box())
+    b_asia := box.new(time, high, time, low, xloc=xloc.bar_time, border_color=c_asia_bor_eff, bgcolor=c_asia_box_eff)
     t_close = f_get_1600_et(time)
-    l_asia_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=f_theme_asia_bor(), style=line.style_dotted, width=1)
+    l_asia_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=c_asia_bor_eff, style=line.style_dotted, width=1)
     if show_ref_lbl
-        lb_asia_mid := label.new(t_close + 2 * timeframe.in_seconds(timeframe.period) * 1000, high, "Asia Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=f_theme_asia_bor(), size=size.small, textalign=text.align_left)
+        lb_asia_mid := label.new(t_close + ref_lbl_offset * timeframe.in_seconds(timeframe.period) * 1000, high, "Asia Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=c_asia_bor_eff, size=get_size(s_ref_lbl), textalign=text.align_left)
 if in_asia
     asia_h := math.max(nz(asia_h, high), high)
     asia_l := math.min(nz(asia_l, low), low)
     box.set_top(b_asia, asia_h)
     box.set_bottom(b_asia, asia_l)
     box.set_right(b_asia, time)
-    mid = (asia_h + asia_l) / 2
-    line.set_y1(l_asia_mid, mid)
-    line.set_y2(l_asia_mid, mid)
+    box.set_border_color(b_asia, c_asia_bor_eff)
+    box.set_bgcolor(b_asia, c_asia_box_eff)
+    asia_mid := (asia_h + asia_l) / 2
+    line.set_y1(l_asia_mid, asia_mid)
+    line.set_y2(l_asia_mid, asia_mid)
+    line.set_color(l_asia_mid, c_asia_bor_eff)
     if not na(lb_asia_mid)
-        label.set_y(lb_asia_mid, mid)
+        label.set_y(lb_asia_mid, asia_mid)
+        label.set_textcolor(lb_asia_mid, c_asia_bor_eff)
+        label.set_size(lb_asia_mid, get_size(s_ref_lbl))
 
 var box b_lon = na, var line l_lon_mid = na, var label lb_lon_mid = na
 if start_lon
@@ -563,22 +591,27 @@ if start_lon
     st_lon := 0
     bk_lon := false
     open_lon := open
-    b_lon := box.new(time, high, time, low, xloc=xloc.bar_time, border_color=f_theme_lon_bor(), bgcolor=f_theme_lon_box())
+    b_lon := box.new(time, high, time, low, xloc=xloc.bar_time, border_color=c_lon_bor_eff, bgcolor=c_lon_box_eff)
     t_close = f_get_1600_et(time)
-    l_lon_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=f_theme_lon_bor(), style=line.style_dotted, width=1)
+    l_lon_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=c_lon_bor_eff, style=line.style_dotted, width=1)
     if show_ref_lbl
-        lb_lon_mid := label.new(t_close + 2 * timeframe.in_seconds(timeframe.period) * 1000, high, "Lon Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=f_theme_lon_bor(), size=size.small, textalign=text.align_left)
+        lb_lon_mid := label.new(t_close + ref_lbl_offset * timeframe.in_seconds(timeframe.period) * 1000, high, "Lon Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=c_lon_bor_eff, size=get_size(s_ref_lbl), textalign=text.align_left)
 if in_lon
     lon_h := math.max(nz(lon_h, high), high)
     lon_l := math.min(nz(lon_l, low), low)
     box.set_top(b_lon, lon_h)
     box.set_bottom(b_lon, lon_l)
     box.set_right(b_lon, time)
-    mid = (lon_h + lon_l) / 2
-    line.set_y1(l_lon_mid, mid)
-    line.set_y2(l_lon_mid, mid)
+    box.set_border_color(b_lon, c_lon_bor_eff)
+    box.set_bgcolor(b_lon, c_lon_box_eff)
+    lon_mid := (lon_h + lon_l) / 2
+    line.set_y1(l_lon_mid, lon_mid)
+    line.set_y2(l_lon_mid, lon_mid)
+    line.set_color(l_lon_mid, c_lon_bor_eff)
     if not na(lb_lon_mid)
-        label.set_y(lb_lon_mid, mid)
+        label.set_y(lb_lon_mid, lon_mid)
+        label.set_textcolor(lb_lon_mid, c_lon_bor_eff)
+        label.set_size(lb_lon_mid, get_size(s_ref_lbl))
 
 var box b_ny1 = na, var line l_ny1_mid = na, var label lb_ny1_mid = na
 if start_ny1
@@ -590,22 +623,28 @@ if start_ny1
     st_ny1 := 0
     bk_ny1 := false
     open_ny := open
-    b_ny1 := box.new(time, high, time, low, xloc=xloc.bar_time, border_color=f_theme_ny1_bor(), bgcolor=f_theme_ny1_box())
+    b_ny1 := box.new(time, high, time, low, xloc=xloc.bar_time, border_color=c_ny1_bor_eff, bgcolor=c_ny1_box_eff)
     t_close = f_get_1600_et(time)
-    l_ny1_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=f_theme_ny1_bor(), style=line.style_dotted, width=1)
+    l_ny1_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=c_ny1_bor_eff, style=line.style_dotted, width=1)
     if show_ref_lbl
-        lb_ny1_mid := label.new(t_close + 2 * timeframe.in_seconds(timeframe.period) * 1000, high, "NY1 Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=f_theme_ny1_bor(), size=size.small, textalign=text.align_left)
+        lb_ny1_mid := label.new(t_close + ref_lbl_offset * timeframe.in_seconds(timeframe.period) * 1000, high, "NY1 Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=c_ny1_bor_eff, size=get_size(s_ref_lbl), textalign=text.align_left)
 if in_ny1
     ny1_h := math.max(nz(ny1_h, high), high)
     ny1_l := math.min(nz(ny1_l, low), low)
     box.set_top(b_ny1, ny1_h)
     box.set_bottom(b_ny1, ny1_l)
     box.set_right(b_ny1, time)
-    mid = (ny1_h + ny1_l) / 2
-    line.set_y1(l_ny1_mid, mid)
-    line.set_y2(l_ny1_mid, mid)
+    box.set_border_color(b_ny1, c_ny1_bor_eff)
+    box.set_bgcolor(b_ny1, c_ny1_box_eff)
+    ny1_mid := (ny1_h + ny1_l) / 2
+    line.set_y1(l_ny1_mid, ny1_mid)
+    line.set_y2(l_ny1_mid, ny1_mid)
+    line.set_color(l_ny1_mid, c_ny1_bor_eff)
     if not na(lb_ny1_mid)
-        label.set_y(lb_ny1_mid, mid)
+        label.set_y(lb_ny1_mid, ny1_mid)
+        label.set_textcolor(lb_ny1_mid, c_ny1_bor_eff)
+        label.set_size(lb_ny1_mid, get_size(s_ref_lbl))
+        label.set_textcolor(lb_ny1_mid, c_ny1_bor_eff)
 
 var box b_ny2 = na, var line l_ny2_mid = na, var label lb_ny2_mid = na
 if start_ny2
@@ -689,26 +728,26 @@ if barstate.islast
     // t_end_d = t_start_d + 86400000 
     
     if show_pd
-        f_draw_lev(pd_h, t_start_d, t_proj, c_pd, get_style(s_pd), w_pd, "PDH", true)
-        f_draw_lev(pd_l, t_start_d, t_proj, c_pd, get_style(s_pd), w_pd, "PDL", true)
-        f_draw_lev(pd_m, t_start_d, t_proj, c_pd, get_style(s_pd), w_pd, "PDM", true)
+        f_draw_lev(pd_h, t_start_d, t_proj, c_pd_eff, get_style(s_pd), w_pd, "PDH", true)
+        f_draw_lev(pd_l, t_start_d, t_proj, c_pd_eff, get_style(s_pd), w_pd, "PDL", true)
+        f_draw_lev(pd_m, t_start_d, t_proj, c_pd_eff, get_style(s_pd), w_pd, "PDM", true)
     if show_settle
-        f_draw_lev(pd_c, t_start_d, t_proj, c_settle, get_style(s_settle), w_settle, "Settle", true)
+        f_draw_lev(pd_c, t_start_d, t_proj, c_settle_eff, get_style(s_settle), w_settle, "Settle", true)
     if show_weekly
-        f_draw_lev(pw_c, time("W"), t_proj, c_weekly, get_style(s_weekly), w_weekly, "P.Week Close", true)
+        f_draw_lev(pw_c, time("W"), t_proj, c_weekly_eff, get_style(s_weekly), w_weekly, "P.Week Close", true)
     if show_open 
-        f_draw_lev(open_glob, t_start_d, t_proj, c_open, get_style(s_open), w_open, "Globex", true)
+        f_draw_lev(open_glob, t_start_d, t_proj, c_open_eff, get_style(s_open), w_open, "Globex", true)
         if not na(open_mid)
-            f_draw_lev(open_mid, t_start_d + 6*3600000, t_proj, c_open, get_style(s_open), w_open, "Midnight", true)
+            f_draw_lev(open_mid, t_start_d + 6*3600000, t_proj, c_open_eff, get_style(s_open), w_open, "Midnight", true)
         if not na(open_0730)
-            f_draw_lev(open_0730, t_start_d + 13.5*3600000, t_proj, c_open, get_style(s_open), w_open, "07:30", true)
+            f_draw_lev(open_0730, t_start_d + 13.5*3600000, t_proj, c_open_eff, get_style(s_open), w_open, "07:30", true)
     if show_p12
         p12_m = (p12_h + p12_l) / 2
         t_0600 = t_start_d + 12*3600000
         if time >= t_0600
-            f_draw_lev(p12_h, t_0600, t_proj, c_p12, get_style(s_p12), w_p12, "P12H", true)
-            f_draw_lev(p12_l, t_0600, t_proj, c_p12, get_style(s_p12), w_p12, "P12L", true)
-            f_draw_lev(p12_m, t_0600, t_proj, c_p12, get_style(s_p12), w_p12, "P12M", true)
+            f_draw_lev(p12_h, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "P12H", true)
+            f_draw_lev(p12_l, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "P12L", true)
+            f_draw_lev(p12_m, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "P12M", true)
 
 // ————— CORE LOGIC —————
 f_calc_status(s_sess, h, l, c_st) =>
@@ -857,7 +896,8 @@ f_render_row_adv(tbl, r, label, cnt, tot, bg_col, sz, arr_hod_t, arr_lod_t, arr_
         f_draw_box(m_hod_t, m_hod_p, d_open, b_col, label, true)
         f_draw_box(m_lod_t, m_lod_p, d_open, b_col, label, false)
         
-        table.cell(tbl, 0, r, label, bgcolor=bg_col, text_color=color.black, text_size=sz)
+        c_eff_cell = theme_sel == "Default" ? bg_col : (label == "Long True" ? f_theme_p12() : label == "Short True" ? f_theme_settle() : color.gray)
+        table.cell(tbl, 0, r, label, bgcolor=c_eff_cell, text_color=color.black, text_size=sz)
         table.cell(tbl, 1, r, str.format("{0,number,#.#}%", pct) + " (" + str.tostring(cnt) + ")", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl, 2, r, m_lod_t.disp, bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl, 3, r, m_hod_t.disp, bgcolor=color.black, text_color=color.white, text_size=sz)
@@ -875,8 +915,8 @@ f_render_row_adv(tbl, r, label, cnt, tot, bg_col, sz, arr_hod_t, arr_lod_t, arr_
         table.cell(tbl, 15, r, v_pd ? str.format("{0,number,#.#}%", ppdl) : "...", bgcolor=color.black, text_color=color.white, text_size=sz)
 
 // ————— HISTOGRAMS —————
-f_draw_time_hist(arr_times, anchor_p, col, is_up, t_ref) =>
-    if array.size(arr_times) > 0 and not na(anchor_p) and not na(t_ref)
+f_draw_time_hist(arr_times, anchor_p, col, is_up, t_ref, tot) =>
+    if array.size(arr_times) > 0 and not na(anchor_p) and not na(t_ref) and tot > 0
         // Bucketize into 15-minute intervals (0-95) based on RELATIVE time from 18:00
         var int[] buckets = array.new_int(96, 0)
         array.fill(buckets, 0)
@@ -895,7 +935,7 @@ f_draw_time_hist(arr_times, anchor_p, col, is_up, t_ref) =>
         
         // Draw
         if max_cnt > 0
-            float scale_fac = hist_scale * (is_up ? 1 : -1) * 0.0005 // 0.05% price per count base
+            float scale_fac = hist_scale * (is_up ? 1 : -1) * 0.5 / tot
             float y_disp = (is_up ? 1 : -1) * hist_disp / 100.0
             
             // Draw buckets relative to t_ref (Session Start)
@@ -910,11 +950,11 @@ f_draw_time_hist(arr_times, anchor_p, col, is_up, t_ref) =>
                     p_base = anchor_p * (1.0 + y_disp)
                     p_curr = p_base * (1.0 + cnt * scale_fac)
                     
-                    c_bucket = is_up ? hist_up_col : hist_dn_col
+                    c_bucket = is_up ? c_hist_up : c_hist_dn
                     box.new(t_s, p_curr, t_e, p_base, xloc=xloc.bar_time, bgcolor=c_bucket, border_width=0)
 
 // ————— PRICE MODEL —————
-f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, open_asia, open_lon, open_ny, lt_t, lt_h, lt_l, lf_t, lf_h, lf_l, st_t, st_h, st_l, sf_t, sf_h, sf_l) =>
+f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, open_asia, open_lon, open_ny, a_mid, l_mid, n1_mid, lt_t, lt_h, lt_l, lf_t, lf_h, lf_l, st_t, st_h, st_l, sf_t, sf_h, sf_l) =>
     var polyline pm_h = na, var polyline pm_l = na, var label lbl_pm = na, var label lbl_debug = na
     if show_pm
         string sel = pm_outcome
@@ -951,9 +991,9 @@ f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, 
             
             for i=0 to array.size(t_arr)-1
                 t_val = array.get(t_arr, i)
-                if t_val >= 480 and idx_lon == -1
+                if t_val >= 510 and idx_lon == -1
                     idx_lon := i
-                if t_val >= 840 and idx_ny == -1
+                if t_val >= 810 and idx_ny == -1
                     idx_ny := i
             
             // Apply Re-anchoring logic
@@ -967,16 +1007,31 @@ f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, 
             float scale_h_base = 0.0
             float scale_l_base = 0.0
             
+            bool use_mid = pm_anchor == "Prev Mid"
+            
+            // Smooth entire arrays first to ensure anchor consistency
+            float[] h_smooth = array.copy(h_arr)
+            float[] l_smooth = array.copy(l_arr)
+            
+            if show_pm_smooth
+                for i = 3 to array.size(h_arr) - 4
+                    sum_h = 0.0, sum_l = 0.0
+                    for k = -3 to 3
+                        sum_h += array.get(h_arr, i + k)
+                        sum_l += array.get(l_arr, i + k)
+                    array.set(h_smooth, i, sum_h / 7.0)
+                    array.set(l_smooth, i, sum_l / 7.0)
+            
             if not na(open_ny) and idx_ny != -1
-                base_p := open_ny
-                scale_h_base := array.get(h_arr, idx_ny) / 100.0
-                scale_l_base := array.get(l_arr, idx_ny) / 100.0
+                base_p := use_mid ? l_mid : open_ny
+                scale_h_base := array.get(h_smooth, idx_ny)
+                scale_l_base := array.get(l_smooth, idx_ny)
             else if not na(open_lon) and idx_lon != -1
-                base_p := open_lon
-                scale_h_base := array.get(h_arr, idx_lon) / 100.0
-                scale_l_base := array.get(l_arr, idx_lon) / 100.0
+                base_p := use_mid ? a_mid : open_lon
+                scale_h_base := array.get(h_smooth, idx_lon)
+                scale_l_base := array.get(l_smooth, idx_lon)
             else
-                base_p := d_open // Default 18:00
+                base_p := use_mid ? pd_m : open_asia
                 scale_h_base := 0.0
                 scale_l_base := 0.0
 
@@ -987,27 +1042,33 @@ f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, 
                         t_min = array.get(t_arr, i)
                         t_pt = _ts_start + t_min*60000
                         
-                        // Re-anchor Formula:
-                        // P_new = Base * (1 + (Model_t - Model_Anchor)) ?
-                        // Or Proportional? P_new = Base * (1+Model_t) / (1+Model_Anchor)
-                        // Using Proportional to preserve percentage scaling.
+                        bool in_range = false
+                        if not na(open_ny)
+                            in_range := t_min >= 810 and t_min < 1320 // NY Session ends @ 16:00
+                        else if not na(open_lon)
+                            in_range := t_min >= 510 and t_min < 810 // London Session ends @ 07:30
+                        else
+                            in_range := t_min >= 0 and t_min < 510 // Asia Session ends @ 02:30
                         
-                        float val_h = array.get(h_arr, i) / 100.0
-                        float val_l = array.get(l_arr, i) / 100.0
+                        if in_range
+                            float val_h = array.get(h_smooth, i) 
+                            float val_l = array.get(l_smooth, i) 
+                            
+                            val_h := val_h * pm_scale
+                            val_l := val_l * pm_scale
+                            float s_h_eff = scale_h_base * pm_scale
+                            float s_l_eff = scale_l_base * pm_scale
+                            
+                            // Avoid division by zero if model_anchor is -100% (unlikely)
+                            float p_h = base_p * (1.0 + val_h) / (1.0 + s_h_eff)
+                            float p_l = base_p * (1.0 + val_l) / (1.0 + s_l_eff)
+                            
+                            array.push(pts_h, chart.point.from_time(t_pt, p_h))
+                            array.push(pts_l, chart.point.from_time(t_pt, p_l))
                         
-                        // Avoid division by zero if model_anchor is -100% (unlikely)
-                        float p_h = base_p * (1.0 + val_h) / (1.0 + scale_h_base)
-                        float p_l = base_p * (1.0 + val_l) / (1.0 + scale_l_base)
-                        
-                        array.push(pts_h, chart.point.from_time(t_pt, p_h))
-                        array.push(pts_l, chart.point.from_time(t_pt, p_l))
-                        
-                    polyline.delete(pm_h)
-                    polyline.delete(pm_l)
-                    label.delete(lbl_pm)
-                    label.delete(lbl_debug)
-                    pm_h := polyline.new(pts_h, line_color=c_pm_high, xloc=xloc.bar_time, line_width=w_pm_high)
-                    pm_l := polyline.new(pts_l, line_color=c_pm_low, xloc=xloc.bar_time, line_width=w_pm_low)
+                    polyline.delete(pm_h), polyline.delete(pm_l)
+                    pm_h := polyline.new(pts_h, line_color=c_pm_h_eff, xloc=xloc.bar_time, line_width=w_pm_high)
+                    pm_l := polyline.new(pts_l, line_color=c_pm_l_eff, xloc=xloc.bar_time, line_width=w_pm_low)
 
 // ————— TABLES —————
 f_status_str(c, act, bk) =>
@@ -1202,7 +1263,7 @@ if barstate.islast
         f_render_row_adv(tbl_res, 2, "Long False", c_lf, total_cnt, color.gray, sz, lf_ht, lf_lt, lf_hp, lf_lp, lf_t_p12h, lf_t_p12m, lf_t_p12l, lf_t_asia, lf_t_lon, lf_t_midnight, lf_t_0730, lf_t_pdh, lf_t_pdl, lf_t_pdm, d_open, false, true, v_p12, v_asia, v_lon, v_mid, v_0730, v_pd)
         f_render_row_adv(tbl_res, 3, "Short True", c_st, total_cnt, color.red, sz, st_ht, st_lt, st_hp, st_lp, st_t_p12h, st_t_p12m, st_t_p12l, st_t_asia, st_t_lon, st_t_midnight, st_t_0730, st_t_pdh, st_t_pdl, st_t_pdm, d_open, false, false, v_p12, v_asia, v_lon, v_mid, v_0730, v_pd)
         f_render_row_adv(tbl_res, 4, "Short False", c_sf, total_cnt, color.gray, sz, sf_ht, sf_lt, sf_hp, sf_lp, sf_t_p12h, sf_t_p12m, sf_t_p12l, sf_t_asia, sf_t_lon, sf_t_midnight, sf_t_0730, sf_t_pdh, sf_t_pdl, sf_t_pdm, d_open, false, true, v_p12, v_asia, v_lon, v_mid, v_0730, v_pd)
-        f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, open_asia, open_lon, open_ny, m_lt_t, m_lt_h, m_lt_l, m_lf_t, m_lf_h, m_lf_l, m_st_t, m_st_h, m_st_l, m_sf_t, m_sf_h, m_sf_l)
+        f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, open_asia, open_lon, open_ny, asia_mid, lon_mid, ny1_mid, m_lt_t, m_lt_h, m_lt_l, m_lf_t, m_lf_h, m_lf_l, m_st_t, m_st_h, m_st_l, m_sf_t, m_sf_h, m_sf_l)
 
     // Histogram Calls
     if hist_outcome != "None" and barstate.islast
@@ -1221,9 +1282,9 @@ if barstate.islast
             h_times := sf_ht, l_times := sf_lt
             
         // Draw HOD histogram Up from P12 High (Use PM High Color)
-        f_draw_time_hist(h_times, p12_h, color.new(c_pm_high, 50), true, t_start_d)
+        f_draw_time_hist(h_times, p12_h, color.new(c_pm_high, 50), true, t_start_d, total_cnt)
         // Draw LOD histogram Down from P12 Low (Use PM Low Color)
-        f_draw_time_hist(l_times, p12_l, color.new(c_pm_low, 50), false, t_start_d)
+        f_draw_time_hist(l_times, p12_l, color.new(c_pm_low, 50), false, t_start_d, total_cnt)
 """
 
     with open(OUT_DIR / "ProfilerIndicator.pine", "w", encoding='utf-8') as f:

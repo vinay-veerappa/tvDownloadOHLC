@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     // If we run `npm run dev` in `web`, then process.cwd() is `.../web`.
     // So data is `../data`.
 
-    const dataDir = path.join(process.cwd(), '..', 'data');
+    const dataDir = path.join(process.cwd(), '..', 'data', 'live');
     const filePath = path.join(dataDir, filename);
 
     try {

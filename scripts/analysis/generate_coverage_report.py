@@ -14,35 +14,43 @@ def get_parquet_stats(filepath):
         # Read only necessary columns/metadata to be faster? 
         # parquet metadata might suffice for some, but we need volume check and exact date range
         df = pd.read_parquet(filepath)
-        df.reset_index(inplace=True)
-        
         if df.empty:
             return None
             
         count = len(df)
-        
-        # Determine time column
-        time_col = None
-        if 'time' in df.columns: time_col = 'time'
-        elif 'datetime' in df.columns: time_col = 'datetime'
-        elif 'date' in df.columns: time_col = 'date'
-        elif 'index' in df.columns: time_col = 'index'
-        
         start_date = "N/A"
         end_date = "N/A"
-        
-        if time_col:
-            # Check if unix timestamp
-            first = df[time_col].iloc[0]
-            last = df[time_col].iloc[-1]
+
+        # Get dates from index if it's a DatetimeIndex
+        if isinstance(df.index, pd.DatetimeIndex):
+            start_date = df.index.min().strftime('%Y-%m-%d')
+            end_date = df.index.max().strftime('%Y-%m-%d')
+        else:
+            # Determine time column
+            time_col = None
+            if 'time' in df.columns: time_col = 'time'
+            elif 'datetime' in df.columns: time_col = 'datetime'
+            elif 'date' in df.columns: time_col = 'date'
             
-            if isinstance(first, (int, float)):
-                start_date = datetime.fromtimestamp(first).strftime('%Y-%m-%d')
-                end_date = datetime.fromtimestamp(last).strftime('%Y-%m-%d')
-            else:
-                # Assume datetime object or string
-                start_date = pd.to_datetime(first).strftime('%Y-%m-%d')
-                end_date = pd.to_datetime(last).strftime('%Y-%m-%d')
+            if time_col:
+                first = df[time_col].iloc[0]
+                last = df[time_col].iloc[-1]
+                
+                # If it's a number (int, float, numpy int), assume Unix timestamp
+                if pd.api.types.is_number(first):
+                    if first > 10**12: # Milliseconds
+                        start_date = pd.to_datetime(first, unit='ms').strftime('%Y-%m-%d')
+                        end_date = pd.to_datetime(last, unit='ms').strftime('%Y-%m-%d')
+                    else: # Seconds
+                        start_date = pd.to_datetime(first, unit='s').strftime('%Y-%m-%d')
+                        end_date = pd.to_datetime(last, unit='s').strftime('%Y-%m-%d')
+                else:
+                    # Assume datetime object or string
+                    try:
+                        start_date = pd.to_datetime(first).strftime('%Y-%m-%d')
+                        end_date = pd.to_datetime(last).strftime('%Y-%m-%d')
+                    except:
+                        pass
                 
         has_volume = 'volume' in df.columns or 'Volume' in df.columns
         

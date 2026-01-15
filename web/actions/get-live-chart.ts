@@ -21,7 +21,7 @@ export async function getLiveChartData(ticker: string = "/NQ", timeframe: string
         if (timeframe === "30s") suffix = "_30s";
 
         const filename = `live_chart_${safeTicker}${suffix}.json`;
-        const filePath = path.join(process.cwd(), '..', 'data', filename);
+        const filePath = path.join(process.cwd(), '..', 'data', 'live', filename);
 
         try {
             await fs.access(filePath);
