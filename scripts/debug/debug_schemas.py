@@ -4,7 +4,7 @@ from pathlib import Path
 
 files = [
     Path("data/NQ1_1m.parquet"),
-    Path("data/live_storage_-NQ.parquet")
+    Path("data/live/live_storage_-NQ.parquet")
 ]
 
 for f in files:

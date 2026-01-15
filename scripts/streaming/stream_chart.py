@@ -27,11 +27,12 @@ def get_safe_symbol(symbol):
 
 def get_live_files(symbol):
     safe = get_safe_symbol(symbol)
+    live_dir = os.path.join(DATA_DIR, "live")
     return {
-        "json": os.path.join(DATA_DIR, f"live_chart_{safe}.json"),
-        "json_15s": os.path.join(DATA_DIR, f"live_chart_{safe}_15s.json"),
-        "json_30s": os.path.join(DATA_DIR, f"live_chart_{safe}_30s.json"),
-        "parquet": os.path.join(DATA_DIR, f"live_storage_{safe}.parquet")
+        "json": os.path.join(live_dir, f"live_chart_{safe}.json"),
+        "json_15s": os.path.join(live_dir, f"live_chart_{safe}_15s.json"),
+        "json_30s": os.path.join(live_dir, f"live_chart_{safe}_30s.json"),
+        "parquet": os.path.join(live_dir, f"live_storage_{safe}.parquet")
     }
 
 def get_watchlist_symbols():
@@ -240,7 +241,7 @@ async def main():
                         
                         # Write Fast Quote
                         safe_symbol = get_safe_symbol(key)
-                        quote_file = os.path.join(DATA_DIR, f"latest_quote_{safe_symbol}.json")
+                        quote_file = os.path.join(DATA_DIR, "live", f"latest_quote_{safe_symbol}.json")
                         try:
                             # Use try-block for atomic-ish write (rename would be better but this is Windows)
                             with open(quote_file, "w") as f:

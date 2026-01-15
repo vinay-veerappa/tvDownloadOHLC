@@ -86,17 +86,18 @@ def load_parquet(ticker: str, timeframe: str) -> Optional[pd.DataFrame]:
         
         # Map back to Live Symbol format
         # NQ1 -> /NQ -> -NQ (Filename format)
+        live_dir = DATA_DIR / "live"
         if clean_ticker == "NQ1":
-            live_path = DATA_DIR / "live_storage_-NQ.parquet"
+            live_path = live_dir / "live_storage_-NQ.parquet"
         elif clean_ticker == "ES1":
-            live_path = DATA_DIR / "live_storage_-ES.parquet"
+            live_path = live_dir / "live_storage_-ES.parquet"
         elif clean_ticker == "YM1":
-            live_path = DATA_DIR / "live_storage_-YM.parquet"
+            live_path = live_dir / "live_storage_-YM.parquet"
         elif clean_ticker == "RTY1":
-            live_path = DATA_DIR / "live_storage_-RTY.parquet"
+            live_path = live_dir / "live_storage_-RTY.parquet"
         else:
             # Standard Equities (e.g. QQQ -> live_storage_QQQ.parquet)
-            live_path = DATA_DIR / f"live_storage_{clean_ticker}.parquet"
+            live_path = live_dir / f"live_storage_{clean_ticker}.parquet"
             
         if live_path and live_path.exists():
             try:

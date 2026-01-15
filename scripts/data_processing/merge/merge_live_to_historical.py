@@ -10,7 +10,7 @@ def merge_live_to_historical(ticker="NQ1", live_symbol="-NQ"):
     """
     data_dir = Path("data")
     hist_path = data_dir / f"{ticker}_1m.parquet"
-    live_path = data_dir / f"live_storage_{live_symbol}.parquet"
+    live_path = data_dir / "live" / f"live_storage_{live_symbol}.parquet"
     
     print(f"--- Merging {live_path.name} -> {hist_path.name} ---")
     
