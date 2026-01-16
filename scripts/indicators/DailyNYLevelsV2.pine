@@ -1,0 +1,444 @@
+// This Pine Script™ source code is free to use under the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © antigravity
+
+//@version=6
+indicator("Daily NY Levels V2", overlay=true, max_bars_back=5000, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// ==========================================
+// --- INPUTS ---
+// ==========================================
+grp_general = "General Settings"
+showLineNames = input.bool(false, "Show Line Names (Dynamic Lines)", group=grp_general)
+showLevelNames = input.bool(false, "Show Level Names (Static Lines)", group=grp_general)
+cutoffTime     = input.int(1200, "Cutoff Time (HHMM)", minval=0, maxval=2359, group=grp_general)
+
+grp_m1 = "M1 Tracker"
+m1ProjPct = input.float(0.01, "M1 Projection %", step=0.01, group=grp_m1)
+
+grp_style = "Style"
+bullColor = input.color(color.blue, "Bullish Color", group=grp_style)
+bearColor = input.color(color.red, "Bearish Color", group=grp_style)
+neutralColor = input.color(color.gray, "Neutral Color", group=grp_style)
+d2Color = input.color(color.orange, "D2 Color", group=grp_style)
+d3Color = input.color(color.purple, "D3 Color", group=grp_style)
+d4Color = input.color(color.yellow, "D4 Color", group=grp_style)
+boxColor0930 = input.color(color.yellow, "0930-0931 Box Color", group=grp_style)
+
+grp_mfe = "MFE Distribution Profile"
+levelDisplayMode = input.string("Both", "Level Display Mode", options=["Both", "Dynamic"], group=grp_mfe)
+percentileStep   = input.int(2, "Percentile Step", minval=1, maxval=10, group=grp_mfe)
+startPercentile  = input.int(20, "Start Percentile", minval=1, maxval=99, group=grp_mfe)
+endPercentile    = input.int(80, "End Percentile", minval=1, maxval=99, group=grp_mfe)
+bullCenterColor  = input.color(color.new(color.green, 0), "Bullish Center Color", group=grp_mfe)
+bullEdgeColor    = input.color(color.new(color.green, 100), "Bullish Edge Color", group=grp_mfe)
+bearCenterColor  = input.color(color.new(color.red, 0), "Bearish Center Color", group=grp_mfe)
+bearEdgeColor    = input.color(color.new(color.red, 100), "Bearish Edge Color", group=grp_mfe)
+gradientOpacity  = input.int(0, "Gradient Opacity", minval=0, maxval=100, group=grp_mfe)
+showPercentLabels = input.bool(true, "Show Percentile Labels", group=grp_mfe)
+showAvgLine       = input.bool(true, "Show AVG Line", group=grp_mfe)
+avgLineColor      = input.color(color.white, "AVG Line Color", group=grp_mfe)
+histWidthScale    = input.int(50, "Histogram Width Scale", minval=1, maxval=500, group=grp_mfe)
+binSize           = input.float(0.04, "Bin Size (%)", minval=0.01, maxval=0.10, step=0.01, tooltip="Size of each histogram bin in percentage", group=grp_mfe)
+mfeLabelSize      = input.string("tiny", "Label Size", options=["auto", "tiny", "small", "normal", "large", "huge"], group=grp_mfe)
+mfeDataLabelSize  = input.string("small", "Data Count Label Size", options=["auto", "tiny", "small", "normal", "large", "huge"], group=grp_mfe)
+removeOutliers    = input.bool(false, "Remove Outliers (>P80)", tooltip="Remove values beyond 80th percentile before calculating statistics", group=grp_mfe)
+
+grp_time = "Hit Time Distribution"
+showTimeDist     = input.bool(true, "Show Time Distribution", group=grp_time)
+timeBucketMins   = input.int(5, "Time Bucket (minutes)", minval=1, maxval=60, group=grp_time)
+profileHeight    = input.int(50, "Profile Height (points)", group=grp_time)
+offsetBelowMFE   = input.int(200, "Offset Below MFE Bars (ticks)", group=grp_time)
+showTimeAvg      = input.bool(true, "Show AVG Line", group=grp_time)
+showTimeMed      = input.bool(true, "Show Median Line", group=grp_time)
+timeAvgLineColor = input.color(color.yellow, "AVG Line Color", group=grp_time)
+timeMedLineColor = input.color(color.aqua, "Median Line Color", group=grp_time)
+timeBullColor    = input.color(color.new(color.green, 50), "Time Bullish Color", group=grp_time)
+timeBearColor    = input.color(color.new(color.red, 50), "Time Bearish Color", group=grp_time)
+timeLabelSize    = input.string("tiny", "Label Size", options=["auto", "tiny", "small", "normal", "large", "huge"], group=grp_time)
+
+// ==========================================
+// --- CONSTANTS & LOGIC ---
+// ==========================================
+// Convert size strings to constants
+f_size(s) =>
+    s == "auto" ? size.auto : s == "tiny" ? size.tiny : s == "small" ? size.small : s == "normal" ? size.normal : s == "large" ? size.large : size.huge
+
+mfe_size = f_size(mfeLabelSize)
+mfe_data_size = f_size(mfeDataLabelSize)
+time_size = f_size(timeLabelSize)
+
+is_ny_session = time(timeframe.period, "0930-1600:1234567", "America/New_York")
+is_before_cutoff = time(timeframe.period, "0930-" + str.format("{0,number,0000}", cutoffTime) + ":1234567", "America/New_York")
+
+var float or_high = na
+var float or_low = na
+var float or_open = na
+
+bool is_new_day = ta.change(time("D", "America/New_York")) != 0
+
+if is_new_day
+    or_high := na
+    or_low := na
+    or_open := na
+
+// Capture 09:30-09:31 OR (1m)
+is_0930 = hour(time, "America/New_York") == 9 and minute(time, "America/New_York") == 30
+
+if is_0930
+    or_high := high
+    or_low := low
+    or_open := open
+
+// Draw 09:30 Box
+var box or_box = na
+if is_0930
+    or_box := box.new(bar_index, or_high, bar_index + 1, or_low, border_color=boxColor0930, bgcolor=color.new(boxColor0930, 80))
+else if not na(or_box) and not na(is_before_cutoff)
+    box.set_right(or_box, bar_index)
+
+// MTF Opening Range (Fetch 1m OR for consistency)
+[m1_open, m1_high, m1_low, m1_time] = request.security(syminfo.tickerid, "1", [open, high, low, time], lookahead=barmerge.lookahead_on)
+is_m1_0930 = hour(m1_time, "America/New_York") == 9 and minute(m1_time, "America/New_York") == 30
+
+var float active_or_high = na
+var float active_or_low = na
+var float active_or_open = na
+
+// Reset active_or on new day FIRST, before checking for new OR
+if is_new_day
+    active_or_high := na
+    active_or_low := na
+    active_or_open := na
+
+// Update active_or when we get valid 1m data OR when we're on the 09:30 bar
+if is_m1_0930 and not na(m1_high)
+    active_or_high := m1_high
+    active_or_low  := m1_low
+    active_or_open := m1_open
+else if is_0930 and na(active_or_high)
+    // Fallback to chart's native OR if MTF data not available
+    active_or_high := or_high
+    active_or_low  := or_low
+    active_or_open := or_open
+
+// ==========================================
+// --- STATISTICAL ENGINE ---
+// ==========================================
+var float[] mfe_bull_history = array.new_float(0)
+var float[] mfe_bear_history = array.new_float(0)
+var int[] peak_time_bull_history = array.new_int(0)
+var int[] peak_time_bear_history = array.new_int(0)
+
+var float or_bar_index = na
+var float daily_mfe_bull = 0.0
+var float daily_mfe_bear = 0.0
+var int daily_peak_time_bull = 0
+var int daily_peak_time_bear = 0
+
+if is_new_day
+    daily_mfe_bull := 0.0
+    daily_mfe_bear := 0.0
+    daily_peak_time_bull := 0
+    daily_peak_time_bear := 0
+
+if is_0930
+    or_bar_index := bar_index
+
+// Calculate MFE (but not on the 09:30 bar itself, since that's when we set the OR)
+if not na(active_or_high) and not na(is_before_cutoff) and not is_0930
+    // MFE as percentage price move from the range boundary
+    float cur_mfe_bull = (high - active_or_high) / active_or_high * 100
+    float cur_mfe_bear = (active_or_low - low) / active_or_low * 100
+    
+    if cur_mfe_bull > daily_mfe_bull
+        daily_mfe_bull := cur_mfe_bull
+        daily_peak_time_bull := (hour(time, "America/New_York") * 60 + minute(time, "America/New_York")) - (9 * 60 + 30)
+        
+    if cur_mfe_bear > daily_mfe_bear
+        daily_mfe_bear := cur_mfe_bear
+        daily_peak_time_bear := (hour(time, "America/New_York") * 60 + minute(time, "America/New_York")) - (9 * 60 + 30)
+
+// Commit daily stats at cutoff or end of day
+is_at_or_after_cutoff = (hour(time, "America/New_York") * 100 + minute(time, "America/New_York")) >= cutoffTime
+var bool is_committed_today = false
+
+// Reset commit flag at the START of each trading session (09:30), not at end of day
+if is_0930
+    is_committed_today := false
+
+// Commit data for all days when we reach cutoff time (but NOT on new day when values are reset)
+if is_at_or_after_cutoff and not is_committed_today and not is_new_day
+    array.push(mfe_bull_history, daily_mfe_bull)
+    array.push(mfe_bear_history, daily_mfe_bear)
+    array.push(peak_time_bull_history, daily_peak_time_bull)
+    array.push(peak_time_bear_history, daily_peak_time_bear)
+    is_committed_today := true
+
+// ==========================================
+// --- VISUALIZATION: MFE FREQUENCY HISTOGRAMS ---
+// ==========================================
+var box[] mfe_hist_boxes = array.new_box(0)
+var line[] mfe_avg_lines = array.new_line(0)
+var label[] mfe_avg_labels = array.new_label(0)
+
+// Clear previous day's drawings on new day
+if is_new_day
+    if array.size(mfe_hist_boxes) > 0
+        for i = 0 to array.size(mfe_hist_boxes) - 1
+            box.delete(array.get(mfe_hist_boxes, i))
+    if array.size(mfe_avg_lines) > 0
+        for i = 0 to array.size(mfe_avg_lines) - 1
+            line.delete(array.get(mfe_avg_lines, i))
+    if array.size(mfe_avg_labels) > 0
+        for i = 0 to array.size(mfe_avg_labels) - 1
+            label.delete(array.get(mfe_avg_labels, i))
+    array.clear(mfe_hist_boxes)
+    array.clear(mfe_avg_lines)
+    array.clear(mfe_avg_labels)
+
+// Draw levels at 09:30 using historical data up to yesterday
+if is_0930 and not na(active_or_high)
+    int anchor = bar_index
+    
+    // --- 1. MFE DISTRIBUTION (VERTICAL FREQUENCY) ---
+    float bin_step = binSize
+    int max_bins = int(2.0 / bin_step)  // Dynamic max bins based on bin size
+    
+    bool has_data = array.size(mfe_bull_history) > 0
+    
+    // Create working copies of history arrays (declare outside if block for scope)
+    float[] working_bull = array.new_float(0)
+    float[] working_bear = array.new_float(0)
+    
+    if has_data
+        // Copy history arrays
+        working_bull := array.copy(mfe_bull_history)
+        working_bear := array.copy(mfe_bear_history)
+        
+        // Data Count Label
+        array.push(mfe_avg_labels, label.new(anchor, active_or_low - (syminfo.mintick * offsetBelowMFE / 2), "Sample: " + str.tostring(array.size(mfe_bull_history)) + " Days", textcolor=color.new(color.white, 30), style=label.style_label_up, size=mfe_data_size, color=color.new(color.black, 100)))
+
+        // Pre-calculate Max Bin Count for Auto-Scaling AND determine actual data range
+        int max_c = 1
+        int max_bin_with_data_bull = 0
+        int max_bin_with_data_bear = 0
+        
+        // Calculate P80 for display truncation if enabled
+        float display_limit_bull = removeOutliers ? array.percentile_linear_interpolation(working_bull, 80) : 999.0
+        float display_limit_bear = removeOutliers ? array.percentile_linear_interpolation(working_bear, 80) : 999.0
+        
+        for i = 0 to max_bins
+            int cb = 0, cr = 0
+            float b_min = i * bin_step
+            float b_max = (i + 1) * bin_step
+            
+            // Count all data in this bin
+            for j = 0 to array.size(working_bull) - 1
+                float val_bull = array.get(working_bull, j)
+                float val_bear = array.get(working_bear, j)
+                
+                // Only count if within display limit (for histogram visualization)
+                if val_bull >= b_min and val_bull < b_max and val_bull <= display_limit_bull
+                    cb += 1
+                if val_bear >= b_min and val_bear < b_max and val_bear <= display_limit_bear
+                    cr += 1
+                    
+            if cb > max_c
+                max_c := cb
+            if cr > max_c
+                max_c := cr
+            // Track highest bin with data
+            if cb > 0
+                max_bin_with_data_bull := i
+            if cr > 0
+                max_bin_with_data_bear := i
+
+        // Draw histogram bars only up to where we have data
+        int max_bin_to_draw = math.max(max_bin_with_data_bull, max_bin_with_data_bear)
+        
+        // If outlier filtering is enabled, further limit to P80 bins
+        if removeOutliers
+            int p80_bin_bull = int(display_limit_bull / bin_step)
+            int p80_bin_bear = int(display_limit_bear / bin_step)
+            int p80_max_bin = math.max(p80_bin_bull, p80_bin_bear)
+            max_bin_to_draw := math.min(max_bin_to_draw, p80_max_bin)
+        
+        for i = 0 to max_bin_to_draw
+            float bin_min = i * bin_step
+            float bin_max = (i + 1) * bin_step
+            
+            int count_bull = 0
+            int count_bear = 0
+            for j = 0 to array.size(working_bull) - 1
+                float val_bull = array.get(working_bull, j)
+                float val_bear = array.get(working_bear, j)
+                
+                // Only count if within display limit
+                if val_bull >= bin_min and val_bull < bin_max and val_bull <= display_limit_bull
+                    count_bull += 1
+                if val_bear >= bin_min and val_bear < bin_max and val_bear <= display_limit_bear
+                    count_bear += 1
+
+            float p_mid_bull = active_or_high + (active_or_open * (bin_min + bin_max) / 2 / 100)
+            float p_mid_bear = active_or_low - (active_or_open * (bin_min + bin_max) / 2 / 100)
+
+            // Draw Bullish Bin - ONLY if count > 0
+            if count_bull > 0
+                float p_top = active_or_high + (active_or_open * bin_max / 100)
+                float p_bot = active_or_high + (active_or_open * bin_min / 100)
+                // Better scaling: normalize to max_c and multiply by user scale
+                float norm_width = count_bull / max_c
+                int w = int(norm_width * histWidthScale)
+                if w > 0
+                    array.push(mfe_hist_boxes, box.new(anchor, p_top, anchor + w, p_bot, border_color=na, bgcolor=color.new(bullCenterColor, 70)))
+                // Show labels less frequently for cleaner look
+                if i % 10 == 0 and anchor > 2
+                    float pct_label = (bin_min + bin_max) / 2
+                    array.push(mfe_avg_labels, label.new(anchor - 2, p_mid_bull, str.tostring(pct_label, "#.##") + "%", color=color.new(color.black, 100), textcolor=color.new(bullCenterColor, 40), style=label.style_label_right, size=mfe_size))
+                
+            // Draw Bearish Bin - ONLY if count > 0
+            if count_bear > 0
+                float p_top_r = active_or_low - (active_or_open * bin_min / 100)
+                float p_bot_r = active_or_low - (active_or_open * bin_max / 100)
+                float norm_width_r = count_bear / max_c
+                int w_r = int(norm_width_r * histWidthScale)
+                if w_r > 0
+                    array.push(mfe_hist_boxes, box.new(anchor, p_top_r, anchor + w_r, p_bot_r, border_color=na, bgcolor=color.new(bearCenterColor, 70)))
+                // Show labels less frequently for cleaner look
+                if i % 10 == 0 and anchor > 2
+                    float pct_label = (bin_min + bin_max) / 2
+                    array.push(mfe_avg_labels, label.new(anchor - 2, p_mid_bear, str.tostring(pct_label, "#.##") + "%", color=color.new(color.black, 100), textcolor=color.new(bearCenterColor, 40), style=label.style_label_right, size=mfe_size))
+
+    // --- 2. STATISTICAL LINES ---
+    if has_data
+        // AVG Lines (using FULL dataset, not filtered)
+        float avg_bull = array.avg(mfe_bull_history)
+        float avg_bear = array.avg(mfe_bear_history)
+        float p_avg_bull = active_or_high + (active_or_open * avg_bull / 100)
+        float p_avg_bear = active_or_low - (active_or_open * avg_bear / 100)
+        
+        if showAvgLine
+            array.push(mfe_avg_lines, line.new(anchor, p_avg_bull, anchor + 150, p_avg_bull, color=avgLineColor, style=line.style_dashed, width=1))
+            array.push(mfe_avg_labels, label.new(anchor + 155, p_avg_bull, str.tostring(avg_bull, "#.##") + "% AVG", color=color.new(color.black, 100), textcolor=avgLineColor, style=label.style_label_left, size=mfe_size))
+            
+            array.push(mfe_avg_lines, line.new(anchor, p_avg_bear, anchor + 150, p_avg_bear, color=avgLineColor, style=line.style_dashed, width=1))
+            array.push(mfe_avg_labels, label.new(anchor + 155, p_avg_bear, str.tostring(avg_bear, "#.##") + "% AVG", color=color.new(color.black, 100), textcolor=avgLineColor, style=label.style_label_left, size=mfe_size))
+
+        // Dynamic Percentile Lines
+        if showPercentLabels
+            // Calculate how many percentile levels to show
+            int num_levels = int((endPercentile - startPercentile) / percentileStep) + 1
+            
+            for i = 0 to num_levels - 1
+                int pct = startPercentile + (i * percentileStep)
+                if pct <= endPercentile
+                    // Use FULL dataset for percentile calculations, not filtered
+                    float pct_bull = array.percentile_linear_interpolation(mfe_bull_history, pct)
+                    float pct_bear = array.percentile_linear_interpolation(mfe_bear_history, pct)
+                    
+                    float p_pct_bull = active_or_high + (active_or_open * pct_bull / 100)
+                    float p_pct_bear = active_or_low - (active_or_open * pct_bear / 100)
+                    
+                    // Determine line style and length based on percentile
+                    bool is_median = pct == 50
+                    bool is_quartile = pct == 25 or pct == 75
+                    int line_length = is_median ? 120 : is_quartile ? 100 : 80
+                    string line_style_str = is_median ? line.style_solid : line.style_dotted
+                    int transparency = is_median ? 30 : is_quartile ? 50 : 70
+                    
+                    // Draw bull percentile
+                    array.push(mfe_avg_lines, line.new(anchor, p_pct_bull, anchor + line_length, p_pct_bull, color=color.new(avgLineColor, transparency), style=line_style_str))
+                    array.push(mfe_avg_labels, label.new(anchor + line_length + 5, p_pct_bull, str.tostring(pct_bull, "#.##") + "% P" + str.tostring(pct), color=color.new(color.black, 100), textcolor=color.new(avgLineColor, transparency), style=label.style_label_left, size=mfe_size))
+                    
+                    // Draw bear percentile
+                    array.push(mfe_avg_lines, line.new(anchor, p_pct_bear, anchor + line_length, p_pct_bear, color=color.new(avgLineColor, transparency), style=line_style_str))
+                    array.push(mfe_avg_labels, label.new(anchor + line_length + 5, p_pct_bear, str.tostring(pct_bear, "#.##") + "% P" + str.tostring(pct), color=color.new(color.black, 100), textcolor=color.new(avgLineColor, transparency), style=label.style_label_left, size=mfe_size))
+
+// ==========================================
+// --- VISUALIZATION: TIME DISTRIBUTION (ANCHORED) ---
+// ==========================================
+var box[] time_hist_boxes = array.new_box(0)
+var line[] time_stat_lines = array.new_line(0)
+var label[] time_stat_labels = array.new_label(0)
+
+// Clear previous day's time distribution on new day
+if is_new_day
+    if array.size(time_hist_boxes) > 0
+        for i = 0 to array.size(time_hist_boxes) - 1
+            box.delete(array.get(time_hist_boxes, i))
+    if array.size(time_stat_lines) > 0
+        for i = 0 to array.size(time_stat_lines) - 1
+            line.delete(array.get(time_stat_lines, i))
+    if array.size(time_stat_labels) > 0
+        for i = 0 to array.size(time_stat_labels) - 1
+            label.delete(array.get(time_stat_labels, i))
+    array.clear(time_hist_boxes)
+    array.clear(time_stat_lines)
+    array.clear(time_stat_labels)
+
+// Draw time distribution at 09:30
+if is_0930 and showTimeDist
+    int t_anchor = bar_index
+    // Use active_or_low if available, otherwise use current low
+    float base_y = not na(active_or_low) ? active_or_low - (syminfo.mintick * offsetBelowMFE) : low - (syminfo.mintick * offsetBelowMFE)
+    
+    // Draw vertical bins (Mirrored) - using 5-minute buckets
+    for i = 0 to 29  // 30 bins of 5 minutes each = 150 minutes
+        int bin_start = i * 5
+        int c_bull = 0, c_bear = 0
+        if array.size(peak_time_bull_history) > 0
+            for j = 0 to array.size(peak_time_bull_history) - 1
+                int peak_bull = array.get(peak_time_bull_history, j)
+                int peak_bear = array.get(peak_time_bear_history, j)
+                if peak_bull >= bin_start and peak_bull < bin_start + 5
+                    c_bull += 1
+                if peak_bear >= bin_start and peak_bear < bin_start + 5
+                    c_bear += 1
+        
+        float h_u = c_bull * 5.0
+        float h_d = c_bear * 5.0
+        
+        if c_bull > 0
+            array.push(time_hist_boxes, box.new(t_anchor + i*5, base_y + h_u, t_anchor + i*5 + 4, base_y, border_color=na, bgcolor=timeBullColor))
+        if c_bear > 0
+            array.push(time_hist_boxes, box.new(t_anchor + i*5, base_y, t_anchor + i*5 + 4, base_y - h_d, border_color=na, bgcolor=timeBearColor))
+    // Vertical Statistical Lines (TIME)
+    bool has_time_data = array.size(peak_time_bull_history) > 0
+    
+    if has_time_data
+        // Bullish Stats
+        float avg_t_bull = array.avg(peak_time_bull_history)
+        float med_t_bull = array.median(peak_time_bull_history)
+        int x_avg_bull = t_anchor + int(avg_t_bull)
+        int x_med_bull = t_anchor + int(med_t_bull)
+        
+        if showTimeAvg
+            array.push(time_stat_lines, line.new(x_avg_bull, base_y + 60, x_avg_bull, base_y, color=timeAvgLineColor, style=line.style_dashed))
+            array.push(time_stat_labels, label.new(x_avg_bull, base_y + 65, "Bull AVG", color=color.new(color.black, 100), textcolor=timeAvgLineColor, style=label.style_label_down, size=time_size))
+        
+        if showTimeMed
+            array.push(time_stat_lines, line.new(x_med_bull, base_y + 40, x_med_bull, base_y, color=timeMedLineColor, style=line.style_dashed))
+            array.push(time_stat_labels, label.new(x_med_bull, base_y + 45, "Bull MED", color=color.new(color.black, 100), textcolor=timeMedLineColor, style=label.style_label_down, size=time_size))
+
+        // Bearish Stats
+        float avg_t_bear = array.avg(peak_time_bear_history)
+        float med_t_bear = array.median(peak_time_bear_history)
+        int x_avg_bear = t_anchor + int(avg_t_bear)
+        int x_med_bear = t_anchor + int(med_t_bear)
+        
+        if showTimeAvg
+            array.push(time_stat_lines, line.new(x_avg_bear, base_y, x_avg_bear, base_y - 60, color=timeAvgLineColor, style=line.style_dashed))
+            array.push(time_stat_labels, label.new(x_avg_bear, base_y - 65, "Bear AVG", color=color.new(color.black, 100), textcolor=timeAvgLineColor, style=label.style_label_up, size=time_size))
+        
+        if showTimeMed
+            array.push(time_stat_lines, line.new(x_med_bear, base_y, x_med_bear, base_y - 40, color=timeMedLineColor, style=line.style_dashed))
+            array.push(time_stat_labels, label.new(x_med_bear, base_y - 45, "Bear MED", color=color.new(color.black, 100), textcolor=timeMedLineColor, style=label.style_label_up, size=time_size))
+
+plot(or_high, "OR High", color.new(bullColor, 50), 2, plot.style_linebr)
+plot(or_low, "OR Low", color.new(bearColor, 50), 2, plot.style_linebr)
+
+// M1 Projections
+m1_bull = or_high + (or_open * m1ProjPct / 100)
+m1_bear = or_low - (or_open * m1ProjPct / 100)
+plot(not na(or_high) ? m1_bull : na, "M1 Bull Proj", bullColor, 2, plot.style_linebr)
+plot(not na(or_low) ? m1_bear : na, "M1 Bear Proj", bearColor, 2, plot.style_linebr)
