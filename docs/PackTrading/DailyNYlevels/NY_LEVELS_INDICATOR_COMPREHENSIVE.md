@@ -164,7 +164,44 @@ The following core logic was derived from the video training session:
 
 ---
 
-## 7. Associated Files & Resources
+## 7. TradingView Indicator Description
+
+**Daily NY Levels V2** - A comprehensive NY session analysis indicator displaying Opening Range levels, MFE distribution histograms, and hit-time statistics.
+
+### Key Features
+
+**📊 Opening Range (OR)**
+- Displays the 09:30-09:31 NY session opening candle
+- Uses 1-minute MTF data for accuracy on all timeframes
+- OR High/Low plotted with M1 projection lines (+0.01%)
+
+**📈 MFE Price Distribution Histogram**
+- Visualizes historical price extension distribution above/below the Opening Range
+- Uses **pivot-based tracking** filtered by day direction (MFE > MAE = bullish days)
+- Configurable reference base: "09:31 Close" or "OR High/Low"
+- Fixed-bin histogram with percentile filtering (P20-P80 default)
+
+**⏰ Hit Time Distribution**
+- Shows when historical MFE targets were typically reached
+- Displays AVG and Median time markers
+
+### Settings Quick Reference
+
+| Group | Setting | Description |
+|-------|---------|-------------|
+| **General** | Cutoff Time | Session end time (default 12:00) |
+| **MFE Profile** | Reference Base | "09:31 Close" or "OR High/Low" |
+| **MFE Profile** | Start/End Percentile | Filter histogram display range |
+| **MFE Profile** | Bin Size (%) | Histogram bar granularity |
+
+### Best Practices
+- Works best on NQ, ES, SPY, QQQ during NY session (09:30-12:00 ET)
+- Use "OR High/Low" reference for breakout strategies
+- Use "09:31 Close" reference for fade/reversion strategies
+
+---
+
+## 8. Associated Files & Resources
 - **PineScript v6**: [DailyNYLevelsV2.pine](file:///C:/Users/vinay/tvDownloadOHLC/scripts/indicators/DailyNYLevelsV2.pine)
 - **Data Processor**: [precompute_opening_range.py](file:///C:/Users/vinay/tvDownloadOHLC/scripts/derived/precompute_opening_range.py)
 - **Stats Analysis**: [precompute_ny_levels.py](file:///C:/Users/vinay/tvDownloadOHLC/scripts/derived/precompute_ny_levels.py)

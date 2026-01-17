@@ -8,32 +8,22 @@ indicator("Daily NY Levels V2", overlay=true, max_bars_back=5000, max_lines_coun
 // --- INPUTS ---
 // ==========================================
 grp_general = "General Settings"
-showLineNames = input.bool(false, "Show Line Names (Dynamic Lines)", group=grp_general)
-showLevelNames = input.bool(false, "Show Level Names (Static Lines)", group=grp_general)
 cutoffTime     = input.int(1200, "Cutoff Time (HHMM)", minval=0, maxval=2359, group=grp_general)
-
-grp_m1 = "M1 Tracker"
-m1ProjPct = input.float(0.01, "M1 Projection %", step=0.01, group=grp_m1)
 
 grp_style = "Style"
 bullColor = input.color(color.blue, "Bullish Color", group=grp_style)
 bearColor = input.color(color.red, "Bearish Color", group=grp_style)
-neutralColor = input.color(color.gray, "Neutral Color", group=grp_style)
-d2Color = input.color(color.orange, "D2 Color", group=grp_style)
-d3Color = input.color(color.purple, "D3 Color", group=grp_style)
-d4Color = input.color(color.yellow, "D4 Color", group=grp_style)
 boxColor0930 = input.color(color.yellow, "0930-0931 Box Color", group=grp_style)
 
 grp_mfe = "MFE Distribution Profile"
-levelDisplayMode = input.string("Both", "Level Display Mode", options=["Both", "Dynamic"], group=grp_mfe)
+refBaseMode      = input.string("09:31 Close", "Reference Base", options=["09:31 Close", "OR High/Low"], tooltip="Choose reference point for MFE calculation", group=grp_mfe)
 percentileStep   = input.int(2, "Percentile Step", minval=1, maxval=10, group=grp_mfe)
 startPercentile  = input.int(20, "Start Percentile", minval=1, maxval=99, group=grp_mfe)
 endPercentile    = input.int(80, "End Percentile", minval=1, maxval=99, group=grp_mfe)
-bullCenterColor  = input.color(color.new(color.green, 0), "Bullish Center Color", group=grp_mfe)
+bullCenterColor  = input.color(color.new(color.green, 50), "Bullish Center Color", group=grp_mfe)
 bullEdgeColor    = input.color(color.new(color.green, 100), "Bullish Edge Color", group=grp_mfe)
-bearCenterColor  = input.color(color.new(color.red, 0), "Bearish Center Color", group=grp_mfe)
+bearCenterColor  = input.color(color.new(color.red, 50), "Bearish Center Color", group=grp_mfe)
 bearEdgeColor    = input.color(color.new(color.red, 100), "Bearish Edge Color", group=grp_mfe)
-gradientOpacity  = input.int(0, "Gradient Opacity", minval=0, maxval=100, group=grp_mfe)
 showPercentLabels = input.bool(true, "Show Percentile Labels", group=grp_mfe)
 showAvgLine       = input.bool(true, "Show AVG Line", group=grp_mfe)
 avgLineColor      = input.color(color.white, "AVG Line Color", group=grp_mfe)
@@ -41,8 +31,8 @@ histWidthScale    = input.int(50, "Histogram Width Scale", minval=1, maxval=500,
 binSize           = input.float(0.04, "Bin Size (%)", minval=0.01, maxval=0.10, step=0.01, tooltip="Size of each histogram bin in percentage", group=grp_mfe)
 mfeLabelSize      = input.string("tiny", "Label Size", options=["auto", "tiny", "small", "normal", "large", "huge"], group=grp_mfe)
 mfeDataLabelSize  = input.string("small", "Data Count Label Size", options=["auto", "tiny", "small", "normal", "large", "huge"], group=grp_mfe)
-removeOutliers    = input.bool(false, "Remove Outliers (>P80)", tooltip="Remove values beyond 80th percentile before calculating statistics", group=grp_mfe)
 showDebugLabels   = input.bool(false, "Show Debug Labels", tooltip="Display labels when MFE data is committed at 12:00 PM", group=grp_mfe)
+
 
 grp_time = "Hit Time Distribution"
 showTimeDist     = input.bool(true, "Show Time Distribution", group=grp_time)
@@ -142,18 +132,27 @@ var float[] pivot_bear_history = array.new_float(0)
 
 // --- Reference base: 09:31 candle close ---
 var float ref_close_0931 = na
-var float bull_ref = na  // Close + 0.01%
-var float bear_ref = na  // Close - 0.01%
+var float bull_ref = na  // Reference for bull extension
+var float bear_ref = na  // Reference for bear extension
 
 // Capture 09:31 candle close (the bar AFTER 09:30)
 is_0931 = hour(time, "America/New_York") == 9 and minute(time, "America/New_York") == 31
 
 if is_0931
-    ref_close_0931 := close
-    bull_ref := close * 1.0001  // +0.01%
-    bear_ref := close * 0.9999  // -0.01%
+    // Set reference based on refBaseMode
+    if refBaseMode == "09:31 Close"
+        ref_close_0931 := close
+        bull_ref := close * 1.0001  // +0.01%
+        bear_ref := close * 0.9999  // -0.01%
+    else  // "OR High/Low"
+        ref_close_0931 := (active_or_high + active_or_low) / 2  // Use OR midpoint for calculations
+        bull_ref := active_or_high  // Use OR High as bull reference
+        bear_ref := active_or_low   // Use OR Low as bear reference
+    
     if showDebugLabels
-        label.new(bar_index, close, "REF: " + str.tostring(close, "#.##") + "\n+0.01%: " + str.tostring(bull_ref, "#.##") + "\n-0.01%: " + str.tostring(bear_ref, "#.##"), color=color.new(color.blue, 50), textcolor=color.white, style=label.style_label_right, size=size.tiny)
+        string mode_str = refBaseMode == "09:31 Close" ? "09:31 Close" : "OR H/L"
+        label.new(bar_index, close, "REF (" + mode_str + ")\nBull: " + str.tostring(bull_ref, "#.##") + "\nBear: " + str.tostring(bear_ref, "#.##"), color=color.new(color.blue, 50), textcolor=color.white, style=label.style_label_right, size=size.tiny)
+
 
 // --- Daily tracking variables ---
 var float daily_max_bull_mfe = 0.0
@@ -359,30 +358,39 @@ if is_0931 and not na(ref_close_0931)
             if array.get(bear_bin_counts, i) > max_count
                 max_count := array.get(bear_bin_counts, i)
         
-        // Draw histogram bars with fixed bins
+        // Calculate percentile-based MFE range for filtering
+        float bull_pct_low = total_pivot_bull > 0 ? array.percentile_linear_interpolation(pivot_bull_history, startPercentile) : 0.0
+        float bull_pct_high = total_pivot_bull > 0 ? array.percentile_linear_interpolation(pivot_bull_history, endPercentile) : 1.0
+        float bear_pct_low = total_pivot_bear > 0 ? array.percentile_linear_interpolation(pivot_bear_history, startPercentile) : 0.0
+        float bear_pct_high = total_pivot_bear > 0 ? array.percentile_linear_interpolation(pivot_bear_history, endPercentile) : 1.0
+        
+        // Draw histogram bars with fixed bins (filtered by percentile range)
+        // Use bull_ref as starting point for bull histogram, bear_ref for bear histogram
         for i = 0 to num_bins - 1
             float bin_low = i * binSize
             float bin_high = (i + 1) * binSize
             
-            // Bull bars (above reference)
+            // Bull bars (above bull_ref) - only draw if within percentile range
             int bull_count = array.get(bull_bin_counts, i)
-            if bull_count > 0
-                float p_top = ref_close_0931 + (ref_close_0931 * bin_high / 100)
-                float p_bot = ref_close_0931 + (ref_close_0931 * bin_low / 100)
+            if bull_count > 0 and bin_low >= bull_pct_low and bin_high <= bull_pct_high
+                float p_top = bull_ref + (ref_close_0931 * bin_high / 100)
+                float p_bot = bull_ref + (ref_close_0931 * bin_low / 100)
                 float norm_width = bull_count / max_count
                 int w = int(norm_width * histWidthScale)
                 if w > 0
-                    array.push(mfe_hist_boxes, box.new(anchor, p_top, anchor + w, p_bot, border_color=na, bgcolor=color.new(bullCenterColor, 70)))
+                    array.push(mfe_hist_boxes, box.new(anchor, p_top, anchor + w, p_bot, border_color=bullEdgeColor, bgcolor=bullCenterColor))
             
-            // Bear bars (below reference)
+            // Bear bars (below bear_ref) - only draw if within percentile range
             int bear_count = array.get(bear_bin_counts, i)
-            if bear_count > 0
-                float p_top = ref_close_0931 - (ref_close_0931 * bin_low / 100)
-                float p_bot = ref_close_0931 - (ref_close_0931 * bin_high / 100)
+            if bear_count > 0 and bin_low >= bear_pct_low and bin_high <= bear_pct_high
+                float p_top = bear_ref - (ref_close_0931 * bin_low / 100)
+                float p_bot = bear_ref - (ref_close_0931 * bin_high / 100)
                 float norm_width = bear_count / max_count
                 int w = int(norm_width * histWidthScale)
                 if w > 0
-                    array.push(mfe_hist_boxes, box.new(anchor, p_top, anchor + w, p_bot, border_color=na, bgcolor=color.new(bearCenterColor, 70)))
+                    array.push(mfe_hist_boxes, box.new(anchor, p_top, anchor + w, p_bot, border_color=bearEdgeColor, bgcolor=bearCenterColor))
+
+
     
     // Keep using daily MAX MFE for statistical lines
     bool has_data = array.size(mfe_bull_history) > 0 or array.size(mfe_bear_history) > 0
@@ -392,8 +400,8 @@ if is_0931 and not na(ref_close_0931)
         // AVG Lines (using FULL dataset, not filtered)
         float avg_bull = array.avg(mfe_bull_history)
         float avg_bear = array.avg(mfe_bear_history)
-        float p_avg_bull = active_or_high + (active_or_open * avg_bull / 100)
-        float p_avg_bear = active_or_low - (active_or_open * avg_bear / 100)
+        float p_avg_bull = bull_ref + (ref_close_0931 * avg_bull / 100)
+        float p_avg_bear = bear_ref - (ref_close_0931 * avg_bear / 100)
         
         if showAvgLine
             array.push(mfe_avg_lines, line.new(anchor, p_avg_bull, anchor + 150, p_avg_bull, color=avgLineColor, style=line.style_dashed, width=1))
@@ -414,8 +422,8 @@ if is_0931 and not na(ref_close_0931)
                     float pct_bull = array.percentile_linear_interpolation(mfe_bull_history, pct)
                     float pct_bear = array.percentile_linear_interpolation(mfe_bear_history, pct)
                     
-                    float p_pct_bull = active_or_high + (active_or_open * pct_bull / 100)
-                    float p_pct_bear = active_or_low - (active_or_open * pct_bear / 100)
+                    float p_pct_bull = bull_ref + (ref_close_0931 * pct_bull / 100)
+                    float p_pct_bear = bear_ref - (ref_close_0931 * pct_bear / 100)
                     
                     // Determine line style and length based on percentile
                     bool is_median = pct == 50
@@ -525,7 +533,7 @@ plot(or_high, "OR High", color.new(bullColor, 50), 2, plot.style_linebr)
 plot(or_low, "OR Low", color.new(bearColor, 50), 2, plot.style_linebr)
 
 // M1 Projections
-m1_bull = or_high + (or_open * m1ProjPct / 100)
-m1_bear = or_low - (or_open * m1ProjPct / 100)
+m1_bull = or_high + (or_open * 0.01 / 100)
+m1_bear = or_low - (or_open * 0.01 / 100)
 plot(not na(or_high) ? m1_bull : na, "M1 Bull Proj", bullColor, 2, plot.style_linebr)
 plot(not na(or_low) ? m1_bear : na, "M1 Bear Proj", bearColor, 2, plot.style_linebr)
