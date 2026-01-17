@@ -42,6 +42,7 @@ binSize           = input.float(0.04, "Bin Size (%)", minval=0.01, maxval=0.10, 
 mfeLabelSize      = input.string("tiny", "Label Size", options=["auto", "tiny", "small", "normal", "large", "huge"], group=grp_mfe)
 mfeDataLabelSize  = input.string("small", "Data Count Label Size", options=["auto", "tiny", "small", "normal", "large", "huge"], group=grp_mfe)
 removeOutliers    = input.bool(false, "Remove Outliers (>P80)", tooltip="Remove values beyond 80th percentile before calculating statistics", group=grp_mfe)
+showDebugLabels   = input.bool(false, "Show Debug Labels", tooltip="Display labels when MFE data is committed at 12:00 PM", group=grp_mfe)
 
 grp_time = "Hit Time Distribution"
 showTimeDist     = input.bool(true, "Show Time Distribution", group=grp_time)
@@ -122,57 +123,174 @@ else if is_0930 and na(active_or_high)
     active_or_open := or_open
 
 // ==========================================
-// --- STATISTICAL ENGINE ---
+// --- STATISTICAL ENGINE: MFE FROM 09:31 CLOSE ---
 // ==========================================
+// Uses 09:31 candle CLOSE ±0.01% as the reference base
+// Only commits MFE for the WINNING direction at cutoff
+
+// --- History Arrays (one value per winning day) ---
 var float[] mfe_bull_history = array.new_float(0)
 var float[] mfe_bear_history = array.new_float(0)
 var int[] peak_time_bull_history = array.new_int(0)
 var int[] peak_time_bear_history = array.new_int(0)
 
-var float or_bar_index = na
-var float daily_mfe_bull = 0.0
-var float daily_mfe_bear = 0.0
-var int daily_peak_time_bull = 0
-var int daily_peak_time_bear = 0
+// --- Pivot-based History (for price histogram) ---
+// Stores all pivot highs on LONG days (MFE > MAE)
+// Stores all pivot lows on SHORT days (MAE > MFE)
+var float[] pivot_bull_history = array.new_float(0)
+var float[] pivot_bear_history = array.new_float(0)
 
-if is_new_day
-    daily_mfe_bull := 0.0
-    daily_mfe_bear := 0.0
-    daily_peak_time_bull := 0
-    daily_peak_time_bear := 0
+// --- Reference base: 09:31 candle close ---
+var float ref_close_0931 = na
+var float bull_ref = na  // Close + 0.01%
+var float bear_ref = na  // Close - 0.01%
 
-if is_0930
-    or_bar_index := bar_index
+// Capture 09:31 candle close (the bar AFTER 09:30)
+is_0931 = hour(time, "America/New_York") == 9 and minute(time, "America/New_York") == 31
 
-// Calculate MFE (but not on the 09:30 bar itself, since that's when we set the OR)
-if not na(active_or_high) and not na(is_before_cutoff) and not is_0930
-    // MFE as percentage price move from the range boundary
-    float cur_mfe_bull = (high - active_or_high) / active_or_high * 100
-    float cur_mfe_bear = (active_or_low - low) / active_or_low * 100
-    
-    if cur_mfe_bull > daily_mfe_bull
-        daily_mfe_bull := cur_mfe_bull
-        daily_peak_time_bull := (hour(time, "America/New_York") * 60 + minute(time, "America/New_York")) - (9 * 60 + 30)
-        
-    if cur_mfe_bear > daily_mfe_bear
-        daily_mfe_bear := cur_mfe_bear
-        daily_peak_time_bear := (hour(time, "America/New_York") * 60 + minute(time, "America/New_York")) - (9 * 60 + 30)
+if is_0931
+    ref_close_0931 := close
+    bull_ref := close * 1.0001  // +0.01%
+    bear_ref := close * 0.9999  // -0.01%
+    if showDebugLabels
+        label.new(bar_index, close, "REF: " + str.tostring(close, "#.##") + "\n+0.01%: " + str.tostring(bull_ref, "#.##") + "\n-0.01%: " + str.tostring(bear_ref, "#.##"), color=color.new(color.blue, 50), textcolor=color.white, style=label.style_label_right, size=size.tiny)
 
-// Commit daily stats at cutoff or end of day
-is_at_or_after_cutoff = (hour(time, "America/New_York") * 100 + minute(time, "America/New_York")) >= cutoffTime
+// --- Daily tracking variables ---
+var float daily_max_bull_mfe = 0.0
+var float daily_max_bear_mfe = 0.0
+var int daily_bull_peak_time = 0
+var int daily_bear_peak_time = 0
 var bool is_committed_today = false
 
-// Reset commit flag at the START of each trading session (09:30), not at end of day
-if is_0930
-    is_committed_today := false
+// --- Daily pivot tracking (for price histogram) ---
+var float[] daily_pivot_bulls = array.new_float(0)
+var float[] daily_pivot_bears = array.new_float(0)
 
-// Commit data for all days when we reach cutoff time (but NOT on new day when values are reset)
-if is_at_or_after_cutoff and not is_committed_today and not is_new_day
-    array.push(mfe_bull_history, daily_mfe_bull)
-    array.push(mfe_bear_history, daily_mfe_bear)
-    array.push(peak_time_bull_history, daily_peak_time_bull)
-    array.push(peak_time_bear_history, daily_peak_time_bear)
+// --- Helper: Calculate minutes since 09:30 ---
+f_mins_since_or() =>
+    (hour(time, "America/New_York") * 60 + minute(time, "America/New_York")) - (9 * 60 + 30)
+
+// --- Reset at 09:30 (start of new session) ---
+if is_0930
+    daily_max_bull_mfe := 0.0
+    daily_max_bear_mfe := 0.0
+    daily_bull_peak_time := 0
+    daily_bear_peak_time := 0
+    is_committed_today := false
+    ref_close_0931 := na
+    bull_ref := na
+    bear_ref := na
+    // Clear daily pivot arrays
+    array.clear(daily_pivot_bulls)
+    array.clear(daily_pivot_bears)
+
+// --- Track MFE from 09:31 Close ±0.01% ---
+// Run after 09:31 ref is set, before cutoff
+if not na(bull_ref) and not na(is_before_cutoff) and not is_0930 and not is_0931
+    // Bull MFE: max extension ABOVE bull_ref (Close + 0.01%)
+    if high > bull_ref
+        float ext_above = (high - bull_ref) / ref_close_0931 * 100
+        if ext_above > daily_max_bull_mfe
+            daily_max_bull_mfe := ext_above
+            daily_bull_peak_time := f_mins_since_or()
+            if showDebugLabels
+                label.new(bar_index, high, "▲" + str.tostring(ext_above, "#.##") + "%", color=color.new(color.green, 30), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+    
+    // Bear MFE: max extension BELOW bear_ref (Close - 0.01%)
+    if low < bear_ref
+        float ext_below = (bear_ref - low) / ref_close_0931 * 100
+        if ext_below > daily_max_bear_mfe
+            daily_max_bear_mfe := ext_below
+            daily_bear_peak_time := f_mins_since_or()
+            if showDebugLabels
+                label.new(bar_index, low, "▼" + str.tostring(ext_below, "#.##") + "%", color=color.new(color.red, 30), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+    
+    // --- Pivot Detection for Price Histogram ---
+    // Pivot high: bar high > surrounding ±2 bars (detected on [2] for confirmation)
+    bool is_pivot_high = bar_index >= 4 and high[2] > high[1] and high[2] > high[3] and high[2] > high[4] and high[2] > nz(high[0], high[2])
+    // Pivot low: bar low < surrounding ±2 bars
+    bool is_pivot_low = bar_index >= 4 and low[2] < low[1] and low[2] < low[3] and low[2] < low[4] and low[2] < nz(low[0], low[2])
+    
+    // Track confirmed pivot highs above bull_ref
+    if is_pivot_high and high[2] > bull_ref
+        float pivot_ext = (high[2] - bull_ref) / ref_close_0931 * 100
+        array.push(daily_pivot_bulls, pivot_ext)
+    
+    // Track confirmed pivot lows below bear_ref
+    if is_pivot_low and low[2] < bear_ref
+        float pivot_ext = (bear_ref - low[2]) / ref_close_0931 * 100
+        array.push(daily_pivot_bears, pivot_ext)
+
+// --- Commit BOTH directions at cutoff time ---
+is_at_or_after_cutoff = (hour(time, "America/New_York") * 100 + minute(time, "America/New_York")) >= cutoffTime
+
+if is_at_or_after_cutoff and not is_committed_today and not is_new_day and not na(bull_ref)
+    // Commit BOTH bull and bear MFE if they have values (for time histogram)
+    if daily_max_bull_mfe > 0
+        array.push(mfe_bull_history, daily_max_bull_mfe)
+        array.push(peak_time_bull_history, daily_bull_peak_time)
+        if showDebugLabels
+            label.new(bar_index, high, "▲COMMIT " + str.tostring(daily_max_bull_mfe, "#.##") + "%", color=color.new(color.lime, 30), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+    
+    if daily_max_bear_mfe > 0
+        array.push(mfe_bear_history, daily_max_bear_mfe)
+        array.push(peak_time_bear_history, daily_bear_peak_time)
+        if showDebugLabels
+            label.new(bar_index, low, "▼COMMIT " + str.tostring(daily_max_bear_mfe, "#.##") + "%", color=color.new(color.maroon, 30), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+    
+    // --- Commit PIVOTS based on day direction (for price histogram) ---
+    // LONG day (MFE > MAE): commit all bull pivots
+    // SHORT day (MAE > MFE): commit all bear pivots
+    bool is_long_day = daily_max_bull_mfe > daily_max_bear_mfe
+    
+    if is_long_day
+        for i = 0 to array.size(daily_pivot_bulls) - 1
+            array.push(pivot_bull_history, array.get(daily_pivot_bulls, i))
+        if showDebugLabels
+            label.new(bar_index, high + syminfo.mintick * 50, "LONG DAY: " + str.tostring(array.size(daily_pivot_bulls)) + " pivots", color=color.new(color.blue, 50), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+    else
+        for i = 0 to array.size(daily_pivot_bears) - 1
+            array.push(pivot_bear_history, array.get(daily_pivot_bears, i))
+        if showDebugLabels
+            label.new(bar_index, low - syminfo.mintick * 50, "SHORT DAY: " + str.tostring(array.size(daily_pivot_bears)) + " pivots", color=color.new(color.blue, 50), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+    
     is_committed_today := true
+
+// --- Debug: Dump MFE history on last bar ---
+if barstate.islast and showDebugLabels
+    int total_bull = array.size(mfe_bull_history)
+    int total_bear = array.size(mfe_bear_history)
+    
+    log.info("=== MFE HISTORY DUMP ===")
+    log.info("Total Bull Days: {0}, Total Bear Days: {1}", total_bull, total_bear)
+    
+    // Dump bull MFE values
+    if total_bull > 0
+        string bull_vals = ""
+        for i = 0 to total_bull - 1
+            bull_vals := bull_vals + str.tostring(array.get(mfe_bull_history, i), "#.###") + ", "
+        log.info("Bull MFE: [{0}]", bull_vals)
+        
+        // Percentile values
+        log.info("Bull P20={0}, P50={1}, P80={2}", 
+            array.percentile_linear_interpolation(mfe_bull_history, 20),
+            array.percentile_linear_interpolation(mfe_bull_history, 50),
+            array.percentile_linear_interpolation(mfe_bull_history, 80))
+    
+    // Dump bear MFE values
+    if total_bear > 0
+        string bear_vals = ""
+        for i = 0 to total_bear - 1
+            bear_vals := bear_vals + str.tostring(array.get(mfe_bear_history, i), "#.###") + ", "
+        log.info("Bear MFE: [{0}]", bear_vals)
+        
+        log.info("Bear P20={0}, P50={1}, P80={2}", 
+            array.percentile_linear_interpolation(mfe_bear_history, 20),
+            array.percentile_linear_interpolation(mfe_bear_history, 50),
+            array.percentile_linear_interpolation(mfe_bear_history, 80))
+    
+    log.info("09:31 Ref Close: {0}", ref_close_0931)
+    log.info("=== END DUMP ===")
 
 // ==========================================
 // --- VISUALIZATION: MFE FREQUENCY HISTOGRAMS ---
@@ -196,118 +314,78 @@ if is_new_day
     array.clear(mfe_avg_lines)
     array.clear(mfe_avg_labels)
 
-// Draw levels at 09:30 using historical data up to yesterday
-if is_0930 and not na(active_or_high)
+// Draw levels at 09:31 using historical data (after reference is established)
+if is_0931 and not na(ref_close_0931)
     int anchor = bar_index
     
-    // --- 1. MFE DISTRIBUTION (VERTICAL FREQUENCY) ---
-    float bin_step = binSize
-    int max_bins = int(2.0 / bin_step)  // Dynamic max bins based on bin size
+    // --- 1. MFE PRICE DISTRIBUTION (PIVOT-BASED, FIXED BINS) ---
+    // Uses pivot highs/lows filtered by day direction (MFE > MAE)
+    // Fixed bins based on binSize input (e.g., 0.04%)
     
-    bool has_data = array.size(mfe_bull_history) > 0
+    int total_pivot_bull = array.size(pivot_bull_history)
+    int total_pivot_bear = array.size(pivot_bear_history)
+    bool has_pivot_data = total_pivot_bull > 0 or total_pivot_bear > 0
     
-    // Create working copies of history arrays (declare outside if block for scope)
-    float[] working_bull = array.new_float(0)
-    float[] working_bear = array.new_float(0)
-    
-    if has_data
-        // Copy history arrays
-        working_bull := array.copy(mfe_bull_history)
-        working_bear := array.copy(mfe_bear_history)
-        
+    if has_pivot_data
         // Data Count Label
-        array.push(mfe_avg_labels, label.new(anchor, active_or_low - (syminfo.mintick * offsetBelowMFE / 2), "Sample: " + str.tostring(array.size(mfe_bull_history)) + " Days", textcolor=color.new(color.white, 30), style=label.style_label_up, size=mfe_data_size, color=color.new(color.black, 100)))
-
-        // Pre-calculate Max Bin Count for Auto-Scaling AND determine actual data range
-        int max_c = 1
-        int max_bin_with_data_bull = 0
-        int max_bin_with_data_bear = 0
+        array.push(mfe_avg_labels, label.new(anchor, active_or_low - (syminfo.mintick * offsetBelowMFE / 2), "Pivots: " + str.tostring(total_pivot_bull) + " Bull / " + str.tostring(total_pivot_bear) + " Bear", textcolor=color.new(color.white, 30), style=label.style_label_up, size=mfe_data_size, color=color.new(color.black, 100)))
         
-        // Calculate P80 for display truncation if enabled
-        float display_limit_bull = removeOutliers ? array.percentile_linear_interpolation(working_bull, 80) : 999.0
-        float display_limit_bear = removeOutliers ? array.percentile_linear_interpolation(working_bear, 80) : 999.0
+        // Create fixed bins from 0% to max MFE
+        float max_mfe = 1.5  // Cap at 1.5% for display
+        int num_bins = int(max_mfe / binSize) + 1
+        int[] bull_bin_counts = array.new_int(num_bins, 0)
+        int[] bear_bin_counts = array.new_int(num_bins, 0)
         
-        for i = 0 to max_bins
-            int cb = 0, cr = 0
-            float b_min = i * bin_step
-            float b_max = (i + 1) * bin_step
+        // Count pivots in each fixed bin
+        if total_pivot_bull > 0
+            for j = 0 to total_pivot_bull - 1
+                float val = array.get(pivot_bull_history, j)
+                int bin_idx = int(val / binSize)
+                if bin_idx >= 0 and bin_idx < num_bins
+                    array.set(bull_bin_counts, bin_idx, array.get(bull_bin_counts, bin_idx) + 1)
+        
+        if total_pivot_bear > 0
+            for j = 0 to total_pivot_bear - 1
+                float val = array.get(pivot_bear_history, j)
+                int bin_idx = int(val / binSize)
+                if bin_idx >= 0 and bin_idx < num_bins
+                    array.set(bear_bin_counts, bin_idx, array.get(bear_bin_counts, bin_idx) + 1)
+        
+        // Find max count for normalization
+        int max_count = 1
+        for i = 0 to num_bins - 1
+            if array.get(bull_bin_counts, i) > max_count
+                max_count := array.get(bull_bin_counts, i)
+            if array.get(bear_bin_counts, i) > max_count
+                max_count := array.get(bear_bin_counts, i)
+        
+        // Draw histogram bars with fixed bins
+        for i = 0 to num_bins - 1
+            float bin_low = i * binSize
+            float bin_high = (i + 1) * binSize
             
-            // Count all data in this bin
-            for j = 0 to array.size(working_bull) - 1
-                float val_bull = array.get(working_bull, j)
-                float val_bear = array.get(working_bear, j)
-                
-                // Only count if within display limit (for histogram visualization)
-                if val_bull >= b_min and val_bull < b_max and val_bull <= display_limit_bull
-                    cb += 1
-                if val_bear >= b_min and val_bear < b_max and val_bear <= display_limit_bear
-                    cr += 1
-                    
-            if cb > max_c
-                max_c := cb
-            if cr > max_c
-                max_c := cr
-            // Track highest bin with data
-            if cb > 0
-                max_bin_with_data_bull := i
-            if cr > 0
-                max_bin_with_data_bear := i
-
-        // Draw histogram bars only up to where we have data
-        int max_bin_to_draw = math.max(max_bin_with_data_bull, max_bin_with_data_bear)
-        
-        // If outlier filtering is enabled, further limit to P80 bins
-        if removeOutliers
-            int p80_bin_bull = int(display_limit_bull / bin_step)
-            int p80_bin_bear = int(display_limit_bear / bin_step)
-            int p80_max_bin = math.max(p80_bin_bull, p80_bin_bear)
-            max_bin_to_draw := math.min(max_bin_to_draw, p80_max_bin)
-        
-        for i = 0 to max_bin_to_draw
-            float bin_min = i * bin_step
-            float bin_max = (i + 1) * bin_step
-            
-            int count_bull = 0
-            int count_bear = 0
-            for j = 0 to array.size(working_bull) - 1
-                float val_bull = array.get(working_bull, j)
-                float val_bear = array.get(working_bear, j)
-                
-                // Only count if within display limit
-                if val_bull >= bin_min and val_bull < bin_max and val_bull <= display_limit_bull
-                    count_bull += 1
-                if val_bear >= bin_min and val_bear < bin_max and val_bear <= display_limit_bear
-                    count_bear += 1
-
-            float p_mid_bull = active_or_high + (active_or_open * (bin_min + bin_max) / 2 / 100)
-            float p_mid_bear = active_or_low - (active_or_open * (bin_min + bin_max) / 2 / 100)
-
-            // Draw Bullish Bin - ONLY if count > 0
-            if count_bull > 0
-                float p_top = active_or_high + (active_or_open * bin_max / 100)
-                float p_bot = active_or_high + (active_or_open * bin_min / 100)
-                // Better scaling: normalize to max_c and multiply by user scale
-                float norm_width = count_bull / max_c
+            // Bull bars (above reference)
+            int bull_count = array.get(bull_bin_counts, i)
+            if bull_count > 0
+                float p_top = ref_close_0931 + (ref_close_0931 * bin_high / 100)
+                float p_bot = ref_close_0931 + (ref_close_0931 * bin_low / 100)
+                float norm_width = bull_count / max_count
                 int w = int(norm_width * histWidthScale)
                 if w > 0
                     array.push(mfe_hist_boxes, box.new(anchor, p_top, anchor + w, p_bot, border_color=na, bgcolor=color.new(bullCenterColor, 70)))
-                // Show labels less frequently for cleaner look
-                if i % 10 == 0 and anchor > 2
-                    float pct_label = (bin_min + bin_max) / 2
-                    array.push(mfe_avg_labels, label.new(anchor - 2, p_mid_bull, str.tostring(pct_label, "#.##") + "%", color=color.new(color.black, 100), textcolor=color.new(bullCenterColor, 40), style=label.style_label_right, size=mfe_size))
-                
-            // Draw Bearish Bin - ONLY if count > 0
-            if count_bear > 0
-                float p_top_r = active_or_low - (active_or_open * bin_min / 100)
-                float p_bot_r = active_or_low - (active_or_open * bin_max / 100)
-                float norm_width_r = count_bear / max_c
-                int w_r = int(norm_width_r * histWidthScale)
-                if w_r > 0
-                    array.push(mfe_hist_boxes, box.new(anchor, p_top_r, anchor + w_r, p_bot_r, border_color=na, bgcolor=color.new(bearCenterColor, 70)))
-                // Show labels less frequently for cleaner look
-                if i % 10 == 0 and anchor > 2
-                    float pct_label = (bin_min + bin_max) / 2
-                    array.push(mfe_avg_labels, label.new(anchor - 2, p_mid_bear, str.tostring(pct_label, "#.##") + "%", color=color.new(color.black, 100), textcolor=color.new(bearCenterColor, 40), style=label.style_label_right, size=mfe_size))
+            
+            // Bear bars (below reference)
+            int bear_count = array.get(bear_bin_counts, i)
+            if bear_count > 0
+                float p_top = ref_close_0931 - (ref_close_0931 * bin_low / 100)
+                float p_bot = ref_close_0931 - (ref_close_0931 * bin_high / 100)
+                float norm_width = bear_count / max_count
+                int w = int(norm_width * histWidthScale)
+                if w > 0
+                    array.push(mfe_hist_boxes, box.new(anchor, p_top, anchor + w, p_bot, border_color=na, bgcolor=color.new(bearCenterColor, 70)))
+    
+    // Keep using daily MAX MFE for statistical lines
+    bool has_data = array.size(mfe_bull_history) > 0 or array.size(mfe_bear_history) > 0
 
     // --- 2. STATISTICAL LINES ---
     if has_data
@@ -383,16 +461,25 @@ if is_0930 and showTimeDist
     float base_y = not na(active_or_low) ? active_or_low - (syminfo.mintick * offsetBelowMFE) : low - (syminfo.mintick * offsetBelowMFE)
     
     // Draw vertical bins (Mirrored) - using 5-minute buckets
-    for i = 0 to 29  // 30 bins of 5 minutes each = 150 minutes
-        int bin_start = i * 5
+    // Bins start at minute 1 (not 0) since minute 0 is the OR candle itself
+    // 31 bins cover minutes 1-155 (09:31 to 12:05) to include edge cases at cutoff
+    for i = 0 to 30  // 31 bins: 1-5, 6-10, ... 151-155
+        int bin_start = 1 + (i * 5)  // Start at minute 1, not minute 0
+        int bin_end = bin_start + 5
         int c_bull = 0, c_bear = 0
+        
+        // Count bull peaks in this bin (separate loop since array sizes differ)
         if array.size(peak_time_bull_history) > 0
             for j = 0 to array.size(peak_time_bull_history) - 1
                 int peak_bull = array.get(peak_time_bull_history, j)
-                int peak_bear = array.get(peak_time_bear_history, j)
-                if peak_bull >= bin_start and peak_bull < bin_start + 5
+                if peak_bull >= bin_start and peak_bull < bin_end
                     c_bull += 1
-                if peak_bear >= bin_start and peak_bear < bin_start + 5
+        
+        // Count bear peaks in this bin (separate loop)
+        if array.size(peak_time_bear_history) > 0
+            for j = 0 to array.size(peak_time_bear_history) - 1
+                int peak_bear = array.get(peak_time_bear_history, j)
+                if peak_bear >= bin_start and peak_bear < bin_end
                     c_bear += 1
         
         float h_u = c_bull * 5.0

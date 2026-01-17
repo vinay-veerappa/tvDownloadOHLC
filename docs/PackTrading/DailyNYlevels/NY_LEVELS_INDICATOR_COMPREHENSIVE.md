@@ -38,8 +38,68 @@ The indicator is designed to capture high-probability price extensions occurring
 - MFE calculation skips the 09:30 bar itself (`and not is_0930`) since that's when the OR is set
 
 ### Distribution Logic
-- **MFE (Max Favorable Excursion)**: The maximum price extension reached between 09:30 and 12:00 relative to the 9:30 OR boundary.
+
+- **MFE (Max Favorable Excursion)**: The maximum price extension reached during a breakout relative to the OR boundary.
 - **Percentile-Based Levels**: Levels are generated based on historical distributions (e.g., the 50th percentile level shows where price reached 50% of the time).
+
+### Multi-Breakout Tracking (v2.0)
+
+> [!IMPORTANT]
+> The indicator tracks **ALL breakouts**, not just the daily maximum. Each complete breakout cycle is recorded separately.
+
+**Breakout Definition:**
+- **Bull Breakout**: Starts when `high > OR_high`, continues while price stays above OR
+- **Bear Breakout**: Starts when `low < OR_low`, continues while price stays below OR
+
+**Breakout End Condition (Critical):**
+- **Bull breakout ends** when candle **CLOSES below OR_low** (opposite side breach)
+- **Bear breakout ends** when candle **CLOSES above OR_high** (opposite side breach)
+- **At Cutoff (12:00 PM)**: Any open breakouts are closed and committed
+
+**Data Captured Per Breakout:**
+- `mfe`: Peak percentage extension during the breakout
+- `peak_time`: Minutes since 09:30 when peak occurred
+
+**Why This Matters:**
+- Multiple breakouts per day create more data points for statistical analysis
+- Captures the full range traversal pattern, not just isolated peaks
+- Matches reference indicator behavior more closely
+
+---
+
+### MFE Histogram Requirements (v2.2 - Dual Approach)
+
+> [!IMPORTANT]
+> The indicator uses TWO different tracking methods for different purposes.
+
+**1. Reference Base (Both):**
+- Use the **09:31 candle CLOSE** ±0.01% zone
+- Bull reference = Close × 1.0001
+- Bear reference = Close × 0.9999
+
+**2. TIME Distribution Histogram:**
+- Uses **Daily MAX MFE** (one value per day per direction)
+- Tracks the TIME when the daily max was reached
+- Commits both bull and bear MFE at 12:00 PM cutoff
+- Bar width = count of days that peaked in that time bin
+
+**3. PRICE Distribution Histogram (NEW):**
+- Uses **All Pivot Highs/Lows** filtered by day direction
+- Long days (MFE > MAE): Track all pivot highs
+- Short days (MAE > MFE): Track all pivot lows
+- Detection: Pivot = bar high/low > surrounding ±2 bars
+- Creates more data points for smoother distribution
+- Bar width = count of pivots that fell in each MFE bin
+
+**4. Day Direction Classification:**
+- At 12:00 PM cutoff, compare daily MAX bull MFE vs daily MAX bear MAE
+- If bull MFE > bear MAE → **LONG day** → use pivot highs for price histogram
+- If bear MAE > bull MFE → **SHORT day** → use pivot lows for price histogram
+
+**5. Display Settings:**
+- `binSize`: Controls price bin width (default 0.04%)
+- `startPercentile`, `endPercentile`: Filter display range
+- `histWidthScale`: Controls bar width scaling
 
 ---
 
