@@ -42,47 +42,60 @@ def load_1m_data(ticker: str) -> pd.DataFrame:
 
 def extract_opening_range(df: pd.DataFrame) -> list:
     """
-    Extract the 9:30 1-minute candle for each trading day.
-    
-    Returns list of records with:
-    - date: YYYY-MM-DD
-    - open, high, low, close: OHLC of 9:30 candle
-    - range_pts: high - low (points)
-    - range_pct: (high - low) / open * 100 (percentage)
-    - timestamp: Unix timestamp of 9:30 bar
+    Extract various opening ranges and the 12:00 PM close for each trading day.
     """
-    # Add date column
+    # Add grouping columns
     df['date'] = df['datetime'].dt.date
-    df['hour'] = df['datetime'].dt.hour
-    df['minute'] = df['datetime'].dt.minute
-    
-    # Filter for 9:30 candles only
-    opening_bars = df[(df['hour'] == 9) & (df['minute'] == 30)].copy()
-    
-    if opening_bars.empty:
-        print("Warning: No 9:30 bars found!")
-        return []
+    df['time_only'] = df['datetime'].dt.time
     
     records = []
-    for _, row in opening_bars.iterrows():
-        o, h, l, c = row['open'], row['high'], row['low'], row['close']
-        range_pts = h - l
-        range_pct = (range_pts / o * 100) if o > 0 else 0
+    
+    # Process each day
+    for date_obj, day_df in df.groupby('date'):
+        # 1m OR (9:30-9:31)
+        or_1m = day_df[day_df['time_only'] == time(9, 30)]
+        if or_1m.empty: continue
+        
+        row_1m = or_1m.iloc[0]
+        
+        # 12:00 PM Close
+        close_12 = day_df[day_df['time_only'] == time(12, 0)]
+        close_12_val = close_12.iloc[0]['close'] if not close_12.empty else None
+        
+        # MFE Calculation (Max Extension from 09:30-12:00 relative to 1m OR)
+        window_12 = day_df[(day_df['time_only'] >= time(9, 30)) & (day_df['time_only'] <= time(12, 0))]
+        
+        o_1m = row_1m['open']
+        h_1m = row_1m['high']
+        l_1m = row_1m['low']
+        
+        # Calculate MFEs in the 12:00 window
+        max_high = window_12['high'].max()
+        min_low = window_12['low'].min()
+        
+        mfe_bull = max_high - h_1m
+        mfe_bear = l_1m - min_low
         
         records.append({
-            'date': str(row['date']),
-            'open': round(o, 2),
-            'high': round(h, 2),
-            'low': round(l, 2),
-            'close': round(c, 2),
-            'range_pts': round(range_pts, 2),
-            'range_pct': round(range_pct, 4),
-            'timestamp': int(row['datetime'].timestamp())
+            'date': str(date_obj),
+            'or_1m': {
+                'open': round(o_1m, 2),
+                'high': round(h_1m, 2),
+                'low': round(l_1m, 2),
+                'close': round(row_1m['close'], 2),
+                'range_pts': round(h_1m - l_1m, 2)
+            },
+            'close_1200': round(close_12_val, 2) if close_12_val else None,
+            'mfe_1200': {
+                'bull_pts': round(max(0, mfe_bull), 2),
+                'bear_pts': round(max(0, mfe_bear), 2),
+                'bull_pct': round(max(0, mfe_bull) / o_1m * 100, 4),
+                'bear_pct': round(max(0, mfe_bear) / o_1m * 100, 4)
+            },
+            'timestamp': int(row_1m['datetime'].timestamp())
         })
     
-    # Sort by date
     records.sort(key=lambda x: x['date'])
-    
     return records
 
 def precompute_opening_range(ticker: str):

@@ -19,6 +19,9 @@ from scripts.derived import precompute_hod_lod as hod_lod
 from scripts.derived import precompute_daily_hod_lod as daily_hod
 from scripts.derived import precompute_sessions as sessions
 from scripts.derived import precompute_vwap as vwap
+from scripts.derived import precompute_opening_range as opening_range
+from scripts.derived import precompute_ny_levels as ny_levels
+from scripts.derived import precompute_daily_classification as daily_class
 from scripts.data_processing import resample_parquet
 
 def ensure_time_column(file_path):
@@ -128,6 +131,15 @@ def regenerate_all(ticker="ES1"):
     
     print(f"  - VWAP ({best_tf})...")
     vwap.precompute_vwap(ticker, best_tf)
+
+    print("  - Opening Range Statistics (Expanded)...")
+    opening_range.precompute_opening_range(ticker)
+
+    print("  - NY Levels Distributions (MFE/Time)...")
+    ny_levels.precompute_ny_levels(ticker)
+    
+    print("  - Daily Action Classifications (R1, R2, DWP, DNP)...")
+    daily_class.run_precompute(ticker)
     
     # 3. CHUNK FOR WEB
     print("\n>> Step 3: Generating Web JSON Chunks (Global)...")
