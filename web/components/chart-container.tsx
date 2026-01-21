@@ -69,6 +69,7 @@ interface ChartContainerProps {
     initialReplayTime?: number // Timestamp to restore replay position after remount
     onTimeframeChange?: (tf: string) => void // New Prop for shortcuts
     mode?: 'historical' | 'live'
+    livePrice?: number // Override for 200ms updates
 
     // Trading Props
     position?: {
@@ -117,6 +118,7 @@ export interface ChartContainerRef {
     getTotalBars: () => number;
     // Capture
     takeScreenshot: () => HTMLCanvasElement | null;
+    updateLivePrice: (price: number) => void;
 }
 
 
@@ -128,6 +130,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     selection, onSelectionChange, onDeleteSelection, onReplayStateChange, onDataLoad,
     onPriceChange, position, pendingOrders, onModifyOrder, onModifyPosition, initialReplayTime,
     vwapSettings, emSettings, indicatorParams, onIndicatorParamsChange, theme, onTimeframeChange, trades, mode, // Destructure mode
+    livePrice, // Destructure
     onOpenEMSettings
 }, ref) => {
 
@@ -341,12 +344,10 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
 
             // Use barsInLogicalRange to check how many bars are to the left of visible area
             const barsInfo = series.barsInLogicalRange(logicalRange)
-            // console.log('[ChartContainer] Visible Range changed:', logicalRange, 'BarsInfo:', barsInfo, 'HasMore:', hasMoreData)
 
             // If less than 50 bars to the left and we have more data to load
             if (barsInfo && barsInfo.barsBefore !== null && barsInfo.barsBefore < 50) {
                 if (hasMoreData && !isLoadingMore) {
-                    //console.log('[LOAD] Triggering loadMoreData, barsBefore:', barsInfo.barsBefore)
                     lastLoadTimeRef.current = now
                     loadMoreData()
                 }
@@ -1329,8 +1330,21 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         takeScreenshot: () => {
             if (!chart) return null;
             return chart.takeScreenshot();
+        },
+        updateLivePrice: (price: number) => {
+            if (!series || !data || data.length === 0) return;
+            const lastBar = data[data.length - 1];
+            if (!lastBar) return;
+
+            // Imperative update to last candle
+            const updatedBar = { ...lastBar };
+            updatedBar.close = price;
+            updatedBar.high = Math.max(updatedBar.high, price);
+            updatedBar.low = Math.min(updatedBar.low, price);
+
+            series.update(updatedBar);
         }
-    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart, fullDataRange, jumpToTime])
+    }), [scrollByBars, scrollToStart, scrollToEnd, scrollToTime, getDataRange, replayMode, replayIndex, fullData, chart, fullDataRange, jumpToTime, series, data])
 
 
     // -------------------------------------------------------------------------

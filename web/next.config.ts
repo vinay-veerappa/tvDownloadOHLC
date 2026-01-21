@@ -7,6 +7,15 @@ const withBundleAnalyzer = require('@next/bundle-analyzer')({
 const nextConfig: NextConfig = {
   // Enable gzip compression for responses
   compress: true,
+  webpack: (config, { dev }) => {
+    if (dev) {
+      config.watchOptions = {
+        ignored: ['**/data/**', '**/node_modules/**'],
+        poll: false, // Use native filesystem events
+      }
+    }
+    return config
+  },
 };
 
 export default withBundleAnalyzer(nextConfig);

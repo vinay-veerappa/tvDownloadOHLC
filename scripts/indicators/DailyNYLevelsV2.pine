@@ -2,7 +2,7 @@
 // © antigravity
 
 //@version=6
-indicator("Daily NY Levels V2", overlay=true, max_bars_back=5000, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+indicator("Daily NY Levels VxV", overlay=true, max_bars_back=5000, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
 
 // ==========================================
 // --- INPUTS ---
@@ -47,6 +47,50 @@ timeBullColor    = input.color(color.new(color.green, 50), "Time Bullish Color",
 timeBearColor    = input.color(color.new(color.red, 50), "Time Bearish Color", group=grp_time)
 timeLabelSize    = input.string("tiny", "Label Size", options=["auto", "tiny", "small", "normal", "large", "huge"], group=grp_time)
 
+// --- 15-Minute Level Inputs ---
+grp_15m = "15-Min Levels"
+show15mLevels    = input.bool(true, "Show 15m Levels", group=grp_15m)
+color15mBorder   = input.color(color.new(color.orange, 50), "15m Line Color", group=grp_15m)
+calc15mMode      = input.string("Average", "Calculation Mode", options=["Average", "Median", "Percentile"], group=grp_15m)
+calcPercentile   = input.float(50.0, "Percentile (for Mode)", minval=0.0, maxval=100.0, step=5.0, group=grp_15m)
+calcSource       = input.string("Active Mode", "Level Source", options=["Active Mode", "Combined"], group=grp_15m, tooltip="Use 'Combined' to calculate the line level from all data (e.g. Combined Median) and see how often Bull/Bear days hit it.")
+calcRef          = input.string("9:31 Close", "Reference Base", options=["9:31 Close", "Opening Range"], group=grp_15m)
+displayStatsMode = input.string("Combined", "Display Stats", options=["Combined", "Bullish Days", "Bearish Days"], group=grp_15m)
+show15mTooltips  = input.bool(true, "Show Tooltips", group=grp_15m)
+
+// --- Types ---
+type BucketHistory
+    float[] bull_highs
+    float[] bull_lows
+    float[] bear_highs
+    float[] bear_lows
+
+// Helper: Get Bull/Bear/Combined stats
+f_get_15m_stats(BucketHistory bh, string mode) =>
+    float[] h = array.new_float(0)
+    float[] l = array.new_float(0)
+    if not na(bh)
+        if mode == "Combined"
+            h := array.concat(array.copy(bh.bull_highs), bh.bear_highs)
+            l := array.concat(array.copy(bh.bull_lows), bh.bear_lows)
+        else if mode == "Bullish Days"
+            h := bh.bull_highs
+            l := bh.bull_lows
+        else // Bearish Days
+            h := bh.bear_highs
+            l := bh.bear_lows
+    [h, l]
+
+// Helper: Calculate hits >= level
+f_calc_stats(float[] arr, float level) =>
+    int total = array.size(arr)
+    int hits = 0
+    if total > 0
+        for i = 0 to total - 1
+            if array.get(arr, i) >= level
+                hits += 1
+    [total, hits]
+
 // ==========================================
 // --- CONSTANTS & LOGIC ---
 // ==========================================
@@ -72,7 +116,18 @@ if is_new_day
     or_low := na
     or_open := na
 
-// Capture 09:30-09:31 OR (1m)
+// Capture 09:30-09:31 OR (1m) - for chart's native timeframe
+// --- Daily tracking variables (Declared early for reset logic) ---
+var float daily_max_bull_mfe = 0.0
+var float daily_max_bear_mfe = 0.0
+var int daily_bull_peak_time = 0
+var int daily_bear_peak_time = 0
+var bool is_committed_today = false
+
+// --- Daily pivot tracking (for price histogram) ---
+var float[] daily_pivot_bulls = array.new_float(0)
+var float[] daily_pivot_bears = array.new_float(0)
+
 is_0930 = hour(time, "America/New_York") == 9 and minute(time, "America/New_York") == 30
 
 if is_0930
@@ -80,37 +135,62 @@ if is_0930
     or_low := low
     or_open := open
 
-// Draw 09:30 Box
-var box or_box = na
-if is_0930
-    or_box := box.new(bar_index, or_high, bar_index + 1, or_low, border_color=boxColor0930, bgcolor=color.new(boxColor0930, 80))
-else if not na(or_box) and not na(is_before_cutoff)
-    box.set_right(or_box, bar_index)
-
-// MTF Opening Range (Fetch 1m OR for consistency)
+// MTF Opening Range (Fetch 1m OR for consistency across all timeframes)
 [m1_open, m1_high, m1_low, m1_time] = request.security(syminfo.tickerid, "1", [open, high, low, time], lookahead=barmerge.lookahead_on)
 is_m1_0930 = hour(m1_time, "America/New_York") == 9 and minute(m1_time, "America/New_York") == 30
+
+// Fetch 1-min intrabar data for MFE tracking (works on all timeframes)
+// Returns arrays of 1-min bars within each chart bar
+[ltf_high_arr, ltf_low_arr, ltf_time_arr] = request.security_lower_tf(syminfo.tickerid, "1", [high, low, time])
 
 var float active_or_high = na
 var float active_or_low = na
 var float active_or_open = na
+var bool or_set_today = false
 
-// Reset active_or on new day FIRST, before checking for new OR
+// Reset on new day
 if is_new_day
     active_or_high := na
     active_or_low := na
     active_or_open := na
+    or_set_today := false
+    
+    // Reset Daily MFE & Commit Flags (FIX for Accumulation Bug)
+    daily_max_bull_mfe := 0.0
+    daily_max_bear_mfe := 0.0
+    daily_bull_peak_time := 0
+    daily_bear_peak_time := 0
+    is_committed_today := false
+    array.clear(daily_pivot_bulls)
+    array.clear(daily_pivot_bears)
 
-// Update active_or when we get valid 1m data OR when we're on the 09:30 bar
-if is_m1_0930 and not na(m1_high)
+// Set active_or from MTF 1m data (works on all timeframes)
+var int or_bar_index = na  // Store the bar_index of 09:30 for histogram anchoring
+
+if is_m1_0930 and not na(m1_high) and not or_set_today
     active_or_high := m1_high
     active_or_low  := m1_low
     active_or_open := m1_open
-else if is_0930 and na(active_or_high)
+    or_set_today := true
+    or_bar_index := bar_index  // Store 09:30 bar position
+else if is_0930 and not or_set_today
     // Fallback to chart's native OR if MTF data not available
     active_or_high := or_high
     active_or_low  := or_low
     active_or_open := or_open
+    or_set_today := true
+    or_bar_index := bar_index  // Store 09:30 bar position
+
+// Draw 09:30 Box using MTF data (works on all timeframes)
+var box or_box = na
+// Session start: first bar where we have active_or set and we're in session
+bool is_session_start = or_set_today and not na(active_or_high) and (is_0930 or (is_m1_0930 and ta.change(or_set_today ? 1 : 0) != 0))
+
+if is_session_start or (not na(active_or_high) and na(or_box) and not na(is_before_cutoff))
+    or_box := box.new(bar_index, active_or_high, bar_index + 1, active_or_low, border_color=boxColor0930, bgcolor=color.new(boxColor0930, 80))
+else if not na(or_box) and not na(is_before_cutoff)
+    box.set_right(or_box, bar_index)
+
 
 // ==========================================
 // --- STATISTICAL ENGINE: MFE FROM 09:31 CLOSE ---
@@ -130,24 +210,50 @@ var int[] peak_time_bear_history = array.new_int(0)
 var float[] pivot_bull_history = array.new_float(0)
 var float[] pivot_bear_history = array.new_float(0)
 
-// --- Reference base: 09:31 candle close ---
+// --- Reference base: set when OR is established ---
 var float ref_close_0931 = na
 var float bull_ref = na  // Reference for bull extension
 var float bear_ref = na  // Reference for bear extension
+var bool ref_set_today = false
 
-// Capture 09:31 candle close (the bar AFTER 09:30)
+// Fetch 09:31 candle close via MTF (for 09:31 Close mode on higher timeframes)
+[m1_0931_close, m1_0931_time] = request.security(syminfo.tickerid, "1", [close, time], lookahead=barmerge.lookahead_on)
+is_m1_0931 = hour(m1_0931_time, "America/New_York") == 9 and minute(m1_0931_time, "America/New_York") == 31
+
+// Native 09:31 detection (only fires on 1-min chart)
 is_0931 = hour(time, "America/New_York") == 9 and minute(time, "America/New_York") == 31
 
-if is_0931
-    // Set reference based on refBaseMode
+// Reset reference on new day
+if is_new_day
+    ref_close_0931 := na
+    bull_ref := na
+    bear_ref := na
+    ref_set_today := false
+
+// Set reference when OR is established and we haven't set it yet today
+// This fires on the first bar >= 09:30 on any timeframe
+var bool just_set_ref = false
+just_set_ref := false  // Reset each bar
+
+if or_set_today and not ref_set_today and not na(active_or_high)
     if refBaseMode == "09:31 Close"
-        ref_close_0931 := close
-        bull_ref := close * 1.0001  // +0.01%
-        bear_ref := close * 0.9999  // -0.01%
+        // Use MTF 09:31 close if available, otherwise use current close
+        if is_m1_0931 and not na(m1_0931_close)
+            ref_close_0931 := m1_0931_close
+        else if is_0931
+            ref_close_0931 := close
+        else
+            // On higher TF, use OR midpoint as fallback
+            ref_close_0931 := (active_or_high + active_or_low) / 2
+        bull_ref := ref_close_0931 * 1.0001  // +0.01%
+        bear_ref := ref_close_0931 * 0.9999  // -0.01%
     else  // "OR High/Low"
         ref_close_0931 := (active_or_high + active_or_low) / 2  // Use OR midpoint for calculations
         bull_ref := active_or_high  // Use OR High as bull reference
         bear_ref := active_or_low   // Use OR Low as bear reference
+    
+    ref_set_today := true
+    just_set_ref := true  // Flag for drawing histogram on this bar
     
     if showDebugLabels
         string mode_str = refBaseMode == "09:31 Close" ? "09:31 Close" : "OR H/L"
@@ -155,70 +261,320 @@ if is_0931
 
 
 // --- Daily tracking variables ---
-var float daily_max_bull_mfe = 0.0
-var float daily_max_bear_mfe = 0.0
-var int daily_bull_peak_time = 0
-var int daily_bear_peak_time = 0
-var bool is_committed_today = false
+// MOVED TO TOP (Fix for initialization order)
+// var float daily_max_bull_mfe = 0.0
+// var float daily_max_bear_mfe = 0.0
+// var int daily_bull_peak_time = 0
+// var int daily_bear_peak_time = 0
+// var bool is_committed_today = false
 
 // --- Daily pivot tracking (for price histogram) ---
-var float[] daily_pivot_bulls = array.new_float(0)
-var float[] daily_pivot_bears = array.new_float(0)
+// MOVED TO TOP
+// var float[] daily_pivot_bulls = array.new_float(0)
+// var float[] daily_pivot_bears = array.new_float(0)
+
+// --- 15-Minute Bucket Tracking ---
+var float curr_15m_high = na
+var float curr_15m_low = na
+var int curr_15m_start_time = na
+var int last_bucket_id = -1
+
+// --- Historical 15-Minute Stats (Expanding Window) ---
+// Max 20 buckets (5 hours * 4) covers enough
+// --- Historical 15-Minute Stats (Expanding Window) ---
+// Max 20 buckets. Using UDT to store full history for Median calc.
+var BucketHistory[] bucket_stats = array.new<BucketHistory>(20)
+
+// Initialize bucket stats on first run
+if barstate.isfirst
+    for i = 0 to 19
+        array.set(bucket_stats, i, BucketHistory.new(array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0)))
+
+// Buffer arrays for today's MFE values
+var float[] today_15m_highs = array.new_float(20, na)
+var float[] today_15m_lows = array.new_float(20, na)
+
 
 // --- Helper: Calculate minutes since 09:30 ---
 f_mins_since_or() =>
     (hour(time, "America/New_York") * 60 + minute(time, "America/New_York")) - (9 * 60 + 30)
 
-// --- Reset at 09:30 (start of new session) ---
+// --- Reset DAILY tracking at 09:30 (start of new session) ---
+// Note: ref_close_0931/bull_ref/bear_ref are reset by is_new_day and ref_set_today logic
 if is_0930
     daily_max_bull_mfe := 0.0
     daily_max_bear_mfe := 0.0
     daily_bull_peak_time := 0
     daily_bear_peak_time := 0
     is_committed_today := false
-    ref_close_0931 := na
-    bull_ref := na
-    bear_ref := na
-    // Clear daily pivot arrays
+    // Reset 15m tracking
+    curr_15m_high := na
+    curr_15m_low := na
+    curr_15m_start_time := na
+    curr_15m_start_time := na
+    last_bucket_id := -1
+    // Reset daily buffers
+    array.fill(today_15m_highs, na)
+    array.fill(today_15m_lows, na)
+    // Clear daily pivot arrays (NOT history arrays)
     array.clear(daily_pivot_bulls)
     array.clear(daily_pivot_bears)
 
-// --- Track MFE from 09:31 Close ±0.01% ---
-// Run after 09:31 ref is set, before cutoff
-if not na(bull_ref) and not na(is_before_cutoff) and not is_0930 and not is_0931
-    // Bull MFE: max extension ABOVE bull_ref (Close + 0.01%)
-    if high > bull_ref
-        float ext_above = (high - bull_ref) / ref_close_0931 * 100
-        if ext_above > daily_max_bull_mfe
-            daily_max_bull_mfe := ext_above
-            daily_bull_peak_time := f_mins_since_or()
-            if showDebugLabels
-                label.new(bar_index, high, "▲" + str.tostring(ext_above, "#.##") + "%", color=color.new(color.green, 30), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+// --- Track MFE using 1-min intrabar data (consistent across all timeframes) ---
+// Process each 1-min bar within the current chart bar
+// On 1-min charts, ltf arrays will be empty - fallback to native OHLC
+if not na(bull_ref) and not na(ref_close_0931)
+    int num_ltf_bars = array.size(ltf_high_arr)
     
-    // Bear MFE: max extension BELOW bear_ref (Close - 0.01%)
-    if low < bear_ref
-        float ext_below = (bear_ref - low) / ref_close_0931 * 100
-        if ext_below > daily_max_bear_mfe
-            daily_max_bear_mfe := ext_below
-            daily_bear_peak_time := f_mins_since_or()
-            if showDebugLabels
-                label.new(bar_index, low, "▼" + str.tostring(ext_below, "#.##") + "%", color=color.new(color.red, 30), textcolor=color.white, style=label.style_label_up, size=size.tiny)
-    
-    // --- Pivot Detection for Price Histogram ---
-    // Pivot high: bar high > surrounding ±2 bars (detected on [2] for confirmation)
-    bool is_pivot_high = bar_index >= 4 and high[2] > high[1] and high[2] > high[3] and high[2] > high[4] and high[2] > nz(high[0], high[2])
-    // Pivot low: bar low < surrounding ±2 bars
-    bool is_pivot_low = bar_index >= 4 and low[2] < low[1] and low[2] < low[3] and low[2] < low[4] and low[2] < nz(low[0], low[2])
-    
-    // Track confirmed pivot highs above bull_ref
-    if is_pivot_high and high[2] > bull_ref
-        float pivot_ext = (high[2] - bull_ref) / ref_close_0931 * 100
-        array.push(daily_pivot_bulls, pivot_ext)
-    
-    // Track confirmed pivot lows below bear_ref
-    if is_pivot_low and low[2] < bear_ref
-        float pivot_ext = (bear_ref - low[2]) / ref_close_0931 * 100
-        array.push(daily_pivot_bears, pivot_ext)
+    // If on 1-min chart (no lower TF data), process native bar
+    if num_ltf_bars == 0
+        // Use native bar data (this is a 1-min chart)
+        int bar_hour = hour(time, "America/New_York")
+        int bar_min = minute(time, "America/New_York")
+        int bar_hhmm = bar_hour * 100 + bar_min
+        
+        bool is_bar_0930 = bar_hour == 9 and bar_min == 30
+        bool is_bar_after_cutoff = bar_hhmm >= cutoffTime
+        bool is_bar_before_session = bar_hhmm < 931
+        
+        if not is_bar_0930 and not is_bar_after_cutoff and not is_bar_before_session
+            // Bull MFE
+            if high > bull_ref
+                float ext_above = (high - bull_ref) / ref_close_0931 * 100
+                if ext_above > daily_max_bull_mfe
+                    daily_max_bull_mfe := ext_above
+                    daily_bull_peak_time := (bar_hour * 60 + bar_min) - (9 * 60 + 30)
+            
+            // Bear MFE
+            if low < bear_ref
+                float ext_below = (bear_ref - low) / ref_close_0931 * 100
+                if ext_below > daily_max_bear_mfe
+                    daily_max_bear_mfe := ext_below
+                    daily_bear_peak_time := (bar_hour * 60 + bar_min) - (9 * 60 + 30)
+            
+            // Pivot tracking
+            if high > bull_ref
+                array.push(daily_pivot_bulls, (high - bull_ref) / ref_close_0931 * 100)
+            if low < bear_ref
+                array.push(daily_pivot_bears, (bear_ref - low) / ref_close_0931 * 100)
+                
+            // --- 15-Minute Bucket Logic (Native) ---
+            int mins_From_930 = (bar_hour * 60 + bar_min) - (9 * 60 + 30)
+            if mins_From_930 >= 0
+                int bucket_id = math.floor(mins_From_930 / 15)
+                
+                if bucket_id != last_bucket_id
+                    // Close previous bucket
+                    if last_bucket_id != -1 and not na(curr_15m_high) and show15mLevels
+                        // 1. Get History (if any)
+                        BucketHistory bh = last_bucket_id < 20 ? array.get(bucket_stats, last_bucket_id) : na
+                        [h_arr, l_arr] = f_get_15m_stats(bh, displayStatsMode)
+                        
+                        // Fix for Tuple Ternary Error (Combined Stats)
+                        float[] h_comb = na
+                        float[] l_comb = na
+                        if displayStatsMode == "Combined"
+                            h_comb := h_arr
+                            l_comb := l_arr
+                        else
+                            [hc, lc] = f_get_15m_stats(bh, "Combined")
+                            h_comb := hc
+                            l_comb := lc
+                        
+                        // Get Calculation Source Data (Active or Combined)
+                        float[] h_calc = calcSource == "Combined" ? h_comb : h_arr
+                        float[] l_calc = calcSource == "Combined" ? l_comb : l_arr
+
+                        int hist_cnt = array.size(h_arr)
+                        
+                        // Define References based on Input
+                        float ref_h = calcRef == "Opening Range" ? active_or_high : ref_close_0931
+                        float ref_l = calcRef == "Opening Range" ? active_or_low : ref_close_0931
+
+                        // 2. Draw Historical Level (if data exists)
+                        if hist_cnt > 0 and not na(ref_h) and not na(ref_l)
+                            // Calculate Level from Source Data (h_calc)
+                            float avg_h_pct = calc15mMode == "Average" ? array.avg(h_calc) : calc15mMode == "Median" ? array.median(h_calc) : array.percentile_linear_interpolation(h_calc, calcPercentile)
+                            float avg_l_pct = calc15mMode == "Average" ? array.avg(l_calc) : calc15mMode == "Median" ? array.median(l_calc) : array.percentile_linear_interpolation(l_calc, calcPercentile)
+                            
+                            // Calculate Hit Stats (Active Mode Data vs Level)
+                            [tot_h, hits_h] = f_calc_stats(h_arr, avg_h_pct)
+                            [tot_l, hits_l] = f_calc_stats(l_arr, avg_l_pct)
+                            float pct_h = tot_h > 0 ? hits_h * 100.0 / tot_h : 0.0
+                            float pct_l = tot_l > 0 ? hits_l * 100.0 / tot_l : 0.0
+                            
+                            // Convert PCT to Price for Plotting
+                            float plot_h = ref_h * (1 + avg_h_pct)
+                            float plot_l = ref_l * (1 - avg_l_pct)
+                            
+                            // Filter Drawing based on Mode
+                            bool draw_h = displayStatsMode == "Combined" or displayStatsMode == "Bullish Days"
+                            bool draw_l = displayStatsMode == "Combined" or displayStatsMode == "Bearish Days"
+                            
+                            if draw_h
+                                line.new(curr_15m_start_time, plot_h, time, plot_h, xloc=xloc.bar_time, color=color15mBorder)
+                            if draw_l
+                                line.new(curr_15m_start_time, plot_l, time, plot_l, xloc=xloc.bar_time, color=color15mBorder)
+                            
+                            if show15mTooltips
+                                string tt = str.format("15m {0} ({1})\nHigh: {2} sess, {3} hits ({4,number,#.##}%)\nLow: {5} sess, {6} hits ({7,number,#.##}%)", calc15mMode, displayStatsMode, tot_h, hits_h, pct_h, tot_l, hits_l, pct_l)
+                                
+                                // Append Combined Stats if separate
+                                // Calculate Hit Stats (Combined Data vs Level)
+                                if displayStatsMode != "Combined"
+                                    [tot_h_c, hits_h_c] = f_calc_stats(h_comb, avg_h_pct)
+                                    [tot_l_c, hits_l_c] = f_calc_stats(l_comb, avg_l_pct)
+                                    float pct_h_c = tot_h_c > 0 ? hits_h_c * 100.0 / tot_h_c : 0.0
+                                    float pct_l_c = tot_l_c > 0 ? hits_l_c * 100.0 / tot_l_c : 0.0
+                                    tt := tt + str.format("\n\nCombined:\nHigh: {0} sess, {1} hits ({2,number,#.##}%)\nLow: {3} sess, {4} hits ({5,number,#.##}%)", tot_h_c, hits_h_c, pct_h_c, tot_l_c, hits_l_c, pct_l_c)
+                                
+                                if draw_h
+                                    label.new(time, plot_h, "●", xloc=xloc.bar_time, style=label.style_none, textcolor=color15mBorder, size=size.tiny, tooltip=tt)
+                                if draw_l
+                                    label.new(time, plot_l, "●", xloc=xloc.bar_time, style=label.style_none, textcolor=color15mBorder, size=size.tiny, tooltip=tt)
+                        
+                        // 3. Update Stats (Buffer for End of Day) -> Store as PERCENTAGE
+                        if last_bucket_id < 20 and not na(ref_h) and not na(ref_l)
+                            float curr_h_pct = (curr_15m_high - ref_h) / ref_h
+                            float curr_l_pct = (ref_l - curr_15m_low) / ref_l
+                            array.set(today_15m_highs, last_bucket_id, curr_h_pct)
+                            array.set(today_15m_lows, last_bucket_id, curr_l_pct)
+
+                    // Start new bucket
+                    curr_15m_high := high
+                    curr_15m_low := low
+                    curr_15m_start_time := time
+                    last_bucket_id := bucket_id
+                else
+                    // Update current bucket
+                    curr_15m_high := math.max(curr_15m_high, high)
+                    curr_15m_low := math.min(curr_15m_low, low)
+    else
+        // Use lower timeframe data (this is a higher TF chart like 5m, 15m, etc.)
+        for i = 0 to num_ltf_bars - 1
+            float ltf_high = array.get(ltf_high_arr, i)
+            float ltf_low = array.get(ltf_low_arr, i)
+            int ltf_time = array.get(ltf_time_arr, i)
+            
+            int ltf_hour = hour(ltf_time, "America/New_York")
+            int ltf_min = minute(ltf_time, "America/New_York")
+            int ltf_hhmm = ltf_hour * 100 + ltf_min
+            
+            bool is_ltf_0930 = ltf_hour == 9 and ltf_min == 30
+            bool is_after_cutoff = ltf_hhmm >= cutoffTime
+            bool is_before_session = ltf_hhmm < 931
+            
+            if not is_ltf_0930 and not is_after_cutoff and not is_before_session
+                // Bull MFE
+                if ltf_high > bull_ref
+                    float ext_above = (ltf_high - bull_ref) / ref_close_0931 * 100
+                    if ext_above > daily_max_bull_mfe
+                        daily_max_bull_mfe := ext_above
+                        daily_bull_peak_time := (ltf_hour * 60 + ltf_min) - (9 * 60 + 30)
+                
+                // Bear MFE
+                if ltf_low < bear_ref
+                    float ext_below = (bear_ref - ltf_low) / ref_close_0931 * 100
+                    if ext_below > daily_max_bear_mfe
+                        daily_max_bear_mfe := ext_below
+                        daily_bear_peak_time := (ltf_hour * 60 + ltf_min) - (9 * 60 + 30)
+                
+                // Pivot tracking
+                if ltf_high > bull_ref
+                    array.push(daily_pivot_bulls, (ltf_high - bull_ref) / ref_close_0931 * 100)
+                if ltf_low < bear_ref
+                    array.push(daily_pivot_bears, (bear_ref - ltf_low) / ref_close_0931 * 100)
+                
+                // --- 15-Minute Bucket Logic (MTF) ---
+                int mins_From_930 = (ltf_hour * 60 + ltf_min) - (9 * 60 + 30)
+                if mins_From_930 >= 0
+                    int bucket_id = math.floor(mins_From_930 / 15)
+                    
+                    if bucket_id != last_bucket_id
+                        if last_bucket_id != -1 and not na(curr_15m_high) and show15mLevels
+                            // 1. Get History (if any)
+                            BucketHistory bh = last_bucket_id < 20 ? array.get(bucket_stats, last_bucket_id) : na
+                            [h_arr, l_arr] = f_get_15m_stats(bh, displayStatsMode)
+                            
+                            // Fix for Tuple Ternary Error (Combined Stats)
+                            float[] h_comb = na
+                            float[] l_comb = na
+                            if displayStatsMode == "Combined"
+                                h_comb := h_arr
+                                l_comb := l_arr
+                            else
+                                [hc, lc] = f_get_15m_stats(bh, "Combined")
+                                h_comb := hc
+                                l_comb := lc
+                            
+                            // Get Calculation Source Data (Active or Combined)
+                            float[] h_calc = calcSource == "Combined" ? h_comb : h_arr
+                            float[] l_calc = calcSource == "Combined" ? l_comb : l_arr
+
+                            int hist_cnt = array.size(h_arr)
+                            
+                            // Define References based on Input
+                            float ref_h = calcRef == "Opening Range" ? active_or_high : ref_close_0931
+                            float ref_l = calcRef == "Opening Range" ? active_or_low : ref_close_0931
+
+                            // 2. Draw Historical Level (if data exists)
+                            if hist_cnt > 0 and not na(ref_h) and not na(ref_l)
+                                // Calculate Level from Source Data (h_calc)
+                                float avg_h_pct = calc15mMode == "Average" ? array.avg(h_calc) : calc15mMode == "Median" ? array.median(h_calc) : array.percentile_linear_interpolation(h_calc, calcPercentile)
+                                float avg_l_pct = calc15mMode == "Average" ? array.avg(l_calc) : calc15mMode == "Median" ? array.median(l_calc) : array.percentile_linear_interpolation(l_calc, calcPercentile)
+                                
+                                // Calculate Hit Stats (Active Mode)
+                                [tot_h, hits_h] = f_calc_stats(h_arr, avg_h_pct)
+                                [tot_l, hits_l] = f_calc_stats(l_arr, avg_l_pct)
+                                float pct_h = tot_h > 0 ? hits_h * 100.0 / tot_h : 0.0
+                                float pct_l = tot_l > 0 ? hits_l * 100.0 / tot_l : 0.0
+                                
+                                float plot_h = ref_h * (1 + avg_h_pct)
+                                float plot_l = ref_l * (1 - avg_l_pct)
+                                
+                                // Filter Drawing based on Mode
+                                bool draw_h = displayStatsMode == "Combined" or displayStatsMode == "Bullish Days"
+                                bool draw_l = displayStatsMode == "Combined" or displayStatsMode == "Bearish Days"
+                                
+                                if draw_h
+                                    line.new(curr_15m_start_time, plot_h, ltf_time, plot_h, xloc=xloc.bar_time, color=color15mBorder)
+                                if draw_l
+                                    line.new(curr_15m_start_time, plot_l, ltf_time, plot_l, xloc=xloc.bar_time, color=color15mBorder)
+                                
+                                if show15mTooltips
+                                    string tt = str.format("15m {0} ({1})\nHigh: {2} sess, {3} hits ({4,number,#.##}%)\nLow: {5} sess, {6} hits ({7,number,#.##}%)", calc15mMode, displayStatsMode, tot_h, hits_h, pct_h, tot_l, hits_l, pct_l)
+                                    
+                                    // Append Combined Stats if separate
+                                    if displayStatsMode != "Combined"
+                                        [tot_h_c, hits_h_c] = f_calc_stats(h_comb, avg_h_pct)
+                                        [tot_l_c, hits_l_c] = f_calc_stats(l_comb, avg_l_pct)
+                                        float pct_h_c = tot_h_c > 0 ? hits_h_c * 100.0 / tot_h_c : 0.0
+                                        float pct_l_c = tot_l_c > 0 ? hits_l_c * 100.0 / tot_l_c : 0.0
+                                        tt := tt + str.format("\n\nCombined:\nHigh: {0} sess, {1} hits ({2,number,#.##}%)\nLow: {3} sess, {4} hits ({5,number,#.##}%)", tot_h_c, hits_h_c, pct_h_c, tot_l_c, hits_l_c, pct_l_c)
+                                        
+                                    if draw_h
+                                        label.new(ltf_time, plot_h, "●", xloc=xloc.bar_time, style=label.style_none, textcolor=color15mBorder, size=size.tiny, tooltip=tt)
+                                    if draw_l
+                                        label.new(ltf_time, plot_l, "●", xloc=xloc.bar_time, style=label.style_none, textcolor=color15mBorder, size=size.tiny, tooltip=tt)
+                            
+                            // 3. Update Stats (Buffer for End of Day) -> Store as PERCENTAGE
+                            if last_bucket_id < 20 and not na(ref_h) and not na(ref_l)
+                                float curr_h_pct = (curr_15m_high - ref_h) / ref_h
+                                float curr_l_pct = (ref_l - curr_15m_low) / ref_l
+                                array.set(today_15m_highs, last_bucket_id, curr_h_pct)
+                                array.set(today_15m_lows, last_bucket_id, curr_l_pct)
+                        
+                        // Start new bucket
+                        curr_15m_high := ltf_high
+                        curr_15m_low := ltf_low
+                        curr_15m_start_time := ltf_time
+                        last_bucket_id := bucket_id
+                    else
+                        // Update current bucket
+                        curr_15m_high := math.max(curr_15m_high, ltf_high)
+                        curr_15m_low := math.min(curr_15m_low, ltf_low)
+
 
 // --- Commit BOTH directions at cutoff time ---
 is_at_or_after_cutoff = (hour(time, "America/New_York") * 100 + minute(time, "America/New_York")) >= cutoffTime
@@ -243,25 +599,122 @@ if is_at_or_after_cutoff and not is_committed_today and not is_new_day and not n
     bool is_long_day = daily_max_bull_mfe > daily_max_bear_mfe
     
     if is_long_day
-        for i = 0 to array.size(daily_pivot_bulls) - 1
-            array.push(pivot_bull_history, array.get(daily_pivot_bulls, i))
+        if array.size(daily_pivot_bulls) > 0
+            for i = 0 to array.size(daily_pivot_bulls) - 1
+                array.push(pivot_bull_history, array.get(daily_pivot_bulls, i))
         if showDebugLabels
             label.new(bar_index, high + syminfo.mintick * 50, "LONG DAY: " + str.tostring(array.size(daily_pivot_bulls)) + " pivots", color=color.new(color.blue, 50), textcolor=color.white, style=label.style_label_down, size=size.tiny)
     else
-        for i = 0 to array.size(daily_pivot_bears) - 1
-            array.push(pivot_bear_history, array.get(daily_pivot_bears, i))
+        if array.size(daily_pivot_bears) > 0
+            for i = 0 to array.size(daily_pivot_bears) - 1
+                array.push(pivot_bear_history, array.get(daily_pivot_bears, i))
         if showDebugLabels
             label.new(bar_index, low - syminfo.mintick * 50, "SHORT DAY: " + str.tostring(array.size(daily_pivot_bears)) + " pivots", color=color.new(color.blue, 50), textcolor=color.white, style=label.style_label_up, size=size.tiny)
     
+    // --- Force Close Last 15m Bucket at Cutoff ---
+    if not na(curr_15m_high) and show15mLevels
+        // 1. Get History (if any)
+        BucketHistory bh = last_bucket_id < 20 ? array.get(bucket_stats, last_bucket_id) : na
+        [h_arr, l_arr] = f_get_15m_stats(bh, displayStatsMode)
+        
+        // Fix for Tuple Ternary Error (Combined Stats)
+        float[] h_comb = na
+        float[] l_comb = na
+        if displayStatsMode == "Combined"
+            h_comb := h_arr
+            l_comb := l_arr
+        else
+            [hc, lc] = f_get_15m_stats(bh, "Combined")
+            h_comb := hc
+            l_comb := lc
+        
+        // Get Calculation Source Data (Active or Combined)
+        float[] h_calc = calcSource == "Combined" ? h_comb : h_arr
+        float[] l_calc = calcSource == "Combined" ? l_comb : l_arr
+
+        int hist_cnt = array.size(h_arr)
+        
+        // Define References based on Input
+        float ref_h = calcRef == "Opening Range" ? active_or_high : ref_close_0931
+        float ref_l = calcRef == "Opening Range" ? active_or_low : ref_close_0931
+
+        // 2. Draw Historical Level (if data exists)
+        if hist_cnt > 0 and not na(ref_h) and not na(ref_l)
+            // Calculate Level from Source Data (h_calc)
+            float avg_h_pct = calc15mMode == "Average" ? array.avg(h_calc) : calc15mMode == "Median" ? array.median(h_calc) : array.percentile_linear_interpolation(h_calc, calcPercentile)
+            float avg_l_pct = calc15mMode == "Average" ? array.avg(l_calc) : calc15mMode == "Median" ? array.median(l_calc) : array.percentile_linear_interpolation(l_calc, calcPercentile)
+            
+            // Calculate Hit Stats (Active Mode)
+            [tot_h, hits_h] = f_calc_stats(h_arr, avg_h_pct)
+            [tot_l, hits_l] = f_calc_stats(l_arr, avg_l_pct)
+            float pct_h = tot_h > 0 ? hits_h * 100.0 / tot_h : 0.0
+            float pct_l = tot_l > 0 ? hits_l * 100.0 / tot_l : 0.0
+            
+            float plot_h = ref_h * (1 + avg_h_pct)
+            float plot_l = ref_l * (1 - avg_l_pct)
+            
+            // Filter Drawing based on Mode
+            bool draw_h = displayStatsMode == "Combined" or displayStatsMode == "Bullish Days"
+            bool draw_l = displayStatsMode == "Combined" or displayStatsMode == "Bearish Days"
+            
+            if draw_h
+                line.new(curr_15m_start_time, plot_h, time, plot_h, xloc=xloc.bar_time, color=color15mBorder)
+            if draw_l
+                line.new(curr_15m_start_time, plot_l, time, plot_l, xloc=xloc.bar_time, color=color15mBorder)
+            
+            if show15mTooltips
+                string tt = str.format("15m {0} ({1})\nHigh: {2} sess, {3} hits ({4,number,#.##}%)\nLow: {5} sess, {6} hits ({7,number,#.##}%)", calc15mMode, displayStatsMode, tot_h, hits_h, pct_h, tot_l, hits_l, pct_l)
+                
+                // Append Combined Stats if separate
+                if displayStatsMode != "Combined"
+                    [tot_h_c, hits_h_c] = f_calc_stats(h_comb, avg_h_pct)
+                    [tot_l_c, hits_l_c] = f_calc_stats(l_comb, avg_l_pct)
+                    float pct_h_c = tot_h_c > 0 ? hits_h_c * 100.0 / tot_h_c : 0.0
+                    float pct_l_c = tot_l_c > 0 ? hits_l_c * 100.0 / tot_l_c : 0.0
+                    tt := tt + str.format("\n\nCombined:\nHigh: {0} sess, {1} hits ({2,number,#.##}%)\nLow: {3} sess, {4} hits ({5,number,#.##}%)", tot_h_c, hits_h_c, pct_h_c, tot_l_c, hits_l_c, pct_l_c)
+                    
+                if draw_h
+                    label.new(time, plot_h, "●", xloc=xloc.bar_time, style=label.style_none, textcolor=color15mBorder, size=size.tiny, tooltip=tt)
+                if draw_l
+                    label.new(time, plot_l, "●", xloc=xloc.bar_time, style=label.style_none, textcolor=color15mBorder, size=size.tiny, tooltip=tt)
+        
+        // 3. Update Stats (Buffer for End of Day) -> Store as PERCENTAGE
+        if last_bucket_id < 20 and not na(ref_h) and not na(ref_l)
+            float curr_h_pct = (curr_15m_high - ref_h) / ref_h
+            float curr_l_pct = (ref_l - curr_15m_low) / ref_l
+            array.set(today_15m_highs, last_bucket_id, curr_h_pct)
+            array.set(today_15m_lows, last_bucket_id, curr_l_pct)
+    
+    // --- Commit 15m Buffers to Directional History ---
+    if is_long_day
+        for i = 0 to 19
+            if not na(array.get(today_15m_highs, i))
+                BucketHistory bh_c = array.get(bucket_stats, i)
+                array.push(bh_c.bull_highs, array.get(today_15m_highs, i))
+                array.push(bh_c.bull_lows, array.get(today_15m_lows, i))
+    else
+        for i = 0 to 19
+            if not na(array.get(today_15m_highs, i))
+                BucketHistory bh_c = array.get(bucket_stats, i)
+                array.push(bh_c.bear_highs, array.get(today_15m_highs, i))
+                array.push(bh_c.bear_lows, array.get(today_15m_lows, i))
+    
     is_committed_today := true
 
-// --- Debug: Dump MFE history on last bar ---
+// --- Debug: Dump MFE history and Bucket Stats on last bar ---
 if barstate.islast and showDebugLabels
     int total_bull = array.size(mfe_bull_history)
     int total_bear = array.size(mfe_bear_history)
     
     log.info("=== MFE HISTORY DUMP ===")
     log.info("Total Bull Days: {0}, Total Bear Days: {1}", total_bull, total_bear)
+    
+    // Debug Bucket 0 (09:30-09:45)
+    BucketHistory b0 = array.get(bucket_stats, 0)
+    if not na(b0)
+        float avg_bull_h = array.size(b0.bull_highs) > 0 ? array.avg(b0.bull_highs) : na
+        float avg_bear_l = array.size(b0.bear_lows) > 0 ? array.avg(b0.bear_lows) : na
+        label.new(bar_index, high, str.format("B0 Stats:\nBull High Avg: {0,number,#.####}\nBear Low Avg: {1,number,#.####}\nBull Count: {2}\nBear Count: {3}", avg_bull_h, avg_bear_l, array.size(b0.bull_highs), array.size(b0.bear_lows)), color=color.black, textcolor=color.white)
     
     // Dump bull MFE values
     if total_bull > 0
@@ -313,9 +766,10 @@ if is_new_day
     array.clear(mfe_avg_lines)
     array.clear(mfe_avg_labels)
 
-// Draw levels at 09:31 using historical data (after reference is established)
-if is_0931 and not na(ref_close_0931)
-    int anchor = bar_index
+// Draw levels when OR is established (works on all timeframes)
+// Since histogram uses HISTORICAL data only, draw on last bar for reliable display
+if barstate.islast and or_set_today and not na(bull_ref) and not na(or_bar_index)
+    int anchor = or_bar_index  // Anchor histogram to 09:30 bar position
     
     // --- 1. MFE PRICE DISTRIBUTION (PIVOT-BASED, FIXED BINS) ---
     // Uses pivot highs/lows filtered by day direction (MFE > MAE)
@@ -330,7 +784,8 @@ if is_0931 and not na(ref_close_0931)
         array.push(mfe_avg_labels, label.new(anchor, active_or_low - (syminfo.mintick * offsetBelowMFE / 2), "Pivots: " + str.tostring(total_pivot_bull) + " Bull / " + str.tostring(total_pivot_bear) + " Bear", textcolor=color.new(color.white, 30), style=label.style_label_up, size=mfe_data_size, color=color.new(color.black, 100)))
         
         // Create fixed bins from 0% to max MFE
-        float max_mfe = 1.5  // Cap at 1.5% for display
+        // Increased cap to 5.0% to capture large volatility days
+        float max_mfe = 5.0  
         int num_bins = int(max_mfe / binSize) + 1
         int[] bull_bin_counts = array.new_int(num_bins, 0)
         int[] bear_bin_counts = array.new_int(num_bins, 0)
@@ -364,27 +819,36 @@ if is_0931 and not na(ref_close_0931)
         float bear_pct_low = total_pivot_bear > 0 ? array.percentile_linear_interpolation(pivot_bear_history, startPercentile) : 0.0
         float bear_pct_high = total_pivot_bear > 0 ? array.percentile_linear_interpolation(pivot_bear_history, endPercentile) : 1.0
         
+        // DEBUG: Check Min Pivot
+        if showDebugLabels
+            if total_pivot_bear > 0
+                float min_bear = array.min(pivot_bear_history)
+                label.new(anchor, active_or_low, "MinBear: " + str.tostring(min_bear, "#.####") + "\nPctLow: " + str.tostring(bear_pct_low, "#.####"), color=color.black, textcolor=color.white, style=label.style_label_up)
+            if total_pivot_bull > 0
+                float min_bull = array.min(pivot_bull_history)
+                label.new(anchor, active_or_high, "MinBull: " + str.tostring(min_bull, "#.####") + "\nPctLow: " + str.tostring(bull_pct_low, "#.####"), color=color.black, textcolor=color.white, style=label.style_label_down)
+
         // Draw histogram bars with fixed bins (filtered by percentile range)
         // Use bull_ref as starting point for bull histogram, bear_ref for bear histogram
         for i = 0 to num_bins - 1
             float bin_low = i * binSize
             float bin_high = (i + 1) * binSize
             
-            // Bull bars (above bull_ref) - only draw if within percentile range
+            // Bull bars (above OR high) - only draw if within percentile range (OVERLAP check)
             int bull_count = array.get(bull_bin_counts, i)
-            if bull_count > 0 and bin_low >= bull_pct_low and bin_high <= bull_pct_high
-                float p_top = bull_ref + (ref_close_0931 * bin_high / 100)
-                float p_bot = bull_ref + (ref_close_0931 * bin_low / 100)
+            if bull_count > 0 and bin_high > bull_pct_low and bin_low < bull_pct_high
+                float p_top = active_or_high + (ref_close_0931 * bin_high / 100)
+                float p_bot = active_or_high + (ref_close_0931 * bin_low / 100)
                 float norm_width = bull_count / max_count
                 int w = int(norm_width * histWidthScale)
                 if w > 0
                     array.push(mfe_hist_boxes, box.new(anchor, p_top, anchor + w, p_bot, border_color=bullEdgeColor, bgcolor=bullCenterColor))
             
-            // Bear bars (below bear_ref) - only draw if within percentile range
+            // Bear bars (below OR low) - only draw if within percentile range (OVERLAP check)
             int bear_count = array.get(bear_bin_counts, i)
-            if bear_count > 0 and bin_low >= bear_pct_low and bin_high <= bear_pct_high
-                float p_top = bear_ref - (ref_close_0931 * bin_low / 100)
-                float p_bot = bear_ref - (ref_close_0931 * bin_high / 100)
+            if bear_count > 0 and bin_high > bear_pct_low and bin_low < bear_pct_high
+                float p_top = active_or_low - (ref_close_0931 * bin_low / 100)
+                float p_bot = active_or_low - (ref_close_0931 * bin_high / 100)
                 float norm_width = bear_count / max_count
                 int w = int(norm_width * histWidthScale)
                 if w > 0
@@ -462,9 +926,9 @@ if is_new_day
     array.clear(time_stat_lines)
     array.clear(time_stat_labels)
 
-// Draw time distribution at 09:30
-if is_0930 and showTimeDist
-    int t_anchor = bar_index
+// Draw time distribution when OR is established (works on all timeframes)
+if barstate.islast and or_set_today and showTimeDist and not na(or_bar_index)
+    int t_anchor = or_bar_index  // Anchor to 09:30 bar position
     // Use active_or_low if available, otherwise use current low
     float base_y = not na(active_or_low) ? active_or_low - (syminfo.mintick * offsetBelowMFE) : low - (syminfo.mintick * offsetBelowMFE)
     
@@ -529,11 +993,3 @@ if is_0930 and showTimeDist
             array.push(time_stat_lines, line.new(x_med_bear, base_y, x_med_bear, base_y - 40, color=timeMedLineColor, style=line.style_dashed))
             array.push(time_stat_labels, label.new(x_med_bear, base_y - 45, "Bear MED", color=color.new(color.black, 100), textcolor=timeMedLineColor, style=label.style_label_up, size=time_size))
 
-plot(or_high, "OR High", color.new(bullColor, 50), 2, plot.style_linebr)
-plot(or_low, "OR Low", color.new(bearColor, 50), 2, plot.style_linebr)
-
-// M1 Projections
-m1_bull = or_high + (or_open * 0.01 / 100)
-m1_bear = or_low - (or_open * 0.01 / 100)
-plot(not na(or_high) ? m1_bull : na, "M1 Bull Proj", bullColor, 2, plot.style_linebr)
-plot(not na(or_low) ? m1_bear : na, "M1 Bear Proj", bearColor, 2, plot.style_linebr)

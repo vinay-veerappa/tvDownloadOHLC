@@ -8,7 +8,10 @@ import { useSearchParams } from "next/navigation"
 
 function ChartPageContent() {
     const searchParams = useSearchParams()
-    const mode = (searchParams.get('mode') as 'historical' | 'live') || 'historical'
+    const rawMode = searchParams.get('mode')
+    console.log('[ChartPage] Raw searchParams mode:', rawMode)
+    const mode = (rawMode as 'historical' | 'live') || 'historical'
+    console.log('[ChartPage] Resolved mode:', mode)
     const [data, setData] = useState<{ tickers: string[]; timeframes: string[]; tickerMap: Record<string, string[]> } | null>(null)
     const [markers, setMarkers] = useState<any[]>([])
     const [trades, setTrades] = useState<any[]>([])

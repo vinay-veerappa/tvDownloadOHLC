@@ -17,7 +17,7 @@ interface UseChartDataProps {
     getVisibleTimeRange?: () => { start: number, end: number, center: number } | null
     initialReplayTime?: number
     mode?: 'historical' | 'live'
-    sessionType?: SessionType
+    sessionType: SessionType
 }
 
 // Cached formatter for performance
@@ -68,7 +68,6 @@ export function useChartData({
     mode = 'historical',
     sessionType = 'ETH'
 }: UseChartDataProps) {
-
     const timeframe = useMemo(() => normalizeResolution(rawTimeframe), [rawTimeframe])
     const currentReplayTimeRef = useRef<number | null>(null)
 
@@ -98,6 +97,7 @@ export function useChartData({
         return loading.fullData.filter(bar => isRTH(bar.time, isFuture));
     }, [loading.fullData, sessionType, ticker, timeframe]);
 
+    // Replay Logic
     const replay = useReplay({
         fullData: effectiveFullData,
         ticker,

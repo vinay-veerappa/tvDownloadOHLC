@@ -1,68 +1,89 @@
-import os
-import json
-import datetime
+import pandas as pd
 import glob
+import os
+from datetime import datetime
 
-DATA_ROOT = "web/public/data"
-OUTPUT_FILE = "DATA_INVENTORY.md"
-
-def get_human_date(ts):
-    if not ts: return "N/A"
-    return datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
-
-def main():
-    print(f"Scanning {DATA_ROOT}...")
+def generate_inventory():
+    data_dir = "data"
+    output_file = "DATA_INVENTORY.md"
     
+    files = glob.glob(f"{data_dir}/*.parquet")
     inventory = []
     
-    # scan for meta.json files
-    meta_files = glob.glob(os.path.join(DATA_ROOT, "*", "meta.json"))
+    print(f"Scanning {len(files)} parquet files...")
     
-    for meta_path in meta_files:
+    for f in files:
         try:
-            with open(meta_path, 'r') as f:
-                meta = json.load(f)
-                
-            folder_name = os.path.basename(os.path.dirname(meta_path))
+            # Optimize: Try reading only metadata if possible, but reading whole file is safer for dates
+            # For 1m data this might be slow, let's try reading head/tail if index is sorted
+            # But parquet doesn't guarantee sorted order unless written that way.
+            # We'll read the whole file for now but keep it simple.
+            # To speed up, we can read just 'date' or index columns.
             
-            # Extract ticker/timeframe from folder name or meta
-            # Folder format: TICKER_TIMEFRAME (usually)
+            df = pd.read_parquet(f, columns=[]) # Just read metadata/index first?
+            # Actually read_parquet with specific columns is faster.
+            # We need index (if datetime) or 'date'/'time' columns.
             
-            item = {
-                'ticker': meta.get('ticker', 'Unknown'),
-                'timeframe': meta.get('timeframe', 'Unknown'),
-                'start': get_human_date(meta.get('startTime')),
-                'end': get_human_date(meta.get('endTime')),
-                'bars': meta.get('totalBars', 0),
-                'folder': folder_name
-            }
-            inventory.append(item)
+            # Let's inspect columns first
+            df_cols = pd.read_parquet(f).columns
+            cols_to_read = []
+            if 'date' in df_cols: cols_to_read.append('date')
+            if 'time' in df_cols: cols_to_read.append('time')
+            
+            df = pd.read_parquet(f, columns=cols_to_read)
+            
+            # Count
+            count = len(df)
+            
+            # Dates
+            start_date = "N/A"
+            end_date = "N/A"
+            
+            if isinstance(df.index, pd.DatetimeIndex):
+                start_date = df.index.min().strftime('%Y-%m-%d')
+                end_date = df.index.max().strftime('%Y-%m-%d')
+            elif 'date' in df.columns:
+                # Convert to datetime if string
+                dates = pd.to_datetime(df['date'])
+                start_date = dates.min().strftime('%Y-%m-%d')
+                end_date = dates.max().strftime('%Y-%m-%d')
+            
+            # Parse filename for Ticker/Timeframe
+            # Format: Ticker_Timeframe.parquet (e.g. NQ1_1m.parquet)
+            basename = os.path.basename(f).replace('.parquet', '')
+            parts = basename.split('_')
+            ticker = parts[0]
+            tf = parts[1] if len(parts) > 1 else "Unknown"
+            
+            inventory.append({
+                'Ticker': ticker,
+                'Timeframe': tf,
+                'Start Date': start_date,
+                'End Date': end_date,
+                'Bars': count,
+                'Filename': os.path.basename(f)
+            })
+            print(f"Processed {os.path.basename(f)}")
+            
         except Exception as e:
-            print(f"Error reading {meta_path}: {e}")
+            print(f"Error processing {f}: {e}")
 
-    # Sort by Ticker, then Timeframe
-    inventory.sort(key=lambda x: (x['ticker'], x['timeframe']))
+    # Sort
+    df_inv = pd.DataFrame(inventory)
+    if not df_inv.empty:
+        df_inv = df_inv.sort_values(['Ticker', 'Timeframe'])
     
     # Generate Markdown
-    md_lines = []
-    md_lines.append("# Data Inventory")
-    md_lines.append(f"Generated on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    md_lines.append("")
-    md_lines.append("| Ticker | Timeframe | Start Date | End Date | Bars | Source Folder |")
-    md_lines.append("|---|---|---|---|---|---|")
-    
-    for item in inventory:
-        md_lines.append(f"| {item['ticker']} | {item['timeframe']} | {item['start']} | {item['end']} | {item['bars']} | `{item['folder']}` |")
+    with open(output_file, 'w') as f:
+        f.write("# Data Inventory\n")
+        f.write(f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write("| Ticker | Timeframe | Start Date | End Date | Bars | Parquet File |\n")
+        f.write("|---|---|---|---|---|---|\n")
         
-    md_lines.append("")
-    md_lines.append("## Notes")
-    md_lines.append("- Data is stored in chunked JSON format in `web/public/data/`.")
-    md_lines.append("- Dates are derived from `meta.json`.")
-
-    with open(OUTPUT_FILE, 'w') as f:
-        f.write('\n'.join(md_lines))
-        
-    print(f"Generated {OUTPUT_FILE} with {len(inventory)} entries.")
+        for _, row in df_inv.iterrows():
+            f.write(f"| {row['Ticker']} | {row['Timeframe']} | {row['Start Date']} | {row['End Date']} | {row['Bars']} | `{row['Filename']}` |\n")
+            
+    print(f"Inventory saved to {output_file}")
 
 if __name__ == "__main__":
-    main()
+    generate_inventory()

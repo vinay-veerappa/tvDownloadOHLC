@@ -185,7 +185,7 @@ def analyze_sequences(ticker="NQ1"):
     print(f"\n[SUCCESS] Markdown Report saved to {md_path}")
     
     # Save CSV as backup
-    csv_path = f"{output_dir}/sequential_probabilities.csv"
+    csv_path = f"{output_dir}/{ticker}_sequential_probabilities.csv"
     trans_probs.to_csv(csv_path)
 
 import sys

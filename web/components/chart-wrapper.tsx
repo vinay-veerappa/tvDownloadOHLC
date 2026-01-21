@@ -16,6 +16,7 @@ import { useTrading } from "@/context/trading-context"
 import { useTheme } from "@/context/theme-context"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { useChartSettings } from "@/hooks/use-chart-settings"
+import { useLiveQuote } from "@/hooks/use-live-quote"
 
 import { VWAPSettings } from "@/lib/indicator-api"
 import type { EMSettings } from './em-settings-dialog'
@@ -80,9 +81,17 @@ export function ChartWrapper(props: ChartWrapperProps) {
 
     // Live Price State
     const [currentPrice, setCurrentPrice] = useState<number>(0)
+    const { price: livePrice } = useLiveQuote(props.ticker, props.mode === 'live')
 
     // Trading Engine (Global Context)
     const { activePosition: position, executeOrder, updatePrice, modifyOrder, modifyPosition, pendingOrders } = useTrading()
+
+    // Imperative Live Price Update
+    useEffect(() => {
+        if (props.mode === 'live' && livePrice && chartRef.current) {
+            chartRef.current.updateLivePrice(livePrice);
+        }
+    }, [livePrice, props.mode]);
 
     // Sync Chart Price with Context
     useEffect(() => {

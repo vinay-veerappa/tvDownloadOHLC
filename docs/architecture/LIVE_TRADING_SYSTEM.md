@@ -26,7 +26,23 @@ The system provides a real-time bridge between the Schwab Streaming API and a lo
 2. **Subscriptions**: Subscribes to `CHART_FUTURES` (1-min bars) and `LEVEL_ONE_FUTURES` (Last Price).
 3. **Price Oscillation**: Level 1 ticks update the `live_price` field in `live_chart.json` instantly.
 4. **Bar Completion**: When a new minute timestamp arrives, the previous bar is flushed to `live_storage.parquet`.
-5. **Frontend Sync**: The web UI polls the server action every 2 seconds to refresh the chart series and price label.
+5. **Frontend Sync (Dual-Layer)**:
+    - **Base Layer (State)**: `useLiveDataLoading` polls the server action every 2000ms to fetch full candle history. This ensures data integrity and fills any missed packets.
+    - **Live Layer (Imperative)**: `useLiveQuote` polls `live_chart.json` every 200ms. Updates are sent directly to the chart instance via `ChartContainerRef.updateLivePrice()`, bypassing React's render cycle for sub-16ms latency.
+
+### Frontend Architecture (Live Mode)
+To achieve high-performance updates without UI freezing, the live chart uses a specialized architecture:
+
+1.  **Windowed Loading**: Instead of loading the entire multi-year history, `useLiveDataLoading` fetches a window of recent data (e.g., 180k candles) to reduce initial payload and memory usage.
+2.  **Imperative Ref Updates**:
+    - The `ChartWrapper` component listens to high-frequency price updates.
+    - Instead of passing `livePrice` as a reactive prop (which triggers full component re-renders), it calls an imperative method on the `ChartContainer` ref.
+    - **Method**: `chartRef.current?.updateLivePrice(price)`
+    - **Implementation**: Directly accesses the Lightweight Charts `series` object to call `series.update()`.
+3.  **Conflict Resolution**:
+    - The "Base Layer" (2s poll) is the source of truth.
+    - The "Live Layer" (200ms poll) is a visual tip projection.
+    - If the Base Layer update lags slightly, it might revert the tip for <200ms, but the next high-frequency tick immediately corrects it, ensuring a perception of zero lag.
 
 ## 4. Safety & Security
 - **Credential Protection**: `secrets.json` and `token.json` are globally ignored via `.gitignore`.

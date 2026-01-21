@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import useSWR from 'swr';
 
 interface LiveQuote {
@@ -33,7 +34,7 @@ export function useLiveQuote(ticker: string | null, isLiveMode: boolean) {
         shouldFetch ? `/api/quote?ticker=${encodeURIComponent(requestTicker || '')}` : null,
         fetcher,
         {
-            refreshInterval: 500, // Fast polling (500ms)
+            refreshInterval: 200, // Fast polling (200ms)
             dedupingInterval: 0,
             keepPreviousData: true
         }

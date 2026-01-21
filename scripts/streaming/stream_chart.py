@@ -217,8 +217,8 @@ async def main():
             cdata = charts[sym]["data"]
             existing_times = {c["time"] for c in cdata["candles"]}
             cdata["candles"] = deduplicate_candles(cdata["candles"] + [c for c in boot if c["time"] not in existing_times])
-            if len(cdata["candles"]) > 5000:
-                cdata["candles"] = cdata["candles"][-5000:]
+            if len(cdata["candles"]) > 500000:
+                cdata["candles"] = cdata["candles"][-500000:]
             cdata["last_update"] = datetime.now().isoformat()
             
             with open(charts[sym]["files"]["json"], "w") as f:
@@ -252,9 +252,9 @@ async def main():
                                 }, f)
                         except: pass
 
-                        # Update Main 1m File (Preserve state)
-                        with open(chart_ctx["files"]["json"], "w") as f:
-                            json.dump(cdata, f, indent=2)
+                        # NOTE: We do NOT write the full JSON here anymore
+                        # The chart_handler writes both snapshot and full with proper throttling
+                        # This keeps level_one updates fast (just the tiny quote file)
 
                         # --- Sub-Minute Aggregation ---
                         curr_time = time.time()
@@ -308,7 +308,8 @@ async def main():
                         cdata["candles"][-1] = candle
                     else:
                         cdata["candles"].append(candle)
-                        if len(cdata["candles"]) > 5000:
+                        # Keep full history (up to ~1 year ~ 360k bars)
+                        if len(cdata["candles"]) > 500000:
                             cdata["candles"].pop(0)
                         
                     cdata["last_update"] = datetime.now().isoformat()
@@ -318,9 +319,36 @@ async def main():
                         cdata["live_price"] = candle["close"]
                     
                     try:
-                        with open(files["json"], "w") as f:
-                            json.dump(cdata, f, indent=2)
-                        print(f"📈 [{key}] {candle['time']} C:{candle['close']}")
+                        # 1. Write Snapshot (Fast, Frequent)
+                        # Contains metadata + last 50 candles
+                        # Update: Throttled to max 4 times/sec (250ms) to prevent excessive IO/Watcher triggers
+                        now = time.time()
+                        last_snap = cdata.get("_last_snap_ts", 0)
+                        
+                        if now - last_snap > 0.25:
+                            snapshot = {
+                                "symbol": cdata["symbol"],
+                                "last_update": cdata["last_update"],
+                                "live_price": cdata["live_price"],
+                                "candles": cdata["candles"][-50:] if cdata["candles"] else []
+                            }
+                            snap_file = files["json"].replace(".json", "_snapshot.json")
+                            with open(snap_file, "w") as f:
+                                json.dump(snapshot, f)
+                            cdata["_last_snap_ts"] = now
+
+                        # 2. Write Full History (Heavy, Throttled)
+                        # Only write every 60 seconds OR if it's the first time
+                        last_write = cdata.get("_last_write_ts", 0)
+                        
+                        if now - last_write > 60:
+                            with open(files["json"], "w") as f:
+                                json.dump(cdata, f) # Minified (no indent) to save space
+                            cdata["_last_write_ts"] = now
+                            print(f"pw Checkpoint saved for {key}")
+
+                        # Only print log occasionally to reduce noise
+                        # print(f"📈 [{key}] {candle['time']} C:{candle['close']}") 
                     except Exception as e:
                         print(f"Write error {key}: {e}")
 

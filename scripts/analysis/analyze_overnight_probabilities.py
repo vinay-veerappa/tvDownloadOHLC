@@ -177,7 +177,7 @@ def analyze_probabilities(ticker="NQ1"):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
-    csv_path = f"{output_dir}/overnight_probability_matrix.csv"
+    csv_path = f"{output_dir}/{ticker}_overnight_probability_matrix.csv"
     df_results.to_csv(csv_path)
     print(f"\n[SUCCESS] CSV Matrix saved to: {csv_path}")
 

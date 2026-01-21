@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useEffect } from "react"
 import { Check, ChevronsUpDown, CandlestickChart, BarChart, Activity, Magnet, Settings, ChevronDown, Camera, Copy, Download, ExternalLink } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 
@@ -70,7 +71,7 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
     const currentMode = searchParams.get("mode") || "historical"
 
     // Fast Live Price Hook
-    const { price: livePrice } = useLiveQuote(currentTicker, currentMode === 'live')
+    const { price: livePrice, isLoading: priceLoading, error: priceError } = useLiveQuote(currentTicker, currentMode === 'live')
 
     const [open, setOpen] = React.useState(false)
     const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
@@ -177,9 +178,9 @@ export function TopToolbar({ tickers, timeframes, tickerMap, magnetMode = 'off',
                                     : "Select ticker..."}
                             </span>
                             {/* Fast Live Price Badge */}
-                            {currentMode === 'live' && livePrice && (
+                            {currentMode === 'live' && (
                                 <span className="ml-2 text-sm font-mono font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 shadow-[0_0_8px_rgba(16,185,129,0.2)] animate-in fade-in slide-in-from-left-2">
-                                    {livePrice.toFixed(2)}
+                                    {livePrice ? livePrice.toFixed(2) : 'Loading...'}
                                 </span>
                             )}
                             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />

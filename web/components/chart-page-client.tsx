@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useRouter, useSearchParams } from "next/navigation"
 import { TopToolbar, type SessionType } from './top-toolbar'
 import { useTheme } from "next-themes"
 import { ChartWrapper, type NavigationFunctions } from './chart-wrapper'
@@ -41,6 +42,10 @@ export function ChartPageClient({
     trades,
     mode = 'historical'
 }: ChartPageClientProps) {
+    const searchParams = useSearchParams()
+
+    const effectiveMode = (searchParams.get('mode') as 'historical' | 'live') || mode
+
     const [magnetMode, setMagnetMode] = useState<MagnetMode>('off')
     const [displayTimezone, setDisplayTimezone] = useState('America/New_York')
     const [sessionType, setSessionType] = useState<SessionType>('ETH')
@@ -289,7 +294,7 @@ export function ChartPageClient({
                             params.set('timeframe', newTf)
                             window.location.search = params.toString()
                         }}
-                        mode={mode}
+                        mode={effectiveMode}
                         onOpenEMSettings={() => setIsEMSettingsOpen(true)}
                     />
                 </div>

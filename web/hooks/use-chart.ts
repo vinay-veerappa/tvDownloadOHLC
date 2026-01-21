@@ -300,6 +300,7 @@ export function useChart(
     // Track if this is the first data load for this ticker
     const isFirstLoadRef = useRef(true)
     const prevDataLengthRef = useRef(0)
+    const dataHashRef = useRef('')
 
     // Memoize chart data transformation (Heiken Ashi + whitespace)
     const chartData = useMemo(() => {
@@ -308,8 +309,11 @@ export function useChart(
         // Calculate base data (Heiken Ashi or raw OHLC)
         let result = style === 'heiken-ashi' ? calculateHeikenAshi(data) : [...data];
 
-        // Add whitespace bars
-        if (result.length > 0) {
+        // Add whitespace bars (only in historical mode for better UX)
+        // In live mode, chart auto-scrolls and whitespace interferes with tick updates
+        const params = new URLSearchParams(window.location.search);
+        const isLiveMode = window.location.pathname.includes('/live') || params.get('mode') === 'live';
+        if (result.length > 0 && !isLiveMode) {
             const lastBar = result[result.length - 1];
             const lastTime = lastBar.time as number;
             const res = normalizeResolution(timeframe);
@@ -318,7 +322,12 @@ export function useChart(
 
             for (let i = 1; i <= whitespaceCount; i++) {
                 result.push({
-                    time: (lastTime + (i * intervalSeconds)) as any
+                    time: (lastTime + (i * intervalSeconds)) as any,
+                    open: lastBar.close,
+                    high: lastBar.close,
+                    low: lastBar.close,
+                    close: lastBar.close,
+                    volume: 0
                 });
             }
         }
@@ -334,29 +343,47 @@ export function useChart(
             const timeScale = chartInstance.timeScale()
             const isFirstLoad = isFirstLoadRef.current || prevDataLengthRef.current === 0
 
-            //console.log(`[useChart] calling setData with ${chartData.length} items. First:`, chartData[0], 'Last:', chartData[chartData.length-1])
-            try {
-                seriesInstance.setData(chartData)
-                //console.log('[useChart] setData success')
-            } catch (err) {
-                console.error('[useChart] setData FAILED:', err)
+            // Optimized Update Logic
+            // 1. If first load or data gap/reset (length diff > 2), set full data
+            const lenDiff = chartData.length - prevDataLengthRef.current;
+
+            // Smart Update Detection using data hash
+            const midIndex = Math.floor(chartData.length / 2)
+            const currentHash = `${chartData.length}-${chartData[0]?.time || 0}-${chartData[midIndex]?.time || 0}-${chartData[chartData.length - 1]?.time || 0}`
+            const dataContentChanged = dataHashRef.current !== currentHash
+
+            // Decision: Full Render vs Incremental Update
+            if (isFirstLoad || dataContentChanged || Math.abs(lenDiff) > 2 || lenDiff < 0) {
+                // Full update (gap filled, data reset, or significant length change)
+                try {
+                    seriesInstance.setData(chartData)
+                    dataHashRef.current = currentHash
+                } catch (err) {
+                    console.error('[useChart] setData FAILED:', err)
+                }
+
+                if (isFirstLoad) {
+                    isFirstLoadRef.current = false
+                    requestAnimationFrame(() => {
+                        try {
+                            if (!isDisposedRef.current) timeScale.fitContent()
+                        } catch { }
+                    })
+                }
+            } else {
+                // Incremental update (tick-by-tick, just update last candle)
+                const lastBar = chartData[chartData.length - 1]
+                try {
+                    seriesInstance.update(lastBar)
+                } catch (err) {
+                    // Fallback to full render if update fails
+                    console.error('[useChart] update() FAILED, fallback:', err)
+                    seriesInstance.setData(chartData)
+                    dataHashRef.current = currentHash
+                }
             }
 
-            // Only fitContent on first load - chart auto-preserves on subsequent updates
-            if (isFirstLoad) {
-                isFirstLoadRef.current = false
-                console.log('[useChart] First load - executing fitContent()')
-                requestAnimationFrame(() => {
-                    try {
-                        if (!isDisposedRef.current) {
-                            timeScale.fitContent()
-                        }
-                    } catch { }
-                })
-            }
-            // NO ELSE NEEDED - chart preserves position by TIME automatically!
-
-            prevDataLengthRef.current = data.length
+            prevDataLengthRef.current = chartData.length
 
             if (markers && markers.length > 0) {
                 if (typeof createSeriesMarkers === 'function') {

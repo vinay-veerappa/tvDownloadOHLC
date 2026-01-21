@@ -214,6 +214,7 @@ This table provides a Single Source of Truth for all data operations. Use full p
 |  | Daily HOD/LOD | `scripts/derived/precompute_daily_hod_lod.py` | Critical for scatter plots. |
 |  | Profiler Stats | `scripts/derived/precompute_profiler.py` | Generates `{ticker}_profiler.json`. |
 |  | Level Touches | `scripts/derived/precompute_level_touches.py` | Generates `{ticker}_level_touches.json`. |
+|  | Daily Classification | `scripts/derived/precompute_daily_classification.py` | Generates `{ticker}_daily_classification.parquet`. |
 |  | Web JSON Chunks | `scripts/data_processing/convert/convert_to_chunked_json.py` | Optimizes data for frontend. |
 | **Analysis** | Data Inventory | `scripts/analysis/generate_coverage_report.py` | Updates `DATA_COVERAGE_REPORT.md`. |
 |  | Continuity Check | `scripts/analysis/check_data_continuity.py` | Validates no gaps in history. |
@@ -257,7 +258,7 @@ The following batch files are scheduled to run automatically for data updates:
 ### 6.1 RTH Open Metrics (`scripts/market_data/run_rth_open.bat`)
 
 **Purpose:** Capture expected move calculations at RTH open (9:30 AM ET)
-**Schedule:** Daily at 9:35 AM (after market open)
+**Schedule:** Daily at 9:30 AM (after market open)
 
 **What it does:**
 1. Runs `capture_rth_open.py`
@@ -291,4 +292,14 @@ cd /d "C:\Users\vinay\tvDownloadOHLC"
 call python scripts/market_data/dolt_em_sync.py
 call python scripts/market_data/update_em_history_live.py
 ```
+
+### 6.3 Live Data Architecture
+
+**Purpose:** Document the system for live chart updates via JSON cache.
+**Reference:** [LIVE_DATA_ARCHITECTURE.md](LIVE_DATA_ARCHITECTURE.md)
+
+**Key Components:**
+- `stream_chart.py` (Writer)
+- `use-live-data-loading.ts` (Reader)
+- `live_chart_-NQ.json` (Optimized Cache)
 

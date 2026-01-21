@@ -24,42 +24,119 @@ export function useLiveDataLoading({
     const [livePrice, setLivePrice] = useState<number | null>(null)
     const [lastUpdate, setLastUpdate] = useState<string | null>(null)
     const [isRunning, setIsRunning] = useState(true)
+    const [hasMoreData, setHasMoreData] = useState(false)
+    const [isLoadingMore, setIsLoadingMore] = useState(false)
 
     const isFirstLoad = useRef(true)
     const isRunningRef = useRef(isRunning)
     useEffect(() => { isRunningRef.current = isRunning }, [isRunning])
 
+    const lastTimeRef = useRef<number>(0)
+    const rawDataRef = useRef<OHLCData[]>([]) // Keep raw array to avoid closure staleness
+
     const fetchData = useCallback(async () => {
         try {
-            const res = await getLiveChartData(ticker, timeframe)
+            // Request delta since last known time (in ms)
+            const sinceMs = lastTimeRef.current * 1000
+
+            const res = await getLiveChartData(ticker, timeframe, isFirstLoad.current ? undefined : sinceMs, isFirstLoad.current ? 180000 : undefined)
+
             if (res.success && res.data) {
                 const rawCandles = res.data.candles || []
 
-                // Transform to OHLCData (seconds instead of ms)
-                const formatted: OHLCData[] = rawCandles.map((c: any) => ({
-                    time: c.time / 1000,
-                    open: c.open,
-                    high: c.high,
-                    low: c.low,
-                    close: c.close,
-                    volume: c.volume
-                }))
+                if (rawCandles.length > 0) {
+                    const formatted: OHLCData[] = rawCandles.map((c: any) => ({
+                        time: c.time / 1000,
+                        open: c.open,
+                        high: c.high,
+                        low: c.low,
+                        close: c.close,
+                        volume: c.volume
+                    }))
 
-                // Sorting is important for Lightweight Charts
-                formatted.sort((a, b) => a.time - b.time)
+                    if (isFirstLoad.current) {
+                        rawDataRef.current = formatted
+                    } else {
+                        // Robust Merge Strategy:
+                        // 1. Combine arrays
+                        // 2. Sort by time
+                        // 3. Deduplicate by time (keeping latest version of same timestamp)
 
-                setFullData(formatted)
-                setLivePrice(res.data.live_price)
+                        const combined = [...rawDataRef.current, ...formatted]
+
+                        // Sort first
+                        combined.sort((a, b) => a.time - b.time)
+
+                        // Deduplicate
+                        const unique: OHLCData[] = []
+                        if (combined.length > 0) {
+                            unique.push(combined[0])
+                            for (let i = 1; i < combined.length; i++) {
+                                const current = combined[i]
+                                const last = unique[unique.length - 1]
+                                if (current.time === last.time) {
+                                    // Replace with new version (usually updated close/volume)
+                                    unique[unique.length - 1] = current
+                                } else {
+                                    unique.push(current)
+                                }
+                            }
+                        }
+                        rawDataRef.current = unique
+                    }
+
+                    // Sorting again (redundant but safe)
+                    // rawDataRef.current.sort((a, b) => a.time - b.time)
+                    // setFullData([...rawDataRef.current])
+                    setFullData((prev) => {
+                        // Optimizing: only update fullData if we have a NEW candle or first load
+                        // Intraday price updates are handled by livePrice state + reference logic in use-chart-data
+                        if (rawDataRef.current.length > prev.length || prev.length === 0) {
+                            return [...rawDataRef.current]
+                        }
+                        return prev
+                    })
+
+                    // Update ref for next poll using the absolute latest time we have
+                    if (rawDataRef.current.length > 0) {
+                        const lastBar = rawDataRef.current[rawDataRef.current.length - 1]
+                        lastTimeRef.current = lastBar.time
+                    }
+
+                    // First Load Callback
+                    if (isFirstLoad.current) {
+                        onDataLoad?.({
+                            start: formatted[0].time,
+                            end: formatted[formatted.length - 1].time,
+                            totalBars: formatted.length
+                        })
+                        isFirstLoad.current = false
+                    }
+                }
+
+                // Always update metadata
+                const currentLivePrice = res.data.live_price
+                setLivePrice(currentLivePrice)
                 setLastUpdate(res.data.last_update)
 
-                if (isFirstLoad.current && formatted.length > 0) {
-                    onDataLoad?.({
-                        start: formatted[0].time,
-                        end: formatted[formatted.length - 1].time,
-                        totalBars: formatted.length
-                    })
-                    isFirstLoad.current = false
+                // Update current candle with live price (tick-by-tick rendering)
+                if (currentLivePrice && rawDataRef.current.length > 0) {
+                    const lastCandle = rawDataRef.current[rawDataRef.current.length - 1]
+                    const updatedCandle = {
+                        ...lastCandle,
+                        close: currentLivePrice,
+                        high: Math.max(lastCandle.high, currentLivePrice),
+                        low: Math.min(lastCandle.low, currentLivePrice)
+                    }
+                    rawDataRef.current[rawDataRef.current.length - 1] = updatedCandle
+                    setFullData([...rawDataRef.current])
                 }
+
+                // Set hasMore based on API response
+                if (res.data.hasMore !== undefined) {
+                    setHasMoreData(res.data.hasMore);
+                }
+
             } else if (isFirstLoad.current) {
                 setLastError(res.error || "Failed to fetch live data")
             }
@@ -69,7 +146,7 @@ export function useLiveDataLoading({
         } finally {
             setIsLoading(false)
         }
-    }, [onDataLoad])
+    }, [onDataLoad, ticker, timeframe])
 
     useEffect(() => {
         // Skip if not enabled (historical mode)
@@ -78,7 +155,7 @@ export function useLiveDataLoading({
         fetchData()
         const id = setInterval(() => {
             if (isRunningRef.current) fetchData()
-        }, 500)
+        }, 2000) // Reduced polling (2s) to prevent I/O overload, relying on livePrice for ticks
         return () => clearInterval(id)
     }, [fetchData, enabled])
 
@@ -94,11 +171,47 @@ export function useLiveDataLoading({
         isRunning,
         setIsRunning,
         lastError,
-        // Mock historical methods for live mode compatibility
-        loadMoreData: async () => { },
+        // Lazy loading support
+        loadMoreData: async () => {
+            if (isLoadingMore || !hasMoreData) return;
+
+            setIsLoadingMore(true);
+            try {
+                const oldestTime = rawDataRef.current[0]?.time;
+                if (!oldestTime) return;
+
+                // Request data before oldest timestamp, limited to 50k candles
+                const beforeMs = oldestTime * 1000;
+                const res = await getLiveChartData(ticker, timeframe, undefined, 50000);
+
+                if (res.success && res.data && res.data.candles) {
+                    const formatted: OHLCData[] = res.data.candles.map((c: any) => ({
+                        time: c.time / 1000,
+                        open: c.open,
+                        high: c.high,
+                        low: c.low,
+                        close: c.close,
+                        volume: c.volume
+                    }));
+
+                    // Filter to only get data older than current oldest
+                    const olderData = formatted.filter(c => c.time < oldestTime);
+
+                    if (olderData.length > 0) {
+                        rawDataRef.current = [...olderData, ...rawDataRef.current];
+                        setFullData([...rawDataRef.current]);
+                    } else {
+                    }
+                }
+            } catch (e) {
+                console.error('[LiveDataLoading] Load more failed:', e);
+            } finally {
+                setIsLoadingMore(false);
+            }
+        },
         jumpToTime: async () => ({ success: false, needsScroll: false }),
-        hasMoreData: false,
-        isLoadingMore: false,
+        hasMoreData,
+        isLoadingMore,
         totalRows: fullData.length,
         baseTimeframe: timeframe,
         isResampling: false

@@ -45,6 +45,7 @@
 We use **Lightweight Charts v5** extended with custom "Primitives" and "Pane Views" for advanced features:
 -   **Hourly Profiler**: A custom renderer implementing `ISeriesPrimitive` to draw complex box/line profiles directly on the canvas.
 -   **Session Highlighting**: Custom canvas rendering for background session colors.
+-   **Live Data Streaming**: Uses an imperative Ref pattern (`updateLivePrice`) to bypass React render cycles for high-frequency (200ms) updates.
 
 ### 2.5 Data Timezone Contract (Hybrid)
 To support both legacy logic and seamless timezone switching:
