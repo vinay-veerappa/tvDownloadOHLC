@@ -15,15 +15,28 @@ This document outlines the data storage strategy for the Trading Platform. We ha
 *   **Access:** Currently via Python scripts (`read_parquet.py`). Future optimization may involve `DuckDB` or native Node.js parquet readers.
 
 ### 2. User Data (Transactional)
-*   **Storage:** SQLite (Development) / PostgreSQL (Production)
+    *   **User Data:** Trades, Journal, Settings, Tags.
+    *   **Cached Market Data:** Economic Events, News, Expected Moves, Historical Volatility.
 *   **ORM:** Prisma
-*   **Entities:**
-    *   **Trades:** Individual trade records (entry, exit, pnl).
-    *   **Journal:** Daily journal entries, notes, tags.
-    *   **Backtest Results:** Configuration and results of backtest runs.
 *   **Reasoning:**
-    *   **Relational:** User data is highly relational (Trades belong to Strategies, etc.).
-    *   **Ecosystem:** Prisma provides excellent type safety and migration tools.
+    *   **Relational:** Complex relationships between trades, tags, and events.
+    *   **Caching:** SQLite serves as a fast, queryable cache for low-frequency market data (daily EM, calendar), avoiding repetitive API calls.
+    *   **Type Safety:** Prisma provides end-to-end type safety for the web app.
+
+### 3. Live Data Architecture (Hot/Cold Storage)
+To support real-time charting without file locking issues:
+
+*   **Hot Layer (Latency < 200ms):**
+    *   **File:** `live_chart.json`
+    *   **Format:** JSON (Array of recent candles + current tick)
+    *   **Access:** Polled by frontend every 200ms.
+    *   **Persistence:** Ephemeral (overwritten on restart).
+
+*   **Cold Layer (Historical):**
+    *   **File:** `[TICKER]_1m.parquet`
+    *   **Format:** Parquet (Columnar)
+    *   **Access:** Read on initial load / scroll back.
+    *   **Persistence:** Permanent. `stream_chart.py` appends confirmed 1m bars here.
 
 ## Future Considerations
 *   **DuckDB Integration:** Replace Python scripts with DuckDB for faster in-process querying of Parquet files.
