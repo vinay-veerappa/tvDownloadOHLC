@@ -44,19 +44,26 @@ Heavy calculations (session detection, VWAP rolling, period aggregation) can blo
 
 ### Architecture
 
+### Architecture
+
+```mermaid
+sequenceDiagram
+    participant Main as Main Thread
+    participant Worker as Web Worker
+    
+    Main->>Worker: postMessage(data)
+    Note right of Worker: calculateXXX()
+    Worker->>Main: postMessage(result)
 ```
-┌─────────────────┐      postMessage      ┌──────────────────┐
-│   Main Thread   │ ───────────────────▶  │    Web Worker    │
-│                 │                        │                  │
-│  indicator.ts   │                        │  *.worker.ts     │
-│  setData()      │      result           │  calculateXXX()  │
-│  update()       │ ◀───────────────────  │                  │
-└─────────────────┘                        └──────────────────┘
-         │
-         ▼
-  ┌─────────────────┐
-  │  Worker Manager │  (Singleton, request tracking, timeout handling)
-  └─────────────────┘
+
+**Worker Manager Pattern**:
+```mermaid
+graph TD
+    UI[Indicator Component] -->|Request| WM[Worker Manager]
+    WM -->|Serialize| W[Web Worker]
+    W -->|Calculate| W
+    W -->|Result| WM
+    WM -->|Promise Resolve| UI
 ```
 
 ### Pattern Implementation

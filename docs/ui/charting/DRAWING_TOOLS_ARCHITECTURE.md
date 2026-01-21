@@ -35,18 +35,33 @@ All drawing tools are implemented as **Lightweight Charts Plugins** (`ISeriesPri
 
 ### Class Hierarchy
 
-```
-ISeriesPrimitive (Lightweight Charts)
-    └── DrawingBase (Abstract)
-            ├── TwoPointDrawing
-            │       ├── TrendLine
-            │       ├── Ray
-            │       ├── Fibonacci
-            │       └── Rectangle
-            └── SinglePointDrawing
-                    ├── HorizontalLine
-                    ├── VerticalLine
-                    └── TextDrawing
+### Class Hierarchy
+
+```mermaid
+classDiagram
+    ISeriesPrimitive <|-- DrawingBase
+    DrawingBase <|-- TwoPointDrawing
+    DrawingBase <|-- SinglePointDrawing
+    
+    TwoPointDrawing <|-- TrendLine
+    TwoPointDrawing <|-- Ray
+    TwoPointDrawing <|-- Fibonacci
+    TwoPointDrawing <|-- Rectangle
+    
+    SinglePointDrawing <|-- HorizontalLine
+    SinglePointDrawing <|-- VerticalLine
+    SinglePointDrawing <|-- TextDrawing
+    
+    class ISeriesPrimitive {
+        +updateAllViews()
+        +hitTest()
+    }
+    
+    class DrawingBase {
+        #_options
+        +save helper()
+        +load helper()
+    }
 ```
 
 ### Standard Options Interface
@@ -121,6 +136,36 @@ draw(target: any) {
 ```
 
 ### 3. Hit Testing
+
+Interaction flow for mouse events:
+
+```mermaid
+sequenceDiagram
+    participant Mouse
+    participant Chart
+    participant DrawingPrimitive
+    
+    Mouse->>Chart: Move/Click (x, y)
+    Chart->>DrawingPrimitive: hitTest(x, y)
+    
+    rect rgb(240, 240, 240)
+        Note right of DrawingPrimitive: Check Handles
+        DrawingPrimitive-->>DrawingPrimitive: dist(P1, cursor) < Radius?
+    end
+    
+    rect rgb(240, 240, 240)
+        Note right of DrawingPrimitive: Check Body
+        DrawingPrimitive-->>DrawingPrimitive: dist(Line, cursor) < Threshold?
+    end
+    
+    DrawingPrimitive->>Chart: Return HitResult | null
+    
+    alt Hit Found
+        Chart->>Chart: Change Cursor / Enable Drag
+    else No Hit
+        Chart->>Chart: Default Behavior
+    end
+```
 
 Return standardized hit objects:
 
