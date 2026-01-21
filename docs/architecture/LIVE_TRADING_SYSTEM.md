@@ -30,6 +30,23 @@ The system provides a real-time bridge between the Schwab Streaming API and a lo
     - **Base Layer (State)**: `useLiveDataLoading` polls the server action every 2000ms to fetch full candle history. This ensures data integrity and fills any missed packets.
     - **Live Layer (Imperative)**: `useLiveQuote` polls `live_chart.json` every 200ms. Updates are sent directly to the chart instance via `ChartContainerRef.updateLivePrice()`, bypassing React's render cycle for sub-16ms latency.
 
+### Architecture Diagram
+```mermaid
+graph TD
+    A[Schwab API] -->|Stream| B(stream_chart.py)
+    B -->|200ms| C{Hot Buffer<br/>live_chart.json}
+    B -->|1m Complete| D[Parquet Storage<br/>live_storage.parquet]
+    
+    C -->|200ms Poll| E[ChartWrapper]
+    D -->|2000ms Poll| F[useLiveDataLoading]
+    
+    E -->|Imperative| G[ChartContainer Ref]
+    G -->|series.update| H[Lightweight Charts]
+    
+    F -->|State Update| I[Full Data Window]
+    I -->|Re-render| G
+```
+
 ### Frontend Architecture (Live Mode)
 To achieve high-performance updates without UI freezing, the live chart uses a specialized architecture:
 

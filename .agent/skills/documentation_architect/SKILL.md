@@ -46,7 +46,17 @@ Activate this skill when:
     - [Dependencies, constraints, performance targets]
     ```
 
-### 3. Update (If Exists)
+### 3. Visuals & Diagrams
+- **Mandatory**: Every architecture doc MUST include at least one Mermaid diagram explaining the data flow or component interaction.
+- **Tools**: Use `mermaid` code blocks.
+- **Example**:
+    ```mermaid
+    graph TD;
+      Source-->Processor;
+      Processor-->Storage;
+    ```
+
+### 4. Update (If Exists)
 - **Read** the existing file.
 - **Compare** with the new implementation.
 - **Update** sections like "Data Flow" or "Key Components" to reflect changes.
