@@ -229,6 +229,11 @@ def analyze_gap_history(ticker="NQ1"):
                          if day_rth['high'].max() > p_rth['high'].max(): held = False
                     far_side_held = held
 
+        # Percents relative to PRICE level (from Open)
+        retrace_price_pct = (retrace_pts / open_price) * 100.0 if open_price > 0 else 0
+        fakeout_price_pct = (fakeout_pts / open_price) * 100.0 if open_price > 0 else 0
+        extension_price_pct = (extension_pts / open_price) * 100.0 if open_price > 0 else 0
+
         results.append({
             "date": date_str,
             "day": day_of_week,
@@ -240,22 +245,27 @@ def analyze_gap_history(ticker="NQ1"):
             "gap_pct": gap_pct,
             "is_filled": is_filled,
             "time_to_fill": time_to_fill,
-            "retrace_pct": retrace_pct, # MAE for Trend / Progress for Fill
-            "fakeout_pct": fakeout_pct, # Heat before Fill / Signal for Trend
+            # Gap Relative %
+            "retrace_pct": retrace_pct, 
+            "fakeout_pct": fakeout_pct, 
             "trend_continuation": trend_continuation,
             "extension_ratio": extension_ratio,
+            # Price Relative %
+            "retrace_price_pct": retrace_price_pct,
+            "fakeout_price_pct": fakeout_price_pct,
+            "extension_price_pct": extension_price_pct,
             "far_side_held": far_side_held
         })
         
     df_res = pd.DataFrame(results)
     
-    def get_stats(series):
+    def get_stats(series, precision=1):
         if series.empty: return "N/A"
         mean_val = series.mean()
         med_val = series.median()
-        # Mode on rounded integers
-        mode_val = series.round().mode().iloc[0] if not series.empty else 0
-        return f"Mean: {mean_val:.1f} | Med: {med_val:.1f} | Mode: {mode_val:.0f}"
+        # Mode calculation: round to specified precision to group values
+        mode_val = series.round(precision).mode().iloc[0] if not series.empty else 0
+        return f"Mean: {mean_val:.{precision}f} | Med: {med_val:.{precision}f} | Mode: {mode_val:.{precision}f}"
 
     # --- REPORT GENERATION ---
     print("\n" + "="*50)
@@ -271,7 +281,7 @@ def analyze_gap_history(ticker="NQ1"):
         day_df = df_res[df_res['day'] == d]
         if day_df.empty: continue
         fill_rate = day_df['is_filled'].mean() * 100
-        time_stats = get_stats(day_df[day_df['is_filled']]['time_to_fill'])
+        time_stats = get_stats(day_df[day_df['is_filled']]['time_to_fill'], precision=0)
         print(f"{d:10} | Fill Rate: {fill_rate:5.1f}% | Time to Fill (min) -> {time_stats}")
 
     # 2. MAE / MFE Statistics
@@ -281,8 +291,14 @@ def analyze_gap_history(ticker="NQ1"):
     print(f"MFE (Fakeout %):   {get_stats(df_res['fakeout_pct'])}  <-- Extension BEFORE fill")
     print(f"MFE (Extension %): {get_stats(df_res['extension_ratio'] * 100)}  <-- Total Session Extension")
 
+    print("\n📐 3. Pure Price Percentage Levels (Move / Price %)")
+    print("--------------------------------------------------")
+    print(f"MAE (Retrace Pct):   {get_stats(df_res['retrace_price_pct'], precision=2)}%")
+    print(f"MFE (Fakeout Pct):   {get_stats(df_res['fakeout_price_pct'], precision=2)}%  <-- Extension BEFORE fill")
+    print(f"MFE (Extension Pct): {get_stats(df_res['extension_price_pct'], precision=2)}%  <-- Total Session Extension")
+
     # 3. Volatility Regime Impact
-    print("\n🌊 3. Volatility Regime Impact")
+    print("\n🌊 4. Volatility Regime Impact")
     print("--- VIX Regimes ---")
     vix_stats = df_res.groupby('vol_regime', observed=False).agg({
         'is_filled': ['mean', 'count'],

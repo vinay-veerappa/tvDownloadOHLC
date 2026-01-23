@@ -61,6 +61,17 @@ How much does prize run *beyond* the open by the end of the session?
 *   **Median Extension**: **85.0% of Gap Size**.
 *   **Mean Extension**: **111.9% of Gap Size**.
 
+### D. Pure Price Percentage Levels (Move / Index Price %)
+Measuring the move relative to the absolute index level (e.g. NQ @ 25,000).
+
+| Metric | Mean | Median | Mode |
+| :--- | :--- | :--- | :--- |
+| **MAE (Retrace / Pullback)** | **1.33%** | **0.33%** | 0.01% |
+| **MFE (Fakeout before Fill)**| **0.15%** | **0.03%** | 0.01% |
+| **MFE (Total Session Ext)** | **0.40%** | **0.25%** | 0.01% |
+
+*   *Stats Trader Note*: A 0.03% Median Fakeout on NQ @ 25,000 is only **7.5 points**. If you are fading a gap and price extends > 10-15 pts beyond the open, the "clean" fill probability is dropping.
+
 ---
 
 ## 4. The "Moat" & Continuation (Defense)
