@@ -101,15 +101,18 @@ def fetch_data(client, symbol, timeframe, start_dt, end_dt):
         
         # Convert to DataFrame
         df = pd.DataFrame(candles)
-        df['datetime'] = pd.to_datetime(df['datetime'], unit='ms')
-        df.set_index('datetime', inplace=True)
+        # Schwab 'datetime' is milliseconds (int)
+        df['time'] = df['datetime'] // 1000
+        df['datetime_idx'] = pd.to_datetime(df['datetime'], unit='ms')
+        df.set_index('datetime_idx', inplace=True)
         
-        # Renaissance keys
-        df.rename(columns={
-            "open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"
-        }, inplace=True)
+        # Ensure only necessary columns
+        df = df[['time', 'open', 'high', 'low', 'close', 'volume']]
         
-        return df[['open', 'high', 'low', 'close', 'volume']]
+        # Drop any NaNs just in case
+        df = df.dropna(subset=['time'])
+        
+        return df
         
     except Exception as e:
         print(f"Fetch Error {symbol}: {e}")
@@ -145,19 +148,25 @@ def update_ticker(ticker, timeframe):
     if os.path.exists(filepath):
         try:
             existing_df = pd.read_parquet(filepath)
-            # Ensure DateTime Index
+            
+            # Clean existing data: handle NaN 'time' or missing columns
+            if 'time' in existing_df.columns:
+                 # Drop if 'time' is NaN and we have a valid index
+                 if existing_df['time'].isna().any() and isinstance(existing_df.index, pd.DatetimeIndex):
+                      existing_df['time'] = (existing_df.index.astype('int64') // 10**9)
+                 existing_df = existing_df.dropna(subset=['time'])
+            
+            # Ensure DateTime Index for deduplication
             if not isinstance(existing_df.index, pd.DatetimeIndex):
-                if 'datetime' in existing_df.columns:
-                    existing_df['datetime'] = pd.to_datetime(existing_df['datetime'])
-                    existing_df.set_index('datetime', inplace=True)
+                if 'time' in existing_df.columns:
+                    existing_df.index = pd.to_datetime(existing_df['time'], unit='s')
+                elif 'datetime' in existing_df.columns:
+                    existing_df.index = pd.to_datetime(existing_df['datetime'])
                 elif 'date' in existing_df.columns:
-                     existing_df['datetime'] = pd.to_datetime(existing_df['date'])
-                     existing_df.set_index('datetime', inplace=True)
+                     existing_df.index = pd.to_datetime(existing_df['date'])
             
             if not existing_df.empty:
                 last_dt = existing_df.index.max()
-                # Start fetching from last known time
-                # Schwab might return overlap, we handle duplication later
                 start_dt = last_dt
                 print(f"Existing data found. Last timestamp: {last_dt}")
         except Exception as e:

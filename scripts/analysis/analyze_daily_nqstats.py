@@ -100,7 +100,7 @@ def main():
     parser.add_argument("--date", help="Analysis date (YYYY-MM-DD), default Today")
     parser.add_argument("--markdown", action="store_true", help="Output in Markdown format")
     parser.add_argument("--discord", action="store_true", help="Send report to Discord")
-    parser.add_argument("--channel", default="data_gap_reports", help="Discord channel name")
+    parser.add_argument("--channel", default="test_channel", help="Discord channel name")
     args = parser.parse_args()
     
     target_date = datetime.strptime(args.date, "%Y-%m-%d").date() if args.date else datetime.now().date()

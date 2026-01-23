@@ -49,27 +49,35 @@ def load_parquet(ticker: str, timeframe: str) -> Optional[pd.DataFrame]:
     df = pd.read_parquet(filepath)
     
     # Handle datetime index - reset to column and convert to Unix timestamp
-    if df.index.name in ['datetime', 'time', 'timestamp']:
+    if df.index.name in ['datetime', 'time', 'timestamp'] or (not df.index.empty and isinstance(df.index, pd.DatetimeIndex)):
+        idx_name = df.index.name or 'datetime'
         df = df.reset_index()
+        if 'time' in df.columns and idx_name != 'time':
+            # If 'time' column is all NaN or largely empty, drop it in favor of index
+            if df['time'].isna().all() or (df['time'].dtype == 'float64' and df['time'].isna().sum() > 0):
+                df = df.drop(columns=['time'])
+                df = df.rename(columns={idx_name: 'time'})
     
     # Rename datetime column to time if needed
-    # Rename datetime column to time if needed
     if 'datetime' in df.columns:
-        if 'time' in df.columns:
-            # Drop duplicative datetime column if time already exists
-            df = df.drop(columns=['datetime'])
-        else:
+        if 'time' in df.columns and 'datetime' != 'time':
+             df = df.drop(columns=['datetime'])
+        elif 'time' not in df.columns:
             df = df.rename(columns={'datetime': 'time'})
     elif 'timestamp' in df.columns:
-        if 'time' in df.columns:
+        if 'time' in df.columns and 'timestamp' != 'time':
              df = df.drop(columns=['timestamp'])
-        else:
+        elif 'time' not in df.columns:
              df = df.rename(columns={'timestamp': 'time'})
     
     # Convert datetime to Unix timestamp (seconds) if needed
     if 'time' in df.columns and pd.api.types.is_datetime64_any_dtype(df['time']):
         df['time'] = df['time'].astype('int64') // 10**9
     
+    # DROP ROWS WITH NaN TIME
+    if 'time' in df.columns:
+        df = df.dropna(subset=['time'])
+
     # Ensure expected columns exist
     expected_cols = ['time', 'open', 'high', 'low', 'close', 'volume']
     for col in expected_cols:

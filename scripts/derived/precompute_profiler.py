@@ -2,43 +2,52 @@
 import pandas as pd
 import json
 import time
+import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# Import logic from service (or duplicate for standalone script if imports are tricky)
-# To avoid import issues with relative paths in scripts, we'll setup path
+# Import logic from service
 import sys
 import os
 sys.path.append(os.getcwd())
 
 from api.services.profiler_service import ProfilerService
 
-def precompute_ticker(ticker="NQ1"):
-    print(f"Loading data for {ticker}...")
+def precompute_ticker(ticker="NQ1", days=10000):
+    print(f"Loading data for {ticker} (Lookback: {days} days)...")
     
-    # Force load locally to bypass API context if needed, but Service has logic
-    # We can use the service logic but passing a large 'days' count to cover all history
-    # Or better: refactor service to exposure "process_dataframe"
-    
-    # For now, let's use the Service but with a hack to get ALL data.
-    # The service takes "days". Let's pass 10000 days.
-    
-    print("Running analysis (this may take a minute)...")
+    print("Running analysis...")
     start = time.time()
     
-    # Note: ensure api.services.data_loader DATA_DIR is correct relative to CWD
-    result = ProfilerService.analyze_profiler_stats(ticker, days=10000, force=True)
+    # Analyze from service
+    result = ProfilerService.analyze_profiler_stats(ticker, days=days, force=True)
     
     if "error" in result:
         print(f"Error: {result['error']}")
         return
 
-    sessions = result["sessions"]
-    count = len(sessions)
+    new_sessions = result["sessions"]
     elapsed = time.time() - start
+    print(f"Analyzed {len(new_sessions)} sessions in {elapsed:.2f}s")
     
-    print(f"Analyzed {count} sessions in {elapsed:.2f}s")
-    
+    # If we are doing a partial update (days < 500), merge with existing JSON
+    output_file = Path(f"data/{ticker}_profiler.json")
+    if days < 1000 and output_file.exists():
+        with open(output_file, 'r') as f:
+            existing_sessions = json.load(f)
+        
+        # Merge logic: use new sessions for overlapping dates
+        # Dictionary keyed by (date, session)
+        session_map = { (s['date'], s['session']): s for s in existing_sessions }
+        for s in new_sessions:
+            session_map[(s['date'], s['session'])] = s
+            
+        final_sessions = list(session_map.values())
+        final_sessions.sort(key=lambda x: x['start_ts'] if 'start_ts' in x else x['start_time'])
+        print(f"Merged {len(new_sessions)} new sessions into existing {len(existing_sessions)} total sessions.")
+    else:
+        final_sessions = new_sessions
+
     # Enrich with Daily Data (High/Low/Open) from NQ1_daily_hod_lod.json
     try:
         daily_json_path = Path(f"data/{ticker}_daily_hod_lod.json")
@@ -47,7 +56,7 @@ def precompute_ticker(ticker="NQ1"):
                 daily_data = json.load(f)
             
             enrich_count = 0
-            for s in sessions:
+            for s in final_sessions:
                 d = s.get('date')
                 if d and d in daily_data:
                     day_info = daily_data[d]
@@ -56,31 +65,25 @@ def precompute_ticker(ticker="NQ1"):
                     s['daily_low'] = day_info.get('daily_low')
                     enrich_count += 1
             print(f"Enriched {enrich_count} sessions with daily stats.")
-        else:
-            print(f"Warning: {daily_json_path} not found. Skipping enrichment.")
     except Exception as e:
         print(f"Enrichment Error: {e}")
 
     # Save to JSON
-    output_file = Path(f"data/{ticker}_profiler.json")
     with open(output_file, "w") as f:
-        json.dump(sessions, f, indent=2)
+        json.dump(final_sessions, f, indent=2)
         
     print(f"Saved to {output_file}")
 
 if __name__ == "__main__":
-    import sys
+    parser = argparse.ArgumentParser(description="Precompute Profiler Stats")
+    parser.add_argument("ticker", nargs="?", default="NQ1", help="Ticker (or 'ALL')")
+    parser.add_argument("--days", type=int, default=10000, help="Number of days to analyze")
+    args = parser.parse_args()
     
     tickers = ["NQ1", "ES1", "GC1", "CL1", "RTY1", "YM1"]
     
-    if len(sys.argv) > 1:
-        target = sys.argv[1]
-        if target.upper() == "ALL":
-            for t in tickers:
-                precompute_ticker(t)
-        else:
-            precompute_ticker(target)
+    if args.ticker.upper() == "ALL":
+        for t in tickers:
+            precompute_ticker(t, days=args.days)
     else:
-        # Default to NQ1 for backward compatibility/testing, or maybe all?
-        # Let's default to ES1 as that's the current problem child.
-        precompute_ticker("ES1")
+        precompute_ticker(args.ticker, days=args.days)

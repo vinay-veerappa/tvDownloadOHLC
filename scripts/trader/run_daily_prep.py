@@ -33,22 +33,7 @@ def main():
         print("   (MODE: NEXT TRADING DAY / TOMORROW)")
     print("==========================================\n")
 
-    # 1. BRIDGE THE GAP (Data Acquisition)
-    print("📡 STEP 1: BRIDGING DATA GAPS (Schwab API)...")
-    for t in args.tickers:
-        # Fetch 1m and 1h data
-        if os.path.exists(FETCH_SCRIPT):
-            run_command(["python", FETCH_SCRIPT, t, "--tf", "1m"])
-            # 1h not supported by Schwab Minute API (max 30m)
-        else:
-            print(f"Warning: {FETCH_SCRIPT} not found. Skipping data fetch.")
-
-    # 2. RUN CLASSIFICATION (HTF & Overnight)
-    print("\n⚙️  STEP 2: UPDATING CLASSIFICATIONS...")
-    if os.path.exists(PRECOMPUTE_SCRIPT):
-         run_command(["python", PRECOMPUTE_SCRIPT, "--tickers"] + args.tickers)
-    
-    # 3. GENERATE ANALYSIS PER TICKER
+    # --- DATA ACQUISITION & ANALYSIS ---
     for t in args.tickers:
         print(f"\n\n🔶 ANALYSIS FOR {t} 🔶")
         print("-----------------------------")
@@ -109,7 +94,7 @@ def main():
     print("\n🔍 STEP 4: DATA INTEGRITY CHECK (Bootstrap Conflicts)...")
     conflict_script = os.path.join(SCRIPTS_DIR, "maintenance", "generate_conflict_report.py")
     if os.path.exists(conflict_script):
-        run_command(["python", conflict_script, "--discord", "--channel", "data_gap_reports", "--clear"])
+        run_command(["python", conflict_script, "--discord", "--channel", "test_channel", "--clear"])
     else:
         print(f"Warning: {conflict_script} not found. Skipping integrity check.")
 
@@ -119,10 +104,21 @@ def main():
     if os.path.exists(nqstats_script):
         for t in args.tickers:
             print(f"\n[NQStats] Analyzing {t}...")
-            # Run and notify Discord using the Data Gap reports channel
-            run_command(["python", nqstats_script, "--ticker", t, "--discord", "--channel", "data_gap_reports"])
+            # Run and notify Discord using the same channel as charts
+            run_command(["python", nqstats_script, "--ticker", t, "--discord", "--channel", "test_channel"])
     else:
         print(f"Warning: {nqstats_script} not found. Skipping NQStats analysis.")
+    
+    # 6. DAILY CLASSIFICATION BIAS
+    print("\n🏷️  STEP 6: DAILY CLASSIFICATION BIAS...")
+    class_bias_script = os.path.join(SCRIPTS_DIR, "analysis", "analyze_daily_classification_bias.py")
+    if os.path.exists(class_bias_script):
+        for t in args.tickers:
+            print(f"\n[Classification] Analyzing {t}...")
+            # Run and notify Discord using the same channel as charts
+            run_command(["python", class_bias_script, "--ticker", t, "--discord", "--channel", "test_channel"])
+    else:
+        print(f"Warning: {class_bias_script} not found. Skipping Classification Bias analysis.")
 
     print("\n==========================================")
     print("✅ PREP COMPLETE. GOOD LUCK.")
