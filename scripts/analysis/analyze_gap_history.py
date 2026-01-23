@@ -3,6 +3,9 @@ import pandas as pd
 import numpy as np
 import os
 import sys
+import sqlite3
+import pytz
+from datetime import datetime, timedelta
 
 # Add utils to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
@@ -13,6 +16,7 @@ except ImportError:
     from fused_data_loader import load_fused_data
 
 GAP_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'derived', 'rth_gaps.json')
+DB_PATH = "c:/Users/vinay/tvDownloadOHLC/web/prisma/dev.db"
 
 def analyze_gap_history(ticker="NQ1"):
     print(f"[{ticker}] Loading Gaps...")
@@ -45,6 +49,49 @@ def analyze_gap_history(ticker="NQ1"):
     vix_df = load_fused_data("VIX", timeframe="1m", require_historical=True)
     vvix_df = load_fused_data("VVIX", timeframe="1d", require_historical=True)  # Daily data
     
+    # Load Economic Events for News Context
+    print(f"[{ticker}] Loading Economic Events from Prisma DB...")
+    news_days = {} # date_str -> list of news events
+    if os.path.exists(DB_PATH):
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            # Filter for US events by excluding foreign keywords
+            EXCLUDE_KEYWORDS = [
+                "German", "French", "Spanish", "Italian", "Eurozone", 
+                "UK ", "JPY", "AUD", "CAD", "CNY", "Swiss", "ECB President", 
+                "EU ", "Australian", "British", "Canadian", "Japanese", "Chinese"
+            ]
+            
+            query = "SELECT datetime, name FROM EconomicEvent WHERE impact = 'HIGH'"
+            events_df = pd.read_sql_query(query, conn)
+            conn.close()
+            
+            if not events_df.empty:
+                local_tz = pytz.timezone('US/Eastern')
+                for _, row in events_df.iterrows():
+                    dt_raw, name = row['datetime'], row['name']
+                    
+                    if any(kw in name for kw in EXCLUDE_KEYWORDS):
+                        continue
+
+                    # Convert to datetime
+                    if isinstance(dt_raw, str):
+                        dt_utc = pd.to_datetime(dt_raw).tz_localize('UTC')
+                    else:
+                        dt_utc = pd.to_datetime(dt_raw, unit='ms').tz_localize('UTC')
+                    
+                    dt_local = dt_utc.astimezone(local_tz)
+                    
+                    # 11:30 AM ET in DB is the proxy for 8:30 AM ET News (3h offset)
+                    if dt_local.hour == 11 and dt_local.minute == 30:
+                        d_str = str(dt_local.date())
+                        if d_str not in news_days: news_days[d_str] = []
+                        news_days[d_str].append(name)
+        except Exception as e:
+            print(f"Error loading news: {e}")
+    else:
+        print("Prisma DB not found for news analysis.")
+
     # Process VIX
     vix_at_open = {}
     if not vix_df.empty:
@@ -110,6 +157,11 @@ def analyze_gap_history(ticker="NQ1"):
         gap_pct = (gap_size / prev_close) * 100.0 if prev_close else 0
         
         # --- 2. Context Metrics ---
+        # 8:30 AM News Context
+        day_news = news_days.get(date_str, [])
+        is_news_day = len(day_news) > 0
+        news_name = ", ".join(day_news) if day_news else "None"
+
         # Day of Week
         dt_obj = pd.Timestamp(date_str)
         day_of_week = dt_obj.day_name()
@@ -155,6 +207,11 @@ def analyze_gap_history(ticker="NQ1"):
         day_rth = day_data[day_data.index >= rth_start]
         if day_rth.empty: continue
         
+        # Day Direction (Close vs Open)
+        session_open = day_rth.iloc[0]['open']
+        session_close = day_rth.iloc[-1]['close']
+        day_direction = "Bullish" if session_close > session_open else "Bearish"
+
         # Fill Logic
         is_filled = False
         time_to_fill = None
@@ -209,25 +266,43 @@ def analyze_gap_history(ticker="NQ1"):
         extension_ratio = (extension_pts / gap_size) if gap_size > 0 else 0
 
         # Trend result (Closes in gap direction)
-        session_close = day_rth.iloc[-1]['close']
         trend_continuation = (gap_type == "UP" and session_close > open_price) or (gap_type == "DOWN" and session_close < open_price)
 
-        # RTH Break Defense
-        far_side_held = None
+        # RTH Segment & Break Defense (NQStats Logic)
+        open_type = "Unknown"
+        prev_day_bias = "Unknown"
+        near_side_broken = False
+        far_side_broken = False
+        
         if date_str in date_map:
             p_date = date_map[date_str]
             if p_date in day_groups:
                 p_data = day_groups[p_date]
-                p_start = (pd.Timestamp(p_date) + pd.Timedelta(hours=9, minutes=30)).tz_localize("US/Eastern")
-                p_end = (pd.Timestamp(p_date) + pd.Timedelta(hours=16, minutes=15)).tz_localize("US/Eastern")
-                p_rth = p_data[(p_data.index >= p_start) & (p_data.index <= p_end)]
+                p_rth_start = (pd.Timestamp(p_date) + pd.Timedelta(hours=9, minutes=30)).tz_localize("US/Eastern")
+                p_rth_end = (pd.Timestamp(p_date) + pd.Timedelta(hours=16, minutes=15)).tz_localize("US/Eastern")
+                p_rth = p_data[(p_data.index >= p_rth_start) & (p_data.index <= p_rth_end)]
+                
                 if not p_rth.empty:
-                    held = True
+                    p_high = p_rth['high'].max()
+                    p_low = p_rth['low'].min()
+                    p_open = p_rth.iloc[0]['open']
+                    p_close = p_rth.iloc[-1]['close']
+                    
+                    # Previous Day Bias
+                    prev_day_bias = "Bullish" if p_close > p_open else "Bearish"
+                    
+                    # Open Type (Relative to Prev RTH Range)
+                    if open_price > p_high: open_type = "OBR (Above)"
+                    elif open_price < p_low: open_type = "OBR (Below)"
+                    else: open_type = "IBR"
+                    
+                    # Boundary Breaks
                     if gap_type == "UP":
-                         if day_rth['low'].min() < p_rth['low'].min(): held = False
-                    else:
-                         if day_rth['high'].max() > p_rth['high'].max(): held = False
-                    far_side_held = held
+                        near_side_broken = day_rth['low'].min() < p_high
+                        far_side_broken = day_rth['low'].min() < p_low
+                    else: # DOWN
+                        near_side_broken = day_rth['high'].max() > p_low
+                        far_side_broken = day_rth['high'].max() > p_high
 
         # Percents relative to PRICE level (from Open)
         retrace_price_pct = (retrace_pts / open_price) * 100.0 if open_price > 0 else 0
@@ -243,8 +318,15 @@ def analyze_gap_history(ticker="NQ1"):
             "vvix_regime": vvix_regime,
             "atr_pct_val": atr_pct,
             "gap_pct": gap_pct,
+            "is_news_day": is_news_day,
+            "news_name": news_name,
             "is_filled": is_filled,
             "time_to_fill": time_to_fill,
+            "day_direction": day_direction,
+            "prev_day_bias": prev_day_bias,
+            "open_type": open_type,
+            "near_side_broken": near_side_broken,
+            "far_side_broken": far_side_broken,
             # Gap Relative %
             "retrace_pct": retrace_pct, 
             "fakeout_pct": fakeout_pct, 
@@ -254,7 +336,6 @@ def analyze_gap_history(ticker="NQ1"):
             "retrace_price_pct": retrace_price_pct,
             "fakeout_price_pct": fakeout_price_pct,
             "extension_price_pct": extension_price_pct,
-            "far_side_held": far_side_held,
             "days_to_fill": 0 if is_filled else None
         })
         
@@ -329,25 +410,38 @@ def analyze_gap_history(ticker="NQ1"):
     print(f"MFE (Fakeout Pct):   {get_stats(df_res['fakeout_price_pct'], precision=2)}%  <-- Extension BEFORE fill")
     print(f"MFE (Extension Pct): {get_stats(df_res['extension_price_pct'], precision=2)}%  <-- Total Session Extension")
 
-    # 3. Volatility Regime Impact
+    # 3. NQStats RTH Logic (Open Types & Breaks)
+    print("\n🏛️ 3. NQStats RTH Logic (Open Types & Boundary Defense)")
+    print("--------------------------------------------------")
+    # Open Type Distribution
+    open_type_stats = df_res.groupby('open_type', observed=False).agg({
+        'is_filled': ['mean', 'count'],
+        'near_side_broken': 'mean',
+        'far_side_broken': 'mean'
+    })
+    open_type_stats.columns = ['Fill Rate', 'Days', 'Near Side Break', 'Far Side Break']
+    open_type_stats[['Fill Rate', 'Near Side Break', 'Far Side Break']] *= 100
+    print(open_type_stats[['Days', 'Fill Rate', 'Near Side Break', 'Far Side Break']].to_string(float_format="{:.1f}%".format))
+    
+    # 4. Volatility Regime Impact
     print("\n🌊 4. Volatility Regime Impact")
     print("--- VIX Regimes ---")
     vix_stats = df_res.groupby('vol_regime', observed=False).agg({
         'is_filled': ['mean', 'count'],
-        'far_side_held': 'mean'
+        'near_side_broken': 'mean'
     })
-    vix_stats.columns = ['is_filled', 'Days', 'far_side_held']
-    vix_stats[['is_filled', 'far_side_held']] = vix_stats[['is_filled', 'far_side_held']] * 100
-    print(vix_stats[['Days', 'is_filled', 'far_side_held']].to_string(float_format="{:.1f}%".format))
+    vix_stats.columns = ['is_filled', 'Days', 'Near Side Break']
+    vix_stats[['is_filled', 'Near Side Break']] *= 100
+    print(vix_stats[['Days', 'is_filled', 'Near Side Break']].to_string(float_format="{:.1f}%".format))
     
     print("\n--- VVIX Regimes ---")
     vvix_stats = df_res.groupby('vvix_regime', observed=False).agg({
         'is_filled': ['mean', 'count'],
-        'far_side_held': 'mean'
+        'near_side_broken': 'mean'
     })
-    vvix_stats.columns = ['is_filled', 'Days', 'far_side_held']
-    vvix_stats[['is_filled', 'far_side_held']] = vvix_stats[['is_filled', 'far_side_held']] * 100
-    print(vvix_stats[['Days', 'is_filled', 'far_side_held']].to_string(float_format="{:.1f}%".format))
+    vvix_stats.columns = ['is_filled', 'Days', 'Near Side Break']
+    vvix_stats[['is_filled', 'Near Side Break']] *= 100
+    print(vvix_stats[['Days', 'is_filled', 'Near Side Break']].to_string(float_format="{:.1f}%".format))
     
     # ATR Correlation
     print("\n--- Correlation with Daily ATR % ---")
@@ -355,13 +449,26 @@ def analyze_gap_history(ticker="NQ1"):
         df_res['atr_bucket'] = pd.qcut(df_res['atr_pct_val'], 3, labels=["Low ATR", "Normal ATR", "High ATR"])
         atr_stats = df_res.groupby('atr_bucket', observed=False).agg({
             'is_filled': 'mean',
-            'far_side_held': 'mean',
+            'near_side_broken': 'mean',
             'gap_pct': 'mean'
         }) * 100
         print(atr_stats.to_string(float_format="{:.1f}%".format))
 
-    # 4. Continuation When Not Filling
-    print("\n🚀 4. Continuation Logic (When Gap Holds)")
+    # 5. Trend & Bias Correlation
+    print("\n📈 5. Trend & Bias Correlation Analysis")
+    print("--------------------------------------------------")
+    # Previous Day Bias Impact
+    bias_stats = df_res.groupby(['prev_day_bias', 'gap_dir'], observed=False).agg({
+        'is_filled': ['mean', 'count'],
+        'trend_continuation': 'mean'
+    })
+    bias_stats.columns = ['Fill Rate', 'Days', 'Trend Continuation']
+    bias_stats[['Fill Rate', 'Trend Continuation']] *= 100
+    print("\n--- Impact of Previous Day Bias on Gap Behavior ---")
+    print(bias_stats.to_string(float_format="{:.1f}%".format))
+
+    # Continuation Logic (When Gap Holds)
+    print("\n🚀 Continuation Logic (When Gap Holds)")
     trend_candidates = df_res[(df_res['gap_pct'] > 0.25) & (~df_res['is_filled'])]
     if not trend_candidates.empty:
         trend_prob = trend_candidates['trend_continuation'].mean() * 100
@@ -370,8 +477,44 @@ def analyze_gap_history(ticker="NQ1"):
         print(f" -> Probability of Trend Day (Gap & Go): {trend_prob:.1f}%")
         print(f" -> Extension Ratio (Multiple of Gap):  {ext_stats}")
 
-    # 6. Deferred Fill Analysis (Multi-Day IPDA Windows)
-    print("\n🧲 6. Deferred Fill Analysis (IPDA Windows: 20, 40, 60 Day)")
+    # 6. 8:30 AM News Impact Analysis
+    print("\n📰 6. 8:30 AM News Impact Analysis (CPI, NFP, etc.)")
+    print("--------------------------------------------------")
+    news_stats = df_res.groupby('is_news_day', observed=False).agg({
+        'gap_pct': ['mean', 'count'],
+        'is_filled': 'mean',
+        'near_side_broken': 'mean',
+        'extension_ratio': 'median'
+    })
+    news_stats.columns = ['Avg Gap %', 'Days', 'Fill Rate', 'Near Side Break', 'Ext Ratio (Med)']
+    news_stats[['Fill Rate', 'Near Side Break']] *= 100
+    
+    # Rename index for clarity
+    news_stats.index = ['No Major News', '8:30 AM News Day']
+    print(news_stats.to_string(float_format="{:.2f}".format))
+
+    # Breakdown by specific news type (Top 5)
+    if not df_res[df_res['is_news_day']].empty:
+        print("\n--- Breakdown by news Event Type (Top 10) ---")
+        # Split multiple news events and count
+        all_news_items = []
+        for news_str in df_res[df_res['is_news_day']]['news_name']:
+            for item in news_str.split(", "):
+                all_news_items.append(item)
+        
+        # This is harder to group by event since one day can have multiple.
+        # Let's just do a simple filter for the big ones
+        for event_key in ["CPI", "NFP", "Retail Sales", "GDP", "Unemployment Rate"]:
+            mask = df_res['news_name'].str.contains(event_key, case=False, na=False)
+            subset = df_res[mask]
+            if not subset.empty:
+                f_rate = subset['is_filled'].mean() * 100
+                g_size = subset['gap_pct'].mean()
+                d_count = len(subset)
+                print(f"{event_key:20} | Days: {d_count:3} | Avg Gap: {g_size:.2f}% | Fill Rate: {f_rate:.1f}%")
+
+    # 7. Deferred Fill Analysis (Multi-Day IPDA Windows)
+    print("\n🧲 7. Deferred Fill Analysis (IPDA Windows: 20, 40, 60 Day)")
     print("--------------------------------------------------")
     unfilled_day0 = df_res[~df_res['is_filled']].copy()
     if not unfilled_day0.empty:

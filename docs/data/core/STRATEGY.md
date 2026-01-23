@@ -28,6 +28,7 @@ To support real-time charting without file locking issues:
 
 *   **Hot Layer (Latency < 200ms):**
     *   **File:** `live_chart.json`
+    *   **Path:** `data/live/live_chart_-{ticker}.json`
     *   **Format:** JSON (Array of recent candles + current tick)
     *   **Access:** Polled by frontend every 200ms.
     *   **Persistence:** Ephemeral (overwritten on restart).

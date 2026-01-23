@@ -69,6 +69,24 @@ python convert_to_parquet.py --ticker NQ1!
 *   Generates `data/ES1_1D.parquet`
 *   (And similarly for NQ1)
 
+# 3. Automated Update (Schwab API)
+
+For a fully automated workflow that bridges gaps without manual CSV exports, use the Schwab API update script.
+
+**Script:** `scripts/market_data/update_via_schwab.py`
+
+### Examples
+
+**Update everything:**
+```powershell
+python update_via_schwab.py --all
+```
+
+**Update specific ticker (1m):**
+```powershell
+python update_via_schwab.py NQ --tf 1m
+```
+
 ---
 
 ## 🔄 Complete Workflow Example
@@ -76,6 +94,10 @@ python convert_to_parquet.py --ticker NQ1!
 Here is the full sequence of commands to update everything for **ES1!**:
 
 ```powershell
+# OPTION A: Automated (Schwab API)
+python scripts/market_data/update_via_schwab.py ES
+
+# OPTION B: Manual (TradingView Selenium)
 # 1. Download Data (from selenium_downloader folder)
 cd selenium_downloader
 python download_ohlc_selenium_enhanced.py --ticker ES1! --check-gap
@@ -85,7 +107,7 @@ cd ../data_processing
 python stitch_and_validate.py --ticker ES1!
 python convert_to_parquet.py --ticker ES1!
 
-# 3. Run Chart (from chart_ui folder)
-cd ../chart_ui
-python chart_server.py
+# 3. Run Web App (from web folder)
+cd ../web
+npm run dev
 ```

@@ -1,5 +1,7 @@
 import os
 import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 import pandas as pd
 import numpy as np
 from datetime import datetime, time, timedelta
@@ -53,10 +55,10 @@ def classify_aln(asia_df, london_df):
     ah, al = asia_df['high'].max(), asia_df['low'].min()
     lh, ll = london_df['high'].max(), london_df['low'].min()
     
-    if lh > ah and ll < al: return "LEA"   # London Expanded Asia
-    if lh > ah and ll >= al: return "LPEU" # London Positive Expansion Up
-    if ll < al and lh <= ah: return "LPED" # London Positive Expansion Down
-    return "AEL" # Asia Expanded London (Inside Day)
+    if lh > ah and ll < al: return "LEA"   # London Engulfs Asia
+    if lh > ah and ll >= al: return "LPEU" # London Partially Engulfs Up
+    if ll < al and lh <= ah: return "LPED" # London Partially Engulfs Down
+    return "AEL" # Asia Engulfs London
 
 def get_broken_status(asia_df, london_df, preny_df):
     """Check if subsequent sessions broke prior session ranges."""
@@ -141,41 +143,62 @@ def main():
     bias = "NEUTRAL / WAIT"
     conviction = "LOW"
     action = "Wait for NY Open (9:30) to establish direction."
+    logic_reasoning = "Default: No high-probability pattern matched."
     
     if aln == "LPEU" and (broken == "Held/Held" or broken == "Broken/Held") and status == "L/L":
         bias = "STRONG BULLISH"
         conviction = "HIGH"
         action = "Look for Longs on pullbacks to London Mid."
+        logic_reasoning = "LPEU (78% Continuation) + Strong Alignment (L/L) + Clean Structure (Held)."
     elif aln == "LPEU" and broken == "Broken/Held" and status == "L/S":
         bias = "STRONG BEARISH (REVERSAL)"
         conviction = "HIGH"
         action = "Look for Shorts on rallies to London Mid."
+        logic_reasoning = "LPEU (63% Reversal) + Broken Asia + London Reversal (L/S)."
     elif broken == "Broken/Broken":
         bias = "NEUTRAL / CHOP"
         conviction = "LOW"
         action = "Expect chop. Reduce size or wait."
+        logic_reasoning = "Market structure is broken on both sides. High noise risk."
 
     # 6. Report
     report_lines = []
-    if args.markdown or args.discord:
-        report_lines.append(f"### 📊 NQSTATS: {args.ticker} | {target_date}")
-        report_lines.append(f"---")
-        report_lines.append(f"**Final Bias**: `{bias}` | **Conviction**: `{conviction}`")
-        report_lines.append(f"**Action**: {action}")
-        report_lines.append(f"\n**Classification**:")
-        report_lines.append(f"- ALN: `{aln}`")
-        report_lines.append(f"- Broken: `{broken}`")
-        report_lines.append(f"- Status: `{status}`")
-        report_lines.append(f"\n**🌙 Noon Curve**: 75% chance High/Low on **Opposite Sides** of Noon.")
-        
-        if not london.empty:
-            lh, ll = london['high'].max(), london['low'].min()
-            report_lines.append(f"\n**📍 Key Levels**:")
-            report_lines.append(f"- London High: `{lh:.2f}`")
-            report_lines.append(f"- London Low: `{ll:.2f}`")
-            report_lines.append(f"- London Mid: `{(lh+ll)/2:.2f}`")
-        
-        report_text = "\n".join(report_lines)
+    
+    report_lines.append(f"### 📊 NQSTATS: {args.ticker} | {target_date}")
+    report_lines.append(f"---")
+    report_lines.append(f"**Final Bias**: `{bias}` | **Conviction**: `{conviction}`")
+    report_lines.append(f"**Action**: {action}")
+    report_lines.append(f"\n**Classification**:")
+    report_lines.append(f"- ALN: `{aln}`")
+    report_lines.append(f"- Broken: `{broken}`")
+    report_lines.append(f"- Status: `{status}`")
+    report_lines.append(f"\n**Reasoning**: {logic_reasoning}")
+    
+    # 7. Add NQStats Claims
+    report_lines.append(f"\n**📈 NQStats Claims for {aln}:**")
+    if aln == "LPEU":
+        report_lines.append("- NY breaks London High (Continuation): **~78%**")
+        report_lines.append("- NY breaks London Low (Reversal): **~63%**")
+        report_lines.append("- NY breaks Asia Low (Full Reversal): **~54%**")
+    elif aln == "LPED":
+        report_lines.append("- NY breaks London Low (Continuation): **~82%**")
+        report_lines.append("- NY breaks London High (Reversal): **~58%**")
+    elif aln == "LEA":
+        report_lines.append("- NY breaks London High OR Low: **~80%**")
+        report_lines.append("- NY breaks BOTH High AND Low: **~64%**")
+    elif aln == "AEL":
+        report_lines.append("- NY breaks Asia High: **~74%**")
+        report_lines.append("- NY breaks Asia Low: **~63%**")
+        report_lines.append("- NY breaks BOTH High AND Low: **~42%**")
+    
+    if not london.empty:
+        lh, ll = london['high'].max(), london['low'].min()
+        report_lines.append(f"\n**📍 Key Levels**:")
+        report_lines.append(f"- London High: `{lh:.2f}`")
+        report_lines.append(f"- London Low: `{ll:.2f}`")
+        report_lines.append(f"- London Mid: `{(lh+ll)/2:.2f}`")
+    
+    report_text = "\n".join(report_lines)
 
     if args.markdown or not args.discord:
         if args.markdown:
@@ -188,13 +211,11 @@ def main():
             print(f"  - ALN Pattern: {aln}")
             print(f"  - Broken Status: {broken}")
             print(f"  - Profiler Status: {status}")
-            print(f"  - Prior Close (P12): {prior_close:.2f if prior_close else 'N/A'}")
+            print(f"  - Prior Close (P12): {prior_close:.2f}" if prior_close else "  - Prior Close (P12): N/A")
             print(f"  - Combo Key: {combo_key}")
             print(f"\n📢 FINAL BIAS: {bias}")
             print(f"🎯 CONVICTION: {conviction}")
             print(f"📝 ACTION: {action}")
-            print(f"\n🌙 NOON CURVE PROBABILITY:")
-            print(f"  - 74.9% chance HOD and LOD are on Opposite Sides of 12:00 ET.")
             if not london.empty:
                 lh, ll = london['high'].max(), london['low'].min()
                 print(f"\n📍 KEY NQSTATS LEVELS:")
@@ -203,6 +224,23 @@ def main():
                 print(f"  - London Mid:  {(lh+ll)/2:.2f}")
             print("\n" + "="*42)
 
+    # 8. Prepare Result Data
+    result_data = {
+        'aln': aln,
+        'broken': broken,
+        'status': status,
+        'bias': bias,
+        'conviction': conviction,
+        'action': action,
+        'reasoning': logic_reasoning,
+        'claims': [l for l in report_lines if l.startswith("- NY breaks")],
+        'levels': {
+            'lh': lh if not london.empty else None,
+            'll': ll if not london.empty else None,
+            'mid': (lh+ll)/2 if not london.empty else None
+        }
+    }
+
     if args.discord:
         from scripts.utils.discord_notify import get_webhook_url, send_message
         webhook_url = get_webhook_url(args.channel)
@@ -210,6 +248,8 @@ def main():
             send_message(webhook_url, report_text)
         else:
             print(f"❌ Discord Error: Channel '{args.channel}' not found.")
+            
+    return report_text, result_data
 
 if __name__ == "__main__":
-    main()
+    report, data = main()

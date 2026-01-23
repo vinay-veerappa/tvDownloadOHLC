@@ -20,7 +20,8 @@ import data_utils
 SCHWAB_MAP = {
     # Indices
     "SPX": "$SPX", 
-    "VIX": "$VIX", 
+    "VIX": "$VIX",
+    "VVIX": "$VVIX",
     "NDX": "$NDX",
     "RUT": "$RUT",
     "DJI": "$DJI",
@@ -44,7 +45,13 @@ SCHWAB_MAP = {
     "ES1": "/ES", 
     "NQ1": "/NQ",
     "RTY1": "/RTY",
-    "YM1": "/YM"
+    "YM1": "/YM",
+    "ES": "/ES",
+    "NQ": "/NQ",
+    "RTY": "/RTY",
+    "YM": "/YM",
+    "CL": "/CL",
+    "GC": "/GC"
 }
 
 def get_schwab_client():

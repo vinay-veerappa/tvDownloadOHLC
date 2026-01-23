@@ -86,20 +86,31 @@ See [`docs/README.md`](docs/README.md) for the full documentation index includin
 - [User Guide](docs/setup/USER_GUIDE.md)
 - Plugin System
 - Indicators Guide
-- [Data Processing Instructions](docs/data/DATA_PROCESSING_INSTRUCTIONS.md)
-- **[Data Integrity & Streaming Guide](docs/data/DATA_INTEGRITY_GUIDE.md)** 🆕 (Corruption Prevention)
+- [Data Processing Instructions](docs/data/pipeline/INSTRUCTIONS.md)
+- **[Data Integrity & Streaming Guide](docs/data/pipeline/INTEGRITY.md)** 🆕 (Corruption Prevention)
 - **[Data Inventory](DATA_INVENTORY.md)** (Available Tickers & Timeframes)
 
 ## 🐍 Data Scripts (Python)
 
-### Update Data (New)
+### Update Data (CSV Import)
 To automatically import and sync new TradingView exports:
 1. Place your `.csv` files in `data/imports/`
 2. Run:
 ```bash
-python scripts/update_data.py
+python scripts/market_data/update_data.py
 ```
 This script handles remaining processing, format conversion, and updates documentation automatically.
+
+### Update Data (Schwab API)
+**New!** Automatically fetch recent data and bridge gaps using the Schwab API.
+```bash
+# Update everything
+python scripts/market_data/update_via_schwab.py --all
+
+# Update specific ticker and timeframe
+python scripts/market_data/update_via_schwab.py NQ --tf 1m
+```
+This script updates standard Parquet files and regenerates Web JSON chunks for the chart.
 
 ### Historical Download (Selenium)
 **New!** Automated download of full contract history using TradingView Replay mode.

@@ -2,8 +2,10 @@ import pandas as pd
 import numpy as np
 import argparse
 import sys
+from datetime import datetime, timedelta, time
 import os
-from datetime import datetime, timedelta
+import sys
+import pytz
 
 def get_next_session_context(df, ticker):
     """
@@ -75,6 +77,9 @@ def get_last_session(df, ticker):
     except:
         pass
 
+    # --- ICT BIAS ANALYSIS (Methods 1-3) ---
+    ict_analysis = analyze_ict_bias_logic(df, last_date, pdh, pdl, pdc, m_open)
+
     return {
         'Date': last_date,
         'PDH': pdh,
@@ -83,8 +88,76 @@ def get_last_session(df, ticker):
         'Midnight_Open': m_open,
         'Open_0830': o_0830,
         'Last_Close': curr_day['close'].iloc[-1],
-        'Is_Projection': False
+        'Is_Projection': False,
+        'ict_analysis': ict_analysis
     }
+
+def analyze_ict_bias_logic(df, target_date, pdh, pdl, pdc, m_open):
+    """
+    Implements ICT Intraday Bias Methods 1, 2, and 3.
+    """
+    analysis = {
+        'method_1_pvh': "Neutral",
+        'method_2_midnight_london': "Neutral",
+        'method_3_london_confirmation': "Neutral",
+        'sweeps': [],
+        'bias_score': 0
+    }
+
+    try:
+        # 1. Method 1: Previous Day Candle Analysis (Reversal/Strength)
+        # Check if PDC (Yesterday's close) is above/below PDH/PDL
+        p_day_df = df[df.index.date == (target_date - timedelta(days=1))]
+        if target_date.weekday() == 0: # Monday
+             p_day_df = df[df.index.date == (target_date - timedelta(days=3))]
+        
+        if not p_day_df.empty:
+            ph, pl = p_day_df['high'].max(), p_day_df['low'].min()
+            pc = p_day_df['close'].iloc[-1]
+            if pc > ph: analysis['method_1_pvh'] = "BULLISH (Closed above PDH)"
+            elif pc < pl: analysis['method_1_pvh'] = "BEARISH (Closed below PDL)"
+            
+            # Reversal Sweep Detection
+            if p_day_df['low'].min() < pl and pc > pl:
+                analysis['method_1_pvh'] = "BULLISH (Swept PDL and closed above)"
+            elif p_day_df['high'].max() > ph and pc < ph:
+                analysis['method_1_pvh'] = "BEARISH (Swept PDH and closed below)"
+
+        # 2. Method 2: Midnight to London Range (00:00 - 03:00)
+        start_0000 = pd.Timestamp(datetime.combine(target_date, time(0, 0))).tz_localize('US/Eastern')
+        end_0300 = pd.Timestamp(datetime.combine(target_date, time(3, 0))).tz_localize('US/Eastern')
+        m_l_range = df.loc[start_0000:end_0300]
+        
+        if not m_l_range.empty:
+            ml_h, ml_l = m_l_range['high'].max(), m_l_range['low'].min()
+            # Check for sweep between 03:00 and 08:30 (Judas Swing)
+            pre_ny = df.loc[end_0300:pd.Timestamp(datetime.combine(target_date, time(8, 30))).tz_localize('US/Eastern')]
+            if not pre_ny.empty:
+                if pre_ny['high'].max() > ml_h: analysis['sweeps'].append("Midnight-London High Swept")
+                if pre_ny['low'].min() < ml_l: analysis['sweeps'].append("Midnight-London Low Swept")
+                
+                if "Midnight-London High Swept" in analysis['sweeps'] and pre_ny['close'].iloc[-1] < ml_h:
+                    analysis['method_2_midnight_london'] = "BEARISH (Judas Swing High)"
+                elif "Midnight-London Low Swept" in analysis['sweeps'] and pre_ny['close'].iloc[-1] > ml_l:
+                    analysis['method_2_midnight_london'] = "BULLISH (Judas Swing Low)"
+
+        # 3. Method 3: London Session Confirmation
+        # Asia Range (18:00 Yesterday - 00:00 Today)
+        asia_start = pd.Timestamp(datetime.combine(target_date - timedelta(days=1), time(18, 0))).tz_localize('US/Eastern')
+        asia_range = df.loc[asia_start:start_0000]
+        if not asia_range.empty:
+            ah, al = asia_range['high'].max(), asia_range['low'].min()
+            # Did London (03:00-08:30) sweep Asia?
+            london_period = df.loc[end_0300:pd.Timestamp(datetime.combine(target_date, time(8, 30))).tz_localize('US/Eastern')]
+            if not london_period.empty:
+                if london_period['high'].max() > ah and london_period['close'].iloc[-1] < ah:
+                    analysis['method_3_london_confirmation'] = "BEARISH (London swept Asia High)"
+                elif london_period['low'].min() < al and london_period['close'].iloc[-1] > al:
+                    analysis['method_3_london_confirmation'] = "BULLISH (London swept Asia Low)"
+    except:
+        pass
+
+    return analysis
 
 def main(ticker, next_day=False):
     # Import the unified data loader
@@ -191,6 +264,14 @@ def main(ticker, next_day=False):
     print("- PDH/PDL are the 'Draw on Liquidity' for the next session.")
     print("- If Globex stays inside prior range -> Expect range expansion.")
     print("-----------------------------------\n")
+
+    return {
+        'context': data,
+        'htf': {
+            'pwh': pwh, 'pwl': pwl,
+            'pmh': pmh, 'pml': pml
+        }
+    }
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

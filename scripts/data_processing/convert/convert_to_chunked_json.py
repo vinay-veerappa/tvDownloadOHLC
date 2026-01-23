@@ -58,6 +58,13 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
     elif 'index' in df.columns:
         df.rename(columns={'index': 'time'}, inplace=True)
     
+    # Fallback: If no 'time' column but index is datetime-like
+    if 'time' not in df.columns:
+        if isinstance(df.index, pd.DatetimeIndex) or pd.api.types.is_datetime64_any_dtype(df.index):
+            df['time'] = df.index
+        else:
+            print(f"FAILED: No time column found and index is not datetime-like for {parquet_path}")
+            return 0, 0
     
     if pd.api.types.is_datetime64_any_dtype(df['time']):
         df['time'] = (df['time'].astype('int64') // 10**9).astype(int)
@@ -184,7 +191,7 @@ def convert_parquet_to_chunked_json(parquet_path, output_dir):
     # Calculate total size
     total_size = sum(f.stat().st_size for f in ticker_dir.glob("*.json"))
     
-    print(f"  {total_bars:,} bars → {num_chunks} chunks ({total_size / (1024*1024):.1f} MB)")
+    print(f"  {total_bars:,} bars -> {num_chunks} chunks ({total_size / (1024*1024):.1f} MB)")
     
     return total_bars, num_chunks
 

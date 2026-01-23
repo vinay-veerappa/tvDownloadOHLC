@@ -103,20 +103,54 @@ Measuring the move relative to the absolute index level (e.g. NQ @ 25,000).
 
 ---
 
-## 4. The "Moat" & Continuation (Defense)
+## 4. NQStats RTH Logic (Open Types & Boundary Defense)
 
-### A. RTH Break Defense
-Does the gap hold the "Far Side" (Yesterday's Low for Gap Up, High for Gap Down)?
-**Result**: **67.3% Defense Rate**.
+Calculating the probability of breaking previous RTH boundaries based on where we open.
+
+### A. Open Type Distribution
+| Open Type | Fill Rate | Near Side Break | Far Side Break | Insight |
+| :--- | :--- | :--- | :--- | :--- |
+| **IBR** (Inside Range) | **76.4%** | 100.0% | 41.6% | High probability of full-range rotation. |
+| **OBR Above** (Gap Up) | 54.4% | 70.5% | 17.2% | **Far Side (Low) is defended 82.8% of the time**. |
+| **OBR Below** (Gap Down) | 53.1% | 72.1% | 14.7% | **Far Side (High) is defended 85.3% of the time**. |
+
+*   *Key Takeaway*: When opening **Outside** the previous RTH range, the "Far Side" (the extreme opposite of the gap) is an extremely strong level. Breaking it (15-17% prob) usually signals a major trend reversal or "failed gap" scenario.
+
+### B. Boundary Defense by Volatility (Near Side)
+How often do we even return to test the "Near Side" (Yesterday's High/Low closest to the open)?
+
+| Regime | Near Side Break (Fill Start) | Insight |
+| :--- | :--- | :--- |
+| **Low ATR** | **76.3%** | Price almost always tests the previous range. |
+| **High ATR** | **72.4%** | Even in high vol, 7 out of 10 days revisit the previous range. |
+| **High VVIX** | **72.4%** | Unstable vol leads to frequent range tests. |
+
+---
+
+## 5. Trend & Bias Correlation Analysis
+
+Does the previous day's direction or the current day's gap alignment create a better edge?
+
+### A. Impact of Previous Day Bias
+| Prev Day Bias | Gap Direction | Fill Rate | Trend Continuation |
+| :--- | :--- | :--- | :--- |
+| **Bearish** | **UP** (Fade) | 66.5% | 54.9% |
+| **Bearish** | **DOWN** (Cont) | **69.9%** | 44.9% |
+| **Bullish** | **UP** (Cont) | 68.1% | 51.6% |
+| **Bullish** | **DOWN** (Fade) | **69.9%** | 45.7% |
+
+*   **The Mean Reversion Edge**: Gaps **DOWN** after a **Bullish** day fill **69.9%** of the time (Mean Reversion).
+*   **The Trend Continuation Edge**: Gaps **UP** after a **Bullish** day have a **51.6%** continuation rate, but still fill **68.1%** of the time.
 
 ### B. Continuation Logic (When Gap Holds)
 For gaps > 0.25% that do not fill within the first 60 minutes:
 *   **Trend Day Probability**: **76.5%**
-*   **Extension Ratio**: **1.16x** (Price runs another 1.16x the gap size past the open).
+*   **Extension Ratio**: **1.5x (Mean)** | **1.2x (Median)**
+*   *Insight*: If a medium/large gap is defended for the first hour, the market is likely to run 120-150% of the gap size *beyond* the open by the close.
 
 ---
 
-## 4. Mechanics & Precision
+## 6. Mechanics & Precision
 
 ### A. Fill Timing (The 15-Minute Rule)
 The opening range is the primary fill window.
@@ -128,51 +162,13 @@ The opening range is the primary fill window.
 | **30m - 60m** | 13.3% | 67.4% | - |
 | **> 2 Hours** | 20.5% | 100% | The "Long Tail". Likely a slow drift fill. |
 
-### B. Partial Fill Precision (If Unfilled)
-| Retracement % | Probability | Insight |
-| :--- | :--- | :--- |
-| **0-25%** | **33.1%** | Strongest trending days. No look-back. |
-| **25-50%** | 25.5% | Common test of gap mid-point. |
-| **50-75%** | 21.4% | Deep retrace, but doesn't fill. |
-| **75-99%** | 20.0% | The "Close Call" (Front-run). |
-
-*   **Median Retracement**: 40.0% | **Mean Retracement**: 43.9%
-
----
-
-## 5. Volatility Regimes
-
-### A. VVIX Regimes
-High VVIX indicates unstable volatility, favoring gap defense.
-
-| VVIX Regime | Fill Rate | Gap Defense | Insight |
-| :--- | :--- | :--- | :--- |
-| **Low (<90)** | **69.2%** | 66.2% | Reversion favored. |
-| **High (>110)** | **63.6%** | **68.9%** | **Defense favored**. |
-
-### B. Daily ATR %
-| ATR Bucket | Fill Rate | Gap Defense | Avg Gap Size |
-| :--- | :--- | :--- | :--- |
-| **Low ATR** | **70.6%** | 66.3% | 14.9 pts |
-| **High ATR** | **63.1%** | **68.4%** | **56.3 pts** |
-
----
-
-## 6. Operational Trading Rules
-1.  **The 0.5% Rule**: If Gap > 0.50%, **DO NOT TRADE FOR THE FILL**.
-2.  **The 15-Minute Rule**: If the gap hasn't filled by 09:45, shift bias to trend continuation.
-3.  **Defensive Stop**: Stops should be placed at the "Moat" (Yesterday's Low/High). Probability of hold is ~67%.
-4.  **Targeting**: If the gap holds, target **1x the Gap Size** extension from the Open.
-
 ---
 
 ## 7. Deferred Fill Analysis (Magnetic Gaps)
 
-How "magnetic" are gaps that don't fill on Day 1? We scanned the 20 trading days following every unfilled gap.
+How "magnetic" are gaps that don't fill on Day 1? We scanned the 60 trading days following every unfilled gap (IPDA Windows).
 
-### A. Cumulative Fill Probabilities (IPDA Lookbacks) 📈
-For gaps that **do not fill** during their initial RTH session, we tracked institutional "collection" over the 60-day IPDA cycle.
-
+### A. Cumulative Fill Probabilities 📈
 | Timeframe | Cumulative Fill % | IPDA Designation |
 | :--- | :--- | :--- |
 | **Day 1 (Next Day)** | **23.1%** | Intra-Week Correction |
@@ -180,11 +176,7 @@ For gaps that **do not fill** during their initial RTH session, we tracked insti
 | **Cumulative 40-Day**| **81.5%** | **IPDA Med-Term Window** |
 | **Cumulative 60-Day**| **84.5%** | **IPDA Long-Term Window** |
 
-*   *IPDA Interpretation*: Gaps have massive gravity within the first 20 days. If a gap survives past 60 trading days (approx 3 months), it is statistically likely to remain an "unfilled" structural level for the long term.
-
 ### B. Deferred Fill Probabilities by Creation Day 📅
-Does the day the gap was born affect its magnetism?
-
 | Creation Day | Unfilled Count | Fill Day 1 (Next Day) | 3-Day Cumulative |
 | :--- | :--- | :--- | :--- |
 | **Monday** | 367 | **29.2%** | **51.8%** |
@@ -193,17 +185,47 @@ Does the day the gap was born affect its magnetism?
 | **Thursday** | 311 | 23.5% | 35.4% |
 | **Friday** | 333 | **8.7%** | 40.5% |
 
-**Key Insights:**
-*   **The Monday Revisit**: If a Monday gap doesn't fill on Monday, there is a very high (**29.2%**) chance it fills on Tuesday. The market often "over-extends" on Mondays and corrects early Tuesday.
-*   **The Friday Persistence**: If a Friday gap doesn't fill on Friday, it is **unlikely** to fill on Monday (only 8.7%). Friday trends tend to have more "staying power" heading into the new week.
+---
 
-### C. Days to Fill (The "Pull" Speed)
-For the gaps that eventually fill:
-*   **Median Time to Fill**: **3 Days**.
-*   **Mode Time to Fill**: **1 Day**.
-*   **Mean Time to Fill**: **5 Days**.
+## 8. 8:30 AM News Impact Analysis (NFP, CPI, GDP)
 
-*   *Strategic Trade*: "Unfilled Gaps" become high-attraction magnets. If price is trading near a 2-day-old unfilled gap, the 43% probability of a fill within the 3rd day offers a significant secondary bias.
+How do major pre-market releases at 08:30 ET influence the open and subsequent gap behavior?
+
+### A. News vs. Non-News Openings
+| Market Context | Days | Avg Gap % | Fill Rate | Near Side Break | Ext Ratio (Med) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **No Major News** | 4,352 | 0.32% | 66.7% | 73.2% | 1.56x |
+| **8:30 AM News Day** | **610** | 0.30% | **67.7%** | **80.8%** | **1.83x** |
+
+*   **Higher Revisit Probability**: High-impact news days see an **8% increase** (80.8% vs 73.2%) in the probability of price returning to test the previous day's range. 
+*   **Greater Extension**: If the news day trends, it trends harder. The median extension beyond the open is **1.83x** the gap size (vs 1.56x on normal days).
+
+### B. Specific News Type Breakdown
+| Event Type | Avg Gap Size | Fill Rate | Insight |
+| :--- | :--- | :--- | :--- |
+| **NFP** (Employment) | 0.30% | **71.3%** | Very high fill probability. |
+| **CPI** (Inflation) | **0.33%** | 65.0% | Larger gaps, lower fill probability. |
+| **Retail Sales** | 0.33% | 65.0% | Similar profile to CPI. |
+| **GDP** | 0.29% | 68.8% | Moderate fill probability. |
+
+*   *Operational Note*: **NFP Gaps** are the most "mean-reverting" of the major releases. Despite the initial volatility, there is a **71%+ probability** of the gap being collected during the RTH session.
+
+---
+
+## 9. Best Practices & Operational Guardrails
+
+To ensure these statistics translate into consistent trading performance, the following guardrails should be followed:
+
+### 🛡️ Execution Best Practices
+1.  **The "Size-Signal" Filter**: Treat gaps between **0.15% and 0.45%** as the highest quality. Gaps smaller than 0.1% are often "noise" with poor R:R, while gaps > 0.5% are structural "Runway Gaps" where fading is dangerous.
+2.  **The 15-Minute "Moat" Verification**: Validated defense of the "Far Side" (Yesterday's High/Low) for the first 15 minutes of RTH increases the probability of a "Gap & Go" significantly.
+3.  **Regime Respect**: Disregard "Mean Reversion" (Fill) biases if **VVIX > 110** or **ATR is "High"**. These regimes favor expansion and defense, not reversion.
+4.  **News Day Patience**: On NFP or CPI days, the "Revisit" to the previous range often happens later in the session or with more "heat" (Fakeouts). Increase stop-loss tolerance to **50% of gap size** on news days.
+
+### 🧪 Statistical Standards (For Future Analysis)
+1.  **The Rule of 30**: Never draw conclusions from a context filter (e.g., a specific news event) with fewer than 30 historical samples. 
+2.  **Timezone Lock**: All RTH calculations must strictly use **US/Eastern** (09:30 - 16:15) to avoid session drift in futures data.
+3.  **Distribution over Averages**: Always compare **Mean, Median, and Mode**. If the Mode is 0 (Clean Start) but Median is high, the "Clean" trade is the outlier.
 
 ---
 **Generated by**: `scripts/analysis/analyze_gap_history.py`

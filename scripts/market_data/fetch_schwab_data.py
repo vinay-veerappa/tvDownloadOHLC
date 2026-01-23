@@ -27,7 +27,14 @@ SCHWAB_MAP = {
     "QQQ": "QQQ", 
     "IWM": "IWM", 
     "SPX": "$SPX", 
-    "VIX": "$VIX"
+    "VIX": "$VIX",
+    "VVIX": "$VVIX",
+    "ES": "/ES",
+    "NQ": "/NQ",
+    "RTY": "/RTY",
+    "YM": "/YM",
+    "CL": "/CL",
+    "GC": "/GC"
 }
 
 def get_schwab_client():
