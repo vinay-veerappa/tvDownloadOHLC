@@ -373,26 +373,38 @@ def analyze_gap_history(ticker="NQ1"):
     # 6. Deferred Fill Analysis (Multi-Day)
     print("\n🧲 6. Deferred Fill Analysis (Magnetic Gaps)")
     print("--------------------------------------------------")
-    unfilled_day0 = df_res[~df_res['is_filled']]
+    unfilled_day0 = df_res[~df_res['is_filled']].copy()
     if not unfilled_day0.empty:
-        # Calculate Forward Probabilities
+        # Overall Stats
         count_day0 = len(unfilled_day0)
         filled_1d = (unfilled_day0['days_to_fill'] == 1).sum()
         filled_3d = (unfilled_day0['days_to_fill'] <= 3).sum()
-        filled_5d = (unfilled_day0['days_to_fill'] <= 5).sum()
-        filled_10d = (unfilled_day0['days_to_fill'] <= 10).sum()
         filled_20d = (unfilled_day0['days_to_fill'] <= 20).sum()
         
         print(f"Total gaps NOT filled on Day 0: {count_day0}")
-        print(f" -> Filled on Day 1:      {(filled_1d/count_day0)*100:.1f}%")
-        print(f" -> Cumulative 3-Day:     {(filled_3d/count_day0)*100:.1f}%")
-        print(f" -> Cumulative 5-Day:     {(filled_5d/count_day0)*100:.1f}%")
-        print(f" -> Cumulative 20-Day:    {(filled_20d/count_day0)*100:.1f}%")
+        print(f" -> Overall Filled on Day 1:      {(filled_1d/count_day0)*100:.1f}%")
+        print(f" -> Overall Cumulative 3-Day:     {(filled_3d/count_day0)*100:.1f}%")
+        print(f" -> Overall Cumulative 20-Day:    {(filled_20d/count_day0)*100:.1f}%")
+
+        # DOW Segmentation for Deferred Fills
+        print("\n📅 Deferred Fill Probabilities by Gap Creation Day:")
+        print(f"{'Creation Day':13} | {'Unfilled':8} | {'Fill Day 1':10} | {'3-Day Cum':9}")
+        print("-" * 50)
+        
+        for d in dow_order:
+            day_unfilled = unfilled_day0[unfilled_day0['day'] == d]
+            if day_unfilled.empty: continue
+            
+            n_unfilled = len(day_unfilled)
+            f1 = (day_unfilled['days_to_fill'] == 1).sum() / n_unfilled * 100
+            f3 = (day_unfilled['days_to_fill'] <= 3).sum() / n_unfilled * 100
+            
+            print(f"{d:13} | {n_unfilled:8} | {f1:9.1f}% | {f3:8.1f}%")
 
         # Time to Fill (for those that eventually fill)
         eventual_fills = unfilled_day0.dropna(subset=['days_to_fill'])
         if not eventual_fills.empty:
-             print(f"Days to Fill (Med/Mean):  {get_stats(eventual_fills['days_to_fill'], precision=0)}")
+             print(f"\nDays to Fill (Med/Mean):  {get_stats(eventual_fills['days_to_fill'], precision=0)}")
     else:
         print("No unfilled Day-0 gaps found.")
 

@@ -180,7 +180,22 @@ For gaps that **do not fill** during their initial RTH session:
 | **Cumulative 5-Day**| **53.4%** | Baseline magnetic pull over 1 week. |
 | **Cumulative 20-Day**| **74.4%** | Most gaps (3 out of 4) fill within a month. |
 
-### B. Days to Fill (The "Pull" Speed)
+### B. Deferred Fill Probabilities by Creation Day 📅
+Does the day the gap was born affect its magnetism?
+
+| Creation Day | Unfilled Count | Fill Day 1 (Next Day) | 3-Day Cumulative |
+| :--- | :--- | :--- | :--- |
+| **Monday** | 367 | **29.2%** | **51.8%** |
+| **Tuesday** | 329 | 27.4% | 47.1% |
+| **Wednesday** | 307 | 26.4% | 39.1% |
+| **Thursday** | 311 | 23.5% | 35.4% |
+| **Friday** | 333 | **8.7%** | 40.5% |
+
+**Key Insights:**
+*   **The Monday Revisit**: If a Monday gap doesn't fill on Monday, there is a very high (**29.2%**) chance it fills on Tuesday. The market often "over-extends" on Mondays and corrects early Tuesday.
+*   **The Friday Persistence**: If a Friday gap doesn't fill on Friday, it is **unlikely** to fill on Monday (only 8.7%). Friday trends tend to have more "staying power" heading into the new week.
+
+### C. Days to Fill (The "Pull" Speed)
 For the gaps that eventually fill:
 *   **Median Time to Fill**: **3 Days**.
 *   **Mode Time to Fill**: **1 Day**.
