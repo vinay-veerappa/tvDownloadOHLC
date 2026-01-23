@@ -6,11 +6,16 @@ import sys
 import time
 import sqlite3
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from schwab.auth import easy_client
 from schwab.client import Client
 from schwab.streaming import StreamClient
 from schwab_token_sync import sync_token_to_db, restore_token_from_db
+
+# Timezone Configuration (Market uses UTC for storage)
+def get_now_iso():
+    """Returns current time in UTC as ISO string for storage."""
+    return datetime.now(timezone.utc).isoformat()
 
 # Configuration
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
@@ -160,31 +165,56 @@ def detect_gaps(candles, symbol, threshold_minutes=5):
     Detect gaps in 1-minute data larger than threshold.
     Returns list of (gap_start_ms, gap_end_ms) tuples.
     Excludes expected weekend gaps (Friday close -> Sunday open).
+    Now also checks for gap between last candle and current time.
     """
-    if len(candles) < 2:
+    if not candles:
         return []
-    
+        
     gaps = []
     threshold_ms = threshold_minutes * 60 * 1000  # 5 minutes = 300,000 ms
+    now_ms = int(time.time() * 1000)
     
-    for i in range(1, len(candles)):
-        prev_time = candles[i-1]['time']
-        curr_time = candles[i]['time']
-        diff = curr_time - prev_time
-        
-        # Skip expected gaps (normal is 1 min = 60,000 ms)
-        if diff > threshold_ms:
-            prev_dt = datetime.fromtimestamp(prev_time / 1000)
-            curr_dt = datetime.fromtimestamp(curr_time / 1000)
+    # 1. Check for gaps between existing candles
+    if len(candles) >= 2:
+        for i in range(1, len(candles)):
+            prev_time = candles[i-1]['time']
+            curr_time = candles[i]['time']
+            diff = curr_time - prev_time
             
-            # Skip weekend gaps (Friday -> Sunday/Monday)
-            if prev_dt.weekday() == 4 and curr_dt.weekday() in [6, 0]:
-                continue
-            # Skip Saturday -> Sunday/Monday (shouldn't happen but just in case)
-            if prev_dt.weekday() in [5, 6] and curr_dt.weekday() in [6, 0]:
-                continue
+            # Skip expected gaps (normal is 1 min = 60,000 ms)
+            if diff > threshold_ms:
+                # Use UTC for weekday checks
+                prev_dt = datetime.fromtimestamp(prev_time / 1000, tz=timezone.utc)
+                curr_dt = datetime.fromtimestamp(curr_time / 1000, tz=timezone.utc)
                 
-            gaps.append((prev_time, curr_time))
+                # Skip weekend gaps (Friday close -> Sunday open)
+                if prev_dt.weekday() == 4 and curr_dt.weekday() in [6, 0]:
+                    continue
+                # Skip Saturday -> Sunday/Monday
+                if prev_dt.weekday() in [5, 6] and curr_dt.weekday() in [6, 0]:
+                    continue
+                    
+                gaps.append((prev_time, curr_time))
+    
+    # 2. Check for gap between last candle and NOW
+    last_time = candles[-1]['time']
+    diff_to_now = now_ms - last_time
+    
+    if diff_to_now > threshold_ms:
+        # Use UTC for weekday checks
+        last_dt = datetime.fromtimestamp(last_time / 1000, tz=timezone.utc)
+        now_dt = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc)
+        
+        # Weekend check for current gap
+        is_weekend = False
+        if last_dt.weekday() == 4 and now_dt.weekday() in [5, 6]:
+             is_weekend = True
+        elif last_dt.weekday() in [5, 6]:
+             is_weekend = True
+             
+        if not is_weekend:
+            print(f"🔍 [{symbol}] Gap detected since last data point (UTC): {last_dt} -> {now_dt}")
+            gaps.append((last_time, now_ms))
     
     return gaps
 
@@ -262,7 +292,7 @@ def init_chart_data(symbol):
                 if 'timestamp' in df.columns:
                     df = df.drop(columns=['timestamp'])
                 data["candles"] = deduplicate_candles(df.to_dict(orient="records"))
-                data["last_update"] = datetime.now().isoformat()
+                data["last_update"] = get_now_iso()
                 print(f"✅ [{symbol}] Restored {len(data['candles'])} bars (1m).")
         except Exception as e:
             print(f"⚠️ [{symbol}] Restore failed: {e}")
@@ -310,7 +340,8 @@ def fetch_bootstrap_data(client, symbol):
                                         period_type=Client.PriceHistory.PeriodType.DAY,
                                         period=Client.PriceHistory.Period.MONTH,
                                         frequency_type=Client.PriceHistory.FrequencyType.MINUTE,
-                                        frequency=Client.PriceHistory.Frequency.EVERY_MINUTE)
+                                        frequency=Client.PriceHistory.Frequency.EVERY_MINUTE,
+                                        need_extended_hours_data=True)
         
         if resp.status_code != 200:
             print(f"❌ [{symbol}] Bootstrap failed: {resp.status_code}")
@@ -366,7 +397,7 @@ def update_sub_candle(container, price, time_curr, interval_sec):
         # Volume could be incremented if we had trade size, but level one usually just gives price
     
     container["live_price"] = price
-    container["last_update"] = datetime.now().isoformat()
+    container["last_update"] = get_now_iso()
 
 async def main():
     # ... Setup ...
@@ -402,7 +433,7 @@ async def main():
             cdata["candles"] = deduplicate_candles(cdata["candles"] + [c for c in boot if c["time"] not in existing_times])
             if len(cdata["candles"]) > 500000:
                 cdata["candles"] = cdata["candles"][-500000:]
-            cdata["last_update"] = datetime.now().isoformat()
+            cdata["last_update"] = get_now_iso()
             
             with open(charts[sym]["files"]["json"], "w") as f:
                 json.dump(cdata, f, indent=2)
@@ -426,7 +457,7 @@ async def main():
                 bridged = validate_bootstrap_data(sym, bridged)
                 
                 cdata["candles"] = deduplicate_candles(cdata["candles"] + bridged)
-                cdata["last_update"] = datetime.now().isoformat()
+                cdata["last_update"] = get_now_iso()
                 print(f"✅ [{sym}] Merged {len(bridged)} bridged bars")
                 
                 # Save updated data back to parquet
@@ -457,7 +488,7 @@ async def main():
                         chart_ctx = charts[key]
                         cdata = chart_ctx["data"]
                         cdata["live_price"] = last_price
-                        cdata["last_update"] = datetime.now().isoformat()
+                        cdata["last_update"] = get_now_iso()
                         
                         # Write Fast Quote
                         safe_symbol = get_safe_symbol(key)
@@ -532,7 +563,7 @@ async def main():
                         if len(cdata["candles"]) > 500000:
                             cdata["candles"].pop(0)
                         
-                    cdata["last_update"] = datetime.now().isoformat()
+                    cdata["last_update"] = get_now_iso()
                     cdata["candles"] = deduplicate_candles(cdata["candles"])
                     
                     if cdata["live_price"] == 0:
