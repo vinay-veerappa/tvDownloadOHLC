@@ -40,32 +40,56 @@ def analyze_gap_history(ticker="NQ1"):
     except:
         df_1m = df_1m.tz_localize('UTC').tz_convert('US/Eastern')
         
-    # Load VIX for Context if available
-    print(f"[{ticker}] Loading VIX Data for Context...")
+    # Load VIX and VVIX for Context
+    print(f"[{ticker}] Loading Volatility Data (VIX/VVIX)...")
     vix_df = load_fused_data("VIX", timeframe="1m", require_historical=True)
+    vvix_df = load_fused_data("VVIX", timeframe="1d", require_historical=True)  # Daily data
+    
+    # Process VIX
+    vix_at_open = {}
     if not vix_df.empty:
         if 'datetime' in vix_df.columns:
             vix_df['datetime'] = pd.to_datetime(vix_df['datetime'], utc=True)
             vix_df.set_index('datetime', inplace=True)
-        try:
-             vix_df = vix_df.tz_convert('US/Eastern')
-        except:
-             vix_df = vix_df.tz_localize('UTC').tz_convert('US/Eastern')
+        try: vix_df = vix_df.tz_convert('US/Eastern')
+        except: vix_df = vix_df.tz_localize('UTC').tz_convert('US/Eastern')
+        # Get 09:30 values
+        vix_opens = vix_df.at_time('09:30')
+        for ts, row in vix_opens.iterrows():
+            vix_at_open[str(ts.date())] = row['close']
+            
+    # Process VVIX (Daily)
+    vvix_by_date = {}
+    if not vvix_df.empty:
+        if 'datetime' in vvix_df.columns:
+            vvix_df['datetime'] = pd.to_datetime(vvix_df['datetime'], utc=True)
+            vvix_df.set_index('datetime', inplace=True)
+        # Map date -> VVIX close (or open, both work for daily)
+        for ts, row in vvix_df.iterrows():
+            vvix_by_date[str(ts.date())] = row['close']
+            
+    # Calculate ATR (14-day) 
+    # We need daily data for ATR. We can resample 1m data to daily.
+    print(f"[{ticker}] Calculating ATR-14...")
+    daily_ohlc = df_1m.resample('D').agg({
+        'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'
+    }).dropna()
     
+    # Simple TR calculation
+    daily_ohlc['prev_close'] = daily_ohlc['close'].shift(1)
+    daily_ohlc['tr0'] = abs(daily_ohlc['high'] - daily_ohlc['low'])
+    daily_ohlc['tr1'] = abs(daily_ohlc['high'] - daily_ohlc['prev_close'])
+    daily_ohlc['tr2'] = abs(daily_ohlc['low'] - daily_ohlc['prev_close'])
+    daily_ohlc['tr'] = daily_ohlc[['tr0', 'tr1', 'tr2']].max(axis=1)
+    daily_ohlc['atr'] = daily_ohlc['tr'].rolling(window=14).mean()
+    
+    # Map ATR to date string
+    atr_map = {str(ts.date()): val for ts, val in daily_ohlc['atr'].items()}
+
     # Pre-process Data Groups
     price_mini = df_1m[['open', 'high', 'low', 'close']].copy()
     day_groups = {str(k): v for k, v in price_mini.groupby(price_mini.index.date)}
     
-    # Pre-process VIX (Daily Mean VIX or VIX at Open?)
-    # VIX at 09:30 is most relevant context for the session.
-    vix_at_open = {}
-    if not vix_df.empty:
-        # Resample to 1min to align, then get 09:30
-        vix_opens = vix_df.at_time('09:30')
-        # Map date_str -> VIX Close
-        for ts, row in vix_opens.iterrows():
-            vix_at_open[str(ts.date())] = row['close']
-            
     sorted_dates = sorted(day_groups.keys())
     date_map = {curr: prev for prev, curr in zip(sorted_dates, sorted_dates[1:])}
     
@@ -94,9 +118,22 @@ def analyze_gap_history(ticker="NQ1"):
         vix_val = vix_at_open.get(date_str, None)
         vol_regime = "Unknown"
         if vix_val:
-            if vix_val < 15: vol_regime = "Low"
-            elif vix_val < 25: vol_regime = "Normal"
-            else: vol_regime = "High"
+            if vix_val < 15: vol_regime = "Low VIX"
+            elif vix_val < 25: vol_regime = "Normal VIX"
+            else: vol_regime = "High VIX"
+            
+        # VVIX Context 
+        vvix_val = vvix_by_date.get(date_str, None)
+        vvix_regime = "Unknown"
+        if vvix_val:
+            if vvix_val < 90: vvix_regime = "Low VVIX"
+            elif vvix_val < 110: vvix_regime = "Normal VVIX"
+            else: vvix_regime = "High VVIX"
+            
+        # ATR Context
+        atr_val = atr_map.get(date_str, None)
+        atr_pct = (atr_val / open_price) * 100.0 if atr_val and open_price else None
+        
             
         # Overnight Context
         # Range of 18:00 (Prev Day) to 09:30 (Current Day)
@@ -197,6 +234,9 @@ def analyze_gap_history(ticker="NQ1"):
             "retrace_pct": max_retrace_pct,
             "trend_continuation": trend_continuation,
             "extension_ratio": extension_ratio,
+            "vvix": vvix_val,
+            "vvix_regime": vvix_regime,
+            "atr_pct_val": atr_pct,
             "far_side_held": far_side_held
         })
         
@@ -218,15 +258,39 @@ def analyze_gap_history(ticker="NQ1"):
     }) * 100
     print(dow_stats.to_string(float_format="{:.1f}%".format))
     
-    # 2. Volatility Regime
-    print("\n🌊 2. VIX Regime Impact")
+    # 2. Volatility Regime (VIX & VVIX)
+    print("\n🌊 2. Volatility Regime Impact")
+    print("--- VIX Regimes ---")
     vix_stats = df_res.groupby('vol_regime', observed=False).agg({
-        'is_filled': 'mean',
+        'is_filled': ['mean', 'count'],
         'far_side_held': 'mean'
-    }) * 100
-    print(vix_stats.to_string(float_format="{:.1f}%".format))
+    })
+    # Flatten columns
+    vix_stats.columns = ['is_filled', 'Days', 'far_side_held']
+    vix_stats[['is_filled', 'far_side_held']] = vix_stats[['is_filled', 'far_side_held']] * 100
+    print(vix_stats[['Days', 'is_filled', 'far_side_held']].to_string(float_format="{:.1f}%".format))
     
-    # 3. Partial Fill Precision (Bucket fill %)
+    print("\n--- VVIX Regimes ---")
+    vvix_stats = df_res.groupby('vvix_regime', observed=False).agg({
+        'is_filled': ['mean', 'count'],
+        'far_side_held': 'mean'
+    })
+    vvix_stats.columns = ['is_filled', 'Days', 'far_side_held']
+    vvix_stats[['is_filled', 'far_side_held']] = vvix_stats[['is_filled', 'far_side_held']] * 100
+    print(vvix_stats[['Days', 'is_filled', 'far_side_held']].to_string(float_format="{:.1f}%".format))
+    
+    # 3. Correlation with ATR
+    print("\n--- Correlation with Daily ATR % ---")
+    if 'atr_pct_val' in df_res.columns:
+        df_res['atr_bucket'] = pd.qcut(df_res['atr_pct_val'], 3, labels=["Low ATR", "Normal ATR", "High ATR"])
+        atr_stats = df_res.groupby('atr_bucket', observed=False).agg({
+            'is_filled': 'mean',
+            'far_side_held': 'mean',
+            'gap_pct': 'mean'
+        }) * 100
+        print(atr_stats.to_string(float_format="{:.1f}%".format))
+        
+    # 4. Partial Fill Precision (Bucket fill %)
     # Only for UNFILLED gaps
     unfilled = df_res[~df_res['is_filled']].copy()
     if not unfilled.empty:
