@@ -29,19 +29,41 @@ Small gaps are noise; large gaps are signal.
 | **Very Large** | > 0.47% | **38.0%** | **Unlikely to fill**. Expect continuation or chop. |
 
 ### B. Day of Week Segmentation
-Mondays show the strongest non-fill/trending behavior.
-
-| Day | Fill Rate | Avg Gap Size | Insight |
+| Day | Fill Rate | Fill Timing (Med) | Fill Timing (Mean) |
 | :--- | :--- | :--- | :--- |
-| **Monday** | **60.6%** | 35.2% | **Lowest Fill Rate**. Market re-pricing post-weekend. |
-| **Tuesday** | 68.0% | 30.8% | Reversion to mean. |
-| **Wednesday** | **70.0%** | 29.8% | **Highest Fill Rate**. Mid-week mean reversion. |
-| **Thursday** | 69.0% | 32.6% | - |
-| **Friday** | 66.0% | 31.8% | - |
+| **Monday** | 60.6% | 20m | 75m |
+| **Tuesday** | 68.0% | 15m | 62m |
+| **Wednesday** | **70.0%** | 12m | 58m |
+| **Thursday** | 69.0% | 15m | 65m |
+| **Friday** | 66.0% | 18m | 70m |
 
 ---
 
-## 3. The "Moat" & Continuation (Defense)
+## 3. MAE / MFE Precision (Stats Trader View)
+
+Treating the gap as a "Range" to be broken or filled.
+
+### A. The "Fakeout" Move (MFE before Fill)
+How much "heat" do you take *in the gap direction* before the fill actually happens?
+*   **Median Fakeout**: **6.8% of Gap Size**.
+*   **Mode Fakeout**: **0%**.
+*   **Mean Fakeout**: **27.5%**.
+*   *Insight*: If you are fading a gap, your stop should likely be > 30% of the gap size. A 0% Mode suggests most fills happen with ZERO adverse extension beyond the open.
+
+### B. Retracement Depth (MAE for Trend / Progress for Fill)
+How much of the gap actually gets filled on average?
+*   **Median Retrace**: **100%** (i.e. Full Fill is the median outcome).
+*   **Mean Retrace**: **68.1%**.
+*   *Insight*: While 67% fill eventually, the "average" day recoups 2/3rds of the gap.
+
+### C. Total Extension (MFE for Trend)
+How much does prize run *beyond* the open by the end of the session?
+*   **Median Extension**: **85.0% of Gap Size**.
+*   **Mean Extension**: **111.9% of Gap Size**.
+
+---
+
+## 4. The "Moat" & Continuation (Defense)
 
 ### A. RTH Break Defense
 Does the gap hold the "Far Side" (Yesterday's Low for Gap Up, High for Gap Down)?

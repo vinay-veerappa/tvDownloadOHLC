@@ -158,50 +158,59 @@ def analyze_gap_history(ticker="NQ1"):
         # Fill Logic
         is_filled = False
         time_to_fill = None
-        max_retrace_pct = 0.0
+        retrace_pts = 0.0
+        fakeout_pts = 0.0 # Extension BEFORE fill (if filled) or total extension (if not)
         
         if gap_type == "UP":
+            # Retracement (Towards Prev Close)
             fill_mask = day_rth['low'] <= prev_close
             min_low = day_rth['low'].min()
-            # Retracement = Distance from Open DOWN to Low
-            # Gap Size = Open - PrevClose
-            dist_covered = open_price - min_low
-            max_retrace_pct = (dist_covered / gap_size) * 100.0 if gap_size > 0 else 0
-        else:
+            retrace_pts = max(0, open_price - min_low)
+            
+            # Extension (Away from Prev Close)
+            if fill_mask.any():
+                is_filled = True
+                first_fill = day_rth[fill_mask].index[0]
+                time_to_fill = (first_fill - rth_start).total_seconds() / 60.0 # Mins
+                # Fakeout: Max high BEFORE first fill
+                pre_fill_data = day_rth[day_rth.index <= first_fill]
+                fakeout_pts = pre_fill_data['high'].max() - open_price
+            else:
+                fakeout_pts = day_rth['high'].max() - open_price
+                
+        else: # Gap DOWN
+            # Retracement (Towards Prev Close)
             fill_mask = day_rth['high'] >= prev_close
             max_high = day_rth['high'].max()
-            # Retracement = Distance from Open UP to High
-            # Gap Size = PrevClose - Open
-            dist_covered = max_high - open_price
-            max_retrace_pct = (dist_covered / gap_size) * 100.0 if gap_size > 0 else 0
+            retrace_pts = max(0, max_high - open_price)
             
-        if fill_mask.any():
-            is_filled = True
-            first_fill = day_rth[fill_mask].index[0]
-            time_to_fill = (first_fill - rth_start).total_seconds() / 60.0 # Mins
-            max_retrace_pct = 100.0
+            # Extension (Away from Prev Close)
+            if fill_mask.any():
+                is_filled = True
+                first_fill = day_rth[fill_mask].index[0]
+                time_to_fill = (first_fill - rth_start).total_seconds() / 60.0
+                # Fakeout: Max low BEFORE first fill
+                pre_fill_data = day_rth[day_rth.index <= first_fill]
+                fakeout_pts = open_price - pre_fill_data['low'].min()
+            else:
+                fakeout_pts = open_price - day_rth['low'].min()
             
-        # Trend / Continuation Logic
-        session_close = day_rth.iloc[-1]['close']
-        session_move = session_close - open_price
-        
-        # Did it trend in gap direction?
-        # Gap UP -> Session UP (session_move > 0)
-        # Gap DOWN -> Session DOWN (session_move < 0)
-        trend_continuation = False
-        if gap_type == "UP" and session_move > 0: trend_continuation = True
-        if gap_type == "DOWN" and session_move < 0: trend_continuation = True
-        
-        # Extension: How far did it go BEYOND the open in gap direction?
-        # Gap Up: Max High - Open
-        # Gap Down: Open - Min Low
+        # Percents relative to gap size
+        retrace_pct = (retrace_pts / gap_size) * 100.0 if gap_size > 0 else 0
+        fakeout_pct = (fakeout_pts / gap_size) * 100.0 if gap_size > 0 else 0
+        if is_filled: retrace_pct = 100.0
+
+        # Trend / Continuation Logic (Total Session Extension)
         extension_pts = 0
         if gap_type == "UP":
             extension_pts = day_rth['high'].max() - open_price
         else:
             extension_pts = open_price - day_rth['low'].min()
-            
         extension_ratio = (extension_pts / gap_size) if gap_size > 0 else 0
+
+        # Trend result (Closes in gap direction)
+        session_close = day_rth.iloc[-1]['close']
+        trend_continuation = (gap_type == "UP" and session_close > open_price) or (gap_type == "DOWN" and session_close < open_price)
 
         # RTH Break Defense
         far_side_held = None
@@ -209,11 +218,9 @@ def analyze_gap_history(ticker="NQ1"):
             p_date = date_map[date_str]
             if p_date in day_groups:
                 p_data = day_groups[p_date]
-                # Prev RTH
                 p_start = (pd.Timestamp(p_date) + pd.Timedelta(hours=9, minutes=30)).tz_localize("US/Eastern")
                 p_end = (pd.Timestamp(p_date) + pd.Timedelta(hours=16, minutes=15)).tz_localize("US/Eastern")
                 p_rth = p_data[(p_data.index >= p_start) & (p_data.index <= p_end)]
-                
                 if not p_rth.empty:
                     held = True
                     if gap_type == "UP":
@@ -227,45 +234,60 @@ def analyze_gap_history(ticker="NQ1"):
             "day": day_of_week,
             "vix": vix_val,
             "vol_regime": vol_regime,
-            "globex_range_pct": globex_range_pct,
-            "gap_pct": gap_pct,
-            "is_filled": is_filled,
-            "time_to_fill": time_to_fill,
-            "retrace_pct": max_retrace_pct,
-            "trend_continuation": trend_continuation,
-            "extension_ratio": extension_ratio,
             "vvix": vvix_val,
             "vvix_regime": vvix_regime,
             "atr_pct_val": atr_pct,
+            "gap_pct": gap_pct,
+            "is_filled": is_filled,
+            "time_to_fill": time_to_fill,
+            "retrace_pct": retrace_pct, # MAE for Trend / Progress for Fill
+            "fakeout_pct": fakeout_pct, # Heat before Fill / Signal for Trend
+            "trend_continuation": trend_continuation,
+            "extension_ratio": extension_ratio,
             "far_side_held": far_side_held
         })
         
     df_res = pd.DataFrame(results)
     
+    def get_stats(series):
+        if series.empty: return "N/A"
+        mean_val = series.mean()
+        med_val = series.median()
+        # Mode on rounded integers
+        mode_val = series.round().mode().iloc[0] if not series.empty else 0
+        return f"Mean: {mean_val:.1f} | Med: {med_val:.1f} | Mode: {mode_val:.0f}"
+
     # --- REPORT GENERATION ---
     print("\n" + "="*50)
     print(f"🧬 EXPANDED GAP ANALYSIS: {ticker}")
     print("="*50)
     
     # 1. Day of Week Stats
-    print("\n📅 1. Day of Week Analysis (Fill Rates)")
+    print("\n📅 1. Day of Week Analysis (Fill Rates & Timing)")
     dow_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     df_res['day'] = pd.Categorical(df_res['day'], categories=dow_order, ordered=True)
-    dow_stats = df_res.groupby('day', observed=False).agg({
-        'is_filled': 'mean',
-        'trend_continuation': 'mean',
-        'gap_pct': 'mean' # Avg gap size per day
-    }) * 100
-    print(dow_stats.to_string(float_format="{:.1f}%".format))
     
-    # 2. Volatility Regime (VIX & VVIX)
-    print("\n🌊 2. Volatility Regime Impact")
+    for d in dow_order:
+        day_df = df_res[df_res['day'] == d]
+        if day_df.empty: continue
+        fill_rate = day_df['is_filled'].mean() * 100
+        time_stats = get_stats(day_df[day_df['is_filled']]['time_to_fill'])
+        print(f"{d:10} | Fill Rate: {fill_rate:5.1f}% | Time to Fill (min) -> {time_stats}")
+
+    # 2. MAE / MFE Statistics
+    print("\n📐 2. MAE / MFE Precision (% of Gap Size)")
+    print("--------------------------------------------------")
+    print(f"MAE (Retrace %):   {get_stats(df_res['retrace_pct'])}")
+    print(f"MFE (Fakeout %):   {get_stats(df_res['fakeout_pct'])}  <-- Extension BEFORE fill")
+    print(f"MFE (Extension %): {get_stats(df_res['extension_ratio'] * 100)}  <-- Total Session Extension")
+
+    # 3. Volatility Regime Impact
+    print("\n🌊 3. Volatility Regime Impact")
     print("--- VIX Regimes ---")
     vix_stats = df_res.groupby('vol_regime', observed=False).agg({
         'is_filled': ['mean', 'count'],
         'far_side_held': 'mean'
     })
-    # Flatten columns
     vix_stats.columns = ['is_filled', 'Days', 'far_side_held']
     vix_stats[['is_filled', 'far_side_held']] = vix_stats[['is_filled', 'far_side_held']] * 100
     print(vix_stats[['Days', 'is_filled', 'far_side_held']].to_string(float_format="{:.1f}%".format))
@@ -279,7 +301,7 @@ def analyze_gap_history(ticker="NQ1"):
     vvix_stats[['is_filled', 'far_side_held']] = vvix_stats[['is_filled', 'far_side_held']] * 100
     print(vvix_stats[['Days', 'is_filled', 'far_side_held']].to_string(float_format="{:.1f}%".format))
     
-    # 3. Correlation with ATR
+    # ATR Correlation
     print("\n--- Correlation with Daily ATR % ---")
     if 'atr_pct_val' in df_res.columns:
         df_res['atr_bucket'] = pd.qcut(df_res['atr_pct_val'], 3, labels=["Low ATR", "Normal ATR", "High ATR"])
@@ -289,28 +311,16 @@ def analyze_gap_history(ticker="NQ1"):
             'gap_pct': 'mean'
         }) * 100
         print(atr_stats.to_string(float_format="{:.1f}%".format))
-        
-    # 4. Partial Fill Precision (Bucket fill %)
-    # Only for UNFILLED gaps
-    unfilled = df_res[~df_res['is_filled']].copy()
-    if not unfilled.empty:
-        print("\n🔎 3. Partial Fill Precision (Unfilled Gaps)")
-        # Bucket retrace pct: 0-25, 25-50, 50-75, 75-99
-        unfilled['fill_bucket'] = pd.cut(unfilled['retrace_pct'], bins=[0, 25, 50, 75, 100], labels=["0-25%", "25-50%", "50-75%", "75-99%"])
-        fill_dist = unfilled['fill_bucket'].value_counts(normalize=True).sort_index() * 100
-        print(fill_dist.to_string(float_format="{:.1f}%".format))
-        print(f"Median Retrace: {unfilled['retrace_pct'].median():.1f}% | Mean: {unfilled['retrace_pct'].mean():.1f}%")
 
     # 4. Continuation When Not Filling
     print("\n🚀 4. Continuation Logic (When Gap Holds)")
-    # Filter: Gap > 0.25% (Medium/Large) AND Not Filled
     trend_candidates = df_res[(df_res['gap_pct'] > 0.25) & (~df_res['is_filled'])]
     if not trend_candidates.empty:
         trend_prob = trend_candidates['trend_continuation'].mean() * 100
-        avg_ext = trend_candidates['extension_ratio'].median()
+        ext_stats = get_stats(trend_candidates['extension_ratio'])
         print(f"Scenario: Gap > 0.25% AND Holds")
         print(f" -> Probability of Trend Day (Gap & Go): {trend_prob:.1f}%")
-        print(f" -> Median Extension Ratio: {avg_ext:.2f}x (Price runs {avg_ext:.2f}x the gap size)")
+        print(f" -> Extension Ratio (Multiple of Gap):  {ext_stats}")
 
     # 5. Fill Timing Histograms
     filled = df_res[df_res['is_filled']].copy()
@@ -319,7 +329,6 @@ def analyze_gap_history(ticker="NQ1"):
         filled['time_bucket'] = pd.cut(filled['time_to_fill'], bins=[0, 15, 30, 60, 120, 9999], labels=["0-15m", "15-30m", "30-60m", "1-2h", ">2h"])
         time_dist = filled['time_bucket'].value_counts(normalize=True).sort_index() * 100
         print(time_dist.to_string(float_format="{:.1f}%".format))
-        print(f"Median Time: {filled['time_to_fill'].median():.0f}m | Mean: {filled['time_to_fill'].mean():.0f}m")
 
 if __name__ == "__main__":
     analyze_gap_history(ticker="NQ1")
