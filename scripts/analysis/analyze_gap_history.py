@@ -237,9 +237,9 @@ def analyze_gap_history(ticker="NQ1"):
         results.append({
             "date": date_str,
             "day": day_of_week,
-            "vix": vix_val,
+            "gap_dir": gap_type,
+            "prev_close": prev_close,
             "vol_regime": vol_regime,
-            "vvix": vvix_val,
             "vvix_regime": vvix_regime,
             "atr_pct_val": atr_pct,
             "gap_pct": gap_pct,
@@ -254,9 +254,41 @@ def analyze_gap_history(ticker="NQ1"):
             "retrace_price_pct": retrace_price_pct,
             "fakeout_price_pct": fakeout_price_pct,
             "extension_price_pct": extension_price_pct,
-            "far_side_held": far_side_held
+            "far_side_held": far_side_held,
+            "days_to_fill": 0 if is_filled else None
         })
         
+    print(f"[{ticker}] Scanning forward for Deferred Fills (Multi-Day)...")
+    # For each gap that wasn't filled on Day 0, check subsequent days (up to 20)
+    for i, result in enumerate(results):
+        if result['is_filled']: continue
+        
+        target = result['prev_close']
+        g_dir = result['gap_dir']
+        start_date = result['date']
+        
+        # Find index in sorted_dates
+        try:
+            start_idx = sorted_dates.index(start_date)
+        except ValueError: continue
+        
+        # Check next 20 trading days
+        for day_offset in range(1, 21):
+            if start_idx + day_offset >= len(sorted_dates): break
+            next_date = sorted_dates[start_idx + day_offset]
+            if next_date not in day_groups: continue
+            
+            future_day = day_groups[next_date]
+            fill_found = False
+            if g_dir == "UP":
+                if future_day['low'].min() <= target: fill_found = True
+            else:
+                if future_day['high'].max() >= target: fill_found = True
+                
+            if fill_found:
+                result['days_to_fill'] = day_offset
+                break
+                
     df_res = pd.DataFrame(results)
     
     def get_stats(series, precision=1):
@@ -338,13 +370,31 @@ def analyze_gap_history(ticker="NQ1"):
         print(f" -> Probability of Trend Day (Gap & Go): {trend_prob:.1f}%")
         print(f" -> Extension Ratio (Multiple of Gap):  {ext_stats}")
 
-    # 5. Fill Timing Histograms
-    filled = df_res[df_res['is_filled']].copy()
-    if not filled.empty:
-        print("\n⏱️ 5. Fill Timing Distribution")
-        filled['time_bucket'] = pd.cut(filled['time_to_fill'], bins=[0, 15, 30, 60, 120, 9999], labels=["0-15m", "15-30m", "30-60m", "1-2h", ">2h"])
-        time_dist = filled['time_bucket'].value_counts(normalize=True).sort_index() * 100
-        print(time_dist.to_string(float_format="{:.1f}%".format))
+    # 6. Deferred Fill Analysis (Multi-Day)
+    print("\n🧲 6. Deferred Fill Analysis (Magnetic Gaps)")
+    print("--------------------------------------------------")
+    unfilled_day0 = df_res[~df_res['is_filled']]
+    if not unfilled_day0.empty:
+        # Calculate Forward Probabilities
+        count_day0 = len(unfilled_day0)
+        filled_1d = (unfilled_day0['days_to_fill'] == 1).sum()
+        filled_3d = (unfilled_day0['days_to_fill'] <= 3).sum()
+        filled_5d = (unfilled_day0['days_to_fill'] <= 5).sum()
+        filled_10d = (unfilled_day0['days_to_fill'] <= 10).sum()
+        filled_20d = (unfilled_day0['days_to_fill'] <= 20).sum()
+        
+        print(f"Total gaps NOT filled on Day 0: {count_day0}")
+        print(f" -> Filled on Day 1:      {(filled_1d/count_day0)*100:.1f}%")
+        print(f" -> Cumulative 3-Day:     {(filled_3d/count_day0)*100:.1f}%")
+        print(f" -> Cumulative 5-Day:     {(filled_5d/count_day0)*100:.1f}%")
+        print(f" -> Cumulative 20-Day:    {(filled_20d/count_day0)*100:.1f}%")
+
+        # Time to Fill (for those that eventually fill)
+        eventual_fills = unfilled_day0.dropna(subset=['days_to_fill'])
+        if not eventual_fills.empty:
+             print(f"Days to Fill (Med/Mean):  {get_stats(eventual_fills['days_to_fill'], precision=0)}")
+    else:
+        print("No unfilled Day-0 gaps found.")
 
 if __name__ == "__main__":
     analyze_gap_history(ticker="NQ1")
