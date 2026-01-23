@@ -6,12 +6,12 @@ This directory contains the latest statistical profiles and tactical analysis fo
 
 | Asset | Ticker | High-Level Profile | Full Report Link |
 | :--- | :--- | :--- | :--- |
-| **Nasdaq 100** | **NQ** | 76.4% IBR Fill Rate. High Reversion on NFP. | [NQ Detailed Report](file:///c:/Users/vinay/tvDownloadOHLC/docs/nqstats/rth_breaks/NQ_GAP_ANALYSIS.md) |
-| **S&P 500** | **ES** | Defensive Structural Gaps. Normal VIX Reversion. | [ES Detailed Report](file:///c:/Users/vinay/tvDownloadOHLC/docs/nqstats/rth_breaks/ES_GAP_ANALYSIS.md) |
-| **Russell 2000** | **RTY** | Broad Market Rotation Profiles. | [RTY Detailed Report](file:///c:/Users/vinay/tvDownloadOHLC/docs/nqstats/rth_breaks/RTY_GAP_ANALYSIS.md) |
-| **Dow 30** | **YM** | Blue Chip Stability & Fill Probability. | [YM Detailed Report](file:///c:/Users/vinay/tvDownloadOHLC/docs/nqstats/rth_breaks/YM_GAP_ANALYSIS.md) |
-| **Crude Oil** | **CL** | Commodity Volatility & Mean Reversion. | [CL Detailed Report](file:///c:/Users/vinay/tvDownloadOHLC/docs/nqstats/rth_breaks/CL_GAP_ANALYSIS.md) |
-| **Gold** | **GC** | Metals Magnetism Analysis. | [GC Detailed Report](file:///c:/Users/vinay/tvDownloadOHLC/docs/nqstats/rth_breaks/GC_GAP_ANALYSIS.md) |
+| **Nasdaq 100** | **NQ** | 76.4% IBR Fill Rate. High Reversion on NFP. | [NQ Detailed Report](./NQ_GAP_ANALYSIS.md) |
+| **S&P 500** | **ES** | Defensive Structural Gaps. Normal VIX Reversion. | [ES Detailed Report](./ES_GAP_ANALYSIS.md) |
+| **Russell 2000** | **RTY** | Broad Market Rotation Profiles. | [RTY Detailed Report](./RTY_GAP_ANALYSIS.md) |
+| **Dow 30** | **YM** | Blue Chip Stability & Fill Probability. | [YM Detailed Report](./YM_GAP_ANALYSIS.md) |
+| **Crude Oil** | **CL** | Commodity Volatility & Mean Reversion. | [CL Detailed Report](./CL_GAP_ANALYSIS.md) |
+| **Gold** | **GC** | Metals Magnetism Analysis. | [GC Detailed Report](./GC_GAP_ANALYSIS.md) |
 
 ---
 
