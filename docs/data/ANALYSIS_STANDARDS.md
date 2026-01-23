@@ -32,12 +32,20 @@ Analyses involving "Fills" or "Touches" must include time-based probability bins
 *   **15-60m**: The Transition Window.
 *   **>60m**: The Fade Window (where the edge degrades).
 
-## 6. News & Event Correlation Standards
+## 6. Ticker Independence
+All scripts must accept a ticker/symbol argument to ensure cross-market verification and batch processing portability.
+
+## 7. Operational Usability (Analysis & Takeaways)
+Every statistical section must conclude with a **"Day Trader Takeaway."**
+*   **Goal**: Translate raw data (e.g., 68% fill rate) into execution rules (e.g., "Set stop-loss beyond the median 15% fakeout depth").
+*   **Context**: Include qualitative analysis explaining *why* the data looks that way (e.g., Institutional hedging vs. retail noise).
+
+## 8. News & Event Correlation Standards
 To avoid false correlations or data drift in news analysis:
 *   **Timezone Normalization**: Primary source APIs often store news with timezone offsets (e.g., 3-hour shift). Always verify offsets against "Anchor Events" (e.g., NFP is strictly 08:30 ET).
 *   **Geographic Filtering**: High-impact news from foreign markets (e.g., Germay FLASH PMI) must be filtered out for indices like NQ to ensure the signal is focused on domestic US drivers.
 
-## 7. Data Integrity & Fusing Standards
+## 9. Data Integrity & Fusing Standards
 To ensure reports are viable at "The Hard Right Edge":
 *   **Fused Loading**: Always use the `load_fused_data` utility to merge "Live Storage" (current month) with "Historical Repos" (years).
 *   **US/Eastern Locking**: Gaps and RTH sessions must be calculated using a strictly localized `US/Eastern` timezone object to account for Daylight Savings shifts automatically.
