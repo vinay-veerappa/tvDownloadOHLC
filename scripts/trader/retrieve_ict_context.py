@@ -5,125 +5,149 @@ import sys
 import os
 from datetime import datetime, timedelta
 
-def get_last_session(df, ticker):
-    # Assume df index is datetime
+def get_next_session_context(df, ticker):
+    """
+    Prepares context for the UPCOMING session using the last completed session data.
+    """
     last_date = df.index[-1].date()
     
-    # Get Prior Day
-    # We need strictly the previous trading day, not just yesterday
-    unique_dates = sorted(df.index.date)
-    curr_idx = unique_dates.index(last_date)
-    
-    if curr_idx > 0:
-        prev_date = unique_dates[curr_idx-1]
-        prev_day = df[df.index.date == prev_date]
-        
-        pdh = prev_day['high'].max()
-        pdl = prev_day['low'].min()
-        pdc = prev_day['close'].iloc[-1]
-    else:
-        pdh = pdl = pdc = None
-        
-    # Get Current Day (Midnight Open)
+    # The last "complete" session is today (since it's after 16:00)
     curr_day = df[df.index.date == last_date]
-    if not curr_day.empty:
-        # Midnight Open: First bar of the day? 
-        # Or specifically 00:00 (ET).
-        # We need to handle timezone. data is typically UTC or ET.
-        # Let's assume the parquet is processed or we handle first bar.
-        
-        # Try to find 00:00
-        # If timestamp, we check hour/minute
-        midnight_bars = curr_day[(curr_day.index.hour == 0) & (curr_day.index.minute == 0)]
-        if not midnight_bars.empty:
-            midnight_open = midnight_bars['open'].iloc[0]
-        else:
-            # Fallback to absolute first open of the session
-            midnight_open = curr_day['open'].iloc[0]
-            
-        # 08:30 Open (News/Bond Open) - often used in ICT
-        # 07:30 Open (old algo open?) - User mentioned 07:30 in previous tasks.
-        open_0830 = None
-        # 8*60 + 30 = 510
-        bars_0830 = curr_day[(curr_day.index.hour == 8) & (curr_day.index.minute == 30)]
-        if not bars_0830.empty:
-            open_0830 = bars_0830['open'].iloc[0]
-            
-    else:
-        midnight_open = None
-        open_0830 = None
+    
+    if curr_day.empty: return None
+
+    # Calculate Prior Day stats (which is Today for the perspective of Tomorrow)
+    pdh = curr_day['high'].max()
+    pdl = curr_day['low'].min()
+    pdc = curr_day['close'].iloc[-1]
+    
+    # Calculate Next Trading Date (skip weekends)
+    next_date = last_date + timedelta(days=1)
+    if next_date.weekday() == 5: # Saturday -> Monday
+        next_date += timedelta(days=2)
+    elif next_date.weekday() == 6: # Sunday -> Monday
+        next_date += timedelta(days=1)
         
     return {
-        'Date': last_date,
+        'Date': next_date,
         'PDH': pdh,
         'PDL': pdl,
         'PDC': pdc,
-        'Midnight_Open': midnight_open,
-        'Open_0830': open_0830,
-        'Last_Close': curr_day['close'].iloc[-1]
+        'Midnight_Open': None, # Future
+        'Open_0830': None,     # Future
+        'Is_Projection': True,
+        'Prior_Date': last_date
     }
 
-def main(ticker):
-    file_path = f"c:/Users/vinay/tvDownloadOHLC/data/{ticker}_1m.parquet"
-    if not os.path.exists(file_path):
-        print(f"Error: Data file not found for {ticker}")
-        return
-
-    try:
-        df = pd.read_parquet(file_path)
-    except Exception as e:
-        print(f"Error reading parquet: {e}")
+def main(ticker, next_day=False):
+    # Import the unified data loader
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
+    from fused_data_loader import load_fused_data
+    
+    print(f"\n📊 Loading data for {ticker}...")
+    # Use the fused data loader (Live + Historical)
+    # For daily analysis, we need HTF levels (Weekly/Monthly), so require_historical=True
+    df = load_fused_data(ticker, timeframe="1m", require_historical=True)
+    
+    if df.empty:
+        print(f"Error: No data found for {ticker}")
         return
         
     # Ensure Datetime Index
     if 'datetime' in df.columns:
         df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
         df.set_index('datetime', inplace=True)
-    elif not isinstance(df.index, pd.DatetimeIndex):
-         # Try parsing 'date' and 'time' or just 'time' if it holds full datetime
-         # Assuming parquet has standard format
-         pass
-
-    # Convert to Eastern Time for ICT levels (NY Midnight)
+    
+    # Convert to Eastern Time
     try:
         df.index = df.index.tz_convert('US/Eastern')
     except:
         try:
             df.index = df.index.tz_localize('UTC').tz_convert('US/Eastern')
         except:
-             pass # Already naive or other issue
+             pass 
 
-    data = get_last_session(df, ticker)
+    if next_day:
+        data = get_next_session_context(df, ticker)
+        title_suffix = "(PREP FOR TOMORROW)"
+    else:
+        data = get_last_session(df, ticker)
+        title_suffix = "(CURRENT SESSION)"
     
-    print(f"\n💎 ICT CONTEXT SHEET: {ticker} 💎")
-    print(f"Date: {data['Date']}")
+    
+    # HTF Levels (Weekly/Monthly)
+    # Resample to Weekly 'W-FRI' (Week ending Friday)
+    # target_date is the date we are trading. We want the info from the COMPLETED period just before it.
+    
+    # 1. Weekly
+    df_weekly = df.resample('W-FRI').agg({'high':'max', 'low':'min', 'close':'last', 'open':'first'})
+    # Filter for weeks BEFORE target date
+    prior_weeks = df_weekly[df_weekly.index.date < data['Date']]
+    
+    pwh = pwl = pmh = pml = None
+    
+    if not prior_weeks.empty:
+        last_week = prior_weeks.iloc[-1]
+        pwh = last_week['high']
+        pwl = last_week['low']
+        
+    # 2. Monthly
+    df_monthly = df.resample('ME').agg({'high':'max', 'low':'min', 'close':'last', 'open':'first'})
+    prior_months = df_monthly[df_monthly.index.date < data['Date']]
+    
+    if not prior_months.empty:
+        last_month = prior_months.iloc[-1]
+        pmh = last_month['high']
+        pml = last_month['low']
+
+
+    print(f"\n💎 ICT CONTEXT SHEET: {ticker} {title_suffix} 💎")
+    print(f"Target Date: {data['Date']} (derived from {data.get('Prior_Date', 'Previous Session')})")
     print("-----------------------------------")
     
     print("\n📍 KEY LEVELS (Liquidity):")
     if data['PDH']: print(f"   PDH:  {data['PDH']:.2f}  (Buyside Liquidity)")
     if data['PDL']: print(f"   PDL:  {data['PDL']:.2f}  (Sellside Liquidity)")
-    if data['PDC']: print(f"   PDC:  {data['PDC']:.2f}  (Gap Fill)")
+    if data['PDC']: print(f"   PDC:  {data['PDC']:.2f}  (Gap Fill / Pivot)")
+    print("   --- HTF ---")
+    if pwh: print(f"   PWH:  {pwh:.2f} (Prev Week High)")
+    if pwl: print(f"   PWL:  {pwl:.2f} (Prev Week Low)")
+    if pmh: print(f"   PMH:  {pmh:.2f} (Prev Month High)")
+    if pml: print(f"   PML:  {pml:.2f} (Prev Month Low)")
     
     print("\n🕒 TIME LEVELS (Magnets):")
-    if data['Midnight_Open']: print(f"   Midnight Open: {data['Midnight_Open']:.2f} (Bias Pivot)")
-    if data['Open_0830']:     print(f"   08:30 Open:    {data['Open_0830']:.2f}    (News Pivot)")
+    if data['Midnight_Open']: 
+        print(f"   Midnight Open: {data['Midnight_Open']:.2f} (Bias Pivot)")
+    elif data.get('Is_Projection'):
+        print(f"   Midnight Open: [WAITING] (Opens at 00:00 ET)")
+        
+    if data['Open_0830']:     
+        print(f"   08:30 Open:    {data['Open_0830']:.2f}    (News Pivot)")
+    elif data.get('Is_Projection'):
+        print(f"   08:30 Open:    [WAITING] (Opens at 08:30 ET)")
     
-    print("\n🌊 BIAS CHECK:")
-    if data['Midnight_Open']:
-        curr_price = data['Last_Close']
-        if curr_price > data['Midnight_Open']:
-            print(f"   Current Price is ABOVE Midnight Open -> INTRA-DAY BULLISH CONTEXT")
-        else:
-            print(f"   Current Price is BELOW Midnight Open -> INTRA-DAY BEARISH CONTEXT")
+    if not data.get('Is_Projection'):
+        print("\n🌊 BIAS CHECK:")
+        if data['Midnight_Open']:
+            curr_price = data['Last_Close']
+            if curr_price > data['Midnight_Open']:
+                print(f"   Current Price is ABOVE Midnight Open -> INTRA-DAY BULLISH CONTEXT")
+            else:
+                print(f"   Current Price is BELOW Midnight Open -> INTRA-DAY BEARISH CONTEXT")
+    else:
+        print("\n🔮 PRE-MARKET PLAN:")
+        print(f"   - Watch reaction at PDC ({data['PDC']:.2f}) during Globex.")
+        print(f"   - Mark PDH ({data['PDH']:.2f}) and PDL ({data['PDL']:.2f}) as primary targets.")
             
     print("\n-----------------------------------")
-    print("Stats Insight (from Historical Audit):")
-    print("- 08:30 Open is a key reversal magnet if PDH/PDL are swept.")
-    print("- Midnight Open acts as equilibrium; price often returns to it before trend continues.")
+    print("Stats Insight:")
+    print("- PDH/PDL are the 'Draw on Liquidity' for the next session.")
+    print("- If Globex stays inside prior range -> Expect range expansion.")
     print("-----------------------------------\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("ticker", help="Ticker (e.g. NQ1)")
+    parser.add_argument("--next-day", action="store_true", help="Prepare for next trading day")
     args = parser.parse_args()
-    main(args.ticker)
+    main(args.ticker, args.next_day)

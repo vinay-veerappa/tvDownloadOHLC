@@ -87,6 +87,7 @@ See [`docs/README.md`](docs/README.md) for the full documentation index includin
 - Plugin System
 - Indicators Guide
 - [Data Processing Instructions](docs/data/DATA_PROCESSING_INSTRUCTIONS.md)
+- **[Data Integrity & Streaming Guide](docs/data/DATA_INTEGRITY_GUIDE.md)** 🆕 (Corruption Prevention)
 - **[Data Inventory](DATA_INVENTORY.md)** (Available Tickers & Timeframes)
 
 ## 🐍 Data Scripts (Python)

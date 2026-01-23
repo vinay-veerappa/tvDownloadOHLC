@@ -71,14 +71,12 @@ def fetch_data(client, symbol, timeframe, start_dt, end_dt):
         freq = 15
     elif timeframe == '30m':
         freq = 30
-    elif timeframe == '1h':
-        freq = 60
     elif timeframe == '1d':
         period_type = 'month' # Schwab daily requires month/year period
         freq_type = 'daily'
         freq = 1
     else:
-        print(f"Unsupported timeframe: {timeframe}")
+        print(f"Unsupported timeframe: {timeframe} (Schwab API only supports 1m, 5m, 15m, 30m, 1d)")
         return None
 
     print(f"Fetching {symbol} ({timeframe}) from {start_dt} to {end_dt}...")
@@ -123,8 +121,21 @@ def update_ticker(ticker, timeframe):
 
     schwab_ticker = SCHWAB_MAP.get(ticker, ticker) # Default to same if not mapped
     
-    filename = f"{ticker}_{timeframe}.parquet"
-    filepath = os.path.join(DATA_DIR, filename)
+    # *** IMPORTANT: Write to LIVE STORAGE, not Historical ***
+    # Live Storage location: data/live/live_storage_{schwab_ticker or ticker}.parquet
+    # We use the Schwab ticker format for futures (e.g., -NQ, -ES)
+    live_dir = os.path.join(DATA_DIR, "live")
+    os.makedirs(live_dir, exist_ok=True)
+    
+    # Determine filename based on ticker format
+    # Futures use Schwab format in live storage (e.g., live_storage_-NQ.parquet)
+    if schwab_ticker.startswith("/"):
+        storage_ticker = schwab_ticker.replace("/", "-") # /NQ -> -NQ
+    else:
+        storage_ticker = ticker
+        
+    filename = f"live_storage_{storage_ticker}.parquet"
+    filepath = os.path.join(live_dir, filename)
     
     start_dt = datetime.now() - timedelta(days=5) # Default: Last 5 days lookback
     
