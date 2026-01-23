@@ -1,5 +1,7 @@
 import os
 import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 import pandas as pd
 import json
 import argparse
@@ -139,6 +141,7 @@ def main():
             p_items.append(f"{c}: {val_str}")
         
         report_lines.append(f"> {' | '.join(p_items)}")
+        seq_dict = {c: float(str(seq_probs_df.loc[prior_type].get(c, seq_probs_df.loc[prior_type].get(f'{c}%', 0)))) for c in ['R1', 'R2', 'DWP', 'DNP']}
     else:
         report_lines.append(f"**Sequential Probability**: Data missing for `{prior_type}`")
 
@@ -152,7 +155,11 @@ def main():
             p_items.append(f"{c}: `{val}%`")
             
         report_lines.append(f"> {' | '.join(p_items)}")
-        report_lines.append(f"\n**Most Likely Outcome**: `{row['most_likely']}` (n={int(row['n'])})")
+        
+        most_likely = row['most_likely']
+        count = int(row['n'])
+        report_lines.append(f"\n**Most Likely Outcome**: `{most_likely}` (n={count})")
+        over_dict = {c: float(str(over_probs_df.loc[overnight_key].get(c, over_probs_df.loc[overnight_key].get(f'{c}%', 0)))) for c in ['R1', 'R2', 'DWP', 'DNP']}
     else:
         report_lines.append(f"\n**Overnight Probability**: No match found for `{overnight_key}`")
 
@@ -167,6 +174,17 @@ def main():
             send_message(url, report_text)
         else:
             print("❌ Discord Error: Webhook not found.")
+            
+    # 6. Prepare Result Data
+    result_data = {
+        'prior_type': prior_type,
+        'overnight_key': overnight_key,
+        'sequential_probs': seq_dict if 'seq_dict' in locals() else {},
+        'overnight_probs': over_dict if 'over_dict' in locals() else {},
+        'most_likely': most_likely if 'most_likely' in locals() else 'Unknown'
+    }
+            
+    return report_text, result_data
 
 if __name__ == "__main__":
-    main()
+    report, data = main()
