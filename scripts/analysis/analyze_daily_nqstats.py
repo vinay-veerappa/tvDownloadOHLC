@@ -99,6 +99,8 @@ def main():
     parser.add_argument("--ticker", default="NQ1", help="Ticker (NQ1, ES1, etc.)")
     parser.add_argument("--date", help="Analysis date (YYYY-MM-DD), default Today")
     parser.add_argument("--markdown", action="store_true", help="Output in Markdown format")
+    parser.add_argument("--discord", action="store_true", help="Send report to Discord")
+    parser.add_argument("--channel", default="data_gap_reports", help="Discord channel name")
     args = parser.parse_args()
     
     target_date = datetime.strptime(args.date, "%Y-%m-%d").date() if args.date else datetime.now().date()
@@ -154,49 +156,60 @@ def main():
         action = "Expect chop. Reduce size or wait."
 
     # 6. Report
-    if args.markdown:
-        print(f"### 📊 NQSTATS: {args.ticker} | {target_date}")
-        print(f"---")
-        print(f"**Final Bias**: `{bias}` | **Conviction**: `{conviction}`")
-        print(f"**Action**: {action}")
-        print(f"\n**Classification**:")
-        print(f"- ALN: `{aln}`")
-        print(f"- Broken: `{broken}`")
-        print(f"- Status: `{status}`")
-        print(f"\n**🌙 Noon Curve**: 75% chance High/Low on **Opposite Sides** of Noon.")
+    report_lines = []
+    if args.markdown or args.discord:
+        report_lines.append(f"### 📊 NQSTATS: {args.ticker} | {target_date}")
+        report_lines.append(f"---")
+        report_lines.append(f"**Final Bias**: `{bias}` | **Conviction**: `{conviction}`")
+        report_lines.append(f"**Action**: {action}")
+        report_lines.append(f"\n**Classification**:")
+        report_lines.append(f"- ALN: `{aln}`")
+        report_lines.append(f"- Broken: `{broken}`")
+        report_lines.append(f"- Status: `{status}`")
+        report_lines.append(f"\n**🌙 Noon Curve**: 75% chance High/Low on **Opposite Sides** of Noon.")
         
         if not london.empty:
             lh, ll = london['high'].max(), london['low'].min()
-            print(f"\n**📍 Key Levels**:")
-            print(f"- London High: `{lh:.2f}`")
-            print(f"- London Low: `{ll:.2f}`")
-            print(f"- London Mid: `{(lh+ll)/2:.2f}`")
-    else:
-        print(f"==========================================")
-        print(f"📊 NQSTATS UNIFIED BIAS: {args.ticker} | {target_date}")
-        print(f"==========================================\n")
-        print(f"Pattern Classification:")
-        print(f"  - ALN Pattern: {aln}")
-        print(f"  - Broken Status: {broken}")
-        print(f"  - Profiler Status: {status}")
-        print(f"  - Prior Close (P12): {prior_close:.2f if prior_close else 'N/A'}")
-        print(f"  - Combo Key: {combo_key}")
-        print(f"\n📢 FINAL BIAS: {bias}")
-        print(f"🎯 CONVICTION: {conviction}")
-        print(f"📝 ACTION: {action}")
-        print(f"\n🌙 NOON CURVE PROBABILITY:")
-        print(f"  - 74.9% chance HOD and LOD are on Opposite Sides of 12:00 ET.")
+            report_lines.append(f"\n**📍 Key Levels**:")
+            report_lines.append(f"- London High: `{lh:.2f}`")
+            report_lines.append(f"- London Low: `{ll:.2f}`")
+            report_lines.append(f"- London Mid: `{(lh+ll)/2:.2f}`")
         
-        if not london.empty:
-            lh, ll = london['high'].max(), london['low'].min()
-            print(f"\n📍 KEY NQSTATS LEVELS:")
-            print(f"  - London High: {lh:.2f}")
-            print(f"  - London Low:  {ll:.2f}")
-            print(f"  - London Mid:  {(lh+ll)/2:.2f}")
-            if not asia.empty:
-                print(f"  - Asia High:   {asia['high'].max():.2f}")
-                print(f"  - Asia Low:    {asia['low'].min():.2f}")
-        print("\n" + "="*42)
+        report_text = "\n".join(report_lines)
+
+    if args.markdown or not args.discord:
+        if args.markdown:
+            print(report_text)
+        else:
+            print(f"==========================================")
+            print(f"📊 NQSTATS UNIFIED BIAS: {args.ticker} | {target_date}")
+            print(f"==========================================\n")
+            print(f"Pattern Classification:")
+            print(f"  - ALN Pattern: {aln}")
+            print(f"  - Broken Status: {broken}")
+            print(f"  - Profiler Status: {status}")
+            print(f"  - Prior Close (P12): {prior_close:.2f if prior_close else 'N/A'}")
+            print(f"  - Combo Key: {combo_key}")
+            print(f"\n📢 FINAL BIAS: {bias}")
+            print(f"🎯 CONVICTION: {conviction}")
+            print(f"📝 ACTION: {action}")
+            print(f"\n🌙 NOON CURVE PROBABILITY:")
+            print(f"  - 74.9% chance HOD and LOD are on Opposite Sides of 12:00 ET.")
+            if not london.empty:
+                lh, ll = london['high'].max(), london['low'].min()
+                print(f"\n📍 KEY NQSTATS LEVELS:")
+                print(f"  - London High: {lh:.2f}")
+                print(f"  - London Low:  {ll:.2f}")
+                print(f"  - London Mid:  {(lh+ll)/2:.2f}")
+            print("\n" + "="*42)
+
+    if args.discord:
+        from scripts.utils.discord_notify import get_webhook_url, send_message
+        webhook_url = get_webhook_url(args.channel)
+        if webhook_url:
+            send_message(webhook_url, report_text)
+        else:
+            print(f"❌ Discord Error: Channel '{args.channel}' not found.")
 
 if __name__ == "__main__":
     main()

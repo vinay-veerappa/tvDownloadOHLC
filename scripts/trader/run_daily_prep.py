@@ -119,8 +119,8 @@ def main():
     if os.path.exists(nqstats_script):
         for t in args.tickers:
             print(f"\n[NQStats] Analyzing {t}...")
-            # Run and capture output for potential discord notification
-            run_command(["python", nqstats_script, "--ticker", t, "--markdown"])
+            # Run and notify Discord using the Data Gap reports channel
+            run_command(["python", nqstats_script, "--ticker", t, "--discord", "--channel", "data_gap_reports"])
     else:
         print(f"Warning: {nqstats_script} not found. Skipping NQStats analysis.")
 
