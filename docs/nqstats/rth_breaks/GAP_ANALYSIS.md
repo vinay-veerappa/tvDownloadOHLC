@@ -170,15 +170,17 @@ High VVIX indicates unstable volatility, favoring gap defense.
 
 How "magnetic" are gaps that don't fill on Day 1? We scanned the 20 trading days following every unfilled gap.
 
-### A. Cumulative Fill Probabilities (Forward-Looking)
-For gaps that **do not fill** during their initial RTH session:
+### A. Cumulative Fill Probabilities (IPDA Lookbacks) 📈
+For gaps that **do not fill** during their initial RTH session, we tracked institutional "collection" over the 60-day IPDA cycle.
 
-| Timeframe | Cumulative Fill % | Insight |
+| Timeframe | Cumulative Fill % | IPDA Designation |
 | :--- | :--- | :--- |
-| **Day 1 (Next Day)** | **23.1%** | High probability of immediate "overnight" revisit. |
-| **Cumulative 3-Day**| **43.1%** | Nearly half fill within the same week. |
-| **Cumulative 5-Day**| **53.4%** | Baseline magnetic pull over 1 week. |
-| **Cumulative 20-Day**| **74.4%** | Most gaps (3 out of 4) fill within a month. |
+| **Day 1 (Next Day)** | **23.1%** | Intra-Week Correction |
+| **Cumulative 20-Day**| **74.4%** | **IPDA Short-Term Window** |
+| **Cumulative 40-Day**| **81.5%** | **IPDA Med-Term Window** |
+| **Cumulative 60-Day**| **84.5%** | **IPDA Long-Term Window** |
+
+*   *IPDA Interpretation*: Gaps have massive gravity within the first 20 days. If a gap survives past 60 trading days (approx 3 months), it is statistically likely to remain an "unfilled" structural level for the long term.
 
 ### B. Deferred Fill Probabilities by Creation Day 📅
 Does the day the gap was born affect its magnetism?

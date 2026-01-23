@@ -272,8 +272,8 @@ def analyze_gap_history(ticker="NQ1"):
             start_idx = sorted_dates.index(start_date)
         except ValueError: continue
         
-        # Check next 20 trading days
-        for day_offset in range(1, 21):
+        # Check next 60 trading days (IPDA Windows)
+        for day_offset in range(1, 61):
             if start_idx + day_offset >= len(sorted_dates): break
             next_date = sorted_dates[start_idx + day_offset]
             if next_date not in day_groups: continue
@@ -370,21 +370,23 @@ def analyze_gap_history(ticker="NQ1"):
         print(f" -> Probability of Trend Day (Gap & Go): {trend_prob:.1f}%")
         print(f" -> Extension Ratio (Multiple of Gap):  {ext_stats}")
 
-    # 6. Deferred Fill Analysis (Multi-Day)
-    print("\n🧲 6. Deferred Fill Analysis (Magnetic Gaps)")
+    # 6. Deferred Fill Analysis (Multi-Day IPDA Windows)
+    print("\n🧲 6. Deferred Fill Analysis (IPDA Windows: 20, 40, 60 Day)")
     print("--------------------------------------------------")
     unfilled_day0 = df_res[~df_res['is_filled']].copy()
     if not unfilled_day0.empty:
         # Overall Stats
         count_day0 = len(unfilled_day0)
         filled_1d = (unfilled_day0['days_to_fill'] == 1).sum()
-        filled_3d = (unfilled_day0['days_to_fill'] <= 3).sum()
         filled_20d = (unfilled_day0['days_to_fill'] <= 20).sum()
+        filled_40d = (unfilled_day0['days_to_fill'] <= 40).sum()
+        filled_60d = (unfilled_day0['days_to_fill'] <= 60).sum()
         
         print(f"Total gaps NOT filled on Day 0: {count_day0}")
-        print(f" -> Overall Filled on Day 1:      {(filled_1d/count_day0)*100:.1f}%")
-        print(f" -> Overall Cumulative 3-Day:     {(filled_3d/count_day0)*100:.1f}%")
-        print(f" -> Overall Cumulative 20-Day:    {(filled_20d/count_day0)*100:.1f}%")
+        print(f" -> Overall Filled on Day 1:       {(filled_1d/count_day0)*100:.1f}%")
+        print(f" -> IPDA 20-Day (Short Term):     {(filled_20d/count_day0)*100:.1f}%")
+        print(f" -> IPDA 40-Day (Med Term):       {(filled_40d/count_day0)*100:.1f}%")
+        print(f" -> IPDA 60-Day (Long Term):      {(filled_60d/count_day0)*100:.1f}%")
 
         # DOW Segmentation for Deferred Fills
         print("\n📅 Deferred Fill Probabilities by Gap Creation Day:")
