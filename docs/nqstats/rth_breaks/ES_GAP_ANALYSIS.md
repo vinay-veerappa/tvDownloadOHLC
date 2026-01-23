@@ -3,13 +3,12 @@
 **Date:** January 23, 2026
 **Ticker:** ES1 (ES)
 **Data Range:** 2006-01-06 to 2026-01-22 (4962 Sessions)
-**Script:** `scripts/analysis/analyze_gap_history.py`
+**Script:** `scripts/analysis/analyze_gap_history.py` 
 
 ## 1. Executive Summary
-This analysis investigates the behavior of **Regular Trading Hours (RTH) Gaps** for ES. Key findings show that ES gaps fill approximately 64.5% of the time, with defense probabilities shifting significantly based on ATR and VIX regimes.
+This analysis investigates the behavior of **Regular Trading Hours (RTH) Gaps** for ES. Key findings show that ES gaps fill approximately 64.5% of the time.
 
 ---
-
 ## 2. Terminology: Reversion vs. Defense
 
 | Term | Strategy | Market Context | Bias Edge |
@@ -18,7 +17,6 @@ This analysis investigates the behavior of **Regular Trading Hours (RTH) Gaps** 
 | **Defense Favored** | **Trade for Continuation**. Bet on the gap holding (The 'Moat'). | High ATR, High VVIX. | **High Defense Rate**. |
 
 ---
-
 ## 3. Daily Bias Inference: Morning Checklist
 Use this logic gate every morning at 09:30 ET:
 
@@ -35,10 +33,7 @@ Use this logic gate every morning at 09:30 ET:
 *   **The Moat Check**: If Yesterday's Extreme (High/Low) holds for the first 15m, the **Defense** bias is confirmed.
 
 ---
-
-## 4. Statistical Breakdown
-
-### A. Fill Probabilities by Size
+## 4. Fill Probabilities by Size
 | bucket              |   Days | Fill Rate   |
 |:--------------------|-------:|:------------|
 | Very Small (<0.07%) |    830 | 94.3%       |
@@ -48,9 +43,9 @@ Use this logic gate every morning at 09:30 ET:
 | Very Large (>0.45%) |   1250 | 35.0%       |
 
 > [!TIP]
-> **Takeaway**: Small gaps (<0.15%) are largely noise and revert quickly. Large gaps (>0.45%) represent true 'Signal' and have a much higher probability of defending the open for a trend day.
+> **Takeaway**: Small gaps (<0.15%) are largely noise and revert quickly. Large gaps (>0.45%) represent true 'Signal' and have a much higher probability of defending the open.
 
-### B. Day of Week Analysis
+## 5. Day of Week Analysis
 | day       |   Count | Fill Rate   |   Med Time (min) |
 |:----------|--------:|:------------|-----------------:|
 | Monday    |     932 | 58.4%       |               23 |
@@ -60,39 +55,105 @@ Use this logic gate every morning at 09:30 ET:
 | Friday    |     976 | 62.7%       |               25 |
 
 > [!IMPORTANT]
-> **Takeaway**: Mid-week (Wednesday) typically shows the highest mean-reversion (fill) tendencies. Mondays and Fridays are 'Defense' prone—if the gap holds the first 30m on these days, expect continuation.
+> **Takeaway**: Mid-week (Wednesday) typically shows highest reversion. Mondays/Fridays are 'Defense' prone.
 
-## 5. MAE / MFE Precision (Stats Trader View)
-Treating the gap as a 'Range' to be broken or filled.
+## 6. Time-to-Fill Distribution (Module 1)
+| t_bucket   |   Fill Count |   % of All Fills |   Cumulative % |
+|:-----------|-------------:|-----------------:|---------------:|
+| 0-5m       |          447 |             14   |           14   |
+| 5-15m      |          459 |             14.3 |           28.3 |
+| 15-30m     |          342 |             10.7 |           39   |
+| 30-60m     |          402 |             12.6 |           51.6 |
+| 60-120m    |          379 |             11.8 |           63.4 |
+| 120m+      |          697 |             21.8 |           85.2 |
 
+
+### Intensity by Gap Size
+| bucket              |   Med Fill Time |   % Filled <15m |   Fill Count |
+|:--------------------|----------------:|----------------:|-------------:|
+| Very Small (<0.07%) |               1 |            84.9 |          783 |
+| Small (0.07-0.15%)  |              16 |            47.6 |          759 |
+| Medium (0.15-0.25%) |              39 |            29   |          572 |
+| Large (0.25-0.45%)  |              74 |            13.7 |          599 |
+| Very Large (>0.45%) |             126 |             3.9 |          437 |
+
+> **Takeaway**: If a fill isn't achieved in the first 30 minutes, probability of same-day fill drops. High-conviction reversions happen fast (<15m).
+
+## 7. Partial Fill Behavior (Module 2)
+| r_bucket   |   Count |   % of Total |
+|:-----------|--------:|-------------:|
+| 0-25%      |     572 |         11.5 |
+| 25-50%     |     467 |          9.4 |
+| 50-75%     |     344 |          6.9 |
+| 75-99%     |     359 |          7.2 |
+| 100%       |    3199 |         64.5 |
+
+
+### Conditional Probability of Full Fill
+| If Reached X%   | P(Full Fill)   |   Sample |
+|:----------------|:---------------|---------:|
+| 25%             | 73.0%          |     4384 |
+| 50%             | 81.4%          |     3928 |
+| 75%             | 89.7%          |     3566 |
+
+> **Takeaway**: If price 'hangs' at the 50% retracement level for more than 15m, failure probability increases.
+
+## 8. Consecutive Day / Streak Analysis (Module 3)
+|                | Fill Rate   |   Days |
+|:---------------|:------------|-------:|
+| Prior Defended | 68.1%       |   1764 |
+| Prior Filled   | 62.4%       |   3198 |
+
+
+### Streak Persistence
+|   streak_count | Fill Rate   |   Sample Size |
+|---------------:|:------------|--------------:|
+|              1 | 66.6%       |          1144 |
+|              2 | 79.7%       |           592 |
+|              3 | 87.9%       |           340 |
+|              4 | 94.7%       |           187 |
+|              5 | 94.8%       |           115 |
+
+> **Takeaway**: Volatility and outcomes cluster. After two consecutive fills, expect a defense day soon.
+
+## 9. Globex Range Context (Module 4)
+| globex_bucket    | Fill Rate   |   Days |
+|:-----------------|:------------|-------:|
+| Narrow (<50%)    | 76.3%       |   1733 |
+| Normal (50-100%) | 61.2%       |   2709 |
+| Wide (>100%)     | 41.2%       |    503 |
+
+
+### RTH Open Position
+| globex_position   | Fill Rate   |   Days |
+|:------------------|:------------|-------:|
+| Lower Third       | 59.2%       |   1424 |
+| Middle Third      | 78.8%       |   1593 |
+| Upper Third       | 56.6%       |   1945 |
+
+> **Takeaway**: Wide Globex ranges signal breakaway. Position within range helps predict early defense.
+
+## 10. MAE / MFE Precision (Stats Trader View)
 ### A. The 'Fakeout' Move (MFE before Fill)
-How much 'heat' do you take *in the gap direction* before the fill actually happens?
 - **Median Fakeout**: 77.8% of Gap Size.
 - **Mean Fakeout**: 155.3%.
-> **Takeaway**: If you are fading a gap, your stop should realistically be placed beyond 50-80% of the gap size to survive the regular 'Fakeout' expansion.
+> **Takeaway**: Set stops beyond 50-80% of gap size.
 
-
-### B. Retracement Depth (MAE for Trend / Progress for Fill)
-How much of the gap actually gets filled on average?
-- **Median Retrace**: 100.0% (i.e. Full Fill is the median outcome).
+### B. Retracement Depth (MAE for Trend)
+- **Median Retrace**: 100.0%
 - **Mean Retrace**: 80.1%.
-> **Takeaway**: Since 100% is the median retracement, the most common outcome is a full fill. However, on trending days, the 'Mean Retrace' shows we often stick around 60-80% fill before resumption.
-
-
 ### C. Total Extension (MFE for Trend)
-How much does price run *beyond* the open by the end of the session?
 - **Median Extension**: Mean: 421.4 | Med: 139.1 | Mode: 100.0
-> **Takeaway**: Trending gaps typically run 1.5x to 2x the size of the initial gap. If the gap holds, use the gap size as your 'Unit' for price targets.
+> **Takeaway**: Trending gaps run 1.5x to 2x the unit of the gap.
 
 
-### D. Pure Price Percentage Levels (Move / Index Price %)
-- **MAE (Retrace Pct)**: Mean: 0.53 | Med: 0.35 | Mode: 0.01%
-- **MFE (Fakeout Pct)**: Mean: 0.36 | Med: 0.16 | Mode: 0.01%
-- **MFE (Total Session Ext)**: Mean: 0.50 | Med: 0.33 | Mode: 0.06%
+### D. Pure Price Percentage Levels
+| Metric        | Mean   |
+|:--------------|:-------|
+| MAE (Retrace) | 0.53%  |
+| MFE (Fakeout) | 0.36%  |
 
-## 6. Trend & Bias Correlation Analysis
-
-### Impact of Previous Day Bias
+## 11. Trend & Bias Correlation
 |                     | Fill Rate   |   Days |
 |:--------------------|:------------|-------:|
 | ('Bearish', 'DOWN') | 69.6%       |    862 |
@@ -102,73 +163,15 @@ How much does price run *beyond* the open by the end of the session?
 | ('Unknown', 'DOWN') | 58.9%       |    392 |
 | ('Unknown', 'UP')   | 54.0%       |    478 |
 
-> **Takeaway**: Gaps that open *against* the previous day's trend (e.g., GAP UP after BEARISH day) have a slightly higher tendency to revert (mean-reversion) as traders take profits or hedge.
+> **Takeaway**: Gaps against trend revert more often.
 
+## 12. 🏆 Highest Edge Setups (Compound Detector)
+| Setup              | Fill Rate   |   Days | Lift   |
+|:-------------------|:------------|-------:|:-------|
+| Perfect Reversion  | 91.1%       |    946 | +26.7% |
+| Trend Continuation | 31.6%       |    651 | -32.8% |
 
-### ATR Volatility Correlation
-| atr_bucket   | Fill Rate   |   Avg Gap % |   Days |
-|:-------------|:------------|------------:|-------:|
-| Low ATR      | 67.7%       |    0.182083 |   1650 |
-| Normal ATR   | 63.6%       |    0.29486  |   1650 |
-| High ATR     | 62.1%       |    0.588455 |   1651 |
-
-> **Takeaway**: High ATR environments coincide with larger gaps and lower fill rates. In High Vol, the gap is likely a 'Breakaway' rather than noise.
-
-## 7. RTH Open Types & Boundary Defense
-| open_type   |   Days | Fill Rate   | Near Side   | Far Side   |
-|:------------|-------:|:------------|:------------|:-----------|
-| IBR         |   2532 | 76.1%       | 100.0%      | 41.0%      |
-| OBR (Above) |    942 | 50.0%       | 67.5%       | 15.3%      |
-| OBR (Below) |    618 | 50.6%       | 70.1%       | 15.2%      |
-| Unknown     |    870 | 56.2%       | 0.0%        | 0.0%       |
-
-> **Takeaway**: **IBR (Inside Bar Range)** opens are high-probability mean-reversion setups (75%+). **OBR (Opening Bar Range)** opens represent directional momentum—if the near-side holds, follow the trend.
-
-## 8. Volatility Regime Impact
-| vol_regime   | Fill Rate   |   Days |
-|:-------------|:------------|-------:|
-| High VIX     | 65.3%       |    167 |
-| Low VIX      | 64.0%       |    236 |
-| Normal VIX   | 66.3%       |    652 |
-| Unknown      | 64.2%       |   3907 |
-
-> **Takeaway**: During High VIX (>25), the 'Morning Moat' is wider. Gaps fill less frequently as institutional positioning drives sustained directional moves.
-
-## 9. 8:30 AM News Impact
-|           |   Avg Gap % | Fill Rate   |   Days |
-|:----------|------------:|:------------|-------:|
-| No News   |    0.358892 | 64.1%       |   4352 |
-| 8:30 News |    0.325267 | 66.9%       |    610 |
-
-### Specific News Type Breakdown
-| Event Type   |   Days | Avg Gap   | Fill Rate   |
-|:-------------|-------:|:----------|:------------|
-| CPI          |    137 | 0.35%     | 63.5%       |
-| NFP          |    230 | 0.32%     | 68.3%       |
-| Retail Sales |    137 | 0.35%     | 63.5%       |
-| GDP          |     48 | 0.23%     | 79.2%       |
-
-> **Takeaway**: NFP days have a unique profile of high 'Fakeouts' followed by high fill rates. CPI days generate the largest gaps with the highest directional persistence.
-
-## 10. Deferred Fill Analysis (IPDA Windows)
-- **IPDA 20-Day (Short Term)**: 76.1%
-- **IPDA 40-Day (Med Term)**: 83.2%
-- **IPDA 60-Day (Long Term)**: 86.2%
-
-### Deferred Fill Probabilities by Creation Day
-| Creation Day   |   Unfilled | Fill Day 1   | 3-Day Cum   |
-|:---------------|-----------:|:-------------|:------------|
-| Monday         |        388 | 27.6%        | 54.1%       |
-| Tuesday        |        359 | 27.6%        | 47.1%       |
-| Wednesday      |        315 | 30.2%        | 42.9%       |
-| Thursday       |        337 | 23.7%        | 37.4%       |
-| Friday         |        364 | 9.3%         | 45.1%       |
-
-> **Takeaway**: The 'IPDA Magnetism' is real—80%+ of unfilled gaps revisit their origin within 40 days. If a gap doesn't fill today, it becomes an 'Anchor Level' for your swing-bias over the next 20 sessions.
-
-- **Friday Persistence**: If a Friday gap holds, only 9.3% fill on the subsequent Monday.
-
-## 11. Best Practices & Operational Guardrails
+## 13. Best Practices & Operational Guardrails
 1. **Size Filter**: Gaps 0.15% - 0.45% are optimal.
 2. **Regime Respect**: Use caution in High VIX/VVIX regimes.
 3. **15-Minute Moat**: Wait for RTH opening candle confirmation.

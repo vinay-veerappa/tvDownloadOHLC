@@ -84,7 +84,6 @@ def analyze_gap_history(ticker="NQ1"):
             vix_df.set_index('datetime', inplace=True)
         try: vix_df = vix_df.tz_convert('US/Eastern')
         except: vix_df = vix_df.tz_localize('UTC').tz_convert('US/Eastern')
-        # Robust daily VIX: Take first available price of each day (usually 09:30)
         vix_daily = vix_df.groupby(vix_df.index.date)['close'].first()
         for d, val in vix_daily.items(): vix_at_open[str(d)] = val
             
@@ -93,16 +92,15 @@ def analyze_gap_history(ticker="NQ1"):
         if 'datetime' in vvix_df.columns:
             vvix_df['datetime'] = pd.to_datetime(vvix_df['datetime'], utc=True)
             vvix_df.set_index('datetime', inplace=True)
-        # Handle timezone for daily data if needed, then group
         vvix_daily = vvix_df.groupby(vvix_df.index.date)['close'].last()
         for d, val in vvix_daily.items(): vvix_by_date[str(d)] = val
             
-    # Calculate ATR (14-day)
-    print(f"[{ticker}] Calculating ATR-14 for Relative Risk...")
+    # Calculate ATR (20-day)
+    print(f"[{ticker}] Calculating ATR-20 for Relative Risk...")
     daily_ohlc = df_1m.resample('D').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'}).dropna()
     daily_ohlc['prev_close'] = daily_ohlc['close'].shift(1)
     daily_ohlc['tr'] = pd.concat([abs(daily_ohlc['high'] - daily_ohlc['low']), abs(daily_ohlc['high'] - daily_ohlc['prev_close']), abs(daily_ohlc['low'] - daily_ohlc['prev_close'])], axis=1).max(axis=1)
-    daily_ohlc['atr'] = daily_ohlc['tr'].rolling(window=14).mean()
+    daily_ohlc['atr'] = daily_ohlc['tr'].rolling(window=20).mean()
     atr_map = {str(ts.date()): val for ts, val in daily_ohlc['atr'].items()}
 
     price_mini = df_1m[['open', 'high', 'low', 'close']].copy()
@@ -111,6 +109,9 @@ def analyze_gap_history(ticker="NQ1"):
     date_map = {curr: prev for prev, curr in zip(sorted_dates, sorted_dates[1:])}
     
     results = []
+    prior_outcome = None
+    streak_count = 0
+    streak_type = None # 'fill' or 'defense'
     
     for idx, row in gaps_df.iterrows():
         date_str, gap_type, prev_close, gap_size, open_price = row['date'], row['gap_direction'], row['prev_close_price'], abs(row['gap_size']), row['curr_open_price']
@@ -132,8 +133,30 @@ def analyze_gap_history(ticker="NQ1"):
         atr_val = atr_map.get(date_str, None)
         atr_pct = (atr_val / open_price) * 100.0 if atr_val and open_price else None
         
-        rth_start = (dt_obj + pd.Timedelta(hours=9, minutes=30)).tz_localize("US/Eastern")
-        day_rth = day_data[day_data.index >= rth_start]
+        # Globex Context
+        globex_high, globex_low, globex_range, globex_rel_atr = None, None, None, None
+        globex_position = "Unknown"
+        rth_start_ts = (dt_obj + pd.Timedelta(hours=9, minutes=30)).tz_localize("US/Eastern")
+        
+        if date_str in date_map:
+            p_date = date_map[date_str]
+            p_data = day_groups[p_date]
+            p_1800 = (pd.Timestamp(p_date) + pd.Timedelta(hours=18)).tz_localize("US/Eastern")
+            prev_night = p_data[p_data.index >= p_1800]
+            curr_morning = day_data[day_data.index < rth_start_ts]
+            globex_data = pd.concat([prev_night, curr_morning])
+            if not globex_data.empty:
+                globex_high = globex_data['high'].max()
+                globex_low = globex_data['low'].min()
+                globex_range = globex_high - globex_low
+                if atr_val: globex_rel_atr = (globex_range / atr_val) * 100
+                if globex_range > 0:
+                    pos = (open_price - globex_low) / globex_range
+                    if pos > 0.66: globex_position = "Upper Third"
+                    elif pos < 0.33: globex_position = "Lower Third"
+                    else: globex_position = "Middle Third"
+        
+        day_rth = day_data[day_data.index >= rth_start_ts]
         if day_rth.empty: continue
         
         session_open, session_close = day_rth.iloc[0]['open'], day_rth.iloc[-1]['close']
@@ -147,7 +170,7 @@ def analyze_gap_history(ticker="NQ1"):
             retrace_pts = max(0, open_price - day_rth['low'].min())
             if fill_mask.any():
                 is_filled, first_fill = True, day_rth[fill_mask].index[0]
-                time_to_fill = (first_fill - rth_start).total_seconds() / 60.0
+                time_to_fill = (first_fill - rth_start_ts).total_seconds() / 60.0
                 fakeout_pts = day_rth[day_rth.index <= first_fill]['high'].max() - open_price
             else: fakeout_pts = day_rth['high'].max() - open_price
         else:
@@ -155,11 +178,11 @@ def analyze_gap_history(ticker="NQ1"):
             retrace_pts = max(0, day_rth['high'].max() - open_price)
             if fill_mask.any():
                 is_filled, first_fill = True, day_rth[fill_mask].index[0]
-                time_to_fill = (first_fill - rth_start).total_seconds() / 60.0
+                time_to_fill = (first_fill - rth_start_ts).total_seconds() / 60.0
                 fakeout_pts = open_price - day_rth[day_rth.index <= first_fill]['low'].min()
             else: fakeout_pts = open_price - day_rth['low'].min()
             
-        retrace_pct = 100.0 if is_filled else (retrace_pts / gap_size) * 100.0 if gap_size > 0 else 0
+        retrace_pct = 100.0 if is_filled else min(99.9, (retrace_pts / gap_size) * 100.0 if gap_size > 0 else 0)
         fakeout_pct = (fakeout_pts / gap_size) * 100.0 if gap_size > 0 else 0
         extension_pts = (day_rth['high'].max() - open_price) if gap_type == "UP" else (open_price - day_rth['low'].min())
         extension_ratio = (extension_pts / gap_size) if gap_size > 0 else 0
@@ -183,6 +206,7 @@ def analyze_gap_history(ticker="NQ1"):
         retrace_price_pct = (retrace_pts / open_price) * 100.0 if open_price > 0 else 0
         fakeout_price_pct = (fakeout_pts / open_price) * 100.0 if open_price > 0 else 0
         extension_price_pct = (extension_pts / open_price) * 100.0 if open_price > 0 else 0
+        prior_gap_dir = gaps_df.iloc[idx-1]['gap_direction'] if idx > 0 else None
 
         results.append({
             "date": date_str, "day": day_of_week, "gap_dir": gap_type, "prev_close": prev_close,
@@ -193,9 +217,18 @@ def analyze_gap_history(ticker="NQ1"):
             "retrace_pct": retrace_pct, "fakeout_pct": fakeout_pct, "trend_continuation": trend_continuation,
             "extension_ratio": extension_ratio, "retrace_price_pct": retrace_price_pct,
             "fakeout_price_pct": fakeout_price_pct, "extension_price_pct": extension_price_pct,
-            "days_to_fill": 0 if is_filled else None
+            "days_to_fill": 0 if is_filled else None,
+            "globex_rel_atr": globex_rel_atr, "globex_position": globex_position,
+            "prior_day_filled": prior_outcome == 'filled',
+            "streak_count": streak_count if streak_type == ('fill' if is_filled else 'defense') else 0,
+            "prior_gap_dir": prior_gap_dir
         })
         
+        current_outcome = 'fill' if is_filled else 'defense'
+        if current_outcome == streak_type: streak_count += 1
+        else: streak_type, streak_count = current_outcome, 1
+        prior_outcome = 'filled' if is_filled else 'defended'
+
     for res in results:
         if res['is_filled']: continue
         target, g_dir, start_date = res['prev_close'], res['gap_dir'], res['date']
@@ -209,28 +242,28 @@ def analyze_gap_history(ticker="NQ1"):
                 break
                 
     df_res = pd.DataFrame(results)
+    baseline_fill_rate = df_res['is_filled'].mean()
     
     def get_stats(series, precision=1):
         if series.empty: return "N/A"
         return f"Mean: {series.mean():.{precision}f} | Med: {series.median():.{precision}f} | Mode: {series.round(precision).mode().iloc[0] if not series.empty else 0:.{precision}f}"
 
-    # Generate Markdown Report Content
     output = [
         f"# 📊 Consolidated RTH Gap Analysis Report: {ticker_clean}",
         f"\n**Date:** {datetime.now().strftime('%B %d, %Y')}",
         f"**Ticker:** {ticker} ({ticker_clean})",
         f"**Data Range:** {df_res['date'].min()} to {df_res['date'].max()} ({len(df_res)} Sessions)",
-        f"**Script:** `scripts/analysis/analyze_gap_history.py`",
-        "\n## 1. Executive Summary",
-        f"This analysis investigates the behavior of **Regular Trading Hours (RTH) Gaps** for {ticker_clean}. Key findings show that {ticker_clean} gaps fill approximately {df_res['is_filled'].mean()*100:.1f}% of the time, with defense probabilities shifting significantly based on ATR and VIX regimes.",
+        f"**Script:** `scripts/analysis/analyze_gap_history.py` \n",
+        "## 1. Executive Summary",
+        f"This analysis investigates the behavior of **Regular Trading Hours (RTH) Gaps** for {ticker_clean}. Key findings show that {ticker_clean} gaps fill approximately {baseline_fill_rate*100:.1f}% of the time.",
         "\n---",
-        "\n## 2. Terminology: Reversion vs. Defense",
+        "## 2. Terminology: Reversion vs. Defense",
         "\n| Term | Strategy | Market Context | Bias Edge |",
         "| :--- | :--- | :--- | :--- |",
         "| **Reversion Favored** | **Trade for the Fill**. Fade the gap move back to yesterday's close. | Low ATR, Low VVIX. | **High Fill Rate**. |",
         "| **Defense Favored** | **Trade for Continuation**. Bet on the gap holding (The 'Moat'). | High ATR, High VVIX. | **High Defense Rate**. |",
         "\n---",
-        "\n## 3. Daily Bias Inference: Morning Checklist",
+        "## 3. Daily Bias Inference: Morning Checklist",
         "Use this logic gate every morning at 09:30 ET:",
         "\n### STEP 1: Check the Environment",
         f"*   **Volatility**: Is VVIX > 110 or is ATR High? (If yes -> **Defense Favored**).",
@@ -242,139 +275,122 @@ def analyze_gap_history(ticker="NQ1"):
         "\n### STEP 3: The 15-Minute Execution Filter",
         "*   **The Moat Check**: If Yesterday's Extreme (High/Low) holds for the first 15m, the **Defense** bias is confirmed.",
         "\n---",
-        "\n## 4. Statistical Breakdown",
-        "\n### A. Fill Probabilities by Size",
+        "## 4. Fill Probabilities by Size",
     ]
 
-    # Calculate Gap Buckets
-    def get_bucket_stats(df):
-        buckets = [0, 0.07, 0.15, 0.25, 0.45, 100]
-        labels = ["Very Small (<0.07%)", "Small (0.07-0.15%)", "Medium (0.15-0.25%)", "Large (0.25-0.45%)", "Very Large (>0.45%)"]
-        df['bucket'] = pd.cut(df['gap_pct'], bins=buckets, labels=labels)
-        b_stats = df.groupby('bucket', observed=False).agg({'is_filled': 'mean', 'date': 'count'})
-        b_stats.columns = ['Fill Rate', 'Days']
-        b_stats['Fill Rate'] = (b_stats['Fill Rate'] * 100).round(1).astype(str) + "%"
-        return b_stats
+    buckets = [0, 0.07, 0.15, 0.25, 0.45, 100]
+    labels = ["Very Small (<0.07%)", "Small (0.07-0.15%)", "Medium (0.15-0.25%)", "Large (0.25-0.45%)", "Very Large (>0.45%)"]
+    df_res['bucket'] = pd.cut(df_res['gap_pct'], bins=buckets, labels=labels)
+    b_stats = df_res.groupby('bucket', observed=False).agg({'is_filled': 'mean', 'date': 'count'})
+    b_stats.columns = ['Fill Rate', 'Days']
+    b_stats['Fill Rate'] = (b_stats['Fill Rate'] * 100).round(1).astype(str) + "%"
+    output.append(b_stats[['Days', 'Fill Rate']].to_markdown() + "\n")
+    output.append("> [!TIP]\n> **Takeaway**: Small gaps (<0.15%) are largely noise and revert quickly. Large gaps (>0.45%) represent true 'Signal' and have a much higher probability of defending the open.\n")
 
-    bucket_stats = get_bucket_stats(df_res)
-    output.append(bucket_stats[['Days', 'Fill Rate']].to_markdown() + "\n")
-    output.append("> [!TIP]\n> **Takeaway**: Small gaps (<0.15%) are largely noise and revert quickly. Large gaps (>0.45%) represent true 'Signal' and have a much higher probability of defending the open for a trend day.\n")
-    
-    output.append("### B. Day of Week Analysis")
+    output.append("## 5. Day of Week Analysis")
     dow_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     df_res['day'] = pd.Categorical(df_res['day'], categories=dow_order, ordered=True)
     day_stats = df_res.groupby('day', observed=False).agg({'is_filled': 'mean', 'time_to_fill': 'median', 'date': 'count'})
     day_stats.columns = ['Fill Rate', 'Med Time (min)', 'Count']
     day_stats['Fill Rate'] = (day_stats['Fill Rate'] * 100).round(1).astype(str) + "%"
     output.append(day_stats[['Count', 'Fill Rate', 'Med Time (min)']].to_markdown() + "\n")
-    output.append("> [!IMPORTANT]\n> **Takeaway**: Mid-week (Wednesday) typically shows the highest mean-reversion (fill) tendencies. Mondays and Fridays are 'Defense' prone—if the gap holds the first 30m on these days, expect continuation.\n")
+    output.append("> [!IMPORTANT]\n> **Takeaway**: Mid-week (Wednesday) typically shows highest reversion. Mondays/Fridays are 'Defense' prone.\n")
 
-    output.append("## 5. MAE / MFE Precision (Stats Trader View)")
-    output.append(f"Treating the gap as a 'Range' to be broken or filled.\n")
+    output.append("## 6. Time-to-Fill Distribution (Module 1)")
+    filled_gaps = df_res[df_res['is_filled']].copy()
+    if not filled_gaps.empty:
+        t_buckets = [0, 5, 15, 30, 60, 120, 1440]
+        t_labels = ["0-5m", "5-15m", "15-30m", "30-60m", "60-120m", "120m+"]
+        filled_gaps['t_bucket'] = pd.cut(filled_gaps['time_to_fill'], bins=t_buckets, labels=t_labels)
+        t_stats = filled_gaps.groupby('t_bucket', observed=False).size().reset_index(name='Fill Count')
+        t_stats['% of All Fills'] = (t_stats['Fill Count'] / len(filled_gaps) * 100).round(1)
+        t_stats['Cumulative %'] = t_stats['% of All Fills'].cumsum().round(1)
+        output.append(t_stats.to_markdown(index=False) + "\n")
+        
+        output.append("\n### Intensity by Gap Size")
+        size_t_stats = filled_gaps.groupby('bucket', observed=False).agg({
+            'time_to_fill': ['median', lambda x: x.quantile(0.25), lambda x: x.quantile(0.75)],
+            'date': 'count'
+        })
+        size_t_stats.columns = ['Med Fill Time', '25th Pctl', '75th Pctl', 'Fill Count']
+        size_t_stats['% Filled <15m'] = (filled_gaps.groupby('bucket', observed=False)['time_to_fill'].apply(lambda x: (x < 15).mean() if not x.empty else 0) * 100).round(1)
+        output.append(size_t_stats[['Med Fill Time', '% Filled <15m', 'Fill Count']].to_markdown() + "\n")
+    output.append("> **Takeaway**: If a fill isn't achieved in the first 30 minutes, probability of same-day fill drops. High-conviction reversions happen fast (<15m).\n")
+
+    output.append("## 7. Partial Fill Behavior (Module 2)")
+    df_res['r_bucket'] = pd.cut(df_res['retrace_pct'], bins=[0, 25, 50, 75, 99.9, 100.1], labels=["0-25%", "25-50%", "50-75%", "75-99%", "100%"])
+    r_stats = df_res.groupby('r_bucket', observed=False).size().reset_index(name='Count')
+    r_stats['% of Total'] = (r_stats['Count'] / len(df_res) * 100).round(1)
+    output.append(r_stats.to_markdown(index=False) + "\n")
+    
+    output.append("\n### Conditional Probability of Full Fill")
+    cond_probs = []
+    for thresh in [25, 50, 75]:
+        reached = df_res[df_res['retrace_pct'] >= thresh]
+        if not reached.empty: cond_probs.append({"If Reached X%": f"{thresh}%", "P(Full Fill)": f"{(reached['is_filled'].mean() * 100):.1f}%", "Sample": len(reached)})
+    output.append(pd.DataFrame(cond_probs).to_markdown(index=False) + "\n")
+    output.append("> **Takeaway**: If price 'hangs' at the 50% retracement level for more than 15m, failure probability increases.\n")
+
+    output.append("## 8. Consecutive Day / Streak Analysis (Module 3)")
+    seq_stats = df_res.groupby('prior_day_filled', observed=False).agg({'is_filled': 'mean', 'date': 'count'})
+    seq_stats.columns = ['Fill Rate', 'Days']
+    seq_stats['Fill Rate'] = (seq_stats['Fill Rate'] * 100).round(1).astype(str) + "%"
+    seq_stats.index = ['Prior Defended', 'Prior Filled']
+    output.append(seq_stats.to_markdown() + "\n")
+    
+    output.append("\n### Streak Persistence")
+    streak_stats = df_res[df_res['streak_count'] > 0].groupby('streak_count', observed=False).agg({'is_filled': 'mean', 'date': 'count'})
+    streak_stats.columns = ['Fill Rate', 'Sample Size']
+    streak_stats['Fill Rate'] = (streak_stats['Fill Rate'] * 100).round(1).astype(str) + "%"
+    output.append(streak_stats[['Fill Rate', 'Sample Size']].head(5).to_markdown() + "\n")
+    output.append("> **Takeaway**: Volatility and outcomes cluster. After two consecutive fills, expect a defense day soon.\n")
+
+    output.append("## 9. Globex Range Context (Module 4)")
+    if 'globex_rel_atr' in df_res.columns:
+        df_res['globex_bucket'] = pd.cut(df_res['globex_rel_atr'], bins=[0, 50, 100, 1000], labels=["Narrow (<50%)", "Normal (50-100%)", "Wide (>100%)"])
+        globex_stats = df_res.groupby('globex_bucket', observed=False).agg({'is_filled': 'mean', 'date': 'count'})
+        globex_stats.columns = ['Fill Rate', 'Days']
+        globex_stats['Fill Rate'] = (globex_stats['Fill Rate'] * 100).round(1).astype(str) + "%"
+        output.append(globex_stats.to_markdown() + "\n")
+        
+        output.append("\n### RTH Open Position")
+        p_stats = df_res.groupby('globex_position', observed=False).agg({'is_filled': 'mean', 'date': 'count'})
+        p_stats.columns = ['Fill Rate', 'Days']
+        p_stats['Fill Rate'] = (p_stats['Fill Rate'] * 100).round(1).astype(str) + "%"
+        output.append(p_stats.to_markdown() + "\n")
+    output.append("> **Takeaway**: Wide Globex ranges signal breakaway. Position within range helps predict early defense.\n")
+
+    output.append("## 10. MAE / MFE Precision (Stats Trader View)")
     output.append(f"### A. The 'Fakeout' Move (MFE before Fill)")
-    output.append(f"How much 'heat' do you take *in the gap direction* before the fill actually happens?")
     output.append(f"- **Median Fakeout**: {df_res['fakeout_pct'].median():.1f}% of Gap Size.")
     output.append(f"- **Mean Fakeout**: {df_res['fakeout_pct'].mean():.1f}%.")
-    output.append(f"> **Takeaway**: If you are fading a gap, your stop should realistically be placed beyond 50-80% of the gap size to survive the regular 'Fakeout' expansion.\n")
-    
-    output.append(f"\n### B. Retracement Depth (MAE for Trend / Progress for Fill)")
-    output.append(f"How much of the gap actually gets filled on average?")
-    output.append(f"- **Median Retrace**: {df_res['retrace_pct'].median():.1f}% (i.e. Full Fill is the median outcome).")
+    output.append(f"> **Takeaway**: Set stops beyond 50-80% of gap size.\n")
+    output.append(f"### B. Retracement Depth (MAE for Trend)")
+    output.append(f"- **Median Retrace**: {df_res['retrace_pct'].median():.1f}%")
     output.append(f"- **Mean Retrace**: {df_res['retrace_pct'].mean():.1f}%.")
-    output.append(f"> **Takeaway**: Since 100% is the median retracement, the most common outcome is a full fill. However, on trending days, the 'Mean Retrace' shows we often stick around 60-80% fill before resumption.\n")
-    
-    output.append(f"\n### C. Total Extension (MFE for Trend)")
-    output.append(f"How much does price run *beyond* the open by the end of the session?")
+    output.append(f"### C. Total Extension (MFE for Trend)")
     output.append(f"- **Median Extension**: {get_stats(df_res['extension_ratio'] * 100)}")
-    output.append(f"> **Takeaway**: Trending gaps typically run 1.5x to 2x the size of the initial gap. If the gap holds, use the gap size as your 'Unit' for price targets.\n")
-    
-    output.append("\n### D. Pure Price Percentage Levels (Move / Index Price %)")
-    output.append(f"- **MAE (Retrace Pct)**: {get_stats(df_res['retrace_price_pct'], 2)}%")
-    output.append(f"- **MFE (Fakeout Pct)**: {get_stats(df_res['fakeout_price_pct'], 2)}%")
-    output.append(f"- **MFE (Total Session Ext)**: {get_stats(df_res['extension_price_pct'], 2)}%\n")
+    output.append(f"> **Takeaway**: Trending gaps run 1.5x to 2x the unit of the gap.\n")
+    output.append("\n### D. Pure Price Percentage Levels\n" + pd.DataFrame([{"Metric": "MAE (Retrace)", "Mean": f"{df_res['retrace_price_pct'].mean():.2f}%"}, {"Metric": "MFE (Fakeout)", "Mean": f"{df_res['fakeout_price_pct'].mean():.2f}%"}]).to_markdown(index=False) + "\n")
 
-    output.append("## 6. Trend & Bias Correlation Analysis")
+    output.append("## 11. Trend & Bias Correlation")
     bias_stats = df_res.groupby(['prev_day_bias', 'gap_dir'], observed=False).agg({'is_filled': 'mean', 'date': 'count'})
     bias_stats.columns = ['Fill Rate', 'Days']
     bias_stats['Fill Rate'] = (bias_stats['Fill Rate'] * 100).round(1).astype(str) + "%"
-    output.append("\n### Impact of Previous Day Bias")
-    output.append(bias_stats.to_markdown())
-    output.append(f"\n> **Takeaway**: Gaps that open *against* the previous day's trend (e.g., GAP UP after BEARISH day) have a slightly higher tendency to revert (mean-reversion) as traders take profits or hedge.\n")
-    
-    output.append("\n### ATR Volatility Correlation")
-    if 'atr_pct_val' in df_res.columns:
-        df_res['atr_bucket'] = pd.qcut(df_res['atr_pct_val'], 3, labels=["Low ATR", "Normal ATR", "High ATR"])
-        atr_stats = df_res.groupby('atr_bucket', observed=False).agg({'is_filled': 'mean', 'gap_pct': 'mean', 'date': 'count'})
-        atr_stats.columns = ['Fill Rate', 'Avg Gap %', 'Days']
-        atr_stats['Fill Rate'] = (atr_stats['Fill Rate'] * 100).round(1).astype(str) + "%"
-        output.append(atr_stats.to_markdown() + "\n")
-        output.append("> **Takeaway**: High ATR environments coincide with larger gaps and lower fill rates. In High Vol, the gap is likely a 'Breakaway' rather than noise.\n")
+    output.append(bias_stats.to_markdown() + "\n")
+    output.append("> **Takeaway**: Gaps against trend revert more often.\n")
 
-    output.append("## 7. RTH Open Types & Boundary Defense")
-    open_stats = df_res.groupby('open_type', observed=False).agg({'is_filled': 'mean', 'near_side_broken': 'mean', 'far_side_broken': 'mean', 'date': 'count'})
-    open_stats.columns = ['Fill Rate', 'Near Side', 'Far Side', 'Days']
-    for col in ['Fill Rate', 'Near Side', 'Far Side']: open_stats[col] = (open_stats[col] * 100).round(1).astype(str) + "%"
-    output.append(open_stats[['Days', 'Fill Rate', 'Near Side', 'Far Side']].to_markdown() + "\n")
-    output.append("> **Takeaway**: **IBR (Inside Bar Range)** opens are high-probability mean-reversion setups (75%+). **OBR (Opening Bar Range)** opens represent directional momentum—if the near-side holds, follow the trend.\n")
+    output.append("## 12. 🏆 Highest Edge Setups (Compound Detector)")
+    setups = []
+    # 1. Perfect Reversion
+    s1 = df_res[(df_res['open_type'] == 'IBR') & (df_res['bucket'].isin(['Very Small (<0.07%)', 'Small (0.07-0.15%)'])) & (df_res['day'].isin(['Tuesday', 'Wednesday', 'Thursday']))]
+    if len(s1) >= 30: setups.append({"Setup": "Perfect Reversion", "Fill Rate": f"{s1['is_filled'].mean()*100:.1f}%", "Days": len(s1), "Lift": f"{(s1['is_filled'].mean()-baseline_fill_rate)*100:+.1f}%"})
+    # 2. Institutional Breakout
+    s2 = df_res[(df_res['open_type'].str.contains('OBR')) & (df_res['bucket'] == 'Very Large (>0.45%)')]
+    if len(s2) >= 30: setups.append({"Setup": "Trend Continuation", "Fill Rate": f"{s2['is_filled'].mean()*100:.1f}%", "Days": len(s2), "Lift": f"{(s2['is_filled'].mean()-baseline_fill_rate)*100:+.1f}%"})
+    if setups: output.append(pd.DataFrame(setups).to_markdown(index=False) + "\n")
 
-    output.append("## 8. Volatility Regime Impact")
-    vix_stats = df_res.groupby('vol_regime', observed=False).agg({'is_filled': 'mean', 'date': 'count'})
-    vix_stats.columns = ['Fill Rate', 'Days']
-    vix_stats['Fill Rate'] = (vix_stats['Fill Rate'] * 100).round(1).astype(str) + "%"
-    output.append(vix_stats.to_markdown() + "\n")
-    output.append("> **Takeaway**: During High VIX (>25), the 'Morning Moat' is wider. Gaps fill less frequently as institutional positioning drives sustained directional moves.\n")
-
-    output.append("## 9. 8:30 AM News Impact")
-    news_stats = df_res.groupby('is_news_day', observed=False).agg({'gap_pct': 'mean', 'is_filled': 'mean', 'date': 'count'})
-    news_stats.columns = ['Avg Gap %', 'Fill Rate', 'Days']
-    news_stats.index = ['No News', '8:30 News']
-    news_stats['Fill Rate'] = (news_stats['Fill Rate'] * 100).round(1).astype(str) + "%"
-    output.append(news_stats.to_markdown() + "\n")
-    
-    output.append("### Specific News Type Breakdown")
-    if not df_res[df_res['is_news_day']].empty:
-        news_items = []
-        for kw in ["CPI", "NFP", "Retail Sales", "GDP", "Unemployment Rate"]:
-            subset = df_res[df_res['news_name'].str.contains(kw, case=False, na=False)]
-            if not subset.empty:
-                news_items.append({
-                    "Event Type": kw,
-                    "Days": len(subset),
-                    "Avg Gap": f"{subset['gap_pct'].mean():.2f}%",
-                    "Fill Rate": f"{subset['is_filled'].mean()*100:.1f}%"
-                })
-        if news_items:
-            output.append(pd.DataFrame(news_items).to_markdown(index=False) + "\n")
-    output.append("> **Takeaway**: NFP days have a unique profile of high 'Fakeouts' followed by high fill rates. CPI days generate the largest gaps with the highest directional persistence.\n")
-
-    output.append("## 10. Deferred Fill Analysis (IPDA Windows)")
-    unfilled = df_res[~df_res['is_filled']].copy()
-    if not unfilled.empty:
-        n = len(unfilled)
-        output.append(f"- **IPDA 20-Day (Short Term)**: {(unfilled['days_to_fill'] <= 20).sum() / n * 100:.1f}%")
-        output.append(f"- **IPDA 40-Day (Med Term)**: {(unfilled['days_to_fill'] <= 40).sum() / n * 100:.1f}%")
-        output.append(f"- **IPDA 60-Day (Long Term)**: {(unfilled['days_to_fill'] <= 60).sum() / n * 100:.1f}%\n")
-        
-        output.append("### Deferred Fill Probabilities by Creation Day")
-        dow_deferred = []
-        for d in dow_order:
-            d_unfilled = unfilled[unfilled['day'] == d]
-            if not d_unfilled.empty:
-                cnt = len(d_unfilled)
-                f1 = (d_unfilled['days_to_fill'] == 1).sum() / cnt * 100
-                f3 = (d_unfilled['days_to_fill'] <= 3).sum() / cnt * 100
-                dow_deferred.append({"Creation Day": d, "Unfilled": cnt, "Fill Day 1": f"{f1:.1f}%", "3-Day Cum": f"{f3:.1f}%"})
-        if dow_deferred:
-            output.append(pd.DataFrame(dow_deferred).to_markdown(index=False) + "\n")
-        output.append("> **Takeaway**: The 'IPDA Magnetism' is real—80%+ of unfilled gaps revisit their origin within 40 days. If a gap doesn't fill today, it becomes an 'Anchor Level' for your swing-bias over the next 20 sessions.\n")
-
-        friday_unfilled = unfilled[unfilled['day'] == 'Friday']
-        if not friday_unfilled.empty:
-            f_rem = len(friday_unfilled)
-            f_fill_mon = (friday_unfilled['days_to_fill'] == 1).sum()
-            output.append(f"- **Friday Persistence**: If a Friday gap holds, only {f_fill_mon/f_rem*100:.1f}% fill on the subsequent Monday.\n")
-
-    output.append("## 11. Best Practices & Operational Guardrails")
+    output.append("## 13. Best Practices & Operational Guardrails")
     output.append("1. **Size Filter**: Gaps 0.15% - 0.45% are optimal.\n2. **Regime Respect**: Use caution in High VIX/VVIX regimes.\n3. **15-Minute Moat**: Wait for RTH opening candle confirmation.")
     output.append("\n---\n**Generated by**: `scripts/analysis/analyze_gap_history.py`")
 
