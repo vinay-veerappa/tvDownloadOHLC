@@ -39,6 +39,53 @@ def get_next_session_context(df, ticker):
         'Prior_Date': last_date
     }
 
+def get_last_session(df, ticker):
+    """
+    Retrieves context for the CURRENT session (Today).
+    """
+    last_date = df.index[-1].date()
+    curr_day = df[df.index.date == last_date]
+    
+    if curr_day.empty: return None
+
+    # PDH/PDL from the day BEFORE last_date
+    prior_days = df[df.index.date < last_date]
+    if not prior_days.empty:
+        prev_date = prior_days.index[-1].date()
+        prev_day = df[df.index.date == prev_date]
+        pdh = prev_day['high'].max()
+        pdl = prev_day['low'].min()
+        pdc = prev_day['close'].iloc[-1]
+    else:
+        pdh = pdl = pdc = None
+
+    # Midnight and 08:30 for Today
+    m_open = o_0830 = None
+    try:
+        m_dt = pd.Timestamp(datetime.combine(last_date, time(0, 0))).tz_localize('US/Eastern')
+        o_dt = pd.Timestamp(datetime.combine(last_date, time(8, 30))).tz_localize('US/Eastern')
+        
+        m_idx = df.index.get_indexer([m_dt], method='pad')[0]
+        if abs((df.index[m_idx] - m_dt).total_seconds()) < 300:
+            m_open = df['open'].iloc[m_idx]
+            
+        o_idx = df.index.get_indexer([o_dt], method='pad')[0]
+        if abs((df.index[o_idx] - o_dt).total_seconds()) < 300:
+            o_0830 = df['open'].iloc[o_idx]
+    except:
+        pass
+
+    return {
+        'Date': last_date,
+        'PDH': pdh,
+        'PDL': pdl,
+        'PDC': pdc,
+        'Midnight_Open': m_open,
+        'Open_0830': o_0830,
+        'Last_Close': curr_day['close'].iloc[-1],
+        'Is_Projection': False
+    }
+
 def main(ticker, next_day=False):
     # Import the unified data loader
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))

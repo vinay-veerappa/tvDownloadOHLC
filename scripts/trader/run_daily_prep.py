@@ -113,6 +113,17 @@ def main():
     else:
         print(f"Warning: {conflict_script} not found. Skipping integrity check.")
 
+    # 5. NQSTATS ANALYSIS
+    print("\n📈 STEP 5: NQSTATS STATISTICAL BIAS...")
+    nqstats_script = os.path.join(SCRIPTS_DIR, "analysis", "analyze_daily_nqstats.py")
+    if os.path.exists(nqstats_script):
+        for t in args.tickers:
+            print(f"\n[NQStats] Analyzing {t}...")
+            # Run and capture output for potential discord notification
+            run_command(["python", nqstats_script, "--ticker", t, "--markdown"])
+    else:
+        print(f"Warning: {nqstats_script} not found. Skipping NQStats analysis.")
+
     print("\n==========================================")
     print("✅ PREP COMPLETE. GOOD LUCK.")
     print("==========================================")
