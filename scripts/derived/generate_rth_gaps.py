@@ -125,6 +125,17 @@ def calculate_rth_gaps(ticker):
         
         gaps.append({
             "date": date_idx.strftime('%Y-%m-%d'),
+            "prev_date": (date_idx - timedelta(days=1)).strftime('%Y-%m-%d') if row.name.weekday() != 0 else (date_idx - timedelta(days=3)).strftime('%Y-%m-%d'), 
+            # Vectorized approach creates issues here since 'prev_close' was just shifted.
+            # But wait, merged index IS 'date_idx'. 
+            # The 'prev_close' column CAME from 'daily_closes.shift(1)'. 
+            # So its actual date was index - 1 (business day? or calendar day?).
+            # Since we did .shift(1) on daily data, it's the previous available row.
+            
+            # Simple Fix: We don't have the exact prev date easily in this vectorized structure without more join work.
+            # However, for analysis we just need to look up the previous trading day in the 1m data.
+            # Let's fix analyze_gap_history.py to find previous trading day dynamically instead.
+            
             "prev_close_price": float(row['prev_close']),
             "curr_open_price": float(row['curr_open']),
             "gap_size": round(float(row['gap_size']), 4),

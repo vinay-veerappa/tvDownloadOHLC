@@ -99,8 +99,12 @@ def main():
             elif tmr.weekday() == 6: tmr += timedelta(days=1)
         target_date = tmr.strftime("%Y-%m-%d")
 
-        # 0. Generate ICT Gaps (NWOG/NDOG)
+        # 0. Generate ICT Gaps (NWOG/NDOG) & RTH Gaps
         run_command(["python", GAP_SCRIPT, "--tickers", t, "--lookback", "365"])
+        
+        # 0.1 RTH Gaps (Break Stats)
+        RTH_GAP_SCRIPT = os.path.join(SCRIPTS_DIR, "derived", "generate_rth_gaps.py")
+        run_command(["python", RTH_GAP_SCRIPT, "--tickers", t])
 
         # A. ICT Context (Levels & HTF)
         import scripts.trader.retrieve_ict_context as ict_module

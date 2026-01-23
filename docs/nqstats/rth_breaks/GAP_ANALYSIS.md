@@ -11,11 +11,40 @@ This analysis investigates the behavior of **Regular Trading Hours (RTH) Gaps**â
 Key findings:
 *   **Defense**: A gap acts as a "moat". The previous day's extreme (High/Low) is defended **67.3%** of the time.
 *   **Fills**: While **66.8%** of all gaps fill, success is highly dependent on size, day of the week, and volatility regime.
-*   **Gap & Go**: If a Medium/Large gap (>0.25%) holds the first 15-30m, there is a **76.5%** probability of a trend day.
+*   **Trend**: Large gaps (>0.5%) have a coin-flip probability (~51%) of trending in the gap direction ("Gap & Go").
 
 ---
 
-## 2. Statistical Breakdown
+## 2. Terminology: Reversion vs. Defense
+
+Understanding how to use these probabilities for a Daily Bias:
+
+| Term | Strategy | Market Context | Bias Edge |
+| :--- | :--- | :--- | :--- |
+| **Reversion Favored** | **Trade for the Fill**. Fade the gap move back to yesterday's close. | Low ATR, Low VVIX, Wednesday. | **70%+ Fill Rate**. |
+| **Defense Favored** | **Trade for Continuation**. Bet on the gap holding (The "Moat"). | High ATR, High VVIX, Monday. | **68%+ Defense Rate**. |
+
+---
+
+## 3. Daily Bias Inference: Morning Checklist
+Do we have enough info? **Yes.** Use this logic gate every morning at 09:30 ET:
+
+### STEP 1: Check the Baseline (The Environment)
+*   **Day of Week**: Is it Monday (Defense Edge) or Wednesday (Reversion Edge)?
+*   **Volatility**: Is Daily ATR % High? Is VVIX > 110? (If yes -> **Defense Favored**).
+
+### STEP 2: Measure the Gap Size
+*   **Gap < 0.15%**: High probability **Reversion** (Treat as noise).
+*   **Gap 0.15% - 0.45%**: The **Conflict Zone**. Lean on Volatility/DOW filters.
+*   **Gap > 0.45%**: High probability **Defense** (Expect Trend Continuation).
+
+### STEP 3: The 15-Minute Execution Filter
+*   **The Fakeout Check**: If price extends > 0.03% (Index Pct) but stays < 0.15% (Index Pct) and then reverses, the **Reversion** play is active.
+*   **The Moat Check**: If Yesterday's Extreme holds for the first 15m, the **Defense** bias is confirmed. Target a 1x extension of the gap size.
+
+---
+
+## 4. Statistical Breakdown
 
 ### A. Fill Probabilities by Size
 Small gaps are noise; large gaps are signal.
