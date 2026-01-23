@@ -57,14 +57,26 @@ Use this logic gate every morning at 09:30 ET:
 | Friday    |     417 | 66.4%       |             14   |
 
 ## 5. MAE / MFE Precision (Stats Trader View)
-- **MAE (Retrace %)**: Mean: 80.7 | Med: 100.0 | Mode: 100.0
-- **MFE (Fakeout %)**: Mean: 194.1 | Med: 87.6 | Mode: 0.0 (Extension BEFORE fill)
-- **MFE (Extension %)**: Mean: 587.6 | Med: 154.8 | Mode: 0.0 (Total Session Extension)
+Treating the gap as a 'Range' to be broken or filled.
 
-### Pure Price Percentage Levels (Move / Price %)
+### A. The 'Fakeout' Move (MFE before Fill)
+How much 'heat' do you take *in the gap direction* before the fill actually happens?
+- **Median Fakeout**: 87.6% of Gap Size.
+- **Mean Fakeout**: 194.1%.
+
+### B. Retracement Depth (MAE for Trend / Progress for Fill)
+How much of the gap actually gets filled on average?
+- **Median Retrace**: 100.0% (i.e. Full Fill is the median outcome).
+- **Mean Retrace**: 80.7%.
+
+### C. Total Extension (MFE for Trend)
+How much does price run *beyond* the open by the end of the session?
+- **Median Extension**: Mean: 587.6 | Med: 154.8 | Mode: 0.0
+
+### D. Pure Price Percentage Levels (Move / Index Price %)
 - **MAE (Retrace Pct)**: Mean: 0.85 | Med: 0.63 | Mode: 0.01%
 - **MFE (Fakeout Pct)**: Mean: 0.58 | Med: 0.29 | Mode: 0.01%
-- **MFE (Extension Pct)**: Mean: 0.81 | Med: 0.61 | Mode: 0.01%
+- **MFE (Total Session Ext)**: Mean: 0.81 | Med: 0.61 | Mode: 0.01%
 
 ## 6. Trend & Bias Correlation Analysis
 
@@ -107,10 +119,28 @@ Use this logic gate every morning at 09:30 ET:
 | No News   |    0.542459 | 65.0%       |   1841 |
 | 8:30 News |    0.506814 | 68.3%       |    259 |
 
+### Specific News Type Breakdown
+| Event Type   |   Days | Avg Gap   | Fill Rate   |
+|:-------------|-------:|:----------|:------------|
+| CPI          |     57 | 0.56%     | 59.6%       |
+| NFP          |     97 | 0.53%     | 67.0%       |
+| Retail Sales |     57 | 0.56%     | 59.6%       |
+| GDP          |     22 | 0.36%     | 90.9%       |
+
 ## 10. Deferred Fill Analysis (IPDA Windows)
 - **IPDA 20-Day (Short Term)**: 77.9%
 - **IPDA 40-Day (Med Term)**: 85.6%
 - **IPDA 60-Day (Long Term)**: 88.2%
+
+### Deferred Fill Probabilities by Creation Day
+| Creation Day   |   Unfilled | Fill Day 1   | 3-Day Cum   |
+|:---------------|-----------:|:-------------|:------------|
+| Monday         |        141 | 31.2%        | 53.9%       |
+| Tuesday        |        160 | 36.2%        | 52.5%       |
+| Wednesday      |        140 | 30.0%        | 44.3%       |
+| Thursday       |        146 | 27.4%        | 42.5%       |
+| Friday         |        140 | 5.0%         | 40.7%       |
+
 - **Friday Persistence**: If a Friday gap holds, only 5.0% fill on the subsequent Monday.
 
 ## 11. Best Practices & Operational Guardrails

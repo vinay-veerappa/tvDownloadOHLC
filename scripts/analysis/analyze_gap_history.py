@@ -268,14 +268,25 @@ def analyze_gap_history(ticker="NQ1"):
     output.append(day_stats[['Count', 'Fill Rate', 'Med Time (min)']].to_markdown() + "\n")
 
     output.append("## 5. MAE / MFE Precision (Stats Trader View)")
-    output.append(f"- **MAE (Retrace %)**: {get_stats(df_res['retrace_pct'])}")
-    output.append(f"- **MFE (Fakeout %)**: {get_stats(df_res['fakeout_pct'])} (Extension BEFORE fill)")
-    output.append(f"- **MFE (Extension %)**: {get_stats(df_res['extension_ratio'] * 100)} (Total Session Extension)")
+    output.append(f"Treating the gap as a 'Range' to be broken or filled.\n")
+    output.append(f"### A. The 'Fakeout' Move (MFE before Fill)")
+    output.append(f"How much 'heat' do you take *in the gap direction* before the fill actually happens?")
+    output.append(f"- **Median Fakeout**: {df_res['fakeout_pct'].median():.1f}% of Gap Size.")
+    output.append(f"- **Mean Fakeout**: {df_res['fakeout_pct'].mean():.1f}%.")
     
-    output.append("\n### Pure Price Percentage Levels (Move / Price %)")
+    output.append(f"\n### B. Retracement Depth (MAE for Trend / Progress for Fill)")
+    output.append(f"How much of the gap actually gets filled on average?")
+    output.append(f"- **Median Retrace**: {df_res['retrace_pct'].median():.1f}% (i.e. Full Fill is the median outcome).")
+    output.append(f"- **Mean Retrace**: {df_res['retrace_pct'].mean():.1f}%.")
+    
+    output.append(f"\n### C. Total Extension (MFE for Trend)")
+    output.append(f"How much does price run *beyond* the open by the end of the session?")
+    output.append(f"- **Median Extension**: {get_stats(df_res['extension_ratio'] * 100)}")
+    
+    output.append("\n### D. Pure Price Percentage Levels (Move / Index Price %)")
     output.append(f"- **MAE (Retrace Pct)**: {get_stats(df_res['retrace_price_pct'], 2)}%")
     output.append(f"- **MFE (Fakeout Pct)**: {get_stats(df_res['fakeout_price_pct'], 2)}%")
-    output.append(f"- **MFE (Extension Pct)**: {get_stats(df_res['extension_price_pct'], 2)}%\n")
+    output.append(f"- **MFE (Total Session Ext)**: {get_stats(df_res['extension_price_pct'], 2)}%\n")
 
     output.append("## 6. Trend & Bias Correlation Analysis")
     bias_stats = df_res.groupby(['prev_day_bias', 'gap_dir'], observed=False).agg({'is_filled': 'mean', 'date': 'count'})
@@ -310,15 +321,42 @@ def analyze_gap_history(ticker="NQ1"):
     news_stats.index = ['No News', '8:30 News']
     news_stats['Fill Rate'] = (news_stats['Fill Rate'] * 100).round(1).astype(str) + "%"
     output.append(news_stats.to_markdown() + "\n")
+    
+    output.append("### Specific News Type Breakdown")
+    if not df_res[df_res['is_news_day']].empty:
+        news_items = []
+        for kw in ["CPI", "NFP", "Retail Sales", "GDP", "Unemployment Rate"]:
+            subset = df_res[df_res['news_name'].str.contains(kw, case=False, na=False)]
+            if not subset.empty:
+                news_items.append({
+                    "Event Type": kw,
+                    "Days": len(subset),
+                    "Avg Gap": f"{subset['gap_pct'].mean():.2f}%",
+                    "Fill Rate": f"{subset['is_filled'].mean()*100:.1f}%"
+                })
+        if news_items:
+            output.append(pd.DataFrame(news_items).to_markdown(index=False) + "\n")
 
     output.append("## 10. Deferred Fill Analysis (IPDA Windows)")
-    unfilled = df_res[~df_res['is_filled']]
+    unfilled = df_res[~df_res['is_filled']].copy()
     if not unfilled.empty:
         n = len(unfilled)
         output.append(f"- **IPDA 20-Day (Short Term)**: {(unfilled['days_to_fill'] <= 20).sum() / n * 100:.1f}%")
         output.append(f"- **IPDA 40-Day (Med Term)**: {(unfilled['days_to_fill'] <= 40).sum() / n * 100:.1f}%")
-        output.append(f"- **IPDA 60-Day (Long Term)**: {(unfilled['days_to_fill'] <= 60).sum() / n * 100:.1f}%")
+        output.append(f"- **IPDA 60-Day (Long Term)**: {(unfilled['days_to_fill'] <= 60).sum() / n * 100:.1f}%\n")
         
+        output.append("### Deferred Fill Probabilities by Creation Day")
+        dow_deferred = []
+        for d in dow_order:
+            d_unfilled = unfilled[unfilled['day'] == d]
+            if not d_unfilled.empty:
+                cnt = len(d_unfilled)
+                f1 = (d_unfilled['days_to_fill'] == 1).sum() / cnt * 100
+                f3 = (d_unfilled['days_to_fill'] <= 3).sum() / cnt * 100
+                dow_deferred.append({"Creation Day": d, "Unfilled": cnt, "Fill Day 1": f"{f1:.1f}%", "3-Day Cum": f"{f3:.1f}%"})
+        if dow_deferred:
+            output.append(pd.DataFrame(dow_deferred).to_markdown(index=False) + "\n")
+
         friday_unfilled = unfilled[unfilled['day'] == 'Friday']
         if not friday_unfilled.empty:
             f_rem = len(friday_unfilled)
