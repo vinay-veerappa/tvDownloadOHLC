@@ -1,0 +1,122 @@
+# 📊 Consolidated RTH Gap Analysis Report: NQ
+
+**Date:** January 23, 2026
+**Ticker:** NQ1 (NQ)
+**Data Range:** 2006-01-06 to 2026-01-22 (4962 Sessions)
+**Script:** `scripts/analysis/analyze_gap_history.py`
+
+## 1. Executive Summary
+This analysis investigates the behavior of **Regular Trading Hours (RTH) Gaps** for NQ. Key findings show that NQ gaps fill approximately 66.8% of the time, with defense probabilities shifting significantly based on ATR and VIX regimes.
+
+---
+
+## 2. Terminology: Reversion vs. Defense
+
+| Term | Strategy | Market Context | Bias Edge |
+| :--- | :--- | :--- | :--- |
+| **Reversion Favored** | **Trade for the Fill**. Fade the gap move back to yesterday's close. | Low ATR, Low VVIX. | **High Fill Rate**. |
+| **Defense Favored** | **Trade for Continuation**. Bet on the gap holding (The 'Moat'). | High ATR, High VVIX. | **High Defense Rate**. |
+
+---
+
+## 3. Daily Bias Inference: Morning Checklist
+Use this logic gate every morning at 09:30 ET:
+
+### STEP 1: Check the Environment
+*   **Volatility**: Is VVIX > 110 or is ATR High? (If yes -> **Defense Favored**).
+*   **News**: Is there an 8:30 AM US News release (NFP/CPI)? (If yes -> **Expect wider volatility before fill**).
+
+### STEP 2: Measure the Gap Size
+*   **Gap < 0.15%**: High probability **Reversion** (Treat as noise).
+*   **Gap 0.15% - 0.45%**: The **Conflict Zone**. Lean on Volatility/Context filters.
+*   **Gap > 0.45%**: High probability **Defense** (Expect Trend Continuation).
+
+### STEP 3: The 15-Minute Execution Filter
+*   **The Moat Check**: If Yesterday's Extreme (High/Low) holds for the first 15m, the **Defense** bias is confirmed.
+
+---
+
+## 4. Statistical Breakdown
+
+### A. Fill Probabilities by Size
+| bucket              |   Days | Fill Rate   |
+|:--------------------|-------:|:------------|
+| Very Small (<0.07%) |   1038 | 93.5%       |
+| Small (0.07-0.15%)  |    981 | 79.0%       |
+| Medium (0.15-0.25%) |    884 | 68.4%       |
+| Large (0.25-0.45%)  |    960 | 54.1%       |
+| Very Large (>0.45%) |   1065 | 38.6%       |
+
+### B. Day of Week Analysis
+| day       |   Count | Fill Rate   |   Med Time (min) |
+|:----------|--------:|:------------|-----------------:|
+| Monday    |     932 | 60.6%       |               13 |
+| Tuesday   |    1027 | 68.0%       |               17 |
+| Wednesday |    1022 | 70.0%       |               17 |
+| Thursday  |    1003 | 69.0%       |               16 |
+| Friday    |     978 | 66.0%       |               13 |
+
+## 5. MAE / MFE Precision (Stats Trader View)
+- **MAE (Retrace %)**: Mean: 81.4 | Med: 100.0 | Mode: 100.0
+- **MFE (Fakeout %)**: Mean: 184.3 | Med: 83.3 | Mode: 0.0 (Extension BEFORE fill)
+- **MFE (Extension %)**: Mean: 608.7 | Med: 160.1 | Mode: 0.0 (Total Session Extension)
+
+### Pure Price Percentage Levels (Move / Price %)
+- **MAE (Retrace Pct)**: Mean: 0.52 | Med: 0.33 | Mode: 0.01%
+- **MFE (Fakeout Pct)**: Mean: 0.34 | Med: 0.15 | Mode: 0.01%
+- **MFE (Extension Pct)**: Mean: 0.49 | Med: 0.32 | Mode: 0.01%
+
+## 6. Trend & Bias Correlation Analysis
+
+### Impact of Previous Day Bias
+|                     | Fill Rate   |   Days |
+|:--------------------|:------------|-------:|
+| ('Bearish', 'DOWN') | 69.9%       |    857 |
+| ('Bearish', 'UP')   | 66.5%       |   1017 |
+| ('Bullish', 'DOWN') | 69.9%       |    971 |
+| ('Bullish', 'UP')   | 68.1%       |   1248 |
+| ('Unknown', 'DOWN') | 62.4%       |    370 |
+| ('Unknown', 'UP')   | 56.1%       |    499 |
+
+### ATR Volatility Correlation
+| atr_bucket   | Fill Rate   |   Avg Gap % |   Days |
+|:-------------|:------------|------------:|-------:|
+| Low ATR      | 70.6%       |    0.149021 |   1651 |
+| Normal ATR   | 66.8%       |    0.249426 |   1650 |
+| High ATR     | 63.1%       |    0.562677 |   1650 |
+
+## 7. RTH Open Types & Boundary Defense
+| open_type   |   Days | Fill Rate   | Near Side   | Far Side   |
+|:------------|-------:|:------------|:------------|:-----------|
+| IBR         |   2658 | 76.4%       | 100.0%      | 41.6%      |
+| OBR (Above) |    891 | 54.4%       | 70.5%       | 17.2%      |
+| OBR (Below) |    544 | 53.1%       | 72.1%       | 14.7%      |
+| Unknown     |    869 | 58.8%       | 0.0%        | 0.0%       |
+
+## 8. Volatility Regime Impact
+| vol_regime   | Fill Rate   |   Days |
+|:-------------|:------------|-------:|
+| High VIX     | 67.7%       |    167 |
+| Low VIX      | 62.3%       |    236 |
+| Normal VIX   | 66.4%       |    651 |
+| Unknown      | 67.1%       |   3908 |
+
+## 9. 8:30 AM News Impact
+|           |   Avg Gap % | Fill Rate   |   Days |
+|:----------|------------:|:------------|-------:|
+| No News   |    0.322139 | 66.7%       |   4352 |
+| 8:30 News |    0.304644 | 67.7%       |    610 |
+
+## 10. Deferred Fill Analysis (IPDA Windows)
+- **IPDA 20-Day (Short Term)**: 74.4%
+- **IPDA 40-Day (Med Term)**: 81.5%
+- **IPDA 60-Day (Long Term)**: 84.5%
+- **Friday Persistence**: If a Friday gap holds, only 8.7% fill on the subsequent Monday.
+
+## 11. Best Practices & Operational Guardrails
+1. **Size Filter**: Gaps 0.15% - 0.45% are optimal.
+2. **Regime Respect**: Use caution in High VIX/VVIX regimes.
+3. **15-Minute Moat**: Wait for RTH opening candle confirmation.
+
+---
+**Generated by**: `scripts/analysis/analyze_gap_history.py`
