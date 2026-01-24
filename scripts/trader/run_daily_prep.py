@@ -242,30 +242,31 @@ def main():
         # D. Chart Generation (Still run these to have files ready)
         chart_script = os.path.join(SCRIPTS_DIR, "analysis", "generate_ict_chart.py")
         run_command(["python", chart_script, t, "--date", target_date])
-
+    
+    final_newsletter = "\n\n".join(newsletter_content)
+    
     # --- FINAL OUTPUT ---
     if args.newsletter:
-        final_newsletter = "\n\n".join(newsletter_content)
         print("\n" + "="*60)
         print("📜 FINAL NEWSLETTER PREVIEW")
         print("="*60 + "\n")
         print(final_newsletter)
         print("\n" + "="*60)
 
-        if args.discord:
-            from scripts.utils.discord_notify import get_webhook_url, send_message
-            webhook_url = get_webhook_url(args.channel)
-            if webhook_url:
-                send_message(webhook_url, final_newsletter)
-                
-                # After newsletter, send charts
-                for t in args.tickers:
-                    chart_path = f"c:/Users/vinay/tvDownloadOHLC/data/analysis/charts/{t}_ict_context_{target_date}.png"
-                    if os.path.exists(chart_path):
-                        from scripts.utils.discord_notify import upload_file
-                        upload_file(webhook_url, chart_path, f"📈 ICT Chart: {t}")
-            else:
-                print(f"❌ Discord Error: Channel '{args.channel}' not found.")
+    if args.discord:
+        from scripts.utils.discord_notify import get_webhook_url, send_message
+        webhook_url = get_webhook_url(args.channel)
+        if webhook_url:
+            send_message(webhook_url, final_newsletter)
+            
+            # After newsletter, send charts
+            for t in args.tickers:
+                chart_path = f"c:/Users/vinay/tvDownloadOHLC/data/analysis/charts/{t}_ict_context_{target_date}.png"
+                if os.path.exists(chart_path):
+                    from scripts.utils.discord_notify import upload_file
+                    upload_file(webhook_url, chart_path, f"📈 ICT Chart: {t}")
+        else:
+            print(f"❌ Discord Error: Channel '{args.channel}' not found.")
 
     print("\n==========================================")
     print("✅ PREP COMPLETE. GOOD LUCK.")

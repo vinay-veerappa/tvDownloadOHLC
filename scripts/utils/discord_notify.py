@@ -49,6 +49,12 @@ def get_webhook_url(channel_name=None, override_url=None):
     print(f"Error: Unknown channel '{channel}'. Available: {list(WEBHOOK_CHANNELS.keys())}")
     return None
 
+def upload_file(webhook_url, file_path, message=None):
+    """
+    Helper to upload a single file.
+    """
+    return send_message(webhook_url, message, [file_path])
+
 def send_message(webhook_url, message, files=None):
     """
     Send a message and/or files to Discord.
@@ -59,18 +65,35 @@ def send_message(webhook_url, message, files=None):
         files: List of file paths to upload
     
     Returns:
-        True if successful, False otherwise
+        True if all successful, False otherwise
     """
     try:
-        # Prepare payload
-        payload = {}
+        # Split message if too long
+        MAX_LENGTH = 1900 # Safe margin below 2000
+        messages = []
+        
         if message:
-            payload['content'] = message
+            if len(message) <= MAX_LENGTH:
+                messages.append(message)
+            else:
+                # Split by newlines to keep formatting
+                current_chunk = ""
+                for line in message.split('\n'):
+                    if len(current_chunk) + len(line) + 1 > MAX_LENGTH:
+                        messages.append(current_chunk)
+                        current_chunk = line + "\n"
+                    else:
+                        current_chunk += line + "\n"
+                if current_chunk:
+                    messages.append(current_chunk)
+        else:
+            messages = [None] # Just send files if no message
+
+        success = True
         
         # Prepare files
         files_data = []
         opened_files = []
-        
         if files:
             for i, file_path in enumerate(files):
                 if os.path.exists(file_path):
@@ -80,29 +103,47 @@ def send_message(webhook_url, message, files=None):
                     files_data.append((f'file{i}', (filename, f)))
                 else:
                     print(f"Warning: File not found: {file_path}")
-        
-        # Send request
-        if files_data:
-            response = requests.post(
-                webhook_url,
-                data={'content': message} if message else None,
-                files=files_data
-            )
-        else:
-            response = requests.post(
-                webhook_url,
-                json=payload
-            )
+
+        # Send each message chunk
+        for i, msg in enumerate(messages):
+            # Only attach files to the last message to avoid duplication or separation context
+            # Or send files with the first message? 
+            # Strategy: Send text chunks first, then text+files in the last chunk, 
+            # OR if no text, just files.
+            
+            # Actually, standard practice: Send files with the last chunk of text.
+            current_files = files_data if (i == len(messages) - 1) else None
+            
+            payload = {}
+            if msg: payload['content'] = msg
+            
+            if current_files:
+                response = requests.post(
+                    webhook_url,
+                    data={'content': msg} if msg else None,
+                    files=current_files
+                )
+            elif msg:
+                # Text only chunk
+                response = requests.post(
+                    webhook_url,
+                    json=payload
+                )
+            else:
+                continue # Should not happen unless empty message and no files
+
+            if response.status_code not in [200, 204]:
+                print(f"❌ Discord Error: {response.status_code} - {response.text}")
+                success = False
         
         # Close files
         for f in opened_files:
             f.close()
-        
-        if response.status_code in [200, 204]:
-            print(f"✅ Discord: Message sent successfully!")
+            
+        if success:
+            print(f"✅ Discord: Message sent successfully ({len(messages)} chunks)!")
             return True
         else:
-            print(f"❌ Discord Error: {response.status_code} - {response.text}")
             return False
             
     except Exception as e:
