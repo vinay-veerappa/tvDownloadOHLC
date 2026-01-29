@@ -25,23 +25,23 @@ The core innovation of Candle Science is the strict **Filter-then-Compute** meth
     -   `SignalCardGrid.tsx`: Alternative "Card" visualization.
     -   `CandleDiagram.tsx`: Dynamic SVG visualization of the C1-C2-C3 pattern.
 
-### 3.2 Backend (Migration in Progress)
+### 3.2 Backend / Calculation Engines
 
-#### Current State (Legacy Python)
--   **Endpoint**: `POST http://localhost:8000/api/candle-science/calculate`
--   **Technology**: Python FastAPI + Pandas
--   **Status**: **DEPRECATED**. Does not support the new `ComparisonStats` structure (split MFE).
--   **File**: `api/routers/candle_science.py`, `api/services/candle_science_service.py`
-
-#### Future State (TypeScript / Next.js API)
+#### Primary: TypeScript (Real-time UI)
 -   **Endpoint**: `POST /api/candle-science/calculate` (Internal Next.js Route)
--   **Technology**: TypeScript (Shared logic)
--   **Calculator**: `web/lib/candle-science/calculator.ts`
--   **Status**: **Refactor Complete**. Ready for integration.
--   **Advantages**:
-    -   Types safety shared with frontend.
-    -   Exact implementation of "Filter-then-Compute".
-    -   No dependency on external Python server for calculation.
+-   **File**: `web/lib/candle-science/calculator.ts`
+-   **Status**: **Production**.
+-   **Role**: Powers the interactive web dashboard.
+-   **Capabilities**: Full "Filter-then-Compute" logic, specific MFE/MAE splitting.
+
+#### Secondary: Python (Backtesting & Research)
+-   **File**: `api/services/candle_science_service.py`
+-   **Status**: **Active / Feature Parity**.
+-   **Role**: Large-scale backtesting, notebook research, and complex scenario analysis.
+-   **Capabilities**:
+    -   Matches frontend logic 1:1 (Filter-then-Compute).
+    -   Implements `ComparisonStats` with identical "Above/Below" MFE splitting.
+    -   Optimized with Vectorized Pandas operations for processing years of 1-minute data.
 
 ### 3.3 Data Flow (Target)
 
