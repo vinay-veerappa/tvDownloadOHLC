@@ -127,7 +127,7 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
             {/* 2. Global Price Range Distribution */}
             <section>
                 <h2 className="text-xl font-semibold mb-4">Global Price Range Distribution</h2>
-                <RangeDistribution sessions={deferredFilteredSessions} forcedSession="daily" />
+                <RangeDistribution sessions={deferredFilteredSessions} forcedSession="daily" dailyHodLod={deferredDailyHodLod} />
             </section>
 
             {/* 3. Daily Price Model */}

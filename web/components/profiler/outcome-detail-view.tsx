@@ -119,7 +119,7 @@ export const OutcomeDetailView = memo(function OutcomeDetailView({
             <section>
                 <h3 className="text-lg font-semibold mb-3">Price Range Distribution  ({outcome})</h3>
                 <p className="text-xs text-muted-foreground mb-2">Showing <strong>Daily Range</strong> distribution.</p>
-                <RangeDistribution sessions={dailyRangeSessions} forcedSession="daily" />
+                <RangeDistribution sessions={dailyRangeSessions} forcedSession="daily" dailyHodLod={dailyHodLod} />
             </section>
 
             {/* 3. Price Model (Median) */}

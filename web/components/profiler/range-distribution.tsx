@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState, useEffect, memo } from 'react';
-import { ProfilerSession } from '@/lib/api/profiler';
+import { ProfilerSession, DailyHodLodResponse } from '@/lib/api/profiler';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ComposedChart, Bar, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
@@ -22,6 +22,7 @@ import {
 interface Props {
     sessions: ProfilerSession[];
     forcedSession?: string;
+    dailyHodLod?: DailyHodLodResponse | null;  // For proper daily range calculation
 }
 
 // Helper to get bin range string (e.g. "0.2 to 0.3 %")
@@ -58,7 +59,7 @@ function modeBin(arr: number[], bucketSize: number = 0.1, referenceDist?: Record
     return sorted.length > 0 ? parseFloat(sorted[0][0]) : null;
 }
 
-export const RangeDistribution = memo(function RangeDistribution({ sessions, forcedSession }: Props) {
+export const RangeDistribution = memo(function RangeDistribution({ sessions, forcedSession, dailyHodLod }: Props) {
     const [selectedSession, setSelectedSession] = useState<string>(forcedSession || 'daily');
     const [isExpandedHigh, setIsExpandedHigh] = useState(false);
     const [isExpandedLow, setIsExpandedLow] = useState(false);
@@ -79,34 +80,38 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
         let lowPcts: number[] = [];
 
         if (selectedSession === 'daily') {
-            // Group by date and calculate daily range
-            const byDate: Record<string, ProfilerSession[]> = {};
-            sessions.forEach(s => {
-                if (!byDate[s.date]) byDate[s.date] = [];
-                byDate[s.date].push(s);
-            });
+            // Get unique dates from sessions
+            const uniqueDates = [...new Set(sessions.map(s => s.date))];
 
-            Object.values(byDate).forEach(daySessions => {
+            uniqueDates.forEach(date => {
+                // PRIORITY 1: Use dailyHodLod lookup (normalized design)
+                if (dailyHodLod && dailyHodLod[date]) {
+                    const dayData = dailyHodLod[date];
+                    const { daily_open, daily_high, daily_low } = dayData;
+
+                    if (daily_open && daily_open > 0) {
+                        highPcts.push(((daily_high - daily_open) / daily_open) * 100);
+                        lowPcts.push(((daily_low - daily_open) / daily_open) * 100);
+                        return; // Skip to next date
+                    }
+                }
+
+                // FALLBACK: Legacy logic using session-embedded fields
+                const daySessions = sessions.filter(s => s.date === date);
                 const asiaSess = daySessions.find(s => s.session === 'Asia');
                 if (!asiaSess || !asiaSess.open) return;
 
-                // Use precomputed daily stats if available (from enrichment), otherwise calculate from visible sessions
-                // @ts-ignore
+                // @ts-ignore - legacy embedded fields
                 const dailyOpen = asiaSess.daily_open;
                 // @ts-ignore
                 const dailyHigh = asiaSess.daily_high;
                 // @ts-ignore
                 const dailyLow = asiaSess.daily_low;
 
-                // CRITICAL: If we have explicit daily stats (e.g. synthetic sessions or enriched data), 
-                // we don't need to enforce having >= 2 sessions.
                 const hasExplicitDaily = dailyOpen !== undefined && dailyHigh !== undefined;
-
                 if (daySessions.length < 2 && !hasExplicitDaily) return;
 
                 const dayOpen = dailyOpen !== undefined ? dailyOpen : asiaSess.open;
-                // If dailyHigh is available, use it. Otherwise finding max of visible sessions is the best fallback, but incorrect for filtered views.
-                // The enrichment ensures dailyHigh is present.
                 const dayHigh = dailyHigh !== undefined ? dailyHigh : Math.max(...daySessions.map(s => s.range_high));
                 const dayLow = dailyLow !== undefined ? dailyLow : Math.min(...daySessions.map(s => s.range_low));
 
@@ -127,7 +132,7 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
 
         return buildDistribution(highPcts, lowPcts);
 
-    }, [sessions, selectedSession]);
+    }, [sessions, selectedSession, dailyHodLod]);
 
     function buildDistribution(highPcts: number[], lowPcts: number[]) {
         // Clamp values to [-5, 5] for aggregation
