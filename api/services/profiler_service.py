@@ -641,12 +641,13 @@ class ProfilerService:
             "count": len(sessions)
         }
     @staticmethod
-    def get_daily_hod_lod(ticker: str) -> Dict:
+    def get_daily_hod_lod(ticker: str, unadjusted: bool = False) -> Dict:
         """
         Get pre-computed true daily HOD/LOD times (from 1-minute data).
         """
         from api.services.data_loader import DATA_DIR
-        json_path = DATA_DIR / f"{ticker}_daily_hod_lod.json"
+        suffix = "_unadjusted" if unadjusted else ""
+        json_path = DATA_DIR / f"{ticker}_daily_hod_lod{suffix}.json"
         
         if json_path.exists():
             try:
@@ -1046,24 +1047,28 @@ class ProfilerService:
         return result
 
     @staticmethod
-    def get_daily_hod_lod(ticker: str) -> Dict:
+    @staticmethod
+    def get_daily_hod_lod(ticker: str, unadjusted: bool = False) -> Dict:
         """
         Get pre-computed true daily HOD/LOD times.
         Buffered in memory to avoid repeated disk I/O (1MB+).
         """
         ticker = ProfilerService._normalize_ticker(ticker)
-        if ticker in ProfilerService._daily_hod_lod_cache:
-            return ProfilerService._daily_hod_lod_cache[ticker]
+        cache_key = f"{ticker}_unadjusted" if unadjusted else ticker
+        
+        if cache_key in ProfilerService._daily_hod_lod_cache:
+            return ProfilerService._daily_hod_lod_cache[cache_key]
             
-        json_path = DATA_DIR / f"{ticker}_daily_hod_lod.json"
+        filename = f"{ticker}_daily_hod_lod_unadjusted.json" if unadjusted else f"{ticker}_daily_hod_lod.json"
+        json_path = DATA_DIR / filename
         
         if not json_path.exists():
-            return {"error": f"Daily HOD/LOD data for {ticker} not found."}
+            return {"error": f"Daily HOD/LOD data for {ticker} ({'Unadjusted' if unadjusted else 'Adjusted'}) not found."}
         
         try:
             with open(json_path, 'r') as f:
                 data = json.load(f)
-            ProfilerService._daily_hod_lod_cache[ticker] = data
+            ProfilerService._daily_hod_lod_cache[cache_key] = data
             return data
         except Exception as e:
             return {"error": str(e)}

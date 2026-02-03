@@ -17,13 +17,13 @@
 indicator("Daily Profiler [VxV]", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 max_bars_back(time, 2000)
 
-import vveerappa/ProfilerData_Asia/3 as LibAsia
-import vveerappa/ProfilerData_London/3 as LibLon
-import vveerappa/ProfilerData_NY/4 as LibNY
-import vveerappa/ProfilerData_Broken/3 as LibBroken
-import vveerappa/ProfilerData_Times/1 as LibTimes
-import vveerappa/ProfilerData_Levels/1 as LibLevels
-import vveerappa/ProfilerData_Touches/4 as LibTouches
+import vveerappa/ProfilerData_Asia/4 as LibAsia
+import vveerappa/ProfilerData_London/4 as LibLon
+import vveerappa/ProfilerData_NY/5 as LibNY
+import vveerappa/ProfilerData_Broken/4 as LibBroken
+import vveerappa/ProfilerData_Times/2 as LibTimes
+import vveerappa/ProfilerData_Levels/2 as LibLevels
+import vveerappa/ProfilerData_Touches/5 as LibTouches
 import vveerappa/ProfilerData_Model_LT/3 as LibModelLT
 import vveerappa/ProfilerData_Model_LF/3 as LibModelLF
 import vveerappa/ProfilerData_Model_ST/3 as LibModelST
@@ -98,8 +98,8 @@ show_boxes  = input.bool(true, "Show Prediction Boxes", group=grp_box)
 c_box_long   = input.color(#4CAF5066, "Long Box Color", group=grp_box)
 c_box_short  = input.color(#F4433666, "Short Box Color", group=grp_box)
 c_box_false  = input.color(#9E9E9E66, "False/Neutral Box Color", group=grp_box)
-show_pm_smooth = input.bool(true, "Smooth Price Model", group=grp_box)
-pm_scale       = input.float(0.3, "Price Model Scale", step=0.1, group=grp_box)
+show_pm_smooth = input.bool(false, "Smooth Price Model", group=grp_box)
+pm_scale       = input.float(10.0, "Price Model Scale", step=0.1, group=grp_box)
 show_labels = input.bool(true, "Show Labels", group=grp_box)
 c_lbl_text   = input.color(#FFFFFF, "Label Text Color", group=grp_box)
 s_lbl        = input.string("Tiny", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_box)
@@ -487,7 +487,7 @@ f_calc_mode_time(arr_vals) =>
 f_calc_mode_pct(arr_vals) =>
     ModeRange r = ModeRange.new("N/A", 0.0, 0.0, false)
     if array.size(arr_vals) > 0
-        float step = 0.1
+        float step = 0.2
         int n_b = 120
         var int[] buckets = array.new_int(120, 0)
         array.fill(buckets, 0)
@@ -508,10 +508,14 @@ f_calc_mode_pct(arr_vals) =>
         float mode_e = mode_s + step
         
         // Median Range
-        array.sort(arr_vals)
-        int mid_idx = array.size(arr_vals) / 2
-        float med_val = array.get(arr_vals, mid_idx)
-        float med_s = math.floor(med_val / step) * step
+        // Median Range
+        float[] sorted_arr = array.copy(arr_vals)
+        array.sort(sorted_arr)
+        int med_idx = array.size(sorted_arr) / 2
+        float med_val = array.get(sorted_arr, med_idx)
+        
+        b_idx_m = math.min(math.max(math.floor((med_val + 6.0) / step), 0), n_b - 1)
+        float med_s = (b_idx_m * step) - 6.0
         float med_e = med_s + step
         
         // Union Range
@@ -628,12 +632,30 @@ f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, 
     var polyline pm_h = na, var polyline pm_l = na, var label lbl_pm = na, var label lbl_debug = na
     if show_pm
         string sel = pm_outcome
+        
+        bool src_asia = false
+        bool src_lon = false
+        bool src_ny1 = false
+        bool src_ny2 = false
+        
+        // Determine which session is driving the outcome (Context)
+        // This ensures Manual selection anchors to the CORRECT session, not default Asia
+        if st_ny2 != 0
+            src_ny2 := true
+        else if st_ny1 != 0
+            src_ny1 := true
+        else if st_lon != 0
+            src_lon := true
+        else
+            src_asia := true
+        
         if sel == "Auto"
             int code = st_ny2 != 0 ? st_ny2 : st_ny1 != 0 ? st_ny1 : st_lon != 0 ? st_lon : st_asia
             if code == 1 or code == 2
                 sel := "Long " + (code == 1 ? "True" : "False")
             else if code == 3 or code == 4
                 sel := "Short " + (code == 3 ? "True" : "False")
+        
         int[] t_arr = sel=="Long True"?lt_t: sel=="Long False"?lf_t: sel=="Short True"?st_t: sel=="Short False"?sf_t : array.new_int(0)
         float[] h_arr = sel=="Long True"?lt_h: sel=="Long False"?lf_h: sel=="Short True"?st_h: sel=="Short False"?sf_h : array.new_float(0)
         float[] l_arr = sel=="Long True"?lt_l: sel=="Long False"?lf_l: sel=="Short True"?st_l: sel=="Short False"?sf_l : array.new_float(0)
@@ -684,22 +706,39 @@ f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, 
             float[] l_smooth = array.copy(l_arr)
             
             if show_pm_smooth
-                for i = 3 to array.size(h_arr) - 4
+                for i = 1 to array.size(h_arr) - 2
                     sum_h = 0.0, sum_l = 0.0
-                    for k = -3 to 3
+                    for k = -1 to 1
                         sum_h += array.get(h_arr, i + k)
                         sum_l += array.get(l_arr, i + k)
-                    array.set(h_smooth, i, sum_h / 7.0)
-                    array.set(l_smooth, i, sum_l / 7.0)
+                    array.set(h_smooth, i, sum_h / 3.0)
+                    array.set(l_smooth, i, sum_l / 3.0)
             
             if not na(open_ny) and idx_ny != -1
-                base_p := use_mid ? l_mid : open_ny
-                scale_h_base := array.get(h_smooth, idx_ny)
-                scale_l_base := array.get(l_smooth, idx_ny)
+                if use_mid
+                    base_p := l_mid
+                    // Anchor to London (Prev) Index if using London Mid
+                    if idx_lon != -1
+                        scale_h_base := array.get(h_smooth, idx_lon)
+                        scale_l_base := array.get(l_smooth, idx_lon)
+                    else 
+                        scale_h_base := array.get(h_smooth, idx_ny)
+                        scale_l_base := array.get(l_smooth, idx_ny)
+                else
+                    base_p := open_ny
+                    scale_h_base := array.get(h_smooth, idx_ny)
+                    scale_l_base := array.get(l_smooth, idx_ny)
+
             else if not na(open_lon) and idx_lon != -1
-                base_p := use_mid ? a_mid : open_lon
-                scale_h_base := array.get(h_smooth, idx_lon)
-                scale_l_base := array.get(l_smooth, idx_lon)
+                if use_mid
+                    base_p := a_mid
+                    // Anchor to Asia (Prev) Index - Index 0
+                    scale_h_base := array.get(h_smooth, 0)
+                    scale_l_base := array.get(l_smooth, 0)
+                else
+                    base_p := open_lon
+                    scale_h_base := array.get(h_smooth, idx_lon)
+                    scale_l_base := array.get(l_smooth, idx_lon)
             else
                 base_p := use_mid ? pd_m : open_asia
                 scale_h_base := 0.0
@@ -713,12 +752,22 @@ f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, 
                         t_pt = _ts_start + t_min*60000
                         
                         bool in_range = false
-                        if not na(open_ny)
-                            in_range := t_min >= 810 and t_min < 1320 // NY Session ends @ 16:00
-                        else if not na(open_lon)
-                            in_range := t_min >= 510 and t_min < 810 // London Session ends @ 07:30
+                        
+                        // Strict Time Windows (Minutes from 18:00)
+                        // Asia: 0 - 510 (18:00 - 02:30)
+                        // Lon: 510 - 810 (02:30 - 07:30)
+                        // NY1: 810 - 1050 (07:30 - 11:30)
+                        // NY2: 1050 - 1320 (11:30 - 16:00)
+                        
+                        if src_ny2
+                            in_range := t_min >= 1050 and t_min < 1320
+                        else if src_ny1
+                            in_range := t_min >= 810 and t_min < 1050
+                        else if src_lon
+                            in_range := t_min >= 510 and t_min < 810
                         else
-                            in_range := t_min >= 0 and t_min < 510 // Asia Session ends @ 02:30
+                            // Default / Asia
+                            in_range := t_min >= 0 and t_min < 510
                         
                         if in_range
                             float val_h = array.get(h_smooth, i) 
@@ -729,9 +778,9 @@ f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, 
                             float s_h_eff = scale_h_base * pm_scale
                             float s_l_eff = scale_l_base * pm_scale
                             
-                            // Avoid division by zero if model_anchor is -100% (unlikely)
-                            float p_h = base_p * (1.0 + val_h) / (1.0 + s_h_eff)
-                            float p_l = base_p * (1.0 + val_l) / (1.0 + s_l_eff)
+                            // Convert percentages to decimals (e.g. 1.0 -> 0.01)
+                            float p_h = base_p * (1.0 + val_h / 100.0) / (1.0 + s_h_eff / 100.0)
+                            float p_l = base_p * (1.0 + val_l / 100.0) / (1.0 + s_l_eff / 100.0)
                             
                             array.push(pts_h, chart.point.from_time(t_pt, p_h))
                             array.push(pts_l, chart.point.from_time(t_pt, p_l))
