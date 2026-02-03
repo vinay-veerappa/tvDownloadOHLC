@@ -17,6 +17,8 @@ import { HodLodAnalysis, HodLodChart, SessionStats } from './hod-lod-analysis';
 import { DailyLevels } from './daily-levels';
 import { LevelProbabilityWidget } from './level-probability-widget';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 const AVAILABLE_TICKERS = ['NQ1', 'ES1', 'CL1', 'GC1', 'RTY1', 'YM1'] as const; // Extensible for future tickers
 

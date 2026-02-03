@@ -65,17 +65,22 @@ def encode_status(status):
 
 def load_data(ticker):
     fname_prof = Path(f"data/{ticker}_profiler.json")
-    fname_hl = Path(f"data/{ticker}_daily_hod_lod.json")
+    fname_hl_unadj = Path(f"data/{ticker}_daily_hod_lod_unadjusted.json")
+    fname_hl_adj = Path(f"data/{ticker}_daily_hod_lod.json") # Standard Adjusted
     fname_touch = Path(f"data/{ticker}_level_touches.json")
     
-    prof, hl, touch = [], {}, {}
+    prof, hl_unadj, hl_adj, touch = [], {}, {}, {}
     if fname_prof.exists():
         with open(fname_prof, "r") as f: prof = json.load(f)
-    if fname_hl.exists():
-        with open(fname_hl, "r") as f: hl = json.load(f)
+    if fname_hl_unadj.exists():
+        with open(fname_hl_unadj, "r") as f: hl_unadj = json.load(f)
+    if fname_hl_adj.exists():
+        with open(fname_hl_adj, "r") as f: hl_adj = json.load(f)
     if fname_touch.exists():
         with open(fname_touch, "r") as f: touch = json.load(f)
-    return prof, hl, touch
+    return prof, hl_unadj, hl_adj, touch
+    
+
 
 def fetch_price_model(ticker, outcome, bucket_minutes=5):
     """Fetch price model data from the backend API."""
@@ -181,7 +186,7 @@ def generate_library_code(vname, vdata, vtype, bits=0):
     
     return "\n".join(code)
 
-def generate_scripts(profiler, hod_lod, touches):
+def generate_scripts(profiler, hod_lod_unadj, hod_lod_adj, touches):
     if not OUT_DIR.exists():
         OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -205,19 +210,30 @@ def generate_scripts(profiler, hod_lod, touches):
             data_map[d_int][sess_name] = code
             data_map[d_int][f"bk_{sess_name}"] = broken
             
-    for date_str, stats in hod_lod.items():
-        if not date_str[0].isdigit(): continue # Skip "daily" etc
+    # 1. Process Adjusted Data (Times)
+    for date_str, stats in hod_lod_adj.items():
+        if not date_str[0].isdigit(): continue 
         d_int = int(date_str.replace('-', ''))
         if d_int in data_map:
             data_map[d_int]['hod_t'] = time_to_min(stats.get('hod_time', '00:00'))
             data_map[d_int]['lod_t'] = time_to_min(stats.get('lod_time', '00:00'))
+            
+    # 2. Process Unadjusted Data (Percentages)
+    for date_str, stats in hod_lod_unadj.items():
+        if not date_str[0].isdigit(): continue 
+        d_int = int(date_str.replace('-', ''))
+        if d_int in data_map:
             d_open = stats.get('daily_open')
             d_high = stats.get('hod_price')
             d_low = stats.get('lod_price')
             if d_open and d_open > 0:
                 data_map[d_int]['hod_p'] = round((d_high - d_open) / d_open * 100, 2)
                 data_map[d_int]['lod_p'] = round((d_low - d_open) / d_open * 100, 2)
-            # Store absolute high/low for PDH/PDL calc
+            # Store absolute high/low for PDH/PDL calc (Optional, usually Unadjusted preferred for levels?)
+            # Logic: If touches are based on Adjusted, do we need Adjusted PDH?
+            # User said "Times & Touches" use Badj.
+            # Levels (Percentages) use Unadjusted.
+            # Keeping Unadjusted for pure price levels seems correct for "Price Distribution".
             data_map[d_int]['high_abs'] = d_high
             data_map[d_int]['low_abs'] = d_low
 
@@ -1293,12 +1309,12 @@ if barstate.islast
 
 def main():
     print("Loading data...")
-    profiler, hod_lod, touches = load_data("NQ1")
+    profiler, hl_unadj, hl_adj, touches = load_data("NQ1")
     if not profiler:
         print("Warning: Profiler data missing")
         return
     print("Generating Pine Scripts...")
-    generate_scripts(profiler, hod_lod, touches) 
+    generate_scripts(profiler, hl_unadj, hl_adj, touches) 
     print("Success!")
 
 if __name__ == "__main__":

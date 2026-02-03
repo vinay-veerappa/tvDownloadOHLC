@@ -43,9 +43,11 @@ The Profiler system analyzes market sessions (Asia, London, NY1, NY2) to provide
 - `high_pct`/`low_pct`: Session range expansion as % from session open
 - `open`: Session opening price (first bar of session)
 
-### 2.2 Daily Data (`NQ1_daily_hod_lod.json`)
+### 2.2 Daily Data (`NQ1_daily_hod_lod.json` & `NQ1_daily_hod_lod_unadjusted.json`)
 
-**Purpose:** Stores true daily high/low prices and times for the full trading day (18:00 to 17:00 next day).
+**Purpose:** Stores daily high/low data. We utilize a **mixed data strategy** to optimize for accuracy:
+*   **Times (HOD/LOD Time):** Sourced from **Adjusted (Backadjusted)** data (`NQ1_daily_hod_lod.json`). This ensures continuity in time analysis across contract rollovers.
+*   **Levels (HOD/LOD Price %):** Sourced from **Unadjusted** data (`NQ1_daily_hod_lod_unadjusted.json`). This ensures price distribution stats reflect the actual raw market movement for that specific contract day, avoiding skew from rollover gaps.
 
 **Structure:** Object keyed by date.
 
@@ -79,22 +81,30 @@ graph TD
     subgraph Data Generation
         A[NQ1_1m.parquet] --> B[precompute_profiler.py]
         A --> C[precompute_daily_hod_lod.py]
-        B --> D[NQ1_profiler.json]
-        C --> E[NQ1_daily_hod_lod.json]
+        B --> D[NQ1_profiler.json (Status/Session)]
+        C --> E[NQ1_daily_hod_lod.json (Adj Times)]
+        C --> F[NQ1_daily_hod_lod_unadjusted.json (Unadj Prices)]
     end
     
+    subgraph Pine Generator
+        D --> G[generate_profiler_pine.py]
+        E --> G
+        F --> G
+        G --> H[Pine Libraries (Mixed Sources, 3-bit Status)]
+    end
+
     subgraph Backend API
-        D --> F[/stats/filtered-stats]
-        F --> G[matched_dates + sessions]
+        D --> I[/stats/filtered-stats]
+        I --> J[matched_dates + sessions]
     end
     
     subgraph Frontend
-        G --> H[useServerFilteredStats]
-        E --> I[useDailyHodLod]
-        H --> J[RangeDistribution]
-        I --> J
-        J --> K[Join by Date]
-        K --> L[Calculate % Distribution]
+        J --> K[useServerFilteredStats]
+        E --> L[useDailyHodLod (Merged)]
+        F --> L
+        K --> M[RangeDistribution]
+        L --> M
+        M --> N[Join by Date (Adj Times + Unadj Pcts)]
     end
 ```
 
@@ -104,7 +114,7 @@ graph TD
 
 - **Session data** contains only session-specific properties
 - **Daily data** contains only day-level aggregates
-- No duplication: `daily_open`, `daily_high`, `daily_low` are stored ONCE per day in `daily_hod_lod.json`, NOT in every session
+- No duplication: `daily_open`, `daily_high`, `daily_low` are stored ONCE per day.
 
 ### 4.2 Separation of Concerns
 
@@ -124,9 +134,10 @@ Backend's `get_filtered_stats` returns lean sessions without daily values:
 | Component | Role |
 |-----------|------|
 | `precompute_profiler.py` | Generates session-level stats |
-| `precompute_daily_hod_lod.py` | Generates daily-level stats |
+| `precompute_daily_hod_lod.py` | Generates daily-level stats (Adj & Unadj) |
+| `generate_profiler_pine.py` | Generates Pine libraries (3-bit Status, Mixed Data) |
 | `profiler_service.py` | Server-side filtering, returns lean sessions |
-| `useDailyHodLod` hook | Fetches daily data on frontend |
+| `useDailyHodLod` hook | Fetches & merges daily data (Times=Adj, Pct=Unadj) |
 | `useServerFilteredStats` hook | Fetches filtered sessions |
 | `RangeDistribution` | Joins sessions + dailyHodLod for distribution calc |
 
@@ -135,12 +146,12 @@ Backend's `get_filtered_stats` returns lean sessions without daily values:
 ```typescript
 // Frontend: RangeDistribution component
 for (const date of matched_dates) {
-    const dayData = dailyHodLod[date];
+    const dayData = dailyHodLod[date]; // Merged: Adj Times, Unadj Prices
     if (!dayData) continue;
     
     const { daily_open, daily_high, daily_low } = dayData;
     
-    // Calculate percentage from daily open
+    // Calculate percentage from daily open (Unadjusted)
     const highPct = ((daily_high - daily_open) / daily_open) * 100;
     const lowPct = ((daily_low - daily_open) / daily_open) * 100;
     
@@ -154,10 +165,11 @@ for (const date of matched_dates) {
 - **Trading Day Definition**: 18:00 ET to 17:00 ET next day
 - **Timezone**: All timestamps stored as Unix (UTC), display in America/New_York
 - **Anchor Point**: `daily_open` is the 18:00 ET bar open price
-- **Bucket Size**: Distribution uses 0.1% buckets
+- **Bucket Size**: Distribution uses 0.2% buckets (aligned with Pine)
 
 ## 8. Changelog
 
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-02-02 | Initial design - normalized session/daily data separation |
+| 1.1.0 | 2026-02-03 | Implemented Mixed Data Strategy (Adj Times / Unadj Levels). Increased Pine status packing to 3-bit. Updated Frontend to merge sources. |
