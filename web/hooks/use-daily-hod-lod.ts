@@ -37,6 +37,8 @@ export function useDailyHodLod(ticker: string, _unused_unadjusted: boolean = fal
                     hod_price: unadj.hod_price,
                     lod_price: unadj.lod_price,
                     daily_open: unadj.daily_open,
+                    daily_high: unadj.daily_high,
+                    daily_low: unadj.daily_low,
                     // If backend provides pre-calc percentages, use Unadjusted ones
                     // (Frontend might calculate percentages on fly, but assuming data structure is same)
                 };
