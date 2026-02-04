@@ -6,6 +6,9 @@
  */
 
 import { getTickerConfig, type TickerConfig } from '@/config/tickers';
+import { type BiasAnalysis, calculateBias } from './calculators/bias-engine';
+import { type NarrativeItem, generateNarratives } from './calculators/narrative-generator';
+import { getOrSet, CACHE_TTL } from './cache';
 
 export interface MissionControlSummary {
     ticker: string;
@@ -13,7 +16,7 @@ export interface MissionControlSummary {
     marketState: 'HISTORICAL' | 'LIVE';
     dailyEM: number | null;
     fuel: number | null;
-    bias: 'BULL' | 'BEAR' | 'NEUTRAL';
+    bias: BiasAnalysis;
     panels: {
         htfTrinity: any | null;
         candleScience: any | null;
@@ -23,6 +26,8 @@ export interface MissionControlSummary {
         modLod: any | null;
         economicCalendar: any | null;
         emaZones: any | null;
+        warGame: any | null;
+        narrative: NarrativeItem[];
     };
 }
 
@@ -47,6 +52,7 @@ export class MissionControlService {
             regimeStreak,
             economicCalendar,
             emaZones,
+            warGame,
             dailyEM,
         ] = await Promise.all([
             this.getHTFTrinity(),
@@ -56,6 +62,7 @@ export class MissionControlService {
             this.getRegimeStreak(),
             this.getEconomicCalendar(),
             this.getEMAZones(),
+            this.getWarGame(),
             this.getDailyEM(),
         ]);
 
@@ -63,20 +70,53 @@ export class MissionControlService {
         const londonStatus = regimeStreak?.sessions.find(s => s.session === 'LONDON')?.status || 'NEUTRAL';
         const modLod = await this.getModLod({ asia: asiaStatus, london: londonStatus });
 
-        // Calculate current fuel from Distro data
-        const currentSession = distro?.sessions[distro.sessions.length - 1]; // NY2 or last active
-        const fuel = currentSession?.fuel_pct || null;
+        // Calculate current fuel from Distro data (New Matrix Logic)
+        // We use the last row's today.range vs global median if available, or just null
+        let fuel: number | null = null;
+        if (distro && distro.rows && distro.rows.length > 0 && distro.globalMedianRange) {
+            const lastRow = distro.rows[distro.rows.length - 1]; // e.g. NY2 or last
+            if (lastRow.today && lastRow.today.range) {
+                fuel = (lastRow.today.range / distro.globalMedianRange) * 100;
+            }
+        }
 
-        // Determine Overall Bias
-        let bias: 'BULL' | 'BEAR' | 'NEUTRAL' = 'NEUTRAL';
-        if (htfTrinity?.trinity_bias === 'BULLISH') bias = 'BULL';
-        if (htfTrinity?.trinity_bias === 'BEARISH') bias = 'BEAR';
+        // Determine Overall Bias (Multi-Factor)
+        const bias = calculateBias(
+            htfTrinity,
+            candleScience,
+            premiumDiscount,
+            warGame,
+            emaZones
+        );
+
+        // Generate Narrative
+        // Create a temporary summary object to pass to the generator
+        const tempSummary: any = {
+            bias,
+            // Extract a proxy "fuel" from the most recent session (likely NY2 or current)
+            // distro.rows is array. Let's find NY1 or NY2
+            fuel: null, // Narrative generator might need update to handle complex distro
+            panels: {
+                htfTrinity,
+                candleScience,
+                premiumDiscount,
+                distro,
+                regimeStreak,
+                modLod,
+                economicCalendar,
+                emaZones,
+                warGame
+            }
+        };
+        const narrative = generateNarratives(tempSummary);
+
+        const marketState = await this.getMarketState();
 
         return {
             ticker: this.ticker,
             timestamp: new Date().toISOString(),
-            marketState: await this.getMarketState(),
-            dailyEM,
+            marketState,
+            dailyEM: dailyEM || null,
             fuel,
             bias,
             panels: {
@@ -88,6 +128,8 @@ export class MissionControlService {
                 modLod,
                 economicCalendar,
                 emaZones,
+                warGame,
+                narrative,
             },
         };
     }
@@ -118,7 +160,7 @@ export class MissionControlService {
             const current = await prisma.expectedMove.findFirst({
                 where: { ticker: prismaTicker }
             });
-            if (current) return current.emStraddle || current.em252 || null;
+            if (current) return current.straddle || current.em252 || null;
 
             // Fallback to history
             const latest = await prisma.expectedMoveHistory.findFirst({
@@ -138,7 +180,7 @@ export class MissionControlService {
     private async getHTFTrinity() {
         const { calculateHTFTrinity } = await import('./calculators/htf-trinity');
         try {
-            return await calculateHTFTrinity(this.ticker);
+            return await getOrSet(`htf:${this.ticker}`, CACHE_TTL.LONG, () => calculateHTFTrinity(this.ticker));
         } catch (error) {
             console.error(`Error calculating HTF Trinity for ${this.ticker}:`, error);
             return null;
@@ -168,7 +210,8 @@ export class MissionControlService {
     private async getDistro() {
         const { calculateDistro } = await import('./calculators/distro');
         try {
-            return await calculateDistro(this.ticker);
+            // Cache Distro for 5 mins as it uses 1m data and is heavy
+            return await getOrSet(`distro:${this.ticker}:matrix`, CACHE_TTL.MEDIUM, () => calculateDistro(this.ticker));
         } catch (error) {
             console.error(`Error calculating Distro for ${this.ticker}:`, error);
             return null;
@@ -211,6 +254,19 @@ export class MissionControlService {
             return await calculateEMAZones(this.ticker);
         } catch (error) {
             console.error(`Error calculating EMA zones for ${this.ticker}:`, error);
+            return null;
+        }
+    }
+
+    private async getWarGame() {
+        // WarGame depends on HTF Trinity, we should pass it or let it calc/cache independently.
+        // The implementation calculateWarGame(ticker) inside 'calculators/war-game' might re-calc HTF.
+        // Let's check war-game.ts imports... Assuming it does its own thing for now, we just cache the result.
+        const { calculateWarGame } = await import('./calculators/war-game');
+        try {
+            return await getOrSet(`wargame:${this.ticker}`, CACHE_TTL.MEDIUM, () => calculateWarGame(this.ticker));
+        } catch (error) {
+            console.error(`Error calculating War Game Matrix for ${this.ticker}:`, error);
             return null;
         }
     }

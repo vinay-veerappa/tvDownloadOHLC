@@ -64,8 +64,8 @@ export function HTFTrinityPanel({ data, isLoading }: HTFTrinityPanelProps) {
                         <div className="htf-trinity-slider">
                             <div className="htf-trinity-midline" />
                             <div
-                                className={`htf-trinity-slider-marker ${profile.position_pct > 50 ? 'bg-green-500' : 'bg-red-500'}`}
-                                style={{ left: `${profile.position_pct}%` } as React.CSSProperties}
+                                className={`htf-trinity-slider-marker dynamic-left ${profile.position_pct > 50 ? 'bg-green-500' : 'bg-red-500'}`}
+                                style={{ '--left': `${profile.position_pct}%` } as React.CSSProperties}
                             />
                         </div>
                     </div>

@@ -1,80 +1,79 @@
-/**
- * HTF Trinity Calculator
- * 
- * Provides Higher Timeframe context (Weekly/Monthly/Daily 5 EMA).
- */
-
-import { readParquetOHLC, calculateEMA } from '../parquet-reader';
-import type { OHLCBar } from '../parquet-reader';
+import { HTFTrinityAnalysis, TrinityLevel } from "@/components/mission-control/panels/HTFTrinityPanel";
+import path from 'path';
+import fs from 'fs';
+import { ParquetReader } from 'parquetjs-lite';
 
 export interface HTFProfile {
     timeframe: 'WEEKLY' | 'MONTHLY';
     high: number;
     low: number;
     mid: number;
-    close?: number;
     zone: 'PREMIUM' | 'DISCOUNT' | 'EQUILIBRIUM';
     position_pct: number;
 }
 
 export interface HTFTrinityAnalysis {
-    weekly: HTFProfile;
-    monthly: HTFProfile;
+    price: number;
+    trinity_bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     daily_ema: {
         value: number;
-        distance_pct: number;
         position: 'ABOVE' | 'BELOW';
     };
-    trinity_bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    weekly: HTFProfile;
+    monthly: HTFProfile;
 }
 
-/**
- * Calculate HTF Trinity analysis
- */
-export async function calculateHTFTrinity(ticker: string): Promise<HTFTrinityAnalysis | null> {
-    const dailyBars = await readParquetOHLC(ticker, '1d');
-    if (dailyBars.length < 20) return null;
+// Helper to load derived context
+async function loadHTFContext(ticker: string) {
+    const validTicker = ticker === 'NQ1' ? '-NQ' : ticker;
+    const ctxPath = path.join(process.cwd(), '..', 'data', 'derived', `htf_context_${validTicker}.json`);
 
-    // 1. Daily 5 EMA
-    const closes = dailyBars.map(b => b.close);
-    const ema5 = calculateEMA(closes, 5);
-    const currentPrice = dailyBars[dailyBars.length - 1].close;
-    const currentEMA = ema5[ema5.length - 1];
-    const emaDistance = ((currentPrice - currentEMA) / currentEMA) * 100;
-
-    // 2. Weekly Profile (Current incomplete week vs Last full week)
-    // Actually Trinity usually uses the PREVIOUS session's range as the context.
-    const lastFullWeek = getRecentRange(dailyBars, 'WEEK');
-    const lastFullMonth = getRecentRange(dailyBars, 'MONTH');
-
-    if (!lastFullWeek || !lastFullMonth) return null;
-
-    const weekly = analyzeInZone(lastFullWeek, currentPrice, 'WEEKLY');
-    const monthly = analyzeInZone(lastFullMonth, currentPrice, 'MONTHLY');
-
-    // 3. Overall Bias
-    let bullishScore = 0;
-    if (currentPrice > currentEMA) bullishScore++;
-    if (weekly.position_pct > 50) bullishScore++;
-    if (monthly.position_pct > 50) bullishScore++;
-
-    const trinity_bias = bullishScore >= 2 ? 'BULLISH' : bullishScore <= 1 ? 'BEARISH' : 'NEUTRAL';
-
-    return {
-        weekly,
-        monthly,
-        daily_ema: {
-            value: currentEMA,
-            distance_pct: emaDistance,
-            position: currentPrice > currentEMA ? 'ABOVE' : 'BELOW'
-        },
-        trinity_bias
-    };
+    if (fs.existsSync(ctxPath)) {
+        try {
+            const raw = fs.readFileSync(ctxPath, 'utf-8');
+            return JSON.parse(raw);
+        } catch (e) { console.error("Error reading HTF context:", e); }
+    }
+    return null;
 }
 
-function analyzeInZone(range: { high: number, low: number }, price: number, timeframe: any): HTFProfile {
-    const mid = (range.high + range.low) / 2;
-    const position_pct = ((price - range.low) / (range.high - range.low)) * 100;
+// Helper to get live price (from Hybrid source)
+async function getLivePrice(ticker: string): Promise<number | null> {
+    const validTicker = ticker === 'NQ1' ? '-NQ' : ticker;
+    // 1. Try Fast JSON (Live Chart)
+    const jsonPath = path.join(process.cwd(), '..', 'data', 'live', `live_chart_${validTicker}.json`);
+    if (fs.existsSync(jsonPath)) {
+        try {
+            const jData = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+            // Use live_price if valid
+            if (typeof jData.live_price === 'number') return jData.live_price;
+            // Fallback to last candle close
+            if (jData.candles && jData.candles.length > 0) return jData.candles[jData.candles.length - 1].close;
+        } catch (e) { }
+    }
+
+    // 2. Fallback to Parquet Scan (Slower but reliable)
+    const livePath = path.join(process.cwd(), '..', 'data', 'live', `live_storage_${validTicker}.parquet`);
+    if (!fs.existsSync(livePath)) return null;
+
+    try {
+        const reader = await ParquetReader.openFile(livePath);
+        const cursor = reader.getCursor();
+        let lastRecord = null;
+        let record = null;
+        while (record = await cursor.next()) {
+            lastRecord = record;
+        }
+        await reader.close();
+        return lastRecord ? lastRecord.close : null;
+    } catch (e) { return null; }
+}
+
+function analyzeProfile(profile: any, currentPrice: number, timeframe: 'WEEKLY' | 'MONTHLY'): HTFProfile {
+    // profile from JSON has { high, low, mid, close }
+    const { high, low, mid } = profile;
+    const range = high - low;
+    const position_pct = range === 0 ? 50 : ((currentPrice - low) / range) * 100;
 
     let zone: 'PREMIUM' | 'DISCOUNT' | 'EQUILIBRIUM' = 'EQUILIBRIUM';
     if (position_pct > 55) zone = 'PREMIUM';
@@ -82,32 +81,50 @@ function analyzeInZone(range: { high: number, low: number }, price: number, time
 
     return {
         timeframe,
-        high: range.high,
-        low: range.low,
-        mid: mid,
+        high,
+        low,
+        mid,
         zone,
         position_pct
     };
 }
 
-function getRecentRange(bars: OHLCBar[], type: 'WEEK' | 'MONTH'): { high: number, low: number } | null {
-    // For simplicity, we'll take the bars from the previous full week/month
-    // For a quick implementation, we can just look back N bars and group them
-    const now = new Date(bars[bars.length - 1].timestamp);
+export async function calculateHTFTrinity(
+    ticker: string,
+    lookbackDays: number = 30
+): Promise<HTFTrinityAnalysis | null> {
 
-    let targetBars: OHLCBar[] = [];
-    if (type === 'WEEK') {
-        // Last 5 trading days approx a week
-        targetBars = bars.slice(-10, -5);
-    } else {
-        // Last 20 trading days approx a month
-        targetBars = bars.slice(-25, -20);
-    }
+    // 1. Load Context
+    const context = await loadHTFContext(ticker);
+    if (!context) return null;
 
-    if (targetBars.length === 0) return null;
+    // 2. Load Live Price
+    const currentPrice = await getLivePrice(ticker) || context.prev_day_close;
+
+    // 3. Analyze Profiles
+    const weekly = analyzeProfile(context.weekly_profile, currentPrice, 'WEEKLY');
+    const monthly = analyzeProfile(context.monthly_profile, currentPrice, 'MONTHLY');
+
+    // 4. Daily EMA Status
+    const emaVal = context.prev_day_ema5;
+    const emaPos = currentPrice > emaVal ? 'ABOVE' : 'BELOW';
+
+    // 5. Total Bias
+    let bullishScore = 0;
+    if (emaPos === 'ABOVE') bullishScore++;
+    if (weekly.position_pct > 50) bullishScore++;
+    if (monthly.position_pct > 50) bullishScore++;
+
+    const trinity_bias = bullishScore >= 2 ? 'BULLISH' : bullishScore <= 1 ? 'BEARISH' : 'NEUTRAL';
 
     return {
-        high: Math.max(...targetBars.map(b => b.high)),
-        low: Math.min(...targetBars.map(b => b.low))
+        price: currentPrice,
+        trinity_bias,
+        daily_ema: {
+            value: emaVal,
+            position: emaPos
+        },
+        weekly,
+        monthly
     };
 }
