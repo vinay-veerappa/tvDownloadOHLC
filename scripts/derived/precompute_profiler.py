@@ -48,26 +48,6 @@ def precompute_ticker(ticker="NQ1", days=10000):
     else:
         final_sessions = new_sessions
 
-    # Enrich with Daily Data (High/Low/Open) from NQ1_daily_hod_lod.json
-    try:
-        daily_json_path = Path(f"data/{ticker}_daily_hod_lod.json")
-        if daily_json_path.exists():
-            with open(daily_json_path) as f:
-                daily_data = json.load(f)
-            
-            enrich_count = 0
-            for s in final_sessions:
-                d = s.get('date')
-                if d and d in daily_data:
-                    day_info = daily_data[d]
-                    s['daily_open'] = day_info.get('daily_open')
-                    s['daily_high'] = day_info.get('daily_high')
-                    s['daily_low'] = day_info.get('daily_low')
-                    enrich_count += 1
-            print(f"Enriched {enrich_count} sessions with daily stats.")
-    except Exception as e:
-        print(f"Enrichment Error: {e}")
-
     # Save to JSON
     with open(output_file, "w") as f:
         json.dump(final_sessions, f, indent=2)

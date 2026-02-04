@@ -26,6 +26,7 @@ Systematic verification of trading statistics and scenarios from [nqstats.com](h
 *   [**Morning Judas Report**](docs/nqstats/morning_judas/REPORT.md)
 *   [**RTH Breaks Report**](docs/nqstats/rth_breaks/REPORT.md)
 *   [**IB Breaks Report**](docs/nqstats/initial_balance/REPORT.md)
+*   [**Quarterly Dynamics (Intrahour) Analysis**](docs/nqstats/quarterly_dynamics/NQ1_QUARTER_ANALYSIS.md)
 *   [**SDEV Report**](docs/nqstats/net_change_sdevs/REPORT.md)
 
 ## 🛠️ Scripts

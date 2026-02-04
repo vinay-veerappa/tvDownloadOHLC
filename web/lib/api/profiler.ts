@@ -119,8 +119,9 @@ export interface DailyHodLodEntry {
 
 export type DailyHodLodResponse = Record<string, DailyHodLodEntry>;
 
-export async function fetchDailyHodLod(ticker: string): Promise<DailyHodLodResponse> {
-    const res = await fetch(`${API_BASE_URL}/stats/daily-hod-lod/${ticker}`);
+export async function fetchDailyHodLod(ticker: string, unadjusted: boolean = false): Promise<DailyHodLodResponse> {
+    const url = `${API_BASE_URL}/stats/daily-hod-lod/${ticker}${unadjusted ? '?unadjusted=true' : ''}`;
+    const res = await fetch(url);
     if (!res.ok) {
         throw new Error('Failed to fetch daily HOD/LOD data');
     }

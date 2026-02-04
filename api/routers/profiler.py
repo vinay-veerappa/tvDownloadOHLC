@@ -140,12 +140,12 @@ async def clear_all_profiler_cache():
     return ProfilerService.clear_cache()
 
 @router.get("/stats/daily-hod-lod/{ticker}", tags=["Stats"])
-async def get_daily_hod_lod(ticker: str):
+async def get_daily_hod_lod(ticker: str, unadjusted: bool = Query(False)):
     """
     Get pre-computed true daily HOD/LOD times (from 1-minute data).
     Returns dict mapping date -> {hod_time, lod_time, hod_price, lod_price, ...}
     """
-    data = ProfilerService.get_daily_hod_lod(ticker)
+    data = ProfilerService.get_daily_hod_lod(ticker, unadjusted=unadjusted)
     
     if "error" in data:
         raise HTTPException(status_code=404, detail=data["error"])
