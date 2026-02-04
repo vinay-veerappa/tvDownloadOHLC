@@ -16,6 +16,9 @@ import { RegimeStreakPanel } from './panels/RegimeStreakPanel';
 import { CandleSciencePanel } from './panels/CandleSciencePanel';
 import { MODLODPanel } from './panels/MODLODPanel';
 import { EconomicCalendarPanel } from './panels/EconomicCalendarPanel';
+import { HTFTrinityPanel } from './panels/HTFTrinityPanel';
+import { WarGamePanel } from './panels/WarGamePanel';
+import { NarrativePanel } from './panels/NarrativePanel';
 
 interface MissionControlGridProps {
     ticker: string;
@@ -36,7 +39,7 @@ export function MissionControlGrid({
 
     if (isLoading) {
         return (
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {panels.map((panel) => (
                     <BasePanel
                         key={panel.id}
@@ -60,6 +63,12 @@ export function MissionControlGrid({
         if (!data) return <div className="text-sm text-muted-foreground">No data</div>;
 
         switch (panelId) {
+            case 'htfTrinity':
+                return <HTFTrinityPanel data={data.panels.htfTrinity} isLoading={isLoading} />;
+
+            case 'warGame':
+                return <WarGamePanel data={data.panels.warGame} isLoading={isLoading} />;
+
             case 'emaZones':
                 return <EMAZonePanel data={data.panels.emaZones} isLoading={isLoading} />;
 
@@ -81,6 +90,9 @@ export function MissionControlGrid({
             case 'economicCalendar':
                 return <EconomicCalendarPanel data={data.panels.economicCalendar} isLoading={isLoading} />;
 
+            case 'narrative':
+                return <NarrativePanel data={data.panels.narrative} isLoading={isLoading} />;
+
             default:
                 return (
                     <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
@@ -91,7 +103,7 @@ export function MissionControlGrid({
     };
 
     return (
-        <div className="grid grid-cols-4 gap-4 auto-rows-min">
+        <div className="grid grid-cols-1 gap-4 auto-rows-min md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {panels.map((panel) => (
                 <BasePanel
                     key={panel.id}

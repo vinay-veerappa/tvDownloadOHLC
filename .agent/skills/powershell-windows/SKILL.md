@@ -164,4 +164,61 @@ catch {
 
 ---
 
-> **Remember:** PowerShell has unique syntax rules. Parentheses, ASCII-only, and null checks are non-negotiable.
+## 11. Command Syntax Pitfalls
+
+### Deleting Multiple Files
+
+| ❌ Wrong | ✅ Correct |
+|----------|-----------|
+| `del file1 file2` | `del file1, file2` |
+| `Remove-Item file1 file2` | `Remove-Item "file1", "file2"` |
+
+**Rule:** `Remove-Item` (alias `del`) accepts a list of strings for `-Path`, BUT they must be comma-separated. Space-separated arguments are interpreted as distinct parameters.
+
+### 11.2 Unix-to-PowerShell Translation
+
+| Bash/Unix | ❌ PowerShell Wrong | ✅ PowerShell Correct |
+|-----------|---------------------|-----------------------|
+| `command1 && command2` | `cmd1 && cmd2` (PS 5.1 fails) | `cmd1; if ($?) { cmd2 }` |
+| `command &` (Background) | `cmd &` | `Start-Process cmd` or `Start-Job` |
+| `export VAR=VAL` | `export VAR=VAL` | `$env:VAR = "VAL"` |
+| `touch file.txt` | `touch file.txt` | `New-Item file.txt` or `"" > file.txt` |
+| `cp -r src dest` | `cp -r src dest` | `Copy-Item -Recurse src dest` |
+
+### 11.3 Output Encoding Trap
+
+| ❌ Wrong | ✅ Correct |
+|----------|-----------|
+| `echo "text" > file.json` | `Set-Content file.json "text"` |
+
+**Rule:** The `>` redirection operator in Windows PowerShell often creates **UTF-16LE** (BOM) files, which breaks JSON parsers and Node.js tools. Always use `Set-Content` or `Out-File -Encoding UTF8`.
+
+### 11.4 The Stop-Parsing Token (--%)
+
+| ❌ Wrong | ✅ Correct |
+|----------|-----------|
+| `npx arg "complex string"` | `npx --% arg "complex string"` |
+
+**Rule:** When calling external CLIs (`npx`, `python`, `az`) with quoted arguments, PowerShell's parser often strips or garbles them. Use `--%` after the command to stop PowerShell parsing and pass the rest literal to the arbitrary program.
+
+### 11.5 Noisy Commands
+
+| ❌ "Silent" | ✅ Truly Silent |
+|-------------|-----------------|
+| `mkdir newdir` | `mkdir newdir > $null` or `null` |
+| `New-Item ...` | `New-Item ... | Out-Null` |
+
+**Rule:** Commands like `mkdir` (New-Item) return the created object. In automation, this "success output" can be mistaken for data. Always silence side-effects.
+
+### 11.6 Reading Files (Array vs String)
+
+| ❌ Risky | ✅ Robust |
+|----------|-----------|
+| `cat file.json` | `Get-Content file.json -Raw` |
+| `$content = Get-Content file.txt` | `$content = Get-Content file.txt -Raw` |
+
+**Rule:** `Get-Content` (alias `cat`) returns an **array of lines** by default. If you try to parse this as JSON or a single block of text without `-Raw`, it will fail or produce unexpected results.
+
+---
+
+> **Remember:** PowerShell has unique syntax rules. Parentheses, ASCII-only, commma-separated lists, and null checks are non-negotiable.

@@ -153,21 +153,35 @@ def send_message(webhook_url, message, files=None):
 def main():
     parser = argparse.ArgumentParser(description="Send to Discord")
     parser.add_argument("--message", "-m", help="Message to send", default="")
+    parser.add_argument("--message-file", "-mf", help="Path to file containing message text")
     parser.add_argument("--file", "-f", action="append", help="File(s) to upload")
     parser.add_argument("--channel", "-c", help="Named channel (e.g., test_channel)", default=DEFAULT_CHANNEL)
     parser.add_argument("--webhook", "-w", help="Direct webhook URL override")
     
     args = parser.parse_args()
     
-    if not args.message and not args.file:
-        print("Error: Provide --message and/or --file")
+    message = args.message
+    if args.message_file:
+        try:
+            with open(args.message_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+                if message:
+                    message += "\n" + content
+                else:
+                    message = content
+        except Exception as e:
+            print(f"Error reading message file: {e}")
+            sys.exit(1)
+    
+    if not message and not args.file:
+        print("Error: Provide --message, --message-file, and/or --file")
         sys.exit(1)
     
     webhook_url = get_webhook_url(args.channel, args.webhook)
     if not webhook_url:
         sys.exit(1)
         
-    success = send_message(webhook_url, args.message, args.file)
+    success = send_message(webhook_url, message, args.file)
     
     sys.exit(0 if success else 1)
 

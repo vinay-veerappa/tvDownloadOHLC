@@ -24,16 +24,51 @@ export async function POST(request: Request) {
         fs.writeFileSync(filePath, JSON.stringify(summary, null, 2));
 
         // 2. Build Discord Message
+        // 2. Build Discord Message
+        const biasInfo = typeof summary.bias === 'string'
+            ? summary.bias
+            : `${summary.bias.bias} (${summary.bias.score.toFixed(0)}% Conviction)`;
+
+        // Get Active War Game Scenario
+        let warGameInfo = 'N/A';
+        if (summary.panels.warGame && summary.panels.warGame.currentScenario) {
+            const sc = summary.panels.warGame.scenarios.find((s: any) =>
+                s.id.startsWith(summary.panels.warGame.currentScenario) &&
+                (summary.panels.warGame.currentScenario === 'long' ? s.id === 'longTrue' : s.id === 'shortTrue')
+            );
+            // More robust: find the one with highest probability or just use the current group
+            // Ideally use the Narrative logic, but for now simple output:
+            warGameInfo = `${summary.panels.warGame.currentScenario.toUpperCase()} Bias (Overnight)`;
+        }
+
+        // Get Top Narratives
+        let narrativeText = '';
+        if (summary.panels.narrative && summary.panels.narrative.length > 0) {
+            narrativeText = '\n\n**Mission Brief:**\n' +
+                summary.panels.narrative
+                    .slice(0, 3)
+                    .map((n: any) => `- ${n.icon || '•'} **${n.title}**: ${n.content}`) // Simple bullet if icon missing
+                    .join('\n');
+        }
+
         const message = `**Mission Control Snapshot: ${ticker}**
-Bias: ${summary.bias}
+Bias: ${biasInfo}
 HTF Trinity: ${summary.panels.htfTrinity?.trinity_bias || 'N/A'}
-MOD/LOD Mode: ${summary.panels.modLod?.hod_mode || 'N/A'} / ${summary.panels.modLod?.lod_mode || 'N/A'}`;
+War Game: ${warGameInfo}
+Fuel: ${summary.fuel ? summary.fuel.toFixed(1) + '%' : 'N/A'}${narrativeText}`;
 
         // 3. Notify Discord (using the python script in background)
         try {
-            // Use absolute path for safety if possible, or relative to root
+            // Write message to temp file to avoid CLI issues
+            const tempMsgPath = path.join(snapshotDir, `${filename}.txt`);
+            fs.writeFileSync(tempMsgPath, message);
+
             const scriptPath = path.join(process.cwd(), '..', 'scripts', 'utils', 'discord_notify.py');
-            await execAsync(`python "${scriptPath}" --channel alerts --message "${message}"`);
+            // Use --message-file argument and data_gap_reports channel
+            await execAsync(`python "${scriptPath}" --channel data_gap_reports --message-file "${tempMsgPath}"`);
+
+            // Clean up temp file
+            fs.unlinkSync(tempMsgPath);
         } catch (discordError) {
             console.error('Discord notification failed:', discordError);
             // Don't fail the whole request if discord fails
