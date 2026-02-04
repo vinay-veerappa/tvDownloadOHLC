@@ -6,7 +6,7 @@ import sys
 import time
 import sqlite3
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from schwab.auth import easy_client
 from schwab.client import Client
 from schwab.streaming import StreamClient
@@ -328,7 +328,8 @@ def get_client():
             api_key=secrets["app_key"],
             app_secret=secrets["app_secret"],
             callback_url='https://127.0.0.1:8182',
-            token_path='token.json')
+            token_path='token.json',
+            enforce_enums=False)
     except Exception as e:
         print(f"Auth failed: {e}")
         return None
@@ -398,6 +399,154 @@ def update_sub_candle(container, price, time_curr, interval_sec):
     
     container["live_price"] = price
     container["last_update"] = get_now_iso()
+
+def update_historical_files(client, symbol):
+    """
+    Checks and updates Daily (1d) and Weekly (1W) parquet files for the symbol.
+    Fetches missing history from Schwab if files are stale.
+    """
+    symbol_map = {
+        "/ES": "ES1", "/NQ": "NQ1", "/YM": "YM1", "/RTY": "RTY1",
+        "/CL": "CL1", "/GC": "GC1"
+    }
+    ticker = symbol_map.get(symbol)
+    if not ticker: return # Only update mapped futures/indices for now
+
+    print(f"📅 [{symbol}] Checking historical data for {ticker}...")
+
+    # Define tasks: (Parquet Suffix, Schwab PeriodType, Schwab FrequencyType, Schwab Frequency)
+    # Note: Schwab 'weekly' frequency might not be directly available for all assets or might need 'daily' aggregation.
+    # Safe bet: Update Daily (1d). Weekly can be derived or updated if API supports it.
+    # Schwab Client.PriceHistory.FrequencyType.WEEKLY exists.
+    
+    tasks = [
+        ("1d", "year", "daily", 1),
+        ("1W", "year", "weekly", 1)
+    ]
+
+    for suffix, p_type, f_type, freq in tasks:
+        file_path = os.path.join(DATA_DIR, f"{ticker}_{suffix}.parquet")
+        
+        last_date = None
+        existing_df = pd.DataFrame()
+
+        if os.path.exists(file_path):
+            try:
+                existing_df = pd.read_parquet(file_path)
+                if not existing_df.empty:
+                    # Check last timestamp
+                    # Assuming 'datetime' index or column
+                    if 'datetime' in existing_df.columns:
+                        existing_df['datetime'] = pd.to_datetime(existing_df['datetime'])
+                        existing_df.set_index('datetime', inplace=True)
+                    elif isinstance(existing_df.index, pd.DatetimeIndex):
+                        pass
+                    elif 'time' in existing_df.columns:
+                         existing_df['datetime'] = pd.to_datetime(existing_df['time'], unit='s', utc=True)
+                         existing_df.set_index('datetime', inplace=True)
+
+                    # Normalize to UTC Aware
+                    if existing_df.index.tz is None:
+                        # Assume it's US/Eastern or just local? 
+                        # Actually if we want to concat with UTC new data, we must localize and converting.
+                        # Safest: Localize to UTC if naive (assuming it was stored as UTC)
+                        existing_df.index = existing_df.index.tz_localize(timezone.utc)
+                    else:
+                        existing_df.index = existing_df.index.tz_convert(timezone.utc)
+
+                    existing_df.sort_index(inplace=True)
+                    last_date = existing_df.index[-1]
+            except Exception as e:
+                print(f"  ⚠️ Error reading {suffix}: {e}")
+
+        if last_date:
+            # last_date is likely pandas Timestamp
+            # Convert to python datetime first to be safe
+            if hasattr(last_date, 'to_pydatetime'):
+                last_date = last_date.to_pydatetime()
+            
+            # Ensure naive
+            if last_date.tzinfo:
+                last_date = last_date.replace(tzinfo=None)
+            
+            if (datetime.now() - last_date).days < 1:
+                continue
+            
+            start_dt = last_date + timedelta(days=1)
+        else:
+            start_dt = datetime.now() - timedelta(days=730)
+
+        # Final check
+        # Paranoid reconstruction to ensure pure python naive datetime
+        now = datetime.now()
+        if start_dt.tzinfo or hasattr(start_dt, 'tz'):
+             start_dt = datetime(start_dt.year, start_dt.month, start_dt.day, start_dt.hour, start_dt.minute)
+        
+        if start_dt >= now: continue
+
+        print(f"  ⬇️ Updating {suffix} from {start_dt.date()}...")
+
+        try:
+            resp = client.get_price_history(
+                symbol,
+                period_type=p_type,
+                frequency_type=f_type,
+                frequency=freq,
+                start_datetime=start_dt,
+                end_datetime=now,
+                need_extended_hours_data=False 
+            )
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                candles = data.get('candles', [])
+                if not candles:
+                    print(f"   No new data for {suffix}.")
+                    continue
+                
+                new_data = []
+                for c in candles:
+                    new_data.append({
+                        "datetime": pd.to_datetime(c.get("datetime", 0), unit='ms', utc=True),
+                        "open": c.get("open", 0),
+                        "high": c.get("high", 0),
+                        "low": c.get("low", 0),
+                        "close": c.get("close", 0),
+                        "volume": c.get("volume", 0)
+                    })
+                
+                new_df = pd.DataFrame(new_data)
+                new_df.set_index('datetime', inplace=True)
+                
+                # Merge
+                if not existing_df.empty:
+                    combined = pd.concat([existing_df, new_df])
+                    combined = combined[~combined.index.duplicated(keep='last')]
+                    combined.sort_index(inplace=True)
+                else:
+                    combined = new_df
+                
+                # Save
+                # Ensure columns
+                # Parquet usually stores index if to_parquet is used on DF with index
+                # But our standard seems to be preserving 'time' or 'datetime' column?
+                # Let's reset index to keep 'datetime' column for compatibility if needed
+                # Actually previous files had specific schemas. 
+                # 'NQ1_1d.parquet' usually has: open, high, low, close, volume (index is datetime)
+                
+                # IMPORTANT: Reset index to column for saving if that's the convention?
+                # debug showed: NQ1_1d has DatetimeIndex. So direct save is fine.
+                
+                combined.to_parquet(file_path)
+                print(f"   ✅ Updated {suffix}: {len(combined)} rows (Added {len(new_df)})")
+                
+            else:
+                print(f"   ❌ API Error: {resp.status_code}")
+                
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"   ⚠️ Fetch failed: {e}")
 
 async def main():
     # ... Setup ...
@@ -474,6 +623,12 @@ async def main():
                     json.dump(cdata, f, indent=2)
         else:
             print(f"✅ [{sym}] No gaps detected")
+
+    # 2.6. Historical Data Update (Daily/Weekly)
+    print("\n📅 updating Historical Files (Daily/Weekly)...")
+    for sym in symbols:
+        # Run this for mapped futures/indices
+        update_historical_files(client, sym)
 
     # 3. Stream Setup
     stream_client = StreamClient(client, account_id='BB4E515511E76B8B035DC72194CA615919766D183922871CF062DB9ACA6E0EBD') 
