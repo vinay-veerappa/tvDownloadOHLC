@@ -13,16 +13,15 @@ This plan outlines the phased implementation of the Mission Control Dashboard, p
 
 ## Phase Overview
 
-| Phase | Focus | Duration | Deliverable |
+| Phase | Focus | Status | Deliverable |
 | :--- | :--- | :--- | :--- |
-| **Phase 1** | Foundation & Infrastructure | 2-3 days | Config system, API routes, basic grid |
-| **Phase 2** | Core Panels (Data-Ready) | 3-4 days | EMA Zones, Premium/Discount, Distro, Regime Streaks |
-| **Phase 3** | Action Buttons & Discord | 1-2 days | Update button, Snapshot mode, Discord webhook |
-| **Phase 4** | Candle Science & HTF Trinity | 2-3 days | Daily Candle Science, HTF context |
-| **Phase 5** | War Game & TBD Features | TBD | Pending user definitions |
-| **Phase 6** | Polish & Optimization | 1-2 days | Performance, testing, visual refinements |
+| **Phase 1** | Foundation & Infrastructure | ✅ Complete | Config, API, Grid, JSON Strategy |
+| **Phase 2** | Core Panels (Data-Ready) | ✅ Complete | EMA, P/D, Distro, Streak |
+| **Phase 3** | Integration & News Hub | ✅ Complete | News, HOD/LOD, Live Data, Fixes |
+| **Phase 4** | Advanced Bias & War Game | 🚀 Starting | Matrix, Conviction, Multi-Factor Bias |
+| **Phase 5** | Polish & Optimization | 🔄 Ongoing | Caching, Skeltons, Mobile, Health |
 
-**Total Estimated: 10-14 days** (excluding Phase 5 TBD items)
+**Goal:** Provide a high-conviction, automated command center for futures trading.
 
 ---
 
@@ -111,52 +110,30 @@ This plan outlines the phased implementation of the Mission Control Dashboard, p
 - [ ] Wire "📤 Publish" button to trigger snapshot + post
 
 ### 3.4 Verification
-- [ ] Update button refreshes data and panels reload
-- [ ] Snapshot generates clean 1920x1080 PNG
-- [ ] Discord receives image successfully
+- [x] Update button refreshes data and panels reload
+- [x] Snapshot generates clean 1920x1080 PNG (via mode query param)
+- [x] Discord receives formatted alert and data reference
+- [x] Ticker normalization (`NQ1` -> `/NQ`) working for Prisma/JSON looksups
 
 ---
 
-## Phase 4: Candle Science & HTF Trinity
+## Phase 4: Advanced Bias & War Game
 
-### 4.1 Candle Science Panel (Daily Only)
-- [ ] Integrate existing `calculator.ts` logic
-- [ ] Create `/api/mission/[ticker]/candle-science/route.ts`
-- [ ] Create `CandleSciencePanel.tsx` with:
-  - Bullish/Bearish probability
-  - C3 projection based on C1/C2
-  - Mode detection (live vs historical)
-  - Expandable modal with full table
+### 4.1 War Game Matrix (The Battle)
+- [ ] Implement `WarGamePanel.tsx` with scenarios
+- [ ] Define activation logic: `Price > Zone + News = Breakout Scenario`
+- [ ] Create "The Battle" modal for drill-down analysis
 
-### 4.2 HTF Trinity Panel
-- [ ] Create `/api/mission/[ticker]/htf-context/route.ts`
-  - Weekly profile analysis (integrate existing script)
-  - Monthly context
-  - EMA zone status
-- [ ] Create `HTFTrinityPanel.tsx` with:
-  - Weekly/Monthly structure summary
-  - Confidence indicator (TBD logic)
-  - Expandable modals for each HTF
+### 4.2 Multi-Factor Daily Bias
+- [ ] Aggregate signals from all panels:
+  - HTF Trinity (Weekly/Monthly Alignment)
+  - Candle Science (C3 Probabilities)
+  - EMA Zones (Mean Reversion vs Extension)
+- [ ] Output: BULL / BEAR / NEUTRAL with Conviction Score (0-100)
 
-### 4.3 MOD/LOD Radar
-- [ ] Create `/api/mission/[ticker]/mod-lod/route.ts`
-  - Load from `{ticker}_daily_hod_lod_unadjusted.json`
-  - Calculate mode/median times
-- [ ] Create `ModLodPanel.tsx` with:
-  - HOD/LOD time indicators
-  - Simple histogram visualization
-
-### 4.4 Economic Calendar
-- [ ] Create `/api/mission/[ticker]/events/route.ts`
-  - Query Prisma `EconomicEvent` for today's events
-- [ ] Create `EconomicCalendarPanel.tsx` with:
-  - List of events with times
-  - Impact level badges
-
-### 4.5 Verification
-- [ ] All Phase 4 panels render correctly
-- [ ] Candle Science matches existing tool output
-- [ ] Economic events load from database
+### 4.3 Narrative Generation
+- [ ] Implement template-based summary for high-impact levels
+- [ ] Format: "Bias is BULL. Watch 5EMA Zone at 29200 for bounce. NEWS at 10:00 AM."
 
 ---
 

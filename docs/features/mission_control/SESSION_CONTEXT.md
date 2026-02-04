@@ -1,97 +1,65 @@
 # Mission Control - Session Context
 
-**Last Updated:** 2026-02-03 18:41 PST
+**Last Updated:** 2026-02-04 09:10 PST
 **Session ID:** 93bbd4f0-8f1b-418f-8ec1-2790c669f957
 
 ---
 
 ## Current State
 
-### Phase: Phase 3 - UI Implementation ✅
+### Phase: Phase 4 - Advanced Bias & War Game 🚀
 
-**Status**: Phase 3 UI Complete (100%), Phase 4 Data Binding starting.
+**Status**: Mission Control v1.0 Core Complete. Starting high-conviction decision logic.
 
 **Completed**:
 - ✅ Phase 1: Foundation & Infrastructure
-- ✅ Phase 2: Core Panels (EMA, P/D, Distro)
-- ✅ Phase 3: Bento Grid & Collapsible Panels
-- ✅ Pivot to JSON Chunk data strategy for performance
-- ✅ EMA Zone Panel (calculator, API, UI)
-- ✅ Premium/Discount Panel (calculator, API, UI)
-- ✅ Distro (Fuel) Panel (calculator, API, UI)
-- ✅ BasePanel wrapper with Snapshot mode support
+- ✅ Phase 2: Core Panels (EMA, P/D, Distro, Regime Streak)
+- ✅ Phase 3: Dashboard Integration & News Hub
+- ✅ Multi-TF Premium/Discount logic + UI
+- ✅ HOD/LOD Radar (unadjusted data integration)
+- ✅ Economic Calendar (Today-only, US-only, Forced EST)
+- ✅ Robust Data Reader (Fixes for large/corrupted live JSON)
+- ✅ Discord Snapshot Automation
 
 **Remaining**:
-- [ ] Regime Streak Panel (calculator implementation)
-- [ ] HOD/LOD Radar Panel
-- [ ] Economic Calendar Panel
-- [ ] HTF Trinity Panel
-- [ ] Candle Science Panel
-- [ ] Backend Snapshot Automation (Playwright)
+- [ ] War Game Matrix (The Battle)
+- [ ] Conviction Score Algorithm
+- [ ] Multi-Factor Daily Bias Prediction
+- [ ] Automated Health Checks for live data capture
+- [ ] Mobile-responsive layout refinements
+- [ ] Advanced Caching (SWR persistency)
 
-### Documents Created
+### Documents Updated
 
 | Document | Status | Purpose |
 | :--- | :--- | :--- |
 | [PRD.md](PRD.md) | ✅ Complete | Requirements, wireframes, component specs |
-| [DESIGN.md](DESIGN.md) | ✅ Complete | Architecture, patterns, tech stack |
-| [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | ✅ Complete | Phased task breakdown |
+| [DESIGN.md](DESIGN.md) | ✅ Updated | Architecture, patterns, tech stack |
+| [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | ✅ Updated | Phase 4 roadmap integrated |
 | [CALCULATIONS.md](CALCULATIONS.md) | ✅ Complete | Algorithm specs for all platforms |
 | SESSION_CONTEXT.md | 🔄 Active | This file - session state tracker |
-
-### Reference Images
-
-| Image | Purpose |
-| :--- | :--- |
-| `distro_reference.png` | Fuel/Distribution table layout |
-| `ema_zone_analysis_reference.png` | EMA zone probability chart |
-| `premium_discount_reference.png` | Multi-TF P/D visualization |
-| `streak_reference.png` | Regime streak panel layout |
-| `uploaded_media_*.png` | Original dashboard mockups |
-
----
-
-## TBD Items (Awaiting User Input)
-
-| Item | Section | Status |
-| :--- | :--- | :--- |
-| War Game Activation Logic | PRD 6.4 | ⏳ TBD |
-| Conviction Score Logic | PRD 6.4 | ⏳ TBD |
-| ICT Daily Bias Rules | PRD 6.3 | ⏳ TBD |
-| Narrative Generation Method | PRD 6.5 | ⏳ TBD |
-| HTF Context Integration | PRD 6.1 | ⏳ TBD |
-
----
-
-## Resolved Items
-
-| Item | Resolution |
-| :--- | :--- |
-| Midnight Open / True Day Open | Same thing = 00:00 EST |
-| Hourly Candle Science | Removed - Daily only |
-| Noon Curve | Removed - Too late for actionable use |
-| Hourly EM | Changed to Daily EM |
-| Streak Definition | Analyze last N days, count TRUE/FALSE, track max/current streak |
-| Distro Calculation | Session-based, DOW-filtered, median (not average), 5/10 day lookback |
-| HOD/LOD Data | Use unadjusted data for % moves |
 
 ---
 
 ## Next Steps
 
-1. **User Review**: Approve planning documents
-2. **Phase 1 Start**: Foundation & Infrastructure
-3. **Phase 2 Start**: Core Panels implementation
+1. **User Review**: Verify Phase 4 roadmap in `IMPLEMENTATION_PLAN.md`.
+2. **Refine War Game Matrix**: Define activation triggers for scenarios.
+3. **Bias Algorithm**: Design the scoring weights for the multi-factor bias output.
 
 ---
 
 ## Key Decisions Made
 
-1. **Tech Stack**: Next.js 15 (App Router) + Tailwind + shadcn/ui + SWR
-2. **Data Strategy (PIVOT)**: Use **JSON Chunks** from `public/data` instead of raw Parquet for web performance and compatibility.
-3. **UI Pattern**: Bento Grid with reusable `BasePanel` wrapper for collapse/expand logic.
-4. **Snapshot Mode**: Query param based (`?mode=snapshot`) for clean reporting view.
-5. **Real-time**: Leveraged SWR for automatic revalidation and refresh polling.
+1. **Timezone Policy**: Forced **EST (America/New_York)** for all display components to ensure trader synchronization.
+2. **News Filtering**: Implemented **Keyword Exclusion** for US News (removing NAB, RBA, ECB, etc.) to keep Mission Control focused on US sessions.
+3. **Data Resilience**: Implemented 25MB file size gates and robust `JSON.parse` wrappers in `parquet-reader.ts` to handle unstable live data captures.
+4. **Styling**: 100% externalized to `mission-control.css` using CSS variables for dynamic UI elements (sliders, bars).
+5. **Tech Stack**: Next.js 15 (App Router) + Tailwind + shadcn/ui + SWR
+6. **Data Strategy (PIVOT)**: Use **JSON Chunks** from `public/data` instead of raw Parquet for web performance and compatibility.
+7. **UI Pattern**: Bento Grid with reusable `BasePanel` wrapper for collapse/expand logic.
+8. **Snapshot Mode**: Query param based (`?mode=snapshot`) for clean reporting view.
+9. **Real-time**: Leveraged SWR for automatic revalidation and refresh polling.
 
 ---
 
@@ -130,6 +98,10 @@ If this session is interrupted, the next session should:
 
 ## Change Log
 
+| Date | Event |
+| :--- | :--- |
+| 2026-02-04 09:10 | **Core Implementation Complete**: Dashboard pushed to main. All panels functional. News refined. |
+| 2026-02-04 06:15 | **Bug Fix**: Robust JSON parsing and 25MB safety gates for live data. |
 | 2026-02-04 04:55 | **Phase 3 Complete**: Bento Grid layout, Collapsible Panels, and Snapshot Mode UI logic implemented |
 | 2026-02-04 03:30 | **Data Strategy Pivot**: Refactored `parquet-reader.ts` to use JSON chunks for performance and compatibility |
 | 2026-02-03 19:26 | **Phase 2 Progress**: Premium/Discount and Distro (Fuel) panels complete |
