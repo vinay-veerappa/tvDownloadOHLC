@@ -23,19 +23,19 @@ export interface PanelConfig {
 export const PANEL_REGISTRY: Record<string, PanelConfig> = {
     htfTrinity: {
         id: 'htfTrinity',
-        displayName: 'HTF Trinity',
+        displayName: 'HTF Context',
         order: 1,
         size: 'md',
         enabled: true,
         description: 'Weekly/Monthly/Daily context',
     },
-    warGame: {
-        id: 'warGame',
-        displayName: 'War Game Matrix',
+    missionMatrix: {
+        id: 'missionMatrix',
+        displayName: 'Mission Matrix',
         order: 2,
-        size: 'lg',
+        size: 'xl',
         enabled: true,
-        description: 'Scenario-based planning',
+        description: 'Context, Probability, and Timing',
     },
     candleScience: {
         id: 'candleScience',
@@ -61,26 +61,10 @@ export const PANEL_REGISTRY: Record<string, PanelConfig> = {
         enabled: true,
         description: 'Session range analysis',
     },
-    regimeStreak: {
-        id: 'regimeStreak',
-        displayName: 'Regime & Streaks',
-        order: 6,
-        size: 'md',
-        enabled: true,
-        description: 'Session TRUE/FALSE analysis',
-    },
-    modLod: {
-        id: 'modLod',
-        displayName: 'HOD/LOD Radar',
-        order: 7,
-        size: 'sm',
-        enabled: true,
-        description: 'Daily high/low timing',
-    },
     economicCalendar: {
         id: 'economicCalendar',
         displayName: 'Economic Calendar',
-        order: 8,
+        order: 6,
         size: 'md',
         enabled: true,
         description: 'Upcoming high-impact events',
@@ -88,7 +72,7 @@ export const PANEL_REGISTRY: Record<string, PanelConfig> = {
     narrative: {
         id: 'narrative',
         displayName: 'Narrative Feed',
-        order: 9,
+        order: 7,
         size: 'md',
         enabled: true,
         description: 'Contextual market stories',
@@ -96,9 +80,9 @@ export const PANEL_REGISTRY: Record<string, PanelConfig> = {
     emaZones: {
         id: 'emaZones',
         displayName: 'EMA Zones',
-        order: 10,
+        order: 8,
         size: 'md',
-        enabled: true,
+        enabled: true, // Enabled for visibility as per new design
         description: 'Daily 5 EMA probability zones',
     },
 };

@@ -1,109 +1,207 @@
 import pandas as pd
-import argparse
+import numpy as np
 import os
+import json
 from datetime import datetime, timedelta
 
-# Import the unified data loader
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
-from fused_data_loader import load_fused_data
+# Configuration
+DATA_DIR = r"c:\Users\vinay\tvDownloadOHLC\data"
+OUTPUT_DIR = r"c:\Users\vinay\tvDownloadOHLC\data\derived"
+TICKER_FILE_1D = "NQ1_1d.parquet"
+TICKER_FILE_1H = "NQ1_1h.parquet"
+LIVE_FILE = "live_storage_-NQ.parquet" 
+LIVE_DIR = r"c:\Users\vinay\tvDownloadOHLC\data\live"
+TICKER = "NQ1"
 
-def analyze_weekly_profile(ticker, target_date_str=None):
-    """
-    Analyzes the weekly profile relative to the target date.
-    Determines if High of Week (HOW) or Low of Week (LOW) is likely set.
-    """
+def get_nfp_fridays(start_year, end_year):
+    nfp_dates = set()
+    for year in range(start_year, end_year + 1):
+        for month in range(1, 13):
+            for day in range(1, 8):
+                try:
+                    d = datetime(year, month, day)
+                    if d.weekday() == 4:
+                        nfp_dates.add(pd.Timestamp(d).date())
+                        break
+                except ValueError:
+                    continue
+    return nfp_dates
+
+def analyze_weekly_profile():
+    print(f"--- Analyzing Weekly Profile for {TICKER} ---")
     
-    # 1. Load Data (Live + Historical fused)
-    df = load_fused_data(ticker, require_historical=False) # Weekly analysis needs recent data primarily
+    path_1d = os.path.join(DATA_DIR, TICKER_FILE_1D)
+    path_1h = os.path.join(DATA_DIR, TICKER_FILE_1H)
+    path_live = os.path.join(LIVE_DIR, LIVE_FILE)
     
-    if df.empty:
-        print(f"Error: No data found for {ticker}")
+    if not os.path.exists(path_1d) or not os.path.exists(path_1h):
+        print("Error: Missing data files.")
         return
+
+    df_1d = pd.read_parquet(path_1d)
+    df_1h = pd.read_parquet(path_1h)
     
-    try:
-        df.index = df.index.tz_convert('US/Eastern')
-    except:
+    df_live_1h = pd.DataFrame()
+    if os.path.exists(path_live):
         try:
-            df.index = df.index.tz_localize('UTC').tz_convert('US/Eastern')
-        except:
-             pass
+            df_live = pd.read_parquet(path_live)
+            if not isinstance(df_live.index, pd.DatetimeIndex):
+                if 'time' in df_live.columns:
+                     df_live['datetime'] = pd.to_datetime(df_live['time'], unit='ms', utc=True)
+                     df_live.set_index('datetime', inplace=True)
+            
+            if df_live.index.tz is None:
+                df_live.index = df_live.index.tz_localize('UTC')
+            df_live.index = df_live.index.tz_convert('US/Eastern')
+            
+            df_live_1h = df_live.resample('1h').agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum'
+            }).dropna()
+            print(f"DEBUG: Loaded {len(df_live_1h)} hours from Live Storage Parquet.")
+        except Exception as e:
+            print(f"Warning: Failed to load live data: {e}")
 
-    # 2. Determine Scope (Current Week up to Target Date)
-    if target_date_str:
-        target_date = pd.to_datetime(target_date_str).date()
-    else:
-        target_date = datetime.now().date() # Default to today
+    for i, df in enumerate([df_1d, df_1h]):
+        if not isinstance(df.index, pd.DatetimeIndex):
+            if 'time' in df.columns:
+                 df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
+                 df = df.set_index('datetime')
+        if df.index.tz is None:
+            df.index = df.index.tz_localize('UTC')
+        df.index = df.index.tz_convert('US/Eastern')
+        df.sort_index(inplace=True)
+        if i == 0: df_1d = df
+        else: df_1h = df
         
-    # Get start of week (Sunday or Monday?)
-    # Markets often open Sunday 6pm ET, but let's count Monday as Day 1 for weekly range usually,
-    # or Sunday Globex as start.
-    # ISO Calendar: Monday is 1.
-    # Start of this week:
-    start_of_week = target_date - timedelta(days=target_date.weekday()) # Monday
-    # Optional: include Sunday globex data? 
-    # Let's simple filter: Data >= Start of Week 00:00 ET
-    
-    # Filter DF for this week up to (but not including?) target session if it's "next day" prev context?
-    # If we are analyzing FOR "Tomorrow" (Target Date), we have data UP TO "Today".
-    # So we analyze the COMPLETED data for the week so far.
-    
-    week_mask = (df.index.date >= start_of_week) & (df.index.date < target_date)
-    week_data = df[week_mask]
-    
-    if week_data.empty:
-        # Maybe it's Monday and we are prepping for Tuesday?
-        # Or it's Sunday prepping for Monday?
-        # If prepping for Monday, no weekly data exists yet.
-        print(f"   (New Week: No prior weekly data for {target_date})")
-        return
+    if not df_live_1h.empty:
+        df_1h = pd.concat([df_1h, df_live_1h])
+        df_1h = df_1h[~df_1h.index.duplicated(keep='last')]
+        df_1h.sort_index(inplace=True)
 
-    # 3. Calculate Stats
-    week_high = week_data['high'].max()
-    week_low = week_data['low'].min()
-    week_open = week_data['open'].iloc[0]
-    last_close = week_data['close'].iloc[-1]
+    last_date = df_1d.index[-1]
+    current_year, current_week, _ = last_date.isocalendar()
+    df_1d['year'] = df_1d.index.year
+    df_1d['week'] = df_1d.index.isocalendar().week
+
+    today_date = last_date.date()
+    nfp_set = get_nfp_fridays(today_date.year, today_date.year)
+    days_to_fri = (4 - last_date.weekday()) % 7 
+    this_friday = today_date + timedelta(days=days_to_fri)
+    is_nfp_week = this_friday in nfp_set
+    nfp_date = this_friday.isoformat() if is_nfp_week else None
     
-    # Identify Days High/Low were formed
-    # We need to find the specific bar
-    high_idx = week_data['high'].idxmax()
-    low_idx = week_data['low'].idxmin()
+    df_1h['year'] = df_1h.index.year
+    df_1h['week'] = df_1h.index.isocalendar().week
+    curr_week_1h = df_1h[(df_1h['year'] == current_year) & (df_1h['week'] == current_week)]
     
-    day_name = target_date.strftime("%A") # Day we are prepping FOR
-    current_day_name = (target_date - timedelta(days=1)).strftime("%A") # Day just finished
+    anchors = {"sunday": None, "tuesday": None}
     
-    print(f"\n📅 WEEKLY PROFILE: {day_name.upper()} Analysis")
-    print(f"   (Data from {start_of_week} to {current_day_name})")
-    print(f"   WTD High: {week_high:.2f} ({high_idx.strftime('%A')})")
-    print(f"   WTD Low:  {week_low:.2f}  ({low_idx.strftime('%A')})")
-    print(f"   WTD Open: {week_open:.2f}")
+    if not curr_week_1h.empty:
+        sunday_data = curr_week_1h[curr_week_1h.index.dayofweek == 6]
+        if not sunday_data.empty:
+            anchors["sunday"] = {
+                "high": float(sunday_data['high'].max()),
+                "low": float(sunday_data['low'].min()),
+                "open": float(sunday_data['open'].iloc[0]),
+                "close": float(sunday_data['close'].iloc[-1])
+            }
+        tues_data = curr_week_1h[curr_week_1h.index.dayofweek == 1]
+        if not tues_data.empty:
+            anchors["tuesday"] = {
+                "high": float(tues_data['high'].max()),
+                "low": float(tues_data['low'].min()),
+                "close": float(tues_data['close'].iloc[-1])
+            }
     
-    # 4. Heuristics (ICT Style)
-    # "Tuesday Low of Week" or "Tuesday High of Week" is classic.
-    # If it's Wednesday, and Low was Tuesday -> Likely LOW is in.
+    # 4. Profile Logic & Narrative
+    curr_price = float(df_1d['close'].iloc[-1])
+    open_of_week = anchors["sunday"]["open"] if (anchors["sunday"] and "open" in anchors["sunday"]) else df_1d['open'].iloc[0]
     
-    bias_up = last_close > week_open
+    # HTF Context (EMA & Prev Week)
+    prev_week_mask = (df_1d.index.isocalendar().week == current_week - 1) & (df_1d.index.year == current_year)
+    prev_week_data = df_1d[prev_week_mask]
+    pwh = float(prev_week_data['high'].max()) if not prev_week_data.empty else 0.0
+    pwl = float(prev_week_data['low'].min()) if not prev_week_data.empty else 0.0
+        
+    df_weekly = df_1d.resample('W-FRI').agg({'close':'last'})
+    df_weekly['ema5'] = df_weekly['close'].ewm(span=5, adjust=False).mean()
+    prev_weekly_ema = float(df_weekly['ema5'].iloc[-2]) if len(df_weekly) >= 2 else 0.0
+    ema_dist_pct = ((curr_price - prev_weekly_ema) / prev_weekly_ema) * 100 if prev_weekly_ema > 0 else 0.0
     
-    print("\n🧐 PROJECTION:")
-    if bias_up:
-        print("   Structure: BULLISH (Above Week Open)")
-        if low_idx.weekday() <= 1: # Low on Mon or Tue
-            print("   Scenario:  Classic 'Tuesday/Monday Low' in effect?")
-            print(f"   --> Expect Expansion toward Week High ({week_high:.2f})")
+    df_monthly = df_1d.resample('ME').agg({'high':'max', 'low':'min'})
+    pm_mid = 0.0
+    if len(df_monthly) >= 2:
+        prev_month = df_monthly.iloc[-2]
+        pm_mid = (prev_month['high'] + prev_month['low']) / 2
+
+    narrative_parts = []
+    if is_nfp_week:
+        narrative_parts.append(f"It is NFP Week ({nfp_date}). Historical data suggests heavy consolidation and order flow manipulation until the Friday news release.")
+
+    if pm_mid > 0:
+        rel = "above" if curr_price > pm_mid else "below"
+        prox = "close to" if abs(curr_price - pm_mid) < (pm_mid * 0.002) else ""
+        narrative_parts.append(f"Price is currently trading {prox} {rel} the Previous Month Mid-point ({pm_mid:.0f}).")
+
+    if prev_weekly_ema > 0:
+        ema_rel = "above" if curr_price > prev_weekly_ema else "below"
+        ema_state = "overextended" if abs(ema_dist_pct) > 2.2 else "respecting"
+        narrative_parts.append(f"We are {ema_state} {ema_rel} the Weekly EMA(5) ({prev_weekly_ema:.0f}).")
+
+    profile_type = "Developing"
+    if anchors["tuesday"]:
+        tue_h = anchors["tuesday"]["high"]
+        tue_l = anchors["tuesday"]["low"]
+        if curr_price > tue_h:
+            profile_type = "Expansion (Bullish)"
+            narrative_parts.append("Breach of Tuesday High suggests a Classic Buy Week expansion is underway.")
+        elif curr_price < tue_l:
+            profile_type = "Expansion (Bearish)"
+            narrative_parts.append("Breach of Tuesday Low suggests a Classic Sell Week expansion is underway.")
         else:
-             print(f"   Scenario:  Low formed late ({low_idx.strftime('%A')}). Careful of reversal.")
-    else:
-        print("   Structure: BEARISH (Below Week Open)")
-        if high_idx.weekday() <= 1: # High on Mon or Tue
-            print("   Scenario:  Classic 'Tuesday/Monday High' in effect?")
-            print(f"   --> Expect Expansion toward Week Low ({week_low:.2f})")
-        else:
-             print(f"   Scenario:  High formed late ({high_idx.strftime('%A')}). Careful of reversal.")
-             
+            profile_type = "Consolidation (Inside Tuesday)"
+            narrative_parts.append("Price remains inside the Tuesday range, suggesting a mid-week sweep or NFP consolidation period.")
+
+    open_rel = "above" if curr_price > open_of_week else "below"
+    narrative_parts.append(f"Trading {open_rel} the Weekly Open ({open_of_week:.0f}).")
+
+    narrative = " ".join(narrative_parts) if narrative_parts else "Monitoring weekly development."
+    bias = "BULLISH" if curr_price > open_of_week else "BEARISH"
+
+    output = {
+        "timestamp": datetime.now().isoformat(),
+        "ticker": TICKER,
+        "profile": {
+            "status": profile_type,
+            "narrative": narrative,
+            "bias_direction_est": bias,
+            "current_price": curr_price,
+            "open_of_week": float(open_of_week),
+            "in_nfp_week": is_nfp_week,
+            "nfp_friday_date": nfp_date
+        },
+        "anchors": anchors,
+        "htf_context": {
+            "pwh": pwh,
+            "pwl": pwl,
+            "prev_month_mid": float(pm_mid),
+            "weekly_ema5": prev_weekly_ema,
+            "dist_from_ema_pct": round(ema_dist_pct, 2)
+        }
+    }
+    
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    out_path = os.path.join(OUTPUT_DIR, f"weekly_profile_{TICKER}.json")
+    with open(out_path, 'w') as f:
+        json.dump(output, f, indent=2)
+    
+    print(f"Saved Weekly Profile analysis to {out_path}")
+    print(f"Profile: {profile_type}")
+    print(f"Narrative: {narrative}")
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("ticker", help="Ticker")
-    parser.add_argument("--date", help="Target Date YYYY-MM-DD", required=False)
-    args = parser.parse_args()
-    
-    analyze_weekly_profile(args.ticker, args.date)
+    analyze_weekly_profile()

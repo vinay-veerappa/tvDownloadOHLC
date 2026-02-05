@@ -68,22 +68,18 @@ export function generateNarratives(data: MissionControlSummary): NarrativeItem[]
         add('BIAS', `${intensity} ${direction} Structure`, content, 'HIGH', ['htfTrinity', 'candleScience']);
     }
 
-    // 2. War Game Narrative
-    if (data.panels.warGame && data.panels.warGame.currentScenario) {
-        const scenarios = data.panels.warGame.scenarios;
-        const currentId = data.panels.warGame.currentScenario === 'long' ? 'longTrue' : 'shortTrue'; // Simplified assumption
+    // 2. Mission Matrix Narrative
+    if (data.panels.missionMatrix) {
+        const matrix = data.panels.missionMatrix.matrix;
+        const dominant = matrix.reduce((prev: any, current: any) =>
+            (prev.probability > current.probability) ? prev : current
+        );
 
-        // Find best specific scenario
-        const activeGroup = data.panels.warGame.currentScenario; // 'long' or 'short'
-        const bestOutcome = scenarios
-            .filter((s: any) => s.id.startsWith(activeGroup))
-            .sort((a: any, b: any) => b.probability - a.probability)[0];
-
-        if (bestOutcome) {
-            const prob = bestOutcome.probability.toFixed(0);
-            add('PROJECTION', `Scenario: ${bestOutcome.name}`,
-                `The "${bestOutcome.name}" scenario is currently active with a ${prob}% historical probability. ${bestOutcome.description}`,
-                'HIGH', ['warGame']);
+        if (dominant) {
+            const prob = dominant.probability.toFixed(0);
+            add('PROJECTION', `Scenario: ${dominant.scenario}`,
+                `The "${dominant.scenario}" scenario is active with a ${prob}% probability based on current regime context.`,
+                'HIGH', ['missionMatrix']);
         }
     }
 
@@ -111,19 +107,42 @@ export function generateNarratives(data: MissionControlSummary): NarrativeItem[]
         }
     }
 
-    // 5. Fuel / Distro (New Matrix Logic)
+    // 5. Fuel / Distro
     if (data.panels.distro && data.panels.distro.rows) {
-        const rows = data.panels.distro.rows as any[]; // Type assertion for flexibility
+        const rows = data.panels.distro.rows as any[];
         const globalMedian = data.panels.distro.globalMedianRange || 100;
 
         for (const row of rows) {
             if (row.today && row.today.range) {
                 const fuel = (row.today.range / globalMedian) * 100;
-
                 if (fuel > 100) {
                     add('WARNING', `${row.label} Extension`,
                         `${row.label} range is ${fuel.toFixed(0)}% of the daily median. Expansion may be exhausted.`, 'MEDIUM', ['distro']);
                 }
+            }
+        }
+    }
+
+    // 6. HTF Context & Weekly Story (Phase 6)
+    if (data.panels.weeklyProfile && data.panels.weeklyProfile.profile) {
+        const wp = data.panels.weeklyProfile;
+        const profile = wp.profile;
+        const context = wp.htf_context;
+
+        // Add the primary weekly story
+        if (profile.narrative) {
+            add('PROJECTION', 'Weekly Story',
+                profile.narrative,
+                'HIGH', ['htfTrinity']);
+        }
+
+        // Specific Alert: Mid-point relation
+        if (context.prev_month_mid) {
+            const dist = Math.abs(profile.current_price - context.prev_month_mid);
+            if (dist < (context.prev_month_mid * 0.005)) {
+                add('WARNING', 'Approaching Monthly Mid',
+                    `Price is within 0.5% of the Previous Month Mid-point (${context.prev_month_mid.toFixed(0)}). Expect institutional reaction.`,
+                    'HIGH', ['htfTrinity']);
             }
         }
     }

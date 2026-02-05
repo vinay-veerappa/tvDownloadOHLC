@@ -8,7 +8,7 @@
 import type { HTFTrinityAnalysis } from './htf-trinity';
 import type { C3Projection as CandleScienceAnalysis } from './candle-science';
 import type { PremiumDiscountAnalysis } from './premium-discount';
-import type { WarGameAnalysis } from './war-game';
+import type { MissionMatrixResponse } from './mission-matrix';
 import type { EMAZoneAnalysis } from './ema-zones';
 
 export interface BiasFactor {
@@ -33,7 +33,7 @@ export function calculateBias(
     htfTrinity: HTFTrinityAnalysis | null,
     candleScience: CandleScienceAnalysis | null,
     premiumDiscount: PremiumDiscountAnalysis | null,
-    warGame: WarGameAnalysis | null,
+    missionMatrix: MissionMatrixResponse | null,
     emaZones: EMAZoneAnalysis | null
 ): BiasAnalysis {
     const factors: BiasFactor[] = [];
@@ -57,43 +57,35 @@ export function calculateBias(
         factors.push({ name: 'HTF Trinity', points, weight: 0.3, signal, reason });
     }
 
-    // --- 2. War Game (Weight: 30%) ---
-    if (warGame && warGame.currentScenario) {
+    // --- 2. Mission Matrix (Weight: 30%) ---
+    if (missionMatrix) {
         let signal: 'BULL' | 'BEAR' | 'NEUTRAL' = 'NEUTRAL';
         let points = 50;
-        const scenario = warGame.scenarios.find(s => s.id === (warGame.currentScenario === 'long' ? 'longTrue' : 'shortTrue')); // Simplified mapping
 
-        // Better logic: mapping scenario ID to signal
-        // We need to know which specific scenario is dominant, not just 'long' vs 'short' category
-        // Relying on `currentScenario` which is 'long' or 'short' derived from overnight.
-        // If 'long' (Overnight Bullish), we lean Bullish unless War Game says Long False is high prob?
-        // Actually, War Game is probabilistic. Let's look at the highest probability scenario for the CURRENT condition.
+        // Find the dominant scenario from the matrix
+        const dominant = missionMatrix.matrix.reduce((prev, current) =>
+            (prev.probability > current.probability) ? prev : current
+        );
 
-        const activeGroup = warGame.currentScenario; // 'long' or 'short'
-        const relevantScenarios = warGame.scenarios.filter(s => s.id.startsWith(activeGroup || ''));
+        if (dominant) {
+            const isBullish = dominant.bias === 'Bullish';
+            const prob = dominant.probability;
 
-        // Find highest probability outcome given current state
-        const bestOutcome = relevantScenarios.sort((a, b) => b.probability - a.probability)[0];
-
-        if (bestOutcome) {
-            const isBullishOutcome = bestOutcome.id === 'longTrue' || bestOutcome.id === 'shortFalse';
-            const isBearishOutcome = bestOutcome.id === 'shortTrue' || bestOutcome.id === 'longFalse';
-
-            if (isBullishOutcome) {
+            if (isBullish) {
                 signal = 'BULL';
-                points = 50 + (bestOutcome.probability / 2); // e.g. 60% prob -> 80 points? No, 50 + 30 = 80.
-                // Normalize: 50 base. If 100% prob bull, score 100. If 100% prob bear, score 0.
+                // Map 25% (unlikely) to 90% (likely) range -> score 
+                points = 50 + (prob / 2);
             } else {
                 signal = 'BEAR';
-                points = 50 - (bestOutcome.probability / 2);
+                points = 50 - (prob / 2);
             }
 
             factors.push({
-                name: 'War Game',
+                name: 'Mission Matrix',
                 points,
                 weight: 0.3,
                 signal,
-                reason: `${bestOutcome.name} (${bestOutcome.probability.toFixed(0)}%)`
+                reason: `${dominant.scenario} (${dominant.probability.toFixed(0)}%)`
             });
         }
     }

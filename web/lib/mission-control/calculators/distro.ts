@@ -58,61 +58,23 @@ async function loadDerivedStats(ticker: string): Promise<any | null> {
 }
 
 // Helper to read LIVE today stats directly from parquet
+// Helper to read LIVE today stats directly from JSON
 async function readLiveTodayStats(ticker: string): Promise<{ todayDaily: any, sessionStats: any } | null> {
     try {
-        const parquet = await import('parquetjs-lite');
-        const path = await import('path');
-        // Point to live storage
-        // Assuming -NQ for now as primary live ticker
-        const livePath = path.join(process.cwd(), '..', 'data', 'live', `live_storage_-NQ.parquet`);
+        const { readRecentBars } = await import('../parquet-reader');
+        // readRecentBars(ticker, timeframe, count) - it automatically handles live_chart_{ticker}.json
+        const todayBars = await readRecentBars(ticker, '1m', 5000); // Past ~3 days of data
 
-        if (!require('fs').existsSync(livePath)) return null;
-
-        const reader = await parquet.ParquetReader.openFile(livePath);
-        const cursor = reader.getCursor();
-        let record = null;
-
-        // We need "Today". Since we can't easily seek, and file is 9MB (300k rows),
-        // we might need to read all? Or try to skip?
-        // 9MB is fast to read in Node.
-
-        const todayBars: any[] = [];
-        // Approximate "Today" = Data from last 24h? Or same calendar day?
-        // Market day starts 18:00 prev day.
-        // Let's assume dashboard wants the "current trading session".
-        // Let's just grab the last 2000 bars (~33 hours of 1m data) to be safe and filter in JS.
-        // Reading all is safest to find the valid "current session".
-
-        while (record = await cursor.next()) {
-            todayBars.push(record);
-        }
-        await reader.close();
-
-        if (todayBars.length === 0) return null;
+        if (!todayBars || todayBars.length === 0) return null;
 
         // Filter for "Current Session"
-        // Simply use the date of the LAST bar.
         const lastBar = todayBars[todayBars.length - 1];
-        // Timestamps in parquet are often ms or s.
-        // debug script showed: 1.770229e+12 (ms) -> 2026-02-04
-
-        let lastTs = Number(lastBar.time || lastBar.timestamp);
-        // Heuristic: if small, it's seconds. If large, ms.
-        if (lastTs < 10000000000) lastTs *= 1000; // Convert sec to ms
-
+        let lastTs = lastBar.timestamp;
         const lastDate = new Date(lastTs);
-        // We want all bars from the same "Trading Day". 
-        // Simplification: All bars from the same Calendar Day (US/Eastern) OR 
-        // if it's < 18:00, it's today. If > 18:00, it's new session?
-        // Let's just take all bars from the same YYYY-MM-DD as the last bar (in ET).
-
-        // Convert to ET string
         const etDateStr = lastDate.toLocaleDateString('en-US', { timeZone: 'America/New_York' });
 
         const currentSessionBars = todayBars.filter(b => {
-            let t = Number(b.time || b.timestamp);
-            if (t < 10000000000) t *= 1000;
-            const d = new Date(t);
+            const d = new Date(b.timestamp);
             return d.toLocaleDateString('en-US', { timeZone: 'America/New_York' }) === etDateStr;
         });
 
@@ -128,43 +90,34 @@ async function readLiveTodayStats(ticker: string): Promise<{ todayDaily: any, se
 
         const todayDaily = {
             range: (dHigh - dLow),
-            pct: ((dHigh - dLow) / dOpen) * 100
+            pct: dOpen > 0 ? ((dHigh - dLow) / dOpen) * 100 : 0
         };
 
         // 2. Calculate Session Stats
-        // Definitions (ET)
-        // Standardized: s=start hour, sm=start min, e=end hour, em=end min
         const sessions = {
-            'ASIA': { s: 18, sm: 0, e: 2, em: 30 }, // 18:00 - 02:30
-            'LONDON': { s: 2, sm: 30, e: 7, em: 30 }, // 02:30 - 07:30
-            'NY1': { s: 7, sm: 30, e: 11, em: 30 }, // 07:30 - 11:30
-            'NY2': { s: 11, sm: 30, e: 17, em: 0 }  // 11:30 - 17:00
+            'ASIA': { s: 18, sm: 0, e: 2, em: 30 },
+            'LONDON': { s: 2, sm: 30, e: 7, em: 30 },
+            'NY1': { s: 7, sm: 30, e: 11, em: 30 },
+            'NY2': { s: 11, sm: 30, e: 17, em: 0 }
         };
 
         const sessionStats: any = {};
 
         for (const [key, range] of Object.entries(sessions)) {
             const sBars = currentSessionBars.filter(b => {
-                let t = Number(b.time || b.timestamp);
-                if (t < 10000000000) t *= 1000;
-                const d = new Date(t);
-                const h = parseInt(d.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }));
-                const m = parseInt(d.toLocaleString('en-US', { timeZone: 'America/New_York', minute: 'numeric' }));
+                const d = new Date(b.timestamp);
+                const formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false });
+                const mFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', minute: 'numeric' });
+                const h = parseInt(formatter.format(d));
+                const m = parseInt(mFormatter.format(d));
 
-                // Minute logic
                 const tMin = h * 60 + m;
-                // Handle wrap for Asia (18:00)
-                // If s > e (e.g. 18 to 2), we check separate ranges
-
                 const sTime = (range.s * 60) + (range.sm || 0);
                 const eTime = (range.e * 60) + (range.em || 0);
 
                 if (sTime > eTime) {
-                    // Overnight (e.g. 18:00 to 02:30)
-                    // >= 18:00 OR < 02:30
                     return tMin >= sTime || tMin < eTime;
                 } else {
-                    // Intraday (e.g. 07:30 to 11:30)
                     return tMin >= sTime && tMin < eTime;
                 }
             });
@@ -172,19 +125,15 @@ async function readLiveTodayStats(ticker: string): Promise<{ todayDaily: any, se
             if (sBars.length > 0) {
                 let h = -Infinity, l = Infinity, o = sBars[0].open;
                 sBars.forEach(b => { h = Math.max(h, b.high); l = Math.min(l, b.low); });
-                sessionStats[key] = { range: h - l, pct: (h - l) / o * 100 };
+                sessionStats[key] = { range: h - l, pct: o > 0 ? (h - l) / o * 100 : 0 };
             }
         }
 
         // 3. 09:30-10:00 (30m Micro)
         const bars0930_1000 = currentSessionBars.filter(b => {
-            let t = Number(b.time || b.timestamp);
-            if (t < 10000000000) t *= 1000;
-            const d = new Date(t);
-            const h = parseInt(d.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }));
-            const m = parseInt(d.toLocaleString('en-US', { timeZone: 'America/New_York', minute: 'numeric' }));
-
-            // 09:30 to 10:00 (exclusive)
+            const d = new Date(b.timestamp);
+            const h = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(d));
+            const m = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', minute: 'numeric' }).format(d));
             const tMin = h * 60 + m;
             return tMin >= (9 * 60 + 30) && tMin < (10 * 60);
         });
@@ -192,34 +141,26 @@ async function readLiveTodayStats(ticker: string): Promise<{ todayDaily: any, se
         if (bars0930_1000.length > 0) {
             let h = -Infinity, l = Infinity, o = bars0930_1000[0].open;
             bars0930_1000.forEach(b => { h = Math.max(h, b.high); l = Math.min(l, b.low); });
-            sessionStats['0930-1000'] = {
-                range: h - l,
-                pct: (h - l) / o * 100
-            };
+            sessionStats['0930-1000'] = { range: h - l, pct: o > 0 ? (h - l) / o * 100 : 0 };
         }
 
         // 4. 09:30 Candle (1m)
         const candle0930 = currentSessionBars.find(b => {
-            let t = Number(b.time || b.timestamp);
-            if (t < 10000000000) t *= 1000;
-            const d = new Date(t);
-            const h = parseInt(d.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }));
-            const m = parseInt(d.toLocaleString('en-US', { timeZone: 'America/New_York', minute: 'numeric' }));
+            const d = new Date(b.timestamp);
+            const h = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(d));
+            const m = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', minute: 'numeric' }).format(d));
             return h === 9 && m === 30;
         });
 
         if (candle0930) {
             const r = candle0930.high - candle0930.low;
-            sessionStats['0930'] = {
-                range: r,
-                pct: (r / candle0930.open) * 100
-            };
+            sessionStats['0930'] = { range: r, pct: (r / candle0930.open) * 100 };
         }
 
         return { todayDaily, sessionStats };
 
     } catch (e) {
-        console.error("Error reading live stats:", e);
+        console.error("Error reading live stats from JSON:", e);
         return null; // Fallback to derived
     }
 }

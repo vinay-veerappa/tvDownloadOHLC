@@ -62,8 +62,15 @@ export function AppSidebar() {
             active: pathname === "/profiler",
         },
         {
+            label: "Mission Control",
+            icon: Radio,
+            href: "/dashboard/mission-control/NQ1",
+            active: pathname?.startsWith("/dashboard/mission-control"),
+            badge: "New", // Feature flag for badge
+        },
+        {
             label: "Chart",
-            icon: Radio, // Using Radio/Signal for Live Chart concept
+            icon: Activity,
             href: "/tools/live-chart",
             active: pathname === "/tools/live-chart",
         },

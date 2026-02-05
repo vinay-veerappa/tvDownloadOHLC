@@ -22,11 +22,10 @@ export interface MissionControlSummary {
         candleScience: any | null;
         premiumDiscount: any | null;
         distro: any | null;
-        regimeStreak: any | null;
-        modLod: any | null;
         economicCalendar: any | null;
         emaZones: any | null;
-        warGame: any | null;
+        missionMatrix: any | null;
+        weeklyProfile: any | null;
         narrative: NarrativeItem[];
     };
 }
@@ -49,32 +48,27 @@ export class MissionControlService {
             candleScience,
             premiumDiscount,
             distro,
-            regimeStreak,
             economicCalendar,
             emaZones,
-            warGame,
+            missionMatrix,
             dailyEM,
+            weeklyProfile,
         ] = await Promise.all([
             this.getHTFTrinity(),
             this.getCandleScience(),
             this.getPremiumDiscount(),
             this.getDistro(),
-            this.getRegimeStreak(),
             this.getEconomicCalendar(),
             this.getEMAZones(),
-            this.getWarGame(),
+            this.getMissionMatrix(),
             this.getDailyEM(),
+            this.getWeeklyProfile(),
         ]);
 
-        const asiaStatus = regimeStreak?.sessions.find(s => s.session === 'ASIA')?.status || 'NEUTRAL';
-        const londonStatus = regimeStreak?.sessions.find(s => s.session === 'LONDON')?.status || 'NEUTRAL';
-        const modLod = await this.getModLod({ asia: asiaStatus, london: londonStatus });
-
-        // Calculate current fuel from Distro data (New Matrix Logic)
-        // We use the last row's today.range vs global median if available, or just null
+        // Calculate current fuel from Distro data
         let fuel: number | null = null;
         if (distro && distro.rows && distro.rows.length > 0 && distro.globalMedianRange) {
-            const lastRow = distro.rows[distro.rows.length - 1]; // e.g. NY2 or last
+            const lastRow = distro.rows[distro.rows.length - 1];
             if (lastRow.today && lastRow.today.range) {
                 fuel = (lastRow.today.range / distro.globalMedianRange) * 100;
             }
@@ -85,27 +79,23 @@ export class MissionControlService {
             htfTrinity,
             candleScience,
             premiumDiscount,
-            warGame,
+            missionMatrix,
             emaZones
         );
 
         // Generate Narrative
-        // Create a temporary summary object to pass to the generator
         const tempSummary: any = {
             bias,
-            // Extract a proxy "fuel" from the most recent session (likely NY2 or current)
-            // distro.rows is array. Let's find NY1 or NY2
-            fuel: null, // Narrative generator might need update to handle complex distro
+            fuel,
             panels: {
                 htfTrinity,
                 candleScience,
                 premiumDiscount,
                 distro,
-                regimeStreak,
-                modLod,
                 economicCalendar,
                 emaZones,
-                warGame
+                missionMatrix,
+                weeklyProfile
             }
         };
         const narrative = generateNarratives(tempSummary);
@@ -124,11 +114,10 @@ export class MissionControlService {
                 candleScience,
                 premiumDiscount,
                 distro,
-                regimeStreak,
-                modLod,
                 economicCalendar,
                 emaZones,
-                warGame,
+                missionMatrix,
+                weeklyProfile,
                 narrative,
             },
         };
@@ -150,19 +139,16 @@ export class MissionControlService {
         const { PrismaClient } = await import('@prisma/client');
         const prisma = new PrismaClient();
         try {
-            // Normalize ticker for Prisma (NQ1 -> /NQ)
             const roots = ["NQ", "ES", "YM", "RTY", "GC", "CL", "SI", "HG", "NG", "ZB", "ZN"];
             const clean = this.ticker.replace(/[^a-zA-Z]/g, "").toUpperCase();
             const root = clean.replace(/\d+$/, "");
             const prismaTicker = roots.includes(root) ? `/${root}` : this.ticker;
 
-            // Try current ExpectedMove first
             const current = await prisma.expectedMove.findFirst({
                 where: { ticker: prismaTicker }
             });
             if (current) return current.straddle || current.em252 || null;
 
-            // Fallback to history
             const latest = await prisma.expectedMoveHistory.findFirst({
                 where: { ticker: prismaTicker },
                 orderBy: { date: 'desc' }
@@ -176,7 +162,6 @@ export class MissionControlService {
         }
     }
 
-    // Panel data methods (to be implemented in Phase 2)
     private async getHTFTrinity() {
         const { calculateHTFTrinity } = await import('./calculators/htf-trinity');
         try {
@@ -210,7 +195,6 @@ export class MissionControlService {
     private async getDistro() {
         const { calculateDistro } = await import('./calculators/distro');
         try {
-            // Cache Distro for 5 mins as it uses 1m data and is heavy
             return await getOrSet(`distro:${this.ticker}:matrix`, CACHE_TTL.MEDIUM, () => calculateDistro(this.ticker));
         } catch (error) {
             console.error(`Error calculating Distro for ${this.ticker}:`, error);
@@ -218,24 +202,17 @@ export class MissionControlService {
         }
     }
 
-    private async getRegimeStreak() {
-        const { calculateRegimeStreak } = await import('./calculators/regime-streak');
-        try {
-            return await calculateRegimeStreak(this.ticker);
-        } catch (error) {
-            console.error(`Error calculating Regime Streak for ${this.ticker}:`, error);
-            return null;
-        }
+    async getWeeklyProfile() {
+        return this.readJson<any>(`weekly_profile_${this.ticker}.json`)
+            .catch(() => null);
     }
 
-    private async getModLod(overnightStatuses: { asia: string; london: string }) {
-        const { calculateHODLOD } = await import('./calculators/hod-lod');
-        try {
-            return await calculateHODLOD(this.ticker, overnightStatuses);
-        } catch (error) {
-            console.error(`Error calculating MOD/LOD Radar for ${this.ticker}:`, error);
-            return null;
-        }
+    private async readJson<T>(filename: string): Promise<T> {
+        const { readFile } = await import('fs/promises');
+        const path = await import('path');
+        const filePath = path.join(process.cwd(), '..', 'data', 'derived', filename);
+        const content = await readFile(filePath, 'utf-8');
+        return JSON.parse(content);
     }
 
     private async getEconomicCalendar() {
@@ -258,15 +235,12 @@ export class MissionControlService {
         }
     }
 
-    private async getWarGame() {
-        // WarGame depends on HTF Trinity, we should pass it or let it calc/cache independently.
-        // The implementation calculateWarGame(ticker) inside 'calculators/war-game' might re-calc HTF.
-        // Let's check war-game.ts imports... Assuming it does its own thing for now, we just cache the result.
-        const { calculateWarGame } = await import('./calculators/war-game');
+    private async getMissionMatrix() {
+        const { calculateMissionMatrix } = await import('./calculators/mission-matrix');
         try {
-            return await getOrSet(`wargame:${this.ticker}`, CACHE_TTL.MEDIUM, () => calculateWarGame(this.ticker));
+            return await getOrSet(`mission_matrix:${this.ticker}`, CACHE_TTL.MEDIUM, () => calculateMissionMatrix(this.ticker));
         } catch (error) {
-            console.error(`Error calculating War Game Matrix for ${this.ticker}:`, error);
+            console.error(`Error calculating Mission Matrix for ${this.ticker}:`, error);
             return null;
         }
     }

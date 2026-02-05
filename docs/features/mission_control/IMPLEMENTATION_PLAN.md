@@ -78,7 +78,7 @@ This plan outlines the phased implementation of the Mission Control Dashboard, p
 
 ### 2.4 Regime Streak Panel
 - [/] Create `lib/mission-control/calculators/regime-streak.ts` (In Progress)
-- [ ] Create `RegimeStreakPanel.tsx`
+- [ ] **Note**: Visualization moved to Mission Matrix (Phase 4.1).
 
 ### 2.5 Verification
 - [ ] All panels render with real data
@@ -119,10 +119,18 @@ This plan outlines the phased implementation of the Mission Control Dashboard, p
 
 ## Phase 4: Advanced Bias & War Game
 
-### 4.1 War Game Matrix (The Battle)
-- [x] Implement `WarGamePanel.tsx` with scenarios
-- [x] Define activation logic: `Price > Zone + News = Breakout Scenario`
-- [x] Create "The Battle" modal for drill-down analysis (Simplified to panel view for now)
+### 4.1 Integrated Mission Matrix
+- [ ] Create `lib/mission-control/calculators/mission-matrix.ts`
+  - **Inputs**: Current Asia/London status.
+  - **Logic**: 
+    1. Filter historical days matching current Overnight Context.
+    2. Calculate Outcome Probabilities (Long/Short True/False).
+    3. Calculate HOD/LOD Mode Times per Outcome.
+    4. Calculate Avg HOD/LOD % (Expansion) using **Unadjusted Data**.
+- [ ] Create `/api/mission/[ticker]/mission-matrix/route.ts` (or integrate into summary).
+- [ ] Create `MissionMatrixPanel.tsx`
+  - **Layout**: High-density table with rows (Outcomes) and columns (Probs, Times, Levels).
+  - **Header**: Display current Regime Streak context.
 
 ### 4.2 Multi-Factor Daily Bias
 - [x] Aggregate signals from all panels:
@@ -143,9 +151,9 @@ This plan outlines the phased implementation of the Mission Control Dashboard, p
 > These features are blocked on user definitions. Implementation will proceed once specs are provided.
 
 ### 5.1 War Game Matrix (TBD)
-- [ ] **Blocked**: Awaiting scenario activation criteria
-- [ ] **Blocked**: Awaiting conviction score logic
-- [ ] Create `WarGamePanel.tsx` (placeholder ready)
+### 5.1 Mission Matrix (Ready)
+- [ ] **Unblocked**: Activation criteria defined (Overnight Context).
+- [ ] Implement calculation and UI.
 - [ ] Create The Battle modal
 
 ### 5.2 ICT Daily Bias (TBD)

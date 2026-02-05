@@ -12,12 +12,10 @@ import { Skeleton } from '../ui/skeleton';
 import { EMAZonePanel } from './panels/EMAZonePanel';
 import { PremiumDiscountPanel } from './panels/PremiumDiscountPanel';
 import { DistroPanel } from './panels/DistroPanel';
-import { RegimeStreakPanel } from './panels/RegimeStreakPanel';
 import { CandleSciencePanel } from './panels/CandleSciencePanel';
-import { MODLODPanel } from './panels/MODLODPanel';
 import { EconomicCalendarPanel } from './panels/EconomicCalendarPanel';
-import { HTFTrinityPanel } from './panels/HTFTrinityPanel';
-import { WarGamePanel } from './panels/WarGamePanel';
+import { HTFContextPanel } from './panels/HTFContextPanel';
+import { MissionMatrixPanel } from './panels/MissionMatrixPanel';
 import { NarrativePanel } from './panels/NarrativePanel';
 
 interface MissionControlGridProps {
@@ -64,10 +62,10 @@ export function MissionControlGrid({
 
         switch (panelId) {
             case 'htfTrinity':
-                return <HTFTrinityPanel data={data.panels.htfTrinity} isLoading={isLoading} />;
+                return <HTFContextPanel ticker={ticker} className="flex-1" />;
 
-            case 'warGame':
-                return <WarGamePanel data={data.panels.warGame} isLoading={isLoading} />;
+            case 'missionMatrix':
+                return <MissionMatrixPanel data={data.panels.missionMatrix} isLoading={isLoading} />;
 
             case 'emaZones':
                 return <EMAZonePanel data={data.panels.emaZones} isLoading={isLoading} />;
@@ -78,14 +76,8 @@ export function MissionControlGrid({
             case 'distro':
                 return <DistroPanel data={data.panels.distro} isLoading={isLoading} />;
 
-            case 'regimeStreak':
-                return <RegimeStreakPanel data={data.panels.regimeStreak} isLoading={isLoading} />;
-
             case 'candleScience':
                 return <CandleSciencePanel data={data.panels.candleScience} isLoading={isLoading} />;
-
-            case 'modLod':
-                return <MODLODPanel data={data.panels.modLod} isLoading={isLoading} />;
 
             case 'economicCalendar':
                 return <EconomicCalendarPanel data={data.panels.economicCalendar} isLoading={isLoading} />;

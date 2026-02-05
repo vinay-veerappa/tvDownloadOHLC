@@ -15,6 +15,7 @@
 2.  **Professional Aesthetics**: A "Bloomberg Terminal" inspired design suitable for a premium newsletter and Discord distribution.
 3.  **Modular & Expandable**: Built with collapsible "panels" to allow progressive disclosure of information.
 4.  **Dual-Purpose Output**: Designed for both interactive use and static "snapshot" export for newsletters/Discord.
+5.  **Interactive Deep-Dives**: Collapsible panels expand into detailed modals (see [POPUP_SPECIFICATION.md](./POPUP_SPECIFICATION.md)).
 
 ---
 
@@ -38,7 +39,7 @@ The dashboard follows a **"Bento Grid"** design pattern, optimized for a 16:9 as
 +---------------------------------------------------------------------+
 |                                                                     |
 | +------------------+  +----------------------+  +------------------+|
-| | HTF TRINITY      |  | THE BATTLE (MODAL)   |  | CANDLE SCIENCE  ||
+| | HTF CONTEXT      |  | THE BATTLE (MODAL)   |  | CANDLE SCIENCE  ||
 | | Weekly/Monthly   |  | Scenario Details     |  | 1H / 1D Projs   ||
 | | Confidence %     |  | Sniper/Grinder Plan  |  | Edge Probability||
 | +------------------+  +----------------------+  +------------------+|
@@ -80,7 +81,7 @@ The dashboard follows a **"Bento Grid"** design pattern, optimized for a 16:9 as
 
 ---
 
-### 4.2 HTF Trinity Panel
+### 4.2 HTF Context Panel
 
 **Purpose**: Top-down directional context from Weekly and Monthly timeframes.
 
@@ -93,27 +94,45 @@ The dashboard follows a **"Bento Grid"** design pattern, optimized for a 16:9 as
 
 **Expandable Detail**:
 - **Weekly Modal**: Chart embed with Bridge Anchors (Sunday/Tuesday), Variance Gauge, Key Levels (5 EMA, 1% Target).
-- **Monthly Modal**: Climate Map (Daily chart), Flight Checklist (NFP Position, PM 50%, Month Color).
+- **Monthly Modal**: Climate Map (Daily chart), Flight Checklist (NFP Position, PM 30% Bull/Bear Levels).
 
 ---
 
-### 4.3 War Game Matrix
+### 4.3 Integrated Mission Matrix
 
-**Purpose**: Scenario-based probability analysis. What happens if X?
+**Purpose**: The central command deck minimizing screen real estate by combining **Probabilities**, **Timing**, and **Regime Context** into a single high-density view.
 
-| Scenario | Description | Data Source |
-| :--- | :--- | :--- |
-| **Long TRUE** | Asia/London bullish, NY follows through. | `DailyClassification` + `Profiler` |
-| **Long FALSE** | Asia/London bullish, NY reverses. | `DailyClassification` + `Profiler` |
-| **Short TRUE** | Asia/London bearish, NY follows through. | `DailyClassification` + `Profiler` |
-| **Short FALSE** | Asia/London bearish, NY reverses. | `DailyClassification` + `Profiler` |
+**Data Fusion**:
+1.  **Regime Context (Header)**: Displays current Asia/London status and active Streaks (e.g., "London: Short True (2 Day Streak)").
+2.  **Outcome Probabilities (Rows)**: Long/Short True/False derived from the Regime Context filter.
+3.  **HOD/LOD Radar (Columns)**: "Time" columns in the matrix replace the separate Radar panel, showing the **Mode Time** for each specific outcome.
 
-**Panel Content (per scenario)**:
-- Probability %.
-- Median HOD/LOD Times (Histogram).
-- Daily High/Low Distribution (Histogram).
-- Level Hits (NY1 Mid, NY1 High, NY Open, NY1 Low).
-- Price Path (Overlay chart).
+**Layout Specification**:
+
+**A. Header: Context & Streaks**
+> "Context: ASIA [Long True] | LONDON [Short False]"
+> "Regime: NY Breakout [2 Day Streak] (Max: 4). Reversion Risk: MEDIUM."
+
+**B. The Matrix (Main Table)**
+| Scenario | Prob | Count | Bias | LOD Time | HOD Time | Avg HOD % | Avg LOD % | Key Level Hits |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Long True** | **45%** | 12 | 🟩 | 09:45 | 10:30 | +0.85% | -0.12% | PDH (80%) |
+| **Long False** | 15% | 4 | 🟥 | 10:30 | 09:45 | +0.32% | -0.45% | NY Open (90%) |
+| **Short True** | 10% | 3 | 🟥 | 11:00 | 10:15 | -0.15% | -0.92% | PDL (85%) |
+| **Short False** | 30% | 8 | 🟩 | 10:00 | 11:00 | +0.55% | -0.55% | Mid (70%) |
+
+*Columns Explained*:
+- **Scenario**: The 4 possible NY outcomes.
+- **Prob**: % chance based on filtering historical days with *matching* Asia/London profiles.
+- **LOD/HOD Time**: The *Mode Time* (most frequent) for the HOD/LOD.
+- **Avg HOD % / LOD %**: The average percentage distance from the Day Open.
+    > **RULE**: Must use **Unadjusted Data** (Raw Contract Prices) for percent calculations to ensure accurate historical comparisons. Do not use continuous/back-adjusted contract data which distorts percentage moves.
+- **Key Level Hits**: Probability of touching institutional levels (PDH, PDL, Midpoints).
+
+**C. Visual & Display Rules**:
+- **Dominant Scenario**: Highlight row with highest probability (Gold/Glow border).
+- **Bias Color**: Green for Net Bullish (> +0.1%), Red for Net Bearish (< -0.1%).
+- **HOD/LOD Intensity**: Bold text if % > 0.75% (Expansion Day).
 
 ---
 
@@ -134,18 +153,7 @@ The dashboard follows a **"Bento Grid"** design pattern, optimized for a 16:9 as
 
 ---
 
-### 4.5 MOD/LOD Radar
-
-**Purpose**: Statistical timing for the daily High and Low.
-
-> [!NOTE]
-> **Uses Unadjusted Data** for HOD/LOD price percentage moves to ensure accurate historical comparison.
-
-| Element | Data Source |
-| :--- | :--- |
-| **HOD Mode/Median** | `{ticker}_daily_hod_lod_unadjusted.json` |
-| **LOD Mode/Median** | `{ticker}_daily_hod_lod_unadjusted.json` |
-| **Timing Histogram** | Derived from unadjusted HOD/LOD data (30m buckets). |
+### 4.5 [Merged into Matrix]
 
 ---
 
@@ -157,33 +165,70 @@ The dashboard follows a **"Bento Grid"** design pattern, optimized for a 16:9 as
 
 #### Calculation Logic
 
-| Metric | Calculation |
-| :--- | :--- |
-| **Current Session Range** | `Session High - Session Low` (for current session). |
-| **Median N-Day Range** | `Median(Last N Session Ranges)` for the **same session type AND day of week**. |
-| **Fuel %** | `(Current Range / Median Range) * 100` |
-| **Consumed %** | `(Current Range / Daily Median Range) * 100` |
+| Metric | Calculation | Notes |
+| :--- | :--- | :--- |
+| **Trading Day** | 18:00 ET (Prev Day) to 17:00 ET (Curr Day) | **CRITICAL**: Sunday 18:00 merges into Monday session. |
+| **Current Range** | `Session High - Session Low` | Developing range for current session. |
+| **Median N-Day Range** | `Median(Last N Completed Sessions)` | **Excludes** current developing session to avoid skew. |
+| **Fuel %** | `(Current Range / Median Range) * 100` | Volatility consumption metric. |
 
-#### Session Types
-| Session | Time (NY) |
-| :--- | :--- |
-| **ASN (Asia)** | 18:00 - 02:00 |
-| **LDN (London)** | 02:00 - 08:00 |
-| **NY1** | 09:30 - 12:00 |
-| **NY2** | 12:00 - 16:00 |
-| **09:30-10:00** | First 30m of RTH |
+#### 4.6.2 Session Windows (EST)
 
-#### Configurable Lookback
-- **Default**: 10 days
-- **Alternative**: 5 days (user toggle)
+Each session is divided into three functional windows strictly following the Profiler "Design Rules":
 
-#### Day of Week Filtering
-- Statistics are calculated **per day of week** (e.g., Monday NY1 vs. Monday NY1).
+| Session | Reference Window | Status Window | Broken Window |
+| :--- | :--- | :--- | :--- |
+| **Asia** | 06:00 PM - 07:29 PM | 07:30 PM - 02:29 AM | 02:30 AM - 05:00 PM |
+| **London** | 02:30 AM - 03:29 AM | 03:30 AM - 07:29 AM | 07:30 AM - 05:00 PM |
+| **NY1** | 07:30 AM - 08:29 AM | 08:30 AM - 11:29 AM | 11:30 AM - 05:00 PM |
+| **NY2** | 11:30 AM - 12:29 PM | 12:30 PM - 04:59 PM | 06:00 PM - 05:00 PM (Next Day) |
+
+#### 4.6.3 Status Determination Logic (Break-Order)
+
+Status is classified based on whether price breaks the **Reference Window's** High/Low during the **Status Window**:
+
+- **Long True (1)**: Price broke **High** ONLY.
+- **Long False (2)**: Price broke **High** FIRST, then broke **Low**.
+- **Short True (3)**: Price broke **Low** ONLY.
+- **Short False (4)**: Price broke **Low** FIRST, then broke **High**.
+- **Neutral (0)**: No sides broken.
+
+#### 4.6.4 "Broken" Status
+
+A session is marked as **Broken** if price touches its **Midpoint** (High+Low)/2 during its specific **Broken Window**.
+
+- **Constraint**: The "Broken" flag is only evaluated *after* the session's Status Window has concluded.
+- **Active Session Rule**: An active session cannot be "Broken". It is considered `Broken: False` until the window closes.
+- **NY2 Exception**: The "Broken Window" for NY2 starts at 18:00 (Next Cycle). Therefore, NY2 can **never** be "Broken" during the current trading day.
+
+#### 4.6.5 Matrix Filtering Logic (`f_match`)
+
+The Mission Matrix identifies "Twin Days" by matching the current day's profile against historical data:
+
+1.  **Session Status Filtering**:
+    *   **Strict Matching**: Historical sessions must match the Live session status *exactly*.
+    *   **Pending Sessions**: If Live is Pending (e.g., Active), status is treated as the *current state*. (e.g., Live "Long True" matches Historical "Long True").
+
+2.  **"Broken" Filtering**:
+    *   **If Live Session is BROKEN**: Filter *strictly* for historical days that were also Broken.
+    *   **If Live Session is NOT BROKEN** (or Pending): Do **NOT** filter by the Broken attribute. Allow historical days to be either Broken or Not Broken. (Loose Matching).
+
+#### 4.6.6 Streak Calculation Logic
+
+Streaks track the momentum of regimes:
+1.  **Ignore Broken**: The "Broken" status is ignored for streak calculation.
+2.  **Individual Streaks**: Tracks runs of identical status (e.g., 3 days of "Long True").
+3.  **Group Streaks**: Tracks runs of the same *Side* (True vs False).
+    - `Long True` + `Short True` = **TRUE Group**.
+    - `Long False` + `Short False` = **FALSE Group**.
+
+#### Analysis Settings
+- **Lookback**: 10 Trading Days (Global), 16 samples (Day-Specific Sessions).
+- **Day Filtering**: Statistics are calculated per **Day of Week** (e.g., Wednesday stats only use historical Wednesdays).
 
 ---
 
 ### 4.7 Candle Science Panel
-
 **Purpose**: Probabilistic C3 projections for **Daily (1D) timeframe only**.
 
 > [!NOTE]
@@ -214,43 +259,7 @@ The dashboard follows a **"Bento Grid"** design pattern, optimized for a 16:9 as
 
 ---
 
-### 4.9 Session Regime & Streak Panel
-
-**Purpose**: Historical regime analysis showing TRUE/FALSE distribution and streak probability for each session.
-
-![Streak Reference](streak_reference.png)
-
-#### Per-Session Statistics
-| Metric | Description |
-| :--- | :--- |
-| **Days in History** | Total days analyzed for this session. |
-| **Current State** | `FALSE_ACTIVE` or `TRUE_ACTIVE` - current regime. |
-| **BO Direction** | Current breakout direction (LONG/SHORT). |
-| **False %** | Historical % of sessions that were FALSE. |
-| **True %** | Historical % of sessions that were TRUE. |
-| **Max Streak (false)** | Longest consecutive FALSE streak in history. |
-| **Max Streak (true)** | Longest consecutive TRUE streak in history. |
-| **Current Streak** | Current consecutive streak (e.g., "2 days (true)"). |
-| **Days w/ False** | Count of FALSE days in lookback. |
-| **Days w/o False** | Count of TRUE days in lookback. |
-
-#### Historical MFE/MAE Percentiles
-| Metric | Description |
-| :--- | :--- |
-| **Hist BO MFE 50%** | Median MFE for historical breakouts. |
-| **Hist BO MFE 70%** | 70th percentile MFE. |
-| **Hist BO MFE MAX** | Maximum MFE observed. |
-| **Hist BO MAE 50%** | Median MAE (adverse excursion). |
-| **Range Size** | Typical range as % of price. |
-
-#### Today's Comparison
-| Metric | Description |
-| :--- | :--- |
-| **TODAY BO MFE** | Today's breakout MFE vs historical. |
-| **TODAY BO MAE** | Today's breakout MAE vs historical. |
-| **TODAY false MFE/MAE** | Stats if today's session flips to FALSE. |
-
-**Key Insight**: When `Current Streak` approaches `Max Streak`, probability of regime flip increases.
+### 4.9 [Merged into Matrix]
 
 ---
 
@@ -282,65 +291,71 @@ The dashboard follows a **"Bento Grid"** design pattern, optimized for a 16:9 as
 
 ---
 
-## 6. Analysis Logic - Pending Clarification
+## 6. Analysis Logic - Detailed Specifications
 
-> [!IMPORTANT]
-> The following logic blocks require further definition from the user before implementation.
+### 6.1 HTF Context: EMA & Weekly Profile Analysis
 
-### 6.1 HTF Context: EMA Zone Analysis
-
-**Purpose**: One component of HTF context - define support/resistance zones based on historical hit rates from the Daily 5 EMA.
+**Purpose**: Define Overbought/Oversold volatility zones based on **Weekly** deviations from the 5-EMA.
 
 > [!NOTE]
-> **TBD**: How to tie all HTF context elements together (EMA zones, weekly profile, monthly profile, etc.).
+> **Data Source**: Weekly Aggregation (Friday Close).
+> **Anchor**: Previous Week's 5-EMA.
 
 ![EMA Zone Analysis Reference](ema_zone_analysis_reference.png)
 
 #### Calculation Method
-1. **Anchor**: Daily 5 EMA (calculated on Close).
-2. **Zone Levels**: Calculate price levels at various % distances from EMA (0.5%, 1%, 1.5%, 2%, 2.5%, 3%, 3.5%, 4%, 5%).
-3. **Hit Rate Analysis**: For each zone level, calculate:
-   - **Hit Rate ↑**: % of weeks price touched this level moving UP from EMA.
-   - **Hit Rate ↓**: % of weeks price touched this level moving DOWN from EMA.
-   - **Status**: "Good" if hit rate above threshold, "Fail" otherwise.
+1. **Timeframe**: **WEEKLY** (Fri-Fri alignment).
+2. **Anchor**: `EMA(Close, 5)` of the **Previous Week**.
+3. **Zones**:
+   - **Zone 1 (2-3%)**: `Anchor * 1.02` to `Anchor * 1.03`
+   - **Zone 2 (2.5-3%)**: `Anchor * 1.025` to `Anchor * 1.03`
 
-#### NQ Sweet Spot: 2-3% Zone
-Based on 52-week analysis:
-- **Zone Entry**: 61.5% (price enters this zone)
-- **Zone Complete**: 46.2% (price completes the move)
-- **Completion Rate**: 72.7%
+### 6.1 HTF Context: EMA & ICT Weekly Profiles
 
-#### All Levels Hit Rate Table (NQ Example)
-| Level % | Hit Rate ↑ | Hit Rate ↓ | Status |
-| :--- | :--- | :--- | :--- |
-| 0.5% | 86.7% | 55.8% | Good |
-| 1% | 78.9% | 42.3% | Good |
-| 1.5% | 73.1% | 34.5% | Fail |
-| 2% | 63.3% | 30.8% | Fail |
-| 2.5% | 55.8% | 25% | Fail |
-| 3% | 46.2% | 19.2% | Fail |
+**Purpose**: Synthesize statistical volatility (EMA) with ICT structural narratives to predict the "Shape of the Week".
 
-#### Day of Week Analysis
-Hit rates vary by day:
-| Day | HR ↑ | HR ↓ | Comp ↑ | Comp ↓ |
-| :--- | :--- | :--- | :--- | :--- |
-| Mon | 42.3% | 19.2% | 36.5% | 21.2% |
-| Tue | 57.7% | 25% | 40.4% | 26.9% |
-| Wed | 61.5% | 34.6% | 50% | 30.8% |
-| Thu | 46.2% | 26.9% | - | 26.9% |
+![EMA Zone Analysis Reference](ema_zone_analysis_reference.png)
 
-#### Opening Position Context
-- **Opened Above EMA**: 68.8% of weeks
-- **Opened Below EMA**: 31.2% of weeks
+#### A. EMA Zones (Volatility Context)
+**Data Source**: Weekly Aggregation (Friday Close), Anchor = Prev Week EMA(5).
 
-#### Dashboard Display
-- Show current price position relative to Daily 5 EMA.
-- Highlight the 2-3% zone as "target zone".
-- Color code based on current hit rate probability.
+| Metric | Calculation | NQ Thresholds |
+| :--- | :--- | :--- |
+| **Zone 1 (Standard)** | `Anchor * 1.02` to `Anchor * 1.03` | Entry: 67% \| Complete: 71% |
+| **Zone 2 (Extreme)** | `Anchor * 1.025` to `Anchor * 1.03` | Entry: 30% \| Complete: 86% |
 
-#### Data Source
-- Calculated from `public/data/{ticker}_1d/chunk_*.json`.
-- Uses `parquet-reader.ts` (JSON implementation).
+#### B. ICT Weekly Profiles (Structural Context)
+**Concept**: Determines the likely "Power Day" and "Liquidity Run" based on the **Opening Price**, **Day of Week**, and **Upcoming News**.
+
+**Key Inputs**:
+1.  **Weekly Open**: Price at Sunday 18:00 ET.
+2.  **Manipulation Zone**: Price movement *against* the HTF Bias early in the week (Mon/Tue).
+3.  **News Driver**: `is_nfp_week` or `is_fomc_week`.
+
+**Profile Types & Logic**:
+
+| Profile Name | Context / Trigger | Expected Behavior |
+| :--- | :--- | :--- |
+| **Classic Tuesday Low/High** | **Trend Week**. Mon/Tue trades *opposite* to trend. | Low/High of week forms on **Tuesday**. Wednesday/Thursday expands in trend direction. |
+| **Mid-Week Reversal** | **Tuesday Consolidation**. Failed breakout Tue. | Low/High of week forms on **Wednesday** (often NY session). Target: Previous Week Extreme. |
+| **NFP Consolidation** | **NFP Week**. Mon-Wed range is < 50% of ADR. | Market holds inside range until Friday 08:30. "Stacking Orders". Expect Friday Expansion. |
+| **Seek & Destroy** | **Range Bound**. Sweeps both Mon Low and Mon High. | Broadening formation. Target: External Range Liquidity on both sides. |
+
+#### C. The Weekly Narrative (Algorithm)
+The system produces a dynamic narrative string based on the current day and profile status.
+
+**Logic Map**:
+1.  **IF** `Day == Tuesday` **AND** `Price < Weekly Open` **AND** `Bias == BULLISH`:
+    *   *Narrative*: "Potential JUDAS SWING. Watch for Tues Low formation to confirm Classic Buy Week."
+2.  **IF** `Day == Wednesday` **AND** `Tuesday == Inside Day`:
+    *   *Narrative*: "Volatility delayed. Expect Wednesday Expansion (Mid-Week Reversal profile)."
+3.  **IF** `is_nfp_week == TRUE` **AND** `Day < Friday`:
+    *   *Narrative*: "NFP Protocol: Expect lower volatility/manipulation until Friday release. Respect local ranges."
+
+#### Data Sources
+- **EMA Stats**: `volatility_stats.json`
+- **Calculation**: `analyze_weekly_profile.py`
+- **Live Context**: `live_chart_{ticker}.json` (for current price vs Weekly Open)
 
 ### 6.2 ICT Premium/Discount Multi-Timeframe Analysis
 
@@ -502,4 +517,35 @@ Hit rates vary by day:
 
 ![Streak Analysis Reference](streak_reference.png)
 
-![EMA Zone Analysis](ema_zone_analysis_reference.png)
+
+---
+
+## 11. Popup Specifications (Appended)
+
+### 11.1 Unified Modal Framework
+All popups use the `MissionModal` wrapper for a consistent "Terminal" aesthetic.
+- **Background**: `hsl(222, 47%, 4%)` (Ultra-dark navy) with 80% backdrop blur.
+- **Borders**: `1px solid hsl(222, 47%, 16%)`.
+- **Header**: Monospace Title, Close Icon (X), and "Last Update" timestamp.
+- **Animation**: Gentle "Fade + Scale In" from center.
+
+### 11.2 The Battle (War Game) Modal
+**Purpose**: High-conviction execution script for the day's primary scenario.
+- **Left Column**: Briefing (Why) + Script (If/Then rules).
+- **Right Column**: Visual Path (Professional Chart) with Blue Path Line, Red Invalidation Zone, and Target Bubbles.
+
+### 11.3 HTF Context Modal
+**Purpose**: Detailed structural mapping.
+- **Weekly View**: Bridge Anchor Chart showing Sunday Open and Tuesday Range (Blue Box). Volatility Gauge (Needle).
+- **Monthly View**: Climate Map (Heatmap of daily returns) + Flight Checklist.
+
+### 11.4 Candle Science Modal
+**Purpose**: Statistical deep dive.
+- **Projection Heatmap**: Horizontal BarChart colored by confidence.
+- **Level Table**: High-density table for C3 High/Low Projections.
+
+### 11.5 Implementation Standards
+1.  **Monochrome Defaults**: Slate/Gray for non-essential lines.
+2.  **High Contrast Accents**: Emerald (Bull), Rose (Bear), Sky (Info).
+3.  **Typography**: `JetBrains Mono` or `Roboto Mono`.
+4.  **Read-Only**: Charts should be snapshots with clear tooltips.

@@ -41,11 +41,10 @@ graph TB
     
     subgraph Panels["Dashboard Panels"]
         HTF["HTF Trinity"]
-        WG["War Game"]
+        MM["Mission Matrix (Matrix+Radar+Streak)"]
         CS["Candle Science"]
         PD["Premium/Discount"]
         Distro["Fuel/Distro"]
-        RS["Regime Streaks"]
     end
     
     Grid --> Panels
@@ -68,7 +67,8 @@ graph TB
         EMA["EMA Zones"]
         PDCalc["Premium/Discount"]
         DistroCalc["Distro"]
-        StreakCalc["Regime Streak"]
+        MMCalc["Mission Matrix (Unified)"]
+        WPCalc["Weekly Profile (ICT)"]
     end
     
     MCS --> Calculators
@@ -148,7 +148,12 @@ export const TICKER_CONFIGS: Record<string, TickerConfig> = {
     tickSize: 0.25,
     pointValue: 20,
     sessions: ['ASIA', 'LONDON', 'NY1', 'NY2'],
-    emaZonePercent: { min: 2, max: 3 }, // NQ sweet spot
+    emaZones: [
+      { min: 2.0, max: 3.0, label: 'Standard' },
+      { min: 2.5, max: 3.0, label: 'Extreme' }
+    ],
+    volatilityStatsPath: 'data/derived/volatility_stats.json',
+    weeklyProfilePath: 'data/derived/weekly_profile_NQ1.json',
     dataPath: 'data/derived/NQ1',
   },
   ES1: {
@@ -157,7 +162,11 @@ export const TICKER_CONFIGS: Record<string, TickerConfig> = {
     tickSize: 0.25,
     pointValue: 50,
     sessions: ['ASIA', 'LONDON', 'NY1', 'NY2'],
-    emaZonePercent: { min: 1, max: 2 }, // ES sweet spot
+    emaZones: [
+      { min: 1.0, max: 2.0, label: 'Standard' }
+    ],
+    volatilityStatsPath: 'data/derived/volatility_stats_ES.json',
+    weeklyProfilePath: 'data/derived/weekly_profile_ES1.json', // New derived file
     dataPath: 'data/derived/ES1',
   },
   // ... extensible for any ticker
@@ -182,6 +191,13 @@ export const SESSION_CONFIGS: Record<string, SessionConfig> = {
 export const PREMIUM_DISCOUNT_TIMEFRAMES = ['1W', '1D', '4H', '1H', '15m'];
 // Easily modified to add/remove timeframes
 ```
+
+### 3.4 Outcome Filtering Logic (`f_match`)
+
+The calculator identifies historical "Twin Days" by matching the current live trajectory.
+
+> [!NOTE]
+> **Logic Definition**: See `PRD.md` Section 4.6.5 for the authoritative specification of Strict Sequence matching and Broken status filtering rules.
 
 ---
 
@@ -211,12 +227,10 @@ interface BasePanelProps<T> {
 // components/panels/registry.ts
 export const PANEL_REGISTRY = {
   htfTrinity: { component: HTFTrinityPanel, order: 1, size: 'md' },
-  warGame: { component: WarGamePanel, order: 2, size: 'lg' },
+  missionMatrix: { component: MissionMatrixPanel, order: 2, size: 'xl' }, // Consolidated Panel
   candleScience: { component: CandleSciencePanel, order: 3, size: 'md' },
   premiumDiscount: { component: PremiumDiscountPanel, order: 4, size: 'md' },
   distro: { component: DistroPanel, order: 5, size: 'lg' },
-  regimeStreak: { component: RegimeStreakPanel, order: 6, size: 'md' },
-  modLod: { component: ModLodPanel, order: 7, size: 'sm' },
   economicCalendar: { component: EconomicCalendarPanel, order: 8, size: 'sm' },
 };
 ```
