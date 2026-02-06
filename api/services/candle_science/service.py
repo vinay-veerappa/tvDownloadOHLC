@@ -144,7 +144,8 @@ class CandleScienceService:
             Calculate detailed MFE/MAE style stats separating Above/Below outcomes.
             """
             diff = values - refs
-            pct_diff = (diff / prices) * 100
+            safe_prices = prices.replace(0, np.nan)
+            pct_diff = (diff / safe_prices) * 100
             
             # Mask for Above and Below
             mask_above = values > refs
@@ -185,8 +186,9 @@ class CandleScienceService:
         
         # Helper to get raw distribution for scatter plot
         def get_dist(series, reference_series, price_series):
-            dist = ((series - reference_series) / price_series) * 100
-            return dist.tolist()
+            safe_prices = price_series.replace(0, np.nan)
+            dist = ((series - reference_series) / safe_prices) * 100
+            return dist.dropna().tolist()
 
         # Build Response Object
         stats = {

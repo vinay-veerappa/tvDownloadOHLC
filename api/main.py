@@ -34,6 +34,9 @@ app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
 from api.routers import profiler
 app.include_router(profiler.router)
 
+from api.routers.candle_science import router as candle_science_router
+app.include_router(candle_science_router, prefix="/api/candle-science", tags=["candle-science"])
+
 
 @app.on_event("startup")
 async def startup_event():

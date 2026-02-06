@@ -7,7 +7,8 @@ import {
     Radio,
     Zap,
     History,
-    ArrowRight
+    ArrowRight,
+    Flame
 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
@@ -53,6 +54,14 @@ export function QuickLinksWidget() {
             href: "/backtest",
             color: "text-pink-500",
             bg: "bg-pink-500/10",
+        },
+        {
+            title: "Candle Science",
+            description: "3-Candle Pattern Projections",
+            icon: Flame,
+            href: "/candle-science",
+            color: "text-orange-500",
+            bg: "bg-orange-500/10",
         },
     ]
 

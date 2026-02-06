@@ -19,7 +19,8 @@ import {
     HardDrive,
     Library,
     LayoutDashboard,
-    AreaChart
+    AreaChart,
+    Flame
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -79,6 +80,12 @@ export function AppSidebar() {
             icon: Zap,
             href: "/tools/expected-move",
             active: pathname === "/tools/expected-move",
+        },
+        {
+            label: "Candle Science",
+            icon: Flame,
+            href: "/candle-science",
+            active: pathname === "/candle-science",
         },
         {
             label: "Journal",

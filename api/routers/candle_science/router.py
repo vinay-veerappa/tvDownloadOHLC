@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Body
 from typing import Dict, Any, Optional
-from api.services.candle_science_service import CandleScienceService
+from api.services.candle_science.service import CandleScienceService
 from api.services.data_loader import get_available_data
 
 router = APIRouter()
