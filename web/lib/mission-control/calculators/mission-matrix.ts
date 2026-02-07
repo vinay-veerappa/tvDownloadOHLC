@@ -74,6 +74,7 @@ export interface MissionMatrixResponse {
 // --- Constants ---
 
 const OUTCOMES = ['Long True', 'Long False', 'Short True', 'Short False'];
+const SESSION_ORDER = ['Asia', 'London', 'NY1', 'NY2'];
 
 // --- Helper Functions ---
 
@@ -86,10 +87,12 @@ async function readJsonFile<T>(filePath: string): Promise<T> {
     }
 }
 
-// Convert "HH:MM" (EST) to minutes from 18:00 Prev Day
+// Convert "HH:MM" (EST) or ISO to minutes from 18:00 Prev Day
 function getMinutesFrom1800(timeStr: string): number {
     if (!timeStr) return 0;
-    const [h, m] = timeStr.split(':').map(Number);
+    // Handle ISO string
+    const timePart = timeStr.includes('T') ? timeStr.split('T')[1].substring(0, 5) : timeStr;
+    const [h, m] = timePart.split(':').map(Number);
     if (isNaN(h) || isNaN(m)) return 0;
     const minutesFromMidnight = h * 60 + m;
     // 18:00 is 1080 minutes from midnight.
@@ -108,66 +111,64 @@ function calculateModeTime(times: (string | null | undefined)[]): string {
     if (validTimes.length === 0) return 'N/A';
 
     const BUCKET_SIZE = 15;
-    const TOTAL_BUCKETS = 96; // 1440 / 15
-    const buckets = new Array(TOTAL_BUCKETS).fill(0);
+    const buckets: Record<string, number> = {};
+    const firstSeen: Record<string, number> = {};
 
-    validTimes.forEach(t => {
+    validTimes.forEach((t, idx) => {
         const m = getMinutesFrom1800(t);
-        const bIdx = Math.min(Math.floor(m / BUCKET_SIZE), TOTAL_BUCKETS - 1);
-        buckets[bIdx]++;
+        const bStart = Math.floor(m / BUCKET_SIZE) * BUCKET_SIZE;
+        const bKey = bStart.toString();
+
+        buckets[bKey] = (buckets[bKey] || 0) + 1;
+        if (!(bKey in firstSeen)) firstSeen[bKey] = idx;
     });
 
-    let maxCount = 0;
-    let maxB = 0;
-    for (let i = 0; i < TOTAL_BUCKETS; i++) {
-        if (buckets[i] > maxCount) {
-            maxCount = buckets[i];
-            maxB = i;
-        }
-    }
+    const entries = Object.entries(buckets);
+    // Sort by count DESC, then by first occurrence ASC (to match Dashboard stable sort)
+    entries.sort((a, b) => {
+        if (b[1] !== a[1]) return b[1] - a[1];
+        return (firstSeen[a[0]] ?? 0) - (firstSeen[b[0]] ?? 0);
+    });
 
-    const startT = maxB * BUCKET_SIZE;
-    const endT = (startT + BUCKET_SIZE) % 1440;
+    const maxB = parseInt(entries[0][0]);
+    const startT = maxB;
+    const endT = startT + BUCKET_SIZE;
     return `${formatMinutesToHHMM(startT)}-${formatMinutesToHHMM(endT)}`;
 }
 
-function calculateModePct(pcts: number[]): string {
+function calculateModePct(pcts: number[], bucketSize: number = 0.1): string {
     if (pcts.length === 0) return 'N/A';
 
-    const STEP = 0.2;
-    const NUM_BUCKETS = 120;
-    const OFFSET = 6.0;
+    // 1. Calculate Median (average of middle two for even)
+    const sorted = [...pcts].sort((a, b) => a - b);
+    const n = sorted.length;
+    const mid = Math.floor(n / 2);
+    const medianVal = n % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    const medianBucket = Math.floor(medianVal / bucketSize) * bucketSize;
 
-    const buckets = new Array(NUM_BUCKETS).fill(0);
-    pcts.forEach(v => {
-        const idx = Math.min(Math.max(Math.floor((v + OFFSET) / STEP), 0), NUM_BUCKETS - 1);
-        buckets[idx]++;
+    // 2. Calculate Mode (Stable Sort)
+    const buckets: Record<string, number> = {};
+    const firstSeen: Record<string, number> = {};
+
+    pcts.forEach((v, idx) => {
+        const b = (Math.floor(v / bucketSize) * bucketSize).toFixed(1);
+        buckets[b] = (buckets[b] || 0) + 1;
+        if (!(b in firstSeen)) firstSeen[b] = idx;
     });
 
-    let maxC = 0;
-    let maxB = 0;
-    for (let i = 0; i < NUM_BUCKETS; i++) {
-        if (buckets[i] > maxC) {
-            maxC = buckets[i];
-            maxB = i;
-        }
-    }
+    const entries = Object.entries(buckets);
+    entries.sort((a, b) => {
+        if (b[1] !== a[1]) return b[1] - a[1];
+        return (firstSeen[a[0]] ?? 0) - (firstSeen[b[0]] ?? 0);
+    });
 
-    const modeS = (maxB * STEP) - OFFSET;
-    const modeE = modeS + STEP;
+    const modeBucket = parseFloat(entries[0][0]);
 
-    const sorted = [...pcts].sort((a, b) => a - b);
-    const medIdx = Math.floor(sorted.length / 2);
-    const medVal = sorted[medIdx] ?? 0;
+    // 3. Range Format (Highest to Lowest)
+    const uMin = Math.min(modeBucket, medianBucket);
+    const uMax = Math.max(modeBucket, medianBucket);
 
-    const medB = Math.min(Math.max(Math.floor((medVal + OFFSET) / STEP), 0), NUM_BUCKETS - 1);
-    const medS = (medB * STEP) - OFFSET;
-    const medE = medS + STEP;
-
-    const uMin = Math.min(modeS, medS);
-    const uMax = Math.max(modeE, medE);
-
-    return `${uMin.toFixed(1)}% to ${uMax.toFixed(1)}%`;
+    return `${uMax.toFixed(1)}% to ${uMin.toFixed(1)}%`;
 }
 
 function calculateStreak(sessions: ProfilerSession[], targetSession: string, currentStatus: string): number {
@@ -275,6 +276,15 @@ export async function calculateMissionMatrix(ticker: string, providedLevelData?:
         } catch (e) {
             levelData = {};
         }
+    }
+
+    // 2.5 Load Daily HOD/LOD (Unadjusted)
+    let dailyHodLod: Record<string, any> = {};
+    try {
+        const dailyPath = findDataFile(`${ticker}_daily_hod_lod.json`);
+        dailyHodLod = await readJsonFile<Record<string, any>>(dailyPath);
+    } catch (e) {
+        console.warn(`[MissionMatrix] Failed to load daily HOD/LOD for ${ticker}`);
     }
 
     // 3. Load Current Context (Live)
@@ -436,28 +446,35 @@ export async function calculateMissionMatrix(ticker: string, providedLevelData?:
     };
 
     // 4.1 Consistent Outcome Matching Logic (PRECISE)
-    const isConsistent = (hist_s: number, hist_b: boolean, live_s: number, live_b: boolean): boolean => {
-        // Precise matching: If today has a status, historical day MUST match exactly
-        if (live_s === 0) return true; // Don't filter by Pending/Neutral sessions
+    const isConsistent = (
+        hist_s: number,
+        hist_b: boolean,
+        live_s: number,
+        live_b: boolean,
+        isPrior: boolean
+    ): boolean => {
+        // Pending/Neutral sessions (0) don't filter anything unless they are "Developing"
+        if (live_s === 0) return true;
 
-        // Pending/Developing Logic (Subset Matching) using explicit codes 11/13
-        // 11 = Long Pending -> Matches Hist Long True (1) OR Long False (2)
-        if (live_s === 11 && (hist_s === 1 || hist_s === 2)) return true;
+        if (isPrior) {
+            // PRIOR SESSIONS: Strict Status, Adaptive Broken
+            if (hist_s !== live_s) return false;
 
-        // 13 = Short Pending -> Matches Hist Short True (3) OR Short False (4)
-        if (live_s === 13 && (hist_s === 3 || hist_s === 4)) return true;
-
-        // Status must match
-        if (hist_s !== live_s) return false;
-
-        // BROKEN LOGIC (Simplified per User Request)
-        if (live_b) {
-            // If Live IS broken, History MUST be broken (Strict)
-            return hist_b === true;
+            if (live_b) {
+                return hist_b === true; // If live is broken, history must be broken
+            }
+            return true; // If live is not broken, history can be either (Adaptive)
         } else {
-            // If Live is NOT broken (yet), History can be Broken or Not Broken (Loose)
-            // This handles "Active Session" where it might break later.
-            return true;
+            // CURRENT SESSION: Developing Aware, Loose Broken
+            // 11 = Long Pending -> Matches Hist Long True (1) OR Long False (2)
+            if (live_s === 11) return (hist_s === 1 || hist_s === 2);
+            // 13 = Short Pending -> Matches Hist Short True (3) OR Short False (4)
+            if (live_s === 13) return (hist_s === 3 || hist_s === 4);
+
+            // If it's already confirmed (LF/ST/SF/LT), match exactly
+            if (hist_s !== live_s) return false;
+
+            return true; // Always ignore broken for current session
         }
     };
 
@@ -475,8 +492,6 @@ export async function calculateMissionMatrix(ticker: string, providedLevelData?:
         liveStatusMap.ny2_broken || false
     ];
 
-
-
     const currentStatusStrings = [
         currentAsiaStatus,
         currentLondonStatus,
@@ -484,104 +499,112 @@ export async function calculateMissionMatrix(ticker: string, providedLevelData?:
         currentNY2Status
     ];
 
-    // 5. Create Pivot Table for Historical Matching
+    // Identify which session is CURRENT (the first one that is "Pending" or "Developing")
+    // Use the existing phase_idx as our active index for the matrix display
+    const activeSessionIdx = phase_idx;
+
+    // 5. Filter Historical Days
+    const matchedDates: string[] = [];
+
+    // Group sessions by date for intersection logic
     const dayPivots: Record<string, Record<string, ProfilerSession>> = {};
     allSessions.forEach(s => {
         if (!dayPivots[s.date]) dayPivots[s.date] = {};
         dayPivots[s.date][s.session] = s;
     });
 
-    // 6. Filter History & Match Outcomes
-    const matchingSessions: ProfilerSession[] = [];
     Object.entries(dayPivots).forEach(([date, sessions]) => {
-        // EXCLUDE TODAY: Do not match today's developing day against the historical pool
         if (date === latestDate) return;
 
         let ok = true;
-        // 1. Must match all PREVIOUSLY COMPLETED sessions exactly AND the current Target Status if available
-        // User Requirement: "always apply all sessions status... when we confirm a false, we apply the filter immediately"
-        for (let i = 0; i <= phase_idx; i++) {
-            const sName = i === 0 ? 'Asia' : i === 1 ? 'London' : i === 2 ? 'NY1' : 'NY2';
-            const hist = sessions[sName];
+        // Check consistency up to the target/active session
+        for (let i = 0; i <= activeSessionIdx; i++) {
+            const sessName = SESSION_ORDER[i];
+            const hist = sessions[sessName];
+            if (!hist) { ok = false; break; }
 
-            if (!hist || !isConsistent(getStatusCode(hist.status), hist.broken, currentStatuses[i], currentBrokens[i])) {
-                // DEBUG MISMATCHES: Only if Status Matches but Broken fails
-                if (hist && getStatusCode(hist.status) === currentStatuses[i] && hist.broken !== currentBrokens[i]) {
-                    if (targetSessionName === 'NY2') console.log(`[Reject] ${date} ${sName} Broken Mismatch: Hist(B:${hist.broken}) vs Live(B:${currentBrokens[i]})`);
-                }
-                ok = false; break;
+            const isPrior = i < activeSessionIdx;
+            if (!isConsistent(getStatusCode(hist.status), hist.broken, currentStatuses[i], currentBrokens[i], isPrior)) {
+                ok = false;
+                break;
             }
         }
 
-        if (ok) {
-            const target = sessions[targetSessionName];
-            if (target && target.status !== 'Pending' && target.status !== 'Neutral') {
-                matchingSessions.push(target);
-            }
-        }
+        if (ok) matchedDates.push(date);
     });
 
-    // DEBUG: Count how many match if we IGNORE BROKEN (Deprecated)
-    /*
-    const looseCount = Object.entries(dayPivots).filter(([date, sessions]) => {
-        if (date === latestDate) return false;
-        for (let i = 0; i <= phase_idx; i++) {
-            const sName = i === 0 ? 'Asia' : i === 1 ? 'London' : i === 2 ? 'NY1' : 'NY2';
-            const hist = sessions[sName];
-            // Pass hist.broken as the live_b constraint to force a match on broken
-            if (!hist || !isConsistent(getStatusCode(hist.status), hist.broken, currentStatuses[i], hist.broken)) return false;
-        }
-        return true;
-    }).length;
-
-    console.log(`[MissionMatrix] Strict Matches: ${matchingSessions.length} | Loose (Ignore Broken) Matches: ${looseCount}`);
-    */
-
-    console.log(`[MissionMatrix] ${phase_name} | Target: ${targetSessionName} | Samples: ${matchingSessions.length} | Context Status: ${currentStatuses[0]}/${currentStatuses[1]} Context Broken: ${currentBrokens[0]}/${currentBrokens[1]}`);
-
-    const totalSamples = matchingSessions.length;
-
     // 6. Generate Outcome Matrix
+    const totalSamples = matchedDates.length;
     const matrix: OutcomeStats[] = OUTCOMES.map(scenario => {
-        const scenarioSessions = matchingSessions.filter(s => s.status === scenario);
-        const count = scenarioSessions.length;
+        // Filter matched days for this specific target outcome
+        const scenarioDays = matchedDates.filter(date => {
+            const target = dayPivots[date]?.[targetSessionName];
+            return target?.status === scenario;
+        });
+
+        const count = scenarioDays.length;
         const probability = totalSamples > 0 ? (count / totalSamples) * 100 : 0;
 
-        const hods = scenarioSessions.map(s => s.high_pct);
-        const lods = scenarioSessions.map(s => s.low_pct);
-
-        const checkHit = (date: string, key: string) => {
-            const dayLevels = (levelData as any)[date];
-            return dayLevels?.[key]?.touched || false;
+        // Helper to convert HH:MM or ISO to relative minutes from 18:00 (Trading Day)
+        const getRelMins = (timeStr: string | null) => {
+            if (!timeStr) return -1;
+            const timePart = timeStr.includes('T') ? timeStr.split('T')[1].substring(0, 5) : timeStr;
+            const [h, m] = timePart.split(':').map(Number);
+            if (isNaN(h) || isNaN(m)) return -1;
+            const total = h * 60 + m;
+            return (total - 1080 + 1440) % 1440;
         };
 
-        const calcRate = (hits: number) => count > 0 ? (hits / count) * 100 : 0;
+        // Calculate hit rates: Counts touches occurring AT OR AFTER matched target session start
+        const checkHit = (date: string, key: string) => {
+            const dayLevels = (levelData as any)[date];
+            const targetSess = dayPivots[date]?.[targetSessionName];
+            if (!dayLevels || !dayLevels[key] || !targetSess) return false;
+
+            const sessStartRel = getRelMins(targetSess.start_time);
+            const touchTimesRel = (dayLevels[key].touch_times || []).map((t: string) => getRelMins(t));
+
+            return touchTimesRel.some((t: number) => t >= sessStartRel);
+        };
+
+        const calcRate = (key: string) => count > 0 ? (scenarioDays.filter(d => checkHit(d, key)).length / count) * 100 : 0;
+
+        // Collect stats
+        const sampleSessions = scenarioDays.map(d => dayPivots[d][targetSessionName]);
+        const dailySamples = scenarioDays.map(d => dailyHodLod[d]).filter(d => !!d);
+
+        // Price Percentages: Unadjusted Daily
+        const highPcts = dailySamples.map(s => ((s.daily_high - s.daily_open) / s.daily_open) * 100);
+        const lowPcts = dailySamples.map(s => ((s.daily_low - s.daily_open) / s.daily_open) * 100);
 
         return {
             scenario,
             probability,
             count,
-            bias: scenario.includes('Long') ? 'Bullish' : 'Bearish',
-            avg_hod_pct: hods.length ? hods.reduce((a, b) => a + b, 0) / count : 0,
-            avg_lod_pct: lods.length ? lods.reduce((a, b) => a + b, 0) / count : 0,
-            hod_time_mode: calculateModeTime(scenarioSessions.map(s => s.high_time)),
-            lod_time_mode: calculateModeTime(scenarioSessions.map(s => s.low_time)),
-            hod_pct_display: calculateModePct(hods),
-            lod_pct_display: calculateModePct(lods),
-            pdh_hit_rate: calcRate(scenarioSessions.filter(s => checkHit(s.date, 'pdh')).length),
-            pdl_hit_rate: calcRate(scenarioSessions.filter(s => checkHit(s.date, 'pdl')).length),
-            pdm_hit_rate: calcRate(scenarioSessions.filter(s => checkHit(s.date, 'pdm')).length),
-            p12h_hit_rate: calcRate(scenarioSessions.filter(s => checkHit(s.date, 'p12h')).length),
-            p12l_hit_rate: calcRate(scenarioSessions.filter(s => checkHit(s.date, 'p12l')).length),
-            p12m_hit_rate: calcRate(scenarioSessions.filter(s => checkHit(s.date, 'p12m')).length),
-            asia_mid_hit_rate: calcRate(scenarioSessions.filter(s => checkHit(s.date, 'asia_mid')).length),
-            london_mid_hit_rate: calcRate(scenarioSessions.filter(s => checkHit(s.date, 'london_mid')).length),
-            ny1_mid_hit_rate: calcRate(scenarioSessions.filter(s => checkHit(s.date, 'ny1_mid')).length),
-            midnight_open_hit_rate: calcRate(scenarioSessions.filter(s => checkHit(s.date, 'midnight_open')).length),
-            open_0730_hit_rate: calcRate(scenarioSessions.filter(s => checkHit(s.date, 'open_0730')).length),
+            bias: (scenario.includes('Long') ? 'Bullish' : 'Bearish') as 'Bullish' | 'Bearish',
+            avg_hod_pct: highPcts.length ? highPcts.reduce((a, b) => a + b, 0) / count : 0,
+            avg_lod_pct: lowPcts.length ? lowPcts.reduce((a, b) => a + b, 0) / count : 0,
+            // Times: Unadjusted Daily (matching Dashboard)
+            hod_time_mode: calculateModeTime(dailySamples.map(s => s.hod_time)),
+            lod_time_mode: calculateModeTime(dailySamples.map(s => s.lod_time)),
+            // Bucketing matches indicator (0.2 step)
+            hod_pct_display: calculateModePct(highPcts, 0.1),
+            lod_pct_display: calculateModePct(lowPcts, 0.1),
+            pdh_hit_rate: Math.round(calcRate('pdh')),
+            pdl_hit_rate: Math.round(calcRate('pdl')),
+            pdm_hit_rate: Math.round(calcRate('pdm')),
+            p12h_hit_rate: Math.round(calcRate('p12h')),
+            p12l_hit_rate: Math.round(calcRate('p12l')),
+            p12m_hit_rate: Math.round(calcRate('p12m')),
+            asia_mid_hit_rate: Math.round(calcRate('asia_mid')),
+            london_mid_hit_rate: Math.round(calcRate('london_mid')),
+            ny1_mid_hit_rate: Math.round(calcRate('ny1_mid')),
+            midnight_open_hit_rate: Math.round(calcRate('midnight_open')),
+            open_0730_hit_rate: Math.round(calcRate('open_0730')),
             key_level_hits: []
         };
-    });
+    }).filter(m => m.count > 0);
+
 
     const dominant = matrix.reduce((prev, curr) => (curr.probability > prev.probability ? curr : prev), matrix[0]!);
 

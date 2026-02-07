@@ -41,7 +41,7 @@ def get_live_files(symbol):
     }
 
 def get_watchlist_symbols():
-    defaults = ["/NQ", "/ES", "QQQ", "SPY", "NVDA"]
+    defaults = ["/NQ", "/ES", "/RTY", "/YM","/CL", "/GC","QQQ", "SPY", "GOOGL", "AAPL", "MSFT", "AMZN", "TSLA", "META", "NFLX", "NVDA"]
     try:
         if not os.path.exists(DB_PATH):
             return defaults
@@ -339,7 +339,7 @@ def fetch_bootstrap_data(client, symbol):
     try:
         resp = client.get_price_history(symbol, 
                                         period_type=Client.PriceHistory.PeriodType.DAY,
-                                        period=Client.PriceHistory.Period.MONTH,
+                                        period=Client.PriceHistory.Period.THREE_MONTHS,
                                         frequency_type=Client.PriceHistory.FrequencyType.MINUTE,
                                         frequency=Client.PriceHistory.Frequency.EVERY_MINUTE,
                                         need_extended_hours_data=True)
