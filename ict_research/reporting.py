@@ -92,10 +92,54 @@ def generate_report(ticker='NQ', data_dir='ict_research/data'):
     print("End of Report")
     print("="*50)
 
+class Tee(object):
+    def __init__(self, name, mode):
+        self.file = open(name, mode)
+        self.stdout = sys.stdout
+        sys.stdout = self
+        
+    def __del__(self):
+        sys.stdout = self.stdout
+        self.file.close()
+        
+    def write(self, data):
+        self.file.write(data)
+        self.stdout.write(data)
+        
+    def flush(self):
+        self.file.flush()
+        self.stdout.flush()
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='Generate ICT research report.')
     parser.add_argument('--ticker', type=str, default='NQ', help='Ticker symbol (e.g. NQ, ES, CL)')
     
     args = parser.parse_args()
-    generate_report(ticker=args.ticker)
+    
+    # Setup report path
+    report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reports')
+    if not os.path.exists(report_dir):
+        os.makedirs(report_dir)
+        
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_file = os.path.join(report_dir, f"report_{args.ticker}_{timestamp}.md")
+    
+    print(f"Generating report for {args.ticker}...")
+    print(f"Saving to: {report_file}")
+    
+    # Capture output
+    tee = Tee(report_file, 'w')
+    
+    # Write Markdown header to file only
+    tee.file.write(f"# ICT Research Report: {args.ticker}\n")
+    tee.file.write(f"Generated: {timestamp}\n\n")
+    tee.file.write("```text\n")
+    
+    try:
+        generate_report(ticker=args.ticker)
+    finally:
+        # Close Markdown block in file only
+        tee.file.write("\n```\n")
+        del tee # Restore stdout

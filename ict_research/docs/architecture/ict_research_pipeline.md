@@ -100,3 +100,15 @@ The system computes conditional probabilities (`decision_tree.py`) based on 5 br
 5.  **NY Outcome**: Sweep London High/Low/Reversal.
 
 This creates a **72-Branch Decision Matrix** to predict the most likely NY Session outcome.
+
+## 8. Recent Fixes & Enhancements (Feb 2026)
+### Critical Bug Fixes
+-   **CBDR Sigma Hits**: Fixed a field name mismatch where `setattr` was generating strings like `_2_0` instead of `_2`, causing all sigma hit flags to report as `False`. Logic now uses explicit assignments.
+-   **Missing Data Export**: Overhauled `run_research.py` to use `dataclasses.asdict()`, ensuring 60+ calculated fields (Percentage Ranges, Time-based Opens, detailed Hit Flags) are correctly written to the CSV.
+-   **Logic Deduplication**: Cleaned up `session_extractor.py` to remove redundant calculation blocks and duplicate field definitions.
+
+### Added Metrics
+-   **Full CBDR Sigma Analysis**: 0.5 to 4.0 standard deviations (Up/Down) with both Price Levels and Boolean Hit Flags.
+-   **Time-Based Opens**: Midnight, 07:30, 08:30, 13:30 (PM Open) explicitly tracked.
+-   **Relative Percentages**: Ranges and distances normalized to opening prices (Globex/Asia/NY) for cross-era analysis.
+-   **Detailed Outcomes**: Specific flags for hitting London High/Low, Overnight High/Low, and P12 Extremes.

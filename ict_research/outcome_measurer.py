@@ -366,30 +366,36 @@ def measure_ny_enhanced(day_1m_df: pd.DataFrame, day_stats: TradingDay, outcome:
     else:
         outcome.london_low_vs_pdl_first = "NEITHER"
 
-    # --- CBDR Sigma Reach ---
-    # Determine max reach above/below CBDR
-    # Base is CBDR High/Low
-    if pd.notna(day_stats.cbdr_asia_high) and pd.notna(day_stats.cbdr_asia_low):
+    # --- CBDR Sigma Reach (London + NY) ---
+    # User Spec: "Compute how far price went during London + NY"
+    # Range: 02:30 - 16:00
+    rth_plus_london = day_1m_df.between_time(SESSION_TIMES['LONDON'][0], SESSION_TIMES['NY_PM'][1])
+    
+    if not rth_plus_london.empty and pd.notna(day_stats.cbdr_asia_high) and pd.notna(day_stats.cbdr_asia_low):
         r = day_stats.cbdr_asia_range
         if r > 0:
-            max_h = highs.max()
-            min_l = lows.min()
+            max_h = rth_plus_london['high'].max()
+            min_l = rth_plus_london['low'].min()
             
             outcome.cbdr_upside_sigmas = (max_h - day_stats.cbdr_asia_high) / r
             outcome.cbdr_downside_sigmas = (day_stats.cbdr_asia_low - min_l) / r
             
-            # Check specific sigma hits
-            for sigma in [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0]:
-                s_name = str(sigma).replace('.', '_')
-                
-                up_level = getattr(day_stats, f'cbdr_sigma_up_{s_name}', None)
-                dn_level = getattr(day_stats, f'cbdr_sigma_dn_{s_name}', None)
-                
-                hit_up, _ = check_hit(up_level)
-                hit_dn, _ = check_hit(dn_level)
-                
-                setattr(outcome, f'cbdr_hit_up_{s_name}', hit_up)
-                setattr(outcome, f'cbdr_hit_dn_{s_name}', hit_dn)
+            # Check specific sigma hits directly from the ratio
+            outcome.cbdr_hit_up_0_5 = outcome.cbdr_upside_sigmas >= 0.5
+            outcome.cbdr_hit_up_1 = outcome.cbdr_upside_sigmas >= 1.0
+            outcome.cbdr_hit_up_1_5 = outcome.cbdr_upside_sigmas >= 1.5
+            outcome.cbdr_hit_up_2 = outcome.cbdr_upside_sigmas >= 2.0
+            outcome.cbdr_hit_up_2_5 = outcome.cbdr_upside_sigmas >= 2.5
+            outcome.cbdr_hit_up_3 = outcome.cbdr_upside_sigmas >= 3.0
+            outcome.cbdr_hit_up_4 = outcome.cbdr_upside_sigmas >= 4.0
+
+            outcome.cbdr_hit_dn_0_5 = outcome.cbdr_downside_sigmas >= 0.5
+            outcome.cbdr_hit_dn_1 = outcome.cbdr_downside_sigmas >= 1.0
+            outcome.cbdr_hit_dn_1_5 = outcome.cbdr_downside_sigmas >= 1.5
+            outcome.cbdr_hit_dn_2 = outcome.cbdr_downside_sigmas >= 2.0
+            outcome.cbdr_hit_dn_2_5 = outcome.cbdr_downside_sigmas >= 2.5
+            outcome.cbdr_hit_dn_3 = outcome.cbdr_downside_sigmas >= 3.0
+            outcome.cbdr_hit_dn_4 = outcome.cbdr_downside_sigmas >= 4.0
 
 
 def measure_pm_outcomes(day_1m_df: pd.DataFrame, day_stats: TradingDay) -> PMOutcome:

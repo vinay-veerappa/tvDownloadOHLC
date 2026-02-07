@@ -1,4 +1,5 @@
 import argparse
+import dataclasses
 import pandas as pd
 import numpy as np
 import datetime
@@ -11,7 +12,7 @@ from functools import partial
 from session_extractor import extract_session_stats, TradingDay
 from pattern_classifier import (
     classify_overnight_pattern, classify_manipulation, classify_ny_position,
-    classify_pm_pattern, classify_pm_manipulation, detect_judas_pm
+    classify_pm_pattern, classify_pm_manipulation, detect_judas_pm, detect_judas_london
 )
 from pda_detector import detect_london_pd_arrays
 from outcome_measurer import (
@@ -35,6 +36,9 @@ def process_day_worker(args):
     manipulation = classify_manipulation(day_stats)
     ny_position = classify_ny_position(day_stats)
     
+    # NEW: Detect Judas London
+    is_judas_london = detect_judas_london(day_stats, manipulation)
+    
     # 3. Detect PD Arrays
     pd_arrays = detect_london_pd_arrays(df_day, day_stats, manipulation)
     
@@ -55,75 +59,31 @@ def process_day_worker(args):
     pm_outcome = measure_pm_outcomes(df_day, day_stats)
     
     # Return a dictionary of results and the updated stats object (needed for Asia pass)
-    row = {
-        'date': t_date,
-        'pattern': pattern,
-        'manipulation': manipulation,
-        'ny_position': ny_position,
-        'pm_pattern': pm_pattern,
-        'pm_manipulation': pm_manipulation,
-        'is_judas_pm': day_stats.is_judas_pm,
-        
-        # Day Stats
-        'london_high': day_stats.london_high,
-        'london_low': day_stats.london_low,
-        'ny_open': day_stats.ny_open,
-        'ny_high': day_stats.ny_high,
-        'ny_low': day_stats.ny_low,
-        'ny_close': day_stats.ny_close,
-        'ny_am_high': day_stats.ny_am_high,
-        'ny_am_low': day_stats.ny_am_low,
-        'ny_pm_high': day_stats.ny_pm_high,
-        'ny_pm_low': day_stats.ny_pm_low,
-        'ny_pm_mid': day_stats.ny_pm_mid,
-        'lunch_high': day_stats.lunch_high,
-        'lunch_low': day_stats.lunch_low,
-        'overnight_high': day_stats.overnight_high,
-        'overnight_low': day_stats.overnight_low,
-        'cbdr_asia_high': day_stats.cbdr_asia_high,
-        'cbdr_asia_low': day_stats.cbdr_asia_low,
-        'cbdr_asia_range': day_stats.cbdr_asia_range,
-        'p12_range': day_stats.p12_range,
-        'globex_open': day_stats.globex_open,
-        'ote_bull_62': day_stats.ote_bull_62,
-        'ote_bear_62': day_stats.ote_bear_62,
-        'rth_gap': day_stats.rth_gap,
-        'rth_gap_pct': day_stats.rth_gap_pct,
-        'prev_settle': day_stats.prev_settle,
-        
-        # NY Outcome
-        'hit_london_high': ny_outcome.hit_london_high,
-        'hit_london_low': ny_outcome.hit_london_low,
-        'hit_london_high_first': ny_outcome.hit_london_high_first,
-        'hit_overnight_high': ny_outcome.hit_overnight_high,
-        'hit_overnight_low': ny_outcome.hit_overnight_low,
-        'on_high_first': ny_outcome.on_high_first,
-        'hit_p12_high': ny_outcome.hit_p12_high,
-        'hit_p12_low': ny_outcome.hit_p12_low,
-        'p12_high_first': ny_outcome.p12_high_first,
-        'hit_ote_bull_62': ny_outcome.hit_ote_bull_62,
-        'hit_ote_bear_62': ny_outcome.hit_ote_bear_62,
-        'gap_fill_25': ny_outcome.gap_fill_25,
-        'gap_fill_50': ny_outcome.gap_fill_50,
-        'gap_fill_100': ny_outcome.gap_fill_100,
-        'manipulation_reversed': ny_outcome.manipulation_reversed,
-        'reversal_time': ny_outcome.reversal_time,
-        
-        # CBDR Sigma Reach
-        'cbdr_upside_sigmas': ny_outcome.cbdr_upside_sigmas,
-        'cbdr_downside_sigmas': ny_outcome.cbdr_downside_sigmas,
-        'cbdr_hit_up_1': ny_outcome.cbdr_hit_up_1,
-        'cbdr_hit_up_2': ny_outcome.cbdr_hit_up_2,
-        'cbdr_hit_up_3': ny_outcome.cbdr_hit_up_3,
-        'cbdr_hit_dn_1': ny_outcome.cbdr_hit_dn_1,
-        'cbdr_hit_dn_2': ny_outcome.cbdr_hit_dn_2,
-        'cbdr_hit_dn_3': ny_outcome.cbdr_hit_dn_3,
-        
-        # PM Outcome
-        'pm_hit_am_high': pm_outcome.hit_am_high,
-        'pm_hit_am_low': pm_outcome.hit_am_low,
-        'pm_am_high_first': pm_outcome.am_high_first,
-    }
+    # Use dataclasses.asdict to capture ALL fields (fixes missing columns bug)
+    row = dataclasses.asdict(day_stats)
+    
+    # Fix Datetime Serialization
+    for k, v in row.items():
+        if isinstance(v, (datetime.datetime, datetime.time, pd.Timestamp)):
+            row[k] = str(v) if v is not None else None
+
+    # Merge NY Outcome fields
+    for field in dataclasses.fields(ny_outcome):
+        key = field.name
+        val = getattr(ny_outcome, key)
+        if key not in ['arrays_touched', 'arrays_respected', 'arrays_failed']: 
+            # Prefix helpful? Most are unique. 
+            row[key] = val
+
+    # Merge PM Outcome fields (prefixed)
+    for field in dataclasses.fields(pm_outcome):
+        row[f'pm_{field.name}'] = getattr(pm_outcome, field.name)
+
+    # Add Phase 2 Classifications (not in TradingDay)
+    row['pattern'] = pattern
+    row['manipulation'] = manipulation
+    row['ny_position'] = ny_position
+    row['is_judas_london'] = is_judas_london
     
     return row, day_stats
 
@@ -171,7 +131,16 @@ if __name__ == "__main__":
     day_stats_list = []
     day_dfs_cache = {} # Cache df slices for Phase 2
     
+    # Context Tracking
     prev_day_stats = None
+    prev_week_stats = None
+    prev_month_stats = None
+    
+    # Running Aggregates
+    curr_week_h, curr_week_l, curr_week_o = None, None, None
+    curr_month_h, curr_month_l, curr_month_o = None, None, None
+    last_week_num = None
+    last_month_num = None
     
     print("  Extracting stats...")
     for i, t_date in enumerate(unique_dates):
@@ -180,19 +149,65 @@ if __name__ == "__main__":
         except KeyError:
             continue
             
-        day_dfs_cache[t_date] = day_1m # Store for parallel pass
+        day_dfs_cache[t_date] = day_1m 
         
-        # Prepare context (prev_day_stats is updated at end of loop)
-        # (Simplified: calculate complex weekly/monthly context here if needed)
+        # --- Context Logic (Group E) ---
+        ts = pd.Timestamp(t_date)
+        week_num = ts.isocalendar()[1]
+        month_num = ts.month
         
+        # Week Boundary
+        if last_week_num is not None and week_num != last_week_num:
+            prev_week_stats = {
+                'high': curr_week_h, 'low': curr_week_l,
+                'weekly_open': curr_week_o,
+                'close': prev_day_stats.get('close') if prev_day_stats else None,
+                'mid': (curr_week_h + curr_week_l)/2 if (curr_week_h and curr_week_l) else None
+            }
+            curr_week_h, curr_week_l, curr_week_o = None, None, None
+            
+        # Month Boundary
+        if last_month_num is not None and month_num != last_month_num:
+            prev_month_stats = {
+                'high': curr_month_h, 'low': curr_month_l,
+                'monthly_open': curr_month_o,
+                'close': prev_day_stats.get('close') if prev_day_stats else None,
+            }
+            curr_month_h, curr_month_l, curr_month_o = None, None, None
+            
+        last_week_num = week_num
+        last_month_num = month_num
+
         if i % 100 == 0:
             print(f"  Processed {i}/{len(unique_dates)} days...", end='\r')
             
-        day_stats = extract_session_stats(day_1m, prev_day_stats)
+        # Pass full context
+        day_stats = extract_session_stats(day_1m, prev_day_stats, prev_week_stats, prev_month_stats)
         
         if day_stats:
             day_stats_list.append((t_date, day_stats))
             
+            # --- Update Running Aggregates ---
+            ny_h, ny_l, ny_c = day_stats.ny_high, day_stats.ny_low, day_stats.ny_close
+            
+            # Weekly
+            if curr_week_h is None:
+                curr_week_h = ny_h
+                curr_week_l = ny_l
+                curr_week_o = day_stats.globex_open # Week starts Sunday 18:00
+            else:
+                if pd.notna(ny_h): curr_week_h = max(curr_week_h, ny_h)
+                if pd.notna(ny_l): curr_week_l = min(curr_week_l, ny_l)
+                
+            # Monthly
+            if curr_month_h is None:
+                curr_month_h = ny_h
+                curr_month_l = ny_l
+                curr_month_o = day_stats.globex_open
+            else:
+                if pd.notna(ny_h): curr_month_h = max(curr_month_h, ny_h)
+                if pd.notna(ny_l): curr_month_l = min(curr_month_l, ny_l)
+
             # Update prev stats for next iteration
             prev_day_stats = {
                 'high': day_stats.ny_high, 'low': day_stats.ny_low, 

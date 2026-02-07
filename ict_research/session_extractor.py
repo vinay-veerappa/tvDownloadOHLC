@@ -129,7 +129,6 @@ class TradingDay:
     cbdr_sigma_dn_2: float = np.nan
     cbdr_sigma_dn_2_5: float = np.nan
     cbdr_sigma_dn_3: float = np.nan
-    cbdr_sigma_dn_3: float = np.nan
     cbdr_sigma_dn_4: float = np.nan
 
     # ═══ NEW: FLOUT (Asian Range starting at 20:00) ═══
@@ -394,10 +393,21 @@ def extract_session_stats(df_day: pd.DataFrame, prev_day_stats: dict = None, pre
         # Compute sigma levels
         r = stats.cbdr_asia_range
         if r > 0:
-            for sigma in [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0]:
-                s_name = str(sigma).replace('.', '_')
-                setattr(stats, f'cbdr_sigma_up_{s_name}', stats.cbdr_asia_high + sigma * r)
-                setattr(stats, f'cbdr_sigma_dn_{s_name}', stats.cbdr_asia_low - sigma * r)
+            stats.cbdr_sigma_up_0_5 = stats.cbdr_asia_high + 0.5 * r
+            stats.cbdr_sigma_up_1 = stats.cbdr_asia_high + 1.0 * r
+            stats.cbdr_sigma_up_1_5 = stats.cbdr_asia_high + 1.5 * r
+            stats.cbdr_sigma_up_2 = stats.cbdr_asia_high + 2.0 * r
+            stats.cbdr_sigma_up_2_5 = stats.cbdr_asia_high + 2.5 * r
+            stats.cbdr_sigma_up_3 = stats.cbdr_asia_high + 3.0 * r
+            stats.cbdr_sigma_up_4 = stats.cbdr_asia_high + 4.0 * r
+
+            stats.cbdr_sigma_dn_0_5 = stats.cbdr_asia_low - 0.5 * r
+            stats.cbdr_sigma_dn_1 = stats.cbdr_asia_low - 1.0 * r
+            stats.cbdr_sigma_dn_1_5 = stats.cbdr_asia_low - 1.5 * r
+            stats.cbdr_sigma_dn_2 = stats.cbdr_asia_low - 2.0 * r
+            stats.cbdr_sigma_dn_2_5 = stats.cbdr_asia_low - 2.5 * r
+            stats.cbdr_sigma_dn_3 = stats.cbdr_asia_low - 3.0 * r
+            stats.cbdr_sigma_dn_4 = stats.cbdr_asia_low - 4.0 * r
 
     # NEW: FLOUT (20:00 - 00:00)
     flout_df = get_ohlc_in_range(df_day, SESSION_TIMES['FLOUT'][0], SESSION_TIMES['FLOUT'][1])
@@ -457,66 +467,64 @@ def extract_session_stats(df_day: pd.DataFrame, prev_day_stats: dict = None, pre
         stats.prev_month_close = prev_month_stats.get('close', np.nan)
         stats.monthly_open = prev_month_stats.get('monthly_open', np.nan)
     
-    # ═══ NEW: Calculations for Additional Items ═══
-    # 1. London Open Position vs Asia Mid
-    if pd.notna(stats.london_open) and pd.notna(stats.asia_mid):
-        stats.london_open_vs_asia_mid = "ABOVE_ASIA_MID" if stats.london_open > stats.asia_mid else "BELOW_ASIA_MID"
-        
-    # 2. Percentage Normalization (using Globex Open or Asia Open as ref)
-    ref_price = stats.globex_open if pd.notna(stats.globex_open) else stats.asia_open
+
+
+    # ═══ Derived Metrics (Group A & C) ═══
+    ref_price = stats.globex_open if pd.notna(stats.globex_open) else stats.ny_open
     
     if pd.notna(ref_price) and ref_price > 0:
-        # Range Percentages
         if pd.notna(stats.asia_range): stats.asia_range_pct = stats.asia_range / ref_price * 100
         if pd.notna(stats.london_range): stats.london_range_pct = stats.london_range / ref_price * 100
         if pd.notna(stats.ny_am_range): stats.ny_am_range_pct = stats.ny_am_range / ref_price * 100
         if pd.notna(stats.ny_pm_range): stats.ny_pm_range_pct = stats.ny_pm_range / ref_price * 100
         if pd.notna(stats.lunch_range): stats.lunch_range_pct = stats.lunch_range / ref_price * 100
-        if pd.notna(stats.overnight_high) and pd.notna(stats.overnight_low):
-            stats.overnight_range_pct = (stats.overnight_high - stats.overnight_low) / ref_price * 100
-        if pd.notna(stats.cbdr_asia_range): stats.cbdr_asia_range_pct = stats.cbdr_asia_range / ref_price * 100
         if pd.notna(stats.p12_range): stats.p12_range_pct = stats.p12_range / ref_price * 100
-        if pd.notna(stats.cbdr_asia_range) and pd.notna(stats.cbdr_asia_mid) and stats.cbdr_asia_mid > 0:
-            stats.cbdr_range_pct_of_price = stats.cbdr_asia_range / stats.cbdr_asia_mid * 100 # Specific request
-
-        # Sweep Percentages (relative to Asia Mid usually, or ref_price)
-        # Request: (london_high - asia_high) / asia_mid * 100
-        asia_mid_ref = stats.asia_mid if pd.notna(stats.asia_mid) and stats.asia_mid > 0 else ref_price
+        if pd.notna(stats.cbdr_asia_range): stats.cbdr_asia_range_pct = stats.cbdr_asia_range / ref_price * 100
         
-        if pd.notna(stats.london_high) and pd.notna(stats.asia_high):
-            sweep = stats.london_high - stats.asia_high
-            if sweep > 0: stats.london_sweep_up_pct = sweep / asia_mid_ref * 100
-            
-        if pd.notna(stats.london_low) and pd.notna(stats.asia_low):
-            sweep = stats.asia_low - stats.london_low
-            if sweep > 0: stats.london_sweep_dn_pct = sweep / asia_mid_ref * 100
+        if pd.notna(stats.overnight_high) and pd.notna(stats.overnight_low):
+             curr_on_range = stats.overnight_high - stats.overnight_low
+             stats.overnight_range_pct = curr_on_range / ref_price * 100
+             
+        if pd.notna(stats.cbdr_asia_range): stats.cbdr_range_pct_of_price = stats.cbdr_asia_range_pct
 
-        # Level Distances from NY Open
-        if pd.notna(stats.ny_open) and stats.ny_open > 0:
-            if pd.notna(stats.london_high): stats.london_high_from_ny_open_pct = (stats.london_high - stats.ny_open) / stats.ny_open * 100
-            if pd.notna(stats.london_low): stats.london_low_from_ny_open_pct = (stats.london_low - stats.ny_open) / stats.ny_open * 100
-            if pd.notna(stats.asia_high): stats.asia_high_from_ny_open_pct = (stats.asia_high - stats.ny_open) / stats.ny_open * 100
-            if pd.notna(stats.asia_low): stats.asia_low_from_ny_open_pct = (stats.asia_low - stats.ny_open) / stats.ny_open * 100
-            if pd.notna(stats.prev_day_high): stats.pdh_from_ny_open_pct = (stats.prev_day_high - stats.ny_open) / stats.ny_open * 100
-            if pd.notna(stats.prev_day_low): stats.pdl_from_ny_open_pct = (stats.prev_day_low - stats.ny_open) / stats.ny_open * 100
+    # London Sweep Pct
+    if pd.notna(stats.london_high) and pd.notna(stats.asia_high) and pd.notna(stats.asia_mid) and stats.asia_mid > 0:
+        sweep_up = max(0, stats.london_high - stats.asia_high)
+        stats.london_sweep_up_pct = sweep_up / stats.asia_mid * 100
+        
+    if pd.notna(stats.london_low) and pd.notna(stats.asia_low) and pd.notna(stats.asia_mid) and stats.asia_mid > 0:
+        sweep_dn = max(0, stats.asia_low - stats.london_low)
+        stats.london_sweep_dn_pct = sweep_dn / stats.asia_mid * 100
+        
+    # Distance from NY Open
+    if pd.notna(stats.ny_open) and stats.ny_open > 0:
+        if pd.notna(stats.london_high): stats.london_high_from_ny_open_pct = (stats.london_high - stats.ny_open) / stats.ny_open * 100
+        if pd.notna(stats.london_low): stats.london_low_from_ny_open_pct = (stats.london_low - stats.ny_open) / stats.ny_open * 100
+        if pd.notna(stats.asia_high): stats.asia_high_from_ny_open_pct = (stats.asia_high - stats.ny_open) / stats.ny_open * 100
+        if pd.notna(stats.asia_low): stats.asia_low_from_ny_open_pct = (stats.asia_low - stats.ny_open) / stats.ny_open * 100
+        if pd.notna(stats.prev_day_high): stats.pdh_from_ny_open_pct = (stats.prev_day_high - stats.ny_open) / stats.ny_open * 100
+        if pd.notna(stats.prev_day_low): stats.pdl_from_ny_open_pct = (stats.prev_day_low - stats.ny_open) / stats.ny_open * 100
 
-    # 3. Additional Position Classifications
+    # Classifications
+    if pd.notna(stats.london_open_price) and pd.notna(stats.asia_mid):
+        stats.london_open_vs_asia_mid = "ABOVE_ASIA_MID" if stats.london_open_price > stats.asia_mid else "BELOW_ASIA_MID"
+        
     if pd.notna(stats.asia_open) and pd.notna(stats.prev_settle):
-        stats.asia_open_vs_prev_close = "ABOVE" if stats.asia_open > stats.prev_settle else "BELOW"
+        stats.asia_open_vs_prev_close = "GAP_UP" if stats.asia_open > stats.prev_settle else "GAP_DOWN"
         
-    if pd.notna(stats.london_open) and pd.notna(stats.midnight_open):
-        stats.london_open_vs_midnight = "ABOVE" if stats.london_open > stats.midnight_open else "BELOW"
-
+    if pd.notna(stats.london_open_price) and pd.notna(stats.midnight_open):
+        stats.london_open_vs_midnight = "ABOVE" if stats.london_open_price > stats.midnight_open else "BELOW"
+        
     if pd.notna(stats.ny_open) and pd.notna(stats.overnight_mid):
         stats.ny_open_vs_overnight_mid = "ABOVE" if stats.ny_open > stats.overnight_mid else "BELOW"
         
     if pd.notna(stats.ny_open) and pd.notna(stats.midnight_open):
         stats.ny_open_vs_midnight = "ABOVE" if stats.ny_open > stats.midnight_open else "BELOW"
         
-    if pd.notna(stats.ny_pm_open):
-        if pd.notna(stats.ny_am_mid):
-            stats.pm_open_vs_am_mid = "ABOVE" if stats.ny_pm_open > stats.ny_am_mid else "BELOW"
-        if pd.notna(stats.lunch_mid):
-            stats.pm_open_vs_lunch_mid = "ABOVE" if stats.ny_pm_open > stats.lunch_mid else "BELOW"
+    if pd.notna(stats.pm_open_price) and pd.notna(stats.ny_am_mid):
+        stats.pm_open_vs_am_mid = "ABOVE" if stats.pm_open_price > stats.ny_am_mid else "BELOW"
+        
+    if pd.notna(stats.pm_open_price) and pd.notna(stats.lunch_mid):
+        stats.pm_open_vs_lunch_mid = "ABOVE" if stats.pm_open_price > stats.lunch_mid else "BELOW"
 
     return stats
