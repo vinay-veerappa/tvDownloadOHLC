@@ -1,0 +1,285 @@
+import argparse
+import pandas as pd
+import numpy as np
+import datetime
+from datetime import time, timedelta
+import os
+import multiprocessing
+from multiprocessing import Pool, cpu_count
+from functools import partial
+
+from session_extractor import extract_session_stats, TradingDay
+from pattern_classifier import (
+    classify_overnight_pattern, classify_manipulation, classify_ny_position,
+    classify_pm_pattern, classify_pm_manipulation, detect_judas_pm
+)
+from pda_detector import detect_london_pd_arrays
+from outcome_measurer import (
+    measure_outcomes, measure_ny_enhanced, measure_pm_outcomes, measure_asia_outcomes,
+    NYOutcome, PMOutcome, AsiaOutcome
+)
+from data_loader import load_data, slice_trading_days, get_trading_day_data
+
+def process_day_worker(args):
+    """
+    Worker function for parallel processing.
+    args: (t_date, df_day, day_stats)
+    """
+    t_date, df_day, day_stats = args
+    
+    if df_day.empty or day_stats is None:
+        return None
+
+    # 2. Classify Patterns
+    pattern = classify_overnight_pattern(day_stats)
+    manipulation = classify_manipulation(day_stats)
+    ny_position = classify_ny_position(day_stats)
+    
+    # 3. Detect PD Arrays
+    pd_arrays = detect_london_pd_arrays(df_day, day_stats, manipulation)
+    
+    # 4. Measure Outcomes (Original)
+    ny_outcome = measure_outcomes(df_day, day_stats, pd_arrays, manipulation)
+    
+    # 5. Measure Outcomes (Enhanced)
+    measure_ny_enhanced(df_day, day_stats, ny_outcome)
+    
+    # 6. PM Classification (NEW)
+    pm_pattern = classify_pm_pattern(day_stats)
+    pm_manipulation = classify_pm_manipulation(day_stats)
+    day_stats.pattern_pm = pm_pattern
+    day_stats.manip_pm = pm_manipulation
+    day_stats.is_judas_pm = detect_judas_pm(day_stats, pm_manipulation)
+    
+    # 7. PM Outcomes (NEW)
+    pm_outcome = measure_pm_outcomes(df_day, day_stats)
+    
+    # Return a dictionary of results and the updated stats object (needed for Asia pass)
+    row = {
+        'date': t_date,
+        'pattern': pattern,
+        'manipulation': manipulation,
+        'ny_position': ny_position,
+        'pm_pattern': pm_pattern,
+        'pm_manipulation': pm_manipulation,
+        'is_judas_pm': day_stats.is_judas_pm,
+        
+        # Day Stats
+        'london_high': day_stats.london_high,
+        'london_low': day_stats.london_low,
+        'ny_open': day_stats.ny_open,
+        'ny_high': day_stats.ny_high,
+        'ny_low': day_stats.ny_low,
+        'ny_close': day_stats.ny_close,
+        'ny_am_high': day_stats.ny_am_high,
+        'ny_am_low': day_stats.ny_am_low,
+        'ny_pm_high': day_stats.ny_pm_high,
+        'ny_pm_low': day_stats.ny_pm_low,
+        'ny_pm_mid': day_stats.ny_pm_mid,
+        'lunch_high': day_stats.lunch_high,
+        'lunch_low': day_stats.lunch_low,
+        'overnight_high': day_stats.overnight_high,
+        'overnight_low': day_stats.overnight_low,
+        'cbdr_asia_high': day_stats.cbdr_asia_high,
+        'cbdr_asia_low': day_stats.cbdr_asia_low,
+        'cbdr_asia_range': day_stats.cbdr_asia_range,
+        'p12_range': day_stats.p12_range,
+        'globex_open': day_stats.globex_open,
+        'ote_bull_62': day_stats.ote_bull_62,
+        'ote_bear_62': day_stats.ote_bear_62,
+        'rth_gap': day_stats.rth_gap,
+        'rth_gap_pct': day_stats.rth_gap_pct,
+        'prev_settle': day_stats.prev_settle,
+        
+        # NY Outcome
+        'hit_london_high': ny_outcome.hit_london_high,
+        'hit_london_low': ny_outcome.hit_london_low,
+        'hit_london_high_first': ny_outcome.hit_london_high_first,
+        'hit_overnight_high': ny_outcome.hit_overnight_high,
+        'hit_overnight_low': ny_outcome.hit_overnight_low,
+        'on_high_first': ny_outcome.on_high_first,
+        'hit_p12_high': ny_outcome.hit_p12_high,
+        'hit_p12_low': ny_outcome.hit_p12_low,
+        'p12_high_first': ny_outcome.p12_high_first,
+        'hit_ote_bull_62': ny_outcome.hit_ote_bull_62,
+        'hit_ote_bear_62': ny_outcome.hit_ote_bear_62,
+        'gap_fill_25': ny_outcome.gap_fill_25,
+        'gap_fill_50': ny_outcome.gap_fill_50,
+        'gap_fill_100': ny_outcome.gap_fill_100,
+        'manipulation_reversed': ny_outcome.manipulation_reversed,
+        'reversal_time': ny_outcome.reversal_time,
+        
+        # CBDR Sigma Reach
+        'cbdr_upside_sigmas': ny_outcome.cbdr_upside_sigmas,
+        'cbdr_downside_sigmas': ny_outcome.cbdr_downside_sigmas,
+        'cbdr_hit_up_1': ny_outcome.cbdr_hit_up_1,
+        'cbdr_hit_up_2': ny_outcome.cbdr_hit_up_2,
+        'cbdr_hit_up_3': ny_outcome.cbdr_hit_up_3,
+        'cbdr_hit_dn_1': ny_outcome.cbdr_hit_dn_1,
+        'cbdr_hit_dn_2': ny_outcome.cbdr_hit_dn_2,
+        'cbdr_hit_dn_3': ny_outcome.cbdr_hit_dn_3,
+        
+        # PM Outcome
+        'pm_hit_am_high': pm_outcome.hit_am_high,
+        'pm_hit_am_low': pm_outcome.hit_am_low,
+        'pm_am_high_first': pm_outcome.am_high_first,
+    }
+    
+    return row, day_stats
+
+def main():
+    # Enforce spawn method for Windows compatibility if needed, 
+    # but strictly inside main block to avoid recursive loops
+    pass
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Run ICT Research Pipeline')
+    parser.add_argument('--ticker', type=str, required=True, help='Ticker symbol (e.g. NQ)')
+    parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing')
+    args = parser.parse_args()
+
+    ticker = args.ticker
+    print(f"Loading data for {ticker}...")
+    
+    # Load 1m data
+    df_1m = load_data(ticker, '1m')
+    df_1m = slice_trading_days(df_1m)
+    
+    # Load 1d data for weekly/monthly stats
+    try:
+        df_1d = load_data(ticker, '1d')
+        if not df_1d.empty:
+            df_1d = df_1d.sort_index()
+    except FileNotFoundError:
+        print("Warning: Daily data not found. Weekly/Monthly stats will be missing.")
+        df_1d = pd.DataFrame()
+
+    unique_dates = df_1m['trading_date'].unique()
+    # Filter out NaT/None values that cannot be compared/sorted
+    unique_dates = unique_dates[pd.notna(unique_dates)]
+    unique_dates.sort()
+    
+    print(f"Processing {len(unique_dates)} trading days...")
+    
+    # --- PHASE 1: Sequential Extraction (Preserve History) ---
+    print("Phase 1: extracting session stats (sequential)...")
+    
+    # Optimization: Group by date once to avoid repeated filtering
+    print("  Splitting data by date...")
+    day_groups = df_1m.groupby('trading_date')
+    
+    day_stats_list = []
+    day_dfs_cache = {} # Cache df slices for Phase 2
+    
+    prev_day_stats = None
+    
+    print("  Extracting stats...")
+    for i, t_date in enumerate(unique_dates):
+        try:
+            day_1m = day_groups.get_group(t_date)
+        except KeyError:
+            continue
+            
+        day_dfs_cache[t_date] = day_1m # Store for parallel pass
+        
+        # Prepare context (prev_day_stats is updated at end of loop)
+        # (Simplified: calculate complex weekly/monthly context here if needed)
+        
+        if i % 100 == 0:
+            print(f"  Processed {i}/{len(unique_dates)} days...", end='\r')
+            
+        day_stats = extract_session_stats(day_1m, prev_day_stats)
+        
+        if day_stats:
+            day_stats_list.append((t_date, day_stats))
+            
+            # Update prev stats for next iteration
+            prev_day_stats = {
+                'high': day_stats.ny_high, 'low': day_stats.ny_low, 
+                'close': day_stats.ny_close,
+                'am_high': day_stats.ny_am_high, 'am_low': day_stats.ny_am_low,
+                'pm_high': day_stats.ny_pm_high, 'pm_low': day_stats.ny_pm_low,
+                'pm_mid': day_stats.ny_pm_mid,
+                'lunch_high': day_stats.lunch_high, 'lunch_low': day_stats.lunch_low,
+            }
+        else:
+            # Handle empty day
+            pass
+
+    # --- PHASE 2: Parallel Analysis ---
+    print("Phase 2: running analysis (parallel)...")
+    
+    # Prepare arguments
+    tasks = []
+    for t_date, day_stats in day_stats_list:
+        tasks.append((t_date, day_dfs_cache[t_date], day_stats))
+    
+    final_stats_map = {} # Map date -> updated day_stats (with PM classification)
+    results = []
+    
+    if args.no_parallel:
+        print("Running in serial mode...")
+        worker_outputs = [process_day_worker(task) for task in tasks]
+    else:
+        num_cores = cpu_count()
+        print(f"Running on {num_cores} cores...")
+        with Pool(processes=num_cores) as pool:
+            worker_outputs = pool.map(process_day_worker, tasks)
+            
+    # Collect results
+    for out in worker_outputs:
+        if out:
+            row, updated_stats = out
+            results.append(row)
+            final_stats_map[row['date']] = updated_stats
+
+    # --- PHASE 3: Asia Outcomes (Sequential - Cross-Day) ---
+    print("Phase 3: measuring Asia outcomes (cross-day)...")
+    
+    # We iterate through the RESULTS.
+    # For result i (Date T), we calculate Asia outcomes using Day T's NEW PM stats vs Day T+1's data.
+    # Note: Pass 2 computed PM stats and stored them in final_stats_map.
+    
+    # Convert results to DataFrame for easy indexing logic, or just iterate list
+    # Because we need T+1's data, we need to find the next date in our cache.
+    
+    date_to_next_date = {unique_dates[i]: unique_dates[i+1] for i in range(len(unique_dates)-1)}
+    
+    for row in results:
+        curr_date = row['date']
+        next_date = date_to_next_date.get(curr_date)
+        
+        # Default empty values
+        row['asia_hit_pm_high'] = False
+        row['asia_hit_pm_low'] = False
+        row['asia_hit_pdh'] = False
+        row['asia_hit_pdl'] = False
+        row['asia_pm_manip_reversed'] = False
+        
+        if next_date and next_date in day_dfs_cache:
+            next_day_df = day_dfs_cache[next_date]
+            curr_stats = final_stats_map[curr_date] # Get stats with PM info
+            
+            asia_outcome = measure_asia_outcomes(next_day_df, curr_stats)
+            
+            row['asia_hit_pm_high'] = asia_outcome.hit_pm_high
+            row['asia_hit_pm_low'] = asia_outcome.hit_pm_low
+            row['asia_hit_pdh'] = asia_outcome.hit_pdh
+            row['asia_hit_pdl'] = asia_outcome.hit_pdl
+            row['asia_pm_manip_reversed'] = asia_outcome.pm_manip_reversed
+            row['asia_pm_high_first'] = asia_outcome.pm_high_first
+
+    # Save Results
+    results_df = pd.DataFrame(results)
+    
+    # Ensure data directory exists
+    data_dir = 'ict_research/data'
+    if not os.path.exists(data_dir):
+        if os.path.exists('data'):
+            data_dir = 'data'
+        else:
+             os.makedirs(data_dir, exist_ok=True)
+             
+    output_path = os.path.join(data_dir, f"trading_days_enhanced_{ticker}.csv")
+    results_df.to_csv(output_path, index=False)
+    print(f"Saved enhanced results to {output_path}")
