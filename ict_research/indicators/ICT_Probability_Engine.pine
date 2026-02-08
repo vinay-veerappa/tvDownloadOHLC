@@ -1,7 +1,28 @@
 //@version=6
-indicator("[VxV]Stats Probability Mapper", shorttitle="[VxV]Prob Map]", overlay=true,
+indicator("[VxV]ICT Probability Engine v4", shorttitle="[VxV]Prob v4", overlay=true,
      max_boxes_count=50, max_lines_count=100, max_labels_count=100)
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ICT PROBABILITY ENGINE v4
+// ═══════════════════════════════════════════════════════════════════════════════
+// 
+// CHANGELOG from v3:
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. [CRITICAL] 72-Scenario Decision Tree — Asia size now modifies probabilities
+// 2. [CRITICAL] Gap Confluence — Tracks RTH gap direction, calculates chasing vs fading
+// 3. [CRITICAL] Fixed Judas Detection — Now tracks sweep ORDER, not just occurrence
+// 4. [CRITICAL] Misaligned = SKIP — Shows "⚠ SKIP" with actual 49-56% probability
+// 5. [HIGH] Conditional CBDR Sigmas — Asymmetric based on manipulation direction
+// 6. [HIGH] London Range Effect — Large London reduces probability
+// 7. [HIGH] DOW Adjustment — Tuesday/Wednesday boost, Monday reduction
+// 8. [MEDIUM] Fixed 7-8AM Mid probability — 80.6% not 94.3%
+// 9. [MEDIUM] Setup Quality Score — Combines all factors into single score
+// 10. [LOW] Timing Window Warning — Alerts when 80% of reversals complete
+// 11. [LOW] PM Management Mode — Different display during PM session
+// 12. [LOW] Commodity Exception — Different logic for CL/GC
+//
+// Based on 5,165 NQ trading days (2006-2026)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 // ─── INPUTS ──────────────────────────────────────────────────────────────────
 
@@ -71,21 +92,21 @@ i_showLunch = input.bool(true, "  Show Lunch H/L (PM only)", group=grp_l, inline
 i_lchWidth = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="lch")
 i_lchStyle = input.string("Dashed", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="lch")
 
+i_lvlWidth = input.int(1, "Default Level Width", minval=1, maxval=5, group=grp_l)
+
 grp_lb = "═══════ Labels ═══════"
 i_showLabels = input.bool(true, "Show Level Labels", group=grp_lb)
 i_labelSize = input.string("Small", "Label Size", options=["Tiny","Small","Normal","Huge"], group=grp_lb)
 i_labelOffset = input.int(5, "Label Offset (bars)", minval=0, maxval=50, group=grp_lb)
 
 grp_c = "═══════ Colors ═══════"
-i_londonColor = input.color(#ef4444, "London Levels", group=grp_c, inline="c1")
-i_asiaColor = input.color(#3b82f6, "Asia Levels", group=grp_c, inline="c2")
-i_intradayColor = input.color(#10b981, "Intraday Levels", group=grp_c, inline="c3")
-i_overnightColor = input.color(#f59e0b, "Overnight Levels", group=grp_c, inline="c4")
-i_priorColor = input.color(#f97316, "Prior Day Levels", group=grp_c, inline="c5")
-i_sigmaUpColor = input.color(#16a34a, "Sigma Upside", group=grp_c, inline="c6")
-i_sigmaDnColor = input.color(#dc2626, "Sigma Downside", group=grp_c, inline="c7")
-
-i_lvlWidth = input.int(1, "Level Width", minval=1, maxval=5, group=grp_l, inline="lch")
+i_londonColor = input.color(#ef4444, "London Levels", group=grp_c)
+i_asiaColor = input.color(#3b82f6, "Asia Levels", group=grp_c)
+i_intradayColor = input.color(#10b981, "Intraday Levels", group=grp_c)
+i_overnightColor = input.color(#f59e0b, "Overnight Levels", group=grp_c)
+i_priorColor = input.color(#f97316, "Prior Day Levels", group=grp_c)
+i_sigmaUpColor = input.color(#16a34a, "Sigma Upside", group=grp_c)
+i_sigmaDnColor = input.color(#dc2626, "Sigma Downside", group=grp_c)
 
 grp_b = "═══════ Session Boxes ═══════"
 i_showBoxes = input.bool(true, "Show Session Boxes", group=grp_b)
@@ -97,128 +118,95 @@ i_rangeLookback = input.int(50, "Range Percentile Lookback", minval=5, maxval=10
 // ─── COMPREHENSIVE THEME SYSTEM ──────────────────────────────────────────────
 
 type ThemePalette
-    // Background & Canvas
     color bg_primary
     color bg_secondary
     color bg_border
-    
-    // Text & Labels
     color text_primary
     color text_secondary
     color text_dim
-    
-    // Session Colors
     color asia_primary
     color london_primary
     color ny_primary
     color overnight_primary
     color prior_primary
-    
-    // Semantic Colors
     color bullish
     color bearish
     color neutral
     color caution
     color confirm
-    
-    // UI Elements
     color header_bg
     color header_text
     color validated_bg
     color validated_text
     color pending_bg
     color pending_text
-    
-    // Line Transparency Defaults
+    color skip_bg
+    color skip_text
     int line_transp_primary
     int line_transp_secondary
     int label_transp
 
-// ─── DARK THEME PALETTE ─────────────────────────────────────────────────────
-
 getDarkPalette() =>
     ThemePalette.new(
-        // Background & Canvas
-        bg_primary = color.new(#0f172a, 0),      // dark blue-gray
-        bg_secondary = color.new(#1e293b, 0),    // slightly lighter
-        bg_border = color.new(#334155, 60),      // slate with transparency
-        
-        // Text & Labels
-        text_primary = color.new(#f1f5f9, 0),    // near white
-        text_secondary = color.new(#cbd5e1, 0),  // light gray
-        text_dim = color.new(#94a3b8, 0),        // medium gray
-        
-        // Session Colors
-        asia_primary = color.new(#0ea5e9, 0),     // bright cyan-blue
-        london_primary = color.new(#ef4444, 0),   // bright red
-        ny_primary = color.new(#10b981, 0),       // bright green
-        overnight_primary = color.new(#f59e0b, 0),// amber
-        prior_primary = color.new(#f97316, 0),    // orange
-        
-        // Semantic Colors
-        bullish = color.new(#22c55e, 0),          // bright green
-        bearish = color.new(#ef4444, 0),          // bright red
-        neutral = color.new(#6b7280, 0),          // gray
-        caution = color.new(#f59e0b, 0),          // amber
-        confirm = color.new(#8b5cf6, 0),          // purple
-        
-        // UI Elements
+        bg_primary = color.new(#0f172a, 0),
+        bg_secondary = color.new(#1e293b, 0),
+        bg_border = color.new(#334155, 60),
+        text_primary = color.new(#f1f5f9, 0),
+        text_secondary = color.new(#cbd5e1, 0),
+        text_dim = color.new(#94a3b8, 0),
+        asia_primary = color.new(#0ea5e9, 0),
+        london_primary = color.new(#ef4444, 0),
+        ny_primary = color.new(#10b981, 0),
+        overnight_primary = color.new(#f59e0b, 0),
+        prior_primary = color.new(#f97316, 0),
+        bullish = color.new(#22c55e, 0),
+        bearish = color.new(#ef4444, 0),
+        neutral = color.new(#6b7280, 0),
+        caution = color.new(#f59e0b, 0),
+        confirm = color.new(#8b5cf6, 0),
         header_bg = color.new(#1e3a5f, 0),
         header_text = color.new(#60a5fa, 0),
         validated_bg = color.new(#166534, 0),
         validated_text = color.new(#dcfce7, 0),
         pending_bg = color.new(#92400e, 0),
         pending_text = color.new(#fef3c7, 0),
-        
-        // Line Transparency
+        skip_bg = color.new(#7f1d1d, 0),
+        skip_text = color.new(#fecaca, 0),
         line_transp_primary = 25,
         line_transp_secondary = 40,
         label_transp = 0
     )
 
-// ─── LIGHT THEME PALETTE ────────────────────────────────────────────────────
-
 getLightPalette() =>
     ThemePalette.new(
-        // Background & Canvas
-        bg_primary = color.new(#ffffff, 0),       // white
-        bg_secondary = color.new(#f8fafc, 0),     // off-white
-        bg_border = color.new(#cbd5e1, 60),       // slate
-        
-        // Text & Labels
-        text_primary = color.new(#0f172a, 0),     // dark blue-gray
-        text_secondary = color.new(#475569, 0),   // slate
-        text_dim = color.new(#78716c, 0),         // muted
-        
-        // Session Colors
-        asia_primary = color.new(#0369a1, 0),     // teal-blue
-        london_primary = color.new(#dc2626, 0),   // dark red
-        ny_primary = color.new(#059669, 0),       // dark green
-        overnight_primary = color.new(#d97706, 0),// dark amber
-        prior_primary = color.new(#ea580c, 0),    // dark orange
-        
-        // Semantic Colors
-        bullish = color.new(#16a34a, 0),          // green-700
-        bearish = color.new(#dc2626, 0),          // red-600
-        neutral = color.new(#6b7280, 0),          // gray
-        caution = color.new(#ea580c, 0),          // orange
-        confirm = color.new(#7c3aed, 0),          // purple
-        
-        // UI Elements
+        bg_primary = color.new(#ffffff, 0),
+        bg_secondary = color.new(#f8fafc, 0),
+        bg_border = color.new(#cbd5e1, 60),
+        text_primary = color.new(#0f172a, 0),
+        text_secondary = color.new(#475569, 0),
+        text_dim = color.new(#78716c, 0),
+        asia_primary = color.new(#0369a1, 0),
+        london_primary = color.new(#dc2626, 0),
+        ny_primary = color.new(#059669, 0),
+        overnight_primary = color.new(#d97706, 0),
+        prior_primary = color.new(#ea580c, 0),
+        bullish = color.new(#16a34a, 0),
+        bearish = color.new(#dc2626, 0),
+        neutral = color.new(#6b7280, 0),
+        caution = color.new(#ea580c, 0),
+        confirm = color.new(#7c3aed, 0),
         header_bg = color.new(#e0f2fe, 0),
         header_text = color.new(#0369a1, 0),
         validated_bg = color.new(#dcfce7, 0),
         validated_text = color.new(#166534, 0),
         pending_bg = color.new(#fef3c7, 0),
         pending_text = color.new(#92400e, 0),
-        
-        // Line Transparency
+        skip_bg = color.new(#fee2e2, 0),
+        skip_text = color.new(#991b1b, 0),
         line_transp_primary = 35,
         line_transp_secondary = 50,
         label_transp = 0
     )
-
-// ─── GET ACTIVE PALETTE ─────────────────────────────────────────────────────
 
 isDarkTheme = i_theme == "Dark" or (i_theme == "Auto")
 
@@ -234,6 +222,9 @@ is_rty = str.contains(r,"RTY") or str.contains(r,"M2K")
 is_ym  = str.contains(r,"YM") or str.contains(r,"MYM")
 is_cl  = str.contains(r,"CL") or str.contains(r,"MCL")
 is_gc  = str.contains(r,"GC") or str.contains(r,"MGC")
+
+// NEW: Commodity flag for different logic
+is_commodity = is_cl or is_gc
 
 // ─── TIME HELPERS ────────────────────────────────────────────────────────────
 
@@ -275,7 +266,6 @@ inNYPM   = hhmm >= 1330 and hhmm < 1600
 
 string curSession = inAsia ? "ASIA" : inLondon ? "LONDON" : inPreMkt ? "PRE-MKT" : inNYAM ? "NY AM" : inLunch ? "LUNCH" : inNYPM ? "NY PM" : "CLOSED"
 
-// New session day detection (at 18:00 globex open)
 var int lastDay = -1
 isNewDay = false
 if hhmm >= 1800 and hhmm < 1815 and curDay != lastDay
@@ -296,10 +286,20 @@ var float glxOpen = na, var float mnOpen = na, var float o730 = na
 var float rthOpen = na, var float pmOpen = na
 var int asiaBar0 = na, var int lonBar0 = na, var int amBar0 = na
 
-// Daily high/low tracking with timestamps
+// NEW: Gap tracking
+var float rthGap = na
+var string gapDir = "—"
+var bool gapChasing = false
+var float gapPts = na
+
+// NEW: London sweep order tracking (for Judas detection)
+var int lonHighTime = na
+var int lonLowTime = na
+var int lonHighFirst = 0  // 0=unknown, 1=high first, -1=low first
+var bool isJudas = false
+
+// Daily high/low tracking
 var float dayH = na, var float dayL = na
-var int dayHBar = na, var int dayLBar = na
-var int dayHTime = na, var int dayLTime = na
 var int dayHHour = na, var int dayHMin = na
 var int dayLHour = na, var int dayLMin = na
 
@@ -310,7 +310,6 @@ var array<float> nyRanges = array.new_float()
 
 // Daily data
 [pdH, pdL, pdC] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], barmerge.gaps_off, barmerge.lookahead_on)
-pwC = request.security(syminfo.tickerid, "W", close[1], barmerge.gaps_off, barmerge.lookahead_on)
 
 // Resets
 if isNewDay
@@ -325,14 +324,20 @@ if isNewDay
     glxOpen := open, mnOpen := na, o730 := na
     rthOpen := na, pmOpen := na
     asiaBar0 := na, lonBar0 := na, amBar0 := na
-    // Reset daily high/low
     dayH := na, dayL := na
-    dayHBar := na, dayLBar := na
-    dayHTime := na, dayLTime := na
     dayHHour := na, dayHMin := na
     dayLHour := na, dayLMin := na
+    // NEW: Reset gap and Judas tracking
+    rthGap := na
+    gapDir := "—"
+    gapChasing := false
+    gapPts := na
+    lonHighTime := na
+    lonLowTime := na
+    lonHighFirst := 0  // Reset to unknown
+    isJudas := false
 
-// Track sessions with range recording
+// Track Asia
 if inAsia
     if na(asiaBar0)
         asiaBar0 := bar_index
@@ -345,19 +350,39 @@ if not inAsia and inAsia[1] and not na(asiaH) and not na(asiaL)
     if asiaRanges.size() > i_rangeLookback
         asiaRanges.shift()
 
+// Track London with sweep order
 if inLondon
     if na(lonBar0)
         lonBar0 := bar_index
+    
+    // Track WHEN London first sweeps each Asia level
+    if not na(asiaH) and high > asiaH and na(lonHighTime)
+        lonHighTime := time
+    if not na(asiaL) and low < asiaL and na(lonLowTime)
+        lonLowTime := time
+    
     lonH := na(lonH) ? high : math.max(lonH, high)
     lonL := na(lonL) ? low  : math.min(lonL, low)
     lonMid := (lonH + lonL) / 2.0
 
+// At London close, determine sweep order
 if not inLondon and inLondon[1] and not na(lonH) and not na(lonL)
     lonRng = lonH - lonL
     londonRanges.push(lonRng)
     if londonRanges.size() > i_rangeLookback
         londonRanges.shift()
+    
+    // Determine high-first vs low-first (1=high first, -1=low first, 0=unknown)
+    if not na(lonHighTime) and not na(lonLowTime)
+        lonHighFirst := lonHighTime < lonLowTime ? 1 : -1
+    else if not na(lonHighTime) and na(lonLowTime)
+        lonHighFirst := 1
+    else if na(lonHighTime) and not na(lonLowTime)
+        lonHighFirst := -1
+    else
+        lonHighFirst := 0
 
+// Track NY AM
 if inNYAM
     if na(amBar0)
         amBar0 := bar_index
@@ -385,9 +410,6 @@ if hhmm >= 1800 or hhmm < 930
     onH := na(onH) ? high : math.max(onH, high)
     onL := na(onL) ? low  : math.min(onL, low)
     onMid := (onH + onL) / 2.0
-if hhmm >= 1800 or hhmm < 600
-    p12H := na(p12H) ? high : math.max(p12H, high)
-    p12L := na(p12L) ? low  : math.min(p12L, low)
 
 if curH == 7
     h78H := na(h78H) ? high : math.max(h78H, high)
@@ -399,24 +421,22 @@ if curH == 7 and curM == 30 and na(o730)
     o730 := open
 if curH == 9 and curM == 30 and na(rthOpen)
     rthOpen := open
+    // NEW: Calculate RTH gap
+    rthGap := open - pdC
+    gapPts := math.abs(rthGap)
+    gapDir := rthGap > 5 ? "UP" : rthGap < -5 ? "DOWN" : "FLAT"
+    
 if curH == 13 and curM == 30 and na(pmOpen)
     pmOpen := open
 
-// ─── DAILY HIGH/LOW TRACKING ─────────────────────────────────────────────────
-
-// Track high entire trading day (6:00 PM Globex open through 4:00 PM close)
-if hhmm >= 1800 or hhmm < 1600  // 18:00 through 16:00
+// Daily H/L tracking
+if hhmm >= 1800 or hhmm < 1600
     if na(dayH) or high > dayH
         dayH := high
-        dayHBar := bar_index
-        dayHTime := time
         dayHHour := hour(time, i_tz)
         dayHMin := minute(time, i_tz)
-    
     if na(dayL) or low < dayL
         dayL := low
-        dayLBar := bar_index
-        dayLTime := time
         dayLHour := hour(time, i_tz)
         dayLMin := minute(time, i_tz)
 
@@ -437,6 +457,12 @@ float lonPctl = not na(lonH) and not na(lonL) ? pctRank(lonH - lonL, londonRange
 float nyRng = not na(amH) and not na(amL) ? math.max(amH, nz(pmH, amH)) - math.min(amL, nz(pmL, amL)) : na
 float nyPctl = not na(nyRng) ? pctRank(nyRng, nyRanges) : na
 
+// NEW: Asia size classification
+string asiaSize = na(asiaPctl) ? "—" : asiaPctl < 25 ? "SMALL" : asiaPctl < 50 ? "MED" : asiaPctl < 75 ? "MED-LG" : "LARGE"
+
+// NEW: London size classification
+string londonSize = na(lonPctl) ? "—" : lonPctl < 25 ? "SMALL" : lonPctl < 50 ? "MED" : lonPctl < 75 ? "MED-LG" : "LARGE"
+
 // ─── CLASSIFICATION ──────────────────────────────────────────────────────────
 
 var string pattern = "—"
@@ -444,6 +470,8 @@ var string manipulation = "NONE"
 var string nyPos = "—"
 var string bias = "WAITING"
 var float biasPct = 0.0
+var bool isAligned = false
+var bool isMisaligned = false
 
 if not na(lonH) and not na(asiaH) and not na(asiaL)
     bool sweptH = lonH > asiaH
@@ -460,11 +488,323 @@ if not na(lonH) and not na(asiaH) and not na(asiaL)
     else
         pattern := "INSIDE"
         manipulation := "NONE"
+    
+    // NEW: Judas detection - fake one direction, then commit opposite
+    // lonHighFirst: 1=high first, -1=low first, 0=unknown
+    if manipulation == "BULLISH" and lonHighFirst == 1
+        isJudas := true  // Faked up first, then swept low (bullish)
+    else if manipulation == "BEARISH" and lonHighFirst == -1
+        isJudas := true  // Faked down first, then swept high (bearish)
+    else
+        isJudas := false
 
 if not na(lonMid)
     nyPos := close > lonMid ? "ABOVE" : "BELOW"
 
-// ─── CONDITIONAL PROBABILITY LOOKUP ──────────────────────────────────────────
+// NEW: Gap confluence calculation
+if manipulation == "BULLISH" and gapDir == "UP"
+    gapChasing := true
+else if manipulation == "BEARISH" and gapDir == "DOWN"
+    gapChasing := true
+else
+    gapChasing := false
+
+// ─── 72-SCENARIO PROBABILITY LOOKUP (NEW) ────────────────────────────────────
+
+// Full decision tree: Pattern × Position × Asia Size × London Size
+get72ScenarioProb(string pat, string pos, string aSz, string lSz) =>
+    float result = 50.0
+    
+    // Base probabilities from research
+    if is_nq
+        // ALIGNED SETUPS
+        if (pat == "PARTIAL DN" and pos == "ABOVE") or (pat == "PARTIAL UP" and pos == "BELOW")
+            // Start with aligned base
+            result := 84.0
+            
+            // Asia size adjustment (±6%)
+            if aSz == "SMALL"
+                result += 4.0  // 88%
+            else if aSz == "MED"
+                result -= 2.0  // 82%
+            else if aSz == "LARGE" or aSz == "MED-LG"
+                result -= 6.0  // 78%
+            
+            // London size adjustment (±5%)
+            if lSz == "SMALL"
+                result += 3.0
+            else if lSz == "LARGE" or lSz == "MED-LG"
+                result -= 5.0
+        
+        // MISALIGNED SETUPS
+        else if (pat == "PARTIAL DN" and pos == "BELOW") or (pat == "PARTIAL UP" and pos == "ABOVE")
+            result := 52.0  // Base misaligned
+            // Asia/London don't help misaligned setups much
+            if aSz == "SMALL"
+                result += 2.0
+            if lSz == "SMALL"
+                result += 2.0
+        
+        // ENGULFS
+        else if pat == "ENGULFS"
+            if pos == "ABOVE"
+                result := 68.0
+            else
+                result := 66.0
+            if aSz == "SMALL"
+                result += 3.0
+            if lSz == "LARGE"
+                result -= 4.0
+        
+        // INSIDE (no manipulation)
+        else if pat == "INSIDE"
+            result := 50.0  // No edge
+    
+    else if is_es
+        if (pat == "PARTIAL DN" and pos == "ABOVE") or (pat == "PARTIAL UP" and pos == "BELOW")
+            result := 82.0
+            if aSz == "SMALL"
+                result += 4.0
+            else if aSz == "LARGE"
+                result -= 5.0
+            if lSz == "SMALL"
+                result += 2.0
+            else if lSz == "LARGE" or lSz == "MED-LG"
+                result -= 4.0
+        else if (pat == "PARTIAL DN" and pos == "BELOW") or (pat == "PARTIAL UP" and pos == "ABOVE")
+            result := 51.0
+            if aSz == "SMALL"
+                result += 2.0
+        else if pat == "ENGULFS"
+            result := pos == "ABOVE" ? 66.0 : 64.0
+            if aSz == "SMALL"
+                result += 2.0
+        else
+            result := 50.0
+    
+    else if is_rty
+        if (pat == "PARTIAL DN" and pos == "ABOVE") or (pat == "PARTIAL UP" and pos == "BELOW")
+            result := 80.0
+            if aSz == "SMALL"
+                result += 4.0
+            else if aSz == "LARGE"
+                result -= 4.0
+            if lSz == "SMALL"
+                result += 2.0
+            else if lSz == "LARGE"
+                result -= 3.0
+        else if (pat == "PARTIAL DN" and pos == "BELOW") or (pat == "PARTIAL UP" and pos == "ABOVE")
+            result := 50.0
+            if aSz == "SMALL"
+                result += 2.0
+        else if pat == "ENGULFS"
+            result := pos == "ABOVE" ? 64.0 : 62.0
+            if aSz == "SMALL"
+                result += 2.0
+        else
+            result := 50.0
+    
+    else if is_ym
+        if (pat == "PARTIAL DN" and pos == "ABOVE") or (pat == "PARTIAL UP" and pos == "BELOW")
+            result := 81.0
+            if aSz == "SMALL"
+                result += 4.0
+            else if aSz == "LARGE"
+                result -= 5.0
+            if lSz == "SMALL"
+                result += 2.0
+            else if lSz == "LARGE"
+                result -= 4.0
+        else if (pat == "PARTIAL DN" and pos == "BELOW") or (pat == "PARTIAL UP" and pos == "ABOVE")
+            result := 51.0
+            if aSz == "SMALL"
+                result += 2.0
+        else if pat == "ENGULFS"
+            result := pos == "ABOVE" ? 65.0 : 63.0
+            if aSz == "SMALL"
+                result += 2.0
+        else
+            result := 50.0
+    
+    // COMMODITIES: Different model - trade WITH London, not against
+    else if is_cl
+        // CL trades WITH manipulation (continuation model)
+        if manipulation == "BULLISH"
+            result := pos == "ABOVE" ? 58.0 : 46.0
+            if aSz == "SMALL"
+                result += 3.0
+        else if manipulation == "BEARISH"
+            result := pos == "BELOW" ? 57.0 : 45.0
+            if aSz == "SMALL"
+                result += 3.0
+        else
+            result := 50.0
+    
+    else if is_gc
+        // GC trades WITH manipulation (continuation model)
+        if manipulation == "BULLISH"
+            result := pos == "ABOVE" ? 56.0 : 47.0
+            if aSz == "SMALL"
+                result += 2.0
+        else if manipulation == "BEARISH"
+            result := pos == "BELOW" ? 55.0 : 46.0
+            if aSz == "SMALL"
+                result += 2.0
+        else
+            result := 50.0
+    
+    result
+
+// ─── ADJUSTMENT FACTORS (NEW) ────────────────────────────────────────────────
+
+// Day of week adjustment
+getDOWAdjust() =>
+    float adj = 1.0
+    if curDOW == dayofweek.tuesday
+        adj := 1.05
+    else if curDOW == dayofweek.wednesday
+        adj := 1.03
+    else if curDOW == dayofweek.monday
+        adj := 0.96
+    else if curDOW == dayofweek.friday
+        adj := 0.98
+    adj
+
+// Gap confluence adjustment (+18% for chasing)
+getGapAdjust() =>
+    gapChasing ? 1.12 : 1.0  // Conservative 12% vs full 18%
+
+// Judas adjustment (+10%)
+getJudasAdjust() =>
+    isJudas ? 1.08 : 1.0
+
+// ─── BIAS CALCULATION (ENHANCED) ─────────────────────────────────────────────
+
+if not na(lonMid) and manipulation != "NONE"
+    // Get base probability from 72-scenario lookup
+    float baseProb = get72ScenarioProb(pattern, nyPos, asiaSize, londonSize)
+    
+    // Apply adjustments
+    float adjustedProb = baseProb * getDOWAdjust() * getGapAdjust() * getJudasAdjust()
+    
+    // Cap at reasonable bounds
+    adjustedProb := math.min(adjustedProb, 95.0)
+    adjustedProb := math.max(adjustedProb, 35.0)
+    
+    // Determine alignment
+    isAligned := (manipulation == "BULLISH" and nyPos == "ABOVE") or 
+                 (manipulation == "BEARISH" and nyPos == "BELOW")
+    isMisaligned := (manipulation == "BULLISH" and nyPos == "BELOW") or
+                     (manipulation == "BEARISH" and nyPos == "ABOVE")
+    
+    if is_commodity
+        // Commodities: trade WITH manipulation
+        if manipulation == "BULLISH"
+            bias := "LONG (CONT)"
+            biasPct := adjustedProb
+        else
+            bias := "SHORT (CONT)"
+            biasPct := adjustedProb
+    else
+        // Equities: reversal model
+        if isAligned
+            if manipulation == "BULLISH"
+                bias := "LONG"
+            else
+                bias := "SHORT"
+            biasPct := adjustedProb
+        else if isMisaligned
+            bias := "⚠ SKIP"  // Changed from "WAIT"
+            biasPct := adjustedProb  // Show actual low probability
+        else
+            bias := "NEUTRAL"
+            biasPct := 50.0
+
+if manipulation == "NONE"
+    bias := "NO SETUP"
+    biasPct := 0.0
+    isAligned := false
+    isMisaligned := false
+
+if isNewDay
+    pattern := "—"
+    manipulation := "NONE"
+    nyPos := "—"
+    bias := "WAITING"
+    biasPct := 0.0
+    isAligned := false
+    isMisaligned := false
+
+// ─── SETUP QUALITY SCORE (NEW) ────────────────────────────────────────────────
+
+var int qualityScore = 0
+var string qualityTxt = "—"
+var string qualityDetails = ""
+
+if not na(lonH) and not na(asiaH) and manipulation != "NONE"
+    qualityScore := 0
+    qualityDetails := ""
+    
+    // +2 for aligned setup
+    if isAligned
+        qualityScore += 2
+        qualityDetails += "Aligned+"
+    
+    // +1 for Judas
+    if isJudas
+        qualityScore += 1
+        qualityDetails += "Judas+"
+    
+    // +1 for gap chasing
+    if gapChasing
+        qualityScore += 1
+        qualityDetails += "Gap+"
+    
+    // +1 for Tuesday/Wednesday
+    if curDOW == dayofweek.tuesday or curDOW == dayofweek.wednesday
+        qualityScore += 1
+        qualityDetails += "DOW+"
+    
+    // +1 for small Asia
+    if asiaSize == "SMALL"
+        qualityScore += 1
+        qualityDetails += "SmAsia+"
+    
+    // +1 for small London
+    if londonSize == "SMALL"
+        qualityScore += 1
+        qualityDetails += "SmLon+"
+    
+    // -1 for large London
+    if londonSize == "LARGE" or londonSize == "MED-LG"
+        qualityScore -= 1
+        qualityDetails += "LgLon-"
+    
+    // -1 for Monday
+    if curDOW == dayofweek.monday
+        qualityScore -= 1
+        qualityDetails += "Mon-"
+    
+    // -2 for misaligned
+    if isMisaligned
+        qualityScore -= 2
+        qualityDetails += "Misalign-"
+    
+    // Convert to text
+    if qualityScore >= 5
+        qualityTxt := "★★★★★"
+    else if qualityScore >= 4
+        qualityTxt := "★★★★"
+    else if qualityScore >= 3
+        qualityTxt := "★★★"
+    else if qualityScore >= 2
+        qualityTxt := "★★"
+    else if qualityScore >= 1
+        qualityTxt := "★"
+    else
+        qualityTxt := "—"
+
+// ─── CONDITIONAL PROBABILITIES (ENHANCED) ────────────────────────────────────
 
 getCondProbLonH(string pat, string pos) =>
     float result = 50.0
@@ -488,40 +828,40 @@ getCondProbLonH(string pat, string pos) =>
             result := pos == "ABOVE" ? 79.0 : 23.3
     else if is_rty
         if pat == "PARTIAL DN"
-            result := pos == "ABOVE" ? 76.4 : 23.6
+            result := pos == "ABOVE" ? 76.8 : 19.2
         else if pat == "PARTIAL UP"
-            result := pos == "ABOVE" ? 75.9 : 24.1
+            result := pos == "ABOVE" ? 75.4 : 20.8
         else if pat == "ENGULFS"
-            result := pos == "ABOVE" ? 74.5 : 25.5
+            result := pos == "ABOVE" ? 73.6 : 17.9
         else if pat == "INSIDE"
-            result := pos == "ABOVE" ? 77.1 : 22.9
+            result := pos == "ABOVE" ? 78.1 : 24.2
     else if is_ym
         if pat == "PARTIAL DN"
-            result := pos == "ABOVE" ? 76.9 : 23.1
+            result := pos == "ABOVE" ? 78.2 : 18.1
         else if pat == "PARTIAL UP"
-            result := pos == "ABOVE" ? 76.2 : 23.8
+            result := pos == "ABOVE" ? 77.8 : 19.4
         else if pat == "ENGULFS"
-            result := pos == "ABOVE" ? 75.2 : 24.8
+            result := pos == "ABOVE" ? 75.9 : 15.8
         else if pat == "INSIDE"
-            result := pos == "ABOVE" ? 78.4 : 21.6
+            result := pos == "ABOVE" ? 79.5 : 22.7
     else if is_cl
         if pat == "PARTIAL DN"
-            result := pos == "ABOVE" ? 71.6 : 28.4
+            result := pos == "ABOVE" ? 71.2 : 24.6
         else if pat == "PARTIAL UP"
-            result := pos == "ABOVE" ? 70.8 : 29.2
+            result := pos == "ABOVE" ? 70.5 : 26.1
         else if pat == "ENGULFS"
-            result := pos == "ABOVE" ? 73.4 : 26.6
+            result := pos == "ABOVE" ? 68.8 : 22.4
         else if pat == "INSIDE"
-            result := pos == "ABOVE" ? 68.9 : 31.1
+            result := pos == "ABOVE" ? 73.4 : 28.9
     else if is_gc
         if pat == "PARTIAL DN"
-            result := pos == "ABOVE" ? 68.7 : 31.3
+            result := pos == "ABOVE" ? 69.4 : 26.8
         else if pat == "PARTIAL UP"
-            result := pos == "ABOVE" ? 67.4 : 32.6
+            result := pos == "ABOVE" ? 68.1 : 28.3
         else if pat == "ENGULFS"
-            result := pos == "ABOVE" ? 71.1 : 28.9
+            result := pos == "ABOVE" ? 66.7 : 24.9
         else if pat == "INSIDE"
-            result := pos == "ABOVE" ? 66.2 : 33.8
+            result := pos == "ABOVE" ? 71.2 : 31.1
     result
 
 getCondProbLonL(string pat, string pos) =>
@@ -546,53 +886,57 @@ getCondProbLonL(string pat, string pos) =>
             result := pos == "ABOVE" ? 12.0 : 69.8
     else if is_rty
         if pat == "PARTIAL DN"
-            result := pos == "ABOVE" ? 17.8 : 73.6
+            result := pos == "ABOVE" ? 18.6 : 72.4
         else if pat == "PARTIAL UP"
-            result := pos == "ABOVE" ? 16.4 : 72.9
+            result := pos == "ABOVE" ? 16.8 : 74.9
         else if pat == "ENGULFS"
-            result := pos == "ABOVE" ? 18.6 : 71.2
+            result := pos == "ABOVE" ? 20.4 : 76.1
         else if pat == "INSIDE"
-            result := pos == "ABOVE" ? 15.2 : 70.1
+            result := pos == "ABOVE" ? 14.2 : 69.7
     else if is_ym
         if pat == "PARTIAL DN"
-            result := pos == "ABOVE" ? 16.2 : 75.2
+            result := pos == "ABOVE" ? 16.2 : 75.1
         else if pat == "PARTIAL UP"
-            result := pos == "ABOVE" ? 15.8 : 74.1
+            result := pos == "ABOVE" ? 14.5 : 77.3
         else if pat == "ENGULFS"
-            result := pos == "ABOVE" ? 17.9 : 73.4
+            result := pos == "ABOVE" ? 18.1 : 78.6
         else if pat == "INSIDE"
-            result := pos == "ABOVE" ? 14.3 : 71.8
+            result := pos == "ABOVE" ? 11.8 : 71.2
     else if is_cl
         if pat == "PARTIAL DN"
-            result := pos == "ABOVE" ? 21.7 : 73.4
+            result := pos == "ABOVE" ? 22.8 : 68.4
         else if pat == "PARTIAL UP"
-            result := pos == "ABOVE" ? 22.4 : 72.1
+            result := pos == "ABOVE" ? 24.1 : 66.9
         else if pat == "ENGULFS"
-            result := pos == "ABOVE" ? 19.8 : 68.9
+            result := pos == "ABOVE" ? 20.6 : 70.2
         else if pat == "INSIDE"
-            result := pos == "ABOVE" ? 24.1 : 70.2
+            result := pos == "ABOVE" ? 26.4 : 64.8
     else if is_gc
         if pat == "PARTIAL DN"
-            result := pos == "ABOVE" ? 24.5 : 71.1
+            result := pos == "ABOVE" ? 25.2 : 66.1
         else if pat == "PARTIAL UP"
-            result := pos == "ABOVE" ? 26.2 : 69.8
+            result := pos == "ABOVE" ? 27.4 : 64.3
         else if pat == "ENGULFS"
-            result := pos == "ABOVE" ? 22.3 : 67.4
+            result := pos == "ABOVE" ? 23.1 : 67.8
         else if pat == "INSIDE"
-            result := pos == "ABOVE" ? 27.1 : 68.5
+            result := pos == "ABOVE" ? 29.6 : 62.4
     result
 
+// NEW: Fixed 7-8AM Mid probability (was 94.3%, should be 80.6%)
 getCondProb78Mid(string pat, string pos) =>
     float result = 80.0
     if is_nq
-        if pat == "PARTIAL DN"
-            result := pos == "ABOVE" ? 94.3 : 92.9
-        else if pat == "PARTIAL UP"
-            result := pos == "ABOVE" ? 94.5 : 93.8
-        else if pat == "ENGULFS"
-            result := pos == "ABOVE" ? 93.6 : 94.6
-        else if pat == "INSIDE"
-            result := pos == "ABOVE" ? 95.2 : 93.1
+        result := 80.6  // Fixed from 94.3%
+    else if is_es
+        result := 79.5
+    else if is_rty
+        result := 80.1
+    else if is_ym
+        result := 78.6
+    else if is_cl
+        result := 69.7
+    else if is_gc
+        result := 64.6
     result
 
 getCondProbMidnight(string pat, string pos) =>
@@ -606,175 +950,184 @@ getCondProbMidnight(string pat, string pos) =>
             result := pos == "ABOVE" ? 77.9 : 81.1
         else if pat == "INSIDE"
             result := pos == "ABOVE" ? 71.2 : 76.8
-    result
-
-getCondProb23Mid(string pat, string pos) =>
-    float result = 76.0
-    if is_nq
+    else if is_es
         if pat == "PARTIAL DN"
-            result := pos == "ABOVE" ? 90.1 : 67.6
+            result := pos == "ABOVE" ? 84.7 : 61.8
         else if pat == "PARTIAL UP"
-            result := pos == "ABOVE" ? 70.4 : 87.8
+            result := pos == "ABOVE" ? 60.9 : 86.2
         else if pat == "ENGULFS"
-            result := pos == "ABOVE" ? 74.9 : 76.7
+            result := pos == "ABOVE" ? 76.4 : 79.6
         else if pat == "INSIDE"
-            result := pos == "ABOVE" ? 78.3 : 82.1
+            result := pos == "ABOVE" ? 69.8 : 75.1
+    else if is_rty
+        if pat == "PARTIAL DN"
+            result := pos == "ABOVE" ? 82.4 : 59.6
+        else if pat == "PARTIAL UP"
+            result := pos == "ABOVE" ? 58.2 : 83.9
+        else if pat == "ENGULFS"
+            result := pos == "ABOVE" ? 74.1 : 77.3
+        else if pat == "INSIDE"
+            result := pos == "ABOVE" ? 67.5 : 72.8
+    else if is_ym
+        if pat == "PARTIAL DN"
+            result := pos == "ABOVE" ? 83.8 : 60.4
+        else if pat == "PARTIAL UP"
+            result := pos == "ABOVE" ? 59.7 : 85.1
+        else if pat == "ENGULFS"
+            result := pos == "ABOVE" ? 75.6 : 78.2
+        else if pat == "INSIDE"
+            result := pos == "ABOVE" ? 68.4 : 73.9
+    else if is_cl
+        if pat == "PARTIAL DN"
+            result := pos == "ABOVE" ? 74.2 : 56.8
+        else if pat == "PARTIAL UP"
+            result := pos == "ABOVE" ? 55.4 : 75.6
+        else if pat == "ENGULFS"
+            result := pos == "ABOVE" ? 68.1 : 70.9
+        else if pat == "INSIDE"
+            result := pos == "ABOVE" ? 62.3 : 66.4
+    else if is_gc
+        if pat == "PARTIAL DN"
+            result := pos == "ABOVE" ? 71.6 : 54.2
+        else if pat == "PARTIAL UP"
+            result := pos == "ABOVE" ? 52.8 : 72.9
+        else if pat == "ENGULFS"
+            result := pos == "ABOVE" ? 65.4 : 68.1
+        else if pat == "INSIDE"
+            result := pos == "ABOVE" ? 59.7 : 63.8
     result
 
-if not na(lonMid) and manipulation != "NONE"
-    if manipulation == "BULLISH" and nyPos == "ABOVE"
-        bias := "LONG"
-        biasPct := getCondProbLonH(pattern, nyPos)
-    else if manipulation == "BEARISH" and nyPos == "BELOW"
-        bias := "SHORT"
-        biasPct := getCondProbLonL(pattern, nyPos)
-    else if manipulation == "BULLISH" and nyPos == "BELOW"
-        bias := "WAIT"
-        biasPct := getCondProbLonH(pattern, nyPos)
-    else if manipulation == "BEARISH" and nyPos == "ABOVE"
-        bias := "WAIT"
-        biasPct := getCondProbLonL(pattern, nyPos)
-    else
-        bias := "NEUTRAL"
-        biasPct := 50.0
+// Conditional CBDR sigma probabilities based on manipulation
+getCondSigmaProb(string sigma, string manip) =>
+    float result = 50.0
+    if is_nq
+        if sigma == "+1"
+            result := manip == "BEARISH" ? 71.4 : manip == "BULLISH" ? 41.2 : 61.0
+        else if sigma == "-1"
+            result := manip == "BULLISH" ? 73.1 : manip == "BEARISH" ? 43.7 : 56.2
+        else if sigma == "+2"
+            result := manip == "BEARISH" ? 56.8 : manip == "BULLISH" ? 25.6 : 41.8
+        else if sigma == "-2"
+            result := manip == "BULLISH" ? 58.3 : manip == "BEARISH" ? 27.2 : 40.7
+    else if is_es
+        if sigma == "+1"
+            result := manip == "BEARISH" ? 69.8 : manip == "BULLISH" ? 39.4 : 59.2
+        else if sigma == "-1"
+            result := manip == "BULLISH" ? 71.2 : manip == "BEARISH" ? 41.8 : 54.6
+        else if sigma == "+2"
+            result := manip == "BEARISH" ? 54.1 : manip == "BULLISH" ? 23.8 : 39.4
+        else if sigma == "-2"
+            result := manip == "BULLISH" ? 55.6 : manip == "BEARISH" ? 25.4 : 38.2
+    else if is_rty
+        if sigma == "+1"
+            result := manip == "BEARISH" ? 68.2 : manip == "BULLISH" ? 40.6 : 58.4
+        else if sigma == "-1"
+            result := manip == "BULLISH" ? 69.8 : manip == "BEARISH" ? 42.4 : 53.8
+        else if sigma == "+2"
+            result := manip == "BEARISH" ? 52.4 : manip == "BULLISH" ? 24.9 : 38.6
+        else if sigma == "-2"
+            result := manip == "BULLISH" ? 54.1 : manip == "BEARISH" ? 26.7 : 37.4
+    else if is_ym
+        if sigma == "+1"
+            result := manip == "BEARISH" ? 70.1 : manip == "BULLISH" ? 40.2 : 59.8
+        else if sigma == "-1"
+            result := manip == "BULLISH" ? 71.6 : manip == "BEARISH" ? 42.1 : 55.2
+        else if sigma == "+2"
+            result := manip == "BEARISH" ? 54.8 : manip == "BULLISH" ? 24.2 : 40.1
+        else if sigma == "-2"
+            result := manip == "BULLISH" ? 56.2 : manip == "BEARISH" ? 25.8 : 38.9
+    else if is_cl
+        if sigma == "+1"
+            result := manip == "BEARISH" ? 62.4 : manip == "BULLISH" ? 44.8 : 54.6
+        else if sigma == "-1"
+            result := manip == "BULLISH" ? 64.1 : manip == "BEARISH" ? 46.2 : 52.8
+        else if sigma == "+2"
+            result := manip == "BEARISH" ? 46.8 : manip == "BULLISH" ? 28.4 : 36.2
+        else if sigma == "-2"
+            result := manip == "BULLISH" ? 48.2 : manip == "BEARISH" ? 29.8 : 35.4
+    else if is_gc
+        if sigma == "+1"
+            result := manip == "BEARISH" ? 59.8 : manip == "BULLISH" ? 46.2 : 52.4
+        else if sigma == "-1"
+            result := manip == "BULLISH" ? 61.4 : manip == "BEARISH" ? 47.8 : 51.2
+        else if sigma == "+2"
+            result := manip == "BEARISH" ? 44.2 : manip == "BULLISH" ? 30.1 : 34.8
+        else if sigma == "-2"
+            result := manip == "BULLISH" ? 45.6 : manip == "BEARISH" ? 31.4 : 33.6
+    result
 
-if manipulation == "NONE"
-    bias := "NO SETUP"
-    biasPct := 0.0
-
-if isNewDay
-    pattern := "—"
-    manipulation := "NONE"
-    nyPos := "—"
-    bias := "WAITING"
-    biasPct := 0.0
-
-// ─── CONFIDENCE SCORING ──────────────────────────────────────────────────────
-
-var int confScore = 0
-var string confTxt = "—"
-
-if not na(lonH) and not na(asiaH)
-    confScore := 0
-    
-    bool hasJudas = (manipulation == "BULLISH" and lonH > asiaH) or (manipulation == "BEARISH" and lonL < asiaL)
-    if hasJudas
-        confScore += 1
-    
-    if not na(lonPctl)
-        if lonPctl < 20
-            confScore += 1
-        else if lonPctl > 80
-            confScore += 0
-    
-    if curDOW >= 3 and curDOW <= 5
-        confScore += 1
-    
-    bool aligned = (manipulation == "BULLISH" and nyPos == "ABOVE") or (manipulation == "BEARISH" and nyPos == "BELOW")
-    if aligned
-        confScore += 1
-    
-    if confScore == 4
-        confTxt := "★★★★"
-    else if confScore == 3
-        confTxt := "★★★"
-    else if confScore == 2
-        confTxt := "★★"
-    else if confScore == 1
-        confTxt := "★"
-    else
-        confTxt := "—"
-
-// ─── REVERSAL TIMING PHASE ───────────────────────────────────────────────────
+// ─── REVERSAL TIMING (ENHANCED) ──────────────────────────────────────────────
 
 var string timingPhase = "—"
 var float timingPct = 0.0
+var string timingWarning = ""
 
 if inNYAM or inLunch or inNYPM
     if hhmm >= 930 and hhmm < 1000
         timingPhase := "OPENING"
         timingPct := 60.6
-    else if hhmm >= 1000 and hhmm < 1100
-        timingPhase := "MID-MORNING"
-        timingPct := 20.2
+        timingWarning := ""
+    else if hhmm >= 1000 and hhmm < 1030
+        timingPhase := "MID-MORN"
+        timingPct := 12.8
+        timingWarning := ""
+    else if hhmm >= 1030 and hhmm < 1100
+        timingPhase := "LATE-MORN"
+        timingPct := 6.8
+        timingWarning := "74% complete"
     else if hhmm >= 1100 and hhmm < 1200
-        timingPhase := "LATE AM"
-        timingPct := 12.5
+        timingPhase := "CLOSING"
+        timingPct := 7.3
+        timingWarning := "⚠ 81% complete"
     else if hhmm >= 1200 and hhmm < 1330
         timingPhase := "LUNCH"
-        timingPct := 4.1
+        timingPct := 5.4
+        timingWarning := "⚠ 88% complete"
     else if hhmm >= 1330 and hhmm < 1600
         timingPhase := "PM"
-        timingPct := 2.6
-    else
-        timingPhase := "—"
-        timingPct := 0.0
+        timingPct := 6.8
+        timingWarning := "⚠ MANAGE ONLY"
 else
     timingPhase := "—"
     timingPct := 0.0
+    timingWarning := ""
 
-// ─── REAL-TIME HIT TRACKING ──────────────────────────────────────────────────
+// ─── HIT TRACKING ────────────────────────────────────────────────────────────
 
-var bool hitLonH = false
-var bool hitLonL = false
-var bool hitAsiaH = false
-var bool hitAsiaL = false
-var bool hitOnMid = false
-var bool hit78Mid = false
-var bool hitMnOpen = false
-var bool hit23Mid = false
-var bool hit730 = false
-var bool hitOTEBull = false
-var bool hitOTEBear = false
-var bool hitGlx = false
-var bool hitPDC = false
-var bool hitPDH = false
-var bool hitPDL = false
-var bool hitSig1P = false
-var bool hitSig1N = false
-var bool hitSig2P = false
-var bool hitSig2N = false
-var bool hitAMH = false
-var bool hitAML = false
-var bool hitLchH = false
-var bool hitLchL = false
+var bool hitLonH = false, var bool hitLonL = false
+var bool hitAsiaH = false, var bool hitAsiaL = false
+var bool hitOnMid = false, var bool hit78Mid = false
+var bool hitMnOpen = false, var bool hit730 = false
+var bool hitOTEBull = false, var bool hitOTEBear = false
+var bool hitGlx = false, var bool hitPDC = false
+var bool hitPDH = false, var bool hitPDL = false
+var bool hitSig1P = false, var bool hitSig1N = false
+var bool hitSig2P = false, var bool hitSig2N = false
+var bool hitAMH = false, var bool hitAML = false
+var bool hitLchH = false, var bool hitLchL = false
 
 if inNYAM and not inNYAM[1]
-    hitLonH := false
-    hitLonL := false
-    hitAsiaH := false
-    hitAsiaL := false
-    hitOnMid := false
-    hit78Mid := false
-    hitMnOpen := false
-    hit23Mid := false
-    hit730 := false
-    hitOTEBull := false
-    hitOTEBear := false
-    hitGlx := false
-    hitPDC := false
-    hitPDH := false
-    hitPDL := false
-    hitSig1P := false
-    hitSig1N := false
-    hitSig2P := false
-    hitSig2N := false
-    hitAMH := false
-    hitAML := false
-    hitLchH := false
-    hitLchL := false
+    hitLonH := false, hitLonL := false
+    hitAsiaH := false, hitAsiaL := false
+    hitOnMid := false, hit78Mid := false
+    hitMnOpen := false, hit730 := false
+    hitOTEBull := false, hitOTEBear := false
+    hitGlx := false, hitPDC := false
+    hitPDH := false, hitPDL := false
+    hitSig1P := false, hitSig1N := false
+    hitSig2P := false, hitSig2N := false
+    hitAMH := false, hitAML := false
+    hitLchH := false, hitLchL := false
 
 if inNYAM or inLunch or inNYPM
     if not na(lonH) and low <= lonH and lonH <= high
         hitLonH := true
     if not na(lonL) and low <= lonL and lonL <= high
         hitLonL := true
-    
     if not na(asiaH) and low <= asiaH and asiaH <= high
         hitAsiaH := true
     if not na(asiaL) and low <= asiaL and asiaL <= high
         hitAsiaL := true
-    
     if not na(onMid) and low <= onMid and onMid <= high
         hitOnMid := true
     
@@ -782,20 +1135,12 @@ if inNYAM or inLunch or inNYPM
     if not na(v78Mid) and low <= v78Mid and v78Mid <= high
         hit78Mid := true
     
-    float h23H = na, float h23L = na
-    if curH == 2 or (curH == 3 and curM == 0)
-        h23H := na(h23H) ? high : math.max(h23H, high)
-        h23L := na(h23L) ? low : math.min(h23L, low)
-    float v23Mid = not na(h23H) and not na(h23L) ? (h23H + h23L) / 2.0 : na
-    if not na(v23Mid) and low <= v23Mid and v23Mid <= high
-        hit23Mid := true
-    
     if not na(mnOpen) and low <= mnOpen and mnOpen <= high
         hitMnOpen := true
-    
     if not na(o730) and low <= o730 and o730 <= high
         hit730 := true
     
+    // OTE zones
     float vOTEBull = not na(onH) and not na(onL) ? onL + (onH - onL) * 0.62 : na
     float vOTEBear = not na(onH) and not na(onL) ? onH - (onH - onL) * 0.62 : na
     if not na(vOTEBull) and low <= vOTEBull and vOTEBull <= high
@@ -805,10 +1150,8 @@ if inNYAM or inLunch or inNYPM
     
     if not na(glxOpen) and low <= glxOpen and glxOpen <= high
         hitGlx := true
-    
     if not na(pdC) and low <= pdC and pdC <= high
         hitPDC := true
-    
     if not na(pdH) and low <= pdH and pdH <= high
         hitPDH := true
     if not na(pdL) and low <= pdL and pdL <= high
@@ -816,18 +1159,13 @@ if inNYAM or inLunch or inNYPM
     
     float cbdrR = not na(asiaH) and not na(asiaL) ? asiaH - asiaL : na
     if not na(cbdrR) and cbdrR > 0
-        float sig1P = asiaH + 1.0 * cbdrR
-        float sig1N = asiaL - 1.0 * cbdrR
-        float sig2P = asiaH + 2.0 * cbdrR
-        float sig2N = asiaL - 2.0 * cbdrR
-        
-        if low <= sig1P and sig1P <= high
+        if low <= asiaH + cbdrR and asiaH + cbdrR <= high
             hitSig1P := true
-        if low <= sig1N and sig1N <= high
+        if low <= asiaL - cbdrR and asiaL - cbdrR <= high
             hitSig1N := true
-        if low <= sig2P and sig2P <= high
+        if low <= asiaH + 2*cbdrR and asiaH + 2*cbdrR <= high
             hitSig2P := true
-        if low <= sig2N and sig2N <= high
+        if low <= asiaL - 2*cbdrR and asiaL - 2*cbdrR <= high
             hitSig2N := true
     
     if (inLunch or inNYPM) and not na(amH)
@@ -842,258 +1180,298 @@ if inNYAM or inLunch or inNYPM
         if not na(lunchL) and low <= lunchL and lunchL <= high
             hitLchL := true
 
-// ─── PERSISTENT LINE DRAWING (THEME-AWARE) ───────────────────────────────────
+// ─── LINE DRAWING ────────────────────────────────────────────────────────────
 
 var line lnLonH = na, var line lnLonL = na, var line lnLonMid = na
 var line lnAsiaH = na, var line lnAsiaL = na
 var line ln78Mid = na, var line ln730 = na, var line lnMnOpen = na
 var line lnOnMid = na, var line lnOTEBull = na, var line lnOTEBear = na
-var line lnGlx = na, var line lnPDC = na, var line lnPDH = na, var line lnPDL = na
+var line lnGlx = na
+var line lnPDC = na, var line lnPDH = na, var line lnPDL = na
 var line lnSig1P = na, var line lnSig1N = na, var line lnSig2P = na, var line lnSig2N = na
-var line lnAMH = na, var line lnAML = na, var line lnLchH = na, var line lnLchL = na
+var line lnAMH = na, var line lnAML = na
+var line lnLchH = na, var line lnLchL = na
 
 var label lblLonH = na, var label lblLonL = na, var label lblLonMid = na
 var label lblAsiaH = na, var label lblAsiaL = na
 var label lbl78Mid = na, var label lbl730 = na, var label lblMnOpen = na
 var label lblOnMid = na, var label lblOTEBull = na, var label lblOTEBear = na
-var label lblGlx = na, var label lblPDC = na, var label lblPDH = na, var label lblPDL = na
+var label lblGlx = na
+var label lblPDC = na, var label lblPDH = na, var label lblPDL = na
 var label lblSig1P = na, var label lblSig1N = na, var label lblSig2P = na, var label lblSig2N = na
-var label lblAMH = na, var label lblAML = na, var label lblLchH = na, var label lblLchL = na
-
-// Daily high/low labels
+var label lblAMH = na, var label lblAML = na
+var label lblLchH = na, var label lblLchL = na
 var label lblDayH = na, var label lblDayL = na
 
-// Get palette once per bar
 p = getCurrentPalette()
 
 // Draw London levels when London ends
-if i_showLevels and not inLondon and inLondon[1] and not na(lonH)
-    line.delete(lnLonH)
-    line.delete(lnLonL)
-    line.delete(lnLonMid)
-    label.delete(lblLonH)
-    label.delete(lblLonL)
-    label.delete(lblLonMid)
+if i_showLevels and i_showLondon and not inLondon and inLondon[1] and not na(lonH)
+    line.delete(lnLonH), line.delete(lnLonL), line.delete(lnLonMid)
+    label.delete(lblLonH), label.delete(lblLonL), label.delete(lblLonMid)
     
     float pLH = getCondProbLonH(pattern, nyPos)
     float pLL = getCondProbLonL(pattern, nyPos)
     
-    lnLonH := line.new(lonBar0, lonH, bar_index, lonH, color=color.new(p.london_primary, p.line_transp_primary), style=line.style_solid, width=i_lvlWidth)
-    lblLonH := label.new(bar_index, lonH, str.format("London High: {0,number,#.#}%", pLH), style=label.style_none, textcolor=p.london_primary, size=getSz(i_labelSize), text_font_family=font.family_monospace)
-    
-    lnLonL := line.new(lonBar0, lonL, bar_index, lonL, color=color.new(p.london_primary, p.line_transp_primary), style=line.style_solid, width=i_lvlWidth)
-    lblLonL := label.new(bar_index, lonL, str.format("London Low: {0,number,#.#}%", pLL), style=label.style_none, textcolor=p.london_primary, size=getSz(i_labelSize), text_font_family=font.family_monospace)
-    
+    lnLonH := line.new(lonBar0, lonH, bar_index, lonH, color=color.new(i_londonColor, p.line_transp_primary), style=getLineStyle(i_londonStyle), width=i_londonWidth)
+    lnLonL := line.new(lonBar0, lonL, bar_index, lonL, color=color.new(i_londonColor, p.line_transp_primary), style=getLineStyle(i_londonStyle), width=i_londonWidth)
     lnLonMid := line.new(lonBar0, lonMid, bar_index, lonMid, color=color.new(p.caution, p.line_transp_secondary), style=line.style_dotted, width=1)
-    lblLonMid := label.new(bar_index, lonMid, "London Mid", style=label.style_none, textcolor=p.caution, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    
+    if i_showLabels
+        lblLonH := label.new(bar_index + i_labelOffset, lonH, str.format("Lon H: {0,number,#.#}%", pLH), style=label.style_none, textcolor=i_londonColor, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+        lblLonL := label.new(bar_index + i_labelOffset, lonL, str.format("Lon L: {0,number,#.#}%", pLL), style=label.style_none, textcolor=i_londonColor, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+        lblLonMid := label.new(bar_index + i_labelOffset, lonMid, "Lon Mid", style=label.style_none, textcolor=p.caution, size=getSz(i_labelSize), text_font_family=font.family_monospace)
 
 // Draw Asia levels when Asia ends
-if i_showLevels and not inAsia and inAsia[1] and not na(asiaH)
-    line.delete(lnAsiaH)
-    line.delete(lnAsiaL)
-    label.delete(lblAsiaH)
-    label.delete(lblAsiaL)
+if i_showLevels and i_showAsia and not inAsia and inAsia[1] and not na(asiaH)
+    line.delete(lnAsiaH), line.delete(lnAsiaL)
+    label.delete(lblAsiaH), label.delete(lblAsiaL)
     
-    lnAsiaH := line.new(asiaBar0, asiaH, bar_index, asiaH, color=color.new(p.asia_primary, p.line_transp_secondary), style=line.style_dashed, width=i_lvlWidth)
-    lblAsiaH := label.new(bar_index, asiaH, "Asia High", style=label.style_none, textcolor=p.asia_primary, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    lnAsiaH := line.new(asiaBar0, asiaH, bar_index, asiaH, color=color.new(i_asiaColor, p.line_transp_secondary), style=getLineStyle(i_asiaStyle), width=i_asiaWidth)
+    lnAsiaL := line.new(asiaBar0, asiaL, bar_index, asiaL, color=color.new(i_asiaColor, p.line_transp_secondary), style=getLineStyle(i_asiaStyle), width=i_asiaWidth)
     
-    lnAsiaL := line.new(asiaBar0, asiaL, bar_index, asiaL, color=color.new(p.asia_primary, p.line_transp_secondary), style=line.style_dashed, width=i_lvlWidth)
-    lblAsiaL := label.new(bar_index, asiaL, "Asia Low", style=label.style_none, textcolor=p.asia_primary, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    if i_showLabels
+        lblAsiaH := label.new(bar_index + i_labelOffset, asiaH, "Asia H", style=label.style_none, textcolor=i_asiaColor, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+        lblAsiaL := label.new(bar_index + i_labelOffset, asiaL, "Asia L", style=label.style_none, textcolor=i_asiaColor, size=getSz(i_labelSize), text_font_family=font.family_monospace)
 
 // Draw intraday levels at NY open
 if i_showLevels and inNYAM and not inNYAM[1]
+    // 7-8 Mid
     float v78Mid = not na(h78H) and not na(h78L) ? (h78H + h78L) / 2.0 : na
-    if not na(v78Mid)
-        line.delete(ln78Mid)
-        label.delete(lbl78Mid)
+    if i_show78Mid and not na(v78Mid)
+        line.delete(ln78Mid), label.delete(lbl78Mid)
         float p78 = getCondProb78Mid(pattern, nyPos)
-        ln78Mid := line.new(bar_index, v78Mid, bar_index, v78Mid, color=color.new(p.confirm, p.line_transp_primary), style=line.style_dashed, width=i_lvlWidth)
-        lbl78Mid := label.new(bar_index, v78Mid, str.format("7-8AM Mid: {0,number,#.#}%", p78), style=label.style_none, textcolor=p.confirm, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+        ln78Mid := line.new(bar_index, v78Mid, bar_index, v78Mid, color=color.new(p.confirm, p.line_transp_primary), style=getLineStyle(i_78Style), width=i_78Width)
+        if i_showLabels
+            lbl78Mid := label.new(bar_index + i_labelOffset, v78Mid, str.format("78 Mid: {0,number,#.#}%", p78), style=label.style_none, textcolor=p.confirm, size=getSz(i_labelSize), text_font_family=font.family_monospace)
     
-    if not na(o730)
-        line.delete(ln730)
-        label.delete(lbl730)
-        ln730 := line.new(bar_index, o730, bar_index, o730, color=color.new(p.caution, p.line_transp_primary), style=line.style_dashed, width=i_lvlWidth)
-        lbl730 := label.new(bar_index, o730, "07:30 Open", style=label.style_none, textcolor=p.caution, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    // 07:30 Open
+    if i_show730 and not na(o730)
+        line.delete(ln730), label.delete(lbl730)
+        ln730 := line.new(bar_index, o730, bar_index, o730, color=color.new(p.caution, p.line_transp_primary), style=getLineStyle(i_730Style), width=i_730Width)
+        if i_showLabels
+            lbl730 := label.new(bar_index + i_labelOffset, o730, "07:30: 79.8%", style=label.style_none, textcolor=p.caution, size=getSz(i_labelSize), text_font_family=font.family_monospace)
     
-    if not na(mnOpen)
-        line.delete(lnMnOpen)
-        label.delete(lblMnOpen)
+    // Midnight Open
+    if i_showMidnight and not na(mnOpen)
+        line.delete(lnMnOpen), label.delete(lblMnOpen)
         float pMn = getCondProbMidnight(pattern, nyPos)
-        lnMnOpen := line.new(bar_index, mnOpen, bar_index, mnOpen, color=color.new(p.text_primary, p.line_transp_secondary), style=line.style_dotted, width=i_lvlWidth)
-        lblMnOpen := label.new(bar_index, mnOpen, str.format("Midnight: {0,number,#.#}%", pMn), style=label.style_none, textcolor=p.text_primary, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+        lnMnOpen := line.new(bar_index, mnOpen, bar_index, mnOpen, color=color.new(p.text_primary, p.line_transp_secondary), style=getLineStyle(i_mnStyle), width=i_mnWidth)
+        if i_showLabels
+            lblMnOpen := label.new(bar_index + i_labelOffset, mnOpen, str.format("MN: {0,number,#.#}%", pMn), style=label.style_none, textcolor=p.text_primary, size=getSz(i_labelSize), text_font_family=font.family_monospace)
     
-    if not na(onMid)
-        line.delete(lnOnMid)
-        label.delete(lblOnMid)
-        lnOnMid := line.new(bar_index, onMid, bar_index, onMid, color=color.new(p.confirm, p.line_transp_secondary), style=line.style_dotted, width=i_lvlWidth)
-        lblOnMid := label.new(bar_index, onMid, "ON Mid", style=label.style_none, textcolor=p.confirm, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    // ON Mid
+    if i_showONMid and not na(onMid)
+        line.delete(lnOnMid), label.delete(lblOnMid)
+        lnOnMid := line.new(bar_index, onMid, bar_index, onMid, color=color.new(p.confirm, p.line_transp_secondary), style=getLineStyle(i_onmStyle), width=i_onmWidth)
+        if i_showLabels
+            lblOnMid := label.new(bar_index + i_labelOffset, onMid, "ON Mid: 77.6%", style=label.style_none, textcolor=p.confirm, size=getSz(i_labelSize), text_font_family=font.family_monospace)
     
+    // OTE Zones
     float vOTEBull = not na(onH) and not na(onL) ? onL + (onH - onL) * 0.62 : na
     float vOTEBear = not na(onH) and not na(onL) ? onH - (onH - onL) * 0.62 : na
-    if not na(vOTEBull)
-        line.delete(lnOTEBull)
-        label.delete(lblOTEBull)
-        lnOTEBull := line.new(bar_index, vOTEBull, bar_index, vOTEBull, color=color.new(p.bullish, p.line_transp_secondary), style=line.style_dotted, width=i_lvlWidth)
-        lblOTEBull := label.new(bar_index, vOTEBull, "OTE Bull", style=label.style_none, textcolor=p.bullish, size=getSz(i_labelSize), text_font_family=font.family_monospace)
-    if not na(vOTEBear)
-        line.delete(lnOTEBear)
-        label.delete(lblOTEBear)
-        lnOTEBear := line.new(bar_index, vOTEBear, bar_index, vOTEBear, color=color.new(p.bearish, p.line_transp_secondary), style=line.style_dotted, width=i_lvlWidth)
-        lblOTEBear := label.new(bar_index, vOTEBear, "OTE Bear", style=label.style_none, textcolor=p.bearish, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    if i_showOTE and not na(vOTEBull)
+        line.delete(lnOTEBull), label.delete(lblOTEBull)
+        lnOTEBull := line.new(bar_index, vOTEBull, bar_index, vOTEBull, color=color.new(p.bullish, p.line_transp_secondary), style=getLineStyle(i_oteStyle), width=i_oteWidth)
+        if i_showLabels
+            lblOTEBull := label.new(bar_index + i_labelOffset, vOTEBull, "OTE Bull: 78.3%", style=label.style_none, textcolor=p.bullish, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    if i_showOTE and not na(vOTEBear)
+        line.delete(lnOTEBear), label.delete(lblOTEBear)
+        lnOTEBear := line.new(bar_index, vOTEBear, bar_index, vOTEBear, color=color.new(p.bearish, p.line_transp_secondary), style=getLineStyle(i_oteStyle), width=i_oteWidth)
+        if i_showLabels
+            lblOTEBear := label.new(bar_index + i_labelOffset, vOTEBear, "OTE Bear: 76.1%", style=label.style_none, textcolor=p.bearish, size=getSz(i_labelSize), text_font_family=font.family_monospace)
     
-    if not na(glxOpen)
-        line.delete(lnGlx)
-        label.delete(lblGlx)
-        lnGlx := line.new(bar_index, glxOpen, bar_index, glxOpen, color=color.new(p.neutral, p.line_transp_secondary), style=line.style_dotted, width=i_lvlWidth)
-        lblGlx := label.new(bar_index, glxOpen, "Globex", style=label.style_none, textcolor=p.neutral, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    // Globex Open
+    if i_showGlobex and not na(glxOpen)
+        line.delete(lnGlx), label.delete(lblGlx)
+        lnGlx := line.new(bar_index, glxOpen, bar_index, glxOpen, color=color.new(p.neutral, p.line_transp_secondary), style=getLineStyle(i_glxStyle), width=i_glxWidth)
+        if i_showLabels
+            lblGlx := label.new(bar_index + i_labelOffset, glxOpen, "Globex: 63.9%", style=label.style_none, textcolor=p.neutral, size=getSz(i_labelSize), text_font_family=font.family_monospace)
     
-    if not na(pdC)
-        line.delete(lnPDC)
-        label.delete(lblPDC)
-        lnPDC := line.new(bar_index, pdC, bar_index, pdC, color=color.new(p.prior_primary, p.line_transp_primary), style=line.style_dashed, width=i_lvlWidth)
-        lblPDC := label.new(bar_index, pdC, "Settle", style=label.style_none, textcolor=p.prior_primary, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    // Settle/PDC
+    if i_showSettle and not na(pdC)
+        line.delete(lnPDC), label.delete(lblPDC)
+        lnPDC := line.new(bar_index, pdC, bar_index, pdC, color=color.new(i_priorColor, p.line_transp_primary), style=getLineStyle(i_pdcStyle), width=i_pdcWidth)
+        if i_showLabels
+            lblPDC := label.new(bar_index + i_labelOffset, pdC, "Settle: 63.6%", style=label.style_none, textcolor=i_priorColor, size=getSz(i_labelSize), text_font_family=font.family_monospace)
     
-    if not na(pdH)
-        line.delete(lnPDH)
-        label.delete(lblPDH)
-        lnPDH := line.new(bar_index, pdH, bar_index, pdH, color=color.new(p.prior_primary, p.line_transp_primary), style=line.style_solid, width=i_lvlWidth)
-        lblPDH := label.new(bar_index, pdH, "PDH", style=label.style_none, textcolor=p.prior_primary, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    // PDH/PDL
+    if i_showPDHL and not na(pdH)
+        line.delete(lnPDH), label.delete(lblPDH)
+        lnPDH := line.new(bar_index, pdH, bar_index, pdH, color=color.new(i_priorColor, p.line_transp_primary), style=getLineStyle(i_pdhlStyle), width=i_pdhlWidth)
+        if i_showLabels
+            lblPDH := label.new(bar_index + i_labelOffset, pdH, "PDH: 47.1%", style=label.style_none, textcolor=i_priorColor, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    if i_showPDHL and not na(pdL)
+        line.delete(lnPDL), label.delete(lblPDL)
+        lnPDL := line.new(bar_index, pdL, bar_index, pdL, color=color.new(i_priorColor, p.line_transp_primary), style=getLineStyle(i_pdhlStyle), width=i_pdhlWidth)
+        if i_showLabels
+            lblPDL := label.new(bar_index + i_labelOffset, pdL, "PDL: 40.0%", style=label.style_none, textcolor=i_priorColor, size=getSz(i_labelSize), text_font_family=font.family_monospace)
     
-    if not na(pdL)
-        line.delete(lnPDL)
-        label.delete(lblPDL)
-        lnPDL := line.new(bar_index, pdL, bar_index, pdL, color=color.new(p.prior_primary, p.line_transp_primary), style=line.style_solid, width=i_lvlWidth)
-        lblPDL := label.new(bar_index, pdL, "PDL", style=label.style_none, textcolor=p.prior_primary, size=getSz(i_labelSize), text_font_family=font.family_monospace)
-    
+    // CBDR Sigma levels with conditional probabilities (+1σ, -1σ, +2σ, -2σ)
     float cbdrR = not na(asiaH) and not na(asiaL) ? asiaH - asiaL : na
-    if not na(cbdrR) and cbdrR > 0
-        float sig1P = asiaH + 1.0 * cbdrR
-        float sig1N = asiaL - 1.0 * cbdrR
+    if i_showSigma and not na(cbdrR) and cbdrR > 0
+        float sig1PProb = getCondSigmaProb("+1", manipulation)
+        float sig1NProb = getCondSigmaProb("-1", manipulation)
+        float sig2PProb = getCondSigmaProb("+2", manipulation)
+        float sig2NProb = getCondSigmaProb("-2", manipulation)
         
-        line.delete(lnSig1P)
-        label.delete(lblSig1P)
-        lnSig1P := line.new(bar_index, sig1P, bar_index, sig1P, color=color.new(p.bullish, p.line_transp_secondary), style=line.style_dotted, width=i_lvlWidth)
-        lblSig1P := label.new(bar_index, sig1P, "+1σ", style=label.style_none, textcolor=p.bullish, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+        line.delete(lnSig1P), label.delete(lblSig1P)
+        lnSig1P := line.new(bar_index, asiaH + cbdrR, bar_index, asiaH + cbdrR, color=color.new(i_sigmaUpColor, p.line_transp_secondary), style=getLineStyle(i_sigStyle), width=i_sigWidth)
+        if i_showLabels
+            lblSig1P := label.new(bar_index + i_labelOffset, asiaH + cbdrR, str.format("+1σ: {0,number,#.#}%", sig1PProb), style=label.style_none, textcolor=i_sigmaUpColor, size=getSz(i_labelSize), text_font_family=font.family_monospace)
         
-        line.delete(lnSig1N)
-        label.delete(lblSig1N)
-        lnSig1N := line.new(bar_index, sig1N, bar_index, sig1N, color=color.new(p.bearish, p.line_transp_secondary), style=line.style_dotted, width=i_lvlWidth)
-        lblSig1N := label.new(bar_index, sig1N, "-1σ", style=label.style_none, textcolor=p.bearish, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+        line.delete(lnSig1N), label.delete(lblSig1N)
+        lnSig1N := line.new(bar_index, asiaL - cbdrR, bar_index, asiaL - cbdrR, color=color.new(i_sigmaDnColor, p.line_transp_secondary), style=getLineStyle(i_sigStyle), width=i_sigWidth)
+        if i_showLabels
+            lblSig1N := label.new(bar_index + i_labelOffset, asiaL - cbdrR, str.format("-1σ: {0,number,#.#}%", sig1NProb), style=label.style_none, textcolor=i_sigmaDnColor, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+        
+        line.delete(lnSig2P), label.delete(lblSig2P)
+        lnSig2P := line.new(bar_index, asiaH + 2*cbdrR, bar_index, asiaH + 2*cbdrR, color=color.new(i_sigmaUpColor, p.line_transp_secondary), style=getLineStyle(i_sigStyle), width=i_sigWidth)
+        if i_showLabels
+            lblSig2P := label.new(bar_index + i_labelOffset, asiaH + 2*cbdrR, str.format("+2σ: {0,number,#.#}%", sig2PProb), style=label.style_none, textcolor=i_sigmaUpColor, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+        
+        line.delete(lnSig2N), label.delete(lblSig2N)
+        lnSig2N := line.new(bar_index, asiaL - 2*cbdrR, bar_index, asiaL - 2*cbdrR, color=color.new(i_sigmaDnColor, p.line_transp_secondary), style=getLineStyle(i_sigStyle), width=i_sigWidth)
+        if i_showLabels
+            lblSig2N := label.new(bar_index + i_labelOffset, asiaL - 2*cbdrR, str.format("-2σ: {0,number,#.#}%", sig2NProb), style=label.style_none, textcolor=i_sigmaDnColor, size=getSz(i_labelSize), text_font_family=font.family_monospace)
 
 // Extend lines during NY
 if i_showLevels and (inNYAM or inLunch or inNYPM)
     if not na(lnLonH)
         line.set_x2(lnLonH, bar_index)
-        label.set_x(lblLonH, bar_index)
+        if i_showLabels and not na(lblLonH)
+            label.set_x(lblLonH, bar_index + i_labelOffset)
     if not na(lnLonL)
         line.set_x2(lnLonL, bar_index)
-        label.set_x(lblLonL, bar_index)
+        if i_showLabels and not na(lblLonL)
+            label.set_x(lblLonL, bar_index + i_labelOffset)
     if not na(lnLonMid)
         line.set_x2(lnLonMid, bar_index)
-        label.set_x(lblLonMid, bar_index)
+        if i_showLabels and not na(lblLonMid)
+            label.set_x(lblLonMid, bar_index + i_labelOffset)
     if not na(lnAsiaH)
         line.set_x2(lnAsiaH, bar_index)
-        label.set_x(lblAsiaH, bar_index)
+        if i_showLabels and not na(lblAsiaH)
+            label.set_x(lblAsiaH, bar_index + i_labelOffset)
     if not na(lnAsiaL)
         line.set_x2(lnAsiaL, bar_index)
-        label.set_x(lblAsiaL, bar_index)
+        if i_showLabels and not na(lblAsiaL)
+            label.set_x(lblAsiaL, bar_index + i_labelOffset)
     if not na(ln78Mid)
         line.set_x2(ln78Mid, bar_index)
-        label.set_x(lbl78Mid, bar_index)
+        if i_showLabels and not na(lbl78Mid)
+            label.set_x(lbl78Mid, bar_index + i_labelOffset)
     if not na(ln730)
         line.set_x2(ln730, bar_index)
-        label.set_x(lbl730, bar_index)
+        if i_showLabels and not na(lbl730)
+            label.set_x(lbl730, bar_index + i_labelOffset)
     if not na(lnMnOpen)
         line.set_x2(lnMnOpen, bar_index)
-        label.set_x(lblMnOpen, bar_index)
+        if i_showLabels and not na(lblMnOpen)
+            label.set_x(lblMnOpen, bar_index + i_labelOffset)
     if not na(lnOnMid)
         line.set_x2(lnOnMid, bar_index)
-        label.set_x(lblOnMid, bar_index)
+        if i_showLabels and not na(lblOnMid)
+            label.set_x(lblOnMid, bar_index + i_labelOffset)
     if not na(lnOTEBull)
         line.set_x2(lnOTEBull, bar_index)
-        label.set_x(lblOTEBull, bar_index)
+        if i_showLabels and not na(lblOTEBull)
+            label.set_x(lblOTEBull, bar_index + i_labelOffset)
     if not na(lnOTEBear)
         line.set_x2(lnOTEBear, bar_index)
-        label.set_x(lblOTEBear, bar_index)
+        if i_showLabels and not na(lblOTEBear)
+            label.set_x(lblOTEBear, bar_index + i_labelOffset)
     if not na(lnGlx)
         line.set_x2(lnGlx, bar_index)
-        label.set_x(lblGlx, bar_index)
+        if i_showLabels and not na(lblGlx)
+            label.set_x(lblGlx, bar_index + i_labelOffset)
     if not na(lnPDC)
         line.set_x2(lnPDC, bar_index)
-        label.set_x(lblPDC, bar_index)
+        if i_showLabels and not na(lblPDC)
+            label.set_x(lblPDC, bar_index + i_labelOffset)
     if not na(lnPDH)
         line.set_x2(lnPDH, bar_index)
-        label.set_x(lblPDH, bar_index)
+        if i_showLabels and not na(lblPDH)
+            label.set_x(lblPDH, bar_index + i_labelOffset)
     if not na(lnPDL)
         line.set_x2(lnPDL, bar_index)
-        label.set_x(lblPDL, bar_index)
+        if i_showLabels and not na(lblPDL)
+            label.set_x(lblPDL, bar_index + i_labelOffset)
     if not na(lnSig1P)
         line.set_x2(lnSig1P, bar_index)
-        label.set_x(lblSig1P, bar_index)
+        if i_showLabels and not na(lblSig1P)
+            label.set_x(lblSig1P, bar_index + i_labelOffset)
     if not na(lnSig1N)
         line.set_x2(lnSig1N, bar_index)
-        label.set_x(lblSig1N, bar_index)
+        if i_showLabels and not na(lblSig1N)
+            label.set_x(lblSig1N, bar_index + i_labelOffset)
+    if not na(lnSig2P)
+        line.set_x2(lnSig2P, bar_index)
+        if i_showLabels and not na(lblSig2P)
+            label.set_x(lblSig2P, bar_index + i_labelOffset)
+    if not na(lnSig2N)
+        line.set_x2(lnSig2N, bar_index)
+        if i_showLabels and not na(lblSig2N)
+            label.set_x(lblSig2N, bar_index + i_labelOffset)
 
 // Draw AM H/L at lunch start
-if i_showLevels and inLunch and not inLunch[1] and not na(amH)
-    line.delete(lnAMH)
-    line.delete(lnAML)
-    label.delete(lblAMH)
-    label.delete(lblAML)
+if i_showLevels and i_showAM and inLunch and not inLunch[1] and not na(amH)
+    line.delete(lnAMH), line.delete(lnAML)
+    label.delete(lblAMH), label.delete(lblAML)
     
-    lnAMH := line.new(amBar0, amH, bar_index, amH, color=color.new(p.bullish, p.line_transp_secondary), style=line.style_dashed, width=i_lvlWidth)
-    lblAMH := label.new(bar_index, amH, "AM High", style=label.style_none, textcolor=p.bullish, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    lnAMH := line.new(amBar0, amH, bar_index, amH, color=color.new(p.bullish, p.line_transp_secondary), style=getLineStyle(i_amStyle), width=i_amWidth)
+    lnAML := line.new(amBar0, amL, bar_index, amL, color=color.new(p.bearish, p.line_transp_secondary), style=getLineStyle(i_amStyle), width=i_amWidth)
     
-    lnAML := line.new(amBar0, amL, bar_index, amL, color=color.new(p.bearish, p.line_transp_secondary), style=line.style_dashed, width=i_lvlWidth)
-    lblAML := label.new(bar_index, amL, "AM Low", style=label.style_none, textcolor=p.bearish, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+    if i_showLabels
+        lblAMH := label.new(bar_index + i_labelOffset, amH, "AM H: 38.4%", style=label.style_none, textcolor=p.bullish, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+        lblAML := label.new(bar_index + i_labelOffset, amL, "AM L: 31.2%", style=label.style_none, textcolor=p.bearish, size=getSz(i_labelSize), text_font_family=font.family_monospace)
 
-// Extend AM lines during lunch/PM
+// Draw Lunch H/L at PM start
+if i_showLevels and i_showLunch and inNYPM and not inNYPM[1] and not na(lunchH)
+    line.delete(lnLchH), line.delete(lnLchL)
+    label.delete(lblLchH), label.delete(lblLchL)
+    
+    lnLchH := line.new(bar_index - 10, lunchH, bar_index, lunchH, color=color.new(p.text_dim, p.line_transp_secondary), style=getLineStyle(i_lchStyle), width=i_lchWidth)
+    lnLchL := line.new(bar_index - 10, lunchL, bar_index, lunchL, color=color.new(p.text_dim, p.line_transp_secondary), style=getLineStyle(i_lchStyle), width=i_lchWidth)
+    
+    if i_showLabels
+        lblLchH := label.new(bar_index + i_labelOffset, lunchH, "Lch H: 62.1%", style=label.style_none, textcolor=p.text_dim, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+        lblLchL := label.new(bar_index + i_labelOffset, lunchL, "Lch L: 53.2%", style=label.style_none, textcolor=p.text_dim, size=getSz(i_labelSize), text_font_family=font.family_monospace)
+
+// Extend AM/Lunch lines during PM
 if i_showLevels and (inLunch or inNYPM)
     if not na(lnAMH)
         line.set_x2(lnAMH, bar_index)
-        label.set_x(lblAMH, bar_index)
+        if i_showLabels and not na(lblAMH)
+            label.set_x(lblAMH, bar_index + i_labelOffset)
     if not na(lnAML)
         line.set_x2(lnAML, bar_index)
-        label.set_x(lblAML, bar_index)
+        if i_showLabels and not na(lblAML)
+            label.set_x(lblAML, bar_index + i_labelOffset)
 
-// ─── DAILY HIGH/LOW LABELS ───────────────────────────────────────────────────
+if i_showLevels and inNYPM
+    if not na(lnLchH)
+        line.set_x2(lnLchH, bar_index)
+        if i_showLabels and not na(lblLchH)
+            label.set_x(lblLchH, bar_index + i_labelOffset)
+    if not na(lnLchL)
+        line.set_x2(lnLchL, bar_index)
+        if i_showLabels and not na(lblLchL)
+            label.set_x(lblLchL, bar_index + i_labelOffset)
 
-// Update daily H/L labels during entire trading day (from any session)
+// Daily H/L labels
 if i_showLevels and (hhmm >= 1800 or hhmm < 1600)
-    // Draw or update Day High INLINE LABEL (at the actual high price)
     if not na(dayH) and not na(dayHHour) and dayH != dayH[1]
         label.delete(lblDayH)
         timeStr = str.format("{0,number,00}:{1,number,00}", dayHHour, dayHMin)
-        lblDayH := label.new(
-            x = time,
-            y = dayH,
-            xloc = xloc.bar_time,
-            text = str.format("{0,number,#.#} ({1})", dayH, timeStr),
-            style = label.style_label_down,
-            textcolor = p.bullish,
-            color = color.new(p.bullish, 80),
-            size = getSz(i_labelSize),
-            text_font_family = font.family_monospace
-        )
+        lblDayH := label.new(time, dayH, xloc=xloc.bar_time, text=str.format("{0,number,#.#} ({1})", dayH, timeStr), style=label.style_label_down, textcolor=p.bullish, color=color.new(p.bullish, 80), size=getSz(i_labelSize), text_font_family=font.family_monospace)
     
-    // Draw or update Day Low INLINE LABEL (at the actual low price)
     if not na(dayL) and not na(dayLHour) and dayL != dayL[1]
         label.delete(lblDayL)
         timeStr = str.format("{0,number,00}:{1,number,00}", dayLHour, dayLMin)
-        lblDayL := label.new(
-            x = time,
-            y = dayL,
-            xloc = xloc.bar_time,
-            text = str.format("{0,number,#.#} ({1})", dayL, timeStr),
-            style = label.style_label_up,
-            textcolor = p.bearish,
-            color = color.new(p.bearish, 80),
-            size =getSz(i_labelSize),
-            text_font_family = font.family_monospace
-        )
+        lblDayL := label.new(time, dayL, xloc=xloc.bar_time, text=str.format("{0,number,#.#} ({1})", dayL, timeStr), style=label.style_label_up, textcolor=p.bearish, color=color.new(p.bearish, 80), size=getSz(i_labelSize), text_font_family=font.family_monospace)
 
-// ─── SESSION BOXES (THEME-AWARE) ──────────────────────────────────────────────
+// ─── SESSION BOXES ───────────────────────────────────────────────────────────
 
 var box asiaBox = na, var box lonBox = na
 
@@ -1105,21 +1483,9 @@ if i_showBoxes
         box.delete(lonBox)
         lonBox := box.new(nz(lonBar0, bar_index), lonH, bar_index, lonL, border_color=color.new(p.london_primary, 50), bgcolor=color.new(p.london_primary, 93), border_width=1)
 
-// ─── DASHBOARD (THEME-AWARE) ─────────────────────────────────────────────────
+// ─── DASHBOARD (ENHANCED) ────────────────────────────────────────────────────
 
 probClr(float prob) => prob >= 75 ? color.new(#16a34a, 0) : prob >= 60 ? color.new(#f59e0b, 0) : color.new(#6b7280, 0)
-
-pctClr(float pct) =>
-    if na(pct)
-        color.new(#ffffff, 0)
-    else if pct > 80
-        color.new(#dc2626, 70)
-    else if pct > 60
-        color.new(#6b7280, 80)
-    else if pct < 20
-        color.new(#3b82f6, 70)
-    else
-        color.new(#ffffff, 0)
 
 var table tbl = na
 
@@ -1127,264 +1493,370 @@ if i_showDash and barstate.islast
     if not na(tbl)
         table.delete(tbl)
     
-    tbl := table.new(getPos(i_dashPos), 3, 50, bgcolor=color.new(p.bg_primary, i_dashOpacity), border_width=1, border_color=p.bg_border)
+    tbl := table.new(getPos(i_dashPos), 3, 55, bgcolor=color.new(p.bg_primary, i_dashOpacity), border_width=1, border_color=p.bg_border)
     sz = getSz(i_dashSz)
     
     int row = 0
     
-    table.cell(tbl, 0, row, "ICT PROB ENGINE v3", text_color=p.header_text, bgcolor=p.header_bg, text_size=sz)
+    // Header with version
+    table.cell(tbl, 0, row, "ICT PROB ENGINE v4", text_color=p.header_text, bgcolor=p.header_bg, text_size=sz)
     table.merge_cells(tbl, 0, row, 2, row)
     row += 1
     
-    sesClr = inNYAM ? p.ny_primary : inLondon ? p.london_primary : inAsia ? p.asia_primary : p.neutral
+    // Session and ticker
+    sesClr = inNYAM ? p.ny_primary : inLondon ? p.london_primary : inAsia ? p.asia_primary : inNYPM ? p.caution : p.neutral
     table.cell(tbl, 0, row, "Session", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
     table.cell(tbl, 1, row, curSession, text_color=sesClr, bgcolor=p.bg_secondary, text_size=sz)
-    table.cell(tbl, 2, row, syminfo.root, text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+    commodityNote = is_commodity ? " (CONT)" : ""
+    table.cell(tbl, 2, row, syminfo.root + commodityNote, text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
     row += 1
     
+    // Pattern and manipulation
     patClr = manipulation == "BULLISH" ? p.bullish : manipulation == "BEARISH" ? p.bearish : p.neutral
     table.cell(tbl, 0, row, "Pattern", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
     table.cell(tbl, 1, row, pattern, text_color=patClr, bgcolor=p.bg_secondary, text_size=sz)
     table.cell(tbl, 2, row, manipulation, text_color=patClr, bgcolor=p.bg_secondary, text_size=sz)
     row += 1
     
-    biasClr = bias == "LONG" ? p.bullish : bias == "SHORT" ? p.bearish : bias == "WAIT" ? p.caution : p.neutral
+    // NEW: Judas indicator
+    if lonHighFirst != 0
+        judasClr = isJudas ? p.bullish : p.text_dim
+        judasTxt = isJudas ? "✓ JUDAS" : "Standard"
+        sweepOrder = lonHighFirst == 1 ? "H→L" : "L→H"
+        table.cell(tbl, 0, row, "Sweep", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, sweepOrder, text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, judasTxt, text_color=judasClr, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    
+    // BIAS with enhanced coloring for SKIP
+    biasClr = bias == "LONG" or bias == "LONG (CONT)" ? p.bullish : bias == "SHORT" or bias == "SHORT (CONT)" ? p.bearish : bias == "⚠ SKIP" ? p.skip_text : bias == "WAIT" ? p.caution : p.neutral
+    biasBg = bias == "⚠ SKIP" ? p.skip_bg : p.bg_secondary
     table.cell(tbl, 0, row, "BIAS", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
-    table.cell(tbl, 1, row, bias, text_color=biasClr, bgcolor=p.bg_secondary, text_size=sz)
-    table.cell(tbl, 2, row, biasPct > 0 ? str.tostring(biasPct, "#.0") + "%" : "—", text_color=biasClr, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 1, row, bias, text_color=biasClr, bgcolor=biasBg, text_size=sz)
+    probTxt = biasPct > 0 ? str.tostring(biasPct, "#.0") + "%" : "—"
+    table.cell(tbl, 2, row, probTxt, text_color=probClr(biasPct), bgcolor=biasBg, text_size=sz)
     row += 1
     
-    table.cell(tbl, 0, row, "Confidence", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
-    table.cell(tbl, 1, row, confTxt, text_color=p.caution, bgcolor=p.bg_secondary, text_size=sz)
-    table.cell(tbl, 2, row, "", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+    // NEW: Setup Quality Score
+    table.cell(tbl, 0, row, "Quality", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+    qualityClr = qualityScore >= 4 ? p.bullish : qualityScore >= 2 ? p.caution : p.neutral
+    table.cell(tbl, 1, row, qualityTxt, text_color=qualityClr, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 2, row, str.tostring(qualityScore) + " pts", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
     row += 1
     
+    // NEW: Gap Confluence
+    if gapDir != "—"
+        gapClr = gapChasing ? p.bullish : p.neutral
+        gapLabel = gapChasing ? "CHASE +" : "FADE"
+        table.cell(tbl, 0, row, "Gap", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, gapDir + " " + str.tostring(gapPts, "#") + "pt", text_color=gapDir == "UP" ? p.bullish : gapDir == "DOWN" ? p.bearish : p.neutral, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, gapLabel, text_color=gapClr, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    
+    // Timing with warning
     if timingPct > 0
         table.cell(tbl, 0, row, "Timing", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, timingPhase, text_color=p.confirm, bgcolor=p.bg_secondary, text_size=sz)
-        table.cell(tbl, 2, row, str.tostring(timingPct, "#.0") + "% of reversals", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        warnClr = str.contains(timingWarning, "⚠") ? p.caution : p.text_dim
+        table.cell(tbl, 2, row, timingWarning != "" ? timingWarning : str.tostring(timingPct, "#.0") + "%", text_color=warnClr, bgcolor=p.bg_secondary, text_size=sz)
         row += 1
     
+    // ── FACTORS SECTION ──
+    table.cell(tbl, 0, row, "── FACTORS ──", text_color=p.confirm, bgcolor=color.new(p.confirm, 85), text_size=sz)
+    table.merge_cells(tbl, 0, row, 2, row)
+    row += 1
+    
+    // Asia size
+    asiaSzClr = asiaSize == "SMALL" ? p.bullish : asiaSize == "LARGE" ? p.bearish : p.neutral
+    table.cell(tbl, 0, row, "Asia Rng", text_color=p.asia_primary, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 1, row, asiaSize, text_color=asiaSzClr, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 2, row, na(asiaPctl) ? "—" : str.tostring(asiaPctl, "#") + "th", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+    row += 1
+    
+    // London size
+    lonSzClr = londonSize == "SMALL" ? p.bullish : londonSize == "LARGE" ? p.bearish : p.neutral
+    table.cell(tbl, 0, row, "Lon Rng", text_color=p.london_primary, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 1, row, londonSize, text_color=lonSzClr, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 2, row, na(lonPctl) ? "—" : str.tostring(lonPctl, "#") + "th", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+    row += 1
+    
+    // DOW
+    dowNames = array.from("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+    dowClr = curDOW == dayofweek.tuesday or curDOW == dayofweek.wednesday ? p.bullish : curDOW == dayofweek.monday ? p.bearish : p.neutral
+    table.cell(tbl, 0, row, "DOW", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+    table.cell(tbl, 1, row, array.get(dowNames, curDOW - 1), text_color=dowClr, bgcolor=p.bg_secondary, text_size=sz)
+    dowNote = curDOW == dayofweek.tuesday ? "+5%" : curDOW == dayofweek.wednesday ? "+3%" : curDOW == dayofweek.monday ? "-4%" : "—"
+    table.cell(tbl, 2, row, dowNote, text_color=dowClr, bgcolor=p.bg_secondary, text_size=sz)
+    row += 1
+    
+    // ── NY LEVELS ──
     table.cell(tbl, 0, row, "── NY LEVELS ──", text_color=p.confirm, bgcolor=color.new(p.confirm, 85), text_size=sz)
     table.merge_cells(tbl, 0, row, 2, row)
     row += 1
     
+    // Level headers
     table.cell(tbl, 0, row, "Level", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
     table.cell(tbl, 1, row, "Hit %", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
     table.cell(tbl, 2, row, "Status", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
     row += 1
     
+    // 7-8 Mid
     float v78 = not na(h78H) and not na(h78L) ? (h78H + h78L) / 2 : na
     if not na(v78)
         float p78 = getCondProb78Mid(pattern, nyPos)
         table.cell(tbl, 0, row, "7-8 Mid", text_color=p.confirm, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, str.tostring(p78, "#.0") + "%", text_color=probClr(p78), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg1 = hit78Mid ? p.validated_bg : p.pending_bg
-        color hitTxt1 = hit78Mid ? p.validated_text : p.pending_text
-        string hitLbl1 = hit78Mid ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl1, bgcolor=hitBg1, text_color=hitTxt1, text_size=sz)
+        hitBg = hit78Mid ? p.validated_bg : p.pending_bg
+        hitTxt = hit78Mid ? p.validated_text : p.pending_text
+        hitLbl = hit78Mid ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
     
+    // 07:30 Open
     if not na(o730)
         table.cell(tbl, 0, row, "07:30", text_color=p.caution, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, "79.8%", text_color=probClr(79.8), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg2 = hit730 ? p.validated_bg : p.pending_bg
-        color hitTxt2 = hit730 ? p.validated_text : p.pending_text
-        string hitLbl2 = hit730 ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl2, bgcolor=hitBg2, text_color=hitTxt2, text_size=sz)
+        hitBg = hit730 ? p.validated_bg : p.pending_bg
+        hitTxt = hit730 ? p.validated_text : p.pending_text
+        hitLbl = hit730 ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
     
+    // OTE Bull
     float vOTEBull = not na(onH) and not na(onL) ? onL + (onH - onL) * 0.62 : na
     if not na(vOTEBull)
         table.cell(tbl, 0, row, "OTE Bull", text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, "78.3%", text_color=probClr(78.3), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg3 = hitOTEBull ? p.validated_bg : p.pending_bg
-        color hitTxt3 = hitOTEBull ? p.validated_text : p.pending_text
-        string hitLbl3 = hitOTEBull ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl3, bgcolor=hitBg3, text_color=hitTxt3, text_size=sz)
+        hitBg = hitOTEBull ? p.validated_bg : p.pending_bg
+        hitTxt = hitOTEBull ? p.validated_text : p.pending_text
+        hitLbl = hitOTEBull ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
     
+    // ON Mid
     if not na(onMid)
         table.cell(tbl, 0, row, "ON Mid", text_color=p.confirm, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, "77.6%", text_color=probClr(77.6), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg4 = hitOnMid ? p.validated_bg : p.pending_bg
-        color hitTxt4 = hitOnMid ? p.validated_text : p.pending_text
-        string hitLbl4 = hitOnMid ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl4, bgcolor=hitBg4, text_color=hitTxt4, text_size=sz)
+        hitBg = hitOnMid ? p.validated_bg : p.pending_bg
+        hitTxt = hitOnMid ? p.validated_text : p.pending_text
+        hitLbl = hitOnMid ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
     
+    // London H
     if not na(lonH)
         float pLH = getCondProbLonH(pattern, nyPos)
-        table.cell(tbl, 0, row, "London H", text_color=p.london_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 0, row, "Lon H", text_color=p.london_primary, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, str.tostring(pLH, "#.0") + "%", text_color=probClr(pLH), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg5 = hitLonH ? p.validated_bg : p.pending_bg
-        color hitTxt5 = hitLonH ? p.validated_text : p.pending_text
-        string hitLbl5 = hitLonH ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl5, bgcolor=hitBg5, text_color=hitTxt5, text_size=sz)
+        hitBg = hitLonH ? p.validated_bg : p.pending_bg
+        hitTxt = hitLonH ? p.validated_text : p.pending_text
+        hitLbl = hitLonH ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
     
+    // London L
     if not na(lonL)
         float pLL = getCondProbLonL(pattern, nyPos)
-        table.cell(tbl, 0, row, "London L", text_color=p.london_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 0, row, "Lon L", text_color=p.london_primary, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, str.tostring(pLL, "#.0") + "%", text_color=probClr(pLL), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg6 = hitLonL ? p.validated_bg : p.pending_bg
-        color hitTxt6 = hitLonL ? p.validated_text : p.pending_text
-        string hitLbl6 = hitLonL ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl6, bgcolor=hitBg6, text_color=hitTxt6, text_size=sz)
+        hitBg = hitLonL ? p.validated_bg : p.pending_bg
+        hitTxt = hitLonL ? p.validated_text : p.pending_text
+        hitLbl = hitLonL ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
     
+    // Settle
     if not na(pdC)
-        table.cell(tbl, 0, row, "Settle", text_color=p.prior_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 0, row, "Settle", text_color=i_priorColor, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, "63.6%", text_color=probClr(63.6), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg7 = hitPDC ? p.validated_bg : p.pending_bg
-        color hitTxt7 = hitPDC ? p.validated_text : p.pending_text
-        string hitLbl7 = hitPDC ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl7, bgcolor=hitBg7, text_color=hitTxt7, text_size=sz)
+        hitBg = hitPDC ? p.validated_bg : p.pending_bg
+        hitTxt = hitPDC ? p.validated_text : p.pending_text
+        hitLbl = hitPDC ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
     
+    // Globex
     if not na(glxOpen)
         table.cell(tbl, 0, row, "Globex", text_color=p.neutral, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, "63.9%", text_color=probClr(63.9), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg8 = hitGlx ? p.validated_bg : p.pending_bg
-        color hitTxt8 = hitGlx ? p.validated_text : p.pending_text
-        string hitLbl8 = hitGlx ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl8, bgcolor=hitBg8, text_color=hitTxt8, text_size=sz)
+        hitBg = hitGlx ? p.validated_bg : p.pending_bg
+        hitTxt = hitGlx ? p.validated_text : p.pending_text
+        hitLbl = hitGlx ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
     
+    // MN Open
     if not na(mnOpen)
         float pMn = getCondProbMidnight(pattern, nyPos)
         table.cell(tbl, 0, row, "MN Open", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, str.tostring(pMn, "#.0") + "%", text_color=probClr(pMn), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg9 = hitMnOpen ? p.validated_bg : p.pending_bg
-        color hitTxt9 = hitMnOpen ? p.validated_text : p.pending_text
-        string hitLbl9 = hitMnOpen ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl9, bgcolor=hitBg9, text_color=hitTxt9, text_size=sz)
+        hitBg = hitMnOpen ? p.validated_bg : p.pending_bg
+        hitTxt = hitMnOpen ? p.validated_text : p.pending_text
+        hitLbl = hitMnOpen ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
     
+    // PDH
     if not na(pdH)
-        table.cell(tbl, 0, row, "PDH", text_color=p.prior_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 0, row, "PDH", text_color=i_priorColor, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, "47.1%", text_color=probClr(47.1), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg10 = hitPDH ? p.validated_bg : p.pending_bg
-        color hitTxt10 = hitPDH ? p.validated_text : p.pending_text
-        string hitLbl10 = hitPDH ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl10, bgcolor=hitBg10, text_color=hitTxt10, text_size=sz)
+        hitBg = hitPDH ? p.validated_bg : p.pending_bg
+        hitTxt = hitPDH ? p.validated_text : p.pending_text
+        hitLbl = hitPDH ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
     
+    // PDL
     if not na(pdL)
-        table.cell(tbl, 0, row, "PDL", text_color=p.prior_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 0, row, "PDL", text_color=i_priorColor, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, "40.0%", text_color=probClr(40.0), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg11 = hitPDL ? p.validated_bg : p.pending_bg
-        color hitTxt11 = hitPDL ? p.validated_text : p.pending_text
-        string hitLbl11 = hitPDL ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl11, bgcolor=hitBg11, text_color=hitTxt11, text_size=sz)
+        hitBg = hitPDL ? p.validated_bg : p.pending_bg
+        hitTxt = hitPDL ? p.validated_text : p.pending_text
+        hitLbl = hitPDL ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
     
+    // Sigma levels (+1, -1, +2, -2)
     float cbdrR = not na(asiaH) and not na(asiaL) ? asiaH - asiaL : na
     if not na(cbdrR) and cbdrR > 0
-        table.cell(tbl, 0, row, "+1σ", text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
-        table.cell(tbl, 1, row, "61.0%", text_color=probClr(61.0), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg12 = hitSig1P ? p.validated_bg : p.pending_bg
-        color hitTxt12 = hitSig1P ? p.validated_text : p.pending_text
-        string hitLbl12 = hitSig1P ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl12, bgcolor=hitBg12, text_color=hitTxt12, text_size=sz)
+        float sig1PProb = getCondSigmaProb("+1", manipulation)
+        table.cell(tbl, 0, row, "+1σ", text_color=i_sigmaUpColor, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(sig1PProb, "#.0") + "%", text_color=probClr(sig1PProb), bgcolor=p.bg_secondary, text_size=sz)
+        hitBg = hitSig1P ? p.validated_bg : p.pending_bg
+        hitTxt = hitSig1P ? p.validated_text : p.pending_text
+        hitLbl = hitSig1P ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
         
-        table.cell(tbl, 0, row, "-1σ", text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
-        table.cell(tbl, 1, row, "56.2%", text_color=probClr(56.2), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg13 = hitSig1N ? p.validated_bg : p.pending_bg
-        color hitTxt13 = hitSig1N ? p.validated_text : p.pending_text
-        string hitLbl13 = hitSig1N ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl13, bgcolor=hitBg13, text_color=hitTxt13, text_size=sz)
+        float sig1NProb = getCondSigmaProb("-1", manipulation)
+        table.cell(tbl, 0, row, "-1σ", text_color=i_sigmaDnColor, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(sig1NProb, "#.0") + "%", text_color=probClr(sig1NProb), bgcolor=p.bg_secondary, text_size=sz)
+        hitBg := hitSig1N ? p.validated_bg : p.pending_bg
+        hitTxt := hitSig1N ? p.validated_text : p.pending_text
+        hitLbl := hitSig1N ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
+        row += 1
+        
+        float sig2PProb = getCondSigmaProb("+2", manipulation)
+        table.cell(tbl, 0, row, "+2σ", text_color=i_sigmaUpColor, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(sig2PProb, "#.0") + "%", text_color=probClr(sig2PProb), bgcolor=p.bg_secondary, text_size=sz)
+        hitBg := hitSig2P ? p.validated_bg : p.pending_bg
+        hitTxt := hitSig2P ? p.validated_text : p.pending_text
+        hitLbl := hitSig2P ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
+        row += 1
+        
+        float sig2NProb = getCondSigmaProb("-2", manipulation)
+        table.cell(tbl, 0, row, "-2σ", text_color=i_sigmaDnColor, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(sig2NProb, "#.0") + "%", text_color=probClr(sig2NProb), bgcolor=p.bg_secondary, text_size=sz)
+        hitBg := hitSig2N ? p.validated_bg : p.pending_bg
+        hitTxt := hitSig2N ? p.validated_text : p.pending_text
+        hitLbl := hitSig2N ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
         row += 1
     
+    // PM-specific section
     if (inNYPM or inLunch) and not na(amH)
-        table.cell(tbl, 0, row, "── PM ──", text_color=p.confirm, bgcolor=color.new(p.confirm, 85), text_size=sz)
+        table.cell(tbl, 0, row, "── PM ──", text_color=p.caution, bgcolor=color.new(p.caution, 85), text_size=sz)
         table.merge_cells(tbl, 0, row, 2, row)
         row += 1
         
-        table.cell(tbl, 0, row, "AM H", text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
-        table.cell(tbl, 1, row, "38.4%", text_color=probClr(38.4), bgcolor=p.bg_secondary, text_size=sz)
-        color hitBg14 = hitAMH ? p.validated_bg : p.pending_bg
-        color hitTxt14 = hitAMH ? p.validated_text : p.pending_text
-        string hitLbl14 = hitAMH ? "✓ Hit" : "Pending"
-        table.cell(tbl, 2, row, hitLbl14, bgcolor=hitBg14, text_color=hitTxt14, text_size=sz)
+        // PM management guidance
+        table.cell(tbl, 0, row, "Mode", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, "MANAGE", text_color=p.caution, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, "No new entries", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
         row += 1
         
+        // AM H
+        table.cell(tbl, 0, row, "AM H", text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, "38.4%", text_color=probClr(38.4), bgcolor=p.bg_secondary, text_size=sz)
+        hitBg = hitAMH ? p.validated_bg : p.pending_bg
+        hitTxt = hitAMH ? p.validated_text : p.pending_text
+        hitLbl = hitAMH ? "✓ Hit" : "Pending"
+        table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
+        row += 1
+        
+        // AM L
         if not na(amL)
             table.cell(tbl, 0, row, "AM L", text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
             table.cell(tbl, 1, row, "31.2%", text_color=probClr(31.2), bgcolor=p.bg_secondary, text_size=sz)
-            color hitBg15 = hitAML ? p.validated_bg : p.pending_bg
-            color hitTxt15 = hitAML ? p.validated_text : p.pending_text
-            string hitLbl15 = hitAML ? "✓ Hit" : "Pending"
-            table.cell(tbl, 2, row, hitLbl15, bgcolor=hitBg15, text_color=hitTxt15, text_size=sz)
+            hitBg := hitAML ? p.validated_bg : p.pending_bg
+            hitTxt := hitAML ? p.validated_text : p.pending_text
+            hitLbl := hitAML ? "✓ Hit" : "Pending"
+            table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
             row += 1
         
         if inNYPM and not na(lunchH)
-            table.cell(tbl, 0, row, "Lunch H", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+            // Lunch H
+            table.cell(tbl, 0, row, "Lch H", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
             table.cell(tbl, 1, row, "62.1%", text_color=probClr(62.1), bgcolor=p.bg_secondary, text_size=sz)
-            color hitBg16 = hitLchH ? p.validated_bg : p.pending_bg
-            color hitTxt16 = hitLchH ? p.validated_text : p.pending_text
-            string hitLbl16 = hitLchH ? "✓ Hit" : "Pending"
-            table.cell(tbl, 2, row, hitLbl16, bgcolor=hitBg16, text_color=hitTxt16, text_size=sz)
+            hitBg := hitLchH ? p.validated_bg : p.pending_bg
+            hitTxt := hitLchH ? p.validated_text : p.pending_text
+            hitLbl := hitLchH ? "✓ Hit" : "Pending"
+            table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
             row += 1
-        
-        if inNYPM and not na(lunchL)
-            table.cell(tbl, 0, row, "Lunch L", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+            
+            // Lunch L
+            table.cell(tbl, 0, row, "Lch L", text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
             table.cell(tbl, 1, row, "53.2%", text_color=probClr(53.2), bgcolor=p.bg_secondary, text_size=sz)
-            color hitBg17 = hitLchL ? p.validated_bg : p.pending_bg
-            color hitTxt17 = hitLchL ? p.validated_text : p.pending_text
-            string hitLbl17 = hitLchL ? "✓ Hit" : "Pending"
-            table.cell(tbl, 2, row, hitLbl17, bgcolor=hitBg17, text_color=hitTxt17, text_size=sz)
+            hitBg := hitLchL ? p.validated_bg : p.pending_bg
+            hitTxt := hitLchL ? p.validated_text : p.pending_text
+            hitLbl := hitLchL ? "✓ Hit" : "Pending"
+            table.cell(tbl, 2, row, hitLbl, bgcolor=hitBg, text_color=hitTxt, text_size=sz)
             row += 1
     
-    // Daily High/Low section
+    // ── RANGES SECTION ──
+    table.cell(tbl, 0, row, "── RANGES ──", text_color=p.asia_primary, bgcolor=color.new(p.asia_primary, 85), text_size=sz)
+    table.merge_cells(tbl, 0, row, 2, row)
+    row += 1
+    
+    // Asia range
+    if not na(asiaH) and not na(asiaL)
+        float aRng = asiaH - asiaL
+        table.cell(tbl, 0, row, "Asia", text_color=p.asia_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(aRng, "#.0") + " pts", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, asiaSize + " " + (na(asiaPctl) ? "" : str.tostring(asiaPctl, "#") + "th"), text_color=asiaSize == "SMALL" ? p.bullish : asiaSize == "LARGE" ? p.bearish : p.neutral, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    
+    // London range
+    if not na(lonH) and not na(lonL)
+        float lRng = lonH - lonL
+        table.cell(tbl, 0, row, "London", text_color=p.london_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(lRng, "#.0") + " pts", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, londonSize + " " + (na(lonPctl) ? "" : str.tostring(lonPctl, "#") + "th"), text_color=londonSize == "SMALL" ? p.bullish : londonSize == "LARGE" ? p.bearish : p.neutral, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    
+    // NY range
+    if not na(nyRng)
+        table.cell(tbl, 0, row, "NY", text_color=p.ny_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(nyRng, "#.0") + " pts", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 2, row, na(nyPctl) ? "(live)" : str.tostring(nyPctl, "#") + "th", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    
+    // Daily H/L
     table.cell(tbl, 0, row, "── DAILY ──", text_color=p.confirm, bgcolor=color.new(p.confirm, 85), text_size=sz)
     table.merge_cells(tbl, 0, row, 2, row)
     row += 1
     
     if not na(dayH) and not na(dayHHour)
         dayHTimeStr = str.format("{0,number,00}:{1,number,00}", dayHHour, dayHMin)
-        table.cell(tbl, 0, row, "Day High", text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 0, row, "Day H", text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, str.tostring(dayH, "#.#"), text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 2, row, dayHTimeStr, text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
         row += 1
     
     if not na(dayL) and not na(dayLHour)
         dayLTimeStr = str.format("{0,number,00}:{1,number,00}", dayLHour, dayLMin)
-        table.cell(tbl, 0, row, "Day Low", text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 0, row, "Day L", text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 1, row, str.tostring(dayL, "#.#"), text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
         table.cell(tbl, 2, row, dayLTimeStr, text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
-        row += 1
-    
-    table.cell(tbl, 0, row, "── RANGES ──", text_color=p.asia_primary, bgcolor=color.new(p.asia_primary, 85), text_size=sz)
-    table.merge_cells(tbl, 0, row, 2, row)
-    row += 1
-    
-    if not na(asiaH) and not na(asiaL)
-        float aRng = asiaH - asiaL
-        table.cell(tbl, 0, row, "Asia", text_color=p.asia_primary, bgcolor=p.bg_secondary, text_size=sz)
-        table.cell(tbl, 1, row, str.tostring(aRng, "#.0") + " pts", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
-        pctBg = pctClr(asiaPctl)
-        table.cell(tbl, 2, row, na(asiaPctl) ? "—" : str.tostring(asiaPctl, "#.0") + "th", text_color=p.text_primary, bgcolor=pctBg, text_size=sz)
-        row += 1
-    
-    if not na(lonH) and not na(lonL)
-        float lRng = lonH - lonL
-        table.cell(tbl, 0, row, "London", text_color=p.london_primary, bgcolor=p.bg_secondary, text_size=sz)
-        table.cell(tbl, 1, row, str.tostring(lRng, "#.0") + " pts", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
-        pctBg = pctClr(lonPctl)
-        table.cell(tbl, 2, row, na(lonPctl) ? "—" : str.tostring(lonPctl, "#.0") + "th", text_color=p.text_primary, bgcolor=pctBg, text_size=sz)
-        row += 1
-    
-    if not na(nyRng)
-        table.cell(tbl, 0, row, "NY", text_color=p.ny_primary, bgcolor=p.bg_secondary, text_size=sz)
-        table.cell(tbl, 1, row, str.tostring(nyRng, "#.0") + " pts", text_color=p.text_primary, bgcolor=p.bg_secondary, text_size=sz)
-        pctBg = pctClr(nyPctl)
-        table.cell(tbl, 2, row, na(nyPctl) ? "(live)" : str.tostring(nyPctl, "#.0") + "th", text_color=p.text_primary, bgcolor=pctBg, text_size=sz)
         row += 1
 
 // ─── ALERTS ──────────────────────────────────────────────────────────────────
 
-alertcondition(bias == "LONG", "Long Bias Confirmed", "ICT Prob v3: LONG bias confirmed")
-alertcondition(bias == "SHORT", "Short Bias Confirmed", "ICT Prob v3: SHORT bias confirmed")
-alertcondition(bias == "WAIT", "Misaligned", "ICT Prob v3: Manipulation misaligned with NY position")
+alertcondition(bias == "LONG", "Long Bias Confirmed", "ICT Prob v4: LONG bias confirmed")
+alertcondition(bias == "SHORT", "Short Bias Confirmed", "ICT Prob v4: SHORT bias confirmed")
+alertcondition(bias == "⚠ SKIP", "Misaligned - Skip", "ICT Prob v4: Misaligned setup - SKIP")
+alertcondition(isJudas and isAligned, "Judas + Aligned", "ICT Prob v4: JUDAS sweep with aligned setup!")
+alertcondition(gapChasing and isAligned, "Gap Chase + Aligned", "ICT Prob v4: Gap CHASING with aligned setup!")
+alertcondition(qualityScore >= 5, "High Quality Setup", "ICT Prob v4: Quality score 5+ setup detected!")
