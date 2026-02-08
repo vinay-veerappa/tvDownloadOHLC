@@ -7,8 +7,8 @@ def analyze_all_levels(df):
     print("COMPREHENSIVE LEVEL HIT RATES")
     print("=" * 60)
     
-    # Identify hit columns
-    hit_cols = [c for c in df.columns if c.startswith('hit_') or c.startswith('pm_hit_') or c.startswith('asia_hit_') or c.startswith('cbdr_hit_')]
+    # Identify hit columns (exclude time columns)
+    hit_cols = [c for c in df.columns if (c.startswith('hit_') or c.startswith('pm_hit_') or c.startswith('asia_hit_') or c.startswith('cbdr_hit_')) and not c.endswith('_time')]
     
     results = []
     

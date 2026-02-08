@@ -14,7 +14,7 @@ def analyze_cbdr_sigma(df):
         return
 
     # Filter invalid
-    valid_df = df[df['cbdr_asia_range'] > 0]
+    valid_df = df[df['cbdr_asia_range'] > 0].copy()
     total = len(valid_df)
     
     # 1. Sigma Reach Distribution
@@ -90,10 +90,10 @@ def analyze_cbdr_sigma(df):
         valid_df['rng_quartile'] = pd.qcut(valid_df['cbdr_asia_range'], 4, labels=['Small', 'Med', 'Large', 'XL'])
         if 'cbdr_upside_sigmas' in valid_df.columns:
              print("\nAverage Upside Sigmas by Range Size:")
-             print(valid_df.groupby('rng_quartile')['cbdr_upside_sigmas'].mean())
+             print(valid_df.groupby('rng_quartile', observed=False)['cbdr_upside_sigmas'].mean())
              
         if 'cbdr_downside_sigmas' in valid_df.columns:
              print("\nAverage Downside Sigmas by Range Size:")
-             print(valid_df.groupby('rng_quartile')['cbdr_downside_sigmas'].mean())
+             print(valid_df.groupby('rng_quartile', observed=False)['cbdr_downside_sigmas'].mean())
     except Exception as e:
         print(f"Could not calculate quartiles: {e}")

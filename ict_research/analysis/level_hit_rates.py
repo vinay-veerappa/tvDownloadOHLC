@@ -6,7 +6,7 @@ def analyze_level_hit_rates(df_days: pd.DataFrame):
         
     print("\n--- Level Hit Rates ---")
     
-    cols = [c for c in df_days.columns if c.startswith('hit_') and 'first' not in c]
+    cols = [c for c in df_days.columns if c.startswith('hit_') and 'first' not in c and '_time' not in c]
     
     # Global hit rates
     print("Global Hit Rates:")

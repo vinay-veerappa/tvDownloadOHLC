@@ -160,8 +160,8 @@ class TradingDay:
     monthly_open: float = np.nan
     
     # ═══ NEW: NY PM Manipulation (Asia Prediction Model) ═══
-    manip_pm: str = None                # BULLISH/BEARISH/BOTH/NONE
-    pattern_pm: str = None              # PM_PARTIAL_UP/DOWN/ENGULFS/INSIDE
+    pm_manipulation: str = None         # BULLISH/BEARISH/BOTH/NONE
+    pm_pattern: str = None              # PM_PARTIAL_UP/DOWN/ENGULFS/INSIDE
     is_judas_pm: bool = None
     globex_pos_vs_pm_mid: str = None    # ABOVE/BELOW
     globex_gap: float = np.nan          # 18:00 open - 16:00 close
@@ -317,7 +317,8 @@ def extract_session_stats(df_day: pd.DataFrame, prev_day_stats: dict = None, pre
         stats.prev_settle = prev_day_stats.get('close', np.nan)
         if pd.notna(stats.prev_settle) and pd.notna(stats.ny_open):
             stats.rth_gap = stats.ny_open - stats.prev_settle
-            stats.rth_gap_pct = (stats.rth_gap / stats.prev_settle) * 100
+            if stats.prev_settle != 0:
+                stats.rth_gap_pct = (stats.rth_gap / stats.prev_settle) * 100
         
         stats.prev_day_high = prev_day_stats.get('high', np.nan)
         stats.prev_day_low = prev_day_stats.get('low', np.nan)
@@ -417,26 +418,23 @@ def extract_session_stats(df_day: pd.DataFrame, prev_day_stats: dict = None, pre
         stats.flout_mid = (stats.flout_high + stats.flout_low) / 2
         stats.flout_range = stats.flout_high - stats.flout_low
     
-    # NEW: Time-based opens
-    globex_bar = df_day.at_time(SESSION_TIMES['GLOBEX_OPEN'])
-    if not globex_bar.empty:
-        stats.globex_open = globex_bar['open'].iloc[0]
-    
-    london_open_bar = df_day.at_time(SESSION_TIMES['LONDON_OPEN'])
-    if not london_open_bar.empty:
-        stats.london_open_price = london_open_bar['open'].iloc[0]
-    
-    bar_0730 = df_day.at_time(SESSION_TIMES['OPEN_0730'])
-    if not bar_0730.empty:
-        stats.open_0730 = bar_0730['open'].iloc[0]
-    
-    rth_bar = df_day.at_time(SESSION_TIMES['RTH_OPEN'])
-    if not rth_bar.empty:
-        stats.rth_open_price = rth_bar['open'].iloc[0]
-    
-    pm_bar = df_day.at_time(SESSION_TIMES['PM_OPEN'])
-    if not pm_bar.empty:
-        stats.pm_open_price = pm_bar['open'].iloc[0]
+    # NEW: Time-based opens (Robust Extraction)
+    def get_open_price(df, target_time, session_open=np.nan):
+        """Helper to find open price with fallback."""
+        bar = df.at_time(target_time)
+        if not bar.empty:
+            return bar['open'].iloc[0]
+        # Try finding nearest bar within 5 minutes
+        bars = df.between_time(target_time, (datetime.combine(date.min, target_time) + timedelta(minutes=5)).time())
+        if not bars.empty:
+            return bars['open'].iloc[0]
+        return session_open
+
+    stats.globex_open = get_open_price(df_day, SESSION_TIMES['GLOBEX_OPEN'])
+    stats.london_open_price = stats.london_open if pd.notna(stats.london_open) else get_open_price(df_day, SESSION_TIMES['LONDON_OPEN'])
+    stats.open_0730 = get_open_price(df_day, SESSION_TIMES['OPEN_0730'])
+    stats.rth_open_price = stats.ny_open if pd.notna(stats.ny_open) else get_open_price(df_day, SESSION_TIMES['RTH_OPEN'])
+    stats.pm_open_price = stats.ny_pm_open if pd.notna(stats.ny_pm_open) else get_open_price(df_day, SESSION_TIMES['PM_OPEN'])
     
     # NEW: OTE zones
     if pd.notna(stats.overnight_high) and pd.notna(stats.overnight_low):
@@ -452,7 +450,8 @@ def extract_session_stats(df_day: pd.DataFrame, prev_day_stats: dict = None, pre
         # This should use prev_day_stats['close'] (same as prev_settle)
         if prev_day_stats and pd.notna(prev_day_stats.get('close')):
             stats.globex_gap = stats.globex_open - prev_day_stats['close']
-            stats.globex_gap_pct = stats.globex_gap / prev_day_stats['close'] * 100
+            if prev_day_stats['close'] != 0:
+                stats.globex_gap_pct = stats.globex_gap / prev_day_stats['close'] * 100
     
     # NEW: Extended prev period levels
     if prev_week_stats:

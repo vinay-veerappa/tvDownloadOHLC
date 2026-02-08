@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import datetime
 
 def analyze_timing(df):
     """When do reversals happen? Timing distribution analysis."""
@@ -13,8 +14,12 @@ def analyze_timing(df):
         return
         
     valid = df[df['reversal_time'].notna()].copy()
-    # Coerce to datetime, handle errors
-    valid['rev_dt'] = pd.to_datetime(valid['reversal_time'], errors='coerce')
+    # Coerce to datetime, handle errors (using utc=True for mixed timezones)
+    valid['rev_dt'] = pd.to_datetime(valid['reversal_time'], errors='coerce', utc=True)
+    try:
+        valid['rev_dt'] = valid['rev_dt'].dt.tz_convert('America/New_York')
+    except Exception as e:
+        print(f"Warning: Could not convert timezone: {e}")
     valid = valid.dropna(subset=['rev_dt'])
     
     if valid.empty:
@@ -34,7 +39,7 @@ def analyze_timing(df):
         if t < datetime.time(13, 30): return "12:00-13:30 (Lunch)"
         return "13:30-16:00 (PM)"
         
-    import datetime
+
     valid['window'] = valid['rev_dt'].apply(bucket_time)
     
     counts = valid['window'].value_counts().sort_index()
@@ -48,7 +53,7 @@ def analyze_timing(df):
     # 2. By Manipulation Type
     print("\n--- 2. Timing by Manipulation Type ---")
     if 'manipulation' in valid.columns:
-        print(valid.groupby('manipulation')['window'].value_counts(normalize=True).unstack().fillna(0) * 100)
+        print(valid.groupby('manipulation', observed=False)['window'].value_counts(normalize=True).unstack().fillna(0) * 100)
         
     # 3. By Pattern
     print("\n--- 3. Timing by Pattern ---")
@@ -56,7 +61,7 @@ def analyze_timing(df):
         # Filter top patterns
         top_pats = valid['pattern'].value_counts().head(3).index
         sub = valid[valid['pattern'].isin(top_pats)]
-        print(sub.groupby('pattern')['window'].value_counts(normalize=True).unstack().fillna(0) * 100)
+        print(sub.groupby('pattern', observed=False)['window'].value_counts(normalize=True).unstack().fillna(0) * 100)
         
     # 4. By Day of Week
     print("\n--- 4. Timing by Day of Week ---")
@@ -67,4 +72,4 @@ def analyze_timing(df):
     days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     valid['dow'] = pd.Categorical(valid['dow'], categories=days, ordered=True)
     
-    print(valid.groupby('dow')['window'].value_counts(normalize=True).unstack().fillna(0) * 100)
+    print(valid.groupby('dow', observed=False)['window'].value_counts(normalize=True).unstack().fillna(0) * 100)

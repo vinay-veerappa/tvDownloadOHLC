@@ -17,7 +17,7 @@ from pattern_classifier import (
 from pda_detector import detect_london_pd_arrays
 from outcome_measurer import (
     measure_outcomes, measure_ny_enhanced, measure_pm_outcomes, measure_asia_outcomes,
-    NYOutcome, PMOutcome, AsiaOutcome
+    measure_lunch_outcomes, NYOutcome, PMOutcome, AsiaOutcome, LunchOutcome
 )
 from data_loader import load_data, slice_trading_days, get_trading_day_data
 
@@ -51,11 +51,14 @@ def process_day_worker(args):
     # 6. PM Classification (NEW)
     pm_pattern = classify_pm_pattern(day_stats)
     pm_manipulation = classify_pm_manipulation(day_stats)
-    day_stats.pattern_pm = pm_pattern
-    day_stats.manip_pm = pm_manipulation
+    day_stats.pm_pattern = pm_pattern
+    day_stats.pm_manipulation = pm_manipulation
     day_stats.is_judas_pm = detect_judas_pm(day_stats, pm_manipulation)
     
-    # 7. PM Outcomes (NEW)
+    # 7. Lunch Outcomes (NEW)
+    lunch_outcome = measure_lunch_outcomes(df_day, day_stats)
+
+    # 8. PM Outcomes (NEW)
     pm_outcome = measure_pm_outcomes(df_day, day_stats)
     
     # Return a dictionary of results and the updated stats object (needed for Asia pass)
@@ -72,8 +75,11 @@ def process_day_worker(args):
         key = field.name
         val = getattr(ny_outcome, key)
         if key not in ['arrays_touched', 'arrays_respected', 'arrays_failed']: 
-            # Prefix helpful? Most are unique. 
             row[key] = val
+
+    # Merge Lunch Outcome fields (prefixed)
+    for field in dataclasses.fields(lunch_outcome):
+        row[f'lunch_{field.name}'] = getattr(lunch_outcome, field.name)
 
     # Merge PM Outcome fields (prefixed)
     for field in dataclasses.fields(pm_outcome):
@@ -265,11 +271,7 @@ if __name__ == "__main__":
         next_date = date_to_next_date.get(curr_date)
         
         # Default empty values
-        row['asia_hit_pm_high'] = False
-        row['asia_hit_pm_low'] = False
-        row['asia_hit_pdh'] = False
-        row['asia_hit_pdl'] = False
-        row['asia_pm_manip_reversed'] = False
+        # (These will be overwritten if next_date exists)
         
         if next_date and next_date in day_dfs_cache:
             next_day_df = day_dfs_cache[next_date]
@@ -277,12 +279,14 @@ if __name__ == "__main__":
             
             asia_outcome = measure_asia_outcomes(next_day_df, curr_stats)
             
-            row['asia_hit_pm_high'] = asia_outcome.hit_pm_high
-            row['asia_hit_pm_low'] = asia_outcome.hit_pm_low
-            row['asia_hit_pdh'] = asia_outcome.hit_pdh
-            row['asia_hit_pdl'] = asia_outcome.hit_pdl
-            row['asia_pm_manip_reversed'] = asia_outcome.pm_manip_reversed
-            row['asia_pm_high_first'] = asia_outcome.pm_high_first
+            # Merge Asia Outcome fields (prefixed)
+            for field in dataclasses.fields(asia_outcome):
+                row[f'asia_{field.name}'] = getattr(asia_outcome, field.name)
+        else:
+            # Populate with None/False so columns remain consistent
+            # We can't easily iterate fields here without an instance, but we can just skip
+            # and pandas will fill with NaNs.
+            pass
 
     # Save Results
     results_df = pd.DataFrame(results)

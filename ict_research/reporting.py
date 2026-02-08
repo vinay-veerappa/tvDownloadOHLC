@@ -24,6 +24,7 @@ from analysis.sweep_order_analysis import analyze_sweep_order
 from analysis.dow_analysis import analyze_day_of_week
 from analysis.comprehensive_levels import analyze_all_levels
 from analysis.decision_tree import analyze_decision_tree
+from analysis.first_strike import analyze_first_strike
 
 def generate_report(ticker='NQ', data_dir='ict_research/data'):
     # Adjust path if running from root
@@ -42,13 +43,16 @@ def generate_report(ticker='NQ', data_dir='ict_research/data'):
         return
         
     print(f"Loading data from {days_file}...")
-    df_days = pd.read_csv(days_file)
-    df_arrays = pd.read_csv(arrays_file) if os.path.exists(arrays_file) else pd.DataFrame()
+    df_days = pd.read_csv(days_file, low_memory=False)
+    df_arrays = pd.read_csv(arrays_file, low_memory=False) if os.path.exists(arrays_file) else pd.DataFrame()
     
     # Clean up boolean columns that might be objects
     bool_keywords = ['hit_', 'gap_fill_', 'reversed', 'first']
     for col in df_days.columns:
-        if any(k in col for k in bool_keywords) and df_days[col].dtype == 'object':
+        # Exclude time columns from boolean conversion
+        if any(k in col for k in bool_keywords) and \
+           not col.endswith('_time') and not col.endswith('_at') and \
+           df_days[col].dtype == 'object':
             # Handle potential string 'True'/'False'
             df_days[col] = df_days[col].astype(str).map({'True': True, 'False': False, 'nan': None, 'None': None})
             # Convert to numeric (float) for mean calculation, keeping NaNs
@@ -83,6 +87,7 @@ def generate_report(ticker='NQ', data_dir='ict_research/data'):
         analyze_day_of_week(df_days)
         analyze_all_levels(df_days)
         analyze_decision_tree(df_days)
+        analyze_first_strike(df_days)
     except Exception as e:
         print(f"\nError running new analysis modules: {e}")
         import traceback

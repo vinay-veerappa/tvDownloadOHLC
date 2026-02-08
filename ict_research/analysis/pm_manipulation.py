@@ -87,4 +87,4 @@ def analyze_pm_manipulation(df):
         df['close_quartile'] = pd.cut(df['pm_close_loc'], bins=[0, 25, 50, 75, 100], labels=['Low', 'Mid-Low', 'Mid-High', 'High'])
         
         if 'asia_pm_manip_reversed' in df.columns:
-            print(df.groupby('close_quartile')['asia_pm_manip_reversed'].agg(['count', 'mean']).rename(columns={'mean': 'reversal_rate'}))
+            print(df.groupby('close_quartile', observed=False)['asia_pm_manip_reversed'].agg(['count', 'mean']).rename(columns={'mean': 'reversal_rate'}))
