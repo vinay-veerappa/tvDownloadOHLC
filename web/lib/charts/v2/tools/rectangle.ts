@@ -7,8 +7,11 @@ import {
     IUpdatablePaneView,
     LineToolOptionsCommon,
     HitTestResult,
+    HitTestType,
     TextAlignment,
+    PaneCursorType,
 } from "../core/types";
+import { AnchorPoint } from "../core/rendering/line-anchor-renderer";
 import { LineToolPoint } from "../core/api/public-api";
 import {
     RectangleRenderer,
@@ -49,41 +52,49 @@ class RectanglePaneViewV2<HorzScaleItem> extends LineToolPaneView<HorzScaleItem>
                 showQuarterLines: options.rectangle.showQuarterLines,
                 midline: options.rectangle.midline,
                 quarterLine: options.rectangle.quarterLine,
-                hitTestBackground: false, // Let text hit test take precedence or handle background separately? valid point.
-                // Actually, let's keep hitTestBackground true for rect, and text generally sits on top.
+                hitTestBackground: true,
                 toolDefaultHoverCursor: options.defaultHoverCursor,
                 toolDefaultDragCursor: options.defaultDragCursor,
-            });
-
-            // Update Text Renderer
-            // FIX: Must deep copy text options because BaseLineTool mutates options in-place,
-            // and TextRenderer.setData checks for object equality. Without copy, before/after are same object.
-            this._textRenderer.setData({
-                text: deepCopy(options.text),
-                points: [this._points[0], this._points[1]], // Text uses the same defining points
-                hitTestBackground: false, // Text box background handles its own hit test if needed
-                toolDefaultHoverCursor: options.defaultHoverCursor,
-                toolDefaultDragCursor: options.defaultDragCursor,
+                text: options.text, // Pass text directly to RectangleRenderer
             });
 
             const composite = this._renderer as CompositeRenderer<HorzScaleItem>;
             composite.append(this._rectangleRenderer);
-            // Append text renderer on top
-            composite.append(this._textRenderer);
         }
     }
 
     protected override _addAnchors(renderer: CompositeRenderer<HorzScaleItem>): void {
-        if (this._points.length > 0) {
-            renderer.append(this.createLineAnchor({
-                points: [this._points[0]],
-            }, 0));
-        }
-        if (this._points.length > 1) {
-            renderer.append(this.createLineAnchor({
-                points: [this._points[1]],
-            }, 1));
-        }
+        const points = this._points;
+        if (points.length < 2) return;
+
+        const p0 = points[0];
+        const p1 = points[1];
+
+        const minX = Math.min(p0.x, p1.x) as Coordinate;
+        const maxX = Math.max(p0.x, p1.x) as Coordinate;
+        const minY = Math.min(p0.y, p1.y) as Coordinate;
+        const maxY = Math.max(p0.y, p1.y) as Coordinate;
+        const centerX = (minX + maxX) / 2 as Coordinate;
+        const centerY = (minY + maxY) / 2 as Coordinate;
+
+        // 0: P0 (Corner 0) - usually top-left
+        renderer.append(this.createLineAnchor({ points: [p0] }, 0));
+        // 1: P1 (Corner 1) - usually bottom-right
+        renderer.append(this.createLineAnchor({ points: [p1] }, 1));
+
+        // 2: Top-Right
+        renderer.append(this.createLineAnchor({ points: [new AnchorPoint(maxX, minY, 2, false, PaneCursorType.DiagonalNeSwResize)] }, 2));
+        // 3: Bottom-Left
+        renderer.append(this.createLineAnchor({ points: [new AnchorPoint(minX, maxY, 3, false, PaneCursorType.DiagonalNeSwResize)] }, 3));
+
+        // 4: Mid-Top
+        renderer.append(this.createLineAnchor({ points: [new AnchorPoint(centerX, minY, 4, false, PaneCursorType.VerticalResize)] }, 4));
+        // 5: Mid-Right
+        renderer.append(this.createLineAnchor({ points: [new AnchorPoint(maxX, centerY, 5, false, PaneCursorType.HorizontalResize)] }, 5));
+        // 6: Mid-Bottom
+        renderer.append(this.createLineAnchor({ points: [new AnchorPoint(centerX, maxY, 6, false, PaneCursorType.VerticalResize)] }, 6));
+        // 7: Mid-Left
+        renderer.append(this.createLineAnchor({ points: [new AnchorPoint(minX, centerY, 7, false, PaneCursorType.HorizontalResize)] }, 7));
     }
 }
 
@@ -140,6 +151,8 @@ const defaultOptions: LineToolRectangleOptions & LineToolOptionsCommon = {
     },
 };
 
+import { EditorLayout } from "../../plugins/base/inline-editable";
+
 export class RectangleV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
     private _rectRenderer = new RectangleRenderer<HorzScaleItem>();
     private _textRenderer = new TextRenderer<HorzScaleItem>();
@@ -174,15 +187,173 @@ export class RectangleV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
         this._paneViews = [paneView as IUpdatablePaneView];
     }
 
+    public override maxAnchorIndex(): number {
+        return 7;
+    }
+
+    public override setPoint(index: number, point: LineToolPoint): void {
+        if (index < 2) {
+            super.setPoint(index, point);
+            return;
+        }
+
+        const p0 = this._points[0];
+        const p1 = this._points[1];
+        if (!p0 || !p1) return;
+
+        // Figure out which real point is which corner/edge based on logical coordinates
+        // price: minY is smaller value (top of chart in price terms)
+        // timestamp: minX is smaller value (left of chart)
+        const isP0MinX = p0.timestamp <= p1.timestamp;
+        const isP0MinY = p0.price <= p1.price;
+
+        switch (index) {
+            case 2: // Top-Right (maxX, minY)
+                if (isP0MinX) { p1.timestamp = point.timestamp; } else { p0.timestamp = point.timestamp; }
+                if (isP0MinY) { p0.price = point.price; } else { p1.price = point.price; }
+                break;
+            case 3: // Bottom-Left (minX, maxY)
+                if (isP0MinX) { p0.timestamp = point.timestamp; } else { p1.timestamp = point.timestamp; }
+                if (isP0MinY) { p1.price = point.price; } else { p0.price = point.price; }
+                break;
+            case 4: // Mid-Top (minY)
+                if (isP0MinY) { p0.price = point.price; } else { p1.price = point.price; }
+                break;
+            case 5: // Mid-Right (maxX)
+                if (isP0MinX) { p1.timestamp = point.timestamp; } else { p0.timestamp = point.timestamp; }
+                break;
+            case 6: // Mid-Bottom (maxY)
+                if (isP0MinY) { p1.price = point.price; } else { p0.price = point.price; }
+                break;
+            case 7: // Mid-Left (minX)
+                if (isP0MinX) { p0.timestamp = point.timestamp; } else { p1.timestamp = point.timestamp; }
+                break;
+        }
+    }
+
+    public override getText(): string {
+        const options = this.options() as LineToolRectangleOptions & LineToolOptionsCommon;
+        return options.text?.value || '';
+    }
+
+    public override setText(text: string): void {
+        this.applyOptions({
+            text: {
+                value: text
+            }
+        } as any);
+    }
+
+    public override getPoint(index: number): LineToolPoint | null {
+        if (index < 2) {
+            return super.getPoint(index);
+        }
+
+        const p0 = this._points[0];
+        const p1 = this._points[1];
+        if (!p0 || !p1) return null;
+
+        const minX = Math.min(p0.timestamp, p1.timestamp);
+        const maxX = Math.max(p0.timestamp, p1.timestamp);
+        const minY = Math.min(p0.price, p1.price);
+        const maxY = Math.max(p0.price, p1.price);
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+
+        switch (index) {
+            case 2: return { timestamp: maxX, price: minY };
+            case 3: return { timestamp: minX, price: maxY };
+            case 4: return { timestamp: centerX, price: minY };
+            case 5: return { timestamp: maxX, price: centerY };
+            case 6: return { timestamp: centerX, price: maxY };
+            case 7: return { timestamp: minX, price: centerY };
+            default: return null;
+        }
+    }
+
     public updateAllViews(): void {
         super.updateAllViews();
     }
 
     public _internalHitTest(x: Coordinate, y: Coordinate): HitTestResult<any> | null {
-        // Priority: Text -> Rectangle Border/Background
+        // Priority: Text -> Rectangle Anchors -> Rectangle Border/Background
         const textHit = this._textRenderer.hitTest(x, y as any);
         if (textHit) return textHit;
 
+        // Check 8 anchors
+        const points = this._points;
+        if (points.length >= 2) {
+            const p0Coord = this.pointToScreenPoint(points[0]);
+            const p1Coord = this.pointToScreenPoint(points[1]);
+
+            if (p0Coord && p1Coord) {
+                const minX = Math.min(p0Coord.x, p1Coord.x) as Coordinate;
+                const maxX = Math.max(p0Coord.x, p1Coord.x) as Coordinate;
+                const minY = Math.min(p0Coord.y, p1Coord.y) as Coordinate;
+                const maxY = Math.max(p0Coord.y, p1Coord.y) as Coordinate;
+                const centerX = (minX + maxX) / 2 as Coordinate;
+                const centerY = (minY + maxY) / 2 as Coordinate;
+
+                const anchors = [
+                    { p: p0Coord, c: PaneCursorType.DiagonalNwSeResize }, // 0
+                    { p: p1Coord, c: PaneCursorType.DiagonalNwSeResize }, // 1
+                    { p: { x: maxX, y: minY }, c: PaneCursorType.DiagonalNeSwResize }, // 2
+                    { p: { x: minX, y: maxY }, c: PaneCursorType.DiagonalNeSwResize }, // 3
+                    { p: { x: centerX, y: minY }, c: PaneCursorType.VerticalResize }, // 4
+                    { p: { x: maxX, y: centerY }, c: PaneCursorType.HorizontalResize }, // 5
+                    { p: { x: centerX, y: maxY }, c: PaneCursorType.VerticalResize }, // 6
+                    { p: { x: minX, y: centerY }, c: PaneCursorType.HorizontalResize }, // 7
+                ];
+
+                const tolerance = 8; // Slightly increased for easier hitting
+                for (let i = 0; i < anchors.length; i++) {
+                    const a = anchors[i];
+                    const dx = x - a.p.x;
+                    const dy = y - a.p.y;
+                    if (dx * dx + dy * dy < tolerance * tolerance) {
+                        return new HitTestResult(HitTestType.ChangePoint, { pointIndex: i, suggestedCursor: a.c });
+                    }
+                }
+            }
+        }
+
         return this._rectRenderer.hitTest(x, (y as any));
+    }
+
+    /** @inheritdoc */
+    public override getEditorLayout(): EditorLayout | null {
+        // Use the internal renderer's text renderer bounds
+        const rect = (this._rectRenderer as any)._textRenderer?.rect() || { x: 0, y: 0, width: 0, height: 0 };
+
+        // If the rectangle hasn't been drawn yet (no points), return null
+        if (this._points.length < 2) return null;
+
+        const options = this.options() as LineToolRectangleOptions & LineToolOptionsCommon;
+
+        // For rectangles, if text is empty, the editor should occupy the whole rectangle center
+        const p0 = this.pointToScreenPoint(this._points[0]);
+        const p1 = this.pointToScreenPoint(this._points[1]);
+
+        if (!p0 || !p1) return null;
+
+        const minX = Math.min(p0.x, p1.x);
+        const maxX = Math.max(p0.x, p1.x);
+        const minY = Math.min(p0.y, p1.y);
+        const maxY = Math.max(p0.y, p1.y);
+        const width = maxX - minX;
+        const height = maxY - minY;
+
+        const isEmpty = !options.text || !options.text.value;
+
+        return {
+            x: isEmpty ? minX : rect.x,
+            y: isEmpty ? minY : rect.y,
+            width: isEmpty ? Math.max(width, 40) : Math.max(rect.width, 20),
+            height: isEmpty ? Math.max(height, 40) : Math.max(rect.height, 20),
+            padding: options.text.padding || 8,
+            lineHeight: (options.text.font?.size || 12) * 1.2,
+            alignmentHorizontal: options.text.box?.alignment?.horizontal as any || 'center',
+            alignmentVertical: options.text.box?.alignment?.vertical as any || 'center',
+        };
     }
 }

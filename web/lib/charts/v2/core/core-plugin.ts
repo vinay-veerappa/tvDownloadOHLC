@@ -508,6 +508,66 @@ export class LineToolsCorePlugin<HorzScaleItem> implements ILineToolsApi {
 		console.log('Line Tools Core Plugin destroyed.');
 	}
 
+	public bringToFront(id: string): void {
+		const tool = this._tools.get(id);
+		if (!tool) return;
+
+		// Re-insert at the end to make it the top-most for export and future re-binds
+		this._tools.delete(id);
+		this._tools.set(id, tool);
+
+		this._series.detachPrimitive(tool);
+		this._series.attachPrimitive(tool);
+		this.requestUpdate();
+		this.fireAfterEditEvent(tool, 'lineToolEdited');
+	}
+
+	public sendToBack(id: string): void {
+		const targetTool = this._tools.get(id);
+		if (!targetTool) return;
+
+		const allTools = Array.from(this._tools.values());
+		this._rebuildToolsAndPrimitives([
+			targetTool,
+			...allTools.filter(t => t.id() !== id)
+		]);
+		this.fireAfterEditEvent(targetTool, 'lineToolEdited');
+	}
+
+	public bringForward(id: string): void {
+		const tools = Array.from(this._tools.values());
+		const index = tools.findIndex(t => t.id() === id);
+		if (index !== -1 && index < tools.length - 1) {
+			[tools[index], tools[index + 1]] = [tools[index + 1], tools[index]];
+			this._rebuildToolsAndPrimitives(tools);
+			this.fireAfterEditEvent(tools[index + 1], 'lineToolEdited');
+		}
+	}
+
+	public sendBackward(id: string): void {
+		const tools = Array.from(this._tools.values());
+		const index = tools.findIndex(t => t.id() === id);
+		if (index > 0) {
+			[tools[index], tools[index - 1]] = [tools[index - 1], tools[index]];
+			this._rebuildToolsAndPrimitives(tools);
+			this.fireAfterEditEvent(tools[index - 1], 'lineToolEdited');
+		}
+	}
+
+	private _rebuildToolsAndPrimitives(tools: BaseLineTool<HorzScaleItem>[]): void {
+		// Detach all currently tracked primitives
+		this._tools.forEach(t => this._series.detachPrimitive(t));
+
+		// Clear and rebuild the map in the new order
+		this._tools.clear();
+		tools.forEach(t => {
+			this._tools.set(t.id(), t);
+			this._series.attachPrimitive(t);
+		});
+
+		this.requestUpdate();
+	}
+
 	/**
 	 * Sets the crosshair position to a specific pixel coordinate (x, y) on the chart.
 	 *

@@ -2,7 +2,7 @@
 
 import { IUpdatablePaneView, IPaneRenderer, LineToolHitTestData, PaneCursorType, HitTestType, LineAnchorCreationData } from '../types';
 import { AnchorPoint } from '../rendering/line-anchor-renderer';
-import { Point,  } from '../utils/geometry';
+import { Point, } from '../utils/geometry';
 import { CompositeRenderer } from '../rendering/composite-renderer';
 import { IChartApiBase, ISeriesApi, SeriesType, IPaneApi } from 'lightweight-charts';
 import { BaseLineTool } from '../model/base-line-tool';
@@ -45,7 +45,7 @@ export abstract class LineToolPaneView<HorzScaleItem> implements IUpdatablePaneV
      * @protected
      */
     protected readonly _series: ISeriesApi<SeriesType, HorzScaleItem>;
-	
+
 
     /**
      * Internal cache of the tool's points converted to screen coordinates (pixels).
@@ -236,7 +236,7 @@ export abstract class LineToolPaneView<HorzScaleItem> implements IUpdatablePaneV
         // This abstract method is just a placeholder to ensure it's called.
     }
 
-    
+
 
     /**
      * Factory method to create or recycle a `LineAnchorRenderer`.
@@ -249,13 +249,13 @@ export abstract class LineToolPaneView<HorzScaleItem> implements IUpdatablePaneV
      * @returns A configured {@link LineAnchorRenderer}.
      * @protected
      */
-    protected createLineAnchor(data: LineAnchorCreationData, index: number): LineAnchorRenderer<HorzScaleItem> { 
+    protected createLineAnchor(data: LineAnchorCreationData, index: number): LineAnchorRenderer<HorzScaleItem> {
         let renderer = this._lineAnchorRenderers[index];
         if (!renderer) {
-            renderer = new LineAnchorRenderer(this._chart); // Pass chart instance to anchor renderer
-            this._lineAnchorRenderers.push(renderer);
+            renderer = new LineAnchorRenderer(this._chart);
+            this._lineAnchorRenderers[index] = renderer;
         }
-        
+
         // Populate the renderer with common anchor data
         const toolOptions = this._tool.options();
         renderer.setData({
@@ -292,7 +292,7 @@ export abstract class LineToolPaneView<HorzScaleItem> implements IUpdatablePaneV
 
         // Apply a color based on the chart's background type
         const defaultAnchorColor = backgroundColor.type === 'solid' ? backgroundColor.color : 'transparent';
-        
+
         return points.map(point => defaultAnchorColor);
     }
 }

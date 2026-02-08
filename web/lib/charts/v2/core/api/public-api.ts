@@ -356,6 +356,26 @@ export interface ILineToolsApi {
 	 * Destroys the plugin instance, cleaning up all internal managers and event listeners.
 	 */
 	destroy(): void;
+
+	/**
+	 * Brings the specified tool to the front of the visual order.
+	 */
+	bringToFront(id: string): void;
+
+	/**
+	 * Sends the specified tool to the back of the visual order.
+	 */
+	sendToBack(id: string): void;
+
+	/**
+	 * Brings the specified tool forward by one position in the visual order.
+	 */
+	bringForward(id: string): void;
+
+	/**
+	 * Sends the specified tool backward by one position in the visual order.
+	 */
+	sendBackward(id: string): void;
 }
 
 // #endregion Main Plugin Interface

@@ -10,7 +10,7 @@
 import { LineStyle, LineWidth, Coordinate, Nominal, Logical, IPriceScaleApi, ISeriesPrimitiveAxisView } from 'lightweight-charts';
 import { DeepPartial, OmitRecursively } from './utils/helpers';
 import { AnchorPoint } from './rendering/line-anchor-renderer';
-import { Point } from './utils/geometry';
+import { Point, Box } from './utils/geometry';
 
 // #region LWCharts Adapters & Helpers
 
@@ -1267,7 +1267,8 @@ export interface CircleRendererData {
  */
 export interface TextRendererData {
 	text: TextOptions;
-	points: Point[];
+	points?: Point[]; // Made points optional
+	box?: Box; // Support coordinate-less text rendering
 	hitTestBackground?: boolean;
 	toolDefaultHoverCursor?: PaneCursorType;
 	toolDefaultDragCursor?: PaneCursorType;

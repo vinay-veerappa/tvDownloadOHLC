@@ -512,7 +512,20 @@ export class RectangleRenderer<HorzScaleItem> implements IPaneRenderer {
 			} else {
 				// Clear text renderer if no text
 				this._textRenderer.setData({
-					text: { value: '', font: {}, box: { alignment: { vertical: 'middle', horizontal: 'center' } } },
+					text: {
+						value: '',
+						font: { color: 'transparent', size: 12, bold: false, italic: false, family: 'sans-serif' },
+						alignment: TextAlignment.Center,
+						padding: 0,
+						wordWrapWidth: 0,
+						forceTextAlign: false,
+						forceCalculateMaxLineWidth: false,
+						box: {
+							alignment: { vertical: BoxVerticalAlignment.Middle, horizontal: BoxHorizontalAlignment.Center },
+							angle: 0,
+							scale: 1,
+						}
+					},
 					box: box
 				});
 			}
@@ -861,7 +874,10 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 				&& before.toolDefaultHoverCursor === after.toolDefaultHoverCursor
 				&& before.toolDefaultDragCursor === after.toolDefaultDragCursor
 				// Check hitTestBackground
-				&& before.hitTestBackground === after.hitTestBackground;
+				&& before.hitTestBackground === after.hitTestBackground
+				// Check box property
+				&& (before.box === undefined) === (after.box === undefined)
+				&& (before.box === undefined || (before.box.min.x === after.box?.min.x && before.box.min.y === after.box?.min.y && before.box.max.x === after.box?.max.x && before.box.max.y === after.box?.max.y));
 		}
 
 		if (checkUnchanged(this._data, data)) {
@@ -889,7 +905,7 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 	 * @returns A {@link HitTestResult} if the text box is hit, otherwise `null`.
 	 */
 	public hitTest(x: Coordinate, y: Coordinate): HitTestResult<LineToolHitTestData> | null {
-		if (this._data === null || this._data.points === undefined || this._data.points.length === 0) {
+		if (this._data === null || ((this._data.points === undefined || this._data.points.length === 0) && this._data.box === undefined)) {
 			return null;
 		}
 
@@ -977,7 +993,7 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 	 * @returns `true` if the text box is entirely off-screen, `false` otherwise.
 	 */
 	public isOutOfScreen(width: number, height: number): boolean {
-		if (null === this._data || void 0 === this._data.points || 0 === this._data.points.length) { return true; }
+		if (null === this._data || ((void 0 === this._data.points || 0 === this._data.points.length) && this._data.box === undefined)) { return true; }
 
 		const internalData = this._getInternalData();
 		if (internalData.boxLeft + internalData.boxWidth < 0 || internalData.boxLeft > width) {
@@ -1024,7 +1040,7 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 	 * @returns void
 	 */
 	public draw(target: CanvasRenderingTarget2D): void {
-		if (this._data === null || this._data.points === undefined || this._data.points.length === 0) { return; }
+		if (this._data === null || ((this._data.points === undefined || this._data.points.length === 0) && this._data.box === undefined)) { return; }
 
 		target.useMediaCoordinateSpace(({ context: ctx, mediaSize }: MediaCoordinatesRenderingScope) => {
 			this._mediaSize = mediaSize;
@@ -1158,126 +1174,71 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 		const inflationPaddingX = getScaledBackgroundInflationX(data) + paddingX;
 		const inflationPaddingY = getScaledBackgroundInflationY(data) + paddingY;
 
-		//Check if two points are present but identical.
+		// Check if two points are present but identical.
 		const isDegenerate = data.points && data.points.length >= 2 && equalPoints(data.points[0], data.points[1]);
 
+		// Prepare rectangle bounds. Use data.points if available (2 points required),
+		// otherwise fall back to data.box if provided.
+		let rectMinX: number = 0;
+		let rectMaxX: number = 0;
+		let rectMinY: number = 0;
+		let rectMaxY: number = 0;
+		let useBoxOrPoints = false;
 
-		// Ensure we have at least one point, which is now expected to be the rectangle's top-left in the pane view context
-		// However, for the new logic, we expect two points (rectangle's corners) to calculate parent bounds.
-		//console.log('data.points', data.points)
+		if (data.points && data.points.length >= 2 && !isDegenerate) {
+			const [rectPointA, rectPointB] = data.points;
+			rectMinX = Math.min(rectPointA.x, rectPointB.x);
+			rectMaxX = Math.max(rectPointA.x, rectPointB.x);
+			rectMinY = Math.min(rectPointA.y, rectPointB.y);
+			rectMaxY = Math.max(rectPointA.y, rectPointB.y);
+			useBoxOrPoints = true;
+		} else if (data.box) {
+			rectMinX = data.box.min.x;
+			rectMaxX = data.box.max.x;
+			rectMinY = data.box.min.y;
+			rectMaxY = data.box.max.y;
+			useBoxOrPoints = true;
+		}
 
-		if (!data.points || data.points.length < 2 || isDegenerate) {
+		if (!useBoxOrPoints) {
 			// Fallback: Treat the first point as the anchor/reference for positioning.
-			//console.warn('[TextRenderer] _getInternalData called with less than 2 points or degenerate. Using anchor-based alignment.');
 			const boxSize = this._getBoxSize();
 			const boxWidth = boxSize.width;
 			const boxHeight = boxSize.height;
 			const defaultAnchor = data.points && data.points.length > 0 ? data.points[0] : new Point(0 as Coordinate, 0 as Coordinate);
 
-			// Recompute paddings (safe to re-call; mirrors main path)
-			const paddingX = getScaledBoxPaddingX(data);
-			const paddingY = getScaledBoxPaddingY(data);
-			const inflationPaddingX = getScaledBackgroundInflationX(data) + paddingX;
-			const inflationPaddingY = getScaledBackgroundInflationY(data) + paddingY;
-
-			// --- Mirror Step 1: refX/Y from "degenerate rectangle" (single point as min=max) ---
-			// For degenerate, rect bounds = defaultAnchor (no min/max calc needed)
 			let refX: number = defaultAnchor.x as number;
 			let refY: number = defaultAnchor.y as number;
 
-			// But for HorizontalLine context, refX is already the desired pivot (0/center/paneWidth from pane view),
-			// so no switch needed here—refX is the "attachment point".
-
-			// --- Mirror Step 2: Offset boxLeft/Top from refX/Y based on box.alignment ---
 			let textBoxFinalX = refX;
 			let textBoxFinalY = refY;
 
-			// Horizontal: Position box left edge relative to refX
-			switch ((data.text?.box?.alignment?.horizontal || '').toLowerCase()) {
-				case 'left':
-					textBoxFinalX = refX; // Left edge at refX, expands right
-					break;
-				case 'center':
-					textBoxFinalX = refX - boxWidth / 2; // Center at refX
-					break;
-				case 'right':
-					textBoxFinalX = refX - boxWidth; // Right edge at refX, expands left
-					break;
+			const hAlign = (data.text?.box?.alignment?.horizontal || 'center').toLowerCase();
+			switch (hAlign) {
+				case 'left': textBoxFinalX = refX; break;
+				case 'center': textBoxFinalX = refX - boxWidth / 2; break;
+				case 'right': textBoxFinalX = refX - boxWidth; break;
 			}
 
-			// Vertical: Position box top edge relative to refY (unchanged from original)
-			switch ((data.text?.box?.alignment?.vertical || '').toLowerCase()) {
-				case 'top':
-					textBoxFinalY = refY - boxHeight; // Top at refY? Wait, original: Bottom at refY, expands up? No:
-					// Per original: For Top: textBoxFinalY = refY - boxHeight (bottom at refY? Wait, clarify:
-					// Original Vertical Top: "Bottom edge of text box aligns with refY. It expands up." → textBoxFinalY = refY - boxHeight
-					// (Assuming Y increases down; box top at Y - height, bottom at Y)
-					break;
-				case 'middle':
-					textBoxFinalY = refY - boxHeight / 2;
-					break;
-				case 'bottom':
-					textBoxFinalY = refY;
-					break;
+			const vAlign = (data.text?.box?.alignment?.vertical || 'middle').toLowerCase();
+			switch (vAlign) {
+				case 'top': textBoxFinalY = refY - boxHeight; break;
+				case 'middle': textBoxFinalY = refY - boxHeight / 2; break;
+				case 'bottom': textBoxFinalY = refY; break;
 			}
 
-			// --- Mirror Step 3: Apply offset ---
 			textBoxFinalX += (data.text?.box?.offset?.x || 0);
 			textBoxFinalY += (data.text?.box?.offset?.y || 0);
 
-			// --- Mirror Step 4: Internal text alignment/textStart (your existing switch) ---
-			const rawAlignment = (ensureDefined(data.text?.alignment) || 'start').toLowerCase().trim();
-			let textStart: number = inflationPaddingX; // Safe init
+			const rawAlignment = (data.text?.alignment || 'center').toLowerCase().trim();
+			let textX: number = inflationPaddingX;
 			let textAlign: TextAlignment = TextAlignment.Start;
 
 			switch (rawAlignment) {
-				case TextAlignment.Start:
-				case TextAlignment.Left: {
-					// FIX: Always assign TextAlignment.Start to maintain clean enum value.
-					textAlign = TextAlignment.Start;
-					textStart = inflationPaddingX;
-					if (isRtl()) {
-						if (data.text?.forceTextAlign) {
-							// FIX: Ensure clean enum. Since it's forcing LTR start in RTL, use Start.
-							textAlign = TextAlignment.Start;
-						} else {
-							textStart = boxWidth - inflationPaddingX;
-							// FIX: Use clean enum for RTL end.
-							textAlign = TextAlignment.End;
-						}
-					}
-					break;
-				}
-				case TextAlignment.Center: {
-					// FIX: Always assign TextAlignment.Center.
-					textAlign = TextAlignment.Center;
-					textStart = boxWidth / 2;
-					break;
-				}
-				case TextAlignment.End:
-				case TextAlignment.Right: {
-					// FIX: Always assign TextAlignment.End.
-					textAlign = TextAlignment.End;
-					textStart = boxWidth - inflationPaddingX;
-					if (isRtl() && data.text?.forceTextAlign) {
-						// FIX: Ensure clean enum. Since it's forcing LTR end in RTL, use End.
-						textAlign = TextAlignment.End;
-					}
-					break;
-				}
-				default: {
-					console.warn(`[TextRenderer] Unknown text alignment "${data.text?.alignment}" in fallback; defaulting to Start.`);
-					textStart = inflationPaddingX;
-					// FIX: Explicitly set default to clean enum.
-					textAlign = TextAlignment.Start;
-				}
+				case 'center': textAlign = TextAlignment.Center; textX = boxWidth / 2; break;
+				case 'end': case 'right': textAlign = TextAlignment.End; textX = boxWidth - inflationPaddingX; break;
+				default: textAlign = TextAlignment.Start; textX = inflationPaddingX; break;
 			}
-
-			// Text Y (unchanged)
-			const textTop = inflationPaddingY + getScaledFontSize(data) / 2;
-
-			// --- Rotation Pivot: Use ref point (anchor) ---
-			const rotationPivot = defaultAnchor;
 
 			this._internalData = {
 				boxLeft: textBoxFinalX,
@@ -1285,156 +1246,65 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 				boxWidth: boxWidth,
 				boxHeight: boxHeight,
 				textAlign: textAlign,
-				textTop: textTop,
-				textStart: textStart,
-				rotationPivot: rotationPivot,
+				textTop: inflationPaddingY + getScaledFontSize(data) / 2,
+				textStart: textX,
+				rotationPivot: defaultAnchor,
 			};
 			return this._internalData;
 		}
 
-		const [rectPointA, rectPointB] = data.points; // These are the two defining points of the parent rectangle
-
-		// Calculate the actual bounding box of the parent rectangle
-		const rectMinX = Math.min(rectPointA.x, rectPointB.x);
-		const rectMaxX = Math.max(rectPointA.x, rectPointB.x);
-		const rectMinY = Math.min(rectPointA.y, rectPointB.y);
-		const rectMaxY = Math.max(rectPointA.y, rectPointB.y);
-
+		// Main Path: Use the calculated rectMinX/MaxX/MinY/MaxY
 		const boxSize = this._getBoxSize();
 		const boxWidth = boxSize.width;
 		const boxHeight = boxSize.height;
 
-		let refX: number = 0; // Reference point on the parent rectangle for the text box
+		const hAlign = (data.text?.box?.alignment?.horizontal || 'center').toLowerCase();
+		const vAlign = (data.text?.box?.alignment?.vertical || 'middle').toLowerCase();
+
+		let refX: number = 0;
 		let refY: number = 0;
 
-		// --- Step 1: Determine the Reference Point on the Parent Rectangle ---
-		// --- Step 1: Determine the Reference Point on the Parent Rectangle ---
-		const hAlign = (data.text?.box?.alignment?.horizontal || 'center').toLowerCase();
 		switch (hAlign) {
-			case BoxHorizontalAlignment.Left:
-				refX = rectMinX;
-				break;
-			case BoxHorizontalAlignment.Right:
-				refX = rectMaxX;
-				break;
-			case BoxHorizontalAlignment.Center:
-			default:
-				refX = (rectMinX + rectMaxX) / 2;
-				break;
+			case 'left': refX = rectMinX; break;
+			case 'right': refX = rectMaxX; break;
+			case 'center': default: refX = (rectMinX + rectMaxX) / 2; break;
 		}
 
-		const vAlign = (data.text?.box?.alignment?.vertical || 'middle').toLowerCase();
 		switch (vAlign) {
-			case BoxVerticalAlignment.Top:
-				refY = rectMinY;
-				break;
-			case BoxVerticalAlignment.Bottom:
-				refY = rectMaxY;
-				break;
-			case BoxVerticalAlignment.Middle:
-			default:
-				refY = (rectMinY + rectMaxY) / 2;
-				break;
+			case 'top': refY = rectMinY; break;
+			case 'bottom': refY = rectMaxY; break;
+			case 'middle': default: refY = (rectMinY + rectMaxY) / 2; break;
 		}
 
-		// --- Store this calculated reference point as the rotation pivot immediately ---
 		const rotationPivot = new Point(refX as Coordinate, refY as Coordinate);
 
 		let textBoxFinalX = refX;
 		let textBoxFinalY = refY;
 
-		// --- Step 2: Position the Text Box's Top-Left based on its own size and alignment to the Reference Point ---
-		// --- Step 2: Position the Text Box's Top-Left based on its own size and alignment to the Reference Point ---
 		switch (hAlign) {
-			case BoxHorizontalAlignment.Left:
-				// Left edge of text box aligns with refX. It expands right.
-				textBoxFinalX = refX;
-				break;
-			case BoxHorizontalAlignment.Right:
-				// Right edge of text box aligns with refX. It expands left.
-				textBoxFinalX = refX - boxWidth;
-				break;
-			case BoxHorizontalAlignment.Center:
-			default:
-				// Center of text box aligns with refX.
-				textBoxFinalX = refX - boxWidth / 2;
-				break;
+			case 'left': textBoxFinalX = refX; break;
+			case 'right': textBoxFinalX = refX - boxWidth; break;
+			case 'center': default: textBoxFinalX = refX - boxWidth / 2; break;
 		}
 
 		switch (vAlign) {
-			case BoxVerticalAlignment.Top:
-				// Top edge of text box aligns with refY. It expands down.
-				// Wait, if alignment is TOP, we usually want text INSIDE the box at the top.
-				// If refY is rectMinY (top of rect), and we want text INSIDE, we should put text box start at refY.
-				textBoxFinalY = refY;
-				break;
-			case BoxVerticalAlignment.Bottom:
-				// Bottom edge of text box aligns with refY. It expands UP if we want it inside.
-				// If refY is rectMaxY (bottom of rect), we want text box to end at refY.
-				textBoxFinalY = refY - boxHeight;
-				break;
-			case BoxVerticalAlignment.Middle:
-			default:
-				// Middle of text box aligns with refY.
-				textBoxFinalY = refY - boxHeight / 2;
-				break;
+			case 'top': textBoxFinalY = refY; break;
+			case 'bottom': textBoxFinalY = refY - boxHeight; break;
+			case 'middle': default: textBoxFinalY = refY - boxHeight / 2; break;
 		}
 
-		// --- Step 3: Apply `text.box.offset` as a final adjustment ---
 		textBoxFinalX += (data.text?.box?.offset?.x || 0);
 		textBoxFinalY += (data.text?.box?.offset?.y || 0);
 
-
-		//let textX = 0; // X position for text rendering relative to textbox left
-		//let textAlign = TextAlignment.Start;
-
-		// --- Step 4: Determine internal text alignment within the textbox ---
-		const rawAlignment = (data.text?.alignment ?? 'center').toLowerCase().trim(); // FIX: Safe access with default to 'center'
-		let textX: number = inflationPaddingX; // Safe init: padded left (better than 0)
+		const rawAlignment = (data.text?.alignment || 'center').toLowerCase().trim();
+		let textX: number = inflationPaddingX;
 		let textAlign: TextAlignment = TextAlignment.Start;
 
 		switch (rawAlignment) {
-			case 'start':
-			case 'left': {
-				textAlign = TextAlignment.Start;
-				textX = inflationPaddingX;
-
-				if (isRtl()) {
-					if (data.text?.forceTextAlign) {
-						textAlign = TextAlignment.Start;
-					} else {
-						textX = boxWidth - inflationPaddingX;
-						textAlign = TextAlignment.End;
-					}
-				}
-				break;
-			}
-			case 'center': {
-				textAlign = TextAlignment.Center;
-				textX = boxWidth / 2;
-				break;
-			}
-			case 'end':
-			case 'right': {
-				textAlign = TextAlignment.End;
-				textX = boxWidth - inflationPaddingX;
-
-				if (isRtl() && data.text?.forceTextAlign) {
-					textAlign = TextAlignment.End;
-				}
-				break;
-			}
-			default: {
-				// Fallback + log for debugging
-				console.warn(`[TextRenderer] Unknown text alignment "${data.text?.alignment}"; defaulting to Start (padded left).`);
-				textX = inflationPaddingX;
-				// Optionally force center for unknown: textAlign = TextAlignment.Center; textX = boxWidth / 2;
-			}
+			case 'center': textAlign = TextAlignment.Center; textX = boxWidth / 2; break;
+			case 'end': case 'right': textAlign = TextAlignment.End; textX = boxWidth - inflationPaddingX; break;
+			default: textAlign = TextAlignment.Start; textX = inflationPaddingX; break;
 		}
-
-		// Calculate text start Y relative to box top. textBaseline is 'middle'
-		const textY = inflationPaddingY + getScaledFontSize(data) / 2;
-
 
 		this._internalData = {
 			boxLeft: textBoxFinalX,
@@ -1442,8 +1312,8 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 			boxWidth: boxWidth,
 			boxHeight: boxHeight,
 			textAlign: textAlign,
-			textTop: textY, // Offset from box top to text middle
-			textStart: textX, // Offset from box left to text start
+			textTop: inflationPaddingY + getScaledFontSize(data) / 2,
+			textStart: textX,
 			rotationPivot: rotationPivot,
 		};
 

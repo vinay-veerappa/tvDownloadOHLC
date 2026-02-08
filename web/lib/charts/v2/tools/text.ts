@@ -92,6 +92,8 @@ const defaultOptions: LineToolTextOptions & LineToolOptionsCommon = {
     timeAxisLabelAlwaysVisible: false,
 };
 
+import { EditorLayout } from "../../plugins/base/inline-editable";
+
 export class TextV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
     private _textRenderer = new TextRenderer<HorzScaleItem>();
 
@@ -126,5 +128,53 @@ export class TextV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
 
     public _internalHitTest(x: Coordinate, y: Coordinate): HitTestResult<any> | null {
         return this._textRenderer.hitTest(x, (y as any));
+    }
+
+    public override getText(): string {
+        const options = this.options() as LineToolTextOptions & LineToolOptionsCommon;
+        return options.text?.value || '';
+    }
+
+    public override setText(text: string): void {
+        this.applyOptions({
+            text: {
+                value: text
+            }
+        } as any);
+    }
+
+    /** @inheritdoc */
+    public override getEditorLayout(): EditorLayout | null {
+        const rect = this._textRenderer.rect();
+        const options = this.options() as LineToolTextOptions & LineToolOptionsCommon;
+        const isEmpty = !options.text || !options.text.value;
+
+        if (isEmpty && this._points.length > 0) {
+            const p = this.pointToScreenPoint(this._points[0]);
+            if (!p) return null;
+            return {
+                x: p.x - 20,
+                y: p.y - 10,
+                width: 40,
+                height: 20,
+                padding: options.text.padding || 4,
+                lineHeight: (options.text.font?.size || 14) * 1.2,
+                alignmentHorizontal: 'left',
+                alignmentVertical: 'center',
+            };
+        }
+
+        if (rect.width === 0 || rect.height === 0) return null;
+
+        return {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            padding: options.text.padding || 4,
+            lineHeight: (options.text.font?.size || 14) * 1.2,
+            alignmentHorizontal: options.text.box?.alignment?.horizontal as any,
+            alignmentVertical: options.text.box?.alignment?.vertical as any,
+        };
     }
 }

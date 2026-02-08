@@ -39,7 +39,7 @@ import { RaySettingsDialog, RaySettingsOptions, DEFAULT_RAY_OPTIONS } from "@/co
 import { FloatingToolbar } from "@/components/drawing/FloatingToolbar"
 import { InlineTextEditor } from "@/components/drawing/InlineTextEditor"
 import { TextSettings } from "@/components/drawing-settings/TextSettings"
-// import { isInlineEditable } from "@/lib/charts/plugins/base/inline-editable"
+import { isInlineEditable } from "@/lib/charts/plugins/base/inline-editable"
 import { fetchProfilerStats, fetchLevelTouches, ProfilerSession, LevelTouchesResponse } from "@/lib/api/profiler"
 import { useChartPreferences } from "@/hooks/use-chart-preferences"
 import { V2SandboxManager } from "@/lib/charts/v2/sandbox-manager"
@@ -659,17 +659,43 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                         selectedDrawingRef.current = null;
                         setSelectedDrawingOptions(null);
                         setToolbarPosition(null);
-                        onSelectionChange?.(null);
+                        if (id) {
+                            onSelectionChange?.({ type: toolInstance?.toolType || '', id });
+                        } else {
+                            onSelectionChange?.(null);
+                        }
                     }
                 }
             };
 
+            const handleDrawingDoubleClicked = (tool: any) => {
+                console.log('[ChartContainer] handleDrawingDoubleClicked callback. tool:', tool.id);
+
+                // V2 tool instances have .getEditorLayout() and .getText() methods
+                // We need to get the actual instance from the plugin to call these
+                const toolInstance = v2SandboxRef.current?.plugin.getLineTool(tool.id);
+                if (toolInstance && typeof toolInstance.getEditorLayout === 'function') {
+                    const layout = toolInstance.getEditorLayout();
+                    if (layout) {
+                        const options = toolInstance.options();
+                        setInlineTextEditing({
+                            drawingId: tool.id,
+                            position: { x: layout.x, y: layout.y },
+                            layout: layout,
+                            text: toolInstance.getText ? toolInstance.getText() : (options.text?.value || ''),
+                            options: options,
+                            drawingType: tool.toolType.toLowerCase()
+                        });
+                    }
+                }
+            };
 
             v2SandboxRef.current = new V2SandboxManager(chart, series, {
                 onDrawingCreated: handleDrawingCreated,
                 onDrawingModified: handleDrawingModified,
                 onDrawingDeleted: handleDrawingDeleted,
-                onSelectionChanged: handleSelectionChanged
+                onSelectionChanged: handleSelectionChanged,
+                onDrawingDoubleClick: handleDrawingDoubleClicked
             });
 
             // Load Saved Drawings
@@ -884,6 +910,30 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
             }
 
             if (hitDrawing) {
+                // Check if it's a V2 InlineEditable tool
+                if (isInlineEditable(hitDrawing)) {
+                    const layout = hitDrawing.getEditorLayout();
+                    if (layout) {
+                        // Set editing state on the tool itself
+                        hitDrawing.setEditing(true);
+
+                        const drawingId = typeof (hitDrawing as any).id === 'function' ? (hitDrawing as any).id() : (hitDrawing as any).id;
+                        const type = (typeof (hitDrawing as any).toolType === 'function' ? (hitDrawing as any).toolType() : ((hitDrawing as any).toolType || 'text'));
+                        const toolType = type.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+                        const options = (typeof (hitDrawing as any).options === 'function') ? (hitDrawing as any).options() : ((hitDrawing as any).options || {});
+
+                        setInlineTextEditing({
+                            drawingId,
+                            position: { x: param.point.x, y: param.point.y },
+                            layout: layout,
+                            text: hitDrawing.getText(),
+                            options: options,
+                            drawingType: toolType,
+                        });
+                        return; // Successfully triggered inline edit
+                    }
+                }
+
                 // If it's a standard indicator (string ID), we need to open its properties
                 if (hitDrawing._type === 'indicator') {
                     // Handle standard indicator
@@ -1057,6 +1107,33 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, []); // Empty deps - accessing plugin directly avoids closure issues
+
+    const handleInlineSave = (text: string) => {
+        if (!inlineTextEditing || !selectedDrawingRef.current) return;
+
+        const tool = selectedDrawingRef.current;
+        if (isInlineEditable(tool)) {
+            tool.setText(text);
+            tool.setEditing(false);
+
+            // Persist to storage
+            const exportData = typeof (tool as any).exportData === 'function' ? (tool as any).exportData() : null;
+            if (exportData) {
+                DrawingStorage.updateDrawing(ticker, timeframe, inlineTextEditing.drawingId, {
+                    options: exportData.options,
+                });
+            }
+        }
+
+        setInlineTextEditing(null);
+    };
+
+    const handleInlineCancel = () => {
+        if (selectedDrawingRef.current && isInlineEditable(selectedDrawingRef.current)) {
+            selectedDrawingRef.current.setEditing(false);
+        }
+        setInlineTextEditing(null);
+    };
 
     const handlePropertiesSave = (options: any, pointsOrTimeOrPrice?: any) => {
         const points = pointsOrTimeOrPrice;
@@ -2010,21 +2087,32 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
 
             {/* Toolbar - appears on drawing selection (Portal to bypass parent CSS constraints) */}
             {typeof document !== 'undefined' && selectedDrawingId && createPortal(
-                <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[99999] pointer-events-auto">
-
+                <div className="fixed inset-0 z-[99999] pointer-events-none">
                     <FloatingToolbar
                         drawingId={selectedDrawingId || ''}
                         drawingType={selectedDrawingType}
-                        position={toolbarPosition || { x: 0, y: 0 }}
+                        position={toolbarPosition || { x: 100, y: 100 }}
                         options={selectedDrawingOptions || {}}
                         isLocked={isDrawingLocked}
                         isHidden={isDrawingHidden}
-                        isPinned={true}
+                        isPinned={false}
                         onSettings={openDrawingSettings}
                         onClone={cloneSelectedDrawing}
                         onLock={toggleDrawingLock}
                         onDelete={deleteSelectedDrawing}
                         onToggleVisibility={toggleDrawingVisibility}
+                        onZOrderChange={(action) => {
+                            if (v2SandboxRef.current) {
+                                const plugin = v2SandboxRef.current.plugin;
+                                switch (action) {
+                                    case 'bringToFront': plugin.bringToFront(selectedDrawingId!); break;
+                                    case 'sendToBack': plugin.sendToBack(selectedDrawingId!); break;
+                                    case 'bringForward': plugin.bringForward(selectedDrawingId!); break;
+                                    case 'sendBackward': plugin.sendBackward(selectedDrawingId!); break;
+                                }
+                            }
+                        }}
+                        onPositionChange={(pos) => setToolbarPosition(pos)}
                         onOptionsChange={(updates) => {
                             // Use the centralized handler to ensure V2 conversion, application to real tool, and storage persistence
                             handlePropertiesSave(updates);
@@ -2043,8 +2131,21 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 ticker={ticker}
             />
 
-            {/* Inline Text Editor Overlay - Removed Legacy V1 */}
-            {/* V2 Text Tool handles editing internally or will use a new overlay */}
+            {/* Inline Text Editor Overlay */}
+            {inlineTextEditing && (
+                <InlineTextEditor
+                    position={inlineTextEditing.position}
+                    layout={inlineTextEditing.layout}
+                    initialText={inlineTextEditing.text}
+                    onSave={handleInlineSave}
+                    onCancel={handleInlineCancel}
+                    fontSize={inlineTextEditing.options.text?.font?.size || 14}
+                    fontFamily={inlineTextEditing.options.text?.font?.family || 'Arial'}
+                    color={inlineTextEditing.options.text?.color || '#FFFFFF'}
+                    backgroundColor={inlineTextEditing.options.text?.box?.background?.color}
+                    bounded={inlineTextEditing.drawingType === 'rectangle'}
+                />
+            )}
 
             {/* Text Settings Dialog */}
             <TextSettings

@@ -35,6 +35,7 @@ export class V2SandboxManager<HorzScaleItem> {
         onDrawingModified?: (tool: any) => void;
         onDrawingDeleted?: (id: string) => void;
         onSelectionChanged?: (id: string | null, tool: any | null) => void;
+        onDrawingDoubleClick?: (tool: any) => void;
     };
 
     constructor(
@@ -45,6 +46,7 @@ export class V2SandboxManager<HorzScaleItem> {
             onDrawingModified?: (tool: any) => void;
             onDrawingDeleted?: (id: string) => void;
             onSelectionChanged?: (id: string | null, tool: any | null) => void;
+            onDrawingDoubleClick?: (tool: any) => void;
         } = {}
     ) {
         this._callbacks = callbacks;
@@ -105,8 +107,14 @@ export class V2SandboxManager<HorzScaleItem> {
             }
         });
 
-        // Double Click (Optional - maybe for opening settings?)
-        // this._plugin.subscribeLineToolsDoubleClick((params: any) => { ... });
+        // Double Click
+        this._plugin.subscribeLineToolsDoubleClick((params: any) => {
+            const { selectedLineTool } = params;
+            console.log('[SandboxManager] DoubleClick callback. selectedLineTool:', selectedLineTool);
+            if (selectedLineTool) {
+                this._callbacks.onDrawingDoubleClick?.(selectedLineTool);
+            }
+        });
 
         console.log("V2 Sandbox Manager Initialized and Tools Registered.");
     }

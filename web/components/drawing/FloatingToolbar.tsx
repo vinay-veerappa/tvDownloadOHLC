@@ -35,6 +35,7 @@ interface FloatingToolbarProps {
     onLock: () => void;
     onDelete: () => void;
     onToggleVisibility: () => void;
+    onZOrderChange: (action: 'bringToFront' | 'sendToBack' | 'bringForward' | 'sendBackward') => void;
     onOptionsChange: (updates: Record<string, any>) => void;
     onPositionChange?: (pos: { x: number; y: number }) => void;
     isPinned?: boolean;
@@ -58,6 +59,7 @@ export function FloatingToolbar({
     onLock,
     onDelete,
     onToggleVisibility,
+    onZOrderChange,
     onOptionsChange,
     onPositionChange,
     isPinned = false,
@@ -311,6 +313,25 @@ export function FloatingToolbar({
                                 {isHidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                                 {isHidden ? "Show" : "Hide"}
                             </button>
+
+                            {/* Visual Order */}
+                            <div className="flex flex-col">
+                                <span className="px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground">Visual Order</span>
+                                <button className="flex items-center gap-2 px-2 py-1.5 text-sm rounded hover:bg-muted" onClick={() => onZOrderChange('bringToFront')}>
+                                    <Layers className="h-4 w-4" /> Bring to front
+                                </button>
+                                <button className="flex items-center gap-2 px-2 py-1.5 text-sm rounded hover:bg-muted" onClick={() => onZOrderChange('sendToBack')}>
+                                    <Layers className="h-4 w-4" /> Send to back
+                                </button>
+                                <button className="flex items-center gap-2 px-2 py-1.5 text-sm rounded hover:bg-muted" onClick={() => onZOrderChange('bringForward')}>
+                                    <Layers className="h-4 w-4" /> Bring forward
+                                </button>
+                                <button className="flex items-center gap-2 px-2 py-1.5 text-sm rounded hover:bg-muted" onClick={() => onZOrderChange('sendBackward')}>
+                                    <Layers className="h-4 w-4" /> Send backward
+                                </button>
+                            </div>
+
+                            <div className="my-1 border-t border-border" />
 
                             {/* Settings */}
                             {config.commonButtons.includes('settings') && (

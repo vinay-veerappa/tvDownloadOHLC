@@ -57,6 +57,8 @@ import { LineToolPriceAxisLabelView } from '../views/line-tool-price-axis-label-
 import { LineToolTimeAxisLabelView } from '../views/line-tool-time-axis-label-view';
 import { PriceAxisLabelStackingManager } from './price-axis-label-stacking-manager';
 
+import { InlineEditable, EditorLayout } from '../../../plugins/base/inline-editable';
+
 
 /**
  * The abstract base class for all line drawing tools in the plugin.
@@ -68,7 +70,7 @@ import { PriceAxisLabelStackingManager } from './price-axis-label-stacking-manag
  *
  * @typeParam HorzScaleItem - The type of the horizontal scale item (e.g., `Time` or `number`).
  */
-export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzScaleItem> implements ISeriesPrimitive<HorzScaleItem> {
+export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzScaleItem> implements ISeriesPrimitive<HorzScaleItem>, InlineEditable {
 	// Abstract properties that must be defined by child classes
 	// These properties are now set in the constructor from subclass arguments
 
@@ -286,6 +288,34 @@ export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzSc
 	private _isDestroying: boolean = false;
 
 	private _attachedPane: IPaneApi<HorzScaleItem> | null = null;
+
+	/** @inheritdoc */
+	public getText(): string {
+		const options = this.options() as any;
+		// Support both { text: { value: '...' } } and { text: '...' } patterns
+		if (options.text && typeof options.text === 'object') {
+			return options.text.value || '';
+		}
+		return typeof options.text === 'string' ? options.text : '';
+	}
+
+	/** @inheritdoc */
+	public setText(text: string): void {
+		const options = this.options() as any;
+		if (options.text && typeof options.text === 'object') {
+			this.applyOptions({ text: { value: text } } as any);
+		} else {
+			this.applyOptions({ text } as any);
+		}
+		this.updateAllViews();
+		this._requestUpdate?.();
+	}
+
+	/** @inheritdoc */
+	public getEditorLayout(): EditorLayout | null {
+		// Base class returns null. Subclasses with text renderers must override this.
+		return null;
+	}
 
 	/**
 	 * Initializes the Base Line Tool instance.
