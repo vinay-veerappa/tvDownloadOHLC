@@ -158,7 +158,7 @@ export function InlineTextEditor({
                         maxHeight: bounded && layout ? `${layout.height - (layout.padding * 2)}px` : undefined,
                         minWidth: (!bounded && layout) ? `${layout.width}px` : '200px',
                         // Show scrollbar for bounded mode when content overflows
-                        overflow: bounded ? 'auto' : 'hidden',
+                        overflow: bounded ? 'auto' : 'visible',
                         boxSizing: 'border-box',
                         display: 'block',
                     }}

@@ -8,7 +8,7 @@
  * - Tab 2: Visibility (timeframe toggles)
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -58,10 +58,19 @@ export function TextSettings({
 }: TextSettingsProps) {
     const [options, setOptions] = useState(initialOptions);
 
+    console.log('[TextSettings] Render. open:', open, 'initialOptions text:', initialOptions?.text);
+
+    const initializedRef = useRef(false);
+
     // Only reset options when the dialog opens, not on every render
     useEffect(() => {
-        if (open) {
+        if (open && !initializedRef.current) {
+            console.log('[TextSettings] Initializing state on open session. options:', JSON.stringify(initialOptions));
             setOptions(initialOptions);
+            initializedRef.current = true;
+        } else if (!open) {
+            // Reset the flag when dialog closes
+            initializedRef.current = false;
         }
     }, [open, initialOptions]);
 
@@ -70,6 +79,7 @@ export function TextSettings({
     }, []);
 
     const handleSave = () => {
+        console.log('[TextSettings] handleSave. options state:', JSON.stringify(options));
         onSave(options);
         onOpenChange(false);
     };
@@ -78,7 +88,17 @@ export function TextSettings({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-md">
+            <DialogContent
+                className="max-w-md"
+                onPointerDownOutside={(e) => {
+                    console.log('[TextSettings] Pointer down outside detected - preventing closure');
+                    e.preventDefault();
+                }}
+                onInteractOutside={(e) => {
+                    console.log('[TextSettings] Interaction outside detected - preventing closure');
+                    e.preventDefault();
+                }}
+            >
                 <DialogHeader className="flex flex-row items-center gap-2">
                     <DialogTitle>Text</DialogTitle>
                 </DialogHeader>

@@ -237,6 +237,7 @@ export interface ShadowOptions {
  */
 export interface BorderOptions {
 	color: string;
+	opacity?: number;
 	width: number;
 	radius: number | number[];
 	highlight: boolean;
@@ -248,6 +249,7 @@ export interface BorderOptions {
  */
 export interface BackgroundOptions {
 	color: string;
+	opacity?: number;
 	inflation: IPoint;
 }
 

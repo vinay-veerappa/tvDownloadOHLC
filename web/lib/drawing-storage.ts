@@ -109,7 +109,18 @@ export class DrawingStorage {
         const index = drawings.findIndex(d => d.id === drawingId);
 
         if (index >= 0) {
-            drawings[index].options = { ...drawings[index].options, ...options };
+            // Helper for recursive merge
+            const mergeRecursive = (dst: any, src: any) => {
+                for (const key in src) {
+                    if (typeof src[key] === 'object' && src[key] !== null && typeof dst[key] === 'object' && dst[key] !== null) {
+                        mergeRecursive(dst[key], src[key]);
+                    } else {
+                        dst[key] = src[key];
+                    }
+                }
+            };
+
+            mergeRecursive(drawings[index].options, options);
             return this.saveDrawings(ticker, timeframe, drawings);
         }
 

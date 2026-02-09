@@ -840,50 +840,32 @@ export class InteractionManager<HorzScaleItem> {
 			}
 			return;
 		}
-
-		// --- 2. Selection / Deselection Logic (Click on Empty Space or Tool) ---
-		if (!handledInteraction && !this._isDrag && !this._isEditing && point) {
-			const hitResult = this._hitTest(point);
-
-			if (hitResult && hitResult.tool) {
-				// Tool Clicked
-				const tool = hitResult.tool;
-				if (!tool.isSelected()) {
-					this.deselectAllTools();
-					this._selectedTool = tool;
-					this._selectedTool.setSelected(true);
-					// NEW: Fire Selection Change
-					this._plugin.fireSelectionChangedEvent();
-				}
-				// If it was already selected, do nothing (or maybe toggle if Ctrl is held? - simpler logic for now)
-			} else {
-				// Empty Space Clicked -> Deselect All
-				if (this._selectedTool) {
-					this.deselectAllTools();
-					// NEW: Fire Selection Change
-					this._plugin.fireSelectionChangedEvent();
-				}
-			}
-		}
-
-
-
-		// --- 2. Finalize Editing Click/Drag ---
-		if (this._draggedTool && this._dragStartPoint) {
+		// --- 2. Finalize Selection / Editing Logic ---
+		// If we started a gesture on a tool (editing or selection click)
+		if (!handledInteraction && this._draggedTool && this._dragStartPoint) {
+			handledInteraction = true;
 			if (this._isEditing) { // It was an EDITING DRAG
-				console.log(`[InteractionManager] Mouse Up after edit drag: Finalizing for tool ${this._draggedTool.id()}`);
 				this._plugin.fireAfterEditEvent(this._draggedTool, 'lineToolEdited');
 
 				const tool = this._draggedTool as BaseLineTool<HorzScaleItem> & { normalize?: () => void };
 				if (tool.normalize) { tool.normalize(); }
-			} else { // It was a discrete CLICK ON AN EXISTING TOOL (selection)
-				console.log(`[InteractionManager] Mouse Up: Discrete click on existing tool ${this._draggedTool.id()}. Attempting selection.`);
+			} else { // It was a discrete CLICK ON AN EXISTING TOOL (selection/double-click)
 				this._handleStandaloneClick(this._dragStartPoint);
 			}
 
 			// Always reset editing-specific flags after an editing mouseup
 			this._resetEditingGestureStateOnly();
-			return; // Handled editing flow
+		}
+
+		// --- 3. Standalone Click (in empty space) ---
+		if (!handledInteraction && !this._isDrag && !this._isEditing && point) {
+			const chartElement = this._chart.chartElement();
+			const clickedInsideChartElement = chartElement.contains(event.target as Node);
+
+			if (clickedInsideChartElement) {
+				handledInteraction = true;
+				this._handleStandaloneClick(point);
+			}
 		}
 
 		// --- 3. Standalone Click (in empty space or on external UI) ---
@@ -1014,8 +996,12 @@ export class InteractionManager<HorzScaleItem> {
 			this.deselectAllTools();
 			this._selectedTool = clickedTool;
 			this._selectedTool.setSelected(true);
+			this._plugin.fireSelectionChangedEvent();
 		} else {
-			this.deselectAllTools();
+			if (this._selectedTool) {
+				this.deselectAllTools();
+				this._plugin.fireSelectionChangedEvent();
+			}
 		}
 	}
 

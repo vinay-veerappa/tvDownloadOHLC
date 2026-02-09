@@ -9,7 +9,7 @@
  * - Text annotation
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -77,12 +77,17 @@ export function HorizontalLineSettingsDialog({
     const [localOptions, setLocalOptions] = useState<HorizontalLineSettingsOptions>(options);
     const [localPrice, setLocalPrice] = useState<number>(price || 0);
 
+    const initializedRef = useRef(false);
+
     // Reset local options when dialog opens
     useEffect(() => {
-        if (open) {
-
+        if (open && !initializedRef.current) {
+            console.log('[HorizontalLineSettingsDialog] Initializing state on open session. options:', JSON.stringify(options));
             setLocalOptions(options);
             setLocalPrice(price || 0);
+            initializedRef.current = true;
+        } else if (!open) {
+            initializedRef.current = false;
         }
     }, [open, options, price]);
 

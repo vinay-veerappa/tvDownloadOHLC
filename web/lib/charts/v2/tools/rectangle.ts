@@ -22,6 +22,7 @@ import { LineStyle } from 'lightweight-charts';
 import { LineToolPaneView } from "../core/views/line-tool-pane-view";
 import { IChartApiBase, ISeriesApi, SeriesType, IHorzScaleBehavior, Coordinate } from "lightweight-charts";
 import { CompositeRenderer } from "../core/rendering/composite-renderer";
+import { Box } from "../core/utils/geometry";
 
 class RectanglePaneViewV2<HorzScaleItem> extends LineToolPaneView<HorzScaleItem> {
     private _textRenderer: TextRenderer<HorzScaleItem>;
@@ -38,8 +39,8 @@ class RectanglePaneViewV2<HorzScaleItem> extends LineToolPaneView<HorzScaleItem>
             const tool = this._tool as RectangleV2<HorzScaleItem>;
             const options = tool.options() as LineToolRectangleOptions & LineToolOptionsCommon;
 
-            this._rectangleRenderer.setData({
-                points: [this._points[0], this._points[1]],
+            const rectData = {
+                points: [this._points[0], this._points[1]] as [AnchorPoint, AnchorPoint],
                 background: options.rectangle.background,
                 border: {
                     color: options.rectangle.border.color,
@@ -56,7 +57,18 @@ class RectanglePaneViewV2<HorzScaleItem> extends LineToolPaneView<HorzScaleItem>
                 toolDefaultHoverCursor: options.defaultHoverCursor,
                 toolDefaultDragCursor: options.defaultDragCursor,
                 text: options.text, // Pass text directly to RectangleRenderer
-            });
+            };
+
+            this._rectangleRenderer.setData(rectData);
+
+            // SYNC FIX: Also update the tool-level _textRenderer so getEditorLayout() works Correctly
+            if (options.text) {
+                const box = new Box(this._points[0], this._points[1]);
+                this._textRenderer.setData({
+                    text: options.text,
+                    box: box
+                });
+            }
 
             const composite = this._renderer as CompositeRenderer<HorzScaleItem>;
             composite.append(this._rectangleRenderer);

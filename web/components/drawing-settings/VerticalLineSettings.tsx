@@ -9,7 +9,7 @@
  * - Text annotation
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -73,11 +73,17 @@ export function VerticalLineSettingsDialog({
     const [localOptions, setLocalOptions] = useState<VerticalLineSettingsOptions>(options);
     const [localTime, setLocalTime] = useState<Time>(0 as Time);
 
+    const initializedRef = useRef(false);
+
     // Reset local options when dialog opens
     useEffect(() => {
-        if (open) {
+        if (open && !initializedRef.current) {
+            console.log('[VerticalLineSettingsDialog] Initializing state on open session. options:', JSON.stringify(options));
             setLocalOptions(options);
             if (time) setLocalTime(time);
+            initializedRef.current = true;
+        } else if (!open) {
+            initializedRef.current = false;
         }
     }, [open, options, time]);
 

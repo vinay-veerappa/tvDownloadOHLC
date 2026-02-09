@@ -644,6 +644,11 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     const layout = toolInstance.getEditorLayout();
 
                     if (layout) {
+                        // Start editing on the tool to hide the canvas text
+                        if (typeof toolInstance.setEditing === 'function') {
+                            toolInstance.setEditing(true);
+                        }
+
                         const options = toolInstance.options();
                         setInlineTextEditing({
                             drawingId: tool.id,
@@ -836,6 +841,9 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                         const options = (typeof (hitDrawing as any).options === 'function') ? (hitDrawing as any).options() : ((hitDrawing as any).options || {});
 
                         console.log('[ChartContainer] Triggering inline text editing via native dblClick');
+                        if (typeof hitDrawing.setEditing === 'function') {
+                            hitDrawing.setEditing(true);
+                        }
                         setInlineTextEditing({
                             drawingId,
                             position: { x: param.point.x, y: param.point.y },
@@ -1020,6 +1028,46 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, []); // Empty deps - accessing plugin directly avoids closure issues
+
+    // Sync inline editor position with chart scroll/zoom/resize
+    useEffect(() => {
+        if (!inlineTextEditing || !chart) return;
+
+        let rafId: number;
+        const updatePosition = () => {
+            const tool = v2SandboxRef.current?.plugin.getLineTool(inlineTextEditing.drawingId);
+            // Type guard for inline editable tool
+            if (tool && typeof (tool as any).getEditorLayout === 'function') {
+                const layout = (tool as any).getEditorLayout();
+                if (layout) {
+                    setInlineTextEditing(prev => {
+                        if (!prev) return null;
+                        const prevLayout = prev.layout;
+                        // specific check for coordinate changes to avoid unnecessary re-renders
+                        // also checking layout width/height which might change on zoom
+                        if (prev.position.x === layout.x &&
+                            prev.position.y === layout.y &&
+                            prevLayout?.width === layout.width &&
+                            prevLayout?.height === layout.height) {
+                            return prev;
+                        }
+                        return {
+                            ...prev,
+                            position: { x: layout.x, y: layout.y },
+                            layout: layout
+                        };
+                    });
+                }
+            }
+            rafId = requestAnimationFrame(updatePosition);
+        };
+
+        rafId = requestAnimationFrame(updatePosition);
+
+        return () => {
+            cancelAnimationFrame(rafId);
+        };
+    }, [inlineTextEditing?.drawingId, chart]);
 
     const handleInlineSave = (text: string) => {
         if (!inlineTextEditing) return;

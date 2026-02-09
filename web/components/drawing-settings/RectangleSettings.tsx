@@ -276,6 +276,8 @@ export function RectangleSettingsDialog({
     onCancel,
 }: RectangleSettingsDialogProps) {
     const [localOptions, setLocalOptions] = useState<RectangleSettingsOptions>(options);
+
+    console.log('[RectangleSettingsDialog] Render. open:', open, 'text input prop:', options.text);
     const [localPoints, setLocalPoints] = useState<Array<{ time: Time; price: number }>>([]);
 
     // Track if we've initialized for this open session
@@ -284,14 +286,13 @@ export function RectangleSettingsDialog({
     // Reset local options ONLY when dialog opens (not on every options change)
     useEffect(() => {
         if (open && !initializedRef.current) {
-            console.log('[RectangleSettingsDialog] Initializing options on open:', JSON.stringify(options));
+            console.log('[RectangleSettingsDialog] Initializing state on open. Props options text:', options.text);
             setLocalOptions(options);
             if (points) {
                 setLocalPoints([points.p1, points.p2]);
             }
             initializedRef.current = true;
         } else if (!open) {
-            // Reset the flag when dialog closes
             initializedRef.current = false;
         }
     }, [open, options, points]);
@@ -302,7 +303,18 @@ export function RectangleSettingsDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[425px]" onOpenAutoFocus={(e) => e.preventDefault()}>
+            <DialogContent
+                className="sm:max-w-[425px]"
+                onOpenAutoFocus={(e) => e.preventDefault()}
+                onPointerDownOutside={(e) => {
+                    console.log('[RectangleSettingsDialog] Pointer down outside detected - preventing closure');
+                    e.preventDefault();
+                }}
+                onInteractOutside={(e) => {
+                    console.log('[RectangleSettingsDialog] Interaction outside detected - preventing closure');
+                    e.preventDefault();
+                }}
+            >
                 <DialogTitle className="sr-only">Rectangle Settings</DialogTitle>
                 <DialogDescription className="sr-only">Settings for the rectangle drawing tool</DialogDescription>
                 {/* Reusing the View Component */}
@@ -322,8 +334,14 @@ export function RectangleSettingsDialog({
                 */}
 
                 <div className="flex justify-end gap-2 mt-4 pt-4 border-t">
-                    <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
-                    <Button type="button" onClick={handleApply}>Save</Button>
+                    <Button type="button" variant="outline" onClick={() => {
+                        console.log('[RectangleSettingsDialog] Cancel clicked.');
+                        onCancel();
+                    }}>Cancel</Button>
+                    <Button type="button" onClick={() => {
+                        console.log('[RectangleSettingsDialog] Save/Apply clicked. localOptions:', JSON.stringify(localOptions));
+                        handleApply();
+                    }}>Save</Button>
                 </div>
             </DialogContent>
         </Dialog>

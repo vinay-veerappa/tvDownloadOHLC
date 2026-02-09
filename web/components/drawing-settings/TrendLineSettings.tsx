@@ -9,7 +9,7 @@
  * - Show Stats (angle, distance, price range)
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
@@ -81,13 +81,19 @@ export function TrendLineSettingsDialog({
     const [localOptions, setLocalOptions] = useState<TrendLineSettingsOptions>(options);
     const [localPoints, setLocalPoints] = useState<Array<{ time: Time; price: number }>>([]);
 
+    const initializedRef = useRef(false);
+
     // Reset local options when dialog opens
     useEffect(() => {
-        if (open) {
+        if (open && !initializedRef.current) {
+            console.log('[TrendLineSettingsDialog] Initializing state on open session. options:', JSON.stringify(options));
             setLocalOptions(options);
             if (points) {
                 setLocalPoints([points.p1, points.p2]);
             }
+            initializedRef.current = true;
+        } else if (!open) {
+            initializedRef.current = false;
         }
     }, [open, options, points]);
 
@@ -102,6 +108,7 @@ export function TrendLineSettingsDialog({
     };
 
     const handleApply = () => {
+        console.log('[TrendLineSettingsDialog] handleApply. localOptions:', JSON.stringify(localOptions));
         onApply(localOptions, localPoints.length === 2 ? localPoints : undefined);
     };
 

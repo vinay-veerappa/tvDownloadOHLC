@@ -107,6 +107,27 @@ const tool = v2SandboxRef.current?.plugin.getLineTool(toolId) || null;
 
 ---
 
+---
+
+## Fix 3: Text Placement "Drift" Correction (geometry.ts)
+
+### Problem
+Newly created text drawings, or drawings restored from saved state, were appearing shifted significantly to the left relative to the mouse cursor or their intended position. In some cases, text placed in the blank space to the right would appear years in the past.
+
+### Root Cause
+The core utility functions `interpolateTimeFromLogicalIndex` and `interpolateLogicalIndexFromTime` in `web/lib/charts/v2/core/utils/geometry.ts` used a linear extrapolation algorithm anchored to the **start of the dataset** (often years in the past).
+Because financial charts naturally skip weekends and holidays (non-trading periods), the "Logical Index" (bar count) grows slower than "Linear Time" (calendar days). Over 10+ years of data, this difference accumulates into a massive "drift" error (thousands of days).
+When creating a tool in the future (blank space), the linear extrapolation would calculate a timestamp based on "Start Time + X Days", which corresponds to a much earlier logical index on the non-linear chart scale, resulting in the leftward shift.
+
+### Solution
+Refactored both `interpolateTimeFromLogicalIndex` and `interpolateLogicalIndexFromTime` to anchor their extrapolation to the **latest visible data point** (the rightmost edge of known data) instead of the series start.
+1. **Creation (Screen -> Data):** Calculates future timestamps by adding `(LogicalEnd - LogicalTarget) * Interval` to the `TimeEnd`. This treats the "future" as a linear extension of the current market rhythm.
+2. **Restoration (Data -> Screen):** Calculates logical index by adding `(TimeTarget - TimeEnd) / Interval` to `LogicalEnd`.
+
+This eliminates historical drift and ensures precise 1:1 mapping between mouse clicks and chart coordinates, even far into the future.
+
+---
+
 ## Related Files
 
 - `web/lib/charts/v2/core/rendering/generic-renderers.ts` - TextRenderer implementation
@@ -115,6 +136,7 @@ const tool = v2SandboxRef.current?.plugin.getLineTool(toolId) || null;
 - `web/lib/charts/v2/core/model/base-line-tool.ts` - Base class for drawing tools
 - `web/components/chart-container.tsx` - Chart container with inline editing handlers
 - `web/lib/charts/v2/sandbox-manager.ts` - V2 sandbox manager with event handling
+- `web/lib/charts/v2/core/utils/geometry.ts` - Core geometry utilities with time interpolation fixes
 
 ## Notes
 

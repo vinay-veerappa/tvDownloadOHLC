@@ -51,7 +51,7 @@ class TextPaneViewV2<HorzScaleItem> extends LineToolPaneView<HorzScaleItem> {
 
             this._textRenderer.setData({
                 points: renderPoints.length > 0 ? renderPoints : undefined,
-                text: options.text,
+                text: tool.isEditing() ? { ...options.text, value: "" } : options.text,
                 toolDefaultHoverCursor: options.defaultHoverCursor,
                 toolDefaultDragCursor: options.defaultDragCursor,
                 hitTestBackground: true,
@@ -77,7 +77,7 @@ class TextPaneViewV2<HorzScaleItem> extends LineToolPaneView<HorzScaleItem> {
 const defaultOptions: LineToolTextOptions & LineToolOptionsCommon = {
     text: {
         value: 'Text',
-        alignment: TextAlignment.Center,
+        alignment: TextAlignment.Start,
         font: {
             color: '#ffffff',
             size: 14,
@@ -86,7 +86,7 @@ const defaultOptions: LineToolTextOptions & LineToolOptionsCommon = {
             family: 'Trebuchet MS',
         },
         box: {
-            alignment: { vertical: 'middle' as any, horizontal: 'center' as any },
+            alignment: { vertical: 'middle' as any, horizontal: 'left' as any },
             angle: 0,
             scale: 1,
             background: {

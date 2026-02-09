@@ -2,7 +2,7 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DEFAULT_FIB_OPTIONS, FibonacciOptions, FibonacciLevel } from "@/lib/charts/v2/tools/fibonacci"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
@@ -53,8 +53,13 @@ const ColorPicker = ({ color, onChange, opacity, onOpacityChange }: { color: str
 export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsViewProps) {
     const [localOptions, setLocalOptions] = useState<FibonacciOptions>(() => mergeWithDefaults(options));
 
+    const initializedRef = useRef(false);
+
     useEffect(() => {
-        setLocalOptions(mergeWithDefaults(options));
+        if (!initializedRef.current) {
+            setLocalOptions(mergeWithDefaults(options));
+            initializedRef.current = true;
+        }
     }, [options]);
 
     const update = (updates: Partial<FibonacciOptions>) => {

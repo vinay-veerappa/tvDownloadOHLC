@@ -283,6 +283,7 @@ export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzSc
 	private _hovered: boolean = false;
 	private _editing: boolean = false;
 	private _creating: boolean = false;
+	private _inlineEditing: boolean = false; // Separate flag for inline text editing mode (hides canvas text)
 	protected _lastPoint: LineToolPoint | null = null;
 	private _editedPointIndex: number | null = null;
 	private _currentPoint: Point = new Point(0, 0);
@@ -544,7 +545,7 @@ export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzSc
 	 *
 	 * @returns `true` if an anchor is being dragged, `false` otherwise.
 	 */
-	public isEditing(): boolean { return this._editing; }
+	public isEditing(): boolean { return this._inlineEditing; }
 
 	/**
 	 * Checks if the tool is currently in the process of being created by user interaction.
@@ -580,15 +581,16 @@ export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzSc
 	}
 
 	/**
-	 * Sets the tool's editing state (active drag is in progress).
+	 * Sets the tool's inline editing state (for InlineEditable interface).
 	 *
-	 * This typically happens when the user clicks down on an anchor and moves beyond the drag threshold.
+	 * When editing is true, the canvas-rendered text should be hidden to prevent
+	 * overlap/ghosting with the inline text editor overlay.
 	 *
-	 * @param editing - The new editing state.
+	 * @param editing - `true` to enter inline editing mode, `false` to exit.
 	 * @returns void
 	 */
 	public setEditing(editing: boolean): void {
-		this._editing = editing;
+		this._inlineEditing = editing;
 		this.updateAllViews();
 		this._requestUpdate?.();
 	}

@@ -113,6 +113,18 @@ export const V2OptionAdapter = {
                 flat.alignmentVertical = v2Options.text.box.alignment.vertical;
                 flat.alignmentHorizontal = v2Options.text.box.alignment.horizontal;
             }
+
+            // Sync box styles for UI dialogs
+            if (v2Options.text.box?.background) {
+                flat.backgroundColor = toHex(v2Options.text.box.background.color);
+                flat.backgroundOpacity = v2Options.text.box.background.opacity ?? getOpacity(v2Options.text.box.background.color);
+                flat.backgroundVisible = v2Options.text.box.background.color !== 'transparent';
+            }
+            if (v2Options.text.box?.border) {
+                flat.borderColor = toHex(v2Options.text.box.border.color);
+                flat.borderWidth = v2Options.text.box.border.width;
+                flat.borderVisible = v2Options.text.box.border.width > 0;
+            }
         }
 
         // Special V2 properties that might be used by UI
@@ -170,19 +182,29 @@ export const V2OptionAdapter = {
         }
 
         // Rectangle Mapping
-        if (v1Options.borderColor || v1Options.fillColor || v1Options.borderWidth) {
+        if (v1Options.borderColor || v1Options.fillColor || v1Options.borderWidth !== undefined || v1Options.borderVisible !== undefined || v1Options.backgroundVisible !== undefined) {
             const border = ensure(v2, 'rectangle.border');
             if (v1Options.borderColor) border.color = v1Options.borderColor;
             if (v1Options.borderWidth !== undefined) border.width = v1Options.borderWidth;
             if (v1Options.borderStyle !== undefined) border.style = v1Options.borderStyle;
 
+            // Handle border visibility
+            if (v1Options.borderVisible === false) {
+                border.width = 0;
+            }
+
             const bg = ensure(v2, 'rectangle.background');
             if (v1Options.fillColor) bg.color = v1Options.fillColor;
             if (v1Options.fillOpacity !== undefined) bg.opacity = v1Options.fillOpacity;
+
+            // Handle background visibility
+            if (v1Options.backgroundVisible === false) {
+                bg.color = 'transparent';
+            }
         }
 
         // Text Mapping
-        if (v1Options.text !== undefined || v1Options.fontSize || v1Options.textColor) {
+        if (v1Options.text !== undefined || v1Options.fontSize || v1Options.textColor || v1Options.fontFamily || v1Options.backgroundVisible !== undefined) {
             // console.log('[V2OptionAdapter] Mapping Text. input:', v1Options.text);
             const text = ensure(v2, 'text');
             if (v1Options.text !== undefined) {
@@ -193,6 +215,9 @@ export const V2OptionAdapter = {
                 text.value = val;
             }
 
+            if (v1Options.wordWrapWidth !== undefined) text.wordWrapWidth = v1Options.wordWrapWidth;
+            if (v1Options.padding !== undefined) text.padding = v1Options.padding;
+
             const font = ensure(v2, 'text.font');
             if (v1Options.textColor) {
                 font.color = v1Options.textColor;
@@ -200,11 +225,43 @@ export const V2OptionAdapter = {
             if (v1Options.fontSize) font.size = v1Options.fontSize;
             if (v1Options.bold !== undefined) font.bold = v1Options.bold;
             if (v1Options.italic !== undefined) font.italic = v1Options.italic;
+            if (v1Options.fontFamily) font.family = v1Options.fontFamily;
+
+            const box = ensure(v2, 'text.box');
+
+            // Handle Box Background
+            if (v1Options.backgroundColor || v1Options.backgroundVisible !== undefined || v1Options.backgroundOpacity !== undefined) {
+                const boxBg = ensure(v2, 'text.box.background');
+                if (v1Options.backgroundColor) boxBg.color = v1Options.backgroundColor;
+                if (v1Options.backgroundOpacity !== undefined) boxBg.opacity = v1Options.backgroundOpacity; // Note: renderer might need to apply this
+
+                if (v1Options.backgroundVisible === false) {
+                    boxBg.color = 'transparent';
+                }
+            }
+
+            // Handle Box Border
+            if (v1Options.borderColor || v1Options.borderVisible !== undefined || v1Options.borderWidth !== undefined) {
+                const boxBorder = ensure(v2, 'text.box.border');
+                if (v1Options.borderColor) boxBorder.color = v1Options.borderColor;
+                if (v1Options.borderWidth !== undefined) boxBorder.width = v1Options.borderWidth;
+                if (v1Options.borderStyle !== undefined) boxBorder.style = v1Options.borderStyle;
+
+                if (v1Options.borderVisible === false) {
+                    boxBorder.width = 0;
+                }
+            }
 
             if (v1Options.alignmentVertical || v1Options.alignmentHorizontal) {
                 const align = ensure(v2, 'text.box.alignment');
                 if (v1Options.alignmentVertical) align.vertical = v1Options.alignmentVertical;
                 if (v1Options.alignmentHorizontal) align.horizontal = v1Options.alignmentHorizontal;
+
+                // CRITICAL SYNC: Ensure text.alignment (internal) matches text.box.alignment.horizontal
+                // This ensures TextRenderer.draw() uses the correct alignment for the text itself.
+                if (v1Options.alignmentHorizontal) {
+                    text.alignment = v1Options.alignmentHorizontal;
+                }
             }
         }
 

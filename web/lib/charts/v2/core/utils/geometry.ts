@@ -864,70 +864,120 @@ export function convertUTCTimestampToDateString(timestamp: UTCTimestamp): string
  * @returns The extrapolated `Time`, or `null` if the series has insufficient data ( < 2 bars) to determine an interval.
  */
 export function interpolateTimeFromLogicalIndex<HorzScaleItem>(
-	chart: IChartApiBase<HorzScaleItem>, // NEW: Now accepts chart instance
-	series: ISeriesApi<SeriesType, HorzScaleItem>, // Keep series for data access
+	chart: IChartApiBase<HorzScaleItem>,
+	series: ISeriesApi<SeriesType, HorzScaleItem>,
 	logicalIndex: number
 ): Time | null {
-	if (!chart || !series) { // Also check if chart is defined
+	if (!chart || !series) {
 		console.warn("[interpolateTimeFromLogicalIndex] chart or series is not defined.");
 		return null;
 	}
 
-	const timeScale = chart.timeScale(); // Access timeScale directly from chart
+	const timeScale = chart.timeScale();
 
-	// Retrieve data for the first two points in the series to calculate the time interval.
-	// This assumes that there are at least two data points to establish a reliable interval.
-	// If the chart starts empty, this will need a fallback (e.g., using default bar spacing).
+	// 1. Try to find exact or surrounding points (Interpolation)
+	const floorIndex = Math.floor(logicalIndex);
+	const ceilIndex = Math.ceil(logicalIndex);
+
+	const dataFloor = series.dataByIndex(floorIndex, 0); // 0 = Exact
+	const dataCeil = series.dataByIndex(ceilIndex, 0);
+
+	if (dataFloor && dataCeil) {
+		const timeFloor = typeof dataFloor.time === 'string' ? convertDateStringToUTCTimestamp(dataFloor.time) : dataFloor.time;
+		const timeCeil = typeof dataCeil.time === 'string' ? convertDateStringToUTCTimestamp(dataCeil.time) : dataCeil.time;
+		const fraction = logicalIndex - floorIndex;
+		const interpolated = (Number(timeFloor) + fraction * (Number(timeCeil) - Number(timeFloor))) as UTCTimestamp;
+
+		return typeof dataFloor.time === 'string'
+			? convertUTCTimestampToDateString(interpolated) as any
+			: interpolated as any;
+	}
+
+	// 2. Extrapolation: If target is outside data, anchor to the nearest visible data point (usually the end)
+	// This prevents accumulated error (drift) from ignoring weekends over the entire dataset history.
+
+	const visibleRange = timeScale.getVisibleLogicalRange();
+	let anchorData = null;
+	let anchorIndex = 0;
+	let prevData = null;
+	let interval = 0;
+
+	if (visibleRange) {
+		// Prefer anchoring to the right (latest data) as users usually draw there
+		const checkIndex = Math.min(Math.floor(visibleRange.to), Math.floor(logicalIndex));
+		// search NearestLeft from checkIndex to find valid data
+		anchorData = series.dataByIndex(checkIndex, -1);
+
+		if (anchorData) {
+			// Find the index of this anchor data? 
+			// dataByIndex returns the item, but we need its Logical Index to calculate delta.
+			// Re-reverse: coordinateToLogical? No, we don't know the coordinate of the bar.
+			// LWC doesn't give logical index of a data item easily.
+			// WORKAROUND: We assume checkIndex IS close to the anchor.
+			// Actually, if dataByIndex(-1) found something, it might be far back.
+			// But since we started at checkIndex (visible.to), it should be close.
+
+			// We need a reliable interval.
+			// Let's take the anchor and the point immediately before it.
+			// We assume anchorData corresponds to `checkIndex` approximately.
+
+			// To be precise, we need the logical index of the anchor.
+			// For simplicity/robustness, let's just use the fallback if we can't do precise anchoring.
+			// Actually, the Original Logic used index 0 and 1.
+			// Let's try to use index (checkIndex) and (checkIndex - 1).
+
+			const refIndex1 = checkIndex;
+			const refIndex2 = checkIndex - 1;
+
+			const d1 = series.dataByIndex(refIndex1, -1);
+			const d2 = series.dataByIndex(refIndex2, -1);
+
+			if (d1 && d2 && d1.time !== d2.time) {
+				const t1 = typeof d1.time === 'string' ? convertDateStringToUTCTimestamp(d1.time) : d1.time as number;
+				const t2 = typeof d2.time === 'string' ? convertDateStringToUTCTimestamp(d2.time) : d2.time as number;
+
+				// Calculate interval per logical unit. 
+				// Note: d1 and d2 might not be adjacent if data is sparse.
+				// But we assume they are close.
+				// Wait, if d1 is at index 100, and d2 is at 99.
+				// Interval = t1 - t2.
+
+				interval = Number(t1) - Number(t2);
+				anchorData = d1;
+				anchorIndex = refIndex1;
+			}
+		}
+	}
+
+	if (anchorData && interval > 0) {
+		const anchorTime = typeof anchorData.time === 'string' ? convertDateStringToUTCTimestamp(anchorData.time) : anchorData.time;
+		const delta = logicalIndex - anchorIndex;
+		const extrapolated = Number(anchorTime) + delta * interval;
+
+		return typeof anchorData.time === 'string'
+			? convertUTCTimestampToDateString(extrapolated as UTCTimestamp) as any
+			: extrapolated as any;
+	}
+
+	// 3. Fallback to original logic (Start of series) if all else fails
 	const dataAtIndex0 = series.dataByIndex(0, 0);
 	const dataAtIndex1 = series.dataByIndex(1, 0);
 
 	if (!dataAtIndex0 || !dataAtIndex1) {
-		// Fallback for very few data points: try to use visible logical range or timeScale options
-		const visibleLogicalRange = timeScale.getVisibleLogicalRange();
-
-		if (visibleLogicalRange && visibleLogicalRange.to - visibleLogicalRange.from > 0) {
-			const logicalSpan = visibleLogicalRange.to - visibleLogicalRange.from;
-			// Use coordinateToTime on the chart's time scale directly
-			const timeFrom = timeScale.coordinateToTime(timeScale.logicalToCoordinate(visibleLogicalRange.from) as Coordinate) as number;
-			const timeTo = timeScale.coordinateToTime(timeScale.logicalToCoordinate(visibleLogicalRange.to) as Coordinate) as number;
-
-
-			if (timeFrom !== null && timeTo !== null && logicalSpan > 0) {
-				const timeSpan = timeTo - timeFrom;
-				const timePerLogicalUnit = timeSpan / logicalSpan;
-				const logicalOffset = logicalIndex - visibleLogicalRange.from;
-				return (timeFrom + logicalOffset * timePerLogicalUnit) as UTCTimestamp;
-			}
-		}
-
-		console.warn("[interpolateTimeFromLogicalIndex] Not enough data points or visible range for interpolation. Cannot determine time.");
-		// If we can't get a reliable interval, return null.
+		console.warn("[interpolateTimeFromLogicalIndex] Not enough data points. Returning null.");
 		return null;
 	}
 
-	const startTime = typeof dataAtIndex0.time === 'string'
-		? convertDateStringToUTCTimestamp(dataAtIndex0.time)
-		: dataAtIndex0.time;
-	const endTime = typeof dataAtIndex1.time === 'string'
-		? convertDateStringToUTCTimestamp(dataAtIndex1.time)
-		: dataAtIndex1.time;
+	const startTime = typeof dataAtIndex0.time === 'string' ? convertDateStringToUTCTimestamp(dataAtIndex0.time) : dataAtIndex0.time;
+	const endTime = typeof dataAtIndex1.time === 'string' ? convertDateStringToUTCTimestamp(dataAtIndex1.time) : dataAtIndex1.time;
 
-	// Calculate the time interval between the two data points (e.g., 86400 for daily bars).
-	const interval = (Number(endTime) - Number(startTime));
+	const legacyInterval = (Number(endTime) - Number(startTime));
+	const legacyDelta = logicalIndex - 0;
+	const legacyInterpolated = Number(startTime) + legacyDelta * legacyInterval;
 
-	// Calculate the difference in logical units from the first data point.
-	// We assume that `logicalIndex` relates linearly to `time`.
-	const logicalDelta = logicalIndex - 0; // Assuming the first data point (index 0) corresponds to logical 0.
-
-	// Interpolate the time for the given logical index.
-	const interpolatedTime = Number(startTime) + logicalDelta * interval;
-
-	// Return the interpolated time in the correct format (UTCTimestamp or string).
-	if (typeof dataAtIndex0.time === 'string') {
-		return convertUTCTimestampToDateString(interpolatedTime as UTCTimestamp) as string;
-	} else {
-		return interpolatedTime as UTCTimestamp;
-	}
+	return typeof dataAtIndex0.time === 'string'
+		? convertUTCTimestampToDateString(legacyInterpolated as UTCTimestamp) as any
+		: legacyInterpolated as any;
 }
 
 /**
@@ -1012,10 +1062,55 @@ export function interpolateLogicalIndexFromTime<HorzScaleItem>(
 	series: ISeriesApi<SeriesType, HorzScaleItem>,
 	timestamp: Time
 ): Logical | null {
-	if (!series) {
-		console.warn("[interpolateLogicalIndexFromTime] series is not defined.");
+	if (!chart || !series) { // Check chart too
+		console.warn("[interpolateLogicalIndexFromTime] chart or series is not defined.");
 		return null;
 	}
+
+	// 1. Try to anchor to the latest visible data (Right Side Extrapolation)
+	// This is critical for tools drawn in the future (blank space).
+	const timeScale = chart.timeScale();
+	const visibleRange = timeScale.getVisibleLogicalRange();
+
+	if (visibleRange) {
+		const checkIndex = Math.floor(visibleRange.to);
+		const anchorData = series.dataByIndex(checkIndex, -1); // Nearest Left
+
+		if (anchorData) {
+
+			// Establish Interval locally
+			const refIndex1 = checkIndex; // Approximation of anchorData index
+			// We need a second point to get interval.
+			const d1 = anchorData;
+			// Try previous point
+			const d2 = series.dataByIndex(checkIndex - 1, -1);
+
+			if (d1 && d2 && d1.time !== d2.time) {
+				const t1 = typeof d1.time === 'string' ? convertDateStringToUTCTimestamp(d1.time) : d1.time as number;
+				const t2 = typeof d2.time === 'string' ? convertDateStringToUTCTimestamp(d2.time) : d2.time as number;
+				const interval = Number(t1) - Number(t2);
+
+				if (interval > 0) {
+					// We have a valid local interval at the end of data.
+					const targetTimeNum = typeof timestamp === 'string'
+						? convertDateStringToUTCTimestamp(timestamp)
+						: Number(timestamp);
+
+					const anchorTimeNum = t1;
+
+					// If the target is in the future relative to our anchor (or close to it)
+					// We use this anchor.
+					// Even if it's slightly in the past, local interval is better than global.
+
+					const timeDiff = targetTimeNum - anchorTimeNum;
+					const indexDiff = timeDiff / interval;
+					return (refIndex1 + indexDiff) as Logical;
+				}
+			}
+		}
+	}
+
+	// 2. Fallback to Legacy Logic (Anchor to Start of Series)
 
 	// Retrieve data for the first two points in the series to calculate the time interval.
 	// This approach avoids reliance on `timeScale.timeToLogical`.

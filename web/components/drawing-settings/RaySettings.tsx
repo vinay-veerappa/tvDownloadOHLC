@@ -9,7 +9,7 @@
  * - Text annotation
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Label } from "@/components/ui/label";
 import { StyleTab } from "@/components/drawing/tabs/StyleTab";
 import { DrawingSettingsDialog } from "@/components/drawing/DrawingSettingsDialog";
@@ -72,13 +72,19 @@ export function RaySettingsDialog({
     const [localOptions, setLocalOptions] = useState<RaySettingsOptions>(options);
     const [localPoints, setLocalPoints] = useState<Array<{ time: Time; price: number }>>([]);
 
+    const initializedRef = useRef(false);
+
     // Reset local options when dialog opens
     useEffect(() => {
-        if (open) {
+        if (open && !initializedRef.current) {
+            console.log('[RaySettingsDialog] Initializing state on open session. options:', JSON.stringify(options));
             setLocalOptions(options);
             if (points) {
                 setLocalPoints([points.p1, points.p2]);
             }
+            initializedRef.current = true;
+        } else if (!open) {
+            initializedRef.current = false;
         }
     }, [open, options, points]);
 

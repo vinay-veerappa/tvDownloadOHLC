@@ -163,11 +163,13 @@ export function DrawingSettingsDialog({
     };
 
     const handleApply = () => {
+        console.log('[DrawingSettingsDialog] handleApply called.');
         onApply();
         onOpenChange(false);
     };
 
     const handleCancel = () => {
+        console.log('[DrawingSettingsDialog] handleCancel called.');
         onCancel();
         onOpenChange(false);
     };
@@ -177,6 +179,14 @@ export function DrawingSettingsDialog({
             <DialogContent
                 ref={dialogRef}
                 className="max-w-md"
+                onPointerDownOutside={(e) => {
+                    console.log('[DrawingSettingsDialog] Pointer down outside detected - preventing closure');
+                    e.preventDefault();
+                }}
+                onInteractOutside={(e) => {
+                    console.log('[DrawingSettingsDialog] Interaction outside detected - preventing closure');
+                    e.preventDefault();
+                }}
             >
                 <DialogHeader
                     className="cursor-move select-none flex flex-row items-center gap-2"
