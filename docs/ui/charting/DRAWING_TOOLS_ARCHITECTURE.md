@@ -2,6 +2,9 @@
 
 This is the consolidated reference for implementing and extending drawing tools in the charting application.
 
+> [!NOTE]
+> Detailed architecture documents for each specific tool can be found in the [drawings/](./drawings/README.md) directory.
+
 ## Overview
 
 All drawing tools are implemented as **Lightweight Charts Plugins** (`ISeriesPrimitive`). Each tool consists of:

@@ -479,6 +479,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         setSelectedDrawingOptions(null);
         setToolbarPosition(null);
         onSelectionChange?.(null);
+        onToolSelect?.('cursor');
     };
 
 
@@ -564,6 +565,9 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                         type: drawing.type as any
                     } as any);
                 }
+
+                // Reset sidebar selection to cursor after drawing is finished
+                onToolSelect?.('cursor');
             };
 
             const handleDrawingModified = (exportData: any) => {
