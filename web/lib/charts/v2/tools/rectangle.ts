@@ -208,22 +208,26 @@ export class RectangleV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
         const isP0MinY = p0.price <= p1.price;
 
         switch (index) {
-            case 2: // Top-Right (maxX, minY)
+            case 2: // Top-Right (maxX, minY -> High Price)
                 if (isP0MinX) { p1.timestamp = point.timestamp; } else { p0.timestamp = point.timestamp; }
-                if (isP0MinY) { p0.price = point.price; } else { p1.price = point.price; }
-                break;
-            case 3: // Bottom-Left (minX, maxY)
-                if (isP0MinX) { p0.timestamp = point.timestamp; } else { p1.timestamp = point.timestamp; }
+                // We want to update the High Price point
                 if (isP0MinY) { p1.price = point.price; } else { p0.price = point.price; }
                 break;
-            case 4: // Mid-Top (minY)
+            case 3: // Bottom-Left (minX, maxY -> Low Price)
+                if (isP0MinX) { p0.timestamp = point.timestamp; } else { p1.timestamp = point.timestamp; }
+                // We want to update the Low Price point
                 if (isP0MinY) { p0.price = point.price; } else { p1.price = point.price; }
+                break;
+            case 4: // Mid-Top (minY -> High Price)
+                // We want to update the High Price point
+                if (isP0MinY) { p1.price = point.price; } else { p0.price = point.price; }
                 break;
             case 5: // Mid-Right (maxX)
                 if (isP0MinX) { p1.timestamp = point.timestamp; } else { p0.timestamp = point.timestamp; }
                 break;
-            case 6: // Mid-Bottom (maxY)
-                if (isP0MinY) { p1.price = point.price; } else { p0.price = point.price; }
+            case 6: // Mid-Bottom (maxY -> Low Price)
+                // We want to update the Low Price point
+                if (isP0MinY) { p0.price = point.price; } else { p1.price = point.price; }
                 break;
             case 7: // Mid-Left (minX)
                 if (isP0MinX) { p0.timestamp = point.timestamp; } else { p1.timestamp = point.timestamp; }
@@ -261,11 +265,11 @@ export class RectangleV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
         const centerY = (minY + maxY) / 2;
 
         switch (index) {
-            case 2: return { timestamp: maxX, price: minY };
-            case 3: return { timestamp: minX, price: maxY };
-            case 4: return { timestamp: centerX, price: minY };
+            case 2: return { timestamp: maxX, price: maxY }; // Top-Right (High Price)
+            case 3: return { timestamp: minX, price: minY }; // Bottom-Left (Low Price)
+            case 4: return { timestamp: centerX, price: maxY }; // Top-Mid (High Price)
             case 5: return { timestamp: maxX, price: centerY };
-            case 6: return { timestamp: centerX, price: maxY };
+            case 6: return { timestamp: centerX, price: minY }; // Bottom-Mid (Low Price)
             case 7: return { timestamp: minX, price: centerY };
             default: return null;
         }
