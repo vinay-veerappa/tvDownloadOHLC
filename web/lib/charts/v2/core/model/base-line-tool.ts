@@ -58,6 +58,7 @@ import { LineToolTimeAxisLabelView } from '../views/line-tool-time-axis-label-vi
 import { PriceAxisLabelStackingManager } from './price-axis-label-stacking-manager';
 
 import { InlineEditable, EditorLayout } from '../../../plugins/base/inline-editable';
+import { LogicalRange } from 'lightweight-charts';
 
 
 /**
@@ -399,6 +400,15 @@ export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzSc
 		if (!this._attachedPane) {
 			console.warn(`[BaseLineTool] Tool ${this.id()} attached to a series not found in any pane. This primitive relies on IPaneApi access.`);
 		}
+
+		// Subscribe to visible logical range changes to handle scrolling and data loading
+		this._chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+			// When the visible range changes (scrolling, zooming, data loading),
+			// request an update to recalculate coordinates with the updated time scale
+			if (this._requestUpdate) {
+				this._requestUpdate();
+			}
+		});
 
 		console.log(`Tool ${this.toolType} with ID ${this.id()} attached to series.`);
 	}
@@ -754,7 +764,13 @@ export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzSc
 	 * @returns void
 	 */
 	public applyOptions(options: DeepPartial<LineToolOptionsInternal<any>>): void {
-		merge(this._options, options);
+		// FIX: Use deepCopy to create a new reference for _options.
+		// This ensures that renderers comparing this._options (old) with this._options (new) via references
+		// will correctly detect that something has changed.
+		const currentOptions = deepCopy(this._options);
+		merge(currentOptions, options);
+		this._options = currentOptions;
+
 		this.updateAllViews();
 		this._requestUpdate?.();
 	}
@@ -979,27 +995,44 @@ export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzSc
 	 * @returns A {@link Point} with screen coordinates, or `null` if conversion fails.
 	 */
 	public pointToScreenPoint(point: LineToolPoint): Point | null {
-		const timeScale = this._chart.timeScale();
-
-		// CORRECTED: Assert point.timestamp as UTCTimestamp to match the 'Time' type expectation.
-		const logicalIndex = interpolateLogicalIndexFromTime(this._chart, this._series, point.timestamp as UTCTimestamp);
-
-		if (logicalIndex === null) {
-			console.warn(`[BaseLineTool] pointToScreenPoint: Could not determine logical index for timestamp: ${point.timestamp}.`);
+		if (this._isDestroying || !this._chart || !this._series) {
 			return null;
 		}
 
-		// Use logicalToCoordinate for x-coordinate based on the logical index.
-		const x = timeScale.logicalToCoordinate(logicalIndex);
+		const timeScale = this._chart.timeScale();
+
+		// 1. Try native LWC timeToCoordinate first.
+		// This handles scrolling, data gaps, and shifts robustly for existing bars.
+		let x = timeScale.timeToCoordinate(point.timestamp as any);
+		let resolutionMethod = 'native';
+
+		// 2. Fallback to custom interpolation if native lookup fails (e.g. for "future" space)
+		if (x === null) {
+			const logicalIndex = interpolateLogicalIndexFromTime(this._chart, this._series, point.timestamp as UTCTimestamp);
+			if (logicalIndex !== null) {
+				x = timeScale.logicalToCoordinate(logicalIndex);
+				resolutionMethod = 'interpolation';
+			}
+		}
+
+		if (x === null) {
+			console.warn(`[BaseLineTool ${this.id()}] pointToScreenPoint FAILED: Could not determine X coordinate for timestamp: ${point.timestamp}. Tool may disappear.`);
+			return null;
+		}
 
 		// Use the series' priceToCoordinate method directly.
 		const y = this._series.priceToCoordinate(point.price);
 
 		// Ensure conversions were successful and resulted in valid coordinates.
-		if (x === null || y === null) {
-			console.warn(`[BaseLineTool] pointToScreenPoint: Coordinate conversion failed for point: ${JSON.stringify(point)}. Received x=${x}, y=${y}`);
+		if (y === null) {
+			console.warn(`[BaseLineTool ${this.id()}] pointToScreenPoint FAILED: Price conversion failed for point: ${JSON.stringify(point)}. Received y=${y}. Tool may disappear.`);
 			return null;
 		}
+
+		// Log successful resolution with method used (disabled - too noisy)
+		// if (resolutionMethod === 'interpolation') {
+		// 	console.log(`[BaseLineTool ${this.id()}] pointToScreenPoint: Using ${resolutionMethod} for timestamp ${point.timestamp} -> x=${x}, y=${y}`);
+		// }
 
 		return new Point(x, y);
 	}
@@ -1014,6 +1047,10 @@ export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzSc
 	 * @returns A logical {@link LineToolPoint}, or `null` if conversion fails.
 	 */
 	public screenPointToPoint(point: Point): LineToolPoint | null {
+		if (this._isDestroying || !this._chart || !this._series) {
+			return null;
+		}
+
 		const timeScale = this._chart.timeScale();
 		const price = this._series.coordinateToPrice(point.y as Coordinate);
 

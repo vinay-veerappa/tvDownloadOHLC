@@ -808,6 +808,10 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 	// _data is already present from previous implementation
 	protected _data: TextRendererData | null = null;
 
+	// NEW: Cache for last known good coordinates to handle temporary calculation failures during data loading
+	private _lastGoodInternalData: InternalData | null = null;
+	private _lastGoodPolygonPoints: Point[] | null = null;
+
 	protected _hitTest: HitTestResult<LineToolHitTestData>; // Uses LineToolHitTestData now
 	private _mediaSize: { width: number; height: number; } = { width: 0, height: 0 }; // Still needed for screen dimensions
 
@@ -831,66 +835,110 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 	 * @returns void
 	 */
 	public setData(data: TextRendererData): void {
-		// eslint-disable-next-line complexity
-		function checkUnchanged(before: TextRendererData | null, after: TextRendererData | null): boolean {
-			if (null === before || null === after) { return before === after; } // If both null, or one null one not
-			if (before.points === undefined !== (after.points === undefined)) { return false; }
+		const before = this._data;
+		const after = data;
 
-			if (before.points !== undefined && after.points !== undefined) {
-				if (before.points.length !== after.points.length) { return false; }
-				for (let i = 0; i < before.points.length; ++i) {
-					if (before.points[i].x !== after.points[i].x || before.points[i].y !== after.points[i].y) { return false; }
-				}
-			}
-
-			// Perform deep comparison for text options and cursor data
-			// This part is crucial for cache invalidation
-			return before.text?.forceCalculateMaxLineWidth === after.text?.forceCalculateMaxLineWidth
-				&& before.text?.forceTextAlign === after.text?.forceTextAlign
-				&& before.text?.wordWrapWidth === after.text?.wordWrapWidth
-				&& before.text?.padding === after.text?.padding
-				&& before.text?.value === after.text?.value
-				&& before.text?.alignment === after.text?.alignment
-				&& before.text?.font?.bold === after.text?.font?.bold
-				&& before.text?.font?.size === after.text?.font?.size
-				&& before.text?.font?.family === after.text?.font?.family
-				&& before.text?.font?.italic === after.text?.font?.italic
-				&& before.text?.box?.angle === after.text?.box?.angle
-				&& before.text?.box?.scale === after.text?.box?.scale
-				&& before.text?.box?.offset?.x === after.text?.box?.offset?.x
-				&& before.text?.box?.offset?.y === after.text?.box?.offset?.y
-				&& before.text?.box?.maxHeight === after.text?.box?.maxHeight
-				&& before.text?.box?.padding?.x === after.text?.box?.padding?.x
-				&& before.text?.box?.padding?.y === after.text?.box?.padding?.y
-				&& before.text?.box?.alignment?.vertical === after.text?.box?.alignment?.vertical
-				&& before.text?.box?.alignment?.horizontal === after.text?.box?.alignment?.horizontal
-				// Check background inflation (now used)
-				&& before.text?.box?.background?.inflation?.x === after.text?.box?.background?.inflation?.x
-				&& before.text?.box?.background?.inflation?.y === after.text?.box?.background?.inflation?.y
-				// Check border properties (now including radius and highlight)
-				&& before.text?.box?.border?.highlight === after.text?.box?.border?.highlight
-				&& JSON.stringify(before.text?.box?.border?.radius) === JSON.stringify(after.text?.box?.border?.radius) // For array comparison
-				// Check new cursor properties
-				&& before.toolDefaultHoverCursor === after.toolDefaultHoverCursor
-				&& before.toolDefaultDragCursor === after.toolDefaultDragCursor
-				// Check hitTestBackground
-				&& before.hitTestBackground === after.hitTestBackground
-				// Check box property
-				&& (before.box === undefined) === (after.box === undefined)
-				&& (before.box === undefined || (before.box.min.x === after.box?.min.x && before.box.min.y === after.box?.min.y && before.box.max.x === after.box?.max.x && before.box.max.y === after.box?.max.y));
-		}
-
-		if (checkUnchanged(this._data, data)) {
-			this._data = data; // If unchanged, just reassign for reference consistency
-		} else {
-			this._data = data; // Assign new data
-			// Invalidate all caches
+		if (null === before || null === after) {
+			this._data = data;
 			this._polygonPoints = null;
 			this._internalData = null;
 			this._linesInfo = null;
 			this._fontInfo = null;
 			this._boxSize = null;
+			// NOTE: We don't clear _lastGoodInternalData and _lastGoodPolygonPoints here
+			// because they should persist across data updates
+			return;
 		}
+
+		// NEW: Helper to validate coordinates
+		const isValidCoordinate = (val: number): boolean => {
+			return typeof val === 'number' && !isNaN(val) && isFinite(val);
+		};
+
+		// NEW: Check if the new data has valid coordinates
+		let hasValidCoordinates = false;
+		if (after.points && after.points.length > 0) {
+			hasValidCoordinates = after.points.every(p =>
+				isValidCoordinate(p.x) && isValidCoordinate(p.y)
+			);
+		} else if (after.box) {
+			hasValidCoordinates =
+				isValidCoordinate(after.box.min.x) &&
+				isValidCoordinate(after.box.min.y) &&
+				isValidCoordinate(after.box.max.x) &&
+				isValidCoordinate(after.box.max.y);
+		}
+
+		// 1. Check for Content/Measurement changes (expensive to re-calculate)
+		const contentUnchanged =
+			before.text?.value === after.text?.value &&
+			before.text?.font?.size === after.text?.font?.size &&
+			before.text?.font?.bold === after.text?.font?.bold &&
+			before.text?.font?.italic === after.text?.font?.italic &&
+			before.text?.font?.family === after.text?.font?.family &&
+			before.text?.wordWrapWidth === after.text?.wordWrapWidth &&
+			before.text?.padding === after.text?.padding &&
+			before.text?.box?.padding?.x === after.text?.box?.padding?.x &&
+			before.text?.box?.padding?.y === after.text?.box?.padding?.y &&
+			before.text?.box?.scale === after.text?.box?.scale &&
+			before.text?.box?.maxHeight === after.text?.box?.maxHeight &&
+			before.text?.box?.background?.inflation?.x === after.text?.box?.background?.inflation?.x &&
+			before.text?.box?.background?.inflation?.y === after.text?.box?.background?.inflation?.y &&
+			before.text?.forceCalculateMaxLineWidth === after.text?.forceCalculateMaxLineWidth;
+
+		// 2. Check for Geometry/Position changes (cheap to re-calculate)
+		let pointsUnchanged = before.points === undefined === (after.points === undefined);
+		if (pointsUnchanged && before.points !== undefined && after.points !== undefined) {
+			if (before.points.length !== after.points.length) {
+				pointsUnchanged = false;
+			} else {
+				for (let i = 0; i < before.points.length; ++i) {
+					if (before.points[i].x !== after.points[i].x || before.points[i].y !== after.points[i].y) {
+						pointsUnchanged = false;
+						break;
+					}
+				}
+			}
+		}
+
+		const boxUnchanged = (before.box === undefined === (after.box === undefined)) &&
+			(before.box === undefined || (
+				before.box.min.x === after.box?.min.x &&
+				before.box.min.y === after.box?.min.y &&
+				before.box.max.x === after.box?.max.x &&
+				before.box.max.y === after.box?.max.y
+			));
+
+		const layoutUnchanged =
+			before.text?.box?.angle === after.text?.box?.angle &&
+			before.text?.box?.offset?.x === after.text?.box?.offset?.x &&
+			before.text?.box?.offset?.y === after.text?.box?.offset?.y &&
+			before.text?.box?.alignment?.vertical === after.text?.box?.alignment?.vertical &&
+			before.text?.box?.alignment?.horizontal === after.text?.box?.alignment?.horizontal &&
+			before.text?.alignment === after.text?.alignment;
+
+		if (!contentUnchanged) {
+			// Content changed: Invalidate ALL caches as measurement and layout both need update
+			this._linesInfo = null;
+			this._fontInfo = null;
+			this._boxSize = null;
+			this._internalData = null;
+			this._polygonPoints = null;
+			// NOTE: We preserve _lastGoodInternalData and _lastGoodPolygonPoints
+		} else if (!pointsUnchanged || !boxUnchanged || !layoutUnchanged) {
+			// NEW: Only invalidate coordinate-dependent caches if the new coordinates are VALID
+			// If coordinates are invalid (e.g., during data loading), keep the cache intact
+			if (hasValidCoordinates) {
+				this._internalData = null;
+				this._polygonPoints = null;
+			} else {
+				console.warn('[TextRenderer] setData received invalid coordinates, preserving cache');
+			}
+		}
+
+		// Update other properties that don't affect layout (background color, border width, etc.)
+		// No cache invalidation needed for these as they are accessed directly from this._data in draw()
+		this._data = data;
 	}
 
 	/**
@@ -905,12 +953,21 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 	 * @returns A {@link HitTestResult} if the text box is hit, otherwise `null`.
 	 */
 	public hitTest(x: Coordinate, y: Coordinate): HitTestResult<LineToolHitTestData> | null {
-		if (this._data === null || ((this._data.points === undefined || this._data.points.length === 0) && this._data.box === undefined)) {
+		// Allow hit testing if we have cached polygon points even when current data is missing
+		const hasCurrentData = this._data !== null && ((this._data.points !== undefined && this._data.points.length > 0) || this._data.box !== undefined);
+		const hasCachedData = this._lastGoodPolygonPoints !== null && this._lastGoodPolygonPoints.length > 0;
+
+		if (!hasCurrentData && !hasCachedData) {
 			return null;
 		}
 
 		const hitPoint = new Point(x, y);
-		const { text, toolDefaultHoverCursor, toolDefaultDragCursor, hitTestBackground } = this._data;
+
+		// Extract data with null-safe defaults for cached-data-only scenarios
+		const text = this._data?.text;
+		const toolDefaultHoverCursor = this._data?.toolDefaultHoverCursor;
+		const toolDefaultDragCursor = this._data?.toolDefaultDragCursor;
+		const hitTestBackground = this._data?.hitTestBackground;
 
 		// The calculated polygon points (4 corners of the rotated text box)
 		const polygonPoints = this._getPolygonPoints();
@@ -919,7 +976,7 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 		const isInsidePolygon = pointInPolygon(hitPoint, polygonPoints);
 
 		// CRUCIAL FIX: Implement Border Hit Test for robustness, especially on zero-area input
-		const borderWidth = text.box?.border?.width || 0;
+		const borderWidth = text?.box?.border?.width || 0;
 		const borderHitTolerance = 4; // Add a small pixel tolerance for border clicks (e.g. 4px)
 		let isNearBorder = false;
 
@@ -993,7 +1050,11 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 	 * @returns `true` if the text box is entirely off-screen, `false` otherwise.
 	 */
 	public isOutOfScreen(width: number, height: number): boolean {
-		if (null === this._data || ((void 0 === this._data.points || 0 === this._data.points.length) && this._data.box === undefined)) { return true; }
+		// Allow rendering if we have cached data even when current points are missing
+		const hasCurrentData = this._data !== null && ((this._data.points !== undefined && this._data.points.length > 0) || this._data.box !== undefined);
+		const hasCachedData = this._lastGoodInternalData !== null;
+
+		if (!hasCurrentData && !hasCachedData) { return true; }
 
 		const internalData = this._getInternalData();
 		if (internalData.boxLeft + internalData.boxWidth < 0 || internalData.boxLeft > width) {
@@ -1040,7 +1101,11 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 	 * @returns void
 	 */
 	public draw(target: CanvasRenderingTarget2D): void {
-		if (this._data === null || ((this._data.points === undefined || this._data.points.length === 0) && this._data.box === undefined)) { return; }
+		// Allow drawing if we have cached data even when current points are missing
+		const hasCurrentData = this._data !== null && ((this._data.points !== undefined && this._data.points.length > 0) || this._data.box !== undefined);
+		const hasCachedData = this._lastGoodInternalData !== null;
+
+		if (!hasCurrentData && !hasCachedData) { return; }
 
 		target.useMediaCoordinateSpace(({ context: ctx, mediaSize }: MediaCoordinatesRenderingScope) => {
 			this._mediaSize = mediaSize;
@@ -1089,9 +1154,15 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 
 			// 2. Draw box background (this will cast the shadow)
 			if (textData.box?.background?.color && !isFullyTransparent(textData.box.background.color)) {
+				const opacity = textData.box.background.opacity ?? 1;
+				const oldAlpha = ctx.globalAlpha;
+				ctx.globalAlpha = oldAlpha * opacity;
+
 				ctx.fillStyle = textData.box.background.color;
 				drawRoundRect(ctx, scaledBoxLeft, scaledBoxTop, scaledBoxWidth, scaledBoxHeight, borderRadius, boxBorderStyle);
 				ctx.fill();
+
+				ctx.globalAlpha = oldAlpha;
 			}
 
 			// 3. Reset shadow properties BEFORE drawing the border, so the border itself doesn't cast a shadow
@@ -1105,10 +1176,16 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 
 			// 4. Draw border
 			if ((textData.box?.border?.width || 0) > 0 && textData.box?.border?.color && !isFullyTransparent(textData.box.border.color)) {
+				const opacity = textData.box.border.opacity ?? 1;
+				const oldAlpha = ctx.globalAlpha;
+				ctx.globalAlpha = oldAlpha * opacity;
+
 				ctx.strokeStyle = textData.box.border.color;
 				ctx.lineWidth = textData.box.border.width;
 				drawRoundRect(ctx, scaledBoxLeft, scaledBoxTop, scaledBoxWidth, scaledBoxHeight, borderRadius, boxBorderStyle);
 				ctx.stroke();
+
+				ctx.globalAlpha = oldAlpha;
 			}
 
 			// Draw text
@@ -1167,7 +1244,26 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 	private _getInternalData(): InternalData {
 		if (this._internalData !== null) { return this._internalData; }
 
-		const data = ensureNotNull(this._data);
+		// NEW: Helper function to validate coordinates
+		const isValidCoordinate = (val: number): boolean => {
+			return typeof val === 'number' && !isNaN(val) && isFinite(val);
+		};
+
+		// NEW: If we can't get valid data, use cached coordinates
+		if (this._data === null) {
+			if (this._lastGoodInternalData) {
+				console.warn('[TextRenderer] No data available, using cached position');
+				return this._lastGoodInternalData;
+			}
+			// Last resort fallback
+			return {
+				boxLeft: 0, boxTop: 0, boxWidth: 0, boxHeight: 0,
+				textAlign: TextAlignment.Center, textTop: 0, textStart: 0,
+				rotationPivot: new Point(0 as Coordinate, 0 as Coordinate)
+			};
+		}
+
+		const data = this._data;
 
 		const paddingX = getScaledBoxPaddingX(data);
 		const paddingY = getScaledBoxPaddingY(data);
@@ -1187,17 +1283,38 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 
 		if (data.points && data.points.length >= 2 && !isDegenerate) {
 			const [rectPointA, rectPointB] = data.points;
-			rectMinX = Math.min(rectPointA.x, rectPointB.x);
-			rectMaxX = Math.max(rectPointA.x, rectPointB.x);
-			rectMinY = Math.min(rectPointA.y, rectPointB.y);
-			rectMaxY = Math.max(rectPointA.y, rectPointB.y);
-			useBoxOrPoints = true;
+
+			// NEW: Validate coordinates before using them
+			if (isValidCoordinate(rectPointA.x) && isValidCoordinate(rectPointA.y) &&
+				isValidCoordinate(rectPointB.x) && isValidCoordinate(rectPointB.y)) {
+				rectMinX = Math.min(rectPointA.x, rectPointB.x);
+				rectMaxX = Math.max(rectPointA.x, rectPointB.x);
+				rectMinY = Math.min(rectPointA.y, rectPointB.y);
+				rectMaxY = Math.max(rectPointA.y, rectPointB.y);
+				useBoxOrPoints = true;
+			} else {
+				// Coordinates are invalid - use cached data if available
+				if (this._lastGoodInternalData) {
+					console.warn('[TextRenderer] Invalid coordinates detected during data loading, using cached position');
+					return this._lastGoodInternalData;
+				}
+			}
 		} else if (data.box) {
-			rectMinX = data.box.min.x;
-			rectMaxX = data.box.max.x;
-			rectMinY = data.box.min.y;
-			rectMaxY = data.box.max.y;
-			useBoxOrPoints = true;
+			// NEW: Validate box coordinates
+			if (isValidCoordinate(data.box.min.x) && isValidCoordinate(data.box.min.y) &&
+				isValidCoordinate(data.box.max.x) && isValidCoordinate(data.box.max.y)) {
+				rectMinX = data.box.min.x;
+				rectMaxX = data.box.max.x;
+				rectMinY = data.box.min.y;
+				rectMaxY = data.box.max.y;
+				useBoxOrPoints = true;
+			} else {
+				// Box coordinates are invalid - use cached data if available
+				if (this._lastGoodInternalData) {
+					console.warn('[TextRenderer] Invalid box coordinates detected, using cached position');
+					return this._lastGoodInternalData;
+				}
+			}
 		}
 
 		if (!useBoxOrPoints) {
@@ -1206,6 +1323,17 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 			const boxWidth = boxSize.width;
 			const boxHeight = boxSize.height;
 			const defaultAnchor = data.points && data.points.length > 0 ? data.points[0] : new Point(0 as Coordinate, 0 as Coordinate);
+
+			// NEW: Validate default anchor coordinates
+			if (!isValidCoordinate(defaultAnchor.x) || !isValidCoordinate(defaultAnchor.y)) {
+				if (this._lastGoodInternalData) {
+					console.warn('[TextRenderer] Invalid anchor coordinates detected, using cached position');
+					return this._lastGoodInternalData;
+				}
+				// If no cache, use origin as last resort
+				defaultAnchor.x = 0 as Coordinate;
+				defaultAnchor.y = 0 as Coordinate;
+			}
 
 			let refX: number = defaultAnchor.x as number;
 			let refY: number = defaultAnchor.y as number;
@@ -1250,6 +1378,10 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 				textStart: textX,
 				rotationPivot: defaultAnchor,
 			};
+
+			// NEW: Cache this successful calculation
+			this._lastGoodInternalData = { ...this._internalData };
+
 			return this._internalData;
 		}
 
@@ -1316,6 +1448,9 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 			textStart: textX,
 			rotationPivot: rotationPivot,
 		};
+
+		// NEW: Cache this successful calculation
+		this._lastGoodInternalData = { ...this._internalData };
 
 		return this._internalData;
 	}
@@ -1441,7 +1576,14 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 	 */
 	private _getPolygonPoints(): Point[] {
 		if (null !== this._polygonPoints) { return this._polygonPoints; }
-		if (null === this._data) { return []; }
+
+		// NEW: If we have no data but have cached polygon points, return them
+		if (null === this._data) {
+			if (this._lastGoodPolygonPoints) {
+				return this._lastGoodPolygonPoints;
+			}
+			return [];
+		}
 
 		const { boxLeft, boxTop, boxWidth, boxHeight } = this._getInternalData();
 		const pivot = this._getRotationPoint();
@@ -1454,6 +1596,9 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 			rotatePoint(new Point((boxLeft + boxWidth) as Coordinate, (boxTop + boxHeight) as Coordinate), pivot, angle),
 			rotatePoint(new Point(boxLeft as Coordinate, (boxTop + boxHeight) as Coordinate), pivot, angle),
 		];
+
+		// NEW: Cache this successful calculation
+		this._lastGoodPolygonPoints = [...this._polygonPoints];
 
 		return this._polygonPoints;
 	}

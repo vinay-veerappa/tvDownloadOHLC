@@ -27,19 +27,41 @@ class TextPaneViewV2<HorzScaleItem> extends LineToolPaneView<HorzScaleItem> {
     }
 
     protected override _updateImpl(height: number, width: number): void {
-        super._updateImpl(height, width);
-        if (this._points.length >= 1) {
-            const tool = this._tool as TextV2<HorzScaleItem>;
-            const options = tool.options() as LineToolTextOptions & LineToolOptionsCommon;
+        // IMPORTANT: Call parent's clear and update, but we handle point conversion ourselves
+        // to ensure the text renderer is always appended (for caching to work)
+        (this._renderer as CompositeRenderer<HorzScaleItem>).clear();
+
+        const tool = this._tool as TextV2<HorzScaleItem>;
+        const options = tool.options() as LineToolTextOptions & LineToolOptionsCommon;
+
+        if (!options.visible) {
+            return;
+        }
+
+        // Try to update points - this may fail during data loading
+        const pointsValid = this._updatePoints();
+
+        // ALWAYS call setData and append the renderer, even if points are invalid
+        // This is critical for the TextRenderer's coordinate caching to work
+        // When points are invalid, the renderer will use its cached last-good coordinates
+        if (this._points.length >= 1 || pointsValid === false) {
+            // Use the current point if available, otherwise pass an empty array
+            // The TextRenderer will use cached coordinates if the array is empty or coordinates are invalid
+            const renderPoints = this._points.length >= 1 ? [this._points[0]] : [];
 
             this._textRenderer.setData({
-                points: [this._points[0]],
+                points: renderPoints.length > 0 ? renderPoints : undefined,
                 text: options.text,
                 toolDefaultHoverCursor: options.defaultHoverCursor,
                 toolDefaultDragCursor: options.defaultDragCursor,
                 hitTestBackground: true,
             });
             (this._renderer as CompositeRenderer<HorzScaleItem>).append(this._textRenderer);
+
+            // Add anchors only when we have valid points
+            if (this.areAnchorsVisible() && this._points.length > 0) {
+                this._addAnchors(this._renderer as CompositeRenderer<HorzScaleItem>);
+            }
         }
     }
 
@@ -164,7 +186,25 @@ export class TextV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
             };
         }
 
-        if (rect.width === 0 || rect.height === 0) return null;
+        if (rect.width === 0 || rect.height === 0) {
+            // If rect is 0 but we have a point, provide a default layout to allow editing
+            if (this._points.length > 0) {
+                const p = this.pointToScreenPoint(this._points[0]);
+                if (p) {
+                    return {
+                        x: p.x - 50,
+                        y: p.y - 12,
+                        width: 100,
+                        height: 24,
+                        padding: options.text.padding || 4,
+                        lineHeight: (options.text.font?.size || 14) * 1.2,
+                        alignmentHorizontal: 'center',
+                        alignmentVertical: 'center',
+                    };
+                }
+            }
+            return null;
+        }
 
         return {
             x: rect.x,
