@@ -678,28 +678,28 @@ export function PropertiesModal({ open, onOpenChange, drawingType, initialOption
                                             </div>
                                         )}
 
-                                        {/* Alignment */}
+                                        {/* Alignment - Using flat format for adapter compatibility */}
                                         <div className="flex gap-1 border-l pl-2 ml-2">
-                                            {/* Vertical */}
-                                            <Button variant={options.alignment?.vertical === 'top' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, vertical: 'top' })} title="Top">
+                                            {/* Vertical - UI uses 'center' for middle */}
+                                            <Button variant={options.alignmentVertical === 'top' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignmentVertical', 'top')} title="Top">
                                                 <ArrowUpToLine className="h-4 w-4" />
                                             </Button>
-                                            <Button variant={options.alignment?.vertical === 'middle' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, vertical: 'middle' })} title="Middle">
+                                            <Button variant={options.alignmentVertical === 'center' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignmentVertical', 'center')} title="Middle">
                                                 <AlignVerticalJustifyCenter className="h-4 w-4" />
                                             </Button>
-                                            <Button variant={options.alignment?.vertical === 'bottom' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, vertical: 'bottom' })} title="Bottom">
+                                            <Button variant={options.alignmentVertical === 'bottom' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignmentVertical', 'bottom')} title="Bottom">
                                                 <ArrowDownToLine className="h-4 w-4" />
                                             </Button>
                                         </div>
                                         <div className="flex gap-1 border-l pl-2 ml-2">
                                             {/* Horizontal */}
-                                            <Button variant={options.alignment?.horizontal === 'left' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, horizontal: 'left' })} title="Left">
+                                            <Button variant={options.alignmentHorizontal === 'left' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignmentHorizontal', 'left')} title="Left">
                                                 <AlignLeft className="h-4 w-4" />
                                             </Button>
-                                            <Button variant={options.alignment?.horizontal === 'center' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, horizontal: 'center' })} title="Center">
+                                            <Button variant={options.alignmentHorizontal === 'center' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignmentHorizontal', 'center')} title="Center">
                                                 <AlignCenter className="h-4 w-4" />
                                             </Button>
-                                            <Button variant={options.alignment?.horizontal === 'right' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignment', { ...options.alignment, horizontal: 'right' })} title="Right">
+                                            <Button variant={options.alignmentHorizontal === 'right' ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => handleChange('alignmentHorizontal', 'right')} title="Right">
                                                 <AlignRight className="h-4 w-4" />
                                             </Button>
                                         </div>

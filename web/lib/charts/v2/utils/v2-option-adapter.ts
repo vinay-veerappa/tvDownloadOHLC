@@ -109,9 +109,16 @@ export const V2OptionAdapter = {
             flat.bold = v2Options.text.font?.bold;
             flat.italic = v2Options.text.font?.italic;
 
+            // Read alignment - prefer box.alignment, fall back to legacy text.alignment
             if (v2Options.text.box?.alignment) {
-                flat.alignmentVertical = v2Options.text.box.alignment.vertical;
                 flat.alignmentHorizontal = v2Options.text.box.alignment.horizontal;
+                // Map renderer's 'middle' to UI's 'center' for vertical alignment
+                const rawVert = v2Options.text.box.alignment.vertical;
+                flat.alignmentVertical = rawVert === 'middle' ? 'center' : rawVert;
+            }
+            // Fallback: if box alignment didn't provide horizontal, check legacy text.alignment
+            if (!flat.alignmentHorizontal && v2Options.text.alignment) {
+                flat.alignmentHorizontal = v2Options.text.alignment;
             }
 
             // Sync box styles for UI dialogs
@@ -204,7 +211,7 @@ export const V2OptionAdapter = {
         }
 
         // Text Mapping
-        if (v1Options.text !== undefined || v1Options.fontSize || v1Options.textColor || v1Options.fontFamily || v1Options.backgroundVisible !== undefined) {
+        if (v1Options.text !== undefined || v1Options.fontSize || v1Options.textColor || v1Options.fontFamily || v1Options.backgroundVisible !== undefined || v1Options.alignmentVertical !== undefined || v1Options.alignmentHorizontal !== undefined) {
             // console.log('[V2OptionAdapter] Mapping Text. input:', v1Options.text);
             const text = ensure(v2, 'text');
             if (v1Options.text !== undefined) {
@@ -252,14 +259,19 @@ export const V2OptionAdapter = {
                 }
             }
 
-            if (v1Options.alignmentVertical || v1Options.alignmentHorizontal) {
+            if (v1Options.alignmentVertical !== undefined || v1Options.alignmentHorizontal !== undefined) {
                 const align = ensure(v2, 'text.box.alignment');
-                if (v1Options.alignmentVertical) align.vertical = v1Options.alignmentVertical;
-                if (v1Options.alignmentHorizontal) align.horizontal = v1Options.alignmentHorizontal;
+                if (v1Options.alignmentVertical !== undefined) {
+                    // Map UI's 'center' back to renderer's 'middle' for vertical alignment
+                    align.vertical = v1Options.alignmentVertical === 'center' ? 'middle' : v1Options.alignmentVertical;
+                }
+                if (v1Options.alignmentHorizontal !== undefined) {
+                    align.horizontal = v1Options.alignmentHorizontal;
+                }
 
                 // CRITICAL SYNC: Ensure text.alignment (internal) matches text.box.alignment.horizontal
                 // This ensures TextRenderer.draw() uses the correct alignment for the text itself.
-                if (v1Options.alignmentHorizontal) {
+                if (v1Options.alignmentHorizontal !== undefined) {
                     text.alignment = v1Options.alignmentHorizontal;
                 }
             }

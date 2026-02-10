@@ -2302,10 +2302,10 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 open={raySettingsOpen}
                 onOpenChange={setRaySettingsOpen}
                 options={{
-                    ...DEFAULT_RAY_OPTIONS,
-                    color: selectedDrawingOptions?.lineColor || '#2962FF',
-                    width: selectedDrawingOptions?.lineWidth || 2,
-                    style: selectedDrawingOptions?.lineStyle || 0,
+                    color: selectedDrawingOptions?.lineColor || selectedDrawingOptions?.color || DEFAULT_RAY_OPTIONS.color,
+                    width: selectedDrawingOptions?.lineWidth || selectedDrawingOptions?.width || DEFAULT_RAY_OPTIONS.width,
+                    style: selectedDrawingOptions?.lineStyle ?? selectedDrawingOptions?.style ?? DEFAULT_RAY_OPTIONS.style,
+                    opacity: selectedDrawingOptions?.opacity ?? DEFAULT_RAY_OPTIONS.opacity,
                     text: selectedDrawingOptions?.text,
                     textColor: selectedDrawingOptions?.textColor,
                     fontSize: selectedDrawingOptions?.fontSize,
