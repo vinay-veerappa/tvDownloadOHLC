@@ -1,706 +1,397 @@
-# TradingView Drawing Tools - UI/UX Parity Guide
+# TradingView Drawing Tools - Implementation Status
 
-This document provides a comprehensive comparison between our current drawing tools implementation and TradingView's UI/UX patterns, serving as the reference for achieving feature parity.
+**Last Updated:** 2026-02-10  
+**Overall Progress:** ~70% Complete
 
----
-
-## Table of Contents
-
-1. [Overview](#overview)
-2. [TradingView's Core UI Patterns](#tradingviews-core-ui-patterns)
-3. [Tool-by-Tool Comparison](#tool-by-tool-comparison)
-4. [Universal Missing Features](#universal-missing-features)
-5. [Design Specifications](#design-specifications)
-6. [Implementation Roadmap](#implementation-roadmap)
+This document tracks the verified implementation status of TradingView parity features.
 
 ---
 
-## Overview
+## ✅ VERIFIED COMPLETE (100%)
 
-**Current Status:** 14 drawing tools implemented with basic functionality  
-**Goal:** Match TradingView's professional UI/UX for all tools  
-**Priority:** Universal components first, then per-tool customization
+### 1. Tool Count: 23 Tools Implemented
+**Lines (7):** Trend Line, Ray, Horizontal Line, Vertical Line, Horizontal Ray, Extended Line, Cross Line  
+**Shapes (5):** Rectangle, Circle, Arrow, Triangle, Callout  
+**Fibonacci (1):** Fibonacci Retracement  
+**Measurements (3):** Measure, Price Range, Date Range  
+**Annotations (2):** Text, Price Label  
+**Trading (1):** Risk/Reward  
+**Drawing (4):** Brush, Path, Highlighter, Parallel Channel
 
-### Current Tools
-- Trend Line
-- Horizontal Line
-- Vertical Line
-- Ray
-- Rectangle
-- Fibonacci Retracement
-- Text
-- Measure
-- Risk/Reward
-- Expected Move Levels (custom)
-- Session Highlighting (custom)
-- Hourly Profiler (custom)
-- VWAP (custom)
-- Anchored Text
+### 2. Floating Toolbar
+- ✅ Settings button
+- ✅ Clone button
+- ✅ Lock button
+- ✅ Delete button
+- ✅ Hide button
+- ✅ Z-order controls (bring to front, send to back, forward, backward)
+- ✅ Quick style controls (color, width, style)
+- ✅ Draggable positioning
+- ✅ Auto-hide after inactivity
 
----
+**File:** `web/components/drawing/FloatingToolbar.tsx`
 
-## TradingView's Core UI Patterns
+### 3. Settings Dialogs
 
-### 1. Floating Toolbar
+**Dedicated 4-Tab Dialogs (6 tools):**
+1. Trend Line (`TrendLineSettings.tsx`)
+2. Horizontal Line (`HorizontalLineSettings.tsx`)
+3. Vertical Line (`VerticalLineSettings.tsx`)
+4. Ray (`RaySettings.tsx`)
+5. Rectangle (`RectangleSettings.tsx`)
+6. Text (`TextSettings.tsx`)
 
-**Appears immediately after drawing completion**
+**Fibonacci Custom Dialog:**
+- Fibonacci Retracement (`fibonacci-settings-view.tsx`)
 
-```
-┌─────────────────────────────────────────┐
-│ [⚙️] [📋] [🔒] [🗑️] [👁️] [⭐]         │
-└─────────────────────────────────────────┘
-```
+**Generic 3-Tab Dialog (16 tools):**
+- All other tools use `PropertiesModal.tsx`
 
-**Buttons:**
-- ⚙️ **Settings** - Opens settings dialog
-- 📋 **Clone** - Duplicates the drawing
-- 🔒 **Lock** - Prevents accidental modification
-- 🗑️ **Delete** - Removes the drawing
-- 👁️ **Hide** - Toggles visibility
-- ⭐ **Favorite** - Adds tool to favorites
-
-**Behavior:**
-- Positioned near the drawing's end point
-- Follows the drawing when moved
-- Auto-hides after 3 seconds of no interaction
-- Reappears on hover
-
----
-
-### 2. Settings Dialog (4-Tab System)
-
-**Structure:**
-```
-┌─────────────────────────────────────────┐
-│  [Tool Name] Settings           [x]     │
-├─────────────────────────────────────────┤
-│  [Style] [Coordinates] [Visibility] [Text] │
-├─────────────────────────────────────────┤
-│  [Tab Content]                          │
-│                                         │
-│  [Template ▼]  [OK]  [Cancel]          │
-└─────────────────────────────────────────┘
-```
-
-**Tab 1: Style**
-- Color picker with hex display
-- Opacity slider (0-100%)
-- Line thickness (1-4px)
-- Line style (Solid/Dashed/Dotted)
-- Tool-specific options (extend, fill, etc.)
-- Stats display toggles
-
-**Tab 2: Coordinates**
-- Precise point editing
-- Bar number
-- Date/Time
-- Price value
-- Apply button
-
-**Tab 3: Visibility**
-- Timeframe checkboxes
-- Show/hide on specific intervals
-- Multi-timeframe support
-
-**Tab 4: Text**
-- Text input field
-- Position selector
-- Font size
-- Color picker
-- Alignment options
-
----
-
-### 3. Keyboard Shortcuts
-
-**Tool Selection:**
-| Shortcut | Tool |
-|:---------|:-----|
-| `Alt + T` | Trend Line |
-| `Alt + H` | Horizontal Line |
-| `Alt + V` | Vertical Line |
-| `Alt + F` | Fibonacci Retracement |
-| `Alt + C` | Cross Line |
-| `Alt + Shift + R` | Rectangle |
-
-**Actions:**
-| Shortcut | Action |
-|:---------|:-------|
-| `Esc` | Cancel active tool |
-| `Del` | Delete selected |
-| `Ctrl + Z` | Undo |
-| `Ctrl + Y` | Redo |
-| `Ctrl + C` | Copy selected |
-| `Ctrl + V` | Paste |
-| `Ctrl + D` | Clone selected |
-| `Ctrl + Alt + H` | Hide all drawings |
-| `Arrow Keys` | Move selected (1px) |
-| `Shift + Arrow` | Move selected (10px) |
-
----
+**Tab Features:**
+- ✅ Style: Color, opacity, thickness, line style, tool-specific options
+- ✅ Text: Input, size, bold/italic, color, alignment (H+V), background, border
+- ✅ Coordinates: Display points (read-only)
+- ✅ Visibility: Timeframe toggles
 
 ### 4. Template System
+- ✅ Save current settings as template
+- ✅ Load template from dropdown
+- ✅ Set default template per tool
+- ✅ Delete templates
+- ✅ Manage templates dialog
 
-**Template Dropdown in Settings:**
-```
-┌──────────────────────────┐
-│ Template:  [▼]           │
-├──────────────────────────┤
-│ • Default                │
-│ • My Blue Trendline      │
-│ • Support Level          │
-│ • Resistance Level       │
-│ ──────────────────────   │
-│ ✚ Save as...             │
-│ ⚙️ Manage Templates...   │
-└──────────────────────────┘
-```
+**File:** `web/lib/template-manager.ts`
 
-**Features:**
-- Save current settings as template
-- Apply template to new drawings
-- Set default template per tool
-- Manage/delete templates
+### 5. Text Alignment (FIXED 2026-02-10)
+- ✅ Horizontal: left/center/right
+- ✅ Vertical: top/middle/bottom
+- ✅ Persistence across sessions
+- ✅ Works for all 23 tools
 
----
+**Files:**
+- `web/lib/charts/v2/utils/v2-option-adapter.ts`
+- `web/components/drawing-settings/TextSettingsTab.tsx`
+- `web/components/properties-modal.tsx`
 
-### 5. Magnet Mode
-
-**UI Location:** Top toolbar
-
-**States:**
-- 🧲 **Off** - No snapping
-- 🧲 **Weak** - Snap within 30% of bar range
-- 🧲 **Strong** - Always snap to nearest OHLC
-
-**Visual Feedback:**
-- Green dot at snap point
-- Tooltip shows value (e.g., "High: 4,250.50")
-- Line "jumps" to OHLC point
-
-**Keyboard:** Hold `Ctrl` to temporarily toggle
+### 6. Clone & Lock Functions
+- ✅ Clone any drawing (creates duplicate)
+- ✅ Lock/unlock drawings (prevents modification)
+- ✅ Visual indicators for locked state
+- ✅ Accessible via floating toolbar
 
 ---
 
-## Tool-by-Tool Comparison
+## ⚠️ VERIFIED PARTIAL (40-85%)
 
-### 1. Trend Line
+### 1. Settings Dialogs - 85% Complete
+**Missing:**
+- ❌ Precise coordinate editing (can view but not edit points)
+- ❌ Some tool-specific advanced options
 
-**TradingView Features:**
+### 2. Magnet Mode - 40% Complete
+**Implemented:**
+- ✅ Snap to OHLC values (functional)
+- ✅ Three modes (Off/Weak/Strong)
 
-**Style Tab:**
-- Color + Opacity
-- Thickness (1-4)
-- Style (Solid/Dashed/Dotted)
-- ☐ Extend Left
-- ☑ Extend Right
-- Show Stats:
-  - ☑ Price Range
-  - ☑ Bars Range
-  - ☑ Date/Time Range
-  - ☑ Distance
-  - ☑ Angle
+**Missing:**
+- ❌ No UI indicator in toolbar
+- ❌ No visual feedback (green dot at snap point)
+- ❌ No tooltip showing snap value
+- ❌ No keyboard toggle (Ctrl)
 
-**Our Status:**
-- ✅ Basic drawing
-- ✅ Selection handles
-- ✅ Magnet snapping (hidden)
-- ✅ Extended line support (Left/Right)
-- ✅ Extended hit testing
-- ❌ No settings dialog (In Progress)
-- ❌ No stats display
-- ❌ No keyboard shortcut
+### 3. Stats Display - 60% Complete
+**Implemented:**
+- ✅ Measure tool (price, %, bars, time)
+- ✅ Price Range (price, %)
+- ✅ Date Range (bars, time)
+- ✅ Risk/Reward (R:R ratio)
 
-**Gap Priority:** CRITICAL
-
----
-
-### 2. Horizontal Line
-
-**TradingView Features:**
-
-**Style Tab:**
-- Color + Opacity
-- Thickness (1-4)
-- Style (Solid/Dashed/Dotted)
-- ☑ Show Price
-- ☑ Show Percent
-
-**Additional:**
-- 🔔 Create Alert button
-- Price label on right axis
-
-**Our Status:**
-- ✅ Basic drawing
-- ❌ No settings
-- ❌ No price label
-- ❌ No alert creation
-- ❌ No keyboard shortcut
-
-**Gap Priority:** HIGH
+**Missing:**
+- ❌ Trend Line (no angle, distance, price range, bars range)
+- ❌ Customizable stats toggles
+- ❌ Stats box background/styling options
 
 ---
 
-### 3. Vertical Line
+## ❌ VERIFIED NOT IMPLEMENTED (0%)
 
-**TradingView Features:**
+### 1. Keyboard Shortcuts - CRITICAL
+**Missing:**
+- ❌ Tool selection (Alt+T, Alt+H, Alt+V, Alt+F, Alt+C, Alt+Shift+R)
+- ❌ Actions (Esc, Del, Ctrl+Z, Ctrl+Y, Ctrl+C, Ctrl+V, Ctrl+D, Ctrl+Alt+H)
+- ❌ Movement (Arrow keys for 1px, Shift+Arrow for 10px)
 
-**Style Tab:**
-- Color + Opacity
-- Thickness (1-4)
-- Style (Solid/Dashed/Dotted)
-- ☑ Show Date/Time
+**Priority:** CRITICAL  
+**Effort:** 2-3 days
 
-**Our Status:**
-- ✅ Basic drawing
-- ✅ Basic Settings (Color, Width, Label)
-- ✅ Date/Time Label (Timezone corrected)
-- ❌ No keyboard shortcut
+### 2. Undo/Redo System - CRITICAL
+**Missing:**
+- ❌ Command pattern
+- ❌ History stack
+- ❌ Undo (Ctrl+Z)
+- ❌ Redo (Ctrl+Y)
 
-**Gap Priority:** MEDIUM (Functional parity achieved for mouse users)
+**Priority:** CRITICAL  
+**Effort:** 3-4 days
 
----
+### 3. Multi-Select + Bulk Edit
+**Missing:**
+- ❌ Select multiple drawings (Ctrl+Click or drag box)
+- ❌ Bulk property changes
+- ❌ Bulk delete
+- ❌ Bulk lock/unlock
+- ❌ Group move
 
-### 4. Rectangle
+**Priority:** MEDIUM  
+**Effort:** 4-5 days
 
-**TradingView Features:**
+### 4. Alert Creation
+**Missing:**
+- ❌ Alert button on Horizontal Line
+- ❌ Price alert dialog
+- ❌ Alert management
+- ❌ Backend integration
 
-**Style Tab:**
-- Border: Color, Opacity, Thickness, Style
-- Background: ☑ Filled, Color, Opacity
-- ☐ Show Price Range
-- ☐ Show Bars Range
-
-**Interaction:**
-- 8-point resize (4 corners + 4 edges)
-- Maintain aspect ratio (Shift+Drag)
-
-**Our Status:**
-- ✅ Basic drawing
-- ✅ Fill + border colors
-- ❌ No separate opacity controls
-- ❌ Only 2-point resize
-- ❌ No stats display
-- ❌ No keyboard shortcut
-
-**Gap Priority:** HIGH
+**Priority:** LOW (requires backend)  
+**Effort:** 5+ days
 
 ---
 
-### 5. Fibonacci Retracement
+## Tool-Specific Verified Status
 
-**TradingView Features:**
+### Trend Line - 85%
+- ✅ Basic drawing (2 points)
+- ✅ 4-tab settings dialog
+- ✅ Extend left/right
+- ✅ Text annotations with alignment
+- ✅ Magnet snapping (functional)
+- ❌ Stats display (angle, distance, price range, bars)
+- ❌ Keyboard shortcut (Alt+T)
 
-**Style Tab:**
-- Trend Line: Visible, Color, Thickness, Style
-- Levels: Individual colors, Add custom levels
-- Levels Line: Thickness, Style
-- Extend Lines: None/Left/Right/Both
-- Background: Filled, Color, Opacity
-- Labels: Show, Prices, Levels, Position, Font Size
+### Horizontal Line - 80%
+- ✅ Basic drawing (1 point)
+- ✅ 4-tab settings dialog
+- ✅ Text annotations with alignment
+- ❌ Price label on right axis
+- ❌ Alert creation
+- ❌ Keyboard shortcut (Alt+H)
 
-**Our Status:**
-- ✅ Comprehensive settings (BEST!)
-- ✅ All major features
-- ❌ Can't add custom levels
+### Vertical Line - 90%
+- ✅ Basic drawing (1 point)
+- ✅ 4-tab settings dialog
+- ✅ Date/time label
+- ✅ Text annotations with alignment
+- ❌ Keyboard shortcut (Alt+V)
+
+### Rectangle - 90%
+- ✅ Basic drawing (2 points)
+- ✅ 4-tab settings dialog
+- ✅ Fill + border with separate opacity
+- ✅ Text annotations with alignment
+- ✅ **8-point resize (4 corners + 4 edges)** - VERIFIED
+- ❌ Aspect ratio lock (Shift+Drag)
+- ❌ Stats display (price range, bars range)
+- ❌ Keyboard shortcut (Alt+Shift+R)
+
+### Fibonacci Retracement - 85%
+- ✅ Comprehensive custom settings dialog
+- ✅ All standard levels (0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0)
+- ✅ Individual colors per level
+- ✅ Extend lines (None/Left/Right/Both)
+- ✅ Background fill with opacity
+- ✅ Labels with position/size customization
+- ❌ **Cannot add custom levels** - VERIFIED NOT IMPLEMENTED
 - ❌ No reverse button
-- ❌ No keyboard shortcut
-
-**Gap Priority:** LOW (already close to parity)
-
----
-
-### 6. Text Tool
-
-**TradingView Features:**
-
-**Style Tab:**
-- Text input
-- Font: Family, Size
-- Style: Bold, Italic, Underline
-- Color
-- Background: Filled, Color, Opacity
-- Border: Visible, Color, Thickness
-- Alignment: Left/Center/Right
-- Word Wrap: Enabled, Width
-
-**Our Status:**
-- ✅ Basic text placement
-- ✅ Font Size / Color / B/I
-- ✅ Background (Fill + Color + Opacity)
-- ✅ Border (Color + Width)
-- ✅ Alignment support
-- ⚠️ Font Family (Default Arial)
-
-**Gap Priority:** LOW (Parity achieved)
-
----
-
-### 7. Measure Tool
-
-**TradingView Features:**
-
-**Auto-Display Stats Box:**
-```
-┌─────────────────────┐
-│ Δ Price: +24.75     │
-│ Δ %:     +0.58%     │
-│ Bars:    222        │
-│ Time:    6h 30m     │
-│ Distance: 1.2%      │
-└─────────────────────┘
-```
-
-**Settings:**
-- Line: Color, Thickness, Style
-- Stats Box: Toggle individual stats, Background, Opacity
-
-**Our Status:**
-- ✅ Basic measure line
-- ✅ Shows stats
-- ❌ Can't customize stats
-- ❌ No stats box background
-
-**Gap Priority:** MEDIUM
-
----
-
-### 8. Risk/Reward Tool
-
-**TradingView Features:**
-
-**Style Tab:**
-- Entry Line: Color, Thickness, Style
-- Stop Loss: Color, Thickness, Style
-- Take Profit: Color, Thickness, Style
-- Risk/Reward Ratio: Target (auto-calculate)
-- ☑ Show R:R Label
-- ☑ Show Price Labels
-- ☑ Show Percent Labels
-- Background: Profit Zone (Green), Loss Zone (Red), Opacity
-
-**Our Status:**
-- ✅ Entry, Stop, Target points
-- ✅ Basic R:R calculation
-- ❌ No per-line color customization
-- ❌ No R:R display
-- ❌ No background zones
-
-**Gap Priority:** MEDIUM
-
----
-
-## Universal Missing Features
-
-### 1. Floating Toolbar
-**Priority:** CRITICAL  
-**Affects:** All 14 tools  
-**Effort:** Medium (1-2 days)
-
-### 2. Settings Dialog (4 tabs)
-**Priority:** CRITICAL  
-**Affects:** 13 tools (Fibonacci has it)  
-**Effort:** High (3-4 days for base, 1 day per tool)
-
-### 3. Keyboard Shortcuts
-**Priority:** CRITICAL  
-**Affects:** All tools  
-**Effort:** Low (1 day)
-
-### 4. Template System
-**Priority:** HIGH  
-**Affects:** All tools  
-**Effort:** Medium (2 days)
-
-### 5. Coordinates Tab
-**Priority:** MEDIUM  
-**Affects:** All tools with points  
-**Effort:** Medium (2 days)
-
-### 6. Visibility Tab
-**Priority:** MEDIUM  
-**Affects:** All tools  
-**Effort:** Low (1 day)
-
-### 7. Clone Function
-**Priority:** MEDIUM  
-**Affects:** All tools  
-**Effort:** Low (1 day)
-
-### 8. Lock Function
-**Priority:** LOW  
-**Affects:** All tools  
-**Effort:** Low (0.5 day)
-
----
-
-## Design Specifications
-
-### Colors (TradingView Defaults)
-
-```typescript
-const TRADINGVIEW_COLORS = {
-  // Primary
-  blue: '#2962FF',
-  
-  // Fibonacci Levels
-  fib_0: '#787B86',
-  fib_236: '#F23645',
-  fib_382: '#FFA726',
-  fib_5: '#26A69A',
-  fib_618: '#2962FF',
-  fib_786: '#9C27B0',
-  fib_1: '#787B86',
-  
-  // Risk/Reward
-  profit: '#26A69A',
-  loss: '#F23645',
-  
-  // UI
-  background: '#131722',
-  text: '#D1D4DC',
-  border: '#2A2E39',
-  
-  // Selection
-  selectionHandle: '#2962FF',
-  selectionBorder: '#FFFFFF',
-};
-```
-
-### Sizing & Spacing
-
-```typescript
-const TRADINGVIEW_SIZES = {
-  // Floating Toolbar
-  toolbarHeight: 32,
-  toolbarIconSize: 20,
-  toolbarGap: 4,
-  toolbarPadding: 4,
-  
-  // Settings Dialog
-  dialogWidth: 420,
-  dialogPadding: 20,
-  tabHeight: 36,
-  inputHeight: 32,
-  labelFontSize: 13,
-  
-  // Selection Handles
-  handleRadius: 6,
-  handleBorderWidth: 2,
-  
-  // Line Widths
-  minLineWidth: 1,
-  maxLineWidth: 4,
-  defaultLineWidth: 2,
-};
-```
-
----
-
-## Toolbar Design Patterns
-
-### Button Representation
-**Rule**: Toolbar buttons must NEVER fallback to displaying their property name (e.g., "Width", "Style") as text. They must always communicate via Icons or Visual Values.
-
-**Implementation**:
-1.  **Always Configured Icons**: Every button in `toolbar-configs.ts` (including `select` types) must have an `icon` property defined.
-2.  **Icon-First Rendering**: The `SelectButton` component must always render the `icon` if present.
-3.  **Visual Over Text**: If a value is selected (e.g., 2px), preferential treatment should be given to a visual representation (graphical line) over text ("2px"). Text labels are a fallback for specific values, but the generic property name (Tooltip) should never be the button's face content.
-4.  **State Hydration**: The parent container (e.g., `ChartContainer`) MUST synchronize the `selectedDrawingOptions` state with the active drawing's potential values immediately upon selection. Passing an empty or default object will trigger the "text fallback" anti-pattern.
-
-**Anti-Pattern to Avoid**:
-- Relying on `tooltip` as the default `label` when `value` is undefined.
-- Omitting `icon` for dropdown triggers.
-
-### Text Entry Patterns
-**Rule**: Text changes from any source (Inline Editor, Settings Dialog) must propagate to the central state immediately.
-
-**Implementation**:
-1.  **State Hydration**: When `InlineTextEditor` saves, it MUST update `selectedDrawingOptions` in `ChartContainer` if the edited drawing is currently selected.
-2.  **Property Standardization**: All text-capable tools must use `textColor` (not `color`) for text styling to match the standardized `TextSettingsTab` interface.
-
-### Standard Properties Reference
-
-To prevent property mismatches, all Drawing Tools must strictly adhere to the following naming conventions. Do not use legacy or tool-specific variations (e.g., `labelColor`, `showLabels`).
-
-| capabilities | Property Name | Type | Description |
-| :--- | :--- | :--- | :--- |
-| **Line** | `lineColor` | string | Main line color |
-| | `lineWidth` | number | Line width in px |
-| | `lineStyle` | number | 0=Solid, 1=Dotted, 2=Dashed |
-| **Text** | `text` | string | The text content |
-| | `textColor` | string | Color of the text (NOT `color`) |
-| | `fontSize` | number | Size in px (default 14) |
-| | `showLabel` | boolean | Toggle visibility (Singular!) |
-| | `bold` | boolean | |
-| | `italic` | boolean | |
-| | `fontFamily` | string | e.g. 'Arial', 'Verdana' |
-| **Background**| `backgroundColor`| string | Text background color |
-| | `showBackground` | boolean | Toggle background visibility |
-| | `backgroundOpacity`| number | 0-1 opacity |
-| **Border** | `borderColor` | string | Border color |
-| | `showBorder` | boolean | Toggle border visibility |
-| | `borderWidth` | number | Width in px |
-| **Fill** | `fillColor` | string | Shape fill color (Rect/Circle) |
-| | `fillOpacity` | number | 0-1 opacity multiplier |
-
-> [!IMPORTANT]
-> **Inheritance vs Composition**: While tools inherit from `DrawingBase`, standardized features like Text and Fill are composed via interfaces (`TextCapableOptions`, `FillableOptions`). Strict adherence to these property names allows the `FloatingToolbar` and `SettingsDialog` to be polymorphic and reusable.
-
-### Drawing Systems Architecture
-
-To ensure long-term maintainability and consistency, the drawing system follows a strict architecture involving inheritance for core behavior and composition for capabilities.
-
-#### 1. Class Hierarchy
-
-All drawing tools should inherit from a base class that handles common rendering lifecycle events (`attached`, `detached`, `updateAllViews`).
-
-*   **`DrawingBase` (Abstract)**: The root class. Handles ID generation, selection state (`isSelected`, `setSelected`), serialization (`toJSON`), and common options management.
-    *   **`TwoPointLineTool`**: Extends `DrawingBase`. Specialized for tools defined by a start and end point (e.g., `TrendLine`, `Ray`, `Arrow`). Handles common point updates and hit testing for lines.
-        *   `TrendLine`
-        *   `Ray`
-        *   `Arrow`
-    *   **`MultipointDrawing`** (Conceptual): For tools with >2 points (e.g., `Triangle`, `Path`).
-    *   **`Standalone Primitive`**: Tools that implement `ISeriesPrimitive` directly without `DrawingBase` (e.g., `Rectangle`). *Note: Future refactors should aim to migrate these to `DrawingBase` for consistency.*
-
-#### 2. Composition (Capabilities)
-
-Features shared across disparate tools (like Text or Fills) are defined as **Interfaces** and composed into the tool's Options interface. They are NOT inherited.
-
-*   **`TextCapableOptions`**:
-    *   `text` (string)
-    *   `textColor` (string) - **CRITICAL**: Do NOT use `color` or `labelColor`.
-    *   `fontSize` (number)
-    *   `showLabel` (boolean) - **CRITICAL**: Singular, not `showLabels`.
-    *   `bold`, `italic` (boolean)
-    *   `alignmentVertical`, `alignmentHorizontal`
-*   **`FillableOptions`**:
-    *   `fillColor` (string)
-    *   `fillOpacity` (number)
-
-**Example Usage**:
-```typescript
-interface MyToolOptions extends DrawingOptions, TextCapableOptions, FillableOptions {
-    // Tool specific props
-    lineWidth: number;
-}
-```
-
-#### 3. Naming Conventions
-
-*   **Classes**: PascalCase (e.g., `TrendLine`, `TextDrawing`).
-*   **Files**: Kebab-case (e.g., `trend-line.ts`, `text-drawing.ts`).
-*   **Properties**: camelCase.
-    *   **Colors**: Suffix with `Color` (e.g., `lineColor`, `textColor`, `fillColor`). Avoid generic `color`.
-    *   **Booleans**: Prefix with `show`, `enable`, or `is` (e.g., `showLabel`, `isLocked`).
-    *   **Handlers**: Prefix with `on` (e.g., `onDrawingCreated`).
-
-#### 4. Best Practices
-
-1.  **State Hydration**: When a tool's options change (via Toolbar or Settings), the `ChartContainer`'s `selectedDrawingOptions` state MUST be updated immediately. This ensures the Toolbar reflects the new reality.
-2.  **Renderer Separation**: logic should be split into a logical class (e.g., `TrendLine`) and a renderer class (e.g., `TrendLineRenderer`) that handles the raw Canvas 2D API. The logical class passes simple data structures (points, resolved options) to the renderer.
-3.  **Hit Testing**: Implement `hitTest` in the logical class, not the renderer. Return standard hit objects (`cursorStyle`, `hitType`, `externalId`).
-
----
-
-## Implementation Roadmap
-
-### Phase 1: Universal Components (Week 1)
-**Goal:** Build reusable components for all tools
-
-**Tasks:**
-1. FloatingToolbar component
-2. DrawingSettingsDialog base component
-3. Keyboard shortcuts system
-4. Template storage system
-
-**Deliverables:**
-- `<FloatingToolbar>` - 6 buttons, auto-hide, positioning
-- `<DrawingSettingsDialog>` - 4 tabs, template dropdown
-- `KeyboardShortcutManager` - Global handler
-- `TemplateStorage` - Save/load/manage
-
----
-
-### Phase 2: Per-Tool Settings (Week 2)
-**Goal:** Add settings dialogs to all tools
-
-**Priority Order:**
-1. Trend Line (most used)
-2. Horizontal Line (most used)
-3. Rectangle (high value)
-4. Text (high gap)
-5. Vertical Line
-6. Ray
-7. Measure
-8. Risk/Reward
-
-**Deliverables:**
-- Settings tabs for each tool
-- Stats display components
-- Coordinate editors
-
----
-
-### 9. Ray Tool
-
-**TradingView Features:**
-
-**Style Tab:**
-- Color + Opacity
-- Thickness (1-4)
-- Style (Solid/Dashed/Dotted)
-- ☑ Show Text
-- Text Alignment (Left/Center/Right, Top/Middle/Bottom)
-
-**Our Status:**
-- ✅ Basic drawing
-- ✅ Settings dialog (Text & Style)
-- ✅ Viewport-aware text alignment
+- ❌ No keyboard shortcut (Alt+F)
+
+### Text Tool - 95%
+- ✅ 4-tab settings dialog
+- ✅ Font size (8-48px), color, bold, italic
+- ✅ Alignment (horizontal + vertical)
+- ✅ Background (color + opacity)
+- ✅ Border (color + width)
+- ✅ Word wrap
+- ⚠️ Font family (default only, no selection)
+
+### Ray - 90%
+- ✅ Basic drawing (2 points, infinite extension)
+- ✅ 4-tab settings dialog
+- ✅ Text annotations with alignment
 - ✅ Infinite line hit testing
-- ✅ Keyboard shortcuts (via global system)
+- ❌ Keyboard shortcut
 
-**Gap Priority:** LOW (parity achieved)
+### Measure - 80%
+- ✅ Basic measurement (2 points, rectangular bounds)
+- ✅ **Stats display (price, %, bars, time)** - VERIFIED
+- ✅ Shaded background
+- ❌ Customizable stats toggles
+- ❌ Stats box styling options
+
+### Risk/Reward - 70%
+- ✅ Entry/Stop/Target points (3 points)
+- ✅ R:R calculation
+- ✅ Dedicated settings
+- ❌ Per-line color customization
+- ❌ Background zones (profit/loss shading)
+- ❌ R:R label display on chart
+
+### Circle - 70%
+- ✅ Basic drawing (2 points)
+- ✅ Generic 3-tab settings
+- ✅ Fill + border
+- ✅ Text annotations with alignment
+- ❌ No dedicated settings dialog
+
+### Arrow - 70%
+- ✅ Basic drawing (2 points)
+- ✅ Generic 3-tab settings
+- ✅ Arrowhead rendering
+- ✅ Text annotations with alignment
+- ❌ No dedicated settings dialog
+
+### Triangle - 70%
+- ✅ Basic drawing (3 points)
+- ✅ Generic 3-tab settings
+- ✅ Fill + border
+- ✅ Text annotations with alignment
+- ❌ No dedicated settings dialog
+
+### Horizontal Ray - 75%
+- ✅ Basic drawing (1 point, infinite horizontal extension)
+- ✅ Generic 3-tab settings
+- ✅ Text annotations with alignment
+- ❌ No dedicated settings dialog
+
+### Extended Line - 75%
+- ✅ Basic drawing (2 points, infinite both directions)
+- ✅ Generic 3-tab settings
+- ✅ Text annotations with alignment
+- ❌ No dedicated settings dialog
+
+### Cross Line - 75%
+- ✅ Basic drawing (1 point, vertical + horizontal)
+- ✅ Generic 3-tab settings
+- ✅ Text annotations with alignment
+- ❌ No dedicated settings dialog
+
+### Callout - 70%
+- ✅ Basic drawing (2 points)
+- ✅ Generic 3-tab settings
+- ✅ Callout arrow
+- ✅ Text annotations with alignment
+- ❌ No dedicated settings dialog
+
+### Price Range - 75%
+- ✅ Basic measurement (2 points, vertical)
+- ✅ Stats display (price, %)
+- ✅ Generic 3-tab settings
+- ❌ No dedicated settings dialog
+
+### Date Range - 75%
+- ✅ Basic measurement (2 points, horizontal)
+- ✅ Stats display (bars, time)
+- ✅ Generic 3-tab settings
+- ❌ No dedicated settings dialog
+
+### Price Label - 70%
+- ✅ Basic annotation (2 points)
+- ✅ Connector line
+- ✅ Price display
+- ✅ Generic 3-tab settings
+- ❌ No dedicated settings dialog
+
+### Brush - 60%
+- ✅ Freehand drawing
+- ✅ Generic 3-tab settings
+- ❌ Limited customization
+
+### Path - 60%
+- ✅ Multi-point path
+- ✅ Generic 3-tab settings
+- ❌ Limited customization
+
+### Highlighter - 60%
+- ✅ Highlight drawing
+- ✅ Generic 3-tab settings
+- ❌ Limited customization
+
+### Parallel Channel - 70%
+- ✅ Parallel lines (3 points)
+- ✅ Generic 3-tab settings
+- ✅ Text annotations with alignment
+- ❌ No dedicated settings dialog
 
 ---
 
-### Phase 3: Advanced Features (Week 3)
-**Goal:** Polish and advanced functionality
+## Recommended Priorities
 
-**Tasks:**
-1. Multi-select + bulk edit
-2. Undo/Redo system
-3. Clone function (Ctrl+D)
-4. Lock function
-5. Alert creation (Horizontal Line)
-6. Stats display (Trend Line, Measure)
+### Phase 1 (Week 1) - CRITICAL
+1. **Keyboard Shortcuts** - Implement global shortcut system
+   - Tool selection (Alt+T, Alt+H, etc.)
+   - Actions (Ctrl+Z, Ctrl+D, Del, Esc)
+   - Movement (Arrow keys)
 
-**Deliverables:**
-- Full keyboard shortcut support
-- Professional interaction patterns
-- TradingView parity achieved
+2. **Magnet Mode UI** - Add visual feedback
+   - Toolbar button with 3 states
+   - Green dot at snap point
+   - Tooltip showing snap value
+   - Keyboard toggle (Ctrl)
+
+### Phase 2 (Week 2) - HIGH
+1. **Undo/Redo System** - Implement command pattern
+   - History stack
+   - Undo (Ctrl+Z)
+   - Redo (Ctrl+Y)
+
+2. **Stats Display** - Add to Trend Line
+   - Angle calculation
+   - Distance measurement
+   - Price range
+   - Bars range
+
+### Phase 3 (Week 3) - MEDIUM
+1. **Precise Coordinate Editing** - Make coordinates tab editable
+2. **Multi-Select Foundation** - Basic multi-selection
+3. **Aspect Ratio Lock** - Shift+Drag for Rectangle
 
 ---
 
-## Success Criteria
+## Success Metrics
 
-1. ✅ All tools have floating toolbar
-2. ✅ All tools have 4-tab settings dialog
-3. ✅ All tools have keyboard shortcuts
-4. ✅ Template system works for all tools
-5. ✅ Magnet mode has visible UI
-6. ✅ Stats display on relevant tools
-7. ✅ Clone/Lock/Hide functions work
-8. ✅ User feedback: "Feels like TradingView"
+**Current Score:** 70/100
+
+**Breakdown:**
+- Tools: 23/15 (153%) ✅
+- Floating Toolbar: 100% ✅
+- Settings Dialogs: 85% ⚠️
+- Template System: 100% ✅
+- Text Alignment: 100% ✅
+- Keyboard Shortcuts: 0% ❌
+- Undo/Redo: 0% ❌
+- Magnet Mode: 40% ⚠️
+- Clone/Lock: 100% ✅
+- Stats Display: 60% ⚠️
+
+**Target:** 95/100 (TradingView Parity)
+
+---
+
+## Recent Achievements (2026-02-10)
+
+### Text Alignment Persistence Fix
+Fixed critical bugs preventing text alignment from persisting:
+1. V2OptionAdapter now correctly translates between flat UI and nested V2 formats
+2. PropertiesModal uses flat alignment format
+3. Ray dialog no longer overwrites real values with defaults
+4. All 23 tools now persist alignment correctly
+
+**Impact:** Professional-grade text annotation across all tools
 
 ---
 
 ## References
 
-- [TradingView Drawing Tools Documentation](https://www.tradingview.com/support/solutions/43000481029-drawings-and-annotations/)
+- [TradingView Drawing Tools](https://www.tradingview.com/support/solutions/43000481029-drawings-and-annotations/)
 - [TradingView Keyboard Shortcuts](https://www.tradingview.com/support/solutions/43000555216-keyboard-shortcuts/)
-- Implementation Design: See `DRAWING_TOOLS_IMPLEMENTATION_DESIGN.md`
-
----
-
-*Last Updated: 2025-12-19*
+- [Architecture Doc](../../architecture/DRAWING_TOOLS_ARCHITECTURE.md)
+- [User Guide](../../features/drawing/USER_GUIDE.md)
