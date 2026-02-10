@@ -80,19 +80,30 @@ interface RectangleSettingsDialogProps {
 interface RectangleSettingsViewProps {
     options: RectangleSettingsOptions;
     onChange: (options: RectangleSettingsOptions) => void;
+    points?: any[];
+    setPoints?: (points: any[]) => void;
 }
 
-export function RectangleSettingsView({ options, onChange }: RectangleSettingsViewProps) {
+export function RectangleSettingsView({ options, onChange, points, setPoints }: RectangleSettingsViewProps) {
     const handleChange = (updates: Partial<RectangleSettingsOptions>) => {
         onChange({ ...options, ...updates });
     };
 
+    const updatePoint = (index: number, key: 'price' | 'time' | 'timestamp', value: any) => {
+        if (!setPoints || !points) return;
+        const newPoints = [...points];
+        if (!newPoints[index]) newPoints[index] = {};
+        newPoints[index] = { ...newPoints[index], [key]: value };
+        setPoints(newPoints);
+    };
+
     return (
-        <Tabs defaultValue="style" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="style">Style</TabsTrigger>
-                <TabsTrigger value="text">Text</TabsTrigger>
-                <TabsTrigger value="vis">Visibility</TabsTrigger>
+        <Tabs defaultValue="style" className="w-full flex flex-col h-full">
+            <TabsList className="grid w-full grid-cols-4 shrink-0">
+                <TabsTrigger value="style" className="text-xs h-8">Style</TabsTrigger>
+                <TabsTrigger value="text" className="text-xs h-8">Text</TabsTrigger>
+                <TabsTrigger value="coords" className="text-xs h-8">Coords</TabsTrigger>
+                <TabsTrigger value="vis" className="text-xs h-8">Visibility</TabsTrigger>
             </TabsList>
 
             <TabsContent value="style" className="space-y-4 py-4 h-[400px] overflow-y-auto pr-2">
@@ -257,7 +268,55 @@ export function RectangleSettingsView({ options, onChange }: RectangleSettingsVi
                 />
             </TabsContent>
 
-            <TabsContent value="vis">
+            <TabsContent value="coords" className="flex-1 p-4 space-y-4 overflow-y-auto min-h-0 scrollbar-minimal">
+                <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label className="text-xs uppercase font-bold">Point 1 Price</Label>
+                            <Input
+                                type="number"
+                                step="any"
+                                value={points?.[0]?.price || 0}
+                                onChange={(e) => updatePoint(0, 'price', parseFloat(e.target.value))}
+                                className="h-8"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label className="text-xs uppercase font-bold">Point 1 Time/Bar</Label>
+                            <Input
+                                type="text"
+                                value={points?.[0]?.time || points?.[0]?.timestamp || ''}
+                                onChange={(e) => updatePoint(0, 'timestamp', e.target.value)}
+                                className="h-8"
+                            />
+                        </div>
+                    </div>
+                    <Separator />
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label className="text-xs uppercase font-bold">Point 2 Price</Label>
+                            <Input
+                                type="number"
+                                step="any"
+                                value={points?.[1]?.price || 0}
+                                onChange={(e) => updatePoint(1, 'price', parseFloat(e.target.value))}
+                                className="h-8"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label className="text-xs uppercase font-bold">Point 2 Time/Bar</Label>
+                            <Input
+                                type="text"
+                                value={points?.[1]?.time || points?.[1]?.timestamp || ''}
+                                onChange={(e) => updatePoint(1, 'timestamp', e.target.value)}
+                                className="h-8"
+                            />
+                        </div>
+                    </div>
+                </div>
+            </TabsContent>
+
+            <TabsContent value="vis" className="flex-1 p-4">
                 <VisibilityTab
                     visibleTimeframes={options.visibleTimeframes || []}
                     onChange={(tf) => handleChange({ visibleTimeframes: tf })}

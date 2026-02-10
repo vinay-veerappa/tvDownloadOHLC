@@ -399,6 +399,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
     // console.log('[ChartContainer RENDER] selectedDrawingOptions:', JSON.stringify(selectedDrawingOptions));
 
     const [selectedDrawingType, setSelectedDrawingType] = useState<string>('')
+    const [selectedDrawingPoints, setSelectedDrawingPoints] = useState<any[]>([])
     const [toolbarPosition, setToolbarPosition] = useState<{ x: number; y: number } | null>(null)
     const [isDrawingLocked, setIsDrawingLocked] = useState(false)
     const [isDrawingHidden, setIsDrawingHidden] = useState(false)
@@ -896,11 +897,42 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
         // e.g. TrendLine -> trend-line, Rectangle -> rectangle
         type = type.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
 
+        // Get latest points from tool if possible
+        let pts: any[] = [];
+
+        // Resolve ID safely (could be function or property)
+        const toolId = typeof drawing.id === 'function' ? drawing.id() : drawing.id;
+
+        // Try getting real tool from plugin
+        let tool = null;
+        if (toolId && v2SandboxRef.current?.plugin) {
+            tool = v2SandboxRef.current.plugin.getLineTool(toolId);
+        }
+
+        if (tool) {
+            if (typeof tool.getPoints === 'function') pts = tool.getPoints();
+            else if (typeof tool.points === 'function') pts = tool.points();
+            else if (tool.points) pts = tool.points;
+        } else {
+            // Fallback to drawing object itself
+            if (typeof drawing.points === 'function') pts = drawing.points();
+            else if (drawing.points) pts = drawing.points;
+        }
+        setSelectedDrawingPoints(pts);
+
+        // UI Mapping fixes
+        if (type === 'fib-retracement') type = 'fibonacci';
+        if (type === 'long-short-position') type = 'risk-reward';
+
         // Adapt V2 options for the V1-style settings dialogs
-        // Always adapt, regardless of how options were retrieved (function or property)
+        // Complex tools with dedicated SettingsViews should keep their nested V2 structure
+        const complexTools = ['fibonacci', 'risk-reward', 'truth-profiler', 'daily-profiler', 'hourly-profiler', 'range-extensions', 'opening-range', 'rectangle'];
+
         console.log('[ChartContainer] Opening Properties. Raw options:', JSON.stringify(options));
-        options = V2OptionAdapter.toV1FlatOptions(options, type);
-        console.log('[ChartContainer] Opening Properties. Adapted options:', JSON.stringify(options));
+        if (!complexTools.includes(type)) {
+            options = V2OptionAdapter.toV1FlatOptions(options, type);
+        }
+        console.log('[ChartContainer] Opening Properties. Final options:', JSON.stringify(options));
 
         setSelectedDrawingOptions(options);
         setSelectedDrawingType(type);
@@ -1195,14 +1227,21 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     type = type.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
 
                     // FIX: Merge with current options to prevent partial updates from resetting defaults
-                    // We must fetch the CURRENT options from the tool, flatten them, merge with new updates, then re-nest.
-                    const currentOptions = typeof realTool.options === 'function' ? realTool.options() : {};
-                    const currentFlatOptions = V2OptionAdapter.toV1FlatOptions(currentOptions, type);
+                    // For complex tools, we assume the options are already in V2 nested format
+                    const complexTools = ['fibonacci', 'risk-reward', 'truth-profiler', 'daily-profiler', 'hourly-profiler', 'range-extensions', 'opening-range', 'rectangle'];
 
-                    // Merge incoming updates into current state
-                    const mergedFlatOptions = { ...currentFlatOptions, ...options };
+                    if (complexTools.includes(selectedDrawingType)) {
+                        v2Options = options;
+                    } else {
+                        // We must fetch the CURRENT options from the tool, flatten them, merge with new updates, then re-nest.
+                        const currentOptions = typeof realTool.options === 'function' ? realTool.options() : {};
+                        const currentFlatOptions = V2OptionAdapter.toV1FlatOptions(currentOptions, type);
 
-                    v2Options = V2OptionAdapter.toV2NestedOptions(mergedFlatOptions, type);
+                        // Merge incoming updates into current state
+                        const mergedFlatOptions = { ...currentFlatOptions, ...options };
+
+                        v2Options = V2OptionAdapter.toV2NestedOptions(mergedFlatOptions, type);
+                    }
 
                     // Apply options to the V2 tool instance
                     // This will trigger a merge() inside the tool and then an update()
@@ -1224,8 +1263,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                     }
 
                     // Also update local state for UI sync if needed
-                    // Use mergedFlatOptions directly as it represents the latest state we just applied
-                    setSelectedDrawingOptions(mergedFlatOptions);
+                    setSelectedDrawingOptions(v2Options || options);
                 } else if (drawing.applyOptions) {
                     // Legacy fallback
                     drawing.applyOptions(options);
@@ -2103,6 +2141,7 @@ export const ChartContainer = memo(forwardRef<ChartContainerRef, ChartContainerP
                 onOpenChange={setPropertiesModalOpen}
                 drawingType={selectedDrawingType as any}
                 initialOptions={selectedDrawingOptions}
+                points={selectedDrawingPoints}
                 onSave={handlePropertiesSave}
                 ticker={ticker}
             />
