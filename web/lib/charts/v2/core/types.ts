@@ -450,6 +450,7 @@ export interface FibRetracementLevel {
 	coeff: number;
 	color: string;
 	opacity: number;
+	visible: boolean;
 	distanceFromCoeffEnabled: boolean;
 	distanceFromCoeff: number;
 }
@@ -614,7 +615,21 @@ export interface LineToolPathOptions { line: Omit<LineOptions, 'cap' | 'extend' 
  * Specific options for the Fibonacci Retracement tool.
  * Configures the trend line, the retracement levels (coefficients/colors), and optional trading strategy displays.
  */
-export interface LineToolFibRetracementOptions { line: Omit<LineOptions, 'extend' | 'join' | 'color' | 'cap' | 'end'>; extend: ExtendOptions; levels: FibRetracementLevel[]; tradeStrategy: FibRetracementTradeStrategy; }
+export interface LineToolFibRetracementOptions {
+	line: Omit<LineOptions, 'extend' | 'join' | 'color' | 'cap' | 'end'>;
+	extend: ExtendOptions;
+	levels: FibRetracementLevel[];
+	tradeStrategy: FibRetracementTradeStrategy;
+	reverse: boolean;
+	background: { enabled: boolean; opacity: number };
+	showPrices: boolean;
+	showLevels: boolean;
+	levelFormat: 'values' | 'percent' | 'price';
+	labelsPosition: { horizontal: 'left' | 'center' | 'right'; vertical: 'top' | 'middle' | 'bottom' };
+	textPosition: { horizontal: 'left' | 'center' | 'right'; vertical: 'top' | 'middle' | 'bottom' };
+	fontSize: number;
+	trendLine: { visible: boolean; color: string; style: number };
+}
 
 /**
  * Specific options for the Parallel Channel tool.

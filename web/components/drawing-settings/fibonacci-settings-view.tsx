@@ -2,9 +2,11 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DEFAULT_FIB_OPTIONS, FibonacciOptions, FibonacciLevel } from "@/lib/charts/v2/tools/fibonacci"
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Button } from "@/components/ui/button"
+import { Plus, Trash2 } from "lucide-react"
 
 interface FibonacciSettingsViewProps {
     options: FibonacciOptions;
@@ -12,43 +14,38 @@ interface FibonacciSettingsViewProps {
 }
 
 // Helper to deep merge options with defaults
-// Helper to deep merge options with defaults
 const mergeWithDefaults = (options: Partial<FibonacciOptions> | undefined): FibonacciOptions => {
-    if (!options) return DEFAULT_FIB_OPTIONS;
+    if (!options) return { ...DEFAULT_FIB_OPTIONS };
     return {
         ...DEFAULT_FIB_OPTIONS,
         ...options,
         line: { ...DEFAULT_FIB_OPTIONS.line, ...options.line },
         levels: (options.levels && options.levels.length > 0) ? options.levels : DEFAULT_FIB_OPTIONS.levels,
         extend: { ...DEFAULT_FIB_OPTIONS.extend, ...options.extend },
+        background: { ...DEFAULT_FIB_OPTIONS.background, ...options.background },
+        labelsPosition: { ...DEFAULT_FIB_OPTIONS.labelsPosition, ...options.labelsPosition },
+        textPosition: { ...DEFAULT_FIB_OPTIONS.textPosition, ...options.textPosition },
+        trendLine: { ...DEFAULT_FIB_OPTIONS.trendLine, ...options.trendLine },
     };
 };
 
-const ColorPicker = ({ color, onChange, opacity, onOpacityChange }: { color: string, onChange: (c: string) => void, opacity?: number, onOpacityChange?: (o: number) => void }) => (
-    <div className="flex items-center gap-1">
-        <Input
-            type="color"
-            value={color}
-            onChange={(e) => onChange(e.target.value)}
-            className="w-8 h-8 p-1 cursor-pointer"
-            aria-label="Color Picker"
-        />
-        {opacity !== undefined && onOpacityChange && (
-            <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={1 - opacity}
-                onChange={(e) => onOpacityChange(1 - parseFloat(e.target.value))}
-                className="w-16 h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
-                title={`Opacity: ${Math.round((1 - opacity) * 100)}%`}
-                aria-label="Opacity"
-            />
-        )}
-    </div>
+const ColorPicker = ({ color, onChange }: { color: string, onChange: (c: string) => void }) => (
+    <Input
+        type="color"
+        value={color}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-8 h-8 p-1 cursor-pointer shrink-0"
+        aria-label="Color Picker"
+    />
 )
 
+// Ensure a level has 'visible' field (for backwards compatibility with old saved data)
+function ensureVisible(level: FibonacciLevel): FibonacciLevel {
+    return {
+        ...level,
+        visible: level.visible !== undefined ? level.visible : (level.opacity > 0),
+    };
+}
 
 export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsViewProps) {
     const [localOptions, setLocalOptions] = useState<FibonacciOptions>(() => mergeWithDefaults(options));
@@ -57,16 +54,21 @@ export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsVi
 
     useEffect(() => {
         if (!initializedRef.current) {
-            setLocalOptions(mergeWithDefaults(options));
+            const merged = mergeWithDefaults(options);
+            // Ensure all levels have the 'visible' property
+            merged.levels = merged.levels.map(ensureVisible);
+            setLocalOptions(merged);
             initializedRef.current = true;
         }
     }, [options]);
 
-    const update = (updates: Partial<FibonacciOptions>) => {
-        const newOptions = { ...localOptions, ...updates };
-        setLocalOptions(newOptions);
-        onChange(newOptions);
-    };
+    const update = useCallback((updates: Partial<FibonacciOptions>) => {
+        setLocalOptions(prev => {
+            const newOptions = { ...prev, ...updates };
+            onChange(newOptions);
+            return newOptions;
+        });
+    }, [onChange]);
 
     const updateLine = (updates: Partial<FibonacciOptions['line']>) => {
         if (!localOptions.line) return;
@@ -80,16 +82,64 @@ export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsVi
     };
 
     const toggleLevel = (index: number) => {
-        // V2 doesn't have 'visible' on levels yet. Use color transparency hack or just ignore.
-        // For now, let's assume we can set opacity to 0 or something. 
-        // Actually, let's just use a local visibility property if possible, but we need to persist it.
-        // Let's toggle opacity between 0 and 1 or current?
-        // Or if we modify the type in V2...
-        // For now, let's just make it visually toggle opacity=0.
         const current = localOptions.levels[index];
-        const newOpacity = current.opacity === 0 ? 1 : 0;
-        updateLevel(index, { opacity: newOpacity });
+        updateLevel(index, { visible: !current.visible });
     };
+
+    const addLevel = () => {
+        const newLevel: FibonacciLevel = {
+            coeff: 1.618,
+            color: '#787b86',
+            opacity: 1,
+            visible: true,
+            distanceFromCoeffEnabled: false,
+            distanceFromCoeff: 0,
+        };
+        update({ levels: [...localOptions.levels, newLevel] });
+    };
+
+    const removeLevel = (index: number) => {
+        const newLevels = localOptions.levels.filter((_, i) => i !== index);
+        update({ levels: newLevels });
+    };
+
+    const applyOneColor = (color: string) => {
+        const newLevels = localOptions.levels.map(l => ({ ...l, color }));
+        update({ levels: newLevels });
+    };
+
+    // Split levels into two columns for TradingView-style layout
+    const midpoint = Math.ceil(localOptions.levels.length / 2);
+    const leftCol = localOptions.levels.slice(0, midpoint);
+    const rightCol = localOptions.levels.slice(midpoint);
+
+    const renderLevelRow = (level: FibonacciLevel, globalIndex: number) => (
+        <div key={globalIndex} className="flex items-center gap-1.5">
+            <input
+                type="checkbox"
+                checked={level.visible}
+                onChange={() => toggleLevel(globalIndex)}
+                className="w-4 h-4 shrink-0 cursor-pointer accent-primary"
+                aria-label={`Toggle Level ${level.coeff}`}
+            />
+            <Input
+                type="number"
+                value={level.coeff}
+                onChange={(e) => updateLevel(globalIndex, { coeff: parseFloat(e.target.value) || 0 })}
+                className={`w-[65px] h-7 px-1.5 text-xs text-right font-mono ${!level.visible ? 'opacity-40' : ''}`}
+                step="0.001"
+                aria-label={`Level ${globalIndex} Value`}
+            />
+            <ColorPicker color={level.color} onChange={(c) => updateLevel(globalIndex, { color: c })} />
+            <button
+                onClick={() => removeLevel(globalIndex)}
+                className="p-0.5 text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover/row:opacity-100"
+                aria-label={`Remove Level ${level.coeff}`}
+            >
+                <Trash2 className="w-3 h-3" />
+            </button>
+        </div>
+    );
 
     return (
         <Tabs defaultValue="style" className="w-full">
@@ -99,59 +149,50 @@ export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsVi
                 <TabsTrigger value="visibility">Visibility</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="style" className="space-y-4 py-4 h-[400px] overflow-y-auto px-6">
-
-                {/* Levels Grid */}
-                <div className="grid grid-cols-2 gap-x-8 gap-y-2">
-                    {localOptions.levels.map((level, index) => (
-                        <div key={index} className="flex items-center gap-2">
-                            <input
-                                type="checkbox"
-                                checked={level.opacity > 0}
-                                onChange={() => toggleLevel(index)}
-                                aria-label={`Toggle Level ${level.coeff}`}
-                            />
-                            <Input
-                                type="number"
-                                value={level.coeff}
-                                onChange={(e) => updateLevel(index, { coeff: parseFloat(e.target.value) })}
-                                className="w-[70px] h-8 p-1 text-right"
-                                step="0.1"
-                                aria-label={`Level ${index} Value`}
-                            />
-                            <ColorPicker color={level.color} onChange={(c) => updateLevel(index, { color: c })} />
-                        </div>
-                    ))}
-                </div>
-
-                <div className="flex items-center gap-2 mt-2">
-                    <Label className="text-xs text-muted-foreground">Use one color</Label>
-                    <ColorPicker color={localOptions.levels[0].color} onChange={(c) => {
-                        const newLevels = localOptions.levels.map(l => ({ ...l, color: c }));
-                        update({ levels: newLevels });
-                    }} />
-                </div>
-
-                <Separator />
+            <TabsContent value="style" className="space-y-3 py-3 h-[500px] overflow-y-auto px-4">
 
                 {/* Trend Line */}
-                {/* Trend Line (Diagonal) - Not supported in V2 yet 
                 <div className="flex items-center justify-between">
-                     ... 
-                </div> 
-                */}
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="checkbox"
+                            checked={localOptions.trendLine?.visible ?? false}
+                            onChange={(e) => update({ trendLine: { ...localOptions.trendLine, visible: e.target.checked } })}
+                            className="w-4 h-4 cursor-pointer accent-primary"
+                            aria-label="Show Trend Line"
+                        />
+                        <Label className="text-sm">Trend line</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <ColorPicker
+                            color={localOptions.trendLine?.color || '#787b86'}
+                            onChange={(c) => update({ trendLine: { ...localOptions.trendLine, color: c } })}
+                        />
+                        <Select
+                            value={(localOptions.trendLine?.style ?? 2).toString()}
+                            onValueChange={(v) => update({ trendLine: { ...localOptions.trendLine, style: parseInt(v) } })}
+                        >
+                            <SelectTrigger className="w-[80px] h-7 text-xs" aria-label="Trend Line Style"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="0">Solid</SelectItem>
+                                <SelectItem value="1">Dotted</SelectItem>
+                                <SelectItem value="2">Dashed</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
 
                 {/* Levels Line Style */}
                 {localOptions.line && (
-                    <div className="flex items-center justify-between mt-4">
-                        <Label>Levels line</Label>
+                    <div className="flex items-center justify-between">
+                        <Label className="text-sm">Levels line</Label>
                         <div className="flex items-center gap-2">
                             <Select value={localOptions.line.width?.toString() || "1"} onValueChange={(v) => updateLine({ width: parseInt(v) })}>
-                                <SelectTrigger className="w-[60px] h-8" aria-label="Levels Line Width"><SelectValue /></SelectTrigger>
+                                <SelectTrigger className="w-[55px] h-7 text-xs" aria-label="Levels Line Width"><SelectValue /></SelectTrigger>
                                 <SelectContent>{[1, 2, 3, 4].map(w => <SelectItem key={w} value={w.toString()}>{w}px</SelectItem>)}</SelectContent>
                             </Select>
                             <Select value={localOptions.line.style?.toString() || "0"} onValueChange={(v) => updateLine({ style: parseInt(v) })}>
-                                <SelectTrigger className="w-[80px] h-8" aria-label="Levels Line Style"><SelectValue /></SelectTrigger>
+                                <SelectTrigger className="w-[75px] h-7 text-xs" aria-label="Levels Line Style"><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="0">Solid</SelectItem>
                                     <SelectItem value="1">Dotted</SelectItem>
@@ -162,10 +203,9 @@ export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsVi
                     </div>
                 )}
 
-
                 {/* Extend */}
-                <div className="flex items-center justify-between mt-2">
-                    <Label id="extend-label">Extend lines</Label>
+                <div className="flex items-center justify-between">
+                    <Label className="text-sm" id="extend-label">Extend</Label>
                     <Select
                         value={localOptions.extend ? (localOptions.extend.left && localOptions.extend.right ? 'both' : (localOptions.extend.left ? 'left' : (localOptions.extend.right ? 'right' : 'none'))) : 'none'}
                         onValueChange={(v) => {
@@ -174,9 +214,9 @@ export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsVi
                             update({ extend: { left, right } });
                         }}
                     >
-                        <SelectTrigger className="w-[180px] h-8" aria-labelledby="extend-label"><SelectValue /></SelectTrigger>
+                        <SelectTrigger className="w-[140px] h-7 text-xs" aria-labelledby="extend-label"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="none">None</SelectItem>
+                            <SelectItem value="none">Don&apos;t extend</SelectItem>
                             <SelectItem value="left">Left</SelectItem>
                             <SelectItem value="right">Right</SelectItem>
                             <SelectItem value="both">Both</SelectItem>
@@ -186,22 +226,196 @@ export function FibonacciSettingsView({ options, onChange }: FibonacciSettingsVi
 
                 <Separator />
 
-                {/* Background - Not supported in global options, V2 uses level colors 
-                <div className="flex items-center justify-between">
-                     ... 
-                </div> 
-                */}
+                {/* Levels Grid — two columns like TradingView */}
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                    <div className="space-y-1.5">
+                        {leftCol.map((level, i) => (
+                            <div key={i} className="group/row">
+                                {renderLevelRow(level, i)}
+                            </div>
+                        ))}
+                    </div>
+                    <div className="space-y-1.5">
+                        {rightCol.map((level, i) => (
+                            <div key={i + midpoint} className="group/row">
+                                {renderLevelRow(level, i + midpoint)}
+                            </div>
+                        ))}
+                    </div>
+                </div>
 
-                {/* Labels */}
-                <div className="space-y-2 pt-2">
-                    <div className="flex items-center justify-between">
-                        <Label htmlFor="showPrices">Show Prices</Label>
-                        <input id="showPrices" type="checkbox" checked={localOptions.showPriceAxisLabels} onChange={(e) => update({ showPriceAxisLabels: e.target.checked })} aria-label="Show Prices" />
+                {/* Add Level Button */}
+                <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full h-7 text-xs"
+                    onClick={addLevel}
+                >
+                    <Plus className="w-3 h-3 mr-1" /> Add Level
+                </Button>
+
+                <Separator />
+
+                {/* Use One Color */}
+                <div className="flex items-center justify-between">
+                    <Label className="text-sm text-muted-foreground">Use one color</Label>
+                    <ColorPicker color={localOptions.levels[0]?.color || '#787b86'} onChange={applyOneColor} />
+                </div>
+
+                {/* Background */}
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="checkbox"
+                            checked={localOptions.background?.enabled ?? true}
+                            onChange={(e) => update({ background: { ...localOptions.background, enabled: e.target.checked } })}
+                            className="w-4 h-4 cursor-pointer accent-primary"
+                            aria-label="Show Background"
+                        />
+                        <Label className="text-sm">Background</Label>
                     </div>
-                    <div className="flex items-center justify-between">
-                        <Label htmlFor="showTime">Show Time</Label>
-                        <input id="showTime" type="checkbox" checked={localOptions.showTimeAxisLabels} onChange={(e) => update({ showTimeAxisLabels: e.target.checked })} aria-label="Show Timeline" />
+                    <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={localOptions.background?.opacity ?? 0.08}
+                        onChange={(e) => update({ background: { ...localOptions.background, opacity: parseFloat(e.target.value) } })}
+                        className="w-28 h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                        title={`Opacity: ${Math.round((localOptions.background?.opacity ?? 0.08) * 100)}%`}
+                        aria-label="Background Opacity"
+                    />
+                </div>
+
+                {/* Reverse */}
+                <div className="flex items-center gap-2">
+                    <input
+                        type="checkbox"
+                        checked={localOptions.reverse ?? false}
+                        onChange={(e) => update({ reverse: e.target.checked })}
+                        className="w-4 h-4 cursor-pointer accent-primary"
+                        aria-label="Reverse"
+                    />
+                    <Label className="text-sm">Reverse</Label>
+                </div>
+
+                {/* Prices */}
+                <div className="flex items-center gap-2">
+                    <input
+                        type="checkbox"
+                        checked={localOptions.showPrices ?? false}
+                        onChange={(e) => update({ showPrices: e.target.checked })}
+                        className="w-4 h-4 cursor-pointer accent-primary"
+                        aria-label="Show Prices"
+                    />
+                    <Label className="text-sm">Prices</Label>
+                </div>
+
+                {/* Levels toggle with format */}
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="checkbox"
+                            checked={localOptions.showLevels ?? true}
+                            onChange={(e) => update({ showLevels: e.target.checked })}
+                            className="w-4 h-4 cursor-pointer accent-primary"
+                            aria-label="Show Levels"
+                        />
+                        <Label className="text-sm">Levels</Label>
                     </div>
+                    <Select
+                        value={localOptions.levelFormat || 'values'}
+                        onValueChange={(v) => update({ levelFormat: v as 'values' | 'percent' | 'price' })}
+                    >
+                        <SelectTrigger className="w-[100px] h-7 text-xs" aria-label="Level Format"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="values">Values</SelectItem>
+                            <SelectItem value="percent">Percent</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                {/* Labels position */}
+                <div className="flex items-center justify-between">
+                    <Label className="text-sm">Labels</Label>
+                    <div className="flex items-center gap-2">
+                        <Select
+                            value={localOptions.labelsPosition?.horizontal || 'right'}
+                            onValueChange={(v) => update({ labelsPosition: { ...localOptions.labelsPosition, horizontal: v as 'left' | 'center' | 'right' } })}
+                        >
+                            <SelectTrigger className="w-[75px] h-7 text-xs" aria-label="Labels Horizontal Position"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="left">Left</SelectItem>
+                                <SelectItem value="center">Center</SelectItem>
+                                <SelectItem value="right">Right</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <Select
+                            value={localOptions.labelsPosition?.vertical || 'middle'}
+                            onValueChange={(v) => update({ labelsPosition: { ...localOptions.labelsPosition, vertical: v as 'top' | 'middle' | 'bottom' } })}
+                        >
+                            <SelectTrigger className="w-[75px] h-7 text-xs" aria-label="Labels Vertical Position"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="top">Top</SelectItem>
+                                <SelectItem value="middle">Middle</SelectItem>
+                                <SelectItem value="bottom">Bottom</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+
+                {/* Text position */}
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="checkbox"
+                            checked={true}
+                            className="w-4 h-4 cursor-pointer accent-primary"
+                            readOnly
+                            aria-label="Show Text"
+                        />
+                        <Label className="text-sm">Text</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Select
+                            value={localOptions.textPosition?.horizontal || 'left'}
+                            onValueChange={(v) => update({ textPosition: { ...localOptions.textPosition, horizontal: v as 'left' | 'center' | 'right' } })}
+                        >
+                            <SelectTrigger className="w-[75px] h-7 text-xs" aria-label="Text Horizontal Position"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="left">Left</SelectItem>
+                                <SelectItem value="center">Center</SelectItem>
+                                <SelectItem value="right">Right</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <Select
+                            value={localOptions.textPosition?.vertical || 'middle'}
+                            onValueChange={(v) => update({ textPosition: { ...localOptions.textPosition, vertical: v as 'top' | 'middle' | 'bottom' } })}
+                        >
+                            <SelectTrigger className="w-[75px] h-7 text-xs" aria-label="Text Vertical Position"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="top">Top</SelectItem>
+                                <SelectItem value="middle">Middle</SelectItem>
+                                <SelectItem value="bottom">Bottom</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+
+                {/* Font Size */}
+                <div className="flex items-center justify-between">
+                    <Label className="text-sm">Font size</Label>
+                    <Select
+                        value={(localOptions.fontSize || 14).toString()}
+                        onValueChange={(v) => update({ fontSize: parseInt(v) })}
+                    >
+                        <SelectTrigger className="w-[75px] h-7 text-xs" aria-label="Font Size"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            {[8, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32].map(s => (
+                                <SelectItem key={s} value={s.toString()}>{s}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </div>
 
             </TabsContent>
