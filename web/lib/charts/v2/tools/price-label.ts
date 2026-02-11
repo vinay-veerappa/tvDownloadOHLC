@@ -4,10 +4,9 @@ import { ILineToolsApi } from "../core/api/public-api";
 import { PriceAxisLabelStackingManager } from "../core/model/price-axis-label-stacking-manager";
 import {
     LineToolTextOptions,
-    IUpdatablePaneView,
-    LineToolOptionsCommon,
     HitTestResult,
     TextAlignment,
+    EditorLayout,
 } from "../core/types";
 import { LineToolPoint } from "../core/api/public-api";
 import {
@@ -166,5 +165,32 @@ export class PriceLabelV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
         const textHit = this._textRenderer.hitTest(x, (y as any));
         if (textHit) return textHit;
         return this._lineRenderer.hitTest(x, (y as any));
+    }
+
+    /** @inheritdoc */
+    public override getEditorLayout(): EditorLayout | null {
+        // Use the internal renderer's text renderer bounds
+        const rect = (this._textRenderer as any).rect() || { x: 0, y: 0, width: 0, height: 0 };
+
+        if (this._points.length < 2) return null;
+
+        const options = this.options() as LineToolTextOptions & LineToolOptionsCommon;
+        const textOptions = options.text;
+        const isEmpty = !textOptions || !textOptions.value;
+
+        // Alignment fallback logic: Prefer box alignment, then text alignment
+        const hAlign = textOptions.box?.alignment?.horizontal as any || textOptions.alignment || 'center';
+        const vAlign = textOptions.box?.alignment?.vertical as any || 'middle';
+
+        return {
+            x: rect.x,
+            y: rect.y,
+            width: Math.max(rect.width, 20),
+            height: Math.max(rect.height, 20),
+            padding: textOptions.padding || 8,
+            lineHeight: (textOptions.font?.size || 14) * 1.2,
+            alignmentHorizontal: hAlign,
+            alignmentVertical: vAlign,
+        };
     }
 }

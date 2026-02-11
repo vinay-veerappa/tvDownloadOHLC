@@ -305,12 +305,16 @@ export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzSc
 	public setText(text: string): void {
 		const options = this.options() as any;
 		if (options.text && typeof options.text === 'object') {
-			this.applyOptions({ text: { value: text } } as any);
+			// Deep sync: Update both value and ensure alignment is consistent if needed
+			const textOptions: any = { value: text };
+
+			// If we are setting text, and the tool has no alignment yet, set a sensible default
+			if (!options.text.alignment) textOptions.alignment = 'center';
+
+			this.applyOptions({ text: textOptions } as any);
 		} else {
 			this.applyOptions({ text } as any);
 		}
-		this.updateAllViews();
-		this._requestUpdate?.();
 	}
 
 	/** @inheritdoc */
@@ -770,7 +774,53 @@ export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzSc
 		// This ensures that renderers comparing this._options (old) with this._options (new) via references
 		// will correctly detect that something has changed.
 		const currentOptions = deepCopy(this._options);
+
+		// First, merge the incoming options with current options
 		merge(currentOptions, options);
+
+		// ENHANCEMENT: Maintain consistency between legacy 'text.alignment' and modern 'text.box.alignment.horizontal'.
+		// This ensures that updates from simple property editors (setting alignment) are reflected in the 
+		// advanced renderer (which prefers box alignment), preventing "alignment not saving" issues.
+		// 
+		// CRITICAL: This must happen AFTER the merge to ensure synchronized values aren't overwritten.
+		if (options.text && typeof options.text === 'object') {
+			const incomingTextOpt = options.text as any;
+			const mergedTextOpt = (currentOptions as any).text;
+
+			// ALWAYS sync both properties when either is provided to ensure consistency
+			// This handles updates from both simple and advanced UI components
+
+			// If horizontal alignment is provided via box.alignment.horizontal, sync to text.alignment
+			if (incomingTextOpt.box?.alignment?.horizontal !== undefined) {
+				mergedTextOpt.alignment = incomingTextOpt.box.alignment.horizontal;
+				mergedTextOpt.box = mergedTextOpt.box || {};
+				mergedTextOpt.box.alignment = mergedTextOpt.box.alignment || {};
+				mergedTextOpt.box.alignment.horizontal = incomingTextOpt.box.alignment.horizontal;
+			}
+
+			// If vertical alignment is provided via box.alignment.vertical, ensure it's set
+			if (incomingTextOpt.box?.alignment?.vertical !== undefined) {
+				mergedTextOpt.box = mergedTextOpt.box || {};
+				mergedTextOpt.box.alignment = mergedTextOpt.box.alignment || {};
+				mergedTextOpt.box.alignment.vertical = incomingTextOpt.box.alignment.vertical;
+			}
+
+			// If text.alignment is provided (legacy property), sync to box.alignment.horizontal
+			if (incomingTextOpt.alignment !== undefined) {
+				mergedTextOpt.alignment = incomingTextOpt.alignment;
+				mergedTextOpt.box = mergedTextOpt.box || {};
+				mergedTextOpt.box.alignment = mergedTextOpt.box.alignment || {};
+				mergedTextOpt.box.alignment.horizontal = incomingTextOpt.alignment;
+			}
+
+			// SPECIAL CASE: Prevent text clearing if 'text' object is provided without 'value'
+			// during partial updates from certain UI components.
+			if (incomingTextOpt.value === undefined && this._options?.text?.value !== undefined) {
+				// Restore the original value if it wasn't explicitly being changed
+				mergedTextOpt.value = (this._options as any).text.value;
+			}
+		}
+
 		this._options = currentOptions;
 
 		this.updateAllViews();
@@ -989,12 +1039,13 @@ export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzSc
 
 	/**
 	 * Transforms a logical data point (timestamp/price) into pixel screen coordinates.
+	 * 
+	 * This method is the core bridge between the tool's abstract geometry and the
+	 * pixels on the screen. It handles coordinate conversion with support for
+	 * scrolling, data gaps, and extrapolation into "future" space.
 	 *
-	 * This utility handles the complex conversion, including interpolation for points
-	 * that lie in the chart's "blank logical space" (outside the available data bars).
-	 *
-	 * @param point - The logical {@link LineToolPoint} to convert.
-	 * @returns A {@link Point} with screen coordinates, or `null` if conversion fails.
+	 * @param point - The {@link LineToolPoint} to convert.
+	 * @returns A {@link Point} in pixel coordinates, or `null` if conversion is impossible.
 	 */
 	public pointToScreenPoint(point: LineToolPoint): Point | null {
 		if (this._isDestroying || !this._chart || !this._series) {
@@ -1002,41 +1053,56 @@ export abstract class BaseLineTool<HorzScaleItem> extends PriceDataSource<HorzSc
 		}
 
 		const timeScale = this._chart.timeScale();
+		const timestamp = point.timestamp;
+		const price = point.price;
 
-		// 1. Try native LWC timeToCoordinate first.
-		// This handles scrolling, data gaps, and shifts robustly for existing bars.
-		let x = timeScale.timeToCoordinate(point.timestamp as any);
-		let resolutionMethod = 'native';
+		let x: number | null = null;
+		let y: number | null = null;
 
-		// 2. Fallback to custom interpolation if native lookup fails (e.g. for "future" space)
-		if (x === null) {
-			const logicalIndex = interpolateLogicalIndexFromTime(this._chart, this._series, point.timestamp as UTCTimestamp);
-			if (logicalIndex !== null) {
-				x = timeScale.logicalToCoordinate(logicalIndex);
-				resolutionMethod = 'interpolation';
+		// --- 1. X Coordinate Calculation (Time Dimension) ---
+		// We try multiple strategies to determine X: Native LWC -> Interpolation -> Fallback
+		if (timestamp !== undefined && timestamp !== null && !(typeof timestamp === 'number' && isNaN(timestamp))) {
+			// A. Try native LWC timeToCoordinate. This is the most accurate for visible bars.
+			x = timeScale.timeToCoordinate(timestamp as any);
+
+			// B. Fallback to custom interpolation (required for "future" space or extremely high zoom)
+			if (x === null) {
+				const logicalIndex = interpolateLogicalIndexFromTime(this._chart, this._series, timestamp as UTCTimestamp);
+				if (logicalIndex !== null) {
+					x = timeScale.logicalToCoordinate(logicalIndex);
+				}
 			}
 		}
 
-		if (x === null) {
-			console.warn(`[BaseLineTool ${this.id()}] pointToScreenPoint FAILED: Could not determine X coordinate for timestamp: ${point.timestamp}. Tool may disappear.`);
+		// Fallback for Horizontal Tools: If timestamp is missing, anchor X to the viewport center or 0.
+		// These tools are infinite horizontally, so we only need SOME X to render the line at its price level.
+		if (x === null && (this.toolType === 'HorizontalLine' || this.toolType === 'HorizontalRay')) {
+			const range = timeScale.getVisibleLogicalRange();
+			if (range) {
+				x = timeScale.logicalToCoordinate(((range.from + range.to) / 2) as Logical);
+			}
+			if (x === null) x = 0;
+		}
+
+		// --- 2. Y Coordinate Calculation (Price Dimension) ---
+		if (price !== undefined && price !== null && !isNaN(price)) {
+			// Use the series' priceToCoordinate method directly.
+			y = this._series.priceToCoordinate(price);
+		}
+
+		// Fallback for Vertical Tools: If price is missing, anchor Y to the top of the pane (0).
+		// These tools are infinite vertically, so we only need SOME Y to render the line at its time position.
+		if (y === null && this.toolType === 'VerticalLine') {
+			y = 0;
+		}
+
+		// --- 3. Final Validation ---
+		if (x === null || y === null) {
+			console.warn(`[BaseLineTool ${this.id()}] pointToScreenPoint FAILED for ${this.toolType}. x=${x}, y=${y}. Tool will be hidden.`, point);
 			return null;
 		}
 
-		// Use the series' priceToCoordinate method directly.
-		const y = this._series.priceToCoordinate(point.price);
-
-		// Ensure conversions were successful and resulted in valid coordinates.
-		if (y === null) {
-			console.warn(`[BaseLineTool ${this.id()}] pointToScreenPoint FAILED: Price conversion failed for point: ${JSON.stringify(point)}. Received y=${y}. Tool may disappear.`);
-			return null;
-		}
-
-		// Log successful resolution with method used (disabled - too noisy)
-		// if (resolutionMethod === 'interpolation') {
-		// 	console.log(`[BaseLineTool ${this.id()}] pointToScreenPoint: Using ${resolutionMethod} for timestamp ${point.timestamp} -> x=${x}, y=${y}`);
-		// }
-
-		return new Point(x, y);
+		return new Point(x as Coordinate, y as Coordinate);
 	}
 
 	/**

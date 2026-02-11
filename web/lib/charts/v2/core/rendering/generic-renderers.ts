@@ -1341,11 +1341,11 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 			let textBoxFinalX = refX;
 			let textBoxFinalY = refY;
 
-			const hAlign = (data.text?.box?.alignment?.horizontal || 'center').toLowerCase();
+			const hAlign = (data.text?.box?.alignment?.horizontal || data.text?.alignment || 'center').toLowerCase();
 			switch (hAlign) {
-				case 'left': textBoxFinalX = refX; break;
+				case 'left': case 'start': textBoxFinalX = refX; break;
 				case 'center': textBoxFinalX = refX - boxWidth / 2; break;
-				case 'right': textBoxFinalX = refX - boxWidth; break;
+				case 'right': case 'end': textBoxFinalX = refX - boxWidth; break;
 			}
 
 			const vAlign = (data.text?.box?.alignment?.vertical || 'middle').toLowerCase();
@@ -1390,15 +1390,15 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 		const boxWidth = boxSize.width;
 		const boxHeight = boxSize.height;
 
-		const hAlign = (data.text?.box?.alignment?.horizontal || 'center').toLowerCase();
+		const hAlign = (data.text?.box?.alignment?.horizontal || data.text?.alignment || 'center').toLowerCase();
 		const vAlign = (data.text?.box?.alignment?.vertical || 'middle').toLowerCase();
 
 		let refX: number = 0;
 		let refY: number = 0;
 
 		switch (hAlign) {
-			case 'left': refX = rectMinX; break;
-			case 'right': refX = rectMaxX; break;
+			case 'left': case 'start': refX = rectMinX; break;
+			case 'right': case 'end': refX = rectMaxX; break;
 			case 'center': default: refX = (rectMinX + rectMaxX) / 2; break;
 		}
 
@@ -1414,14 +1414,14 @@ export class TextRenderer<HorzScaleItem> implements IPaneRenderer {
 		let textBoxFinalY = refY;
 
 		switch (hAlign) {
-			case 'left': textBoxFinalX = refX; break;
-			case 'right': textBoxFinalX = refX - boxWidth; break;
+			case 'left': case 'start': textBoxFinalX = refX; break;
+			case 'right': case 'end': textBoxFinalX = refX - boxWidth; break;
 			case 'center': default: textBoxFinalX = refX - boxWidth / 2; break;
 		}
 
 		switch (vAlign) {
-			case 'top': textBoxFinalY = refY; break;
-			case 'bottom': textBoxFinalY = refY - boxHeight; break;
+			case 'top': textBoxFinalY = refY - boxHeight; break;
+			case 'bottom': textBoxFinalY = refY; break;
 			case 'middle': default: textBoxFinalY = refY - boxHeight / 2; break;
 		}
 

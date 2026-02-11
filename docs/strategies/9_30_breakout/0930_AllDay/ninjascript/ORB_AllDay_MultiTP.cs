@@ -43,7 +43,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Display(Name = "Fixed TP")] FixedTP,
         [Display(Name = "Breakeven")] Breakeven,
         [Display(Name = "Trailing")] Trailing,
-        [Display(Name = "Time Exit")] TimeExit
+        [Display(Name = "Time Exit")] TimeExit,
+        [Display(Name = "Dump Pouch")] DumpPouch
     }
 
     public class ORB_AllDay_MultiTP : Strategy
@@ -85,10 +86,15 @@ namespace NinjaTrader.NinjaScript.Strategies
         private int tp1Qty = 0;
         private int remainingQty = 0;
 
-        // Orders
-        private Order tp1Order = null;
-        private Order tp2Order = null;
-        private Order slOrder = null;
+        // Dump Pouch State
+        private int dumpLevel = 0;              // 0=Initial, 1=TP1 hit, 2=50% target, 3=75% target
+        private double initialSLPrice = double.NaN;
+        private double currentDPStop = double.NaN;
+        private double dpTP1Price = double.NaN;
+        private double dpTargetPrice = double.NaN;
+        private double dpLevel2Price = double.NaN;
+        private double dpLevel3Price = double.NaN;
+
         #endregion
 
         protected override void OnStateChange()
@@ -113,7 +119,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                 StopTargetHandling = StopTargetHandling.PerEntryExecution;
                 BarsRequiredToTrade = 20;
 
-                // Time Zone
+                // Time Zone Configuration
+                // All time inputs (OR Start, Trading End, etc.) are in EASTERN TIME.
+                // Set ChartTimeZone to match your NinjaTrader chart's configured timezone
+                // so the strategy can correctly convert bar timestamps to Eastern.
+                // Common values: "Eastern Standard Time", "Central Standard Time", "Pacific Standard Time"
                 ChartTimeZone = "Pacific Standard Time";
 
                 // Core Settings
@@ -155,6 +165,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                 MAEThresholdPct = 0.05;  // Optimized: 0.10% is best
                 InitialCapital = 3000;
                 RiskPercent = 1.0;
+                MaxContracts = 3;
+
+                // Dump Pouch Settings
+                DP_TargetMovePct = 1.00;
+                DP_Level1RiskReducePct = 50;
+                DP_Level2TriggerPct = 50;
+                DP_Level3TriggerPct = 75;
+                DP_Level3LockPct = 25;
 
                 // Filters
                 UseVVIXFilter = true;
@@ -162,12 +180,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 MaxRangePct = 0.25;
                 MinRangePct = 0.03;
 
-                // Day Filters
-                SkipMonday = false;
-                SkipTuesday = false;
-                SkipWednesday = false;
-                SkipThursday = false;
-                SkipFriday = false;
 
                 // Visuals
                 ShowDashboard = true;
@@ -293,6 +305,15 @@ namespace NinjaTrader.NinjaScript.Strategies
             lastExitBar = -1;
             lastResetDate = estTime.Date;
 
+            // Dump Pouch reset
+            dumpLevel = 0;
+            initialSLPrice = double.NaN;
+            currentDPStop = double.NaN;
+            dpTP1Price = double.NaN;
+            dpTargetPrice = double.NaN;
+            dpLevel2Price = double.NaN;
+            dpLevel3Price = double.NaN;
+
             if (SystemPerformance.AllTrades.Count > 0)
                 prevClosedProfit = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
             else
@@ -308,16 +329,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             bool isTradingTime = estTime.TimeOfDay >= OREndTime.TimeOfDay && estTime.TimeOfDay < TradingEndTime.TimeOfDay;
             bool isHardExit = estTime.TimeOfDay >= HardExitTime.TimeOfDay;
 
-            // Filter Checks
-            bool isDayFiltered = (SkipMonday && estTime.DayOfWeek == DayOfWeek.Monday) ||
-                                 (SkipTuesday && estTime.DayOfWeek == DayOfWeek.Tuesday) ||
-                                 (SkipWednesday && estTime.DayOfWeek == DayOfWeek.Wednesday) ||
-                                 (SkipThursday && estTime.DayOfWeek == DayOfWeek.Thursday) ||
-                                 (SkipFriday && estTime.DayOfWeek == DayOfWeek.Friday);
-
             bool isRangeFiltered = rPct > MaxRangePct || rPct < MinRangePct;
             bool isVVIXFiltered = UseVVIXFilter && VVIX_Open > MaxVVIX;
-            bool isFiltered = isDayFiltered || isRangeFiltered || isVVIXFiltered;
+            bool isFiltered = isRangeFiltered || isVVIXFiltered;
 
             // Track price returning to range
             if (Position.MarketPosition == MarketPosition.Flat && Close[0] >= rLow && Close[0] <= rHigh)
@@ -357,19 +371,28 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ProcessEntryLogic(estTime, qty, canTakeLong, canTakeShort, rSize);
             }
 
-            // Exit/Management Logic
-            if (Position.MarketPosition != MarketPosition.Flat)
-            {
-                ProcessExitLogic(estTime, rSize);
-            }
-
-            // Hard Exit
+            // =============================================
+            // HARD EXIT — checked FIRST, takes priority
+            // =============================================
+            bool hardExitTriggered = false;
             if (Position.MarketPosition != MarketPosition.Flat && isHardExit)
             {
+                hardExitTriggered = true;
+
                 if (Position.MarketPosition == MarketPosition.Long)
-                    ExitLong("Time Exit");
+                {
+                    ExitLong(Position.Quantity, "Time Exit", "");
+                }
                 else
-                    ExitShort("Time Exit");
+                {
+                    ExitShort(Position.Quantity, "Time Exit", "");
+                }
+            }
+
+            // Only run normal exit management if NOT in hard exit window
+            if (!hardExitTriggered && Position.MarketPosition != MarketPosition.Flat)
+            {
+                ProcessExitLogic(estTime, rSize);
             }
 
             // Visuals
@@ -528,6 +551,19 @@ namespace NinjaTrader.NinjaScript.Strategies
             entryQty = qty;
             tp1Qty = (int)Math.Max(1, Math.Floor(qty * TP1PositionPct / 100.0));
             remainingQty = qty - tp1Qty;
+
+            // Dump Pouch initialization
+            dumpLevel = 0;
+            initialSLPrice = isLong ? rLow : rHigh;
+            currentDPStop = initialSLPrice;
+            dpTP1Price = isLong ? Close[0] * (1 + TP1Pct / 100) : Close[0] * (1 - TP1Pct / 100);
+            dpTargetPrice = isLong ? Close[0] * (1 + DP_TargetMovePct / 100) : Close[0] * (1 - DP_TargetMovePct / 100);
+
+            double moveToTarget = Math.Abs(dpTargetPrice - Close[0]);
+            dpLevel2Price = isLong ? Close[0] + moveToTarget * (DP_Level2TriggerPct / 100)
+                                   : Close[0] - moveToTarget * (DP_Level2TriggerPct / 100);
+            dpLevel3Price = isLong ? Close[0] + moveToTarget * (DP_Level3TriggerPct / 100)
+                                   : Close[0] - moveToTarget * (DP_Level3TriggerPct / 100);
         }
 
         private void ProcessExitLogic(DateTime estTime, double rSize)
@@ -565,11 +601,26 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 double tp1Price = isLong ? entry * (1 + TP1Pct / 100) : entry * (1 - TP1Pct / 100);
                 double tp2Price = isLong ? entry * (1 + TP2Pct / 100) : entry * (1 - TP2Pct / 100);
-                double currentSL = tp1Hit && MoveToBreakevenAfterTP1 ? entry : baseSL;
+
+                double displaySL;
+                if (RunnerModeAfterTP1 == ORB_AllDay_RunnerMode.DumpPouch && tp1Hit)
+                    displaySL = currentDPStop;
+                else if (tp1Hit && MoveToBreakevenAfterTP1)
+                    displaySL = entry;
+                else
+                    displaySL = baseSL;
 
                 Draw.Line(this, "TP1_Line", false, 1, tp1Price, 0, tp1Price, Brushes.LimeGreen, DashStyleHelper.Solid, 2);
                 Draw.Line(this, "TP2_Line", false, 1, tp2Price, 0, tp2Price, Brushes.Lime, DashStyleHelper.Dash, 1);
-                Draw.Line(this, "SL_Line", false, 1, currentSL, 0, currentSL, Brushes.Red, DashStyleHelper.Solid, 2);
+                Draw.Line(this, "SL_Line", false, 1, displaySL, 0, displaySL, Brushes.Red, DashStyleHelper.Solid, 2);
+
+                // Draw Dump Pouch target levels when active
+                if (RunnerModeAfterTP1 == ORB_AllDay_RunnerMode.DumpPouch && !double.IsNaN(dpLevel2Price))
+                {
+                    Draw.Line(this, "DP_L2", false, 1, dpLevel2Price, 0, dpLevel2Price, Brushes.Gold, DashStyleHelper.Dash, 1);
+                    Draw.Line(this, "DP_L3", false, 1, dpLevel3Price, 0, dpLevel3Price, Brushes.Orange, DashStyleHelper.Dash, 1);
+                    Draw.Line(this, "DP_Target", false, 1, dpTargetPrice, 0, dpTargetPrice, Brushes.Cyan, DashStyleHelper.Dot, 1);
+                }
             }
         }
 
@@ -588,13 +639,90 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     tp1Hit = true;
                     isRunnerActive = true;
+
                     if (RunnerModeAfterTP1 == ORB_AllDay_RunnerMode.Trailing)
                     {
                         currentTrailStop = isLong ? High[0] - (entry * TrailOffsetPct / 100) :
                                                     Low[0] + (entry * TrailOffsetPct / 100);
                     }
+                    else if (RunnerModeAfterTP1 == ORB_AllDay_RunnerMode.DumpPouch)
+                    {
+                        // Level 1: Reduce risk by DP_Level1RiskReducePct
+                        dumpLevel = 1;
+                        double riskAmount = Math.Abs(entry - initialSLPrice);
+                        double riskReduction = riskAmount * (DP_Level1RiskReducePct / 100.0);
+                        currentDPStop = isLong ? initialSLPrice + riskReduction
+                                               : initialSLPrice - riskReduction;
+                    }
                 }
             }
+
+            // ==========================================
+            // DUMP POUCH MODE — progressive trail levels
+            // ==========================================
+            if (RunnerModeAfterTP1 == ORB_AllDay_RunnerMode.DumpPouch)
+            {
+                if (tp1Hit)
+                {
+                    // Level 2: At DP_Level2TriggerPct% of target move → SL to breakeven
+                    if (dumpLevel == 1)
+                    {
+                        if ((isLong && High[0] >= dpLevel2Price) || (!isLong && Low[0] <= dpLevel2Price))
+                        {
+                            dumpLevel = 2;
+                            currentDPStop = entry;  // Breakeven
+                        }
+                    }
+
+                    // Level 3: At DP_Level3TriggerPct% of target move → lock DP_Level3LockPct% of move
+                    if (dumpLevel == 2)
+                    {
+                        if ((isLong && High[0] >= dpLevel3Price) || (!isLong && Low[0] <= dpLevel3Price))
+                        {
+                            dumpLevel = 3;
+                            double moveAmount = Math.Abs(dpLevel3Price - entry);
+                            double lockAmount = moveAmount * (DP_Level3LockPct / 100.0);
+                            currentDPStop = isLong ? entry + lockAmount
+                                                   : entry - lockAmount;
+                        }
+                    }
+
+                    currentSL = currentDPStop;
+                }
+                else
+                {
+                    // Before TP1: use initial SL
+                    currentSL = initialSLPrice;
+                }
+
+                // Set exits for Dump Pouch mode
+                int qty = Position.Quantity;
+                int tp1ExitQty = Math.Min(tp1Qty, qty);
+                int runnerQty = qty - tp1ExitQty;
+
+                if (isLong)
+                {
+                    // Before TP1: partial exit at TP1 + initial SL on whole position
+                    if (!tp1Hit && tp1ExitQty > 0)
+                        ExitLongLimit(0, true, tp1ExitQty, tp1Price, "TP1", "");
+
+                    // SL on full position (covers pre-TP1 and post-TP1 runner)
+                    ExitLongStopMarket(0, true, qty, currentSL, dumpLevel <= 0 ? "SL" : "DP" + dumpLevel, "");
+                }
+                else
+                {
+                    if (!tp1Hit && tp1ExitQty > 0)
+                        ExitShortLimit(0, true, tp1ExitQty, tp1Price, "TP1", "");
+
+                    ExitShortStopMarket(0, true, qty, currentSL, dumpLevel <= 0 ? "SL" : "DP" + dumpLevel, "");
+                }
+
+                return;  // Skip the standard exit logic below
+            }
+
+            // ==========================================
+            // NON-DUMP-POUCH MODES (original logic)
+            // ==========================================
 
             // Move SL to breakeven after TP1
             if (tp1Hit && MoveToBreakevenAfterTP1)
@@ -620,25 +748,25 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
 
             // Set exits
-            int qty = Position.Quantity;
-            int tp1ExitQty = Math.Min(tp1Qty, qty);
-            int tp2ExitQty = qty - tp1ExitQty;
+            int qtyStd = Position.Quantity;
+            int tp1ExitQtyStd = Math.Min(tp1Qty, qtyStd);
+            int tp2ExitQtyStd = qtyStd - tp1ExitQtyStd;
 
             if (isLong)
             {
-                if (!tp1Hit && tp1ExitQty > 0)
-                    ExitLongLimit(0, true, tp1ExitQty, tp1Price, "TP1", "");
-                if (tp2ExitQty > 0)
-                    ExitLongLimit(0, true, tp2ExitQty, tp2Price, "TP2", "");
-                ExitLongStopMarket(0, true, qty, currentSL, "SL", "");
+                if (!tp1Hit && tp1ExitQtyStd > 0)
+                    ExitLongLimit(0, true, tp1ExitQtyStd, tp1Price, "TP1", "");
+                if (tp2ExitQtyStd > 0)
+                    ExitLongLimit(0, true, tp2ExitQtyStd, tp2Price, "TP2", "");
+                ExitLongStopMarket(0, true, qtyStd, currentSL, "SL", "");
             }
             else
             {
-                if (!tp1Hit && tp1ExitQty > 0)
-                    ExitShortLimit(0, true, tp1ExitQty, tp1Price, "TP1", "");
-                if (tp2ExitQty > 0)
-                    ExitShortLimit(0, true, tp2ExitQty, tp2Price, "TP2", "");
-                ExitShortStopMarket(0, true, qty, currentSL, "SL", "");
+                if (!tp1Hit && tp1ExitQtyStd > 0)
+                    ExitShortLimit(0, true, tp1ExitQtyStd, tp1Price, "TP1", "");
+                if (tp2ExitQtyStd > 0)
+                    ExitShortLimit(0, true, tp2ExitQtyStd, tp2Price, "TP2", "");
+                ExitShortStopMarket(0, true, qtyStd, currentSL, "SL", "");
             }
         }
 
@@ -665,7 +793,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             double riskAmt = InitialCapital * (RiskPercent / 100.0);
             int qty = (int)Math.Max(1, Math.Floor(riskAmt / (rSize * Instrument.MasterInstrument.PointValue)));
-            return qty;
+            return Math.Min(qty, MaxContracts);
         }
 
         protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity,
@@ -695,6 +823,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             string tp1Status = tp1Hit ? "YES ✓" : "NO";
             string runnerStatus = isRunnerActive ? RunnerModeAfterTP1.ToString() : "Inactive";
+            string dpStatus = RunnerModeAfterTP1 == ORB_AllDay_RunnerMode.DumpPouch ?
+                (dumpLevel == 0 ? "INITIAL" : dumpLevel == 1 ? "LVL1(Risk-)" : dumpLevel == 2 ? "LVL2(BE)" : "LVL3(LOCK)") : "N/A";
 
             string hud = string.Format(
                 "ORB ALL-DAY V2\n" +
@@ -705,13 +835,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                 "TP Mode: {7}\n" +
                 "TP1 Hit: {8}\n" +
                 "Runner: {9}\n" +
-                "MAE: {10}%\n" +
-                "Status: {11}\n" +
-                "Time: {12:HH:mm}",
+                "Dump Pouch: {10}\n" +
+                "MAE: {11}%\n" +
+                "MaxQty: {12}\n" +
+                "Status: {13}\n" +
+                "Time: {14:HH:mm}",
                 rSize, rPct, VVIX_Open,
                 attemptsToday, MaxAttempts, longAttempts, shortAttempts,
-                tpMode, tp1Status, runnerStatus,
-                MAEThresholdPct, status, estTime);
+                tpMode, tp1Status, runnerStatus, dpStatus,
+                MAEThresholdPct, MaxContracts, status, estTime);
 
             Draw.TextFixed(this, "HUD", hud, TextPosition.TopRight, Brushes.White,
                 new SimpleFont("Consolas", 10), Brushes.Black, Brushes.DimGray, 90);
@@ -753,27 +885,28 @@ namespace NinjaTrader.NinjaScript.Strategies
         #region Properties
 
         [NinjaScriptProperty]
-        [Display(Name = "Chart Time Zone", Order = 0, GroupName = "1. Time")]
+        [Display(Name = "Chart Time Zone (match your chart)", Order = 0, GroupName = "1. Time",
+            Description = "Must match your NinjaTrader chart timezone. All time inputs below are in Eastern Time.")]
         public string ChartTimeZone { get; set; }
 
         [NinjaScriptProperty]
         [PropertyEditor("NinjaTrader.Gui.Tools.TimeEditorKey")]
-        [Display(Name = "OR Start Time", Order = 1, GroupName = "1. Time")]
+        [Display(Name = "OR Start Time (ET)", Order = 1, GroupName = "1. Time")]
         public DateTime ORStartTime { get; set; }
 
         [NinjaScriptProperty]
         [PropertyEditor("NinjaTrader.Gui.Tools.TimeEditorKey")]
-        [Display(Name = "OR End Time", Order = 2, GroupName = "1. Time")]
+        [Display(Name = "OR End Time (ET)", Order = 2, GroupName = "1. Time")]
         public DateTime OREndTime { get; set; }
 
         [NinjaScriptProperty]
         [PropertyEditor("NinjaTrader.Gui.Tools.TimeEditorKey")]
-        [Display(Name = "Trading End Time", Order = 3, GroupName = "1. Time")]
+        [Display(Name = "Trading End Time (ET)", Order = 3, GroupName = "1. Time")]
         public DateTime TradingEndTime { get; set; }
 
         [NinjaScriptProperty]
         [PropertyEditor("NinjaTrader.Gui.Tools.TimeEditorKey")]
-        [Display(Name = "Hard Exit Time", Order = 4, GroupName = "1. Time")]
+        [Display(Name = "Hard Exit Time (ET)", Order = 4, GroupName = "1. Time")]
         public DateTime HardExitTime { get; set; }
 
         [NinjaScriptProperty]
@@ -873,6 +1006,30 @@ namespace NinjaTrader.NinjaScript.Strategies
         public double RiskPercent { get; set; }
 
         [NinjaScriptProperty]
+        [Display(Name = "Max Contracts", Order = 6, GroupName = "5. Risk")]
+        public int MaxContracts { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "DP Target Move %", Order = 1, GroupName = "5b. Dump Pouch")]
+        public double DP_TargetMovePct { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "DP Level 1: Risk Reduce %", Order = 2, GroupName = "5b. Dump Pouch")]
+        public double DP_Level1RiskReducePct { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "DP Level 2 Trigger: % of Target", Order = 3, GroupName = "5b. Dump Pouch")]
+        public double DP_Level2TriggerPct { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "DP Level 3 Trigger: % of Target", Order = 4, GroupName = "5b. Dump Pouch")]
+        public double DP_Level3TriggerPct { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "DP Level 3: Lock % of Move", Order = 5, GroupName = "5b. Dump Pouch")]
+        public double DP_Level3LockPct { get; set; }
+
+        [NinjaScriptProperty]
         [Display(Name = "Use VVIX Filter", Order = 1, GroupName = "6. Filters")]
         public bool UseVVIXFilter { get; set; }
 
@@ -893,26 +1050,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         public double MinRangePct { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Skip Monday", Order = 1, GroupName = "7. Day Filters")]
-        public bool SkipMonday { get; set; }
-
-        [NinjaScriptProperty]
-        [Display(Name = "Skip Tuesday", Order = 2, GroupName = "7. Day Filters")]
-        public bool SkipTuesday { get; set; }
-
-        [NinjaScriptProperty]
-        [Display(Name = "Skip Wednesday", Order = 3, GroupName = "7. Day Filters")]
-        public bool SkipWednesday { get; set; }
-
-        [NinjaScriptProperty]
-        [Display(Name = "Skip Thursday", Order = 4, GroupName = "7. Day Filters")]
-        public bool SkipThursday { get; set; }
-
-        [NinjaScriptProperty]
-        [Display(Name = "Skip Friday", Order = 5, GroupName = "7. Day Filters")]
-        public bool SkipFriday { get; set; }
-
-        [NinjaScriptProperty]
         [Display(Name = "Show Dashboard", Order = 1, GroupName = "8. Visuals")]
         public bool ShowDashboard { get; set; }
 
@@ -927,3 +1064,5 @@ namespace NinjaTrader.NinjaScript.Strategies
         #endregion
     }
 }
+
+

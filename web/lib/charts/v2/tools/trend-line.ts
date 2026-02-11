@@ -146,9 +146,6 @@ export class TrendLineV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
         this._paneViews = [paneView as IUpdatablePaneView];
     }
 
-    public updateAllViews(): void {
-        super.updateAllViews();
-    }
 
     public _internalHitTest(x: Coordinate, y: Coordinate): HitTestResult<any> | null {
         // Priority: Text -> Line
@@ -166,11 +163,14 @@ export class TrendLineV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
         if (this._points.length < 2) return null;
 
         const options = this.options() as LineToolTrendLineOptions & LineToolOptionsCommon;
-        const isEmpty = !options.text || !options.text.value;
+        const textOptions = options.text;
+        const isEmpty = !textOptions || !textOptions.value;
+        const hAlign = textOptions.box?.alignment?.horizontal as any || textOptions.alignment || 'center';
+        const vAlign = textOptions.box?.alignment?.vertical as any || 'bottom';
 
         if (isEmpty) {
-            const p1 = (this as any)._toPoint(this._points[0]);
-            const p2 = (this as any)._toPoint(this._points[1]);
+            const p1 = (this as any).pointToScreenPoint(this._points[0]);
+            const p2 = (this as any).pointToScreenPoint(this._points[1]);
             if (!p1 || !p2) return null;
 
             const midX = (p1.x + p2.x) / 2;
@@ -181,10 +181,10 @@ export class TrendLineV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
                 y: midY - 20,
                 width: 40,
                 height: 40,
-                padding: options.text.padding || 8,
-                lineHeight: (options.text.font?.size || 12) * 1.2,
-                alignmentHorizontal: 'center',
-                alignmentVertical: 'center',
+                padding: textOptions.padding || 8,
+                lineHeight: (textOptions.font?.size || 12) * 1.2,
+                alignmentHorizontal: hAlign,
+                alignmentVertical: vAlign,
             };
         }
 
@@ -193,10 +193,10 @@ export class TrendLineV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
             y: rect.y,
             width: Math.max(rect.width, 20),
             height: Math.max(rect.height, 20),
-            padding: options.text.padding || 8,
-            lineHeight: (options.text.font?.size || 12) * 1.2,
-            alignmentHorizontal: options.text.box?.alignment?.horizontal as any || 'center',
-            alignmentVertical: options.text.box?.alignment?.vertical as any || 'bottom',
+            padding: textOptions.padding || 8,
+            lineHeight: (textOptions.font?.size || 12) * 1.2,
+            alignmentHorizontal: hAlign,
+            alignmentVertical: vAlign,
         };
     }
 }

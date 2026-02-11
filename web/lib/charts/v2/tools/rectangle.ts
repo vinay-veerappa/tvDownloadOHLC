@@ -247,18 +247,6 @@ export class RectangleV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
         }
     }
 
-    public override getText(): string {
-        const options = this.options() as LineToolRectangleOptions & LineToolOptionsCommon;
-        return options.text?.value || '';
-    }
-
-    public override setText(text: string): void {
-        this.applyOptions({
-            text: {
-                value: text
-            }
-        } as any);
-    }
 
     public override getPoint(index: number): LineToolPoint | null {
         if (index < 2) {
@@ -287,9 +275,6 @@ export class RectangleV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
         }
     }
 
-    public updateAllViews(): void {
-        super.updateAllViews();
-    }
 
     public _internalHitTest(x: Coordinate, y: Coordinate): HitTestResult<any> | null {
         // Priority: Text -> Rectangle Anchors -> Rectangle Border/Background
@@ -359,17 +344,20 @@ export class RectangleV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
         const width = maxX - minX;
         const height = maxY - minY;
 
-        const isEmpty = !options.text || !options.text.value;
+        const textOptions = options.text;
+        const isEmpty = !textOptions || !textOptions.value;
+        const hAlign = textOptions.box?.alignment?.horizontal as any || textOptions.alignment || 'center';
+        const vAlign = textOptions.box?.alignment?.vertical as any || 'center';
 
         return {
             x: isEmpty ? minX : rect.x,
             y: isEmpty ? minY : rect.y,
             width: isEmpty ? Math.max(width, 40) : Math.max(rect.width, 20),
             height: isEmpty ? Math.max(height, 40) : Math.max(rect.height, 20),
-            padding: options.text.padding || 8,
-            lineHeight: (options.text.font?.size || 12) * 1.2,
-            alignmentHorizontal: options.text.box?.alignment?.horizontal as any || 'center',
-            alignmentVertical: options.text.box?.alignment?.vertical as any || 'center',
+            padding: textOptions.padding || 8,
+            lineHeight: (textOptions.font?.size || 12) * 1.2,
+            alignmentHorizontal: hAlign,
+            alignmentVertical: vAlign,
         };
     }
 }
