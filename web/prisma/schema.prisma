@@ -26,6 +26,19 @@ model Account {
   
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  
+  groupId        String?
+  group          AccountGroup? @relation(fields: [groupId], references: [id])
+}
+
+model AccountGroup {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  accounts    Account[]
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }
 
 model Strategy {
@@ -33,6 +46,17 @@ model Strategy {
   name        String
   description String?
   color       String   @default("#2962FF") // For UI tagging
+  trades      Trade[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Playbook {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  rules       String?
   trades      Trade[]
   
   createdAt   DateTime @default(now())
@@ -78,12 +102,24 @@ model Trade {
   notes       String?
   tags        Tag[]
   metadata    String?  // Storage for arbitrary JSON metrics (e.g. correlation data)
+  originalSource String? // "TV", "TRADOVATE", "TOPSTEP", "MANUAL"
+  
+  // Psychology & Playbook
+  playbookId      String?
+  playbook        Playbook? @relation(fields: [playbookId], references: [id])
+  
+  disciplineRating Int?     // 1-10
+  emotions        String?  // Comma-separated tags e.g. "Fear,Greed"
+  mistakes        String?  // Comma-separated tags e.g. "Chasing,WideStop"
   
   // Phase 1: Journal Enhancement Relations
   marketCondition MarketCondition?
   tradeEvents     TradeEvent[]
   tradeNotes      Note[]
   tradePlan       TradePlan?
+  
+  // Phase 3: Ralph Loop Relations
+  chartLinks      Chart[]
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -97,6 +133,17 @@ model Journal {
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Rundown {
+  id          String   @id @default(cuid())
+  date        DateTime @unique
+  content     String?
+  mood        String?
+  score       Int?     // Daily discipline score
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Tag {
@@ -348,4 +395,78 @@ model RthExpectedMove {
 
   @@unique([ticker, date])
   @@index([ticker])
+}
+
+// ==========================================
+// Phase 3: The Ralph Loop (Process & Routine)
+// ==========================================
+
+model Analysis {
+  id          String   @id @default(cuid())
+  date        DateTime @unique // One main daily context per day
+  
+  // Context
+  sentiment   String?  // BULLISH | BEARISH | NEUTRAL | MIXED
+  bias        String?  // LONG | SHORT | BOTH
+  notes       String?  // Markdown content
+  keyLevels   String?  // JSON string of critical levels
+  invalidationLevel String?
+  
+  // Tool Snapshots
+  profilerSnapshot      String? // JSON snapshot of Profiler state
+  candleScienceSnapshot String? // JSON snapshot of C.Science state
+  
+  charts      Chart[]
+  wargames    Wargame[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Wargame {
+  id          String   @id @default(cuid())
+  analysisId  String
+  analysis    Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  
+  scenario    String   // "IF price breaks 200..."
+  plan        String   // "THEN I look for short..."
+  probability String?  // "High", "Medium"
+  outcome     String?  // "Played out", "Invalidated"
+  
+  charts      Chart[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Routine {
+  id          String   @id @default(cuid())
+  date        DateTime @unique
+  
+  checklist   String?  // JSON: { "meditate": true, "plan": false }
+  rating      Int?     // 1-10
+  notes       String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Chart {
+  id          String   @id @default(cuid())
+  url         String   // Path or Base64 (prefer path if file upload)
+  type        String?  // PRE_MARKET | TRADE | REVIEW
+  tags        String?  // Comma-separated or JSON
+  
+  // Linking Logic (Poly-morphic ish)
+  tradeId     String?
+  trade       Trade?   @relation(fields: [tradeId], references: [id])
+  
+  analysisId  String?
+  analysis    Analysis? @relation(fields: [analysisId], references: [id])
+  
+  wargameId   String?
+  wargame     Wargame?  @relation(fields: [wargameId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

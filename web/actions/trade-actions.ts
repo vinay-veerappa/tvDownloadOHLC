@@ -18,6 +18,11 @@ interface CreateTradeParams {
     accountId: string
     strategyId?: string
     risk?: number // Intended risk
+    playbookId?: string
+    disciplineRating?: number
+    emotions?: string[]
+    mistakes?: string[]
+    chartUrl?: string
 }
 
 // ... types above ...
@@ -30,7 +35,8 @@ export async function getTrades() {
             },
             include: {
                 account: true,
-                strategy: true
+                strategy: true,
+                playbook: true
             }
         })
         const mappedTrades = trades.map(t => ({
@@ -50,6 +56,7 @@ export async function getTrade(id: string) {
             include: {
                 account: true,
                 strategy: true,
+                playbook: true,
                 marketCondition: true,
                 tradeNotes: true
             }
@@ -93,9 +100,24 @@ export async function createTrade(data: CreateTradeParams) {
                 takeProfit: data.takeProfit,
                 accountId: data.accountId,
                 strategyId: data.strategyId,
-                risk: data.risk
+                risk: data.risk,
+                playbookId: data.playbookId,
+                disciplineRating: data.disciplineRating,
+                emotions: data.emotions ? data.emotions.join(",") : undefined,
+                mistakes: data.mistakes ? data.mistakes.join(",") : undefined
             }
         })
+
+        if (data.chartUrl) {
+            await prisma.chart.create({
+                data: {
+                    url: data.chartUrl,
+                    type: "TRADE",
+                    tradeId: trade.id,
+                    tags: "Entry"
+                }
+            })
+        }
 
         revalidatePath("/")
         revalidatePath("/journal")

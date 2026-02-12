@@ -25,6 +25,10 @@ import {
 import { useTradeContext } from "@/components/journal/trade-context"
 import { format } from "date-fns"
 
+import { PlaybookSelector } from "./input/playbook-selector"
+import { DemonFinder, DEFAULT_DEMONS, DEFAULT_EMOTIONS } from "./input/demon-finder"
+import { ChartUrlInput } from "./input/chart-url-input"
+
 interface Strategy {
     id: string
     name: string
@@ -38,6 +42,11 @@ export function AddTradeDialog() {
 
     // Form state
     const [selectedStrategy, setSelectedStrategy] = useState<string>("none")
+    const [selectedPlaybook, setSelectedPlaybook] = useState<string>("none")
+    const [discipline, setDiscipline] = useState(5)
+    const [mistakes, setMistakes] = useState<string[]>([])
+    const [emotions, setEmotions] = useState<string[]>([])
+    const [chartUrl, setChartUrl] = useState("")
 
     useEffect(() => {
         async function loadStrategies() {
@@ -74,11 +83,16 @@ export function AddTradeDialog() {
             quantity: parseFloat(formData.get("quantity") as string),
             status: "OPEN" as const,
             orderType: "MARKET" as const,
-            accountId: "default-sim-account",
+            accountId: "default-sim-account", // TODO: Make dynamic
             strategyId: selectedStrategy !== "none" ? selectedStrategy : undefined,
             stopLoss: stopLossValue ? parseFloat(stopLossValue) : undefined,
             takeProfit: takeProfitValue ? parseFloat(takeProfitValue) : undefined,
-            risk: 0
+            risk: 0,
+            playbookId: selectedPlaybook !== "none" ? selectedPlaybook : undefined,
+            disciplineRating: discipline,
+            emotions: emotions,
+            mistakes: mistakes,
+            chartUrl: chartUrl
         }
 
         const result = await createTrade(data)
@@ -97,7 +111,7 @@ export function AddTradeDialog() {
             <DialogTrigger asChild>
                 <Button onClick={() => setIsOpen(true)}>Add Trade</Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[500px]">
+            <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
                 <form onSubmit={onSubmit}>
                     <DialogHeader>
                         <DialogTitle>Add New Trade</DialogTitle>
@@ -193,10 +207,17 @@ export function AddTradeDialog() {
                             </div>
                         </div>
 
-                        {/* Row 4: Stop Loss & Take Profit */}
+                        {/* Row 4: Playbook & Stop Loss */}
                         <div className="grid grid-cols-2 gap-4">
+                             <div className="space-y-2">
+                                <Label>Playbook / Setup</Label>
+                                <PlaybookSelector 
+                                    value={selectedPlaybook === "none" ? undefined : selectedPlaybook}
+                                    onChange={setSelectedPlaybook}
+                                />
+                            </div>
                             <div className="space-y-2">
-                                <Label htmlFor="stopLoss">Stop Loss (optional)</Label>
+                                <Label htmlFor="stopLoss">Stop Loss</Label>
                                 <Input
                                     id="stopLoss"
                                     name="stopLoss"
@@ -205,8 +226,12 @@ export function AddTradeDialog() {
                                     placeholder="Price"
                                 />
                             </div>
+                        </div>
+                        
+                        {/* Row 5: Take Profit */}
+                        <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <Label htmlFor="takeProfit">Take Profit (optional)</Label>
+                                <Label htmlFor="takeProfit">Take Profit</Label>
                                 <Input
                                     id="takeProfit"
                                     name="takeProfit"
@@ -217,7 +242,22 @@ export function AddTradeDialog() {
                             </div>
                         </div>
 
-                        {/* Row 5: Notes */}
+                        <div className="border-t pt-4 mt-2">
+                            <Label className="mb-2 block text-lg font-semibold">Psychology & Execution</Label>
+                            <DemonFinder 
+                                discipline={discipline}
+                                setDiscipline={setDiscipline}
+                                mistakes={mistakes}
+                                setMistakes={setMistakes}
+                                emotions={emotions}
+                                setEmotions={setEmotions}
+                            />
+                        </div>
+
+                        {/* Row 6: Chart URL */}
+                        <ChartUrlInput value={chartUrl} onChange={setChartUrl} />
+
+                        {/* Row 7: Notes */}
                         <div className="space-y-2">
                             <Label htmlFor="notes">Notes (optional)</Label>
                             <Textarea

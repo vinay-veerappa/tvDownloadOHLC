@@ -19,6 +19,9 @@ import {
     getBacktestResults,
     importBacktestToJournal
 } from "@/actions/csv-actions"
+import { getAccounts } from "@/actions/settings-actions"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+
 
 interface BacktestResult {
     id: string
@@ -49,6 +52,25 @@ export function ImportExportDialog() {
     const [backtests, setBacktests] = useState<BacktestResult[]>([])
     const [loadingBacktests, setLoadingBacktests] = useState(false)
     const [importingBacktest, setImportingBacktest] = useState<string | null>(null)
+
+    // Accounts state
+    const [accounts, setAccounts] = useState<{ id: string; name: string }[]>([])
+    const [selectedAccountId, setSelectedAccountId] = useState<string>("")
+
+    // Load accounts on open
+    const handleOpenChange = async (open: boolean) => {
+        setOpen(open)
+        if (open) {
+            const res = await getAccounts()
+            if (res.success && res.data) {
+                setAccounts(res.data)
+                if (res.data.length > 0) {
+                    setSelectedAccountId(res.data[0].id)
+                }
+            }
+        }
+    }
+
 
     const handleExport = async () => {
         setExporting(true)
@@ -82,18 +104,22 @@ export function ImportExportDialog() {
     }
 
     const handleImport = async () => {
-        if (!csvFile) return
+        if (!csvFile || !selectedAccountId) return
 
         setImporting(true)
         setImportResult(null)
 
-        const content = await csvFile.text()
-        const result = await importTradesFromCsv(content, "default-sim-account")
+        const formData = new FormData()
+        formData.append("file", csvFile)
+        formData.append("accountId", selectedAccountId)
+
+        const result = await importTradesFromCsv(formData)
+
 
         if (result.success) {
             setImportResult({
                 success: true,
-                message: `Imported ${result.imported} trades`
+                message: `Imported ${result.count} trades`
             })
             setCsvFile(null)
             if (fileInputRef.current) fileInputRef.current.value = ""
@@ -137,7 +163,7 @@ export function ImportExportDialog() {
     }
 
     return (
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={open} onOpenChange={handleOpenChange}>
             <DialogTrigger asChild>
                 <Button variant="outline" size="sm">
                     <FileText className="h-4 w-4 mr-2" />
@@ -192,6 +218,22 @@ export function ImportExportDialog() {
                                 onChange={handleFileSelect}
                             />
                         </div>
+                        <div className="space-y-2">
+                            <Label>Select Account</Label>
+                            <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select account..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {accounts.map(acc => (
+                                        <SelectItem key={acc.id} value={acc.id}>{acc.name}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            {accounts.length === 0 && (
+                                <p className="text-xs text-red-500">No accounts found. Please create one in Settings.</p>
+                            )}
+                        </div>
                         {csvFile && (
                             <p className="text-sm text-muted-foreground">
                                 Selected: {csvFile.name}
@@ -199,7 +241,7 @@ export function ImportExportDialog() {
                         )}
                         <Button
                             onClick={handleImport}
-                            disabled={!csvFile || importing}
+                            disabled={!csvFile || importing || !selectedAccountId}
                         >
                             {importing ? "Importing..." : "Import Trades"}
                         </Button>
