@@ -5,9 +5,9 @@ Fetches today's USD high/medium impact economic events from ForexFactory's
 free XML feed and writes a simple CSV that NinjaScript can read at session start.
 
 Usage:
-    python news_calendar_fetcher.py                    # Fetch today's events
+    python news_calendar_fetcher.py                    # Fetch this week + next week (DEFAULT)
+    python news_calendar_fetcher.py --day               # Fetch single trading day (Today or Tomorrow if > 5pm ET)
     python news_calendar_fetcher.py --date 2026-02-12  # Fetch specific date
-    python news_calendar_fetcher.py --week              # Fetch full week
 
 Output: news_blackout.csv in the configured output directory
 Format: date,time_et,impact,event_name
@@ -26,6 +26,7 @@ import os
 import sys
 import argparse
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 # =============================================================================
@@ -39,7 +40,7 @@ OUTPUT_FILENAME = "news_blackout.csv"
 
 # Filter settings
 CURRENCIES = ["USD"]                    # Only USD events matter for NQ/ES
-IMPACT_LEVELS = ["High", "Medium"]      # "High", "Medium", "Low", "Holiday"
+IMPACT_LEVELS = ["High", "Medium","Low"]      # "High", "Medium", "Low", "Holiday"
                                          # Set to ["High"] for only red-folder events
 
 # Pre/Post buffer defaults (written to CSV header for reference)
@@ -51,8 +52,8 @@ DEFAULT_POST_MINUTES = 2
 # =============================================================================
 
 FF_XML_URLS = [
-    "https://nfs.faireconomy.media/ff_calendar_thisweek.xml",
-    "https://nfs.faireconomy.media/ff_calendar_nextweek.xml",
+    "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"  #,
+    #"https://nfs.faireconomy.media/ff_calendar_nextweek.xml",
 ]
 
 HEADERS = {
@@ -121,26 +122,35 @@ def parse_ff_xml(xml_text: str, target_date: date = None,
         if target_date and event_date != target_date:
             continue
 
-        # Parse time (ET) - FF uses "8:30am", "10:00am", "2:00pm", etc.
+        # Parse time (ET) - FF XML times are effectively GMT
         # Some events have "All Day" or "Tentative" or empty time
         time_et = ""
+        final_date_str = event_date.strftime("%Y-%m-%d")
+
         if time_str and time_str.lower() not in ["", "all day", "tentative"]:
+            pt = None
             try:
-                parsed_time = datetime.strptime(time_str, "%I:%M%p")
-                time_et = parsed_time.strftime("%H:%M")  # 24-hour format
+                pt = datetime.strptime(time_str, "%I:%M%p").time()
             except ValueError:
                 try:
                     # Try without minutes: "8am"
-                    parsed_time = datetime.strptime(time_str, "%I%p")
-                    time_et = parsed_time.strftime("%H:%M")
+                    pt = datetime.strptime(time_str, "%I%p").time()
                 except ValueError:
-                    time_et = ""
+                    pass
+
+            if pt:
+                # Combine with date (GMT) and convert to Eastern
+                dt_gmt = datetime.combine(event_date, pt).replace(tzinfo=ZoneInfo("UTC"))
+                dt_est = dt_gmt.astimezone(ZoneInfo("America/New_York"))
+                
+                time_et = dt_est.strftime("%H:%M")  # 24-hour format
+                final_date_str = dt_est.strftime("%Y-%m-%d")
 
         if not time_et:
             continue  # Skip events without a specific time
 
         events.append({
-            "date": event_date.strftime("%Y-%m-%d"),
+            "date": final_date_str,
             "time_et": time_et,
             "impact": impact,
             "event": title,
@@ -258,8 +268,9 @@ def fetch_and_save(target_date: date = None, fetch_week: bool = False,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fetch ForexFactory economic calendar for NinjaTrader news blackout")
-    parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD). Default: today")
-    parser.add_argument("--week", action="store_true", help="Fetch full week instead of single day")
+    parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD). If set, fetches this specific date.")
+    parser.add_argument("--day", action="store_true", help="Fetch single trading day (Today, or Tomorrow if > 17:00 ET). Default is FULL WEEK.")
+    parser.add_argument("--week", action="store_true", help="Deprecated: Weekly fetch is now default.")
     parser.add_argument("--output-dir", type=str, default=None, help=f"Output directory (default: {OUTPUT_DIR})")
     parser.add_argument("--output-file", type=str, default=None, help=f"Output filename (default: {OUTPUT_FILENAME})")
     parser.add_argument("--impacts", type=str, default=None, help='Comma-separated impact levels (default: "High,Medium")')
@@ -267,10 +278,35 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # Determine mode:
+    # 1. Specific Date text provided -> Fetch that date
+    # 2. --day flag provided -> Fetch single trading day (Today or Tomorrow)
+    # 3. Default -> Fetch full week (This Week + Next Week)
+    
+    fetch_week_mode = True
+    target = None
+
     if args.date:
         target = datetime.strptime(args.date, "%Y-%m-%d").date()
+        fetch_week_mode = False
+    elif args.day:
+        fetch_week_mode = False
+        # Determine "Trading Day" based on ET time (rollover at 17:00 / 5pm)
+        now_utc = datetime.now(ZoneInfo("UTC"))
+        now_et = now_utc.astimezone(ZoneInfo("America/New_York"))
+        
+        # If it's 5:00 PM ET or later, use tomorrow's date
+        if now_et.hour >= 17:
+            target = now_et.date() + timedelta(days=1)
+            print(f"Current time is {now_et.strftime('%H:%M')} ET (>= 17:00). Fetching for Trading Day: {target}")
+        else:
+            target = now_et.date()
+            print(f"Current time is {now_et.strftime('%H:%M')} ET (< 17:00). Fetching for Trading Day: {target}")
     else:
-        target = date.today()
+        # Default: Fetch week
+        fetch_week_mode = True
+        target = date.today()  # Placeholder, won't be used for filtering in week mode
+        print("Fetching full week schedule (Default)...")
 
     if args.impacts:
         IMPACT_LEVELS[:] = [x.strip() for x in args.impacts.split(",")]
@@ -279,7 +315,7 @@ if __name__ == "__main__":
 
     fetch_and_save(
         target_date=target,
-        fetch_week=args.week,
+        fetch_week=fetch_week_mode,
         output_dir=args.output_dir,
         output_filename=args.output_file,
     )

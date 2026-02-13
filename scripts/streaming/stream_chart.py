@@ -41,7 +41,7 @@ def get_live_files(symbol):
     }
 
 def get_watchlist_symbols():
-    defaults = ["/NQ", "/ES", "/RTY", "/YM","/CL", "/GC","QQQ", "SPY", "GOOGL", "AAPL", "MSFT", "AMZN", "TSLA", "META", "NFLX", "NVDA"]
+    defaults = ["/NQ", "/ES", "/RTY", "/YM","/CL", "/GC","QQQ", "SPY", "SPX""GOOGL", "AAPL", "MSFT", "AMZN", "TSLA", "META", "NFLX", "NVDA","VVIX","VIX"]
     try:
         if not os.path.exists(DB_PATH):
             return defaults
@@ -407,7 +407,8 @@ def update_historical_files(client, symbol):
     """
     symbol_map = {
         "/ES": "ES1", "/NQ": "NQ1", "/YM": "YM1", "/RTY": "RTY1",
-        "/CL": "CL1", "/GC": "GC1"
+        "/CL": "CL1", "/GC": "GC1","VVIX":"VVIX","VIX":"VIX","SPX":"SPX",
+        "SPY":"SPY","QQQ":"QQQ","TSLA":"TSLA","NVDA":"NVDA","MSFT":"MSFT","AAPL":"AAPL","AMZN":"AMZN","META":"META"
     }
     ticker = symbol_map.get(symbol)
     if not ticker: return # Only update mapped futures/indices for now
