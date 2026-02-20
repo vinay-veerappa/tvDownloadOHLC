@@ -29,16 +29,18 @@ export async function POST(request: Request) {
             ? summary.bias
             : `${summary.bias.bias} (${summary.bias.score.toFixed(0)}% Conviction)`;
 
+        const panels: any = summary.panels;
+        
         // Get Active War Game Scenario
         let warGameInfo = 'N/A';
-        if (summary.panels.warGame && summary.panels.warGame.currentScenario) {
-            const sc = summary.panels.warGame.scenarios.find((s: any) =>
-                s.id.startsWith(summary.panels.warGame.currentScenario) &&
-                (summary.panels.warGame.currentScenario === 'long' ? s.id === 'longTrue' : s.id === 'shortTrue')
+        if (panels.warGame && panels.warGame.currentScenario) {
+            const sc = panels.warGame.scenarios.find((s: any) =>
+                s.id.startsWith(panels.warGame.currentScenario) &&
+                (panels.warGame.currentScenario === 'long' ? s.id === 'longTrue' : s.id === 'shortTrue')
             );
             // More robust: find the one with highest probability or just use the current group
             // Ideally use the Narrative logic, but for now simple output:
-            warGameInfo = `${summary.panels.warGame.currentScenario.toUpperCase()} Bias (Overnight)`;
+            warGameInfo = `${panels.warGame.currentScenario.toUpperCase()} Bias (Overnight)`;
         }
 
         // Get Top Narratives

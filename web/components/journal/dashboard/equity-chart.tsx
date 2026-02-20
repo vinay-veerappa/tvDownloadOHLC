@@ -49,7 +49,7 @@ export function EquityChart({ data, loading }: EquityChartProps) {
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#333" opacity={0.2} />
                         <Tooltip
                             content={({ active, payload, label }) => {
-                                if (active && payload && payload.length) {
+                                if (active && payload && payload.length && label) {
                                     return (
                                         <div className="rounded-lg border bg-background p-2 shadow-sm">
                                             <div className="grid grid-cols-2 gap-2">

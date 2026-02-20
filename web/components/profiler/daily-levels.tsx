@@ -37,6 +37,7 @@ const SESSION_RANGES: Record<string, { start: string; end: string }> = {
 // Start times for specific levels to avoid empty space
 const LEVEL_START_TIMES: Record<string, string> = {
     'p12h': '06:00', 'p12m': '06:00', 'p12l': '06:00',
+    'asia_p12h': '18:00', 'asia_p12m': '18:00', 'asia_p12l': '18:00',
     'midnight_open': '00:00',
     'open_0730': '07:30',
     'asia_mid': '02:00',   // Asia ends 02:00
@@ -409,6 +410,20 @@ export const DailyLevels = memo(function DailyLevels({ levelTouches, filteredDat
                             {shouldShow('p12h') && <LevelCard title="P12 High" levelKey="p12h" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#22c55e" targetSession={targetSession} />}
                             {shouldShow('p12m') && <LevelCard title="P12 Mid" levelKey="p12m" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#06b6d4" targetSession={targetSession} />}
                             {shouldShow('p12l') && <LevelCard title="P12 Low" levelKey="p12l" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#ef4444" targetSession={targetSession} />}
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* Asia P12 Levels */}
+            {
+                (shouldShow('asia_p12h') || shouldShow('asia_p12m') || shouldShow('asia_p12l')) && (
+                    <div>
+                        <h3 className="text-lg font-semibold mb-3">Asia P12 Levels (Day)</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {shouldShow('asia_p12h') && <LevelCard title="Asia P12 High" levelKey="asia_p12h" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#22c55e" targetSession={targetSession} />}
+                            {shouldShow('asia_p12m') && <LevelCard title="Asia P12 Mid" levelKey="asia_p12m" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#06b6d4" targetSession={targetSession} />}
+                            {shouldShow('asia_p12l') && <LevelCard title="Asia P12 Low" levelKey="asia_p12l" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#ef4444" targetSession={targetSession} />}
                         </div>
                     </div>
                 )

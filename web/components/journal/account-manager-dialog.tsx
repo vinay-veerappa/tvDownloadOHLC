@@ -24,10 +24,11 @@ export function AccountManagerDialog({ open, onOpenChange }: AccountManagerProps
     const handleCreate = async () => {
         if (!newAccountName) return
 
-        const res = await createAccount({
-            name: newAccountName,
-            initialBalance: parseFloat(initialBalance)
-        })
+        const res = await createAccount(
+            newAccountName,
+            parseFloat(initialBalance),
+            "USD"
+        )
 
         if (res.success) {
             toast.success("Account created")

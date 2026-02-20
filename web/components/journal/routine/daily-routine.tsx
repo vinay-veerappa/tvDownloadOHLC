@@ -117,7 +117,6 @@ export function DailyRoutine() {
         try {
             await upsertAnalysis({
                 date,
-                timeframe: "DAILY",
                 sentiment: sentiment as any,
                 bias: bias as any,
                 notes,
@@ -134,7 +133,7 @@ export function DailyRoutine() {
         if (!newScenario || !newPlan) return
         
         // Ensure analysis exists first
-        await upsertAnalysis({ date, timeframe: "DAILY" })
+        await upsertAnalysis({ date })
         const { analysis } = await getDailyContext(date)
         
         if (analysis) {
@@ -179,7 +178,6 @@ export function DailyRoutine() {
         
          await upsertAnalysis({
                 date,
-                timeframe: "DAILY",
                 profilerSnapshot: JSON.stringify(snapshot)
             })
         setHasSnapshot(true)

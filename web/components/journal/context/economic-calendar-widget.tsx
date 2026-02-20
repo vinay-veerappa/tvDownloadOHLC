@@ -61,8 +61,8 @@ export function EconomicCalendarWidget({ initialEvents }: EconomicCalendarWidget
             // We keep ALL data from the feed
             const relevant = data
 
-            const mapped = relevant.map((e: any) => ({
-                id: `live-${e.date}-${e.title}`,
+            const mapped = relevant.map((e: any, i: number) => ({
+                id: `live-${e.date}-${e.title}-${i}`,
                 name: e.title,
                 country: e.country, // Ensure country is passed for filtering
                 datetime: new Date(e.date), // This parses string to Date object

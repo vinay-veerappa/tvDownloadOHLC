@@ -235,3 +235,48 @@ export async function getJournalTrades(filters?: DashboardFilters) {
         return { success: false, error: String(e) }
     }
 }
+
+export async function getAccounts() {
+    try {
+        const accounts = await prisma.account.findMany({
+            orderBy: { name: 'asc' }
+        })
+        return { success: true, data: accounts }
+    } catch (e) {
+        return { success: false, error: String(e) }
+    }
+}
+
+export async function createAccount(name: string, balance: number, currency: string) {
+    try {
+        const acc = await prisma.account.create({
+            data: {
+                name,
+                initialBalance: balance,
+                currentBalance: balance,
+                currency,
+            }
+        });
+        return { success: true, data: acc };
+    } catch (e) {
+        return { success: false, error: String(e) };
+    }
+}
+
+export async function deleteAccount(id: string) {
+    try {
+        await prisma.account.delete({ where: { id } });
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: String(e) };
+    }
+}
+
+export async function resetAccount(id: string) {
+    try {
+        await prisma.trade.deleteMany({ where: { accountId: id } });
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: String(e) };
+    }
+}

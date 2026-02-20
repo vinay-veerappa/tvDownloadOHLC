@@ -1,4 +1,4 @@
-import { HTFTrinityAnalysis, TrinityLevel } from "@/components/mission-control/panels/HTFTrinityPanel";
+// HTFTrinityAnalysis interface is defined below
 import path from 'path';
 import fs from 'fs';
 import { ParquetReader } from 'parquetjs-lite';

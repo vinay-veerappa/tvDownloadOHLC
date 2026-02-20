@@ -125,11 +125,15 @@ function calcComparisonStats(
     const aboveCount = aboveDistances.length;
     const belowCount = belowDistances.length;
 
+    const aboveMean = aboveCount > 0 ? aboveDistances.reduce((a, b) => a + b, 0) / aboveCount : 0;
+    const belowMean = belowCount > 0 ? belowDistances.reduce((a, b) => a + b, 0) / belowCount : 0;
+
     return {
         above: n > 0 ? Math.round((aboveCount / n) * 100) : 0,
         below: n > 0 ? Math.round((belowCount / n) * 100) : 0,
         aboveStats: {
             count: aboveCount,
+            mean: round(aboveMean, 4),
             p30: aboveCount > 0 ? round(percentile(aboveDistances, 30), 4) : 0,
             median: aboveCount > 0 ? round(percentile(aboveDistances, 50), 4) : 0,
             p70: aboveCount > 0 ? round(percentile(aboveDistances, 70), 4) : 0,
@@ -137,6 +141,7 @@ function calcComparisonStats(
         },
         belowStats: {
             count: belowCount,
+            mean: round(belowMean, 4),
             p30: belowCount > 0 ? round(percentile(belowDistances, 30), 4) : 0,
             median: belowCount > 0 ? round(percentile(belowDistances, 50), 4) : 0,
             p70: belowCount > 0 ? round(percentile(belowDistances, 70), 4) : 0,

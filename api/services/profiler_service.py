@@ -17,6 +17,8 @@ class ProfilerService:
     _level_touches_cache = {}
     _daily_hod_lod_cache = {}
     _filtered_stats_cache = {} # Cache for filtered stats results
+    _prediction_cache = {} # Cache for prediction datasets
+
     
     @staticmethod
     def _normalize_ticker(ticker: str) -> str:
@@ -1264,3 +1266,53 @@ class ProfilerService:
         except Exception as e:
             print(f"[Profiling] Load error for {ticker}: {e}")
             return None
+    @staticmethod
+    def _load_prediction_data(target: str) -> Dict:
+        """Load prediction JSONs with caching."""
+        ticker = "NQ1"  # Currently hardcoded as we only generated NQ1 data
+        cache_key = f"{ticker}_{target}"
+        
+        if cache_key in ProfilerService._prediction_cache:
+            return ProfilerService._prediction_cache[cache_key]
+            
+        from api.services.data_loader import DATA_DIR
+        filename = f"{ticker}_{target}_predictions.json"
+        path = DATA_DIR / filename
+        
+        try:
+            if path.exists():
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                ProfilerService._prediction_cache[cache_key] = data
+                return data
+            return {}
+        except Exception as e:
+            print(f"[ProfilerService] Error loading prediction data: {e}")
+            return {}
+
+    @staticmethod
+    def get_asia_prediction(prev_ny1: str, prev_ny2: str) -> Dict:
+        """
+        Get outcome probabilities for Asia session based on previous NY1/NY2 context.
+        """
+        data = ProfilerService._load_prediction_data("asia")
+        context_key = f"{prev_ny1}|{prev_ny2}"
+        
+        if context_key in data:
+            return data[context_key]
+        
+        # Fallback or empty result
+        return {"error": f"No historical match for context: {context_key}"}
+
+    @staticmethod
+    def get_london_prediction(prev_ny2: str, curr_asia: str) -> Dict:
+        """
+        Get outcome probabilities for London session based on previous NY2 and current Asia context.
+        """
+        data = ProfilerService._load_prediction_data("london")
+        context_key = f"{prev_ny2}|{curr_asia}"
+        
+        if context_key in data:
+            return data[context_key]
+            
+        return {"error": f"No historical match for context: {context_key}"}

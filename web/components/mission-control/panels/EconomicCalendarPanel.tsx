@@ -15,7 +15,7 @@ interface EconomicEvent {
 }
 
 interface EconomicCalendarPanelProps {
-    data: EconomicEvent[] | null;
+    data: { events: EconomicEvent[] } | null;
     isLoading?: boolean;
 }
 
@@ -32,7 +32,10 @@ export function EconomicCalendarPanel({ data, isLoading }: EconomicCalendarPanel
             </Card>
         );
     }
-    if (!data || data.length === 0) {
+    
+    const events = data?.events || [];
+    
+    if (events.length === 0) {
         return (
             <Card className="p-4 h-full flex flex-col items-center justify-center text-muted-foreground bg-muted/5">
                 <Info className="w-8 h-8 mb-2 opacity-20" />
@@ -49,7 +52,7 @@ export function EconomicCalendarPanel({ data, isLoading }: EconomicCalendarPanel
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-slate-800">
-                {data.map((event) => (
+                {events.map((event) => (
                     <div key={event.id} className="group relative bg-slate-900/50 border border-slate-800 rounded-md p-3 hover:bg-slate-900 transition-colors">
                         <div className="flex justify-between items-start mb-1">
                             <span className="text-xs font-mono text-orange-400">

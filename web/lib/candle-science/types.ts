@@ -15,6 +15,7 @@ export interface DirectionStats {
 export interface ComparisonStats {
     above: number;
     below: number;
+    median_dist?: number;
     aboveStats: {
         count: number;
         mean: number;

@@ -137,15 +137,16 @@ export function ImportExportDialog() {
         setLoadingBacktests(true)
         const result = await getBacktestResults()
         if (result.success && result.data) {
-            setBacktests(result.data)
+            setBacktests(result.data as any)
         }
         setLoadingBacktests(false)
     }
 
     const handleImportBacktest = async (backtestId: string) => {
+        if (!selectedAccountId) return;
         setImportingBacktest(backtestId)
 
-        const result = await importBacktestToJournal(backtestId)
+        const result = await importBacktestToJournal(backtestId, selectedAccountId)
 
         if (result.success) {
             setImportResult({

@@ -6,7 +6,7 @@ import {
     LineToolTextOptions,
     HitTestResult,
     TextAlignment,
-    EditorLayout,
+    LineToolOptionsCommon,
 } from "../core/types";
 import { LineToolPoint } from "../core/api/public-api";
 import {
@@ -168,7 +168,7 @@ export class PriceLabelV2<HorzScaleItem> extends BaseLineTool<HorzScaleItem> {
     }
 
     /** @inheritdoc */
-    public override getEditorLayout(): EditorLayout | null {
+    public override getEditorLayout(): any | null {
         // Use the internal renderer's text renderer bounds
         const rect = (this._textRenderer as any).rect() || { x: 0, y: 0, width: 0, height: 0 };
 

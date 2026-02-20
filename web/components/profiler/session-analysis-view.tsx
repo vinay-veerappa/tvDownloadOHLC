@@ -26,7 +26,7 @@ const OUTCOMES = ['Long True', 'Short True', 'Long False', 'Short False'];
 
 // Level configuration per session
 export const SESSION_LEVELS: Record<string, string[]> = {
-    'Asia': ['daily_open', 'pdl', 'pdm', 'pdh', 'p12h', 'p12m', 'p12l', 'asia_mid'],
+    'Asia': ['daily_open', 'pdl', 'pdm', 'pdh', 'asia_p12h', 'asia_p12m', 'asia_p12l', 'asia_mid'],
     'London': ['midnight_open', 'asia_mid', 'london_mid', 'pdl', 'pdh', 'pdm', 'p12h', 'p12m', 'p12l'],
     'NY1': ['open_0730', 'london_mid', 'ny1_mid', 'asia_mid', 'midnight_open', 'pdl', 'pdh', 'pdm', 'p12h', 'p12m', 'p12l'],
     'NY2': ['ny1_mid', 'ny2_mid', 'london_mid', 'open_0730', 'asia_mid', 'daily_open', 'pdl', 'pdh', 'pdm'],
@@ -113,7 +113,7 @@ export const SessionAnalysisView = memo(function SessionAnalysisView({ session, 
                     </button>
                 </div>
                 <Tabs defaultValue={validOutcomes[0]} className="w-full">
-                    <TabsList className="w-full justify-start h-auto p-1 bg-muted/20 mb-4 overflow-x-auto">
+                    <TabsList className="w-full justify-start h-auto p-1 bg-muted mb-4 overflow-x-auto">
                         {validOutcomes.map(outcome => {
                             const count = outcomeGroups.groups[outcome].length;
                             return (

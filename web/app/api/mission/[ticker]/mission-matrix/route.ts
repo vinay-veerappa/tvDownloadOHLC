@@ -3,9 +3,9 @@ import { calculateMissionMatrix } from '@/lib/mission-control/calculators/missio
 
 export async function GET(
     request: NextRequest,
-    { params }: { params: { ticker: string } }
+    context: { params: Promise<{ ticker: string }> }
 ) {
-    const { ticker } = params;
+    const { ticker } = await context.params;
 
     try {
         const data = await calculateMissionMatrix(ticker);
@@ -18,3 +18,4 @@ export async function GET(
         );
     }
 }
+

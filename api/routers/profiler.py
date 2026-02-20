@@ -270,3 +270,33 @@ async def get_filtered_price_model(
         raise HTTPException(status_code=404, detail=result["error"])
     return result
 
+
+# ============================================================================
+# NEW: Prediction Endpoints (Profiler Expansion)
+# ============================================================================
+
+@router.get("/stats/prediction/asia", tags=["Stats"])
+async def get_asia_prediction(
+    prev_ny1: str = Query(..., description="Status of previous day's NY1 session (e.g. 'Long True')"),
+    prev_ny2: str = Query(..., description="Status of previous day's NY2 session")
+):
+    """
+    Get probability distribution for the upcoming Asia session.
+    """
+    result = ProfilerService.get_asia_prediction(prev_ny1, prev_ny2)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+@router.get("/stats/prediction/london", tags=["Stats"])
+async def get_london_prediction(
+    prev_ny2: str = Query(..., description="Status of previous day's NY2 session"),
+    asia_status: str = Query(..., description="Status of current day's Asia session")
+):
+    """
+    Get probability distribution for the upcoming London session.
+    """
+    result = ProfilerService.get_london_prediction(prev_ny2, asia_status)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result

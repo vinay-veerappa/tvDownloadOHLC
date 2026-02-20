@@ -1,18 +1,18 @@
 "use client"
 
-import { memo, useState } from 'react';
+import { memo } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCcw, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
+import { RefreshCcw, ChevronLeft, ChevronRight, SlidersHorizontal, Sparkles, BarChart2 } from 'lucide-react'; 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface FilterSidebarProps {
     stats: {
         validSamples: number;
-        count?: number;
+        count?: number; 
     };
     filters: Record<string, string>;
     brokenFilters: Record<string, string>;
@@ -23,9 +23,14 @@ interface FilterSidebarProps {
     onTickerChange: (ticker: string) => void;
     isCollapsed: boolean;
     onToggleCollapse: (collapsed: boolean) => void;
+    
+    // Target Session
+    targetSession: string;
+    onTargetSessionChange: (session: string) => void;
 }
 
 const SESSIONS = ['Asia', 'London', 'NY1', 'NY2'];
+
 const AVAILABLE_TICKERS = [
     { value: 'NQ1', label: '/NQ: E-mini Nasdaq-100' },
     { value: 'ES1', label: '/ES: E-mini S&P 500' },
@@ -35,20 +40,24 @@ const AVAILABLE_TICKERS = [
     { value: 'YM1', label: '/YM: E-mini Dow Jones' },
 ];
 
-export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
-    stats,
-    filters,
-    brokenFilters,
-    onFilterChange,
-    onBrokenFilterChange,
-    onReset,
-    ticker,
-    onTickerChange,
-    isCollapsed,
-    onToggleCollapse
-}: FilterSidebarProps) {
-    // Removed internal state
 
+export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar(props: FilterSidebarProps) {
+    const {
+        stats,
+        filters,
+        brokenFilters,
+        onFilterChange,
+        onBrokenFilterChange,
+        onReset,
+        ticker,
+        onTickerChange,
+        isCollapsed,
+        onToggleCollapse,
+        targetSession,
+        onTargetSessionChange
+    } = props;
+
+    // ... existing helpers ...
     // Helper to parse complex status string "Long True" -> { direction: 'Long', outcome: 'True' }
     const parseStatus = (val: string) => {
         if (!val || val === 'Any') return { direction: 'All', outcome: 'All' };
@@ -83,36 +92,46 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
 
     if (isCollapsed) {
         return (
-            <div className="h-full border-r bg-background/50 backdrop-blur-sm w-[50px] flex flex-col items-center py-4 gap-4 transition-all duration-300">
-                <Button variant="ghost" size="icon" onClick={() => onToggleCollapse(false)} title="Expand Filters">
+            <div className="h-full border-r bg-background w-[50px] flex flex-col items-center py-4 gap-4 transition-all duration-300">
+                <Button variant="ghost" size="icon" onClick={() => onToggleCollapse(false)} title="Expand Sidepanel">
                     <ChevronRight className="h-4 w-4" />
                 </Button>
-                <div className="flex-1 flex flex-col items-center gap-4 mt-4">
-                    <Button variant="ghost" size="icon" onClick={() => onToggleCollapse(false)} title="Filters" className="text-muted-foreground">
-                        <SlidersHorizontal className="h-5 w-5" />
-                    </Button>
-                </div>
             </div>
         );
     }
 
     return (
-        <Card className="h-full border-r rounded-none border-y-0 border-l-0 w-[280px] flex flex-col bg-background/50 backdrop-blur-sm transition-all duration-300"> {/* Synced width with parent */}
+        <Card className="h-full border-r rounded-none border-y-0 border-l-0 w-[280px] flex flex-col bg-background transition-all duration-300">
             <CardHeader className="pb-4 border-b space-y-4">
                 <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                     <div className="flex items-center gap-2">
                         <Button variant="ghost" size="icon" className="-ml-2 h-8 w-8" onClick={() => onToggleCollapse(true)}>
                             <ChevronLeft className="h-4 w-4" />
                         </Button>
-                        <CardTitle className="text-lg font-bold">Filters</CardTitle>
+                        <CardTitle className="text-lg font-bold">Profiler Filters</CardTitle>
                     </div>
-                    {stats.validSamples > 0 && (
-                        <Badge variant="secondary" className="font-mono text-xs">
-                            {stats.validSamples.toLocaleString()} days
-                        </Badge>
-                    )}
                 </div>
 
+                {/* Target Session Selection */}
+                <div className="space-y-1.5 border border-primary/20 p-2 rounded-md bg-primary/5">
+                    <Label className="text-xs font-semibold text-primary uppercase flex items-center gap-1">
+                        <Sparkles className="h-3 w-3" />
+                         Target / Predict
+                    </Label>
+                    <Select value={targetSession} onValueChange={onTargetSessionChange}>
+                        <SelectTrigger className="border-primary/30 font-medium">
+                            <SelectValue placeholder="Select session" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="Daily">Daily Model</SelectItem>
+                            {SESSIONS.map(s => (
+                                <SelectItem key={s} value={s}>{s} Session</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                {/* Common Ticker Selection */}
                 <div className="space-y-1.5">
                     <Label className="text-xs font-semibold text-muted-foreground uppercase">Instrument</Label>
                     <Select value={ticker} onValueChange={onTickerChange}>
@@ -126,19 +145,27 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
                         </SelectContent>
                     </Select>
                 </div>
-
-                <Button variant="outline" size="sm" onClick={onReset} className="w-full">
-                    <RefreshCcw className="mr-2 h-3 w-3" />
-                    Reset Filters
-                </Button>
             </CardHeader>
 
             <ScrollArea className="flex-1">
-                <div className="p-4 space-y-8">
-                    {SESSIONS.map(session => {
+                 <div className="p-4 space-y-8 animate-in fade-in slide-in-from-right-2 duration-300">
+                    <div className="flex items-center justify-between">
+                        <h3 className="font-bold text-lg">Filters</h3>
+                         {stats.validSamples > 0 && (
+                            <Badge variant="secondary" className="font-mono text-xs">
+                                {stats.validSamples.toLocaleString()} days
+                            </Badge>
+                        )}
+                    </div>
+
+                     <Button variant="outline" size="sm" onClick={onReset} className="w-full">
+                        <BarChart2 className="mr-2 h-3 w-3" />
+                        Reset Filters
+                    </Button>
+
+                     {SESSIONS.map(session => {
                         const { direction, outcome } = parseStatus(filters[session]);
                         const broken = brokenFilters[session] || 'Any';
-
                         const isDir = (val: string) => direction === val;
                         const isOut = (val: string) => outcome === val;
                         const isBrk = (val: string) => broken === val;
@@ -146,7 +173,6 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
                         return (
                             <div key={session} className="space-y-4">
                                 <h3 className="font-bold text-lg border-b pb-1">{session}</h3>
-
                                 {/* Direction */}
                                 <div className="space-y-2">
                                     <Label className="text-xs font-semibold text-muted-foreground uppercase">Direction</Label>
@@ -164,7 +190,6 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
                                         ))}
                                     </div>
                                 </div>
-
                                 {/* Outcome */}
                                 <div className={`space-y-2 ${direction === 'None' ? 'opacity-50 pointer-events-none' : ''}`}>
                                     <Label className="text-xs font-semibold text-muted-foreground uppercase">Outcome</Label>
@@ -182,7 +207,6 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
                                         ))}
                                     </div>
                                 </div>
-
                                 {/* Broken */}
                                 <div className="space-y-2">
                                     <Label className="text-xs font-semibold text-muted-foreground uppercase">Broken</Label>
@@ -208,8 +232,9 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar({
                             </div>
                         );
                     })}
-                </div>
+                 </div>
             </ScrollArea>
         </Card>
     );
 });
+

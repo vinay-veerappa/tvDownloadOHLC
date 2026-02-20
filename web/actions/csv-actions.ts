@@ -562,3 +562,24 @@ export async function importTradesFromCsv(formData: FormData) {
         return { success: false, error: "Failed to process CSV: " + String(e) };
     }
 }
+
+export async function getBacktestResults() {
+    try {
+        const results = await prisma.backtestResult.findMany({
+            orderBy: { createdAt: "desc" }
+        });
+        return { success: true, data: results };
+    } catch (e) {
+        return { success: false, error: String(e) };
+    }
+}
+
+export async function importBacktestToJournal(backtestId: string, accountId: string) {
+    try {
+        // Dummy implementation for now
+        console.log(`Importing backtest ${backtestId} to account ${accountId}`);
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: String(e) };
+    }
+}
