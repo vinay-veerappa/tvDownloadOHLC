@@ -1098,11 +1098,11 @@ class ProfilerService:
             # Optimize Payload: Convert raw touch_times list to first_hit dict per session
             # Matches ranges in daily-levels.tsx
             SESSION_RANGES = {
-                'Asia':   {'start': 18*60, 'end': 26*60}, # 18:00 - 02:00 (next day)
-                'London': {'start': 26*60, 'end': 31*60}, # 02:00 - 07:00
-                'NY1':    {'start': 8*60,  'end': 12*60}, # 08:00 - 12:00
-                'NY2':    {'start': 12*60, 'end': 16*60}, # 12:00 - 16:00
-                'P12':    {'start': 6*60,  'end': 17*60}, # 06:00 - 17:00
+                'Asia':   {'start': 18*60, 'end': 41*60}, # 18:00 - 17:00 (next day)
+                'London': {'start': 26*60, 'end': 41*60}, # 02:00 - 17:00
+                'NY1':    {'start': 32*60, 'end': 41*60}, # 08:00 - 17:00
+                'NY2':    {'start': 36*60, 'end': 41*60}, # 12:00 - 17:00
+                'P12':    {'start': 30*60, 'end': 41*60}, # 06:00 - 17:00
                 'Daily':  {'start': 18*60, 'end': 41*60}  # 18:00 - 17:00 (next day)
             }
             

@@ -26,10 +26,10 @@ import {
 } from "@/components/ui/dialog";
 
 const SESSION_RANGES: Record<string, { start: string; end: string }> = {
-    'Asia': { start: '18:00', end: '02:00' },
-    'London': { start: '02:00', end: '07:00' },
-    'NY1': { start: '08:00', end: '12:00' },
-    'NY2': { start: '12:00', end: '16:00' },
+    'Asia': { start: '18:00', end: '17:00' },
+    'London': { start: '02:00', end: '17:00' },
+    'NY1': { start: '08:00', end: '17:00' },
+    'NY2': { start: '12:00', end: '17:00' },
     'P12': { start: '06:00', end: '17:00' },
     'Daily': { start: '18:00', end: '17:00' },
 };
