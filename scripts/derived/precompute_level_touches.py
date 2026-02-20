@@ -134,17 +134,17 @@ def compute_level_touches(ticker: str) -> dict:
         else:
             p12h = p12l = p12m = None
 
-        # Asia P12 levels (previous day 06:00-17:59)
+        # NY P12 levels (previous day 06:00-17:59)
         prev_bars = prev['bars']
-        asia_p12_mask = (prev_bars.index.time >= time(6, 0)) & (prev_bars.index.time < time(18, 0))
-        asia_p12_bars = prev_bars[asia_p12_mask]
+        ny_p12_mask = (prev_bars.index.time >= time(6, 0)) & (prev_bars.index.time < time(18, 0))
+        ny_p12_bars = prev_bars[ny_p12_mask]
         
-        if len(asia_p12_bars) > 0:
-            asia_p12h = float(asia_p12_bars['high'].max())
-            asia_p12l = float(asia_p12_bars['low'].min())
-            asia_p12m = (asia_p12h + asia_p12l) / 2
+        if len(ny_p12_bars) > 0:
+            ny_p12h = float(ny_p12_bars['high'].max())
+            ny_p12l = float(ny_p12_bars['low'].min())
+            ny_p12m = (ny_p12h + ny_p12l) / 2
         else:
-            asia_p12h = asia_p12l = asia_p12m = None
+            ny_p12h = ny_p12l = ny_p12m = None
         
         # Find touch times for each level
         def find_touch_times(level, bars_df):
@@ -258,39 +258,39 @@ def compute_level_touches(ticker: str) -> dict:
                 result['p12m']['touched'] = True
                 result['p12m']['touch_times'] = p12m_times
                 
-        # Asia P12 levels
-        if asia_p12h is not None:
-            result['asia_p12h'] = {
-                'level': round(asia_p12h, 2),
+        # NY P12 levels
+        if ny_p12h is not None:
+            result['ny_p12h'] = {
+                'level': round(ny_p12h, 2),
                 'touched': False,
                 'touch_times': []
             }
-            result['asia_p12l'] = {
-                'level': round(asia_p12l, 2),
+            result['ny_p12l'] = {
+                'level': round(ny_p12l, 2),
                 'touched': False,
                 'touch_times': []
             }
-            result['asia_p12m'] = {
-                'level': round(asia_p12m, 2),
+            result['ny_p12m'] = {
+                'level': round(ny_p12m, 2),
                 'touched': False,
                 'touch_times': []
             }
             
-            # Check Asia P12 touches (valid entirely during current trading day, starting at 18:00)
-            asia_p12h_times = find_touch_times(asia_p12h, day_session)
-            if asia_p12h_times:
-                result['asia_p12h']['touched'] = True
-                result['asia_p12h']['touch_times'] = asia_p12h_times
+            # Check NY P12 touches (valid entirely during current trading day, starting at 18:00)
+            ny_p12h_times = find_touch_times(ny_p12h, day_session)
+            if ny_p12h_times:
+                result['ny_p12h']['touched'] = True
+                result['ny_p12h']['touch_times'] = ny_p12h_times
             
-            asia_p12l_times = find_touch_times(asia_p12l, day_session)
-            if asia_p12l_times:
-                result['asia_p12l']['touched'] = True
-                result['asia_p12l']['touch_times'] = asia_p12l_times
+            ny_p12l_times = find_touch_times(ny_p12l, day_session)
+            if ny_p12l_times:
+                result['ny_p12l']['touched'] = True
+                result['ny_p12l']['touch_times'] = ny_p12l_times
             
-            asia_p12m_times = find_touch_times(asia_p12m, day_session)
-            if asia_p12m_times:
-                result['asia_p12m']['touched'] = True
-                result['asia_p12m']['touch_times'] = asia_p12m_times
+            ny_p12m_times = find_touch_times(ny_p12m, day_session)
+            if ny_p12m_times:
+                result['ny_p12m']['touched'] = True
+                result['ny_p12m']['touch_times'] = ny_p12m_times
         
         # Helper to slice session from start_time (exclusive) to 17:00
         def get_valid_window(bars_df, start_t: time):

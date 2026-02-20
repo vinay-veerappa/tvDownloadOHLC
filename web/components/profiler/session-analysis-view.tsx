@@ -26,9 +26,9 @@ const OUTCOMES = ['Long True', 'Short True', 'Long False', 'Short False'];
 
 // Level configuration per session
 export const SESSION_LEVELS: Record<string, string[]> = {
-    'Asia': ['daily_open', 'pdl', 'pdm', 'pdh', 'asia_p12h', 'asia_p12m', 'asia_p12l', 'asia_mid'],
-    'London': ['midnight_open', 'asia_mid', 'london_mid', 'pdl', 'pdh', 'pdm', 'p12h', 'p12m', 'p12l'],
-    'NY1': ['open_0730', 'london_mid', 'ny1_mid', 'asia_mid', 'midnight_open', 'pdl', 'pdh', 'pdm', 'p12h', 'p12m', 'p12l'],
+    'Asia': ['daily_open', 'pdl', 'pdm', 'pdh', 'ny_p12h', 'ny_p12m', 'ny_p12l', 'asia_mid', 'london_mid', 'ny1_mid', 'ny2_mid'],
+    'London': ['midnight_open', 'asia_mid', 'london_mid', 'pdl', 'pdh', 'pdm', 'ny_p12h', 'ny_p12m', 'ny_p12l', 'ny1_mid', 'ny2_mid'],
+    'NY1': ['open_0730', 'london_mid', 'ny1_mid', 'asia_mid', 'midnight_open', 'pdl', 'pdh', 'pdm', 'p12h', 'p12m', 'p12l', 'ny2_mid'],
     'NY2': ['ny1_mid', 'ny2_mid', 'london_mid', 'open_0730', 'asia_mid', 'daily_open', 'pdl', 'pdh', 'pdm'],
 };
 

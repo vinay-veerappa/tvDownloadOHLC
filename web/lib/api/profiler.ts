@@ -143,9 +143,9 @@ export interface DayLevelTouches {
     p12h?: LevelTouchEntry;
     p12l?: LevelTouchEntry;
     p12m?: LevelTouchEntry;
-    asia_p12h?: LevelTouchEntry;
-    asia_p12l?: LevelTouchEntry;
-    asia_p12m?: LevelTouchEntry;
+    ny_p12h?: LevelTouchEntry;
+    ny_p12l?: LevelTouchEntry;
+    ny_p12m?: LevelTouchEntry;
     // Time-based opens
     daily_open?: LevelTouchEntry;
     midnight_open?: LevelTouchEntry;
