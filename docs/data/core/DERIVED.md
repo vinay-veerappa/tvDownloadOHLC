@@ -14,21 +14,21 @@ This document describes all derived/precomputed data files generated from raw OH
 
 Derived data is precomputed from raw parquet OHLC data to support charting features, analytics, and research. These files are regenerated whenever source data is updated.
 
-| Category | Files | Location | Script |
-|:---|:---|:---|:---|
-| Profiler Stats | `{ticker}_profiler.json` | `data/` | `precompute_profiler.py` |
-| Daily HOD/LOD | `{ticker}_daily_hod_lod.json` | `data/` | `precompute_daily_hod_lod.py` |
-| Session HOD/LOD | `{ticker}_hod_lod.json` | `data/` | `precompute_hod_lod.py` |
-| Level Touches | `{ticker}_level_touches.json` | `data/` | `precompute_level_touches.py` |
-| Range Distribution | `{ticker}_range_dist.json` | `data/` | `precompute_range_dist.py` |
-| Opening Range | `{ticker}_opening_range.json` | `data/` | `precompute_opening_range.py` |
-| **NY Levels Stats** | `{ticker}_ny_levels_stats.json` | `data/` | `precompute_ny_levels.py` |
-| **Daily Classification** | `{ticker}_daily_classification.parquet` | `data/derived/` | `precompute_daily_classification.py` |
-| **ICT NWOG/NDOG** | `ict_nwog_ndog.json` | `data/derived/` | `generate_ict_nwog_ndog.py` |
-| Sessions | `{ticker}_sessions.json` | `data/sessions/` | `precompute_sessions.py` |
-| VWAP Indicators | `{ticker}_1m_vwap.parquet` | `data/indicators/` | `precompute_vwap.py` |
-| Hourly Quarter Stats | `hourly_quarter_stats_{ticker}.json` | `data/derived/` | `hourly_quarter_stats.py` |
-| Live Charts | `live_chart_{symbol}.json` | `data/` | Schwab Streamer |
+| Category                 | Files                                   | Location           | Script                               |
+| :----------------------- | :-------------------------------------- | :----------------- | :----------------------------------- |
+| Profiler Stats           | `{ticker}_profiler.json`                | `data/`            | `precompute_profiler.py`             |
+| Daily HOD/LOD            | `{ticker}_daily_hod_lod.json`           | `data/`            | `precompute_daily_hod_lod.py`        |
+| Session HOD/LOD          | `{ticker}_hod_lod.json`                 | `data/`            | `precompute_hod_lod.py`              |
+| Level Touches            | `{ticker}_level_touches.json`           | `data/`            | `precompute_level_touches.py`        |
+| Range Distribution       | `{ticker}_range_dist.json`              | `data/`            | `precompute_range_dist.py`           |
+| Opening Range            | `{ticker}_opening_range.json`           | `data/`            | `precompute_opening_range.py`        |
+| **NY Levels Stats**      | `{ticker}_ny_levels_stats.json`         | `data/`            | `precompute_ny_levels.py`            |
+| **Daily Classification** | `{ticker}_daily_classification.parquet` | `data/derived/`    | `precompute_daily_classification.py` |
+| **ICT NWOG/NDOG**        | `ict_nwog_ndog.json`                    | `data/derived/`    | `generate_ict_nwog_ndog.py`          |
+| Sessions                 | `{ticker}_sessions.json`                | `data/sessions/`   | `precompute_sessions.py`             |
+| VWAP Indicators          | `{ticker}_1m_vwap.parquet`              | `data/indicators/` | `precompute_vwap.py`                 |
+| Hourly Quarter Stats     | `hourly_quarter_stats_{ticker}.json`    | `data/derived/`    | `hourly_quarter_stats.py`            |
+| Live Charts              | `live_chart_{symbol}.json`              | `data/`            | Schwab Streamer                      |
 
 ---
 
@@ -39,20 +39,21 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 **Purpose:** Session-by-session trading statistics for the Profiler feature.
 
 **Contents (per record):**
+
 ```json
 {
   "date": "2025-12-20",
-  "session": "NY1",           // NY1, NY2, ON, etc.
+  "session": "NY1", // NY1, NY2, ON, etc.
   "open": 6050.25,
-  "prior_close": 6048.50,
-  "range_high": 6075.00,
+  "prior_close": 6048.5,
+  "range_high": 6075.0,
   "range_low": 6042.25,
-  "high_ts": 1734710400,      // Unix timestamp of session high
-  "low_ts": 1734720000,       // Unix timestamp of session low
-  "status_ts": 1734723600,    // Status determination timestamp
-  "daily_open": 6050.00,
-  "daily_high": 6080.00,
-  "daily_low": 6040.00
+  "high_ts": 1734710400, // Unix timestamp of session high
+  "low_ts": 1734720000, // Unix timestamp of session low
+  "status_ts": 1734723600, // Status determination timestamp
+  "daily_open": 6050.0,
+  "daily_high": 6080.0,
+  "daily_low": 6040.0
 }
 ```
 
@@ -67,15 +68,16 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 **Purpose:** Daily high/low of day statistics for scatter plots and analysis.
 
 **Contents (per record):**
+
 ```json
 {
   "date": "2025-12-20",
-  "daily_high": 6080.00,
-  "daily_low": 6040.00,
-  "daily_open": 6050.00,
-  "daily_close": 6070.00,
-  "high_time": "10:35",       // Time of HOD (NY time)
-  "low_time": "14:22",        // Time of LOD (NY time)
+  "daily_high": 6080.0,
+  "daily_low": 6040.0,
+  "daily_open": 6050.0,
+  "daily_close": 6070.0,
+  "high_time": "10:35", // Time of HOD (NY time)
+  "low_time": "14:22", // Time of LOD (NY time)
   "high_ts": 1734710100,
   "low_ts": 1734723720
 }
@@ -99,18 +101,25 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 
 ### 2.4 Level Touches (`{ticker}_level_touches.json`)
 
-**Purpose:** Records every time price touches or crosses key levels (Prior day high/low, overnight high/low, IB range, etc.).
+**Purpose:** Records every time price touches or crosses key levels. Included levels are:
+
+- Previous Day High/Low/Mid (PDH, PDL, PDM)
+- P12 Levels (Overnight 18:00-06:00 High/Low/Mid)
+- NY P12 Levels (Previous Day NY Session 06:00-17:00 High/Low/Mid)
+- Time-based Opens (Daily Open, Midnight Open, 07:30 Open)
+- Session Mids (Asia Mid, London Mid, NY1 Mid, NY2 Mid)
 
 **Contents (per record):**
+
 ```json
 {
   "date": "2025-12-20",
-  "level_type": "PDH",        // PDH, PDL, ONH, ONL, IBH, IBL, etc.
-  "level_price": 6080.00,
+  "level_type": "PDH", // PDH, PDL, ny_p12h, ny1_mid, etc.
+  "level_price": 6080.0,
   "touch_time": "09:45",
   "touch_ts": 1734707100,
   "direction": "from_below", // from_below, from_above
-  "break": true              // Did it break through?
+  "break": true // Did it break through?
 }
 ```
 
@@ -133,16 +142,17 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 **Purpose:** 9:30 AM 1-minute candle data for opening range breakout strategies.
 
 **Contents (per record):**
+
 ```json
 {
   "date": "2025-12-20",
   "open": 6050.25,
-  "high": 6052.50,
-  "low": 6048.00,
+  "high": 6052.5,
+  "low": 6048.0,
   "close": 6051.75,
-  "range_pts": 4.50,           // High - Low in points
-  "range_pct": 0.0743,         // Range as % of open
-  "timestamp": 1734707400      // Unix timestamp of 9:30 bar
+  "range_pts": 4.5, // High - Low in points
+  "range_pct": 0.0743, // Range as % of open
+  "timestamp": 1734707400 // Unix timestamp of 9:30 bar
 }
 ```
 
@@ -167,6 +177,7 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 **Purpose:** Statistical distributions for the Daily NY Levels Indicator.
 
 **Contents:**
+
 - `bull_mfe_dist`: Percentiles (2% steps) for price extension from 9:30 high.
 - `bear_mfe_dist`: Percentiles (2% steps) for price extension from 9:30 low.
 - `time_dist_bull/bear`: Frequency count of peak timing.
@@ -181,6 +192,7 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 **Purpose:** Precomputed session boundaries and OHLC for each trading session.
 
 **Companion Files:**
+
 - `{ticker}_hourly.parquet` - Hourly aggregated OHLC data
 
 **Generated By:** `scripts/derived/precompute_sessions.py`
@@ -213,11 +225,13 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 **Purpose:** Stores historical and active "New Week Opening Gaps" (NWOG) and "New Day Opening Gaps" (NDOG) for ICT-style institutional reference points.
 
 **Contents:**
+
 - `NWOG`: Weekend gaps (Friday Close to Sunday Open).
 - `NDOG`: Daily settlement gaps (Session Close to Session Open).
 - `gap_size`: Magnitude of the gap in points.
 
 **Structure (JSON):**
+
 ```json
 {
   "NQ1": {
@@ -247,11 +261,13 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 **Purpose:** Historical record of gaps between the Previous Regular Trading Hours (RTH) Close and the Current RTH Open.
 
 **Logic:**
+
 - **Indices (NQ, ES, YM, RTY)**: Gap = 09:30 Open - 16:15 Prev Close.
 - **Crude Oil (CL)**: Gap = 09:00 Open - 14:30 Prev Close.
 - **Gold (GC)**: Gap = 08:20 Open - 13:30 Prev Close.
 
 **Structure (JSON):**
+
 ```json
 {
   "NQ1": [
@@ -276,6 +292,7 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 **Purpose:** Precomputed VWAP and standard deviation bands at 1-minute resolution.
 
 **Columns:**
+
 - `time` - Unix timestamp
 - `vwap` - Volume-weighted average price
 - `vwap_upper_1`, `vwap_lower_1` - ±1 std dev bands
@@ -292,6 +309,7 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 **Purpose:** Quantitative distribution of High/Low formation within 15-minute quarters for each hour.
 
 **Contents:**
+
 - `total_sessions`: Number of sessions analyzed.
 - `h_high_q`: Count of Highs in Q1, Q2, Q3, Q4.
 - `h_low_q`: Count of Lows in Q1, Q2, Q3, Q4.
@@ -310,6 +328,7 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 **Purpose:** Real-time OHLC data from Schwab API streamer for live charting.
 
 **Variants:**
+
 - `live_chart_{symbol}.json` - 1-minute bars
 - `live_chart_{symbol}_15s.json` - 15-second bars
 - `live_chart_{symbol}_30s.json` - 30-second bars
@@ -327,6 +346,7 @@ python scripts/derived/regenerate_derived.py ES1
 ```
 
 This runs the following scripts in order:
+
 1. `precompute_profiler.py`
 2. `precompute_daily_hod_lod.py`
 3. `precompute_hod_lod.py`
@@ -340,14 +360,14 @@ This runs the following scripts in order:
 
 ## 4. File Sizes
 
-| Ticker | profiler | daily_hod_lod | level_touches | sessions | vwap |
-|:---|:---|:---|:---|:---|:---|
-| ES1 | 14 MB | 1.2 MB | 36 MB | 8.8 MB | 388 MB |
-| NQ1 | 14 MB | 1.2 MB | 29 MB | 8.9 MB | 369 MB |
-| CL1 | 14 MB | 1.2 MB | 27 MB | 8.4 MB | 376 MB |
-| GC1 | 14 MB | 1.2 MB | 26 MB | 8.7 MB | 385 MB |
-| YM1 | 14 MB | 1.2 MB | 28 MB | 8.8 MB | 369 MB |
-| RTY1 | 6.8 MB | 0.6 MB | 12 MB | 4.1 MB | 174 MB |
+| Ticker | profiler | daily_hod_lod | level_touches | sessions | vwap   |
+| :----- | :------- | :------------ | :------------ | :------- | :----- |
+| ES1    | 14 MB    | 1.2 MB        | 36 MB         | 8.8 MB   | 388 MB |
+| NQ1    | 14 MB    | 1.2 MB        | 29 MB         | 8.9 MB   | 369 MB |
+| CL1    | 14 MB    | 1.2 MB        | 27 MB         | 8.4 MB   | 376 MB |
+| GC1    | 14 MB    | 1.2 MB        | 26 MB         | 8.7 MB   | 385 MB |
+| YM1    | 14 MB    | 1.2 MB        | 28 MB         | 8.8 MB   | 369 MB |
+| RTY1   | 6.8 MB   | 0.6 MB        | 12 MB         | 4.1 MB   | 174 MB |
 
 ---
 
@@ -358,7 +378,7 @@ scripts/derived/
 ├── regenerate_derived.py      # Master script
 ├── precompute_profiler.py     # Profiler stats
 ├── precompute_daily_hod_lod.py # Daily HOD/LOD
-├── precompute_hod_lod.py      # Session HOD/LOD  
+├── precompute_hod_lod.py      # Session HOD/LOD
 ├── precompute_level_touches.py # Level touch events
 ├── precompute_range_dist.py   # Range distributions
 ├── precompute_sessions.py     # Session boundaries
@@ -378,25 +398,25 @@ SQLite database storing application state, journal entries, expected moves, and 
 
 ### 6.1 Table Overview
 
-| Category | Table | Purpose |
-|:---|:---|:---|
-| **Journal** | `Account` | Trading accounts with balances |
-| | `Strategy` | Trading strategies (with color tags) |
-| | `Trade` | Trade records with PnL, MAE, MFE |
-| | `Journal` | Daily journal entries |
-| | `Tag`, `TagGroup` | Multi-category trade tagging |
-| | `Note` | Trade/daily/misc notes |
-| | `TradePlan` | Pre-trade planning |
-| | `MarketCondition` | VIX, ATR, trend at trade time |
-| **Market Data** | `EconomicEvent` | Economic calendar (FOMC, Jobs, etc.) |
-| | `ExpectedMove` | Current expected move calculations |
-| | `ExpectedMoveHistory` | Historical EM with straddle/IV |
-| | `RthExpectedMove` | RTH-specific EM calculations |
-| | `HistoricalVolatility` | IV/HV history by ticker |
-| | `MarketNews` | Yahoo Finance news feed |
-| **UI State** | `WatchlistGroup`, `WatchlistItem` | Symbol watchlists |
-| | `BacktestResult` | Stored backtest runs |
-| **API** | `SchwabToken` | Schwab OAuth tokens |
+| Category        | Table                             | Purpose                              |
+| :-------------- | :-------------------------------- | :----------------------------------- |
+| **Journal**     | `Account`                         | Trading accounts with balances       |
+|                 | `Strategy`                        | Trading strategies (with color tags) |
+|                 | `Trade`                           | Trade records with PnL, MAE, MFE     |
+|                 | `Journal`                         | Daily journal entries                |
+|                 | `Tag`, `TagGroup`                 | Multi-category trade tagging         |
+|                 | `Note`                            | Trade/daily/misc notes               |
+|                 | `TradePlan`                       | Pre-trade planning                   |
+|                 | `MarketCondition`                 | VIX, ATR, trend at trade time        |
+| **Market Data** | `EconomicEvent`                   | Economic calendar (FOMC, Jobs, etc.) |
+|                 | `ExpectedMove`                    | Current expected move calculations   |
+|                 | `ExpectedMoveHistory`             | Historical EM with straddle/IV       |
+|                 | `RthExpectedMove`                 | RTH-specific EM calculations         |
+|                 | `HistoricalVolatility`            | IV/HV history by ticker              |
+|                 | `MarketNews`                      | Yahoo Finance news feed              |
+| **UI State**    | `WatchlistGroup`, `WatchlistItem` | Symbol watchlists                    |
+|                 | `BacktestResult`                  | Stored backtest runs                 |
+| **API**         | `SchwabToken`                     | Schwab OAuth tokens                  |
 
 ---
 
@@ -406,78 +426,81 @@ SQLite database storing application state, journal entries, expected moves, and 
 
 Core trade journaling table.
 
-| Field | Type | Description |
-|:---|:---|:---|
-| `id` | String | CUID primary key |
-| `ticker` | String | Symbol (e.g. "ES1", "NQ1") |
-| `entryDate`, `exitDate` | DateTime | Trade timestamps |
-| `entryPrice`, `exitPrice` | Float | Trade prices |
-| `quantity` | Float | Position size |
-| `direction` | String | "LONG" or "SHORT" |
-| `status` | String | "OPEN", "CLOSED", "PENDING", "CANCELLED" |
-| `pnl`, `fees` | Float | Realized P&L and fees |
-| `risk`, `mae`, `mfe` | Float | Risk metrics |
-| `stopLoss`, `takeProfit` | Float | Bracket order levels |
-| `notes`, `metadata` | String | Free text and JSON storage |
+| Field                     | Type     | Description                              |
+| :------------------------ | :------- | :--------------------------------------- |
+| `id`                      | String   | CUID primary key                         |
+| `ticker`                  | String   | Symbol (e.g. "ES1", "NQ1")               |
+| `entryDate`, `exitDate`   | DateTime | Trade timestamps                         |
+| `entryPrice`, `exitPrice` | Float    | Trade prices                             |
+| `quantity`                | Float    | Position size                            |
+| `direction`               | String   | "LONG" or "SHORT"                        |
+| `status`                  | String   | "OPEN", "CLOSED", "PENDING", "CANCELLED" |
+| `pnl`, `fees`             | Float    | Realized P&L and fees                    |
+| `risk`, `mae`, `mfe`      | Float    | Risk metrics                             |
+| `stopLoss`, `takeProfit`  | Float    | Bracket order levels                     |
+| `notes`, `metadata`       | String   | Free text and JSON storage               |
 
 #### ExpectedMoveHistory
 
 Historical expected move data by ticker and date.
 
-| Field | Type | Description |
-|:---|:---|:---|
-| `ticker` | String | Symbol |
-| `date` | DateTime | Trade date |
-| `closePrice` | Float | Close price |
-| `straddlePrice`, `emStraddle` | Float | Straddle-based EM |
-| `iv365`, `em365` | Float | 365-day IV method |
-| `iv252`, `em252` | Float | 252-day IV method |
-| `source` | String | "historical", "manual", "computed" |
+| Field                         | Type     | Description                        |
+| :---------------------------- | :------- | :--------------------------------- |
+| `ticker`                      | String   | Symbol                             |
+| `date`                        | DateTime | Trade date                         |
+| `closePrice`                  | Float    | Close price                        |
+| `straddlePrice`, `emStraddle` | Float    | Straddle-based EM                  |
+| `iv365`, `em365`              | Float    | 365-day IV method                  |
+| `iv252`, `em252`              | Float    | 252-day IV method                  |
+| `source`                      | String   | "historical", "manual", "computed" |
 
 #### HistoricalVolatility
 
 IV/HV timeseries for analysis.
 
-| Field | Type | Description |
-|:---|:---|:---|
-| `ticker` | String | Symbol |
-| `date` | DateTime | Date |
-| `iv` | Float | Implied Volatility |
-| `hv` | Float | Historical Volatility |
-| `closePrice` | Float | Underlying close |
+| Field        | Type     | Description           |
+| :----------- | :------- | :-------------------- |
+| `ticker`     | String   | Symbol                |
+| `date`       | DateTime | Date                  |
+| `iv`         | Float    | Implied Volatility    |
+| `hv`         | Float    | Historical Volatility |
+| `closePrice` | Float    | Underlying close      |
 
 #### EconomicEvent
 
 Economic calendar events.
 
-| Field | Type | Description |
-|:---|:---|:---|
-| `datetime` | DateTime | Event time |
-| `name` | String | Event name (e.g. "FOMC Rate Decision") |
-| `impact` | String | "HIGH", "MEDIUM", "LOW" |
-| `actual`, `forecast`, `previous` | Float | Event values |
+| Field                            | Type     | Description                            |
+| :------------------------------- | :------- | :------------------------------------- |
+| `datetime`                       | DateTime | Event time                             |
+| `name`                           | String   | Event name (e.g. "FOMC Rate Decision") |
+| `impact`                         | String   | "HIGH", "MEDIUM", "LOW"                |
+| `actual`, `forecast`, `previous` | Float    | Event values                           |
 
 ---
 
 ### 6.3 Database Commands
 
 **View in Prisma Studio:**
+
 ```powershell
 cd web && npx prisma studio
 ```
 
 **Generate client after schema changes:**
+
 ```powershell
 cd web && npx prisma generate
 ```
 
 **Run migrations:**
+
 ```powershell
 cd web && npx prisma migrate dev
 ```
 
 **Reset database:**
+
 ```powershell
 cd web && npx prisma migrate reset
 ```
-
