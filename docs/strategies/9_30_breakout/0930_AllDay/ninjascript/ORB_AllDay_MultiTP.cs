@@ -57,7 +57,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double rHigh = double.MinValue;
         private double rLow = double.MaxValue;
         private bool rDefined = false;
-        private bool rangeSynced = false;  // Flag to sync range with primary bar
+        private bool rangeSynced = false;
 
         // State Tracking
         private int attemptsToday = 0;
@@ -87,7 +87,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private int remainingQty = 0;
 
         // Dump Pouch State
-        private int dumpLevel = 0;              // 0=Initial, 1=TP1 hit, 2=50% target, 3=75% target
+        private int dumpLevel = 0;
         private double initialSLPrice = double.NaN;
         private double currentDPStop = double.NaN;
         private double dpTP1Price = double.NaN;
@@ -95,7 +95,12 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double dpLevel2Price = double.NaN;
         private double dpLevel3Price = double.NaN;
 
-        // News Blackout State (auto-loaded from CSV)
+        // Net Displacement tracking (for debug/dashboard)
+        private double lastNetDispRatio = double.NaN;
+        private bool lastNetDispPassed = false;
+        private int netDispRejectCount = 0;
+
+        // News Blackout State
         private List<TimeSpan> newsBlackoutTimes = new List<TimeSpan>();
         private bool newsFileLoaded = false;
         private string newsFileDate = "";
@@ -106,7 +111,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (State == State.SetDefaults)
             {
-                Description = @"All-Day ORB Strategy with Multi-TP - Based on 3-year backtest optimization";
+                Description = @"All-Day ORB Strategy with Multi-TP + Net Displacement Filter";
                 Name = "ORB_AllDay_MultiTP";
                 Calculate = Calculate.OnBarClose;
                 EntriesPerDirection = 1;
@@ -124,11 +129,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 StopTargetHandling = StopTargetHandling.PerEntryExecution;
                 BarsRequiredToTrade = 20;
 
-                // Time Zone Configuration
-                // All time inputs (OR Start, Trading End, etc.) are in EASTERN TIME.
-                // Set ChartTimeZone to match your NinjaTrader chart's configured timezone
-                // so the strategy can correctly convert bar timestamps to Eastern.
-                // Common values: "Eastern Standard Time", "Central Standard Time", "Pacific Standard Time"
                 ChartTimeZone = "Pacific Standard Time";
 
                 // Core Settings
@@ -144,13 +144,19 @@ namespace NinjaTrader.NinjaScript.Strategies
                 PBTimeoutBars = 5;
                 FallbackProximityPct = 0.10;
 
+                // Net Displacement Filter (NEW)
+                EnableNetDisplacement = true;
+                MinBodyRatio = 0.05;
+                NetDispApplyToImmediate = true;
+                NetDispApplyToPullback = true;
+
                 // Re-entry Rules
                 ReentryModel = ORB_AllDay_ReentryMode.Immediate;
                 MaxAttempts = 10;
                 StopAfterWin = false;
                 CooldownBars = 0;
 
-                // Multi-TP Configuration (Optimized Settings)
+                // Multi-TP Configuration
                 EnableMultiTP = true;
                 NumTPLevels = 3;
                 TP1Pct = 0.15;
@@ -167,12 +173,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 // Risk Management
                 UseMAEFilter = true;
-                MAEThresholdPct = 0.05;  // Optimized: 0.10% is best
+                MAEThresholdPct = 0.05;
                 InitialCapital = 3000;
                 RiskPercent = 1.0;
                 MaxContracts = 3;
 
-                // News Blackout (all times in Eastern)
+                // News Blackout
                 EnableNewsBlackout = true;
                 AutoLoadNewsCSV = true;
                 NewsCSVPath = System.IO.Path.Combine(
@@ -205,18 +211,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 MaxRangePct = 0.25;
                 MinRangePct = 0.03;
 
-
                 // Visuals
                 ShowDashboard = true;
                 ShowRangeBox = true;
                 ShowTPSLLevels = true;
 
-                // VVIX placeholder (user must input manually or use indicator)
                 VVIX_Open = 100.0;
             }
             else if (State == State.Configure)
             {
-                AddDataSeries(BarsPeriodType.Second, 1); // Index 1: 1-Second for precise range capture
+                AddDataSeries(BarsPeriodType.Second, 1);
             }
             else if (State == State.DataLoaded)
             {
@@ -242,7 +246,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         protected override void OnBarUpdate()
         {
-            // Safety Checks
             if (CurrentBars[0] < 1) return;
             if (BarsArray.Length > 1 && CurrentBars[1] < 1) return;
 
@@ -251,13 +254,11 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 DateTime estTime = TimeZoneInfo.ConvertTime(Time[0], chartZone, estZone);
 
-                // Reset on new day
                 if (estTime.Date != lastResetDate)
                 {
                     ResetDailyState(estTime);
                 }
 
-                // Capture Range (9:30:01 - 9:31:00)
                 TimeSpan timeOfDay = estTime.TimeOfDay;
                 TimeSpan startTime = ORStartTime.TimeOfDay;
                 TimeSpan endTime = OREndTime.TimeOfDay;
@@ -268,7 +269,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (Low[0] < rLow) rLow = Low[0];
                 }
 
-                // Finalize Range
                 if (!rDefined && timeOfDay > endTime && rHigh > double.MinValue && rLow < double.MaxValue)
                 {
                     rDefined = true;
@@ -279,19 +279,16 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (BarsInProgress == 0 && rDefined)
             {
                 DateTime estTime = TimeZoneInfo.ConvertTime(Time[0], chartZone, estZone);
-                
-                // Look-back Range Sync - ensure primary bar's High/Low is captured
+
                 if (rDefined && !rangeSynced)
                 {
                     for (int i = 0; i <= 5; i++)
                     {
                         if (CurrentBar - i < 0) continue;
-                        
+
                         DateTime barTimeEST = TimeZoneInfo.ConvertTime(Time[i], chartZone, estZone);
-                        // Match 9:30 or 9:31 bar
                         if (barTimeEST.Hour == 9 && (barTimeEST.Minute == 30 || barTimeEST.Minute == 31))
                         {
-                            // Force Sync: Capture primary bar's High/Low into range
                             if (High[i] > rHigh) rHigh = High[i];
                             if (Low[i] < rLow) rLow = Low[i];
                             rangeSynced = true;
@@ -299,7 +296,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         }
                     }
                 }
-                
+
                 ProcessTradingLogic(estTime);
             }
         }
@@ -339,13 +336,84 @@ namespace NinjaTrader.NinjaScript.Strategies
             dpLevel2Price = double.NaN;
             dpLevel3Price = double.NaN;
 
+            // Net Displacement reset
+            lastNetDispRatio = double.NaN;
+            lastNetDispPassed = false;
+            netDispRejectCount = 0;
+
             if (SystemPerformance.AllTrades.Count > 0)
                 prevClosedProfit = SystemPerformance.AllTrades.TradesPerformance.Currency.CumProfit;
             else
                 prevClosedProfit = 0;
 
-            // Load today's news blackout times from CSV
             LoadNewsCSV(estTime);
+        }
+
+        // =====================================================================
+        // NET DISPLACEMENT CALCULATION
+        // =====================================================================
+
+        /// <summary>
+        /// Calculates how much of the candle body sits beyond a boundary level,
+        /// as a ratio of the total candle range.
+        /// 
+        /// For longs: measures body above rHigh / candle range
+        /// For shorts: measures body below rLow / candle range
+        /// 
+        /// High ratio = committed breakout (body pushed through)
+        /// Low ratio = wicky/fake breakout (wick poked through, body stayed near boundary)
+        /// </summary>
+        private double CalcNetBodyRatio(bool isLong)
+        {
+            double candleRange = High[0] - Low[0];
+            if (candleRange <= 0) return 0.0;
+
+            double bodyTop = Math.Max(Open[0], Close[0]);
+            double bodyBot = Math.Min(Open[0], Close[0]);
+
+            if (isLong)
+            {
+                // How much of the body is ABOVE rHigh
+                double bodyAbove = Math.Max(0.0, bodyTop - Math.Max(bodyBot, rHigh));
+                return bodyAbove / candleRange;
+            }
+            else
+            {
+                // How much of the body is BELOW rLow
+                double bodyBelow = Math.Max(0.0, Math.Min(bodyTop, rLow) - bodyBot);
+                return bodyBelow / candleRange;
+            }
+        }
+
+        /// <summary>
+        /// Returns true if the breakout candle passes the net displacement quality check.
+        /// When EnableNetDisplacement is false, always returns true (no filtering).
+        /// </summary>
+        private bool PassesNetDisplacement(bool isLong, bool isImmediateMode)
+        {
+            if (!EnableNetDisplacement)
+                return true;
+
+            // Check if this filter applies to the current entry mode
+            if (isImmediateMode && !NetDispApplyToImmediate)
+                return true;
+            if (!isImmediateMode && !NetDispApplyToPullback)
+                return true;
+
+            double ratio = CalcNetBodyRatio(isLong);
+            lastNetDispRatio = ratio;
+
+            bool passes = ratio >= MinBodyRatio;
+            lastNetDispPassed = passes;
+
+            if (!passes)
+            {
+                netDispRejectCount++;
+                Print(string.Format("NetDisp REJECT: {0} ratio={1:F3} < min={2:F3} (reject #{3} today)",
+                    isLong ? "LONG" : "SHORT", ratio, MinBodyRatio, netDispRejectCount));
+            }
+
+            return passes;
         }
 
         private void ProcessTradingLogic(DateTime estTime)
@@ -353,7 +421,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             double rSize = rHigh - rLow;
             double rPct = (rSize / Close[0]) * 100;
 
-            // Time Checks
             bool isTradingTime = estTime.TimeOfDay >= OREndTime.TimeOfDay && estTime.TimeOfDay < TradingEndTime.TimeOfDay;
             bool isHardExit = estTime.TimeOfDay >= HardExitTime.TimeOfDay;
 
@@ -361,11 +428,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             bool isVVIXFiltered = UseVVIXFilter && VVIX_Open > MaxVVIX;
             bool isFiltered = isRangeFiltered || isVVIXFiltered;
 
-            // Track price returning to range
             if (Position.MarketPosition == MarketPosition.Flat && Close[0] >= rLow && Close[0] <= rHigh)
                 priceReturnedToRange = true;
 
-            // Win tracking
             if (StopAfterWin && !hasWonToday)
             {
                 double currentProfit = SystemPerformance.AllTrades.Count > 0 ?
@@ -374,10 +439,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                     hasWonToday = true;
             }
 
-            // Cooldown check
             bool cooldownComplete = lastExitBar < 0 || (CurrentBar - lastExitBar) >= CooldownBars;
 
-            // Re-entry eligibility
             bool reentryEligible = ReentryModel == ORB_AllDay_ReentryMode.Immediate ||
                                    (ReentryModel == ORB_AllDay_ReentryMode.FreshOnly && priceReturnedToRange) ||
                                    ReentryModel == ORB_AllDay_ReentryMode.OnePerDirection;
@@ -385,7 +448,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             bool canTakeLong = ReentryModel != ORB_AllDay_ReentryMode.OnePerDirection || !longTakenToday;
             bool canTakeShort = ReentryModel != ORB_AllDay_ReentryMode.OnePerDirection || !shortTakenToday;
 
-            // News blackout check
             bool inNewsBlackout = IsInNewsBlackout(estTime);
 
             bool canTrade = isTradingTime && !isHardExit && !isFiltered &&
@@ -394,40 +456,30 @@ namespace NinjaTrader.NinjaScript.Strategies
                             !inNewsBlackout &&
                             Position.MarketPosition == MarketPosition.Flat;
 
-            // Calculate Position Size
             int qty = CalculateQty(rSize);
 
-            // Entry Logic
             if (canTrade)
             {
                 ProcessEntryLogic(estTime, qty, canTakeLong, canTakeShort, rSize);
             }
 
-            // =============================================
-            // HARD EXIT — checked FIRST, takes priority
-            // =============================================
+            // Hard Exit
             bool hardExitTriggered = false;
             if (Position.MarketPosition != MarketPosition.Flat && isHardExit)
             {
                 hardExitTriggered = true;
 
                 if (Position.MarketPosition == MarketPosition.Long)
-                {
                     ExitLong(Position.Quantity, "Time Exit", "");
-                }
                 else
-                {
                     ExitShort(Position.Quantity, "Time Exit", "");
-                }
             }
 
-            // Only run normal exit management if NOT in hard exit window
             if (!hardExitTriggered && Position.MarketPosition != MarketPosition.Flat)
             {
                 ProcessExitLogic(estTime, rSize);
             }
 
-            // Visuals
             if (ShowDashboard)
                 DrawDashboard(estTime, rSize, rPct, isFiltered, isTradingTime);
 
@@ -435,11 +487,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 DrawRangeBox(estTime, rSize, rPct, isRangeFiltered);
         }
 
-        /// <summary>
-        /// Loads news event times from the CSV generated by news_calendar_fetcher.py.
-        /// Called once per day during daily reset.
-        /// CSV format: date,time_et,impact,event (with comment lines starting with #)
-        /// </summary>
         private void LoadNewsCSV(DateTime estDate)
         {
             newsBlackoutTimes.Clear();
@@ -465,7 +512,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#"))
                         continue;
 
-                    // Skip header row
                     if (!headerSkipped && line.StartsWith("date"))
                     {
                         headerSkipped = true;
@@ -480,11 +526,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                     string eventDate = parts[0].Trim();
                     string eventTime = parts[1].Trim();
 
-                    // Only load events for today
                     if (eventDate != dateStr)
                         continue;
 
-                    // Parse HH:mm time
                     TimeSpan ts;
                     if (TimeSpan.TryParse(eventTime, out ts))
                     {
@@ -507,18 +551,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
 
-        /// <summary>
-        /// Returns true if the given EST time falls within any active news blackout window.
-        /// Checks both auto-loaded CSV times and manual time slots.
-        /// Each news time creates a window from [NewsTime - PreMinutes] to [NewsTime + PostMinutes].
-        /// </summary>
         private bool IsInNewsBlackout(DateTime estTime)
         {
             if (!EnableNewsBlackout) return false;
 
             TimeSpan now = estTime.TimeOfDay;
 
-            // Check auto-loaded CSV times first
             if (AutoLoadNewsCSV && newsFileLoaded)
             {
                 foreach (TimeSpan newsTime in newsBlackoutTimes)
@@ -528,7 +566,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
 
-            // Also check manual time slots (fallback / additional times)
             if (NewsTime1_Enabled && IsInWindow(now, NewsTime1.TimeOfDay, NewsPreMinutes, NewsPostMinutes)) return true;
             if (NewsTime2_Enabled && IsInWindow(now, NewsTime2.TimeOfDay, NewsPreMinutes, NewsPostMinutes)) return true;
             if (NewsTime3_Enabled && IsInWindow(now, NewsTime3.TimeOfDay, NewsPreMinutes, NewsPostMinutes)) return true;
@@ -544,11 +581,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             return now >= windowStart && now <= windowEnd;
         }
 
-        /// <summary>
-        /// Computes the initial SL price based on UsePercentSL setting.
-        /// If UsePercentSL: SL = entry +/- PercentSLPct% of entry price
-        /// Otherwise: SL = range boundary (rLow for long, rHigh for short)
-        /// </summary>
         private double GetInitialSLPrice(bool isLong, double entryPrice)
         {
             if (UsePercentSL)
@@ -565,21 +597,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private void ProcessEntryLogic(DateTime estTime, int qty, bool canTakeLong, bool canTakeShort, double rSize)
         {
-            // Displacement levels
             double displacementHigh = rHigh * (1 + MinDisplacementPct / 100);
             double displacementLow = rLow * (1 - MinDisplacementPct / 100);
 
-            // Pullback levels
             double maxPBLong = rHigh - (rSize * MaxPullbackDepthPct / 100);
             double maxPBShort = rLow + (rSize * MaxPullbackDepthPct / 100);
 
-            // Fallback zones
             double fallbackLongZone = rHigh * (1 + FallbackProximityPct / 100);
             double fallbackShortZone = rLow * (1 - FallbackProximityPct / 100);
 
-            // Breakout detection
             bool breakoutLong = CrossAbove(Close, rHigh, 1);
             bool breakoutShort = CrossBelow(Close, rLow, 1);
+
+            // Standard displacement check
             bool hasDisplacementLong = Close[0] >= displacementHigh;
             bool hasDisplacementShort = Close[0] <= displacementLow;
 
@@ -588,32 +618,48 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 if (breakoutLong && canTakeLong)
                 {
-                    EnterLong(0, qty, "Long");
-                    SetupEntry(true, qty);
+                    // >>> NET DISPLACEMENT GATE <<<
+                    if (PassesNetDisplacement(true, true))
+                    {
+                        EnterLong(0, qty, "Long");
+                        SetupEntry(true, qty);
+                    }
                 }
                 else if (breakoutShort && canTakeShort)
                 {
-                    EnterShort(0, qty, "Short");
-                    SetupEntry(false, qty);
+                    // >>> NET DISPLACEMENT GATE <<<
+                    if (PassesNetDisplacement(false, true))
+                    {
+                        EnterShort(0, qty, "Short");
+                        SetupEntry(false, qty);
+                    }
                 }
             }
             // PULLBACK MODES
             else
             {
-                // Arm pending entries
+                // Arm pending entries — net displacement gates the arming
                 if (!longPending && !shortPending)
                 {
                     if (breakoutLong && hasDisplacementLong && canTakeLong)
                     {
-                        longPending = true;
-                        breakoutBar = CurrentBar;
-                        sigCandleExtreme = Low[0];
+                        // >>> NET DISPLACEMENT GATE (arming) <<<
+                        if (PassesNetDisplacement(true, false))
+                        {
+                            longPending = true;
+                            breakoutBar = CurrentBar;
+                            sigCandleExtreme = Low[0];
+                        }
                     }
                     else if (breakoutShort && hasDisplacementShort && canTakeShort)
                     {
-                        shortPending = true;
-                        breakoutBar = CurrentBar;
-                        sigCandleExtreme = High[0];
+                        // >>> NET DISPLACEMENT GATE (arming) <<<
+                        if (PassesNetDisplacement(false, false))
+                        {
+                            shortPending = true;
+                            breakoutBar = CurrentBar;
+                            sigCandleExtreme = High[0];
+                        }
                     }
                 }
 
@@ -712,7 +758,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             tp1Qty = (int)Math.Max(1, Math.Floor(qty * TP1PositionPct / 100.0));
             remainingQty = qty - tp1Qty;
 
-            // Compute initial SL using centralized helper (respects UsePercentSL)
             double slPrice = GetInitialSLPrice(isLong, Close[0]);
 
             // Dump Pouch initialization
@@ -728,7 +773,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             dpLevel3Price = isLong ? Close[0] + moveToTarget * (DP_Level3TriggerPct / 100)
                                    : Close[0] - moveToTarget * (DP_Level3TriggerPct / 100);
 
-            // === IMMEDIATE STOP — protect position from bar 0 ===
             if (isLong)
                 ExitLongStopMarket(0, true, qty, slPrice, "SL", "");
             else
@@ -743,12 +787,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             double entry = Position.AveragePrice;
             bool isLong = Position.MarketPosition == MarketPosition.Long;
 
-            // Base SL — uses percent or range boundary per setting
             double baseSL = GetInitialSLPrice(isLong, entry);
 
-            // MAE Filter — early exit if adverse excursion exceeds threshold
-            // Only fires if we haven't already hit TP1 (avoid killing a winning runner)
-            // Uses market exit, so skip normal TP/SL submission on this bar to avoid conflicts
             bool maeTriggered = false;
             if (UseMAEFilter && !tp1Hit)
             {
@@ -777,7 +817,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
 
-            // Draw levels
             if (ShowTPSLLevels && !maeTriggered)
             {
                 double tp1Price = isLong ? entry * (1 + TP1Pct / 100) : entry * (1 - TP1Pct / 100);
@@ -801,7 +840,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Draw.Line(this, "TP3_Line", false, 1, tp3Price, 0, tp3Price, Brushes.Aqua, DashStyleHelper.Dot, 1);
                 Draw.Line(this, "SL_Line", false, 1, displaySL, 0, displaySL, Brushes.Red, DashStyleHelper.Solid, 2);
 
-                // Draw Dump Pouch target levels when active
                 if (RunnerModeAfterTP1 == ORB_AllDay_RunnerMode.DumpPouch && !double.IsNaN(dpLevel2Price))
                 {
                     Draw.Line(this, "DP_L2", false, 1, dpLevel2Price, 0, dpLevel2Price, Brushes.Gold, DashStyleHelper.Dash, 1);
@@ -819,7 +857,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             double currentSL = baseSL;
 
-            // Detect TP1 hit (intra-bar check)
             if (!tp1Hit)
             {
                 if ((isLong && High[0] >= tp1Price) || (!isLong && Low[0] <= tp1Price))
@@ -843,31 +880,26 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
 
-            // Detect TP2 hit (for 3-TP mode tracking)
             if (tp1Hit && !tp2Hit && NumTPLevels >= 3)
             {
                 if ((isLong && High[0] >= tp2Price) || (!isLong && Low[0] <= tp2Price))
                     tp2Hit = true;
             }
 
-            // ==========================================
-            // DUMP POUCH MODE — progressive trail levels
-            // ==========================================
+            // Dump Pouch Mode
             if (RunnerModeAfterTP1 == ORB_AllDay_RunnerMode.DumpPouch)
             {
                 if (tp1Hit)
                 {
-                    // Level 2: At DP_Level2TriggerPct% of target move → SL to breakeven
                     if (dumpLevel == 1)
                     {
                         if ((isLong && High[0] >= dpLevel2Price) || (!isLong && Low[0] <= dpLevel2Price))
                         {
                             dumpLevel = 2;
-                            currentDPStop = entry;  // Breakeven
+                            currentDPStop = entry;
                         }
                     }
 
-                    // Level 3: At DP_Level3TriggerPct% of target move → lock DP_Level3LockPct% of move
                     if (dumpLevel == 2)
                     {
                         if ((isLong && High[0] >= dpLevel3Price) || (!isLong && Low[0] <= dpLevel3Price))
@@ -887,38 +919,29 @@ namespace NinjaTrader.NinjaScript.Strategies
                     currentSL = initialSLPrice;
                 }
 
-                // Set exits for Dump Pouch mode
-                // FIX: Use consistent "SL" signal name to avoid orphan orders
                 int qty = Position.Quantity;
-                int tp1ExitQty = tp1Hit ? 0 : Math.Min(tp1Qty, qty);  // Don't re-submit after TP1 fills
+                int tp1ExitQty = tp1Hit ? 0 : Math.Min(tp1Qty, qty);
 
                 if (isLong)
                 {
                     if (tp1ExitQty > 0)
                         ExitLongLimit(0, true, tp1ExitQty, tp1Price, "TP1", "");
-
                     ExitLongStopMarket(0, true, qty, currentSL, "SL", "");
                 }
                 else
                 {
                     if (tp1ExitQty > 0)
                         ExitShortLimit(0, true, tp1ExitQty, tp1Price, "TP1", "");
-
                     ExitShortStopMarket(0, true, qty, currentSL, "SL", "");
                 }
 
-                return;  // Skip the standard exit logic below
+                return;
             }
 
-            // ==========================================
-            // NON-DUMP-POUCH MODES
-            // ==========================================
-
-            // Move SL to breakeven after TP1
+            // Non-Dump-Pouch Modes
             if (tp1Hit && MoveToBreakevenAfterTP1)
                 currentSL = entry;
 
-            // Update trailing stop
             if (tp1Hit && RunnerModeAfterTP1 == ORB_AllDay_RunnerMode.Trailing)
             {
                 if (isLong)
@@ -937,14 +960,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
 
-            // ==========================================
-            // Calculate per-tranche quantities
-            // ==========================================
             int qtyNow = Position.Quantity;
 
             if (NumTPLevels >= 3)
             {
-                // 3-TP mode: split into TP1 / TP2 / TP3 (runner) tranches
                 int tp1ExitQ = tp1Hit ? 0 : Math.Min(tp1Qty, qtyNow);
                 int tp2Qty = (int)Math.Max(1, Math.Floor(entryQty * TP2PositionPct / 100.0));
                 int tp2ExitQ = tp2Hit ? 0 : Math.Min(tp2Qty, qtyNow - tp1ExitQ);
@@ -973,7 +992,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else
             {
-                // 2-TP mode: TP1 partial + TP2 remainder
                 int tp1ExitQ = tp1Hit ? 0 : Math.Min(tp1Qty, qtyNow);
                 int tp2ExitQ = qtyNow - tp1ExitQ;
 
@@ -1016,15 +1034,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             double slDistance;
             if (UsePercentSL)
-            {
-                // Use percent-based SL distance for sizing
                 slDistance = Close[0] * (PercentSLPct / 100.0);
-            }
             else
-            {
-                // Use range size as SL distance
                 slDistance = rSize;
-            }
 
             if (RiskPercent <= 0 || slDistance <= 0)
                 return 1;
@@ -1037,7 +1049,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity,
             MarketPosition marketPosition, string orderId, DateTime time)
         {
-            // Track exits for cooldown
             if (execution.Order.OrderState == OrderState.Filled &&
                 (execution.Order.Name.Contains("TP") || execution.Order.Name.Contains("SL") ||
                  execution.Order.Name.Contains("MAE") || execution.Order.Name.Contains("Time") ||
@@ -1070,6 +1081,17 @@ namespace NinjaTrader.NinjaScript.Strategies
             string dpStatus = RunnerModeAfterTP1 == ORB_AllDay_RunnerMode.DumpPouch ?
                 (dumpLevel == 0 ? "INITIAL" : dumpLevel == 1 ? "LVL1(Risk-)" : dumpLevel == 2 ? "LVL2(BE)" : "LVL3(LOCK)") : "N/A";
 
+            // Net Displacement status line
+            string ndStatus = EnableNetDisplacement
+                ? string.Format("ON (≥{0:F2}) Rej:{1}", MinBodyRatio, netDispRejectCount)
+                : "OFF";
+            string ndScope = EnableNetDisplacement
+                ? (NetDispApplyToImmediate ? "IM " : "") + (NetDispApplyToPullback ? "PB" : "")
+                : "-";
+            string ndLast = !double.IsNaN(lastNetDispRatio)
+                ? string.Format("{0:F3}{1}", lastNetDispRatio, lastNetDispPassed ? " ✓" : " ✗")
+                : "-";
+
             string hud = string.Format(
                 "ORB ALL-DAY V2\n" +
                 "─────────────\n" +
@@ -1084,12 +1106,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 "Dump Pouch: {12}\n" +
                 "MAE: {13}%\n" +
                 "MaxQty: {14}\n" +
-                "Status: {15}\n" +
-                "Time: {16:HH:mm}",
+                "Net Disp: {15}\n" +
+                "  Scope: {16} Last: {17}\n" +
+                "Status: {18}\n" +
+                "Time: {19:HH:mm}",
                 rSize, rPct, VVIX_Open,
                 attemptsToday, MaxAttempts, longAttempts, shortAttempts,
                 tpMode, slMode, newsInfo, tp1Status, runnerStatus, dpStatus,
-                MAEThresholdPct, MaxContracts, status, estTime);
+                MAEThresholdPct, MaxContracts,
+                ndStatus, ndScope, ndLast,
+                status, estTime);
 
             Draw.TextFixed(this, "HUD", hud, TextPosition.TopRight, Brushes.White,
                 new SimpleFont("Consolas", 10), Brushes.Black, Brushes.DimGray, 90);
@@ -1101,30 +1127,24 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (chartZone == null || estZone == null) return;
 
             DateTime rangeDate = estTime.Date;
-            
-            // Calculate start time: OR end time in EST, converted to chart time
+
             DateTime estOpen = rangeDate.Add(OREndTime.TimeOfDay);
-            // End: 16:00:00 EST (End of Session)
             DateTime estEnd = rangeDate.Add(new TimeSpan(16, 0, 0));
 
             DateTime chartStart = TimeZoneInfo.ConvertTime(estOpen, estZone, chartZone);
             DateTime chartEnd = TimeZoneInfo.ConvertTime(estEnd, estZone, chartZone);
 
-            // Extend to current time if before end, otherwise draw full
             DateTime displayEnd = (Time[0] < chartEnd) ? Time[0] : chartEnd;
-            
+
             Brush fillBrush = isRangeFiltered ? Brushes.Red : Brushes.DeepSkyBlue;
             string suffix = rangeDate.ToString("yyyyMMdd");
 
-            // Main Lines using DateTime coordinates
             Draw.Line(this, "High" + suffix, false, chartStart, rHigh, displayEnd, rHigh, Brushes.DeepSkyBlue, DashStyleHelper.Solid, 2);
             Draw.Line(this, "Low" + suffix, false, chartStart, rLow, displayEnd, rLow, Brushes.OrangeRed, DashStyleHelper.Solid, 2);
 
-            // Mid line
             double mid = (rHigh + rLow) / 2;
             Draw.Line(this, "Mid" + suffix, false, chartStart, mid, displayEnd, mid, Brushes.Gold, DashStyleHelper.Dash, 1);
 
-            // Box using DateTime coordinates
             Draw.Rectangle(this, "RangeBox" + suffix, false, chartStart, rHigh, displayEnd, rLow, Brushes.Transparent, fillBrush, 20);
         }
 
@@ -1175,6 +1195,31 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Display(Name = "Fallback Proximity %", Order = 5, GroupName = "2. Entry")]
         public double FallbackProximityPct { get; set; }
 
+        // --- Net Displacement Filter Properties (NEW) ---
+
+        [NinjaScriptProperty]
+        [Display(Name = "Enable Net Displacement", Order = 1, GroupName = "2b. Net Displacement",
+            Description = "Require breakout candle body to be substantially beyond range boundary")]
+        public bool EnableNetDisplacement { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Min Body Ratio", Order = 2, GroupName = "2b. Net Displacement",
+            Description = "Fraction of candle range that body must be beyond boundary. 0.30=moderate, 0.50=strict")]
+        [Range(0.05, 0.90)]
+        public double MinBodyRatio { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Apply to Immediate Mode", Order = 3, GroupName = "2b. Net Displacement",
+            Description = "Gate Immediate entries with net displacement check")]
+        public bool NetDispApplyToImmediate { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Apply to Pullback Arm", Order = 4, GroupName = "2b. Net Displacement",
+            Description = "Gate Pullback/Fallback arming with net displacement check")]
+        public bool NetDispApplyToPullback { get; set; }
+
+        // --- Re-entry ---
+
         [NinjaScriptProperty]
         [Display(Name = "Re-entry Mode", Order = 1, GroupName = "3. Re-entry")]
         public ORB_AllDay_ReentryMode ReentryModel { get; set; }
@@ -1190,6 +1235,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         [NinjaScriptProperty]
         [Display(Name = "Cooldown Bars", Order = 4, GroupName = "3. Re-entry")]
         public int CooldownBars { get; set; }
+
+        // --- Multi-TP ---
 
         [NinjaScriptProperty]
         [Display(Name = "Enable Multi-TP", Order = 1, GroupName = "4. Multi-TP")]
@@ -1231,6 +1278,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Display(Name = "Trail Offset %", Order = 10, GroupName = "4. Multi-TP")]
         public double TrailOffsetPct { get; set; }
 
+        // --- Risk ---
+
         [NinjaScriptProperty]
         [Display(Name = "Single TP %", Order = 1, GroupName = "5. Risk")]
         public double SingleTPPct { get; set; }
@@ -1265,6 +1314,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             Description = "Stop loss distance as % of entry price (used when Use Percent-Based SL is enabled)")]
         public double PercentSLPct { get; set; }
 
+        // --- Dump Pouch ---
+
         [NinjaScriptProperty]
         [Display(Name = "DP Target Move %", Order = 1, GroupName = "5b. Dump Pouch")]
         public double DP_TargetMovePct { get; set; }
@@ -1284,6 +1335,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         [NinjaScriptProperty]
         [Display(Name = "DP Level 3: Lock % of Move", Order = 5, GroupName = "5b. Dump Pouch")]
         public double DP_Level3LockPct { get; set; }
+
+        // --- Filters ---
 
         [NinjaScriptProperty]
         [Display(Name = "Use VVIX Filter", Order = 1, GroupName = "6. Filters")]
@@ -1305,6 +1358,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Display(Name = "Min Range %", Order = 5, GroupName = "6. Filters")]
         public double MinRangePct { get; set; }
 
+        // --- News Blackout ---
+
         [NinjaScriptProperty]
         [Display(Name = "Enable News Blackout", Order = 1, GroupName = "7. News Blackout",
             Description = "Block new entries during configurable windows around news events (all times ET)")]
@@ -1322,8 +1377,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         [NinjaScriptProperty]
         [PropertyEditor("NinjaTrader.Gui.Tools.TimeEditorKey")]
-        [Display(Name = "News Time 1 (ET)", Order = 4, GroupName = "7. News Blackout",
-            Description = "Manual fallback: news time slot 1")]
+        [Display(Name = "News Time 1 (ET)", Order = 4, GroupName = "7. News Blackout")]
         public DateTime NewsTime1 { get; set; }
 
         [NinjaScriptProperty]
@@ -1358,14 +1412,14 @@ namespace NinjaTrader.NinjaScript.Strategies
         public bool NewsTime4_Enabled { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Pre-News Buffer (minutes)", Order = 12, GroupName = "7. News Blackout",
-            Description = "Minutes before news time to start blocking entries")]
+        [Display(Name = "Pre-News Buffer (minutes)", Order = 12, GroupName = "7. News Blackout")]
         public int NewsPreMinutes { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Post-News Buffer (minutes)", Order = 13, GroupName = "7. News Blackout",
-            Description = "Minutes after news time to resume entries")]
+        [Display(Name = "Post-News Buffer (minutes)", Order = 13, GroupName = "7. News Blackout")]
         public int NewsPostMinutes { get; set; }
+
+        // --- Visuals ---
 
         [NinjaScriptProperty]
         [Display(Name = "Show Dashboard", Order = 1, GroupName = "8. Visuals")]
