@@ -155,6 +155,11 @@ export interface DayLevelTouches {
     london_mid?: LevelTouchEntry;
     ny1_mid?: LevelTouchEntry;
     ny2_mid?: LevelTouchEntry;
+    // Previous Session mids
+    prev_asia_mid?: LevelTouchEntry;
+    prev_london_mid?: LevelTouchEntry;
+    prev_ny1_mid?: LevelTouchEntry;
+    prev_ny2_mid?: LevelTouchEntry;
 }
 
 export type LevelTouchesResponse = Record<string, DayLevelTouches>;

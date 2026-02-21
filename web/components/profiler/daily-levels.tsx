@@ -40,10 +40,14 @@ const LEVEL_START_TIMES: Record<string, string> = {
     'ny_p12h': '18:00', 'ny_p12m': '18:00', 'ny_p12l': '18:00',
     'midnight_open': '00:00',
     'open_0730': '07:30',
-    'asia_mid': '02:00',   // Asia ends 02:00
-    'london_mid': '07:00', // London ends 07:00
-    'ny1_mid': '12:00',    // NY1 ends 12:00
-    'ny2_mid': '16:00',    // NY2 ends 16:00
+    'asia_mid': '19:30',   
+    'london_mid': '03:30', 
+    'ny1_mid': '08:30',    
+    'ny2_mid': '12:30',    
+    'prev_asia_mid': '18:00',
+    'prev_london_mid': '18:00',
+    'prev_ny1_mid': '18:00',
+    'prev_ny2_mid': '18:00',
 };
 
 interface DailyLevelsProps {
@@ -445,7 +449,8 @@ export const DailyLevels = memo(function DailyLevels({ levelTouches, filteredDat
 
             {/* Session Mids */}
             {
-                (shouldShow('asia_mid') || shouldShow('london_mid') || shouldShow('ny1_mid') || shouldShow('ny2_mid')) && (
+                (shouldShow('asia_mid') || shouldShow('london_mid') || shouldShow('ny1_mid') || shouldShow('ny2_mid') ||
+                 shouldShow('prev_asia_mid') || shouldShow('prev_london_mid') || shouldShow('prev_ny1_mid') || shouldShow('prev_ny2_mid')) && (
                     <div>
                         <h3 className="text-lg font-semibold mb-3">Session Mids</h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -453,6 +458,11 @@ export const DailyLevels = memo(function DailyLevels({ levelTouches, filteredDat
                             {shouldShow('london_mid') && <LevelCard title="London Mid" levelKey="london_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#fb923c" targetSession={targetSession} />}
                             {shouldShow('ny1_mid') && <LevelCard title="NY1 Mid" levelKey="ny1_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#38bdf8" targetSession={targetSession} />}
                             {shouldShow('ny2_mid') && <LevelCard title="NY2 Mid" levelKey="ny2_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#60a5fa" targetSession={targetSession} />}
+                            
+                            {shouldShow('prev_asia_mid') && <LevelCard title="Prev Asia Mid" levelKey="prev_asia_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#f472b6" targetSession={targetSession} />}
+                            {shouldShow('prev_london_mid') && <LevelCard title="Prev London Mid" levelKey="prev_london_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#fb923c" targetSession={targetSession} />}
+                            {shouldShow('prev_ny1_mid') && <LevelCard title="Prev NY1 Mid" levelKey="prev_ny1_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#38bdf8" targetSession={targetSession} />}
+                            {shouldShow('prev_ny2_mid') && <LevelCard title="Prev NY2 Mid" levelKey="prev_ny2_mid" levelTouches={levelTouches} filteredDates={filteredDates} granularity={granularity} color="#60a5fa" targetSession={targetSession} />}
                         </div>
                     </div>
                 )

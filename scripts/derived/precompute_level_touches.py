@@ -379,6 +379,14 @@ def compute_level_touches(ticker: str) -> dict:
         if date in profiler_sessions:
             day_prof = profiler_sessions[date]
             
+            # Map session to "Valid Start Time" for checking touches (end of utility window)
+            session_check_starts = {
+                'Asia': '19:30',
+                'London': '03:30',
+                'NY1': '08:30',
+                'NY2': '12:30'
+            }
+            
             for sess_name in ['Asia', 'London', 'NY1', 'NY2']:
                 if sess_name in day_prof:
                     sess = day_prof[sess_name]
@@ -386,8 +394,34 @@ def compute_level_touches(ticker: str) -> dict:
                     if mid is not None:
                         key = f'{sess_name.lower()}_mid'
                         
-                        # Just search the entire day_session (18:00 to 17:00 next day)
+                        start_t_str = session_check_starts.get(sess_name)
+                        h, m = map(int, start_t_str.split(':'))
+                        start_dt = (datetime.min + timedelta(hours=h, minutes=m, seconds=1)).time()
+                        
+                        # Search from end of utility until 17:00
+                        valid_bars = day_session.between_time(start_dt, time(17,0))
+                        mid_times = find_touch_times(mid, valid_bars)
+                        
+                        result[key] = {
+                            'level': round(mid, 2),
+                            'touched': len(mid_times) > 0,
+                            'touch_times': mid_times
+                        }
+
+        # Previous Session Mids (Used for Asia/London sessions)
+        if prev_date in profiler_sessions:
+            prev_prof = profiler_sessions[prev_date]
+            for sess_name in ['Asia', 'London', 'NY1', 'NY2']:
+                if sess_name in prev_prof:
+                    sess = prev_prof[sess_name]
+                    mid = sess.get('mid')
+                    if mid is not None:
+                        key = f'prev_{sess_name.lower()}_mid'
+                        
+                        # Previous day's mids are already fully formed by the time the current trading day starts (18:00)
+                        # So we can search the entire current trading day
                         mid_times = find_touch_times(mid, day_session)
+                        
                         result[key] = {
                             'level': round(mid, 2),
                             'touched': len(mid_times) > 0,
