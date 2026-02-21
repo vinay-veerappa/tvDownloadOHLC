@@ -1,0 +1,398 @@
+# strategy_validation/scripts/utils.py
+"""
+Shared utilities for all validation scripts.
+Heavy use of NumPy vectorization — avoid Python loops over bars.
+"""
+
+import pandas as pd
+import numpy as np
+from pathlib import Path
+from typing import Optional, Tuple, List, Dict
+import time
+import functools
+import sys
+import os
+
+# Add parent dir to path for config import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config.settings import DataConfig, SessionConfig, OpeningRangeConfig, get_config
+
+
+# ---------------------------------------------------------------------------
+# Performance helpers
+# ---------------------------------------------------------------------------
+
+def timer(func):
+    """Decorator to time function execution."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        elapsed = time.perf_counter() - start
+        print(f"  [{func.__name__}] completed in {elapsed:.2f}s")
+        return result
+    return wrapper
+
+
+def log(msg: str):
+    """Simple logger with timestamp."""
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}")
+
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
+
+# Common column name mappings
+COLUMN_ALIASES = {
+    "datetime": ["datetime", "timestamp", "date", "time", "Date", "Time", "Datetime", "Timestamp"],
+    "open":     ["open", "Open", "OPEN", "o", "O"],
+    "high":     ["high", "High", "HIGH", "h", "H"],
+    "low":      ["low", "Low", "LOW", "l", "L"],
+    "close":    ["close", "Close", "CLOSE", "c", "C"],
+    "volume":   ["volume", "Volume", "VOLUME", "vol", "Vol", "v", "V"],
+}
+
+
+def _resolve_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Auto-detect and rename columns to standard names."""
+    col_map = {}
+    existing = set(df.columns)
+    for standard, aliases in COLUMN_ALIASES.items():
+        if standard in existing:
+            continue  # already correct
+        for alias in aliases:
+            if alias in existing:
+                col_map[alias] = standard
+                break
+    if col_map:
+        df = df.rename(columns=col_map)
+        log(f"  Renamed columns: {col_map}")
+    return df
+
+
+@timer
+def load_parquet(filepath: str, cfg: DataConfig) -> pd.DataFrame:
+    """Load parquet file, standardize columns, set timezone.
+    Returns DataFrame with DatetimeIndex in US/Eastern.
+    """
+    log(f"Loading {filepath}...")
+    df = pd.read_parquet(filepath)
+    log(f"  Raw shape: {df.shape}, columns: {list(df.columns)}")
+
+    # Resolve column names
+    df = _resolve_columns(df)
+
+    # Validate required columns exist
+    required = ["datetime", "open", "high", "low", "close", "volume"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        # Check if datetime is the index
+        if df.index.name in COLUMN_ALIASES["datetime"] or isinstance(df.index, pd.DatetimeIndex):
+            df = df.reset_index()
+            df = _resolve_columns(df)
+            missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}. Found: {list(df.columns)}")
+
+    # Ensure datetime is proper type
+    if not pd.api.types.is_datetime64_any_dtype(df["datetime"]):
+        df["datetime"] = pd.to_datetime(df["datetime"])
+
+    # Handle timezone
+    if df["datetime"].dt.tz is None:
+        if cfg.raw_timezone:
+            df["datetime"] = df["datetime"].dt.tz_localize(cfg.raw_timezone, ambiguous="NaT", nonexistent="NaT")
+        else:
+            df["datetime"] = df["datetime"].dt.tz_localize(cfg.target_timezone, ambiguous="NaT", nonexistent="NaT")
+
+    if str(df["datetime"].dt.tz) != cfg.target_timezone:
+        df["datetime"] = df["datetime"].dt.tz_convert(cfg.target_timezone)
+
+    # Drop any NaT rows from DST handling
+    nat_count = df["datetime"].isna().sum()
+    if nat_count > 0:
+        log(f"  Dropping {nat_count} rows with NaT datetime (DST transitions)")
+        df = df.dropna(subset=["datetime"])
+
+    # Set index and sort
+    df = df.set_index("datetime").sort_index()
+
+    # Ensure OHLCV are numeric
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    log(f"  Final shape: {df.shape}, range: {df.index[0]} to {df.index[-1]}")
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Session filtering (vectorized)
+# ---------------------------------------------------------------------------
+
+def time_mask(idx: pd.DatetimeIndex, start: tuple, end: tuple) -> np.ndarray:
+    """Create boolean mask for time-of-day filtering. Vectorized.
+    start/end are (hour, minute) tuples.
+    Handles cross-midnight sessions (e.g., 18:00 - 09:29).
+    """
+    minutes = idx.hour * 60 + idx.minute
+    start_min = start[0] * 60 + start[1]
+    end_min = end[0] * 60 + end[1]
+
+    if start_min <= end_min:
+        # Normal: e.g., 09:30 to 16:00
+        return (minutes >= start_min) & (minutes <= end_min)
+    else:
+        # Cross midnight: e.g., 18:00 to 09:29
+        return (minutes >= start_min) | (minutes <= end_min)
+
+
+def filter_session(df: pd.DataFrame, start: tuple, end: tuple) -> pd.DataFrame:
+    """Filter DataFrame to specific time-of-day window."""
+    mask = time_mask(df.index, start, end)
+    return df[mask]
+
+
+def get_rth(df: pd.DataFrame, cfg: SessionConfig) -> pd.DataFrame:
+    """Filter to RTH only."""
+    return filter_session(df, cfg.rth_start, cfg.rth_end)
+
+
+# ---------------------------------------------------------------------------
+# Trade date assignment (vectorized)
+# ---------------------------------------------------------------------------
+
+def assign_trade_date(df: pd.DataFrame, cfg: SessionConfig) -> pd.Series:
+    """Assign each bar to its trade date.
+    Bars from 18:00 onward belong to the NEXT calendar day's trade date.
+    Bars from 00:00 to 16:59 belong to the current calendar day's trade date.
+    Returns Series of datetime.date.
+    """
+    dates = df.index.date
+    hours = df.index.hour
+
+    # Bars from 18:00-23:59 belong to next trade date
+    next_day_mask = hours >= cfg.eth_start[0]  # 18:00+
+    trade_dates = pd.Series(dates, index=df.index)
+    trade_dates[next_day_mask] = trade_dates[next_day_mask] + pd.Timedelta(days=1)
+
+    return trade_dates
+
+
+# ---------------------------------------------------------------------------
+# Vectorized aggregation helpers
+# ---------------------------------------------------------------------------
+
+def session_ohlcv_by_date(df: pd.DataFrame, trade_dates: pd.Series,
+                          start: tuple, end: tuple) -> pd.DataFrame:
+    """Compute OHLCV for a specific session window, grouped by trade_date.
+    Returns DataFrame indexed by trade_date with columns:
+    session_open, session_high, session_low, session_close, session_volume
+    """
+    mask = time_mask(df.index, start, end)
+    sub = df[mask].copy()
+    sub["trade_date"] = trade_dates[mask]
+
+    # Use groupby with named agg for performance
+    result = sub.groupby("trade_date").agg(
+        session_open=("open", "first"),
+        session_high=("high", "max"),
+        session_low=("low", "min"),
+        session_close=("close", "last"),
+        session_volume=("volume", "sum"),
+    )
+    return result
+
+
+def compute_opening_ranges(df: pd.DataFrame, trade_dates: pd.Series,
+                           or_cfg: OpeningRangeConfig) -> pd.DataFrame:
+    """Compute opening range high/low/width for all configured durations.
+    Fully vectorized per duration.
+
+    Returns DataFrame indexed by trade_date with columns like:
+    or_5_high, or_5_low, or_5_width, or_15_high, or_15_low, or_15_width, ...
+    """
+    results = {}
+    or_start = or_cfg.or_start
+    end_times = or_cfg.get_or_end_times()
+
+    for dur, end_time in end_times.items():
+        # For OR, we need bars from or_start to end_time - 1 minute
+        # e.g., 5min OR = 9:30, 9:31, 9:32, 9:33, 9:34 (5 bars)
+        end_inclusive = (end_time[0], end_time[1] - 1)
+        if end_inclusive[1] < 0:
+            end_inclusive = (end_time[0] - 1, 59)
+
+        mask = time_mask(df.index, or_start, end_inclusive)
+        sub = df[mask].copy()
+        sub["trade_date"] = trade_dates[mask]
+
+        agg = sub.groupby("trade_date").agg(
+            high=("high", "max"),
+            low=("low", "min"),
+            open=("open", "first"),
+            close=("close", "last"),
+            volume=("volume", "sum"),
+        )
+        results[f"or_{dur}_high"] = agg["high"]
+        results[f"or_{dur}_low"] = agg["low"]
+        results[f"or_{dur}_width"] = agg["high"] - agg["low"]
+        results[f"or_{dur}_open"] = agg["open"]
+        results[f"or_{dur}_close"] = agg["close"]
+        results[f"or_{dur}_volume"] = agg["volume"]
+
+    return pd.DataFrame(results)
+
+
+# ---------------------------------------------------------------------------
+# FVG detection (vectorized)
+# ---------------------------------------------------------------------------
+
+def detect_fvgs(df: pd.DataFrame) -> pd.DataFrame:
+    """Detect Fair Value Gaps using vectorized operations.
+    Bullish FVG: bar[i-2].high < bar[i].low (gap up)
+    Bearish FVG: bar[i-2].low > bar[i].high (gap down)
+
+    Returns DataFrame with FVG info for each bar where an FVG exists.
+    """
+    highs = df["high"].values
+    lows = df["low"].values
+
+    # Shift arrays instead of using pandas shift (faster)
+    high_2back = np.roll(highs, 2)
+    low_2back = np.roll(lows, 2)
+
+    # Bullish FVG: gap between bar[i-2] high and bar[i] low
+    bull_mask = np.zeros(len(df), dtype=bool)
+    bull_mask[2:] = high_2back[2:] < lows[2:]
+    bull_top = lows.copy()
+    bull_bottom = high_2back.copy()
+
+    # Bearish FVG: gap between bar[i-2] low and bar[i] high
+    bear_mask = np.zeros(len(df), dtype=bool)
+    bear_mask[2:] = low_2back[2:] > highs[2:]
+    bear_top = low_2back.copy()
+    bear_bottom = highs.copy()
+
+    fvg_type = np.where(bull_mask, 1, np.where(bear_mask, -1, 0))
+
+    result = pd.DataFrame({
+        "fvg_type": fvg_type,  # 1=bullish, -1=bearish, 0=none
+        "fvg_top": np.where(bull_mask, bull_top, np.where(bear_mask, bear_top, np.nan)),
+        "fvg_bottom": np.where(bull_mask, bull_bottom, np.where(bear_mask, bear_bottom, np.nan)),
+        "fvg_width": np.where(fvg_type != 0,
+                              np.abs(np.where(bull_mask, bull_top - bull_bottom,
+                                              bear_top - bear_bottom)),
+                              np.nan),
+    }, index=df.index)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# IO helpers
+# ---------------------------------------------------------------------------
+
+def save_derived(df: pd.DataFrame, name: str, cfg: DataConfig, fmt: Optional[str] = None):
+    """Save derived DataFrame to configured format (csv or json)."""
+    cfg.ensure_dirs()
+    fmt = fmt or cfg.derived_format
+    path = Path(cfg.derived_dir)
+
+    if fmt == "csv":
+        filepath = path / f"{name}.csv"
+        df.to_csv(filepath)
+    elif fmt == "json":
+        filepath = path / f"{name}.json"
+        df.to_json(filepath, orient="table", date_format="iso")
+    else:
+        raise ValueError(f"Unsupported format: {fmt}")
+
+    log(f"  Saved {filepath} ({len(df)} rows)")
+    return filepath
+
+
+def load_derived(name: str, cfg: DataConfig, fmt: Optional[str] = None) -> pd.DataFrame:
+    """Load previously saved derived data."""
+    fmt = fmt or cfg.derived_format
+    path = Path(cfg.derived_dir)
+
+    if fmt == "csv":
+        filepath = path / f"{name}.csv"
+        df = pd.read_csv(filepath, index_col=0, parse_dates=True)
+    elif fmt == "json":
+        filepath = path / f"{name}.json"
+        df = pd.read_json(filepath, orient="table")
+    else:
+        raise ValueError(f"Unsupported format: {fmt}")
+
+    log(f"  Loaded {filepath} ({len(df)} rows)")
+    return df
+
+
+def save_results(df: pd.DataFrame, name: str, cfg: DataConfig):
+    """Save results CSV to results directory."""
+    cfg.ensure_dirs()
+    filepath = Path(cfg.results_dir) / f"{name}.csv"
+    df.to_csv(filepath)
+    log(f"  Results saved: {filepath} ({len(df)} rows)")
+    return filepath
+
+
+def save_results_json(data: dict, name: str, cfg: DataConfig):
+    """Save results as JSON (for nested/summary data)."""
+    import json
+    cfg.ensure_dirs()
+    filepath = Path(cfg.results_dir) / f"{name}.json"
+    with open(filepath, "w") as f:
+        json.dump(data, f, indent=2, default=str)
+    log(f"  Results saved: {filepath}")
+    return filepath
+
+
+# ---------------------------------------------------------------------------
+# Data quality checks
+# ---------------------------------------------------------------------------
+
+def check_data_quality(df: pd.DataFrame, symbol: str) -> dict:
+    """Run quality checks on loaded data. Returns report dict."""
+    report = {
+        "symbol": symbol,
+        "total_bars": len(df),
+        "date_range": f"{df.index[0]} to {df.index[-1]}",
+        "total_calendar_days": (df.index[-1] - df.index[0]).days,
+    }
+
+    # Check for duplicate timestamps
+    dupes = df.index.duplicated().sum()
+    report["duplicate_timestamps"] = int(dupes)
+
+    # Check for OHLC integrity
+    ohlc_violations = (
+        (df["high"] < df["low"]) |
+        (df["high"] < df["open"]) |
+        (df["high"] < df["close"]) |
+        (df["low"] > df["open"]) |
+        (df["low"] > df["close"])
+    ).sum()
+    report["ohlc_violations"] = int(ohlc_violations)
+
+    # Check for zero/negative volume
+    report["zero_volume_bars"] = int((df["volume"] <= 0).sum())
+
+    # Check for NaN values
+    report["nan_counts"] = df.isna().sum().to_dict()
+
+    # Estimate trading days and check for gaps
+    trade_dates = df.index.date
+    unique_dates = np.unique(trade_dates)
+    report["unique_trading_days"] = len(unique_dates)
+
+    # Simple gap detection: gaps > 3 calendar days (weekends = 2, holidays might = 3)
+    date_diffs = np.diff(unique_dates)
+    long_gaps = [(str(unique_dates[i]), str(unique_dates[i+1]), d.days)
+                 for i, d in enumerate(date_diffs) if d.days > 4]
+    report["suspicious_gaps"] = long_gaps
+    report["max_gap_days"] = max(d.days for d in date_diffs) if len(date_diffs) > 0 else 0
+
+    return report
