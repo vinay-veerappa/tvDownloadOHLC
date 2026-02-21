@@ -108,6 +108,7 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 - NY P12 Levels (Previous Day NY Session 06:00-17:00 High/Low/Mid)
 - Time-based Opens (Daily Open, Midnight Open, 07:30 Open)
 - Session Mids (Asia Mid, London Mid, NY1 Mid, NY2 Mid)
+- **Previous Session Mids** (prev_asia_mid, prev_london_mid, prev_ny1_mid, prev_ny2_mid)
 
 **Contents (per record):**
 

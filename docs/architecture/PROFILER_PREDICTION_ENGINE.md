@@ -8,6 +8,7 @@ The Profiler Prediction Engine extends the session profiling system by introduci
 
 - **Data aggregation**: Merging Session Status (Trend) with Unadjusted Price Data (Volatility).
 - **Context Mapping**: Linking `Previous Day` sessions to `Current Day` targets (e.g., Prev NY -> Current Asia).
+  - _Note_: For sessions starting before a target level is formed (e.g. Asia analyzing NY1 Mid), the engine explicitly uses the **Previous Day's** version of that level to ensure valid hit probabilities.
 - **Probability Generation**: Calculating frequency distributions for Session Status (Long True, Short False, etc.) and Price Extremes (HOD/LOD %).
 - **Serving**: Providing these lookup tables to the Web UI for real-time analysis.
 
