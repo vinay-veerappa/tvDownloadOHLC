@@ -144,8 +144,9 @@ def generate_price_model_libraries(ticker, data_map):
     return models
 
 def pack_bits(data, bits):
-    """Packs multiple values into 50-bit integers (safe for Pine Script float math)."""
-    vals_per_int = 15
+    """Packs multiple values into 45-bit integers for maximum token efficiency."""
+    import math
+    vals_per_int = math.floor(45 / bits)
     packed = []
     current = 0
     count = 0
@@ -157,6 +158,9 @@ def pack_bits(data, bits):
             current = 0
             count = 0
     if count > 0:
+        while count < vals_per_int:
+            current = (current * (2**bits))
+            count += 1
         packed.append(current)
     return packed
 
@@ -377,9 +381,9 @@ max_bars_back(time, 2000)
 
 {chr(10).join(imports)}
 
-f_get_bit(arr, i) =>
-    val = array.get(arr, math.floor(i / 15))
-    pos = 14 - (i % 15)
+f_get_touch(arr, i) =>
+    val = array.get(arr, math.floor(i / 45))
+    pos = 44 - (i % 45)
     math.floor(val / math.pow(2, pos)) % 2
 
 f_get_code(arr, i) =>
@@ -1231,16 +1235,16 @@ if barstate.islast
         for i = 0 to array.size(dates) - 1
             bool ok = true
             // Match History with bits
-            if tgt_idx > 0 and not f_match(f_get_code(asia_stats, i), f_get_bit(asia_bk, i), st_asia, bk_asia, false, false)
+            if tgt_idx > 0 and not f_match(f_get_code(asia_stats, i), f_get_touch(asia_bk, i), st_asia, bk_asia, false, false)
                 ok := false
-            if tgt_idx > 1 and not f_match(f_get_code(london_stats, i), f_get_bit(london_bk, i), st_lon, bk_lon, false, false)
+            if tgt_idx > 1 and not f_match(f_get_code(london_stats, i), f_get_touch(london_bk, i), st_lon, bk_lon, false, false)
                 ok := false
-            if tgt_idx > 2 and not f_match(f_get_code(ny1_stats, i), f_get_bit(ny1_bk, i), st_ny1, bk_ny1, false, false)
+            if tgt_idx > 2 and not f_match(f_get_code(ny1_stats, i), f_get_touch(ny1_bk, i), st_ny1, bk_ny1, false, false)
                 ok := false
             
             // Current Session bit-unpacked
             int hist_s = tgt_idx==0?f_get_code(asia_stats, i): tgt_idx==1?f_get_code(london_stats, i): tgt_idx==2?f_get_code(ny1_stats, i): f_get_code(ny2_stats, i)
-            int hist_b = tgt_idx==0?f_get_bit(asia_bk, i): tgt_idx==1?f_get_bit(london_bk, i): tgt_idx==2?f_get_bit(ny1_bk, i): f_get_bit(ny2_bk, i)
+            int hist_b = tgt_idx==0?f_get_touch(asia_bk, i): tgt_idx==1?f_get_touch(london_bk, i): tgt_idx==2?f_get_touch(ny1_bk, i): f_get_touch(ny2_bk, i)
             int live_s = tgt_idx==0?st_asia: tgt_idx==1?st_lon: tgt_idx==2?st_ny1: st_ny2
             bool live_b = tgt_idx==0?bk_asia: tgt_idx==1?bk_lon: tgt_idx==2?bk_ny1: bk_ny2
             bool is_pend = (tgt_idx==0 and not fin_asia) or (tgt_idx==1 and not fin_lon) or (tgt_idx==2 and not fin_ny1) or (tgt_idx==3 and not fin_ny2)
@@ -1266,11 +1270,11 @@ if barstate.islast
                 int[] cur_pdl = tgt_idx==0?t_pdl_a: tgt_idx==1?t_pdl_l: tgt_idx==2?t_pdl_n1: t_pdl_n2
                 int[] cur_pdm = tgt_idx==0?t_pdm_a: tgt_idx==1?t_pdm_l: tgt_idx==2?t_pdm_n1: t_pdm_n2
 
-                _p12h = f_get_bit(cur_p12h, i), _p12m = f_get_bit(cur_p12m, i), _p12l = f_get_bit(cur_p12l, i)
-                _nyp12h = f_get_bit(cur_nyp12h, i), _nyp12m = f_get_bit(cur_nyp12m, i), _nyp12l = f_get_bit(cur_nyp12l, i)
-                _casia = f_get_bit(cur_asia, i), _clon = f_get_bit(cur_lon, i), _cny1m = f_get_bit(cur_ny1m, i), _cny2m = f_get_bit(cur_ny2m, i)
-                _cmidnight = f_get_bit(cur_midnight, i), _c0730 = f_get_bit(cur_0730, i)
-                _cpdh = f_get_bit(cur_pdh, i), _cpdl = f_get_bit(cur_pdl, i), _cpdm = f_get_bit(cur_pdm, i)
+                _p12h = f_get_touch(cur_p12h, i), _p12m = f_get_touch(cur_p12m, i), _p12l = f_get_touch(cur_p12l, i)
+                _nyp12h = f_get_touch(cur_nyp12h, i), _nyp12m = f_get_touch(cur_nyp12m, i), _nyp12l = f_get_touch(cur_nyp12l, i)
+                _casia = f_get_touch(cur_asia, i), _clon = f_get_touch(cur_lon, i), _cny1m = f_get_touch(cur_ny1m, i), _cny2m = f_get_touch(cur_ny2m, i)
+                _cmidnight = f_get_touch(cur_midnight, i), _c0730 = f_get_touch(cur_0730, i)
+                _cpdh = f_get_touch(cur_pdh, i), _cpdl = f_get_touch(cur_pdl, i), _cpdm = f_get_touch(cur_pdm, i)
 
                 if hist_s == 1
                     c_lt += 1, array.push(lt_ht, _ht), array.push(lt_lt, _lt), array.push(lt_hp, _hp), array.push(lt_lp, _lp)
