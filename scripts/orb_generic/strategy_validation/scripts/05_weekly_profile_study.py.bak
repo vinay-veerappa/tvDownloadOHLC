@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 # strategy_validation/scripts/05_weekly_profile_study.py
 """
-Study 5: Day-of-Week and Weekly Profile (FIXED)
-=================================================
-Fixes: Friday now included in weekly extremes and continuation analysis.
+Study 5: Day-of-Week and Weekly Profile
+=========================================
+Validates ICT weekly profile concepts.
 
 Usage:
     python 05_weekly_profile_study.py
-    python 05_weekly_profile_study.py --symbols ES1 NQ1
+    python 05_weekly_profile_study.py --symbols ES NQ
+
+Outputs:
+    {symbol}_weekly_extreme_days.csv
+    {symbol}_daily_continuation.csv
+    {symbol}_weekly_profile_summary.json
 """
 
 import argparse
@@ -28,43 +33,21 @@ DAY_NAMES = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Frida
 def analyze_weekly_extremes(daily_levels: pd.DataFrame) -> tuple:
     """Which day of week makes the weekly high/low? Range contribution per day."""
     dl = daily_levels.copy()
-
-    # Normalize index to date strings and parse
-    try:
-        dl["date"] = pd.to_datetime(dl.index)
-    except Exception:
-        dl["date"] = pd.to_datetime(dl.index.astype(str).str[:10])
-
+    dl["date"] = pd.to_datetime(dl.index)
+    dl["year"] = dl["date"].dt.isocalendar().year.astype(int).values
+    dl["week"] = dl["date"].dt.isocalendar().week.astype(int).values
     dl["dow"] = dl["date"].dt.dayofweek
-
-    # Use year-week grouping that keeps Friday in the same week
-    # isocalendar can sometimes split Fri into next week — use simpler approach
-    dl["week_start"] = dl["date"] - pd.to_timedelta(dl["dow"], unit="D")
-    dl["week_id"] = dl["week_start"].dt.strftime("%Y-%m-%d")
-
-    # Diagnostic
-    for dow, name in DAY_NAMES.items():
-        count = (dl["dow"] == dow).sum()
-        log(f"  {name}: {count} days in data")
 
     day_records = []
     week_records = []
 
-    for wk_id, grp in dl.groupby("week_id"):
+    for (yr, wk), grp in dl.groupby(["year", "week"]):
         if len(grp) < 3:
-            continue
-
-        # Verify we have valid OHLC data
-        if grp["rth_high"].isna().all() or grp["rth_low"].isna().all():
             continue
 
         week_high = grp["rth_high"].max()
         week_low = grp["rth_low"].min()
         week_range = week_high - week_low
-
-        if week_range <= 0 or pd.isna(week_range):
-            continue
-
         high_dow = grp.loc[grp["rth_high"].idxmax(), "dow"]
         low_dow = grp.loc[grp["rth_low"].idxmin(), "dow"]
 
@@ -73,47 +56,40 @@ def analyze_weekly_extremes(daily_levels: pd.DataFrame) -> tuple:
         mon_l_is_wk_l = (mon["rth_low"].iloc[0] == week_low) if len(mon) > 0 else False
 
         week_records.append({
-            "week_id": wk_id,
-            "week_high_day": high_dow,
-            "week_low_day": low_dow,
-            "week_range": week_range,
-            "num_days": len(grp),
+            "year": yr, "week": wk, "week_high_day": high_dow,
+            "week_low_day": low_dow, "week_range": week_range,
             "mon_high_is_week_high": mon_h_is_wk_h,
             "mon_low_is_week_low": mon_l_is_wk_l,
         })
 
         for _, row in grp.iterrows():
             day_records.append({
-                "week_id": wk_id,
-                "day_of_week": row["dow"],
-                "rth_range": row.get("rth_range", row["rth_high"] - row["rth_low"]),
-                "range_pct_of_weekly": (row.get("rth_range", row["rth_high"] - row["rth_low"])) / week_range * 100 if week_range > 0 else 0,
+                "year": yr, "week": wk, "day_of_week": row["dow"],
+                "rth_range": row["rth_range"],
+                "range_pct_of_weekly": row["rth_range"] / week_range * 100 if week_range > 0 else 0,
             })
 
     df_weeks = pd.DataFrame(week_records)
     df_days = pd.DataFrame(day_records)
 
     n_weeks = len(df_weeks)
-    log(f"  Total complete weeks: {n_weeks}")
-
     summary_rows = []
     for dow, name in DAY_NAMES.items():
         dow_days = df_days[df_days["day_of_week"] == dow]
         summary_rows.append({
             "day": name,
-            "pct_week_high": (df_weeks["week_high_day"] == dow).sum() / n_weeks * 100 if n_weeks > 0 else 0,
-            "pct_week_low": (df_weeks["week_low_day"] == dow).sum() / n_weeks * 100 if n_weeks > 0 else 0,
-            "avg_range_contribution_pct": dow_days["range_pct_of_weekly"].mean() if len(dow_days) > 0 else 0,
-            "avg_daily_range_pts": dow_days["rth_range"].mean() if len(dow_days) > 0 else 0,
-            "count": len(dow_days),
+            "pct_week_high": (df_weeks["week_high_day"] == dow).sum() / n_weeks * 100,
+            "pct_week_low": (df_weeks["week_low_day"] == dow).sum() / n_weeks * 100,
+            "avg_range_contribution_pct": dow_days["range_pct_of_weekly"].mean(),
+            "avg_daily_range_pts": dow_days["rth_range"].mean(),
         })
 
     summary = pd.DataFrame(summary_rows)
 
     extra = {
         "total_weeks": n_weeks,
-        "mon_high_holds_pct": df_weeks["mon_high_is_week_high"].mean() * 100 if n_weeks > 0 else 0,
-        "mon_low_holds_pct": df_weeks["mon_low_is_week_low"].mean() * 100 if n_weeks > 0 else 0,
+        "mon_high_holds_pct": df_weeks["mon_high_is_week_high"].mean() * 100,
+        "mon_low_holds_pct": df_weeks["mon_low_is_week_low"].mean() * 100,
     }
 
     return summary, extra
@@ -121,13 +97,9 @@ def analyze_weekly_extremes(daily_levels: pd.DataFrame) -> tuple:
 
 @timer
 def analyze_daily_continuation(daily_levels: pd.DataFrame) -> pd.DataFrame:
-    """Day-to-day continuation/reversal rates. Now includes Thu→Fri and Fri→Mon."""
+    """Day-to-day continuation/reversal rates."""
     dl = daily_levels.copy()
-    try:
-        dl["date"] = pd.to_datetime(dl.index)
-    except Exception:
-        dl["date"] = pd.to_datetime(dl.index.astype(str).str[:10])
-
+    dl["date"] = pd.to_datetime(dl.index)
     dl["dow"] = dl["date"].dt.dayofweek
 
     dl["direction"] = np.where(
@@ -137,16 +109,10 @@ def analyze_daily_continuation(daily_levels: pd.DataFrame) -> pd.DataFrame:
     dl["next_direction"] = dl["direction"].shift(-1)
     dl["next_dow"] = dl["dow"].shift(-1)
 
-    # Calculate calendar day gap to determine consecutive trading days
-    dl["next_date"] = dl["date"].shift(-1)
-    dl["day_gap"] = (dl["next_date"] - dl["date"]).dt.days
-
-    # Consecutive if gap <= 3 (handles weekends: Fri→Mon = 3 days)
-    # and next_dow makes sense (not a holiday gap)
+    # Consecutive trading days
     dl["is_consecutive"] = (
-        (dl["day_gap"] <= 4) &
-        dl["next_direction"].notna() &
-        (dl["next_direction"] != "flat")
+        (dl["next_dow"] - dl["dow"] == 1) |
+        ((dl["dow"] == 4) & (dl["next_dow"] == 0))
     )
 
     consec = dl[dl["is_consecutive"] & dl["direction"].isin(["up", "down"])].copy()
@@ -155,7 +121,6 @@ def analyze_daily_continuation(daily_levels: pd.DataFrame) -> pd.DataFrame:
     for dow, name in DAY_NAMES.items():
         dd = consec[consec["dow"] == dow]
         if len(dd) < 20:
-            log(f"  WARNING: {name} only has {len(dd)} consecutive days, skipping")
             continue
 
         up = dd[dd["direction"] == "up"]
@@ -170,30 +135,28 @@ def analyze_daily_continuation(daily_levels: pd.DataFrame) -> pd.DataFrame:
             "after_up_reverse_pct": (up["next_direction"] == "down").mean() * 100 if len(up) > 0 else 0,
             "after_down_continue_pct": (dn["next_direction"] == "down").mean() * 100 if len(dn) > 0 else 0,
             "after_down_reverse_pct": (dn["next_direction"] == "up").mean() * 100 if len(dn) > 0 else 0,
-            "avg_range_pts": dd.get("rth_range", dd["rth_high"] - dd["rth_low"]).mean() if "rth_range" in dd.columns else 0,
+            "avg_range_pts": dd["rth_range"].mean(),
         })
 
     return pd.DataFrame(results)
 
 
 @timer
-def analyze_weekly_patterns(daily_levels: pd.DataFrame) -> tuple:
-    """ICT weekly patterns: Mon direction vs week, Thu reversal tendency."""
+def analyze_weekly_patterns(daily_levels: pd.DataFrame) -> pd.DataFrame:
+    """Specific ICT weekly patterns:
+    - Monday range expansion direction vs week outcome
+    - Tue/Wed as delivery days
+    - Thursday reversal tendency
+    """
     dl = daily_levels.copy()
-    try:
-        dl["date"] = pd.to_datetime(dl.index)
-    except Exception:
-        dl["date"] = pd.to_datetime(dl.index.astype(str).str[:10])
-
+    dl["date"] = pd.to_datetime(dl.index)
+    dl["year"] = dl["date"].dt.isocalendar().year.astype(int).values
+    dl["week"] = dl["date"].dt.isocalendar().week.astype(int).values
     dl["dow"] = dl["date"].dt.dayofweek
     dl["direction"] = np.where(dl["rth_close"] > dl["rth_open"], "up", "down")
 
-    # Week grouping using Monday as start
-    dl["week_start"] = dl["date"] - pd.to_timedelta(dl["dow"], unit="D")
-    dl["week_id"] = dl["week_start"].dt.strftime("%Y-%m-%d")
-
     results = []
-    for wk_id, grp in dl.groupby("week_id"):
+    for (yr, wk), grp in dl.groupby(["year", "week"]):
         if len(grp) < 4:
             continue
 
@@ -201,7 +164,6 @@ def analyze_weekly_patterns(daily_levels: pd.DataFrame) -> tuple:
         tue = grp[grp["dow"] == 1]
         wed = grp[grp["dow"] == 2]
         thu = grp[grp["dow"] == 3]
-        fri = grp[grp["dow"] == 4]
 
         if any(len(d) == 0 for d in [mon, tue, wed, thu]):
             continue
@@ -210,30 +172,22 @@ def analyze_weekly_patterns(daily_levels: pd.DataFrame) -> tuple:
         tue_dir = tue["direction"].iloc[0]
         wed_dir = wed["direction"].iloc[0]
         thu_dir = thu["direction"].iloc[0]
-        fri_dir = fri["direction"].iloc[0] if len(fri) > 0 else None
 
-        # Week net direction: Monday open to last day's close
+        # Week net direction
         week_open = mon["rth_open"].iloc[0]
         week_close = grp["rth_close"].iloc[-1]
         week_dir = "up" if week_close > week_open else "down"
 
-        entry = {
-            "week_id": wk_id,
+        results.append({
+            "year": yr, "week": wk,
             "mon_dir": mon_dir, "tue_dir": tue_dir,
             "wed_dir": wed_dir, "thu_dir": thu_dir,
-            "fri_dir": fri_dir,
             "week_dir": week_dir,
             "mon_matches_week": mon_dir == week_dir,
             "tue_matches_week": tue_dir == week_dir,
             "wed_matches_week": wed_dir == week_dir,
             "thu_reverses_wed": thu_dir != wed_dir,
-        }
-
-        if fri_dir:
-            entry["fri_matches_week"] = fri_dir == week_dir
-            entry["fri_reverses_thu"] = fri_dir != thu_dir
-
-        results.append(entry)
+        })
 
     df = pd.DataFrame(results)
     if len(df) > 0:
@@ -244,6 +198,7 @@ def analyze_weekly_patterns(daily_levels: pd.DataFrame) -> tuple:
             "tue_matches_week_pct": df["tue_matches_week"].mean() * 100,
             "wed_matches_week_pct": df["wed_matches_week"].mean() * 100,
             "thu_reverses_wed_pct": df["thu_reverses_wed"].mean() * 100,
+            # Specific patterns
             "mon_up_week_up_pct": (
                 df[df["mon_dir"] == "up"]["week_dir"] == "up"
             ).mean() * 100 if (df["mon_dir"] == "up").any() else 0,
@@ -251,13 +206,6 @@ def analyze_weekly_patterns(daily_levels: pd.DataFrame) -> tuple:
                 df[df["mon_dir"] == "down"]["week_dir"] == "down"
             ).mean() * 100 if (df["mon_dir"] == "down").any() else 0,
         }
-
-        if "fri_matches_week" in df.columns:
-            fri_valid = df["fri_matches_week"].dropna()
-            pattern_summary["fri_matches_week_pct"] = fri_valid.mean() * 100 if len(fri_valid) > 0 else 0
-            fri_rev = df["fri_reverses_thu"].dropna()
-            pattern_summary["fri_reverses_thu_pct"] = fri_rev.mean() * 100 if len(fri_rev) > 0 else 0
-
         return df, pattern_summary
 
     return df, {}
@@ -285,14 +233,7 @@ def main():
 
         daily_levels = load_derived(f"{symbol}_daily_levels", cfg_data)
 
-        # Diagnostic: check day of week distribution
-        try:
-            dates = pd.to_datetime(daily_levels.index)
-        except Exception:
-            dates = pd.to_datetime(daily_levels.index.astype(str).str[:10])
-        dow_counts = dates.dayofweek.value_counts().sort_index()
-        log(f"  Day distribution: {dict(zip([DAY_NAMES.get(i,'?') for i in dow_counts.index], dow_counts.values))}")
-
+        # 5.1: Weekly extremes
         log("\n--- 5.1: Weekly Extreme Days ---")
         extremes, extra = analyze_weekly_extremes(daily_levels)
         save_results(extremes, f"{symbol}_weekly_extreme_days", cfg_data)
@@ -300,11 +241,13 @@ def main():
         log(f"\n  Mon high holds as week high: {extra['mon_high_holds_pct']:.1f}%")
         log(f"  Mon low holds as week low: {extra['mon_low_holds_pct']:.1f}%")
 
+        # 5.2: Continuation rates
         log("\n--- 5.2: Day-to-Day Continuation ---")
         cont = analyze_daily_continuation(daily_levels)
         save_results(cont, f"{symbol}_daily_continuation", cfg_data)
         print(cont.to_string(index=False))
 
+        # 5.3: Weekly patterns
         log("\n--- 5.3: ICT Weekly Patterns ---")
         patterns, pat_summary = analyze_weekly_patterns(daily_levels)
         if len(patterns) > 0:

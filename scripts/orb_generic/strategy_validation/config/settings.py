@@ -14,7 +14,7 @@ import json
 class DataConfig:
     """Paths and file settings."""
     # Input: directory containing parquet files named like ES_1min.parquet, NQ_1min.parquet
-    input_dir: str = "./data/raw"
+    input_dir: str = r"C:\Users\vinay\tvDownloadOHLC\data"
     # Output: derived data cached here as CSV/JSON so we never re-read parquet unnecessarily
     derived_dir: str = "./data/derived"
     # Results: study outputs
@@ -31,7 +31,7 @@ class DataConfig:
 
     # Timezone of raw data — set to None if already in US/Eastern
     # Common values: "UTC", "US/Central", "US/Eastern", None
-    raw_timezone: Optional[str] = "US/Eastern"
+    raw_timezone: Optional[str] = "UTC"
     target_timezone: str = "US/Eastern"
 
     # Output format for derived data

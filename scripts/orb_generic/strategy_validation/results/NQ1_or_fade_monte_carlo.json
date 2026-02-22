@@ -1,0 +1,15 @@
+{
+  "n_simulations": 1000,
+  "n_trades_per_sim": 1772,
+  "eval_target": 3000,
+  "max_drawdown": 2000,
+  "pass_rate_pct": 0.0,
+  "blow_rate_pct": 100.0,
+  "avg_final_equity": -2000.0,
+  "median_final_equity": -2000.0,
+  "avg_max_drawdown": 2000.0,
+  "avg_days_to_pass": 71.52678571428571,
+  "median_days_to_pass": 65.0,
+  "p10_final_equity": -2000.0,
+  "p90_final_equity": -2000.0
+}

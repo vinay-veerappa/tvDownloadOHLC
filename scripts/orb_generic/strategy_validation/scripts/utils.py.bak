@@ -319,22 +319,13 @@ def load_derived(name: str, cfg: DataConfig, fmt: Optional[str] = None) -> pd.Da
     if fmt == "csv":
         filepath = path / f"{name}.csv"
         df = pd.read_csv(filepath, index_col=0)
-
+        
         # Force parse index as datetime for 1min bar files
         if "_1min" in name:
-            try:
-                df.index = pd.to_datetime(df.index, utc=True)
-                df.index = df.index.tz_convert(cfg.target_timezone)
-            except Exception as e:
-                log(f"  WARNING: Could not parse datetime index: {e}")
-                # Fallback: try without utc
-                try:
-                    df.index = pd.to_datetime(df.index)
-                    if df.index.tz is None:
-                        df.index = df.index.tz_localize(cfg.target_timezone, ambiguous="NaT", nonexistent="NaT")
-                except Exception as e2:
-                    log(f"  ERROR: datetime parse failed completely: {e2}")
+            df.index = pd.to_datetime(df.index, utc=True)
+            df.index = df.index.tz_convert(cfg.target_timezone)
         else:
+            # For daily-level files, try to parse but don't force
             try:
                 parsed = pd.to_datetime(df.index, utc=True)
                 if not parsed.isna().all():
@@ -347,16 +338,8 @@ def load_derived(name: str, cfg: DataConfig, fmt: Optional[str] = None) -> pd.Da
     else:
         raise ValueError(f"Unsupported format: {fmt}")
 
-    idx_type = type(df.index).__name__
-    log(f"  Loaded {filepath} ({len(df)} rows, index: {idx_type})")
-
-    # Safety check for 1min files
-    if "_1min" in name and not isinstance(df.index, pd.DatetimeIndex):
-        log(f"  CRITICAL WARNING: {name} index is {idx_type}, not DatetimeIndex!")
-        log(f"  First 3 index values: {list(df.index[:3])}")
-
+    log(f"  Loaded {filepath} ({len(df)} rows, index type: {type(df.index).__name__})")
     return df
-
 
 def save_results(df: pd.DataFrame, name: str, cfg: DataConfig):
     """Save results CSV to results directory."""

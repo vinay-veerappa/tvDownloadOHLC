@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 # strategy_validation/scripts/03_key_level_study.py
 """
-Study 3: Key Level Rejection/Acceptance (FIXED)
-=================================================
+Study 3: Key Level Rejection/Acceptance
+========================================
+Quantifies price behavior at PDH, PDL, PDC, Weekly Open, ONH, ONL.
+
 Usage:
     python 03_key_level_study.py
-    python 03_key_level_study.py --symbols ES1 NQ1
+    python 03_key_level_study.py --symbols ES NQ
+
+Outputs:
+    {symbol}_key_level_stats.csv         — rejection/acceptance rates per level
+    {symbol}_weekly_open_stats.csv       — weekly open as S/R
+    {symbol}_gap_fill_stats.csv          — gap fill rates by size
+    {symbol}_level_test_detail.csv       — per-day per-level detail
 """
 
 import argparse
@@ -20,61 +28,56 @@ from config.settings import get_config
 from scripts.utils import load_derived, save_results, log, timer
 
 
-def normalize_trade_date(series_or_index):
-    s = pd.Series(series_or_index)
-    try:
-        return pd.to_datetime(s).dt.strftime("%Y-%m-%d")
-    except Exception:
-        return s.astype(str).str[:10]
-
-
-def build_rth_daily_dict(rth: pd.DataFrame) -> dict:
-    rth = rth.copy()
-    rth["_td_norm"] = normalize_trade_date(rth["trade_date"]).values
-    return {td: grp for td, grp in rth.groupby("_td_norm")}
-
-
 @timer
 def analyze_level_touches(daily_levels: pd.DataFrame, rth: pd.DataFrame,
                           proximity_pts: float = 2.0, reject_bars: int = 15,
                           accept_bars: int = 3) -> pd.DataFrame:
-    """Analysis 3.1: PDH/PDL/ONH/ONL touch and reaction statistics."""
+    """Analysis 3.1: PDH/PDL touch and reaction statistics.
+
+    Args:
+        proximity_pts: how close price must come to "test" the level
+        reject_bars: bars to look ahead for rejection confirmation
+        accept_bars: consecutive bars beyond level to confirm acceptance
+    """
     results = []
     levels_to_test = ["pdh", "pdl", "onh", "onl"]
 
-    dl_dates = normalize_trade_date(daily_levels.index)
-    daily_dict = build_rth_daily_dict(rth)
-
-    matched = 0
-    for i, td_str in enumerate(dl_dates):
-        day_bars = daily_dict.get(td_str)
-        if day_bars is None or len(day_bars) < 10:
+    for td in daily_levels.index:
+        td_str = str(td)
+        day_bars = rth[rth["trade_date"].astype(str) == td_str]
+        if len(day_bars) < 10:
             continue
 
-        matched += 1
         highs = day_bars["high"].values
         lows = day_bars["low"].values
         closes = day_bars["close"].values
 
         for level_name in levels_to_test:
-            level_val = daily_levels.iloc[i][level_name]
+            level_val = daily_levels.loc[td, level_name]
             if pd.isna(level_val):
                 continue
 
+            # Determine approach direction
+            # PDH, ONH: approached from below (price rises to test)
+            # PDL, ONL: approached from above (price falls to test)
             is_upper = level_name in ["pdh", "onh"]
 
             if is_upper:
+                # Test: did high come within proximity_pts of level?
                 touches = np.where(highs >= level_val - proximity_pts)[0]
                 if len(touches) == 0:
                     continue
 
                 first_touch = touches[0]
+                # Did it break through?
                 broke_through = np.any(highs[first_touch:] > level_val)
+                # Rejection: after touching, close pulls back within reject_bars
                 look_ahead = closes[first_touch:first_touch + reject_bars]
                 rejected = np.all(look_ahead < level_val) if len(look_ahead) > 0 else False
-
+                # Acceptance: accept_bars consecutive closes above
                 if broke_through:
                     above_closes = closes[first_touch:] > level_val
+                    # Check for accept_bars consecutive True values
                     accepted = False
                     count = 0
                     for ac in above_closes:
@@ -90,9 +93,9 @@ def analyze_level_touches(daily_levels: pd.DataFrame, rth: pd.DataFrame,
 
                 max_beyond = np.max(highs[first_touch:]) - level_val if broke_through else 0
                 max_retrace = level_val - np.min(lows[first_touch:])
-                num_tests = len(np.where(highs >= level_val - proximity_pts)[0])
 
             else:
+                # Lower level — approached from above
                 touches = np.where(lows <= level_val + proximity_pts)[0]
                 if len(touches) == 0:
                     continue
@@ -101,7 +104,6 @@ def analyze_level_touches(daily_levels: pd.DataFrame, rth: pd.DataFrame,
                 broke_through = np.any(lows[first_touch:] < level_val)
                 look_ahead = closes[first_touch:first_touch + reject_bars]
                 rejected = np.all(look_ahead > level_val) if len(look_ahead) > 0 else False
-
                 if broke_through:
                     below_closes = closes[first_touch:] < level_val
                     accepted = False
@@ -119,12 +121,18 @@ def analyze_level_touches(daily_levels: pd.DataFrame, rth: pd.DataFrame,
 
                 max_beyond = level_val - np.min(lows[first_touch:]) if broke_through else 0
                 max_retrace = np.max(highs[first_touch:]) - level_val
+
+            # Number of tests (how many times price approaches within proximity)
+            if is_upper:
+                num_tests = len(np.where(highs >= level_val - proximity_pts)[0])
+            else:
                 num_tests = len(np.where(lows <= level_val + proximity_pts)[0])
 
+            # Time of first test
             first_test_minute = day_bars.index[first_touch].hour * 60 + day_bars.index[first_touch].minute
 
             results.append({
-                "trade_date": td_str,
+                "trade_date": td,
                 "level": level_name,
                 "level_value": level_val,
                 "touched": True,
@@ -137,7 +145,6 @@ def analyze_level_touches(daily_levels: pd.DataFrame, rth: pd.DataFrame,
                 "max_retrace_pts": max_retrace,
             })
 
-    log(f"  Matched {matched} days, found {len(results)} level tests")
     return pd.DataFrame(results)
 
 
@@ -146,16 +153,16 @@ def analyze_weekly_open(daily_levels: pd.DataFrame, rth: pd.DataFrame) -> pd.Dat
     """Analysis 3.2: Weekly open as support/resistance."""
     results = []
 
+    # Only Tue-Fri (Mon IS the weekly open)
     dl = daily_levels[daily_levels["day_of_week"] > 0].copy()
-    dl_dates = normalize_trade_date(dl.index)
-    daily_dict = build_rth_daily_dict(rth)
 
-    for i, td_str in enumerate(dl_dates):
-        day_bars = daily_dict.get(td_str)
-        if day_bars is None or len(day_bars) < 10:
+    for td in dl.index:
+        td_str = str(td)
+        day_bars = rth[rth["trade_date"].astype(str) == td_str]
+        if len(day_bars) < 10:
             continue
 
-        wo = dl.iloc[i]["weekly_open"]
+        wo = dl.loc[td, "weekly_open"]
         if pd.isna(wo):
             continue
 
@@ -165,12 +172,24 @@ def analyze_weekly_open(daily_levels: pd.DataFrame, rth: pd.DataFrame) -> pd.Dat
         closes = day_bars["close"].values
 
         above_at_open = opens > wo
+        # Count crosses: number of times price goes from above to below or vice versa
         above = closes > wo
         crosses = np.sum(np.diff(above.astype(int)) != 0)
 
+        # S/R behavior
+        if above_at_open:
+            # WO should act as support
+            retests = np.where(lows <= wo + 2)[0]
+            held_as_support = len(retests) > 0 and np.all(closes[retests[0]:retests[0]+5] > wo) if len(retests) > 0 else None
+        else:
+            # WO should act as resistance
+            retests = np.where(highs >= wo - 2)[0]
+            held_as_support = None
+            held_as_resistance = len(retests) > 0 and np.all(closes[retests[0]:retests[0]+5] < wo) if len(retests) > 0 else None
+
         results.append({
-            "trade_date": td_str,
-            "day_of_week": dl.iloc[i]["day_of_week"],
+            "trade_date": td,
+            "day_of_week": dl.loc[td, "day_of_week"],
             "weekly_open": wo,
             "above_at_open": above_at_open,
             "crosses": crosses,
@@ -181,6 +200,7 @@ def analyze_weekly_open(daily_levels: pd.DataFrame, rth: pd.DataFrame) -> pd.Dat
     df = pd.DataFrame(results)
 
     if len(df) > 0:
+        # Summary by day of week
         day_names = {1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday"}
         for dow, name in day_names.items():
             sub = df[df["day_of_week"] == dow]
@@ -197,16 +217,14 @@ def analyze_gap_fills(daily_levels: pd.DataFrame, rth: pd.DataFrame) -> pd.DataF
     """Analysis 3.3: Gap fill statistics (RTH open vs PDC)."""
     results = []
 
-    dl_dates = normalize_trade_date(daily_levels.index)
-    daily_dict = build_rth_daily_dict(rth)
-
-    for i, td_str in enumerate(dl_dates):
-        day_bars = daily_dict.get(td_str)
-        if day_bars is None or len(day_bars) < 10:
+    for td in daily_levels.index:
+        td_str = str(td)
+        day_bars = rth[rth["trade_date"].astype(str) == td_str]
+        if len(day_bars) < 10:
             continue
 
-        pdc = daily_levels.iloc[i]["pdc"]
-        rth_open = daily_levels.iloc[i]["rth_open"]
+        pdc = daily_levels.loc[td, "pdc"]
+        rth_open = daily_levels.loc[td, "rth_open"]
 
         if pd.isna(pdc) or pd.isna(rth_open):
             continue
@@ -214,14 +232,18 @@ def analyze_gap_fills(daily_levels: pd.DataFrame, rth: pd.DataFrame) -> pd.DataF
         gap = rth_open - pdc
         gap_abs = abs(gap)
 
-        if gap_abs < 0.5:
+        if gap_abs < 0.5:  # No meaningful gap
             continue
 
+        # Did price fill the gap (return to PDC)?
         if gap > 0:
+            # Gap up — need price to come back down to PDC
             filled = np.any(day_bars["low"].values <= pdc)
         else:
+            # Gap down — need price to come back up to PDC
             filled = np.any(day_bars["high"].values >= pdc)
 
+        # Time to fill
         fill_time = np.nan
         if filled:
             if gap > 0:
@@ -233,7 +255,7 @@ def analyze_gap_fills(daily_levels: pd.DataFrame, rth: pd.DataFrame) -> pd.DataF
                 fill_time = (fill_bar.hour * 60 + fill_bar.minute) - (9 * 60 + 30)
 
         results.append({
-            "trade_date": td_str,
+            "trade_date": td,
             "pdc": pdc,
             "rth_open": rth_open,
             "gap_pts": gap,
@@ -246,9 +268,7 @@ def analyze_gap_fills(daily_levels: pd.DataFrame, rth: pd.DataFrame) -> pd.DataF
     df = pd.DataFrame(results)
 
     if len(df) > 0:
-        log(f"\n  Total gap days: {len(df)}")
-        log(f"  Overall fill rate: {df['filled'].mean()*100:.1f}%")
-
+        # Bucket by gap size
         df["gap_bucket"] = pd.cut(df["gap_abs_pts"],
                                    bins=[0, 5, 10, 20, 50, 100, float("inf")],
                                    labels=["0-5", "5-10", "10-20", "20-50", "50-100", "100+"])
@@ -261,6 +281,7 @@ def analyze_gap_fills(daily_levels: pd.DataFrame, rth: pd.DataFrame) -> pd.DataF
         log("\nGap Fill by Size:")
         print(summary.to_string())
 
+        # Also by direction
         dir_summary = df.groupby("gap_direction").agg(
             count=("filled", "count"),
             fill_rate=("filled", lambda x: x.mean() * 100),
@@ -268,8 +289,6 @@ def analyze_gap_fills(daily_levels: pd.DataFrame, rth: pd.DataFrame) -> pd.DataF
         )
         log("\nGap Fill by Direction:")
         print(dir_summary.to_string())
-    else:
-        log("  WARNING: No gap days found — check PDC computation")
 
     return df
 
@@ -296,9 +315,8 @@ def main():
 
         daily_levels = load_derived(f"{symbol}_daily_levels", cfg_data)
         rth = load_derived(f"{symbol}_rth_1min", cfg_data)
-        if "trade_date" not in rth.columns:
-            rth["trade_date"] = rth.index.date
 
+        # 3.1: Level touches
         log("\n--- 3.1: PDH/PDL/ONH/ONL Touch Stats ---")
         touches = analyze_level_touches(daily_levels, rth)
         save_results(touches, f"{symbol}_level_test_detail", cfg_data)
@@ -317,10 +335,12 @@ def main():
             save_results(summary, f"{symbol}_key_level_stats", cfg_data)
             print(summary.to_string())
 
+        # 3.2: Weekly open
         log("\n--- 3.2: Weekly Open as S/R ---")
         wo = analyze_weekly_open(daily_levels, rth)
         save_results(wo, f"{symbol}_weekly_open_stats", cfg_data)
 
+        # 3.3: Gap fills
         log("\n--- 3.3: Gap Fill Statistics ---")
         gaps = analyze_gap_fills(daily_levels, rth)
         save_results(gaps, f"{symbol}_gap_fill_stats", cfg_data)

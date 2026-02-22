@@ -1,11 +1,24 @@
 #!/usr/bin/env python3
 # strategy_validation/scripts/06_prop_sim.py
 """
-Study 6: Prop Firm Viability Simulation (FIXED)
-=================================================
+Study 6: Prop Firm Viability Simulation
+========================================
+Takes strategy parameters derived from Studies 1-5 and simulates
+prop firm account performance with realistic constraints.
+
+This script is a FRAMEWORK — you plug in the strategy parameters
+after reviewing study results. The actual entry/exit logic is
+defined in the StrategySignal dataclass and generate_signals() function.
+
 Usage:
-    python 06_prop_sim.py --symbol NQ1 --strategy or_fade
-    python 06_prop_sim.py --symbol ES1 --strategy or_fade --monte-carlo 1000
+    python 06_prop_sim.py --symbol NQ --strategy or_fade
+    python 06_prop_sim.py --symbol ES --strategy or_fade --monte-carlo 1000
+
+Outputs:
+    {symbol}_{strategy}_equity_curve.csv
+    {symbol}_{strategy}_trade_log.csv
+    {symbol}_{strategy}_sim_summary.json
+    {symbol}_{strategy}_monte_carlo.json
 """
 
 import argparse
@@ -24,40 +37,24 @@ from scripts.utils import load_derived, save_results, save_results_json, log, ti
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def normalize_trade_date(series_or_index):
-    s = pd.Series(series_or_index)
-    try:
-        return pd.to_datetime(s).dt.strftime("%Y-%m-%d")
-    except Exception:
-        return s.astype(str).str[:10]
-
-
-def build_rth_daily_dict(rth: pd.DataFrame) -> dict:
-    rth = rth.copy()
-    rth["_td_norm"] = normalize_trade_date(rth["trade_date"]).values
-    return {td: grp for td, grp in rth.groupby("_td_norm")}
-
-
-# ---------------------------------------------------------------------------
 # Trade and strategy signal definitions
 # ---------------------------------------------------------------------------
 
 @dataclass
 class StrategySignal:
+    """A trading signal with defined entry, stop, and target."""
     trade_date: str
     entry_time: str
-    direction: str
+    direction: str         # "long" or "short"
     entry_price: float
     stop_price: float
     target_price: float
-    signal_name: str = ""
+    signal_name: str = ""  # which sub-strategy generated this
 
 
 @dataclass
 class TradeResult:
+    """Result of executing a signal."""
     trade_date: str
     entry_time: str
     exit_time: str
@@ -68,21 +65,33 @@ class TradeResult:
     target_price: float
     pnl_pts: float
     pnl_dollars: float
-    mae_pts: float
-    mfe_pts: float
-    exit_reason: str
+    mae_pts: float         # max adverse excursion
+    mfe_pts: float         # max favorable excursion
+    exit_reason: str       # "target", "stop", "eod" (end of day)
     signal_name: str
 
 
 # ---------------------------------------------------------------------------
-# Strategy signal generators
+# Strategy signal generators — CUSTOMIZE THESE after reviewing study results
 # ---------------------------------------------------------------------------
 
 def generate_signals_or_fade(rth: pd.DataFrame, or_data: pd.DataFrame,
                               daily_levels: pd.DataFrame,
                               or_duration: int = 30,
                               params: dict = None) -> List[StrategySignal]:
-    """Opening Range Fade (Judas Swing) strategy."""
+    """Opening Range Fade (Judas Swing) strategy.
+
+    Logic: After the OR is established, wait for a breakout of one side.
+    If that breakout shows signs of failure (price returns inside OR),
+    enter in the opposite direction targeting the other side of the OR.
+
+    params dict allows tuning without code changes:
+        - or_duration: which OR to use (default 30)
+        - min_or_width: minimum OR width to trade (filter noise)
+        - max_or_width: maximum OR width (too wide = too much risk)
+        - entry_offset: points beyond OR level to confirm failure
+        - stop_buffer: points beyond the false breakout extreme
+    """
     if params is None:
         params = {
             "min_or_width": 5.0,
@@ -101,32 +110,26 @@ def generate_signals_or_fade(rth: pd.DataFrame, or_data: pd.DataFrame,
 
     or_end_min = 9 * 60 + 30 + or_duration
 
-    # Build daily dict and normalize OR dates
-    daily_dict = build_rth_daily_dict(rth)
-    or_dates_norm = normalize_trade_date(or_data.index)
-
-    for i in range(len(or_data)):
-        td_str = or_dates_norm.iloc[i]
-        h = or_data.iloc[i][or_h_col]
-        l = or_data.iloc[i][or_l_col]
+    for td in or_data.index:
+        h = or_data.loc[td, or_h_col]
+        l = or_data.loc[td, or_l_col]
+        width = h - l
 
         if pd.isna(h) or pd.isna(l):
             continue
-
-        width = h - l
         if width < params["min_or_width"] or width > params["max_or_width"]:
             continue
 
-        day_bars = daily_dict.get(td_str)
-        if day_bars is None:
-            continue
-
+        # Get post-OR bars
+        td_str = str(td)
+        day_bars = rth[rth["trade_date"].astype(str) == td_str]
         rth_min = day_bars.index.hour * 60 + day_bars.index.minute
         post_or = day_bars[rth_min >= or_end_min]
 
         if len(post_or) < 10:
             continue
 
+        # Look for breakout then failure
         highs = post_or["high"].values
         lows = post_or["low"].values
         closes = post_or["close"].values
@@ -136,11 +139,12 @@ def generate_signals_or_fade(rth: pd.DataFrame, or_data: pd.DataFrame,
         h_break = np.where(highs > h)[0]
         if len(h_break) > 0:
             break_idx = h_break[0]
+            # Look for close back below OR high (failure)
             after_break = closes[break_idx:]
             fail_idx = np.where(after_break < h - params["entry_offset"])[0]
             if len(fail_idx) > 0:
                 entry_bar = break_idx + fail_idx[0]
-                if entry_bar < len(post_or) - 5:
+                if entry_bar < len(post_or) - 5:  # enough time left in day
                     false_extreme = highs[:entry_bar + 1].max()
                     signals.append(StrategySignal(
                         trade_date=td_str,
@@ -151,7 +155,7 @@ def generate_signals_or_fade(rth: pd.DataFrame, or_data: pd.DataFrame,
                         target_price=l,
                         signal_name="or_fade_short",
                     ))
-                    continue
+                    continue  # one signal per day
 
         # Check for downside breakout then failure (long signal)
         l_break = np.where(lows < l)[0]
@@ -178,8 +182,10 @@ def generate_signals_or_fade(rth: pd.DataFrame, or_data: pd.DataFrame,
     return signals
 
 
+# Registry of strategies
 STRATEGIES = {
     "or_fade": generate_signals_or_fade,
+    # Add more strategy generators here as studies reveal edges
 }
 
 
@@ -194,11 +200,10 @@ def simulate_trades(signals: List[StrategySignal], rth: pd.DataFrame,
     """Simulate trade execution bar-by-bar with realistic assumptions."""
     results = []
     slip = slippage_ticks * instrument.tick_size
-    daily_dict = build_rth_daily_dict(rth)
 
     for sig in signals:
-        day_bars = daily_dict.get(sig.trade_date)
-        if day_bars is None or len(day_bars) == 0:
+        day_bars = rth[rth["trade_date"].astype(str) == sig.trade_date]
+        if len(day_bars) == 0:
             continue
 
         # Find entry bar
@@ -207,11 +212,13 @@ def simulate_trades(signals: List[StrategySignal], rth: pd.DataFrame,
         if len(trade_bars) == 0:
             continue
 
+        # Apply slippage to entry
         if sig.direction == "long":
             entry = sig.entry_price + slip
         else:
             entry = sig.entry_price - slip
 
+        # Walk forward bar by bar
         mae = 0.0
         mfe = 0.0
         exit_price = None
@@ -220,16 +227,19 @@ def simulate_trades(signals: List[StrategySignal], rth: pd.DataFrame,
 
         for bar_time, bar in trade_bars.iterrows():
             if sig.direction == "long":
+                # Check stop
                 if bar["low"] <= sig.stop_price:
                     exit_price = sig.stop_price - slip
                     exit_time = str(bar_time)
                     exit_reason = "stop"
                     break
+                # Check target
                 if bar["high"] >= sig.target_price:
-                    exit_price = sig.target_price - slip
+                    exit_price = sig.target_price - slip  # conservative: slip on limit too
                     exit_time = str(bar_time)
                     exit_reason = "target"
                     break
+                # Track MAE/MFE
                 mae = max(mae, entry - bar["low"])
                 mfe = max(mfe, bar["high"] - entry)
             else:
@@ -246,11 +256,13 @@ def simulate_trades(signals: List[StrategySignal], rth: pd.DataFrame,
                 mae = max(mae, bar["high"] - entry)
                 mfe = max(mfe, entry - bar["low"])
 
+        # End of day exit
         if exit_price is None:
             last_bar = trade_bars.iloc[-1]
             exit_price = last_bar["close"] + (slip if sig.direction == "short" else -slip)
             exit_time = str(trade_bars.index[-1])
 
+        # Calculate P&L
         if sig.direction == "long":
             pnl_pts = exit_price - entry
         else:
@@ -288,6 +300,7 @@ def simulate_prop_account(trades: List[TradeResult],
                           daily_loss_limit: float = 300,
                           trailing: bool = True,
                           max_trades_per_day: int = 3) -> dict:
+    """Simulate a prop firm account with realistic rules."""
     equity = 0.0
     peak_equity = 0.0
     max_dd_used = 0.0
@@ -300,6 +313,7 @@ def simulate_prop_account(trades: List[TradeResult],
     accepted_trades = []
 
     for t in trades:
+        # New day?
         if t.trade_date != current_date:
             if current_date is not None:
                 equity_curve.append({
@@ -313,11 +327,13 @@ def simulate_prop_account(trades: List[TradeResult],
             daily_pnl = 0.0
             trades_today = 0
 
+        # Check daily limits
         if trades_today >= max_trades_per_day:
             continue
         if daily_pnl <= -daily_loss_limit:
             continue
 
+        # Check account blown
         if trailing:
             dd = peak_equity - equity
         else:
@@ -327,6 +343,7 @@ def simulate_prop_account(trades: List[TradeResult],
             blown = True
             break
 
+        # Execute trade
         equity += t.pnl_dollars
         daily_pnl += t.pnl_dollars
         trades_today += 1
@@ -334,8 +351,10 @@ def simulate_prop_account(trades: List[TradeResult],
 
         current_dd = peak_equity - equity if trailing else (-equity if equity < 0 else 0)
         max_dd_used = max(max_dd_used, current_dd)
+
         accepted_trades.append(t)
 
+    # Final day
     if current_date and not blown:
         equity_curve.append({
             "date": current_date,
@@ -345,6 +364,7 @@ def simulate_prop_account(trades: List[TradeResult],
             "drawdown": peak_equity - equity if trailing else -min(0, equity),
         })
 
+    # Compute summary
     df_eq = pd.DataFrame(equity_curve)
     df_trades = pd.DataFrame([vars(t) for t in accepted_trades])
 
@@ -371,6 +391,7 @@ def simulate_prop_account(trades: List[TradeResult],
         "longest_winning_streak": _max_streak(df_trades["pnl_dollars"].values, negative=False) if n_trades > 0 else 0,
     }
 
+    # Consistency check: no single day > 30% of total profit
     if len(df_eq) > 0 and equity > 0:
         max_day = df_eq["daily_pnl"].max()
         summary["max_day_pct_of_total"] = max_day / equity * 100
@@ -383,10 +404,12 @@ def simulate_prop_account(trades: List[TradeResult],
 
 
 def _max_streak(pnls: np.ndarray, negative: bool = True) -> int:
+    """Find longest consecutive losing (or winning) streak."""
     if negative:
         mask = pnls <= 0
     else:
         mask = pnls > 0
+
     max_streak = 0
     current = 0
     for m in mask:
@@ -406,6 +429,11 @@ def _max_streak(pnls: np.ndarray, negative: bool = True) -> int:
 def monte_carlo(trades: List[TradeResult], n_sims: int = 1000,
                 eval_target: float = 3000, max_drawdown: float = 2000,
                 daily_loss_limit: float = 300, trailing: bool = True) -> dict:
+    """Run Monte Carlo permutations of trade sequence.
+
+    Randomly reorder trades and simulate prop account for each permutation.
+    Measures probability of passing eval vs blowing account.
+    """
     pnls = np.array([t.pnl_dollars for t in trades])
     n = len(pnls)
 
@@ -471,11 +499,11 @@ def main():
     parser = argparse.ArgumentParser(description="Study 6: Prop Firm Simulation")
     parser.add_argument("--symbol", required=True, help="Symbol to simulate")
     parser.add_argument("--strategy", default="or_fade", choices=list(STRATEGIES.keys()))
-    parser.add_argument("--instrument", default=None, help="Instrument for sizing")
-    parser.add_argument("--or-duration", type=int, default=30)
-    parser.add_argument("--monte-carlo", type=int, default=1000)
-    parser.add_argument("--eval-target", type=float, default=3000)
-    parser.add_argument("--max-drawdown", type=float, default=2000)
+    parser.add_argument("--instrument", default=None, help="Instrument for sizing (default: same as symbol)")
+    parser.add_argument("--or-duration", type=int, default=30, help="OR duration for OR-based strategies")
+    parser.add_argument("--monte-carlo", type=int, default=1000, help="Number of Monte Carlo simulations")
+    parser.add_argument("--eval-target", type=float, default=3000, help="Eval profit target")
+    parser.add_argument("--max-drawdown", type=float, default=2000, help="Max drawdown")
     args = parser.parse_args()
 
     config = get_config()
@@ -485,24 +513,22 @@ def main():
 
     inst_key = args.instrument or args.symbol
     if inst_key not in instruments:
+        # Try with M prefix for micro
         if f"M{inst_key}" in instruments:
             inst_key = f"M{inst_key}"
-        elif inst_key.rstrip("1") in instruments:
-            inst_key = inst_key.rstrip("1")
         else:
-            log(f"WARNING: Instrument {inst_key} not found, using MNQ defaults")
+            log(f"WARNING: Instrument {inst_key} not found, using NQ defaults")
             inst_key = "MNQ"
 
     instrument = instruments[inst_key]
     log(f"Using instrument: {instrument.symbol} (${instrument.point_value}/pt)")
 
+    # Load data
     rth = load_derived(f"{args.symbol}_rth_1min", cfg_data)
     or_data = load_derived(f"{args.symbol}_opening_ranges", cfg_data)
     daily_levels = load_derived(f"{args.symbol}_daily_levels", cfg_data)
 
-    if "trade_date" not in rth.columns:
-        rth["trade_date"] = rth.index.date
-
+    # Generate signals
     log(f"\nGenerating signals: {args.strategy}")
     gen_func = STRATEGIES[args.strategy]
     signals = gen_func(rth, or_data, daily_levels, or_duration=args.or_duration)
@@ -511,11 +537,13 @@ def main():
         log("ERROR: No signals generated. Check strategy parameters.")
         sys.exit(1)
 
+    # Simulate trades
     log(f"\nSimulating {len(signals)} trades...")
     trades = simulate_trades(signals, rth, instrument,
                              slippage_ticks=cfg_strat.slippage_ticks,
                              commission_per_side=cfg_strat.commission_per_side)
 
+    # Run prop account simulation
     log("\nRunning prop account simulation...")
     summary, eq_curve, trade_log = simulate_prop_account(
         trades,
@@ -537,6 +565,7 @@ def main():
         else:
             log(f"  {k}: {v}")
 
+    # Monte Carlo
     if args.monte_carlo > 0:
         log(f"\nRunning {args.monte_carlo} Monte Carlo simulations...")
         mc = monte_carlo(
