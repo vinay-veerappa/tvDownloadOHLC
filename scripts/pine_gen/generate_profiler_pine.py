@@ -518,14 +518,13 @@ grp_tbl = "Table Settings"
 p_res  = input.string("Bottom Right", "Result Table Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left", "Top Center", "Bottom Center"], group=grp_tbl)
 s_res  = input.string("Tiny", "Result Table Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tbl)
 p_stat = input.string("Middle Right", "Status Table Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left", "Top Center", "Bottom Center"], group=grp_tbl)
+show_debug = input.bool(false, "Show Debug Panel", group=grp_tbl)
 
 grp_box = "Prediction Visuals"
 show_boxes  = input.bool(true, "Show Prediction Boxes", group=grp_box)
 c_box_long   = input.color(#4CAF5066, "Long Box Color", group=grp_box)
 c_box_short  = input.color(#F4433666, "Short Box Color", group=grp_box)
 c_box_false  = input.color(#9E9E9E66, "False/Neutral Box Color", group=grp_box)
-show_pm_smooth = input.bool(true, "Smooth Price Model", group=grp_box)
-pm_scale       = input.float(0.3, "Price Model Scale", step=0.1, group=grp_box)
 show_labels = input.bool(true, "Show Labels", group=grp_box)
 c_lbl_text   = input.color(#FFFFFF, "Label Text Color", group=grp_box)
 s_lbl        = input.string("Tiny", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_box)
@@ -567,6 +566,7 @@ grp_pm = "Price Models"
 show_pm     = input.bool(true, "Show Price Models", group=grp_pm)
 pm_outcome  = input.string("Auto", "Outcome Model", options=["Auto", "Long True", "Long False", "Short True", "Short False"], group=grp_pm)
 pm_anchor   = input.string("Prev Mid", "Anchor To", options=["Session Open", "Prev Mid"], group=grp_pm)
+pm_scale    = input.float(1.0, "Price Model Scale", step=0.1, group=grp_pm)
 c_pm_high   = input.color(#4CAF5066, "Model High", inline="pm_h", group=grp_pm)
 w_pm_high   = input.int(2, "Width", minval=1, inline="pm_h", group=grp_pm)
 c_pm_low    = input.color(#F4433666, "Model Low", inline="pm_l", group=grp_pm)
@@ -1114,70 +1114,9 @@ f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, 
         if array.size(t_arr) > 0
             pts_h = array.new<chart.point>(), pts_l = array.new<chart.point>()
             
-            // Determine active anchor
+            // Determine base price anchor
             float base_p = d_open
-            int t_offset = 0
-            float anchor_val = 0.0 // Value of model at anchor time (pct)
-            
-            // Priority: NY (08:00=480+360=840m) > Lon (02:00=480m) > Asia (18:00=0m)
-            // Note: t_arr is Minutes from 18:00.
-            // Asia Open @ 18:00 (0 min)
-            // Lon Open @ 02:00 (8*60 = 480 min)
-            // NY Open @ 08:00 (14*60 = 840 min)
-            
-            bool is_ny = not na(open_ny) and bar_index > bi_day_start + 10 // approximate check
-            bool is_lon = not na(open_lon) and not is_ny
-            
-            // Find model indices for re-anchoring
-            int idx_lon = -1, int idx_ny = -1
-            // Optimization: Assuming sorted time array, can binary search or loop. Loop is fine for <100 pts.
-            // Usually 02:00 is around 480. 08:00 is around 840.
-            
-            for i=0 to array.size(t_arr)-1
-                t_val = array.get(t_arr, i)
-                if t_val >= 510 and idx_lon == -1
-                    idx_lon := i
-                if t_val >= 810 and idx_ny == -1
-                    idx_ny := i
-            
-            // Apply Re-anchoring logic
-            // If NY active: Anchor to open_ny at t=840 (approx)
-            // If Lon active: Anchor to open_lon at t=480 (approx)
-            // Else: Anchor to open_asia (d_open) at t=0
-            
-            // Currently using simple time checks. Better to use session flags passed in?
-            // open_ny valid means we passed 08:00.
-            
-            float scale_h_base = 0.0
-            float scale_l_base = 0.0
-            
             bool use_mid = pm_anchor == "Prev Mid"
-            
-            // Smooth entire arrays first to ensure anchor consistency
-            float[] h_smooth = array.copy(h_arr)
-            float[] l_smooth = array.copy(l_arr)
-            
-            if show_pm_smooth
-                for i = 3 to array.size(h_arr) - 4
-                    sum_h = 0.0, sum_l = 0.0
-                    for k = -3 to 3
-                        sum_h += array.get(h_arr, i + k)
-                        sum_l += array.get(l_arr, i + k)
-                    array.set(h_smooth, i, sum_h / 7.0)
-                    array.set(l_smooth, i, sum_l / 7.0)
-            
-            if not na(open_ny) and idx_ny != -1
-                base_p := use_mid ? l_mid : open_ny
-                scale_h_base := array.get(h_smooth, idx_ny)
-                scale_l_base := array.get(l_smooth, idx_ny)
-            else if not na(open_lon) and idx_lon != -1
-                base_p := use_mid ? a_mid : open_lon
-                scale_h_base := array.get(h_smooth, idx_lon)
-                scale_l_base := array.get(l_smooth, idx_lon)
-            else
-                base_p := use_mid ? pd_m : open_asia
-                scale_h_base := 0.0
-                scale_l_base := 0.0
 
             if not na(base_p) and bi_day_start > 0
                 _ts_start = time[bar_index - bi_day_start]
@@ -1186,29 +1125,18 @@ f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, 
                         t_min = array.get(t_arr, i)
                         t_pt = _ts_start + t_min*60000
                         
-                        bool in_range = false
-                        if not na(open_ny)
-                            in_range := t_min >= 810 and t_min < 1320 // NY Session ends @ 16:00
-                        else if not na(open_lon)
-                            in_range := t_min >= 510 and t_min < 810 // London Session ends @ 07:30
-                        else
-                            in_range := t_min >= 0 and t_min < 510 // Asia Session ends @ 02:30
+                        // We use the same median % arrays that the backend aggregated.
+                        // Since they were already normalized using V24 dynamic anchors in the backend,
+                        // attempting to do a ratio-rescale on a single anchor distorts the intended shape.
+                        // We simply project from the session base price using raw percentages.
+                        float val_h = array.get(h_arr, i) * pm_scale
+                        float val_l = array.get(l_arr, i) * pm_scale
                         
-                        if in_range
-                            float val_h = array.get(h_smooth, i) 
-                            float val_l = array.get(l_smooth, i) 
-                            
-                            val_h := val_h * pm_scale
-                            val_l := val_l * pm_scale
-                            float s_h_eff = scale_h_base * pm_scale
-                            float s_l_eff = scale_l_base * pm_scale
-                            
-                            // Avoid division by zero if model_anchor is -100% (unlikely)
-                            float p_h = base_p * (1.0 + val_h) / (1.0 + s_h_eff)
-                            float p_l = base_p * (1.0 + val_l) / (1.0 + s_l_eff)
-                            
-                            array.push(pts_h, chart.point.from_time(t_pt, p_h))
-                            array.push(pts_l, chart.point.from_time(t_pt, p_l))
+                        float p_h = base_p * (1.0 + (val_h / 100.0))
+                        float p_l = base_p * (1.0 + (val_l / 100.0))
+                        
+                        array.push(pts_h, chart.point.from_time(t_pt, p_h))
+                        array.push(pts_l, chart.point.from_time(t_pt, p_l))
                         
                     polyline.delete(pm_h), polyline.delete(pm_l)
                     pm_h := polyline.new(pts_h, curved = true, line_color=c_pm_h_eff, xloc=xloc.bar_time, line_width=w_pm_high)
@@ -1222,7 +1150,7 @@ f_status_str(c, act, bk) =>
 f_status_long_to_short(c) =>
     c==1 ? "LT" : c==2 ? "LF" : c==3 ? "ST" : c==4 ? "SF" : "Neu"
 
-var table tbl_res = table.new(get_pos(p_res), 21, 7, border_width = 1) 
+var table tbl_res = table.new(get_pos(p_res), 21, 5, border_width = 1) 
 var table tbl_stat = table.new(get_pos(p_stat), 2, 9, border_width = 1)
 
 f_match(hc, hb, lc, lb, loose, ignore_bk) =>
@@ -1231,23 +1159,6 @@ f_match(hc, hb, lc, lb, loose, ignore_bk) =>
     // Broken Match (Old Logic: lb restricts to hb=1. lb=0 allows all)
     b_ok = ignore_bk ? true : (lb ? (hb == 1) : true)
     s_ok and b_ok
-
-f_pred_lookup(arr, key_a, key_b, slot_idx) =>
-    base = (key_a * 5 + key_b) * 6
-    slot = base + slot_idx
-    slot >= 0 and slot < 150 ? array.get(arr, slot) : 0
-
-f_render_row_pred(tbl, r, row_lbl, p_lt, p_lf, p_st, p_sf, p_none, total_samples, sz) =>
-    if total_samples > 0
-        max_p = math.max(math.max(p_lt, p_lf), math.max(p_st, p_sf))
-        cell_col = p_lt == max_p ? f_theme_p12() : p_st == max_p ? f_theme_settle() : color.gray
-        table.cell(tbl, 0, r, row_lbl, bgcolor=cell_col, text_color=color.black, text_size=sz)
-        table.cell(tbl, 1, r, str.tostring(total_samples) + " days", bgcolor=color.black, text_color=color.white, text_size=sz)
-        table.cell(tbl, 2, r, str.format("{0,number,#.#}%", p_lt / 10.0), bgcolor=color.black, text_color=p_lt == max_p ? f_theme_p12() : color.white, text_size=sz)
-        table.cell(tbl, 3, r, str.format("{0,number,#.#}%", p_lf / 10.0), bgcolor=color.black, text_color=color.white, text_size=sz)
-        table.cell(tbl, 4, r, str.format("{0,number,#.#}%", p_st / 10.0), bgcolor=color.black, text_color=p_st == max_p ? f_theme_settle() : color.white, text_size=sz)
-        table.cell(tbl, 5, r, str.format("{0,number,#.#}%", p_sf / 10.0), bgcolor=color.black, text_color=color.white, text_size=sz)
-        table.cell(tbl, 6, r, str.format("{0,number,#.#}%", p_none / 10.0), bgcolor=color.black, text_color=#666666, text_size=sz)
 
 // Caching Variables
 var int last_tgt_idx = -1
@@ -1333,17 +1244,18 @@ if barstate.islast
     dbg_ok   = (n_dates == n_hod) and (n_dates <= n_asia) and (n_dates <= n_bk) and (n_dates <= n_touch)
     dbg_col  = dbg_ok ? color.new(color.green, 70) : color.new(color.red, 50)
     dbg_str  = "dates=" + str.tostring(n_dates) + " asia=" + str.tostring(n_asia) + " bk=" + str.tostring(n_bk) + " hod=" + str.tostring(n_hod) + " tch=" + str.tostring(n_touch)
-    table.cell(tbl_stat, 0, 7, "LibSizes:", bgcolor=dbg_col, text_color=color.white, text_size=sz)
-    table.cell(tbl_stat, 1, 7, dbg_str, bgcolor=dbg_col, text_color=color.white, text_size=sz)
-    n_ny1  = array.size(ny1_stats) * 15
-    n_ny2  = array.size(ny2_stats) * 15
-    n_ny1b = array.size(ny1_bk) * 45
-    n_ctx  = array.size(ctx_prev_ny1) * 15
-    dbg_ny = "ny1=" + str.tostring(n_ny1) + " ny2=" + str.tostring(n_ny2) + " ny1bk=" + str.tostring(n_ny1b) + " ctx=" + str.tostring(n_ctx)
-    dbg_ok := dbg_ok and (n_dates <= n_ctx)
-    dbg_col  := dbg_ok ? color.new(color.green, 70) : color.new(color.red, 50)
-    table.cell(tbl_stat, 0, 8, "NY libs:", bgcolor=dbg_col, text_color=color.white, text_size=sz)
-    table.cell(tbl_stat, 1, 8, dbg_ny, bgcolor=dbg_col, text_color=color.white, text_size=sz)
+    if show_debug
+        table.cell(tbl_stat, 0, 7, "LibSizes:", bgcolor=dbg_col, text_color=color.white, text_size=sz)
+        table.cell(tbl_stat, 1, 7, dbg_str, bgcolor=dbg_col, text_color=color.white, text_size=sz)
+        n_ny1  = array.size(ny1_stats) * 15
+        n_ny2  = array.size(ny2_stats) * 15
+        n_ny1b = array.size(ny1_bk) * 45
+        n_ctx  = array.size(ctx_prev_ny1) * 15
+        dbg_ny = "ny1=" + str.tostring(n_ny1) + " ny2=" + str.tostring(n_ny2) + " ny1bk=" + str.tostring(n_ny1b) + " ctx=" + str.tostring(n_ctx)
+        dbg_ok := dbg_ok and (n_dates <= n_ctx)
+        dbg_col  := dbg_ok ? color.new(color.green, 70) : color.new(color.red, 50)
+        table.cell(tbl_stat, 0, 8, "NY libs:", bgcolor=dbg_col, text_color=color.white, text_size=sz)
+        table.cell(tbl_stat, 1, 8, dbg_ny, bgcolor=dbg_col, text_color=color.white, text_size=sz)
 
     state_changed = (tgt_idx != last_tgt_idx) or (st_asia != last_st_asia) or (st_lon != last_st_lon) or (st_ny1 != last_st_ny1) or (st_ny2 != last_st_ny2) or (bk_asia != last_bk_asia) or (bk_lon != last_bk_lon) or (bk_ny1 != last_bk_ny1) or (bk_ny2 != last_bk_ny2) or (prev_ny1_status != last_prev_ny1) or (prev_ny2_status != last_prev_ny2)
     if state_changed
@@ -1454,7 +1366,7 @@ if barstate.islast
         v_0730 = time >= t_0730
         v_pd = true 
     
-        table.clear(tbl_res, 0, 0, 20, 6)
+        table.clear(tbl_res, 0, 0, 20, 4)
         table.cell(tbl_res, 0, 0, cached_title, bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 1, 0, "Stats", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 2, 0, "LOD Time", bgcolor=color.black, text_color=color.white, text_size=sz)
@@ -1488,38 +1400,6 @@ if barstate.islast
         f_render_row_adv(tbl_res, 3, "Short True", c_st, total_cnt, color.red, sz, st_ht, st_lt, st_hp, st_lp, st_t_p12h, st_t_p12m, st_t_p12l, st_t_nyp12h, st_t_nyp12m, st_t_nyp12l, st_t_asia, st_t_lon, st_t_ny1m, st_t_ny2m, st_t_midnight, st_t_0730, st_t_pdh, st_t_pdl, st_t_pdm, d_open, false, false, v_p12, v_nyp, v_asia, v_lon, v_ny1, v_ny2, v_mid, v_0730, v_pd)
         f_render_row_adv(tbl_res, 4, "Short False", c_sf, total_cnt, color.gray, sz, sf_ht, sf_lt, sf_hp, sf_lp, sf_t_p12h, sf_t_p12m, sf_t_p12l, sf_t_nyp12h, sf_t_nyp12m, sf_t_nyp12l, sf_t_asia, sf_t_lon, sf_t_ny1m, sf_t_ny2m, sf_t_midnight, sf_t_0730, sf_t_pdh, sf_t_pdl, sf_t_pdm, d_open, false, true, v_p12, v_nyp, v_asia, v_lon, v_ny1, v_ny2, v_mid, v_0730, v_pd)
         
-        if tgt_idx == 0 or tgt_idx == 1
-            string p_title = tgt_idx == 0 ? "Asia Prediction" : "London Prediction"
-            table.cell(tbl_res, 0, 5, p_title, bgcolor=color.black, text_color=color.white, text_size=sz)
-            table.cell(tbl_res, 1, 5, "Samples", bgcolor=color.black, text_color=color.white, text_size=sz)
-            table.cell(tbl_res, 2, 5, "Long True", bgcolor=color.black, text_color=color.white, text_size=sz)
-            table.cell(tbl_res, 3, 5, "Long False", bgcolor=color.black, text_color=color.white, text_size=sz)
-            table.cell(tbl_res, 4, 5, "Short True", bgcolor=color.black, text_color=color.white, text_size=sz)
-            table.cell(tbl_res, 5, 5, "Short False", bgcolor=color.black, text_color=color.white, text_size=sz)
-            table.cell(tbl_res, 6, 5, "None", bgcolor=color.black, text_color=#666666, text_size=sz)
-
-            if tgt_idx == 0
-                string ctx_str = "pNY1:" + f_status_long_to_short(prev_ny1_status) + " pNY2:" + f_status_long_to_short(prev_ny2_status)
-                p_none = f_pred_lookup(asia_pred_arr, prev_ny1_status, prev_ny2_status, 0)
-                p_lt = f_pred_lookup(asia_pred_arr, prev_ny1_status, prev_ny2_status, 1)
-                p_lf = f_pred_lookup(asia_pred_arr, prev_ny1_status, prev_ny2_status, 2)
-                p_st = f_pred_lookup(asia_pred_arr, prev_ny1_status, prev_ny2_status, 3)
-                p_sf = f_pred_lookup(asia_pred_arr, prev_ny1_status, prev_ny2_status, 4)
-                samples = f_pred_lookup(asia_pred_arr, prev_ny1_status, prev_ny2_status, 5)
-                f_render_row_pred(tbl_res, 6, "Pred (" + ctx_str + ")", p_lt, p_lf, p_st, p_sf, p_none, samples, sz)
-            else if tgt_idx == 1 and fin_asia
-                string ctx_str = "pNY2:" + f_status_long_to_short(prev_ny2_status) + " Asia:" + f_status_long_to_short(st_asia)
-                p_none = f_pred_lookup(lon_pred_arr, prev_ny2_status, st_asia, 0)
-                p_lt = f_pred_lookup(lon_pred_arr, prev_ny2_status, st_asia, 1)
-                p_lf = f_pred_lookup(lon_pred_arr, prev_ny2_status, st_asia, 2)
-                p_st = f_pred_lookup(lon_pred_arr, prev_ny2_status, st_asia, 3)
-                p_sf = f_pred_lookup(lon_pred_arr, prev_ny2_status, st_asia, 4)
-                samples = f_pred_lookup(lon_pred_arr, prev_ny2_status, st_asia, 5)
-                f_render_row_pred(tbl_res, 6, "Pred (" + ctx_str + ")", p_lt, p_lf, p_st, p_sf, p_none, samples, sz)
-            else if tgt_idx == 1 and not fin_asia
-                table.cell(tbl_res, 0, 6, p_title, bgcolor=color.black, text_color=color.white, text_size=sz)
-                table.cell(tbl_res, 1, 6, "Waiting for Asia to complete...", bgcolor=color.black, text_color=#888888, text_size=sz)
-
         f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, open_asia, open_lon, open_ny, asia_mid, lon_mid, ny1_mid, m_lt_t, m_lt_h, m_lt_l, m_lf_t, m_lf_h, m_lf_l, m_st_t, m_st_h, m_st_l, m_sf_t, m_sf_h, m_sf_l)
 
     // Histogram Calls
