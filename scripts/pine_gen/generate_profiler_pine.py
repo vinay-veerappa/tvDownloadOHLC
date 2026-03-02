@@ -378,7 +378,7 @@ def generate_scripts(profiler, hod_lod_unadj, hod_lod_adj, touches, asia_pred_ar
     libs_def = {
         "ProfilerData_Asia":   [("dates", dates, "int", 0), ("asia", asia, "int", 3)],
         "ProfilerData_London": [("london", london, "int", 3)], 
-        "ProfilerData_NY":     [("ny1", ny1, "int", 6), ("ny2", ny2, "int", 6)],
+        "ProfilerData_NY":     [("ny1", ny1, "int", 3), ("ny2", ny2, "int", 3)],
         "ProfilerData_Broken": [("asia", bk_asia, "int", 1), ("london", bk_london, "int", 1), ("ny1", bk_ny1, "int", 1), ("ny2", bk_ny2, "int", 1)],
         "ProfilerData_Times":  [("hod_time", hod_t, "int", 0), ("lod_time", lod_t, "int", 0)],
         "ProfilerData_Levels": [("hod_pct", hod_p, "float", 0), ("lod_pct", lod_p, "float", 0)],
