@@ -1,0 +1,286 @@
+{
+  "15": {
+    "or_duration_min": "15",
+    "total_days": 4969,
+    "valid_days": 4587,
+    "pct_high_first": 49.9672988881622,
+    "pct_low_first": 50.03270111183781,
+    "overall_prediction_accuracy": 71.1140178766078,
+    "high_first_low_break_pct": 71.77137870855148,
+    "low_first_high_break_pct": 70.45751633986929,
+    "closing_half_accuracy": 0.021800741225201654,
+    "avg_correct_excursion_pct": 0.46223043585226337,
+    "high_first_count": 2292,
+    "low_first_count": 2295,
+    "width_breakdown": [
+      {
+        "width_bucket": "0-0.1%",
+        "count": 148,
+        "high_first_count": 76,
+        "low_first_count": 72,
+        "high_first_low_break_pct": 50.0,
+        "low_first_high_break_pct": 59.72222222222222,
+        "overall_prediction_pct": 54.729729729729726,
+        "closing_half_pct": 0.6756756756756757
+      },
+      {
+        "width_bucket": "0.1-0.2%",
+        "count": 1751,
+        "high_first_count": 869,
+        "low_first_count": 882,
+        "high_first_low_break_pct": 66.9735327963176,
+        "low_first_high_break_pct": 67.80045351473923,
+        "overall_prediction_pct": 67.390062821245,
+        "closing_half_pct": 0.05711022272986865
+      },
+      {
+        "width_bucket": "0.2-0.4%",
+        "count": 1982,
+        "high_first_count": 971,
+        "low_first_count": 1011,
+        "high_first_low_break_pct": 74.76828012358393,
+        "low_first_high_break_pct": 72.10682492581603,
+        "overall_prediction_pct": 73.41069626639758,
+        "closing_half_pct": 0.050454086781029264
+      },
+      {
+        "width_bucket": "0.4-0.6%",
+        "count": 481,
+        "high_first_count": 254,
+        "low_first_count": 227,
+        "high_first_low_break_pct": 80.31496062992126,
+        "low_first_high_break_pct": 74.44933920704845,
+        "overall_prediction_pct": 77.54677754677755,
+        "closing_half_pct": 0.2079002079002079
+      },
+      {
+        "width_bucket": "0.6-0.9%",
+        "count": 165,
+        "high_first_count": 97,
+        "low_first_count": 68,
+        "high_first_low_break_pct": 77.31958762886599,
+        "low_first_high_break_pct": 73.52941176470588,
+        "overall_prediction_pct": 75.75757575757575,
+        "closing_half_pct": 0.6060606060606061
+      },
+      {
+        "width_bucket": "0.9%+",
+        "count": 60,
+        "high_first_count": 25,
+        "low_first_count": 35,
+        "high_first_low_break_pct": 80.0,
+        "low_first_high_break_pct": 80.0,
+        "overall_prediction_pct": 80.0,
+        "closing_half_pct": 1.6666666666666667
+      }
+    ]
+  },
+  "30": {
+    "or_duration_min": "30",
+    "total_days": 4976,
+    "valid_days": 4920,
+    "pct_high_first": 51.239837398373986,
+    "pct_low_first": 48.760162601626014,
+    "overall_prediction_accuracy": 69.89837398373983,
+    "high_first_low_break_pct": 67.11622372074574,
+    "low_first_high_break_pct": 72.8220091704877,
+    "closing_half_accuracy": 0.02032520325203252,
+    "avg_correct_excursion_pct": 0.4381489981219439,
+    "high_first_count": 2521,
+    "low_first_count": 2399,
+    "width_breakdown": [
+      {
+        "width_bucket": "0-0.1%",
+        "count": 47,
+        "high_first_count": 31,
+        "low_first_count": 16,
+        "high_first_low_break_pct": 41.935483870967744,
+        "low_first_high_break_pct": 93.75,
+        "overall_prediction_pct": 59.57446808510638,
+        "closing_half_pct": 2.127659574468085
+      },
+      {
+        "width_bucket": "0.1-0.2%",
+        "count": 1116,
+        "high_first_count": 550,
+        "low_first_count": 566,
+        "high_first_low_break_pct": 56.36363636363636,
+        "low_first_high_break_pct": 66.07773851590106,
+        "overall_prediction_pct": 61.29032258064516,
+        "closing_half_pct": 0.08960573476702509
+      },
+      {
+        "width_bucket": "0.2-0.4%",
+        "count": 2351,
+        "high_first_count": 1187,
+        "low_first_count": 1164,
+        "high_first_low_break_pct": 68.82898062342039,
+        "low_first_high_break_pct": 72.42268041237114,
+        "overall_prediction_pct": 70.60825180774138,
+        "closing_half_pct": 0.04253509145044662
+      },
+      {
+        "width_bucket": "0.4-0.6%",
+        "count": 853,
+        "high_first_count": 447,
+        "low_first_count": 406,
+        "high_first_low_break_pct": 74.9440715883669,
+        "low_first_high_break_pct": 79.06403940886699,
+        "overall_prediction_pct": 76.90504103165298,
+        "closing_half_pct": 0.11723329425556857
+      },
+      {
+        "width_bucket": "0.6-0.9%",
+        "count": 393,
+        "high_first_count": 219,
+        "low_first_count": 174,
+        "high_first_low_break_pct": 70.77625570776256,
+        "low_first_high_break_pct": 76.4367816091954,
+        "overall_prediction_pct": 73.2824427480916,
+        "closing_half_pct": 0.2544529262086514
+      },
+      {
+        "width_bucket": "0.9%+",
+        "count": 160,
+        "high_first_count": 87,
+        "low_first_count": 73,
+        "high_first_low_break_pct": 71.26436781609196,
+        "low_first_high_break_pct": 83.56164383561644,
+        "overall_prediction_pct": 76.875,
+        "closing_half_pct": 0.625
+      }
+    ]
+  },
+  "45": {
+    "or_duration_min": "45",
+    "total_days": 4976,
+    "valid_days": 4958,
+    "pct_high_first": 50.48406615570795,
+    "pct_low_first": 49.51593384429206,
+    "overall_prediction_accuracy": 69.36264622831787,
+    "high_first_low_break_pct": 66.00079904115061,
+    "low_first_high_break_pct": 72.79022403258656,
+    "closing_half_accuracy": 0.02016942315449778,
+    "avg_correct_excursion_pct": 0.40877084054984525,
+    "high_first_count": 2503,
+    "low_first_count": 2455,
+    "width_breakdown": [
+      {
+        "width_bucket": "0.1-0.2%",
+        "count": 653,
+        "high_first_count": 308,
+        "low_first_count": 345,
+        "high_first_low_break_pct": 57.7922077922078,
+        "low_first_high_break_pct": 66.08695652173913,
+        "overall_prediction_pct": 62.17457886676876,
+        "closing_half_pct": 0.1531393568147014
+      },
+      {
+        "width_bucket": "0.2-0.4%",
+        "count": 2229,
+        "high_first_count": 1093,
+        "low_first_count": 1136,
+        "high_first_low_break_pct": 63.494967978042084,
+        "low_first_high_break_pct": 71.0387323943662,
+        "overall_prediction_pct": 67.33961417676088,
+        "closing_half_pct": 0.04486316733961417
+      },
+      {
+        "width_bucket": "0.4-0.6%",
+        "count": 1109,
+        "high_first_count": 584,
+        "low_first_count": 525,
+        "high_first_low_break_pct": 72.43150684931507,
+        "low_first_high_break_pct": 77.71428571428571,
+        "overall_prediction_pct": 74.93237150586114,
+        "closing_half_pct": 0.09017132551848511
+      },
+      {
+        "width_bucket": "0.6-0.9%",
+        "count": 649,
+        "high_first_count": 353,
+        "low_first_count": 296,
+        "high_first_low_break_pct": 69.68838526912181,
+        "low_first_high_break_pct": 74.32432432432432,
+        "overall_prediction_pct": 71.80277349768875,
+        "closing_half_pct": 0.15408320493066258
+      },
+      {
+        "width_bucket": "0.9%+",
+        "count": 304,
+        "high_first_count": 160,
+        "low_first_count": 144,
+        "high_first_low_break_pct": 68.125,
+        "low_first_high_break_pct": 81.94444444444444,
+        "overall_prediction_pct": 74.67105263157895,
+        "closing_half_pct": 0.3289473684210526
+      }
+    ]
+  },
+  "60": {
+    "or_duration_min": "60",
+    "total_days": 4977,
+    "valid_days": 4970,
+    "pct_high_first": 49.95975855130785,
+    "pct_low_first": 50.04024144869216,
+    "overall_prediction_accuracy": 69.15492957746478,
+    "high_first_low_break_pct": 65.80749093838098,
+    "low_first_high_break_pct": 72.49698431845597,
+    "closing_half_accuracy": 0.02012072434607646,
+    "avg_correct_excursion_pct": 0.3968698372819256,
+    "high_first_count": 2483,
+    "low_first_count": 2487,
+    "width_breakdown": [
+      {
+        "width_bucket": "0.1-0.2%",
+        "count": 476,
+        "high_first_count": 223,
+        "low_first_count": 253,
+        "high_first_low_break_pct": 57.399103139013455,
+        "low_first_high_break_pct": 66.79841897233202,
+        "overall_prediction_pct": 62.39495798319328,
+        "closing_half_pct": 0.21008403361344538
+      },
+      {
+        "width_bucket": "0.2-0.4%",
+        "count": 2085,
+        "high_first_count": 1016,
+        "low_first_count": 1069,
+        "high_first_low_break_pct": 61.318897637795274,
+        "low_first_high_break_pct": 69.41066417212348,
+        "overall_prediction_pct": 65.46762589928058,
+        "closing_half_pct": 0.047961630695443645
+      },
+      {
+        "width_bucket": "0.4-0.6%",
+        "count": 1215,
+        "high_first_count": 623,
+        "low_first_count": 592,
+        "high_first_low_break_pct": 69.34189406099517,
+        "low_first_high_break_pct": 76.52027027027027,
+        "overall_prediction_pct": 72.8395061728395,
+        "closing_half_pct": 0.0823045267489712
+      },
+      {
+        "width_bucket": "0.6-0.9%",
+        "count": 774,
+        "high_first_count": 401,
+        "low_first_count": 373,
+        "high_first_low_break_pct": 73.81546134663341,
+        "low_first_high_break_pct": 74.79892761394102,
+        "overall_prediction_pct": 74.28940568475451,
+        "closing_half_pct": 0.12919896640826875
+      },
+      {
+        "width_bucket": "0.9%+",
+        "count": 414,
+        "high_first_count": 217,
+        "low_first_count": 197,
+        "high_first_low_break_pct": 71.42857142857143,
+        "low_first_high_break_pct": 80.71065989847716,
+        "overall_prediction_pct": 75.84541062801932,
+        "closing_half_pct": 0.24154589371980675
+      }
+    ]
+  }
+}

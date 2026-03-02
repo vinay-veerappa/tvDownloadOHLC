@@ -1,20 +1,49 @@
 """
-signal_generators.py — Entry strategy signal generators
-=========================================================
-Each generator takes standardized inputs and returns a list of StrategySignal.
-All use percentage-based normalization for regime independence.
+signal_generators.py v6 — Zone-Based Architecture
+====================================================
+All strategies build structural zones from 9:30 onward (including OR period),
+then look for price to enter these zones post-OR with confirmation.
+
+Zone types:
+  - fib: Fibonacci retracement levels of OR (38.2, 50, 61.8, 78.6%)
+  - fvg: Fair Value Gaps from 9:30 onward
+  - ob: Order Blocks from 9:30 onward
+  - choch: CHOCH level where structure shifted
+  - or_boundary: OR high/low (for retest entries)
+  - vwap: Dynamic VWAP level
+
+Each zone has: price_high, price_low, zone_type, direction (long/short/both),
+and a confluence score.
 """
 
 import numpy as np
 import pandas as pd
-from dataclasses import dataclass
-from typing import List, Optional, Dict
+from dataclasses import dataclass, field
+from typing import List, Optional, Dict, Tuple
 from scripts.market_structure import (
     detect_swings, get_swing_levels, detect_structure_shifts,
     detect_order_blocks, detect_fvgs, fib_zone,
-    compute_vwap, compute_vwap_bands, compute_atr,
+    compute_vwap, compute_atr,
     pct_of_price, points_from_pct,
 )
+
+
+# ---------------------------------------------------------------------------
+# Data structures
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Zone:
+    """A price zone where an entry may be taken."""
+    zone_type: str       # "fib", "fvg", "ob", "choch", "or_boundary", "vwap"
+    direction: str       # "long", "short", or "both"
+    price_high: float    # upper boundary of zone
+    price_low: float     # lower boundary of zone
+    price_mid: float     # midpoint (typical entry target)
+    stop_price: float    # suggested stop for this zone
+    source_bar: int      # session-relative bar index where zone was created
+    score: int = 1       # confluence score (higher = more confirmations)
+    label: str = ""      # descriptive label for debugging
 
 
 @dataclass
@@ -22,584 +51,566 @@ class StrategySignal:
     trade_date: str
     entry_bar_idx: int
     entry_time: str
-    direction: str       # "long" or "short"
+    direction: str
     entry_price: float
     stop_price: float
     target_price: float
-    risk_pct: float      # risk as % of price
-    reward_pct: float    # reward as % of price
-    rr_ratio: float      # reward / risk
+    risk_pct: float
+    reward_pct: float
+    rr_ratio: float
     signal_name: str
-    confidence: float = 1.0  # 0-1, for multi-confirmation scoring
+    confidence: float = 1.0
+    ib_bias: str = ""
+    first_formed: str = ""
+    zones_hit: str = ""   # which zone types contributed to entry
 
 
 # ---------------------------------------------------------------------------
-# Shared: OR context and bias
+# IB Bias
 # ---------------------------------------------------------------------------
 
-def get_day_context(day_bars: pd.DataFrame, or_high: float, or_low: float,
-                    or_end_idx: int) -> dict:
-    """Compute context for a single day's trading.
+def compute_ib_bias(high: np.ndarray, low: np.ndarray,
+                    or_start_idx: int, or_end_idx: int,
+                    bias_minutes: int = 15) -> Tuple[str, str]:
+    bias_end_idx = min(or_start_idx + bias_minutes, or_end_idx)
+    if bias_end_idx <= or_start_idx:
+        return "", "same"
 
-    Returns dict with all the structural info signal generators need.
+    running_high = high[or_start_idx]
+    running_low = low[or_start_idx]
+    high_last_set = or_start_idx
+    low_last_set = or_start_idx
+
+    for i in range(or_start_idx + 1, bias_end_idx):
+        if i >= len(high):
+            break
+        if high[i] > running_high:
+            running_high = high[i]
+            high_last_set = i
+        if low[i] < running_low:
+            running_low = low[i]
+            low_last_set = i
+
+    if high_last_set < low_last_set:
+        return "short", "high"
+    elif low_last_set < high_last_set:
+        return "long", "low"
+    else:
+        return "", "same"
+
+
+# ---------------------------------------------------------------------------
+# Zone Builder — builds ALL zones from 9:30 onward
+# ---------------------------------------------------------------------------
+
+def build_zones(day_bars: pd.DataFrame, or_high: float, or_low: float,
+                or_start_idx: int, or_end_idx: int,
+                swing_lookback: int = 2,
+                min_fvg_pct: float = 0.02,
+                disp_mult: float = 1.5,
+                stop_buffer_pct: float = 0.03,
+                vwap_tol_pct: float = 0.03) -> Tuple[List[Zone], dict]:
+    """Build all structural zones from session start (9:30).
+
+    Returns:
+        zones: list of Zone objects
+        context: dict with arrays and metadata needed for entry scanning
     """
-    o = day_bars["open"].values
     h = day_bars["high"].values
     l = day_bars["low"].values
+    o = day_bars["open"].values
     c = day_bars["close"].values
     v = day_bars["volume"].values
 
     or_mid = (or_high + or_low) / 2
     or_width = or_high - or_low
-    ref_price = or_mid  # reference price for % calculations
-    or_width_pct = pct_of_price(or_width, ref_price)
+    ref = or_mid
+    stop_buf = points_from_pct(stop_buffer_pct, ref)
 
-    # Post-OR bars
-    post_h = h[or_end_idx:]
-    post_l = l[or_end_idx:]
-    post_c = c[or_end_idx:]
-    post_o = o[or_end_idx:]
-    post_v = v[or_end_idx:]
+    zones = []
 
-    # ATR for normalization (use all bars available)
+    # === FIB ZONES ===
+    # Multiple fib levels as zones, not just 38.2%
+    fib_levels = {
+        "fib_236": (or_low + 0.236 * or_width, "long"),
+        "fib_382": (or_low + 0.382 * or_width, "long"),    # discount
+        "fib_500": (or_low + 0.500 * or_width, "both"),    # equilibrium
+        "fib_618": (or_low + 0.618 * or_width, "short"),   # premium
+        "fib_786": (or_low + 0.786 * or_width, "short"),
+    }
+
+    # Zone thickness = small % of OR width
+    fib_thickness = or_width * 0.05  # 5% of OR width as zone thickness
+
+    for fib_name, (fib_price, fib_dir) in fib_levels.items():
+        # For "both" direction (50%), create two zones
+        if fib_dir == "both":
+            zones.append(Zone(
+                zone_type="fib", direction="long",
+                price_high=fib_price + fib_thickness, price_low=fib_price - fib_thickness,
+                price_mid=fib_price, stop_price=or_low - stop_buf,
+                source_bar=or_end_idx, label=fib_name + "_long"))
+            zones.append(Zone(
+                zone_type="fib", direction="short",
+                price_high=fib_price + fib_thickness, price_low=fib_price - fib_thickness,
+                price_mid=fib_price, stop_price=or_high + stop_buf,
+                source_bar=or_end_idx, label=fib_name + "_short"))
+        elif fib_dir == "long":
+            zones.append(Zone(
+                zone_type="fib", direction="long",
+                price_high=fib_price + fib_thickness, price_low=fib_price - fib_thickness,
+                price_mid=fib_price, stop_price=or_low - stop_buf,
+                source_bar=or_end_idx, label=fib_name))
+        else:
+            zones.append(Zone(
+                zone_type="fib", direction="short",
+                price_high=fib_price + fib_thickness, price_low=fib_price - fib_thickness,
+                price_mid=fib_price, stop_price=or_high + stop_buf,
+                source_bar=or_end_idx, label=fib_name))
+
+    # === OR BOUNDARY ZONES (for retest entries) ===
+    retest_thickness = points_from_pct(0.05, ref)
+    zones.append(Zone(
+        zone_type="or_boundary", direction="long",
+        price_high=or_high + retest_thickness, price_low=or_high - retest_thickness,
+        price_mid=or_high, stop_price=or_high - stop_buf * 2,
+        source_bar=or_end_idx, label="or_high_retest"))
+    zones.append(Zone(
+        zone_type="or_boundary", direction="short",
+        price_high=or_low + retest_thickness, price_low=or_low - retest_thickness,
+        price_mid=or_low, stop_price=or_low + stop_buf * 2,
+        source_bar=or_end_idx, label="or_low_retest"))
+
+    # === SESSION STRUCTURE (from 9:30 onward) ===
+    sess_h = h[or_start_idx:]
+    sess_l = l[or_start_idx:]
+    sess_c = c[or_start_idx:]
+    sess_o = o[or_start_idx:]
+    n_sess = len(sess_h)
+
+    if n_sess > 10:
+        # Swings
+        swing_highs, swing_lows = detect_swings(sess_h, sess_l,
+                                                 lookback=swing_lookback,
+                                                 lookforward=swing_lookback)
+        last_sh, last_sl = get_swing_levels(sess_h, sess_l, swing_highs, swing_lows)
+
+        # Structure shifts (CHOCH/BOS)
+        events = detect_structure_shifts(sess_h, sess_l, sess_c, swing_highs, swing_lows)
+
+        # FVGs from 9:30 onward
+        fvgs = detect_fvgs(sess_h, sess_l, min_gap_pct=min_fvg_pct)
+
+        # OBs from 9:30 onward
+        obs = detect_order_blocks(sess_o, sess_h, sess_l, sess_c, displacement_mult=disp_mult)
+    else:
+        swing_highs = swing_lows = np.zeros(n_sess, dtype=bool)
+        last_sh = last_sl = np.full(n_sess, np.nan)
+        events = pd.DataFrame(columns=["bar_idx", "type", "direction", "level_broken", "price"])
+        fvgs = pd.DataFrame(columns=["bar_idx", "fvg_type", "fvg_top", "fvg_bottom", "fvg_mid"])
+        obs = pd.DataFrame(columns=["bar_idx", "ob_type", "ob_high", "ob_low", "ob_mid"])
+
+    # === CHOCH ZONES ===
+    for _, ev in events.iterrows():
+        if ev["type"] == "choch":
+            ev_bar = int(ev["bar_idx"])
+            level = ev["level_broken"]
+
+            if ev["direction"] == "bullish":
+                # Bullish CHOCH: broken above swing high → zone around that level for pullback long
+                zones.append(Zone(
+                    zone_type="choch", direction="long",
+                    price_high=level + fib_thickness, price_low=level - fib_thickness,
+                    price_mid=level,
+                    stop_price=last_sl[ev_bar] - stop_buf if not np.isnan(last_sl[ev_bar]) else or_low - stop_buf,
+                    source_bar=or_start_idx + ev_bar, label=f"choch_bull@{level:.0f}"))
+            else:
+                zones.append(Zone(
+                    zone_type="choch", direction="short",
+                    price_high=level + fib_thickness, price_low=level - fib_thickness,
+                    price_mid=level,
+                    stop_price=last_sh[ev_bar] + stop_buf if not np.isnan(last_sh[ev_bar]) else or_high + stop_buf,
+                    source_bar=or_start_idx + ev_bar, label=f"choch_bear@{level:.0f}"))
+
+    # === FVG ZONES ===
+    for _, fvg in fvgs.iterrows():
+        fvg_bar = int(fvg["bar_idx"])
+        if fvg["fvg_type"] == "bullish":
+            zones.append(Zone(
+                zone_type="fvg", direction="long",
+                price_high=fvg["fvg_top"], price_low=fvg["fvg_bottom"],
+                price_mid=fvg["fvg_mid"],
+                stop_price=fvg["fvg_bottom"] - stop_buf,
+                source_bar=or_start_idx + fvg_bar, label=f"fvg_bull@{fvg['fvg_mid']:.0f}"))
+        else:
+            zones.append(Zone(
+                zone_type="fvg", direction="short",
+                price_high=fvg["fvg_top"], price_low=fvg["fvg_bottom"],
+                price_mid=fvg["fvg_mid"],
+                stop_price=fvg["fvg_top"] + stop_buf,
+                source_bar=or_start_idx + fvg_bar, label=f"fvg_bear@{fvg['fvg_mid']:.0f}"))
+
+    # === OB ZONES ===
+    for _, ob in obs.iterrows():
+        ob_bar = int(ob["bar_idx"])
+        if ob["ob_type"] == "bullish":
+            zones.append(Zone(
+                zone_type="ob", direction="long",
+                price_high=ob["ob_high"], price_low=ob["ob_low"],
+                price_mid=ob["ob_mid"],
+                stop_price=ob["ob_low"] - stop_buf,
+                source_bar=or_start_idx + ob_bar, label=f"ob_bull@{ob['ob_mid']:.0f}"))
+        else:
+            zones.append(Zone(
+                zone_type="ob", direction="short",
+                price_high=ob["ob_high"], price_low=ob["ob_low"],
+                price_mid=ob["ob_mid"],
+                stop_price=ob["ob_high"] + stop_buf,
+                source_bar=or_start_idx + ob_bar, label=f"ob_bear@{ob['ob_mid']:.0f}"))
+
+    # === VWAP (computed but added as dynamic zone during scanning) ===
+    reset = np.zeros(len(h), dtype=bool)
+    reset[or_start_idx] = True
+    vwap = compute_vwap(h, l, c, v, reset_mask=reset)
+
+    # ATR
     atr = compute_atr(h, l, c, period=14)
     current_atr = atr[or_end_idx] if or_end_idx < len(atr) else atr[-1]
 
-    # VWAP from session start
-    reset = np.zeros(len(h), dtype=bool)
-    reset[0] = True
-    vwap = compute_vwap(h, l, c, v, reset_mask=reset)
+    # OR sweep tracking
+    or_bars_count = or_end_idx - or_start_idx
+    post_h = h[or_end_idx:]
+    post_l = l[or_end_idx:]
+    post_c = c[or_end_idx:]
 
-    # Detect structures in post-OR bars
-    if len(post_h) > 10:
-        swing_h, swing_l = detect_swings(post_h, post_l, lookback=2, lookforward=2)
-        last_sh, last_sl = get_swing_levels(post_h, post_l, swing_h, swing_l)
-    else:
-        swing_h = swing_l = np.zeros(len(post_h), dtype=bool)
-        last_sh = last_sl = np.full(len(post_h), np.nan)
-
-    return {
-        "open": o, "high": h, "low": l, "close": c, "volume": v,
-        "post_open": post_o, "post_high": post_h, "post_low": post_l,
-        "post_close": post_c, "post_volume": post_v,
+    context = {
+        "high": h, "low": l, "close": c, "open": o, "volume": v,
+        "post_high": post_h, "post_low": post_l, "post_close": post_c,
         "or_high": or_high, "or_low": or_low, "or_mid": or_mid,
-        "or_width": or_width, "or_width_pct": or_width_pct,
-        "ref_price": ref_price, "atr": current_atr,
-        "vwap": vwap, "or_end_idx": or_end_idx,
-        "swing_highs": swing_h, "swing_lows": swing_l,
-        "last_swing_high": last_sh, "last_swing_low": last_sl,
+        "or_width": or_width, "or_width_pct": pct_of_price(or_width, ref),
+        "or_start_idx": or_start_idx, "or_end_idx": or_end_idx,
+        "ref_price": ref, "atr": current_atr, "vwap": vwap,
+        "vwap_tol": points_from_pct(vwap_tol_pct, ref),
+        "stop_buffer": stop_buf,
+        "swing_highs": swing_highs, "swing_lows": swing_lows,
+        "last_sh": last_sh, "last_sl": last_sl,
+        "structure_events": events,
+        "or_bars_count": or_bars_count,
         "bar_times": day_bars.index,
     }
 
+    return zones, context
 
-def make_signal(td_str: str, bar_idx: int, bar_times, direction: str,
-                entry: float, stop: float, target: float,
-                ref_price: float, name: str, confidence: float = 1.0) -> StrategySignal:
-    """Helper to construct a signal with auto-computed percentages."""
-    risk = abs(entry - stop)
-    reward = abs(target - entry)
-    risk_pct = pct_of_price(risk, ref_price)
-    reward_pct = pct_of_price(reward, ref_price)
-    rr = reward / risk if risk > 0 else 0
 
-    return StrategySignal(
-        trade_date=td_str,
-        entry_bar_idx=bar_idx,
-        entry_time=str(bar_times[bar_idx]) if bar_idx < len(bar_times) else "",
-        direction=direction,
-        entry_price=entry,
-        stop_price=stop,
-        target_price=target,
-        risk_pct=risk_pct,
-        reward_pct=reward_pct,
-        rr_ratio=rr,
-        signal_name=name,
-        confidence=confidence,
+# ---------------------------------------------------------------------------
+# Zone scoring — adds confluence points
+# ---------------------------------------------------------------------------
+
+def score_zones(zones: List[Zone], context: dict) -> List[Zone]:
+    """Score zones by confluence: overlapping zones of different types boost the score."""
+    for i, z1 in enumerate(zones):
+        for j, z2 in enumerate(zones):
+            if i == j:
+                continue
+            if z1.direction != z2.direction:
+                continue
+            if z1.zone_type == z2.zone_type:
+                continue  # same type doesn't add confluence
+            # Check overlap
+            if z1.price_low <= z2.price_high and z1.price_high >= z2.price_low:
+                z1.score += 1
+    return zones
+
+
+# ---------------------------------------------------------------------------
+# Entry scanner — scans post-OR bars for price entering scored zones
+# ---------------------------------------------------------------------------
+
+def scan_for_entries(zones: List[Zone], context: dict, td_str: str,
+                     bias: Optional[str] = None,
+                     strategy_filter: Optional[str] = None,
+                     max_risk_pct: float = 0.20,
+                     target_rr: float = 1.5,
+                     min_score: int = 1,
+                     require_or_sweep: bool = True,
+                     require_close_confirmation: bool = True,
+                     ib_bias: str = "", first_formed: str = ""
+                     ) -> List[StrategySignal]:
+    """Scan post-OR bars for price entering any qualifying zone.
+
+    Args:
+        zones: scored zones to monitor
+        strategy_filter: if set, only consider zones of this type (e.g., "choch", "fib")
+        min_score: minimum confluence score to enter
+        require_or_sweep: for CHOCH zones, require OR boundary to be swept first
+        require_close_confirmation: require candle close inside zone, not just wick
+    """
+    signals = []
+    post_h = context["post_high"]
+    post_l = context["post_low"]
+    post_c = context["post_close"]
+    or_h = context["or_high"]
+    or_l = context["or_low"]
+    ref = context["ref_price"]
+    offset = context["or_end_idx"]
+    bar_times = context["bar_times"]
+
+    # Track OR sweeps
+    or_high_swept = False
+    or_low_swept = False
+
+    # Filter zones by direction bias and strategy
+    eligible = []
+    for z in zones:
+        if bias and z.direction != bias:
+            continue
+        if strategy_filter and z.zone_type != strategy_filter:
+            # For composite strategies, allow multiple types
+            if strategy_filter == "all":
+                pass
+            elif strategy_filter == "choch_fade" and z.zone_type not in ("choch",):
+                continue
+            elif strategy_filter == "fib_discount" and z.zone_type not in ("fib",):
+                continue
+            elif strategy_filter == "ob_entry" and z.zone_type not in ("ob",):
+                continue
+            elif strategy_filter == "fvg_displacement" and z.zone_type not in ("fvg",):
+                continue
+            elif strategy_filter == "breakout_retest" and z.zone_type not in ("or_boundary",):
+                continue
+            elif strategy_filter == "full_confluence":
+                pass  # allow all zone types
+            elif strategy_filter == "vwap_reversion" and z.zone_type not in ("fib", "vwap"):
+                continue
+        if z.score < min_score:
+            continue
+        eligible.append(z)
+
+    if not eligible:
+        return signals
+
+    for i in range(len(post_h)):
+        # Update sweep tracking
+        if post_h[i] > or_h:
+            or_high_swept = True
+        if post_l[i] < or_l:
+            or_low_swept = True
+
+        # Add VWAP as dynamic zone at current bar
+        vwap_val = context["vwap"][offset + i] if (offset + i) < len(context["vwap"]) else None
+        vwap_tol = context["vwap_tol"]
+
+        for z in eligible:
+            # Check if price is in this zone
+            price_in_zone = False
+
+            if require_close_confirmation:
+                # Close must be inside the zone
+                if z.direction == "long":
+                    price_in_zone = post_l[i] <= z.price_high and post_c[i] >= z.price_low and post_c[i] > z.price_low
+                else:
+                    price_in_zone = post_h[i] >= z.price_low and post_c[i] <= z.price_high and post_c[i] < z.price_high
+            else:
+                # Any wick touch counts
+                price_in_zone = post_l[i] <= z.price_high and post_h[i] >= z.price_low
+
+            if not price_in_zone:
+                continue
+
+            # For CHOCH zones, verify OR was swept
+            if require_or_sweep and z.zone_type == "choch":
+                if z.direction == "long" and not or_low_swept:
+                    continue
+                if z.direction == "short" and not or_high_swept:
+                    continue
+
+            # For OR boundary retests, verify the boundary was broken first
+            if z.zone_type == "or_boundary":
+                if z.direction == "long" and not or_high_swept:
+                    continue  # OR high must be broken before we look for retest
+                if z.direction == "short" and not or_low_swept:
+                    continue
+
+            # VWAP confluence bonus: check if zone is near VWAP
+            vwap_bonus = 0
+            if vwap_val is not None and abs(z.price_mid - vwap_val) <= vwap_tol:
+                vwap_bonus = 1
+
+            effective_score = z.score + vwap_bonus
+
+            if effective_score < min_score:
+                continue
+
+            # Calculate risk/reward
+            entry = post_c[i]
+            stop = z.stop_price
+            risk = abs(entry - stop)
+            risk_pct = pct_of_price(risk, ref)
+
+            if risk <= 0 or risk_pct > max_risk_pct:
+                continue
+
+            if z.direction == "long":
+                target = entry + risk * target_rr
+            else:
+                target = entry - risk * target_rr
+
+            reward = abs(target - entry)
+            reward_pct = pct_of_price(reward, ref)
+            rr = reward / risk if risk > 0 else 0
+
+            # Determine signal name
+            signal_name = z.zone_type
+            if strategy_filter and strategy_filter != "all":
+                signal_name = strategy_filter
+
+            bar_idx = offset + i
+            entry_time = str(bar_times[bar_idx]) if bar_idx < len(bar_times) else ""
+
+            zones_hit = z.label + (f"+vwap" if vwap_bonus else "")
+
+            signals.append(StrategySignal(
+                trade_date=td_str,
+                entry_bar_idx=bar_idx,
+                entry_time=entry_time,
+                direction=z.direction,
+                entry_price=entry,
+                stop_price=stop,
+                target_price=target,
+                risk_pct=risk_pct,
+                reward_pct=reward_pct,
+                rr_ratio=rr,
+                signal_name=signal_name,
+                confidence=min(1.0, effective_score / 4.0),
+                ib_bias=ib_bias,
+                first_formed=first_formed,
+                zones_hit=zones_hit,
+            ))
+            return signals  # one signal per day
+
+    return signals
+
+
+# ---------------------------------------------------------------------------
+# Strategy entry points — each just configures the scanner differently
+# ---------------------------------------------------------------------------
+
+def _run_strategy(ctx_args: dict, td_str: str, bias: Optional[str],
+                  strategy_name: str, min_score: int = 1,
+                  max_risk_pct: float = 0.20, target_rr: float = 1.5,
+                  require_or_sweep: bool = True,
+                  require_close: bool = True,
+                  **zone_kwargs) -> List[StrategySignal]:
+    """Common runner for all strategies."""
+    day_bars = ctx_args["day_bars"]
+    or_h = ctx_args["or_high"]
+    or_l = ctx_args["or_low"]
+    or_start = ctx_args["or_start_idx"]
+    or_end = ctx_args["or_end_idx"]
+    swing_lb = ctx_args.get("swing_lookback", 2)
+    bias_min = ctx_args.get("bias_minutes", 15)
+
+    # Build zones
+    zones, context = build_zones(
+        day_bars, or_h, or_l, or_start, or_end,
+        swing_lookback=swing_lb,
+        **zone_kwargs
+    )
+
+    # Score zones
+    zones = score_zones(zones, context)
+
+    # IB Bias
+    ib_dir, ff = compute_ib_bias(context["high"], context["low"], or_start, or_end, bias_min)
+
+    # Scan for entries
+    return scan_for_entries(
+        zones, context, td_str,
+        bias=bias,
+        strategy_filter=strategy_name,
+        max_risk_pct=max_risk_pct,
+        target_rr=target_rr,
+        min_score=min_score,
+        require_or_sweep=require_or_sweep,
+        require_close_confirmation=require_close,
+        ib_bias=ib_dir,
+        first_formed=ff,
     )
 
 
-# ---------------------------------------------------------------------------
-# Strategy 1B: Breakout + Retest
-# ---------------------------------------------------------------------------
-
-def generate_breakout_retest(ctx: dict, td_str: str, bias: Optional[str] = None,
+def generate_breakout_retest(ctx_args: dict, td_str: str, bias: Optional[str] = None,
                               params: dict = None) -> List[StrategySignal]:
-    """Wait for OR break, then enter on retest of OR level as S/R.
-
-    Params:
-        retest_tolerance_pct: how close price must come to OR level (% of price)
-        max_risk_pct: maximum risk as % of price
-        target_rr: reward:risk ratio for target
-        max_bars_to_retest: max bars to wait for retest after breakout
-    """
     if params is None:
-        params = {"retest_tolerance_pct": 0.05, "max_risk_pct": 0.15,
-                  "target_rr": 1.5, "max_bars_to_retest": 30, "stop_buffer_pct": 0.03}
-
-    signals = []
-    ph, pl, pc = ctx["post_high"], ctx["post_low"], ctx["post_close"]
-    or_h, or_l = ctx["or_high"], ctx["or_low"]
-    ref = ctx["ref_price"]
-    tol = points_from_pct(params["retest_tolerance_pct"], ref)
-    stop_buf = points_from_pct(params["stop_buffer_pct"], ref)
-    offset = ctx["or_end_idx"]
-
-    for i in range(len(ph)):
-        # Bullish breakout: close above OR high
-        if bias != "short" and pc[i] > or_h:
-            # Look for retest: price comes back to within tolerance of OR high
-            for j in range(i + 1, min(i + params["max_bars_to_retest"], len(pl))):
-                if pl[j] <= or_h + tol and pc[j] > or_h:
-                    # Retest confirmed — enter long
-                    entry = pc[j]
-                    stop = or_h - stop_buf
-                    risk = entry - stop
-                    if pct_of_price(risk, ref) > params["max_risk_pct"]:
-                        break
-                    target = entry + risk * params["target_rr"]
-                    signals.append(make_signal(
-                        td_str, offset + j, ctx["bar_times"], "long",
-                        entry, stop, target, ref, "breakout_retest"))
-                    break
-            break  # one signal per day per direction
-
-        # Bearish breakout: close below OR low
-        if bias != "long" and pc[i] < or_l:
-            for j in range(i + 1, min(i + params["max_bars_to_retest"], len(ph))):
-                if ph[j] >= or_l - tol and pc[j] < or_l:
-                    entry = pc[j]
-                    stop = or_l + stop_buf
-                    risk = stop - entry
-                    if pct_of_price(risk, ref) > params["max_risk_pct"]:
-                        break
-                    target = entry - risk * params["target_rr"]
-                    signals.append(make_signal(
-                        td_str, offset + j, ctx["bar_times"], "short",
-                        entry, stop, target, ref, "breakout_retest"))
-                    break
-            break
-
-    return signals
+        params = {}
+    return _run_strategy(ctx_args, td_str, bias, "breakout_retest",
+                         min_score=1, max_risk_pct=params.get("max_risk_pct", 0.15),
+                         target_rr=params.get("target_rr", 1.5),
+                         require_or_sweep=True, require_close=True)
 
 
-# ---------------------------------------------------------------------------
-# Strategy 2A: Fibonacci Discount Entry
-# ---------------------------------------------------------------------------
-
-def generate_fib_discount(ctx: dict, td_str: str, bias: Optional[str] = None,
+def generate_fib_discount(ctx_args: dict, td_str: str, bias: Optional[str] = None,
                            params: dict = None) -> List[StrategySignal]:
-    """Enter at Fibonacci discount/premium zone within OR.
-
-    For long bias: wait for price to dip to discount zone (below 38.2% of OR)
-    For short bias: wait for price to rise to premium zone (above 61.8% of OR)
-    """
     if params is None:
-        params = {"max_risk_pct": 0.15, "target_rr": 1.5,
-                  "stop_buffer_pct": 0.03, "max_bars_to_entry": 60}
-
-    signals = []
-    ph, pl, pc = ctx["post_high"], ctx["post_low"], ctx["post_close"]
-    or_h, or_l = ctx["or_high"], ctx["or_low"]
-    ref = ctx["ref_price"]
-    stop_buf = points_from_pct(params["stop_buffer_pct"], ref)
-    offset = ctx["or_end_idx"]
-
-    discount_low, discount_high = fib_zone(or_h, or_l, "discount")
-    premium_low, premium_high = fib_zone(or_h, or_l, "premium")
-
-    for i in range(min(params["max_bars_to_entry"], len(pl))):
-        # Long at discount
-        if bias in (None, "long") and pl[i] <= discount_high and pc[i] > discount_low:
-            entry = pc[i]
-            stop = or_l - stop_buf
-            risk = entry - stop
-            if risk <= 0 or pct_of_price(risk, ref) > params["max_risk_pct"]:
-                continue
-            target = entry + risk * params["target_rr"]
-            signals.append(make_signal(
-                td_str, offset + i, ctx["bar_times"], "long",
-                entry, stop, target, ref, "fib_discount"))
-            return signals
-
-        # Short at premium
-        if bias in (None, "short") and ph[i] >= premium_low and pc[i] < premium_high:
-            entry = pc[i]
-            stop = or_h + stop_buf
-            risk = stop - entry
-            if risk <= 0 or pct_of_price(risk, ref) > params["max_risk_pct"]:
-                continue
-            target = entry - risk * params["target_rr"]
-            signals.append(make_signal(
-                td_str, offset + i, ctx["bar_times"], "short",
-                entry, stop, target, ref, "fib_discount"))
-            return signals
-
-    return signals
+        params = {}
+    return _run_strategy(ctx_args, td_str, bias, "fib_discount",
+                         min_score=1, max_risk_pct=params.get("max_risk_pct", 0.15),
+                         target_rr=params.get("target_rr", 1.5),
+                         require_or_sweep=False, require_close=True)
 
 
-# ---------------------------------------------------------------------------
-# Strategy 3A: Order Block at OR Boundary
-# ---------------------------------------------------------------------------
-
-def generate_ob_entry(ctx: dict, td_str: str, bias: Optional[str] = None,
+def generate_ob_entry(ctx_args: dict, td_str: str, bias: Optional[str] = None,
                        params: dict = None) -> List[StrategySignal]:
-    """Enter at an order block near the OR boundary after breakout."""
     if params is None:
-        params = {"max_risk_pct": 0.15, "target_rr": 2.0,
-                  "stop_buffer_pct": 0.02, "ob_proximity_pct": 0.1}
-
-    signals = []
-    o, h, l, c = ctx["post_open"], ctx["post_high"], ctx["post_low"], ctx["post_close"]
-    or_h, or_l = ctx["or_high"], ctx["or_low"]
-    ref = ctx["ref_price"]
-    stop_buf = points_from_pct(params["stop_buffer_pct"], ref)
-    prox = points_from_pct(params["ob_proximity_pct"], ref)
-    offset = ctx["or_end_idx"]
-
-    if len(o) < 15:
-        return signals
-
-    # Detect OBs in post-OR bars
-    obs = detect_order_blocks(o, h, l, c, displacement_mult=1.5)
-    if obs.empty:
-        return signals
-
-    for _, ob in obs.iterrows():
-        ob_idx = int(ob["bar_idx"])
-        disp_idx = int(ob["displacement_bar"])
-
-        # Bullish OB near OR boundary → long entry
-        if ob["ob_type"] == "bullish" and bias != "short":
-            if abs(ob["ob_mid"] - or_h) < prox or ob["ob_mid"] > or_l:
-                # Wait for retest of OB
-                for j in range(disp_idx + 1, min(disp_idx + 30, len(l))):
-                    if l[j] <= ob["ob_high"] and c[j] > ob["ob_low"]:
-                        entry = c[j]
-                        stop = ob["ob_low"] - stop_buf
-                        risk = entry - stop
-                        if risk <= 0 or pct_of_price(risk, ref) > params["max_risk_pct"]:
-                            break
-                        target = entry + risk * params["target_rr"]
-                        signals.append(make_signal(
-                            td_str, offset + j, ctx["bar_times"], "long",
-                            entry, stop, target, ref, "ob_entry"))
-                        return signals
-
-        # Bearish OB → short entry
-        elif ob["ob_type"] == "bearish" and bias != "long":
-            if abs(ob["ob_mid"] - or_l) < prox or ob["ob_mid"] < or_h:
-                for j in range(disp_idx + 1, min(disp_idx + 30, len(h))):
-                    if h[j] >= ob["ob_low"] and c[j] < ob["ob_high"]:
-                        entry = c[j]
-                        stop = ob["ob_high"] + stop_buf
-                        risk = stop - entry
-                        if risk <= 0 or pct_of_price(risk, ref) > params["max_risk_pct"]:
-                            break
-                        target = entry - risk * params["target_rr"]
-                        signals.append(make_signal(
-                            td_str, offset + j, ctx["bar_times"], "short",
-                            entry, stop, target, ref, "ob_entry"))
-                        return signals
-
-    return signals
+        params = {}
+    return _run_strategy(ctx_args, td_str, bias, "ob_entry",
+                         min_score=1, max_risk_pct=params.get("max_risk_pct", 0.15),
+                         target_rr=params.get("target_rr", 2.0),
+                         require_or_sweep=False, require_close=True)
 
 
-# ---------------------------------------------------------------------------
-# Strategy 4B: FVG on Displacement Break
-# ---------------------------------------------------------------------------
-
-def generate_fvg_displacement(ctx: dict, td_str: str, bias: Optional[str] = None,
+def generate_fvg_displacement(ctx_args: dict, td_str: str, bias: Optional[str] = None,
                                params: dict = None) -> List[StrategySignal]:
-    """Enter on FVG fill after a displacement breakout of OR."""
     if params is None:
-        params = {"max_risk_pct": 0.15, "target_rr": 1.5,
-                  "stop_buffer_pct": 0.02, "min_fvg_pct": 0.02,
-                  "max_bars_to_fill": 30}
-
-    signals = []
-    h, l, c = ctx["post_high"], ctx["post_low"], ctx["post_close"]
-    or_h, or_l = ctx["or_high"], ctx["or_low"]
-    ref = ctx["ref_price"]
-    stop_buf = points_from_pct(params["stop_buffer_pct"], ref)
-    offset = ctx["or_end_idx"]
-
-    if len(h) < 5:
-        return signals
-
-    fvgs = detect_fvgs(h, l, min_gap_pct=params["min_fvg_pct"])
-    if fvgs.empty:
-        return signals
-
-    for _, fvg in fvgs.iterrows():
-        fvg_idx = int(fvg["bar_idx"])
-
-        # Bullish FVG after upside break
-        if fvg["fvg_type"] == "bullish" and bias != "short":
-            if fvg["fvg_bottom"] >= or_l:  # FVG is above OR low (meaningful)
-                # Wait for price to fill to FVG mid
-                for j in range(fvg_idx + 1, min(fvg_idx + params["max_bars_to_fill"], len(l))):
-                    if l[j] <= fvg["fvg_mid"]:
-                        entry = max(c[j], fvg["fvg_bottom"])
-                        stop = fvg["fvg_bottom"] - stop_buf
-                        risk = entry - stop
-                        if risk <= 0 or pct_of_price(risk, ref) > params["max_risk_pct"]:
-                            break
-                        target = entry + risk * params["target_rr"]
-                        signals.append(make_signal(
-                            td_str, offset + j, ctx["bar_times"], "long",
-                            entry, stop, target, ref, "fvg_displacement"))
-                        return signals
-
-        # Bearish FVG after downside break
-        elif fvg["fvg_type"] == "bearish" and bias != "long":
-            if fvg["fvg_top"] <= or_h:
-                for j in range(fvg_idx + 1, min(fvg_idx + params["max_bars_to_fill"], len(h))):
-                    if h[j] >= fvg["fvg_mid"]:
-                        entry = min(c[j], fvg["fvg_top"])
-                        stop = fvg["fvg_top"] + stop_buf
-                        risk = stop - entry
-                        if risk <= 0 or pct_of_price(risk, ref) > params["max_risk_pct"]:
-                            break
-                        target = entry - risk * params["target_rr"]
-                        signals.append(make_signal(
-                            td_str, offset + j, ctx["bar_times"], "short",
-                            entry, stop, target, ref, "fvg_displacement"))
-                        return signals
-
-    return signals
+        params = {}
+    return _run_strategy(ctx_args, td_str, bias, "fvg_displacement",
+                         min_score=1, max_risk_pct=params.get("max_risk_pct", 0.15),
+                         target_rr=params.get("target_rr", 1.5),
+                         require_or_sweep=False, require_close=True)
 
 
-# ---------------------------------------------------------------------------
-# Strategy 5B: CHOCH Fade
-# ---------------------------------------------------------------------------
-
-def generate_choch_fade(ctx: dict, td_str: str, bias: Optional[str] = None,
+def generate_choch_fade(ctx_args: dict, td_str: str, bias: Optional[str] = None,
                          params: dict = None) -> List[StrategySignal]:
-    """Enter on Change of Character after false OR breakout."""
     if params is None:
-        params = {"max_risk_pct": 0.2, "target_rr": 1.5,
-                  "stop_buffer_pct": 0.03, "swing_lookback": 2}
-
-    signals = []
-    o, h, l, c = ctx["post_open"], ctx["post_high"], ctx["post_low"], ctx["post_close"]
-    or_h, or_l = ctx["or_high"], ctx["or_low"]
-    ref = ctx["ref_price"]
-    stop_buf = points_from_pct(params["stop_buffer_pct"], ref)
-    offset = ctx["or_end_idx"]
-
-    if len(h) < 15:
-        return signals
-
-    sh, sl = detect_swings(h, l, lookback=params["swing_lookback"],
-                           lookforward=params["swing_lookback"])
-    events = detect_structure_shifts(h, l, c, sh, sl)
-
-    if events.empty:
-        return signals
-
-    for _, ev in events.iterrows():
-        ev_bar = int(ev["bar_idx"])
-
-        # Bullish CHOCH after bearish structure (price broke OR low, then shifted bullish)
-        if ev["type"] == "choch" and ev["direction"] == "bullish" and bias != "short":
-            # Verify: was there a prior sweep of OR low?
-            if np.any(l[:ev_bar] < or_l):
-                entry = c[ev_bar]
-                # Stop below the swing low that preceded the CHOCH
-                recent_lows = l[:ev_bar][sl[:ev_bar]] if np.any(sl[:ev_bar]) else l[:ev_bar]
-                stop = np.min(recent_lows[-3:]) - stop_buf if len(recent_lows) > 0 else or_l - stop_buf
-                risk = entry - stop
-                if risk <= 0 or pct_of_price(risk, ref) > params["max_risk_pct"]:
-                    continue
-                target = entry + risk * params["target_rr"]
-                signals.append(make_signal(
-                    td_str, offset + ev_bar, ctx["bar_times"], "long",
-                    entry, stop, target, ref, "choch_fade"))
-                return signals
-
-        # Bearish CHOCH after bullish structure
-        elif ev["type"] == "choch" and ev["direction"] == "bearish" and bias != "long":
-            if np.any(h[:ev_bar] > or_h):
-                entry = c[ev_bar]
-                recent_highs = h[:ev_bar][sh[:ev_bar]] if np.any(sh[:ev_bar]) else h[:ev_bar]
-                stop = np.max(recent_highs[-3:]) + stop_buf if len(recent_highs) > 0 else or_h + stop_buf
-                risk = stop - entry
-                if risk <= 0 or pct_of_price(risk, ref) > params["max_risk_pct"]:
-                    continue
-                target = entry - risk * params["target_rr"]
-                signals.append(make_signal(
-                    td_str, offset + ev_bar, ctx["bar_times"], "short",
-                    entry, stop, target, ref, "choch_fade"))
-                return signals
-
-    return signals
+        params = {}
+    return _run_strategy(ctx_args, td_str, bias, "choch_fade",
+                         min_score=1, max_risk_pct=params.get("max_risk_pct", 0.20),
+                         target_rr=params.get("target_rr", 1.5),
+                         require_or_sweep=True, require_close=True)
 
 
-# ---------------------------------------------------------------------------
-# Strategy 6C: Full Multi-Confirmation
-# ---------------------------------------------------------------------------
-
-def generate_full_confluence(ctx: dict, td_str: str, bias: Optional[str] = None,
+def generate_full_confluence(ctx_args: dict, td_str: str, bias: Optional[str] = None,
                               params: dict = None) -> List[StrategySignal]:
-    """Require multiple confirmations: CHOCH/BOS + FVG or OB + Fib zone."""
     if params is None:
-        params = {"max_risk_pct": 0.15, "target_rr": 2.0,
-                  "stop_buffer_pct": 0.02, "min_confirmations": 2}
-
-    signals = []
-    o, h, l, c = ctx["post_open"], ctx["post_high"], ctx["post_low"], ctx["post_close"]
-    or_h, or_l = ctx["or_high"], ctx["or_low"]
-    ref = ctx["ref_price"]
-    stop_buf = points_from_pct(params["stop_buffer_pct"], ref)
-    offset = ctx["or_end_idx"]
-
-    if len(h) < 15:
-        return signals
-
-    # Detect all structures
-    sh, sl = detect_swings(h, l, lookback=2, lookforward=2)
-    events = detect_structure_shifts(h, l, c, sh, sl)
-    obs = detect_order_blocks(o, h, l, c, displacement_mult=1.5)
-    fvgs = detect_fvgs(h, l, min_gap_pct=0.02)
-
-    discount_low, discount_high = fib_zone(or_h, or_l, "discount")
-    premium_low, premium_high = fib_zone(or_h, or_l, "premium")
-
-    # Score each potential entry bar
-    for i in range(5, len(c)):
-        confirmations_long = 0
-        confirmations_short = 0
-        stop_long = or_l - stop_buf
-        stop_short = or_h + stop_buf
-
-        # Check CHOCH/BOS
-        if not events.empty:
-            recent = events[events["bar_idx"] <= i]
-            if len(recent) > 0:
-                last_ev = recent.iloc[-1]
-                if last_ev["direction"] == "bullish" and last_ev["bar_idx"] >= i - 5:
-                    confirmations_long += 1
-                elif last_ev["direction"] == "bearish" and last_ev["bar_idx"] >= i - 5:
-                    confirmations_short += 1
-
-        # Check FVG
-        if not fvgs.empty:
-            for _, fvg in fvgs.iterrows():
-                if fvg["fvg_type"] == "bullish" and l[i] <= fvg["fvg_top"] and c[i] > fvg["fvg_bottom"]:
-                    confirmations_long += 1
-                    stop_long = max(stop_long, fvg["fvg_bottom"] - stop_buf)
-                elif fvg["fvg_type"] == "bearish" and h[i] >= fvg["fvg_bottom"] and c[i] < fvg["fvg_top"]:
-                    confirmations_short += 1
-                    stop_short = min(stop_short, fvg["fvg_top"] + stop_buf)
-
-        # Check OB
-        if not obs.empty:
-            for _, ob in obs.iterrows():
-                if ob["ob_type"] == "bullish" and l[i] <= ob["ob_high"] and c[i] > ob["ob_low"]:
-                    confirmations_long += 1
-                    stop_long = max(stop_long, ob["ob_low"] - stop_buf)
-                elif ob["ob_type"] == "bearish" and h[i] >= ob["ob_low"] and c[i] < ob["ob_high"]:
-                    confirmations_short += 1
-                    stop_short = min(stop_short, ob["ob_high"] + stop_buf)
-
-        # Check Fib zone
-        if c[i] <= discount_high:
-            confirmations_long += 1
-        if c[i] >= premium_low:
-            confirmations_short += 1
-
-        # Generate signal if enough confirmations
-        min_conf = params["min_confirmations"]
-
-        if confirmations_long >= min_conf and bias != "short":
-            entry = c[i]
-            risk = entry - stop_long
-            if risk > 0 and pct_of_price(risk, ref) <= params["max_risk_pct"]:
-                target = entry + risk * params["target_rr"]
-                conf_score = min(1.0, confirmations_long / 4.0)
-                signals.append(make_signal(
-                    td_str, offset + i, ctx["bar_times"], "long",
-                    entry, stop_long, target, ref, "full_confluence", conf_score))
-                return signals
-
-        if confirmations_short >= min_conf and bias != "long":
-            entry = c[i]
-            risk = stop_short - entry
-            if risk > 0 and pct_of_price(risk, ref) <= params["max_risk_pct"]:
-                target = entry - risk * params["target_rr"]
-                conf_score = min(1.0, confirmations_short / 4.0)
-                signals.append(make_signal(
-                    td_str, offset + i, ctx["bar_times"], "short",
-                    entry, stop_short, target, ref, "full_confluence", conf_score))
-                return signals
-
-    return signals
+        params = {}
+    return _run_strategy(ctx_args, td_str, bias, "full_confluence",
+                         min_score=params.get("min_confirmations", 2),
+                         max_risk_pct=params.get("max_risk_pct", 0.15),
+                         target_rr=params.get("target_rr", 2.0),
+                         require_or_sweep=False, require_close=True)
 
 
-# ---------------------------------------------------------------------------
-# Strategy 2B: VWAP Mean Reversion (Tier 3)
-# ---------------------------------------------------------------------------
-
-def generate_vwap_reversion(ctx: dict, td_str: str, bias: Optional[str] = None,
+def generate_vwap_reversion(ctx_args: dict, td_str: str, bias: Optional[str] = None,
                              params: dict = None) -> List[StrategySignal]:
-    """Enter when price reverts to VWAP inside OR zone with directional bias."""
     if params is None:
-        params = {"max_risk_pct": 0.15, "target_rr": 1.5,
-                  "stop_buffer_pct": 0.03, "vwap_tolerance_pct": 0.03,
-                  "max_bars_to_entry": 60}
-
-    signals = []
-    h, l, c = ctx["post_high"], ctx["post_low"], ctx["post_close"]
-    vwap = ctx["vwap"]
-    or_h, or_l = ctx["or_high"], ctx["or_low"]
-    ref = ctx["ref_price"]
-    stop_buf = points_from_pct(params["stop_buffer_pct"], ref)
-    vwap_tol = points_from_pct(params["vwap_tolerance_pct"], ref)
-    offset = ctx["or_end_idx"]
-
-    post_vwap = vwap[offset:]
-
-    for i in range(min(params["max_bars_to_entry"], len(c))):
-        vw = post_vwap[i] if i < len(post_vwap) else ref
-
-        # Price near VWAP and inside OR range
-        near_vwap = abs(c[i] - vw) <= vwap_tol
-        inside_or = or_l <= c[i] <= or_h
-
-        if not (near_vwap and inside_or):
-            continue
-
-        # Long: price touching VWAP from above, VWAP is in lower half of OR
-        if bias in (None, "long") and vw < ctx["or_mid"] and c[i] >= vw:
-            entry = c[i]
-            stop = or_l - stop_buf
-            risk = entry - stop
-            if risk <= 0 or pct_of_price(risk, ref) > params["max_risk_pct"]:
-                continue
-            target = entry + risk * params["target_rr"]
-            signals.append(make_signal(
-                td_str, offset + i, ctx["bar_times"], "long",
-                entry, stop, target, ref, "vwap_reversion"))
-            return signals
-
-        # Short: price touching VWAP from below, VWAP in upper half
-        if bias in (None, "short") and vw > ctx["or_mid"] and c[i] <= vw:
-            entry = c[i]
-            stop = or_h + stop_buf
-            risk = stop - entry
-            if risk <= 0 or pct_of_price(risk, ref) > params["max_risk_pct"]:
-                continue
-            target = entry - risk * params["target_rr"]
-            signals.append(make_signal(
-                td_str, offset + i, ctx["bar_times"], "short",
-                entry, stop, target, ref, "vwap_reversion"))
-            return signals
-
-    return signals
+        params = {}
+    return _run_strategy(ctx_args, td_str, bias, "vwap_reversion",
+                         min_score=1, max_risk_pct=params.get("max_risk_pct", 0.15),
+                         target_rr=params.get("target_rr", 1.5),
+                         require_or_sweep=False, require_close=True)
 
 
 # ---------------------------------------------------------------------------
-# Strategy Registry
+# Registry
 # ---------------------------------------------------------------------------
 
 STRATEGIES = {

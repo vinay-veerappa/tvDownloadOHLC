@@ -1,0 +1,1032 @@
+import TradingView/ta/12
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © niharika / claude
+
+//@version=6
+strategy("OR Strategy Lab v6 [All Strategies Fixed]", shorttitle="OR Lab v6", overlay=true,
+          initial_capital=100000, default_qty_type=strategy.fixed, default_qty_value=1,
+          margin_long=0, margin_short=0, calc_on_every_tick=false,
+          max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// =============================================================================
+// 1. INPUTS
+// =============================================================================
+
+grp_strat = "Strategy Selection"
+activeStrategy = input.string("CHOCH Fade", "Active Strategy",
+    options=["Breakout Retest", "Fib Discount", "Order Block", "FVG Displacement",
+             "CHOCH Fade", "Full Confluence", "VWAP Reversion"], group=grp_strat)
+
+grp_or = "Opening Range"
+ib_session = input.session('0930-0945', title='OR Session', group=grp_or)
+orMinPct      = input.float(0.05, "Min OR Width %", step=0.01, group=grp_or)
+orMaxPct      = input.float(2.00, "Max OR Width %", step=0.01, group=grp_or)
+
+grp_session = "Session & Filters"
+trading_session   = input.session('0930-1130', title='Trading Window', group=grp_session)
+hard_exit_session = input.session('0930-1545', title='Hard Exit Window', group=grp_session)
+maxTradesPerDay   = input.int(1, "Max Trades/Day", minval=1, maxval=5, group=grp_session)
+
+grp_ib = "IB Bias"
+useIBBias     = input.bool(true, "Enable IB Bias Filter", group=grp_ib)
+ibBiasMinutes = input.int(15, "Bias Detection Duration (min)", minval=5, maxval=60, step=5, group=grp_ib)
+ibMinWidthPct = input.float(0.20, "Min OR Width for Bias %", step=0.05, group=grp_ib)
+
+grp_risk = "Risk Management (% of Price)"
+maxRiskPct    = input.float(1.00, "Max Risk %", step=0.01, group=grp_risk)
+stopBufferPct = input.float(0.03, "Stop Buffer %", step=0.01, group=grp_risk)
+targetRR      = input.float(1.5, "Target R:R Ratio", minval=0.5, maxval=4.0, step=0.25, group=grp_risk)
+slMode        = input.string("Strategy", "SL Mode", options=["Strategy", "Fixed %", "Range Boundary"], group=grp_risk)
+slFixedPct    = input.float(0.15, "Fixed SL %", step=0.01, group=grp_risk)
+
+grp_params = "Strategy Parameters"
+swingLookback     = input.int(2, "Swing Lookback/Forward", minval=2, maxval=7, group=grp_params)
+dispMultiplier    = input.float(1.2, "OB Displacement Mult", minval=1.0, maxval=3.0, step=0.1, group=grp_params)
+minFvgPct         = input.float(0.02, "Min FVG Width %", step=0.01, group=grp_params)
+fvgEntryAtBoundary = input.bool(true, "FVG: Enter at Boundary (not just CE)", group=grp_params,
+    tooltip="If ON, enter when price touches FVG edge. If OFF, require midpoint (CE) touch.")
+vwapTolPct        = input.float(0.03, "VWAP Tolerance %", step=0.01, group=grp_params)
+minConfirmations  = input.int(2, "Min Confirmations (Confluence)", minval=2, maxval=4, group=grp_params)
+obRequireSweep    = input.bool(false, "OB: Require OR Sweep", group=grp_params,
+    tooltip="If ON, OB entries require OR boundary to be swept first (like CHOCH).")
+
+grp_zones = "Zone Settings"
+zoneMaxLife       = input.int(30, "Zone Max Life (bars)", minval=5, maxval=120, step=5, group=grp_zones)
+retestTolPct      = input.float(0.05, "Retest Tolerance %", step=0.01, group=grp_zones)
+
+grp_vis = "Visuals"
+showORBox         = input.bool(true, "Show OR Box", group=grp_vis)
+showFibLevels     = input.bool(true, "Show Fib Levels", group=grp_vis)
+showStructure     = input.bool(true, "Show CHOCH/BOS Labels", group=grp_vis)
+showZoneBoxes     = input.bool(true, "Show Active Zone Boxes", group=grp_vis)
+showVWAP          = input.bool(true, "Show VWAP Line", group=grp_vis)
+showTPSL          = input.bool(true, "Show TP/SL Lines", group=grp_vis)
+showEntryLabels   = input.bool(true, "Show Trade Idea Labels", group=grp_vis)
+showRejections    = input.bool(true, "Show Rejection Reason Labels", group=grp_vis)
+
+// =============================================================================
+// 2. TIME & SESSION
+// =============================================================================
+
+inSession(sess) =>
+    na(time(timeframe.period, sess, "America/New_York")) == false
+
+isTradingTime = inSession(trading_session)
+isHardExit    = not inSession(hard_exit_session)
+isInSession   = inSession(ib_session)                    // OR formation window only (e.g., 9:30-9:45)
+isPostOR      = not inSession(ib_session)
+isTrackingActive = inSession('0930-1600')                // Structure detection runs ALL DAY
+
+// =============================================================================
+// 3. OPENING RANGE + IB BIAS
+// =============================================================================
+
+var int currentDay = na
+var float orHigh = na, var float orLow = na, var bool orSet = false
+var int orStartBar = na, var int orEndBar = na
+var int highLastSetBar = na, var int lowLastSetBar = na
+var float firstBarOpen = na, var float firstBarClose = na
+var string ibBias = "", var bool ibBiasSet = false, var string firstFormed = ""
+var box currentORBox = na, var label hMarker = na, var label lMarker = na
+
+dailyBarTime = time('1D')
+isNewDay = ta.change(dailyBarTime) != 0
+
+if isNewDay
+    currentDay := dayofmonth(time, "America/New_York")
+    orHigh := na, orLow := na, orSet := false
+    orStartBar := na, orEndBar := na
+    highLastSetBar := na, lowLastSetBar := na
+    firstBarOpen := na, firstBarClose := na
+    ibBias := "", ibBiasSet := false, firstFormed := ""
+
+if isInSession
+    if na(orHigh) or high >= orHigh
+        orHigh := high
+        highLastSetBar := bar_index
+        if na(firstBarOpen)
+            firstBarOpen := open
+            firstBarClose := close
+            orStartBar := bar_index
+    if na(orLow) or low <= orLow
+        orLow := low
+        lowLastSetBar := bar_index
+
+if not ibBiasSet and isInSession[1] and not isInSession and not na(highLastSetBar) and not na(lowLastSetBar)
+    if highLastSetBar > lowLastSetBar
+        firstFormed := "low"
+        ibBias := "long"
+    else if lowLastSetBar > highLastSetBar
+        firstFormed := "high"
+        ibBias := "short"
+    else
+        if firstBarClose < firstBarOpen
+            firstFormed := "same"
+            ibBias := "short"
+        else
+            firstFormed := "same"
+            ibBias := "long"
+    ibBiasSet := true
+
+if isPostOR and not orSet and not na(orHigh)
+    orSet := true
+    orEndBar := bar_index
+
+orWidth    = orSet ? orHigh - orLow : na
+orMid      = orSet ? (orHigh + orLow) / 2.0 : na
+orWidthPct = orSet and not na(orMid) and orMid > 0 ? (orWidth / orMid) * 100.0 : 0.0
+orValid    = orSet and orWidthPct >= orMinPct and orWidthPct <= orMaxPct
+ibBiasActive = useIBBias and ibBiasSet and ibBias != "" and orWidthPct >= ibMinWidthPct
+
+fib236 = orSet ? orLow + 0.236 * orWidth : na
+fib382 = orSet ? orLow + 0.382 * orWidth : na
+fib500 = orMid
+fib618 = orSet ? orLow + 0.618 * orWidth : na
+fib786 = orSet ? orLow + 0.786 * orWidth : na
+
+// =============================================================================
+// 4. VWAP & SWINGS
+// =============================================================================
+
+var float cumTPV = 0.0, var float cumVol = 0.0, var float vwapVal = na
+if isNewDay
+    cumTPV := 0.0, cumVol := 0.0, vwapVal := na
+cumTPV += (high + low + close) / 3.0 * volume
+cumVol += volume
+vwapVal := cumVol > 0 ? cumTPV / cumVol : close
+
+var float lastSwingHigh = na, var float lastSwingLow = na
+var int lastSHBar = na, var int lastSLBar = na
+if isNewDay
+    lastSwingHigh := na, lastSwingLow := na, lastSHBar := na, lastSLBar := na
+
+swingH_raw = isTrackingActive and not na(orHigh) ? ta.pivothigh(high, swingLookback, swingLookback) : na
+swingL_raw = isTrackingActive and not na(orHigh) ? ta.pivotlow(low, swingLookback, swingLookback) : na
+
+if not na(swingH_raw)
+    lastSwingHigh := swingH_raw, lastSHBar := bar_index - swingLookback
+if not na(swingL_raw)
+    lastSwingLow := swingL_raw, lastSLBar := bar_index - swingLookback
+
+// =============================================================================
+// 5. STRUCTURE DETECTION
+//    FIX: Store broken level BEFORE consuming trackSH/trackSL
+// =============================================================================
+
+var int msTrend = 0, var float prevSH = na, var float prevSL = na
+var float trackSH = na, var float trackSL = na
+var float lastBrokenSH = na  // FIX: stores the level before consumption
+var float lastBrokenSL = na  // FIX: stores the level before consumption
+chochBullish = false, chochBearish = false
+bosBullish = false, bosBearish = false
+
+if isNewDay
+    msTrend := 0, prevSH := na, prevSL := na, trackSH := na, trackSL := na
+    lastBrokenSH := na, lastBrokenSL := na
+
+if not na(swingH_raw)
+    if not na(prevSH)
+        msTrend := swingH_raw > prevSH ? 1 : swingH_raw < prevSH ? -1 : msTrend
+    prevSH := swingH_raw, trackSH := swingH_raw
+
+if not na(swingL_raw)
+    if not na(prevSL)
+        msTrend := swingL_raw > prevSL ? 1 : swingL_raw < prevSL ? -1 : msTrend
+    prevSL := swingL_raw, trackSL := swingL_raw
+
+if isTrackingActive and not na(orHigh)
+    if not na(trackSH) and close > trackSH
+        lastBrokenSH := trackSH  // FIX: save before consuming
+        if msTrend == -1
+            chochBullish := true
+        else if msTrend == 1
+            bosBullish := true
+        trackSH := na
+    if not na(trackSL) and close < trackSL
+        lastBrokenSL := trackSL  // FIX: save before consuming
+        if msTrend == 1
+            chochBearish := true
+        else if msTrend == -1
+            bosBearish := true
+        trackSL := na
+
+// =============================================================================
+// 6. ZONE STORAGE (TradeZone UDT + Array)
+// =============================================================================
+
+type TradeZone
+    float top
+    float bottom
+    float sl
+    int dir          // 1=long, -1=short
+    int created_bar
+    bool active
+    bool consumed
+    string typeName  // "CHOCH", "FVG", "OB", "OR_RETEST"
+    box visualBox
+
+var activeZones = array.new<TradeZone>()
+
+if isNewDay
+    array.clear(activeZones)
+
+pctToPoints(pct) => close * pct / 100.0
+stopBuf = pctToPoints(stopBufferPct)
+dynamicOrWidth = not na(orHigh) and not na(orLow) ? (orHigh - orLow) : 0
+zoneThickness = dynamicOrWidth * 0.05
+
+addZone(zTop, zBot, zSl, zDir, zType) =>
+    color bgCol = zDir == 1 ? color.new(color.green, 90) : color.new(color.red, 90)
+    color borderCol = zDir == 1 ? color.new(color.green, 60) : color.new(color.red, 60)
+    box b = showZoneBoxes ? box.new(bar_index - 1, zTop, bar_index + 3, zBot, bgcolor=bgCol, border_color=borderCol, border_width=1) : na
+    array.push(activeZones, TradeZone.new(zTop, zBot, zSl, zDir, bar_index, true, false, zType, b))
+
+// --- CHOCH Zones (FIX: use lastBrokenSH/SL instead of trackSH[1]) ---
+if chochBullish and not na(lastSwingHigh)
+    level = lastBrokenSH  // FIX: reliable level
+    if na(level)
+        level := lastSwingHigh
+    zSl = not na(lastSwingLow) ? lastSwingLow - stopBuf : not na(orLow) ? orLow - stopBuf : na
+    addZone(level + zoneThickness, level - zoneThickness, zSl, 1, "CHOCH")
+    // Invalidate opposite CHOCH zones
+    for i = array.size(activeZones) - 1 to 0
+        z = array.get(activeZones, i)
+        if z.typeName == "CHOCH" and z.dir == -1
+            z.active := false
+
+if chochBearish and not na(lastSwingLow)
+    level = lastBrokenSL  // FIX: reliable level
+    if na(level)
+        level := lastSwingLow
+    zSl = not na(lastSwingHigh) ? lastSwingHigh + stopBuf : not na(orHigh) ? orHigh + stopBuf : na
+    addZone(level + zoneThickness, level - zoneThickness, zSl, -1, "CHOCH")
+    for i = array.size(activeZones) - 1 to 0
+        z = array.get(activeZones, i)
+        if z.typeName == "CHOCH" and z.dir == 1
+            z.active := false
+
+// --- FVG Zones ---
+bullFVG_raw = bar_index >= 2 and high[2] < low[0] and isTrackingActive and not na(orHigh)
+bearFVG_raw = bar_index >= 2 and low[2] > high[0] and isTrackingActive and not na(orHigh)
+fvgWidthP = bullFVG_raw ? (low - high[2]) / close * 100 : bearFVG_raw ? (low[2] - high) / close * 100 : 0.0
+if bullFVG_raw and fvgWidthP >= minFvgPct
+    addZone(low, high[2], high[2] - stopBuf, 1, "FVG")
+if bearFVG_raw and fvgWidthP >= minFvgPct
+    addZone(low[2], high, low[2] + stopBuf, -1, "FVG")
+
+// --- OB Zones ---
+avgBody = ta.sma(math.abs(close - open), 20)
+isDisp = math.abs(close - open) >= dispMultiplier * nz(avgBody, 1)
+isBullOB = isDisp and close > open and close[1] < open[1] and isTrackingActive and not na(orHigh)
+isBearOB = isDisp and close < open and close[1] > open[1] and isTrackingActive and not na(orHigh)
+if isBullOB
+    addZone(high[1], low[1], low[1] - stopBuf, 1, "OB")
+if isBearOB
+    addZone(high[1], low[1], high[1] + stopBuf, -1, "OB")
+
+// --- OR BOUNDARY RETEST ZONES (NEW: created once OR is set) ---
+var bool orRetestZonesCreated = false
+if isNewDay
+    orRetestZonesCreated := false
+
+if orSet and not orRetestZonesCreated
+    retestTol = pctToPoints(retestTolPct)
+    // Long retest: OR high was broken, price pulls back to OR high as support
+    addZone(orHigh + retestTol, orHigh - retestTol, orHigh - stopBuf * 2, 1, "OR_RETEST")
+    // Short retest: OR low was broken, price pulls back to OR low as resistance
+    addZone(orLow + retestTol, orLow - retestTol, orLow + stopBuf * 2, -1, "OR_RETEST")
+    orRetestZonesCreated := true
+
+// --- Zone Maintenance: expiration, mitigation, cleanup ---
+for i = array.size(activeZones) - 1 to 0
+    if array.size(activeZones) == 0
+        break
+    z = array.get(activeZones, i)
+    if not z.active
+        if not z.consumed and not na(z.visualBox)
+            box.delete(z.visualBox)
+        array.remove(activeZones, i)
+        continue
+    if showZoneBoxes and not na(z.visualBox)
+        box.set_right(z.visualBox, bar_index + 1)
+
+    // Age-based expiration (only count bars after OR closes)
+    age = isPostOR ? (bar_index - math.max(nz(orEndBar, bar_index), z.created_bar)) : 0
+
+    // Mitigation check — use CLOSE, not wick. A wick through the zone is a valid
+    // entry opportunity; only a close through means the zone is truly broken.
+    isMitigated = false
+    if z.dir == 1 and close < z.bottom
+        isMitigated := true
+    if z.dir == -1 and close > z.top
+        isMitigated := true
+
+    if age > zoneMaxLife or isMitigated
+        z.active := false
+        if not z.consumed and not na(z.visualBox)
+            box.delete(z.visualBox)
+        array.remove(activeZones, i)
+
+// =============================================================================
+// 7. SWEEP TRACKING & TRADE STATE
+// =============================================================================
+
+var bool orHighSwept = false, var bool orLowSwept = false
+var int todayTrades = 0, var float entryPrice = na, var float stopPrice = na
+var float targetPrice = na, var string tradeDir = "", var string tradeStrategy = ""
+var int entryBar = na, var bool signalFired = false
+var string entryZoneName = "", var string rejectReason = ""
+
+if isNewDay
+    orHighSwept := false, orLowSwept := false
+    todayTrades := 0, signalFired := false, entryZoneName := "", rejectReason := ""
+
+if isPostOR and orValid
+    if high > orHigh
+        orHighSwept := true
+    if low < orLow
+        orLowSwept := true
+
+if isPostOR and not orValid and rejectReason == ""
+    rejectReason := "OR Width " + str.tostring(orWidthPct, "#.##") + "% outside limits"
+
+inTrade = strategy.position_size != 0
+canLong = ibBiasActive ? ibBias == "long" : true
+canShort = ibBiasActive ? ibBias == "short" : true
+canTrade = orValid and isTradingTime and not isHardExit and not inTrade and todayTrades < maxTradesPerDay and not signalFired
+
+enterLogic(isLong, zoneStop) =>
+    entry = close
+    sl = zoneStop
+    risk = isLong ? entry - sl : sl - entry
+    riskPct = risk / entry * 100
+    valid = risk > 0 and riskPct <= maxRiskPct
+    tp = isLong ? entry + risk * targetRR : entry - risk * targetRR
+    rejStr = valid ? "" : "Risk " + str.tostring(riskPct, "#.##") + "% > Max " + str.tostring(maxRiskPct) + "%"
+    [valid, entry, sl, tp, risk, riskPct, rejStr]
+
+// =============================================================================
+// 8. ENTRY LOGIC — ALL 7 STRATEGIES (with proper entry quality checks)
+//
+// Every zone entry requires:
+//   A) APPROACH: Price must have been on the OTHER side of the zone recently
+//      (confirms this is a pullback, not continuation through the zone)
+//   B) CONFIRMATION CANDLE: Entry bar must show rejection from the zone
+//      - Longs: close > open (bullish candle) AND close in upper half of zone or above
+//      - Shorts: close < open (bearish candle) AND close in lower half of zone or below
+//   C) SCORING: Location, confluence, recency, swing position, VWAP
+//   D) TIMING: Entries in the first 60 min after OR score higher
+//
+// Strategy-specific requirements:
+//   CHOCH: OR must be swept in the fake direction before entry
+//   OB: Displacement that created OB should have broken a level (configurable)
+//   FVG: First touch is strongest (tracked)
+//   Retest: OR boundary must be broken AND price must have made progress beyond it
+// =============================================================================
+
+// --- Helpers for entry quality ---
+isBullishCandle = close > open
+isBearishCandle = close < open
+candleMidpoint  = (high + low) / 2.0
+
+// How many minutes since OR closed (for timing score)
+minutesSinceOR = orSet and not na(orEndBar) ? (bar_index - orEndBar) : 999
+
+if canTrade and isPostOR
+
+    // =================================================================
+    // ZONE-BASED ENTRIES: CHOCH, OB, FVG, Breakout Retest
+    // =================================================================
+    if activeStrategy == "CHOCH Fade" or activeStrategy == "Order Block" or activeStrategy == "FVG Displacement" or activeStrategy == "Breakout Retest"
+
+        var int   bestIdx = -1
+        var int   bestScore = -1
+        var int   bestBar = -1
+        bestIdx := -1, bestScore := -1, bestBar := -1
+
+        vwapTolZone = pctToPoints(vwapTolPct)
+
+        for i = 0 to array.size(activeZones) - 1
+            if array.size(activeZones) == 0
+                break
+            z = array.get(activeZones, i)
+            if not z.active or z.consumed
+                continue
+
+            isMatch = false
+            isRejection = false
+            rejMsg = ""
+            zMid = (z.top + z.bottom) / 2
+
+            // ==========================================================
+            // CHECK A: Swing discount/premium
+            // For longs: zone must be in the discount of the current swing
+            //   (below 50% of lastSwingHigh to lastSwingLow)
+            // For shorts: zone must be in the premium of the current swing
+            //   (above 50% of the swing)
+            // This is how a trader reads the chart — not bar counting.
+            // ==========================================================
+            hasGoodLocation = false
+            if not na(lastSwingHigh) and not na(lastSwingLow) and lastSwingHigh > lastSwingLow
+                swingMid = (lastSwingHigh + lastSwingLow) / 2.0
+                if z.dir == 1 and zMid <= swingMid
+                    hasGoodLocation := true   // long zone in discount of swing
+                if z.dir == -1 and zMid >= swingMid
+                    hasGoodLocation := true   // short zone in premium of swing
+            else
+                // No valid swing yet — allow entry (don't block on missing data)
+                hasGoodLocation := true
+
+            // ==========================================================
+            // CHECK B: Zone touch — price must enter the zone.
+            // For longs: low touches into zone, close stays above zone bottom
+            //   (close below zone bottom = zone broken = no entry)
+            // For shorts: high touches into zone, close stays below zone top
+            // NOTE: We enter on the touch bar itself (often a bearish candle for
+            // longs). Confirmation comes on the NEXT bar — managed in exits.
+            // ==========================================================
+            // ==========================================================
+            // ENTRY MODEL (applies to all zone strategies):
+            //   - Enter on the TOUCH BAR (often bearish for longs)
+            //   - Close must stay INSIDE zone (not through it)
+            //   - Close through zone bottom (longs) = zone broken, consume it
+            //   - Confirmation on NEXT bar managed in exit logic
+            //   - Zone must be in correct swing position
+            // ==========================================================
+
+            // --- CHOCH ---
+            if activeStrategy == "CHOCH Fade" and z.typeName == "CHOCH"
+                if z.dir == 1 and canLong and orLowSwept
+                    if low <= z.top and close > z.bottom and hasGoodLocation
+                        isMatch := true
+                    else if low <= z.top and close <= z.bottom
+                        rejMsg := "CHOCH↑ closed through zone (broken)"
+                        z.consumed := true
+                    else if low <= z.top and close > z.bottom and not hasGoodLocation
+                        rejMsg := "CHOCH↑ zone not in swing discount"
+                else if z.dir == -1 and canShort and orHighSwept
+                    if high >= z.bottom and close < z.top and hasGoodLocation
+                        isMatch := true
+                    else if high >= z.bottom and close >= z.top
+                        rejMsg := "CHOCH↓ closed through zone (broken)"
+                        z.consumed := true
+                    else if high >= z.bottom and close < z.top and not hasGoodLocation
+                        rejMsg := "CHOCH↓ zone not in swing premium"
+                else if z.dir == 1 and not canLong and ibBiasActive and low <= z.top
+                    rejMsg := "CHOCH↑ blocked by IB bias (SHORT)"
+                    isRejection := true
+                else if z.dir == -1 and not canShort and ibBiasActive and high >= z.bottom
+                    rejMsg := "CHOCH↓ blocked by IB bias (LONG)"
+                    isRejection := true
+                else if z.dir == 1 and canLong and not orLowSwept and low <= z.top
+                    rejMsg := "CHOCH↑ OR low not swept yet"
+                else if z.dir == -1 and canShort and not orHighSwept and high >= z.bottom
+                    rejMsg := "CHOCH↓ OR high not swept yet"
+
+            // --- ORDER BLOCK ---
+            else if activeStrategy == "Order Block" and z.typeName == "OB"
+                sweepOK = not obRequireSweep or (z.dir == 1 and orLowSwept) or (z.dir == -1 and orHighSwept)
+                if z.dir == 1 and canLong and sweepOK
+                    if low <= z.top and close > z.bottom and hasGoodLocation
+                        isMatch := true
+                    else if low <= z.top and close <= z.bottom
+                        rejMsg := "OB↑ closed through zone (broken)"
+                        z.consumed := true
+                    else if low <= z.top and close > z.bottom and not hasGoodLocation
+                        rejMsg := "OB↑ zone not in swing discount"
+                else if z.dir == -1 and canShort and sweepOK
+                    if high >= z.bottom and close < z.top and hasGoodLocation
+                        isMatch := true
+                    else if high >= z.bottom and close >= z.top
+                        rejMsg := "OB↓ closed through zone (broken)"
+                        z.consumed := true
+                    else if high >= z.bottom and close < z.top and not hasGoodLocation
+                        rejMsg := "OB↓ zone not in swing premium"
+                else if z.dir == 1 and not canLong and ibBiasActive and low <= z.top
+                    rejMsg := "OB↑ blocked by IB bias"
+                    isRejection := true
+                else if z.dir == -1 and not canShort and ibBiasActive and high >= z.bottom
+                    rejMsg := "OB↓ blocked by IB bias"
+                    isRejection := true
+
+            // --- FVG DISPLACEMENT ---
+            else if activeStrategy == "FVG Displacement" and z.typeName == "FVG"
+                entryLevel = fvgEntryAtBoundary ? z.top : zMid
+                exitLevel = fvgEntryAtBoundary ? z.bottom : zMid
+                if z.dir == 1 and canLong
+                    if low <= entryLevel and close > z.bottom and hasGoodLocation
+                        isMatch := true
+                    else if low <= entryLevel and close <= z.bottom
+                        rejMsg := "FVG↑ closed through zone (broken)"
+                        z.consumed := true
+                    else if low <= entryLevel and close > z.bottom and not hasGoodLocation
+                        rejMsg := "FVG↑ zone not in swing discount"
+                else if z.dir == -1 and canShort
+                    if high >= exitLevel and close < z.top and hasGoodLocation
+                        isMatch := true
+                    else if high >= exitLevel and close >= z.top
+                        rejMsg := "FVG↓ closed through zone (broken)"
+                        z.consumed := true
+                    else if high >= exitLevel and close < z.top and not hasGoodLocation
+                        rejMsg := "FVG↓ zone not in swing premium"
+                else if z.dir == 1 and not canLong and ibBiasActive and low <= entryLevel
+                    rejMsg := "FVG↑ blocked by IB bias"
+                    isRejection := true
+                else if z.dir == -1 and not canShort and ibBiasActive and high >= exitLevel
+                    rejMsg := "FVG↓ blocked by IB bias"
+                    isRejection := true
+
+            // --- BREAKOUT RETEST ---
+            else if activeStrategy == "Breakout Retest" and z.typeName == "OR_RETEST"
+                hasFollowThrough = false
+                if z.dir == 1
+                    for k = 1 to 20
+                        if bar_index - k >= 0 and close[k] > orHigh
+                            hasFollowThrough := true
+                            break
+                else
+                    for k = 1 to 20
+                        if bar_index - k >= 0 and close[k] < orLow
+                            hasFollowThrough := true
+                            break
+
+                if z.dir == 1 and canLong and orHighSwept and hasFollowThrough
+                    if low <= z.top and close > z.bottom
+                        isMatch := true
+                    else if low <= z.top and close <= z.bottom
+                        rejMsg := "BkRe↑ closed through OR high (retest failed)"
+                        z.consumed := true
+                else if z.dir == -1 and canShort and orLowSwept and hasFollowThrough
+                    if high >= z.bottom and close < z.top
+                        isMatch := true
+                    else if high >= z.bottom and close >= z.top
+                        rejMsg := "BkRe↓ closed through OR low (retest failed)"
+                        z.consumed := true
+                else if z.dir == 1 and canLong and orHighSwept and not hasFollowThrough and low <= z.top
+                    rejMsg := "BkRe↑ no follow-through after breakout"
+                else if z.dir == -1 and canShort and orLowSwept and not hasFollowThrough and high >= z.bottom
+                    rejMsg := "BkRe↓ no follow-through after breakout"
+                else if z.dir == 1 and not canLong and ibBiasActive and orHighSwept and low <= z.top
+                    rejMsg := "BkRe↑ blocked by IB bias"
+                    isRejection := true
+                else if z.dir == -1 and not canShort and ibBiasActive and orLowSwept and high >= z.bottom
+                    rejMsg := "BkRe↓ blocked by IB bias"
+                    isRejection := true
+
+
+            // Handle rejections
+            if isRejection
+                z.consumed := true
+                rejectReason := rejMsg
+            else if rejMsg != "" and not isMatch
+                rejectReason := rejMsg
+
+            // ==========================================================
+            // SCORING (only for matched zones)
+            // ==========================================================
+            if isMatch
+                score = 0
+
+                // +1 Recency: created within last 10 bars
+                if (bar_index - z.created_bar) <= 10
+                    score += 1
+
+                // +1 Fib alignment: zone in discount of OR (below OR 50%) for longs
+                if z.dir == 1 and not na(fib500) and zMid < fib500
+                    score += 1
+                if z.dir == -1 and not na(fib500) and zMid > fib500
+                    score += 1
+
+                // +1 Confluence: overlaps another active zone of different type
+                for j = 0 to array.size(activeZones) - 1
+                    if j == i or array.size(activeZones) == 0
+                        continue
+                    z2 = array.get(activeZones, j)
+                    if z2.active and not z2.consumed and z2.typeName != z.typeName and z2.dir == z.dir
+                        if z.bottom <= z2.top and z.top >= z2.bottom
+                            score += 1
+                            break
+
+                // +1 Swing position
+                if z.dir == 1 and not na(lastSwingLow) and math.abs(zMid - lastSwingLow) <= dynamicOrWidth * 0.15
+                    score += 1
+                if z.dir == -1 and not na(lastSwingHigh) and math.abs(zMid - lastSwingHigh) <= dynamicOrWidth * 0.15
+                    score += 1
+
+                // +1 VWAP proximity
+                if not na(vwapVal) and math.abs(zMid - vwapVal) <= vwapTolZone
+                    score += 1
+
+                // +1 Timing: within first 60 bars (minutes) after OR close
+                if minutesSinceOR <= 60
+                    score += 1
+
+                // Track best
+                if score > bestScore or (score == bestScore and z.created_bar > bestBar)
+                    bestScore := score
+                    bestIdx := i
+                    bestBar := z.created_bar
+
+        // --- Pass 2: Execute entry on best zone ---
+        if bestIdx >= 0 and bestIdx < array.size(activeZones) and not signalFired
+            zBest = array.get(activeZones, bestIdx)
+            [v, e, s, t, r, rp, rej] = enterLogic(zBest.dir == 1, zBest.sl)
+            if v
+                strategy.entry(zBest.dir == 1 ? "Long" : "Short", zBest.dir == 1 ? strategy.long : strategy.short)
+                zBest.consumed := true
+                entryPrice := e, stopPrice := s, targetPrice := t
+                tradeDir := zBest.dir == 1 ? "long" : "short"
+                tradeStrategy := activeStrategy, entryBar := bar_index
+                todayTrades += 1, signalFired := true
+                scoreTxt = " [S:" + str.tostring(bestScore) + "]"
+                entryZoneName := zBest.typeName + " (" + (zBest.dir == 1 ? "Bull" : "Bear") + " @ " + str.tostring(zBest.top, "#") + ")" + scoreTxt
+            else
+                rejectReason := zBest.typeName + ": " + rej
+                zBest.consumed := true
+
+    // =================================================================
+    // FIB DISCOUNT — entry at Fib levels with swing position + confirmation
+    // For longs: price must be in the discount of the current swing
+    // For shorts: price must be in the premium of the current swing
+    // =================================================================
+    if not signalFired and activeStrategy == "Fib Discount"
+
+        // Swing position check
+        fibSwingMid = not na(lastSwingHigh) and not na(lastSwingLow) and lastSwingHigh > lastSwingLow ? (lastSwingHigh + lastSwingLow) / 2.0 : na
+        inSwingDiscount = not na(fibSwingMid) ? close <= fibSwingMid : true   // below swing mid = discount
+        inSwingPremium  = not na(fibSwingMid) ? close >= fibSwingMid : true   // above swing mid = premium
+
+        if canLong and inSwingDiscount
+            // Fib 50% long: price dips to 50%, bullish confirmation
+            if low <= fib500 and close > fib382 
+                [v, e, s, t, r, rp, rej] = enterLogic(true, orLow - stopBuf)
+                if v
+                    strategy.entry("Long", strategy.long)
+                    entryPrice := e, stopPrice := s, targetPrice := t, tradeDir := "long"
+                    tradeStrategy := "Fib Discount", entryBar := bar_index
+                    todayTrades += 1, signalFired := true, entryZoneName := "Fib 50%"
+                else
+                    rejectReason := "Fib50 L: " + rej
+            // Fib 38.2% long: deeper discount
+            else if low <= fib382 and close >= fib236 and not signalFired
+                [v, e, s, t, r, rp, rej] = enterLogic(true, orLow - stopBuf)
+                if v
+                    strategy.entry("Long", strategy.long)
+                    entryPrice := e, stopPrice := s, targetPrice := t, tradeDir := "long"
+                    tradeStrategy := "Fib Discount", entryBar := bar_index
+                    todayTrades += 1, signalFired := true, entryZoneName := "Fib 38.2%"
+                else
+                    rejectReason := "Fib38 L: " + rej
+            // Deep discount
+            else if not na(fib786) and low <= fib236 and close > orLow and not signalFired
+                [v, e, s, t, r, rp, rej] = enterLogic(true, orLow - stopBuf)
+                if v
+                    strategy.entry("Long", strategy.long)
+                    entryPrice := e, stopPrice := s, targetPrice := t, tradeDir := "long"
+                    tradeStrategy := "Fib Discount", entryBar := bar_index
+                    todayTrades += 1, signalFired := true, entryZoneName := "Fib Deep"
+                else
+                    rejectReason := "FibDeep L: " + rej
+
+        else if canLong and not inSwingDiscount and not signalFired
+            if low <= fib500 and close > fib382
+                rejectReason := "Fib L: price not in swing discount"
+
+        if canShort and not signalFired and inSwingPremium
+            // Fib 50% short
+            if high >= fib500 and close < fib618 
+                [v, e, s, t, r, rp, rej] = enterLogic(false, orHigh + stopBuf)
+                if v
+                    strategy.entry("Short", strategy.short)
+                    entryPrice := e, stopPrice := s, targetPrice := t, tradeDir := "short"
+                    tradeStrategy := "Fib Discount", entryBar := bar_index
+                    todayTrades += 1, signalFired := true, entryZoneName := "Fib 50%"
+                else
+                    rejectReason := "Fib50 S: " + rej
+            // Fib 61.8% short
+            else if high >= fib618 and close <= fib786 and not signalFired
+                [v, e, s, t, r, rp, rej] = enterLogic(false, orHigh + stopBuf)
+                if v
+                    strategy.entry("Short", strategy.short)
+                    entryPrice := e, stopPrice := s, targetPrice := t, tradeDir := "short"
+                    tradeStrategy := "Fib Discount", entryBar := bar_index
+                    todayTrades += 1, signalFired := true, entryZoneName := "Fib 61.8%"
+                else
+                    rejectReason := "Fib62 S: " + rej
+
+        else if canShort and not signalFired and not inSwingPremium
+            if high >= fib500 and close < fib618
+                rejectReason := "Fib S: price not in swing premium"
+
+    // =================================================================
+    // FULL CONFLUENCE — with confirmation candle
+    // =================================================================
+    if not signalFired and activeStrategy == "Full Confluence"
+        confL = 0
+        confS = 0
+        bestSlL = not na(orLow) ? orLow - stopBuf : na
+        bestSlS = not na(orHigh) ? orHigh + stopBuf : na
+
+        for i = 0 to array.size(activeZones) - 1
+            if array.size(activeZones) == 0
+                break
+            z = array.get(activeZones, i)
+            if not z.active or z.consumed
+                continue
+            if z.dir == 1 and low <= z.top and close > z.bottom
+                confL += 1
+                if not na(z.sl) and z.sl > bestSlL
+                    bestSlL := z.sl
+            if z.dir == -1 and high >= z.bottom and close < z.top
+                confS += 1
+                if not na(z.sl) and z.sl < bestSlS
+                    bestSlS := z.sl
+
+        if close <= fib382
+            confL += 1
+        if close >= fib618
+            confS += 1
+
+        if not na(vwapVal)
+            vwapTol = pctToPoints(vwapTolPct)
+            if math.abs(close - vwapVal) <= vwapTol
+                if close < orMid
+                    confL += 1
+                else
+                    confS += 1
+
+        // Require confirmation candle for confluence too
+        if confL >= minConfirmations and canLong 
+            [v, e, s, t, r, rp, rej] = enterLogic(true, bestSlL)
+            if v
+                strategy.entry("Long", strategy.long)
+                entryPrice := e, stopPrice := s, targetPrice := t, tradeDir := "long"
+                tradeStrategy := "Full Confluence", entryBar := bar_index
+                todayTrades += 1, signalFired := true
+                entryZoneName := "Confluence x" + str.tostring(confL)
+            else
+                rejectReason := "Conf L(" + str.tostring(confL) + "): " + rej
+
+        else if confS >= minConfirmations and canShort and not signalFired 
+            [v, e, s, t, r, rp, rej] = enterLogic(false, bestSlS)
+            if v
+                strategy.entry("Short", strategy.short)
+                entryPrice := e, stopPrice := s, targetPrice := t, tradeDir := "short"
+                tradeStrategy := "Full Confluence", entryBar := bar_index
+                todayTrades += 1, signalFired := true
+                entryZoneName := "Confluence x" + str.tostring(confS)
+            else
+                rejectReason := "Conf S(" + str.tostring(confS) + "): " + rej
+
+    // =================================================================
+    // VWAP REVERSION — price crosses VWAP while in swing discount/premium
+    // No bar counting. Same swing logic as all other strategies.
+    // For longs: price crosses above VWAP while in swing discount
+    // For shorts: price crosses below VWAP while in swing premium
+    // =================================================================
+    if not signalFired and activeStrategy == "VWAP Reversion"
+        if not na(vwapVal) and orValid
+            // VWAP cross detection
+            priceCrossedAbove = close >= vwapVal and low <= vwapVal
+            priceCrossedBelow = close <= vwapVal and high >= vwapVal
+            priceNearVWAP = math.abs(close - vwapVal) <= pctToPoints(vwapTolPct) * 3
+
+            // Swing position — same check as zones
+            vwapSwingMid = not na(lastSwingHigh) and not na(lastSwingLow) and lastSwingHigh > lastSwingLow ? (lastSwingHigh + lastSwingLow) / 2.0 : na
+            inDiscount = not na(vwapSwingMid) ? close <= vwapSwingMid : true
+            inPremium  = not na(vwapSwingMid) ? close >= vwapSwingMid : true
+
+            if canLong and (priceCrossedAbove or (priceNearVWAP and close >= vwapVal)) and inDiscount
+                sl = not na(lastSwingLow) ? lastSwingLow - stopBuf : vwapVal - pctToPoints(vwapTolPct) * 10
+                [v, e, s, t, r, rp, rej] = enterLogic(true, sl)
+                if v
+                    strategy.entry("Long", strategy.long)
+                    entryPrice := e, stopPrice := s, targetPrice := t, tradeDir := "long"
+                    tradeStrategy := "VWAP Reversion", entryBar := bar_index
+                    todayTrades += 1, signalFired := true
+                    entryZoneName := "VWAP Cross↑ (swing discount)"
+                else
+                    rejectReason := "VWAP L: " + rej
+
+            else if canShort and (priceCrossedBelow or (priceNearVWAP and close <= vwapVal)) and inPremium and not signalFired
+                sl = not na(lastSwingHigh) ? lastSwingHigh + stopBuf : vwapVal + pctToPoints(vwapTolPct) * 10
+                [v, e, s, t, r, rp, rej] = enterLogic(false, sl)
+                if v
+                    strategy.entry("Short", strategy.short)
+                    entryPrice := e, stopPrice := s, targetPrice := t, tradeDir := "short"
+                    tradeStrategy := "VWAP Reversion", entryBar := bar_index
+                    todayTrades += 1, signalFired := true
+                    entryZoneName := "VWAP Cross↓ (swing premium)"
+                else
+                    rejectReason := "VWAP S: " + rej
+
+            // Rejection diagnostics — only when price is actually near VWAP
+            else if not signalFired and (priceCrossedAbove or priceCrossedBelow or priceNearVWAP)
+                if priceCrossedAbove and not canLong
+                    rejectReason := "VWAP: crossed↑ but IB bias is SHORT"
+                else if priceCrossedBelow and not canShort
+                    rejectReason := "VWAP: crossed↓ but IB bias is LONG"
+                else if priceCrossedAbove and canLong and not inDiscount
+                    rejectReason := "VWAP: crossed↑ but not in swing discount"
+                else if priceCrossedBelow and canShort and not inPremium
+                    rejectReason := "VWAP: crossed↓ but not in swing premium"
+
+// =============================================================================
+// 9. EXITS — with post-entry zone confirmation
+//
+// Trade entered on the zone touch bar (often bearish for longs).
+// On the NEXT bar after entry:
+//   - If candle closes ABOVE zone top (longs) → zone held, confirmed. Hold to TP/SL.
+//   - If candle closes BELOW zone bottom (longs) → zone broken. Exit immediately.
+//   - Same logic inverted for shorts.
+// After confirmation, normal TP/SL management takes over.
+// =============================================================================
+
+// Track if the trade has been confirmed by the bar after entry
+var bool tradeConfirmed = false
+var float entryZoneTop = na
+var float entryZoneBot = na
+
+if isNewDay
+    tradeConfirmed := false
+    entryZoneTop := na
+    entryZoneBot := na
+
+// When a new trade is entered, store the zone boundaries for confirmation check
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    tradeConfirmed := false
+    // Find the zone that was just consumed (the entry zone)
+    for i = 0 to array.size(activeZones) - 1
+        if array.size(activeZones) == 0
+            break
+        z = array.get(activeZones, i)
+        if z.consumed and z.created_bar <= bar_index
+            entryZoneTop := z.top
+            entryZoneBot := z.bottom
+            break
+    // For Fib/VWAP entries (no zone), use OR levels as proxy
+    if na(entryZoneTop)
+        if strategy.position_size > 0
+            entryZoneTop := not na(fib500) ? fib500 : orMid
+            entryZoneBot := not na(fib382) ? fib382 : orLow
+        else
+            entryZoneTop := not na(fib618) ? fib618 : orHigh
+            entryZoneBot := not na(fib500) ? fib500 : orMid
+
+// Post-entry confirmation check (bar after entry)
+if strategy.position_size != 0 and not tradeConfirmed and bar_index > entryBar
+    isL = strategy.position_size > 0
+    if isL
+        if close > entryZoneTop
+            tradeConfirmed := true   // Zone held — price closed above zone
+        else if close < entryZoneBot
+            strategy.close_all("Zone Broken")  // Zone failed — close immediately
+            tradeConfirmed := true  // prevent re-checking
+    else
+        if close < entryZoneBot
+            tradeConfirmed := true   // Zone held — price closed below zone
+        else if close > entryZoneTop
+            strategy.close_all("Zone Broken")
+            tradeConfirmed := true
+
+// Normal TP/SL management
+if strategy.position_size != 0
+    ep = strategy.opentrades.entry_price(0)
+    isL = strategy.position_size > 0
+    float sl_use = switch slMode
+        "Fixed %" => isL ? ep * (1 - slFixedPct/100) : ep * (1 + slFixedPct/100)
+        "Range Boundary" => isL ? orLow : orHigh
+        => stopPrice
+    slTicks = math.abs(ep - sl_use) / syminfo.mintick
+    tpTicks = not na(targetPrice) ? math.abs(targetPrice - ep) / syminfo.mintick : slTicks * targetRR
+    strategy.exit("Exit", profit=tpTicks, loss=slTicks)
+
+if strategy.position_size != 0 and isHardExit
+    strategy.close_all("Time Exit")
+
+// =============================================================================
+// 10. VISUALS
+// =============================================================================
+
+// OR Box
+if showORBox and isPostOR and orSet
+    if na(currentORBox)
+        currentORBox := box.new(orStartBar, orHigh, orEndBar, orLow,
+            bgcolor=orValid ? color.new(color.blue, 88) : color.new(color.red, 88),
+            border_color=orValid ? color.blue : color.red, border_width=1)
+    else
+        box.set_right(currentORBox, bar_index + 3)
+
+// IB Markers
+if showORBox and isPostOR and orValid and na(hMarker)
+    hTxt = ibBias == "short" ? "1st (H)" : (firstFormed == "same" ? "TIE (H)" : "2nd (H)")
+    lTxt = ibBias == "long" ? "1st (L)" : (firstFormed == "same" ? "TIE (L)" : "2nd (L)")
+    hMarker := label.new(highLastSetBar, orHigh, hTxt, color=color.new(color.red, 20), textcolor=color.white, style=label.style_label_down, size=size.small)
+    lMarker := label.new(lowLastSetBar, orLow, lTxt, color=color.new(color.green, 20), textcolor=color.white, style=label.style_label_up, size=size.small)
+
+// Fib Lines
+var line fl3 = na, var line fl5 = na, var line fl6 = na
+if showFibLevels and orValid and isPostOR
+    if isNewDay or na(fl3)
+        sx = nz(orEndBar, bar_index)
+        fl3 := line.new(sx, fib382, bar_index, fib382, color=color.new(color.orange, 50), width=1, style=line.style_dotted)
+        fl5 := line.new(sx, fib500, bar_index, fib500, color=color.new(color.yellow, 40), width=1, style=line.style_dashed)
+        fl6 := line.new(sx, fib618, bar_index, fib618, color=color.new(color.orange, 50), width=1, style=line.style_dotted)
+        label.new(sx, fib382, "38.2", color=na, textcolor=color.new(color.orange, 30), size=size.tiny, style=label.style_label_right)
+        label.new(sx, fib500, "50 EQ", color=na, textcolor=color.new(color.yellow, 20), size=size.tiny, style=label.style_label_right)
+        label.new(sx, fib618, "61.8", color=na, textcolor=color.new(color.orange, 30), size=size.tiny, style=label.style_label_right)
+    else
+        line.set_x2(fl3, bar_index + 3)
+        line.set_x2(fl5, bar_index + 3)
+        line.set_x2(fl6, bar_index + 3)
+
+// VWAP
+if showVWAP and not na(vwapVal) and bar_index > 0 and isTrackingActive
+    line.new(bar_index - 1, nz(vwapVal[1], vwapVal), bar_index, vwapVal, color=color.new(color.purple, 30), width=2)
+
+// Swings
+plotshape(not na(swingH_raw) ? swingH_raw : na, "SH", shape.triangledown, location.abovebar, color=color.new(color.red, 40), size=size.tiny, offset=-swingLookback)
+plotshape(not na(swingL_raw) ? swingL_raw : na, "SL", shape.triangleup, location.belowbar, color=color.new(color.green, 40), size=size.tiny, offset=-swingLookback)
+
+// CHOCH/BOS Labels
+if showStructure and isTrackingActive
+    if chochBullish
+        label.new(bar_index, low, "CHOCH↑" + (isPostOR and orLowSwept ? " ✓" : ""), color=color.new(color.green, 15), textcolor=color.white, size=size.small, style=label.style_label_up)
+    if chochBearish
+        label.new(bar_index, high, "CHOCH↓" + (isPostOR and orHighSwept ? " ✓" : ""), color=color.new(color.red, 15), textcolor=color.white, size=size.small, style=label.style_label_down)
+    if bosBullish
+        label.new(bar_index, low, "BOS↑", color=color.new(color.teal, 50), textcolor=color.white, size=size.tiny, style=label.style_label_up)
+    if bosBearish
+        label.new(bar_index, high, "BOS↓", color=color.new(color.maroon, 50), textcolor=color.white, size=size.tiny, style=label.style_label_down)
+
+// Sweep markers
+if orValid and isPostOR
+    if high > orHigh and high[1] <= orHigh
+        label.new(bar_index, high, "SWEEP↑", color=color.new(color.orange, 30), textcolor=color.white, size=size.tiny, style=label.style_label_down)
+    if low < orLow and low[1] >= orLow
+        label.new(bar_index, low, "SWEEP↓", color=color.new(color.orange, 30), textcolor=color.white, size=size.tiny, style=label.style_label_up)
+
+// TP/SL Lines
+var line tpL = na, var line slL = na, var label tpLbl = na, var label slLbl = na
+if strategy.position_size != 0 and showTPSL
+    ep = strategy.opentrades.entry_price(0)
+    if na(tpL)
+        tpL := line.new(entryBar, targetPrice, bar_index + 5, targetPrice, color=color.green, width=2)
+        slL := line.new(entryBar, stopPrice, bar_index + 5, stopPrice, color=color.red, width=2)
+        tpLbl := label.new(bar_index + 5, targetPrice, "TP +" + str.tostring(math.abs(targetPrice - ep) / ep * 100, "#.##") + "%", color=na, textcolor=color.green, size=size.tiny, style=label.style_label_left)
+        slLbl := label.new(bar_index + 5, stopPrice, "SL -" + str.tostring(math.abs(stopPrice - ep) / ep * 100, "#.##") + "%", color=na, textcolor=color.red, size=size.tiny, style=label.style_label_left)
+    else
+        line.set_x2(tpL, bar_index + 5), line.set_x2(slL, bar_index + 5)
+        label.set_x(tpLbl, bar_index + 5), label.set_x(slLbl, bar_index + 5)
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    tpL := na, slL := na, tpLbl := na, slLbl := na
+
+// Entry Labels
+if showEntryLabels and strategy.position_size != 0 and strategy.position_size[1] == 0
+    isLong = strategy.position_size > 0
+    riskPts = math.abs(entryPrice - stopPrice)
+    riskP = riskPts / entryPrice * 100
+    rr = riskPts > 0 ? math.abs(targetPrice - entryPrice) / riskPts : 0.0
+
+    biasStr = "NONE"
+    biasRsn = ""
+    if not useIBBias
+        biasRsn := "Disabled"
+    else if not ibBiasSet
+        biasRsn := "Not calculated"
+    else if ibBias == ""
+        biasRsn := "Tied"
+    else if orWidthPct < ibMinWidthPct
+        biasRsn := "Width " + str.tostring(orWidthPct, "#.##") + "% < " + str.tostring(ibMinWidthPct) + "%"
+    else
+        biasStr := ibBias == "long" ? "BULLISH" : "BEARISH"
+        biasRsn := firstFormed == "low" ? "Low formed 1st" : (firstFormed == "high" ? "High formed 1st" : "Tie→" + ibBias)
+
+    txt = "TRADE (" + tradeStrategy + ")\n" +
+          "Bias: " + biasStr + " (" + biasRsn + ")\n" +
+          "Zone: " + entryZoneName + "\n" +
+          "E: " + str.tostring(entryPrice, "#.##") +
+          " SL: " + str.tostring(stopPrice, "#.##") + " (-" + str.tostring(riskP, "#.##") + "%)" +
+          " TP: " + str.tostring(targetPrice, "#.##") +
+          " R:R: " + str.tostring(rr, "#.##")
+
+    label.new(bar_index, isLong ? low - (syminfo.mintick * 10) : high + (syminfo.mintick * 10), txt,
+              color=isLong ? color.new(color.green, 15) : color.new(color.red, 15),
+              textcolor=color.white, size=size.normal,
+              style=isLong ? label.style_label_up : label.style_label_down)
+
+// Rejection Labels
+if showRejections and rejectReason != "" and rejectReason != rejectReason[1]
+    label.new(bar_index, high, "Rejected: " + rejectReason, color=color.new(color.gray, 20), textcolor=color.yellow, size=size.tiny, style=label.style_label_down)
+
+barcolor(isInSession ? color.new(color.yellow, 30) : na)
+
+// =============================================================================
+// 11. DATA WINDOW
+// =============================================================================
+
+plot(orWidthPct, "OR Width %", display=display.data_window)
+plot(vwapVal, "VWAP", display=display.data_window)
+plot(msTrend, "Trend", display=display.data_window)
+plot(ibBias == "long" ? 1 : ibBias == "short" ? -1 : 0, "IB Bias", display=display.data_window)
+plot(todayTrades, "Trades", display=display.data_window)

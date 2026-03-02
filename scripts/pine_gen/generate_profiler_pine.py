@@ -378,7 +378,7 @@ def generate_scripts(profiler, hod_lod_unadj, hod_lod_adj, touches, asia_pred_ar
     libs_def = {
         "ProfilerData_Asia":   [("dates", dates, "int", 0), ("asia", asia, "int", 3)],
         "ProfilerData_London": [("london", london, "int", 3)], 
-        "ProfilerData_NY":     [("ny1", ny1, "int", 3), ("ny2", ny2, "int", 3)],
+        "ProfilerData_NY":     [("ny1", ny1, "int", 6), ("ny2", ny2, "int", 6)],
         "ProfilerData_Broken": [("asia", bk_asia, "int", 1), ("london", bk_london, "int", 1), ("ny1", bk_ny1, "int", 1), ("ny2", bk_ny2, "int", 1)],
         "ProfilerData_Times":  [("hod_time", hod_t, "int", 0), ("lod_time", lod_t, "int", 0)],
         "ProfilerData_Levels": [("hod_pct", hod_p, "float", 0), ("lod_pct", lod_p, "float", 0)],
@@ -411,7 +411,7 @@ def generate_scripts(profiler, hod_lod_unadj, hod_lod_adj, touches, asia_pred_ar
     imports = []
     imports.append(f"import {IMPORT_BASE}_Asia/4 as LibAsia")
     imports.append(f"import {IMPORT_BASE}_London/4 as LibLon")
-    imports.append(f"import {IMPORT_BASE}_NY/4 as LibNY")
+    imports.append(f"import {IMPORT_BASE}_NY/6 as LibNY")
     imports.append(f"import {IMPORT_BASE}_Broken/6 as LibBroken")
     imports.append(f"import {IMPORT_BASE}_Times/2 as LibTimes")
     imports.append(f"import {IMPORT_BASE}_Levels/2 as LibLevels")
@@ -1202,8 +1202,8 @@ f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, 
                             array.push(pts_l, chart.point.from_time(t_pt, p_l))
                         
                     polyline.delete(pm_h), polyline.delete(pm_l)
-                    pm_h := polyline.new(pts_h, line_color=c_pm_h_eff, xloc=xloc.bar_time, line_width=w_pm_high)
-                    pm_l := polyline.new(pts_l, line_color=c_pm_l_eff, xloc=xloc.bar_time, line_width=w_pm_low)
+                    pm_h := polyline.new(pts_h, curved = true, line_color=c_pm_h_eff, xloc=xloc.bar_time, line_width=w_pm_high)
+                    pm_l := polyline.new(pts_l, curved = true, line_color=c_pm_l_eff, xloc=xloc.bar_time, line_width=w_pm_low)
 
 // ————— TABLES —————
 f_status_str(c, act, bk) =>
@@ -1214,7 +1214,7 @@ f_status_long_to_short(c) =>
     c==1 ? "LT" : c==2 ? "LF" : c==3 ? "ST" : c==4 ? "SF" : "Neu"
 
 var table tbl_res = table.new(get_pos(p_res), 21, 7, border_width = 1) 
-var table tbl_stat = table.new(get_pos(p_stat), 2, 7, border_width = 1)
+var table tbl_stat = table.new(get_pos(p_stat), 2, 9, border_width = 1)
 
 f_match(hc, hb, lc, lb, loose, ignore_bk) =>
     // Status Match
@@ -1315,6 +1315,23 @@ if barstate.islast
     table.cell(tbl_stat, 0, 4, "NY2: " + f_status_str(st_ny2, not fin_ny2, bk_ny2), bgcolor=color.black, text_color=color.white, text_size=sz)
     table.cell(tbl_stat, 0, 5, "Prev NY1: " + f_status_str(prev_ny1_status, false, false), bgcolor=color.black, text_color=#888888, text_size=sz)
     table.cell(tbl_stat, 0, 6, "Prev NY2: " + f_status_str(prev_ny2_status, false, false), bgcolor=color.black, text_color=#888888, text_size=sz)
+    // Debug: show live array sizes to detect stale/mismatched library versions
+    n_dates  = array.size(dates)
+    n_asia   = array.size(asia_stats) * 15  // status arrays: ceil(n/15) ints each
+    n_bk     = array.size(asia_bk) * 45     // broken arrays: ceil(n/45) ints each
+    n_hod    = array.size(hod_times)
+    n_touch  = array.size(t_p12h_a) * 45
+    dbg_ok   = (n_dates == n_hod) and (n_dates <= n_asia) and (n_dates <= n_bk) and (n_dates <= n_touch)
+    dbg_col  = dbg_ok ? color.new(color.green, 70) : color.new(color.red, 50)
+    dbg_str  = "dates=" + str.tostring(n_dates) + " asia=" + str.tostring(n_asia) + " bk=" + str.tostring(n_bk) + " hod=" + str.tostring(n_hod) + " tch=" + str.tostring(n_touch)
+    table.cell(tbl_stat, 0, 7, "LibSizes:", bgcolor=dbg_col, text_color=color.white, text_size=sz)
+    table.cell(tbl_stat, 1, 7, dbg_str, bgcolor=dbg_col, text_color=color.white, text_size=sz)
+    n_ny1  = array.size(ny1_stats) * 15
+    n_ny2  = array.size(ny2_stats) * 15
+    n_ny1b = array.size(ny1_bk) * 45
+    dbg_ny = "ny1=" + str.tostring(n_ny1) + " ny2=" + str.tostring(n_ny2) + " ny1bk=" + str.tostring(n_ny1b)
+    table.cell(tbl_stat, 0, 8, "NY libs:", bgcolor=dbg_col, text_color=color.white, text_size=sz)
+    table.cell(tbl_stat, 1, 8, dbg_ny, bgcolor=dbg_col, text_color=color.white, text_size=sz)
 
     state_changed = (tgt_idx != last_tgt_idx) or (st_asia != last_st_asia) or (st_lon != last_st_lon) or (st_ny1 != last_st_ny1) or (st_ny2 != last_st_ny2) or (bk_asia != last_bk_asia) or (bk_lon != last_bk_lon) or (bk_ny1 != last_bk_ny1) or (bk_ny2 != last_bk_ny2) or (prev_ny1_status != last_prev_ny1) or (prev_ny2_status != last_prev_ny2)
     if state_changed
@@ -1345,6 +1362,10 @@ if barstate.islast
             bool live_b = tgt_idx==0?bk_asia: tgt_idx==1?bk_lon: tgt_idx==2?bk_ny1: bk_ny2
             bool is_pend = (tgt_idx==0 and not fin_asia) or (tgt_idx==1 and not fin_lon) or (tgt_idx==2 and not fin_ny1) or (tgt_idx==3 and not fin_ny2)
             
+            if ok and f_match(hist_s, hist_b, live_s, live_b, is_pend, false)
+                // Bounds guard: skip if any library has fewer items than dates (stale lib)
+                if i >= array.size(hod_times) or i >= array.size(lod_times)
+                    ok := false
             if ok and f_match(hist_s, hist_b, live_s, live_b, is_pend, false)
                 total_cnt += 1
                 _ht = array.get(hod_times, i), _lt = array.get(lod_times, i), _hp = array.get(hod_pcts, i), _lp = array.get(lod_pcts, i)
