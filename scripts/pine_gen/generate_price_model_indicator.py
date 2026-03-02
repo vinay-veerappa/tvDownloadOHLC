@@ -129,14 +129,15 @@ def fetch_model_filtered(target_session, filters):
 
 
 def pack_model(model_data):
-    """Pack median path into a compact string: 'h1:l1,h2:l2,...'"""
+    """Pack median path into a compact string: 'h1:l1,h2:l2,...' as ints (*1000)."""
     median = model_data.get("median", [])
     if not median:
         return None
     parts = []
     for pt in median:
-        h = round(pt.get("high", 0.0), 3)
-        l = round(pt.get("low", 0.0), 3)
+        # Multiply by 1000 to keep 0.001% precision in integer form (saves space)
+        h = int(round(pt.get("high", 0.0) * 1000))
+        l = int(round(pt.get("low", 0.0) * 1000))
         parts.append(f"{h}:{l}")
     return ",".join(parts)
 
@@ -303,9 +304,7 @@ def generate_all_models(ctx_table):
 
 
 def write_library(models):
-    """Write the PriceModelData.pine library."""
-    # Check if we need to split into multiple libraries
-    # Pine Script string literals max 4096 chars; most models ~1500 chars — safe
+    """Write the PriceModelData.pine library with chunked helper functions."""
     total_chars = sum(len(v[0]) for v in models.values())
     print(f"\nTotal packed data: {total_chars:,} characters across {len(models)} models")
 
@@ -315,16 +314,26 @@ def write_library(models):
     lines.append("//@version=6")
     lines.append(f'library("PriceModelData", overlay=true)')
     lines.append("")
+
+    sorted_keys = sorted(models.keys())
+    chunk_size = 40
+    chunks = [sorted_keys[i:i + chunk_size] for i in range(0, len(sorted_keys), chunk_size)]
+
+    # Generate chunk functions
+    for idx, keys in enumerate(chunks):
+        lines.append(f"f_add_chunk_{idx+1}(m) =>")
+        for key in keys:
+            packed, _ = models[key]
+            lines.append(f'    m.put("{key}", "{packed}")')
+        lines.append("")
+
     lines.append("// Returns map of all contextual price models")
     lines.append("// Key format: SESSION_CTX1_CTX2_OUTCOME (L1), SESSION_F_CTX_OUTCOME (L2), SESSION_B_OUTCOME (L3)")
     lines.append("// Value format: 'high:low,high:low,...' (5-min buckets, % from session open)")
     lines.append("export f_get_models() =>")
     lines.append("    m = map.new<string, string>()")
-
-    for key, (packed, count) in sorted(models.items()):
-        # Pine Script string literal — escape any quotes (shouldn't be any)
-        lines.append(f'    m.put("{key}", "{packed}")')
-
+    for idx in range(len(chunks)):
+        lines.append(f"    f_add_chunk_{idx+1}(m)")
     lines.append("    m")
     lines.append("")
 
@@ -372,7 +381,7 @@ in_ny2()    => not na(time(timeframe.period, "1130-1559", TZ))
 var float v_asia_h = na, var float v_asia_l = na, var float v_asia_open = na
 var float v_lon_h  = na, var float v_lon_l  = na, var float v_lon_open = na
 var float v_ny1_h  = na, var float v_ny1_l  = na, var float v_ny1_open = na
-var float v_ny2_open = na
+var float v_ny2_h  = na, var float v_ny2_l  = na, var float v_ny2_open = na
 var int   v_day_bi = 0
 
 // Directions: L=Long, S=Short, N=Neutral
@@ -381,6 +390,7 @@ var string v_prev_ny2_dir = "N"
 var string v_asia_dir = "N"
 var string v_lon_dir  = "N"
 var string v_ny1_dir  = "N"
+var string v_ny2_dir  = "N"
 
 // ===== DAY BOUNDARY =====
 bool _new_day = in_asia_class() and not in_asia_class()[1]
@@ -388,7 +398,7 @@ bool _new_day = in_asia_class() and not in_asia_class()[1]
 if _new_day
     // Save prev day context
     v_prev_ny1_dir := v_ny1_dir
-    v_prev_ny2_dir := v_lon_dir  // NY2 dir not tracked separately, use last known
+    v_prev_ny2_dir := v_ny2_dir
     // Reset
     v_asia_h := high
     v_asia_l := low
@@ -399,10 +409,13 @@ if _new_day
     v_ny1_h := na
     v_ny1_l := na
     v_ny1_open := na
+    v_ny2_h := na
+    v_ny2_l := na
     v_ny2_open := na
     v_asia_dir := "N"
     v_lon_dir  := "N"
     v_ny1_dir  := "N"
+    v_ny2_dir  := "N"
     v_day_bi := bar_index
 
 // ===== CLASSIFICATION TRACKING =====
@@ -432,11 +445,17 @@ if in_ny1_class()
 // NY2
 if in_ny2_class() and not in_ny2_class()[1]
     v_ny2_open := open
+    v_ny2_h := high
+    v_ny2_l := low
+if in_ny2_class()
+    v_ny2_h := math.max(nz(v_ny2_h, high), high)
+    v_ny2_l := math.min(nz(v_ny2_l, low), low)
 
 // ===== DIRECTION CLASSIFICATION =====
 float _asia_mid = na(v_asia_h) or na(v_asia_l) ? na : (v_asia_h + v_asia_l) / 2.0
 float _lon_mid  = na(v_lon_h)  or na(v_lon_l)  ? na : (v_lon_h  + v_lon_l)  / 2.0
 float _ny1_mid  = na(v_ny1_h)  or na(v_ny1_l)  ? na : (v_ny1_h  + v_ny1_l)  / 2.0
+float _ny2_mid  = na(v_ny2_h)  or na(v_ny2_l)  ? na : (v_ny2_h  + v_ny2_l)  / 2.0
 
 if not na(_asia_mid)
     v_asia_dir := close > _asia_mid ? "L" : "S"
@@ -444,6 +463,8 @@ if not na(_lon_mid)
     v_lon_dir := close > _lon_mid ? "L" : "S"
 if not na(_ny1_mid)
     v_ny1_dir := close > _ny1_mid ? "L" : "S"
+if not na(_ny2_mid)
+    v_ny2_dir := close > _ny2_mid ? "L" : "S"
 
 // ===== PRICE MODEL RENDERING =====
 var polyline pm_h = na
@@ -472,7 +493,7 @@ if barstate.islast and v_day_bi > 0
     // Determine outcome
     string out = i_outcome
     if out == "Auto"
-        string dev_dir = target == "Asia" ? v_asia_dir : target == "London" ? v_lon_dir : target == "NY1" ? v_ny1_dir : "N"
+        string dev_dir = target == "Asia" ? v_asia_dir : target == "London" ? v_lon_dir : target == "NY1" ? v_ny1_dir : target == "NY2" ? v_ny2_dir : "N"
         out := dev_dir == "L" ? "Long True" : dev_dir == "S" ? "Short True" : "Long True"
 
     string out_s = out == "Long True" ? "LT" : out == "Long False" ? "LF" : out == "Short True" ? "ST" : "SF"
@@ -518,8 +539,9 @@ if barstate.islast and v_day_bi > 0
                 string pt_str = array.get(points, i)
                 string[] hl = str.split(pt_str, ":")
                 if array.size(hl) >= 2
-                    float h_pct = str.tonumber(array.get(hl, 0))
-                    float l_pct = str.tonumber(array.get(hl, 1))
+                    // Decode quantized integers (/1000.0)
+                    float h_pct = str.tonumber(array.get(hl, 0)) / 1000.0
+                    float l_pct = str.tonumber(array.get(hl, 1)) / 1000.0
 
                     if not na(h_pct) and not na(l_pct)
                         int t_min = sess_offset + i * 5  // BUCKET = 5 min
