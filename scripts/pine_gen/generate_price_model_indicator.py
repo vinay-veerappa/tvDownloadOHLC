@@ -25,7 +25,7 @@ DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "profiler"
 
 TICKER = "NQ1"
-BUCKET = 5
+BUCKET = 10
 MIN_SAMPLE = 30
 
 DIRECTIONS = ['L', 'S', 'N']
@@ -544,7 +544,7 @@ if barstate.islast and v_day_bi > 0
                     float l_pct = str.tonumber(array.get(hl, 1)) / 1000.0
 
                     if not na(h_pct) and not na(l_pct)
-                        int t_min = sess_offset + i * 5  // BUCKET = 5 min
+                        int t_min = sess_offset + i * {BUCKET}  // BUCKET = {BUCKET} min
                         int t_pt = ts_start + t_min * 60000
 
                         float p_h = base * (1.0 + h_pct * i_scale / 100.0)
