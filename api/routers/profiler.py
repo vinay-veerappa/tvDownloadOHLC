@@ -271,6 +271,37 @@ async def get_filtered_price_model(
     return result
 
 
+@router.post("/stats/custom-price-model", tags=["Stats"])
+async def get_custom_price_model(
+    payload: dict = Body(...)
+):
+    """
+    Get Price Model for an explicit list of dates.
+    Used by the Pine Script generator for cross-day filtered models.
+    Payload: {
+        "ticker": str,
+        "target_session": str,
+        "dates": [str],
+        "bucket_minutes": int
+    }
+    """
+    ticker = payload.get("ticker", "NQ1")
+    target_session = payload.get("target_session", "Daily")
+    dates = payload.get("dates", [])
+    bucket_minutes = payload.get("bucket_minutes", 5)
+    
+    if not dates:
+        raise HTTPException(status_code=400, detail="No dates provided")
+    
+    result = ProfilerService.get_custom_price_model(
+        ticker, target_session, dates, bucket_minutes
+    )
+    
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
 # ============================================================================
 # NEW: Prediction Endpoints (Profiler Expansion)
 # ============================================================================
