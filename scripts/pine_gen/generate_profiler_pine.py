@@ -1338,7 +1338,10 @@ if barstate.islast
     n_ny1  = array.size(ny1_stats) * 15
     n_ny2  = array.size(ny2_stats) * 15
     n_ny1b = array.size(ny1_bk) * 45
-    dbg_ny = "ny1=" + str.tostring(n_ny1) + " ny2=" + str.tostring(n_ny2) + " ny1bk=" + str.tostring(n_ny1b)
+    n_ctx  = array.size(ctx_prev_ny1) * 15
+    dbg_ny = "ny1=" + str.tostring(n_ny1) + " ny2=" + str.tostring(n_ny2) + " ny1bk=" + str.tostring(n_ny1b) + " ctx=" + str.tostring(n_ctx)
+    dbg_ok := dbg_ok and (n_dates <= n_ctx)
+    dbg_col  := dbg_ok ? color.new(color.green, 70) : color.new(color.red, 50)
     table.cell(tbl_stat, 0, 8, "NY libs:", bgcolor=dbg_col, text_color=color.white, text_size=sz)
     table.cell(tbl_stat, 1, 8, dbg_ny, bgcolor=dbg_col, text_color=color.white, text_size=sz)
 
@@ -1354,6 +1357,9 @@ if barstate.islast
         array.clear(st_ht), array.clear(st_lt), array.clear(st_hp), array.clear(st_lp)
         array.clear(sf_ht), array.clear(sf_lt), array.clear(sf_hp), array.clear(sf_lp)
         cached_title := title
+        // Indicate filtered mode when prev NY context is active
+        if tgt_idx <= 1 and (prev_ny1_status != 0 or prev_ny2_status != 0)
+            cached_title := title + " (ctx)"
         for i = 0 to array.size(dates) - 1
             bool ok = true
             // Match History with bits
@@ -1379,11 +1385,7 @@ if barstate.islast
             bool live_b = tgt_idx==0?bk_asia: tgt_idx==1?bk_lon: tgt_idx==2?bk_ny1: bk_ny2
             bool is_pend = (tgt_idx==0 and not fin_asia) or (tgt_idx==1 and not fin_lon) or (tgt_idx==2 and not fin_ny1) or (tgt_idx==3 and not fin_ny2)
             
-            if ok and f_match(hist_s, hist_b, live_s, live_b, is_pend, false)
-                // Bounds guard: skip if any library has fewer items than dates (stale lib)
-                if i >= array.size(hod_times) or i >= array.size(lod_times)
-                    ok := false
-            if ok and f_match(hist_s, hist_b, live_s, live_b, is_pend, false)
+            if ok and f_match(hist_s, hist_b, live_s, live_b, is_pend, false) and i < array.size(hod_times) and i < array.size(lod_times)
                 total_cnt += 1
                 _ht = array.get(hod_times, i), _lt = array.get(lod_times, i), _hp = array.get(hod_pcts, i), _lp = array.get(lod_pcts, i)
                 
