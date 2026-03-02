@@ -19,11 +19,13 @@ max_bars_back(time, 2000)
 
 import vveerappa/ProfilerData_Asia/4 as LibAsia
 import vveerappa/ProfilerData_London/4 as LibLon
-import vveerappa/ProfilerData_NY/6 as LibNY
+import vveerappa/ProfilerData_NY/4 as LibNY
 import vveerappa/ProfilerData_Broken/6 as LibBroken
 import vveerappa/ProfilerData_Times/2 as LibTimes
 import vveerappa/ProfilerData_Levels/2 as LibLevels
 import vveerappa/ProfilerData_Touches/7 as LibTouches
+import vveerappa/ProfilerData_AsiaPred/1 as LibAsiaPred
+import vveerappa/ProfilerData_LondonPred/1 as LibLonPred
 import vveerappa/ProfilerData_Model_LT/3 as LibModelLT
 import vveerappa/ProfilerData_Model_LF/3 as LibModelLF
 import vveerappa/ProfilerData_Model_ST/3 as LibModelST
@@ -198,6 +200,9 @@ var bool bk_asia = false, var bool bk_lon = false, var bool bk_ny1 = false, var 
 var float open_asia = na, var float open_lon = na, var float open_ny = na
 var float asia_mid = na, var float lon_mid = na, var float ny1_mid = na, var float ny2_mid = na
 var float prev_asia_mid = na, var float prev_lon_mid = na, var float prev_ny1_mid = na, var float prev_ny2_mid = na
+var int prev_ny1_status = 0, var int prev_ny2_status = 0, var int prev_asia_status = 0
+var int[] asia_pred_arr = LibAsiaPred.get_predictions()
+var int[] lon_pred_arr = LibLonPred.get_predictions()
 
 f_update_sess(_sess) =>
     in_s = not na(time(timeframe.period, _sess + ":1234567", "America/New_York"))
@@ -218,6 +223,11 @@ if start_asia
     box.delete(b_asia)
     line.delete(l_asia_mid)
     label.delete(lb_asia_mid)
+    
+    prev_asia_status := st_asia
+    prev_ny1_status  := st_ny1
+    prev_ny2_status  := st_ny2
+    
     asia_h := high
     asia_l := low
     st_asia := 0
@@ -315,7 +325,6 @@ if in_ny1
         label.set_y(lb_ny1_mid, ny1_mid)
         label.set_textcolor(lb_ny1_mid, c_ny1_bor_eff)
         label.set_size(lb_ny1_mid, get_size(s_ref_lbl))
-        label.set_textcolor(lb_ny1_mid, c_ny1_bor_eff)
 
 var box b_ny2 = na, var line l_ny2_mid = na, var label lb_ny2_mid = na
 if start_ny2
@@ -326,22 +335,27 @@ if start_ny2
     ny2_l := low
     st_ny2 := 0
     bk_ny2 := false
-    b_ny2 := box.new(time, high, time, low, xloc=xloc.bar_time, border_color=f_theme_ny2_bor(), bgcolor=f_theme_ny2_box())
+    b_ny2 := box.new(time, high, time, low, xloc=xloc.bar_time, border_color=c_ny2_bor_eff, bgcolor=c_ny2_box_eff)
     t_close = f_get_1700_et(time)
-    l_ny2_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=f_theme_ny2_bor(), style=line.style_dotted, width=1)
+    l_ny2_mid := line.new(time, high, t_close, high, xloc=xloc.bar_time, color=c_ny2_bor_eff, style=line.style_dotted, width=1)
     if show_ref_lbl
-        lb_ny2_mid := label.new(t_close + 2 * timeframe.in_seconds(timeframe.period) * 1000, high, "NY2 Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=f_theme_ny2_bor(), size=size.small, textalign=text.align_left)
+        lb_ny2_mid := label.new(t_close + ref_lbl_offset * timeframe.in_seconds(timeframe.period) * 1000, high, "NY2 Mid", xloc=xloc.bar_time, style=label.style_none, textcolor=c_ny2_bor_eff, size=get_size(s_ref_lbl), textalign=text.align_left)
 if in_ny2
     ny2_h := math.max(nz(ny2_h, high), high)
     ny2_l := math.min(nz(ny2_l, low), low)
     box.set_top(b_ny2, ny2_h)
     box.set_bottom(b_ny2, ny2_l)
     box.set_right(b_ny2, time)
+    box.set_border_color(b_ny2, c_ny2_bor_eff)
+    box.set_bgcolor(b_ny2, c_ny2_box_eff)
     ny2_mid := (ny2_h + ny2_l) / 2
     line.set_y1(l_ny2_mid, ny2_mid)
     line.set_y2(l_ny2_mid, ny2_mid)
+    line.set_color(l_ny2_mid, c_ny2_bor_eff)
     if not na(lb_ny2_mid)
         label.set_y(lb_ny2_mid, ny2_mid)
+        label.set_textcolor(lb_ny2_mid, c_ny2_bor_eff)
+        label.set_size(lb_ny2_mid, get_size(s_ref_lbl))
 
 // ————— REFERENCE LEVELS —————
 [pd_h, pd_l, pd_c] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead=barmerge.lookahead_on)
@@ -493,8 +507,7 @@ f_calc_mode_time(arr_vals) =>
     ModeRange r = ModeRange.new("N/A", 0.0, 0.0, false)
     if array.size(arr_vals) > 0
         int b_size = 15
-        var int[] buckets = array.new_int(96, 0)
-        array.fill(buckets, 0)
+        int[] buckets = array.new_int(96, 0)
         int max_c = 0
         int max_b = 0
         for i = 0 to array.size(arr_vals) - 1
@@ -518,8 +531,7 @@ f_calc_mode_pct(arr_vals) =>
     if array.size(arr_vals) > 0
         float step = 0.1
         int n_b = 120
-        var int[] buckets = array.new_int(120, 0)
-        array.fill(buckets, 0)
+        int[] buckets = array.new_int(120, 0)
         int max_c = 0
         int max_b = 0
         for i = 0 to array.size(arr_vals) - 1
@@ -627,8 +639,7 @@ f_render_row_adv(tbl, r, label, cnt, tot, bg_col, sz, arr_hod_t, arr_lod_t, arr_
 f_draw_time_hist(arr_times, anchor_p, col, is_up, t_ref, tot) =>
     if array.size(arr_times) > 0 and not na(anchor_p) and not na(t_ref) and tot > 0
         // Bucketize into 15-minute intervals (0-95) based on RELATIVE time from 18:00
-        var int[] buckets = array.new_int(96, 0)
-        array.fill(buckets, 0)
+        int[] buckets = array.new_int(96, 0)
         int max_cnt = 0
         for i = 0 to array.size(arr_times) - 1
             t_raw = array.get(arr_times, i)
@@ -784,8 +795,11 @@ f_status_str(c, act, bk) =>
     s = c==1?(act?"Long (Pend)":"Long True"): c==2?"Long False": c==3?(act?"Short (Pend)":"Short True"): c==4?"Short False":"Neutral"
     bk ? s + " (BK)" : s
 
-var table tbl_res = table.new(get_pos(p_res), 21, 5, border_width = 1) 
-var table tbl_stat = table.new(get_pos(p_stat), 2, 5, border_width = 1)
+f_status_long_to_short(c) =>
+    c==1 ? "LT" : c==2 ? "LF" : c==3 ? "ST" : c==4 ? "SF" : "Neu"
+
+var table tbl_res = table.new(get_pos(p_res), 21, 7, border_width = 1) 
+var table tbl_stat = table.new(get_pos(p_stat), 2, 7, border_width = 1)
 
 f_match(hc, hb, lc, lb, loose, ignore_bk) =>
     // Status Match
@@ -794,8 +808,27 @@ f_match(hc, hb, lc, lb, loose, ignore_bk) =>
     b_ok = ignore_bk ? true : (lb ? (hb == 1) : true)
     s_ok and b_ok
 
+f_pred_lookup(arr, key_a, key_b, slot_idx) =>
+    base = (key_a * 5 + key_b) * 6
+    slot = base + slot_idx
+    slot >= 0 and slot < 150 ? array.get(arr, slot) : 0
+
+f_render_row_pred(tbl, r, row_lbl, p_lt, p_lf, p_st, p_sf, p_none, total_samples, sz) =>
+    if total_samples > 0
+        max_p = math.max(math.max(p_lt, p_lf), math.max(p_st, p_sf))
+        cell_col = p_lt == max_p ? f_theme_p12() : p_st == max_p ? f_theme_settle() : color.gray
+        table.cell(tbl, 0, r, row_lbl, bgcolor=cell_col, text_color=color.black, text_size=sz)
+        table.cell(tbl, 1, r, str.tostring(total_samples) + " days", bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl, 2, r, str.format("{0,number,#.#}%", p_lt / 10.0), bgcolor=color.black, text_color=p_lt == max_p ? f_theme_p12() : color.white, text_size=sz)
+        table.cell(tbl, 3, r, str.format("{0,number,#.#}%", p_lf / 10.0), bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl, 4, r, str.format("{0,number,#.#}%", p_st / 10.0), bgcolor=color.black, text_color=p_st == max_p ? f_theme_settle() : color.white, text_size=sz)
+        table.cell(tbl, 5, r, str.format("{0,number,#.#}%", p_sf / 10.0), bgcolor=color.black, text_color=color.white, text_size=sz)
+        table.cell(tbl, 6, r, str.format("{0,number,#.#}%", p_none / 10.0), bgcolor=color.black, text_color=#666666, text_size=sz)
+
 // Caching Variables
 var int last_tgt_idx = -1
+var int last_prev_ny1 = -1
+var int last_prev_ny2 = -1
 var int last_st_asia = -1, var int last_st_lon = -1, var int last_st_ny1 = -1, var int last_st_ny2 = -1
 var bool last_bk_asia = false, var bool last_bk_lon = false, var bool last_bk_ny1 = false, var bool last_bk_ny2 = false
 
@@ -822,7 +855,6 @@ var int sf_t_pdh = 0, var int sf_t_pdl = 0, var int sf_t_pdm = 0
 var int[] hod_times = LibTimes.get_hod_time(), var int[] lod_times = LibTimes.get_lod_time()
 var float[] hod_pcts = LibLevels.get_hod_pct(), var float[] lod_pcts = LibLevels.get_lod_pct()
 // Load Touches
-var int[] t_p12h = LibTouches.get_p12h_asia() // These are just dummies to establish names, will be selected dynamically
 // Session-indexed touch arrays
 var int[] t_p12h_a = LibTouches.get_p12h_asia(), var int[] t_p12h_l = LibTouches.get_p12h_london(), var int[] t_p12h_n1 = LibTouches.get_p12h_ny1(), var int[] t_p12h_n2 = LibTouches.get_p12h_ny2()
 var int[] t_p12m_a = LibTouches.get_p12m_asia(), var int[] t_p12m_l = LibTouches.get_p12m_london(), var int[] t_p12m_n1 = LibTouches.get_p12m_ny1(), var int[] t_p12m_n2 = LibTouches.get_p12m_ny2()
@@ -843,19 +875,23 @@ var int[] t_pdm_a = LibTouches.get_pdm_asia(), var int[] t_pdm_l = LibTouches.ge
 d_open = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
 if barstate.islast
     sz = get_size(s_res)
+    int tgt_idx = 0, string title = "Asia Outcomes"
+
     bool fin_asia = not na(time(timeframe.period, "0230-1700:1234567", "America/New_York"))
     bool fin_lon  = not na(time(timeframe.period, "0730-1700:1234567", "America/New_York"))
     bool fin_ny1  = not na(time(timeframe.period, "1130-1700:1234567", "America/New_York"))
     bool fin_ny2  = not na(time(timeframe.period, "1615-1700:1234567", "America/New_York"))
 
-    table.clear(tbl_stat, 0, 0, 1, 4)
-    table.cell(tbl_stat, 0, 0, "Current Status", bgcolor=color.black, text_color=color.white, text_size=sz)
+    table.clear(tbl_stat, 0, 0, 1, 6)
+    string stat_title = tgt_idx == 0 ? "Asia Pred Context" : tgt_idx == 1 ? "Lon Pred Context" : "Current Status"
+    table.cell(tbl_stat, 0, 0, stat_title, bgcolor=color.black, text_color=color.white, text_size=sz)
     table.cell(tbl_stat, 0, 1, "Asia: " + f_status_str(st_asia, not fin_asia, bk_asia), bgcolor=color.black, text_color=color.white, text_size=sz)
     table.cell(tbl_stat, 0, 2, "Lon: " + f_status_str(st_lon, not fin_lon, bk_lon), bgcolor=color.black, text_color=color.white, text_size=sz)
     table.cell(tbl_stat, 0, 3, "NY1: " + f_status_str(st_ny1, not fin_ny1, bk_ny1), bgcolor=color.black, text_color=color.white, text_size=sz)
     table.cell(tbl_stat, 0, 4, "NY2: " + f_status_str(st_ny2, not fin_ny2, bk_ny2), bgcolor=color.black, text_color=color.white, text_size=sz)
+    table.cell(tbl_stat, 0, 5, "Prev NY1: " + f_status_str(prev_ny1_status, false, false), bgcolor=color.black, text_color=#888888, text_size=sz)
+    table.cell(tbl_stat, 0, 6, "Prev NY2: " + f_status_str(prev_ny2_status, false, false), bgcolor=color.black, text_color=#888888, text_size=sz)
 
-    int tgt_idx = 0, string title = "Asia Outcomes"
     if fin_asia
         tgt_idx := 1
         title := "London Outcomes"
@@ -866,7 +902,7 @@ if barstate.islast
         tgt_idx := 3
         title := "NY2 Outcomes"
 
-    state_changed = (tgt_idx != last_tgt_idx) or (st_asia != last_st_asia) or (st_lon != last_st_lon) or (st_ny1 != last_st_ny1) or (st_ny2 != last_st_ny2) or (bk_asia != last_bk_asia) or (bk_lon != last_bk_lon) or (bk_ny1 != last_bk_ny1) or (bk_ny2 != last_bk_ny2)
+    state_changed = (tgt_idx != last_tgt_idx) or (st_asia != last_st_asia) or (st_lon != last_st_lon) or (st_ny1 != last_st_ny1) or (st_ny2 != last_st_ny2) or (bk_asia != last_bk_asia) or (bk_lon != last_bk_lon) or (bk_ny1 != last_bk_ny1) or (bk_ny2 != last_bk_ny2) or (prev_ny1_status != last_prev_ny1) or (prev_ny2_status != last_prev_ny2)
     if state_changed
         c_lt := 0, c_lf := 0, c_st := 0, c_sf := 0, total_cnt := 0
         lt_t_p12h := 0, lt_t_p12m := 0, lt_t_p12l := 0, lt_t_nyp12h := 0, lt_t_nyp12m := 0, lt_t_nyp12l := 0, lt_t_asia := 0, lt_t_lon := 0, lt_t_ny1m := 0, lt_t_ny2m := 0, lt_t_midnight := 0, lt_t_0730 := 0, lt_t_pdh := 0, lt_t_pdl := 0, lt_t_pdm := 0
@@ -943,6 +979,8 @@ if barstate.islast
         last_bk_lon := bk_lon
         last_bk_ny1 := bk_ny1
         last_bk_ny2 := bk_ny2
+        last_prev_ny1 := prev_ny1_status
+        last_prev_ny2 := prev_ny2_status
 
         // Viz Logic
         t_start_d = time[bar_index - bi_day_start]
@@ -962,7 +1000,7 @@ if barstate.islast
         v_0730 = time >= t_0730
         v_pd = true 
     
-        table.clear(tbl_res, 0, 0, 20, 4)
+        table.clear(tbl_res, 0, 0, 20, 6)
         table.cell(tbl_res, 0, 0, cached_title, bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 1, 0, "Stats", bgcolor=color.black, text_color=color.white, text_size=sz)
         table.cell(tbl_res, 2, 0, "LOD Time", bgcolor=color.black, text_color=color.white, text_size=sz)
@@ -995,6 +1033,39 @@ if barstate.islast
         f_render_row_adv(tbl_res, 2, "Long False", c_lf, total_cnt, color.gray, sz, lf_ht, lf_lt, lf_hp, lf_lp, lf_t_p12h, lf_t_p12m, lf_t_p12l, lf_t_nyp12h, lf_t_nyp12m, lf_t_nyp12l, lf_t_asia, lf_t_lon, lf_t_ny1m, lf_t_ny2m, lf_t_midnight, lf_t_0730, lf_t_pdh, lf_t_pdl, lf_t_pdm, d_open, false, true, v_p12, v_nyp, v_asia, v_lon, v_ny1, v_ny2, v_mid, v_0730, v_pd)
         f_render_row_adv(tbl_res, 3, "Short True", c_st, total_cnt, color.red, sz, st_ht, st_lt, st_hp, st_lp, st_t_p12h, st_t_p12m, st_t_p12l, st_t_nyp12h, st_t_nyp12m, st_t_nyp12l, st_t_asia, st_t_lon, st_t_ny1m, st_t_ny2m, st_t_midnight, st_t_0730, st_t_pdh, st_t_pdl, st_t_pdm, d_open, false, false, v_p12, v_nyp, v_asia, v_lon, v_ny1, v_ny2, v_mid, v_0730, v_pd)
         f_render_row_adv(tbl_res, 4, "Short False", c_sf, total_cnt, color.gray, sz, sf_ht, sf_lt, sf_hp, sf_lp, sf_t_p12h, sf_t_p12m, sf_t_p12l, sf_t_nyp12h, sf_t_nyp12m, sf_t_nyp12l, sf_t_asia, sf_t_lon, sf_t_ny1m, sf_t_ny2m, sf_t_midnight, sf_t_0730, sf_t_pdh, sf_t_pdl, sf_t_pdm, d_open, false, true, v_p12, v_nyp, v_asia, v_lon, v_ny1, v_ny2, v_mid, v_0730, v_pd)
+        
+        if tgt_idx == 0 or tgt_idx == 1
+            string p_title = tgt_idx == 0 ? "Asia Prediction" : "London Prediction"
+            table.cell(tbl_res, 0, 5, p_title, bgcolor=color.black, text_color=color.white, text_size=sz)
+            table.cell(tbl_res, 1, 5, "Samples", bgcolor=color.black, text_color=color.white, text_size=sz)
+            table.cell(tbl_res, 2, 5, "Long True", bgcolor=color.black, text_color=color.white, text_size=sz)
+            table.cell(tbl_res, 3, 5, "Long False", bgcolor=color.black, text_color=color.white, text_size=sz)
+            table.cell(tbl_res, 4, 5, "Short True", bgcolor=color.black, text_color=color.white, text_size=sz)
+            table.cell(tbl_res, 5, 5, "Short False", bgcolor=color.black, text_color=color.white, text_size=sz)
+            table.cell(tbl_res, 6, 5, "None", bgcolor=color.black, text_color=#666666, text_size=sz)
+
+            if tgt_idx == 0
+                string ctx_str = "pNY1:" + f_status_long_to_short(prev_ny1_status) + " pNY2:" + f_status_long_to_short(prev_ny2_status)
+                p_none = f_pred_lookup(asia_pred_arr, prev_ny1_status, prev_ny2_status, 0)
+                p_lt = f_pred_lookup(asia_pred_arr, prev_ny1_status, prev_ny2_status, 1)
+                p_lf = f_pred_lookup(asia_pred_arr, prev_ny1_status, prev_ny2_status, 2)
+                p_st = f_pred_lookup(asia_pred_arr, prev_ny1_status, prev_ny2_status, 3)
+                p_sf = f_pred_lookup(asia_pred_arr, prev_ny1_status, prev_ny2_status, 4)
+                samples = f_pred_lookup(asia_pred_arr, prev_ny1_status, prev_ny2_status, 5)
+                f_render_row_pred(tbl_res, 6, "Pred (" + ctx_str + ")", p_lt, p_lf, p_st, p_sf, p_none, samples, sz)
+            else if tgt_idx == 1 and fin_asia
+                string ctx_str = "pNY2:" + f_status_long_to_short(prev_ny2_status) + " Asia:" + f_status_long_to_short(st_asia)
+                p_none = f_pred_lookup(lon_pred_arr, prev_ny2_status, st_asia, 0)
+                p_lt = f_pred_lookup(lon_pred_arr, prev_ny2_status, st_asia, 1)
+                p_lf = f_pred_lookup(lon_pred_arr, prev_ny2_status, st_asia, 2)
+                p_st = f_pred_lookup(lon_pred_arr, prev_ny2_status, st_asia, 3)
+                p_sf = f_pred_lookup(lon_pred_arr, prev_ny2_status, st_asia, 4)
+                samples = f_pred_lookup(lon_pred_arr, prev_ny2_status, st_asia, 5)
+                f_render_row_pred(tbl_res, 6, "Pred (" + ctx_str + ")", p_lt, p_lf, p_st, p_sf, p_none, samples, sz)
+            else if tgt_idx == 1 and not fin_asia
+                table.cell(tbl_res, 0, 6, p_title, bgcolor=color.black, text_color=color.white, text_size=sz)
+                table.cell(tbl_res, 1, 6, "Waiting for Asia to complete...", bgcolor=color.black, text_color=#888888, text_size=sz)
+
         f_draw_price_model(st_asia, st_lon, st_ny1, st_ny2, pd_m, d_open, bi_day_start, open_asia, open_lon, open_ny, asia_mid, lon_mid, ny1_mid, m_lt_t, m_lt_h, m_lt_l, m_lf_t, m_lf_h, m_lf_l, m_st_t, m_st_h, m_st_l, m_sf_t, m_sf_h, m_sf_l)
 
     // Histogram Calls
@@ -1014,6 +1085,6 @@ if barstate.islast
             h_times := sf_ht, l_times := sf_lt
             
         // Draw HOD histogram Up from P12 High (Use PM High Color)
-        f_draw_time_hist(h_times, p12_h, color.new(c_pm_high, 50), true, t_start_d, total_cnt)
+        f_draw_time_hist(h_times, p12_h, color.new(c_pm_h_eff, 50), true, t_start_d, total_cnt)
         // Draw LOD histogram Down from P12 Low (Use PM Low Color)
-        f_draw_time_hist(l_times, p12_l, color.new(c_pm_low, 50), false, t_start_d, total_cnt)
+        f_draw_time_hist(l_times, p12_l, color.new(c_pm_l_eff, 50), false, t_start_d, total_cnt)
