@@ -26,6 +26,7 @@ import vveerappa/ProfilerData_Levels/2 as LibLevels
 import vveerappa/ProfilerData_Touches/7 as LibTouches
 import vveerappa/ProfilerData_AsiaPred/1 as LibAsiaPred
 import vveerappa/ProfilerData_LondonPred/1 as LibLonPred
+import vveerappa/ProfilerData_Context/1 as LibContext
 import vveerappa/ProfilerData_Model_LT/3 as LibModelLT
 import vveerappa/ProfilerData_Model_LF/3 as LibModelLF
 import vveerappa/ProfilerData_Model_ST/3 as LibModelST
@@ -51,6 +52,9 @@ var int[] asia_bk = LibBroken.get_asia()
 var int[] london_bk = LibBroken.get_london()
 var int[] ny1_bk = LibBroken.get_ny1()
 var int[] ny2_bk = LibBroken.get_ny2()
+// Previous-day NY context (for Asia and London outcome filtering)
+var int[] ctx_prev_ny1 = LibContext.get_prev_ny1()
+var int[] ctx_prev_ny2 = LibContext.get_prev_ny2()
 // Load Data Arrays
 
 var int[] m_lt_t = LibModelLT.get_times()
@@ -939,6 +943,14 @@ if barstate.islast
                 ok := false
             if tgt_idx > 2 and not f_match(f_get_code(ny1_stats, i), f_get_touch(ny1_bk, i), st_ny1, bk_ny1, false, false)
                 ok := false
+            // Prev-day NY context filter — applied for Asia and London (mirrors web profiler filter sidebar)
+            // For Asia  (tgt_idx==0): filter by prev_ny1 AND prev_ny2 if set (non-zero)
+            // For London (tgt_idx==1): filter by prev_ny2 (and prev_ny1 if set)
+            if tgt_idx <= 1
+                if prev_ny1_status != 0 and f_get_code(ctx_prev_ny1, i) != prev_ny1_status
+                    ok := false
+                if prev_ny2_status != 0 and f_get_code(ctx_prev_ny2, i) != prev_ny2_status
+                    ok := false
             
             // Current Session bit-unpacked
             int hist_s = tgt_idx==0?f_get_code(asia_stats, i): tgt_idx==1?f_get_code(london_stats, i): tgt_idx==2?f_get_code(ny1_stats, i): f_get_code(ny2_stats, i)

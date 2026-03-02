@@ -364,6 +364,10 @@ def generate_scripts(profiler, hod_lod_unadj, hod_lod_adj, touches, asia_pred_ar
             for sess in ['asia', 'london', 'ny1', 'ny2']:
                 key = f't_{lvl}_{sess}'
                 touch_arrays[f'{lvl}_{sess}'].append(row.get(key, 0))
+
+    # Build prev_ny1 / prev_ny2 arrays: for day i, these hold the status from day i-1
+    prev_ny1 = [0] + ny1[:-1]  # first day has no previous = 0 (Neutral)
+    prev_ny2 = [0] + ny2[:-1]
         
     pm_ticker = "NQ1"
     price_models = generate_price_model_libraries(pm_ticker, data_map)
@@ -383,6 +387,7 @@ def generate_scripts(profiler, hod_lod_unadj, hod_lod_adj, touches, asia_pred_ar
         "ProfilerData_Times":  [("hod_time", hod_t, "int", 0), ("lod_time", lod_t, "int", 0)],
         "ProfilerData_Levels": [("hod_pct", hod_p, "float", 0), ("lod_pct", lod_p, "float", 0)],
         "ProfilerData_Touches": touches_fields,
+        "ProfilerData_Context": [("prev_ny1", prev_ny1, "int", 3), ("prev_ny2", prev_ny2, "int", 3)],
         "ProfilerData_AsiaPred": [("predictions", asia_pred_arr, "int", 0)],
         "ProfilerData_LondonPred": [("predictions", lon_pred_arr, "int", 0)],
         "ProfilerData_Model_LT": [("times", price_models.get('LT', ([],[],[]))[0], "int", 0), ("high", price_models.get('LT', ([],[],[]))[1], "float", 0), ("low", price_models.get('LT', ([],[],[]))[2], "float", 0)],
@@ -418,6 +423,7 @@ def generate_scripts(profiler, hod_lod_unadj, hod_lod_adj, touches, asia_pred_ar
     imports.append(f"import {IMPORT_BASE}_Touches/7 as LibTouches")
     imports.append(f"import {IMPORT_BASE}_AsiaPred/1 as LibAsiaPred")
     imports.append(f"import {IMPORT_BASE}_LondonPred/1 as LibLonPred")
+    imports.append(f"import {IMPORT_BASE}_Context/1 as LibContext")
     imports.append(f"import {IMPORT_BASE}_Model_LT/3 as LibModelLT")
     imports.append(f"import {IMPORT_BASE}_Model_LF/3 as LibModelLF")
     imports.append(f"import {IMPORT_BASE}_Model_ST/3 as LibModelST")
@@ -464,6 +470,9 @@ var int[] asia_bk = LibBroken.get_asia()
 var int[] london_bk = LibBroken.get_london()
 var int[] ny1_bk = LibBroken.get_ny1()
 var int[] ny2_bk = LibBroken.get_ny2()
+// Previous-day NY context (for Asia and London outcome filtering)
+var int[] ctx_prev_ny1 = LibContext.get_prev_ny1()
+var int[] ctx_prev_ny2 = LibContext.get_prev_ny2()
 // Load Data Arrays
 
 var int[] m_lt_t = LibModelLT.get_times()
@@ -1354,6 +1363,14 @@ if barstate.islast
                 ok := false
             if tgt_idx > 2 and not f_match(f_get_code(ny1_stats, i), f_get_touch(ny1_bk, i), st_ny1, bk_ny1, false, false)
                 ok := false
+            // Prev-day NY context filter — applied for Asia and London (mirrors web profiler filter sidebar)
+            // For Asia  (tgt_idx==0): filter by prev_ny1 AND prev_ny2 if set (non-zero)
+            // For London (tgt_idx==1): filter by prev_ny2 (and prev_ny1 if set)
+            if tgt_idx <= 1
+                if prev_ny1_status != 0 and f_get_code(ctx_prev_ny1, i) != prev_ny1_status
+                    ok := false
+                if prev_ny2_status != 0 and f_get_code(ctx_prev_ny2, i) != prev_ny2_status
+                    ok := false
             
             // Current Session bit-unpacked
             int hist_s = tgt_idx==0?f_get_code(asia_stats, i): tgt_idx==1?f_get_code(london_stats, i): tgt_idx==2?f_get_code(ny1_stats, i): f_get_code(ny2_stats, i)
