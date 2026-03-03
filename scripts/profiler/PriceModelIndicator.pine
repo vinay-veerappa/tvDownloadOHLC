@@ -3,7 +3,7 @@
 //@version=6
 indicator("NQ Price Model", overlay=true, max_polypoints=10000)
 
-import vinay_veerappa/PriceModelData/1 as PMD
+import vveerappa/PriceModelData/1 as PMD
 
 // ===== INPUTS =====
 grp = "Price Model"
@@ -197,7 +197,7 @@ if barstate.islast and v_day_bi > 0
                     float l_pct = str.tonumber(array.get(hl, 1)) / 1000.0
 
                     if not na(h_pct) and not na(l_pct)
-                        int t_min = sess_offset + i * {BUCKET}  // BUCKET = {BUCKET} min
+                        int t_min = sess_offset + i * 10  // BUCKET = 10 min
                         int t_pt = ts_start + t_min * 60000
 
                         float p_h = base * (1.0 + h_pct * i_scale / 100.0)
@@ -215,4 +215,5 @@ if barstate.islast and v_day_bi > 0
     // Debug label
     if i_show_key
         label.delete(lbl_key)
-        lbl_key := label.new(bar_index, high, "PM: " + used_key + "\nCtx: " + ctx, style=label.style_label_down, color=#333333CC, textcolor=color.white, size=size.small)
+        lbl_key := label.new(bar_index, high, "PM: " + used_key + "
+Ctx: " + ctx, style=label.style_label_down, color=#333333CC, textcolor=color.white, size=size.small)
