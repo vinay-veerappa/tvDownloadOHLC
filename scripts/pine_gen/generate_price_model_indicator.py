@@ -585,12 +585,12 @@ def main():
     # 3. Write Pine Script library
     write_library(models)
 
-    # 4. Write Pine Script indicator
-    write_indicator()
+    # 4. Write Pine Script indicator (Skipped by default to prevent overwriting user edits)
+    # write_indicator()
 
     print("\n✓ Generation complete!")
     print(f"  Library: {OUTPUT_DIR / 'PriceModelData.pine'}")
-    print(f"  Indicator: {OUTPUT_DIR / 'PriceModelIndicator.pine'}")
+    print(f"  Indicator: {OUTPUT_DIR / 'PriceModelIndicator.pine'} (Skipped generation)")
 
 
 if __name__ == "__main__":

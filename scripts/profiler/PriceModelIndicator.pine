@@ -200,8 +200,8 @@ if barstate.islast and v_day_bi > 0
                         int t_min = sess_offset + i * 10  // BUCKET = 10 min
                         int t_pt = ts_start + t_min * 60000
 
-                        float p_h = base * (1.0 + h_pct * i_scale / 100.0)
-                        float p_l = base * (1.0 + l_pct * i_scale / 100.0)
+                        float p_h = base * (1.0 + h_pct * i_scale)
+                        float p_l = base * (1.0 + l_pct * i_scale)
 
                         array.push(pts_h, chart.point.from_time(t_pt, p_h))
                         array.push(pts_l, chart.point.from_time(t_pt, p_l))
