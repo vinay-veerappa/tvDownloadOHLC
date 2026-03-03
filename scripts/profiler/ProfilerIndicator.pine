@@ -940,16 +940,10 @@ if barstate.islast
         v_nyp = true // Day stat
         // When viewing Asia/London prediction (tgt_idx <= 1), these columns show PREVIOUS day mids
         // which always exist, so force visibility to true
-        if tgt_idx <= 1
-            v_asia = true
-            v_lon = true
-            v_ny1 = true
-            v_ny2 = true
-        else
-            v_asia = time >= t_asia_end
-            v_lon = time >= t_lon_end
-            v_ny1 = time >= (t_start_d + 18 * 3600000) // approx 12:00
-            v_ny2 = time >= (t_start_d + 22 * 3600000) // approx 16:00
+        v_asia = tgt_idx <= 1 ? true : time >= t_asia_end
+        v_lon  = tgt_idx <= 1 ? true : time >= t_lon_end
+        v_ny1  = tgt_idx <= 1 ? true : time >= (t_start_d + 18 * 3600000)
+        v_ny2  = tgt_idx <= 1 ? true : time >= (t_start_d + 22 * 3600000)
         v_mid = time >= t_midnight
         v_0730 = time >= t_0730
         v_pd = true 
