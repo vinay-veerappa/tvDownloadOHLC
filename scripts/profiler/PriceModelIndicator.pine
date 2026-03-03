@@ -178,17 +178,13 @@ if barstate.islast and v_day_bi > 0
         base := v_asia_open
 
     // Draw
-    if used_key != last_drawn_key or base != last_drawn_base
-        last_drawn_key := used_key
-        last_drawn_base := base
-        
-        if not na(packed)
-            string[] points = str.split(packed, ",")
-            pts_h = array.new<chart.point>()
-            pts_l = array.new<chart.point>()
+    if not na(packed)
+        string[] points = str.split(packed, ",")
+        pts_h = array.new<chart.point>()
+        pts_l = array.new<chart.point>()
 
-            // Time base = day start (18:00)
-            int ts_start = na(time[bar_index - v_day_bi]) ? time : time[bar_index - v_day_bi]
+        // Time base = day start (18:00)
+        int ts_start = na(time[bar_index - v_day_bi]) ? time : time[bar_index - v_day_bi]
 
             // Session time offsets from 18:00 (in minutes)
             int sess_offset = target == "London" ? 510 : target == "NY1" ? 810 : target == "NY2" ? 930 : 0
@@ -213,14 +209,14 @@ if barstate.islast and v_day_bi > 0
                             array.push(pts_h, chart.point.from_time(t_pt, p_h))
                             array.push(pts_l, chart.point.from_time(t_pt, p_l))
 
-            if not na(pm_h)
-                polyline.delete(pm_h)
-            if not na(pm_l)
-                polyline.delete(pm_l)
-                
-            if array.size(pts_h) > 1
-                pm_h := polyline.new(pts_h, curved=true, line_color=c_hi, xloc=xloc.bar_time, line_width=w_line)
-                pm_l := polyline.new(pts_l, curved=true, line_color=c_lo, xloc=xloc.bar_time, line_width=w_line)
+        if not na(pm_h)
+            polyline.delete(pm_h)
+        if not na(pm_l)
+            polyline.delete(pm_l)
+            
+        if array.size(pts_h) > 1
+            pm_h := polyline.new(pts_h, curved=true, line_color=c_hi, xloc=xloc.bar_time, line_width=w_line)
+            pm_l := polyline.new(pts_l, curved=true, line_color=c_lo, xloc=xloc.bar_time, line_width=w_line)
 
     // Debug label
     if i_show_key
