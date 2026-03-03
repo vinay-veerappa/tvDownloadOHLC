@@ -461,10 +461,16 @@ if barstate.islast
             f_draw_lev(p12_h, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "P12H", true)
             f_draw_lev(p12_l, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "P12L", true)
             f_draw_lev(p12_m, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "P12M", true)
-            
-            f_draw_lev(prev_ny_p12_h, t_start_d, t_proj, color.new(c_p12_eff, 30), get_style(s_p12), w_p12, "Prev NY P12H", true)
-            f_draw_lev(prev_ny_p12_l, t_start_d, t_proj, color.new(c_p12_eff, 30), get_style(s_p12), w_p12, "Prev NY P12L", true)
-            f_draw_lev(prev_ny_p12_m, t_start_d, t_proj, color.new(c_p12_eff, 30), get_style(s_p12), w_p12, "Prev NY P12M", true)
+            // Current NY P12 (06:00-16:59 range)
+            if not na(ny_p12_h) and not na(ny_p12_l)
+                ny_p12_m = (ny_p12_h + ny_p12_l) / 2
+                f_draw_lev(ny_p12_h, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "NY P12H", true)
+                f_draw_lev(ny_p12_l, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "NY P12L", true)
+                f_draw_lev(ny_p12_m, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "NY P12M", true)
+        // Prev NY P12 — always available from day start
+        f_draw_lev(prev_ny_p12_h, t_start_d, t_proj, color.new(c_p12_eff, 30), get_style(s_p12), w_p12, "Prev NY P12H", true)
+        f_draw_lev(prev_ny_p12_l, t_start_d, t_proj, color.new(c_p12_eff, 30), get_style(s_p12), w_p12, "Prev NY P12L", true)
+        f_draw_lev(prev_ny_p12_m, t_start_d, t_proj, color.new(c_p12_eff, 30), get_style(s_p12), w_p12, "Prev NY P12M", true)
 
 // ————— CORE LOGIC —————
 f_calc_status(s_sess, h, l, c_st) =>
