@@ -123,6 +123,8 @@ if not na(_ny2_mid)
 var polyline pm_h = na
 var polyline pm_l = na
 var label lbl_key = na
+var string last_drawn_key = ""
+var float last_drawn_base = na
 
 if barstate.islast and v_day_bi > 0
     // Load model map
@@ -170,50 +172,64 @@ if barstate.islast and v_day_bi > 0
         packed := models.get(key_l3)
         used_key := key_l3
 
+    // Base price = session open
+    float base = target == "NY1" ? v_ny1_open : target == "NY2" ? v_ny2_open : target == "London" ? v_lon_open : v_asia_open
+    if na(base)
+        base := v_asia_open
+
     // Draw
-    if not na(packed)
-        string[] points = str.split(packed, ",")
-        pts_h = array.new<chart.point>()
-        pts_l = array.new<chart.point>()
+    if used_key != last_drawn_key or base != last_drawn_base
+        last_drawn_key := used_key
+        last_drawn_base := base
+        
+        if not na(packed)
+            string[] points = str.split(packed, ",")
+            pts_h = array.new<chart.point>()
+            pts_l = array.new<chart.point>()
 
-        // Base price = session open
-        float base = target == "NY1" ? v_ny1_open : target == "NY2" ? v_ny2_open : target == "London" ? v_lon_open : v_asia_open
-        if na(base)
-            base := v_asia_open
+            // Time base = day start (18:00)
+            int ts_start = na(time[bar_index - v_day_bi]) ? time : time[bar_index - v_day_bi]
 
-        // Time base = day start (18:00)
-        int ts_start = na(time[bar_index - v_day_bi]) ? time : time[bar_index - v_day_bi]
+            // Session time offsets from 18:00 (in minutes)
+            int sess_offset = target == "London" ? 510 : target == "NY1" ? 810 : target == "NY2" ? 930 : 0
 
-        // Session time offsets from 18:00 (in minutes)
-        int sess_offset = target == "London" ? 510 : target == "NY1" ? 810 : target == "NY2" ? 930 : 0
+            if not na(base) and not na(ts_start)
+                for i = 0 to array.size(points) - 1
+                    string pt_str = array.get(points, i)
+                    string[] hl = str.split(pt_str, ":")
+                    if array.size(hl) >= 2
+                        // Decode quantized integers (/1000.0) -> raw fraction
+                        float h_pct = str.tonumber(array.get(hl, 0)) / 1000.0
+                        float l_pct = str.tonumber(array.get(hl, 1)) / 1000.0
 
-        if not na(base) and not na(ts_start)
-            for i = 0 to array.size(points) - 1
-                string pt_str = array.get(points, i)
-                string[] hl = str.split(pt_str, ":")
-                if array.size(hl) >= 2
-                    // Decode quantized integers (/1000.0)
-                    float h_pct = str.tonumber(array.get(hl, 0)) / 1000.0
-                    float l_pct = str.tonumber(array.get(hl, 1)) / 1000.0
+                        if not na(h_pct) and not na(l_pct)
+                            int t_min = sess_offset + i * 10  // BUCKET = 10 min
+                            int t_pt = ts_start + t_min * 60000
 
-                    if not na(h_pct) and not na(l_pct)
-                        int t_min = sess_offset + i * 10  // BUCKET = 10 min
-                        int t_pt = ts_start + t_min * 60000
+                            // API gives true decimal values (0.01 = 1%), direct multiplier applies
+                            float p_h = base * (1.0 + h_pct * i_scale)
+                            float p_l = base * (1.0 + l_pct * i_scale)
 
-                        // Math: 1.0 + (x_pct * scale) / 100.0
-                        float p_h = base * (1.0 + (h_pct * i_scale) / 100.0)
-                        float p_l = base * (1.0 + (l_pct * i_scale) / 100.0)
+                            array.push(pts_h, chart.point.from_time(t_pt, p_h))
+                            array.push(pts_l, chart.point.from_time(t_pt, p_l))
 
-                        array.push(pts_h, chart.point.from_time(t_pt, p_h))
-                        array.push(pts_l, chart.point.from_time(t_pt, p_l))
-
-            polyline.delete(pm_h)
-            polyline.delete(pm_l)
+            if not na(pm_h)
+                polyline.delete(pm_h)
+            if not na(pm_l)
+                polyline.delete(pm_l)
+                
             if array.size(pts_h) > 1
                 pm_h := polyline.new(pts_h, curved=true, line_color=c_hi, xloc=xloc.bar_time, line_width=w_line)
                 pm_l := polyline.new(pts_l, curved=true, line_color=c_lo, xloc=xloc.bar_time, line_width=w_line)
 
     // Debug label
     if i_show_key
-        label.delete(lbl_key)
-        lbl_key := label.new(bar_index, high, "PM: " + used_key + "Ctx: " + ctx, style=label.style_label_down, color=#333333CC, textcolor=color.white, size=size.small)
+        if na(lbl_key)
+            lbl_key := label.new(bar_index, high, "PM: " + used_key + "\nCtx: " + ctx, style=label.style_label_down, color=#333333CC, textcolor=color.white, size=size.small)
+        else
+            label.set_xy(lbl_key, bar_index, high)
+            label.set_text(lbl_key, "PM: " + used_key + "\nCtx: " + ctx)
+    else
+        if not na(lbl_key)
+            label.delete(lbl_key)
+            lbl_key := na
