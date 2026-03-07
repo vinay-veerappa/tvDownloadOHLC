@@ -70,6 +70,10 @@ class NYOutcome:
     hit_globex_open_time: datetime = None
     hit_open_0730: bool = False
     hit_open_0730_time: datetime = None
+    hit_london_mid: bool = False
+    hit_london_mid_time: datetime = None
+    hit_asia_mid: bool = False
+    hit_asia_mid_time: datetime = None
     
     # NEW: Hit-first pairs during NY
     # LO_H vs LO_L already exists (hit_london_high_first)
@@ -369,6 +373,8 @@ def measure_ny_enhanced(day_1m_df: pd.DataFrame, day_stats: TradingDay, outcome:
     outcome.hit_prev_week_close, outcome.hit_prev_week_close_time = check_hit(day_stats.prev_week_close)
     outcome.hit_globex_open, outcome.hit_globex_open_time = check_hit(day_stats.globex_open)
     outcome.hit_open_0730, outcome.hit_open_0730_time = check_hit(day_stats.open_0730)
+    outcome.hit_london_mid, outcome.hit_london_mid_time = check_hit(day_stats.london_mid)
+    outcome.hit_asia_mid, outcome.hit_asia_mid_time = check_hit(day_stats.asia_mid)
 
     # --- Hit First Logic ---
     # Overnight High/Low

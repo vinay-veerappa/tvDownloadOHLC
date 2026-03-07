@@ -46,7 +46,7 @@ i_showLondon = input.bool(true, "  Show London H/L/Mid", group=grp_l, inline="lo
 i_londonW    = input.int(2, "Width", minval=1, maxval=5, group=grp_l, inline="lon")
 i_londonSty  = input.string("Solid", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="lon")
 
-i_showAsia = input.bool(true, "  Show Asia H/L", group=grp_l, inline="asia")
+i_showAsia = input.bool(true, "  Show Asia H/L/Mid", group=grp_l, inline="asia")
 i_asiaW    = input.int(1, "Width", minval=1, maxval=5, group=grp_l, inline="asia")
 i_asiaSty  = input.string("Dashed", "Style", options=["Solid","Dashed","Dotted"], group=grp_l, inline="asia")
 
@@ -315,7 +315,7 @@ string curSession = inAsia ? "ASIA" : inLondon ? "LONDON" : inPreMkt ? "PRE-MKT"
 // │  SESSION STATE                                                              │
 // └─────────────────────────────────────────────────────────────────────────────┘
 
-var float asiaH = na, var float asiaL = na
+var float asiaH = na, var float asiaL = na, var float asiaMid = na
 var float lonH  = na, var float lonL  = na, var float lonMid = na
 var float amH   = na, var float amL   = na, var float amMid  = na
 var float lchH  = na, var float lchL  = na, var float lchMid = na
@@ -347,13 +347,15 @@ var array<float> nyRanges     = array.new_float()
 
 // Daily data
 [pdH, pdL, pdC] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], barmerge.gaps_off, barmerge.lookahead_on)
+[vvixH, vvixL, vvixC] = request.security("VVIX", "D", [high, low, close], barmerge.gaps_off, barmerge.lookahead_on)
+
 
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │  HIT TRACKING                                                               │
 // └─────────────────────────────────────────────────────────────────────────────┘
 
-var bool hitLonH = false, var bool hitLonL = false
-var bool hitAsiaH = false, var bool hitAsiaL = false
+var bool hitLonH = false, var bool hitLonL = false, var bool hitLonMid = false
+var bool hitAsiaH = false, var bool hitAsiaL = false, var bool hitAsiaMid = false
 var bool hitOnMid = false, var bool hit78Mid = false
 var bool hitMnOpen = false, var bool hit730 = false
 var bool hitOTEBull = false, var bool hitOTEBear = false
@@ -371,7 +373,7 @@ var bool londonClosed = false
 // └─────────────────────────────────────────────────────────────────────────────┘
 
 var line lnLonH = na, var line lnLonL = na, var line lnLonMid = na
-var line lnAsiaH = na, var line lnAsiaL = na
+var line lnAsiaH = na, var line lnAsiaL = na, var line lnAsiaMid = na
 var line ln78Mid = na, var line ln730 = na, var line lnMnOpen = na
 var line lnOnMid = na, var line lnOTEBull = na, var line lnOTEBear = na
 var line lnGlx = na
@@ -382,7 +384,7 @@ var line lnLchH = na, var line lnLchL = na
 var line lnP12H = na, var line lnP12L = na, var line lnP12Mid = na
 
 var label lblLonH = na, var label lblLonL = na, var label lblLonMid = na
-var label lblAsiaH = na, var label lblAsiaL = na
+var label lblAsiaH = na, var label lblAsiaL = na, var label lblAsiaMid = na
 var label lbl78Mid = na, var label lbl730 = na, var label lblMnOpen = na
 var label lblOnMid = na, var label lblOTEBull = na, var label lblOTEBear = na
 var label lblGlx = na
@@ -407,6 +409,7 @@ if isNewDay
     // Session prices
     asiaH := na
     asiaL := na
+    asiaMid := na
     lonH  := na
     lonL  := na
     lonMid := na
@@ -466,6 +469,7 @@ if inAsia
         asiaBar0 := bar_index
     asiaH := na(asiaH) ? high : math.max(asiaH, high)
     asiaL := na(asiaL) ? low  : math.min(asiaL, low)
+    asiaMid := (asiaH + asiaL) / 2.0
 
 if not inAsia and inAsia[1] and not na(asiaH) and not na(asiaL)
     asiaRanges.push(asiaH - asiaL)
@@ -746,6 +750,70 @@ getCondProbLonL(string pat, string pos) =>
 
 getCondProb78Mid() => _byIx(80.6, 79.5, 80.1, 78.6, 69.7, 64.6)
 
+getCondProbLonMid(string pat, string pos) =>
+    if is_nq
+        _gp(78.8, 75.1, 74.0, 84.1, 79.3, 79.4, 76.2, 83.0, pat, pos)
+    else if is_es
+        _gp(79.1, 73.0, 72.6, 81.8, 73.8, 78.5, 69.3, 76.5, pat, pos)
+    else if is_rty
+        _gp(81.7, 73.2, 78.5, 79.0, 71.6, 77.4, 79.5, 77.3, pat, pos)
+    else if is_ym
+        _gp(79.7, 71.6, 69.5, 79.7, 74.7, 76.6, 74.3, 82.7, pat, pos)
+    else if is_cl
+        _gp(71.2, 62.1, 63.8, 69.1, 64.7, 67.6, 72.0, 64.2, pat, pos)
+    else if is_gc
+        _gp(66.5, 56.5, 57.7, 67.8, 62.6, 61.5, 60.5, 63.6, pat, pos)
+    else
+        78.0
+
+getCondProbAsiaMid(string pat, string pos) =>
+    if is_nq
+        _gp(85.4, 56.2, 57.1, 84.0, 76.3, 75.0, 74.6, 79.6, pat, pos)
+    else if is_es
+        _gp(84.9, 52.5, 51.8, 84.3, 72.1, 75.2, 67.3, 78.6, pat, pos)
+    else if is_rty
+        _gp(83.5, 53.1, 54.8, 82.1, 67.9, 71.9, 76.1, 73.3, pat, pos)
+    else if is_ym
+        _gp(82.3, 50.6, 49.2, 82.3, 72.3, 73.6, 71.5, 82.2, pat, pos)
+    else if is_cl
+        _gp(76.6, 35.8, 39.6, 75.6, 61.7, 64.6, 73.3, 63.2, pat, pos)
+    else if is_gc
+        _gp(71.9, 28.5, 31.6, 72.3, 59.4, 55.8, 58.6, 61.3, pat, pos)
+    else
+        70.0
+
+getCondProbAsiaH(string pat, string pos) =>
+    if is_nq
+        _gp(75.7, 41.3, 72.2, 80.4, 82.1, 63.0, 81.0, 59.7, pat, pos)
+    else if is_es
+        _gp(72.5, 36.7, 70.3, 77.9, 80.9, 61.2, 79.2, 46.5, pat, pos)
+    else if is_rty
+        _gp(71.4, 39.2, 75.2, 76.6, 77.2, 57.3, 85.2, 49.3, pat, pos)
+    else if is_ym
+        _gp(73.1, 34.7, 66.3, 74.9, 77.8, 58.4, 78.2, 47.6, pat, pos)
+    else if is_cl
+        _gp(67.5, 22.1, 56.5, 65.0, 70.4, 49.6, 68.0, 31.6, pat, pos)
+    else if is_gc
+        _gp(55.2, 14.6, 54.0, 61.5, 68.1, 33.7, 60.9, 25.7, pat, pos)
+    else
+        65.0
+
+getCondProbAsiaL(string pat, string pos) =>
+    if is_nq
+        _gp(77.0, 69.8, 43.3, 71.1, 64.4, 82.1, 45.5, 72.8, pat, pos)
+    else if is_es
+        _gp(75.9, 68.7, 36.9, 74.4, 58.0, 82.8, 37.6, 74.9, pat, pos)
+    else if is_rty
+        _gp(79.8, 66.5, 42.7, 76.3, 54.4, 82.4, 51.1, 80.0, pat, pos)
+    else if is_ym
+        _gp(76.0, 68.1, 34.0, 71.1, 58.0, 80.6, 41.9, 74.3, pat, pos)
+    else if is_cl
+        _gp(69.4, 53.4, 26.9, 67.5, 46.3, 72.1, 34.7, 71.6, pat, pos)
+    else if is_gc
+        _gp(60.2, 50.9, 15.8, 51.6, 43.2, 67.9, 32.0, 55.8, pat, pos)
+    else
+        60.0
+
 getCondProbMN(string pat, string pos) =>
     if is_nq
         _gp(86.3,63.1, 62.6,87.8, 77.9,81.1, 71.2,76.8, pat,pos)
@@ -941,11 +1009,13 @@ else
 // └─────────────────────────────────────────────────────────────────────────────┘
 
 // Single reset point: NY AM open (covers both pre-market and AM)
-if inNYAM and not inNYAM[1]
+if isNewDay and not isNewDay[1]
     hitLonH    := false
     hitLonL    := false
+    hitLonMid  := false
     hitAsiaH   := false
     hitAsiaL   := false
+    hitAsiaMid := false
     hitOnMid   := false
     hit78Mid   := false
     hitMnOpen  := false
@@ -974,11 +1044,15 @@ if inNYAM or inLunch or inNYPM or inPreMkt
             hitLonH := true
         if checkHit(lonL)
             hitLonL := true
+        if checkHit(lonMid)
+            hitLonMid := true
     
     if checkHit(asiaH)
         hitAsiaH  := true
     if checkHit(asiaL)
         hitAsiaL  := true
+    if checkHit(asiaMid)
+        hitAsiaMid := true
     if checkHit(onMid)
         hitOnMid  := true
     if checkHit(p12H)
@@ -1053,17 +1127,20 @@ if i_showLevels and i_showLondon and not inLondon and inLondon[1] and not na(lon
     if i_showLabels
         lblLonH   := LStack.drawLevelLabel(lonH, str.format("Lon H: {0,number,#.#}%", pLH), i_cLondon, i_labelSize)
         lblLonL   := LStack.drawLevelLabel(lonL, str.format("Lon L: {0,number,#.#}%", pLL), i_cLondon, i_labelSize)
-        lblLonMid := LStack.drawLevelLabel(lonMid, "Lon Mid", p.caution, i_labelSize)
+        lblLonMid := LStack.drawLevelLabel(lonMid, str.format("Lon Mid: {0,number,#.#}%", getCondProbLonMid(pattern, nyPos)), p.caution, i_labelSize)
 
 // Asia levels (drawn when Asia closes)
 if i_showLevels and i_showAsia and not inAsia and inAsia[1] and not na(asiaH)
     line.delete(lnAsiaH)
     line.delete(lnAsiaL)
+    line.delete(lnAsiaMid)
     lnAsiaH := line.new(asiaBar0, asiaH, bar_index + i_lineOff, asiaH, color=color.new(i_cAsia, p.line_tr2), style=getLnSty(i_asiaSty), width=i_asiaW)
     lnAsiaL := line.new(asiaBar0, asiaL, bar_index + i_lineOff, asiaL, color=color.new(i_cAsia, p.line_tr2), style=getLnSty(i_asiaSty), width=i_asiaW)
+    lnAsiaMid := line.new(asiaBar0, asiaMid, bar_index + i_lineOff, asiaMid, color=color.new(i_cAsia, p.line_tr2), style=line.style_dotted, width=1)
     if i_showLabels
-        lblAsiaH := LStack.drawLevelLabel(asiaH, "Asia H", i_cAsia, i_labelSize)
-        lblAsiaL := LStack.drawLevelLabel(asiaL, "Asia L", i_cAsia, i_labelSize)
+        lblAsiaH := LStack.drawLevelLabel(asiaH, str.format("Asia H: {0,number,#.#}%", getCondProbAsiaH(pattern, nyPos)), i_cAsia, i_labelSize)
+        lblAsiaL := LStack.drawLevelLabel(asiaL, str.format("Asia L: {0,number,#.#}%", getCondProbAsiaL(pattern, nyPos)), i_cAsia, i_labelSize)
+        lblAsiaMid := LStack.drawLevelLabel(asiaMid, str.format("Asia Mid: {0,number,#.#}%", getCondProbAsiaMid(pattern, nyPos)), i_cAsia, i_labelSize)
 
 // P12 levels (drawn when P12 closes)
 if i_showLevels and i_showP12 and not inP12 and inP12[1] and not na(p12H)
@@ -1173,6 +1250,7 @@ if i_showLevels and inNY
     extendLevel(lnLonMid, lblLonMid)
     extendLevel(lnAsiaH, lblAsiaH)
     extendLevel(lnAsiaL, lblAsiaL)
+    extendLevel(lnAsiaMid, lblAsiaMid)
     extendLevel(ln78Mid, lbl78Mid)
     extendLevel(ln730, lbl730)
     extendLevel(lnMnOpen, lblMnOpen)
@@ -1365,6 +1443,14 @@ if i_showDash and barstate.islast
         row := addRow(tbl, row, "Lon H", p.london_primary, getCondProbLonH(pattern, nyPos), hitLonH, sz, p)
     if not na(lonL)
         row := addRow(tbl, row, "Lon L", p.london_primary, getCondProbLonL(pattern, nyPos), hitLonL, sz, p)
+    if not na(lonMid)
+        row := addRow(tbl, row, "Lon Mid", p.london_primary, getCondProbLonMid(pattern, nyPos), hitLonMid, sz, p)
+    if not na(asiaMid)
+        row := addRow(tbl, row, "Asia Mid", p.asia_primary, getCondProbAsiaMid(pattern, nyPos), hitAsiaMid, sz, p)
+    if not na(asiaH)
+        row := addRow(tbl, row, "Asia H", p.asia_primary, getCondProbAsiaH(pattern, nyPos), hitAsiaH, sz, p)
+    if not na(asiaL)
+        row := addRow(tbl, row, "Asia L", p.asia_primary, getCondProbAsiaL(pattern, nyPos), hitAsiaL, sz, p)
     if not na(pdC)
         row := addRow(tbl, row, "Settlement", i_cPrior, getGlobalProb("Settlement"), hitPDC, sz, p)
     if not na(glxOpen)
@@ -1417,6 +1503,26 @@ if i_showDash and barstate.islast
         table.cell(tbl, 2, row, str.format("{0,number,00}:{1,number,00}", dayLH, dayLM), text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
         row += 1
 
+    // ── VVIX H/L section ──
+    table.cell(tbl, 0, row, "── VVIX ──", text_color=p.confirm, bgcolor=color.new(p.confirm, 85), text_size=sz)
+    table.merge_cells(tbl, 0, row, 2, row)
+    row += 1
+    
+    if not na(vvixH) //and not na(dayHH)
+        table.cell(tbl, 0, row, "VVIX H", text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(vvixH, "#.#"), text_color=p.bullish, bgcolor=p.bg_secondary, text_size=sz)
+       // table.cell(tbl, 2, row, str.format("{0,number,00}:{1,number,00}", dayHH, dayHM), text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    if not na(vvixL) //and not na(dayLH)
+        table.cell(tbl, 0, row, "VVIX L", text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(vvixL, "#.#"), text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
+       // table.cell(tbl, 2, row, str.format("{0,number,00}:{1,number,00}", dayLH, dayLM), text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
+    if not na(vvixC) //and not na(dayLH)
+        table.cell(tbl, 0, row, "VVIX Close", text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
+        table.cell(tbl, 1, row, str.tostring(vvixC, "#.#"), text_color=p.bearish, bgcolor=p.bg_secondary, text_size=sz)
+        //table.cell(tbl, 2, row, str.format("{0,number,00}:{1,number,00}", dayLH, dayLM), text_color=p.text_dim, bgcolor=p.bg_secondary, text_size=sz)
+        row += 1
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │  ALERTS                                                                     │
 // └─────────────────────────────────────────────────────────────────────────────┘
