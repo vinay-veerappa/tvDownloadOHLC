@@ -1,0 +1,1124 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © NQStats / Opening Range Strategy
+//
+// v2.0 - Generic Opening Range Retracement
+// - Fully generic opening range (8-10, 8-11, 8-12, etc)
+// - Session-based range definition (start/end hours + bias period hours)
+// - Retracement entry with configurable bias detection
+// - Entry window flexible and profile-driven
+// - Multi-TP scaling + market structure bias detection
+
+//@version=6
+strategy("Opening Range: Retracement Strategy v2.0", overlay=true,
+  initial_capital=3000, default_qty_type=strategy.fixed, default_qty_value=4,
+  pyramiding=0, process_orders_on_close=false, calc_on_every_tick=true,
+  commission_type=strategy.commission.cash_per_contract, commission_value=0.62,
+  slippage=1, margin_long=50, margin_short=50,
+  max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ═══════════════════════════════════════════════════════════════
+//  USER DEFINED TYPES
+// ═══════════════════════════════════════════════════════════════
+
+type SessionState
+    float   rangeOpen       // Opening price of range period
+    float   rangeHigh       // Range session high
+    float   rangeLow        // Range session low
+    int     rangeHighBar    // Bar index of range high
+    int     rangeLowBar     // Bar index of range low
+    int     rangeHighTime   // Timestamp of range high
+    int     rangeLowTime    // Timestamp of range low
+    float   q1High          // Q1 high (first 1.5 hrs of range)
+    float   q1Low           // Q1 low  (first 1.5 hrs of range)
+    float   biasHigh        // Bias period high (configurable start/end)
+    float   biasLow         // Bias period low  (configurable start/end)
+    int     biasHighBar     // Bar index of bias high
+    int     biasLowBar      // Bar index of bias low
+    int     biasHighTime    // Timestamp of bias high
+    int     biasLowTime     // Timestamp of bias low
+    float   biasCandleOpen  // Bias period candle open
+    float   biasCandleClose // Bias period candle close
+    bool    q2BrokeQ1High   // Q2 broke above Q1 high
+    bool    q2BrokeQ1Low    // Q2 broke below Q1 low
+    bool    biasPeriodBrokeHigh // Bias period broke above its high (structural signal)
+    bool    biasPeriodBrokeLow  // Bias period broke below its low (structural signal)
+    bool    setupBullish    // Bullish retracement setup
+    bool    setupBearish    // Bearish retracement setup
+    bool    entryPlaced     // Entry placed this session
+    bool    sessionActive   // Session is live
+    float   retraceLow      // Lowest point during retrace (for recovery tracking)
+    float   retraceHigh     // Highest point during retrace (for recovery tracking)
+    int     retraceBar      // Bar index of retrace extreme
+    bool    recoveryConfirmed  // Price has recovered from retrace
+    float   entryWindowLow   // Lowest low during entry window
+    float   entryWindowHigh  // Highest high during entry window
+    bool    strongSetupBull  // Strong bullish setup (price did NOT retrace to 50% during entry window)
+    bool    strongSetupBear  // Strong bearish setup (price did NOT retrace to 50% during entry window)
+
+type TradeState
+    float   entryPrice
+    float   stopLoss
+    float   tp1
+    float   tp2
+    float   tp3
+    float   initQty
+    float   retrace40
+    float   retrace50
+    float   retrace60
+    bool    tp1Hit
+    bool    tp2Hit
+    bool    tpRecalculated
+    bool    isLong
+
+// ═══════════════════════════════════════════════════════════════
+//  CONSTANTS
+// ═══════════════════════════════════════════════════════════════
+
+BULL_COLOR    = color.new(#26a69a, 0)
+BEAR_COLOR    = color.new(#ef5350, 0)
+ZONE_BULL     = color.new(#26a69a, 80)
+ZONE_BEAR     = color.new(#ef5350, 80)
+NEUTRAL_COLOR = color.new(#787b86, 0)
+TP1_COLOR     = color.new(#ff9800, 0)
+TP2_COLOR     = color.new(#2196f3, 0)
+TP3_COLOR     = color.new(#9c27b0, 0)
+SL_COLOR      = color.new(#f44336, 0)
+
+// ═══════════════════════════════════════════════════════════════
+//  INPUTS
+// ═══════════════════════════════════════════════════════════════
+
+// ── Backtest Window ──
+GRP_BT = "Backtest Window"
+i_startDate  = input.time(timestamp("2020-01-01 00:00"), "Start Date", group=GRP_BT)
+i_endDate    = input.time(timestamp("2030-12-31 23:59"), "End Date",   group=GRP_BT)
+
+// ── Opening Range Definition ──
+GRP_RANGE = "Opening Range Definition"
+i_rangeStartHour = input.int(8, "Range Start Hour (ET)", minval=0, maxval=23, group=GRP_RANGE,
+  tooltip="Hour when opening range begins (e.g., 8 for 8:00 AM ET)")
+i_rangeEndHour   = input.int(12, "Range End Hour (ET)", minval=0, maxval=23, group=GRP_RANGE,
+  tooltip="Hour when opening range ends (e.g., 12 for 12:00 PM ET)")
+i_biasStartHour = input.int(9, "Bias Period Start Hour (ET)", minval=0, maxval=23, group=GRP_RANGE,
+  tooltip="First trading hour for bias detection (e.g., 9 for 9:00 AM). Default 9 skips premarket.")
+i_biasEndHour = input.int(10, "Bias Period End Hour (ET)", minval=0, maxval=23, group=GRP_RANGE,
+  tooltip="End hour of bias detection period (inclusive). Default 10 gives 9:00-10:00 window.")
+i_rangeExtremeLo  = input.float(0.3, "Range Extreme Min % from Open", minval=0.05, step=0.05, group=GRP_RANGE,
+  tooltip="Minimum % move from range open for a valid extreme")
+i_rangeExtremeHi  = input.float(1.0, "Range Extreme Max % from Open", minval=0.2, step=0.1, group=GRP_RANGE,
+  tooltip="Maximum % move from range open for a valid extreme")
+
+// ── Time Gap Filter (optional, secondary) ──
+GRP_TIME = "Entry Window & Timing"
+i_useTimeGap   = input.bool(false, "Use Time Gap Filter", group=GRP_TIME,
+  tooltip="Enable to filter trades by time between range extremes. 120-240 min = 70%+ accuracy for wider ranges.")
+i_timeGapProfile = input.string("Retracement Execution", "Time Gap Profile",
+  options=["Retracement Execution", "Continuation Stats", "Custom"], group=GRP_TIME,
+  tooltip="Use Retracement profile for this strategy. Continuation profile is directional-stat focused.")
+i_entryWindowProfile = input.string("Manual", "Entry Window Profile",
+  options=["Manual"], group=GRP_TIME,
+  tooltip="Manual: Set entry start/end hours directly. This is flexible for any range.")
+i_minTimeGap   = input.int(120, "Minimum Time Gap (Minutes)", minval=60, maxval=240, group=GRP_TIME,
+  tooltip="Minimum time between range high and low formation. Adjust based on range width.")
+i_maxTimeGap   = input.int(240, "Maximum Time Gap (Minutes)", minval=120, maxval=360, group=GRP_TIME,
+  tooltip="Maximum time between range high and low formation.")
+i_entryStart   = input.int(12, "Entry Window Start Hour (ET)", minval=0, maxval=23, group=GRP_TIME,
+  tooltip="Start of entry window. Default 12:00 matches proven baseline.")
+i_entryStartMin = input.int(0, "Entry Window Start Minute", minval=0, maxval=59, group=GRP_TIME)
+i_entryEnd     = input.int(13, "Entry Window End Hour (ET)", minval=0, maxval=23, group=GRP_TIME,
+  tooltip="End of entry window. Default 13:30 matches proven baseline.")
+i_entryEndMin  = input.int(30, "Entry Window End Minute", minval=0, maxval=59, group=GRP_TIME)
+i_forceExitH   = input.int(15, "Force Exit Hour (ET)", minval=0, maxval=23, group=GRP_TIME)
+i_forceExitM   = input.int(45, "Force Exit Minute", minval=0, maxval=59, group=GRP_TIME)
+
+// ── Retracement Entry ──
+GRP_ENTRY = "Entry — Retracement Zone"
+i_retraceLo    = input.float(0.382, "Retracement Low  (Fib)", minval=0.2, maxval=0.5, step=0.01, group=GRP_ENTRY,
+  tooltip="Shallow end of retracement zone. Proven baseline uses 38.2%.")
+i_retraceHi    = input.float(0.618, "Retracement High (Fib)", minval=0.5, maxval=0.786, step=0.01, group=GRP_ENTRY,
+  tooltip="Deep end of retracement zone. Proven baseline uses 61.8%.")
+i_retraceMid   = input.float(0.50, "Retracement Target (Entry Limit)", minval=0.3, maxval=0.7, step=0.01, group=GRP_ENTRY,
+  tooltip="Entry limit level. Proven baseline uses 50%.")
+i_useLimit     = input.bool(true, "Use Limit Order (vs Market on Zone Touch)", group=GRP_ENTRY)
+i_requireRecovery = input.bool(false, "Require Fast Recovery (Within 30min)", group=GRP_ENTRY,
+  tooltip="Experimental. Keep OFF for baseline parity with earlier runs.")
+i_recoveryPct  = input.float(0.20, "Recovery Threshold (% back toward extreme)", minval=0.1, maxval=0.5, step=0.05, group=GRP_ENTRY,
+  tooltip="Price must recover this % of retrace to confirm entry. Default: 20%")
+
+// ── Risk Management ──
+GRP_RISK = "Risk Management"
+i_slMethod     = input.string("Below Range Extreme", "Stop Loss Method",
+  options=["Below Range Extreme", "Below 61.8% Retrace", "Fixed Points"], group=GRP_RISK)
+i_slBuffer     = input.float(5.0, "SL Buffer (Points beyond level)", minval=1.0, step=1.0, group=GRP_RISK,
+  tooltip="Extra points beyond the SL level for safety")
+i_slFixed      = input.float(25.0, "Fixed SL (Points, if Fixed selected)", minval=5.0, step=1.0, group=GRP_RISK)
+i_maxSL        = input.float(30.0, "Maximum SL Cap (Points)", minval=10.0, step=5.0, group=GRP_RISK,
+  tooltip="Absolute maximum SL regardless of method. Protects against wide AM ranges.")
+
+// ── Take Profit / Scaling ──
+GRP_TP = "Take Profit — Multi-TP Scaling"
+i_tp1Pct       = input.int(50, "TP1 — % of Position", minval=10, maxval=80, group=GRP_TP,
+  tooltip="Defensive scale: close this % at TP1")
+i_tp2Pct       = input.int(25, "TP2 — % of Position", minval=10, maxval=50, group=GRP_TP)
+i_tp3Pct       = input.int(25, "TP3 — % of Position", minval=10, maxval=50, group=GRP_TP)
+i_tp1Method    = input.string("Halfway Back", "TP1 Method",
+  options=["Halfway Back", "Range %", "Range Extreme Retest", "Fixed Points"], group=GRP_TP,
+  tooltip="Halfway Back = midpoint between entry and the range extreme we're targeting")
+i_tp1RangePct  = input.float(0.50, "TP1 Range % (if selected)", minval=0.1, maxval=1.0, step=0.05, group=GRP_TP,
+  tooltip="TP1 at this fraction of range. Long: Range Low + range*x. Short: Range High - range*x")
+i_tp1Fixed     = input.float(15.0, "TP1 Fixed Points (if Fixed)", minval=5.0, group=GRP_TP)
+i_tp2Method    = input.string("Range Extreme Retest", "TP2 Method",
+  options=["Range Extreme Retest", "Fixed Points"], group=GRP_TP)
+i_tp2Fixed     = input.float(30.0, "TP2 Fixed Points (if selected)", minval=5.0, group=GRP_TP)
+i_tp3Method    = input.string("PM Window Target", "TP3 Method",
+  options=["PM Window Target", "ADR Extension", "Fixed Points"], group=GRP_TP)
+i_tp3Fixed     = input.float(60.0, "TP3 Fixed Points (if Fixed)", minval=10.0, group=GRP_TP)
+i_trailActivate = input.float(20.0, "Trailing Stop Activation (Pts after TP1)", minval=5.0, group=GRP_TP)
+i_trailOffset  = input.float(12.0, "Trailing Stop Offset (Pts)", minval=3.0, group=GRP_TP)
+i_moveSLToBE   = input.bool(false, "Move SL to Breakeven After TP1", group=GRP_TP)
+i_beOffsetPts  = input.float(0.0, "Breakeven Offset (Pts)", minval=0.0, step=0.25, group=GRP_TP)
+
+// ── Entry Bias & Filters ──
+GRP_FILTER = "Entry Bias & Filters"
+i_useQ2Gate    = input.bool(false, "Use Q2 Break Filter", group=GRP_FILTER,
+  tooltip="When ON, bullish setups require Q2 to break Q1 High; bearish require Q2 to break Q1 Low.")
+i_useStrongSetupFilter = input.bool(false, "Use Strong Setup Filter (Retrace Avoidance)", group=GRP_FILTER,
+  tooltip="When ON, requires price to AVOID deep retracement to 50% level during entry window. 89% accuracy on 2020-2025 data. OFF = baseline. NOTE: Does NOT improve 2023-2026 period (market regime changed).")
+i_useFirstHourBias = input.bool(true, "Use First Hour Candle Bias", group=GRP_FILTER,
+  tooltip="When ON, bullish setups require bullish first-hour candle; bearish require bearish first-hour candle.")
+i_useRangeBias = input.bool(true, "Use Range Bias", group=GRP_FILTER,
+  tooltip="When ON, trade direction must match range direction (which extreme formed last). When OFF, range direction is ignored.")
+i_useRangeMidConfirm = input.bool(true, "Add Midpoint Confirmation", group=GRP_FILTER,
+  tooltip="When ON (and Range Bias is ON), also requires close to be on the correct side of the range midpoint. Adds directional filter.")
+i_rangeBiasSource = input.string("Range Bias", "Range Bias Source",
+  options=["Range Bias"], group=GRP_FILTER,
+  tooltip="Uses configurable opening range extremes for directional bias.")
+i_useGapFilter = input.bool(false, "Use Gap Filter (skip large gaps)", group=GRP_FILTER)
+i_gapThreshold = input.float(0.3, "Gap Threshold (%)", minval=0.1, step=0.05, group=GRP_FILTER)
+i_useMktStruct = input.bool(false, "Use Market Structure Bias", group=GRP_FILTER,
+  tooltip="Longs require bullish structure and shorts require bearish structure.")
+i_structPivotLen = input.int(3, "Structure Pivot Length", minval=2, maxval=10, group=GRP_FILTER)
+i_requireConfirmedBias = input.bool(true, "Require Confirmed Bias (No Neutral Trades)", group=GRP_FILTER,
+  tooltip="When enabled, only trade when structure is clearly bullish or bearish.")
+
+// ── Daily Risk ──
+GRP_DAILY = "Daily Risk Limits"
+i_maxDailyLoss = input.float(300.0, "Max Daily Loss ($)", minval=50.0, group=GRP_DAILY)
+i_maxTrades    = input.int(1, "Max Trades Per Day", minval=1, maxval=3, group=GRP_DAILY)
+
+// ── Visuals ──
+GRP_VIS = "Visual Settings"
+i_showZone     = input.bool(true, "Show Retracement Zone", group=GRP_VIS)
+i_showLevels   = input.bool(true, "Show TP/SL Levels", group=GRP_VIS)
+i_showTable    = input.bool(true, "Show Dashboard Table", group=GRP_VIS)
+i_tablePos     = input.string("Top Right", "Table Position",
+  options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group=GRP_VIS)
+i_tableSize    = input.string("normal", "Table Text Size",
+  options=["tiny", "small", "normal", "large"], group=GRP_VIS)
+
+// ── Debug ──
+GRP_DBG = "Debug Diagnostics"
+i_dbgEnable    = input.bool(false, "Enable Debug Diagnostics", group=GRP_DBG,
+  tooltip="Adds debug rows to the dashboard table and enables debug plots.")
+
+// ═══════════════════════════════════════════════════════════════
+//  HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════
+
+f_nyHour() => hour(time, "America/New_York")
+f_nyMinute() => minute(time, "America/New_York")
+f_nyDay() => dayofmonth(time, "America/New_York")
+
+f_inSession(string sess) =>
+    not na(time(timeframe.period, sess, "America/New_York"))
+
+f_isNewDay() =>
+    f_nyDay() != f_nyDay()[1]
+
+f_pctFromRef(float price, float ref) =>
+    ref != 0 ? ((price - ref) / ref) * 100.0 : 0.0
+
+f_tablePos(string pos) =>
+    switch pos
+        "Top Left"     => position.top_left
+        "Top Right"    => position.top_right
+        "Bottom Left"  => position.bottom_left
+        "Bottom Right" => position.bottom_right
+
+f_tableSize(string sz) =>
+    switch sz
+        "tiny"  => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+
+// ═══════════════════════════════════════════════════════════════
+//  TIME DETECTION
+// ═══════════════════════════════════════════════════════════════
+
+nyH = f_nyHour()
+nyM = f_nyMinute()
+newDay = f_isNewDay()
+atr14 = ta.atr(14)
+
+// Create dynamic sessions using time comparisons (simpler than string building)
+// in_range: active during the configured range period (e.g., 8:00-12:00)
+// in_biasPeriod: active during bias detection period (e.g., 9:00-10:00 for IB-style detection)
+in_range = (nyH >= i_rangeStartHour and nyH < i_rangeEndHour) or (nyH == i_rangeEndHour and nyM == 0)
+in_biasPeriod = (nyH >= i_biasStartHour and nyH < i_biasEndHour) or (nyH == i_biasEndHour and nyM == 0)
+in_premarket  = f_inSession("0800-0930:23456")
+in_rth        = f_inSession("0930-1600:23456")
+in_full       = f_inSession("0800-1600:23456")
+
+// Entry window (manual configuration for flexibility)
+int nyTotalMin = nyH * 60 + nyM
+int entryStartMin = i_entryStart * 60 + i_entryStartMin
+int entryEndMin = i_entryEnd * 60 + i_entryEndMin
+in_entryWindow = nyTotalMin >= entryStartMin and nyTotalMin <= entryEndMin
+entryWindowOpen = in_entryWindow and not in_entryWindow[1]
+
+// Force exit (robust across timeframes).
+// True on the bar that crosses the force-exit timestamp in NY time.
+int nyYear = year(time, "America/New_York")
+int nyMonth = month(time, "America/New_York")
+int nyDom = dayofmonth(time, "America/New_York")
+int forceExitTs = timestamp("America/New_York", nyYear, nyMonth, nyDom, i_forceExitH, i_forceExitM)
+is_forceExit = in_full and time <= forceExitTs and time_close >= forceExitTs
+
+// Detect 8AM open
+is_8am = nyH == 8 and nyM == 0 and nyH[1] != 8
+
+// Detect 9AM close / 10AM open
+is_10am = nyH == 10 and nyM == 0 and (nyH[1] == 9 or (nyH[1] == 10 and nyM[1] != 0) == false)
+
+// ═══════════════════════════════════════════════════════════════
+//  SESSION STATE TRACKING
+// ═══════════════════════════════════════════════════════════════
+
+var SessionState ss = SessionState.new()
+var TradeState   ts = TradeState.new()
+var int dailyTrades = 0
+var float dayStartEquity = 0.0
+var int dbgEodCloseCalls = 0
+var int dbgRolloverCloseCalls = 0
+var int dbgLastEodCloseBar = na
+var int dbgLastRolloverBar = na
+var float msLastHigh = na
+var float msPrevHigh = na
+var float msLastLow = na
+var float msPrevLow = na
+var int msLastHighBar = na
+var int msLastLowBar = na
+var bool msLastWasHigh = false
+var bool msLastWasLow = false
+var bool msBOSUp = false
+var bool msBOSDown = false
+var int msBias = 0 // 1 bullish, -1 bearish, 0 neutral
+var string msBiasReason = "INIT"
+var string entryDiagMode = "NA"
+var string entryDiagRange = "NA"
+var string entryDiagBull = "NA"
+var string entryDiagBear = "NA"
+var string entryDiagFinal = "NA"
+
+// Hard safety: never carry an overnight position.
+if newDay and strategy.opentrades > 0
+    dbgRolloverCloseCalls += 1
+    dbgLastRolloverBar := bar_index
+    strategy.cancel_all()
+    strategy.close_all(comment="Day Rollover Safety", immediately=true)
+
+// ── Daily Reset ──
+if newDay
+    ss := SessionState.new(
+      rangeOpen=na, rangeHigh=na, rangeLow=na, rangeHighBar=na, rangeLowBar=na, rangeHighTime=na, rangeLowTime=na,
+      q1High=na, q1Low=na,
+      biasHigh=na, biasLow=na, biasHighBar=na, biasLowBar=na, biasHighTime=na, biasLowTime=na,
+      biasCandleOpen=na, biasCandleClose=na,
+      q2BrokeQ1High=false, q2BrokeQ1Low=false,
+      biasPeriodBrokeHigh=false, biasPeriodBrokeLow=false,
+      setupBullish=false, setupBearish=false,
+      entryPlaced=false, sessionActive=true,
+      retraceLow=na, retraceHigh=na, retraceBar=na, recoveryConfirmed=false,
+      entryWindowLow=na, entryWindowHigh=na,
+      strongSetupBull=false, strongSetupBear=false)
+    ts := TradeState.new(
+      entryPrice=na, stopLoss=na, tp1=na, tp2=na, tp3=na, initQty=na,
+      retrace40=na, retrace50=na, retrace60=na,
+      tp1Hit=false, tp2Hit=false, tpRecalculated=false, isLong=false)
+    dailyTrades := 0
+    dayStartEquity := strategy.equity
+    msLastHigh := na
+    msPrevHigh := na
+    msLastLow := na
+    msPrevLow := na
+    msLastHighBar := na
+    msLastLowBar := na
+    msBias := 0
+    msBiasReason := "RESET"
+    entryDiagMode := "NA"
+    entryDiagRange := "NA"
+    entryDiagBull := "NA"
+    entryDiagBear := "NA"
+    entryDiagFinal := "NA"
+
+// ── Range Open Detection ──
+// True at the exact start time of the range
+bool is_rangeOpen = (nyH == i_rangeStartHour and nyM == 0 and nyH[1] != i_rangeStartHour) or (na(ss.rangeOpen) and in_range)
+
+if is_rangeOpen or (na(ss.rangeOpen) and nyH == i_rangeStartHour and nyM == 0)
+    ss.rangeOpen := open
+
+// ── Track Range High/Low (during range period) ──
+if in_range and not na(ss.rangeOpen)
+    if na(ss.rangeHigh) or high > ss.rangeHigh
+        ss.rangeHigh    := high
+        ss.rangeHighBar := bar_index
+        ss.rangeHighTime := time
+    if na(ss.rangeLow) or low < ss.rangeLow
+        ss.rangeLow    := low
+        ss.rangeLowBar := bar_index
+        ss.rangeLowTime := time
+
+// ── Track Bias Period High/Low (configurable start/end hours) ──
+if in_biasPeriod
+    if na(ss.biasHigh) or high > ss.biasHigh
+        ss.biasHigh := high
+        ss.biasHighBar := bar_index
+        ss.biasHighTime := time
+    if na(ss.biasLow) or low < ss.biasLow
+        ss.biasLow := low
+        ss.biasLowBar := bar_index
+        ss.biasLowTime := time
+
+// ── Dynamic quarter model for the configured range window ──
+// Q1 = first quarter of range duration, Q2 = second quarter.
+int rangeStartMinDay = i_rangeStartHour * 60
+int rangeEndMinDay = i_rangeEndHour * 60
+int rangeDurRawMin = rangeEndMinDay - rangeStartMinDay
+int rangeDurMin = rangeDurRawMin > 0 ? rangeDurRawMin : rangeDurRawMin + 24 * 60
+int elapsedFromRangeStartRaw = nyTotalMin - rangeStartMinDay
+int elapsedFromRangeStart = elapsedFromRangeStartRaw >= 0 ? elapsedFromRangeStartRaw : elapsedFromRangeStartRaw + 24 * 60
+bool inRangeWindowForQuarters = elapsedFromRangeStart >= 0 and elapsedFromRangeStart < rangeDurMin
+int quarterLenMin = math.max(1, int(math.floor(rangeDurMin / 4.0)))
+
+// ── Track Q1 High/Low (first quarter of range window) ──
+bool in_q1 = inRangeWindowForQuarters and elapsedFromRangeStart < quarterLenMin
+if in_q1
+    if na(ss.q1High) or high > ss.q1High
+        ss.q1High := high
+    if na(ss.q1Low) or low < ss.q1Low
+        ss.q1Low := low
+
+// ── Track Bias Period Candle (e.g., 9 AM hour for IB-style detection) ──
+if nyH == i_biasStartHour and nyM == 0 and na(ss.biasCandleOpen)
+    ss.biasCandleOpen := open
+if nyH == i_biasStartHour
+    ss.biasCandleClose := close
+
+// ── Q2 Break Detection (second quarter breaks Q1 extremes) ──
+bool in_q2 = inRangeWindowForQuarters and elapsedFromRangeStart >= quarterLenMin and elapsedFromRangeStart < quarterLenMin * 2
+if in_q2 and not na(ss.q1High) and not na(ss.q1Low)
+    if high > ss.q1High
+        ss.q2BrokeQ1High := true
+    if low < ss.q1Low
+        ss.q2BrokeQ1Low := true
+
+// ═══════════════════════════════════════════════════════════════
+//  MARKET STRUCTURE BIAS (Trend Continuation Filter)
+// ═══════════════════════════════════════════════════════════════
+
+// Fast asymmetric pivots: left strength = i_structPivotLen, right confirmation = 1 bar.
+// This is much less laggy than symmetric pivots while remaining stable.
+float msPivotHighFast = ta.pivothigh(high, i_structPivotLen, 1)
+float msPivotLowFast = ta.pivotlow(low, i_structPivotLen, 1)
+
+if in_full and not na(msPivotHighFast)
+    msPrevHigh := msLastHigh
+    msLastHigh := msPivotHighFast
+    // right=1 confirms pivot on prior bar
+    msLastHighBar := bar_index - 1
+if in_full and not na(msPivotLowFast)
+    msPrevLow := msLastLow
+    msLastLow := msPivotLowFast
+    // right=1 confirms pivot on prior bar
+    msLastLowBar := bar_index - 1
+
+bool msBullStruct = not na(msLastHigh) and not na(msPrevHigh) and not na(msLastLow) and not na(msPrevLow) and msLastHigh > msPrevHigh and msLastLow > msPrevLow
+bool msBearStruct = not na(msLastHigh) and not na(msPrevHigh) and not na(msLastLow) and not na(msPrevLow) and msLastHigh < msPrevHigh and msLastLow < msPrevLow
+msBOSUp := not na(msLastHigh) and close > msLastHigh
+msBOSDown := not na(msLastLow) and close < msLastLow
+bool msHasLastExtreme = not na(msLastHighBar) and not na(msLastLowBar)
+msLastWasHigh := msHasLastExtreme and msLastHighBar > msLastLowBar
+msLastWasLow := msHasLastExtreme and msLastLowBar > msLastHighBar
+
+// Hardened bias: require BOS + matching structure to avoid one-candle false flips.
+if msBOSUp and msBullStruct and not msBOSDown
+    msBias := 1
+    msBiasReason := "BOS_UP+HHHL"
+else if msBOSDown and msBearStruct and not msBOSUp
+    msBias := -1
+    msBiasReason := "BOS_DN+LHLL"
+else if msBullStruct and not msBearStruct
+    msBias := 1
+    msBiasReason := "HHHL"
+else if msBearStruct and not msBullStruct
+    msBias := -1
+    msBiasReason := "LHLL"
+// Additional directional rule requested:
+// If HIGH is made last => bias bullish (toward highs)
+// If LOW is made last => bias bearish (toward lows)
+else if msLastWasHigh
+    msBias := 1
+    msBiasReason := "LAST_HIGH_DIR"
+else if msLastWasLow
+    msBias := -1
+    msBiasReason := "LAST_LOW_DIR"
+else
+    msBias := 0
+    msBiasReason := "NEUTRAL"
+
+bool allowLongStruct = not i_useMktStruct or (i_requireConfirmedBias ? msBias == 1 : msBias != -1)
+bool allowShortStruct = not i_useMktStruct or (i_requireConfirmedBias ? msBias == -1 : msBias != 1)
+
+// ═══════════════════════════════════════════════════════════════
+//  GAP FILTER (computed once per day at entry window)
+// ═══════════════════════════════════════════════════════════════
+
+bool passGapFilter = true
+if i_useGapFilter
+    [dOpen, dPrevClose] = request.security(syminfo.tickerid, "D", [open, close[1]], lookahead=barmerge.lookahead_on)
+    float gapPct = dPrevClose != 0 ? math.abs((dOpen - dPrevClose) / dPrevClose) * 100 : 0
+    passGapFilter := gapPct < i_gapThreshold
+
+// ═══════════════════════════════════════════════════════════════
+//  ENTRY WINDOW TRACKING (for strong setup filter)
+// ═══════════════════════════════════════════════════════════════
+
+// Track entry window extremes for strong setup detection
+if entryWindowOpen
+    // Reset tracking at start of entry window
+    ss.entryWindowLow := low
+    ss.entryWindowHigh := high
+else if in_entryWindow
+    // Update extremes during entry window
+    if na(ss.entryWindowLow) or low < ss.entryWindowLow
+        ss.entryWindowLow := low
+    if na(ss.entryWindowHigh) or high > ss.entryWindowHigh
+        ss.entryWindowHigh := high
+
+// ═══════════════════════════════════════════════════════════════
+//  SETUP DETECTION
+// ═══════════════════════════════════════════════════════════════
+
+// Detect valid bullish/bearish setups at the start of the entry window
+if in_entryWindow and not ss.entryPlaced and ss.sessionActive
+
+    float setupRangeHigh = ss.rangeHigh
+    float setupRangeLow = ss.rangeLow
+    int setupRangeHighBar = ss.rangeHighBar
+    int setupRangeLowBar = ss.rangeLowBar
+    int setupRangeHighTime = ss.rangeHighTime
+    int setupRangeLowTime = ss.rangeLowTime
+    bool setupRangeReady = not na(setupRangeHigh) and not na(setupRangeLow) and setupRangeHigh != setupRangeLow and not na(setupRangeHighBar) and not na(setupRangeLowBar)
+    
+    // Time-gap threshold - time between high and low formation
+    float tgMin = i_timeGapProfile == "Continuation Stats" ? 120.0 : i_timeGapProfile == "Retracement Execution" ? 90.0 : i_minTimeGap
+    float tgMax = i_timeGapProfile == "Continuation Stats" ? 240.0 : i_timeGapProfile == "Retracement Execution" ? 210.0 : i_maxTimeGap
+    float timeGapMinutes = (setupRangeReady and not na(setupRangeHighTime) and not na(setupRangeLowTime)) ? math.abs(setupRangeHighTime - setupRangeLowTime) / 60000 : 0
+    bool passTimeGap = not i_useTimeGap or (timeGapMinutes >= tgMin and timeGapMinutes <= tgMax)
+    
+    float setupMid = setupRangeReady ? (setupRangeHigh + setupRangeLow) / 2.0 : na
+    bool setupRangeBull = setupRangeReady and setupRangeHighBar > setupRangeLowBar
+    bool setupRangeBear = setupRangeReady and setupRangeLowBar > setupRangeHighBar
+    bool setupMidBull = setupRangeReady and close > setupMid
+    bool setupMidBear = setupRangeReady and close < setupMid
+    
+    // Strong setup evaluation: did entry window extremes avoid 50% retrace?
+    // BULL: entry window LOW must stay ABOVE 50% retrace (no deep weakness)
+    // BEAR: entry window HIGH must stay BELOW 50% retrace (no deep strength)
+    float rangeRange_setup = setupRangeReady ? setupRangeHigh - setupRangeLow : na
+    float bullRetrace50_setup = setupRangeReady ? setupRangeHigh - rangeRange_setup * 0.50 : na
+    float bearRetrace50_setup = setupRangeReady ? setupRangeLow + rangeRange_setup * 0.50 : na
+    
+    // Check if entry window extremes stayed on right side of 50% level
+    if setupRangeReady and not na(ss.entryWindowLow) and not na(ss.entryWindowHigh)
+        // BULL: lowest low during entry window stayed ABOVE 50% retrace
+        if not na(bullRetrace50_setup) and ss.entryWindowLow > bullRetrace50_setup
+            ss.strongSetupBull := true
+        // BEAR: highest high during entry window stayed BELOW 50% retrace
+        if not na(bearRetrace50_setup) and ss.entryWindowHigh < bearRetrace50_setup
+            ss.strongSetupBear := true
+    
+    // Q2 break gate (optional filter - detects if price broke above/below Q1 extremes)
+    bool gateQ2Bull = not i_useQ2Gate or ss.q2BrokeQ1High
+    bool gateQ2Bear = not i_useQ2Gate or ss.q2BrokeQ1Low
+    
+    // Bias period candle bias gate (e.g., 9 AM candle for IB-style)
+    bool gateFirstHourBull = true
+    bool gateFirstHourBear = true
+    if i_useFirstHourBias and not na(ss.biasCandleOpen) and not na(ss.biasCandleClose)
+        bool biasGreen = ss.biasCandleClose > ss.biasCandleOpen
+        gateFirstHourBull := biasGreen
+        gateFirstHourBear := not biasGreen
+
+    // Range bias gate
+    bool midConfirm = i_useRangeBias and i_useRangeMidConfirm
+    bool gateRangeBull = not i_useRangeBias or (setupRangeBull and (not midConfirm or setupMidBull))
+    bool gateRangeBear = not i_useRangeBias or (setupRangeBear and (not midConfirm or setupMidBear))
+
+    // Structure gate
+    bool gateStructBull = allowLongStruct
+    bool gateStructBear = allowShortStruct
+
+    // Gap filter gate
+    bool gateGap = passGapFilter
+    
+    // Time gap filter gate
+    bool gateTimeGap = passTimeGap
+
+    // Strong setup gates (only check if filter is enabled)
+    bool gateStrongBull = not i_useStrongSetupFilter or ss.strongSetupBull
+    bool gateStrongBear = not i_useStrongSetupFilter or ss.strongSetupBear
+
+    // Bullish: Range Low set → expect retracement UP from low then higher high
+    bool bullValid = gateQ2Bull and gateStructBull and gateRangeBull and gateFirstHourBull and gateGap and gateTimeGap and gateStrongBull and not na(ss.rangeLow) and not na(ss.rangeHigh) and ss.rangeHigh > ss.rangeLow
+    if bullValid
+        ss.setupBullish := true
+
+    // Bearish: Range High set → expect retracement DOWN from high then lower low
+    bool bearValid = gateQ2Bear and gateStructBear and gateRangeBear and gateFirstHourBear and gateGap and gateTimeGap and gateStrongBear and not na(ss.rangeHigh) and not na(ss.rangeLow) and ss.rangeHigh > ss.rangeLow
+    if bearValid
+        ss.setupBearish := true
+
+    // If both, pick bullish (tie-break)
+    if ss.setupBullish and ss.setupBearish
+        ss.setupBearish := false
+
+    string setupSide = setupRangeReady ? (close > setupMid ? "ABOVE" : close < setupMid ? "BELOW" : "ON") : "NA"
+    string setupRangeDir = setupRangeBull ? "BULL" : setupRangeBear ? "BEAR" : "NEUTRAL"
+    entryDiagMode := (i_useRangeBias ? "Range" : "") +
+      (i_useRangeMidConfirm ? "+Mid" : "") +
+      (i_useMktStruct ? "+Struct" : "") +
+      (i_useQ2Gate ? "+Q2" : "") +
+      (i_useFirstHourBias ? "+H1" : "") +
+      (i_useGapFilter ? "+Gap" : "") +
+      "+Win(" + str.tostring(entryStartMin / 60, "#") + ":" + str.tostring(entryStartMin % 60, "00") + "-" + str.tostring(entryEndMin / 60, "#") + ":" + str.tostring(entryEndMin % 60, "00") + ")" +
+      (i_useTimeGap ? "+TimeGap(" + str.tostring(tgMin, "#") + "-" + str.tostring(tgMax, "#") + "m)" : "")
+    if str.length(entryDiagMode) == 0
+        entryDiagMode := "NO_FILTERS"
+    entryDiagRange := "H=" + (not na(setupRangeHigh) ? str.tostring(setupRangeHigh, "#.##") : "NA") +
+      " L=" + (not na(setupRangeLow) ? str.tostring(setupRangeLow, "#.##") : "NA") +
+      " Dir=" + setupRangeDir +
+      " Mid=" + (setupRangeReady ? str.tostring(setupMid, "#.##") : "NA") +
+      " C=" + str.tostring(close, "#.##") + " [" + setupSide + "]"
+    entryDiagBull := "Bull" +
+      " Q2=" + (not i_useQ2Gate ? "OFF" : gateQ2Bull ? "PASS" : "FAIL") +
+      " Struct=" + (gateStructBull ? "PASS" : "FAIL") +
+      " Range=" + (not i_useRangeBias ? "OFF" : setupRangeBull ? "PASS" : "FAIL") +
+      " Mid=" + (not midConfirm ? "OFF" : setupMidBull ? "PASS" : "FAIL") +
+      " H1=" + (not i_useFirstHourBias ? "OFF" : gateFirstHourBull ? "PASS" : "FAIL") +
+      " Gap=" + (not i_useGapFilter ? "OFF" : gateGap ? "PASS" : "FAIL") +
+      (i_useTimeGap ? " TimeGap=" + (gateTimeGap ? "PASS(" + str.tostring(timeGapMinutes, "#") + "m)" : "FAIL") : "")
+    entryDiagBear := "Bear" +
+      " Q2=" + (not i_useQ2Gate ? "OFF" : gateQ2Bear ? "PASS" : "FAIL") +
+      " Struct=" + (gateStructBear ? "PASS" : "FAIL") +
+      " Range=" + (not i_useRangeBias ? "OFF" : setupRangeBear ? "PASS" : "FAIL") +
+      " Mid=" + (not midConfirm ? "OFF" : setupMidBear ? "PASS" : "FAIL") +
+      " H1=" + (not i_useFirstHourBias ? "OFF" : gateFirstHourBear ? "PASS" : "FAIL") +
+      " Gap=" + (not i_useGapFilter ? "OFF" : gateGap ? "PASS" : "FAIL") +
+      (i_useTimeGap ? " TimeGap=" + (gateTimeGap ? "PASS(" + str.tostring(timeGapMinutes, "#") + "m)" : "FAIL") : "")
+    entryDiagFinal := "Final Bull=" + (ss.setupBullish ? "YES" : "NO") +
+      " Bear=" + (ss.setupBearish ? "YES" : "NO")
+
+// ═══════════════════════════════════════════════════════════════
+//  RETRACEMENT ZONE CALCULATION
+// ═══════════════════════════════════════════════════════════════
+
+float rangeRange = not na(ss.rangeHigh) and not na(ss.rangeLow) ? ss.rangeHigh - ss.rangeLow : na
+
+// Bullish: entry on pullback DOWN from Range High
+float bullRetrace40 = not na(ss.rangeHigh) and not na(rangeRange) ? ss.rangeHigh - rangeRange * i_retraceLo : na
+float bullRetrace50 = not na(ss.rangeHigh) and not na(rangeRange) ? ss.rangeHigh - rangeRange * i_retraceMid : na
+float bullRetrace60 = not na(ss.rangeHigh) and not na(rangeRange) ? ss.rangeHigh - rangeRange * i_retraceHi : na
+
+// Bearish: entry on pullback UP from Range Low
+float bearRetrace40 = not na(ss.rangeLow) and not na(rangeRange) ? ss.rangeLow + rangeRange * i_retraceLo : na
+float bearRetrace50 = not na(ss.rangeLow) and not na(rangeRange) ? ss.rangeLow + rangeRange * i_retraceMid : na
+float bearRetrace60 = not na(ss.rangeLow) and not na(rangeRange) ? ss.rangeLow + rangeRange * i_retraceHi : na
+
+// ═══════════════════════════════════════════════════════════════
+//  STOP LOSS CALCULATION
+// ═══════════════════════════════════════════════════════════════
+
+f_calcSL(bool isLong, float rangeLow, float rangeHigh, float retrace618, float entryPrice) =>
+    float sl = na
+    if i_slMethod == "Below Range Extreme"
+        sl := isLong ? rangeLow - i_slBuffer : rangeHigh + i_slBuffer
+    else if i_slMethod == "Below 61.8% Retrace"
+        sl := isLong ? retrace618 - i_slBuffer : retrace618 + i_slBuffer
+    else // Fixed Points
+        sl := isLong ? entryPrice - i_slFixed : entryPrice + i_slFixed
+
+    // Apply maximum cap
+    if isLong
+        float maxSLPrice = entryPrice - i_maxSL
+        sl := math.max(sl, maxSLPrice)
+    else
+        float maxSLPrice = entryPrice + i_maxSL
+        sl := math.min(sl, maxSLPrice)
+    sl
+
+// ═══════════════════════════════════════════════════════════════
+//  TAKE PROFIT CALCULATION
+// ═══════════════════════════════════════════════════════════════
+
+f_calcTP1(bool isLong, float entryPrice, float rangeHigh, float rangeLow, float rangeRange) =>
+    float tp = na
+    if i_tp1Method == "Halfway Back"
+        // Halfway between entry and the range extreme we're targeting
+        tp := isLong ? entryPrice + (rangeHigh - entryPrice) * 0.5 : entryPrice - (entryPrice - rangeLow) * 0.5
+    else if i_tp1Method == "Range %"
+        tp := isLong ? rangeLow + rangeRange * i_tp1RangePct : rangeHigh - rangeRange * i_tp1RangePct
+    else if i_tp1Method == "Range Extreme Retest"
+        tp := isLong ? rangeHigh : rangeLow
+    else // Fixed
+        tp := isLong ? entryPrice + i_tp1Fixed : entryPrice - i_tp1Fixed
+    tp
+
+f_calcTP2(bool isLong, float entryPrice, float rangeHigh, float rangeLow) =>
+    float tp = na
+    if i_tp2Method == "Range Extreme Retest"
+        tp := isLong ? rangeHigh : rangeLow
+    else // Fixed Points
+        tp := isLong ? entryPrice + i_tp2Fixed : entryPrice - i_tp2Fixed
+    tp
+
+f_calcTP3(bool isLong, float entryPrice, float rangeHigh, float rangeLow, float rangeRange) =>
+    float tp = na
+    if i_tp3Method == "PM Window Target"
+        // Target = range extreme + extension (the new PM extreme)
+        tp := isLong ? rangeHigh + rangeRange * 0.382 : rangeLow - rangeRange * 0.382
+    else if i_tp3Method == "ADR Extension"
+        tp := isLong ? rangeHigh + rangeRange * 0.618 : rangeLow - rangeRange * 0.618
+    else // Fixed
+        tp := isLong ? entryPrice + i_tp3Fixed : entryPrice - i_tp3Fixed
+    tp
+
+// ═══════════════════════════════════════════════════════════════
+//  STRATEGY EXECUTION
+// ═══════════════════════════════════════════════════════════════
+
+bool inBacktest = time >= i_startDate and time <= i_endDate
+bool dailyLossHit = (dayStartEquity - strategy.equity) > i_maxDailyLoss
+bool canTrade = inBacktest and not dailyLossHit and dailyTrades < i_maxTrades and strategy.opentrades == 0
+
+// ── ENTRY LOGIC ──
+if in_entryWindow and not ss.entryPlaced and canTrade
+
+    // BULLISH ENTRY
+    if ss.setupBullish and not na(bullRetrace50) and not na(bullRetrace60) and not na(ss.rangeHigh)
+        // Check if price is in or approaching the retracement zone
+        bool inZone = low <= bullRetrace40 and high >= bullRetrace60
+
+        if i_useLimit
+            // Place resting limit at 50% retrace (proven baseline behavior)
+            strategy.entry("NC_Long", strategy.long, limit=bullRetrace50,
+              comment="NC Long")
+            ss.entryPlaced := true
+        else if inZone
+            // Market order when price touches zone
+            strategy.entry("NC_Long", strategy.long,
+              comment="NC Long")
+            ss.entryPlaced := true
+
+        if ss.entryPlaced
+            ts.isLong     := true
+            ts.retrace40  := bullRetrace40
+            ts.retrace50  := bullRetrace50
+            ts.retrace60  := bullRetrace60
+            ts.entryPrice := bullRetrace50
+            ts.stopLoss   := f_calcSL(true, ss.rangeLow, ss.rangeHigh, bullRetrace60, bullRetrace50)
+            ts.tp1        := f_calcTP1(true, bullRetrace50, ss.rangeHigh, ss.rangeLow, rangeRange)
+            ts.tp2        := f_calcTP2(true, bullRetrace50, ss.rangeHigh, ss.rangeLow)
+            ts.tp3        := f_calcTP3(true, bullRetrace50, ss.rangeHigh, ss.rangeLow, rangeRange)
+            ts.initQty    := na
+            ts.tp1Hit     := false
+            ts.tp2Hit     := false
+            ts.tpRecalculated := false
+            dailyTrades  += 1
+
+    // BEARISH ENTRY
+    else if ss.setupBearish and not na(bearRetrace50) and not na(bearRetrace60) and not na(ss.rangeLow)
+        bool inZone = high >= bearRetrace40 and low <= bearRetrace60
+
+        if i_useLimit
+            strategy.entry("NC_Short", strategy.short, limit=bearRetrace50,
+              comment="NC Short")
+            ss.entryPlaced := true
+        else if inZone
+            strategy.entry("NC_Short", strategy.short,
+              comment="NC Short")
+            ss.entryPlaced := true
+
+        if ss.entryPlaced
+            ts.isLong     := false
+            ts.retrace40  := bearRetrace40
+            ts.retrace50  := bearRetrace50
+            ts.retrace60  := bearRetrace60
+            ts.entryPrice := bearRetrace50
+            ts.stopLoss   := f_calcSL(false, ss.rangeLow, ss.rangeHigh, bearRetrace60, bearRetrace50)
+            ts.tp1        := f_calcTP1(false, bearRetrace50, ss.rangeHigh, ss.rangeLow, rangeRange)
+            ts.tp2        := f_calcTP2(false, bearRetrace50, ss.rangeHigh, ss.rangeLow)
+            ts.tp3        := f_calcTP3(false, bearRetrace50, ss.rangeHigh, ss.rangeLow, rangeRange)
+            ts.initQty    := na
+            ts.tp1Hit     := false
+            ts.tp2Hit     := false
+            ts.tpRecalculated := false
+            dailyTrades  += 1
+
+// ── EXIT MANAGEMENT (Multi-TP) ──
+// Architecture: Dedicated SL exit (full position) + limit-only TP exits (partial).
+// TP hit state is tracked by real position reduction (with price-touch fallback).
+if strategy.opentrades > 0
+
+    float actualEntry = strategy.opentrades.entry_price(0)
+    float posSize = math.abs(strategy.position_size)
+    if na(ts.initQty) and posSize > 0
+        ts.initQty := posSize
+
+    // Recalculate TP/SL based on ACTUAL fill price (not intended limit price)
+    if not ts.tpRecalculated
+        ts.entryPrice := actualEntry
+        ts.stopLoss := f_calcSL(ts.isLong, ss.rangeLow, ss.rangeHigh, ts.retrace60, actualEntry)
+        ts.tp1 := f_calcTP1(ts.isLong, actualEntry, ss.rangeHigh, ss.rangeLow, rangeRange)
+        ts.tp2 := f_calcTP2(ts.isLong, actualEntry, ss.rangeHigh, ss.rangeLow)
+        ts.tp3 := f_calcTP3(ts.isLong, actualEntry, ss.rangeHigh, ss.rangeLow, rangeRange)
+        ts.tpRecalculated := true
+
+    float qtyBase = not na(ts.initQty) ? ts.initQty : posSize
+    int tp1Qty = math.max(1, math.round(qtyBase * i_tp1Pct / 100.0))
+    int tp2Qty = math.max(1, math.round(qtyBase * i_tp2Pct / 100.0))
+    float tp1SizeThreshold = math.max(0.0, qtyBase - tp1Qty)
+    float tp2SizeThreshold = math.max(0.0, qtyBase - tp1Qty - tp2Qty)
+
+    if ts.isLong
+        // Calculate current SL (with optional BE move after TP1)
+        float currentSL = ts.stopLoss
+        if i_moveSLToBE and ts.tp1Hit
+            float bePrice = actualEntry + i_beOffsetPts
+            currentSL := math.max(ts.stopLoss, bePrice)
+
+        // TP1: Defensive scale-out (both limit and stop)
+        if not ts.tp1Hit
+            strategy.exit("TP1_L", "NC_Long", qty=tp1Qty,
+              limit=ts.tp1, stop=currentSL, comment="TP1 Defensive")
+        // TP2: AM High retest (both limit and stop)
+        if ts.tp1Hit and not ts.tp2Hit
+            strategy.exit("TP2_L", "NC_Long", qty=tp2Qty,
+              limit=ts.tp2, stop=currentSL, comment=(i_tp2Method == "Fixed Points" ? "TP2 Fixed" : "TP2 AM High"))
+        // TP3: PM Extension with trailing (both limit and trail)
+        if ts.tp2Hit
+            strategy.exit("TP3_L", "NC_Long",
+              limit=ts.tp3, stop=currentSL,
+              trail_points=i_trailActivate / syminfo.mintick,
+              trail_offset=i_trailOffset / syminfo.mintick,
+              comment="TP3 PM Target")
+
+        // Detect TP hits ONLY by position size reduction (not price touches)
+        if posSize <= tp1SizeThreshold and not ts.tp1Hit
+            ts.tp1Hit := true
+        if posSize <= tp2SizeThreshold and ts.tp1Hit and not ts.tp2Hit
+            ts.tp2Hit := true
+
+    else // Short
+        // Calculate current SL (with optional BE move after TP1)
+        float currentSL = ts.stopLoss
+        if i_moveSLToBE and ts.tp1Hit
+            float bePrice = actualEntry - i_beOffsetPts
+            currentSL := math.min(ts.stopLoss, bePrice)
+
+        // TP1: Defensive scale-out (both limit and stop)
+        if not ts.tp1Hit
+            strategy.exit("TP1_S", "NC_Short", qty=tp1Qty,
+              limit=ts.tp1, stop=currentSL, comment="TP1 Defensive")
+        // TP2: AM Low retest (both limit and stop)
+        if ts.tp1Hit and not ts.tp2Hit
+            strategy.exit("TP2_S", "NC_Short", qty=tp2Qty,
+              limit=ts.tp2, stop=currentSL, comment=(i_tp2Method == "Fixed Points" ? "TP2 Fixed" : "TP2 AM Low"))
+        // TP3: PM Extension with trailing (both limit and trail)
+        if ts.tp2Hit
+            strategy.exit("TP3_S", "NC_Short",
+              limit=ts.tp3, stop=currentSL,
+              trail_points=i_trailActivate / syminfo.mintick,
+              trail_offset=i_trailOffset / syminfo.mintick,
+              comment="TP3 PM Target")
+
+        // Detect TP hits ONLY by position size reduction (not price touches)
+        if posSize <= tp1SizeThreshold and not ts.tp1Hit
+            ts.tp1Hit := true
+        if posSize <= tp2SizeThreshold and ts.tp1Hit and not ts.tp2Hit
+            ts.tp2Hit := true
+
+// ── FORCE EXIT (End of Day) ──
+if is_forceExit and strategy.opentrades > 0
+    dbgEodCloseCalls += 1
+    dbgLastEodCloseBar := bar_index
+    strategy.cancel_all()
+    strategy.close_all(comment="EOD Close", immediately=true)
+
+
+
+// ── CANCEL UNFILLED LIMITS (End of Entry Window) ──
+if not in_entryWindow and ss.entryPlaced and strategy.opentrades == 0
+    strategy.cancel_all()
+
+// ═══════════════════════════════════════════════════════════════
+//  VISUALS — RETRACEMENT ZONE
+// ═══════════════════════════════════════════════════════════════
+
+var box zoneBox = na
+var line tp1Line = na
+var line tp2Line = na
+var line tp3Line = na
+var line slLine  = na
+var table dash = na
+
+// Draw zone during entry window
+if i_showZone and in_entryWindow and (ss.setupBullish or ss.setupBearish)
+    float zTop = ss.setupBullish ? bullRetrace40 : bearRetrace60
+    float zBot = ss.setupBullish ? bullRetrace60 : bearRetrace40
+    color zCol = ss.setupBullish ? ZONE_BULL : ZONE_BEAR
+
+    if na(zoneBox)
+        zoneBox := box.new(bar_index - 5, zTop, bar_index + 20, zBot,
+          border_color=color.new(zCol, 50), bgcolor=zCol, border_width=1)
+    else
+        box.set_top(zoneBox, zTop)
+        box.set_bottom(zoneBox, zBot)
+        box.set_right(zoneBox, bar_index + 20)
+
+// Draw TP/SL levels when in a trade
+if i_showLevels and strategy.opentrades > 0 and not na(ts.tp1)
+    int rightEdge = bar_index + 30
+    if na(tp1Line)
+        tp1Line := line.new(bar_index, ts.tp1, rightEdge, ts.tp1, color=TP1_COLOR, style=line.style_dashed, width=1)
+        tp2Line := line.new(bar_index, ts.tp2, rightEdge, ts.tp2, color=TP2_COLOR, style=line.style_dashed, width=1)
+        tp3Line := line.new(bar_index, ts.tp3, rightEdge, ts.tp3, color=TP3_COLOR, style=line.style_dotted, width=1)
+        slLine  := line.new(bar_index, ts.stopLoss, rightEdge, ts.stopLoss, color=SL_COLOR, style=line.style_solid, width=2)
+    else
+        line.set_x2(tp1Line, rightEdge)
+        line.set_x2(tp2Line, rightEdge)
+        line.set_x2(tp3Line, rightEdge)
+        line.set_x2(slLine, rightEdge)
+
+// Clean up when trade closes
+if strategy.opentrades == 0 and not na(tp1Line)
+    // Leave lines as historical record — just set na for next use
+    tp1Line := na
+    tp2Line := na
+    tp3Line := na
+    slLine  := na
+    zoneBox := na
+
+// ═══════════════════════════════════════════════════════════════
+//  VISUALS — DASHBOARD TABLE
+// ═══════════════════════════════════════════════════════════════
+
+if i_showTable and barstate.islast
+    if na(dash)
+        dash := table.new(f_tablePos(i_tablePos), 2, 24,
+          bgcolor=color.new(#1e222d, 10), border_color=color.new(#363a45, 0), border_width=1)
+
+    tSize = f_tableSize(i_tableSize)
+
+    table.cell(dash, 0, 0, "Opening Range", text_color=color.white, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 0, "Status", text_color=color.white, text_size=tSize, text_halign=text.align_right)
+
+    // Range Open
+    table.cell(dash, 0, 1, "Range Open", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 1, not na(ss.rangeOpen) ? str.tostring(ss.rangeOpen, "#.##") : "—",
+      text_color=color.white, text_size=tSize, text_halign=text.align_right)
+
+    // Range High / Low
+    table.cell(dash, 0, 2, "Range High", text_color=BULL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 2, not na(ss.rangeHigh) ? str.tostring(ss.rangeHigh, "#.##") : "—",
+      text_color=BULL_COLOR, text_size=tSize, text_halign=text.align_right)
+
+    table.cell(dash, 0, 3, "Range Low", text_color=BEAR_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 3, not na(ss.rangeLow) ? str.tostring(ss.rangeLow, "#.##") : "—",
+      text_color=BEAR_COLOR, text_size=tSize, text_halign=text.align_right)
+
+    // Q2 Break
+    string q2Status = ss.q2BrokeQ1High ? "Broke Q1 HIGH ✓" : ss.q2BrokeQ1Low ? "Broke Q1 LOW ✓" : "Pending..."
+    color q2Color = ss.q2BrokeQ1High ? BULL_COLOR : ss.q2BrokeQ1Low ? BEAR_COLOR : NEUTRAL_COLOR
+    table.cell(dash, 0, 4, "Q2 Break", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 4, q2Status, text_color=q2Color, text_size=tSize, text_halign=text.align_right)
+
+    // Strong Setup (Retrace Avoidance)
+    string strongStatus = ss.strongSetupBull ? "BULL ✓ (No Retrace)" : ss.strongSetupBear ? "BEAR ✓ (No Retrace)" : "Pending..."
+    color strongColor = ss.strongSetupBull ? BULL_COLOR : ss.strongSetupBear ? BEAR_COLOR : NEUTRAL_COLOR
+    table.cell(dash, 0, 5, "Strong Setup (89%)", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 5, strongStatus, text_color=strongColor, text_size=tSize, text_halign=text.align_right)
+
+    // Filters Active
+    string filtersTxt = entryDiagMode
+    table.cell(dash, 0, 6, "Filters", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 6, filtersTxt,
+      text_color=color.white, text_size=tSize, text_halign=text.align_right)
+
+    // Entry Range
+    table.cell(dash, 0, 7, "Entry Range", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 7, entryDiagRange, text_color=color.white, text_size=tSize, text_halign=text.align_right)
+
+    // Bull Gates
+    table.cell(dash, 0, 8, "Bull Gates", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 8, entryDiagBull, text_color=ss.setupBullish ? BULL_COLOR : color.white, text_size=tSize, text_halign=text.align_right)
+
+    // Bear Gates
+    table.cell(dash, 0, 9, "Bear Gates", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 9, entryDiagBear, text_color=ss.setupBearish ? BEAR_COLOR : color.white, text_size=tSize, text_halign=text.align_right)
+
+    // Setup
+    string setupTxt = ss.setupBullish ? "BULLISH ▲" : ss.setupBearish ? "BEARISH ▼" : "None"
+    color setupCol = ss.setupBullish ? BULL_COLOR : ss.setupBearish ? BEAR_COLOR : NEUTRAL_COLOR
+    table.cell(dash, 0, 10, "Setup", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 10, setupTxt, text_color=setupCol, text_size=tSize, text_halign=text.align_right)
+
+    // Entry Decision
+    table.cell(dash, 0, 11, "Entry Why", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 11, entryDiagFinal, text_color=setupCol, text_size=tSize, text_halign=text.align_right)
+
+    // Trade Status
+    string tradeTxt = strategy.opentrades > 0 ? (ts.tp2Hit ? "TP2 HIT → TP3" : ts.tp1Hit ? "TP1 HIT → TP2" : "IN TRADE") : ss.entryPlaced ? "Filled / Done" : "Waiting"
+    color tradeCol = strategy.opentrades > 0 ? TP1_COLOR : NEUTRAL_COLOR
+    table.cell(dash, 0, 12, "Trade", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 12, tradeTxt, text_color=tradeCol, text_size=tSize, text_halign=text.align_right)
+
+    // Range % Move
+    float rangePctHigh = not na(ss.rangeOpen) and not na(ss.rangeHigh) ? f_pctFromRef(ss.rangeHigh, ss.rangeOpen) : na
+    float rangePctLow  = not na(ss.rangeOpen) and not na(ss.rangeLow) ? f_pctFromRef(ss.rangeLow, ss.rangeOpen) : na
+    table.cell(dash, 0, 13, "Range % High", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 13, not na(rangePctHigh) ? str.tostring(rangePctHigh, "#.##") + "%" : "—",
+      text_color=BULL_COLOR, text_size=tSize, text_halign=text.align_right)
+
+    table.cell(dash, 0, 14, "Range % Low", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 14, not na(rangePctLow) ? str.tostring(rangePctLow, "#.##") + "%" : "—",
+      text_color=BEAR_COLOR, text_size=tSize, text_halign=text.align_right)
+
+    // Daily P&L
+    float dailyPnL = strategy.equity - dayStartEquity
+    table.cell(dash, 0, 15, "Day P&L", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 15, "$" + str.tostring(dailyPnL, "#.##"),
+      text_color=dailyPnL >= 0 ? BULL_COLOR : BEAR_COLOR, text_size=tSize, text_halign=text.align_right)
+
+    // Daily Loss Guard
+    table.cell(dash, 0, 16, "Loss Guard", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+    table.cell(dash, 1, 16, dailyLossHit ? "LOCKED ⛔" : "OK ✓",
+      text_color=dailyLossHit ? BEAR_COLOR : BULL_COLOR, text_size=tSize, text_halign=text.align_right)
+
+    // ── Debug rows (conditional) ──
+    if i_dbgEnable
+        color DBG_HDR = color.new(color.gray, 0)
+        table.cell(dash, 0, 17, "─── DEBUG ───", text_color=DBG_HDR, text_size=tSize, text_halign=text.align_left)
+        table.cell(dash, 1, 17, "", text_color=DBG_HDR, text_size=tSize, text_halign=text.align_right)
+
+        // Range Bias
+        float _rbH = ss.rangeHigh
+        float _rbL = ss.rangeLow
+        int _rbHBar = ss.rangeHighBar
+        int _rbLBar = ss.rangeLowBar
+        bool _rbReady = not na(_rbH) and not na(_rbL) and _rbH != _rbL and not na(_rbHBar) and not na(_rbLBar)
+        float _rbMid = _rbReady ? (_rbH + _rbL) / 2.0 : na
+        string _rbDir = _rbReady ? (_rbHBar > _rbLBar ? "BULL" : _rbLBar > _rbHBar ? "BEAR" : "NEUT") : "NA"
+        string _rbSide = _rbReady ? (close > _rbMid ? "Above" : close < _rbMid ? "Below" : "OnMid") : "NA"
+
+        table.cell(dash, 0, 18, "Range Bias", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+        table.cell(dash, 1, 18,
+          (i_useRangeBias ? "ON" : "OFF") + " | " + _rbDir,
+          text_color=_rbDir == "BULL" ? BULL_COLOR : _rbDir == "BEAR" ? BEAR_COLOR : NEUTRAL_COLOR,
+          text_size=tSize, text_halign=text.align_right)
+
+        table.cell(dash, 0, 19, "Range H/L/Mid", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+        table.cell(dash, 1, 19,
+          (not na(_rbH) ? str.tostring(_rbH, "#.##") : "—") + " / " +
+          (not na(_rbL) ? str.tostring(_rbL, "#.##") : "—") + " / " +
+          (_rbReady ? str.tostring(_rbMid, "#.##") : "—") + " [" + _rbSide + "]",
+          text_color=color.white, text_size=tSize, text_halign=text.align_right)
+
+        // Market Structure
+        string _msBiasTxt = msBias == 1 ? "BULL" : msBias == -1 ? "BEAR" : "NEUT"
+        string _msBosTxt = msBOSUp ? "BOS↑" : msBOSDown ? "BOS↓" : "—"
+        table.cell(dash, 0, 20, "MS Bias", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+        table.cell(dash, 1, 20,
+          (i_useMktStruct ? _msBiasTxt + " [" + _msBosTxt + "]" : "OFF"),
+          text_color=msBias == 1 ? BULL_COLOR : msBias == -1 ? BEAR_COLOR : NEUTRAL_COLOR,
+          text_size=tSize, text_halign=text.align_right)
+
+        string _hhTxt = not na(msLastHigh) and not na(msPrevHigh) and msLastHigh > msPrevHigh ? "HH:Y" : "HH:N"
+        string _llTxt = not na(msLastLow) and not na(msPrevLow) and msLastLow < msPrevLow ? "LL:Y" : "LL:N"
+        table.cell(dash, 0, 21, "MS HH/LL", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+        table.cell(dash, 1, 21, _hhTxt + " " + _llTxt + " [" + msBiasReason + "]",
+          text_color=color.white, text_size=tSize, text_halign=text.align_right)
+
+        // TP Engine
+        table.cell(dash, 0, 22, "TP Levels", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+        table.cell(dash, 1, 22,
+          "E:" + (not na(ts.entryPrice) ? str.tostring(ts.entryPrice, "#.##") : "—") +
+          " T1:" + (not na(ts.tp1) ? str.tostring(ts.tp1, "#.##") : "—") +
+          " T2:" + (not na(ts.tp2) ? str.tostring(ts.tp2, "#.##") : "—") +
+          " T3:" + (not na(ts.tp3) ? str.tostring(ts.tp3, "#.##") : "—"),
+          text_color=TP1_COLOR, text_size=tSize, text_halign=text.align_right)
+
+        table.cell(dash, 0, 23, "TP Status", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+        table.cell(dash, 1, 23,
+          "TP1:" + (ts.tp1Hit ? "HIT" : "—") +
+          " TP2:" + (ts.tp2Hit ? "HIT" : "—") +
+          " SL:" + (not na(ts.stopLoss) ? str.tostring(ts.stopLoss, "#.##") : "—"),
+          text_color=ts.tp2Hit ? TP2_COLOR : ts.tp1Hit ? TP1_COLOR : color.white,
+          text_size=tSize, text_halign=text.align_right)
+
+        // Counters
+        table.cell(dash, 0, 23, "DBG Counters", text_color=NEUTRAL_COLOR, text_size=tSize, text_halign=text.align_left)
+        table.cell(dash, 1, 23,
+          "EOD:" + str.tostring(dbgEodCloseCalls) +
+          " Roll:" + str.tostring(dbgRolloverCloseCalls) +
+          " Open:" + str.tostring(strategy.opentrades) +
+          " Pos:" + str.tostring(strategy.position_size),
+          text_color=color.white, text_size=tSize, text_halign=text.align_right)
+
+// ═══════════════════════════════════════════════════════════════
+//  ALERTS
+// ═══════════════════════════════════════════════════════════════
+
+alertcondition(ss.setupBullish and in_entryWindow and not ss.entryPlaced,
+  title="Noon Curve Bullish Setup", message="NC Bullish: Filters passed. Retracement zone active.")
+
+alertcondition(ss.setupBearish and in_entryWindow and not ss.entryPlaced,
+  title="Noon Curve Bearish Setup", message="NC Bearish: Filters passed. Retracement zone active.")
+
+alertcondition(strategy.opentrades > 0 and ts.tp1Hit and not (ts[1]).tp1Hit,
+  title="TP1 Hit — Defensive Scale", message="NC TP1 Hit. 50% scaled. Trailing remainder.")
+
+// Debug alerts for stuck-trade diagnosis
+alertcondition(i_dbgEnable and is_forceExit,
+  title="DBG Force-Exit Window", message="DBG: Force-exit window crossed this bar.")
+
+alertcondition(i_dbgEnable and is_forceExit and strategy.opentrades > 0,
+  title="DBG Force-Exit With Open Trade", message="DBG: Force-exit crossed while open trade existed.")
+
+// Debug plots
+plot(i_dbgEnable ? strategy.opentrades : na,
+  "DBG OpenTrades", color=color.new(color.yellow, 0), linewidth=2)
+
+plot(i_dbgEnable ? strategy.position_size : na,
+  "DBG PositionSize", color=color.new(color.aqua, 0), linewidth=1)
+
+plot(i_dbgEnable ? (is_forceExit ? 1 : 0) : na,
+  "DBG ForceExitFlag", color=color.new(color.red, 0), style=plot.style_columns)
+
+plot(i_dbgEnable ? dbgEodCloseCalls : na,
+  "DBG EOD Close Calls", color=color.new(color.orange, 0), linewidth=1)
+
+plot(i_dbgEnable ? dbgRolloverCloseCalls : na,
+  "DBG Rollover Close Calls", color=color.new(color.purple, 0), linewidth=1)

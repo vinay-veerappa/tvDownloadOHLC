@@ -1,0 +1,32 @@
+{
+  "ticker": "NQ1",
+  "total_days": 1888,
+  "retracement_analysis": {
+    "pm_breaks": {
+      "count": 1116,
+      "median": 60.654358338801,
+      "mean": 69.27139128759978,
+      "p25": 44.65662112041366,
+      "p75": 82.42804439067378,
+      "min": 13.270142180094787,
+      "max": 356.6343042071197
+    },
+    "pm_doesnt_break": {
+      "count": 394,
+      "median": 61.02135489555798,
+      "mean": 69.72466264314149,
+      "p25": 44.29557405784399,
+      "p75": 81.09087708630042
+    }
+  },
+  "mae_mfe_analysis": {
+    "losing": {
+      "count": 1510,
+      "mae_median_pct": 57.743532323649006,
+      "mfe_median_pct": 8.618299934401252,
+      "loss_median_pct": 77.07041444827226
+    }
+  },
+  "entry_scenario_analysis": {},
+  "recommendations": []
+}

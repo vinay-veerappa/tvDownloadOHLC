@@ -1,0 +1,1038 @@
+// This Pine Script source code is free to use under the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © vinay-veerappa
+
+//@version=6
+indicator("HTF EMA Analysis", overlay=true, max_bars_back=5000, max_lines_count=500, max_boxes_count=200, max_labels_count=300)
+
+// ============================================
+// Inputs
+// ============================================
+grp_core = "Core Settings"
+i_emaLength = input.int(5, "EMA Length", minval=2, maxval=100, group=grp_core)
+i_showEmaLine = input.bool(true, "Show EMA Line", group=grp_core)
+i_upperZoneHighPct = input.float(3.0, "Upper Zone - High %", minval=0.1, maxval=20.0, step=0.1, group=grp_core)
+i_upperZoneLowPct = input.float(2.5, "Upper Zone - Low %", minval=0.1, maxval=20.0, step=0.1, group=grp_core)
+i_lowerZoneHighPct = input.float(2.5, "Lower Zone - High %", minval=0.1, maxval=20.0, step=0.1, group=grp_core)
+i_lowerZoneLowPct = input.float(3.0, "Lower Zone - Low %", minval=0.1, maxval=20.0, step=0.1, group=grp_core)
+
+grp_weekly = "Weekly Levels"
+i_showEmaZones = input.bool(true, "Show EMA Zones", group=grp_weekly)
+i_currentWeekOnly = input.bool(true, "Current Week Only", group=grp_weekly)
+
+grp_monthly = "Monthly Levels"
+i_showMonthHigh = input.bool(true, "High", inline="m1", group=grp_monthly)
+i_showMonthLow = input.bool(true, "Low", inline="m1", group=grp_monthly)
+i_showMonthMid = input.bool(true, "Mid", inline="m1", group=grp_monthly)
+i_showCurrentMonth30 = input.bool(true, "Current Month 30%", group=grp_monthly)
+i_showHistoricalMonths = input.bool(true, "Historical Months", group=grp_monthly)
+
+grp_sessions = "Sessions"
+i_showSessionBoxes = input.bool(true, "Show Session Boxes", group=grp_sessions)
+
+grp_nfp = "NFP Settings"
+i_showNfp = input.bool(true, "Show NFP", inline="nfp", group=grp_nfp)
+i_nfpCurrentMonthOnly = input.bool(false, "Current Month Only", inline="nfp", group=grp_nfp)
+
+grp_display = "Display Options"
+i_showLabels = input.bool(false, "Show Labels", inline="d1", group=grp_display)
+i_showPctDistanceTable = input.bool(false, "% Distance Table", inline="d1", group=grp_display)
+i_showPositionTable = input.bool(false, "Position Table", inline="d2", group=grp_display)
+i_labelSize = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_display)
+
+grp_appearance = "Appearance"
+i_theme = input.string("Dark", "Theme", options=["Dark", "Light", "Auto"], group=grp_appearance)
+i_tableOpacity = input.int(14, "Table Opacity", minval=0, maxval=95, group=grp_appearance)
+i_zoneFillOpacity = input.int(92, "Zone Fill Opacity", minval=70, maxval=98, group=grp_appearance)
+
+grp_tables = "Table Layout"
+i_weeklyTablePos = input.string("Top Left", "Weekly Table Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right", "Middle Left", "Middle Right", "Middle Center", "Top Center", "Bottom Center"], group=grp_tables)
+i_weeklyTableSize = input.string("Small", "Weekly Table Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tables)
+i_allLevelsTablePos = input.string("Top Right", "All Levels Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right", "Middle Left", "Middle Right", "Middle Center", "Top Center", "Bottom Center"], group=grp_tables)
+i_allLevelsTableSize = input.string("Small", "All Levels Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tables)
+i_pctTablePos = input.string("Middle Right", "% Distance Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right", "Middle Left", "Middle Right", "Middle Center", "Top Center", "Bottom Center"], group=grp_tables)
+i_pctTableSize = input.string("Small", "% Distance Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tables)
+i_positionTablePos = input.string("Bottom Right", "Position Table Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right", "Middle Left", "Middle Right", "Middle Center", "Top Center", "Bottom Center"], group=grp_tables)
+i_positionTableSize = input.string("Small", "Position Table Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tables)
+i_dowTablePos = input.string("Bottom Left", "DOW Table Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right", "Middle Left", "Middle Right", "Middle Center", "Top Center", "Bottom Center"], group=grp_tables)
+i_dowTableSize = input.string("Small", "DOW Table Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tables)
+i_rangeProbTablePos = input.string("Middle Left", "Range Prob Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right", "Middle Left", "Middle Right", "Middle Center", "Top Center", "Bottom Center"], group=grp_tables)
+i_rangeProbTableSize = input.string("Small", "Range Prob Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tables)
+i_rangeLevelsTablePos = input.string("Bottom Center", "Range Levels Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right", "Middle Left", "Middle Right", "Middle Center", "Top Center", "Bottom Center"], group=grp_tables)
+i_rangeLevelsTableSize = input.string("Small", "Range Levels Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tables)
+
+grp_prob = "Probability Analysis"
+i_showProbability = input.bool(false, "Show Probability Analysis", group=grp_prob)
+i_lookbackWeeks = input.int(52, "Lookback Weeks", minval=12, maxval=520, group=grp_prob)
+i_zoneStartPct = input.float(2.0, "Zone Start %", minval=0.1, maxval=20.0, step=0.1, group=grp_prob)
+i_zoneEndPct = input.float(3.0, "Zone End %", minval=0.1, maxval=20.0, step=0.1, group=grp_prob)
+i_showDowStats = input.bool(false, "Show Day of Week Stats", group=grp_prob)
+i_showAllLevelsTable = input.bool(false, "Show All Levels Table", group=grp_prob)
+i_enableTimeFilter = input.bool(false, "Enable Time Filter", group=grp_prob)
+i_startHour = input.int(9, "Start Hour", minval=0, maxval=23, inline="tf1", group=grp_prob)
+i_startMin = input.int(30, "Start Min", minval=0, maxval=59, inline="tf1", group=grp_prob)
+i_endHour = input.int(16, "End Hour", minval=0, maxval=23, inline="tf2", group=grp_prob)
+i_endMin = input.int(15, "End Min", minval=0, maxval=59, inline="tf2", group=grp_prob)
+// Timezone is always America/New_York
+TZ = "America/New_York"
+i_modeBinSize = input.float(0.1, "Mode Bin Size", minval=0.01, maxval=2.0, step=0.01, group=grp_prob)
+
+grp_colors = "Color Scheme"
+i_cEma = input.color(#2d6bff, "EMA", inline="c1", group=grp_colors)
+i_cUpper = input.color(#ff3040, "Upper Zone", inline="c1", group=grp_colors)
+i_cLower = input.color(#4caf50, "Lower Zone", inline="c1", group=grp_colors)
+i_cSunday = input.color(#2d6bff, "Sunday", inline="c2", group=grp_colors)
+i_cTuesday = input.color(#ffa000, "Tuesday", inline="c2", group=grp_colors)
+i_cNfp = input.color(#f4d03f, "NFP", inline="c2", group=grp_colors)
+i_cMonthHigh = input.color(#ff3040, "Month High", inline="c3", group=grp_colors)
+i_cMonthLow = input.color(#4caf50, "Month Low", inline="c3", group=grp_colors)
+i_cMonthMid = input.color(#9c27b0, "Mid", inline="c3", group=grp_colors)
+i_cMonth30 = input.color(#ffa000, "30%", inline="c3", group=grp_colors)
+
+grp_line = "Line Styles"
+i_liveStyle = input.string("Dashed", "Style", options=["Solid", "Dashed", "Dotted"], inline="ls1", group=grp_line)
+i_liveWidth = input.int(2, "Width", minval=1, maxval=5, inline="ls1", group=grp_line)
+i_histStyle = input.string("Solid", "Hist Style", options=["Solid", "Dashed", "Dotted"], inline="ls2", group=grp_line)
+i_histWidth = input.int(2, "Width", minval=1, maxval=5, inline="ls2", group=grp_line)
+
+grp_prevw = "Previous Week"
+i_showPrevWeek = input.bool(false, "Show Previous Week Levels", group=grp_prevw)
+i_showPwh = input.bool(true, "High", inline="pw1", group=grp_prevw)
+i_showPwl = input.bool(true, "Low", inline="pw1", group=grp_prevw)
+i_showPw50 = input.bool(true, "50%", inline="pw1", group=grp_prevw)
+i_showPw25 = input.bool(true, "25%", inline="pw2", group=grp_prevw)
+i_showPw75 = input.bool(true, "75%", inline="pw2", group=grp_prevw)
+i_cPwh = input.color(#ff3040, "High", inline="pwc1", group=grp_prevw)
+i_cPwl = input.color(#4caf50, "Low", inline="pwc1", group=grp_prevw)
+i_cPwMid = input.color(#2d6bff, "Mid", inline="pwc2", group=grp_prevw)
+i_cPwQ = input.color(#ffa000, "25/75", inline="pwc2", group=grp_prevw)
+i_prevWeekStyle = input.string("Dashed", "Style", options=["Solid", "Dashed", "Dotted"], inline="pws", group=grp_prevw)
+i_prevWeekWidth = input.int(1, "Width", minval=1, maxval=5, inline="pws", group=grp_prevw)
+
+grp_range = "Range Analysis"
+i_showRangeAnalysis = input.bool(false, "Show Range Analysis", group=grp_range)
+i_rangeStartHour = input.int(18, "Range Start Hour", minval=0, maxval=23, inline="ra1", group=grp_range)
+i_rangeStartMin = input.int(30, "Start Min", minval=0, maxval=59, inline="ra1", group=grp_range)
+i_rangeEndHour = input.int(19, "Range End Hour", minval=0, maxval=23, inline="ra2", group=grp_range)
+i_rangeEndMin = input.int(30, "End Min", minval=0, maxval=59, inline="ra2", group=grp_range)
+// Range timezone removed — uses global TZ constant
+i_measurementType = input.string("Standard", "Measurement Type", options=["Standard", "Body", "Wick"], group=grp_range)
+i_analysisMethod = input.string("All Individuals", "Analysis Method", options=["All Individuals", "Aggregate"], group=grp_range)
+i_rangeDow = input.string("Sunday", "Day of Week", options=["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], group=grp_range)
+i_dailyCloseHour = input.int(17, "Daily Candle Close Hour", minval=0, maxval=23, group=grp_range)
+i_rangeZoneFrom = input.float(0.5, "Zone", minval=0.1, maxval=10.0, step=0.1, inline="rz", group=grp_range)
+i_rangeZoneTo = input.float(1.0, "To", minval=0.1, maxval=10.0, step=0.1, inline="rz", group=grp_range)
+i_showRangeProbTable = input.bool(false, "Show Range Probability Table", group=grp_range)
+i_showRangeLevelsTable = input.bool(false, "Show Range Levels Table", group=grp_range)
+i_limitDays = input.bool(false, "Limit Days Analyzed", group=grp_range)
+i_numberOfDays = input.int(30, "Number of Days", minval=5, maxval=2000, group=grp_range)
+i_showRangeDebug = input.bool(false, "Show Range Boundaries (Debug)", group=grp_range)
+
+// ============================================
+// Helpers
+// ============================================
+f_line_style(string s) =>
+    switch s
+        "Solid" => line.style_solid
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+f_txt_size(string s) =>
+    switch s
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Large" => size.large
+        => size.normal
+
+f_table_pos(string s) =>
+    switch s
+        "Top Left" => position.top_left
+        "Top Center" => position.top_center
+        "Middle Center" => position.middle_center
+        "Middle Left" => position.middle_left
+        "Middle Right" => position.middle_right
+        "Bottom Left" => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        "Bottom Right" => position.bottom_right
+        => position.top_right
+
+f_table_size(string s) =>
+    s == "Tiny" ? size.tiny : s == "Small" ? size.small : s == "Large" ? size.large : size.normal
+
+f_push_capped(array<float> arr, float value, int maxLen) =>
+    array.push(arr, value)
+    while array.size(arr) > maxLen
+        array.shift(arr)
+
+f_push_capped_bool(array<bool> arr, bool value, int maxLen) =>
+    array.push(arr, value)
+    while array.size(arr) > maxLen
+        array.shift(arr)
+
+f_mean(array<float> arr) =>
+    int n = array.size(arr)
+    if n == 0
+        na
+    else
+        float sum = 0.0
+        for i = 0 to n - 1
+            sum += array.get(arr, i)
+        sum / n
+
+f_median(array<float> arr) =>
+    int n = array.size(arr)
+    if n == 0
+        na
+    else
+        array<float> cp = array.copy(arr)
+        array.sort(cp)
+        int mid = math.floor(n * 0.5)
+        n % 2 == 1 ? array.get(cp, mid) : (array.get(cp, mid - 1) + array.get(cp, mid)) * 0.5
+
+f_mode_nearest_mean(array<float> arr, float binSize) =>
+    int n = array.size(arr)
+    if n == 0
+        na
+    else
+        float mu = f_mean(arr)
+        array<float> bins = array.new_float()
+        array<int> counts = array.new_int()
+        for i = 0 to n - 1
+            float raw = array.get(arr, i)
+            float b = math.round(raw / binSize) * binSize
+            int idx = -1
+            int binsNLocal = array.size(bins)
+            if binsNLocal > 0
+                for j = 0 to binsNLocal - 1
+                    if math.abs(array.get(bins, j) - b) <= (binSize * 0.25)
+                        idx := j
+                        break
+            if idx == -1
+                array.push(bins, b)
+                array.push(counts, 1)
+            else
+                array.set(counts, idx, array.get(counts, idx) + 1)
+
+        int maxCount = 0
+        int countsN = array.size(counts)
+        if countsN > 0
+            for k = 0 to countsN - 1
+                maxCount := math.max(maxCount, array.get(counts, k))
+
+        float best = na
+        float bestDist = 10e10
+        int binsFinal = array.size(bins)
+        int pairN = math.min(binsFinal, countsN)
+        if pairN > 0
+            for m = 0 to pairN - 1
+                if array.get(counts, m) == maxCount
+                    float candidate = array.get(bins, m)
+                    float dist = math.abs(candidate - mu)
+                    if dist < bestDist
+                        bestDist := dist
+                        best := candidate
+        best
+
+f_hitrate_bool(array<bool> arr) =>
+    int n = array.size(arr)
+    if n == 0
+        na
+    else
+        int hits = 0
+        for i = 0 to n - 1
+            if array.get(arr, i)
+                hits += 1
+        (hits * 100.0) / n
+
+f_hitrate_level(array<float> arr, float level) =>
+    int n = array.size(arr)
+    if n == 0
+        na
+    else
+        int hits = 0
+        for i = 0 to n - 1
+            if array.get(arr, i) >= level
+                hits += 1
+        (hits * 100.0) / n
+
+f_status(float hitRate) =>
+    if na(hitRate)
+        "N/A"
+    else
+        hitRate >= 66.67 ? "Good" : hitRate >= 33.33 ? "Fair" : "Rare"
+
+f_status_color(float hitRate) =>
+    if na(hitRate)
+        color.new(color.gray, 0)
+    else
+        hitRate >= 66.67 ? color.new(#16a34a, 0) : hitRate >= 33.33 ? color.new(#d97706, 0) : color.new(#dc2626, 0)
+
+f_day_idx(int dow) =>
+    dow == dayofweek.monday ? 0 : dow == dayofweek.tuesday ? 1 : dow == dayofweek.wednesday ? 2 : dow == dayofweek.thursday ? 3 : dow == dayofweek.friday ? 4 : -1
+
+f_day_name_to_dow(string dayName) =>
+    dayName == "Sunday" ? dayofweek.sunday :
+      dayName == "Monday" ? dayofweek.monday :
+      dayName == "Tuesday" ? dayofweek.tuesday :
+      dayName == "Wednesday" ? dayofweek.wednesday :
+      dayName == "Thursday" ? dayofweek.thursday :
+      dayName == "Friday" ? dayofweek.friday : dayofweek.sunday
+
+f_hhmm_in_window(int hh, int mm, int sh, int sm, int eh, int em) =>
+    int cur = hh * 60 + mm
+    int st = sh * 60 + sm
+    int en = eh * 60 + em
+    en >= st ? (cur >= st and cur <= en) : (cur >= st or cur <= en)
+
+f_update_level_line(line ln, bool show, float y, color c, int w, string style, int lookbackBars) =>
+    line out = ln
+    if show and not na(y)
+        int x1 = math.max(0, bar_index - lookbackBars)
+        int x2 = bar_index + 5
+        if na(out)
+            out := line.new(x1, y, x2, y, xloc=xloc.bar_index, extend=extend.none, color=c, width=w, style=f_line_style(style))
+        else
+            line.set_x1(out, x1)
+            line.set_y1(out, y)
+            line.set_x2(out, x2)
+            line.set_y2(out, y)
+            line.set_color(out, c)
+            line.set_width(out, w)
+            line.set_style(out, f_line_style(style))
+    else if not na(out)
+        line.delete(out)
+        out := na
+    out
+
+f_update_segment_line(line ln, bool show, float y, int x1, int x2, color c, int w, string style) =>
+    line out = ln
+    if show and not na(y) and x1 >= 0 and x2 >= x1
+        if na(out)
+            out := line.new(x1, y, x2, y, xloc=xloc.bar_index, extend=extend.none, color=c, width=w, style=f_line_style(style))
+        else
+            line.set_x1(out, x1)
+            line.set_y1(out, y)
+            line.set_x2(out, x2)
+            line.set_y2(out, y)
+            line.set_color(out, c)
+            line.set_width(out, w)
+            line.set_style(out, f_line_style(style))
+    else if not na(out)
+        line.delete(out)
+        out := na
+    out
+
+// ============================================
+// Core Series
+// NOTE: request.security "W" uses the exchange's native weekly candle.
+// For NYMEX futures (CL), the week runs Sun 18:00 ET to Fri 17:00 ET.
+// This is the exchange-defined boundary and cannot be changed in Pine.
+// ============================================
+float weeklyEma = request.security(syminfo.tickerid, "W", ta.ema(close, i_emaLength), lookahead=barmerge.lookahead_on)
+float prevWeeklyEma = request.security(syminfo.tickerid, "W", ta.ema(close, i_emaLength)[1], lookahead=barmerge.lookahead_on)
+float prevWeekHigh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
+float prevWeekLow = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_on)
+float prevMonthHigh = request.security(syminfo.tickerid, "M", high[1], lookahead=barmerge.lookahead_on)
+float prevMonthLow = request.security(syminfo.tickerid, "M", low[1], lookahead=barmerge.lookahead_on)
+float currMonthHigh = request.security(syminfo.tickerid, "M", high, lookahead=barmerge.lookahead_on)
+float currMonthLow = request.security(syminfo.tickerid, "M", low, lookahead=barmerge.lookahead_on)
+
+float prevWeekMid = (prevWeekHigh + prevWeekLow) * 0.5
+float prevWeek25 = prevWeekLow + (prevWeekHigh - prevWeekLow) * 0.25
+float prevWeek75 = prevWeekLow + (prevWeekHigh - prevWeekLow) * 0.75
+float prevMonthMid = (prevMonthHigh + prevMonthLow) * 0.5
+float currMonth30 = currMonthLow + (currMonthHigh - currMonthLow) * 0.30
+
+float pctDistance = ((close - weeklyEma) / weeklyEma) * 100.0
+float upperZoneHi = weeklyEma * (1.0 + i_upperZoneHighPct / 100.0)
+float upperZoneLo = weeklyEma * (1.0 + i_upperZoneLowPct / 100.0)
+float lowerZoneHi = weeklyEma * (1.0 - i_lowerZoneHighPct / 100.0)
+float lowerZoneLo = weeklyEma * (1.0 - i_lowerZoneLowPct / 100.0)
+
+int monthKey = year(time_close, TZ) * 100 + month(time_close, TZ)
+int dayKey = year(time_close, TZ) * 10000 + month(time_close, TZ) * 100 + dayofmonth(time_close, TZ)
+bool isNewWeek = ta.change(time("W", TZ)) != 0
+bool isNewMonth = ta.change(monthKey) != 0
+bool isNewDay = ta.change(dayKey) != 0
+bool tfIsIntraday = timeframe.isintraday
+int curYear = year(timenow, TZ)
+int curWeek = weekofyear(timenow, TZ)
+int curMonth = month(timenow, TZ)
+bool inCurrentWeek = year(time_close, TZ) == curYear and weekofyear(time_close, TZ) == curWeek
+bool inCurrentMonth = year(time_close, TZ) == curYear and month(time_close, TZ) == curMonth
+bool wkMask = not i_currentWeekOnly or inCurrentWeek
+bool monMask = i_showHistoricalMonths or inCurrentMonth
+bool inProbTime = f_hhmm_in_window(hour(time, TZ), minute(time, TZ), i_startHour, i_startMin, i_endHour, i_endMin)
+bool probTimePass = not i_enableTimeFilter or inProbTime
+
+bool darkTheme = i_theme == "Dark" or i_theme == "Auto"
+color tblBg = darkTheme ? color.new(#0f172a, i_tableOpacity) : color.new(#f8fafc, i_tableOpacity)
+color tblHeaderBg = darkTheme ? color.new(#374151, 24) : color.new(#e5e7eb, 10)
+color tblText = darkTheme ? color.new(#e5e7eb, 0) : color.new(#111827, 0)
+color tblTextMuted = darkTheme ? color.new(#cbd5e1, 0) : color.new(#374151, 0)
+color labelBg = darkTheme ? color.new(#0f172a, 82) : color.new(#f8fafc, 72)
+
+// ============================================
+// Statistical Storage
+// ============================================
+var array<float> weekUpPct = array.new_float()
+var array<float> weekDownPct = array.new_float()
+var array<bool> weekZoneHits = array.new_bool()
+
+var array<int> dowTotals = array.new_int(5, 0)
+var array<int> dowZoneHits = array.new_int(5, 0)
+var array<float> dowMeanProxy = array.new_float(5, na)
+
+var array<float> rangePcts = array.new_float()
+var array<bool> rangeZoneHits = array.new_bool()
+var float activeRangeHigh = na
+var float activeRangeLow = na
+var bool activeRangeTracking = false
+var bool activeRangeDone = false
+
+// Session box state
+var box sundayBox = na
+var box tuesdayBox = na
+var int sundayBoxStart = na
+var int tuesdayBoxStart = na
+var float sundayHigh = na
+var float sundayLow = na
+var float tuesdayHigh = na
+var float tuesdayLow = na
+var bool sundayWindowOpen = false
+var bool tuesdayWindowOpen = false
+var int sundayEndTs = na
+var int tuesdayEndTs = na
+var int sundayBoxRight = na
+var int tuesdayBoxRight = na
+
+// Week tracking for zone boxes
+var int weekStartIdx = na
+var box upperZoneBox = na
+var box lowerZoneBox = na
+
+// NFP box + label
+var box nfpBox = na
+var label lblNfpBox = na
+
+// Current month 30% line object
+var line lnCurrMonth30 = na
+
+// Previous month carry-forward line objects
+var line lnPmHighCarry = na
+var line lnPmLowCarry = na
+var line lnPmMidCarry = na
+
+// Previous week line objects
+var line lnPwHigh = na
+var line lnPwLow = na
+var line lnPw50 = na
+var line lnPw25 = na
+var line lnPw75 = na
+
+// Label objects
+var label lblPmHigh = na
+var label lblPmLow = na
+var label lblPmMid = na
+var label lblMonth30 = na
+var label lblNfp = na
+
+// Month index tracking
+var int currMonthStartIdx = na
+var int prevMonthStartIdx = na
+var int prevMonthEndIdx = na
+
+var int activeNfpBoxMonth = na
+var int activeNfpBoxYear = na
+
+if barstate.isfirst
+    currMonthStartIdx := bar_index
+    weekStartIdx := bar_index
+
+if isNewMonth
+    // Finalize the just-ended month using that month's own H/L/M.
+    if i_showHistoricalMonths and not na(currMonthStartIdx) and not na(prevMonthHigh)
+        int histEnd = bar_index - 1
+        if i_showMonthHigh
+            line.new(currMonthStartIdx, prevMonthHigh, histEnd, prevMonthHigh, xloc=xloc.bar_index, color=i_cMonthHigh, width=i_histWidth, style=f_line_style(i_histStyle))
+        if i_showMonthLow
+            line.new(currMonthStartIdx, prevMonthLow, histEnd, prevMonthLow, xloc=xloc.bar_index, color=i_cMonthLow, width=i_histWidth, style=f_line_style(i_histStyle))
+        if i_showMonthMid
+            line.new(currMonthStartIdx, prevMonthMid, histEnd, prevMonthMid, xloc=xloc.bar_index, color=i_cMonthMid, width=i_histWidth, style=f_line_style(i_histStyle))
+    prevMonthStartIdx := currMonthStartIdx
+    prevMonthEndIdx := bar_index - 1
+    currMonthStartIdx := bar_index
+    // Stop updating the prior month's active NFP box, but leave it on chart.
+    nfpBox := na
+    activeNfpBoxMonth := na
+    activeNfpBoxYear := na
+
+// ============================================
+// Weekly data collection
+// ============================================
+if isNewWeek
+    weekStartIdx := bar_index
+
+if isNewWeek and probTimePass and not na(prevWeeklyEma) and not na(prevWeekHigh) and not na(prevWeekLow)
+    float upPct = ((prevWeekHigh - prevWeeklyEma) / prevWeeklyEma) * 100.0
+    float dnPct = ((prevWeeklyEma - prevWeekLow) / prevWeeklyEma) * 100.0
+    float zoneLo = prevWeeklyEma * (1.0 + i_zoneStartPct / 100.0)
+    float zoneHi = prevWeeklyEma * (1.0 + i_zoneEndPct / 100.0)
+    bool zoneHit = prevWeekHigh >= zoneLo and prevWeekLow <= zoneHi
+
+    f_push_capped(weekUpPct, upPct, i_lookbackWeeks)
+    f_push_capped(weekDownPct, dnPct, i_lookbackWeeks)
+    f_push_capped_bool(weekZoneHits, zoneHit, i_lookbackWeeks)
+
+if isNewDay and i_showDowStats and probTimePass and not na(weeklyEma)
+    float dHighPrev = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_off)
+    float dLowPrev = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_off)
+    int yDow = dayofweek(time[1], TZ)
+    int idx = f_day_idx(yDow)
+    if idx >= 0 and not na(dHighPrev) and not na(dLowPrev)
+        float dUp = ((dHighPrev - weeklyEma) / weeklyEma) * 100.0
+        float dZoneLo = weeklyEma * (1.0 + i_zoneStartPct / 100.0)
+        float dZoneHi = weeklyEma * (1.0 + i_zoneEndPct / 100.0)
+        bool dHit = dHighPrev >= dZoneLo and dLowPrev <= dZoneHi
+
+        int oldT = array.get(dowTotals, idx)
+        int oldH = array.get(dowZoneHits, idx)
+        array.set(dowTotals, idx, oldT + 1)
+        array.set(dowZoneHits, idx, oldH + (dHit ? 1 : 0))
+
+        float oldMean = array.get(dowMeanProxy, idx)
+        float newMean = na(oldMean) ? dUp : ((oldMean * oldT) + dUp) / (oldT + 1)
+        array.set(dowMeanProxy, idx, newMean)
+
+// ============================================
+// Range Analysis Engine
+// ============================================
+int targetDow = f_day_name_to_dow(i_rangeDow)
+bool isTargetDay = dayofweek(time, TZ) == targetDow
+bool inRangeWindow = f_hhmm_in_window(hour(time, TZ), minute(time, TZ), i_rangeStartHour, i_rangeStartMin, i_rangeEndHour, i_rangeEndMin)
+
+if isNewDay
+    activeRangeTracking := false
+    activeRangeDone := false
+    activeRangeHigh := na
+    activeRangeLow := na
+
+if i_showRangeAnalysis and isTargetDay and inRangeWindow
+    if not activeRangeTracking
+        activeRangeTracking := true
+        activeRangeHigh := high
+        activeRangeLow := low
+    else
+        activeRangeHigh := math.max(activeRangeHigh, high)
+        activeRangeLow := math.min(activeRangeLow, low)
+
+if i_showRangeAnalysis and activeRangeTracking and not activeRangeDone and not inRangeWindow
+    float base = open
+    float rangePct = na
+    if i_measurementType == "Body"
+        rangePct := math.abs(close - open) / base * 100.0
+    else if i_measurementType == "Wick"
+        rangePct := ((high - low) - math.abs(close - open)) / base * 100.0
+    else
+        rangePct := (activeRangeHigh - activeRangeLow) / base * 100.0
+
+    if not na(rangePct)
+        int cap = i_limitDays ? i_numberOfDays : 500
+        f_push_capped(rangePcts, rangePct, cap)
+        f_push_capped_bool(rangeZoneHits, rangePct >= i_rangeZoneFrom and rangePct <= i_rangeZoneTo, cap)
+    activeRangeDone := true
+
+// ============================================
+// NFP Detection (first Friday, futures session starts Thu 18:00 ET)
+// ============================================
+var int nfpMonth = na
+var int nfpYear = na
+var int nfpDay = na
+var float nfpHigh = na
+var float nfpLow = na
+
+int nowYear = year(time_close, TZ)
+int nowMonth = month(time_close, TZ)
+
+if isNewMonth and i_nfpCurrentMonthOnly
+    nfpHigh := na
+    nfpLow := na
+
+bool isNfpCalendarDay = dayofweek(time_close, TZ) == dayofweek.friday and dayofmonth(time_close, TZ) <= 7
+if isNfpCalendarDay
+    int yDay = dayofmonth(time_close, TZ)
+    int yMonth = month(time_close, TZ)
+    int yYear = year(time_close, TZ)
+    bool monthNotYetDrawn = na(activeNfpBoxMonth) or na(activeNfpBoxYear) or yMonth != activeNfpBoxMonth or yYear != activeNfpBoxYear
+    if monthNotYetDrawn
+        float sessionNfpHigh = request.security(syminfo.tickerid, "D", high, lookahead=barmerge.lookahead_off)
+        float sessionNfpLow = request.security(syminfo.tickerid, "D", low, lookahead=barmerge.lookahead_off)
+        bool allowHist = not i_nfpCurrentMonthOnly or (yMonth == nowMonth and yYear == nowYear)
+        if allowHist and not na(sessionNfpHigh) and not na(sessionNfpLow)
+            int friMidnight = timestamp(TZ, yYear, yMonth, yDay, 0, 0)
+            int nfpSessionStart = friMidnight - (6 * 60 * 60 * 1000)
+            nfpBox := box.new(nfpSessionStart, sessionNfpHigh, time_close, sessionNfpLow, xloc=xloc.bar_time, border_color=color.new(i_cNfp, 30), bgcolor=color.new(i_cNfp, 86), border_width=1, border_style=line.style_dashed, text="NFP", text_color=i_cNfp, text_size=size.normal, text_halign=text.align_right, text_valign=text.align_center, text_font_family=font.family_monospace)
+            nfpHigh := sessionNfpHigh
+            nfpLow := sessionNfpLow
+            nfpDay := yDay
+            nfpMonth := yMonth
+            nfpYear := yYear
+            activeNfpBoxMonth := yMonth
+            activeNfpBoxYear := yYear
+
+// ============================================
+// Sunday and Tuesday Session Anchors
+// ============================================
+var bool sundaySet = false
+var bool tuesdaySet = false
+
+if isNewWeek
+    sundaySet := false
+    tuesdaySet := false
+    sundayWindowOpen := false
+    tuesdayWindowOpen := false
+    // Delete previous week's zone boxes (only current week shown)
+    if not na(upperZoneBox)
+        box.delete(upperZoneBox)
+        upperZoneBox := na
+    if not na(lowerZoneBox)
+        box.delete(lowerZoneBox)
+        lowerZoneBox := na
+    // Detach session box references so new ones are created (old ones remain on chart)
+    sundayBox := na
+    tuesdayBox := na
+
+// Sunday: detect first bar in 18:xx hour on Sunday (flexible, works on any TF)
+bool isSunday18 = dayofweek(time, TZ) == dayofweek.sunday and hour(time, TZ) == 18
+bool tfLt60 = timeframe.isintraday and timeframe.in_seconds(timeframe.period) < 3600
+// Tuesday: first bar at 9:30 (sub-60m) or 9:xx hour (>=60m)
+bool isTuesday0930 = dayofweek(time, TZ) == dayofweek.tuesday and hour(time, TZ) == 9 and minute(time, TZ) == 30
+bool isTuesdayHourBar = dayofweek(time, TZ) == dayofweek.tuesday and hour(time, TZ) == 9
+
+if not sundaySet and isSunday18
+    sundaySet := true
+    sundayHigh := high
+    sundayLow := low
+    sundayBoxStart := bar_index
+    sundayEndTs := timestamp(TZ, year(time, TZ), month(time, TZ), dayofmonth(time, TZ), 19, 0)
+    sundayWindowOpen := true
+    sundayBoxRight := sundayBoxStart
+
+if not tuesdaySet and ((tfLt60 and isTuesday0930) or (not tfLt60 and isTuesdayHourBar))
+    tuesdaySet := true
+    tuesdayHigh := high
+    tuesdayLow := low
+    tuesdayBoxStart := bar_index
+    int tEndHour = tfLt60 ? 10 : 10
+    int tEndMin = tfLt60 ? 30 : 0
+    tuesdayEndTs := timestamp(TZ, year(time, TZ), month(time, TZ), dayofmonth(time, TZ), tEndHour, tEndMin)
+    tuesdayWindowOpen := true
+    tuesdayBoxRight := tuesdayBoxStart
+
+if sundayWindowOpen and time <= sundayEndTs
+    sundayHigh := math.max(sundayHigh, high)
+    sundayLow := math.min(sundayLow, low)
+    sundayBoxRight := bar_index
+else if sundayWindowOpen and time > sundayEndTs
+    sundayWindowOpen := false
+
+// Extend Sunday box right edge through the entire week
+if sundaySet and not sundayWindowOpen
+    sundayBoxRight := bar_index
+
+if tuesdayWindowOpen and time <= tuesdayEndTs
+    tuesdayHigh := math.max(tuesdayHigh, high)
+    tuesdayLow := math.min(tuesdayLow, low)
+    tuesdayBoxRight := bar_index
+else if tuesdayWindowOpen and time > tuesdayEndTs
+    tuesdayWindowOpen := false
+
+// Extend Tuesday box right edge through the entire week
+if tuesdaySet and not tuesdayWindowOpen
+    tuesdayBoxRight := bar_index
+
+// Session box rendering (only on intraday timeframes)
+if i_showSessionBoxes and tfIsIntraday
+    if sundaySet and not na(sundayHigh) and not na(sundayLow)
+        int sRight = math.max(nz(sundayBoxRight, sundayBoxStart), sundayBoxStart + 1)
+        if na(sundayBox)
+            sundayBox := box.new(sundayBoxStart, sundayHigh, sRight, sundayLow, border_color=color.new(i_cSunday, 0), bgcolor=color.new(i_cSunday, 85), border_width=1, text="Sunday", text_color=i_cSunday, text_size=size.small, text_halign=text.align_right, text_valign=text.align_center, text_font_family=font.family_monospace)
+        else
+            box.set_left(sundayBox, sundayBoxStart)
+            box.set_right(sundayBox, sRight)
+            box.set_top(sundayBox, sundayHigh)
+            box.set_bottom(sundayBox, sundayLow)
+    if tuesdaySet and not na(tuesdayHigh) and not na(tuesdayLow)
+        int tRight = math.max(nz(tuesdayBoxRight, tuesdayBoxStart), tuesdayBoxStart + 1)
+        if na(tuesdayBox)
+            tuesdayBox := box.new(tuesdayBoxStart, tuesdayHigh, tRight, tuesdayLow, border_color=color.new(i_cTuesday, 0), bgcolor=color.new(i_cTuesday, 85), border_width=1, text="Tuesday", text_color=i_cTuesday, text_size=size.small, text_halign=text.align_right, text_valign=text.align_center, text_font_family=font.family_monospace)
+        else
+            box.set_left(tuesdayBox, tuesdayBoxStart)
+            box.set_right(tuesdayBox, tRight)
+            box.set_top(tuesdayBox, tuesdayHigh)
+            box.set_bottom(tuesdayBox, tuesdayLow)
+else
+    if not na(sundayBox)
+        box.delete(sundayBox)
+        sundayBox := na
+    if not na(tuesdayBox)
+        box.delete(tuesdayBox)
+        tuesdayBox := na
+
+// ============================================
+// EMA Zone Boxes (current week)
+// ============================================
+if i_showEmaZones and not na(weeklyEma) and not na(weekStartIdx)
+    int zRight = bar_index + 5
+    if na(upperZoneBox)
+        upperZoneBox := box.new(weekStartIdx, upperZoneHi, zRight, upperZoneLo, border_color=color.new(i_cUpper, 60), bgcolor=color.new(i_cUpper, i_zoneFillOpacity), border_width=1)
+    else
+        box.set_left(upperZoneBox, weekStartIdx)
+        box.set_top(upperZoneBox, upperZoneHi)
+        box.set_right(upperZoneBox, zRight)
+        box.set_bottom(upperZoneBox, upperZoneLo)
+        box.set_border_color(upperZoneBox, color.new(i_cUpper, 60))
+        box.set_bgcolor(upperZoneBox, color.new(i_cUpper, i_zoneFillOpacity))
+    if na(lowerZoneBox)
+        lowerZoneBox := box.new(weekStartIdx, lowerZoneHi, zRight, lowerZoneLo, border_color=color.new(i_cLower, 60), bgcolor=color.new(i_cLower, i_zoneFillOpacity), border_width=1)
+    else
+        box.set_left(lowerZoneBox, weekStartIdx)
+        box.set_top(lowerZoneBox, lowerZoneHi)
+        box.set_right(lowerZoneBox, zRight)
+        box.set_bottom(lowerZoneBox, lowerZoneLo)
+        box.set_border_color(lowerZoneBox, color.new(i_cLower, 60))
+        box.set_bgcolor(lowerZoneBox, color.new(i_cLower, i_zoneFillOpacity))
+
+// ============================================
+// Monthly Level Lines
+// ============================================
+// Carry-forward dashed lines: prev month levels extending into current month only
+bool hasCarryData = not na(prevMonthHigh) and not na(currMonthStartIdx)
+lnPmHighCarry := f_update_segment_line(lnPmHighCarry, i_showMonthHigh and hasCarryData, prevMonthHigh, currMonthStartIdx, bar_index + 5, i_cMonthHigh, i_liveWidth, "Dashed")
+lnPmLowCarry := f_update_segment_line(lnPmLowCarry, i_showMonthLow and hasCarryData, prevMonthLow, currMonthStartIdx, bar_index + 5, i_cMonthLow, i_liveWidth, "Dashed")
+lnPmMidCarry := f_update_segment_line(lnPmMidCarry, i_showMonthMid and hasCarryData, prevMonthMid, currMonthStartIdx, bar_index + 5, i_cMonthMid, i_liveWidth, "Dashed")
+
+// Current month 30% line (solid, within current month only)
+lnCurrMonth30 := f_update_segment_line(lnCurrMonth30, i_showCurrentMonth30 and not na(currMonth30) and not na(currMonthStartIdx), currMonth30, currMonthStartIdx, bar_index + 5, i_cMonth30, i_liveWidth, i_liveStyle)
+
+// Previous week lines
+lnPwHigh := f_update_level_line(lnPwHigh, i_showPrevWeek and tfIsIntraday and i_showPwh and wkMask, prevWeekHigh, i_cPwh, i_prevWeekWidth, i_prevWeekStyle, 120)
+lnPwLow := f_update_level_line(lnPwLow, i_showPrevWeek and tfIsIntraday and i_showPwl and wkMask, prevWeekLow, i_cPwl, i_prevWeekWidth, i_prevWeekStyle, 120)
+lnPw50 := f_update_level_line(lnPw50, i_showPrevWeek and tfIsIntraday and i_showPw50 and wkMask, prevWeekMid, i_cPwMid, i_prevWeekWidth, i_prevWeekStyle, 120)
+lnPw25 := f_update_level_line(lnPw25, i_showPrevWeek and tfIsIntraday and i_showPw25 and wkMask, prevWeek25, i_cPwQ, i_prevWeekWidth, i_prevWeekStyle, 120)
+lnPw75 := f_update_level_line(lnPw75, i_showPrevWeek and tfIsIntraday and i_showPw75 and wkMask, prevWeek75, i_cPwQ, i_prevWeekWidth, i_prevWeekStyle, 120)
+
+// NFP box (horizontal band from NFP low to NFP high, extending across current view)
+if i_showNfp and not na(nfpBox) and activeNfpBoxMonth == month(time_close, TZ) and activeNfpBoxYear == year(time_close, TZ)
+    box.set_right(nfpBox, time_close)
+    box.set_top(nfpBox, nfpHigh)
+    box.set_bottom(nfpBox, nfpLow)
+    box.set_border_color(nfpBox, color.new(i_cNfp, 30))
+    box.set_bgcolor(nfpBox, color.new(i_cNfp, 86))
+else if not i_showNfp and not na(nfpBox)
+    box.delete(nfpBox)
+    nfpBox := na
+
+// ============================================
+// Visuals (only plots that must be plots)
+// ============================================
+// Single EMA line
+plot(i_showEmaLine ? weeklyEma : na, "Weekly EMA", color=i_cEma, linewidth=2)
+
+// Optimal zone marker removed (not in reference design)
+
+// Range debug (only when enabled)
+float rangeDebugHigh = i_showRangeDebug and i_showRangeAnalysis and activeRangeTracking ? activeRangeHigh : na
+float rangeDebugLow = i_showRangeDebug and i_showRangeAnalysis and activeRangeTracking ? activeRangeLow : na
+plot(rangeDebugHigh, "Range Debug High", color=color.new(color.red, 0), linewidth=1, style=plot.style_linebr)
+plot(rangeDebugLow, "Range Debug Low", color=color.new(color.green, 0), linewidth=1, style=plot.style_linebr)
+
+// Highlight every first-Friday NFP bar in yellow for quick visual identification.
+bool isNfpDayBar = i_showNfp and isNfpCalendarDay
+barcolor(isNfpDayBar ? color.new(#facc15, 0) : na, title="NFP Day Highlight")
+
+// ============================================
+// Labels
+// ============================================
+if i_showLabels and barstate.islast
+    int lx = bar_index + 6
+
+    // Previous Month High label
+    if i_showMonthHigh and not na(prevMonthHigh)
+        if na(lblPmHigh)
+            lblPmHigh := label.new(lx, prevMonthHigh, "Prev Month High", style=label.style_label_left, textcolor=i_cMonthHigh, color=labelBg, size=f_txt_size(i_labelSize), text_font_family=font.family_monospace)
+        else
+            label.set_x(lblPmHigh, lx)
+            label.set_y(lblPmHigh, prevMonthHigh)
+            label.set_text(lblPmHigh, "Prev Month High")
+            label.set_textcolor(lblPmHigh, i_cMonthHigh)
+            label.set_color(lblPmHigh, labelBg)
+    else if not na(lblPmHigh)
+        label.delete(lblPmHigh)
+        lblPmHigh := na
+
+    // Previous Month Low label
+    if i_showMonthLow and not na(prevMonthLow)
+        if na(lblPmLow)
+            lblPmLow := label.new(lx, prevMonthLow, "Prev Month Low", style=label.style_label_left, textcolor=i_cMonthLow, color=labelBg, size=f_txt_size(i_labelSize), text_font_family=font.family_monospace)
+        else
+            label.set_x(lblPmLow, lx)
+            label.set_y(lblPmLow, prevMonthLow)
+            label.set_text(lblPmLow, "Prev Month Low")
+            label.set_textcolor(lblPmLow, i_cMonthLow)
+            label.set_color(lblPmLow, labelBg)
+    else if not na(lblPmLow)
+        label.delete(lblPmLow)
+        lblPmLow := na
+
+    // Previous Month Mid label
+    if i_showMonthMid and not na(prevMonthMid)
+        if na(lblPmMid)
+            lblPmMid := label.new(lx, prevMonthMid, "Prev Month Mid", style=label.style_label_left, textcolor=i_cMonthMid, color=labelBg, size=f_txt_size(i_labelSize), text_font_family=font.family_monospace)
+        else
+            label.set_x(lblPmMid, lx)
+            label.set_y(lblPmMid, prevMonthMid)
+            label.set_text(lblPmMid, "Prev Month Mid")
+            label.set_textcolor(lblPmMid, i_cMonthMid)
+            label.set_color(lblPmMid, labelBg)
+    else if not na(lblPmMid)
+        label.delete(lblPmMid)
+        lblPmMid := na
+
+    // Current Month 30% label
+    if i_showCurrentMonth30 and not na(currMonth30)
+        if na(lblMonth30)
+            lblMonth30 := label.new(lx, currMonth30, "Current Month 30%", style=label.style_label_left, textcolor=i_cMonth30, color=labelBg, size=f_txt_size(i_labelSize), text_font_family=font.family_monospace)
+        else
+            label.set_x(lblMonth30, lx)
+            label.set_y(lblMonth30, currMonth30)
+            label.set_text(lblMonth30, "Current Month 30%")
+            label.set_textcolor(lblMonth30, i_cMonth30)
+            label.set_color(lblMonth30, labelBg)
+    else if not na(lblMonth30)
+        label.delete(lblMonth30)
+        lblMonth30 := na
+
+    // NFP Friday label (single label at midpoint of NFP range)
+    if i_showNfp and not na(nfpHigh) and not na(nfpLow)
+        float nfpMid = (nfpHigh + nfpLow) * 0.5
+        if na(lblNfp)
+            lblNfp := label.new(lx, nfpMid, "NFP Friday", style=label.style_label_left, textcolor=i_cNfp, color=labelBg, size=f_txt_size(i_labelSize), text_font_family=font.family_monospace)
+        else
+            label.set_x(lblNfp, lx)
+            label.set_y(lblNfp, nfpMid)
+            label.set_text(lblNfp, "NFP Friday")
+            label.set_textcolor(lblNfp, i_cNfp)
+            label.set_color(lblNfp, labelBg)
+    else if not na(lblNfp)
+        label.delete(lblNfp)
+        lblNfp := na
+
+// ============================================
+// Dashboard Tables
+// ============================================
+float upMean = f_mean(weekUpPct)
+float upMedian = f_median(weekUpPct)
+float upMode = f_mode_nearest_mean(weekUpPct, i_modeBinSize)
+float dnMean = f_mean(weekDownPct)
+float dnMedian = f_median(weekDownPct)
+float dnMode = f_mode_nearest_mean(weekDownPct, i_modeBinSize)
+float zoneHitRate = f_hitrate_bool(weekZoneHits)
+string zoneStatus = f_status(zoneHitRate)
+color zoneStatusColor = f_status_color(zoneHitRate)
+
+// Weekly Summary Table
+var table weeklyTable = table.new(f_table_pos(i_weeklyTablePos), 2, 9, bgcolor=tblBg, border_width=1)
+if i_showProbability and barstate.islast
+    table.cell(weeklyTable, 0, 0, "WEEKLY SUMMARY", text_color=tblText, bgcolor=tblHeaderBg, text_size=size.small)
+    table.cell(weeklyTable, 1, 0, "Value", text_color=tblText, bgcolor=tblHeaderBg, text_size=size.small)
+    table.cell(weeklyTable, 0, 1, "Lookback")
+    table.cell(weeklyTable, 1, 1, str.tostring(array.size(weekUpPct)) + "w")
+    table.cell(weeklyTable, 0, 2, "Mean %")
+    table.cell(weeklyTable, 1, 2, str.tostring(upMean, "#.##"))
+    table.cell(weeklyTable, 0, 3, "Median %")
+    table.cell(weeklyTable, 1, 3, str.tostring(upMedian, "#.##"))
+    table.cell(weeklyTable, 0, 4, "Mode %")
+    table.cell(weeklyTable, 1, 4, str.tostring(upMode, "#.##"))
+    table.cell(weeklyTable, 0, 5, "2-3% Hit Rate")
+    table.cell(weeklyTable, 1, 5, str.tostring(zoneHitRate, "#.##") + "%", text_color=zoneStatusColor)
+    table.cell(weeklyTable, 0, 6, "Status")
+    table.cell(weeklyTable, 1, 6, zoneStatus, text_color=zoneStatusColor)
+    table.cell(weeklyTable, 0, 7, "Current Dist %")
+    table.cell(weeklyTable, 1, 7, str.tostring(pctDistance, "#.##"))
+    table.cell(weeklyTable, 0, 8, "Zone")
+    table.cell(weeklyTable, 1, 8, pctDistance >= i_zoneStartPct and pctDistance <= i_zoneEndPct ? "Inside" : "Outside")
+    for rr = 0 to 8
+        for cc = 0 to 1
+            table.cell_set_text_size(weeklyTable, cc, rr, f_table_size(i_weeklyTableSize))
+
+// % Distance Table
+var table pctTable = table.new(f_table_pos(i_pctTablePos), 2, 4, bgcolor=tblBg, border_width=1)
+if i_showPctDistanceTable and barstate.islast
+    float upperDist = ((upperZoneLo - close) / close) * 100.0
+    float lowerDist = ((close - lowerZoneHi) / close) * 100.0
+    table.cell(pctTable, 0, 0, "% DISTANCE", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(pctTable, 1, 0, "Value", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(pctTable, 0, 1, "EMA Dist")
+    table.cell(pctTable, 1, 1, str.tostring(pctDistance, "#.2") + "%")
+    table.cell(pctTable, 0, 2, "To Upper Lo")
+    table.cell(pctTable, 1, 2, str.tostring(upperDist, "#.2") + "%")
+    table.cell(pctTable, 0, 3, "To Lower Hi")
+    table.cell(pctTable, 1, 3, str.tostring(lowerDist, "#.2") + "%")
+    for rr = 0 to 3
+        for cc = 0 to 1
+            table.cell_set_text_size(pctTable, cc, rr, f_table_size(i_pctTableSize))
+
+// ============================================
+// ALL LEVELS TABLE (with Hit Rate ↑ and Hit Rate ↓)
+// ============================================
+var table allLevelsTable = table.new(f_table_pos(i_allLevelsTablePos), 5, 16, bgcolor=tblBg, border_width=1)
+if i_showAllLevelsTable and barstate.islast
+    // Header row
+    table.cell(allLevelsTable, 0, 0, "Level %", text_color=tblText, bgcolor=tblHeaderBg, text_size=size.small)
+    table.cell(allLevelsTable, 1, 0, "Hit Rate ↑", text_color=tblText, bgcolor=tblHeaderBg, text_size=size.small)
+    table.cell(allLevelsTable, 2, 0, "Hit Rate ↓", text_color=tblText, bgcolor=tblHeaderBg, text_size=size.small)
+    table.cell(allLevelsTable, 3, 0, "Status", text_color=tblText, bgcolor=tblHeaderBg, text_size=size.small)
+    table.cell(allLevelsTable, 4, 0, "Price", text_color=tblText, bgcolor=tblHeaderBg, text_size=size.small)
+
+    float bestLvl = na
+    float bestHr = -1.0
+    int row = 1
+    for i = 1 to 10
+        float lvl = i * 0.5
+        float hrUp = f_hitrate_level(weekUpPct, lvl)
+        float hrDn = f_hitrate_level(weekDownPct, lvl)
+        // Status based on upside hit rate (primary direction)
+        string st = f_status(hrUp)
+        color stCol = f_status_color(hrUp)
+        float priceUp = not na(weeklyEma) ? weeklyEma * (1.0 + lvl / 100.0) : na
+        table.cell(allLevelsTable, 0, row, str.tostring(lvl, "#.0") + "%")
+        table.cell(allLevelsTable, 1, row, na(hrUp) ? "n/a" : str.tostring(hrUp, "#.1") + "%", text_color=f_status_color(hrUp))
+        table.cell(allLevelsTable, 2, row, na(hrDn) ? "n/a" : str.tostring(hrDn, "#.1") + "%", text_color=f_status_color(hrDn))
+        table.cell(allLevelsTable, 3, row, st, text_color=stCol)
+        table.cell(allLevelsTable, 4, row, na(priceUp) ? "n/a" : str.tostring(priceUp, "#.0"))
+        if not na(hrUp) and hrUp > bestHr
+            bestHr := hrUp
+            bestLvl := lvl
+        row += 1
+
+    // Separator
+    table.cell(allLevelsTable, 0, 12, "", bgcolor=tblHeaderBg)
+    table.cell(allLevelsTable, 1, 12, "", bgcolor=tblHeaderBg)
+    table.cell(allLevelsTable, 2, 12, "", bgcolor=tblHeaderBg)
+    table.cell(allLevelsTable, 3, 12, "", bgcolor=tblHeaderBg)
+    table.cell(allLevelsTable, 4, 12, "", bgcolor=tblHeaderBg)
+
+    // Best Level row
+    table.cell(allLevelsTable, 0, 13, "Best Level", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(allLevelsTable, 1, 13, na(bestLvl) ? "n/a" : str.tostring(bestLvl, "#.1") + "%")
+    table.cell(allLevelsTable, 2, 13, na(bestHr) ? "" : str.tostring(bestHr, "#.1") + "%")
+    table.cell(allLevelsTable, 3, 13, f_status(bestHr), text_color=f_status_color(bestHr))
+    table.cell(allLevelsTable, 4, 13, "")
+
+    // Statistics summary row (Mean/Med/Mode for ↑ and ↓)
+    table.cell(allLevelsTable, 0, 14, "Mean/Med/Mode", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(allLevelsTable, 1, 14, str.tostring(upMean, "#.1") + "/" + str.tostring(upMedian, "#.1") + "/" + str.tostring(upMode, "#.1"), text_color=tblTextMuted)
+    table.cell(allLevelsTable, 2, 14, str.tostring(dnMean, "#.1") + "/" + str.tostring(dnMedian, "#.1") + "/" + str.tostring(dnMode, "#.1"), text_color=tblTextMuted)
+    table.cell(allLevelsTable, 3, 14, "")
+    table.cell(allLevelsTable, 4, 14, "")
+
+    // Statistics detail row
+    table.cell(allLevelsTable, 0, 15, "↑ / ↓", text_color=tblTextMuted, bgcolor=tblHeaderBg)
+    table.cell(allLevelsTable, 1, 15, "Above EMA", text_color=tblTextMuted)
+    table.cell(allLevelsTable, 2, 15, "Below EMA", text_color=tblTextMuted)
+    table.cell(allLevelsTable, 3, 15, "")
+    table.cell(allLevelsTable, 4, 15, "")
+
+    for rr = 0 to 15
+        for cc = 0 to 4
+            table.cell_set_text_size(allLevelsTable, cc, rr, f_table_size(i_allLevelsTableSize))
+
+// Position Table
+var table positionTable = table.new(f_table_pos(i_positionTablePos), 2, 5, bgcolor=tblBg, border_width=1)
+if i_showPositionTable and barstate.islast
+    string pmState = close >= prevMonthMid ? "Above" : "Below"
+    string nfpState = na(nfpHigh) and na(nfpLow) ? "No NFP candle" : (close > nfpHigh ? "Above NFP High" : close < nfpLow ? "Below NFP Low" : "Inside NFP Range")
+    table.cell(positionTable, 0, 0, "Level", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(positionTable, 1, 0, "Position", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(positionTable, 0, 1, "Prev Month Mid")
+    table.cell(positionTable, 1, 1, pmState)
+    table.cell(positionTable, 0, 2, "NFP Friday")
+    table.cell(positionTable, 1, 2, nfpState)
+    table.cell(positionTable, 0, 3, "Weekly EMA")
+    table.cell(positionTable, 1, 3, close >= weeklyEma ? "Above" : "Below")
+    table.cell(positionTable, 0, 4, "2-3% Zone")
+    table.cell(positionTable, 1, 4, pctDistance >= i_zoneStartPct and pctDistance <= i_zoneEndPct ? "Inside" : "Outside")
+    for rr = 0 to 4
+        for cc = 0 to 1
+            table.cell_set_text_size(positionTable, cc, rr, f_table_size(i_positionTableSize))
+
+// DOW Stats Table
+var table dowTable = table.new(f_table_pos(i_dowTablePos), 4, 7, bgcolor=tblBg, border_width=1)
+var string[] dowNames = array.from("Mon", "Tue", "Wed", "Thu", "Fri")
+if i_showProbability and i_showDowStats and barstate.islast
+    table.cell(dowTable, 0, 0, "DOW", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(dowTable, 1, 0, "Hits", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(dowTable, 2, 0, "Hit %", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(dowTable, 3, 0, "Mean %", text_color=tblText, bgcolor=tblHeaderBg)
+
+    int dowRows = math.min(5, array.size(dowNames))
+    if dowRows > 0
+        for r = 0 to dowRows - 1
+            int t = array.get(dowTotals, r)
+            int h = array.get(dowZoneHits, r)
+            float hr = t > 0 ? (h * 100.0) / t : na
+            float mp = array.get(dowMeanProxy, r)
+            color c = f_status_color(hr)
+            table.cell(dowTable, 0, r + 1, array.get(dowNames, r))
+            table.cell(dowTable, 1, r + 1, str.tostring(h) + "/" + str.tostring(t))
+            table.cell(dowTable, 2, r + 1, na(hr) ? "n/a" : str.tostring(hr, "#.1") + "%", text_color=c)
+            table.cell(dowTable, 3, r + 1, na(mp) ? "n/a" : str.tostring(mp, "#.2"))
+    for rr = 0 to 6
+        for cc = 0 to 3
+            table.cell_set_text_size(dowTable, cc, rr, f_table_size(i_dowTableSize))
+
+// Range Analysis Tables
+float rangeMean = f_mean(rangePcts)
+float rangeMedian = f_median(rangePcts)
+float rangeMode = f_mode_nearest_mean(rangePcts, 0.1)
+float rangeHitRate = f_hitrate_bool(rangeZoneHits)
+
+var table rangeProbTable = table.new(f_table_pos(i_rangeProbTablePos), 2, 6, bgcolor=tblBg, border_width=1)
+if i_showRangeAnalysis and i_showRangeProbTable and barstate.islast
+    table.cell(rangeProbTable, 0, 0, "RANGE PROB", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(rangeProbTable, 1, 0, "Value", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(rangeProbTable, 0, 1, "Samples")
+    table.cell(rangeProbTable, 1, 1, str.tostring(array.size(rangePcts)))
+    table.cell(rangeProbTable, 0, 2, "Hit Rate")
+    table.cell(rangeProbTable, 1, 2, str.tostring(rangeHitRate, "#.1") + "%", text_color=f_status_color(rangeHitRate))
+    table.cell(rangeProbTable, 0, 3, "Status")
+    table.cell(rangeProbTable, 1, 3, f_status(rangeHitRate), text_color=f_status_color(rangeHitRate))
+    table.cell(rangeProbTable, 0, 4, "Zone")
+    table.cell(rangeProbTable, 1, 4, str.tostring(i_rangeZoneFrom, "#.1") + "-" + str.tostring(i_rangeZoneTo, "#.1") + "%")
+    table.cell(rangeProbTable, 0, 5, "Method")
+    table.cell(rangeProbTable, 1, 5, i_analysisMethod)
+    for rr = 0 to 5
+        for cc = 0 to 1
+            table.cell_set_text_size(rangeProbTable, cc, rr, f_table_size(i_rangeProbTableSize))
+
+var table rangeLevelsTable = table.new(f_table_pos(i_rangeLevelsTablePos), 3, 5, bgcolor=tblBg, border_width=1)
+if i_showRangeAnalysis and i_showRangeLevelsTable and barstate.islast
+    table.cell(rangeLevelsTable, 0, 0, "RANGE", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(rangeLevelsTable, 1, 0, "Stat", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(rangeLevelsTable, 2, 0, "Value", text_color=tblText, bgcolor=tblHeaderBg)
+    table.cell(rangeLevelsTable, 0, 1, i_rangeDow)
+    table.cell(rangeLevelsTable, 1, 1, "Mean")
+    table.cell(rangeLevelsTable, 2, 1, str.tostring(rangeMean, "#.2") + "%")
+    table.cell(rangeLevelsTable, 0, 2, i_rangeDow)
+    table.cell(rangeLevelsTable, 1, 2, "Median")
+    table.cell(rangeLevelsTable, 2, 2, str.tostring(rangeMedian, "#.2") + "%")
+    table.cell(rangeLevelsTable, 0, 3, i_rangeDow)
+    table.cell(rangeLevelsTable, 1, 3, "Mode")
+    table.cell(rangeLevelsTable, 2, 3, str.tostring(rangeMode, "#.2") + "%")
+    table.cell(rangeLevelsTable, 0, 4, i_rangeDow)
+    table.cell(rangeLevelsTable, 1, 4, "Hit%")
+    table.cell(rangeLevelsTable, 2, 4, str.tostring(rangeHitRate, "#.1") + "%")
+    for rr = 0 to 4
+        for cc = 0 to 2
+            table.cell_set_text_size(rangeLevelsTable, cc, rr, f_table_size(i_rangeLevelsTableSize))

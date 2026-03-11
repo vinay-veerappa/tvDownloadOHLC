@@ -146,11 +146,73 @@ i_tableSize   = input.string("normal", "Table Text Size",
 
 Default text/table size: **normal** (not small, not tiny).
 
+### MANDATORY: Per-Table Layout Controls
+
+If an indicator renders multiple tables, position and text size MUST be configurable for each table (or via a clearly documented shared layout profile that maps to every table).
+
+Required rules:
+- No hardcoded table positions for production indicators.
+- Each visible table must be controllable through inputs (position + size).
+- Use a helper mapper for positions/sizes and apply consistently.
+- When table size is configurable, apply it to all cells in that table (not headers only).
+
+Example pattern:
+
+```pine
+i_summaryPos = input.string("Top Left", "Summary Table Position", options=[...], group="Table Layout")
+i_summarySize = input.string("Small", "Summary Table Size", options=["Tiny","Small","Normal","Large"], group="Table Layout")
+
+var table summary = table.new(f_table_pos(i_summaryPos), 3, 8)
+// after populating cells, apply size to full table grid
+for r = 0 to 7
+    for c = 0 to 2
+        table.cell_set_text_size(summary, c, r, f_table_size(i_summarySize))
+```
+
 ### MANDATORY: Colors must work on light backgrounds
 
 - Never use `color.white` as a default text color
 - Use dark defaults or provide theme-aware inputs
 - Test against TradingView's "Light Pro" theme mentally
+
+### MANDATORY: Configurable Text Font (Default Monospace)
+
+All new indicators and strategies that draw labels/tables MUST expose a font option and default to monospace.
+
+Required input pattern:
+
+```pine
+i_textFont = input.string("Monospace", "Text Font", options=["Monospace", "Default"], group="Display")
+f_font(string fontName) => fontName == "Monospace" ? font.family_monospace : font.family_default
+```
+
+Usage requirements:
+- Table/label text should use monospace by default for visual alignment in dashboards.
+- Users must be able to switch to default TradingView font.
+- For labels, apply `text_font_family=f_font(i_textFont)`.
+- For table-heavy dashboards, use monospace conventions consistently in all summary/status rows.
+
+### MANDATORY: Theme System (Dark + Light)
+
+All indicators with custom visuals MUST implement a built-in theme system covering text, labels, lines, fills, and table backgrounds.
+
+Required input pattern:
+
+```pine
+i_theme = input.string("Auto", "Theme", options=["Auto", "Dark", "Light"], group="Display")
+```
+
+Required implementation rules:
+- Define theme-aware color palettes (UDT or grouped constants) for:
+    - primary/secondary text
+    - table background/header/border
+    - bullish/bearish/status colors
+    - line colors and translucent fills
+    - label text/background
+- `Auto` should default safely (prefer dark-like contrast if chart theme detection is unavailable).
+- Avoid hardcoding one-off colors inside drawing calls; route through palette variables.
+- Ensure both themes remain readable on TradingView light and dark charts.
+- Any user color overrides must preserve legibility (especially status text and table headers).
 
 ### Use inline for related inputs
 
@@ -223,6 +285,33 @@ while array.size(boxes) > maxCount
 // WRONG — index shifts cause out-of-bounds
 for i = 0 to array.size(boxes) - 1
     box.delete(array.get(boxes, i))  // WILL CRASH
+```
+
+### MANDATORY: Array Hardening for Every Dynamic Access
+
+Every `array.get()` / `array.set()` and every loop using `array.size(...) - 1` MUST be guarded.
+
+Rules:
+- Never run `for i = 0 to array.size(arr) - 1` unless `array.size(arr) > 0` is checked first.
+- For paired arrays, always iterate with `pairN = math.min(array.size(a), array.size(b))` and loop `0 .. pairN - 1`.
+- When using dynamic indices (`idx` from search or calculation), validate bounds first:
+  `idx >= 0 and idx < array.size(arr)`.
+- Prefer `while array.size(arr) > limit` cleanup for shrinking arrays.
+
+Safe pattern:
+
+```pine
+int n = array.size(arr)
+if n > 0
+    for i = 0 to n - 1
+        float v = array.get(arr, i)
+
+int pairN = math.min(array.size(prices), array.size(counts))
+if pairN > 0
+    for i = 0 to pairN - 1
+        if array.get(counts, i) > 0
+            // safe paired access
+            float p = array.get(prices, i)
 ```
 
 ### Pattern: barstate.islast for Retained/Dynamic Drawings
@@ -425,6 +514,42 @@ Pre-build strings where possible. `str.tostring()` is fine but don't call it unn
 
 ## 11. ICT-Specific Patterns
 
+### IB Bias / Generic Range Bias Pattern (Strategy Filter + Score)
+
+Use one reusable midpoint-bias mechanism that can source from either:
+- `IB (09:30-10:30)`
+- `Custom Session` (user-defined session range)
+
+Recommended inputs:
+
+```pine
+i_useIBBias          = input.bool(true, "Enable Range Mid Bias (IB/Custom)", group=GRP_FILTER)
+i_useRangeBiasScore  = input.bool(true, "Use Range Bias in Score (+1)", group=GRP_FILTER)
+i_useRangeBiasFilter = input.bool(false, "Use Range Bias as Hard Filter", group=GRP_FILTER)
+i_rangeBiasSource    = input.string("IB (09:30-10:30)", "Range Bias Source", options=["IB (09:30-10:30)", "Custom Session"], group=GRP_FILTER)
+i_rangeBiasSession   = input.session("0930-1030", "Custom Bias Session (ET)", group=GRP_FILTER)
+```
+
+Tracking pattern:
+- Track `ibHigh/ibLow` in IB window as usual.
+- Track `biasRangeHigh/biasRangeLow` in custom session.
+- Select active range by source input.
+- Compute midpoint: `biasMid = (biasHigh + biasLow) / 2`.
+
+Directional interpretation:
+- Bullish side: `close > biasMid`
+- Bearish side: `close < biasMid`
+
+Usage modes:
+- Score mode: add `+1` when side matches trade direction.
+- Hard-filter mode: invalidate setup unless side matches direction.
+- Both can run together (`score + filter`).
+
+Implementation notes:
+- If selected range is not ready (`na` or zero-width), hard-filter should fail closed (block setup) when enabled.
+- Keep this mechanism generic and independent from market-structure logic so it can be reused across strategies.
+- Expose debug text showing source, midpoint, and current side (`ABOVE/BELOW/ON_MID`) for verification.
+
 ### FVG Detection Between HTF Candles
 ```pine
 // Bearish FVG: candle1.low > candle3.high (gap down, no overlap)
@@ -514,6 +639,11 @@ alertcondition(takeoutH, "Previous HTF High Taken Out", "Price took out previous
 | Strings can't use `+=` in older Pine | v6 supports `+=` for string concatenation |
 | `time()` returns na outside session | Check `not na(time(...))` for session detection |
 | Line/label stacking on realtime | Use update-in-place pattern, not create-every-tick |
+| `UDT.new()` with `bool` field set to `na` | `na` is `simple na`, not `series bool`. Use `false` (or `true`) as the reset value for `bool` fields in UDT constructors. Never pass bare `na` to a `bool` field. |
+| `object.field[1]` history on UDT field | Cannot use `[]` on UDT fields directly. Reference history on the **object** first: `(object[1]).field`, not `object.field[1]`. |
+| `strategy.exit(qty=N, stop=sl)` only covers `N` contracts | When `qty` is set on a `strategy.exit`, the stop **only** protects that partial qty — the remaining position has **no SL**. Fix: use a **separate** full-position `strategy.exit("SL", entry, stop=sl)` (no `qty`) that always runs, and keep TP exits as **limit-only** partials. After TP1, update the SL exit to breakeven. |
+| EOD close not triggering on higher timeframes | Time-based checks like `hour==15 and minute>=45` can fail when no such bar exists (e.g., 30m bars). Use NY `timestamp(...)` and detect the bar that **crosses** cutoff: `time <= cutoff and time_close >= cutoff`. |
+| `strategy.close_all()` followed by `strategy.cancel_all()` | With `process_orders_on_close=false`, `close_all()` can place a pending market order for next tick; calling `cancel_all()` right after can cancel that close. Fix: `cancel_all()` first, then `close_all(..., immediately=true)` for forced exits. |
 
 ---
 

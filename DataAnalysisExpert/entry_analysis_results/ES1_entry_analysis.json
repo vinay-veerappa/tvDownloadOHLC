@@ -1,0 +1,32 @@
+{
+  "ticker": "ES1",
+  "total_days": 1888,
+  "retracement_analysis": {
+    "pm_breaks": {
+      "count": 1133,
+      "median": 68.94736842105263,
+      "mean": 77.4735614307733,
+      "p25": 50.72463768115942,
+      "p75": 92.7710843373494,
+      "min": 16.793893129770993,
+      "max": 530.0
+    },
+    "pm_doesnt_break": {
+      "count": 377,
+      "median": 68.33333333333333,
+      "mean": 78.3829319046909,
+      "p25": 50.0,
+      "p75": 94.35483870967742
+    }
+  },
+  "mae_mfe_analysis": {
+    "losing": {
+      "count": 1510,
+      "mae_median_pct": 70.84101962099615,
+      "mfe_median_pct": 11.204350161117079,
+      "loss_median_pct": 79.4862412177986
+    }
+  },
+  "entry_scenario_analysis": {},
+  "recommendations": []
+}
