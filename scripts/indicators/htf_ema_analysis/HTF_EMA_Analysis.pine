@@ -255,6 +255,15 @@ f_hitrate_level(array<float> arr, float level) =>
                 hits += 1
         (hits * 100.0) / n
 
+f_hits_at_level(array<float> arr, float level) =>
+    int n = array.size(arr)
+    int hits = 0
+    if n > 0
+        for i = 0 to n - 1
+            if array.get(arr, i) >= level
+                hits += 1
+    hits
+
 f_status(float hitRate) =>
     if na(hitRate)
         "N/A"
@@ -328,14 +337,9 @@ f_update_segment_line(line ln, bool show, float y, int x1, int x2, color c, int 
 // For NYMEX futures (CL), the week runs Sun 18:00 ET to Fri 17:00 ET.
 // This is the exchange-defined boundary and cannot be changed in Pine.
 // ============================================
-float weeklyEma = request.security(syminfo.tickerid, "W", ta.ema(close, i_emaLength), lookahead=barmerge.lookahead_on)
-float prevWeeklyEma = request.security(syminfo.tickerid, "W", ta.ema(close, i_emaLength)[1], lookahead=barmerge.lookahead_on)
-float prevWeekHigh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
-float prevWeekLow = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_on)
-float prevMonthHigh = request.security(syminfo.tickerid, "M", high[1], lookahead=barmerge.lookahead_on)
-float prevMonthLow = request.security(syminfo.tickerid, "M", low[1], lookahead=barmerge.lookahead_on)
-float currMonthHigh = request.security(syminfo.tickerid, "M", high, lookahead=barmerge.lookahead_on)
-float currMonthLow = request.security(syminfo.tickerid, "M", low, lookahead=barmerge.lookahead_on)
+[weeklyEma, prevWeeklyEma, prevWeekHigh, prevWeekLow] = request.security(syminfo.tickerid, "W", [ta.ema(close[1], i_emaLength), ta.ema(close[2], i_emaLength)[1], high[1], low[1]], lookahead=barmerge.lookahead_on)
+[prevMonthHigh, prevMonthLow, currMonthHigh, currMonthLow] = request.security(syminfo.tickerid, "M", [high[1], low[1], high, low], lookahead=barmerge.lookahead_on)
+[dHighPrevSec, dLowPrevSec, dHighSec, dLowSec] = request.security(syminfo.tickerid, "D", [high[1], low[1], high, low], lookahead=barmerge.lookahead_off)
 
 float prevWeekMid = (prevWeekHigh + prevWeekLow) * 0.5
 float prevWeek25 = prevWeekLow + (prevWeekHigh - prevWeekLow) * 0.25
@@ -362,7 +366,13 @@ bool inCurrentWeek = year(time_close, TZ) == curYear and weekofyear(time_close, 
 bool inCurrentMonth = year(time_close, TZ) == curYear and month(time_close, TZ) == curMonth
 bool wkMask = not i_currentWeekOnly or inCurrentWeek
 bool monMask = i_showHistoricalMonths or inCurrentMonth
-bool inProbTime = f_hhmm_in_window(hour(time, TZ), minute(time, TZ), i_startHour, i_startMin, i_endHour, i_endMin)
+int barDow = dayofweek(time, TZ)
+int barHour = hour(time, TZ)
+int barMin = minute(time, TZ)
+int barYear = year(time, TZ)
+int barMonth = month(time, TZ)
+int barDom = dayofmonth(time, TZ)
+bool inProbTime = f_hhmm_in_window(barHour, barMin, i_startHour, i_startMin, i_endHour, i_endMin)
 bool probTimePass = not i_enableTimeFilter or inProbTime
 
 bool darkTheme = i_theme == "Dark" or i_theme == "Auto"
@@ -485,8 +495,8 @@ if isNewWeek and probTimePass and not na(prevWeeklyEma) and not na(prevWeekHigh)
     f_push_capped_bool(weekZoneHits, zoneHit, i_lookbackWeeks)
 
 if isNewDay and i_showDowStats and probTimePass and not na(weeklyEma)
-    float dHighPrev = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_off)
-    float dLowPrev = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_off)
+    float dHighPrev = dHighPrevSec
+    float dLowPrev = dLowPrevSec
     int yDow = dayofweek(time[1], TZ)
     int idx = f_day_idx(yDow)
     if idx >= 0 and not na(dHighPrev) and not na(dLowPrev)
@@ -508,8 +518,8 @@ if isNewDay and i_showDowStats and probTimePass and not na(weeklyEma)
 // Range Analysis Engine
 // ============================================
 int targetDow = f_day_name_to_dow(i_rangeDow)
-bool isTargetDay = dayofweek(time, TZ) == targetDow
-bool inRangeWindow = f_hhmm_in_window(hour(time, TZ), minute(time, TZ), i_rangeStartHour, i_rangeStartMin, i_rangeEndHour, i_rangeEndMin)
+bool isTargetDay = barDow == targetDow
+bool inRangeWindow = f_hhmm_in_window(barHour, barMin, i_rangeStartHour, i_rangeStartMin, i_rangeEndHour, i_rangeEndMin)
 
 if isNewDay
     activeRangeTracking := false
@@ -565,8 +575,8 @@ if isNfpCalendarDay
     int yYear = year(time_close, TZ)
     bool monthNotYetDrawn = na(activeNfpBoxMonth) or na(activeNfpBoxYear) or yMonth != activeNfpBoxMonth or yYear != activeNfpBoxYear
     if monthNotYetDrawn
-        float sessionNfpHigh = request.security(syminfo.tickerid, "D", high, lookahead=barmerge.lookahead_off)
-        float sessionNfpLow = request.security(syminfo.tickerid, "D", low, lookahead=barmerge.lookahead_off)
+        float sessionNfpHigh = dHighSec
+        float sessionNfpLow = dLowSec
         bool allowHist = not i_nfpCurrentMonthOnly or (yMonth == nowMonth and yYear == nowYear)
         if allowHist and not na(sessionNfpHigh) and not na(sessionNfpLow)
             int friMidnight = timestamp(TZ, yYear, yMonth, yDay, 0, 0)
@@ -603,18 +613,18 @@ if isNewWeek
     tuesdayBox := na
 
 // Sunday: detect first bar in 18:xx hour on Sunday (flexible, works on any TF)
-bool isSunday18 = dayofweek(time, TZ) == dayofweek.sunday and hour(time, TZ) == 18
+bool isSunday18 = barDow == dayofweek.sunday and barHour == 18
 bool tfLt60 = timeframe.isintraday and timeframe.in_seconds(timeframe.period) < 3600
 // Tuesday: first bar at 9:30 (sub-60m) or 9:xx hour (>=60m)
-bool isTuesday0930 = dayofweek(time, TZ) == dayofweek.tuesday and hour(time, TZ) == 9 and minute(time, TZ) == 30
-bool isTuesdayHourBar = dayofweek(time, TZ) == dayofweek.tuesday and hour(time, TZ) == 9
+bool isTuesday0930 = barDow == dayofweek.tuesday and barHour == 9 and barMin == 30
+bool isTuesdayHourBar = barDow == dayofweek.tuesday and barHour == 9
 
 if not sundaySet and isSunday18
     sundaySet := true
     sundayHigh := high
     sundayLow := low
     sundayBoxStart := bar_index
-    sundayEndTs := timestamp(TZ, year(time, TZ), month(time, TZ), dayofmonth(time, TZ), 19, 0)
+    sundayEndTs := timestamp(TZ, barYear, barMonth, barDom, 19, 0)
     sundayWindowOpen := true
     sundayBoxRight := sundayBoxStart
 
@@ -625,7 +635,7 @@ if not tuesdaySet and ((tfLt60 and isTuesday0930) or (not tfLt60 and isTuesdayHo
     tuesdayBoxStart := bar_index
     int tEndHour = tfLt60 ? 10 : 10
     int tEndMin = tfLt60 ? 30 : 0
-    tuesdayEndTs := timestamp(TZ, year(time, TZ), month(time, TZ), dayofmonth(time, TZ), tEndHour, tEndMin)
+    tuesdayEndTs := timestamp(TZ, barYear, barMonth, barDom, tEndHour, tEndMin)
     tuesdayWindowOpen := true
     tuesdayBoxRight := tuesdayBoxStart
 
@@ -886,31 +896,36 @@ if i_showPctDistanceTable and barstate.islast
 // ============================================
 // ALL LEVELS TABLE (with Hit Rate ↑ and Hit Rate ↓)
 // ============================================
-var table allLevelsTable = table.new(f_table_pos(i_allLevelsTablePos), 5, 16, bgcolor=tblBg, border_width=1)
+var table allLevelsTable = table.new(f_table_pos(i_allLevelsTablePos), 4, 16, bgcolor=tblBg, border_width=1)
 if i_showAllLevelsTable and barstate.islast
     // Header row
     table.cell(allLevelsTable, 0, 0, "Level %", text_color=tblText, bgcolor=tblHeaderBg, text_size=size.small)
     table.cell(allLevelsTable, 1, 0, "Hit Rate ↑", text_color=tblText, bgcolor=tblHeaderBg, text_size=size.small)
     table.cell(allLevelsTable, 2, 0, "Hit Rate ↓", text_color=tblText, bgcolor=tblHeaderBg, text_size=size.small)
     table.cell(allLevelsTable, 3, 0, "Status", text_color=tblText, bgcolor=tblHeaderBg, text_size=size.small)
-    table.cell(allLevelsTable, 4, 0, "Price", text_color=tblText, bgcolor=tblHeaderBg, text_size=size.small)
 
     float bestLvl = na
     float bestHr = -1.0
+    int nWeeksUp = array.size(weekUpPct)
+    int nWeeksDn = array.size(weekDownPct)
     int row = 1
     for i = 1 to 10
         float lvl = i * 0.5
         float hrUp = f_hitrate_level(weekUpPct, lvl)
         float hrDn = f_hitrate_level(weekDownPct, lvl)
+        int hitsUp = f_hits_at_level(weekUpPct, lvl)
+        int hitsDn = f_hits_at_level(weekDownPct, lvl)
         // Status based on upside hit rate (primary direction)
         string st = f_status(hrUp)
         color stCol = f_status_color(hrUp)
-        float priceUp = not na(weeklyEma) ? weeklyEma * (1.0 + lvl / 100.0) : na
         table.cell(allLevelsTable, 0, row, str.tostring(lvl, "#.0") + "%")
         table.cell(allLevelsTable, 1, row, na(hrUp) ? "n/a" : str.tostring(hrUp, "#.1") + "%", text_color=f_status_color(hrUp))
         table.cell(allLevelsTable, 2, row, na(hrDn) ? "n/a" : str.tostring(hrDn, "#.1") + "%", text_color=f_status_color(hrDn))
         table.cell(allLevelsTable, 3, row, st, text_color=stCol)
-        table.cell(allLevelsTable, 4, row, na(priceUp) ? "n/a" : str.tostring(priceUp, "#.0"))
+        string upTip = nWeeksUp == 0 ? "No weekly samples collected yet." : str.tostring(hitsUp) + " out of " + str.tostring(nWeeksUp) + " weeks reached " + str.tostring(lvl, "#.0") + "% above EMA."
+        string dnTip = nWeeksDn == 0 ? "No weekly samples collected yet." : str.tostring(hitsDn) + " out of " + str.tostring(nWeeksDn) + " weeks reached " + str.tostring(lvl, "#.0") + "% below EMA."
+        table.cell_set_tooltip(allLevelsTable, 1, row, upTip)
+        table.cell_set_tooltip(allLevelsTable, 2, row, dnTip)
         if not na(hrUp) and hrUp > bestHr
             bestHr := hrUp
             bestLvl := lvl
@@ -921,31 +936,27 @@ if i_showAllLevelsTable and barstate.islast
     table.cell(allLevelsTable, 1, 12, "", bgcolor=tblHeaderBg)
     table.cell(allLevelsTable, 2, 12, "", bgcolor=tblHeaderBg)
     table.cell(allLevelsTable, 3, 12, "", bgcolor=tblHeaderBg)
-    table.cell(allLevelsTable, 4, 12, "", bgcolor=tblHeaderBg)
 
     // Best Level row
     table.cell(allLevelsTable, 0, 13, "Best Level", text_color=tblText, bgcolor=tblHeaderBg)
     table.cell(allLevelsTable, 1, 13, na(bestLvl) ? "n/a" : str.tostring(bestLvl, "#.1") + "%")
     table.cell(allLevelsTable, 2, 13, na(bestHr) ? "" : str.tostring(bestHr, "#.1") + "%")
     table.cell(allLevelsTable, 3, 13, f_status(bestHr), text_color=f_status_color(bestHr))
-    table.cell(allLevelsTable, 4, 13, "")
 
     // Statistics summary row (Mean/Med/Mode for ↑ and ↓)
     table.cell(allLevelsTable, 0, 14, "Mean/Med/Mode", text_color=tblText, bgcolor=tblHeaderBg)
     table.cell(allLevelsTable, 1, 14, str.tostring(upMean, "#.1") + "/" + str.tostring(upMedian, "#.1") + "/" + str.tostring(upMode, "#.1"), text_color=tblTextMuted)
     table.cell(allLevelsTable, 2, 14, str.tostring(dnMean, "#.1") + "/" + str.tostring(dnMedian, "#.1") + "/" + str.tostring(dnMode, "#.1"), text_color=tblTextMuted)
     table.cell(allLevelsTable, 3, 14, "")
-    table.cell(allLevelsTable, 4, 14, "")
 
     // Statistics detail row
     table.cell(allLevelsTable, 0, 15, "↑ / ↓", text_color=tblTextMuted, bgcolor=tblHeaderBg)
     table.cell(allLevelsTable, 1, 15, "Above EMA", text_color=tblTextMuted)
     table.cell(allLevelsTable, 2, 15, "Below EMA", text_color=tblTextMuted)
     table.cell(allLevelsTable, 3, 15, "")
-    table.cell(allLevelsTable, 4, 15, "")
 
     for rr = 0 to 15
-        for cc = 0 to 4
+        for cc = 0 to 3
             table.cell_set_text_size(allLevelsTable, cc, rr, f_table_size(i_allLevelsTableSize))
 
 // Position Table
