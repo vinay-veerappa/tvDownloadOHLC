@@ -1,6 +1,12 @@
 // This Pine Script source code is free to use under the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © vinay-veerappa
 
+// --- RECONCILIATION LOG ---
+// 2026-03-12: Corrected Timezone/Session bug: Bins days based on Session Close time to resolve 24h shift.
+// 2026-03-12: Conditional Statistics: Mean, Median, and Mode now filter out zero-excursion days.
+//             This ensures stats reflect movement magnitude only when a touch occurs.
+// 2026-03-12: Fixed Friday visibility: All 5 trading days now display in DOW table.
+// -------------------------
 //@version=6
 indicator("HTF EMA Analysis", overlay=true, max_bars_back=5000, max_lines_count=500, max_boxes_count=200, max_labels_count=300)
 
@@ -169,6 +175,16 @@ f_push_capped_bool(array<bool> arr, bool value, int maxLen) =>
     while array.size(arr) > maxLen
         array.shift(arr)
 
+f_array_filter_nonzero(array<float> arr) =>
+    array<float> filtered = array.new_float()
+    int n = array.size(arr)
+    if n > 0
+        for i = 0 to n - 1
+            float v = array.get(arr, i)
+            if v > 0.001
+                array.push(filtered, v)
+    filtered
+
 f_mean(array<float> arr) =>
     int n = array.size(arr)
     if n == 0
@@ -194,46 +210,49 @@ f_mode_nearest_mean(array<float> arr, float binSize) =>
     if n == 0
         na
     else
-        float mu = f_mean(arr)
-        array<float> bins = array.new_float()
-        array<int> counts = array.new_int()
-        for i = 0 to n - 1
-            float raw = array.get(arr, i)
-            if raw < 0.001
-                continue
-            float b = math.round(raw / binSize) * binSize
-            int idx = -1
-            int binsNLocal = array.size(bins)
-            if binsNLocal > 0
-                for j = 0 to binsNLocal - 1
-                    if math.abs(array.get(bins, j) - b) <= (binSize * 0.25)
-                        idx := j
-                        break
-            if idx == -1
-                array.push(bins, b)
-                array.push(counts, 1)
-            else
-                array.set(counts, idx, array.get(counts, idx) + 1)
+        // Mode logic usually implicitly ignores zeros if we bin them separately, but we'll filter them to be safe
+        array<float> filtered = f_array_filter_nonzero(arr)
+        int fn = array.size(filtered)
+        if fn == 0
+            na
+        else
+            float mu = f_mean(filtered)
+            array<float> bins = array.new_float()
+            array<int> counts = array.new_int()
+            for i = 0 to fn - 1
+                float raw = array.get(filtered, i)
+                float b = math.round(raw / binSize) * binSize
+                int idx = -1
+                int binsNLocal = array.size(bins)
+                if binsNLocal > 0
+                    for j = 0 to binsNLocal - 1
+                        if math.abs(array.get(bins, j) - b) <= (binSize * 0.25)
+                            idx := j
+                            break
+                if idx == -1
+                    array.push(bins, b)
+                    array.push(counts, 1)
+                else
+                    array.set(counts, idx, array.get(counts, idx) + 1)
+            int maxCount = 0
+            int countsN = array.size(counts)
+            if countsN > 0
+                for k = 0 to countsN - 1
+                    maxCount := math.max(maxCount, array.get(counts, k))
 
-        int maxCount = 0
-        int countsN = array.size(counts)
-        if countsN > 0
-            for k = 0 to countsN - 1
-                maxCount := math.max(maxCount, array.get(counts, k))
-
-        float best = na
-        float bestDist = 10e10
-        int binsFinal = array.size(bins)
-        int pairN = math.min(binsFinal, countsN)
-        if pairN > 0
-            for m = 0 to pairN - 1
-                if array.get(counts, m) == maxCount
-                    float candidate = array.get(bins, m)
-                    float dist = math.abs(candidate - mu)
-                    if dist < bestDist
-                        bestDist := dist
-                        best := candidate
-        best
+            float best = na
+            float bestDist = 10e10
+            int binsFinal = array.size(bins)
+            int pairN = math.min(binsFinal, countsN)
+            if pairN > 0
+                for m = 0 to pairN - 1
+                    if array.get(counts, m) == maxCount
+                        float candidate = array.get(bins, m)
+                        float dist = math.abs(candidate - mu)
+                        if dist < bestDist
+                            bestDist := dist
+                            best := candidate
+            best
 
 f_hitrate_bool(array<bool> arr) =>
     int n = array.size(arr)
@@ -389,15 +408,31 @@ bool probTimePass = not i_enableTimeFilter or inProbTime
 bool darkTheme = i_theme == "Dark" or i_theme == "Auto"
 
 // Upgraded base colors mapped to your ORIGINAL variable names so existing tables don't break
-color tblBg        = darkTheme ? color.new(#242735, i_tableOpacity) : color.new(#ffffff, i_tableOpacity)
-color tblHeaderBg  = darkTheme ? color.new(#363a45, 0) : color.new(#f0f3fa, 0)
-color tblText      = darkTheme ? color.new(#d1d4dc, 0) : color.new(#131722, 0)
-color tblTextMuted = darkTheme ? color.new(#8b93a6, 0) : color.new(#787b86, 0)
-color labelBg      = darkTheme ? color.new(#242735, 20) : color.new(#ffffff, 20)
+color tblBg = na
+color tblHeaderBg = na
+color tblText = na
+color tblTextMuted = na
+color labelBg = na
+color uiSubHead = na
+color uiBorder = na
 
-// NEW variables specific to the screenshot's advanced UI
-color uiSubHead    = darkTheme ? color.new(#434651, 0) : color.new(#e4e8f1, 0)
-color uiBorder     = darkTheme ? color.new(#434651, 0) : color.new(#e0e3eb, 0)
+if darkTheme
+    tblBg := color.new(#242735, 14)
+    tblHeaderBg := color.new(#363a45, 0)
+    tblText := color.new(#d1d4dc, 0)
+    tblTextMuted := color.new(#8b93a6, 0)
+    labelBg := color.new(#242735, 20)
+    uiSubHead := color.new(#434651, 0)
+    uiBorder := color.new(#434651, 0)
+else
+    tblBg := color.new(#ffffff, 14)
+    tblHeaderBg := color.new(#f0f3fa, 0)
+    tblText := color.new(#131722, 0)
+    tblTextMuted := color.new(#787b86, 0)
+    labelBg := color.new(#ffffff, 20)
+    uiSubHead := color.new(#e4e8f1, 0)
+    uiBorder := color.new(#e0e3eb, 0)
+
 color colUp        = color.new(#4caf50, 0) // High % Green
 color colDn        = color.new(#ff5252, 0) // Low % Red
 color colUpMuted   = darkTheme ? color.new(#2e4c34, 0) : color.new(#dcedc8, 0) 
@@ -527,7 +562,7 @@ if isNewWeek and probTimePass and not na(prevWeeklyEma) and not na(weeklyEma) an
 if isNewDay and i_showDowStats and probTimePass and not na(weeklyEma) and not prevBarInCurrentWeek
     float dHighPrev = dHighPrevSec
     float dLowPrev = dLowPrevSec
-    int yDow = dayofweek(time[1], TZ)
+    int yDow = dayofweek(time_close[1], TZ)
     int idx = f_day_idx(yDow)
     
     if idx >= 0 and not na(dHighPrev) and not na(dLowPrev)
@@ -896,11 +931,14 @@ var float rangeHitRate = na
 
 if barstate.islast
     // Calculate Weekly Stats once on the final bar
-    upMean := f_mean(weekUpPct)
-    upMedian := f_median(weekUpPct)
+    array<float> weekUpPctNZ = f_array_filter_nonzero(weekUpPct)
+    array<float> weekDownPctNZ = f_array_filter_nonzero(weekDownPct)
+    
+    upMean := f_mean(weekUpPctNZ)
+    upMedian := f_median(weekUpPctNZ)
     upMode := f_mode_nearest_mean(weekUpPct, i_modeBinSize)
-    dnMean := f_mean(weekDownPct)
-    dnMedian := f_median(weekDownPct)
+    dnMean := f_mean(weekDownPctNZ)
+    dnMedian := f_median(weekDownPctNZ)
     dnMode := f_mode_nearest_mean(weekDownPct, i_modeBinSize)
     zoneHitRate := f_hitrate_bool(weekZoneHits)
     zoneStatus := f_status(zoneHitRate)
@@ -1003,7 +1041,7 @@ if i_showProbability and barstate.islast
         
         array<string> dayNames = array.from("Mon", "Tue", "Wed", "Thu", "Fri")
 
-        for r = 0 to 3
+        for r = 0 to 4
             // Dynamically assign the correct array using a switch statement
             array<float> uArr = switch r
                 0 => monUp
@@ -1027,10 +1065,13 @@ if i_showProbability and barstate.islast
             float cUp = f_hitrate_level(uArr, i_zoneEndPct)
             float cDn = f_hitrate_level(dArr, i_zoneEndPct)
             
-            float mUp = f_mean(uArr)
-            float mDn = f_mean(dArr)
-            float medUp = f_median(uArr)
-            float medDn = f_median(dArr)
+            array<float> uArrNZ = f_array_filter_nonzero(uArr)
+            array<float> dArrNZ = f_array_filter_nonzero(dArr)
+
+            float mUp = f_mean(uArrNZ)
+            float mDn = f_mean(dArrNZ)
+            float medUp = f_median(uArrNZ)
+            float medDn = f_median(dArrNZ)
             float modUp = f_mode_nearest_mean(uArr, i_modeBinSize)
             float modDn = f_mode_nearest_mean(dArr, i_modeBinSize)
 
@@ -1044,8 +1085,10 @@ if i_showProbability and barstate.islast
             table.cell(dowTable, 6, row, na(mDn) ? "-" : str.tostring(mDn, "#.00"), text_color=colDn)
             table.cell(dowTable, 7, row, na(medUp) ? "-" : str.tostring(medUp, "#.00"), text_color=colUpMuted)
             table.cell(dowTable, 8, row, na(medDn) ? "-" : str.tostring(medDn, "#.00"), text_color=colDnMuted)
-            table.cell(dowTable, 9, row, na(modUp) ? "-" : str.tostring(modUp, "#.0"), text_color=colUp)
-            table.cell(dowTable, 10, row, na(modDn) ? "-" : str.tostring(modDn, "#.0"), text_color=colDn)
+            string sModUp = na(modUp) ? "-" : str.tostring(modUp, "#.0") + "-" + str.tostring(modUp + i_modeBinSize, "#.0")
+            string sModDn = na(modDn) ? "-" : str.tostring(modDn, "#.0") + "-" + str.tostring(modDn + i_modeBinSize, "#.0")
+            table.cell(dowTable, 9, row, sModUp, text_color=colUp)
+            table.cell(dowTable, 10, row, sModDn, text_color=colDn)
             table.cell(dowTable, 11, row, str.tostring(nDays), text_color=tblTextMuted)
 
 // % Distance Table
