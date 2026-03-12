@@ -1,161 +1,81 @@
-# HTF EMA Analysis - Requirements Specification
+# HTF EMA Analysis - Requirements & Technical Specification
 
-## Goal
-Build a Pine Script v6 overlay indicator named **HTF EMA Analysis** that replicates the chart and input behavior shown in the reference screenshots, centered on percentage-distance analysis from weekly EMA(5), with weekly/day-of-week statistics, configurable EMA zones, and level dashboards.
+## 1. Goal
+Build a Pine Script v6 overlay indicator named **HTF EMA Analysis** that replicates complex probability chart metrics, centered on percentage-distance excursions from the weekly EMA(5). The indicator delivers comprehensive daily and weekly statistics, configurable EMA zones, probabilistic dashboards, and flawlessly renders cross-timeframe structural elements without encountering historical array limit crashes.
 
-## Scope
-- Platform: TradingView Pine Script v6.
-- Type: Overlay indicator.
-- Primary market use: intraday decision support using weekly EMA context.
-- Version target: v1 full screenshot parity, implemented in phases.
+## 2. Environment & Scope
+- **Platform:** TradingView Pine Script v6.
+- **Type:** Intraday & Higher Timeframe (HTF) Overlay Indicator.
+- **Primary Market Use:** Support/Resistance and Magnet Level detection using probability engines, specifically for instruments operating under futures or robust global sessions.
 
-## Core Definitions
+## 3. Core Definitions & Formulas
 
-### 1) Base Metric
-All core statistics use percentage distance from weekly EMA(5):
+### 3.1 Base Percent Excursion Metric
+All probability calculations define movement away from the *closing* Weekly EMA(5) of the **completed prior week**.
 
-`pctDistance = ((price - weeklyEMA5) / weeklyEMA5) * 100`
+**Positive (Upward) Excursion:**
+`dUp = math.max(0.0, ((High - prevWeeklyEma) / prevWeeklyEma) * 100)`
 
-### 2) Weekly Statistical Window
-- Default lookback: `52` completed weeks.
-- Outputs: `mean`, `median`, `mode` of weekly percentage move distribution.
+**Negative (Downward) Excursion:**
+`dDn = math.max(0.0, ((prevWeeklyEma - Low) / prevWeeklyEma) * 100)`
 
-### 3) Analysis Zone
-- Fixed probability analysis zone: **2% to 3% above weekly EMA(5)**.
-- Zone hit is determined by overlap/touch of weekly price range with this band.
+**Requirement Note:**
+- If the target high/low failed to move in the designated direction at all, the excursion is intrinsically considered `0.0`.
+- This ensures adverse volatility does not artificially suppress the baseline metrics of the opposed direction.
 
-### 4) Configurable EMA Zones
-- Upper zone and lower zone are user-configurable percentage bands from weekly EMA(5).
-- Inputs define high/low bounds for both upper and lower zones.
+### 3.2 Weekly Statistical Lookback Window
+- **Default Range:** Exclusively evaluates the historical `52` fully completed weeks (Current week in progress is naturally excluded from the statistical index).
+- **Core Outputs:** 
+  1. `Mean` (Mathematical average)
+  2. `Median` (Sorted midpoint)
+  3. `Mode` (Binned highest frequency)
 
-### 5) Status Classification
-Status labels are hit-rate based and split by thirds:
-- `Good`: top third (`>= 66.67%`)
-- `Fair`: middle third (`>= 33.33% and < 66.67%`)
-- `Rare`: bottom third (`< 33.33%`)
+### 3.3 Target Analysis Zone
+- A static probability analysis zone dynamically checking exactly **2% to 3%** distance from the Weekly EMA(5).
+- Detects interaction overlap/touch logic. 
 
-### 6) Mode Tie Handling
-If multiple bins share max frequency, select a single mode using:
-- **Nearest-to-mean tie-breaker**.
+### 3.4 Binned Mode Logic (Tie-Breaking & Zero-Purge)
+Instead of returning singular raw ticks, the distribution is clustered incrementally.
+1. Data arrays are binned by `i_modeBinSize` (default: **0.5%**).
+2. The zero bin (values `< 0.001%`) is aggressively excluded from the array analysis so tightly-ranged consolidation chop cannot overwhelm directional metrics.
+3. If multiple frequency bins tie for maximum count, the framework employs a **Nearest-to-Mean** check, evaluating the absolute delta of each tied bin's center against the sequence's arithmetic `Mean`. The closest bin becomes the ultimate `Mode`.
 
-### 7) NFP Detection and Holiday Handling
-- Baseline NFP day: first Friday of the month.
-- If first Friday is non-trading, roll forward to next Friday with valid bars.
-- Search horizon: up to month-end Friday.
-- If no valid Friday exists in month, mark NFP as missing.
-- NFP levels use full-day range (high/low and derived levels).
+### 3.5 Classification Logic (Thirds)
+Performance rates explicitly populate in one of three fractional categories:
+- **Good (Green):** $\ge 66.67\%$ Hit Rate
+- **Fair (Yellow):** $\ge 33.33\%$ and $< 66.67\%$ Hit Rate
+- **Rare (Red):** $< 33.33\%$ Hit Rate
 
-### 8) Sunday and Tuesday Anchors
-- Sunday anchor: first `18:00` candle hour.
-- Tuesday anchor:
-  - `< 60m`: first `09:30` candle.
-  - `>= 60m`: hour bar containing `09:30`.
+## 4. Architectural Rules & Structural Features
 
-## Feature Modules
+### 4.1 Global Time Coordinates Protocol
+To permit monthly/weekly architectural objects to exist effortlessly on 1m or 15m timeframes, TradingView's `bar_index` limit (~500 bar recursive limit) is completely bypassed. 
+Every persistent drawing object strictly utilizes `xloc.bar_time` combined with raw `time` / `time_close` variables instead.
+`time` geometrically guarantees lines/boxes reach identically scaled destinations regardless of the viewer's timeframe multiplier.
 
-### A) Core Settings
-- EMA length (default `5`).
-- Show/hide EMA line.
-- Configurable upper/lower EMA zone percentages.
+### 4.2 NFP & Holiday Anomalies
+- The script dynamically detects Non-Farm Payroll anomalies by assessing the initial Friday of the month utilizing native logic (`dayofweek.friday` and `dayofmonth <= 7`).
+- Records the highest high/lowest low directly achieved during the 6-hour NFP block preceding New York open.
 
-### B) Weekly Levels
-- Show EMA zones.
-- Current week only toggle.
+### 4.3 Sunday & Tuesday Intraday Anchors
+- **Sunday Anchor:** Triggers exactly at the first `18:00` candle hour.
+- **Tuesday Anchor:** 
+  - Timeframes `< 60m`: Identifies the exact `09:30` opening candle.
+  - Timeframes $\ge 60m`: Targets the inclusive hour bar capturing `09:30`.
+- Wraps the session high/low directly into targeted `color.new(val, 85)` transparent fill boxes trailing to the current close sequence.
 
-### C) Monthly Levels
-- Toggles for previous month high/low/mid.
-- Toggle for current month 30% level.
-- Toggle for historical month levels.
+## 5. UI Elements & Dashboards
 
-### D) Previous Week Levels
-- Master toggle.
-- Individual toggles for:
-  - High
-  - Low
-  - 50%
-  - 25%
-  - 75%
-- Independent colors and line style/width.
+### 5.1 Weekly Analysis Panel
+- Presents a summary column of standard HTF states (`Mean`, `Median`, `Mode`).
+- Details current zone entry hit-rate percentages alongside raw opening positions.
+- Cross-references statistical days of the week rows corresponding to current price limits (`dUp` & `dDn` math).
 
-### E) Session and Event Context
-- Session boxes.
-- Sunday and Tuesday anchors/boxes.
-- NFP levels with current month filter option.
+### 5.2 All Levels Hit-Rate Dashboard
+- Projects a granular step grid incrementing by `0.5%` continuously to 5.0%.
+- Actively categorizes success rates across the Good/Fair/Rare metric matrix.
+- Appends specialized `Mode` row summaries to identify the most potent predictive magnet levels mathematically proven by the algorithm.
 
-### F) Display Options
-- Labels toggle.
-- Label size.
-- % distance table.
-- Position table.
-
-### G) Probability Analysis
-- Master enable toggle.
-- Lookback weeks input (default `52`).
-- Show optimal zones.
-- Zone start/end (default `2` to `3`).
-- Day-of-week stats toggle.
-- All-levels table toggle.
-- Optional time filter with start/end and timezone.
-
-### H) Range Analysis
-- Master enable toggle.
-- Start/end hour/minute and timezone.
-- Measurement type.
-- Analysis method.
-- Day-of-week filter.
-- Daily close hour.
-- Zone band (for example `0.5` to `1.0`).
-- Optional range probability table.
-- Optional range levels table.
-- Optional day-limit with day count.
-- Optional debug boundary rendering.
-
-### I) Styling
-- Color controls for EMA, zones, Sunday, Tuesday, NFP, month levels.
-- Line style controls for active and historical lines.
-- Light-theme-safe text/line defaults.
-
-## Tables and Dashboard Requirements
-
-### 1) Weekly Analysis Panel
-- Statistical summary (mean/median/mode).
-- Zone-entry and completion-style metrics.
-- Opening position impact.
-- Day-of-week breakdown rows.
-
-### 2) All Levels Analysis Panel
-- Level grid (for example `0.5%` to `5.0%`).
-- Hit-rate values.
-- Good/Fair/Rare status from thirds.
-- Summary rows including best level.
-
-### 3) Optional Tables
-- % distance table.
-- Position table.
-- Range probability and range levels tables (if enabled).
-
-## Data and Time Rules
-- Use completed periods for statistics when required (avoid polluting with incomplete week/month in summary metrics).
-- Handle timezone explicitly in all session/day anchors and time filters.
-- Keep first-Friday NFP logic data-driven from available bars.
-
-## Performance Requirements
-- Avoid unnecessary redraw churn for tables and drawing objects.
-- Keep historical lines where expected by design.
-- Cap object arrays and clean oldest objects safely when limits are approached.
-- Keep per-bar loops bounded by lookback inputs.
-
-## Implementation Phases
-1. Core calculations and statistical engine.
-2. Levels/zones and event anchors.
-3. Dashboards/tables and chart visuals.
-4. Range/time filters and debug options.
-5. Validation and tuning for parity.
-
-## Acceptance Criteria
-- Indicator compiles in Pine Script v6 with no runtime object-limit issues.
-- Inputs appear in grouped sections matching screenshot intent.
-- Weekly stats, mode tie handling, and status thirds follow defined rules.
-- NFP rollover behaves as specified on holiday/non-trading first Friday months.
-- Tuesday anchor logic follows timeframe-dependent rule.
-- Dashboards and key lines render with expected values and toggles.
+### 5.3 Toggle Modularity
+- Enormous feature flag support (Toggle visibility for EMA zones, Monthly High/Low/Mid, NFP filters, Prior Week 25%/50%/75% subdivisions, Statistical tables).
+- Color customization for virtually every array line instantiated on the panel without polluting the main input index excessively.

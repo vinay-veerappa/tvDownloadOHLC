@@ -320,15 +320,15 @@ f_update_level_line(line ln, bool show, float y, color c, int w, string style, i
         out := na
     out
 
-f_update_segment_line(line ln, bool show, float y, int x1, int x2, color c, int w, string style) =>
+f_update_segment_line(line ln, bool show, float y, int t1, int t2, color c, int w, string style) =>
     line out = ln
-    if show and not na(y) and x1 >= 0 and x2 >= x1
+    if show and not na(y) and not na(t1) and not na(t2)
         if na(out)
-            out := line.new(x1, y, x2, y, xloc=xloc.bar_index, extend=extend.none, color=c, width=w, style=f_line_style(style))
+            out := line.new(t1, y, t2, y, xloc=xloc.bar_time, extend=extend.none, color=c, width=w, style=f_line_style(style))
         else
-            line.set_x1(out, x1)
+            line.set_x1(out, t1)
             line.set_y1(out, y)
-            line.set_x2(out, x2)
+            line.set_x2(out, t2)
             line.set_y2(out, y)
             line.set_color(out, c)
             line.set_width(out, w)
@@ -430,8 +430,8 @@ var bool activeRangeDone = false
 // Session box state
 var box sundayBox = na
 var box tuesdayBox = na
-var int sundayBoxStart = na
-var int tuesdayBoxStart = na
+var int sundayBoxStartTime = na
+var int tuesdayBoxStartTime = na
 var float sundayHigh = na
 var float sundayLow = na
 var float tuesdayHigh = na
@@ -440,11 +440,11 @@ var bool sundayWindowOpen = false
 var bool tuesdayWindowOpen = false
 var int sundayEndTs = na
 var int tuesdayEndTs = na
-var int sundayBoxRight = na
-var int tuesdayBoxRight = na
+var int sundayBoxEndTime = na
+var int tuesdayBoxEndTime = na
 
 // Week tracking for zone boxes
-var int weekStartIdx = na
+var int weekStartTime = na
 var box upperZoneBox = na
 var box lowerZoneBox = na
 
@@ -474,30 +474,30 @@ var label lblMonth30 = na
 var label lblNfp = na
 
 // Month index tracking
-var int currMonthStartIdx = na
-var int prevMonthStartIdx = na
-var int prevMonthEndIdx = na
+var int currMonthStartTime = na
+var int prevMonthStartTime = na
+var int prevMonthEndTime = na
 
 var int activeNfpBoxMonth = na
 var int activeNfpBoxYear = na
 
 if barstate.isfirst
-    currMonthStartIdx := bar_index
-    weekStartIdx := bar_index
+    currMonthStartTime := time
+    weekStartTime := time
 
 if isNewMonth
     // Finalize the just-ended month using that month's own H/L/M.
-    if i_showHistoricalMonths and not na(currMonthStartIdx) and not na(prevMonthHigh)
-        int histEnd = bar_index - 1
+    if i_showHistoricalMonths and not na(currMonthStartTime) and not na(prevMonthHigh)
+        int histEndTime = time[1]
         if i_showMonthHigh
-            line.new(currMonthStartIdx, prevMonthHigh, histEnd, prevMonthHigh, xloc=xloc.bar_index, color=i_cMonthHigh, width=i_histWidth, style=f_line_style(i_histStyle))
+            line.new(currMonthStartTime, prevMonthHigh, histEndTime, prevMonthHigh, xloc=xloc.bar_time, color=i_cMonthHigh, width=i_histWidth, style=f_line_style(i_histStyle))
         if i_showMonthLow
-            line.new(currMonthStartIdx, prevMonthLow, histEnd, prevMonthLow, xloc=xloc.bar_index, color=i_cMonthLow, width=i_histWidth, style=f_line_style(i_histStyle))
+            line.new(currMonthStartTime, prevMonthLow, histEndTime, prevMonthLow, xloc=xloc.bar_time, color=i_cMonthLow, width=i_histWidth, style=f_line_style(i_histStyle))
         if i_showMonthMid
-            line.new(currMonthStartIdx, prevMonthMid, histEnd, prevMonthMid, xloc=xloc.bar_index, color=i_cMonthMid, width=i_histWidth, style=f_line_style(i_histStyle))
-    prevMonthStartIdx := currMonthStartIdx
-    prevMonthEndIdx := bar_index - 1
-    currMonthStartIdx := bar_index
+            line.new(currMonthStartTime, prevMonthMid, histEndTime, prevMonthMid, xloc=xloc.bar_time, color=i_cMonthMid, width=i_histWidth, style=f_line_style(i_histStyle))
+    prevMonthStartTime := currMonthStartTime
+    prevMonthEndTime := time[1]
+    currMonthStartTime := time
     // Stop updating the prior month's active NFP box, but leave it on chart.
     nfpBox := na
     activeNfpBoxMonth := na
@@ -531,9 +531,9 @@ if isNewDay and i_showDowStats and probTimePass and not na(weeklyEma) and not pr
     int idx = f_day_idx(yDow)
     
     if idx >= 0 and not na(dHighPrev) and not na(dLowPrev)
-        // Calculate the raw % distance from EMA for both sides
-        float dUp = ((dHighPrev - weeklyEma) / weeklyEma) * 100.0
-        float dDn = ((weeklyEma - dLowPrev) / weeklyEma) * 100.0
+        // Calculate the raw % distance from EMA for both sides (clipped to 0.0)
+        float dUp = math.max(0.0, ((dHighPrev - weeklyEma) / weeklyEma) * 100.0)
+        float dDn = math.max(0.0, ((weeklyEma - dLowPrev) / weeklyEma) * 100.0)
         
         // Exact 52-week cap per day
         int cap = i_lookbackWeeks 
@@ -661,62 +661,62 @@ if not sundaySet and isSunday18
     sundaySet := true
     sundayHigh := high
     sundayLow := low
-    sundayBoxStart := bar_index
+    sundayBoxStartTime := time
     sundayEndTs := timestamp(TZ, barYear, barMonth, barDom, 19, 0)
     sundayWindowOpen := true
-    sundayBoxRight := sundayBoxStart
+    sundayBoxEndTime := sundayBoxStartTime
 
 if not tuesdaySet and ((tfLt60 and isTuesday0930) or (not tfLt60 and isTuesdayHourBar))
     tuesdaySet := true
     tuesdayHigh := high
     tuesdayLow := low
-    tuesdayBoxStart := bar_index
+    tuesdayBoxStartTime := time
     int tEndHour = tfLt60 ? 10 : 10
     int tEndMin = tfLt60 ? 30 : 0
     tuesdayEndTs := timestamp(TZ, barYear, barMonth, barDom, tEndHour, tEndMin)
     tuesdayWindowOpen := true
-    tuesdayBoxRight := tuesdayBoxStart
+    tuesdayBoxEndTime := tuesdayBoxStartTime
 
 if sundayWindowOpen and time <= sundayEndTs
     sundayHigh := math.max(sundayHigh, high)
     sundayLow := math.min(sundayLow, low)
-    sundayBoxRight := bar_index
+    sundayBoxEndTime := time_close
 else if sundayWindowOpen and time > sundayEndTs
     sundayWindowOpen := false
 
 // Extend Sunday box right edge through the entire week
 if sundaySet and not sundayWindowOpen
-    sundayBoxRight := bar_index
+    sundayBoxEndTime := time_close
 
 if tuesdayWindowOpen and time <= tuesdayEndTs
     tuesdayHigh := math.max(tuesdayHigh, high)
     tuesdayLow := math.min(tuesdayLow, low)
-    tuesdayBoxRight := bar_index
+    tuesdayBoxEndTime := time_close
 else if tuesdayWindowOpen and time > tuesdayEndTs
     tuesdayWindowOpen := false
 
 // Extend Tuesday box right edge through the entire week
 if tuesdaySet and not tuesdayWindowOpen
-    tuesdayBoxRight := bar_index
+    tuesdayBoxEndTime := time_close
 
 // Session box rendering (only on intraday timeframes)
 if i_showSessionBoxes and tfIsIntraday
     if sundaySet and not na(sundayHigh) and not na(sundayLow)
-        int sRight = math.max(nz(sundayBoxRight, sundayBoxStart), sundayBoxStart + 1)
+        int sEndTime = nz(sundayBoxEndTime, time_close)
         if na(sundayBox)
-            sundayBox := box.new(sundayBoxStart, sundayHigh, sRight, sundayLow, border_color=color.new(i_cSunday, 0), bgcolor=color.new(i_cSunday, 85), border_width=1, text="Sunday", text_color=i_cSunday, text_size=f_table_size(i_allLevelsTableSize), text_halign=text.align_right, text_valign=text.align_center, text_font_family=font.family_monospace)
+            sundayBox := box.new(sundayBoxStartTime, sundayHigh, sEndTime, sundayLow, xloc=xloc.bar_time, border_color=color.new(i_cSunday, 0), bgcolor=color.new(i_cSunday, 85), border_width=1, text="Sunday", text_color=i_cSunday, text_size=f_table_size(i_allLevelsTableSize), text_halign=text.align_right, text_valign=text.align_center, text_font_family=font.family_monospace)
         else
-            box.set_left(sundayBox, sundayBoxStart)
-            box.set_right(sundayBox, sRight)
+            box.set_left(sundayBox, sundayBoxStartTime)
+            box.set_right(sundayBox, sEndTime)
             box.set_top(sundayBox, sundayHigh)
             box.set_bottom(sundayBox, sundayLow)
     if tuesdaySet and not na(tuesdayHigh) and not na(tuesdayLow)
-        int tRight = math.max(nz(tuesdayBoxRight, tuesdayBoxStart), tuesdayBoxStart + 1)
+        int tEndTime = nz(tuesdayBoxEndTime, time_close)
         if na(tuesdayBox)
-            tuesdayBox := box.new(tuesdayBoxStart, tuesdayHigh, tRight, tuesdayLow, border_color=color.new(i_cTuesday, 0), bgcolor=color.new(i_cTuesday, 85), border_width=1, text="Tuesday", text_color=i_cTuesday, text_size=f_table_size(i_allLevelsTableSize), text_halign=text.align_right, text_valign=text.align_center, text_font_family=font.family_monospace)
+            tuesdayBox := box.new(tuesdayBoxStartTime, tuesdayHigh, tEndTime, tuesdayLow, xloc=xloc.bar_time, border_color=color.new(i_cTuesday, 0), bgcolor=color.new(i_cTuesday, 85), border_width=1, text="Tuesday", text_color=i_cTuesday, text_size=f_table_size(i_allLevelsTableSize), text_halign=text.align_right, text_valign=text.align_center, text_font_family=font.family_monospace)
         else
-            box.set_left(tuesdayBox, tuesdayBoxStart)
-            box.set_right(tuesdayBox, tRight)
+            box.set_left(tuesdayBox, tuesdayBoxStartTime)
+            box.set_right(tuesdayBox, tEndTime)
             box.set_top(tuesdayBox, tuesdayHigh)
             box.set_bottom(tuesdayBox, tuesdayLow)
 else
@@ -730,23 +730,23 @@ else
 // ============================================
 // EMA Zone Boxes (current week)
 // ============================================
-if i_showEmaZones and not na(weeklyEma) and not na(weekStartIdx)
-    int zRight = bar_index + 5
+if i_showEmaZones and not na(weeklyEma) and not na(weekStartTime)
+    int zEndTime = time_close + (time_close - time) * 5
     if na(upperZoneBox)
-        upperZoneBox := box.new(weekStartIdx, upperZoneHi, zRight, upperZoneLo, border_color=color.new(i_cUpper, 60), bgcolor=color.new(i_cUpper, i_zoneFillOpacity), border_width=1)
+        upperZoneBox := box.new(weekStartTime, upperZoneHi, zEndTime, upperZoneLo, xloc=xloc.bar_time, border_color=color.new(i_cUpper, 60), bgcolor=color.new(i_cUpper, i_zoneFillOpacity), border_width=1)
     else
-        box.set_left(upperZoneBox, weekStartIdx)
+        box.set_left(upperZoneBox, weekStartTime)
         box.set_top(upperZoneBox, upperZoneHi)
-        box.set_right(upperZoneBox, zRight)
+        box.set_right(upperZoneBox, zEndTime)
         box.set_bottom(upperZoneBox, upperZoneLo)
         box.set_border_color(upperZoneBox, color.new(i_cUpper, 60))
         box.set_bgcolor(upperZoneBox, color.new(i_cUpper, i_zoneFillOpacity))
     if na(lowerZoneBox)
-        lowerZoneBox := box.new(weekStartIdx, lowerZoneHi, zRight, lowerZoneLo, border_color=color.new(i_cLower, 60), bgcolor=color.new(i_cLower, i_zoneFillOpacity), border_width=1)
+        lowerZoneBox := box.new(weekStartTime, lowerZoneHi, zEndTime, lowerZoneLo, xloc=xloc.bar_time, border_color=color.new(i_cLower, 60), bgcolor=color.new(i_cLower, i_zoneFillOpacity), border_width=1)
     else
-        box.set_left(lowerZoneBox, weekStartIdx)
+        box.set_left(lowerZoneBox, weekStartTime)
         box.set_top(lowerZoneBox, lowerZoneHi)
-        box.set_right(lowerZoneBox, zRight)
+        box.set_right(lowerZoneBox, zEndTime)
         box.set_bottom(lowerZoneBox, lowerZoneLo)
         box.set_border_color(lowerZoneBox, color.new(i_cLower, 60))
         box.set_bgcolor(lowerZoneBox, color.new(i_cLower, i_zoneFillOpacity))
@@ -755,13 +755,13 @@ if i_showEmaZones and not na(weeklyEma) and not na(weekStartIdx)
 // Monthly Level Lines
 // ============================================
 // Carry-forward dashed lines: prev month levels extending into current month only
-bool hasCarryData = not na(prevMonthHigh) and not na(currMonthStartIdx)
-lnPmHighCarry := f_update_segment_line(lnPmHighCarry, i_showMonthHigh and hasCarryData, prevMonthHigh, currMonthStartIdx, bar_index + 5, i_cMonthHigh, i_liveWidth, "Dashed")
-lnPmLowCarry := f_update_segment_line(lnPmLowCarry, i_showMonthLow and hasCarryData, prevMonthLow, currMonthStartIdx, bar_index + 5, i_cMonthLow, i_liveWidth, "Dashed")
-lnPmMidCarry := f_update_segment_line(lnPmMidCarry, i_showMonthMid and hasCarryData, prevMonthMid, currMonthStartIdx, bar_index + 5, i_cMonthMid, i_liveWidth, "Dashed")
+bool hasCarryData = not na(prevMonthHigh) and not na(currMonthStartTime)
+lnPmHighCarry := f_update_segment_line(lnPmHighCarry, i_showMonthHigh and hasCarryData, prevMonthHigh, currMonthStartTime, time_close + (time_close - time) * 5, i_cMonthHigh, i_liveWidth, "Dashed")
+lnPmLowCarry := f_update_segment_line(lnPmLowCarry, i_showMonthLow and hasCarryData, prevMonthLow, currMonthStartTime, time_close + (time_close - time) * 5, i_cMonthLow, i_liveWidth, "Dashed")
+lnPmMidCarry := f_update_segment_line(lnPmMidCarry, i_showMonthMid and hasCarryData, prevMonthMid, currMonthStartTime, time_close + (time_close - time) * 5, i_cMonthMid, i_liveWidth, "Dashed")
 
 // Current month 30% line (solid, within current month only)
-lnCurrMonth30 := f_update_segment_line(lnCurrMonth30, i_showCurrentMonth30 and not na(currMonth30) and not na(currMonthStartIdx), currMonth30, currMonthStartIdx, bar_index + 5, i_cMonth30, i_liveWidth, i_liveStyle)
+lnCurrMonth30 := f_update_segment_line(lnCurrMonth30, i_showCurrentMonth30 and not na(currMonth30) and not na(currMonthStartTime), currMonth30, currMonthStartTime, time_close + (time_close - time) * 5, i_cMonth30, i_liveWidth, i_liveStyle)
 
 // Previous week lines
 lnPwHigh := f_update_level_line(lnPwHigh, i_showPrevWeek and tfIsIntraday and i_showPwh and wkMask, prevWeekHigh, i_cPwh, i_prevWeekWidth, i_prevWeekStyle, 120)
