@@ -1,7 +1,7 @@
 # Data Pipeline Overview
 
-**Version:** 0.7.0
-**Last Updated:** 2026-01-23
+**Version:** 0.8.0
+**Last Updated:** 2026-03-13
 
 This document serves as the guide for acquiring, processing, and storing OHLC market data.
 
@@ -15,10 +15,11 @@ This document serves as the guide for acquiring, processing, and storing OHLC ma
 
 ## 1. Supported Data Sources
 
-We support two primary sources. See [SOURCES.md](SOURCES.md) for detailed specifications.
+See [SOURCES.md](SOURCES.md) for detailed specifications.
 
 -   **TradingView Export (Standard)**: CSV, UTC. Handled by `scripts/data_processing/convert/convert_all_csv.py`.
 -   **BacktestMarket.com**: Semicolon-delimited, Chicago Time. Handled by `scripts/data_processing/convert/convert_backtestmarket.py`.
+-   **yfinance (Yahoo Finance)**: Futures daily/weekly HTF only (NQ1, ES1, YM1, RTY1, CL1, GC1). Pulled automatically by `scripts/streaming/stream_chart.py` on each run. Matches Thinkorswim / Yahoo Finance daily close. See [SOURCES.md](SOURCES.md) for details and the `FUTURES_HTF_SOURCE` toggle.
 
 ---
 
@@ -75,6 +76,7 @@ python data_processing/convert_to_parquet.py --ticker ES1!
 |  | Web JSON Chunks | `scripts/data_processing/convert/convert_to_chunked_json.py` | Optimizes data for frontend. |
 | **Analysis** | Data Inventory | `scripts/analysis/generate_coverage_report.py` | Updates `reports/COVERAGE.md`. |
 |  | Continuity Check | `scripts/analysis/check_data_continuity.py` | Validates no gaps in history. |
+| **Validation** | Futures HTF close verification | `scripts/validation/verify_futures_htf_parquet.py` | Compares futures 1d parquet vs yfinance (and TV for NQ) for N days. |
 
 ---
 

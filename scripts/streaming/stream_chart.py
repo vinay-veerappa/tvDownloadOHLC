@@ -6,16 +6,38 @@ import sys
 import time
 import sqlite3
 import pandas as pd
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dt_time
+from zoneinfo import ZoneInfo
 from schwab.auth import easy_client
 from schwab.client import Client
 from schwab.streaming import StreamClient
 from schwab_token_sync import sync_token_to_db, restore_token_from_db
 
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
+
 # Timezone Configuration (Market uses UTC for storage)
+ET_TZ = ZoneInfo("America/New_York")
+FUTURES_HTF_SOURCE = os.getenv("FUTURES_HTF_SOURCE", "yfinance").strip().lower()
+FUTURES_YFINANCE_MAP = {
+    "/ES": "ES=F",
+    "/NQ": "NQ=F",
+    "/YM": "YM=F",
+    "/RTY": "RTY=F",
+    "/CL": "CL=F",
+    "/GC": "GC=F",
+}
+
 def get_now_iso():
     """Returns current time in UTC as ISO string for storage."""
     return datetime.now(timezone.utc).isoformat()
+
+def resolve_futures_htf_source():
+    if FUTURES_HTF_SOURCE in {"yfinance", "schwab"}:
+        return FUTURES_HTF_SOURCE
+    return "yfinance"
 
 # Configuration
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
@@ -41,7 +63,7 @@ def get_live_files(symbol):
     }
 
 def get_watchlist_symbols():
-    defaults = ["/NQ", "/ES", "/RTY", "/YM","/CL", "/GC","QQQ", "SPY", "SPX""GOOGL", "AAPL", "MSFT", "AMZN", "TSLA", "META", "NFLX", "NVDA","VVIX","VIX"]
+    defaults = ["/NQ", "/ES", "/RTY", "/YM", "/CL", "/GC", "QQQ", "SPY", "SPX", "GOOGL", "AAPL", "MSFT", "AMZN", "TSLA", "META", "NFLX", "NVDA", "VVIX", "VIX"]
     try:
         if not os.path.exists(DB_PATH):
             return defaults
@@ -400,10 +422,324 @@ def update_sub_candle(container, price, time_curr, interval_sec):
     container["live_price"] = price
     container["last_update"] = get_now_iso()
 
+def get_symbol_schedule(symbol):
+    futures_schedule = {
+        "/ES": dt_time(16, 15),
+        "/NQ": dt_time(16, 15),
+        "/YM": dt_time(16, 15),
+        "/RTY": dt_time(16, 15),
+        "/CL": dt_time(14, 30),
+        "/GC": dt_time(13, 30),
+    }
+    if symbol.startswith("/"):
+        return {
+            "session_open": dt_time(18, 0),
+            "settlement": futures_schedule.get(symbol, dt_time(16, 15)),
+            "is_futures": True,
+        }
+    return {
+        "session_open": dt_time(0, 0),
+        "settlement": dt_time(16, 0),
+        "is_futures": False,
+    }
+
+def previous_business_day(day_value):
+    current = day_value - timedelta(days=1)
+    while current.weekday() >= 5:
+        current -= timedelta(days=1)
+    return current
+
+def get_trade_date_for_timestamp(ts_utc, symbol):
+    schedule = get_symbol_schedule(symbol)
+    ts_et = ts_utc.astimezone(ET_TZ)
+    if schedule["is_futures"] and ts_et.timetz().replace(tzinfo=None) >= schedule["session_open"]:
+        return ts_et.date() + timedelta(days=1)
+    return ts_et.date()
+
+def get_current_trade_date(now_et, symbol):
+    schedule = get_symbol_schedule(symbol)
+    if not schedule["is_futures"]:
+        return now_et.date()
+
+    current_time = now_et.timetz().replace(tzinfo=None)
+    if now_et.weekday() == 6 and current_time >= schedule["session_open"]:
+        return now_et.date() + timedelta(days=1)
+    if now_et.weekday() < 4 and current_time >= schedule["session_open"]:
+        return now_et.date() + timedelta(days=1)
+    return now_et.date()
+
+def get_settlement_datetime(trade_date, symbol):
+    settlement_time = get_symbol_schedule(symbol)["settlement"]
+    return datetime.combine(trade_date, settlement_time, ET_TZ)
+
+def get_latest_closed_trade_date(now_et, symbol, grace_minutes=10):
+    current_trade_date = get_current_trade_date(now_et, symbol)
+    settlement_dt = get_settlement_datetime(current_trade_date, symbol) + timedelta(minutes=grace_minutes)
+    if now_et >= settlement_dt:
+        return current_trade_date
+    return previous_business_day(current_trade_date)
+
+def normalize_htf_dataframe(df):
+    normalized = df.copy()
+    if normalized.empty:
+        return normalized
+
+    if 'datetime' in normalized.columns:
+        normalized['datetime'] = pd.to_datetime(normalized['datetime'], utc=True, errors='coerce')
+        normalized = normalized.dropna(subset=['datetime'])
+        normalized.set_index('datetime', inplace=True)
+    elif 'time' in normalized.columns:
+        time_series = normalized['time']
+        if pd.api.types.is_numeric_dtype(time_series):
+            unit = 'ms' if time_series.max() > 10**11 else 's'
+            normalized['datetime'] = pd.to_datetime(time_series, unit=unit, utc=True, errors='coerce')
+        else:
+            normalized['datetime'] = pd.to_datetime(time_series, utc=True, errors='coerce')
+        normalized = normalized.dropna(subset=['datetime'])
+        normalized.set_index('datetime', inplace=True)
+    elif not isinstance(normalized.index, pd.DatetimeIndex):
+        normalized.index = pd.to_datetime(normalized.index, utc=True, errors='coerce')
+        normalized = normalized[~normalized.index.isna()]
+
+    if normalized.index.tz is None:
+        normalized.index = normalized.index.tz_localize(timezone.utc)
+    else:
+        normalized.index = normalized.index.tz_convert(timezone.utc)
+
+    keep_cols = [col for col in ['open', 'high', 'low', 'close', 'volume'] if col in normalized.columns]
+    normalized = normalized[keep_cols].sort_index()
+    return normalized[~normalized.index.duplicated(keep='last')]
+
+def get_daily_anchor_for_trade_date(trade_date, symbol):
+    schedule = get_symbol_schedule(symbol)
+    if schedule['is_futures']:
+        anchor_date = trade_date - timedelta(days=1)
+        return datetime.combine(anchor_date, schedule['session_open'], ET_TZ).astimezone(timezone.utc)
+    return datetime.combine(trade_date, schedule['settlement'], ET_TZ).astimezone(timezone.utc)
+
+def canonicalize_daily_bars(df, symbol):
+    normalized = normalize_htf_dataframe(df)
+    if normalized.empty:
+        return normalized
+
+    working = normalized.copy()
+    working['_trade_date'] = [get_trade_date_for_timestamp(ts, symbol) for ts in working.index]
+    working = working.sort_index()
+
+    canonical = working.groupby('_trade_date').agg({
+        'open': 'first',
+        'high': 'max',
+        'low': 'min',
+        'close': 'last',
+        'volume': 'max',
+    }).sort_index()
+    canonical.index = pd.DatetimeIndex([get_daily_anchor_for_trade_date(day_value, symbol) for day_value in canonical.index], tz=timezone.utc)
+    canonical.index.name = 'datetime'
+    return canonical
+
+def filter_finalized_daily_rows(df, symbol, now_utc):
+    if df.empty:
+        return df
+    now_et = now_utc.astimezone(ET_TZ)
+    latest_closed_trade_date = get_latest_closed_trade_date(now_et, symbol)
+    keep_mask = [get_trade_date_for_timestamp(ts, symbol) <= latest_closed_trade_date for ts in df.index]
+    filtered = df.loc[keep_mask].copy()
+    return filtered.sort_index()
+
+def get_quote_settlement_info(client, symbol):
+    candidates = [symbol]
+    stripped = symbol.lstrip('/')
+    if stripped not in candidates:
+        candidates.append(stripped)
+
+    for candidate in candidates:
+        try:
+            response = client.get_quotes([candidate]).json()
+        except Exception:
+            continue
+
+        if not isinstance(response, dict) or 'errors' in response:
+            continue
+
+        for payload in response.values():
+            if not isinstance(payload, dict):
+                continue
+
+            reference = payload.get('reference', {})
+            quote = payload.get('quote', {})
+            payload_symbol = payload.get('symbol', '')
+            product = reference.get('product', '')
+
+            symbol_matches = (
+                payload_symbol == symbol or
+                payload_symbol == candidate or
+                product == symbol or
+                product == f'/{stripped}' or
+                product == candidate
+            )
+            if not symbol_matches:
+                continue
+
+            settlement_price = reference.get('futureSettlementPrice')
+            if settlement_price is None:
+                settlement_price = quote.get('closePrice')
+
+            if settlement_price is not None:
+                try:
+                    settle_time = quote.get('settleTime')
+                    settle_dt = None
+                    if settle_time is not None:
+                        settle_dt = pd.to_datetime(settle_time, unit='ms', utc=True).to_pydatetime()
+                    return {
+                        'price': float(settlement_price),
+                        'settle_datetime': settle_dt,
+                    }
+                except (TypeError, ValueError):
+                    continue
+
+    return None
+
+def get_quote_close_price(client, symbol):
+    settlement = get_quote_settlement_info(client, symbol)
+    return settlement['price'] if settlement else None
+
+def apply_daily_settlement_override(df, client, symbol, now_utc):
+    if df.empty:
+        return df
+
+    settlement_info = get_quote_settlement_info(client, symbol)
+    if settlement_info is None:
+        return df
+
+    settlement_close = settlement_info['price']
+    settlement_dt = settlement_info.get('settle_datetime')
+
+    if settlement_dt is not None:
+        latest_closed_trade_date = get_trade_date_for_timestamp(settlement_dt, symbol)
+    else:
+        now_et = now_utc.astimezone(ET_TZ)
+        latest_closed_trade_date = get_latest_closed_trade_date(now_et, symbol)
+
+    matching_rows = [ts for ts in df.index if get_trade_date_for_timestamp(ts, symbol) == latest_closed_trade_date]
+    if not matching_rows:
+        return df
+
+    latest_idx = max(matching_rows)
+    day_high = float(df.loc[latest_idx, 'high'])
+    day_low = float(df.loc[latest_idx, 'low'])
+    if not (day_low <= settlement_close <= day_high):
+        return df
+
+    df.loc[latest_idx, 'close'] = settlement_close
+    return df
+
+def fetch_yfinance_daily_history(symbol, start_dt, end_dt, now_utc):
+    yf_symbol = FUTURES_YFINANCE_MAP.get(symbol)
+    if yf_symbol is None:
+        raise ValueError(f"No yfinance mapping configured for {symbol}")
+    if yf is None:
+        raise RuntimeError("yfinance is not installed")
+
+    history = yf.Ticker(yf_symbol).history(
+        start=(start_dt - timedelta(days=3)).date(),
+        end=(end_dt + timedelta(days=3)).date(),
+        interval="1d",
+        auto_adjust=False,
+        actions=False,
+    )
+    if history.empty:
+        return pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
+
+    date_col = 'Date' if 'Date' in history.reset_index().columns else history.reset_index().columns[0]
+    history = history.reset_index()
+    raw_dates = pd.to_datetime(history[date_col], errors='coerce')
+    if raw_dates.dt.tz is None:
+        raw_dates = raw_dates.dt.tz_localize(ET_TZ)
+    else:
+        raw_dates = raw_dates.dt.tz_convert(ET_TZ)
+
+    trade_dates = raw_dates.dt.tz_localize(None).dt.normalize() - pd.Timedelta(days=1)
+    daily_df = pd.DataFrame({
+        'datetime': [get_daily_anchor_for_trade_date(day_value.date(), symbol) for day_value in trade_dates],
+        'open': history['Open'].astype(float),
+        'high': history['High'].astype(float),
+        'low': history['Low'].astype(float),
+        'close': history['Close'].astype(float),
+        'volume': history['Volume'].fillna(0).astype(float),
+    }).set_index('datetime').sort_index()
+
+    return filter_finalized_daily_rows(daily_df, symbol, now_utc)
+
+def fetch_schwab_daily_history(client, symbol, start_dt, end_dt, now_utc):
+    resp = client.get_price_history(
+        symbol,
+        period_type="year",
+        frequency_type="daily",
+        frequency=1,
+        start_datetime=start_dt,
+        end_datetime=end_dt,
+        need_extended_hours_data=False
+    )
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"API Error updating 1d: {resp.status_code}")
+
+    candles = resp.json().get('candles', [])
+    if not candles:
+        return pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
+
+    daily_df = pd.DataFrame([
+        {
+            'datetime': pd.to_datetime(c.get('datetime', 0), unit='ms', utc=True),
+            'open': c.get('open', 0),
+            'high': c.get('high', 0),
+            'low': c.get('low', 0),
+            'close': c.get('close', 0),
+            'volume': c.get('volume', 0),
+        }
+        for c in candles
+    ]).set_index('datetime')
+
+    return filter_finalized_daily_rows(daily_df, symbol, now_utc)
+
+def get_week_start_for_trade_date(trade_date, symbol):
+    schedule = get_symbol_schedule(symbol)
+    week_monday = trade_date - timedelta(days=trade_date.weekday())
+    if schedule['is_futures']:
+        week_start_date = week_monday - timedelta(days=1)
+        return datetime.combine(week_start_date, schedule['session_open'], ET_TZ).astimezone(timezone.utc)
+    return datetime.combine(week_monday, dt_time(0, 0), ET_TZ).astimezone(timezone.utc)
+
+def build_weekly_from_daily(daily_df, symbol, now_utc):
+    if daily_df.empty:
+        return pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
+
+    grouped = daily_df.copy()
+    grouped['_trade_date'] = [get_trade_date_for_timestamp(ts, symbol) for ts in grouped.index]
+    grouped['_week_start'] = [get_week_start_for_trade_date(day_value, symbol) for day_value in grouped['_trade_date']]
+    grouped = grouped.sort_index()
+
+    weekly = grouped.groupby('_week_start').agg({
+        'open': 'first',
+        'high': 'max',
+        'low': 'min',
+        'close': 'last',
+        'volume': 'sum',
+    }).sort_index()
+
+    now_et = now_utc.astimezone(ET_TZ)
+    current_trade_date = get_current_trade_date(now_et, symbol)
+    current_week_start = get_week_start_for_trade_date(current_trade_date, symbol)
+    week_is_final = now_et >= (get_settlement_datetime(current_trade_date, symbol) + timedelta(minutes=10)) and current_trade_date.weekday() == 4
+    if not week_is_final and current_week_start in weekly.index:
+        weekly = weekly.drop(index=current_week_start)
+
+    return weekly
+
 def update_historical_files(client, symbol):
     """
-    Checks and updates Daily (1d) and Weekly (1W) parquet files for the symbol.
-    Fetches missing history from Schwab if files are stale.
+    Updates Daily (1d) with finalized bars only and rebuilds Weekly (1W) from Daily.
+    Futures default to yfinance for HTF data, with Schwab available via FUTURES_HTF_SOURCE=schwab.
     """
     symbol_map = {
         "/ES": "ES1", "/NQ": "NQ1", "/YM": "YM1", "/RTY": "RTY1",
@@ -415,139 +751,65 @@ def update_historical_files(client, symbol):
 
     print(f"📅 [{symbol}] Checking historical data for {ticker}...")
 
-    # Define tasks: (Parquet Suffix, Schwab PeriodType, Schwab FrequencyType, Schwab Frequency)
-    # Note: Schwab 'weekly' frequency might not be directly available for all assets or might need 'daily' aggregation.
-    # Safe bet: Update Daily (1d). Weekly can be derived or updated if API supports it.
-    # Schwab Client.PriceHistory.FrequencyType.WEEKLY exists.
-    
-    tasks = [
-        ("1d", "year", "daily", 1),
-        ("1W", "year", "weekly", 1)
-    ]
+    daily_path = os.path.join(DATA_DIR, f"{ticker}_1d.parquet")
+    weekly_path = os.path.join(DATA_DIR, f"{ticker}_1W.parquet")
+    now_utc = datetime.now(timezone.utc)
+    htf_source = resolve_futures_htf_source() if symbol.startswith("/") else "schwab"
 
-    for suffix, p_type, f_type, freq in tasks:
-        file_path = os.path.join(DATA_DIR, f"{ticker}_{suffix}.parquet")
-        
-        last_date = None
-        existing_df = pd.DataFrame()
-
-        if os.path.exists(file_path):
-            try:
-                existing_df = pd.read_parquet(file_path)
-                if not existing_df.empty:
-                    # Check last timestamp
-                    # Assuming 'datetime' index or column
-                    if 'datetime' in existing_df.columns:
-                        existing_df['datetime'] = pd.to_datetime(existing_df['datetime'])
-                        existing_df.set_index('datetime', inplace=True)
-                    elif isinstance(existing_df.index, pd.DatetimeIndex):
-                        pass
-                    elif 'time' in existing_df.columns:
-                         existing_df['datetime'] = pd.to_datetime(existing_df['time'], unit='s', utc=True)
-                         existing_df.set_index('datetime', inplace=True)
-
-                    # Normalize to UTC Aware
-                    if existing_df.index.tz is None:
-                        # Assume it's US/Eastern or just local? 
-                        # Actually if we want to concat with UTC new data, we must localize and converting.
-                        # Safest: Localize to UTC if naive (assuming it was stored as UTC)
-                        existing_df.index = existing_df.index.tz_localize(timezone.utc)
-                    else:
-                        existing_df.index = existing_df.index.tz_convert(timezone.utc)
-
-                    existing_df.sort_index(inplace=True)
-                    last_date = existing_df.index[-1]
-            except Exception as e:
-                print(f"  ⚠️ Error reading {suffix}: {e}")
-
-        if last_date:
-            # last_date is likely pandas Timestamp
-            # Convert to python datetime first to be safe
-            if hasattr(last_date, 'to_pydatetime'):
-                last_date = last_date.to_pydatetime()
-            
-            # Ensure naive
-            if last_date.tzinfo:
-                last_date = last_date.replace(tzinfo=None)
-            
-            if (datetime.now() - last_date).days < 1:
-                continue
-            
-            start_dt = last_date + timedelta(days=1)
-        else:
-            start_dt = datetime.now() - timedelta(days=730)
-
-        # Final check
-        # Paranoid reconstruction to ensure pure python naive datetime
-        now = datetime.now()
-        if start_dt.tzinfo or hasattr(start_dt, 'tz'):
-             start_dt = datetime(start_dt.year, start_dt.month, start_dt.day, start_dt.hour, start_dt.minute)
-        
-        if start_dt >= now: continue
-
-        print(f"  ⬇️ Updating {suffix} from {start_dt.date()}...")
-
+    existing_daily = pd.DataFrame()
+    if os.path.exists(daily_path):
         try:
-            resp = client.get_price_history(
-                symbol,
-                period_type=p_type,
-                frequency_type=f_type,
-                frequency=freq,
-                start_datetime=start_dt,
-                end_datetime=now,
-                need_extended_hours_data=False 
-            )
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                candles = data.get('candles', [])
-                if not candles:
-                    print(f"   No new data for {suffix}.")
-                    continue
-                
-                new_data = []
-                for c in candles:
-                    new_data.append({
-                        "datetime": pd.to_datetime(c.get("datetime", 0), unit='ms', utc=True),
-                        "open": c.get("open", 0),
-                        "high": c.get("high", 0),
-                        "low": c.get("low", 0),
-                        "close": c.get("close", 0),
-                        "volume": c.get("volume", 0)
-                    })
-                
-                new_df = pd.DataFrame(new_data)
-                new_df.set_index('datetime', inplace=True)
-                
-                # Merge
-                if not existing_df.empty:
-                    combined = pd.concat([existing_df, new_df])
-                    combined = combined[~combined.index.duplicated(keep='last')]
-                    combined.sort_index(inplace=True)
-                else:
-                    combined = new_df
-                
-                # Save
-                # Ensure columns
-                # Parquet usually stores index if to_parquet is used on DF with index
-                # But our standard seems to be preserving 'time' or 'datetime' column?
-                # Let's reset index to keep 'datetime' column for compatibility if needed
-                # Actually previous files had specific schemas. 
-                # 'NQ1_1d.parquet' usually has: open, high, low, close, volume (index is datetime)
-                
-                # IMPORTANT: Reset index to column for saving if that's the convention?
-                # debug showed: NQ1_1d has DatetimeIndex. So direct save is fine.
-                
-                combined.to_parquet(file_path)
-                print(f"   ✅ Updated {suffix}: {len(combined)} rows (Added {len(new_df)})")
-                
-            else:
-                print(f"   ❌ API Error: {resp.status_code}")
-                
+            existing_daily = canonicalize_daily_bars(pd.read_parquet(daily_path), symbol)
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"   ⚠️ Fetch failed: {e}")
+            print(f"  ⚠️ Error reading 1d: {e}")
+
+    if htf_source == "yfinance" and symbol.startswith("/") and not existing_daily.empty:
+        start_dt = (existing_daily.index.min() - timedelta(days=7)).astimezone(timezone.utc).replace(tzinfo=None)
+    elif not existing_daily.empty:
+        start_dt = (existing_daily.index.max() - timedelta(days=14)).astimezone(timezone.utc).replace(tzinfo=None)
+    else:
+        start_dt = (now_utc - timedelta(days=730)).replace(tzinfo=None)
+
+    end_dt = now_utc.replace(tzinfo=None)
+    if start_dt >= end_dt:
+        start_dt = end_dt - timedelta(days=14)
+
+    print(f"  ⬇️ Updating 1d from {start_dt.date()} via {htf_source}...")
+
+    try:
+        if htf_source == "yfinance" and symbol.startswith("/"):
+            source_daily = fetch_yfinance_daily_history(symbol, start_dt, end_dt, now_utc)
+            combined_daily = canonicalize_daily_bars(source_daily, symbol)
+            combined_daily.to_parquet(daily_path)
+            print(f"   ✅ Rebuilt 1d from yfinance: {len(combined_daily)} rows")
+        else:
+            new_df = fetch_schwab_daily_history(client, symbol, start_dt, end_dt, now_utc)
+
+            if not new_df.empty:
+                if not existing_daily.empty:
+                    combined_daily = pd.concat([existing_daily, new_df])
+                else:
+                    combined_daily = new_df.sort_index()
+
+                combined_daily = canonicalize_daily_bars(combined_daily, symbol)
+                combined_daily = apply_daily_settlement_override(combined_daily, client, symbol, now_utc)
+                combined_daily.to_parquet(daily_path)
+                print(f"   ✅ Updated 1d: {len(combined_daily)} rows (Fetched {len(new_df)})")
+            else:
+                combined_daily = existing_daily
+                print("   No new finalized daily data.")
+
+        if combined_daily.empty:
+            return
+
+        weekly_df = build_weekly_from_daily(combined_daily, symbol, now_utc)
+        weekly_df.to_parquet(weekly_path)
+        print(f"   ✅ Rebuilt 1W from 1d: {len(weekly_df)} rows")
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"   ⚠️ Historical update failed: {e}")
 
 async def main():
     # ... Setup ...

@@ -13,6 +13,7 @@ This document describes the various data sources used by the trading platform an
 | BacktestMarket | Semicolon-delimited | Chicago | `scripts/convert_backtestmarket.py` |
 | Selenium Downloader | Unix timestamps | UTC | `scripts/convert_all_csv.py` |
 | NinjaTrader Export | Local (Shifted) | Local -> EST | `scripts/data_processing/import_ninjatrader.py` |
+| **yfinance (Yahoo Finance)** | Daily/Weekly OHLC | UTC | `stream_chart.py` (automatic) |
 
 ---
 
@@ -142,6 +143,55 @@ Futures daily/weekly data from TradingView uses "session start" timestamps.
 
 ---
 
+---
+
+## yfinance (Yahoo Finance) — Futures Daily/Weekly HTF
+
+**Source**: Yahoo Finance via the [`yfinance`](https://pypi.org/project/yfinance/) Python library
+
+**Scope**: Futures **daily and weekly** parquet files only (NQ1, ES1, YM1, RTY1, CL1, GC1).
+Intraday (1m, 5m, 15m, 1h, 4h) data is **not** sourced from yfinance.
+
+**Why yfinance instead of Schwab API for daily bars?**
+
+The Schwab quote API's `reference.futureSettlementPrice` and `quote.closePrice` fields reflect the **previous session's official CME settlement**, not the current day's final traded price. This caused an off-by-settlement discrepancy vs Thinkorswim / Yahoo Finance. yfinance was verified to match TOS/Yahoo daily close exactly for all 6 futures symbols over 200 days.
+
+**Symbol Mapping**:
+
+| Schwab symbol | yfinance ticker |
+|---|---|
+| `/NQ` | `NQ=F` |
+| `/ES` | `ES=F` |
+| `/YM` | `YM=F` |
+| `/RTY` | `RTY=F` |
+| `/CL` | `CL=F` |
+| `/GC` | `GC=F` |
+
+**Critical date-shift**: yfinance daily bars are timestamped at midnight ET of the **next calendar day** (e.g. the March 12 trading session is stamped `2026-03-13`). `stream_chart.py` corrects this by subtracting 1 calendar day before anchoring to the standard futures trade-date convention (prior calendar day at 18:00 ET = 23:00 UTC index key in the parquet).
+
+**TradingView CSV vs yfinance**: TradingView's continuous futures charts (e.g. `CME_MINI_NQ1!`) apply **back-adjustment at each quarterly roll**, shifting all older bars retroactively to produce a smooth continuous series. yfinance uses the **unadjusted** front-month contract price, matching TOS / Yahoo Finance / broker statements. The parquet files store **unadjusted** prices.
+
+**Toggle**: The data source can be changed via environment variable:
+```powershell
+# Default (yfinance)
+$env:FUTURES_HTF_SOURCE = 'yfinance'
+
+# Revert to Schwab API daily history
+$env:FUTURES_HTF_SOURCE = 'schwab'
+```
+Source switching is implemented in `scripts/streaming/stream_chart.py` via `FUTURES_HTF_SOURCE`.
+
+**Verification**:
+```powershell
+.\.venv\Scripts\python.exe scripts/validation/verify_futures_htf_parquet.py --days 200
+# Single symbol with full row-by-row table:
+.\.venv\Scripts\python.exe scripts/validation/verify_futures_htf_parquet.py --symbol NQ1 --verbose
+```
+
+Last verified **2026-03-13**: all 6 futures symbols — **200/200 exact matches** between parquet and yfinance.
+
+---
+
 ## Scripts Reference
 
 | Script | Purpose |
@@ -152,3 +202,4 @@ Futures daily/weekly data from TradingView uses "session start" timestamps.
 | `rebuild_nq1_parquet.py` | Rebuild NQ1 parquet files from converted CSV |
 | `verify_ohlc_match.py` | Verify conversion by matching OHLC values |
 | `generate_coverage_report.py` | Generate data coverage report |
+| `verify_futures_htf_parquet.py` | Verify futures daily parquet vs yfinance (and TV for NQ) |

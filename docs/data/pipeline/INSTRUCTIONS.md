@@ -69,7 +69,34 @@ python convert_to_parquet.py --ticker NQ1!
 *   Generates `data/ES1_1D.parquet`
 *   (And similarly for NQ1)
 
-# 3. Automated Update (Schwab API)
+---
+
+## 3. Updating HTF Parquets (Backward Adjusting Daily & Weekly)
+
+When you manually download new 1D or 1W CSV files from TradingView into any folder, you cannot simply overwrite the old parquet history, nor append them blindly. Futures contracts roll forward continuously, which generates subtle mathematical discrepancies (artificial gaps) across decades of history when compared against a freshly exported TradingView chart.
+
+To safely merge new TradingView HTF CSV exports while preserving complete multi-decade history, use the `update_htf_parquets.py` script. 
+
+**Script:** `scripts/data_processing/convert/update_htf_parquets.py`
+
+### CLI Arguments
+
+| Argument | Description |
+| :--- | :--- |
+| `--folder` | The path where the downloaded HTF `.csv` files are stored. Defaults to `data/TV_OHLC`. |
+
+### How It Works:
+1. It automatically parses TradingView daily and weekly UTC-timestamped `.csv` files inside the provided `--folder`.
+2. It discovers any mathematically adjusted price gaps natively introduced by the continuous roll process when scanning the overlapping calendar dates.
+3. It selectively overlays only the exact newly discovered continuous contract data mathematically backward onto the older inherited history.
+4. Finally, it splices it seamlessly and pushes it into the master `<TICKER>_<TIMEFRAME>.parquet`.
+
+### Example
+```powershell
+python scripts/data_processing/convert/update_htf_parquets.py --folder "data/downloads_HTF"
+```
+
+# 4. Automated Update (Schwab API)
 
 For a fully automated workflow that bridges gaps without manual CSV exports, use the Schwab API update script.
 
