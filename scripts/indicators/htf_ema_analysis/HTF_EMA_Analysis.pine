@@ -1,12 +1,6 @@
 // This Pine Script source code is free to use under the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © vinay-veerappa
 
-// --- RECONCILIATION LOG ---
-// 2026-03-12: Corrected Timezone/Session bug: Bins days based on Session Close time to resolve 24h shift.
-// 2026-03-12: Conditional Statistics: Mean, Median, and Mode now filter out zero-excursion days.
-//             This ensures stats reflect movement magnitude only when a touch occurs.
-// 2026-03-12: Fixed Friday visibility: All 5 trading days now display in DOW table.
-// -------------------------
 //@version=6
 indicator("HTF EMA Analysis", overlay=true, max_bars_back=5000, max_lines_count=500, max_boxes_count=200, max_labels_count=300)
 
@@ -16,10 +10,10 @@ indicator("HTF EMA Analysis", overlay=true, max_bars_back=5000, max_lines_count=
 grp_core = "Core Settings"
 i_emaLength = input.int(5, "EMA Length", minval=2, maxval=100, group=grp_core)
 i_showEmaLine = input.bool(true, "Show EMA Line", group=grp_core)
-i_upperZoneHighPct = input.float(3.0, "Upper Zone - High %", minval=0.1, maxval=20.0, step=0.1, group=grp_core)
-i_upperZoneLowPct = input.float(2.5, "Upper Zone - Low %", minval=0.1, maxval=20.0, step=0.1, group=grp_core)
-i_lowerZoneHighPct = input.float(2.5, "Lower Zone - High %", minval=0.1, maxval=20.0, step=0.1, group=grp_core)
-i_lowerZoneLowPct = input.float(3.0, "Lower Zone - Low %", minval=0.1, maxval=20.0, step=0.1, group=grp_core)
+i_upperZoneHighPct = input.float(3.0, "Upper Zone - High %", minval=0.1, maxval=20.0, step=0.1, group=grp_core, inline = "zoneLvl")
+i_upperZoneLowPct = input.float(2.5, "Upper Zone - Low %", minval=0.1, maxval=20.0, step=0.1, group=grp_core, inline = "zoneLvl")
+i_lowerZoneHighPct = input.float(2.5, "Lower Zone - High %", minval=0.1, maxval=20.0, step=0.1, group=grp_core, inline = "zoneLvl")
+i_lowerZoneLowPct = input.float(3.0, "Lower Zone - Low %", minval=0.1, maxval=20.0, step=0.1, group=grp_core, inline = "zoneLvl")
 
 grp_weekly = "Weekly Levels"
 i_showEmaZones = input.bool(true, "Show EMA Zones", group=grp_weekly)
@@ -69,8 +63,8 @@ i_rangeLevelsTableSize = input.string("Small", "Range Levels Size", options=["Ti
 grp_prob = "Probability Analysis"
 i_showProbability = input.bool(false, "Show Probability Analysis", group=grp_prob)
 i_lookbackWeeks = input.int(52, "Lookback Weeks", minval=12, maxval=520, group=grp_prob)
-i_zoneStartPct = input.float(2.0, "Zone Start %", minval=0.1, maxval=20.0, step=0.1, group=grp_prob)
-i_zoneEndPct = input.float(3.0, "Zone End %", minval=0.1, maxval=20.0, step=0.1, group=grp_prob)
+i_zoneStartPct = input.float(2.0, "Zone Start %", minval=0.1, maxval=20.0, step=0.1, group=grp_prob, inline = "probZoneLvl")
+i_zoneEndPct = input.float(3.0, "Zone End %", minval=0.1, maxval=20.0, step=0.1, group=grp_prob,inline = "probZoneLvl")
 i_showDowStats = input.bool(false, "Show Day of Week Stats", group=grp_prob)
 i_showAllLevelsTable = input.bool(false, "Show All Levels Table", group=grp_prob)
 i_enableTimeFilter = input.bool(false, "Enable Time Filter", group=grp_prob)
@@ -379,6 +373,13 @@ float upperZoneLo = weeklyEma * (1.0 + i_upperZoneLowPct / 100.0)
 float lowerZoneHi = weeklyEma * (1.0 - i_lowerZoneHighPct / 100.0)
 float lowerZoneLo = weeklyEma * (1.0 - i_lowerZoneLowPct / 100.0)
 
+float upperProbZoneHi = weeklyEma * (1.0 + i_zoneStartPct / 100.0)
+float upperProbZoneLo = weeklyEma * (1.0 + i_zoneEndPct / 100.0)
+float lowerProbZoneHi = weeklyEma * (1.0 - i_zoneStartPct / 100.0)
+float lowerProbZoneLo = weeklyEma * (1.0 - i_zoneEndPct / 100.0)
+
+
+
 int monthKey = year(time_close, TZ) * 100 + month(time_close, TZ)
 int dayKey = year(time_close, TZ) * 10000 + month(time_close, TZ) * 100 + dayofmonth(time_close, TZ)
 bool isNewWeek = ta.change(time("W", TZ)) != 0
@@ -482,6 +483,8 @@ var int tuesdayBoxEndTime = na
 var int weekStartTime = na
 var box upperZoneBox = na
 var box lowerZoneBox = na
+var box upperProbZoneBox = na
+var box lowerProbZoneBox = na
 
 // NFP box 
 var box nfpBox = na
@@ -537,6 +540,8 @@ if isNewMonth
     nfpBox := na
     activeNfpBoxMonth := na
     activeNfpBoxYear := na
+    
+    
 
 // ============================================
 // Weekly data collection
@@ -557,6 +562,7 @@ if isNewWeek and probTimePass and not na(prevWeeklyEma) and not na(weeklyEma) an
     // Open comparison: prevWeeklyEma ([2] = prior week EMA), shorter window → 34/48=70.8%
     int openLookback = math.max(1, i_lookbackWeeks - 4)
     f_push_capped_bool(weekOpenAboveEma, prevWeekOpen >= prevWeeklyEma, openLookback)
+    weekStartTime := time
 
 // Exclude partial days from the current active week to lock the 52-week lookback
 if isNewDay and i_showDowStats and probTimePass and not na(weeklyEma) and not prevBarInCurrentWeek
@@ -785,6 +791,33 @@ if i_showEmaZones and not na(weeklyEma) and not na(weekStartTime)
         box.set_bottom(lowerZoneBox, lowerZoneLo)
         box.set_border_color(lowerZoneBox, color.new(i_cLower, 60))
         box.set_bgcolor(lowerZoneBox, color.new(i_cLower, i_zoneFillOpacity))
+        // Delete previous week's zone boxes (only current week shown)
+    if not na(upperProbZoneBox)
+        box.delete(upperProbZoneBox)
+        upperProbZoneBox := na
+    if not na(lowerProbZoneBox)
+        box.delete(lowerProbZoneBox)
+        lowerProbZoneBox := na
+    //int zEndTime = time_close + (time_close - time) * 20
+    if na(upperProbZoneBox)
+        upperProbZoneBox := box.new(prevMonthStartTime, upperProbZoneHi, zEndTime, upperProbZoneLo, xloc=xloc.bar_time, border_color=color.new(i_cUpper, 60), bgcolor=color.new(i_cUpper, i_zoneFillOpacity), border_width=1)
+    else
+        box.set_left(upperProbZoneBox, prevMonthStartTime)
+        box.set_top(upperProbZoneBox, upperProbZoneHi)
+        box.set_right(upperProbZoneBox, zEndTime)
+        box.set_bottom(upperProbZoneBox, upperProbZoneLo)
+        box.set_border_color(upperProbZoneBox, color.new(i_cUpper, 60))
+        box.set_bgcolor(upperProbZoneBox, color.new(i_cUpper, i_zoneFillOpacity))
+    if na(lowerProbZoneBox)
+        lowerProbZoneBox := box.new(prevMonthStartTime, lowerProbZoneHi, zEndTime, lowerProbZoneLo, xloc=xloc.bar_time, border_color=color.new(i_cLower, 60), bgcolor=color.new(i_cLower, i_zoneFillOpacity), border_width=1)
+    else
+        box.set_left(lowerProbZoneBox, prevMonthStartTime)
+        box.set_top(lowerProbZoneBox, lowerProbZoneHi)
+        box.set_right(lowerProbZoneBox, zEndTime)
+        box.set_bottom(lowerProbZoneBox, lowerProbZoneLo)
+        box.set_border_color(lowerProbZoneBox, color.new(i_cLower, 60))
+        box.set_bgcolor(lowerProbZoneBox, color.new(i_cLower, i_zoneFillOpacity))
+
 
 // ============================================
 // Monthly Level Lines

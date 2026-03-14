@@ -14,6 +14,7 @@ from typing import Any
 
 from .config import DAILY_LEVELS_JSON, DAILY_LEVELS_TXT
 from .futures_translator import TranslatedLevels
+from .gex_calculator import DealerLevels
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +78,26 @@ def _to_entries(tl: TranslatedLevels) -> list[dict[str, Any]]:
     return rows
 
 
+def _to_cash_entries(levels: DealerLevels) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for attr, label in _LEVEL_ATTRS:
+        value = getattr(levels, attr, None)
+        if value is None:
+            continue
+        rows.append(
+            {
+                "level": round(float(value), 2),
+                "type": label,
+                "asset": levels.ticker,
+                "regime": levels.gex_regime,
+                "cash_ticker": levels.ticker,
+                "basis_spread": 0.0,
+                "price_space": "cash",
+            }
+        )
+    return rows
+
+
 def _fmt(value: float | None) -> str:
     return f"{value:.2f}" if value is not None else "N/A"
 
@@ -96,6 +117,22 @@ def _copy_ready_line(tl: TranslatedLevels) -> str:
         (_fmt(tl.em_lower), "Lower EM"),
     ]
     return f"{tag}: " + ", ".join(f"{px}:{label}" for px, label in ordered)
+
+
+def _copy_ready_cash_line(levels: DealerLevels) -> str:
+    ordered = [
+        (_fmt(levels.em_upper), "Upper EM"),
+        (_fmt(levels.call_wall), "Absolute Call Wall"),
+        (_fmt(levels.local_call_node), "Local Call Node"),
+        (_fmt(levels.call_wall_0dte), "0DTE Call Wall"),
+        (_fmt(levels.zero_gamma), "Zero Gamma"),
+        (_fmt(levels.max_pain), "Max Pain"),
+        (_fmt(levels.put_wall_0dte), "0DTE Put Wall"),
+        (_fmt(levels.local_put_node), "Local Put Node"),
+        (_fmt(levels.hedge_wall), "Hedge Wall"),
+        (_fmt(levels.em_lower), "Lower EM"),
+    ]
+    return f"{levels.ticker}: " + ", ".join(f"{px}:{label}" for px, label in ordered)
 
 
 def _interpretation_lines(tl: TranslatedLevels) -> list[str]:
@@ -153,6 +190,7 @@ def _detailed_block(tl: TranslatedLevels) -> list[str]:
 def write_levels(
     translated_levels: list[TranslatedLevels],
     run_label: str = "",
+    cash_levels: list[DealerLevels] | None = None,
     json_path: Path = DAILY_LEVELS_JSON,
     txt_path: Path = DAILY_LEVELS_TXT,
 ) -> None:
@@ -162,6 +200,8 @@ def write_levels(
     all_entries: list[dict[str, Any]] = []
     for tl in translated_levels:
         all_entries.extend(_to_entries(tl))
+    for levels in cash_levels or []:
+        all_entries.extend(_to_cash_entries(levels))
 
     doc = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -183,6 +223,11 @@ def write_levels(
 
     for tl in translated_levels:
         lines.append(_copy_ready_line(tl))
+
+    if cash_levels:
+        lines.extend(["", "Cash-Space Test Symbols", ""])
+        for levels in cash_levels:
+            lines.append(_copy_ready_cash_line(levels))
 
     lines.extend(["", "Interpretation / Pre-Open Plan", ""])
     for tl in translated_levels:

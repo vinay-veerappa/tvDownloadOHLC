@@ -2,175 +2,168 @@
 
 ## Overview
 
-Automated pipeline that pulls live options chain data from the Charles Schwab
-Individual Developer API, calculates institutional dealer-positioning levels
-(Net Gamma Exposure, Zero-Gamma, Call/Put Walls, Expected Move), translates
-those levels into actionable ES and NQ futures prices, and distributes results
-to Discord and a TradingView-ready JSON file.
+Automated options dealer-level pipeline that:
+
+1. Pulls Schwab option chains for SPX/NDX (with SPY/QQQ quality fallback)
+2. Computes advanced dealer-structure levels (walls, zero-gamma zone, max pain, vol triggers, flow nodes)
+3. Translates all cash-index levels into ES/NQ futures price space
+4. Writes copy-ready text + Pine-ready JSON outputs
+5. Optionally posts Discord updates (disabled by default)
 
 ---
 
-## Quick Start
+## Run Modes
 
-### Prerequisites
-
-```bash
-# Install dependencies (add to existing venv)
-pip install apscheduler requests schwab-py
-```
-
-Ensure `secrets.json` and `token.json` are present in the repository root.
-
-### Run Once (manual / on-demand)
+### Run once
 
 ```powershell
-# From repository root
 .\.venv\Scripts\python.exe -m scripts.streaming.options.run_options_levels
 ```
 
-### Run on Schedule (blocks until Ctrl-C)
+### Run on schedule (weekday 08:30 ET + 11:00 ET)
 
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.streaming.options.run_options_levels --schedule
 ```
 
-The scheduler fires at **08:30 ET** and **11:00 ET** on weekdays.
-
-### Override the run label
+### Override run label
 
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.streaming.options.run_options_levels --label "Pre-Market"
 ```
 
+### Discord control per run
+
+```powershell
+# Explicitly enable for this run
+.\.venv\Scripts\python.exe -m scripts.streaming.options.run_options_levels --discord
+
+# Explicitly disable for this run
+.\.venv\Scripts\python.exe -m scripts.streaming.options.run_options_levels --no-discord
+```
+
+Default behavior follows `ENABLE_DISCORD_UPDATES` in `scripts/streaming/options/config.py`.
+
+---
+
+## Data Robustness (Current Behavior)
+
+- **Nearest-expiration selection**: selects nearest available expiries to target DTE values (robust on weekends/off-hours).
+- **Chain quality guard**: if SPX/NDX chain lacks actionable non-zero OI profile, fallback to SPY/QQQ.
+- **Rescaling workflow**: if fallback chain is used, levels are rescaled back into target index spot space before futures translation.
+- **Futures quote safety**: rejects symbol-mismatch quote responses and uses yfinance fallback for `/ES` and `/NQ` when needed.
+
 ---
 
 ## Outputs
 
-### `data/daily_levels.json` — Pine Script input
+### `data/daily_levels.txt`
+
+Contains three blocks:
+
+1. **Formatted Strings (copy-ready)**
+   - Exact 10-level ordered string for ES and NQ:
+   - `Upper EM, Absolute Call Wall, Local Call Node, 0DTE Call Wall, Zero Gamma, Max Pain, 0DTE Put Wall, Local Put Node, Hedge Wall, Lower EM`
+2. **Interpretation / Pre-Open Plan**
+   - Regime, anchors, support/resistance ladder, gamma-flip zone, flow nodes, vol-trigger bands
+3. **Detailed Summary**
+   - Expanded advanced level dump (secondary walls, cliffs, liquidity vacuum, skew pivots, etc.)
+
+### `data/daily_levels.json`
+
+JSON schema:
 
 ```json
 {
-  "generated_at": "2026-03-14T13:30:00Z",
-  "run_label": "2026-03-14 08:30 ET",
+  "generated_at": "ISO-8601 UTC",
+  "run_label": "human readable label",
   "levels": [
-    { "level": 5750.25, "type": "Call Wall",   "asset": "ES", "regime": "POSITIVE", ... },
-    { "level": 5690.50, "type": "Put Wall",    "asset": "ES", "regime": "POSITIVE", ... },
-    { "level": 5725.00, "type": "Zero Gamma",  "asset": "ES", "regime": "POSITIVE", ... },
-    { "level": 5780.00, "type": "EM Upper",    "asset": "ES", "regime": "POSITIVE", ... },
-    { "level": 5670.00, "type": "EM Lower",    "asset": "ES", "regime": "POSITIVE", ... },
-    { "level": 20100.0, "type": "Call Wall",   "asset": "NQ", "regime": "NEGATIVE", ... },
-    ...
+    {
+      "level": 6713.21,
+      "type": "Absolute Call Wall",
+      "asset": "ES",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPX",
+      "basis_spread": 3.81
+    }
   ]
 }
 ```
 
-Copy individual `level` values from this file into the Pine Script indicator's
-input fields (see [Pine Script indicator](#tradingview-pine-script-indicator)).
-
-### `data/daily_levels.txt` — Human-readable summary
-
-```
-Dealer Levels — 2026-03-14 08:30 ET
-════════════════════════════════════════════════════════════
-── SPX → ES ────────────────────────────────────────────────
-  Regime       : POSITIVE GEX  (total GEX = 1,234,567,890)
-  Cash Spot    : 5,720.50
-  ES Futures   : 5,738.25  (basis spread: +17.75)
-
-  Call Wall   : 5,760.00
-  Put Wall    : 5,680.00
-  Zero Gamma  : 5,730.25
-  EM Upper    : 5,780.50
-  EM Lower    : 5,660.50
-  ATM Straddle: 35.00
-...
-```
-
-### `data/dealer_levels.log` — Execution log
-
-All INFO and ERROR messages are appended here for troubleshooting.
-
-### Discord embed
-
-One rich embed is posted per asset pair (ES, NQ) to the `alerts` webhook
-defined in `discord_webhooks.json`.
+Current implementation emits all translated level types from the advanced level set, not just the legacy 5-level subset.
 
 ---
 
-## TradingView Pine Script Indicator
+## Advanced Level Set (Current)
 
-Location: `scripts/indicators/options/DealerLevels.pine`
+In addition to absolute call/put walls, zero gamma, and expected move, the pipeline computes:
 
-### To apply on a chart
-
-1. In TradingView, open **Pine Script Editor** and paste the contents of
-   `DealerLevels.pine`.
-2. Click **Add to chart**.
-3. Open **Indicator Settings**:
-   - Select the **ES Levels** tab and enter level values from `daily_levels.json`.
-   - Select the **NQ Levels** tab similarly.
-   - Adjust colours and line styles in the **Line Style** tab.
-4. Lines draw from the session open and extend right through the session.
-
-### Input reference
-
-| Group      | Input         | Description                             |
-|------------|---------------|-----------------------------------------|
-| ES Levels  | Regime        | POSITIVE or NEGATIVE GEX regime         |
-| ES Levels  | Call Wall     | Highest call OI×gamma strike (futures)  |
-| ES Levels  | Put Wall      | Highest put OI×gamma strike (futures)   |
-| ES Levels  | Zero Gamma    | Strike where cumulative GEX crosses zero|
-| ES Levels  | EM Upper      | Expected Move upper bound (futures)     |
-| ES Levels  | EM Lower      | Expected Move lower bound (futures)     |
-| NQ Levels  | (same fields) | Same as ES, for NQ futures              |
-| Line Style | Colours       | Per level-type colour picks             |
-| Line Style | Widths        | Line width 1–4 per level group          |
-| Line Style | ES/NQ Style   | Solid / Dashed / Dotted per asset       |
-| Labels     | Show Labels   | Toggle labels on/off                    |
-| Labels     | Offset        | Bars to the right of current bar        |
-| EM Fill    | Fill ES Band  | Shaded fill between EM Upper/Lower      |
+- Local gamma nodes (±1.5% window)
+- Front-DTE (0DTE/front) call and put walls
+- Hedge wall
+- Max pain
+- Gamma flip zone bounds
+- Secondary walls
+- Vol trigger bands (0.5σ / 1.0σ / 1.5σ)
+- Gamma cliffs
+- Vanna/charm proxy nodes
+- Volume-imbalance nodes
+- DEX nodes
+- Liquidity vacuum bounds
+- 25-delta skew pivots
 
 ---
 
-## Configuration
+## TradingView Indicators
 
-All tuneable parameters live in `scripts/streaming/options/config.py`:
+### `scripts/indicators/options/DealerLevels.pine`
 
-| Constant               | Default           | Description                              |
-|------------------------|-------------------|------------------------------------------|
-| `PRIMARY_INDEX_TICKERS`| `["SPX", "NDX"]`  | Cash indices to calculate GEX for        |
-| `DTE_TARGETS`          | `[0, 1]`          | 0DTE and 1DTE expirations                |
-| `MIN_OI_THRESHOLD`     | `50`              | Min OI for wall detection                |
-| `USE_STRADDLE_EM`      | `True`            | Straddle vs IV formula for EM            |
-| `EM_STRADDLE_SCALAR`   | `0.85`            | Dampening factor on straddle price       |
-| `SCHEDULE_TIMES`       | `["08:30","11:00"]`| Run times (Eastern)                     |
-| `DISCORD_TARGET_KEY`   | `"alerts"`        | Key in discord_webhooks.json             |
+Preferred indicator. Paste one or more formatted lines into a single text box and it auto-selects the line matching the current chart symbol.
+
+Current behavior:
+
+- exact ticker matching when pasted data exists for that symbol (takes precedence over family fallback)
+- continuous-contract normalization before matching (e.g., `/YM1!` resolves to `YM` family)
+- canonical micro/mini matching for common futures pairs such as `MES -> ES`, `MNQ -> NQ`, `MYM -> YM`, and `M2K -> RTY`
+- cash/index/ETF family routing for common aliases (`SPX/SPY/ES`, `NDX/QQQ/NQ`, `DJX/DJI/US30/DOW/YM`, `RUT/IWM/RTY`)
+- single paste-only workflow with no per-level manual inputs
+- overnight futures use trading-day reset logic instead of midnight reset
+- other symbols use calendar-day reset logic
+- customizable line colors, widths, styles, EM fill, labels, and status-table visibility from indicator settings
+- label overlap management (`Stagger` / `Hide` / `Off`) with adjustable min-gap ticks and multi-column label placement
+  - `Stagger` fallback now selects the least-colliding existing column when all columns are occupied
+- optional same-price label merge (e.g., `CALL ABS + CALL LOC + CALL 0DTE`) with duplicate-token protection
+- level-group visibility toggles (EM, Call, Put, Zero Gamma, Max Pain, Hedge) and compact label mode
+
+Recommended workflow:
+
+1. Run pipeline
+2. Copy one or more formatted string lines from `daily_levels.txt`
+3. For routing tests, use the cash-space test lines (`SPX`, `NDX`, `SPY`, `QQQ`, `IWM`, `DIA`, `RUT`, `DJX`, `RTY`, `YM`) or the futures lines (`ES`, `NQ`)
+4. Paste into `DealerLevels.pine`
+5. Apply to chart
 
 ---
 
-## Adding a New Ticker
+## Key Config Knobs
 
-To add a new underlying (e.g. IWM / RTY):
+All settings: `scripts/streaming/options/config.py`
 
-1. **`config.py`**: Add `"RUT"` to `PRIMARY_INDEX_TICKERS`, map it in
-   `INDEX_TO_FUTURES` → `"/RTY"`, and add `"RUT": "$RUT"` to
-   `SCHWAB_INDEX_PREFIX`.
-2. **`config.py`**: Add `"RUT": "IWM"` to `ETF_FALLBACK`.
-3. **Pine Script**: Add a new input group in `DealerLevels.pine` following the
-   same pattern as the ES/NQ groups.
-
-No other changes are required.
+- `PRIMARY_INDEX_TICKERS`
+- `ETF_FALLBACK`
+- `DTE_TARGETS`
+- `MIN_OI_THRESHOLD`
+- `MIN_NONZERO_OI_CONTRACTS`
+- `USE_STRADDLE_EM`
+- `EM_STRADDLE_SCALAR`
+- `ENABLE_DISCORD_UPDATES`
+- `SCHEDULE_TIMES`
 
 ---
 
-## Error Handling
+## Troubleshooting
 
-| Scenario                  | Behaviour                                               |
-|---------------------------|---------------------------------------------------------|
-| HTTP rate-limit (429)     | Log error, skip that ticker, continue with others       |
-| Option chain empty        | Attempt ETF fallback (SPY for SPX, QQQ for NDX)        |
-| Futures quote unavailable | Log error, skip the asset pair entirely                |
-| Zero spot price           | ValueError raised, asset skipped                        |
-| Discord webhook failure   | Log warning, continue (files are still written)         |
-| Token expired             | `schwab-py` raises; Schwab token refresh is handled     |
-|                           | automatically by the library if configured              |
+- **No levels written**: check `data/dealer_levels.log` for per-ticker fetch errors.
+- **Weekend/off-hours sparse chains**: expected; fallback/rescaling handles this automatically when possible.
+- **Discord silent**: verify `--discord` was provided (or config default set true) and webhook key exists in `discord_webhooks.json`.
+- **Unexpected futures prices**: inspect quote-source log (`source=schwab` or `source=yfinance`).

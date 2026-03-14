@@ -37,6 +37,7 @@ NQ_FUTURES_SYMBOL: str = "/NQ"
 # If the chain fetch fails for the index, the ETF fallback is used instead.
 PRIMARY_INDEX_TICKERS: list[str] = ["SPX", "NDX"]
 ETF_FALLBACK: dict[str, str] = {"SPX": "SPY", "NDX": "QQQ"}
+TEST_OUTPUT_TICKERS: list[str] = ["SPX", "NDX", "SPY", "QQQ", "IWM", "DIA", "RUT", "DJX"]
 
 # Maps each primary index to its corresponding futures symbol.
 INDEX_TO_FUTURES: dict[str, str] = {

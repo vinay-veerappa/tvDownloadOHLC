@@ -1,270 +1,199 @@
 # Dealer Levels — Technical Design
 
-**Feature**: Automated Institutional Dealer Positioning Levels via Options GEX  
-**Version**: 1.0  
+**Feature**: Automated Dealer Positioning Levels via Options GEX  
+**Version**: 2.0  
 **Last Updated**: 2026-03-14
 
 ---
 
-## 1. Architecture Overview
+## 1) Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     run_options_levels.py  (orchestrator)           │
-│                                                                     │
-│  create_client()                                                    │
-│        │                                                            │
-│        ▼                                                            │
-│  fetch_option_chain_data(SPX/NDX, dte=[0,1])                       │
-│  fetch_futures_quote(/ES, /NQ)                                      │
-│        │                                                            │
-│        ▼                                                            │
-│  calculate_dealer_levels(chain, ticker)  ← gex_calculator.py       │
-│        │                                                            │
-│        ▼                                                            │
-│  translate_to_futures(levels, futures)   ← futures_translator.py   │
-│        │                                                            │
-│        ├──────────────────────────────────────────────────────────┐ │
-│        ▼                                                          ▼ │
-│  write_levels(...)             send_discord_update(...)           │ │
-│  (file_writer.py)              (discord_notifier.py)              │ │
-│        │                                 │                        │ │
-│        ▼                                 ▼                        │ │
-│  data/daily_levels.json        Discord webhook POST               │ │
-│  data/daily_levels.txt                                            │ │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### Module responsibilities
-
-| Module                  | Responsibility                                                  |
-|-------------------------|-----------------------------------------------------------------|
-| `config.py`             | All constants; single source of truth for tunable parameters   |
-| `options_fetcher.py`    | Schwab API authentication and data retrieval                   |
-| `gex_calculator.py`     | Pure-math GEX, wall, and EM calculations; no I/O               |
-| `futures_translator.py` | Basis-spread adjustment from cash index to futures price space |
-| `discord_notifier.py`   | Discord embed construction and webhook delivery                |
-| `file_writer.py`        | JSON (Pine-ready) and TXT serialisation                        |
-| `run_options_levels.py` | Pipeline orchestration, CLI, APScheduler integration           |
-
----
-
-## 2. Data Flow
-
-### 2.1 Option Chain Fetch
-
-```
-Schwab API  →  HTTP 200 JSON
-                  ├─ underlying.mark          → spot_price
-                  ├─ callExpDateMap            → list[OptionContract]
-                  └─ putExpDateMap             → list[OptionContract]
-```
-
-**Filtering**: Only expirations matching `{today + DTE_target}` are retained.
-Multiple strikes on the same expiry are deduplicated by keeping the contract
-with the highest open interest.
-
-### 2.2 GEX Profile Construction
-
-```
-For each unique strike across calls + puts:
-    call_gex_i = abs(call.gamma) × call.OI × CONTRACT_MULTIPLIER × spot
-    put_gex_i  = abs(put.gamma)  × put.OI  × CONTRACT_MULTIPLIER × spot
-    net_gex_i  = call_gex_i − put_gex_i
-
-GEX profile = sorted list of (strike, net_gex) ascending by strike
-Cumulative GEX = running sum of net_gex from lowest to highest strike
-Total GEX      = sum of all net_gex values
-```
-
-### 2.3 Zero Gamma Detection
-
-Walk the cumulative GEX list position by position.  When
-`cumulative[i−1] × cumulative[i] < 0`, a sign change has occurred between
-strike[i−1] and strike[i].  Linearly interpolate:
-
-```
-weight = |cumulative[i−1]| / |cumulative[i] − cumulative[i−1]|
-zero_gamma = strike[i−1] + weight × (strike[i] − strike[i−1])
-```
-
-### 2.4 Wall Detection
-
-```
-Call Wall = argmax over calls where OI ≥ MIN_OI_THRESHOLD
-            of (OI × |gamma|)
-
-Put Wall  = argmax over puts  where OI ≥ MIN_OI_THRESHOLD
-            of (OI × |gamma|)
-```
-
-### 2.5 Expected Move
-
-Default (straddle method):
-```
-straddle = ATM call ask + ATM put ask
-EM       = straddle × EM_STRADDLE_SCALAR
-```
-
-Alternative (IV method, `USE_STRADDLE_EM = False`):
-```
-EM = spot × ATM_IV × √(max(DTE, 1) / 365)
-```
-
-`EM Upper = spot + EM`  
-`EM Lower = spot − EM`
-
-### 2.6 Futures Translation
-
-```
-basis_spread = futures_price − cash_spot
-
-For each level L (zero_gamma, call_wall, put_wall, em_upper, em_lower):
-    L_futures = L_cash + basis_spread
+run_options_levels.py
+  ├─ create_client()
+  ├─ for ticker in PRIMARY_INDEX_TICKERS:
+  │    ├─ fetch_option_chain_data(ticker, DTE_TARGETS)
+  │    ├─ chain quality check (MIN_NONZERO_OI_CONTRACTS)
+  │    ├─ optional ETF fallback (SPX→SPY, NDX→QQQ)
+  │    ├─ fetch_futures_quote(/ES or /NQ) [Schwab → yfinance fallback]
+  │    ├─ calculate_dealer_levels(chain)
+  │    ├─ optional rescale_levels_to_target_spot() if fallback source used
+  │    └─ translate_to_futures(levels, futures_quote)
+  ├─ write_levels(translated_levels)
+  └─ optional send_discord_update(translated_levels)
 ```
 
 ---
 
-## 3. Domain Objects
+## 2) Module Responsibilities
 
-```
-OptionContract
-  symbol, strike, expiry, contract_type, open_interest, volume,
-  mark, bid, ask, iv, delta, gamma, theta, vega, rho, dte
-
-OptionChainData
-  underlying_symbol, spot_price
-  calls: list[OptionContract]
-  puts:  list[OptionContract]
-
-FuturesQuote
-  symbol, price
-
-StrikeGEX
-  strike, call_gex, put_gex, net_gex, call_oi, put_oi, cumulative_gex
-
-DealerLevels
-  ticker, spot, total_gex, gex_regime
-  zero_gamma, call_wall, put_wall
-  em_upper, em_lower, em_value, atm_straddle
-  strike_gex: list[StrikeGEX]
-
-TranslatedLevels
-  futures_symbol, cash_ticker, futures_price, cash_spot, basis_spread
-  total_gex, gex_regime
-  zero_gamma, call_wall, put_wall
-  em_upper, em_lower, em_value, atm_straddle
-```
+| Module | Responsibility |
+|---|---|
+| `config.py` | Constants for symbols, thresholds, schedule, output paths, Discord defaults |
+| `options_fetcher.py` | Schwab auth, option-chain fetch, expiry-key selection, futures quote + fallback |
+| `gex_calculator.py` | Advanced dealer-level math and derived structures |
+| `futures_translator.py` | Basis-spread shift from cash-index levels to futures levels |
+| `file_writer.py` | Writes JSON + TXT outputs (copy-ready strings + interpretation + detail) |
+| `discord_notifier.py` | Sends optional Discord embeds |
+| `run_options_levels.py` | CLI/scheduler orchestration and error isolation |
 
 ---
 
-## 4. Error Handling Strategy
+## 3) Data Flow Details
 
-```
-run_pipeline()
-  ├─ create_client()              → log.critical + return on failure
-  └─ per-ticker loop
-       ├─ fetch_option_chain_data()
-       │    ├─ HTTP 429           → RuntimeError("rate-limited")
-       │    └─ HTTP != 200        → RuntimeError(f"HTTP {code}")
-       ├─ fetch_futures_quote()
-       │    └─ HTTP != 200        → RuntimeError(...)
-       ├─ calculate_dealer_levels()
-       │    └─ spot == 0          → ValueError(...)
-       ├─ translate_to_futures()
-       └─ All exceptions          → log.error + continue (skip ticker)
-  ├─ write_levels()               → log.error (files skipped, pipeline continues)
-  └─ send_discord_update()        → log.error (discord skipped, files still written)
-```
+### 3.1 Option-chain acquisition
+
+- Request a broad date window around target DTE values.
+- Parse Schwab expiration keys (`YYYY-MM-DD:DTE`).
+- Select nearest available expiry keys for each target DTE.
+- Flatten selected call/put maps into normalized contract records.
+
+### 3.2 Chain quality fallback
+
+- Count contracts with non-zero OI across calls+puts.
+- If below threshold:
+  - SPX chain falls back to SPY chain.
+  - NDX chain falls back to QQQ chain.
+- Preserve original target index spot for later rescaling.
+
+### 3.3 Futures quote acquisition
+
+- First attempt Schwab quote for `/ES` or `/NQ`.
+- Reject mismatched non-futures keys for slash-prefixed requests.
+- If unavailable, use yfinance fallback (`ES=F`, `NQ=F`).
+
+### 3.4 Level computation (`gex_calculator.py`)
+
+Core outputs:
+
+- Total GEX and regime
+- Gamma-flip zone (`gamma_flip_lower`, `gamma_flip_upper`) and `zero_gamma`
+- Absolute + secondary call/put walls
+- Local call/put nodes
+- Front-DTE call/put walls
+- Hedge wall, max pain
+- EM envelope and straddle diagnostics
+- Vol trigger bands (0.5σ, 1.0σ, 1.5σ)
+- Gamma cliffs
+- Vanna/charm proxy nodes
+- Volume imbalance nodes
+- DEX nodes
+- Liquidity vacuum bounds
+- 25-delta skew pivots
+
+### 3.5 Rescaling and futures translation
+
+When source chain != target index:
+
+1. Rescale cash-index-derived levels to target spot.
+2. Compute basis spread = futures price − target cash spot.
+3. Shift all level coordinates into futures space.
 
 ---
 
-## 5. Configuration Reference
+## 4) Output Design
 
-All constants are in `scripts/streaming/options/config.py`.
+### 4.1 JSON (`data/daily_levels.json`)
 
-```python
-PRIMARY_INDEX_TICKERS = ["SPX", "NDX"]
-INDEX_TO_FUTURES = {"SPX": "/ES", "NDX": "/NQ"}
-ETF_FALLBACK = {"SPX": "SPY", "NDX": "QQQ"}
-SCHWAB_INDEX_PREFIX = {"SPX": "$SPX", "NDX": "$NDX", ...}
-DTE_TARGETS = [0, 1]
-CONTRACT_MULTIPLIER = 100
-MIN_OI_THRESHOLD = 50
-USE_STRADDLE_EM = True
-EM_STRADDLE_SCALAR = 0.85
-SCHEDULE_TIMES = ["08:30", "11:00"]
-SCHEDULE_TIMEZONE = "America/New_York"
-DISCORD_TARGET_KEY = "alerts"
-```
-
----
-
-## 6. Output File Schemas
-
-### `daily_levels.json`
+Top-level:
 
 ```json
 {
-  "generated_at": "ISO-8601 UTC datetime",
-  "run_label":    "Human-readable label string",
-  "levels": [
-    {
-      "level":        5750.25,
-      "type":         "Call Wall",
-      "asset":        "ES",
-      "regime":       "POSITIVE",
-      "cash_ticker":  "SPX",
-      "basis_spread": 17.75
-    }
-  ]
+  "generated_at": "ISO timestamp",
+  "run_label": "string",
+  "levels": [ ... ]
 }
 ```
 
-`type` values: `"Call Wall"`, `"Put Wall"`, `"Zero Gamma"`, `"EM Upper"`, `"EM Lower"`.
+Per-level record:
+
+```json
+{
+  "level": 6713.21,
+  "type": "Absolute Call Wall",
+  "asset": "ES",
+  "regime": "NEGATIVE",
+  "cash_ticker": "SPX",
+  "basis_spread": 3.81
+}
+```
+
+`type` is emitted for every currently supported translated level attribute in `file_writer._LEVEL_ATTRS`.
+
+### 4.2 TXT (`data/daily_levels.txt`)
+
+Contains:
+
+1. **Formatted Strings (copy-ready)** for ES and NQ (fixed 10-level ordering)
+2. **Cash-Space Test Symbols** for direct chart-symbol validation such as SPX, NDX, SPY, QQQ, IWM, DIA, RUT, DJX, plus alias test lines RTY and YM
+3. **Interpretation / Pre-Open Plan** block (bias + ladder + flow context)
+4. **Detailed Summary** block (expanded advanced metrics)
+
+### 4.3 Pine indicator (`scripts/indicators/options/DealerLevels.pine`)
+
+The repository now uses a single supported TradingView indicator path:
+
+- one paste-only text area for one or more formatted lines
+- auto-selection of the line matching the current chart symbol
+- canonical symbol-family matching for common futures micro/mini pairs and cash/index aliases
+- trading-session-aware reset logic for overnight futures families
+- user-customizable line colors, widths, styles, EM fill, and label presentation
+- label-overlap management via stagger/hide/off modes with configurable spacing and columns
+- stagger fallback chooses the least-conflicting existing column when max columns are already in use
+- same-price level aggregation into combined labels to avoid stacked duplicates, with token-level duplicate suppression
+- level-group visibility toggles and compact label text mode
+
+Matching strategy:
+
+1. normalize ticker/root/asset tags
+2. strip slash and continuous suffixes (e.g., `/YM1!` → `YM`)
+3. canonicalize common micro contracts into their parent futures family
+4. map assets to family keys (`ES_FAMILY`, `NQ_FAMILY`, `YM_FAMILY`, `RTY_FAMILY`) including aliases such as `US30`, `DJX`, `SPY`, `QQQ`, `IWM`
+5. prefer exact canonical asset matches for ticker/root/primary chart symbol, then fallback to family matches
+
+Session strategy:
+
+- overnight futures families use a shifted trading-day key so the indicator does not reset at midnight
+- non-overnight symbols reset on normal calendar-day boundaries
 
 ---
 
-## 7. Scheduler Design
+## 5) Runtime Control & Scheduling
 
-```
-BlockingScheduler (APScheduler 3.x)
-  timezone: America/New_York
+CLI flags:
 
-  job_1: CronTrigger(hour=8, minute=30)
-    → _is_trading_day() check → run_pipeline("08:30 ET")
+- `--schedule` (blocking scheduler mode)
+- `--label <text>` (output run label)
+- `--discord` (force enable for run)
+- `--no-discord` (force disable for run)
 
-  job_2: CronTrigger(hour=11, minute=0)
-    → _is_trading_day() check → run_pipeline("11:00 ET")
+Config default:
 
-  misfire_grace_time: 300 seconds
-```
+- `ENABLE_DISCORD_UPDATES = False` (current default)
+
+Scheduler:
+
+- `SCHEDULE_TIMEZONE = "America/New_York"`
+- `SCHEDULE_TIMES = ["08:30", "11:00"]`
+- Weekday-only guard (`weekday() < 5`)
 
 ---
 
-## 8. Extension Points
+## 6) Error Handling
 
-### Adding a new underlying (e.g. IWM / RTY)
+- Per-ticker failures are isolated; one asset can fail without aborting the other.
+- If no translated assets are produced, output write is skipped and run logs error.
+- File write and Discord errors are logged independently.
+- Missing APScheduler dependency exits cleanly with install guidance.
 
-1. `config.py`:
-   - Append `"RUT"` to `PRIMARY_INDEX_TICKERS`.
-   - Add `"RUT": "/RTY"` to `INDEX_TO_FUTURES`.
-   - Add `"RUT": "$RUT"` to `SCHWAB_INDEX_PREFIX`.
-   - Add `"RUT": "IWM"` to `ETF_FALLBACK`.
+---
 
-2. `DealerLevels.pine`: Add an NQ-style input group for RTY.
+## 7) Extension Points
 
-No changes to calculation or output modules are required.
-
-### Switching to IV-based Expected Move
-
-Set `USE_STRADDLE_EM = False` in `config.py`.
-
-### Changing schedule times
-
-Edit `SCHEDULE_TIMES = ["08:30", "11:00"]` in `config.py`.
-
-### Adding more Discord channels
-
-Add more keys to `discord_webhooks.json` and pass the URL explicitly to
-`send_discord_update(..., webhook_url=url)` from the pipeline.
+- Add a new index family by extending mappings in `config.py`:
+  - `PRIMARY_INDEX_TICKERS`
+  - `ETF_FALLBACK`
+  - `INDEX_TO_FUTURES`
+  - `SCHWAB_INDEX_PREFIX`
+- Add/remove published levels by editing `file_writer._LEVEL_ATTRS`.
+- Tune robustness via `MIN_NONZERO_OI_CONTRACTS` and `MIN_OI_THRESHOLD`.

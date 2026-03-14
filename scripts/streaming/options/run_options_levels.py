@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -47,6 +48,7 @@ from .config import (
     SCHEDULE_TIMES,
     SCHEDULE_TIMEZONE,
     SECRETS_PATH,
+    TEST_OUTPUT_TICKERS,
     TOKEN_PATH,
 )
 from .discord_notifier import send_discord_update
@@ -108,6 +110,7 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
         return
 
     translated_levels = []
+    cash_levels_by_ticker: dict[str, object] = {}
 
     # --- Process each index / futures pair ----------------------------------
     for ticker in PRIMARY_INDEX_TICKERS:
@@ -160,6 +163,8 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
                     target_cash_spot,
                 )
 
+            cash_levels_by_ticker[ticker] = levels
+
             # 4. Translate levels into futures price space
             tl = translate_to_futures(levels, fut)
             translated_levels.append(tl)
@@ -182,9 +187,35 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
         log.error("No levels were computed — all outputs skipped.")
         return
 
+    # --- Additional cash-space outputs for Pine testing ---------------------
+    for ticker in TEST_OUTPUT_TICKERS:
+        if ticker in cash_levels_by_ticker:
+            continue
+        log.info("─── Processing cash-space test ticker: %s ───", ticker)
+        try:
+            chain = fetch_option_chain_data(client, ticker, DTE_TARGETS)
+            levels = calculate_dealer_levels(chain, ticker)
+            cash_levels_by_ticker[ticker] = levels
+        except Exception as exc:
+            log.error("Cash-space test ticker failed for %s: %s", ticker, exc)
+
+    if "RUT" in cash_levels_by_ticker and "RTY" not in cash_levels_by_ticker:
+        cash_levels_by_ticker["RTY"] = replace(cash_levels_by_ticker["RUT"], ticker="RTY")
+    if "DJX" in cash_levels_by_ticker and "YM" not in cash_levels_by_ticker:
+        dJx_levels = cash_levels_by_ticker["DJX"]
+        cash_levels_by_ticker["YM"] = rescale_levels_to_target_spot(
+            dJx_levels,
+            target_ticker="YM",
+            target_spot=dJx_levels.spot * 100.0,
+        )
+
     # --- Persist to disk ----------------------------------------------------
     try:
-        write_levels(translated_levels, run_label)
+        write_levels(
+            translated_levels,
+            run_label,
+            cash_levels=list(cash_levels_by_ticker.values()),
+        )
     except Exception as exc:
         log.error("File write failed: %s", exc)
 

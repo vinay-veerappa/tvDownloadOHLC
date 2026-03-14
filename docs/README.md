@@ -1,7 +1,7 @@
 # 📚 Documentation Index
 
-**Version:** 0.6.0
-**Last Updated:** December 26, 2025
+**Version:** 0.7.0
+**Last Updated:** March 14, 2026
 
 ---
 
@@ -29,6 +29,9 @@ Main documentation for data acquisition, processing, and storage.
 - **[Data Sources](data/DATA_SOURCES.md)**: Format specs for TradingView, BacktestMarket, NinjaTrader.
 - **[Derived Data](data/DERIVED_DATA.md)**: Precomputed files (profiler, HOD/LOD, VWAP) + Prisma database schema.
 - **[Options Database](data/OPTIONS_DATABASE.md)**: Dolt DB tables, SQL queries, ER diagram.
+- **[Dealer Levels Pipeline](indicators/Options/README.md)**: Schwab options GEX pipeline for SPX/NDX translated to ES/NQ.
+- **[Dealer Levels Requirements](indicators/Options/REQUIREMENTS.md)**: Functional + non-functional requirements for advanced level generation.
+- **[Dealer Levels Technical Design](indicators/Options/DESIGN.md)**: Module architecture, fallback flow, and output schema details.
 - **[Data Coverage Report](data/DATA_COVERAGE_REPORT.md)**: Summary of available data ranges.
 - **[Data Gaps Report](reports/DATA_GAPS_REPORT.md)**: Analysis of missing chunks in history.
 - **[Data Anomaly Report](data/DATA_ANOMALY_REPORT.md)**: Price anomalies and verification.

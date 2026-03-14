@@ -47,6 +47,7 @@
 - Parquet-based OHLC data storage
 - Multi-ticker, multi-timeframe support
 - TV Selenium downloader for historical data
+- Automated options dealer-level pipeline (SPX/NDX → ES/NQ) with advanced GEX structure levels
 
 ## 🚀 Getting Started
 
@@ -91,6 +92,26 @@ See [`docs/README.md`](docs/README.md) for the full documentation index includin
 - **[Data Inventory](DATA_INVENTORY.md)** (Available Tickers & Timeframes)
 
 ## 🐍 Data Scripts (Python)
+
+### Dealer Levels (Options GEX → ES/NQ)
+Generates robust dealer-positioning levels from Schwab chains with ETF fallback logic, futures translation, and copy-ready outputs.
+
+```powershell
+# Run once
+.\.venv\Scripts\python.exe -m scripts.streaming.options.run_options_levels
+
+# Run scheduler (08:30 ET and 11:00 ET weekdays)
+.\.venv\Scripts\python.exe -m scripts.streaming.options.run_options_levels --schedule
+
+# Enable Discord for this run (default is disabled)
+.\.venv\Scripts\python.exe -m scripts.streaming.options.run_options_levels --discord
+```
+
+Outputs:
+- `data/daily_levels.txt` (copy-ready strings + interpretation/pre-open plan + detailed summary)
+- `data/daily_levels.json` (Pine-ready level records for ES/NQ)
+
+See full docs: `docs/indicators/Options/README.md`
 
 ### Update Data (CSV Import)
 To automatically import and sync new TradingView exports:

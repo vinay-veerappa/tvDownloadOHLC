@@ -1,291 +1,460 @@
-// This Pine Script™ source code is subject to the terms of the Mozilla Public License 2.0
-// © antigravity
+// This Pine Script(TM) source code is subject to the terms of the Mozilla Public License 2.0
+// Copyright (c) antigravity
 //
 // DealerLevels.pine
 // =================
-// Draws institutional dealer-positioning levels (Call Wall, Put Wall, Zero Gamma,
-// Expected Move) on the chart.  Levels are entered manually from the JSON output
-// of the Dealer Levels Python pipeline (daily_levels.json).
+// Paste formatted dealer-level lines from data/daily_levels.txt into the text box.
+// The indicator auto-detects the current chart symbol and draws the matching line.
 //
-// Usage
-// ─────
-//  1. Run the Python pipeline to generate data/daily_levels.json.
-//  2. Open this indicator's settings and paste each level value into the
-//     corresponding input field (ES or NQ group, depending on your chart).
-//  3. Lines are drawn from the first bar of the current trading session and
-//     extend to the right on every subsequent bar within that session.
+// Supported workflow:
+// 1. Run the Python dealer-level pipeline.
+// 2. Copy one or more formatted lines, for example:
+//    ES: 6715.91:Upper EM, 6713.21:Absolute Call Wall, ...
+//    NQ: 24695.66:Upper EM, 24652.13:Absolute Call Wall, ...
+// 3. Paste them into the input text area below.
+// 4. The indicator selects the line matching the current chart symbol.
 //
-// Lines are cleared and redrawn automatically at the start of each new day.
-// Set any level to 0 to hide it.
+// Symbol matching:
+// - Exact ticker match when pasted data exists for that ticker.
+// - Canonical family matching for common micro/mini futures pairs.
+//
+// Session handling:
+// - Overnight futures families reset on the trading-day boundary (18:00 ET).
+// - Other symbols reset on the calendar-day boundary.
 
 //@version=6
-indicator(
-    title       = "Dealer Levels — GEX",
-    overlay     = true,
-    max_lines_count  = 200,
-    max_labels_count = 100,
-    max_bars_back    = 5000
+indicator("Dealer Levels Auto", overlay = true, max_lines_count = 200, max_labels_count = 200, max_bars_back = 5000)
+
+var string grp_data = "Dealer Levels"
+pastedData = input.text_area(
+    "",
+    "Paste Dealer Levels",
+    group = grp_data,
+    tooltip = "Paste one or more formatted lines from daily_levels.txt. Example:\nES: 6715.91:Upper EM, 6713.21:Absolute Call Wall, ...\nNQ: 24695.66:Upper EM, 24652.13:Absolute Call Wall, ..."
 )
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── ES LEVELS ──────────────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
-var string grp_es = "ES Levels  (E-mini S&P 500)"
+var string grp_lines = "Line Style"
+showEmFill = input.bool(true, "Show EM Fill", group = grp_lines)
+lineWidthPrimary = input.int(2, "Primary Width", minval = 1, maxval = 4, group = grp_lines)
+lineWidthSecondary = input.int(1, "Secondary Width", minval = 1, maxval = 4, group = grp_lines)
+lineStylePrimaryInp = input.string("Solid", "Primary Style", options = ["Solid", "Dashed", "Dotted"], group = grp_lines)
+lineStyleSecondaryInp = input.string("Dashed", "Secondary Style", options = ["Solid", "Dashed", "Dotted"], group = grp_lines)
+lineStyle0DTEInp = input.string("Dotted", "0DTE Style", options = ["Solid", "Dashed", "Dotted"], group = grp_lines)
 
-es_show       = input.bool  (true,      "Show ES Levels",   group = grp_es)
-es_regime     = input.string("POSITIVE","Regime",
-    options = ["POSITIVE", "NEGATIVE"],
-    tooltip = "Set to match the GEX regime from the pipeline output",
-    group   = grp_es)
-es_callwall   = input.float (0.0, "Call Wall",   step = 0.25, group = grp_es)
-es_putwall    = input.float (0.0, "Put Wall",    step = 0.25, group = grp_es)
-es_zerogamma  = input.float (0.0, "Zero Gamma",  step = 0.25, group = grp_es)
-es_em_upper   = input.float (0.0, "EM Upper",    step = 0.25, group = grp_es)
-es_em_lower   = input.float (0.0, "EM Lower",    step = 0.25, group = grp_es)
+var string grp_colors = "Colors"
+colUpperEM = input.color(color.new(color.aqua, 0), "Upper EM", group = grp_colors)
+colAbsCall = input.color(color.new(color.lime, 0), "Absolute Call Wall", group = grp_colors)
+colLocalCall = input.color(color.new(color.lime, 30), "Local Call Node", group = grp_colors)
+col0DTECall = input.color(color.new(color.lime, 60), "0DTE Call Wall", group = grp_colors)
+colZeroGamma = input.color(color.new(color.yellow, 0), "Zero Gamma", group = grp_colors)
+colMaxPain = input.color(color.new(color.orange, 0), "Max Pain", group = grp_colors)
+col0DTEPut = input.color(color.new(color.red, 60), "0DTE Put Wall", group = grp_colors)
+colLocalPut = input.color(color.new(color.red, 30), "Local Put Node", group = grp_colors)
+colHedge = input.color(color.new(color.red, 0), "Hedge Wall", group = grp_colors)
+colLowerEM = input.color(color.new(color.aqua, 0), "Lower EM", group = grp_colors)
+colFallback = input.color(color.new(color.white, 0), "Fallback", group = grp_colors)
+colEmFill = input.color(color.new(color.aqua, 88), "EM Fill", group = grp_colors)
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── NQ LEVELS ──────────────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
-var string grp_nq = "NQ Levels  (E-mini Nasdaq-100)"
+var string grp_labels = "Labels"
+showLabels = input.bool(true, "Show Labels", group = grp_labels)
+showPriceInLabel = input.bool(true, "Show Price In Label", group = grp_labels)
+compactLabels = input.bool(true, "Compact Label Text", group = grp_labels)
+mergeSamePriceLabels = input.bool(true, "Merge Same-Price Labels", group = grp_labels)
+labelSizeInp = input.string("tiny", "Label Size", options = ["tiny", "small", "normal", "large"], group = grp_labels)
+labelOffset = input.int(2, "Label Offset", minval = 0, maxval = 50, group = grp_labels)
+labelBgOpacity = input.int(85, "Label Background Opacity", minval = 0, maxval = 100, group = grp_labels)
+labelCollisionMode = input.string("Stagger", "Label Collision", options = ["Stagger", "Hide" , "Off"], group = grp_labels)
+maxLabelColumns = input.int(4, "Max Label Columns", minval = 1, maxval = 10, group = grp_labels)
+columnStepBars = input.int(2, "Column Step (bars)", minval = 1, maxval = 20, group = grp_labels)
+minLabelGapTicks = input.int(40, "Min Gap (ticks)", minval = 1, maxval = 500, group = grp_labels)
+showStatusTable = input.bool(true, "Show Status Table", group = grp_labels)
 
-nq_show       = input.bool  (true,      "Show NQ Levels",   group = grp_nq)
-nq_regime     = input.string("POSITIVE","Regime",
-    options = ["POSITIVE", "NEGATIVE"],
-    tooltip = "Set to match the GEX regime from the pipeline output",
-    group   = grp_nq)
-nq_callwall   = input.float (0.0, "Call Wall",   step = 1.0,  group = grp_nq)
-nq_putwall    = input.float (0.0, "Put Wall",    step = 1.0,  group = grp_nq)
-nq_zerogamma  = input.float (0.0, "Zero Gamma",  step = 1.0,  group = grp_nq)
-nq_em_upper   = input.float (0.0, "EM Upper",    step = 1.0,  group = grp_nq)
-nq_em_lower   = input.float (0.0, "EM Lower",    step = 1.0,  group = grp_nq)
+var string grp_visibility = "Level Visibility"
+showEMLevels = input.bool(true, "Show EM Levels", group = grp_visibility)
+showCallLevels = input.bool(true, "Show Call Levels", group = grp_visibility)
+showPutLevels = input.bool(true, "Show Put Levels", group = grp_visibility)
+showZeroGammaLevel = input.bool(true, "Show Zero Gamma", group = grp_visibility)
+showMaxPainLevel = input.bool(true, "Show Max Pain", group = grp_visibility)
+showHedgeLevel = input.bool(true, "Show Hedge Wall", group = grp_visibility)
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── LINE STYLE ─────────────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
-var string grp_style = "Line Style"
+f_label_size(string sizeText) =>
+    sizeText == "tiny" ? size.tiny :
+     sizeText == "small" ? size.small :
+     sizeText == "normal" ? size.normal :
+     size.large
 
-c_call_wall  = input.color(color.new(#00E676, 0),   "Call Wall Colour",   group = grp_style)
-c_put_wall   = input.color(color.new(#FF1744, 0),   "Put Wall Colour",    group = grp_style)
-c_zero_gamma = input.color(color.new(#FFEA00, 0),   "Zero Gamma Colour",  group = grp_style)
-c_em_band    = input.color(color.new(#00B8D4, 60),  "EM Band Colour",     group = grp_style)
+f_line_style(string styleText) =>
+    styleText == "Solid" ? line.style_solid :
+     styleText == "Dashed" ? line.style_dashed :
+     line.style_dotted
 
-line_width_cw = input.int(2, "Call/Put Wall Width", minval = 1, maxval = 4, group = grp_style)
-line_width_zg = input.int(1, "Zero Gamma Width",    minval = 1, maxval = 4, group = grp_style)
-line_width_em = input.int(1, "EM Band Width",       minval = 1, maxval = 4, group = grp_style)
+f_norm(string value) =>
+    str.upper(str.trim(value))
 
-es_line_style_inp = input.string("Solid",  "ES Line Style",
-    options = ["Solid", "Dashed", "Dotted"], group = grp_style)
-nq_line_style_inp = input.string("Dashed", "NQ Line Style",
-    options = ["Solid", "Dashed", "Dotted"], group = grp_style)
+f_strip_prefix(string value) =>
+    trimmed = f_norm(value)
+    str.startswith(trimmed, "/") ? str.substring(trimmed, 1, str.length(trimmed)) : trimmed
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── LABELS ─────────────────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
-var string grp_lbl = "Labels"
+f_strip_continuous_suffix(string value) =>
+    cleaned = f_strip_prefix(value)
+    len = str.length(cleaned)
+    len > 2 and str.endswith(cleaned, "!") ? str.substring(cleaned, 0, len - 2) : cleaned
 
-show_labels    = input.bool  (true,    "Show Labels",     group = grp_lbl)
-show_price_lbl = input.bool  (true,    "Show Price in Label", group = grp_lbl)
-lbl_size_inp   = input.string("small", "Label Size",
-    options = ["tiny", "small", "normal", "large"], group = grp_lbl)
-lbl_offset_inp = input.int(5, "Label Offset (bars right)", minval = 0, maxval = 50, group = grp_lbl)
+f_primary_symbol() =>
+    root = f_strip_prefix(syminfo.root)
+    ticker = f_strip_prefix(syminfo.ticker)
+    str.length(root) > 0 ? root : ticker
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── EM FILL ────────────────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
-var string grp_fill = "Expected-Move Fill"
+f_canonical_symbol(string symbol) =>
+    cleaned = f_strip_continuous_suffix(symbol)
+    cleaned == "MES" ? "ES" :
+     cleaned == "MNQ" ? "NQ" :
+     cleaned == "MYM" ? "YM" :
+     cleaned == "M2K" ? "RTY" :
+     cleaned == "MGC" ? "GC" :
+     cleaned == "SIL" ? "SI" :
+     cleaned == "MCL" ? "CL" :
+     cleaned == "MHG" ? "HG" :
+     cleaned == "M6E" ? "6E" :
+     cleaned == "M6A" ? "6A" :
+     cleaned == "M6B" ? "6B" :
+     cleaned == "M6J" ? "6J" :
+     cleaned
 
-show_es_fill = input.bool(true,  "Fill ES EM Band", group = grp_fill)
-show_nq_fill = input.bool(false, "Fill NQ EM Band", group = grp_fill)
+f_symbol_family_key(string symbol) =>
+    canonical = f_canonical_symbol(symbol)
+    canonical == "ES" or canonical == "SPX" or canonical == "SPY" ? "ES_FAMILY" :
+     canonical == "NQ" or canonical == "NDX" or canonical == "QQQ" ? "NQ_FAMILY" :
+     canonical == "YM" or canonical == "DJX" or canonical == "DJI" or canonical == "US30" or canonical == "DOW" ? "YM_FAMILY" :
+     canonical == "RTY" or canonical == "RUT" or canonical == "IWM" ? "RTY_FAMILY" :
+     canonical
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── HELPERS ────────────────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
+f_is_overnight_futures(string symbol) =>
+    canonical = f_canonical_symbol(symbol)
+    canonical == "ES" or canonical == "NQ" or canonical == "YM" or canonical == "RTY" or canonical == "CL" or canonical == "GC" or canonical == "SI" or canonical == "HG" or canonical == "6E" or canonical == "6A" or canonical == "6B" or canonical == "6J" or canonical == "ZN" or canonical == "ZB"
 
-f_size(s) =>
-    switch s
-        "tiny"   => size.tiny
-        "small"  => size.small
-        "normal" => size.normal
-        "large"  => size.large
-        =>          size.small
+f_match_score(string assetTag) =>
+    asset = f_canonical_symbol(assetTag)
+    assetFamily = f_symbol_family_key(asset)
+    primary = f_canonical_symbol(f_primary_symbol())
+    primaryFamily = f_symbol_family_key(primary)
+    ticker = f_canonical_symbol(syminfo.ticker)
+    tickerFamily = f_symbol_family_key(ticker)
+    root = f_canonical_symbol(syminfo.root)
+    rootFamily = f_symbol_family_key(root)
 
-f_style(s) =>
-    switch s
-        "Solid"  => line.style_solid
-        "Dashed" => line.style_dashed
-        "Dotted" => line.style_dotted
-        =>          line.style_solid
+    exactMatch = asset == ticker or asset == root or asset == primary
+    familyMatch = assetFamily == tickerFamily or assetFamily == rootFamily or assetFamily == primaryFamily
+    exactMatch ? 2 : (familyMatch ? 1 : 0)
 
-_lbl_size   = f_size(lbl_size_inp)
-_es_style   = f_style(es_line_style_inp)
-_nq_style   = f_style(nq_line_style_inp)
+f_symbol_matches(string assetTag) =>
+    f_match_score(assetTag) > 0
 
-f_price_str(p) =>
-    show_price_lbl ? "  " + str.tostring(p, "#.##") : ""
+f_extract_asset_tag(string lineText) =>
+    tokens = str.split(lineText, ",")
+    asset = ""
+    if array.size(tokens) > 0
+        firstToken = str.trim(array.get(tokens, 0))
+        firstParts = str.split(firstToken, ":")
+        if array.size(firstParts) >= 3
+            asset := f_strip_prefix(array.get(firstParts, 0))
+    asset
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── SESSION TRACKING ───────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
+f_find_matching_line(string blob) =>
+    string matchedLine = ""
+    string matchedAsset = ""
+    int bestScore = 0
+    rows = str.split(blob, "\n")
+    if array.size(rows) > 0
+        for idx = 0 to array.size(rows) - 1
+            row = str.trim(array.get(rows, idx))
+            if str.length(row) > 0 and str.contains(row, ",")
+                asset = f_extract_asset_tag(row)
+                score = f_match_score(asset)
+                if str.length(asset) > 0 and score > bestScore
+                    matchedLine := row
+                    matchedAsset := asset
+                    bestScore := score
+                    if bestScore == 2
+                        break
+    [matchedLine, matchedAsset]
 
-// Detect the first bar of a new calendar day
-is_new_day = ta.change(time("D")) != 0
+f_parse_levels(string lineText, array<float> prices, array<string> titles) =>
+    array.clear(prices)
+    array.clear(titles)
+    tokens = str.split(lineText, ",")
+    if array.size(tokens) > 0
+        for idx = 0 to array.size(tokens) - 1
+            token = str.trim(array.get(tokens, idx))
+            parts = str.split(token, ":")
+            string priceText = ""
+            string titleText = ""
+            if idx == 0
+                if array.size(parts) >= 3
+                    priceText := str.trim(array.get(parts, 1))
+                    titleText := str.trim(array.get(parts, 2))
+            else
+                if array.size(parts) >= 2
+                    priceText := str.trim(array.get(parts, 0))
+                    titleText := str.trim(array.get(parts, 1))
+            level = str.tonumber(priceText)
+            if not na(level) and str.length(titleText) > 0
+                array.push(prices, level)
+                array.push(titles, titleText)
 
-var int session_start_bar = 0
-if is_new_day or bar_index == 0
-    session_start_bar := bar_index
+f_level_color(string title) =>
+    upperTitle = f_norm(title)
+    upperTitle == "UPPER EM" ? colUpperEM :
+     upperTitle == "LOWER EM" ? colLowerEM :
+     upperTitle == "ZERO GAMMA" ? colZeroGamma :
+     upperTitle == "MAX PAIN" ? colMaxPain :
+     upperTitle == "HEDGE WALL" ? colHedge :
+     upperTitle == "0DTE PUT WALL" ? col0DTEPut :
+     upperTitle == "LOCAL PUT NODE" ? colLocalPut :
+     upperTitle == "0DTE CALL WALL" ? col0DTECall :
+     upperTitle == "LOCAL CALL NODE" ? colLocalCall :
+     upperTitle == "ABSOLUTE CALL WALL" ? colAbsCall :
+     colFallback
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── LINE & LABEL VARIABLES ─────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
-// One line + label variable per (asset × level-type).
-// Lines are recreated each new day; labels track the right edge.
+f_level_style(string title) =>
+    upperTitle = f_norm(title)
+    str.contains(upperTitle, "0DTE") ? f_line_style(lineStyle0DTEInp) :
+     str.contains(upperTitle, "LOCAL") ? f_line_style(lineStyleSecondaryInp) :
+     f_line_style(lineStylePrimaryInp)
 
-var line ln_es_cw   = na
-var line ln_es_pw   = na
-var line ln_es_zg   = na
-var line ln_es_emu  = na
-var line ln_es_eml  = na
+f_level_width(string title) =>
+    upperTitle = f_norm(title)
+    str.contains(upperTitle, "0DTE") or str.contains(upperTitle, "LOCAL") ? lineWidthSecondary : lineWidthPrimary
 
-var line ln_nq_cw   = na
-var line ln_nq_pw   = na
-var line ln_nq_zg   = na
-var line ln_nq_emu  = na
-var line ln_nq_eml  = na
+f_compact_title(string title) =>
+    upperTitle = f_norm(title)
+    upperTitle == "UPPER EM" ? "EM+" :
+     upperTitle == "LOWER EM" ? "EM-" :
+     upperTitle == "ABSOLUTE CALL WALL" ? "CALL ABS" :
+     upperTitle == "LOCAL CALL NODE" ? "CALL LOC" :
+     upperTitle == "0DTE CALL WALL" ? "CALL 0DTE" :
+     upperTitle == "ZERO GAMMA" ? "ZG" :
+     upperTitle == "MAX PAIN" ? "MAX" :
+     upperTitle == "0DTE PUT WALL" ? "PUT 0DTE" :
+     upperTitle == "LOCAL PUT NODE" ? "PUT LOC" :
+     upperTitle == "HEDGE WALL" ? "HEDGE" :
+     title
 
-var label lbl_es_cw  = na
-var label lbl_es_pw  = na
-var label lbl_es_zg  = na
-var label lbl_es_emu = na
-var label lbl_es_eml = na
+f_show_level(string title) =>
+    upperTitle = f_norm(title)
+    upperTitle == "UPPER EM" or upperTitle == "LOWER EM" ? showEMLevels :
+     str.contains(upperTitle, "CALL") ? showCallLevels :
+     str.contains(upperTitle, "PUT") ? showPutLevels :
+     upperTitle == "ZERO GAMMA" ? showZeroGammaLevel :
+     upperTitle == "MAX PAIN" ? showMaxPainLevel :
+     upperTitle == "HEDGE WALL" ? showHedgeLevel :
+     true
 
-var label lbl_nq_cw  = na
-var label lbl_nq_pw  = na
-var label lbl_nq_zg  = na
-var label lbl_nq_emu = na
-var label lbl_nq_eml = na
+f_label_text(string title, float level) =>
+    titleText = compactLabels ? f_compact_title(title) : title
+    showPriceInLabel ? titleText + "  " + str.tostring(level, "#.##") : titleText
 
-// EM fill lines (need a plot-based linefill; use line pairs)
-var line ln_es_emu_fill = na
-var line ln_es_eml_fill = na
-var line ln_nq_emu_fill = na
-var line ln_nq_eml_fill = na
+f_is_same_price(float left, float right) =>
+    math.abs(left - right) <= syminfo.mintick * 0.25
 
-var linefill lf_es_em = na
-var linefill lf_nq_em = na
+f_has_merged_token(string mergedTitle, string token) =>
+    bool found = false
+    tokens = str.split(mergedTitle, "+")
+    if array.size(tokens) > 0
+        for idx = 0 to array.size(tokens) - 1
+            existing = f_norm(array.get(tokens, idx))
+            if existing == f_norm(token)
+                found := true
+                break
+    found
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── DAY-START: DELETE OLD + CREATE NEW LINES ───────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
+f_assign_label_column(float level, array<float> colLastLevels, float minGap, int maxCols, string mode) =>
+    int assigned = -1
+    if mode == "Off"
+        assigned := 0
+    else
+        if array.size(colLastLevels) > 0
+            for c = 0 to array.size(colLastLevels) - 1
+                lastLevel = array.get(colLastLevels, c)
+                if math.abs(level - lastLevel) >= minGap
+                    assigned := c
+                    break
+        if assigned == -1
+            if array.size(colLastLevels) < maxCols
+                array.push(colLastLevels, level)
+                assigned := array.size(colLastLevels) - 1
+            else
+                if mode == "Hide"
+                    assigned := -1
+                else
+                    bestGap = -1.0
+                    bestCol = 0
+                    for c = 0 to array.size(colLastLevels) - 1
+                        gap = math.abs(level - array.get(colLastLevels, c))
+                        if gap > bestGap
+                            bestGap := gap
+                            bestCol := c
+                    assigned := bestCol
 
-f_make_line(price, col, w, style) =>
-    price != 0.0 ?
-        line.new(bar_index, price, bar_index + 1, price,
-            color = col, width = w, style = style, extend = extend.none) :
-        na
+    if assigned >= 0
+        if assigned >= array.size(colLastLevels)
+            array.push(colLastLevels, level)
+        else
+            array.set(colLastLevels, assigned, level)
 
-f_make_label(price, txt, col, style_lbl) =>
-    price != 0.0 and show_labels ?
-        label.new(bar_index + lbl_offset_inp, price, txt,
-            style     = style_lbl,
-            color     = color.new(col, 80),
-            textcolor = col,
-            size      = _lbl_size) :
-        na
+    assigned
 
-if is_new_day or bar_index == 0
+f_clear_drawings(array<line> linesRef, array<label> labelsRef) =>
+    if array.size(linesRef) > 0
+        for idx = 0 to array.size(linesRef) - 1
+            line.delete(array.get(linesRef, idx))
+    if array.size(labelsRef) > 0
+        for idx = 0 to array.size(labelsRef) - 1
+            label.delete(array.get(labelsRef, idx))
+    array.clear(linesRef)
+    array.clear(labelsRef)
 
-    // ── Teardown ─────────────────────────────────────────────────────────────
-    line.delete(ln_es_cw)  ; line.delete(ln_es_pw)   ; line.delete(ln_es_zg)
-    line.delete(ln_es_emu) ; line.delete(ln_es_eml)
-    line.delete(ln_nq_cw)  ; line.delete(ln_nq_pw)   ; line.delete(ln_nq_zg)
-    line.delete(ln_nq_emu) ; line.delete(ln_nq_eml)
-    line.delete(ln_es_emu_fill) ; line.delete(ln_es_eml_fill)
-    line.delete(ln_nq_emu_fill) ; line.delete(ln_nq_eml_fill)
+var string TZ = "America/New_York"
+var int SESSION_SHIFT_MS = 6 * 60 * 60 * 1000
 
-    label.delete(lbl_es_cw)  ; label.delete(lbl_es_pw)   ; label.delete(lbl_es_zg)
-    label.delete(lbl_es_emu) ; label.delete(lbl_es_eml)
-    label.delete(lbl_nq_cw)  ; label.delete(lbl_nq_pw)   ; label.delete(lbl_nq_zg)
-    label.delete(lbl_nq_emu) ; label.delete(lbl_nq_eml)
+f_session_key() =>
+    referenceTime = f_is_overnight_futures(f_primary_symbol()) ? time + SESSION_SHIFT_MS : time
+    year(referenceTime, TZ) * 10000 + month(referenceTime, TZ) * 100 + dayofmonth(referenceTime, TZ)
 
-    linefill.delete(lf_es_em)
-    linefill.delete(lf_nq_em)
+sessionKey = f_session_key()
+isNewTradingSession = ta.change(sessionKey) != 0
 
-    // ── ES Lines ─────────────────────────────────────────────────────────────
-    if es_show
-        es_regime_suffix = es_regime == "POSITIVE" ? " ✅" : " ⚠️"
+var int sessionStartBar = 0
+if barstate.isfirst or isNewTradingSession
+    sessionStartBar := bar_index
 
-        ln_es_cw  := f_make_line(es_callwall,  c_call_wall,  line_width_cw, _es_style)
-        ln_es_pw  := f_make_line(es_putwall,   c_put_wall,   line_width_cw, _es_style)
-        ln_es_zg  := f_make_line(es_zerogamma, c_zero_gamma, line_width_zg, _es_style)
-        ln_es_emu := f_make_line(es_em_upper,  c_em_band,    line_width_em, _es_style)
-        ln_es_eml := f_make_line(es_em_lower,  c_em_band,    line_width_em, _es_style)
+var array<line> levelLines = array.new_line()
+var array<label> levelLabels = array.new_label()
+var array<int> labelColumns = array.new_int()
+var array<float> labelColumnLastLevels = array.new_float()
+var array<float> parsedPrices = array.new_float()
+var array<string> parsedTitles = array.new_string()
+var table statusTable = table.new(position.top_right, 1, 2, bgcolor = color.new(color.black, 80))
+var line emUpperFill = na
+var line emLowerFill = na
+var linefill emBandFill = na
+var string lastSelectedLine = ""
+var string lastMatchedAsset = ""
+labelSize = f_label_size(labelSizeInp)
 
-        lbl_es_cw  := f_make_label(es_callwall,  "ES Call Wall"  + f_price_str(es_callwall)  + es_regime_suffix, c_call_wall,  label.style_label_left)
-        lbl_es_pw  := f_make_label(es_putwall,   "ES Put Wall"   + f_price_str(es_putwall)   + es_regime_suffix, c_put_wall,   label.style_label_left)
-        lbl_es_zg  := f_make_label(es_zerogamma, "ES Zero Gamma" + f_price_str(es_zerogamma) + es_regime_suffix, c_zero_gamma, label.style_label_left)
-        lbl_es_emu := f_make_label(es_em_upper,  "ES EM+"        + f_price_str(es_em_upper),                     c_em_band,    label.style_label_left)
-        lbl_es_eml := f_make_label(es_em_lower,  "ES EM-"        + f_price_str(es_em_lower),                     c_em_band,    label.style_label_left)
+[selectedLine, matchedAsset] = f_find_matching_line(pastedData)
+needsRedraw = barstate.isfirst or isNewTradingSession or selectedLine != lastSelectedLine or matchedAsset != lastMatchedAsset
 
-        // EM band fill — requires two non-na lines
-        if show_es_fill and es_em_upper != 0.0 and es_em_lower != 0.0
-            ln_es_emu_fill := line.new(bar_index, es_em_upper, bar_index + 1, es_em_upper, color = color.new(c_em_band, 95), width = 1)
-            ln_es_eml_fill := line.new(bar_index, es_em_lower, bar_index + 1, es_em_lower, color = color.new(c_em_band, 95), width = 1)
-            lf_es_em       := linefill.new(ln_es_emu_fill, ln_es_eml_fill, color.new(c_em_band, 85))
+if needsRedraw
+    f_clear_drawings(levelLines, levelLabels)
+    array.clear(labelColumns)
+    array.clear(labelColumnLastLevels)
+    line.delete(emUpperFill)
+    line.delete(emLowerFill)
+    linefill.delete(emBandFill)
+    emUpperFill := na
+    emLowerFill := na
+    emBandFill := na
 
-    // ── NQ Lines ─────────────────────────────────────────────────────────────
-    if nq_show
-        nq_regime_suffix = nq_regime == "POSITIVE" ? " ✅" : " ⚠️"
+    if str.length(selectedLine) > 0
+        f_parse_levels(selectedLine, parsedPrices, parsedTitles)
+        float emUpperPrice = na
+        float emLowerPrice = na
 
-        ln_nq_cw  := f_make_line(nq_callwall,  c_call_wall,  line_width_cw, _nq_style)
-        ln_nq_pw  := f_make_line(nq_putwall,   c_put_wall,   line_width_cw, _nq_style)
-        ln_nq_zg  := f_make_line(nq_zerogamma, c_zero_gamma, line_width_zg, _nq_style)
-        ln_nq_emu := f_make_line(nq_em_upper,  c_em_band,    line_width_em, _nq_style)
-        ln_nq_eml := f_make_line(nq_em_lower,  c_em_band,    line_width_em, _nq_style)
+        uniqueLevels = array.new_float()
+        uniqueTitles = array.new_string()
+        uniqueColors = array.new_color()
+        uniqueWidths = array.new_int()
+        uniqueStyleKeys = array.new_string()
 
-        lbl_nq_cw  := f_make_label(nq_callwall,  "NQ Call Wall"  + f_price_str(nq_callwall)  + nq_regime_suffix, c_call_wall,  label.style_label_left)
-        lbl_nq_pw  := f_make_label(nq_putwall,   "NQ Put Wall"   + f_price_str(nq_putwall)   + nq_regime_suffix, c_put_wall,   label.style_label_left)
-        lbl_nq_zg  := f_make_label(nq_zerogamma, "NQ Zero Gamma" + f_price_str(nq_zerogamma) + nq_regime_suffix, c_zero_gamma, label.style_label_left)
-        lbl_nq_emu := f_make_label(nq_em_upper,  "NQ EM+"        + f_price_str(nq_em_upper),                     c_em_band,    label.style_label_left)
-        lbl_nq_eml := f_make_label(nq_em_lower,  "NQ EM-"        + f_price_str(nq_em_lower),                     c_em_band,    label.style_label_left)
+        if array.size(parsedPrices) > 0
+            for idx = 0 to array.size(parsedPrices) - 1
+                level = array.get(parsedPrices, idx)
+                title = array.get(parsedTitles, idx)
+                levelColor = f_level_color(title)
+                levelStyle = f_level_style(title)
+                levelWidth = f_level_width(title)
+                shouldShowLevel = f_show_level(title)
 
-        if show_nq_fill and nq_em_upper != 0.0 and nq_em_lower != 0.0
-            ln_nq_emu_fill := line.new(bar_index, nq_em_upper, bar_index + 1, nq_em_upper, color = color.new(c_em_band, 95), width = 1)
-            ln_nq_eml_fill := line.new(bar_index, nq_em_lower, bar_index + 1, nq_em_lower, color = color.new(c_em_band, 95), width = 1)
-            lf_nq_em       := linefill.new(ln_nq_emu_fill, ln_nq_eml_fill, color.new(c_em_band, 85))
+                if shouldShowLevel
+                    compactTitle = compactLabels ? f_compact_title(title) : title
+                    existingIndex = -1
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── INTRA-DAY: EXTEND ALL LINES TO CURRENT BAR ─────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
+                    if mergeSamePriceLabels and array.size(uniqueLevels) > 0
+                        for u = 0 to array.size(uniqueLevels) - 1
+                            if f_is_same_price(level, array.get(uniqueLevels, u))
+                                existingIndex := u
+                                break
 
-if not is_new_day
-    // ES
-    if not na(ln_es_cw)   line.set_x2(ln_es_cw,   bar_index)
-    if not na(ln_es_pw)   line.set_x2(ln_es_pw,   bar_index)
-    if not na(ln_es_zg)   line.set_x2(ln_es_zg,   bar_index)
-    if not na(ln_es_emu)  line.set_x2(ln_es_emu,  bar_index)
-    if not na(ln_es_eml)  line.set_x2(ln_es_eml,  bar_index)
-    if not na(ln_es_emu_fill) line.set_x2(ln_es_emu_fill, bar_index)
-    if not na(ln_es_eml_fill) line.set_x2(ln_es_eml_fill, bar_index)
+                    if existingIndex >= 0
+                        mergedTitle = array.get(uniqueTitles, existingIndex)
+                        appendToken = compactTitle
+                        newMerged = f_has_merged_token(mergedTitle, appendToken) ? mergedTitle : mergedTitle + " + " + appendToken
+                        array.set(uniqueTitles, existingIndex, newMerged)
+                    else
+                        array.push(uniqueLevels, level)
+                        array.push(uniqueTitles, compactTitle)
+                        array.push(uniqueColors, levelColor)
+                        array.push(uniqueWidths, levelWidth)
+                        styleKey = str.contains(f_norm(title), "0DTE") ? lineStyle0DTEInp : (str.contains(f_norm(title), "LOCAL") ? lineStyleSecondaryInp : lineStylePrimaryInp)
+                        array.push(uniqueStyleKeys, styleKey)
 
-    // NQ
-    if not na(ln_nq_cw)   line.set_x2(ln_nq_cw,   bar_index)
-    if not na(ln_nq_pw)   line.set_x2(ln_nq_pw,   bar_index)
-    if not na(ln_nq_zg)   line.set_x2(ln_nq_zg,   bar_index)
-    if not na(ln_nq_emu)  line.set_x2(ln_nq_emu,  bar_index)
-    if not na(ln_nq_eml)  line.set_x2(ln_nq_eml,  bar_index)
-    if not na(ln_nq_emu_fill) line.set_x2(ln_nq_emu_fill, bar_index)
-    if not na(ln_nq_eml_fill) line.set_x2(ln_nq_eml_fill, bar_index)
+                titleNorm = f_norm(title)
+                if titleNorm == "UPPER EM"
+                    emUpperPrice := level
+                if titleNorm == "LOWER EM"
+                    emLowerPrice := level
 
-    // Labels — keep anchored to current right edge of session
-    if show_labels
-        int lbl_x = bar_index + lbl_offset_inp
-        if not na(lbl_es_cw)  label.set_x(lbl_es_cw,  lbl_x)
-        if not na(lbl_es_pw)  label.set_x(lbl_es_pw,  lbl_x)
-        if not na(lbl_es_zg)  label.set_x(lbl_es_zg,  lbl_x)
-        if not na(lbl_es_emu) label.set_x(lbl_es_emu, lbl_x)
-        if not na(lbl_es_eml) label.set_x(lbl_es_eml, lbl_x)
-        if not na(lbl_nq_cw)  label.set_x(lbl_nq_cw,  lbl_x)
-        if not na(lbl_nq_pw)  label.set_x(lbl_nq_pw,  lbl_x)
-        if not na(lbl_nq_zg)  label.set_x(lbl_nq_zg,  lbl_x)
-        if not na(lbl_nq_emu) label.set_x(lbl_nq_emu, lbl_x)
-        if not na(lbl_nq_eml) label.set_x(lbl_nq_eml, lbl_x)
+        if array.size(uniqueLevels) > 0
+            for u = 0 to array.size(uniqueLevels) - 1
+                drawLevel = array.get(uniqueLevels, u)
+                drawColor = array.get(uniqueColors, u)
+                drawWidth = array.get(uniqueWidths, u)
+                drawStyle = f_line_style(array.get(uniqueStyleKeys, u))
+                drawTitle = array.get(uniqueTitles, u)
+
+                levelLine = line.new(sessionStartBar, drawLevel, bar_index + 1, drawLevel, color = drawColor, width = drawWidth, style = drawStyle, extend = extend.none)
+                array.push(levelLines, levelLine)
+
+                if showLabels
+                    minGap = syminfo.mintick * minLabelGapTicks
+                    labelCol = f_assign_label_column(drawLevel, labelColumnLastLevels, minGap, maxLabelColumns, labelCollisionMode)
+                    if labelCol >= 0
+                        labelX = bar_index + labelOffset + (labelCol * columnStepBars)
+                        displayText = showPriceInLabel ? drawTitle + "  " + str.tostring(drawLevel, "#.##") : drawTitle
+                        levelLabel = label.new(labelX, drawLevel, displayText, textcolor = drawColor, color = color.new(color.black, labelBgOpacity), style = label.style_label_left, size = labelSize)
+                        array.push(levelLabels, levelLabel)
+                        array.push(labelColumns, labelCol)
+
+        if showEmFill and not na(emUpperPrice) and not na(emLowerPrice)
+            emUpperFill := line.new(sessionStartBar, emUpperPrice, bar_index + 1, emUpperPrice, color = color.new(color.aqua, 95), width = 1, extend = extend.none)
+            emLowerFill := line.new(sessionStartBar, emLowerPrice, bar_index + 1, emLowerPrice, color = color.new(color.aqua, 95), width = 1, extend = extend.none)
+            emBandFill := linefill.new(emUpperFill, emLowerFill, colEmFill)
+
+    lastSelectedLine := selectedLine
+    lastMatchedAsset := matchedAsset
+
+if array.size(levelLines) > 0
+    for idx = 0 to array.size(levelLines) - 1
+        line.set_x2(array.get(levelLines, idx), bar_index)
+
+if not na(emUpperFill)
+    line.set_x2(emUpperFill, bar_index)
+if not na(emLowerFill)
+    line.set_x2(emLowerFill, bar_index)
+
+if array.size(levelLabels) > 0
+    for idx = 0 to array.size(levelLabels) - 1
+        col = idx < array.size(labelColumns) ? array.get(labelColumns, idx) : 0
+        labelX = bar_index + labelOffset + (col * columnStepBars)
+        label.set_x(array.get(levelLabels, idx), labelX)
+
+if barstate.islast and showStatusTable
+    primary = f_primary_symbol()
+    resolved = str.length(matchedAsset) > 0 ? matchedAsset : "NO MATCH"
+    statusColor = str.length(matchedAsset) > 0 ? color.new(color.lime, 0) : color.new(color.red, 0)
+    modeText = f_is_overnight_futures(primary) ? "Globex Day" : "Calendar Day"
+    table.cell(statusTable, 0, 0, "Chart: " + primary + " | " + modeText, text_color = color.white)
+    table.cell(statusTable, 0, 1, "Loaded: " + resolved, text_color = statusColor)
+if barstate.islast and not showStatusTable
+    table.clear(statusTable, 0, 0, 0, 1)

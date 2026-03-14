@@ -1,6 +1,6 @@
 # Scripts Documentation
 
-**Last Updated:** December 26, 2025
+**Last Updated:** March 14, 2026
 
 Complete inventory of all scripts with purposes and cleanup recommendations.
 
@@ -60,6 +60,17 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 | `update_data.py` | Master data update script |
 | `fetch_vix_data.py` | Fetch VIX history |
 | `fetch_economic_calendar.py` | Fetch economic events |
+
+### Streaming / Options (`streaming/options/`)
+| Script | Purpose |
+|:---|:---|
+| `run_options_levels.py` | Orchestrates full options dealer-level pipeline and schedule mode |
+| `options_fetcher.py` | Schwab options/futures retrieval with nearest-expiry and quote fallback logic |
+| `gex_calculator.py` | Calculates advanced dealer levels (walls, gamma flip zone, max pain, vol triggers, flow nodes) |
+| `futures_translator.py` | Translates SPX/NDX cash levels into ES/NQ futures space using basis spread |
+| `file_writer.py` | Writes `daily_levels.json` and `daily_levels.txt` (copy-ready strings + plan text) |
+| `discord_notifier.py` | Sends optional Discord embeds for generated runs |
+| `config.py` | Centralized pipeline constants, thresholds, schedule, and Discord defaults |
 
 ### Analysis (`analysis/`)
 | Script | Purpose |
