@@ -3,6 +3,14 @@ import json
 import os
 import sys
 
+from scripts.market_data.schwab_options_utils import (
+    create_schwab_client,
+    fetch_option_chain,
+    find_expiration_key,
+    get_option_iv,
+    get_option_mark,
+)
+
 def fetch_batch_em():
     symbols = ["NVDA", "TSLA", "AAPL", "SPY"]
     target_date_str = "2025-12-19" # User specified
@@ -12,20 +20,8 @@ def fetch_batch_em():
     
     print(f"=== Fetching Expected Moves for {target_date_str} ===")
     
-    if not os.path.exists("secrets.json") or not os.path.exists("token.json"):
-        print("Error: secrets.json or token.json missing.")
-        return
-
-    with open("secrets.json", "r") as f:
-        secrets = json.load(f)
-        
     try:
-        client = schwab.auth.client_from_token_file(
-            token_path="token.json",
-            api_key=secrets["app_key"],
-            app_secret=secrets["app_secret"],
-            enforce_enums=False
-        )
+        client = create_schwab_client(".")
     except Exception as e:
         print(f"Auth Error: {e}")
         return
@@ -50,18 +46,15 @@ def fetch_batch_em():
             # We filter by to_date to reduce payload
             # Schwab date format? Usually YYYY-MM-DD
             
-            resp = client.get_option_chain(
+            chain_result = fetch_option_chain(
+                client,
                 symbol,
                 strike_count=24,
                 strategy='ANALYTICAL',
-                # range='NEAR_THE_MONEY', # Removed to be safe
                 from_date=target_date_obj,
-                to_date=target_date_obj
-            ).json()
-            
-            if 'status' in resp and resp['status'] == 'FAILED':
-                 print(f"Chain Failed: {resp}")
-                 continue
+                to_date=target_date_obj,
+            )
+            resp = chain_result.payload
                  
         except Exception as e:
             print(f"Chain Error: {e}")
@@ -72,11 +65,7 @@ def fetch_batch_em():
         
         # Find the specific expiration
         # Keys are "YYYY-MM-DD:Days"
-        target_key = None
-        for k in call_map.keys():
-            if k.startswith(target_date_str):
-                target_key = k
-                break
+        target_key = find_expiration_key(call_map, target_date_obj)
         
         if not target_key:
             print(f"No expiration found for {target_date_str}. Available: {list(call_map.keys())}")
@@ -102,25 +91,13 @@ def fetch_batch_em():
         c_opt = call_map[target_key][strike_key][0]
         p_opt = put_map[target_key][strike_key][0]
         
-        def get_mark(o):
-            if 'mark' in o: return o['mark']
-            return (o.get('bid',0) + o.get('ask',0))/2
-
-        def get_iv(o):
-             # Schwab keys for volatility might be 'volatility', 'impliedVolatility', or derived from Greeks
-             # Checking likely keys
-             if 'volatility' in o: return o['volatility']
-             # Sometimes it is not per-option but per-chain? No, usually per option.
-             # If missing, we might default to 0
-             return 0
-
-        c_val = get_mark(c_opt)
-        p_val = get_mark(p_opt)
+        c_val = get_option_mark(c_opt)
+        p_val = get_option_mark(p_opt)
         straddle = c_val + p_val
         
         # IV Extraction (Average of Call/Put IV)
-        c_iv = get_iv(c_opt)
-        p_iv = get_iv(p_opt)
+        c_iv = get_option_iv(c_opt)
+        p_iv = get_option_iv(p_opt)
         avg_iv = (c_iv + p_iv) / 2 / 100.0 if (c_iv > 0 and p_iv > 0) else 0
         
         # Days to Expiration (DTE)

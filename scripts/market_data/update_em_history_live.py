@@ -4,7 +4,6 @@ from prisma import Prisma
 import datetime
 import sys
 import os
-import json
 import math
 
 # Load Environment (for Prisma)
@@ -20,12 +19,14 @@ except Exception as e:
 # Import Schwab (Assuming installed)
 import schwab
 
-def get_iv(o):
-    return o.get('volatility', 0)
-
-def get_mark(o):
-    if 'mark' in o: return o['mark']
-    return (o.get('bid',0) + o.get('ask',0))/2
+from scripts.market_data.schwab_options_utils import (
+    create_schwab_client,
+    fetch_option_chain,
+    find_expiration_key,
+    first_contracts_for_expiration,
+    get_option_iv,
+    get_option_mark,
+)
 
 async def update_live_em():
     print("Connecting to DB...")
@@ -36,16 +37,8 @@ async def update_live_em():
     TICKERS = ["SPY", "QQQ", "IWM", "SPX", "DIA", "AAPL", "AMD", "AMZN", "NVDA", "TSLA", "MSFT", "GOOGL", "META"]
     
     # Setup Client
-    if not os.path.exists("secrets.json") or not os.path.exists("token.json"):
-        print("Error: Missing credentials")
-        return
-
-    with open("secrets.json", "r") as f: secrets = json.load(f)
-    
     try:
-        client = schwab.auth.client_from_token_file(
-            token_path="token.json", api_key=secrets["app_key"], app_secret=secrets["app_secret"], enforce_enums=False
-        )
+        client = create_schwab_client(".")
     except Exception as e:
         print(f"Auth failed: {e}")
         return
@@ -81,24 +74,26 @@ async def update_live_em():
             if price == 0: continue
             
             # 2. Chain
-            chain_resp = client.get_option_chain(
-                ticker, strike_count=20, strategy='ANALYTICAL', from_date=target_friday, to_date=target_friday
-            ).json()
-            
-            if chain_resp.get('status') != 'SUCCESS':
-                print(f"  Chain failed for {ticker}")
+            try:
+                chain_result = fetch_option_chain(
+                    client,
+                    ticker,
+                    strike_count=20,
+                    strategy='ANALYTICAL',
+                    from_date=target_friday,
+                    to_date=target_friday,
+                )
+            except Exception as e:
+                print(f"  Chain failed for {ticker}: {e}")
                 continue
+
+            chain_resp = chain_result.payload
 
             call_map = chain_resp.get('callExpDateMap', {})
             put_map = chain_resp.get('putExpDateMap', {})
             
             # Find key
-            expiry_key = None
-            date_str = target_friday.strftime("%Y-%m-%d")
-            for k in call_map.keys():
-                if k.startswith(date_str):
-                    expiry_key = k
-                    break
+            expiry_key = find_expiration_key(call_map, target_friday)
             
             if not expiry_key: 
                 print(f"  No expiry key found for {ticker}")
@@ -107,8 +102,8 @@ async def update_live_em():
             # Calc Logic
             # Flatten: call_map[expiry] is Dict[Strike, List[Option]]
             # We want the first option from each list
-            calls = [opt_list[0] for opt_list in call_map[expiry_key].values() if opt_list]
-            puts = [opt_list[0] for opt_list in put_map[expiry_key].values() if opt_list]
+            calls = first_contracts_for_expiration(call_map, expiry_key)
+            puts = first_contracts_for_expiration(put_map, expiry_key)
             
             # Sort by strike diff
             calls.sort(key=lambda x: abs(float(x['strikePrice']) - price))
@@ -119,8 +114,8 @@ async def update_live_em():
             atm_call = calls[0]
             atm_put = puts[0]
             
-            straddle = get_mark(atm_call) + get_mark(atm_put)
-            iv = get_iv(atm_call) / 100.0
+            straddle = get_option_mark(atm_call) + get_option_mark(atm_put)
+            iv = get_option_iv(atm_call) / 100.0
             
             # DTE
             dte = (target_friday - today).days
