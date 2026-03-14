@@ -102,6 +102,31 @@ def _fmt(value: float | None) -> str:
     return f"{value:.2f}" if value is not None else "N/A"
 
 
+def _first_level(*values: float | None) -> float | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _nearest_below(reference: float | None, *values: float | None) -> float | None:
+    if reference is None:
+        return _first_level(*values)
+    candidates = [value for value in values if value is not None and value < reference]
+    if not candidates:
+        return _first_level(*values)
+    return max(candidates)
+
+
+def _nearest_above(reference: float | None, *values: float | None) -> float | None:
+    if reference is None:
+        return _first_level(*values)
+    candidates = [value for value in values if value is not None and value > reference]
+    if not candidates:
+        return _first_level(*values)
+    return min(candidates)
+
+
 def _copy_ready_line(tl: TranslatedLevels) -> str:
     tag = tl.futures_symbol.lstrip("/")
     ordered = [
@@ -109,7 +134,9 @@ def _copy_ready_line(tl: TranslatedLevels) -> str:
         (_fmt(tl.call_wall), "Absolute Call Wall"),
         (_fmt(tl.local_call_node), "Local Call Node"),
         (_fmt(tl.call_wall_0dte), "0DTE Call Wall"),
+        (_fmt(tl.gamma_flip_upper), "Gamma Flip Upper"),
         (_fmt(tl.zero_gamma), "Zero Gamma"),
+        (_fmt(tl.gamma_flip_lower), "Gamma Flip Lower"),
         (_fmt(tl.max_pain), "Max Pain"),
         (_fmt(tl.put_wall_0dte), "0DTE Put Wall"),
         (_fmt(tl.local_put_node), "Local Put Node"),
@@ -125,7 +152,9 @@ def _copy_ready_cash_line(levels: DealerLevels) -> str:
         (_fmt(levels.call_wall), "Absolute Call Wall"),
         (_fmt(levels.local_call_node), "Local Call Node"),
         (_fmt(levels.call_wall_0dte), "0DTE Call Wall"),
+        (_fmt(levels.gamma_flip_upper), "Gamma Flip Upper"),
         (_fmt(levels.zero_gamma), "Zero Gamma"),
+        (_fmt(levels.gamma_flip_lower), "Gamma Flip Lower"),
         (_fmt(levels.max_pain), "Max Pain"),
         (_fmt(levels.put_wall_0dte), "0DTE Put Wall"),
         (_fmt(levels.local_put_node), "Local Put Node"),
@@ -137,17 +166,48 @@ def _copy_ready_cash_line(levels: DealerLevels) -> str:
 
 def _interpretation_lines(tl: TranslatedLevels) -> list[str]:
     tag = tl.futures_symbol.lstrip("/")
+
+    short_trigger = _first_level(tl.zero_gamma, tl.gamma_flip_lower, tl.call_wall)
+    short_target_1 = _nearest_below(
+        short_trigger,
+        tl.put_wall_0dte,
+        tl.local_put_node,
+        tl.hedge_wall,
+        tl.vol_trigger_lower_05,
+        tl.vol_trigger_lower_10,
+        tl.em_lower,
+    )
+    short_target_2 = _nearest_below(
+        short_target_1 if short_target_1 is not None else short_trigger,
+        tl.hedge_wall,
+        tl.vol_trigger_lower_10,
+        tl.vol_trigger_lower_15,
+        tl.em_lower,
+    )
+    short_invalidation = _nearest_above(short_trigger, tl.call_wall, tl.gamma_flip_upper, tl.em_upper)
+
+    long_trigger = _first_level(tl.call_wall, tl.gamma_flip_upper, tl.zero_gamma)
+    long_target_1 = _nearest_above(long_trigger, tl.max_pain, tl.vol_trigger_upper_05, tl.em_upper)
+    long_target_2 = _nearest_above(
+        long_target_1 if long_target_1 is not None else long_trigger,
+        tl.vol_trigger_upper_10,
+        tl.secondary_call_wall,
+        tl.em_upper,
+    )
+    long_invalidation = _nearest_below(long_trigger, tl.zero_gamma, tl.gamma_flip_lower, tl.put_wall_0dte)
+
+    regime_tone = (
+        "sellers have structural control" if tl.gex_regime == "NEGATIVE" else "buyers have structural control"
+    )
+
     lines = [
-        f"{tag} Plan:",
-        f"- Regime: {tl.gex_regime} (Total GEX: {tl.total_gex:,.0f})",
-        f"- Bias Anchor: Zero Gamma {_fmt(tl.zero_gamma)} | Max Pain {_fmt(tl.max_pain)}",
-        f"- Key Resistance Ladder: Local/0DTE/Abs Call = {_fmt(tl.local_call_node)} / {_fmt(tl.call_wall_0dte)} / {_fmt(tl.call_wall)}",
-        f"- Key Support Ladder: Local/0DTE/Hedge = {_fmt(tl.local_put_node)} / {_fmt(tl.put_wall_0dte)} / {_fmt(tl.hedge_wall)}",
-        f"- EM Envelope: {_fmt(tl.em_lower)} ↔ {_fmt(tl.em_upper)} (±{tl.em_value:.2f})",
-        f"- Gamma Flip Zone: {_fmt(tl.gamma_flip_lower)} ↔ {_fmt(tl.gamma_flip_upper)}",
-        f"- Flow Nodes: Vanna(C/P) {_fmt(tl.vanna_call_node)}/{_fmt(tl.vanna_put_node)} | Charm(C/P) {_fmt(tl.charm_call_node)}/{_fmt(tl.charm_put_node)}",
-        f"- Intraday Flow: Vol-Imb(C/P) {_fmt(tl.volume_imbalance_call_node)}/{_fmt(tl.volume_imbalance_put_node)} | DEX(C/P) {_fmt(tl.dex_call_node)}/{_fmt(tl.dex_put_node)}",
-        f"- Vol Trigger Bands: 0.5σ {_fmt(tl.vol_trigger_lower_05)}-{_fmt(tl.vol_trigger_upper_05)}, 1.0σ {_fmt(tl.vol_trigger_lower_10)}-{_fmt(tl.vol_trigger_upper_10)}, 1.5σ {_fmt(tl.vol_trigger_lower_15)}-{_fmt(tl.vol_trigger_upper_15)}",
+        f"{tag} Narrative Plan:",
+        f"- Context: {tag} is in a {tl.gex_regime} GEX regime ({tl.total_gex:,.0f}), which means {regime_tone}. Start with this as your default bias, then let price confirm or reject it.",
+        f"- What to watch first: the market's reaction around Zero Gamma {_fmt(tl.zero_gamma)} and the gamma-flip zone {_fmt(tl.gamma_flip_lower)} ↔ {_fmt(tl.gamma_flip_upper)}. Acceptance below this area favors continuation down; acceptance above favors a squeeze.",
+        f"- Base-case execution: If price accepts below {_fmt(short_trigger)}, look for downside rotation into {_fmt(short_target_1)} first, then {_fmt(short_target_2)}. Short idea is invalidated if price reclaims and holds above {_fmt(short_invalidation)}.",
+        f"- Alternate execution: If buyers reclaim {_fmt(long_trigger)} and hold, look for upside rotation toward {_fmt(long_target_1)} and then {_fmt(long_target_2)}. Long idea is invalidated if price loses {_fmt(long_invalidation)} after the breakout.",
+        f"- Risk map for the session: Expected move envelope is {_fmt(tl.em_lower)} ↔ {_fmt(tl.em_upper)} (±{tl.em_value:.2f}). Inside the band, expect two-way trade; outside the band, expect expansion and faster trend continuation.",
+        f"- Practical rule for newer traders: wait for candle-close acceptance and then a retest before entry; if acceptance fails, stand down and wait for the opposite scenario.",
     ]
     return lines
 
@@ -225,7 +285,7 @@ def write_levels(
         lines.append(_copy_ready_line(tl))
 
     if cash_levels:
-        lines.extend(["", "Cash-Space Test Symbols", ""])
+        lines.append("")
         for levels in cash_levels:
             lines.append(_copy_ready_cash_line(levels))
 

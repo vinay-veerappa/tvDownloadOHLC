@@ -47,6 +47,7 @@ colAbsCall = input.color(color.new(color.lime, 0), "Absolute Call Wall", group =
 colLocalCall = input.color(color.new(color.lime, 30), "Local Call Node", group = grp_colors)
 col0DTECall = input.color(color.new(color.lime, 60), "0DTE Call Wall", group = grp_colors)
 colZeroGamma = input.color(color.new(color.yellow, 0), "Zero Gamma", group = grp_colors)
+colGammaFlip = input.color(color.new(color.yellow, 45), "Gamma Flip Zone", group = grp_colors)
 colMaxPain = input.color(color.new(color.orange, 0), "Max Pain", group = grp_colors)
 col0DTEPut = input.color(color.new(color.red, 60), "0DTE Put Wall", group = grp_colors)
 colLocalPut = input.color(color.new(color.red, 30), "Local Put Node", group = grp_colors)
@@ -54,6 +55,7 @@ colHedge = input.color(color.new(color.red, 0), "Hedge Wall", group = grp_colors
 colLowerEM = input.color(color.new(color.aqua, 0), "Lower EM", group = grp_colors)
 colFallback = input.color(color.new(color.white, 0), "Fallback", group = grp_colors)
 colEmFill = input.color(color.new(color.aqua, 88), "EM Fill", group = grp_colors)
+colGammaFlipFill = input.color(color.new(color.yellow, 88), "Gamma Flip Fill", group = grp_colors)
 
 var string grp_labels = "Labels"
 showLabels = input.bool(true, "Show Labels", group = grp_labels)
@@ -68,12 +70,14 @@ maxLabelColumns = input.int(4, "Max Label Columns", minval = 1, maxval = 10, gro
 columnStepBars = input.int(2, "Column Step (bars)", minval = 1, maxval = 20, group = grp_labels)
 minLabelGapTicks = input.int(40, "Min Gap (ticks)", minval = 1, maxval = 500, group = grp_labels)
 showStatusTable = input.bool(true, "Show Status Table", group = grp_labels)
+showNarrativeTable = input.bool(true, "Show Narrative Table", group = grp_labels)
 
 var string grp_visibility = "Level Visibility"
 showEMLevels = input.bool(true, "Show EM Levels", group = grp_visibility)
 showCallLevels = input.bool(true, "Show Call Levels", group = grp_visibility)
 showPutLevels = input.bool(true, "Show Put Levels", group = grp_visibility)
 showZeroGammaLevel = input.bool(true, "Show Zero Gamma", group = grp_visibility)
+showGammaFlipLevels = input.bool(true, "Show Gamma Flip Zone", group = grp_visibility)
 showMaxPainLevel = input.bool(true, "Show Max Pain", group = grp_visibility)
 showHedgeLevel = input.bool(true, "Show Hedge Wall", group = grp_visibility)
 
@@ -207,6 +211,7 @@ f_level_color(string title) =>
     upperTitle == "UPPER EM" ? colUpperEM :
      upperTitle == "LOWER EM" ? colLowerEM :
      upperTitle == "ZERO GAMMA" ? colZeroGamma :
+     upperTitle == "GAMMA FLIP UPPER" or upperTitle == "GAMMA FLIP LOWER" ? colGammaFlip :
      upperTitle == "MAX PAIN" ? colMaxPain :
      upperTitle == "HEDGE WALL" ? colHedge :
      upperTitle == "0DTE PUT WALL" ? col0DTEPut :
@@ -218,13 +223,14 @@ f_level_color(string title) =>
 
 f_level_style(string title) =>
     upperTitle = f_norm(title)
-    str.contains(upperTitle, "0DTE") ? f_line_style(lineStyle0DTEInp) :
+    str.contains(upperTitle, "GAMMA FLIP") ? line.style_dashed :
+     str.contains(upperTitle, "0DTE") ? f_line_style(lineStyle0DTEInp) :
      str.contains(upperTitle, "LOCAL") ? f_line_style(lineStyleSecondaryInp) :
      f_line_style(lineStylePrimaryInp)
 
 f_level_width(string title) =>
     upperTitle = f_norm(title)
-    str.contains(upperTitle, "0DTE") or str.contains(upperTitle, "LOCAL") ? lineWidthSecondary : lineWidthPrimary
+    str.contains(upperTitle, "0DTE") or str.contains(upperTitle, "LOCAL") or str.contains(upperTitle, "GAMMA FLIP") ? lineWidthSecondary : lineWidthPrimary
 
 f_compact_title(string title) =>
     upperTitle = f_norm(title)
@@ -233,7 +239,9 @@ f_compact_title(string title) =>
      upperTitle == "ABSOLUTE CALL WALL" ? "CALL ABS" :
      upperTitle == "LOCAL CALL NODE" ? "CALL LOC" :
      upperTitle == "0DTE CALL WALL" ? "CALL 0DTE" :
+     upperTitle == "GAMMA FLIP UPPER" ? "GF U" :
      upperTitle == "ZERO GAMMA" ? "ZG" :
+     upperTitle == "GAMMA FLIP LOWER" ? "GF L" :
      upperTitle == "MAX PAIN" ? "MAX" :
      upperTitle == "0DTE PUT WALL" ? "PUT 0DTE" :
      upperTitle == "LOCAL PUT NODE" ? "PUT LOC" :
@@ -246,9 +254,16 @@ f_show_level(string title) =>
      str.contains(upperTitle, "CALL") ? showCallLevels :
      str.contains(upperTitle, "PUT") ? showPutLevels :
      upperTitle == "ZERO GAMMA" ? showZeroGammaLevel :
+     str.contains(upperTitle, "GAMMA FLIP") ? showGammaFlipLevels :
      upperTitle == "MAX PAIN" ? showMaxPainLevel :
      upperTitle == "HEDGE WALL" ? showHedgeLevel :
      true
+
+f_num(float value) =>
+    na(value) ? "N/A" : str.tostring(value, "#.##")
+
+f_pick(float v1, float v2, float v3) =>
+    not na(v1) ? v1 : (not na(v2) ? v2 : v3)
 
 f_label_text(string title, float level) =>
     titleText = compactLabels ? f_compact_title(title) : title
@@ -335,11 +350,24 @@ var array<float> labelColumnLastLevels = array.new_float()
 var array<float> parsedPrices = array.new_float()
 var array<string> parsedTitles = array.new_string()
 var table statusTable = table.new(position.top_right, 1, 2, bgcolor = color.new(color.black, 80))
+var table narrativeTable = table.new(position.bottom_right, 1, 5, bgcolor = color.new(color.black, 82))
 var line emUpperFill = na
 var line emLowerFill = na
 var linefill emBandFill = na
+var line gfUpperFill = na
+var line gfLowerFill = na
+var linefill gfBandFill = na
 var string lastSelectedLine = ""
 var string lastMatchedAsset = ""
+var float planZeroGamma = na
+var float planGammaFlipUpper = na
+var float planGammaFlipLower = na
+var float planCallWall = na
+var float planPutWall0DTE = na
+var float planHedgeWall = na
+var float planMaxPain = na
+var float planUpperEM = na
+var float planLowerEM = na
 labelSize = f_label_size(labelSizeInp)
 
 [selectedLine, matchedAsset] = f_find_matching_line(pastedData)
@@ -352,14 +380,31 @@ if needsRedraw
     line.delete(emUpperFill)
     line.delete(emLowerFill)
     linefill.delete(emBandFill)
+    line.delete(gfUpperFill)
+    line.delete(gfLowerFill)
+    linefill.delete(gfBandFill)
     emUpperFill := na
     emLowerFill := na
     emBandFill := na
+    gfUpperFill := na
+    gfLowerFill := na
+    gfBandFill := na
+    planZeroGamma := na
+    planGammaFlipUpper := na
+    planGammaFlipLower := na
+    planCallWall := na
+    planPutWall0DTE := na
+    planHedgeWall := na
+    planMaxPain := na
+    planUpperEM := na
+    planLowerEM := na
 
     if str.length(selectedLine) > 0
         f_parse_levels(selectedLine, parsedPrices, parsedTitles)
         float emUpperPrice = na
         float emLowerPrice = na
+        float gammaFlipUpperPrice = na
+        float gammaFlipLowerPrice = na
 
         uniqueLevels = array.new_float()
         uniqueTitles = array.new_string()
@@ -402,8 +447,26 @@ if needsRedraw
                 titleNorm = f_norm(title)
                 if titleNorm == "UPPER EM"
                     emUpperPrice := level
+                    planUpperEM := level
                 if titleNorm == "LOWER EM"
                     emLowerPrice := level
+                    planLowerEM := level
+                if titleNorm == "ZERO GAMMA"
+                    planZeroGamma := level
+                if titleNorm == "GAMMA FLIP UPPER"
+                    gammaFlipUpperPrice := level
+                    planGammaFlipUpper := level
+                if titleNorm == "GAMMA FLIP LOWER"
+                    gammaFlipLowerPrice := level
+                    planGammaFlipLower := level
+                if titleNorm == "ABSOLUTE CALL WALL"
+                    planCallWall := level
+                if titleNorm == "0DTE PUT WALL"
+                    planPutWall0DTE := level
+                if titleNorm == "HEDGE WALL"
+                    planHedgeWall := level
+                if titleNorm == "MAX PAIN"
+                    planMaxPain := level
 
         if array.size(uniqueLevels) > 0
             for u = 0 to array.size(uniqueLevels) - 1
@@ -431,6 +494,11 @@ if needsRedraw
             emLowerFill := line.new(sessionStartBar, emLowerPrice, bar_index + 1, emLowerPrice, color = color.new(color.aqua, 95), width = 1, extend = extend.none)
             emBandFill := linefill.new(emUpperFill, emLowerFill, colEmFill)
 
+        if showGammaFlipLevels and not na(gammaFlipUpperPrice) and not na(gammaFlipLowerPrice)
+            gfUpperFill := line.new(sessionStartBar, gammaFlipUpperPrice, bar_index + 1, gammaFlipUpperPrice, color = color.new(color.yellow, 95), width = 1, extend = extend.none)
+            gfLowerFill := line.new(sessionStartBar, gammaFlipLowerPrice, bar_index + 1, gammaFlipLowerPrice, color = color.new(color.yellow, 95), width = 1, extend = extend.none)
+            gfBandFill := linefill.new(gfUpperFill, gfLowerFill, colGammaFlipFill)
+
     lastSelectedLine := selectedLine
     lastMatchedAsset := matchedAsset
 
@@ -442,6 +510,10 @@ if not na(emUpperFill)
     line.set_x2(emUpperFill, bar_index)
 if not na(emLowerFill)
     line.set_x2(emLowerFill, bar_index)
+if not na(gfUpperFill)
+    line.set_x2(gfUpperFill, bar_index)
+if not na(gfLowerFill)
+    line.set_x2(gfLowerFill, bar_index)
 
 if array.size(levelLabels) > 0
     for idx = 0 to array.size(levelLabels) - 1
@@ -458,3 +530,17 @@ if barstate.islast and showStatusTable
     table.cell(statusTable, 0, 1, "Loaded: " + resolved, text_color = statusColor)
 if barstate.islast and not showStatusTable
     table.clear(statusTable, 0, 0, 0, 1)
+
+if barstate.islast and showNarrativeTable
+    shortTarget = f_pick(planPutWall0DTE, planHedgeWall, planLowerEM)
+    shortInvalid = f_pick(planCallWall, planGammaFlipUpper, planUpperEM)
+    longTarget = f_pick(planMaxPain, planUpperEM, planGammaFlipUpper)
+    longInvalid = f_pick(planZeroGamma, planGammaFlipLower, planPutWall0DTE)
+    watchText = not na(planGammaFlipLower) and not na(planGammaFlipUpper) ? ("Watch ZG " + f_num(planZeroGamma) + " | GF " + f_num(planGammaFlipLower) + "↔" + f_num(planGammaFlipUpper)) : ("Watch ZG " + f_num(planZeroGamma))
+    table.cell(narrativeTable, 0, 0, "Narrative Plan", text_color = color.white)
+    table.cell(narrativeTable, 0, 1, watchText, text_color = color.new(color.white, 0))
+    table.cell(narrativeTable, 0, 2, "Short: < " + f_num(planZeroGamma) + " -> " + f_num(shortTarget) + " | invalid > " + f_num(shortInvalid), text_color = color.new(color.red, 0))
+    table.cell(narrativeTable, 0, 3, "Long: > " + f_num(planCallWall) + " -> " + f_num(longTarget) + " | invalid < " + f_num(longInvalid), text_color = color.new(color.lime, 0))
+    table.cell(narrativeTable, 0, 4, "EM: " + f_num(planLowerEM) + " ↔ " + f_num(planUpperEM), text_color = color.new(color.aqua, 0))
+if barstate.islast and not showNarrativeTable
+    table.clear(narrativeTable, 0, 0, 0, 4)

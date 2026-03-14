@@ -222,7 +222,11 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
     # --- Send Discord notification (optional) -------------------------------
     if enable_discord:
         try:
-            send_discord_update(translated_levels, run_label)
+            send_discord_update(
+                translated_levels,
+                run_label,
+                cash_levels=list(cash_levels_by_ticker.values()),
+            )
         except Exception as exc:
             log.error("Discord notification failed: %s", exc)
     else:

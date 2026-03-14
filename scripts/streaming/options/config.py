@@ -37,7 +37,24 @@ NQ_FUTURES_SYMBOL: str = "/NQ"
 # If the chain fetch fails for the index, the ETF fallback is used instead.
 PRIMARY_INDEX_TICKERS: list[str] = ["SPX", "NDX"]
 ETF_FALLBACK: dict[str, str] = {"SPX": "SPY", "NDX": "QQQ"}
-TEST_OUTPUT_TICKERS: list[str] = ["SPX", "NDX", "SPY", "QQQ", "IWM", "DIA", "RUT", "DJX"]
+TEST_OUTPUT_TICKERS: list[str] = [
+    "SPX",
+    "NDX",
+    "SPY",
+    "QQQ",
+    "IWM",
+    "DIA",
+    "RUT",
+    "DJX",
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "AMZN",
+    "META",
+    "NVDA",
+    "TSLA",
+    "AVGO",
+]
 
 # Maps each primary index to its corresponding futures symbol.
 INDEX_TO_FUTURES: dict[str, str] = {
@@ -97,7 +114,7 @@ LOG_FILE: Path = OUTPUT_DIR / "dealer_levels.log"
 # ---------------------------------------------------------------------------
 DISCORD_WEBHOOKS_PATH: Path = REPO_ROOT / "discord_webhooks.json"
 # Key inside discord_webhooks.json to use for dealer-level notifications.
-DISCORD_TARGET_KEY: str = "alerts"
+DISCORD_TARGET_KEY: str = "option-levels"
 ENABLE_DISCORD_UPDATES: bool = False
 
 # Embed accent colours (Discord integer format: 0xRRGGBB).

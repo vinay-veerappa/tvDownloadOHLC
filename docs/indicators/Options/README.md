@@ -8,7 +8,7 @@ Automated options dealer-level pipeline that:
 2. Computes advanced dealer-structure levels (walls, zero-gamma zone, max pain, vol triggers, flow nodes)
 3. Translates all cash-index levels into ES/NQ futures price space
 4. Writes copy-ready text + Pine-ready JSON outputs
-5. Optionally posts Discord updates (disabled by default)
+5. Optionally posts Discord updates to the `option-levels` webhook target (disabled by default)
 
 ---
 
@@ -62,10 +62,11 @@ Default behavior follows `ENABLE_DISCORD_UPDATES` in `scripts/streaming/options/
 Contains three blocks:
 
 1. **Formatted Strings (copy-ready)**
-   - Exact 10-level ordered string for ES and NQ:
-   - `Upper EM, Absolute Call Wall, Local Call Node, 0DTE Call Wall, Zero Gamma, Max Pain, 0DTE Put Wall, Local Put Node, Hedge Wall, Lower EM`
+  - Ordered copy-ready strings for ES/NQ plus cash-space routing symbols and default test names (`SPX`, `NDX`, `SPY`, `QQQ`, `IWM`, `DIA`, `RUT`, `DJX`, `AAPL`, `MSFT`, `GOOGL`, `AMZN`, `META`, `NVDA`, `TSLA`, `AVGO`, `RTY`, `YM`)
+  - Level order:
+  - `Upper EM, Absolute Call Wall, Local Call Node, 0DTE Call Wall, Gamma Flip Upper, Zero Gamma, Gamma Flip Lower, Max Pain, 0DTE Put Wall, Local Put Node, Hedge Wall, Lower EM`
 2. **Interpretation / Pre-Open Plan**
-   - Regime, anchors, support/resistance ladder, gamma-flip zone, flow nodes, vol-trigger bands
+  - Natural-language trade plan with context, watch area, base case, alternate case, invalidation, and risk map
 3. **Detailed Summary**
    - Expanded advanced level dump (secondary walls, cliffs, liquidity vacuum, skew pivots, etc.)
 
@@ -134,14 +135,28 @@ Current behavior:
   - `Stagger` fallback now selects the least-colliding existing column when all columns are occupied
 - optional same-price label merge (e.g., `CALL ABS + CALL LOC + CALL 0DTE`) with duplicate-token protection
 - level-group visibility toggles (EM, Call, Put, Zero Gamma, Max Pain, Hedge) and compact label mode
+- gamma flip lines and fill support with independent visibility control
+- narrative table support on chart for the selected symbol
 
 Recommended workflow:
 
 1. Run pipeline
 2. Copy one or more formatted string lines from `daily_levels.txt`
-3. For routing tests, use the cash-space test lines (`SPX`, `NDX`, `SPY`, `QQQ`, `IWM`, `DIA`, `RUT`, `DJX`, `RTY`, `YM`) or the futures lines (`ES`, `NQ`)
-4. Paste into `DealerLevels.pine`
-5. Apply to chart
+3. Or copy the top code block from the Discord `option-levels` message, which is formatted for the same paste input
+4. For routing tests, use the cash-space lines (`SPX`, `NDX`, `SPY`, `QQQ`, `IWM`, `DIA`, `RUT`, `DJX`, `AAPL`, `MSFT`, `GOOGL`, `AMZN`, `META`, `NVDA`, `TSLA`, `AVGO`, `RTY`, `YM`) or the futures lines (`ES`, `NQ`)
+5. Paste into `DealerLevels.pine`
+6. Apply to chart
+
+---
+
+## Discord Output
+
+When Discord is enabled, the pipeline posts:
+
+1. One top copy block containing paste-ready indicator lines
+2. One embed per translated futures symbol (`ES`, `NQ`) with key levels and a condensed narrative plan
+
+The top copy block is the preferred source for direct indicator paste. The embeds are meant for reading, not copying.
 
 ---
 
@@ -165,5 +180,5 @@ All settings: `scripts/streaming/options/config.py`
 
 - **No levels written**: check `data/dealer_levels.log` for per-ticker fetch errors.
 - **Weekend/off-hours sparse chains**: expected; fallback/rescaling handles this automatically when possible.
-- **Discord silent**: verify `--discord` was provided (or config default set true) and webhook key exists in `discord_webhooks.json`.
+- **Discord silent**: verify `--discord` was provided (or config default set true), the `option-levels` key exists in `discord_webhooks.json`, and the webhook URL is valid.
 - **Unexpected futures prices**: inspect quote-source log (`source=schwab` or `source=yfinance`).

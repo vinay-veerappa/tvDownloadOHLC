@@ -24,11 +24,13 @@ from .config import (
     DISCORD_COLOR_NEGATIVE,
 )
 from .futures_translator import TranslatedLevels
+from .gex_calculator import DealerLevels
 
 log = logging.getLogger(__name__)
 
 # Max embeds Discord accepts per webhook call.
 _DISCORD_MAX_EMBEDS = 10
+_DISCORD_MAX_CONTENT = 2000
 
 
 # ---------------------------------------------------------------------------
@@ -59,9 +61,126 @@ def _fmt(value: float | None, decimals: int = 2) -> str:
     return f"{value:,.{decimals}f}"
 
 
+def _fmt_copy(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    return f"{value:.2f}"
+
+
+def _first_level(*values: float | None) -> float | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _nearest_below(reference: float | None, *values: float | None) -> float | None:
+    if reference is None:
+        return _first_level(*values)
+    candidates = [value for value in values if value is not None and value < reference]
+    if not candidates:
+        return _first_level(*values)
+    return max(candidates)
+
+
+def _nearest_above(reference: float | None, *values: float | None) -> float | None:
+    if reference is None:
+        return _first_level(*values)
+    candidates = [value for value in values if value is not None and value > reference]
+    if not candidates:
+        return _first_level(*values)
+    return min(candidates)
+
+
 def _regime_line(regime: str) -> str:
     emoji = "🟢" if regime == "POSITIVE" else "🔴"
     return f"{emoji} **{regime} GEX**"
+
+
+def _copy_ready_line(tl: TranslatedLevels) -> str:
+    tag = tl.futures_symbol.lstrip("/")
+    ordered = [
+        (_fmt_copy(tl.em_upper), "Upper EM"),
+        (_fmt_copy(tl.call_wall), "Absolute Call Wall"),
+        (_fmt_copy(tl.local_call_node), "Local Call Node"),
+        (_fmt_copy(tl.call_wall_0dte), "0DTE Call Wall"),
+        (_fmt_copy(tl.gamma_flip_upper), "Gamma Flip Upper"),
+        (_fmt_copy(tl.zero_gamma), "Zero Gamma"),
+        (_fmt_copy(tl.gamma_flip_lower), "Gamma Flip Lower"),
+        (_fmt_copy(tl.max_pain), "Max Pain"),
+        (_fmt_copy(tl.put_wall_0dte), "0DTE Put Wall"),
+        (_fmt_copy(tl.local_put_node), "Local Put Node"),
+        (_fmt_copy(tl.hedge_wall), "Hedge Wall"),
+        (_fmt_copy(tl.em_lower), "Lower EM"),
+    ]
+    return f"{tag}: " + ", ".join(f"{price}:{label}" for price, label in ordered)
+
+
+def _copy_ready_cash_line(levels: DealerLevels) -> str:
+    ordered = [
+        (_fmt_copy(levels.em_upper), "Upper EM"),
+        (_fmt_copy(levels.call_wall), "Absolute Call Wall"),
+        (_fmt_copy(levels.local_call_node), "Local Call Node"),
+        (_fmt_copy(levels.call_wall_0dte), "0DTE Call Wall"),
+        (_fmt_copy(levels.gamma_flip_upper), "Gamma Flip Upper"),
+        (_fmt_copy(levels.zero_gamma), "Zero Gamma"),
+        (_fmt_copy(levels.gamma_flip_lower), "Gamma Flip Lower"),
+        (_fmt_copy(levels.max_pain), "Max Pain"),
+        (_fmt_copy(levels.put_wall_0dte), "0DTE Put Wall"),
+        (_fmt_copy(levels.local_put_node), "Local Put Node"),
+        (_fmt_copy(levels.hedge_wall), "Hedge Wall"),
+        (_fmt_copy(levels.em_lower), "Lower EM"),
+    ]
+    return f"{levels.ticker}: " + ", ".join(f"{price}:{label}" for price, label in ordered)
+
+
+def _plan_lines(tl: TranslatedLevels) -> str:
+    tag = tl.futures_symbol.lstrip("/")
+    short_trigger = _first_level(tl.zero_gamma, tl.gamma_flip_lower, tl.call_wall)
+    short_target = _nearest_below(short_trigger, tl.put_wall_0dte, tl.local_put_node, tl.hedge_wall, tl.em_lower)
+    short_invalid = _nearest_above(short_trigger, tl.gamma_flip_upper, tl.call_wall, tl.em_upper)
+
+    long_trigger = _first_level(tl.call_wall, tl.gamma_flip_upper, tl.zero_gamma)
+    long_target = _nearest_above(long_trigger, tl.max_pain, tl.em_upper)
+    long_invalid = _nearest_below(long_trigger, tl.zero_gamma, tl.gamma_flip_lower, tl.put_wall_0dte)
+
+    regime_tone = "sellers have structural control" if tl.gex_regime == "NEGATIVE" else "buyers have structural control"
+
+    return (
+        f"Context: {tag} is in a {tl.gex_regime} GEX regime ({tl.total_gex:,.0f}); {regime_tone}.\n"
+        f"Watch first: Zero Gamma {_fmt_copy(tl.zero_gamma)} and gamma flip {_fmt_copy(tl.gamma_flip_lower)}↔{_fmt_copy(tl.gamma_flip_upper)}.\n"
+        f"Base case: Below {_fmt_copy(short_trigger)}, look for rotation into {_fmt_copy(short_target)}. Invalidation is reclaim and hold above {_fmt_copy(short_invalid)}.\n"
+        f"Alternate: Above {_fmt_copy(long_trigger)}, look for continuation into {_fmt_copy(long_target)}. Invalidation is loss of {_fmt_copy(long_invalid)} after breakout.\n"
+        f"Risk map: EM {_fmt_copy(tl.em_lower)}↔{_fmt_copy(tl.em_upper)}."
+    )
+
+
+def _copy_block_payload(
+    translated_levels: list[TranslatedLevels],
+    run_label: str,
+    cash_levels: list[DealerLevels] | None = None,
+) -> dict[str, Any]:
+    lines = [_copy_ready_line(tl) for tl in translated_levels]
+    if cash_levels:
+        lines.extend(_copy_ready_cash_line(levels) for levels in cash_levels)
+    header = f"**Dealer Levels — {run_label}**\nCopy directly into TradingView indicator input:\n"
+    content = header + "```\n" + "\n".join(lines) + "\n```"
+
+    if len(content) <= _DISCORD_MAX_CONTENT:
+        return {"content": content}
+
+    trimmed: list[str] = []
+    current_len = len(header) + len("```\n\n```")
+    for line in lines:
+        add_len = len(line) + 1
+        if current_len + add_len > _DISCORD_MAX_CONTENT:
+            break
+        trimmed.append(line)
+        current_len += add_len
+
+    return {
+        "content": header + "```\n" + "\n".join(trimmed) + "\n```",
+    }
 
 
 def _build_embed(tl: TranslatedLevels, run_label: str) -> dict[str, Any]:
@@ -91,6 +210,8 @@ def _build_embed(tl: TranslatedLevels, run_label: str) -> dict[str, Any]:
         {"name": f"🔼 EM Upper ({tag})",     "value": _fmt(tl.em_upper),    "inline": True},
         {"name": f"🔽 EM Lower ({tag})",     "value": _fmt(tl.em_lower),    "inline": True},
         {"name": "ATM Straddle (cash)",      "value": _fmt(tl.atm_straddle), "inline": True},
+        # ── Narrative & copy line ───────────────────────────────
+        {"name": "🧠 Pre-Open Plan",          "value": _plan_lines(tl), "inline": False},
     ]
 
     return {
@@ -136,6 +257,7 @@ def _post_payload(url: str, payload: dict[str, Any]) -> None:
 def send_discord_update(
     translated_levels: list[TranslatedLevels],
     run_label: str = "",
+    cash_levels: list[DealerLevels] | None = None,
     webhook_url: str | None = None,
 ) -> None:
     """
@@ -152,6 +274,10 @@ def send_discord_update(
         run_label = datetime.now().strftime("%H:%M ET")
 
     url = webhook_url or _load_webhook_url()
+
+    if translated_levels:
+        _post_payload(url, _copy_block_payload(translated_levels, run_label, cash_levels=cash_levels))
+
     embeds = [_build_embed(tl, run_label) for tl in translated_levels]
 
     # Discord allows up to _DISCORD_MAX_EMBEDS per POST, so batch if needed.

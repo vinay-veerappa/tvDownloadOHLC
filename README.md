@@ -94,7 +94,7 @@ See [`docs/README.md`](docs/README.md) for the full documentation index includin
 ## 🐍 Data Scripts (Python)
 
 ### Dealer Levels (Options GEX → ES/NQ)
-Generates robust dealer-positioning levels from Schwab chains with ETF fallback logic, futures translation, and copy-ready outputs.
+Generates robust dealer-positioning levels from Schwab chains with ETF fallback logic, futures translation, richer narrative plans, and copy-ready outputs for both TradingView and Discord.
 
 ```powershell
 # Run once
@@ -110,6 +110,11 @@ Generates robust dealer-positioning levels from Schwab chains with ETF fallback 
 Outputs:
 - `data/daily_levels.txt` (copy-ready strings + interpretation/pre-open plan + detailed summary)
 - `data/daily_levels.json` (Pine-ready level records for ES/NQ)
+
+Discord behavior:
+- Posts to the `option-levels` webhook target configured in `discord_webhooks.json`
+- Sends one top copy block formatted for direct paste into `scripts/indicators/options/DealerLevels.pine`
+- Sends per-ticker embeds for interpretation and key levels
 
 See full docs: `docs/indicators/Options/README.md`
 
