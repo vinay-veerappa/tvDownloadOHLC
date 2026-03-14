@@ -8,6 +8,8 @@ fastapi
 uvicorn
 pyarrow
 yfinance
-o r j s o n 
+orjson
+requests
+apscheduler>=3.10,<4 
  
  
