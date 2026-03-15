@@ -32,6 +32,19 @@ pastedData = input.text_area(
     group = grp_data,
     tooltip = "Paste one or more formatted lines from daily_levels.txt. Example:\nES: 6715.91:Upper EM, 6713.21:Absolute Call Wall, ...\nNQ: 24695.66:Upper EM, 24652.13:Absolute Call Wall, ..."
 )
+familySourcePreference = input.string(
+    "Auto",
+    "Family Source Preference",
+    options = ["Auto", "Prefer Index", "Prefer ETF"],
+    group = grp_data,
+    tooltip = "For family matches (ES/SPX/SPY, NQ/NDX/QQQ, YM/DJX/DIA, RTY/RUT/IWM), prefer index or ETF lines."
+)
+overrideExactWithFamilyPreference = input.bool(
+    false,
+    "Override Exact Match With Family Preference",
+    group = grp_data,
+    tooltip = "When enabled, preferred family source can beat an exact line. Useful to compare SPY-vs-SPX style levels on ES family charts."
+)
 
 var string grp_lines = "Line Style"
 showEmFill = input.bool(true, "Show EM Fill", group = grp_lines)
@@ -127,11 +140,25 @@ f_canonical_symbol(string symbol) =>
 
 f_symbol_family_key(string symbol) =>
     canonical = f_canonical_symbol(symbol)
-    canonical == "ES" or canonical == "SPX" or canonical == "SPY" ? "ES_FAMILY" :
-     canonical == "NQ" or canonical == "NDX" or canonical == "QQQ" ? "NQ_FAMILY" :
-     canonical == "YM" or canonical == "DJX" or canonical == "DJI" or canonical == "US30" or canonical == "DOW" ? "YM_FAMILY" :
-     canonical == "RTY" or canonical == "RUT" or canonical == "IWM" ? "RTY_FAMILY" :
-     canonical
+    result = canonical
+    if canonical == "ES" or canonical == "SPX" or canonical == "SPY"
+        result := "ES_FAMILY"
+    else if canonical == "NQ" or canonical == "NDX" or canonical == "QQQ"
+        result := "NQ_FAMILY"
+    else if canonical == "YM" or canonical == "DJX" or canonical == "DJI" or canonical == "US30" or canonical == "DOW" or canonical == "DIA"
+        result := "YM_FAMILY"
+    else if canonical == "RTY" or canonical == "RUT" or canonical == "IWM"
+        result := "RTY_FAMILY"
+    result
+
+f_source_kind(string symbol) =>
+    canonical = f_canonical_symbol(symbol)
+    kind = "OTHER"
+    if canonical == "SPX" or canonical == "NDX" or canonical == "DJX" or canonical == "DJI" or canonical == "RUT"
+        kind := "INDEX"
+    else if canonical == "SPY" or canonical == "QQQ" or canonical == "DIA" or canonical == "IWM"
+        kind := "ETF"
+    kind
 
 f_is_overnight_futures(string symbol) =>
     canonical = f_canonical_symbol(symbol)
@@ -149,7 +176,19 @@ f_match_score(string assetTag) =>
 
     exactMatch = asset == ticker or asset == root or asset == primary
     familyMatch = assetFamily == tickerFamily or assetFamily == rootFamily or assetFamily == primaryFamily
-    exactMatch ? 2 : (familyMatch ? 1 : 0)
+
+    exactBase = overrideExactWithFamilyPreference and familySourcePreference != "Auto" ? 120 : 200
+    familyBase = familyMatch ? 100 : 0
+
+    prefBoost = 0
+    if familyMatch and familySourcePreference != "Auto"
+        kind = f_source_kind(asset)
+        if familySourcePreference == "Prefer ETF" and kind == "ETF"
+            prefBoost := 30
+        else if familySourcePreference == "Prefer Index" and kind == "INDEX"
+            prefBoost := 30
+
+    exactMatch ? exactBase : (familyBase + prefBoost)
 
 f_symbol_matches(string assetTag) =>
     f_match_score(assetTag) > 0
@@ -179,9 +218,28 @@ f_find_matching_line(string blob) =>
                     matchedLine := row
                     matchedAsset := asset
                     bestScore := score
-                    if bestScore == 2
-                        break
     [matchedLine, matchedAsset]
+
+f_family_futures_anchor(string familyKey) =>
+    familyKey == "ES_FAMILY" ? "ES" :
+     familyKey == "NQ_FAMILY" ? "NQ" :
+     familyKey == "YM_FAMILY" ? "YM" :
+     familyKey == "RTY_FAMILY" ? "RTY" :
+     ""
+
+f_find_asset_line(string blob, string targetAsset) =>
+    string matchedLine = ""
+    target = f_canonical_symbol(targetAsset)
+    rows = str.split(blob, "\n")
+    if array.size(rows) > 0
+        for idx = 0 to array.size(rows) - 1
+            row = str.trim(array.get(rows, idx))
+            if str.length(row) > 0 and str.contains(row, ",")
+                asset = f_extract_asset_tag(row)
+                if f_canonical_symbol(asset) == target
+                    matchedLine := row
+                    break
+    matchedLine
 
 f_parse_levels(string lineText, array<float> prices, array<string> titles) =>
     array.clear(prices)
@@ -368,10 +426,19 @@ var float planHedgeWall = na
 var float planMaxPain = na
 var float planUpperEM = na
 var float planLowerEM = na
+var string lastFamilySourcePreference = ""
+var bool lastOverrideExactWithFamilyPreference = false
+var string selectedLine = ""
+var string matchedAsset = ""
 labelSize = f_label_size(labelSizeInp)
 
-[selectedLine, matchedAsset] = f_find_matching_line(pastedData)
-needsRedraw = barstate.isfirst or isNewTradingSession or selectedLine != lastSelectedLine or matchedAsset != lastMatchedAsset
+selectionNeedsUpdate = barstate.isfirst or familySourcePreference != lastFamilySourcePreference or overrideExactWithFamilyPreference != lastOverrideExactWithFamilyPreference
+if selectionNeedsUpdate
+    [nextSelectedLine, nextMatchedAsset] = f_find_matching_line(pastedData)
+    selectedLine := nextSelectedLine
+    matchedAsset := nextMatchedAsset
+
+needsRedraw = barstate.isfirst or isNewTradingSession or selectionNeedsUpdate or selectedLine != lastSelectedLine or matchedAsset != lastMatchedAsset
 
 if needsRedraw
     f_clear_drawings(levelLines, levelLabels)
@@ -401,6 +468,43 @@ if needsRedraw
 
     if str.length(selectedLine) > 0
         f_parse_levels(selectedLine, parsedPrices, parsedTitles)
+
+        selectedCanonical = f_canonical_symbol(matchedAsset)
+        primaryCanonical = f_canonical_symbol(f_primary_symbol())
+        selectedFamily = f_symbol_family_key(selectedCanonical)
+        chartFamily = f_symbol_family_key(primaryCanonical)
+        selectedIsFutures = f_is_overnight_futures(selectedCanonical)
+        chartIsFutures = f_is_overnight_futures(primaryCanonical)
+
+        if chartIsFutures and selectedFamily == chartFamily and not selectedIsFutures
+            anchorAsset = f_family_futures_anchor(chartFamily)
+            anchorLine = f_find_asset_line(pastedData, anchorAsset)
+            bool convertedToFutures = false
+            if str.length(anchorLine) > 0
+                refPrices = array.new_float()
+                refTitles = array.new_string()
+                f_parse_levels(anchorLine, refPrices, refTitles)
+                if array.size(refPrices) > 0 and array.size(parsedPrices) > 0
+                    sourceRef = array.get(parsedPrices, 0)
+                    anchorRef = array.get(refPrices, 0)
+                    if math.abs(sourceRef) > syminfo.mintick
+                        scale = anchorRef / sourceRef
+                        for idx = 0 to array.size(parsedPrices) - 1
+                            array.set(parsedPrices, idx, array.get(parsedPrices, idx) * scale)
+                        convertedToFutures := true
+                    if not convertedToFutures
+                        basis = anchorRef - sourceRef
+                        for idx = 0 to array.size(parsedPrices) - 1
+                            array.set(parsedPrices, idx, array.get(parsedPrices, idx) + basis)
+                        convertedToFutures := true
+
+            if not convertedToFutures and array.size(parsedPrices) > 0
+                sourceRef = array.get(parsedPrices, 0)
+                if math.abs(sourceRef) > syminfo.mintick
+                    fallbackScale = close / sourceRef
+                    for idx = 0 to array.size(parsedPrices) - 1
+                        array.set(parsedPrices, idx, array.get(parsedPrices, idx) * fallbackScale)
+
         float emUpperPrice = na
         float emLowerPrice = na
         float gammaFlipUpperPrice = na
@@ -501,6 +605,8 @@ if needsRedraw
 
     lastSelectedLine := selectedLine
     lastMatchedAsset := matchedAsset
+    lastFamilySourcePreference := familySourcePreference
+    lastOverrideExactWithFamilyPreference := overrideExactWithFamilyPreference
 
 if array.size(levelLines) > 0
     for idx = 0 to array.size(levelLines) - 1

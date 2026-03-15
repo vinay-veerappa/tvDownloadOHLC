@@ -54,7 +54,7 @@ from .config import (
 from .discord_notifier import send_discord_update
 from .file_writer import write_levels
 from .futures_translator import translate_to_futures
-from .gex_calculator import calculate_dealer_levels, rescale_levels_to_target_spot
+from .gex_calculator import calculate_dealer_levels, calculate_price_metrics, rescale_levels_to_target_spot
 from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data
 
 # ---------------------------------------------------------------------------
@@ -123,12 +123,16 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
 
         try:
             # 1. Fetch primary index chain (0DTE + 1DTE)
-            chain = fetch_option_chain_data(client, ticker, DTE_TARGETS)
-            target_cash_spot = chain.spot_price
+            primary_chain = fetch_option_chain_data(client, ticker, DTE_TARGETS)
+            chain = primary_chain
+            target_cash_spot = primary_chain.spot_price
             source_ticker = ticker
+            direct_price_metrics = None
 
             # 1b. ETF fallback if index chain is empty or has unusable OI profile
             if (not chain.calls and not chain.puts) or (not _chain_has_actionable_oi(chain)):
+                if primary_chain.calls and primary_chain.puts:
+                    direct_price_metrics = calculate_price_metrics(primary_chain)
                 fallback = ETF_FALLBACK.get(ticker)
                 if fallback:
                     log.warning(
@@ -156,6 +160,16 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
                     target_ticker=ticker,
                     target_spot=target_cash_spot,
                 )
+                if direct_price_metrics is not None:
+                    levels = replace(
+                        levels,
+                        **direct_price_metrics,
+                    )
+                    log.info(
+                        "Overlayed direct %s EM/vol metrics onto %s-derived structure.",
+                        ticker,
+                        source_ticker,
+                    )
                 log.info(
                     "Rescaled %s-derived levels into %s space (target spot=%.2f).",
                     source_ticker,

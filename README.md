@@ -96,6 +96,11 @@ See [`docs/README.md`](docs/README.md) for the full documentation index includin
 ### Dealer Levels (Options GEX → ES/NQ)
 Generates robust dealer-positioning levels from Schwab chains with ETF fallback logic, futures translation, richer narrative plans, and copy-ready outputs for both TradingView and Discord.
 
+Current routing behavior:
+- ES structure is sourced from `SPX` when Schwab returns usable index OI, otherwise it falls back to `SPY` structure.
+- When ES falls back to `SPY` structure, expected-move and related price metrics are still sourced directly from the `SPX` chain when quotes are available.
+- NQ uses `QQQ` as the primary source and falls back to `NDX` only when needed.
+
 ```powershell
 # Run once
 .\.venv\Scripts\python.exe -m scripts.streaming.options.run_options_levels
@@ -110,6 +115,9 @@ Generates robust dealer-positioning levels from Schwab chains with ETF fallback 
 Outputs:
 - `data/daily_levels.txt` (copy-ready strings + interpretation/pre-open plan + detailed summary)
 - `data/daily_levels.json` (Pine-ready level records for ES/NQ)
+
+Copy-ready level order now includes the richer structure set used by the TradingView indicator:
+- `Upper EM, Absolute Call Wall, Local Call Node, 0DTE Call Wall, DEX Call Node, Gamma Flip Upper, Gamma Cliff Up, Zero Gamma, Gamma Cliff Down, Gamma Flip Lower, Max Pain, 0DTE Put Wall, Local Put Node, DEX Put Node, Hedge Wall, Lower EM`
 
 Discord behavior:
 - Posts to the `option-levels` webhook target configured in `discord_webhooks.json`

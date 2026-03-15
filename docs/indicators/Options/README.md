@@ -49,8 +49,9 @@ Default behavior follows `ENABLE_DISCORD_UPDATES` in `scripts/streaming/options/
 ## Data Robustness (Current Behavior)
 
 - **Nearest-expiration selection**: selects nearest available expiries to target DTE values (robust on weekends/off-hours).
-- **Chain quality guard**: if SPX/NDX chain lacks actionable non-zero OI profile, fallback to SPY/QQQ.
-- **Rescaling workflow**: if fallback chain is used, levels are rescaled back into target index spot space before futures translation.
+- **Chain quality guard**: if the primary cash-index chain lacks actionable non-zero OI profile, the pipeline falls back to the configured proxy chain (`SPX -> SPY`, `QQQ -> NDX` fallback remains available in config).
+- **Hybrid ES fallback**: when ES falls back from `SPX` structure to `SPY`, the pipeline still preserves direct `SPX` expected-move, vol-trigger, and skew metrics whenever Schwab provides usable SPX quotes.
+- **Rescaling workflow**: when a fallback chain is used, structure levels are rescaled back into target index spot space before futures translation.
 - **Futures quote safety**: rejects symbol-mismatch quote responses and uses yfinance fallback for `/ES` and `/NQ` when needed.
 
 ---
@@ -64,7 +65,7 @@ Contains three blocks:
 1. **Formatted Strings (copy-ready)**
   - Ordered copy-ready strings for ES/NQ plus cash-space routing symbols and default test names (`SPX`, `NDX`, `SPY`, `QQQ`, `IWM`, `DIA`, `RUT`, `DJX`, `AAPL`, `MSFT`, `GOOGL`, `AMZN`, `META`, `NVDA`, `TSLA`, `AVGO`, `RTY`, `YM`)
   - Level order:
-  - `Upper EM, Absolute Call Wall, Local Call Node, 0DTE Call Wall, Gamma Flip Upper, Zero Gamma, Gamma Flip Lower, Max Pain, 0DTE Put Wall, Local Put Node, Hedge Wall, Lower EM`
+  - `Upper EM, Absolute Call Wall, Local Call Node, 0DTE Call Wall, DEX Call Node, Gamma Flip Upper, Gamma Cliff Up, Zero Gamma, Gamma Cliff Down, Gamma Flip Lower, Max Pain, 0DTE Put Wall, Local Put Node, DEX Put Node, Hedge Wall, Lower EM`
 2. **Interpretation / Pre-Open Plan**
   - Natural-language trade plan with context, watch area, base case, alternate case, invalidation, and risk map
 3. **Detailed Summary**
@@ -101,15 +102,15 @@ In addition to absolute call/put walls, zero gamma, and expected move, the pipel
 
 - Local gamma nodes (±1.5% window)
 - Front-DTE (0DTE/front) call and put walls
+- DEX call and put nodes
 - Hedge wall
 - Max pain
 - Gamma flip zone bounds
+- Gamma cliffs
 - Secondary walls
 - Vol trigger bands (0.5σ / 1.0σ / 1.5σ)
-- Gamma cliffs
 - Vanna/charm proxy nodes
 - Volume-imbalance nodes
-- DEX nodes
 - Liquidity vacuum bounds
 - 25-delta skew pivots
 

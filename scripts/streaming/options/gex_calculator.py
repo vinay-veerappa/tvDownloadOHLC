@@ -363,6 +363,32 @@ def _vol_trigger_bands(front_calls: list[OptionContract], spot: float) -> tuple[
     )
 
 
+def calculate_price_metrics(chain: OptionChainData) -> dict[str, float | None]:
+    spot = chain.spot_price
+    if spot <= 0:
+        raise ValueError("Spot price is zero — cannot calculate price-derived metrics.")
+
+    em_value, straddle = _expected_move(chain.calls, chain.puts, spot)
+    front_calls, front_puts = _find_front_dte_contracts(chain.calls, chain.puts)
+    skew_put_25d, skew_call_25d = _find_skew_pivots(front_calls, front_puts)
+    vt_u05, vt_l05, vt_u10, vt_l10, vt_u15, vt_l15 = _vol_trigger_bands(front_calls or chain.calls, spot)
+
+    return {
+        "em_upper": round(spot + em_value, 2),
+        "em_lower": round(spot - em_value, 2),
+        "em_value": round(em_value, 2),
+        "atm_straddle": round(straddle, 2),
+        "vol_trigger_upper_05": vt_u05,
+        "vol_trigger_lower_05": vt_l05,
+        "vol_trigger_upper_10": vt_u10,
+        "vol_trigger_lower_10": vt_l10,
+        "vol_trigger_upper_15": vt_u15,
+        "vol_trigger_lower_15": vt_l15,
+        "skew_pivot_put_25d": skew_put_25d,
+        "skew_pivot_call_25d": skew_call_25d,
+    }
+
+
 def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels:
     spot = chain.spot_price
     if spot <= 0:

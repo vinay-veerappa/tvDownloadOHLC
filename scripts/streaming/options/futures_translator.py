@@ -75,17 +75,26 @@ class TranslatedLevels:
 
 def translate_to_futures(levels: DealerLevels, futures: FuturesQuote) -> TranslatedLevels:
     spread = futures.price - levels.spot
+    ratio = futures.price / levels.spot if levels.spot else 1.0
+    # Use multiplicative scaling when cash source and futures trade at different scales
+    # (e.g. QQQ ~600 -> NQ ~24400, ratio ~41).  Additive basis is correct only when
+    # they trade at the same scale (e.g. SPX ~6632 -> ES ~6636, ratio ~1).
+    use_scale = abs(ratio - 1.0) > 0.1
     log.info(
-        "Basis spread %s vs %s: %+.2f  (futures=%.2f  cash=%.2f)",
+        "%s %s vs %s: %+.2f  (futures=%.2f  cash=%.2f  ratio=%.4f)",
+        "Scale" if use_scale else "Basis",
         futures.symbol,
         levels.ticker,
         spread,
         futures.price,
         levels.spot,
+        ratio,
     )
 
     def _shift(value: float | None) -> float | None:
-        return round(value + spread, 2) if value is not None else None
+        if value is None:
+            return None
+        return round(value * ratio, 2) if use_scale else round(value + spread, 2)
 
     return TranslatedLevels(
         futures_symbol=futures.symbol,

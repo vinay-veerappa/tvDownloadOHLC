@@ -33,10 +33,12 @@ NDX_TICKERS: list[str] = ["NDX", "QQQ"]    # Nasdaq-100 family
 ES_FUTURES_SYMBOL: str = "/ES"
 NQ_FUTURES_SYMBOL: str = "/NQ"
 
-# Cash-index tickers selected for GEX calculation (one per family).
-# If the chain fetch fails for the index, the ETF fallback is used instead.
-PRIMARY_INDEX_TICKERS: list[str] = ["SPX", "NDX"]
-ETF_FALLBACK: dict[str, str] = {"SPX": "SPY", "NDX": "QQQ"}
+# Source tickers selected for translated futures outputs.
+# Defaults:
+# - ES uses SPX as the primary source (fallback SPY)
+# - NQ uses QQQ as the primary source (fallback NDX)
+PRIMARY_INDEX_TICKERS: list[str] = ["SPX", "QQQ"]
+ETF_FALLBACK: dict[str, str] = {"SPX": "SPY", "QQQ": "NDX"}
 TEST_OUTPUT_TICKERS: list[str] = [
     "SPX",
     "NDX",
@@ -59,7 +61,7 @@ TEST_OUTPUT_TICKERS: list[str] = [
 # Maps each primary index to its corresponding futures symbol.
 INDEX_TO_FUTURES: dict[str, str] = {
     "SPX": ES_FUTURES_SYMBOL,
-    "NDX": NQ_FUTURES_SYMBOL,
+    "QQQ": NQ_FUTURES_SYMBOL,
 }
 
 # Schwab API requires a leading "$" for cash CBOE indices.
