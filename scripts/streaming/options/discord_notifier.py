@@ -156,9 +156,9 @@ def _plan_lines(tl: TranslatedLevels) -> str:
 
     return (
         f"Context: {tag} is in a {tl.gex_regime} GEX regime ({tl.total_gex:,.0f}); {regime_tone}.\n"
-        f"Watch first: Zero Gamma {_fmt_copy(tl.zero_gamma)} and gamma flip {_fmt_copy(tl.gamma_flip_lower)}↔{_fmt_copy(tl.gamma_flip_upper)}.\n"
-        f"Base case: Below {_fmt_copy(short_trigger)}, look for rotation into {_fmt_copy(short_target)}. Invalidation is reclaim and hold above {_fmt_copy(short_invalid)}.\n"
-        f"Alternate: Above {_fmt_copy(long_trigger)}, look for continuation into {_fmt_copy(long_target)}. Invalidation is loss of {_fmt_copy(long_invalid)} after breakout.\n"
+        f"Watch first: Zero Gamma {_fmt_copy(tl.zero_gamma)}, gamma flip {_fmt_copy(tl.gamma_flip_lower)}↔{_fmt_copy(tl.gamma_flip_upper)}, DEX {_fmt_copy(tl.dex_put_node)}/{_fmt_copy(tl.dex_call_node)}.\n"
+        f"Base case: Below {_fmt_copy(short_trigger)}, look for rotation into {_fmt_copy(short_target)}. Use Gamma Cliff Down {_fmt_copy(tl.gamma_cliff_down)} and DEX {_fmt_copy(tl.dex_put_node)} as reaction zones; invalidation is reclaim/hold above {_fmt_copy(short_invalid)}.\n"
+        f"Alternate: Above {_fmt_copy(long_trigger)}, look for continuation into {_fmt_copy(long_target)}. Use Gamma Cliff Up {_fmt_copy(tl.gamma_cliff_up)} and DEX {_fmt_copy(tl.dex_call_node)} as decision zones; invalidation is loss of {_fmt_copy(long_invalid)} after breakout.\n"
         f"Risk map: EM {_fmt_copy(tl.em_lower)}↔{_fmt_copy(tl.em_upper)}."
     )
 
