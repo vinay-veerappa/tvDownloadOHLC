@@ -221,7 +221,7 @@ def _interpretation_lines(tl: TranslatedLevels) -> list[str]:
 
 
 def _detailed_block(tl: TranslatedLevels) -> list[str]:
-    tag = tl.futures_symbol.lstrip("/")
+    tag = tl.futures_symbol if tl.futures_symbol.startswith("/") else f"/{tl.futures_symbol}"
     return [
         f"── {tl.cash_ticker} → {tag} {'─' * 40}",
         f"  Regime             : {tl.gex_regime} GEX  (total GEX = {tl.total_gex:,.0f})",

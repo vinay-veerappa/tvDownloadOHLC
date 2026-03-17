@@ -98,7 +98,7 @@ def _regime_line(regime: str) -> str:
 
 
 def _copy_ready_line(tl: TranslatedLevels) -> str:
-    tag = tl.futures_symbol.lstrip("/")
+    tag = tl.futures_symbol if tl.futures_symbol.startswith("/") else f"/{tl.futures_symbol}"
     ordered = [
         (_fmt_copy(tl.em_upper), "Upper EM"),
         (_fmt_copy(tl.call_wall), "Absolute Call Wall"),
@@ -143,7 +143,7 @@ def _copy_ready_cash_line(levels: DealerLevels) -> str:
 
 
 def _plan_lines(tl: TranslatedLevels) -> str:
-    tag = tl.futures_symbol.lstrip("/")
+    tag = tl.futures_symbol if tl.futures_symbol.startswith("/") else f"/{tl.futures_symbol}"
     short_trigger = _first_level(tl.zero_gamma, tl.gamma_flip_lower, tl.call_wall)
     short_target = _nearest_below(short_trigger, tl.put_wall_0dte, tl.local_put_node, tl.hedge_wall, tl.em_lower)
     short_invalid = _nearest_above(short_trigger, tl.gamma_flip_upper, tl.call_wall, tl.em_upper)
@@ -194,7 +194,7 @@ def _copy_block_payload(
 def _build_embed(tl: TranslatedLevels, run_label: str) -> dict[str, Any]:
     """Construct a single Discord embed dict for one TranslatedLevels entry."""
     color = DISCORD_COLOR_POSITIVE if tl.gex_regime == "POSITIVE" else DISCORD_COLOR_NEGATIVE
-    tag = tl.futures_symbol.lstrip("/")   # "ES" or "NQ"
+    tag = tl.futures_symbol if tl.futures_symbol.startswith("/") else f"/{tl.futures_symbol}"   # "/ES" or "/NQ"
 
     fields: list[dict[str, Any]] = [
         {

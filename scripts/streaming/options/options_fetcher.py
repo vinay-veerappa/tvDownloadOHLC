@@ -339,34 +339,39 @@ def fetch_futures_quote(client: Any, symbol: str) -> FuturesQuote:
     ------
     RuntimeError : On HTTP error or missing price field.
     """
-    def _fetch_from_schwab() -> float | None:
-        response = client.get_quote(symbol)
-        if response.status_code != 200:
-            return None
+    import requests
+    import json
+    # Always read the access token directly from token.json
+    try:
+        with open('token.json', 'r') as f:
+            token_data = json.load(f)
+            access_token = token_data['token']['access_token']
+    except Exception as e:
+        raise RuntimeError(f'Could not read access token from token.json: {e}')
 
-        data = response.json()
-        key = next(iter(data.keys()), None)
-        if key is None:
-            return None
-
-        # Guard: Schwab may resolve '/ES' → 'ES' equity in some contexts.
-        # If requested futures symbol starts with '/', require response key
-        # to look like a futures key too.
-        if symbol.startswith("/") and not str(key).startswith("/"):
-            log.warning(
-                "Schwab quote key mismatch for %s (returned %s) — ignoring as non-futures.",
-                symbol, key,
-            )
-            return None
-
-        quote = data[key].get("quote", {})
-        price = _safe_float(
-            quote.get("lastPrice")
-            or quote.get("last")
-            or quote.get("mark")
-            or quote.get("closePrice")
-        )
-        return price if price > 0 else None
+    url = f'https://api.schwabapi.com/marketdata/v1/quotes?symbols={symbol}&fields=quote'
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Accept': 'application/json',
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        log.warning(f"Schwab API HTTP {response.status_code} for {url}")
+        return None
+    data = response.json()
+    key = next(iter(data.keys()), None)
+    if key is None:
+        return None
+    quote = data[key].get("quote", {})
+    price = _safe_float(
+        quote.get("lastPrice")
+        or quote.get("last")
+        or quote.get("mark")
+        or quote.get("closePrice")
+    )
+    if price > 0:
+        return FuturesQuote(symbol=symbol, price=price)
+    return None
 
     def _fetch_from_yfinance() -> float | None:
         if yf is None:
