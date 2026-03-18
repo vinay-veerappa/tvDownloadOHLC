@@ -12,7 +12,6 @@
 run_options_levels.py
   ├─ create_client()
   ├─ for ticker in PRIMARY_INDEX_TICKERS:
-  │    ├─ fetch_option_chain_data(ticker, DTE_TARGETS)
   │    ├─ chain quality check (MIN_NONZERO_OI_CONTRACTS)
   │    ├─ optional ETF fallback (SPX→SPY, NDX→QQQ)
   │    ├─ fetch_futures_quote(/ES or /NQ) [Schwab → yfinance fallback]
@@ -33,7 +32,6 @@ run_options_levels.py
 | `options_fetcher.py` | Schwab auth, option-chain fetch, expiry-key selection, futures quote + fallback |
 | `gex_calculator.py` | Advanced dealer-level math and derived structures |
 | `futures_translator.py` | Basis-spread shift from cash-index levels to futures levels |
-| `file_writer.py` | Writes JSON + TXT outputs (copy-ready strings + interpretation + detail) |
 | `discord_notifier.py` | Sends optional Discord embeds |
 | `run_options_levels.py` | CLI/scheduler orchestration and error isolation |
 
@@ -44,53 +42,29 @@ run_options_levels.py
 ### 3.1 Option-chain acquisition
 
 - Request a broad date window around target DTE values.
-- Parse Schwab expiration keys (`YYYY-MM-DD:DTE`).
 - Select nearest available expiry keys for each target DTE.
 - Flatten selected call/put maps into normalized contract records.
 
-### 3.2 Chain quality fallback
-
-- Count contracts with non-zero OI across calls+puts.
-- If below threshold:
   - SPX chain falls back to SPY chain.
-  - NDX chain falls back to QQQ chain.
 - Preserve original target index spot for later rescaling.
 
 ### 3.3 Futures quote acquisition
-
-- First attempt Schwab quote for `/ES` or `/NQ`.
-- Reject mismatched non-futures keys for slash-prefixed requests.
 - If unavailable, use yfinance fallback (`ES=F`, `NQ=F`).
-
 ### 3.4 Level computation (`gex_calculator.py`)
 
 Core outputs:
-
-- Total GEX and regime
-- Gamma-flip zone (`gamma_flip_lower`, `gamma_flip_upper`) and `zero_gamma`
-- Absolute + secondary call/put walls
 - Local call/put nodes
-- Front-DTE call/put walls
 - Hedge wall, max pain
 - EM envelope and straddle diagnostics
 - Vol trigger bands (0.5σ, 1.0σ, 1.5σ)
-- Gamma cliffs
-- Vanna/charm proxy nodes
 - Volume imbalance nodes
-- DEX nodes
 - Liquidity vacuum bounds
 - 25-delta skew pivots
 
-### 3.5 Rescaling and futures translation
-
 When source chain != target index:
-
 1. Rescale cash-index-derived levels to target spot.
 2. Compute basis spread = futures price − target cash spot.
 3. Shift all level coordinates into futures space.
-
----
-
 ## 4) Output Design
 
 ### 4.1 JSON (`data/daily_levels.json`)
