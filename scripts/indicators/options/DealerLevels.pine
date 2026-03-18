@@ -1,50 +1,21 @@
 // This Pine Script(TM) source code is subject to the terms of the Mozilla Public License 2.0
 // Copyright (c) antigravity
 //
-// DealerLevels.pine
-// =================
-// Paste formatted dealer-level lines from data/daily_levels.txt into the text box.
-// The indicator auto-detects the current chart symbol and draws the matching line.
-//
-// Supported workflow:
-// 1. Run the Python dealer-level pipeline.
-// 2. Copy one or more formatted lines, for example:
-//    ES: 6715.91:Upper EM, 6713.21:Absolute Call Wall, ...
-//    NQ: 24695.66:Upper EM, 24652.13:Absolute Call Wall, ...
-// 3. Paste them into the input text area below.
-// 4. The indicator selects the line matching the current chart symbol.
-//
-// Symbol matching:
-// - Exact ticker match when pasted data exists for that ticker.
-// - Canonical family matching for common micro/mini futures pairs.
-//
-// Session handling:
-// - Overnight futures families reset on the trading-day boundary (18:00 ET).
-// - Other symbols reset on the calendar-day boundary.
+// DealerLevels.pine v2.1
+// ======================
+// Unified dashboard: all info in one table. Position and size user-controllable.
 
 //@version=6
 indicator("Dealer Levels Auto", overlay = true, max_lines_count = 200, max_labels_count = 200, max_bars_back = 5000)
 
+// ═══════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════════════
+
 var string grp_data = "Dealer Levels"
-pastedData = input.text_area(
-    "",
-    "Paste Dealer Levels",
-    group = grp_data,
-    tooltip = "Paste one or more formatted lines from daily_levels.txt. Example:\nES: 6715.91:Upper EM, 6713.21:Absolute Call Wall, ...\nNQ: 24695.66:Upper EM, 24652.13:Absolute Call Wall, ..."
-)
-familySourcePreference = input.string(
-    "Auto",
-    "Family Source Preference",
-    options = ["Auto", "Prefer Index", "Prefer ETF"],
-    group = grp_data,
-    tooltip = "For family matches (ES/SPX/SPY, NQ/NDX/QQQ, YM/DJX/DIA, RTY/RUT/IWM), prefer index or ETF lines."
-)
-overrideExactWithFamilyPreference = input.bool(
-    false,
-    "Override Exact Match With Family Preference",
-    group = grp_data,
-    tooltip = "When enabled, preferred family source can beat an exact line. Useful to compare SPY-vs-SPX style levels on ES family charts."
-)
+pastedData = input.text_area("", "Paste Dealer Levels", group = grp_data, tooltip = "Paste formatted lines from daily_levels.txt")
+familySourcePreference = input.string("Auto", "Family Source Preference", options = ["Auto", "Prefer Index", "Prefer ETF"], group = grp_data)
+overrideExactWithFamilyPreference = input.bool(false, "Override Exact Match With Family Preference", group = grp_data)
 
 var string grp_lines = "Line Style"
 showEmFill = input.bool(true, "Show EM Fill", group = grp_lines)
@@ -70,6 +41,8 @@ colLocalPut = input.color(color.new(color.red, 30), "Local Put Node", group = gr
 colDexPut = input.color(color.new(color.red, 15), "DEX Put Node", group = grp_colors)
 colHedge = input.color(color.new(color.red, 0), "Hedge Wall", group = grp_colors)
 colLowerEM = input.color(color.new(color.aqua, 0), "Lower EM", group = grp_colors)
+colGammaMagnet = input.color(color.new(color.fuchsia, 0), "Gamma Magnet", group = grp_colors)
+colPinStrike = input.color(color.new(color.fuchsia, 30), "Pin Strike", group = grp_colors)
 colFallback = input.color(color.new(color.white, 0), "Fallback", group = grp_colors)
 colEmFill = input.color(color.new(color.aqua, 88), "EM Fill", group = grp_colors)
 colGammaFlipFill = input.color(color.new(color.yellow, 88), "Gamma Flip Fill", group = grp_colors)
@@ -82,12 +55,16 @@ mergeSamePriceLabels = input.bool(true, "Merge Same-Price Labels", group = grp_l
 labelSizeInp = input.string("tiny", "Label Size", options = ["tiny", "small", "normal", "large"], group = grp_labels)
 labelOffset = input.int(2, "Label Offset", minval = 0, maxval = 50, group = grp_labels)
 labelBgOpacity = input.int(85, "Label Background Opacity", minval = 0, maxval = 100, group = grp_labels)
-labelCollisionMode = input.string("Stagger", "Label Collision", options = ["Stagger", "Hide" , "Off"], group = grp_labels)
+labelCollisionMode = input.string("Stagger", "Label Collision", options = ["Stagger", "Hide", "Off"], group = grp_labels)
 maxLabelColumns = input.int(4, "Max Label Columns", minval = 1, maxval = 10, group = grp_labels)
 columnStepBars = input.int(2, "Column Step (bars)", minval = 1, maxval = 20, group = grp_labels)
 minLabelGapTicks = input.int(40, "Min Gap (ticks)", minval = 1, maxval = 500, group = grp_labels)
-showStatusTable = input.bool(true, "Show Status Table", group = grp_labels)
-showNarrativeTable = input.bool(true, "Show Narrative Table", group = grp_labels)
+
+var string grp_dashboard = "Dashboard"
+showDashboard = input.bool(true, "Show Dashboard", group = grp_dashboard)
+dashPosition = input.string("Bottom Right", "Dashboard Position", options = ["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group = grp_dashboard)
+dashTextSize = input.string("small", "Dashboard Text Size", options = ["tiny", "small", "normal", "large"], group = grp_dashboard)
+dashBgOpacity = input.int(82, "Dashboard Background Opacity", minval = 0, maxval = 100, group = grp_dashboard)
 
 var string grp_visibility = "Level Visibility"
 showEMLevels = input.bool(true, "Show EM Levels", group = grp_visibility)
@@ -99,672 +76,639 @@ showGammaCliffLevels = input.bool(true, "Show Gamma Cliffs", group = grp_visibil
 showMaxPainLevel = input.bool(true, "Show Max Pain", group = grp_visibility)
 showHedgeLevel = input.bool(true, "Show Hedge Wall", group = grp_visibility)
 showDexLevels = input.bool(true, "Show DEX Nodes", group = grp_visibility)
+showGammaMagnet = input.bool(true, "Show Gamma Magnet", group = grp_visibility)
+showPinStrike = input.bool(true, "Show Pin Strike", group = grp_visibility)
 
-f_label_size(string sizeText) =>
-    sizeText == "tiny" ? size.tiny :
-     sizeText == "small" ? size.small :
-     sizeText == "normal" ? size.normal :
-     size.large
-
-f_line_style(string styleText) =>
-    styleText == "Solid" ? line.style_solid :
-     styleText == "Dashed" ? line.style_dashed :
-     line.style_dotted
-
-f_norm(string value) =>
-    str.upper(str.trim(value))
-
-f_strip_prefix(string value) =>
-    trimmed = f_norm(value)
-    str.startswith(trimmed, "/") ? str.substring(trimmed, 1, str.length(trimmed)) : trimmed
-
-f_strip_continuous_suffix(string value) =>
-    cleaned = f_strip_prefix(value)
-    len = str.length(cleaned)
-    len > 2 and str.endswith(cleaned, "!") ? str.substring(cleaned, 0, len - 2) : cleaned
-
+// ═══════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════
+f_label_size(string s) => s == "tiny" ? size.tiny : s == "small" ? size.small : s == "normal" ? size.normal : size.large
+f_line_style(string s) => s == "Solid" ? line.style_solid : s == "Dashed" ? line.style_dashed : line.style_dotted
+f_position(string s) =>
+    s == "Top Left" ? position.top_left : s == "Top Center" ? position.top_center : s == "Top Right" ? position.top_right :
+     s == "Middle Left" ? position.middle_left : s == "Middle Center" ? position.middle_center : s == "Middle Right" ? position.middle_right :
+     s == "Bottom Left" ? position.bottom_left : s == "Bottom Center" ? position.bottom_center : position.bottom_right
+f_norm(string v) => str.upper(str.trim(v))
+f_strip_prefix(string v) =>
+    t = f_norm(v)
+    str.startswith(t, "/") ? str.substring(t, 1, str.length(t)) : t
+f_strip_continuous_suffix(string v) =>
+    c = f_strip_prefix(v)
+    l = str.length(c)
+    l > 2 and str.endswith(c, "!") ? str.substring(c, 0, l - 2) : c
 f_primary_symbol() =>
-    root = f_strip_prefix(syminfo.root)
-    ticker = f_strip_prefix(syminfo.ticker)
-    str.length(root) > 0 ? root : ticker
-
-f_canonical_symbol(string symbol) =>
-    cleaned = f_strip_continuous_suffix(symbol)
-    cleaned == "MES" ? "ES" :
-     cleaned == "MNQ" ? "NQ" :
-     cleaned == "MYM" ? "YM" :
-     cleaned == "M2K" ? "RTY" :
-     cleaned == "MGC" ? "GC" :
-     cleaned == "SIL" ? "SI" :
-     cleaned == "MCL" ? "CL" :
-     cleaned == "MHG" ? "HG" :
-     cleaned == "M6E" ? "6E" :
-     cleaned == "M6A" ? "6A" :
-     cleaned == "M6B" ? "6B" :
-     cleaned == "M6J" ? "6J" :
-     cleaned
-
-f_symbol_family_key(string symbol) =>
-    canonical = f_canonical_symbol(symbol)
-    result = canonical
-    if canonical == "ES" or canonical == "SPX" or canonical == "SPY"
-        result := "ES_FAMILY"
-    else if canonical == "NQ" or canonical == "NDX" or canonical == "QQQ"
-        result := "NQ_FAMILY"
-    else if canonical == "YM" or canonical == "DJX" or canonical == "DJI" or canonical == "US30" or canonical == "DOW" or canonical == "DIA"
-        result := "YM_FAMILY"
-    else if canonical == "RTY" or canonical == "RUT" or canonical == "IWM"
-        result := "RTY_FAMILY"
-    result
-
-f_source_kind(string symbol) =>
-    canonical = f_canonical_symbol(symbol)
-    kind = "OTHER"
-    if canonical == "SPX" or canonical == "NDX" or canonical == "DJX" or canonical == "DJI" or canonical == "RUT"
-        kind := "INDEX"
-    else if canonical == "SPY" or canonical == "QQQ" or canonical == "DIA" or canonical == "IWM"
-        kind := "ETF"
-    kind
-
-f_is_overnight_futures(string symbol) =>
-    canonical = f_canonical_symbol(symbol)
-    canonical == "ES" or canonical == "NQ" or canonical == "YM" or canonical == "RTY" or canonical == "CL" or canonical == "GC" or canonical == "SI" or canonical == "HG" or canonical == "6E" or canonical == "6A" or canonical == "6B" or canonical == "6J" or canonical == "ZN" or canonical == "ZB"
-
+    r = f_strip_prefix(syminfo.root)
+    t = f_strip_prefix(syminfo.ticker)
+    str.length(r) > 0 ? r : t
+f_canonical_symbol(string s) =>
+    c = f_strip_continuous_suffix(s)
+    c == "MES" ? "ES" : c == "MNQ" ? "NQ" : c == "MYM" ? "YM" : c == "M2K" ? "RTY" : c == "MGC" ? "GC" : c == "SIL" ? "SI" : c == "MCL" ? "CL" : c == "MHG" ? "HG" : c == "M6E" ? "6E" : c == "M6A" ? "6A" : c == "M6B" ? "6B" : c == "M6J" ? "6J" : c
+f_symbol_family_key(string s) =>
+    c = f_canonical_symbol(s)
+    r = c
+    if c == "ES" or c == "SPX" or c == "SPY"
+        r := "ES_FAMILY"
+    else if c == "NQ" or c == "NDX" or c == "QQQ"
+        r := "NQ_FAMILY"
+    else if c == "YM" or c == "DJX" or c == "DJI" or c == "US30" or c == "DOW" or c == "DIA"
+        r := "YM_FAMILY"
+    else if c == "RTY" or c == "RUT" or c == "IWM"
+        r := "RTY_FAMILY"
+    r
+f_source_kind(string s) =>
+    c = f_canonical_symbol(s)
+    c == "SPX" or c == "NDX" or c == "DJX" or c == "DJI" or c == "RUT" ? "INDEX" : c == "SPY" or c == "QQQ" or c == "DIA" or c == "IWM" ? "ETF" : "OTHER"
+f_is_overnight_futures(string s) =>
+    c = f_canonical_symbol(s)
+    c == "ES" or c == "NQ" or c == "YM" or c == "RTY" or c == "CL" or c == "GC" or c == "SI" or c == "HG" or c == "6E" or c == "6A" or c == "6B" or c == "6J" or c == "ZN" or c == "ZB"
 f_match_score(string assetTag) =>
     asset = f_canonical_symbol(assetTag)
-    assetFamily = f_symbol_family_key(asset)
+    aFam = f_symbol_family_key(asset)
     primary = f_canonical_symbol(f_primary_symbol())
-    primaryFamily = f_symbol_family_key(primary)
+    pFam = f_symbol_family_key(primary)
     ticker = f_canonical_symbol(syminfo.ticker)
-    tickerFamily = f_symbol_family_key(ticker)
+    tFam = f_symbol_family_key(ticker)
     root = f_canonical_symbol(syminfo.root)
-    rootFamily = f_symbol_family_key(root)
+    rFam = f_symbol_family_key(root)
+    exact = asset == ticker or asset == root or asset == primary
+    family = aFam == tFam or aFam == rFam or aFam == pFam
+    eBase = overrideExactWithFamilyPreference and familySourcePreference != "Auto" ? 120 : 200
+    fBase = family ? 100 : 0
+    boost = 0
+    if family and familySourcePreference != "Auto"
+        k = f_source_kind(asset)
+        if familySourcePreference == "Prefer ETF" and k == "ETF"
+            boost := 30
+        else if familySourcePreference == "Prefer Index" and k == "INDEX"
+            boost := 30
+    exact ? eBase : (fBase + boost)
 
-    exactMatch = asset == ticker or asset == root or asset == primary
-    familyMatch = assetFamily == tickerFamily or assetFamily == rootFamily or assetFamily == primaryFamily
+f_num(float v) => na(v) ? "—" : str.tostring(v, "#.##")
+f_pick(float v1, float v2, float v3) => not na(v1) ? v1 : (not na(v2) ? v2 : v3)
+f_is_near(float value, float ref, float thr) => not na(value) and not na(ref) and math.abs(value - ref) <= thr
 
-    exactBase = overrideExactWithFamilyPreference and familySourcePreference != "Auto" ? 120 : 200
-    familyBase = familyMatch ? 100 : 0
+f_nearest_below(float ref, float v1, float v2, float v3) =>
+    float b = na
+    if not na(ref)
+        if not na(v1) and v1 < ref and (na(b) or v1 > b)
+            b := v1
+        if not na(v2) and v2 < ref and (na(b) or v2 > b)
+            b := v2
+        if not na(v3) and v3 < ref and (na(b) or v3 > b)
+            b := v3
+    na(b) ? f_pick(v1, v2, v3) : b
 
-    prefBoost = 0
-    if familyMatch and familySourcePreference != "Auto"
-        kind = f_source_kind(asset)
-        if familySourcePreference == "Prefer ETF" and kind == "ETF"
-            prefBoost := 30
-        else if familySourcePreference == "Prefer Index" and kind == "INDEX"
-            prefBoost := 30
+f_nearest_above(float ref, float v1, float v2, float v3) =>
+    float b = na
+    if not na(ref)
+        if not na(v1) and v1 > ref and (na(b) or v1 < b)
+            b := v1
+        if not na(v2) and v2 > ref and (na(b) or v2 < b)
+            b := v2
+        if not na(v3) and v3 > ref and (na(b) or v3 < b)
+            b := v3
+    na(b) ? f_pick(v1, v2, v3) : b
 
-    exactMatch ? exactBase : (familyBase + prefBoost)
+f_best_short_trigger(float spot, float thr, float v1, float v2, float v3, float v4, float v5) =>
+    float b = na
+    if f_is_near(v1, spot, thr) and (na(b) or v1 > b)
+        b := v1
+    if f_is_near(v2, spot, thr) and (na(b) or v2 > b)
+        b := v2
+    if f_is_near(v3, spot, thr) and (na(b) or v3 > b)
+        b := v3
+    if f_is_near(v4, spot, thr) and (na(b) or v4 > b)
+        b := v4
+    if f_is_near(v5, spot, thr) and (na(b) or v5 > b)
+        b := v5
+    na(b) ? f_pick(v1, v2, v3) : b
 
-f_symbol_matches(string assetTag) =>
-    f_match_score(assetTag) > 0
+f_best_long_trigger(float spot, float thr, float v1, float v2, float v3, float v4, float v5) =>
+    float b = na
+    if f_is_near(v1, spot, thr) and (na(b) or v1 < b)
+        b := v1
+    if f_is_near(v2, spot, thr) and (na(b) or v2 < b)
+        b := v2
+    if f_is_near(v3, spot, thr) and (na(b) or v3 < b)
+        b := v3
+    if f_is_near(v4, spot, thr) and (na(b) or v4 < b)
+        b := v4
+    if f_is_near(v5, spot, thr) and (na(b) or v5 < b)
+        b := v5
+    na(b) ? f_pick(v1, v2, v3) : b
 
+// ═══════════════════════════════════════════════════════════════════════
+// SYMBOL MATCHING & PARSING
+// ═══════════════════════════════════════════════════════════════════════
 f_extract_asset_tag(string lineText) =>
     tokens = str.split(lineText, ",")
     asset = ""
     if array.size(tokens) > 0
-        firstToken = str.trim(array.get(tokens, 0))
-        firstParts = str.split(firstToken, ":")
-        if array.size(firstParts) >= 3
-            asset := f_strip_prefix(array.get(firstParts, 0))
+        fp = str.split(str.trim(array.get(tokens, 0)), ":")
+        if array.size(fp) >= 3
+            asset := f_strip_prefix(array.get(fp, 0))
     asset
-
 f_find_matching_line(string blob) =>
-    string matchedLine = ""
-    string matchedAsset = ""
-    int bestScore = 0
+    string mL = ""
+    string mA = ""
+    int bs = 0
     rows = str.split(blob, "\n")
     if array.size(rows) > 0
-        for idx = 0 to array.size(rows) - 1
-            row = str.trim(array.get(rows, idx))
+        for i = 0 to array.size(rows) - 1
+            row = str.trim(array.get(rows, i))
             if str.length(row) > 0 and str.contains(row, ",")
-                asset = f_extract_asset_tag(row)
-                score = f_match_score(asset)
-                if str.length(asset) > 0 and score > bestScore
-                    matchedLine := row
-                    matchedAsset := asset
-                    bestScore := score
-    [matchedLine, matchedAsset]
-
-f_family_futures_anchor(string familyKey) =>
-    familyKey == "ES_FAMILY" ? "ES" :
-     familyKey == "NQ_FAMILY" ? "NQ" :
-     familyKey == "YM_FAMILY" ? "YM" :
-     familyKey == "RTY_FAMILY" ? "RTY" :
-     ""
-
-f_find_asset_line(string blob, string targetAsset) =>
-    string matchedLine = ""
-    target = f_canonical_symbol(targetAsset)
+                a = f_extract_asset_tag(row)
+                sc = f_match_score(a)
+                if str.length(a) > 0 and sc > bs
+                    mL := row
+                    mA := a
+                    bs := sc
+    [mL, mA]
+f_family_futures_anchor(string fk) => fk == "ES_FAMILY" ? "ES" : fk == "NQ_FAMILY" ? "NQ" : fk == "YM_FAMILY" ? "YM" : fk == "RTY_FAMILY" ? "RTY" : ""
+f_find_asset_line(string blob, string target) =>
+    string mL = ""
+    t = f_canonical_symbol(target)
     rows = str.split(blob, "\n")
     if array.size(rows) > 0
-        for idx = 0 to array.size(rows) - 1
-            row = str.trim(array.get(rows, idx))
+        for i = 0 to array.size(rows) - 1
+            row = str.trim(array.get(rows, i))
             if str.length(row) > 0 and str.contains(row, ",")
-                asset = f_extract_asset_tag(row)
-                if f_canonical_symbol(asset) == target
-                    matchedLine := row
+                if f_canonical_symbol(f_extract_asset_tag(row)) == t
+                    mL := row
                     break
-    matchedLine
-
+    mL
 f_parse_levels(string lineText, array<float> prices, array<string> titles) =>
     array.clear(prices)
     array.clear(titles)
     tokens = str.split(lineText, ",")
     if array.size(tokens) > 0
-        for idx = 0 to array.size(tokens) - 1
-            token = str.trim(array.get(tokens, idx))
+        for i = 0 to array.size(tokens) - 1
+            token = str.trim(array.get(tokens, i))
             parts = str.split(token, ":")
-            string priceText = ""
-            string titleText = ""
-            if idx == 0
+            string px = ""
+            string ti = ""
+            if i == 0
                 if array.size(parts) >= 3
-                    priceText := str.trim(array.get(parts, 1))
-                    titleText := str.trim(array.get(parts, 2))
+                    px := str.trim(array.get(parts, 1))
+                    ti := str.trim(array.get(parts, 2))
             else
                 if array.size(parts) >= 2
-                    priceText := str.trim(array.get(parts, 0))
-                    titleText := str.trim(array.get(parts, 1))
-            level = str.tonumber(priceText)
-            if not na(level) and str.length(titleText) > 0
-                array.push(prices, level)
-                array.push(titles, titleText)
+                    px := str.trim(array.get(parts, 0))
+                    ti := str.trim(array.get(parts, 1))
+            lv = str.tonumber(px)
+            if not na(lv) and str.length(ti) > 0
+                array.push(prices, lv)
+                array.push(titles, ti)
 
+// ═══════════════════════════════════════════════════════════════════════
+// LEVEL STYLING
+// ═══════════════════════════════════════════════════════════════════════
 f_level_color(string title) =>
-    upperTitle = f_norm(title)
-    upperTitle == "UPPER EM" ? colUpperEM :
-     upperTitle == "LOWER EM" ? colLowerEM :
-     upperTitle == "ZERO GAMMA" ? colZeroGamma :
-     upperTitle == "GAMMA FLIP UPPER" or upperTitle == "GAMMA FLIP LOWER" ? colGammaFlip :
-     upperTitle == "GAMMA CLIFF UP" ? colGammaCliffUp :
-     upperTitle == "GAMMA CLIFF DOWN" ? colGammaCliffDown :
-     upperTitle == "MAX PAIN" ? colMaxPain :
-     upperTitle == "HEDGE WALL" ? colHedge :
-     upperTitle == "0DTE PUT WALL" ? col0DTEPut :
-     upperTitle == "LOCAL PUT NODE" ? colLocalPut :
-     upperTitle == "DEX PUT NODE" ? colDexPut :
-     upperTitle == "0DTE CALL WALL" ? col0DTECall :
-     upperTitle == "LOCAL CALL NODE" ? colLocalCall :
-     upperTitle == "DEX CALL NODE" ? colDexCall :
-     upperTitle == "ABSOLUTE CALL WALL" ? colAbsCall :
-     colFallback
-
+    u = f_norm(title)
+    u == "UPPER EM" ? colUpperEM : u == "LOWER EM" ? colLowerEM : u == "ZERO GAMMA" ? colZeroGamma :
+     u == "GAMMA FLIP UPPER" or u == "GAMMA FLIP LOWER" ? colGammaFlip :
+     u == "GAMMA CLIFF UP" ? colGammaCliffUp : u == "GAMMA CLIFF DOWN" ? colGammaCliffDown :
+     u == "MAX PAIN" ? colMaxPain : u == "HEDGE WALL" ? colHedge :
+     u == "0DTE PUT WALL" ? col0DTEPut : u == "LOCAL PUT NODE" ? colLocalPut : u == "DEX PUT NODE" ? colDexPut :
+     u == "0DTE CALL WALL" ? col0DTECall : u == "LOCAL CALL NODE" ? colLocalCall : u == "DEX CALL NODE" ? colDexCall :
+     u == "ABSOLUTE CALL WALL" ? colAbsCall : u == "GAMMA MAGNET" ? colGammaMagnet : u == "PIN STRIKE" ? colPinStrike : colFallback
 f_level_style(string title) =>
-    upperTitle = f_norm(title)
-    str.contains(upperTitle, "GAMMA FLIP") ? line.style_dashed :
-     str.contains(upperTitle, "GAMMA CLIFF") ? line.style_dotted :
-     str.contains(upperTitle, "DEX") ? line.style_dashed :
-     str.contains(upperTitle, "0DTE") ? f_line_style(lineStyle0DTEInp) :
-     str.contains(upperTitle, "LOCAL") ? f_line_style(lineStyleSecondaryInp) :
-     f_line_style(lineStylePrimaryInp)
-
+    u = f_norm(title)
+    str.contains(u, "GAMMA FLIP") ? line.style_dashed : str.contains(u, "GAMMA CLIFF") ? line.style_dotted :
+     str.contains(u, "DEX") ? line.style_dashed : u == "GAMMA MAGNET" or u == "PIN STRIKE" ? line.style_dotted :
+     str.contains(u, "0DTE") ? f_line_style(lineStyle0DTEInp) : str.contains(u, "LOCAL") ? f_line_style(lineStyleSecondaryInp) : f_line_style(lineStylePrimaryInp)
 f_level_width(string title) =>
-    upperTitle = f_norm(title)
-    str.contains(upperTitle, "0DTE") or str.contains(upperTitle, "LOCAL") or str.contains(upperTitle, "GAMMA FLIP") or str.contains(upperTitle, "GAMMA CLIFF") or str.contains(upperTitle, "DEX") ? lineWidthSecondary : lineWidthPrimary
-
+    u = f_norm(title)
+    str.contains(u, "0DTE") or str.contains(u, "LOCAL") or str.contains(u, "GAMMA FLIP") or str.contains(u, "GAMMA CLIFF") or str.contains(u, "DEX") or u == "GAMMA MAGNET" or u == "PIN STRIKE" ? lineWidthSecondary : lineWidthPrimary
 f_compact_title(string title) =>
-    upperTitle = f_norm(title)
-    upperTitle == "UPPER EM" ? "EM+" :
-     upperTitle == "LOWER EM" ? "EM-" :
-     upperTitle == "ABSOLUTE CALL WALL" ? "CALL ABS" :
-     upperTitle == "LOCAL CALL NODE" ? "CALL LOC" :
-     upperTitle == "0DTE CALL WALL" ? "CALL 0DTE" :
-     upperTitle == "DEX CALL NODE" ? "DEX C" :
-     upperTitle == "GAMMA FLIP UPPER" ? "GF U" :
-     upperTitle == "GAMMA CLIFF UP" ? "GC U" :
-     upperTitle == "ZERO GAMMA" ? "ZG" :
-     upperTitle == "GAMMA CLIFF DOWN" ? "GC D" :
-     upperTitle == "GAMMA FLIP LOWER" ? "GF L" :
-     upperTitle == "MAX PAIN" ? "MAX" :
-     upperTitle == "0DTE PUT WALL" ? "PUT 0DTE" :
-     upperTitle == "LOCAL PUT NODE" ? "PUT LOC" :
-     upperTitle == "DEX PUT NODE" ? "DEX P" :
-     upperTitle == "HEDGE WALL" ? "HEDGE" :
-     title
-
+    u = f_norm(title)
+    u == "UPPER EM" ? "EM+" : u == "LOWER EM" ? "EM-" : u == "ABSOLUTE CALL WALL" ? "CALL ABS" : u == "LOCAL CALL NODE" ? "CALL LOC" :
+     u == "0DTE CALL WALL" ? "CALL 0DTE" : u == "DEX CALL NODE" ? "DEX C" : u == "GAMMA FLIP UPPER" ? "GF U" : u == "GAMMA CLIFF UP" ? "GC U" :
+     u == "ZERO GAMMA" ? "ZG" : u == "GAMMA CLIFF DOWN" ? "GC D" : u == "GAMMA FLIP LOWER" ? "GF L" : u == "MAX PAIN" ? "MAX" :
+     u == "0DTE PUT WALL" ? "PUT 0DTE" : u == "LOCAL PUT NODE" ? "PUT LOC" : u == "DEX PUT NODE" ? "DEX P" : u == "HEDGE WALL" ? "HEDGE" :
+     u == "GAMMA MAGNET" ? "MAG" : u == "PIN STRIKE" ? "PIN" : title
 f_show_level(string title) =>
-    upperTitle = f_norm(title)
-    upperTitle == "UPPER EM" or upperTitle == "LOWER EM" ? showEMLevels :
-     str.contains(upperTitle, "DEX CALL") ? showDexLevels :
-     str.contains(upperTitle, "DEX PUT") ? showDexLevels :
-     str.contains(upperTitle, "CALL") ? showCallLevels :
-     str.contains(upperTitle, "PUT") ? showPutLevels :
-     upperTitle == "ZERO GAMMA" ? showZeroGammaLevel :
-     str.contains(upperTitle, "GAMMA FLIP") ? showGammaFlipLevels :
-     str.contains(upperTitle, "GAMMA CLIFF") ? showGammaCliffLevels :
-     upperTitle == "MAX PAIN" ? showMaxPainLevel :
-     upperTitle == "HEDGE WALL" ? showHedgeLevel :
-     true
-
-f_num(float value) =>
-    na(value) ? "N/A" : str.tostring(value, "#.##")
-
-// f_pick: return first non-na value (static priority fallback).
-f_pick(float v1, float v2, float v3) =>
-    not na(v1) ? v1 : (not na(v2) ? v2 : v3)
-
-// f_nearest_below: return the highest value strictly below reference.
-// Falls back to f_pick priority if nothing qualifies.
-f_nearest_below(float reference, float v1, float v2, float v3) =>
-    float best = na
-    if not na(reference)
-        if not na(v1) and v1 < reference
-            if na(best) or v1 > best
-                best := v1
-        if not na(v2) and v2 < reference
-            if na(best) or v2 > best
-                best := v2
-        if not na(v3) and v3 < reference
-            if na(best) or v3 > best
-                best := v3
-    na(best) ? f_pick(v1, v2, v3) : best
-
-// f_nearest_above: return the lowest value strictly above reference.
-// Falls back to f_pick priority if nothing qualifies.
-f_nearest_above(float reference, float v1, float v2, float v3) =>
-    float best = na
-    if not na(reference)
-        if not na(v1) and v1 > reference
-            if na(best) or v1 < best
-                best := v1
-        if not na(v2) and v2 > reference
-            if na(best) or v2 < best
-                best := v2
-        if not na(v3) and v3 > reference
-            if na(best) or v3 < best
-                best := v3
-    na(best) ? f_pick(v1, v2, v3) : best
-
-f_label_text(string title, float level) =>
-    titleText = compactLabels ? f_compact_title(title) : title
-    showPriceInLabel ? titleText + "  " + str.tostring(level, "#.##") : titleText
-
-f_is_same_price(float left, float right) =>
-    math.abs(left - right) <= syminfo.mintick * 0.25
-
-f_has_merged_token(string mergedTitle, string token) =>
+    u = f_norm(title)
+    u == "UPPER EM" or u == "LOWER EM" ? showEMLevels : u == "GAMMA MAGNET" ? showGammaMagnet : u == "PIN STRIKE" ? showPinStrike :
+     str.contains(u, "DEX CALL") or str.contains(u, "DEX PUT") ? showDexLevels :
+     str.contains(u, "CALL") ? showCallLevels : str.contains(u, "PUT") ? showPutLevels :
+     u == "ZERO GAMMA" ? showZeroGammaLevel : str.contains(u, "GAMMA FLIP") ? showGammaFlipLevels :
+     str.contains(u, "GAMMA CLIFF") ? showGammaCliffLevels : u == "MAX PAIN" ? showMaxPainLevel : u == "HEDGE WALL" ? showHedgeLevel : true
+f_is_same_price(float l, float r) => math.abs(l - r) <= syminfo.mintick * 0.25
+f_has_merged_token(string merged, string token) =>
     bool found = false
-    tokens = str.split(mergedTitle, "+")
-    if array.size(tokens) > 0
-        for idx = 0 to array.size(tokens) - 1
-            existing = f_norm(array.get(tokens, idx))
-            if existing == f_norm(token)
+    toks = str.split(merged, "+")
+    if array.size(toks) > 0
+        for i = 0 to array.size(toks) - 1
+            if f_norm(array.get(toks, i)) == f_norm(token)
                 found := true
                 break
     found
-
-f_assign_label_column(float level, array<float> colLastLevels, float minGap, int maxCols, string mode) =>
-    int assigned = -1
+f_assign_label_column(float level, array<float> cols, float gap, int maxC, string mode) =>
+    int a = -1
     if mode == "Off"
-        assigned := 0
+        a := 0
     else
-        if array.size(colLastLevels) > 0
-            for c = 0 to array.size(colLastLevels) - 1
-                lastLevel = array.get(colLastLevels, c)
-                if math.abs(level - lastLevel) >= minGap
-                    assigned := c
+        if array.size(cols) > 0
+            for c = 0 to array.size(cols) - 1
+                if math.abs(level - array.get(cols, c)) >= gap
+                    a := c
                     break
-        if assigned == -1
-            if array.size(colLastLevels) < maxCols
-                array.push(colLastLevels, level)
-                assigned := array.size(colLastLevels) - 1
+        if a == -1
+            if array.size(cols) < maxC
+                array.push(cols, level)
+                a := array.size(cols) - 1
+            else if mode == "Hide"
+                a := -1
             else
-                if mode == "Hide"
-                    assigned := -1
-                else
-                    bestGap = -1.0
-                    bestCol = 0
-                    for c = 0 to array.size(colLastLevels) - 1
-                        gap = math.abs(level - array.get(colLastLevels, c))
-                        if gap > bestGap
-                            bestGap := gap
-                            bestCol := c
-                    assigned := bestCol
-
-    if assigned >= 0
-        if assigned >= array.size(colLastLevels)
-            array.push(colLastLevels, level)
+                bG = -1.0
+                bC = 0
+                for c = 0 to array.size(cols) - 1
+                    g = math.abs(level - array.get(cols, c))
+                    if g > bG
+                        bG := g
+                        bC := c
+                a := bC
+    if a >= 0
+        if a >= array.size(cols)
+            array.push(cols, level)
         else
-            array.set(colLastLevels, assigned, level)
+            array.set(cols, a, level)
+    a
+f_clear_drawings(array<line> lns, array<label> lbs) =>
+    if array.size(lns) > 0
+        for i = 0 to array.size(lns) - 1
+            line.delete(array.get(lns, i))
+    if array.size(lbs) > 0
+        for i = 0 to array.size(lbs) - 1
+            label.delete(array.get(lbs, i))
+    array.clear(lns)
+    array.clear(lbs)
 
-    assigned
-
-f_clear_drawings(array<line> linesRef, array<label> labelsRef) =>
-    if array.size(linesRef) > 0
-        for idx = 0 to array.size(linesRef) - 1
-            line.delete(array.get(linesRef, idx))
-    if array.size(labelsRef) > 0
-        for idx = 0 to array.size(labelsRef) - 1
-            label.delete(array.get(labelsRef, idx))
-    array.clear(linesRef)
-    array.clear(labelsRef)
-
+// ═══════════════════════════════════════════════════════════════════════
+// SESSION
+// ═══════════════════════════════════════════════════════════════════════
 var string TZ = "America/New_York"
 var int SESSION_SHIFT_MS = 6 * 60 * 60 * 1000
-
 f_session_key() =>
-    referenceTime = f_is_overnight_futures(f_primary_symbol()) ? time + SESSION_SHIFT_MS : time
-    year(referenceTime, TZ) * 10000 + month(referenceTime, TZ) * 100 + dayofmonth(referenceTime, TZ)
-
+    rt = f_is_overnight_futures(f_primary_symbol()) ? time + SESSION_SHIFT_MS : time
+    year(rt, TZ) * 10000 + month(rt, TZ) * 100 + dayofmonth(rt, TZ)
 sessionKey = f_session_key()
-isNewTradingSession = ta.change(sessionKey) != 0
-
+isNewSession = ta.change(sessionKey) != 0
 var int sessionStartBar = 0
-if barstate.isfirst or isNewTradingSession
+if barstate.isfirst or isNewSession
     sessionStartBar := bar_index
 
-var array<line> levelLines = array.new_line()
-var array<label> levelLabels = array.new_label()
-var array<int> labelColumns = array.new_int()
-var array<float> labelColumnLastLevels = array.new_float()
-var array<float> parsedPrices = array.new_float()
-var array<string> parsedTitles = array.new_string()
-var table statusTable = table.new(position.top_right, 1, 2, bgcolor = color.new(color.black, 80))
-var table narrativeTable = table.new(position.bottom_right, 1, 6, bgcolor = color.new(color.black, 82))
-var line emUpperFill = na
-var line emLowerFill = na
-var linefill emBandFill = na
-var line gfUpperFill = na
-var line gfLowerFill = na
-var linefill gfBandFill = na
-var string lastSelectedLine = ""
-var string lastMatchedAsset = ""
-// ── Narrative plan variables ────────────────────────────────────────────
-var float planZeroGamma = na
-var float planGammaFlipUpper = na
-var float planGammaFlipLower = na
-var float planGammaCliffUp = na
-var float planGammaCliffDown = na
-var float planCallWall = na
-var float planCallWall0DTE = na
-var float planPutWall0DTE = na
-var float planLocalCallNode = na
-var float planLocalPutNode = na
-var float planDexCallNode = na
-var float planDexPutNode = na
-var float planHedgeWall = na
-var float planMaxPain = na
-var float planUpperEM = na
-var float planLowerEM = na
-var string lastFamilySourcePreference = ""
-var bool lastOverrideExactWithFamilyPreference = false
-var string selectedLine = ""
-var string matchedAsset = ""
-labelSize = f_label_size(labelSizeInp)
+// ═══════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════
+var array<line> lvlLines = array.new_line()
+var array<label> lvlLabels = array.new_label()
+var array<int> lblCols = array.new_int()
+var array<float> lblColLast = array.new_float()
+var array<float> pPrices = array.new_float()
+var array<string> pTitles = array.new_string()
+// Unified dashboard table — created dynamically based on position input
+var table dashTbl = na
+var line emUF = na
+var line emLF = na
+var linefill emBF = na
+var line gfUF = na
+var line gfLF = na
+var linefill gfBF = na
+var float pZG = na
+var float pGFU = na
+var float pGFL = na
+var float pGCU = na
+var float pGCD = na
+var float pCW = na
+var float pCW0 = na
+var float pPW0 = na
+var float pLCN = na
+var float pLPN = na
+var float pDCN = na
+var float pDPN = na
+var float pHW = na
+var float pMP = na
+var float pEU = na
+var float pEL = na
+var float pMAG = na
+var float pPIN = na
+var string lastSL = ""
+var string lastMA = ""
+var string lastFSP = ""
+var bool lastOE = false
+var string selLine = ""
+var string mAsset = ""
+lblSize = f_label_size(labelSizeInp)
+dashSize = f_label_size(dashTextSize)
 
-selectionNeedsUpdate = barstate.isfirst or familySourcePreference != lastFamilySourcePreference or overrideExactWithFamilyPreference != lastOverrideExactWithFamilyPreference
-if selectionNeedsUpdate
-    [nextSelectedLine, nextMatchedAsset] = f_find_matching_line(pastedData)
-    selectedLine := nextSelectedLine
-    matchedAsset := nextMatchedAsset
+// Recreate table if position changed
+if barstate.isfirst
+    dashTbl := table.new(f_position(dashPosition), 2, 14, bgcolor = color.new(color.black, dashBgOpacity), border_width = 0)
 
-needsRedraw = barstate.isfirst or isNewTradingSession or selectionNeedsUpdate or selectedLine != lastSelectedLine or matchedAsset != lastMatchedAsset
+selUpd = barstate.isfirst or familySourcePreference != lastFSP or overrideExactWithFamilyPreference != lastOE
+if selUpd
+    [nl, na2] = f_find_matching_line(pastedData)
+    selLine := nl
+    mAsset := na2
 
-if needsRedraw
-    f_clear_drawings(levelLines, levelLabels)
-    array.clear(labelColumns)
-    array.clear(labelColumnLastLevels)
-    line.delete(emUpperFill)
-    line.delete(emLowerFill)
-    linefill.delete(emBandFill)
-    line.delete(gfUpperFill)
-    line.delete(gfLowerFill)
-    linefill.delete(gfBandFill)
-    emUpperFill := na
-    emLowerFill := na
-    emBandFill := na
-    gfUpperFill := na
-    gfLowerFill := na
-    gfBandFill := na
-    planZeroGamma := na
-    planGammaFlipUpper := na
-    planGammaFlipLower := na
-    planGammaCliffUp := na
-    planGammaCliffDown := na
-    planCallWall := na
-    planCallWall0DTE := na
-    planPutWall0DTE := na
-    planLocalCallNode := na
-    planLocalPutNode := na
-    planDexCallNode := na
-    planDexPutNode := na
-    planHedgeWall := na
-    planMaxPain := na
-    planUpperEM := na
-    planLowerEM := na
+needsDraw = barstate.isfirst or isNewSession or selUpd or selLine != lastSL or mAsset != lastMA
 
-    if str.length(selectedLine) > 0
-        f_parse_levels(selectedLine, parsedPrices, parsedTitles)
+if needsDraw
+    f_clear_drawings(lvlLines, lvlLabels)
+    array.clear(lblCols)
+    array.clear(lblColLast)
+    line.delete(emUF)
+    line.delete(emLF)
+    linefill.delete(emBF)
+    line.delete(gfUF)
+    line.delete(gfLF)
+    linefill.delete(gfBF)
+    emUF := na
+    emLF := na
+    emBF := na
+    gfUF := na
+    gfLF := na
+    gfBF := na
+    pZG := na
+    pGFU := na
+    pGFL := na
+    pGCU := na
+    pGCD := na
+    pCW := na
+    pCW0 := na
+    pPW0 := na
+    pLCN := na
+    pLPN := na
+    pDCN := na
+    pDPN := na
+    pHW := na
+    pMP := na
+    pEU := na
+    pEL := na
+    pMAG := na
+    pPIN := na
 
-        selectedCanonical = f_canonical_symbol(matchedAsset)
-        primaryCanonical = f_canonical_symbol(f_primary_symbol())
-        selectedFamily = f_symbol_family_key(selectedCanonical)
-        chartFamily = f_symbol_family_key(primaryCanonical)
-        selectedIsFutures = f_is_overnight_futures(selectedCanonical)
-        chartIsFutures = f_is_overnight_futures(primaryCanonical)
+    if str.length(selLine) > 0
+        f_parse_levels(selLine, pPrices, pTitles)
 
-        if chartIsFutures and selectedFamily == chartFamily and not selectedIsFutures
-            anchorAsset = f_family_futures_anchor(chartFamily)
-            anchorLine = f_find_asset_line(pastedData, anchorAsset)
-            bool convertedToFutures = false
-            if str.length(anchorLine) > 0
-                refPrices = array.new_float()
-                refTitles = array.new_string()
-                f_parse_levels(anchorLine, refPrices, refTitles)
-                if array.size(refPrices) > 0 and array.size(parsedPrices) > 0
-                    sourceRef = array.get(parsedPrices, 0)
-                    anchorRef = array.get(refPrices, 0)
-                    if math.abs(sourceRef) > syminfo.mintick
-                        scale = anchorRef / sourceRef
-                        for idx = 0 to array.size(parsedPrices) - 1
-                            array.set(parsedPrices, idx, array.get(parsedPrices, idx) * scale)
-                        convertedToFutures := true
-                    if not convertedToFutures
-                        basis = anchorRef - sourceRef
-                        for idx = 0 to array.size(parsedPrices) - 1
-                            array.set(parsedPrices, idx, array.get(parsedPrices, idx) + basis)
-                        convertedToFutures := true
+        sC = f_canonical_symbol(mAsset)
+        pC = f_canonical_symbol(f_primary_symbol())
+        sF = f_symbol_family_key(sC)
+        cF = f_symbol_family_key(pC)
+        sFut = f_is_overnight_futures(sC)
+        cFut = f_is_overnight_futures(pC)
 
-            if not convertedToFutures and array.size(parsedPrices) > 0
-                sourceRef = array.get(parsedPrices, 0)
-                if math.abs(sourceRef) > syminfo.mintick
-                    fallbackScale = close / sourceRef
-                    for idx = 0 to array.size(parsedPrices) - 1
-                        array.set(parsedPrices, idx, array.get(parsedPrices, idx) * fallbackScale)
+        if cFut and sF == cF and not sFut
+            anc = f_family_futures_anchor(cF)
+            aLine = f_find_asset_line(pastedData, anc)
+            bool conv = false
+            if str.length(aLine) > 0
+                rP = array.new_float()
+                rT = array.new_string()
+                f_parse_levels(aLine, rP, rT)
+                if array.size(rP) > 0 and array.size(pPrices) > 0
+                    sR = array.get(pPrices, 0)
+                    aR = array.get(rP, 0)
+                    if math.abs(sR) > syminfo.mintick
+                        sc2 = aR / sR
+                        for i = 0 to array.size(pPrices) - 1
+                            array.set(pPrices, i, array.get(pPrices, i) * sc2)
+                        conv := true
+                    if not conv
+                        ba = aR - sR
+                        for i = 0 to array.size(pPrices) - 1
+                            array.set(pPrices, i, array.get(pPrices, i) + ba)
+                        conv := true
+            if not conv and array.size(pPrices) > 0
+                sR = array.get(pPrices, 0)
+                if math.abs(sR) > syminfo.mintick
+                    fs = close / sR
+                    for i = 0 to array.size(pPrices) - 1
+                        array.set(pPrices, i, array.get(pPrices, i) * fs)
 
-        float emUpperPrice = na
-        float emLowerPrice = na
-        float gammaFlipUpperPrice = na
-        float gammaFlipLowerPrice = na
+        float eUP = na
+        float eLP = na
+        float gUP = na
+        float gLP = na
+        uL = array.new_float()
+        uT = array.new_string()
+        uC = array.new_color()
+        uW = array.new_int()
+        uS = array.new_string()
 
-        uniqueLevels = array.new_float()
-        uniqueTitles = array.new_string()
-        uniqueColors = array.new_color()
-        uniqueWidths = array.new_int()
-        uniqueStyleKeys = array.new_string()
-
-        if array.size(parsedPrices) > 0
-            for idx = 0 to array.size(parsedPrices) - 1
-                level = array.get(parsedPrices, idx)
-                title = array.get(parsedTitles, idx)
-                levelColor = f_level_color(title)
-                levelStyle = f_level_style(title)
-                levelWidth = f_level_width(title)
-                shouldShowLevel = f_show_level(title)
-
-                if shouldShowLevel
-                    compactTitle = compactLabels ? f_compact_title(title) : title
-                    existingIndex = -1
-
-                    if mergeSamePriceLabels and array.size(uniqueLevels) > 0
-                        for u = 0 to array.size(uniqueLevels) - 1
-                            if f_is_same_price(level, array.get(uniqueLevels, u))
-                                existingIndex := u
+        if array.size(pPrices) > 0
+            for idx = 0 to array.size(pPrices) - 1
+                lv = array.get(pPrices, idx)
+                ti = array.get(pTitles, idx)
+                show = f_show_level(ti)
+                if show
+                    ct = compactLabels ? f_compact_title(ti) : ti
+                    ei = -1
+                    if mergeSamePriceLabels and array.size(uL) > 0
+                        for u = 0 to array.size(uL) - 1
+                            if f_is_same_price(lv, array.get(uL, u))
+                                ei := u
                                 break
-
-                    if existingIndex >= 0
-                        mergedTitle = array.get(uniqueTitles, existingIndex)
-                        appendToken = compactTitle
-                        newMerged = f_has_merged_token(mergedTitle, appendToken) ? mergedTitle : mergedTitle + " + " + appendToken
-                        array.set(uniqueTitles, existingIndex, newMerged)
+                    if ei >= 0
+                        mt = array.get(uT, ei)
+                        nm = f_has_merged_token(mt, ct) ? mt : mt + " + " + ct
+                        array.set(uT, ei, nm)
                     else
-                        array.push(uniqueLevels, level)
-                        array.push(uniqueTitles, compactTitle)
-                        array.push(uniqueColors, levelColor)
-                        array.push(uniqueWidths, levelWidth)
-                        styleKey = str.contains(f_norm(title), "0DTE") ? lineStyle0DTEInp : (str.contains(f_norm(title), "LOCAL") ? lineStyleSecondaryInp : lineStylePrimaryInp)
-                        array.push(uniqueStyleKeys, styleKey)
+                        array.push(uL, lv)
+                        array.push(uT, ct)
+                        array.push(uC, f_level_color(ti))
+                        array.push(uW, f_level_width(ti))
+                        sk = str.contains(f_norm(ti), "0DTE") ? lineStyle0DTEInp : str.contains(f_norm(ti), "LOCAL") ? lineStyleSecondaryInp : lineStylePrimaryInp
+                        array.push(uS, sk)
 
-                // ── Extract ALL narrative variables ─────────────────
-                titleNorm = f_norm(title)
-                if titleNorm == "UPPER EM"
-                    emUpperPrice := level
-                    planUpperEM := level
-                if titleNorm == "LOWER EM"
-                    emLowerPrice := level
-                    planLowerEM := level
-                if titleNorm == "ZERO GAMMA"
-                    planZeroGamma := level
-                if titleNorm == "GAMMA FLIP UPPER"
-                    gammaFlipUpperPrice := level
-                    planGammaFlipUpper := level
-                if titleNorm == "GAMMA FLIP LOWER"
-                    gammaFlipLowerPrice := level
-                    planGammaFlipLower := level
-                if titleNorm == "GAMMA CLIFF UP"
-                    planGammaCliffUp := level
-                if titleNorm == "GAMMA CLIFF DOWN"
-                    planGammaCliffDown := level
-                if titleNorm == "ABSOLUTE CALL WALL"
-                    planCallWall := level
-                if titleNorm == "0DTE CALL WALL"
-                    planCallWall0DTE := level
-                if titleNorm == "0DTE PUT WALL"
-                    planPutWall0DTE := level
-                if titleNorm == "LOCAL CALL NODE"
-                    planLocalCallNode := level
-                if titleNorm == "LOCAL PUT NODE"
-                    planLocalPutNode := level
-                if titleNorm == "DEX CALL NODE"
-                    planDexCallNode := level
-                if titleNorm == "DEX PUT NODE"
-                    planDexPutNode := level
-                if titleNorm == "HEDGE WALL"
-                    planHedgeWall := level
-                if titleNorm == "MAX PAIN"
-                    planMaxPain := level
+                tn = f_norm(ti)
+                if tn == "UPPER EM"
+                    eUP := lv
+                    pEU := lv
+                if tn == "LOWER EM"
+                    eLP := lv
+                    pEL := lv
+                if tn == "ZERO GAMMA"
+                    pZG := lv
+                if tn == "GAMMA FLIP UPPER"
+                    gUP := lv
+                    pGFU := lv
+                if tn == "GAMMA FLIP LOWER"
+                    gLP := lv
+                    pGFL := lv
+                if tn == "GAMMA CLIFF UP"
+                    pGCU := lv
+                if tn == "GAMMA CLIFF DOWN"
+                    pGCD := lv
+                if tn == "ABSOLUTE CALL WALL"
+                    pCW := lv
+                if tn == "0DTE CALL WALL"
+                    pCW0 := lv
+                if tn == "0DTE PUT WALL"
+                    pPW0 := lv
+                if tn == "LOCAL CALL NODE"
+                    pLCN := lv
+                if tn == "LOCAL PUT NODE"
+                    pLPN := lv
+                if tn == "DEX CALL NODE"
+                    pDCN := lv
+                if tn == "DEX PUT NODE"
+                    pDPN := lv
+                if tn == "HEDGE WALL"
+                    pHW := lv
+                if tn == "MAX PAIN"
+                    pMP := lv
+                if tn == "GAMMA MAGNET"
+                    pMAG := lv
+                if tn == "PIN STRIKE"
+                    pPIN := lv
 
-        if array.size(uniqueLevels) > 0
-            for u = 0 to array.size(uniqueLevels) - 1
-                drawLevel = array.get(uniqueLevels, u)
-                drawColor = array.get(uniqueColors, u)
-                drawWidth = array.get(uniqueWidths, u)
-                drawStyle = f_line_style(array.get(uniqueStyleKeys, u))
-                drawTitle = array.get(uniqueTitles, u)
-
-                levelLine = line.new(sessionStartBar, drawLevel, bar_index + 1, drawLevel, color = drawColor, width = drawWidth, style = drawStyle, extend = extend.none)
-                array.push(levelLines, levelLine)
-
+        if array.size(uL) > 0
+            for u = 0 to array.size(uL) - 1
+                dl = array.get(uL, u)
+                dc = array.get(uC, u)
+                dw = array.get(uW, u)
+                ds = f_line_style(array.get(uS, u))
+                dt = array.get(uT, u)
+                ll = line.new(sessionStartBar, dl, bar_index + 1, dl, color = dc, width = dw, style = ds, extend = extend.none)
+                array.push(lvlLines, ll)
                 if showLabels
-                    minGap = syminfo.mintick * minLabelGapTicks
-                    labelCol = f_assign_label_column(drawLevel, labelColumnLastLevels, minGap, maxLabelColumns, labelCollisionMode)
-                    if labelCol >= 0
-                        labelX = bar_index + labelOffset + (labelCol * columnStepBars)
-                        displayText = showPriceInLabel ? drawTitle + "  " + str.tostring(drawLevel, "#.##") : drawTitle
-                        levelLabel = label.new(labelX, drawLevel, displayText, textcolor = drawColor, color = color.new(color.black, labelBgOpacity), style = label.style_label_left, size = labelSize)
-                        array.push(levelLabels, levelLabel)
-                        array.push(labelColumns, labelCol)
+                    mg = syminfo.mintick * minLabelGapTicks
+                    lc = f_assign_label_column(dl, lblColLast, mg, maxLabelColumns, labelCollisionMode)
+                    if lc >= 0
+                        lx = bar_index + labelOffset + (lc * columnStepBars)
+                        txt = showPriceInLabel ? dt + "  " + str.tostring(dl, "#.##") : dt
+                        lb = label.new(lx, dl, txt, textcolor = dc, color = color.new(color.black, labelBgOpacity), style = label.style_label_left, size = lblSize)
+                        array.push(lvlLabels, lb)
+                        array.push(lblCols, lc)
 
-        if showEmFill and not na(emUpperPrice) and not na(emLowerPrice)
-            emUpperFill := line.new(sessionStartBar, emUpperPrice, bar_index + 1, emUpperPrice, color = color.new(color.aqua, 95), width = 1, extend = extend.none)
-            emLowerFill := line.new(sessionStartBar, emLowerPrice, bar_index + 1, emLowerPrice, color = color.new(color.aqua, 95), width = 1, extend = extend.none)
-            emBandFill := linefill.new(emUpperFill, emLowerFill, colEmFill)
+        if showEmFill and not na(eUP) and not na(eLP)
+            emUF := line.new(sessionStartBar, eUP, bar_index + 1, eUP, color = color.new(color.aqua, 95), width = 1)
+            emLF := line.new(sessionStartBar, eLP, bar_index + 1, eLP, color = color.new(color.aqua, 95), width = 1)
+            emBF := linefill.new(emUF, emLF, colEmFill)
+        if showGammaFlipLevels and not na(gUP) and not na(gLP)
+            gfUF := line.new(sessionStartBar, gUP, bar_index + 1, gUP, color = color.new(color.yellow, 95), width = 1)
+            gfLF := line.new(sessionStartBar, gLP, bar_index + 1, gLP, color = color.new(color.yellow, 95), width = 1)
+            gfBF := linefill.new(gfUF, gfLF, colGammaFlipFill)
 
-        if showGammaFlipLevels and not na(gammaFlipUpperPrice) and not na(gammaFlipLowerPrice)
-            gfUpperFill := line.new(sessionStartBar, gammaFlipUpperPrice, bar_index + 1, gammaFlipUpperPrice, color = color.new(color.yellow, 95), width = 1, extend = extend.none)
-            gfLowerFill := line.new(sessionStartBar, gammaFlipLowerPrice, bar_index + 1, gammaFlipLowerPrice, color = color.new(color.yellow, 95), width = 1, extend = extend.none)
-            gfBandFill := linefill.new(gfUpperFill, gfLowerFill, colGammaFlipFill)
+    lastSL := selLine
+    lastMA := mAsset
+    lastFSP := familySourcePreference
+    lastOE := overrideExactWithFamilyPreference
 
-    lastSelectedLine := selectedLine
-    lastMatchedAsset := matchedAsset
-    lastFamilySourcePreference := familySourcePreference
-    lastOverrideExactWithFamilyPreference := overrideExactWithFamilyPreference
+// ── Extend lines ──
+if array.size(lvlLines) > 0
+    for i = 0 to array.size(lvlLines) - 1
+        line.set_x2(array.get(lvlLines, i), bar_index)
+if not na(emUF)
+    line.set_x2(emUF, bar_index)
+if not na(emLF)
+    line.set_x2(emLF, bar_index)
+if not na(gfUF)
+    line.set_x2(gfUF, bar_index)
+if not na(gfLF)
+    line.set_x2(gfLF, bar_index)
+if array.size(lvlLabels) > 0
+    for i = 0 to array.size(lvlLabels) - 1
+        c = i < array.size(lblCols) ? array.get(lblCols, i) : 0
+        label.set_x(array.get(lvlLabels, i), bar_index + labelOffset + (c * columnStepBars))
 
-if array.size(levelLines) > 0
-    for idx = 0 to array.size(levelLines) - 1
-        line.set_x2(array.get(levelLines, idx), bar_index)
+// ═══════════════════════════════════════════════════════════════════════
+// UNIFIED DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════
+if barstate.islast and showDashboard and not na(dashTbl)
+    // ── Derived metrics ──
+    emV = not na(pEU) and not na(pEL) ? (pEU - pEL) / 2.0 : na
+    wSep = not na(pCW) and not na(pPW0) ? math.abs(pCW - pPW0) : na
+    tight = not na(wSep) and not na(emV) and emV > 0 ? wSep < emV : false
+    regime = tight ? "COILED / PINNED" : "TRENDING / BATTLE"
+    lClr = tight ? color.yellow : color.lime
+    lE = tight ? "🟡" : "🟢"
 
-if not na(emUpperFill)
-    line.set_x2(emUpperFill, bar_index)
-if not na(emLowerFill)
-    line.set_x2(emLowerFill, bar_index)
-if not na(gfUpperFill)
-    line.set_x2(gfUpperFill, bar_index)
-if not na(gfLowerFill)
-    line.set_x2(gfLowerFill, bar_index)
+    // ── Directional bias: price vs magnet ──
+    biasScore = 0
+    if not na(pMAG) and close > pMAG
+        biasScore -= 1
+    if not na(pMAG) and close < pMAG
+        biasScore += 1
+    // Put wall below call wall = normal; if most gamma is put-side, bearish
+    if not na(pPW0) and not na(pCW) and pPW0 < pCW
+        biasScore -= 1
+    biasArrow = biasScore <= -1 ? " ↓" : biasScore >= 1 ? " ↑" : " ↔"
+    biasLabel = biasScore <= -1 ? "BEARISH" : biasScore >= 1 ? "BULLISH" : "NEUTRAL"
+    biasClr = biasScore <= -1 ? color.red : biasScore >= 1 ? color.lime : color.gray
 
-if array.size(levelLabels) > 0
-    for idx = 0 to array.size(levelLabels) - 1
-        col = idx < array.size(labelColumns) ? array.get(labelColumns, idx) : 0
-        labelX = bar_index + labelOffset + (col * columnStepBars)
-        label.set_x(array.get(levelLabels, idx), labelX)
+    // ── Proximity triggers ──
+    emV2 = not na(emV) ? emV : 50.0
+    thr = emV2 * 3.0
+    sTrig = f_best_short_trigger(close, thr, pGFL, pPW0, pLPN, pHW, pZG)
+    lTrig = f_best_long_trigger(close, thr, pCW, pGFU, pCW0, pLCN, pZG)
+    sTgt = f_nearest_below(sTrig, pPW0, pHW, pEL)
+    sInv = f_nearest_above(sTrig, pCW, pGFU, pEU)
+    lTgt = f_nearest_above(lTrig, pMP, pEU, pGFU)
+    lInv = f_nearest_below(lTrig, pZG, pGFL, pPW0)
 
-if barstate.islast and showStatusTable
     primary = f_primary_symbol()
-    resolved = str.length(matchedAsset) > 0 ? matchedAsset : "NO MATCH"
-    statusColor = str.length(matchedAsset) > 0 ? color.new(color.lime, 0) : color.new(color.red, 0)
-    modeText = f_is_overnight_futures(primary) ? "Globex Day" : "Calendar Day"
-    table.cell(statusTable, 0, 0, "Chart: " + primary + " | " + modeText, text_color = color.white)
-    table.cell(statusTable, 0, 1, "Loaded: " + resolved, text_color = statusColor)
-if barstate.islast and not showStatusTable
-    table.clear(statusTable, 0, 0, 0, 1)
+    resolved = str.length(mAsset) > 0 ? mAsset : "—"
+    modeText = f_is_overnight_futures(primary) ? "Globex" : "Calendar"
 
-if barstate.islast and showNarrativeTable
-    // ── Triggers: match Python's first_level fallback chain ────
-    shortTrigger = f_pick(planZeroGamma, planGammaFlipLower, planCallWall)
-    longTrigger = f_pick(planCallWall, planGammaFlipUpper, planZeroGamma)
+    // Row  0: Header
+    table.cell(dashTbl, 0, 0, primary + " | " + modeText, text_color = color.white, text_size = dashSize)
+    table.cell(dashTbl, 1, 0, "Loaded: " + resolved, text_color = str.length(mAsset) > 0 ? color.lime : color.red, text_size = dashSize)
+    // Row  1: Regime + Direction
+    table.cell(dashTbl, 0, 1, "REGIME", text_color = color.gray, text_size = dashSize)
+    table.cell(dashTbl, 1, 1, lE + " " + regime + biasArrow + " " + biasLabel, text_color = biasClr, text_size = dashSize)
+    // Row  2: Market structure
+    table.cell(dashTbl, 0, 2, "MAGNET", text_color = color.gray, text_size = dashSize)
+    table.cell(dashTbl, 1, 2, f_num(pMAG), text_color = colGammaMagnet, text_size = dashSize)
+    // Row  3: Pin
+    table.cell(dashTbl, 0, 3, "PIN", text_color = color.gray, text_size = dashSize)
+    table.cell(dashTbl, 1, 3, f_num(pPIN), text_color = colPinStrike, text_size = dashSize)
+    // Row  4: Separation + EM
+    table.cell(dashTbl, 0, 4, "SEP | EM±", text_color = color.gray, text_size = dashSize)
+    table.cell(dashTbl, 1, 4, f_num(wSep) + " | " + f_num(emV), text_color = color.white, text_size = dashSize)
+    // Row  5: ZG
+    table.cell(dashTbl, 0, 5, "ZERO γ", text_color = color.gray, text_size = dashSize)
+    table.cell(dashTbl, 1, 5, f_num(pZG), text_color = colZeroGamma, text_size = dashSize)
+    // Row  6: Cliffs
+    table.cell(dashTbl, 0, 6, "CLIFFS", text_color = color.gray, text_size = dashSize)
+    table.cell(dashTbl, 1, 6, "↓" + f_num(pGCD) + " | ↑" + f_num(pGCU), text_color = color.teal, text_size = dashSize)
+    // Row  7: Separator
+    table.cell(dashTbl, 0, 7, "", text_size = size.tiny)
+    table.cell(dashTbl, 1, 7, "", text_size = size.tiny)
+    // Row  8: Narrative header
+    table.cell(dashTbl, 0, 8, "PLAN", text_color = color.white, text_size = dashSize)
+    dexInfo = ""
+    if not na(pDPN) or not na(pDCN)
+        dexInfo := "DEX " + f_num(pDPN) + "/" + f_num(pDCN)
+    table.cell(dashTbl, 1, 8, dexInfo, text_color = color.white, text_size = dashSize)
+    // Row  9: Short
+    sZ = ""
+    if not na(pGCD)
+        sZ := "GC↓" + f_num(pGCD) + " "
+    if not na(pDPN)
+        sZ := sZ + "DEX " + f_num(pDPN)
+    table.cell(dashTbl, 0, 9, "SHORT", text_color = color.red, text_size = dashSize)
+    table.cell(dashTbl, 1, 9, "< " + f_num(sTrig) + " → " + f_num(sTgt) + " inv > " + f_num(sInv), text_color = color.red, text_size = dashSize)
+    // Row 10: Short zones
+    table.cell(dashTbl, 0, 10, "", text_size = size.tiny)
+    table.cell(dashTbl, 1, 10, str.length(sZ) > 0 ? sZ : "", text_color = color.new(color.red, 40), text_size = dashSize)
+    // Row 11: Long
+    lZ = ""
+    if not na(pGCU)
+        lZ := "GC↑" + f_num(pGCU) + " "
+    if not na(pDCN)
+        lZ := lZ + "DEX " + f_num(pDCN)
+    table.cell(dashTbl, 0, 11, "LONG", text_color = color.lime, text_size = dashSize)
+    table.cell(dashTbl, 1, 11, "> " + f_num(lTrig) + " → " + f_num(lTgt) + " inv < " + f_num(lInv), text_color = color.lime, text_size = dashSize)
+    // Row 12: Long zones
+    table.cell(dashTbl, 0, 12, "", text_size = size.tiny)
+    table.cell(dashTbl, 1, 12, str.length(lZ) > 0 ? lZ : "", text_color = color.new(color.lime, 40), text_size = dashSize)
+    // Row 13: EM
+    table.cell(dashTbl, 0, 13, "EM", text_color = color.aqua, text_size = dashSize)
+    table.cell(dashTbl, 1, 13, f_num(pEL) + " ↔ " + f_num(pEU), text_color = color.aqua, text_size = dashSize)
 
-    // ── Targets: match Python's nearest_below / nearest_above ──
-    shortTarget = f_nearest_below(shortTrigger, planPutWall0DTE, planHedgeWall, planLowerEM)
-    shortInvalid = f_nearest_above(shortTrigger, planCallWall, planGammaFlipUpper, planUpperEM)
-    longTarget = f_nearest_above(longTrigger, planMaxPain, planUpperEM, planGammaFlipUpper)
-    longInvalid = f_nearest_below(longTrigger, planZeroGamma, planGammaFlipLower, planPutWall0DTE)
-
-    // ── Watch line includes DEX nodes ──────────────────────────
-    watchParts = "Watch ZG " + f_num(planZeroGamma)
-    if not na(planGammaFlipLower) and not na(planGammaFlipUpper)
-        watchParts := watchParts + " | GF " + f_num(planGammaFlipLower) + "↔" + f_num(planGammaFlipUpper)
-    if not na(planDexPutNode) or not na(planDexCallNode)
-        watchParts := watchParts + " | DEX " + f_num(planDexPutNode) + "/" + f_num(planDexCallNode)
-
-    // ── Reaction zones: Gamma Cliffs + DEX nodes ───────────────
-    shortZones = ""
-    if not na(planGammaCliffDown)
-        shortZones := shortZones + "GC↓ " + f_num(planGammaCliffDown) + " "
-    if not na(planDexPutNode)
-        shortZones := shortZones + "DEX " + f_num(planDexPutNode)
-
-    longZones = ""
-    if not na(planGammaCliffUp)
-        longZones := longZones + "GC↑ " + f_num(planGammaCliffUp) + " "
-    if not na(planDexCallNode)
-        longZones := longZones + "DEX " + f_num(planDexCallNode)
-
-    shortText = "Short: < " + f_num(shortTrigger) + " → " + f_num(shortTarget) + " | inv > " + f_num(shortInvalid)
-    if str.length(shortZones) > 0
-        shortText := shortText + " | " + shortZones
-    longText = "Long: > " + f_num(longTrigger) + " → " + f_num(longTarget) + " | inv < " + f_num(longInvalid)
-    if str.length(longZones) > 0
-        longText := longText + " | " + longZones
-
-    table.cell(narrativeTable, 0, 0, "Narrative Plan", text_color = color.white)
-    table.cell(narrativeTable, 0, 1, watchParts, text_color = color.new(color.white, 0))
-    table.cell(narrativeTable, 0, 2, shortText, text_color = color.new(color.red, 0))
-    table.cell(narrativeTable, 0, 3, longText, text_color = color.new(color.lime, 0))
-    table.cell(narrativeTable, 0, 4, "EM: " + f_num(planLowerEM) + " ↔ " + f_num(planUpperEM), text_color = color.new(color.aqua, 0))
-    // Row 5: Cliff zones quick reference
-    cliffText = "Cliffs: ↓" + f_num(planGammaCliffDown) + " | ↑" + f_num(planGammaCliffUp)
-    table.cell(narrativeTable, 0, 5, cliffText, text_color = color.new(color.teal, 0))
-
-if barstate.islast and not showNarrativeTable
-    table.clear(narrativeTable, 0, 0, 0, 5)
+if barstate.islast and not showDashboard and not na(dashTbl)
+    table.clear(dashTbl, 0, 0, 1, 13)

@@ -64,6 +64,7 @@ class HasLevels(Protocol):
     pin_odds: float
     wall_separation: float | None
     regime_label: str
+    directional_bias: str
     call_gamma_total: float
     put_gamma_total: float
     net_vanna_exposure: float
@@ -486,13 +487,36 @@ def build_coaches_note(tag: str, levels: HasLevels) -> str:
     }
     regime_text = regime_descriptions.get(levels.regime_label, regime_descriptions["NEUTRAL"])
 
+    # ── Directional bias ────────────────────────────────────────────────
+    bias = levels.directional_bias
+    bias_arrow = "↓" if bias == "BEARISH" else "↑" if bias == "BULLISH" else "↔"
+    bias_emoji = "🔴" if bias == "BEARISH" else "🟢" if bias == "BULLISH" else "⚪"
+
+    bias_text = ""
+    if bias == "BEARISH":
+        bias_text = (
+            "Directional lean is BEARISH — gamma magnet is below price, put gamma dominates, "
+            "and/or vanna favors downside. Look for short setups first."
+        )
+    elif bias == "BULLISH":
+        bias_text = (
+            "Directional lean is BULLISH — gamma magnet is above price, call gamma dominates, "
+            "and/or vanna favors upside. Look for long setups first."
+        )
+    else:
+        bias_text = (
+            "Directional lean is NEUTRAL — mixed signals. No strong directional edge from "
+            "options positioning. Let price action lead."
+        )
+
     # ── Key levels summary ──────────────────────────────────────────────
     parts: list[str] = []
 
     parts.append(f"{light_emoji} {light_color}: {light_reason}")
     parts.append("")
-    parts.append(f"**{tag} — {levels.regime_label}** (GEX: {levels.total_gex:,.0f})")
+    parts.append(f"**{tag} — {levels.regime_label} {bias_arrow}** (GEX: {levels.total_gex:,.0f}) {bias_emoji} {bias}")
     parts.append(regime_text)
+    parts.append(bias_text)
 
     # Wall structure
     if levels.call_wall is not None and levels.put_wall is not None:

@@ -37,6 +37,7 @@ class TickerSnapshot:
     total_gex: float
     gex_regime: str              # "POSITIVE" or "NEGATIVE"
     regime_label: str            # "PINNED", "TRENDING", "COILED", "BATTLE_ZONE", "NEUTRAL"
+    directional_bias: str        # "BEARISH", "BULLISH", "NEUTRAL"
     gamma_magnet: float | None
     pin_strike: float | None
     pin_odds: float
@@ -126,6 +127,7 @@ def build_current_state(
             total_gex=tl.total_gex,
             gex_regime=tl.gex_regime,
             regime_label=tl.regime_label,
+            directional_bias=tl.directional_bias,
             gamma_magnet=tl.gamma_magnet,
             pin_strike=tl.pin_strike,
             pin_odds=tl.pin_odds,
@@ -145,6 +147,7 @@ def build_current_state(
                 total_gex=levels.total_gex,
                 gex_regime=levels.gex_regime,
                 regime_label=levels.regime_label,
+                directional_bias=levels.directional_bias,
                 gamma_magnet=levels.gamma_magnet,
                 pin_strike=levels.pin_strike,
                 pin_odds=levels.pin_odds,

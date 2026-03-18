@@ -89,6 +89,7 @@ class DealerLevels:
     pin_odds: float                     # 0.0–1.0, how concentrated gamma is at pin_strike
     wall_separation: float | None       # call_wall − put_wall in points (range character)
     regime_label: str                   # Human-readable: PINNED, TRENDING, COILED, BATTLE_ZONE
+    directional_bias: str               # BEARISH, BULLISH, or NEUTRAL
     call_gamma_total: float             # Aggregate call-side gamma (for regime decomposition)
     put_gamma_total: float              # Aggregate put-side gamma
     net_vanna_exposure: float           # Signed net vanna: negative → IV↓ = bearish pressure
@@ -577,36 +578,71 @@ def _classify_regime(
     separation: float | None,
     em_value: float,
     spot: float,
-) -> str:
+    gamma_magnet: float | None,
+    put_gamma_total: float,
+    call_gamma_total: float,
+    net_vanna: float,
+) -> tuple[str, str]:
     """
-    Combine GEX sign/magnitude and wall separation into a human-readable
-    regime label that tells the trader what *kind* of day to expect.
+    Combine GEX sign/magnitude, wall separation, and directional signals
+    into a regime label + directional bias.
 
-    Labels
-    ------
-    PINNED       Positive GEX + tight separation → mean-revert, fade walls.
-    TRENDING     Negative GEX + wide separation  → trend-follow, trail stops.
-    COILED       Negative GEX + tight separation  → compressed spring, breakout
-                 imminent.  Hardest environment — wait for confirmation.
-    BATTLE_ZONE  Positive GEX + wide separation   → big swings between walls,
-                 trade wall-to-wall.
-    NEUTRAL      When data is too thin to classify.
+    Returns
+    -------
+    tuple[str, str]
+        (regime_label, directional_bias)
+        regime_label: PINNED, TRENDING, COILED, BATTLE_ZONE, NEUTRAL
+        directional_bias: "BEARISH", "BULLISH", or "NEUTRAL"
     """
     if separation is None or em_value <= 0:
-        return "NEUTRAL"
+        return "NEUTRAL", "NEUTRAL"
 
     positive_gex = total_gex >= 0
-    # "Tight" = separation less than 1× EM; "wide" = more than 1× EM.
-    # EM is the natural yardstick for what constitutes a big vs small range.
     tight = separation < em_value
 
     if positive_gex and tight:
-        return "PINNED"
-    if positive_gex and not tight:
-        return "BATTLE_ZONE"
-    if not positive_gex and tight:
-        return "COILED"
-    return "TRENDING"
+        regime = "PINNED"
+    elif positive_gex and not tight:
+        regime = "BATTLE_ZONE"
+    elif not positive_gex and tight:
+        regime = "COILED"
+    else:
+        regime = "TRENDING"
+
+    # ── Directional bias scoring ──────────────────────────────────────
+    # Each signal contributes +1 (bullish) or -1 (bearish).
+    bias_score = 0
+
+    # 1. Price vs gamma magnet: magnet below price = bearish pull
+    if gamma_magnet is not None and spot > 0:
+        if spot > gamma_magnet:
+            bias_score -= 1   # gravity pulls down
+        elif spot < gamma_magnet:
+            bias_score += 1   # gravity pulls up
+
+    # 2. Put gamma dominance = bearish; call gamma dominance = bullish
+    total_gamma = call_gamma_total + put_gamma_total
+    if total_gamma > 0:
+        put_ratio = put_gamma_total / total_gamma
+        if put_ratio > 0.60:
+            bias_score -= 1   # puts dominate → bearish
+        elif put_ratio < 0.40:
+            bias_score += 1   # calls dominate → bullish
+
+    # 3. Net vanna: negative = IV drop is bearish
+    if net_vanna < 0:
+        bias_score -= 1
+    elif net_vanna > 0:
+        bias_score += 1
+
+    if bias_score <= -2:
+        bias = "BEARISH"
+    elif bias_score >= 2:
+        bias = "BULLISH"
+    else:
+        bias = "NEUTRAL"
+
+    return regime, bias
 
 
 def _net_vanna_exposure(
@@ -694,17 +730,21 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
     separation = _wall_separation(call_wall, put_wall)
     call_gamma_total = round(sum(row.call_gex for row in strikes), 2)
     put_gamma_total = round(sum(row.put_gex for row in strikes), 2)
-    regime_label = _classify_regime(total_gex, separation, em_value, spot)
     net_vanna = _net_vanna_exposure(chain.calls, chain.puts)
+    regime_label, directional_bias = _classify_regime(
+        total_gex, separation, em_value, spot,
+        gamma_magnet, put_gamma_total, call_gamma_total, net_vanna,
+    )
 
     log.info(
-        "%s levels: spot=%.2f gex=%.0f regime=%s(%s) zg=%s cw=%s pw=%s "
+        "%s levels: spot=%.2f gex=%.0f regime=%s(%s %s) zg=%s cw=%s pw=%s "
         "mp=%s em=±%.2f magnet=%s pin=%s(%.0f%%) sep=%s vanna=%.0f",
         ticker,
         spot,
         total_gex,
         gex_regime,
         regime_label,
+        directional_bias,
         zero_gamma,
         call_wall,
         put_wall,
@@ -765,6 +805,7 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
         pin_odds=pin_odds,
         wall_separation=separation,
         regime_label=regime_label,
+        directional_bias=directional_bias,
         call_gamma_total=call_gamma_total,
         put_gamma_total=put_gamma_total,
         net_vanna_exposure=net_vanna,
@@ -842,6 +883,7 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         pin_odds=levels.pin_odds,
         wall_separation=round(levels.wall_separation * scale, 2) if levels.wall_separation is not None else None,
         regime_label=levels.regime_label,
+        directional_bias=levels.directional_bias,
         call_gamma_total=levels.call_gamma_total,
         put_gamma_total=levels.put_gamma_total,
         net_vanna_exposure=levels.net_vanna_exposure,

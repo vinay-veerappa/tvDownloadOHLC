@@ -129,7 +129,7 @@ def _detailed_block(tl: TranslatedLevels) -> list[str]:
     tag = futures_tag(tl.futures_symbol)
     return [
         f"── {tl.cash_ticker} → {tag} {'─' * 40}",
-        f"  Regime             : {tl.gex_regime} GEX — {tl.regime_label}  (total GEX = {tl.total_gex:,.0f})",
+        f"  Regime             : {tl.gex_regime} GEX — {tl.regime_label} ({tl.directional_bias})  (total GEX = {tl.total_gex:,.0f})",
         f"  Cash Spot          : {tl.cash_spot:,.2f}",
         f"  {tag} Futures       : {tl.futures_price:,.2f}  "
         f"({'basis: ' + f'{tl.basis_spread:+.2f}' if tl.translation_mode == 'additive' else 'ratio: ' + f'{tl.basis_ratio:.2f}×'})",
@@ -138,7 +138,7 @@ def _detailed_block(tl: TranslatedLevels) -> list[str]:
         f"  Gamma Magnet       : {fmt(tl.gamma_magnet)}",
         f"  Pin Strike         : {fmt(tl.pin_strike)}  ({tl.pin_odds:.0%} concentration)",
         f"  Wall Separation    : {fmt(tl.wall_separation)} pts",
-        f"  Regime             : {tl.regime_label}",
+        f"  Regime             : {tl.regime_label} — {tl.directional_bias}",
         f"  Call Gamma Total   : {tl.call_gamma_total:,.0f}",
         f"  Put Gamma Total    : {tl.put_gamma_total:,.0f}",
         f"  Net Vanna Exposure : {tl.net_vanna_exposure:,.0f}",

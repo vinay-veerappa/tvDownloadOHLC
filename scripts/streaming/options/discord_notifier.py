@@ -113,11 +113,13 @@ def _build_embed(tl: TranslatedLevels, run_label: str) -> dict[str, Any]:
     pin_pct = f"{tl.pin_odds:.0%}" if tl.pin_odds else "N/A"
     light_color, _light_reason = traffic_light(tl)
     light_emoji = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴"}[light_color]
+    bias_arrow = "↓" if tl.directional_bias == "BEARISH" else "↑" if tl.directional_bias == "BULLISH" else "↔"
+    bias_color = "🔴" if tl.directional_bias == "BEARISH" else "🟢" if tl.directional_bias == "BULLISH" else "⚪"
 
     fields: list[dict[str, Any]] = [
         {
             "name": "Regime",
-            "value": f"{light_emoji} {light_color}  |  {_regime_line(tl.gex_regime)}  {regime_emoji} **{tl.regime_label}**",
+            "value": f"{light_emoji} {light_color}  |  {_regime_line(tl.gex_regime)}  {regime_emoji} **{tl.regime_label} {bias_arrow}** {bias_color} {tl.directional_bias}",
             "inline": False,
         },
         # ── Prices ──────────────────────────────────────────────

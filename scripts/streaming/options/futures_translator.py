@@ -80,6 +80,7 @@ class TranslatedLevels:
     pin_odds: float
     wall_separation: float | None
     regime_label: str
+    directional_bias: str
     call_gamma_total: float
     put_gamma_total: float
     net_vanna_exposure: float
@@ -179,6 +180,7 @@ def translate_to_futures(levels: DealerLevels, futures: FuturesQuote) -> Transla
             else levels.wall_separation
         ),
         regime_label=levels.regime_label,
+        directional_bias=levels.directional_bias,
         call_gamma_total=levels.call_gamma_total,
         put_gamma_total=levels.put_gamma_total,
         net_vanna_exposure=levels.net_vanna_exposure,
