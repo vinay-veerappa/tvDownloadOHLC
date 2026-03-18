@@ -19,13 +19,11 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-import requests
 import schwab
 
 try:
@@ -99,9 +97,7 @@ def _best_mark(opt: dict[str, Any]) -> float:
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
-        result = float(value) if value is not None else default
-        # Treat NaN/Inf as missing — callers should not receive poisoned floats.
-        return result if math.isfinite(result) else default
+        return float(value) if value is not None else default
     except (TypeError, ValueError):
         return default
 
@@ -111,13 +107,8 @@ def _parse_contract(raw: dict[str, Any], contract_type: str) -> OptionContract |
     try:
         exp_str = raw.get("expirationDate", "")
         exp_date = date.fromisoformat(exp_str[:10]) if exp_str else date.today()
-
-        # Schwab sends volatility as a percentage (e.g. 20.0 → 0.20).
-        # It can also be NaN for illiquid contracts — _safe_float handles both.
         iv_raw = raw.get("volatility")
-        iv_pct = _safe_float(iv_raw)
-        iv = iv_pct / 100.0 if iv_pct != 0.0 else 0.0
-
+        iv = float(iv_raw) / 100.0 if iv_raw is not None else 0.0
         return OptionContract(
             symbol=raw.get("symbol", ""),
             strike=_safe_float(raw.get("strikePrice")),
@@ -137,9 +128,7 @@ def _parse_contract(raw: dict[str, Any], contract_type: str) -> OptionContract |
             dte=int(raw.get("daysToExpiration") or 0),
         )
     except Exception as exc:
-        # Log at WARNING so systematic parse failures (e.g. API field renames)
-        # are visible rather than silently swallowed at DEBUG level.
-        log.warning("Contract parse error (%s): %s", raw.get("symbol", "?"), exc)
+        log.debug("Contract parse error (%s): %s", raw.get("symbol", "?"), exc)
         return None
 
 
@@ -191,9 +180,7 @@ def _select_expiration_keys(
         # Prefer nearest non-negative DTE first; fallback to absolute nearest.
         non_negative = [p for p in parsed if p[2] >= 0]
         pool = non_negative if non_negative else parsed
-        # Use a default argument to bind `target` at loop time, avoiding
-        # late-binding closure issues if this lambda is ever stored/deferred.
-        best = min(pool, key=lambda p, t=target: (abs(p[2] - t), p[2], p[1]))
+        best = min(pool, key=lambda p: (abs(p[2] - target), p[2], p[1]))
         selected.add(best[0])
 
     # Ensure at least one expiry exists even if targets are empty.
@@ -275,12 +262,8 @@ def fetch_option_chain_data(
 
     Raises
     ------
-    ValueError    : If dte_targets is empty.
     RuntimeError  : On HTTP error, rate-limit, or non-SUCCESS API response.
     """
-    if not dte_targets:
-        raise ValueError("dte_targets must not be empty.")
-
     api_sym = _schwab_symbol(symbol)
     today = date.today()
     # Query a wide enough window so weekend/overnight runs still return expiries.
@@ -309,18 +292,11 @@ def fetch_option_chain_data(
             f"Option chain status='{status}' for {symbol} ({api_sym})"
         )
 
-    # Extract spot price from nested underlying quote.
-    # Use explicit None checks rather than truthiness so a genuine 0.0 value
-    # (unlikely for equities/indices, but possible) isn't silently skipped.
+    # Extract spot price from nested underlying quote
     underlying = payload.get("underlying") or {}
-    raw_spot = (
-        underlying.get("mark")
-        if underlying.get("mark") is not None
-        else underlying.get("last")
-        if underlying.get("last") is not None
-        else payload.get("underlyingPrice")
+    spot: float = _safe_float(
+        underlying.get("mark") or underlying.get("last") or payload.get("underlyingPrice")
     )
-    spot: float = _safe_float(raw_spot)
     if spot == 0:
         log.warning("Spot price is zero for %s — levels may be inaccurate.", symbol)
 
@@ -331,8 +307,12 @@ def fetch_option_chain_data(
     exp_source_map = call_map if call_map else put_map
     selected_exp_keys = _select_expiration_keys(exp_source_map, dte_targets)
 
-    calls = _extract_contracts(call_map, "CALL", selected_exp_keys)
-    puts  = _extract_contracts(put_map,  "PUT",  selected_exp_keys)
+    calls = _extract_contracts(
+        call_map, "CALL", selected_exp_keys
+    )
+    puts = _extract_contracts(
+        put_map, "PUT", selected_exp_keys
+    )
 
     log.info(
         "Option chain %s (%s): spot=%.2f  calls=%d  puts=%d  dte_targets=%s  selected_exp=%s",
@@ -346,78 +326,42 @@ def fetch_option_chain_data(
     )
 
 
-def fetch_futures_quote(
-    symbol: str,
-    token_path: Path = TOKEN_PATH,
-) -> FuturesQuote | None:
+def fetch_futures_quote(client: Any, symbol: str) -> FuturesQuote:
     """
     Fetch the current price for a front-month futures symbol (e.g. "/ES", "/NQ").
 
-    The Schwab client library does not reliably return futures data, so this
-    function hits the Schwab marketdata REST endpoint directly, then falls back
-    to yfinance if the HTTP request fails or returns no usable price.
-
     Parameters
     ----------
-    symbol     : Futures symbol string, e.g. "/ES".
-    token_path : Path to token.json containing the OAuth access token.
+    client : Authenticated Schwab client.
+    symbol : Futures symbol string, e.g. "/ES".
 
-    Returns
-    -------
-    FuturesQuote on success, None if both sources fail.
+    Raises
+    ------
+    RuntimeError : On HTTP error or missing price field.
     """
-    price = _fetch_futures_from_schwab(symbol, token_path)
-    if price is not None:
-        log.info("Futures quote %s: %.2f (source=schwab)", symbol, price)
-        return FuturesQuote(symbol=symbol, price=price)
-
-    price = _fetch_futures_from_yfinance(symbol)
-    if price is not None:
-        log.info("Futures quote %s: %.2f (source=yfinance)", symbol, price)
-        return FuturesQuote(symbol=symbol, price=price)
-
-    log.warning("Futures quote unavailable for %s from both Schwab and yfinance.", symbol)
-    return None
-
-
-def _fetch_futures_from_schwab(symbol: str, token_path: Path) -> float | None:
-    """
-    Hit the Schwab marketdata REST endpoint directly for a futures quote.
-
-    Returns the price as a float, or None if the request fails or returns
-    no usable price.
-    """
+    import requests
+    import json
+    # Always read the access token directly from token.json
     try:
-        token_data = json.loads(token_path.read_text())
-        access_token = token_data["token"]["access_token"]
-    except Exception as exc:
-        log.warning("Could not read access token from %s: %s", token_path, exc)
-        return None
+        with open('token.json', 'r') as f:
+            token_data = json.load(f)
+            access_token = token_data['token']['access_token']
+    except Exception as e:
+        raise RuntimeError(f'Could not read access token from token.json: {e}')
 
-    url = f"https://api.schwabapi.com/marketdata/v1/quotes?symbols={symbol}&fields=quote"
+    url = f'https://api.schwabapi.com/marketdata/v1/quotes?symbols={symbol}&fields=quote'
     headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
+        'Authorization': f'Bearer {access_token}',
+        'Accept': 'application/json',
     }
-
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-    except requests.RequestException as exc:
-        log.warning("Schwab futures HTTP request failed for %s: %s", symbol, exc)
-        return None
-
+    response = requests.get(url, headers=headers)
     if response.status_code != 200:
-        log.warning(
-            "Schwab futures HTTP %d for %s", response.status_code, symbol
-        )
+        log.warning(f"Schwab API HTTP {response.status_code} for {url}")
         return None
-
     data = response.json()
     key = next(iter(data.keys()), None)
     if key is None:
-        log.warning("Schwab futures response was empty for %s", symbol)
         return None
-
     quote = data[key].get("quote", {})
     price = _safe_float(
         quote.get("lastPrice")
@@ -425,35 +369,40 @@ def _fetch_futures_from_schwab(symbol: str, token_path: Path) -> float | None:
         or quote.get("mark")
         or quote.get("closePrice")
     )
-    return price if price > 0 else None
+    if price > 0:
+        return FuturesQuote(symbol=symbol, price=price)
+    return None
 
+    def _fetch_from_yfinance() -> float | None:
+        if yf is None:
+            return None
+        yf_symbol = FUTURES_YF_MAP.get(symbol)
+        if not yf_symbol:
+            return None
+        try:
+            ticker = yf.Ticker(yf_symbol)
+            hist = ticker.history(period="5d", interval="1d")
+            if not hist.empty:
+                close = hist["Close"].dropna()
+                if not close.empty:
+                    return float(close.iloc[-1])
+            info = ticker.fast_info if hasattr(ticker, "fast_info") else {}
+            last = info.get("lastPrice") if info else None
+            return float(last) if last is not None else None
+        except Exception as exc:
+            log.warning("yfinance fallback failed for %s (%s): %s", symbol, yf_symbol, exc)
+            return None
 
-def _fetch_futures_from_yfinance(symbol: str) -> float | None:
-    """
-    Fetch a futures price via yfinance as a fallback.
+    price = _fetch_from_schwab()
+    source = "schwab"
+    if price is None:
+        price = _fetch_from_yfinance()
+        source = "yfinance"
 
-    Returns the price as a float, or None if yfinance is unavailable,
-    the symbol isn't mapped, or the fetch fails.
-    """
-    if yf is None:
-        return None
+    if price is None or price <= 0:
+        raise RuntimeError(
+            f"Futures quote unavailable for {symbol} from Schwab and yfinance fallback"
+        )
 
-    yf_symbol = FUTURES_YF_MAP.get(symbol)
-    if not yf_symbol:
-        log.debug("No yfinance mapping for futures symbol %s", symbol)
-        return None
-
-    try:
-        ticker = yf.Ticker(yf_symbol)
-        hist = ticker.history(period="5d", interval="1d")
-        if not hist.empty:
-            close = hist["Close"].dropna()
-            if not close.empty:
-                return float(close.iloc[-1])
-        # Fall back to fast_info if history is unavailable.
-        info = ticker.fast_info if hasattr(ticker, "fast_info") else {}
-        last = info.get("lastPrice") if info else None
-        return float(last) if last is not None else None
-    except Exception as exc:
-        log.warning("yfinance fallback failed for %s (%s): %s", symbol, yf_symbol, exc)
-        return None
+    log.info("Futures quote %s: %.2f (source=%s)", symbol, price, source)
+    return FuturesQuote(symbol=symbol, price=price)

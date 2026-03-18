@@ -20,7 +20,9 @@ class TranslatedLevels:
     cash_ticker: str
     futures_price: float
     cash_spot: float
-    basis_spread: float
+    basis_spread: float         # Additive: futures - cash (e.g. ES-SPX = +4). Multiplicative: 0.0
+    basis_ratio: float          # Multiplicative: futures/cash (e.g. NQ/QQQ = 41.4). Additive: 1.0
+    translation_mode: str       # "additive" or "multiplicative"
     total_gex: float
     gex_regime: str
 
@@ -72,14 +74,29 @@ class TranslatedLevels:
     skew_pivot_put_25d: float | None
     skew_pivot_call_25d: float | None
 
+    # ── Tier 2: Market-structure metrics ──────────────────────────────────
+    gamma_magnet: float | None
+    pin_strike: float | None
+    pin_odds: float
+    wall_separation: float | None
+    regime_label: str
+    call_gamma_total: float
+    put_gamma_total: float
+    net_vanna_exposure: float
+
 
 def translate_to_futures(levels: DealerLevels, futures: FuturesQuote) -> TranslatedLevels:
     spread = futures.price - levels.spot
     ratio = futures.price / levels.spot if levels.spot else 1.0
-    # Use multiplicative scaling when cash source and futures trade at different scales
-    # (e.g. QQQ ~600 -> NQ ~24400, ratio ~41).  Additive basis is correct only when
-    # they trade at the same scale (e.g. SPX ~6632 -> ES ~6636, ratio ~1).
-    use_scale = abs(ratio - 1.0) > 0.1
+
+    # Use multiplicative scaling when cash source and futures trade at different
+    # scales (e.g. QQQ ~600 → NQ ~24400, ratio ~41).  Additive basis is correct
+    # only when they trade at the same scale (e.g. SPX ~6632 → ES ~6636, ratio ~1).
+    #
+    # Threshold: if the ratio deviates from 1.0 by more than 2%, use multiplicative.
+    # Previous 10% threshold was too loose — an 8% ratio (possible with some
+    # ETF/index combos) would incorrectly fall through to additive.
+    use_scale = abs(ratio - 1.0) > 0.02
     log.info(
         "%s %s vs %s: %+.2f  (futures=%.2f  cash=%.2f  ratio=%.4f)",
         "Scale" if use_scale else "Basis",
@@ -96,12 +113,24 @@ def translate_to_futures(levels: DealerLevels, futures: FuturesQuote) -> Transla
             return None
         return round(value * ratio, 2) if use_scale else round(value + spread, 2)
 
+    # em_value is a ± magnitude (not a price level).  It must be scaled by the
+    # same factor as price levels so that:
+    #   futures_price ± translated_em_value == em_upper / em_lower
+    # For additive mode the magnitude doesn't change (spread cancels out).
+    # For multiplicative mode it must be scaled by the ratio.
+    translated_em_value = (
+        round(levels.em_value * ratio, 2) if use_scale
+        else round(levels.em_value, 2)
+    )
+
     return TranslatedLevels(
         futures_symbol=futures.symbol,
         cash_ticker=levels.ticker,
         futures_price=futures.price,
         cash_spot=levels.spot,
-        basis_spread=round(spread, 2),
+        basis_spread=round(spread, 2) if not use_scale else 0.0,
+        basis_ratio=round(ratio, 4) if use_scale else 1.0,
+        translation_mode="multiplicative" if use_scale else "additive",
         total_gex=levels.total_gex,
         gex_regime=levels.gex_regime,
         zero_gamma=_shift(levels.zero_gamma),
@@ -119,7 +148,7 @@ def translate_to_futures(levels: DealerLevels, futures: FuturesQuote) -> Transla
         max_pain=_shift(levels.max_pain),
         em_upper=_shift(levels.em_upper),  # type: ignore[arg-type]
         em_lower=_shift(levels.em_lower),  # type: ignore[arg-type]
-        em_value=levels.em_value,
+        em_value=translated_em_value,
         atm_straddle=levels.atm_straddle,
         vol_trigger_upper_05=_shift(levels.vol_trigger_upper_05),
         vol_trigger_lower_05=_shift(levels.vol_trigger_lower_05),
@@ -141,4 +170,16 @@ def translate_to_futures(levels: DealerLevels, futures: FuturesQuote) -> Transla
         liquidity_vacuum_upper=_shift(levels.liquidity_vacuum_upper),
         skew_pivot_put_25d=_shift(levels.skew_pivot_put_25d),
         skew_pivot_call_25d=_shift(levels.skew_pivot_call_25d),
+        # ── Tier 2: price levels get shifted, ratios/labels pass through ──
+        gamma_magnet=_shift(levels.gamma_magnet),
+        pin_strike=_shift(levels.pin_strike),
+        pin_odds=levels.pin_odds,
+        wall_separation=(
+            round(levels.wall_separation * ratio, 2) if use_scale and levels.wall_separation is not None
+            else levels.wall_separation
+        ),
+        regime_label=levels.regime_label,
+        call_gamma_total=levels.call_gamma_total,
+        put_gamma_total=levels.put_gamma_total,
+        net_vanna_exposure=levels.net_vanna_exposure,
     )

@@ -83,14 +83,42 @@ class DealerLevels:
     skew_pivot_put_25d: float | None
     skew_pivot_call_25d: float | None
 
+    # ── Tier 2: Market-structure metrics ──────────────────────────────────
+    gamma_magnet: float | None          # Gamma-weighted average strike (intraday gravity)
+    pin_strike: float | None            # Strike with highest combined gamma concentration
+    pin_odds: float                     # 0.0–1.0, how concentrated gamma is at pin_strike
+    wall_separation: float | None       # call_wall − put_wall in points (range character)
+    regime_label: str                   # Human-readable: PINNED, TRENDING, COILED, BATTLE_ZONE
+    call_gamma_total: float             # Aggregate call-side gamma (for regime decomposition)
+    put_gamma_total: float              # Aggregate put-side gamma
+    net_vanna_exposure: float           # Signed net vanna: negative → IV↓ = bearish pressure
+
     strike_gex: list[StrikeGEX] = field(default_factory=list)
 
 
 def _best_contract_per_strike(contracts: list[OptionContract]) -> dict[float, OptionContract]:
+    """
+    Keep the highest-OI contract at each strike.
+
+    When contracts span multiple DTEs (e.g. 0DTE + 1DTE), a 1DTE contract can
+    replace a 0DTE at the same strike if it has more OI.  This is logged at
+    DEBUG so you can audit whether the blended profile is skewed.
+    """
     best: dict[float, OptionContract] = {}
     for contract in contracts:
         existing = best.get(contract.strike)
-        if existing is None or contract.open_interest > existing.open_interest:
+        if existing is None:
+            best[contract.strike] = contract
+        elif contract.open_interest > existing.open_interest:
+            if contract.dte != existing.dte:
+                log.debug(
+                    "Strike %.1f: %dDTE (OI=%d) replaces %dDTE (OI=%d) in blended profile.",
+                    contract.strike,
+                    contract.dte,
+                    contract.open_interest,
+                    existing.dte,
+                    existing.open_interest,
+                )
             best[contract.strike] = contract
     return best
 
@@ -133,10 +161,52 @@ def _build_cumulative_profile(strike_gex: list[StrikeGEX]) -> list[StrikeGEX]:
     return strike_gex
 
 
-def _find_walls(contracts: list[OptionContract], min_oi: int) -> tuple[float | None, float | None]:
+def _find_walls(
+    contracts: list[OptionContract],
+    min_oi: int,
+    spot: float = 0.0,
+    side: str = "",
+) -> tuple[float | None, float | None]:
+    """
+    Find the primary and secondary wall strikes for a set of contracts.
+
+    Parameters
+    ----------
+    contracts : Call or put contracts to search.
+    min_oi    : Minimum open interest threshold.
+    spot      : Current spot price (used for side filtering).
+    side      : ``"CALL"`` to restrict to strikes ≥ spot (resistance),
+                ``"PUT"`` to restrict to strikes ≤ spot (support).
+                Empty string disables side filtering (backward compat).
+
+    Returns
+    -------
+    tuple[primary_strike, secondary_strike]
+    """
     candidates = [c for c in contracts if c.open_interest >= min_oi]
     if not candidates:
         return None, None
+
+    # Filter to the correct side of spot when requested.
+    if side and spot > 0:
+        if side == "CALL":
+            sided = [c for c in candidates if c.strike >= spot]
+        elif side == "PUT":
+            sided = [c for c in candidates if c.strike <= spot]
+        else:
+            sided = candidates
+
+        if sided:
+            candidates = sided
+        else:
+            # No qualifying strikes on the correct side — keep all candidates
+            # but log so we know this happened.
+            log.debug(
+                "No %s-side candidates above min_oi=%d at spot=%.2f; "
+                "using best strike from either side.",
+                side, min_oi, spot,
+            )
+
     ranked = sorted(candidates, key=lambda c: c.open_interest * abs(c.gamma), reverse=True)
     primary = ranked[0].strike
     secondary = ranked[1].strike if len(ranked) > 1 else None
@@ -169,23 +239,34 @@ def _find_gamma_flip_zone(strikes: list[StrikeGEX], spot: float, min_oi: int) ->
     def significant(row: StrikeGEX) -> bool:
         return (row.call_oi + row.put_oi) >= min_oi
 
-    crossing = None
+    # Collect ALL cumulative-GEX zero-crossings, then pick the one nearest spot.
+    crossings: list[int] = []
     for idx in range(1, len(strikes)):
         if strikes[idx - 1].cumulative_gex * strikes[idx].cumulative_gex < 0:
-            crossing = idx
-            break
+            crossings.append(idx)
+
+    crossing: int | None = None
+    if crossings:
+        # Pick the crossing whose midpoint is closest to spot.
+        crossing = min(
+            crossings,
+            key=lambda i: abs((strikes[i - 1].strike + strikes[i].strike) / 2.0 - spot),
+        )
 
     if crossing is not None:
         lower = next((strikes[i].strike for i in range(crossing - 1, -1, -1) if significant(strikes[i])), None)
         upper = next((strikes[i].strike for i in range(crossing, len(strikes)) if significant(strikes[i])), None)
     else:
+        # No crossing found — bracket spot with nearest significant strikes.
         below = [row for row in strikes if row.strike <= spot and significant(row)]
         above = [row for row in strikes if row.strike >= spot and significant(row)]
-        lower = below[-1].strike if below else spot
-        upper = above[0].strike if above else spot
+        lower = below[-1].strike if below else None
+        upper = above[0].strike if above else None
 
-    lower = lower if lower is not None else spot
-    upper = upper if upper is not None else spot
+    if lower is None and upper is None:
+        return None, None, None
+    lower = lower if lower is not None else upper
+    upper = upper if upper is not None else lower
     mid = round((float(lower) + float(upper)) / 2.0, 2)
     return float(lower), float(upper), mid
 
@@ -208,7 +289,9 @@ def _atm_straddle_cost(calls: list[OptionContract], puts: list[OptionContract], 
         return 0.0
     atm_call = min(calls, key=lambda contract: abs(contract.strike - spot))
     atm_put = min(puts, key=lambda contract: abs(contract.strike - spot))
-    return atm_call.ask + atm_put.ask
+    # Use mark (mid-price) rather than ask to avoid inflating EM by the full
+    # bid-ask spread.  mark is already computed as (bid+ask)/2 by the fetcher.
+    return atm_call.mark + atm_put.mark
 
 
 def _expected_move(calls: list[OptionContract], puts: list[OptionContract], spot: float) -> tuple[float, float]:
@@ -244,10 +327,16 @@ def _find_max_pain(calls: list[OptionContract], puts: list[OptionContract]) -> f
 
 
 def _find_gamma_cliffs(strikes: list[StrikeGEX], spot: float) -> tuple[float | None, float | None]:
+    """
+    Gamma cliff up  = strike zone ABOVE spot where net GEX increases most
+                      steeply (positive slope → resistance building).
+    Gamma cliff down = strike zone BELOW spot where net GEX decreases most
+                       steeply (negative slope → support eroding).
+    """
     if len(strikes) < 2:
         return None, None
 
-    diffs = []
+    diffs: list[tuple[float, float]] = []
     for idx in range(1, len(strikes)):
         prev_row = strikes[idx - 1]
         curr_row = strikes[idx]
@@ -257,18 +346,55 @@ def _find_gamma_cliffs(strikes: list[StrikeGEX], spot: float) -> tuple[float | N
 
     up = [item for item in diffs if item[0] >= spot]
     down = [item for item in diffs if item[0] <= spot]
-    cliff_up = max(up, key=lambda item: abs(item[1]))[0] if up else None
-    cliff_down = max(down, key=lambda item: abs(item[1]))[0] if down else None
+
+    # Cliff up: steepest positive GEX slope above spot (wall building).
+    # Fall back to largest absolute slope if no positive slopes exist.
+    cliff_up = None
+    if up:
+        positive_up = [item for item in up if item[1] > 0]
+        if positive_up:
+            cliff_up = max(positive_up, key=lambda item: item[1])[0]
+        else:
+            cliff_up = max(up, key=lambda item: abs(item[1]))[0]
+
+    # Cliff down: steepest negative GEX slope below spot (support eroding).
+    # Fall back to largest absolute slope if no negative slopes exist.
+    cliff_down = None
+    if down:
+        negative_down = [item for item in down if item[1] < 0]
+        if negative_down:
+            cliff_down = min(negative_down, key=lambda item: item[1])[0]
+        else:
+            cliff_down = max(down, key=lambda item: abs(item[1]))[0]
+
     return cliff_up, cliff_down
 
 
 def _find_proxy_node(
     contracts: list[OptionContract],
     proxy_fn,
+    spot: float | None = None,
+    proximity: float = 0.10,
 ) -> float | None:
+    """
+    Find the strike with the highest proxy score.
+
+    When *spot* is provided, restrict the search to contracts within
+    ±*proximity* (default 10%) of spot first.  Falls back to the full
+    chain only if no local contracts exist.
+    """
     if not contracts:
         return None
-    best = max(contracts, key=proxy_fn)
+
+    pool = contracts
+    if spot is not None and spot > 0:
+        lo = spot * (1.0 - proximity)
+        hi = spot * (1.0 + proximity)
+        local = [c for c in contracts if lo <= c.strike <= hi]
+        if local:
+            pool = local
+
+    best = max(pool, key=proxy_fn)
     return best.strike
 
 
@@ -315,8 +441,10 @@ def _find_dex_nodes(agg: dict[float, dict[str, float]]) -> tuple[float | None, f
     if not agg:
         return None, None
     rows = list(agg.items())
+    # Call DEX is positive (positive delta × OI); find the strike with the largest.
     call_node = max(rows, key=lambda item: item[1]["call_dex"])[0]
-    put_node = min(rows, key=lambda item: item[1]["put_dex"])[0]
+    # Put DEX is negative (negative delta × OI); find the largest absolute value.
+    put_node = max(rows, key=lambda item: abs(item[1]["put_dex"]))[0]
     return call_node, put_node
 
 
@@ -327,10 +455,15 @@ def _find_liquidity_vacuum(agg: dict[float, dict[str, float]], spot: float) -> t
     strikes = sorted(agg.keys())
     totals = {strike: agg[strike]["call_oi"] + agg[strike]["put_oi"] for strike in strikes}
     values = sorted(totals.values())
-    threshold = values[max(0, int(len(values) * 0.3) - 1)] if values else 0
 
-    lower_candidates = [strike for strike in strikes if strike <= spot and totals[strike] <= threshold]
-    upper_candidates = [strike for strike in strikes if strike >= spot and totals[strike] <= threshold]
+    # 30th percentile: need at least a few strikes for the concept to be meaningful.
+    if len(values) < 5:
+        return None, None
+    pct_idx = int(math.ceil(len(values) * 0.3)) - 1   # 0-indexed, ceil ensures ≥0
+    threshold = values[max(0, pct_idx)]
+
+    lower_candidates = [strike for strike in strikes if strike < spot and totals[strike] <= threshold]
+    upper_candidates = [strike for strike in strikes if strike > spot and totals[strike] <= threshold]
 
     lower = lower_candidates[-1] if lower_candidates else None
     upper = upper_candidates[0] if upper_candidates else None
@@ -389,6 +522,118 @@ def calculate_price_metrics(chain: OptionChainData) -> dict[str, float | None]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Tier 2: Market-structure metrics
+# ---------------------------------------------------------------------------
+
+def _gamma_magnet(strikes: list[StrikeGEX]) -> float | None:
+    """
+    Gamma-weighted average strike — the price where net hedging pull
+    cancels out.  Conceptually the intraday "center of gravity."
+
+    Uses absolute net GEX as the weight so that both positive- and
+    negative-GEX strikes contribute pull proportional to their magnitude.
+    """
+    if not strikes:
+        return None
+    total_weight = sum(abs(row.net_gex) for row in strikes)
+    if total_weight == 0:
+        return None
+    weighted = sum(row.strike * abs(row.net_gex) for row in strikes)
+    return round(weighted / total_weight, 2)
+
+
+def _pin_strike_and_odds(strikes: list[StrikeGEX]) -> tuple[float | None, float]:
+    """
+    Pin strike = strike with the highest combined gamma concentration.
+    Pin odds  = what fraction of total gamma sits at the pin strike.
+
+    High pin odds (> 0.25) → strong pinning effect, expect convergence.
+    Low pin odds  (< 0.10) → gamma is diffuse, pinning is weak.
+    """
+    if not strikes:
+        return None, 0.0
+    total_gamma = sum(row.call_gex + row.put_gex for row in strikes)
+    if total_gamma == 0:
+        return None, 0.0
+    pin = max(strikes, key=lambda row: row.call_gex + row.put_gex)
+    pin_gamma = pin.call_gex + pin.put_gex
+    odds = round(pin_gamma / total_gamma, 4)
+    return pin.strike, odds
+
+
+def _wall_separation(
+    call_wall: float | None,
+    put_wall: float | None,
+) -> float | None:
+    """Distance in points between call wall and put wall."""
+    if call_wall is None or put_wall is None:
+        return None
+    return round(abs(call_wall - put_wall), 2)
+
+
+def _classify_regime(
+    total_gex: float,
+    separation: float | None,
+    em_value: float,
+    spot: float,
+) -> str:
+    """
+    Combine GEX sign/magnitude and wall separation into a human-readable
+    regime label that tells the trader what *kind* of day to expect.
+
+    Labels
+    ------
+    PINNED       Positive GEX + tight separation → mean-revert, fade walls.
+    TRENDING     Negative GEX + wide separation  → trend-follow, trail stops.
+    COILED       Negative GEX + tight separation  → compressed spring, breakout
+                 imminent.  Hardest environment — wait for confirmation.
+    BATTLE_ZONE  Positive GEX + wide separation   → big swings between walls,
+                 trade wall-to-wall.
+    NEUTRAL      When data is too thin to classify.
+    """
+    if separation is None or em_value <= 0:
+        return "NEUTRAL"
+
+    positive_gex = total_gex >= 0
+    # "Tight" = separation less than 1× EM; "wide" = more than 1× EM.
+    # EM is the natural yardstick for what constitutes a big vs small range.
+    tight = separation < em_value
+
+    if positive_gex and tight:
+        return "PINNED"
+    if positive_gex and not tight:
+        return "BATTLE_ZONE"
+    if not positive_gex and tight:
+        return "COILED"
+    return "TRENDING"
+
+
+def _net_vanna_exposure(
+    calls: list[OptionContract],
+    puts: list[OptionContract],
+) -> float:
+    """
+    Signed net vanna exposure across all contracts.
+
+    Vanna = d(delta)/d(IV).  For calls, vanna is typically positive OTM;
+    for puts, vanna is typically negative OTM.  We approximate vanna as
+    vega × delta (a common proxy when true vanna isn't in the feed).
+
+    Positive net vanna → IV drop is bullish (dealers buy as IV falls).
+    Negative net vanna → IV drop is bearish (dealers sell as IV falls).
+    """
+    call_vanna = sum(
+        c.open_interest * c.vega * c.delta * CONTRACT_MULTIPLIER
+        for c in calls
+    )
+    put_vanna = sum(
+        p.open_interest * p.vega * p.delta * CONTRACT_MULTIPLIER
+        for p in puts
+    )
+    return round(call_vanna + put_vanna, 2)
+
+
 def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels:
     spot = chain.spot_price
     if spot <= 0:
@@ -398,13 +643,13 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
     total_gex = sum(row.net_gex for row in strikes)
     gex_regime = "POSITIVE" if total_gex >= 0 else "NEGATIVE"
 
-    call_wall, secondary_call_wall = _find_walls(chain.calls, MIN_OI_THRESHOLD)
-    put_wall, secondary_put_wall = _find_walls(chain.puts, MIN_OI_THRESHOLD)
+    call_wall, secondary_call_wall = _find_walls(chain.calls, MIN_OI_THRESHOLD, spot=spot, side="CALL")
+    put_wall, secondary_put_wall = _find_walls(chain.puts, MIN_OI_THRESHOLD, spot=spot, side="PUT")
     local_call_node, local_put_node = _find_local_nodes(strikes, spot)
 
     front_calls, front_puts = _find_front_dte_contracts(chain.calls, chain.puts)
-    call_wall_0dte, _ = _find_walls(front_calls, MIN_OI_THRESHOLD)
-    put_wall_0dte, _ = _find_walls(front_puts, MIN_OI_THRESHOLD)
+    call_wall_0dte, _ = _find_walls(front_calls, MIN_OI_THRESHOLD, spot=spot, side="CALL")
+    put_wall_0dte, _ = _find_walls(front_puts, MIN_OI_THRESHOLD, spot=spot, side="PUT")
 
     gamma_flip_lower, gamma_flip_upper, zero_gamma = _find_gamma_flip_zone(strikes, spot, MIN_OI_THRESHOLD)
     hedge_wall = _find_hedge_wall(strikes, spot)
@@ -414,10 +659,10 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
 
     cliff_up, cliff_down = _find_gamma_cliffs(strikes, spot)
 
-    vanna_call_node = _find_proxy_node(chain.calls, lambda c: c.open_interest * abs(c.vega * c.delta))
-    vanna_put_node = _find_proxy_node(chain.puts, lambda p: p.open_interest * abs(p.vega * p.delta))
-    charm_call_node = _find_proxy_node(chain.calls, lambda c: c.open_interest * abs(c.theta * c.delta))
-    charm_put_node = _find_proxy_node(chain.puts, lambda p: p.open_interest * abs(p.theta * p.delta))
+    vanna_call_node = _find_proxy_node(chain.calls, lambda c: c.open_interest * abs(c.vega * c.delta), spot=spot)
+    vanna_put_node = _find_proxy_node(chain.puts, lambda p: p.open_interest * abs(p.vega * p.delta), spot=spot)
+    charm_call_node = _find_proxy_node(chain.calls, lambda c: c.open_interest * abs(c.theta * c.delta), spot=spot)
+    charm_put_node = _find_proxy_node(chain.puts, lambda p: p.open_interest * abs(p.theta * p.delta), spot=spot)
 
     agg = _aggregate_by_strike(chain.calls, chain.puts)
     vol_imb_call, vol_imb_put = _find_volume_imbalance_nodes(agg)
@@ -428,26 +673,48 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
 
     vt_u05, vt_l05, vt_u10, vt_l10, vt_u15, vt_l15 = _vol_trigger_bands(front_calls or chain.calls, spot)
 
-    call_wall = call_wall if call_wall is not None else local_call_node or spot
-    put_wall = put_wall if put_wall is not None else local_put_node or spot
-    local_call_node = local_call_node if local_call_node is not None else call_wall
-    local_put_node = local_put_node if local_put_node is not None else put_wall
-    call_wall_0dte = call_wall_0dte if call_wall_0dte is not None else call_wall
-    put_wall_0dte = put_wall_0dte if put_wall_0dte is not None else put_wall
-    hedge_wall = hedge_wall if hedge_wall is not None else put_wall
-    max_pain = max_pain if max_pain is not None else spot
+    # NOTE: We intentionally leave None levels as None rather than defaulting
+    # them to spot.  Collapsing everything to spot produces meaningless trade
+    # plans ("short below spot, long above spot").  Downstream consumers
+    # (discord_notifier, file_writer) already display "N/A" for None levels.
+    #
+    # The only fallbacks that make structural sense:
+    #   - 0DTE walls fall back to all-expiry walls (same concept, wider DTE)
+    #   - hedge_wall falls back to put_wall (conceptually similar downside anchor)
+    if call_wall_0dte is None and call_wall is not None:
+        call_wall_0dte = call_wall
+    if put_wall_0dte is None and put_wall is not None:
+        put_wall_0dte = put_wall
+    if hedge_wall is None and put_wall is not None:
+        hedge_wall = put_wall
+
+    # ── Tier 2 metrics ─────────────────────────────────────────────────────
+    gamma_magnet = _gamma_magnet(strikes)
+    pin_strike, pin_odds = _pin_strike_and_odds(strikes)
+    separation = _wall_separation(call_wall, put_wall)
+    call_gamma_total = round(sum(row.call_gex for row in strikes), 2)
+    put_gamma_total = round(sum(row.put_gex for row in strikes), 2)
+    regime_label = _classify_regime(total_gex, separation, em_value, spot)
+    net_vanna = _net_vanna_exposure(chain.calls, chain.puts)
 
     log.info(
-        "%s levels: spot=%.2f gex=%.0f regime=%s zg=%s cw=%s pw=%s mp=%s em=±%.2f",
+        "%s levels: spot=%.2f gex=%.0f regime=%s(%s) zg=%s cw=%s pw=%s "
+        "mp=%s em=±%.2f magnet=%s pin=%s(%.0f%%) sep=%s vanna=%.0f",
         ticker,
         spot,
         total_gex,
         gex_regime,
+        regime_label,
         zero_gamma,
         call_wall,
         put_wall,
         max_pain,
         em_value,
+        gamma_magnet,
+        pin_strike,
+        pin_odds * 100,
+        separation,
+        net_vanna,
     )
 
     return DealerLevels(
@@ -492,11 +759,28 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
         liquidity_vacuum_upper=vacuum_upper,
         skew_pivot_put_25d=skew_put_25d,
         skew_pivot_call_25d=skew_call_25d,
+        # ── Tier 2 ──
+        gamma_magnet=gamma_magnet,
+        pin_strike=pin_strike,
+        pin_odds=pin_odds,
+        wall_separation=separation,
+        regime_label=regime_label,
+        call_gamma_total=call_gamma_total,
+        put_gamma_total=put_gamma_total,
+        net_vanna_exposure=net_vanna,
         strike_gex=strikes,
     )
 
 
 def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, target_spot: float) -> DealerLevels:
+    """
+    Rescale all price levels from *levels.spot* space into *target_spot* space
+    using pure multiplicative scaling: ``new_value = value × (target_spot / source_spot)``.
+
+    This is correct for cross-product rescaling where the ratio between the two
+    instruments is roughly constant (e.g. DJX → YM at ~100×, QQQ → NDX at ~41×,
+    or SPY → SPX at ~10×).
+    """
     if levels.spot <= 0 or target_spot <= 0:
         raise ValueError("Proxy and target spots must be positive for rescaling.")
 
@@ -508,7 +792,7 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
     def _scale(value: float | None) -> float | None:
         if value is None:
             return None
-        return round(target_spot + (value - levels.spot) * scale, 2)
+        return round(value * scale, 2)
 
     return DealerLevels(
         ticker=target_ticker,
@@ -552,5 +836,14 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         liquidity_vacuum_upper=_scale(levels.liquidity_vacuum_upper),
         skew_pivot_put_25d=_scale(levels.skew_pivot_put_25d),
         skew_pivot_call_25d=_scale(levels.skew_pivot_call_25d),
+        # ── Tier 2: price levels get scaled, ratios/labels pass through ──
+        gamma_magnet=_scale(levels.gamma_magnet),
+        pin_strike=_scale(levels.pin_strike),
+        pin_odds=levels.pin_odds,
+        wall_separation=round(levels.wall_separation * scale, 2) if levels.wall_separation is not None else None,
+        regime_label=levels.regime_label,
+        call_gamma_total=levels.call_gamma_total,
+        put_gamma_total=levels.put_gamma_total,
+        net_vanna_exposure=levels.net_vanna_exposure,
         strike_gex=[],
     )

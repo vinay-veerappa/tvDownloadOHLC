@@ -7,12 +7,21 @@ No magic numbers live anywhere else in the package.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Repository root — two levels up: options/ → streaming/ → scripts/ → root
+# Repository root
 # ---------------------------------------------------------------------------
-REPO_ROOT: Path = Path(__file__).resolve().parents[3]
+# Prefer the DEALER_LEVELS_ROOT environment variable if set; otherwise
+# walk up from this file.  The env-var approach is more robust when the
+# package is installed via pip or relocated.
+_env_root = os.environ.get("DEALER_LEVELS_ROOT")
+if _env_root:
+    REPO_ROOT: Path = Path(_env_root).resolve()
+else:
+    # Default: three levels up  (options/ → streaming/ → scripts/ → root)
+    REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # ---------------------------------------------------------------------------
 # Authentication
@@ -106,7 +115,7 @@ EM_STRADDLE_SCALAR: float = 0.85
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
-OUTPUT_DIR: Path = REPO_ROOT / "data"
+OUTPUT_DIR: Path = REPO_ROOT
 DAILY_LEVELS_JSON: Path = OUTPUT_DIR / "daily_levels.json"
 DAILY_LEVELS_TXT: Path = OUTPUT_DIR / "daily_levels.txt"
 LOG_FILE: Path = OUTPUT_DIR / "dealer_levels.log"
@@ -128,4 +137,6 @@ DISCORD_COLOR_NEGATIVE: int = 0xD50000   # red    — negative GEX regime
 # ---------------------------------------------------------------------------
 SCHEDULE_TIMEZONE: str = "America/New_York"
 # HH:MM times (24-hour clock, Eastern) at which the pipeline runs on trading days.
-SCHEDULE_TIMES: list[str] = ["08:30", "11:00"]
+# NOTE: duplicates are silently ignored by run_options_levels.py, but keep
+# this list clean to avoid confusion.
+SCHEDULE_TIMES: list[str] = ["08:30", "09:30", "10:00", "11:00", "12:00", "13:00", "15:00"]

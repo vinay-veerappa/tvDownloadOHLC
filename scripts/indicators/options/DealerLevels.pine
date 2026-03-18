@@ -59,11 +59,15 @@ colUpperEM = input.color(color.new(color.aqua, 0), "Upper EM", group = grp_color
 colAbsCall = input.color(color.new(color.lime, 0), "Absolute Call Wall", group = grp_colors)
 colLocalCall = input.color(color.new(color.lime, 30), "Local Call Node", group = grp_colors)
 col0DTECall = input.color(color.new(color.lime, 60), "0DTE Call Wall", group = grp_colors)
+colDexCall = input.color(color.new(color.lime, 15), "DEX Call Node", group = grp_colors)
+colGammaCliffUp = input.color(color.new(color.teal, 20), "Gamma Cliff Up", group = grp_colors)
 colZeroGamma = input.color(color.new(color.yellow, 0), "Zero Gamma", group = grp_colors)
 colGammaFlip = input.color(color.new(color.yellow, 45), "Gamma Flip Zone", group = grp_colors)
+colGammaCliffDown = input.color(color.new(color.teal, 20), "Gamma Cliff Down", group = grp_colors)
 colMaxPain = input.color(color.new(color.orange, 0), "Max Pain", group = grp_colors)
 col0DTEPut = input.color(color.new(color.red, 60), "0DTE Put Wall", group = grp_colors)
 colLocalPut = input.color(color.new(color.red, 30), "Local Put Node", group = grp_colors)
+colDexPut = input.color(color.new(color.red, 15), "DEX Put Node", group = grp_colors)
 colHedge = input.color(color.new(color.red, 0), "Hedge Wall", group = grp_colors)
 colLowerEM = input.color(color.new(color.aqua, 0), "Lower EM", group = grp_colors)
 colFallback = input.color(color.new(color.white, 0), "Fallback", group = grp_colors)
@@ -91,8 +95,10 @@ showCallLevels = input.bool(true, "Show Call Levels", group = grp_visibility)
 showPutLevels = input.bool(true, "Show Put Levels", group = grp_visibility)
 showZeroGammaLevel = input.bool(true, "Show Zero Gamma", group = grp_visibility)
 showGammaFlipLevels = input.bool(true, "Show Gamma Flip Zone", group = grp_visibility)
+showGammaCliffLevels = input.bool(true, "Show Gamma Cliffs", group = grp_visibility)
 showMaxPainLevel = input.bool(true, "Show Max Pain", group = grp_visibility)
 showHedgeLevel = input.bool(true, "Show Hedge Wall", group = grp_visibility)
+showDexLevels = input.bool(true, "Show DEX Nodes", group = grp_visibility)
 
 f_label_size(string sizeText) =>
     sizeText == "tiny" ? size.tiny :
@@ -270,25 +276,31 @@ f_level_color(string title) =>
      upperTitle == "LOWER EM" ? colLowerEM :
      upperTitle == "ZERO GAMMA" ? colZeroGamma :
      upperTitle == "GAMMA FLIP UPPER" or upperTitle == "GAMMA FLIP LOWER" ? colGammaFlip :
+     upperTitle == "GAMMA CLIFF UP" ? colGammaCliffUp :
+     upperTitle == "GAMMA CLIFF DOWN" ? colGammaCliffDown :
      upperTitle == "MAX PAIN" ? colMaxPain :
      upperTitle == "HEDGE WALL" ? colHedge :
      upperTitle == "0DTE PUT WALL" ? col0DTEPut :
      upperTitle == "LOCAL PUT NODE" ? colLocalPut :
+     upperTitle == "DEX PUT NODE" ? colDexPut :
      upperTitle == "0DTE CALL WALL" ? col0DTECall :
      upperTitle == "LOCAL CALL NODE" ? colLocalCall :
+     upperTitle == "DEX CALL NODE" ? colDexCall :
      upperTitle == "ABSOLUTE CALL WALL" ? colAbsCall :
      colFallback
 
 f_level_style(string title) =>
     upperTitle = f_norm(title)
     str.contains(upperTitle, "GAMMA FLIP") ? line.style_dashed :
+     str.contains(upperTitle, "GAMMA CLIFF") ? line.style_dotted :
+     str.contains(upperTitle, "DEX") ? line.style_dashed :
      str.contains(upperTitle, "0DTE") ? f_line_style(lineStyle0DTEInp) :
      str.contains(upperTitle, "LOCAL") ? f_line_style(lineStyleSecondaryInp) :
      f_line_style(lineStylePrimaryInp)
 
 f_level_width(string title) =>
     upperTitle = f_norm(title)
-    str.contains(upperTitle, "0DTE") or str.contains(upperTitle, "LOCAL") or str.contains(upperTitle, "GAMMA FLIP") ? lineWidthSecondary : lineWidthPrimary
+    str.contains(upperTitle, "0DTE") or str.contains(upperTitle, "LOCAL") or str.contains(upperTitle, "GAMMA FLIP") or str.contains(upperTitle, "GAMMA CLIFF") or str.contains(upperTitle, "DEX") ? lineWidthSecondary : lineWidthPrimary
 
 f_compact_title(string title) =>
     upperTitle = f_norm(title)
@@ -297,22 +309,29 @@ f_compact_title(string title) =>
      upperTitle == "ABSOLUTE CALL WALL" ? "CALL ABS" :
      upperTitle == "LOCAL CALL NODE" ? "CALL LOC" :
      upperTitle == "0DTE CALL WALL" ? "CALL 0DTE" :
+     upperTitle == "DEX CALL NODE" ? "DEX C" :
      upperTitle == "GAMMA FLIP UPPER" ? "GF U" :
+     upperTitle == "GAMMA CLIFF UP" ? "GC U" :
      upperTitle == "ZERO GAMMA" ? "ZG" :
+     upperTitle == "GAMMA CLIFF DOWN" ? "GC D" :
      upperTitle == "GAMMA FLIP LOWER" ? "GF L" :
      upperTitle == "MAX PAIN" ? "MAX" :
      upperTitle == "0DTE PUT WALL" ? "PUT 0DTE" :
      upperTitle == "LOCAL PUT NODE" ? "PUT LOC" :
+     upperTitle == "DEX PUT NODE" ? "DEX P" :
      upperTitle == "HEDGE WALL" ? "HEDGE" :
      title
 
 f_show_level(string title) =>
     upperTitle = f_norm(title)
     upperTitle == "UPPER EM" or upperTitle == "LOWER EM" ? showEMLevels :
+     str.contains(upperTitle, "DEX CALL") ? showDexLevels :
+     str.contains(upperTitle, "DEX PUT") ? showDexLevels :
      str.contains(upperTitle, "CALL") ? showCallLevels :
      str.contains(upperTitle, "PUT") ? showPutLevels :
      upperTitle == "ZERO GAMMA" ? showZeroGammaLevel :
      str.contains(upperTitle, "GAMMA FLIP") ? showGammaFlipLevels :
+     str.contains(upperTitle, "GAMMA CLIFF") ? showGammaCliffLevels :
      upperTitle == "MAX PAIN" ? showMaxPainLevel :
      upperTitle == "HEDGE WALL" ? showHedgeLevel :
      true
@@ -320,8 +339,41 @@ f_show_level(string title) =>
 f_num(float value) =>
     na(value) ? "N/A" : str.tostring(value, "#.##")
 
+// f_pick: return first non-na value (static priority fallback).
 f_pick(float v1, float v2, float v3) =>
     not na(v1) ? v1 : (not na(v2) ? v2 : v3)
+
+// f_nearest_below: return the highest value strictly below reference.
+// Falls back to f_pick priority if nothing qualifies.
+f_nearest_below(float reference, float v1, float v2, float v3) =>
+    float best = na
+    if not na(reference)
+        if not na(v1) and v1 < reference
+            if na(best) or v1 > best
+                best := v1
+        if not na(v2) and v2 < reference
+            if na(best) or v2 > best
+                best := v2
+        if not na(v3) and v3 < reference
+            if na(best) or v3 > best
+                best := v3
+    na(best) ? f_pick(v1, v2, v3) : best
+
+// f_nearest_above: return the lowest value strictly above reference.
+// Falls back to f_pick priority if nothing qualifies.
+f_nearest_above(float reference, float v1, float v2, float v3) =>
+    float best = na
+    if not na(reference)
+        if not na(v1) and v1 > reference
+            if na(best) or v1 < best
+                best := v1
+        if not na(v2) and v2 > reference
+            if na(best) or v2 < best
+                best := v2
+        if not na(v3) and v3 > reference
+            if na(best) or v3 < best
+                best := v3
+    na(best) ? f_pick(v1, v2, v3) : best
 
 f_label_text(string title, float level) =>
     titleText = compactLabels ? f_compact_title(title) : title
@@ -408,7 +460,7 @@ var array<float> labelColumnLastLevels = array.new_float()
 var array<float> parsedPrices = array.new_float()
 var array<string> parsedTitles = array.new_string()
 var table statusTable = table.new(position.top_right, 1, 2, bgcolor = color.new(color.black, 80))
-var table narrativeTable = table.new(position.bottom_right, 1, 5, bgcolor = color.new(color.black, 82))
+var table narrativeTable = table.new(position.bottom_right, 1, 6, bgcolor = color.new(color.black, 82))
 var line emUpperFill = na
 var line emLowerFill = na
 var linefill emBandFill = na
@@ -417,11 +469,19 @@ var line gfLowerFill = na
 var linefill gfBandFill = na
 var string lastSelectedLine = ""
 var string lastMatchedAsset = ""
+// ── Narrative plan variables ────────────────────────────────────────────
 var float planZeroGamma = na
 var float planGammaFlipUpper = na
 var float planGammaFlipLower = na
+var float planGammaCliffUp = na
+var float planGammaCliffDown = na
 var float planCallWall = na
+var float planCallWall0DTE = na
 var float planPutWall0DTE = na
+var float planLocalCallNode = na
+var float planLocalPutNode = na
+var float planDexCallNode = na
+var float planDexPutNode = na
 var float planHedgeWall = na
 var float planMaxPain = na
 var float planUpperEM = na
@@ -459,8 +519,15 @@ if needsRedraw
     planZeroGamma := na
     planGammaFlipUpper := na
     planGammaFlipLower := na
+    planGammaCliffUp := na
+    planGammaCliffDown := na
     planCallWall := na
+    planCallWall0DTE := na
     planPutWall0DTE := na
+    planLocalCallNode := na
+    planLocalPutNode := na
+    planDexCallNode := na
+    planDexPutNode := na
     planHedgeWall := na
     planMaxPain := na
     planUpperEM := na
@@ -548,6 +615,7 @@ if needsRedraw
                         styleKey = str.contains(f_norm(title), "0DTE") ? lineStyle0DTEInp : (str.contains(f_norm(title), "LOCAL") ? lineStyleSecondaryInp : lineStylePrimaryInp)
                         array.push(uniqueStyleKeys, styleKey)
 
+                // ── Extract ALL narrative variables ─────────────────
                 titleNorm = f_norm(title)
                 if titleNorm == "UPPER EM"
                     emUpperPrice := level
@@ -563,10 +631,24 @@ if needsRedraw
                 if titleNorm == "GAMMA FLIP LOWER"
                     gammaFlipLowerPrice := level
                     planGammaFlipLower := level
+                if titleNorm == "GAMMA CLIFF UP"
+                    planGammaCliffUp := level
+                if titleNorm == "GAMMA CLIFF DOWN"
+                    planGammaCliffDown := level
                 if titleNorm == "ABSOLUTE CALL WALL"
                     planCallWall := level
+                if titleNorm == "0DTE CALL WALL"
+                    planCallWall0DTE := level
                 if titleNorm == "0DTE PUT WALL"
                     planPutWall0DTE := level
+                if titleNorm == "LOCAL CALL NODE"
+                    planLocalCallNode := level
+                if titleNorm == "LOCAL PUT NODE"
+                    planLocalPutNode := level
+                if titleNorm == "DEX CALL NODE"
+                    planDexCallNode := level
+                if titleNorm == "DEX PUT NODE"
+                    planDexPutNode := level
                 if titleNorm == "HEDGE WALL"
                     planHedgeWall := level
                 if titleNorm == "MAX PAIN"
@@ -638,15 +720,51 @@ if barstate.islast and not showStatusTable
     table.clear(statusTable, 0, 0, 0, 1)
 
 if barstate.islast and showNarrativeTable
-    shortTarget = f_pick(planPutWall0DTE, planHedgeWall, planLowerEM)
-    shortInvalid = f_pick(planCallWall, planGammaFlipUpper, planUpperEM)
-    longTarget = f_pick(planMaxPain, planUpperEM, planGammaFlipUpper)
-    longInvalid = f_pick(planZeroGamma, planGammaFlipLower, planPutWall0DTE)
-    watchText = not na(planGammaFlipLower) and not na(planGammaFlipUpper) ? ("Watch ZG " + f_num(planZeroGamma) + " | GF " + f_num(planGammaFlipLower) + "↔" + f_num(planGammaFlipUpper)) : ("Watch ZG " + f_num(planZeroGamma))
+    // ── Triggers: match Python's first_level fallback chain ────
+    shortTrigger = f_pick(planZeroGamma, planGammaFlipLower, planCallWall)
+    longTrigger = f_pick(planCallWall, planGammaFlipUpper, planZeroGamma)
+
+    // ── Targets: match Python's nearest_below / nearest_above ──
+    shortTarget = f_nearest_below(shortTrigger, planPutWall0DTE, planHedgeWall, planLowerEM)
+    shortInvalid = f_nearest_above(shortTrigger, planCallWall, planGammaFlipUpper, planUpperEM)
+    longTarget = f_nearest_above(longTrigger, planMaxPain, planUpperEM, planGammaFlipUpper)
+    longInvalid = f_nearest_below(longTrigger, planZeroGamma, planGammaFlipLower, planPutWall0DTE)
+
+    // ── Watch line includes DEX nodes ──────────────────────────
+    watchParts = "Watch ZG " + f_num(planZeroGamma)
+    if not na(planGammaFlipLower) and not na(planGammaFlipUpper)
+        watchParts := watchParts + " | GF " + f_num(planGammaFlipLower) + "↔" + f_num(planGammaFlipUpper)
+    if not na(planDexPutNode) or not na(planDexCallNode)
+        watchParts := watchParts + " | DEX " + f_num(planDexPutNode) + "/" + f_num(planDexCallNode)
+
+    // ── Reaction zones: Gamma Cliffs + DEX nodes ───────────────
+    shortZones = ""
+    if not na(planGammaCliffDown)
+        shortZones := shortZones + "GC↓ " + f_num(planGammaCliffDown) + " "
+    if not na(planDexPutNode)
+        shortZones := shortZones + "DEX " + f_num(planDexPutNode)
+
+    longZones = ""
+    if not na(planGammaCliffUp)
+        longZones := longZones + "GC↑ " + f_num(planGammaCliffUp) + " "
+    if not na(planDexCallNode)
+        longZones := longZones + "DEX " + f_num(planDexCallNode)
+
+    shortText = "Short: < " + f_num(shortTrigger) + " → " + f_num(shortTarget) + " | inv > " + f_num(shortInvalid)
+    if str.length(shortZones) > 0
+        shortText := shortText + " | " + shortZones
+    longText = "Long: > " + f_num(longTrigger) + " → " + f_num(longTarget) + " | inv < " + f_num(longInvalid)
+    if str.length(longZones) > 0
+        longText := longText + " | " + longZones
+
     table.cell(narrativeTable, 0, 0, "Narrative Plan", text_color = color.white)
-    table.cell(narrativeTable, 0, 1, watchText, text_color = color.new(color.white, 0))
-    table.cell(narrativeTable, 0, 2, "Short: < " + f_num(planZeroGamma) + " -> " + f_num(shortTarget) + " | invalid > " + f_num(shortInvalid), text_color = color.new(color.red, 0))
-    table.cell(narrativeTable, 0, 3, "Long: > " + f_num(planCallWall) + " -> " + f_num(longTarget) + " | invalid < " + f_num(longInvalid), text_color = color.new(color.lime, 0))
+    table.cell(narrativeTable, 0, 1, watchParts, text_color = color.new(color.white, 0))
+    table.cell(narrativeTable, 0, 2, shortText, text_color = color.new(color.red, 0))
+    table.cell(narrativeTable, 0, 3, longText, text_color = color.new(color.lime, 0))
     table.cell(narrativeTable, 0, 4, "EM: " + f_num(planLowerEM) + " ↔ " + f_num(planUpperEM), text_color = color.new(color.aqua, 0))
+    // Row 5: Cliff zones quick reference
+    cliffText = "Cliffs: ↓" + f_num(planGammaCliffDown) + " | ↑" + f_num(planGammaCliffUp)
+    table.cell(narrativeTable, 0, 5, cliffText, text_color = color.new(color.teal, 0))
+
 if barstate.islast and not showNarrativeTable
-    table.clear(narrativeTable, 0, 0, 0, 4)
+    table.clear(narrativeTable, 0, 0, 0, 5)

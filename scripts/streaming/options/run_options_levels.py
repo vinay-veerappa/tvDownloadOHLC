@@ -51,28 +51,50 @@ from .config import (
     TEST_OUTPUT_TICKERS,
     TOKEN_PATH,
 )
-from .discord_notifier import send_discord_update
+from .discord_notifier import send_discord_update, send_regime_change_alert
 from .file_writer import write_levels
 from .futures_translator import translate_to_futures
-from .gex_calculator import calculate_dealer_levels, calculate_price_metrics, rescale_levels_to_target_spot
-from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data
-
-# ---------------------------------------------------------------------------
-# Logging setup — writes to both stdout and a rotating log file
-# ---------------------------------------------------------------------------
-
-LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-    ],
+from .gex_calculator import (
+    DealerLevels,
+    calculate_dealer_levels,
+    calculate_price_metrics,
+    rescale_levels_to_target_spot,
 )
+from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data
+from .state_tracker import (
+    build_current_state,
+    detect_changes,
+    format_change_alert,
+    load_previous_state,
+    save_current_state,
+)
+
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Logging setup — deferred to _setup_logging() so it only runs when the
+# module is executed as an entry point, not on every import.
+# ---------------------------------------------------------------------------
+
+_logging_configured = False
+
+
+def _setup_logging() -> None:
+    global _logging_configured
+    if _logging_configured:
+        return
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler(LOG_FILE, encoding="utf-8"),
+        ],
+    )
+    _logging_configured = True
 
 
 def _chain_has_actionable_oi(chain) -> bool:
@@ -94,6 +116,8 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
     run_label : Short human-readable label embedded in all outputs.
                 Auto-generated from current Eastern time when empty.
     """
+    _setup_logging()
+
     if not run_label:
         tz = ZoneInfo(SCHEDULE_TIMEZONE)
         run_label = datetime.now(tz).strftime("%Y-%m-%d %H:%M ET")
@@ -110,7 +134,7 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
         return
 
     translated_levels = []
-    cash_levels_by_ticker: dict[str, object] = {}
+    cash_levels_by_ticker: dict[str, DealerLevels] = {}
 
     # --- Process each index / futures pair ----------------------------------
     for ticker in PRIMARY_INDEX_TICKERS:
@@ -146,8 +170,12 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
                     log.error("No fallback available for %s — skipping.", ticker)
                     continue
 
-            # 2. Fetch front-month futures quote
-            fut = fetch_futures_quote(client, futures_sym)
+            # 2. Fetch front-month futures quote.
+            #    NOTE: fetch_futures_quote reads the token file directly for
+            #    REST calls, then falls back to yfinance.  It does not use the
+            #    schwab client object because the client library doesn't
+            #    reliably return futures data.
+            fut = fetch_futures_quote(futures_sym)
 
             # 3. Calculate GEX / walls / EM from the selected source chain
             levels = calculate_dealer_levels(chain, source_ticker)
@@ -180,8 +208,20 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
             cash_levels_by_ticker[ticker] = levels
 
             # 4. Translate levels into futures price space
-            tl = translate_to_futures(levels, fut)
-            translated_levels.append(tl)
+            if fut is None:
+                log.warning(
+                    "No futures price for %s — skipping futures translation for %s. "
+                    "Cash levels will still be written.",
+                    futures_sym,
+                    ticker,
+                )
+                # Do NOT append an untranslated DealerLevels to
+                # translated_levels — it would crash downstream consumers
+                # that expect TranslatedLevels attributes.
+                continue
+            else:
+                tl = translate_to_futures(levels, fut)
+                translated_levels.append(tl)
 
         except RuntimeError as exc:
             # API errors (HTTP failures, rate limits, bad responses)
@@ -197,7 +237,7 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
             )
             continue
 
-    if not translated_levels:
+    if not translated_levels and not cash_levels_by_ticker:
         log.error("No levels were computed — all outputs skipped.")
         return
 
@@ -216,11 +256,11 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
     if "RUT" in cash_levels_by_ticker and "RTY" not in cash_levels_by_ticker:
         cash_levels_by_ticker["RTY"] = replace(cash_levels_by_ticker["RUT"], ticker="RTY")
     if "DJX" in cash_levels_by_ticker and "YM" not in cash_levels_by_ticker:
-        dJx_levels = cash_levels_by_ticker["DJX"]
+        djx_levels = cash_levels_by_ticker["DJX"]
         cash_levels_by_ticker["YM"] = rescale_levels_to_target_spot(
-            dJx_levels,
+            djx_levels,
             target_ticker="YM",
-            target_spot=dJx_levels.spot * 100.0,
+            target_spot=djx_levels.spot * 100.0,
         )
 
     # --- Persist to disk ----------------------------------------------------
@@ -233,6 +273,27 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
     except Exception as exc:
         log.error("File write failed: %s", exc)
 
+    # --- State tracking & regime change detection ---------------------------
+    try:
+        previous_state = load_previous_state()
+        current_state = build_current_state(
+            run_label, translated_levels, cash_levels_by_ticker,
+        )
+        changes = detect_changes(previous_state, current_state)
+        save_current_state(current_state)
+
+        if changes:
+            log.info(
+                "Detected %d state change(s): %s",
+                len(changes),
+                ", ".join(f"{c.ticker}:{c.change_type}" for c in changes),
+            )
+        else:
+            log.info("No regime changes detected since last run.")
+    except Exception as exc:
+        log.error("State tracking failed: %s", exc)
+        changes = []
+
     # --- Send Discord notification (optional) -------------------------------
     if enable_discord:
         try:
@@ -243,6 +304,15 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
             )
         except Exception as exc:
             log.error("Discord notification failed: %s", exc)
+
+        # Send regime change alert if any changes detected
+        if changes:
+            try:
+                alert_text = format_change_alert(changes, run_label)
+                if alert_text:
+                    send_regime_change_alert(alert_text)
+            except Exception as exc:
+                log.error("Regime change alert failed: %s", exc)
     else:
         log.info("Discord updates are disabled for this run.")
 
@@ -269,6 +339,8 @@ def run_scheduled(enable_discord: bool = ENABLE_DISCORD_UPDATES) -> None:
 
     Raises SystemExit when APScheduler is not installed.
     """
+    _setup_logging()
+
     try:
         from apscheduler.schedulers.blocking import BlockingScheduler
         from apscheduler.triggers.cron import CronTrigger
@@ -282,7 +354,18 @@ def run_scheduled(enable_discord: bool = ENABLE_DISCORD_UPDATES) -> None:
     tz = ZoneInfo(SCHEDULE_TIMEZONE)
     scheduler = BlockingScheduler(timezone=tz)  # type: ignore[call-arg]
 
+    # Deduplicate schedule times to prevent double-firing (e.g. duplicate
+    # "11:00" entries in config).
+    seen_times: set[str] = set()
     for time_str in SCHEDULE_TIMES:
+        if time_str in seen_times:
+            log.warning(
+                "Duplicate schedule time '%s' in SCHEDULE_TIMES — skipping.",
+                time_str,
+            )
+            continue
+        seen_times.add(time_str)
+
         hour, minute = map(int, time_str.split(":"))
         label = f"{time_str} ET"
 
