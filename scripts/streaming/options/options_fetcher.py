@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
+from datetime import date, timedelta, datetime, time
+from zoneinfo import ZoneInfo
 
 import requests
 import schwab
@@ -72,6 +74,8 @@ class OptionContract:
 class OptionChainData:
     underlying_symbol: str   # normalised Schwab API symbol
     spot_price: float
+    spot_open: float = 0.0
+    chain_volatility: float = 0.0
     calls: list[OptionContract] = field(default_factory=list)
     puts:  list[OptionContract] = field(default_factory=list)
 
@@ -80,11 +84,27 @@ class OptionChainData:
 class FuturesQuote:
     symbol: str
     price: float
+    open_price: float = 0.0
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _today_ny() -> date:
+    """
+    Return the logical trading date in Eastern Time.
+    Before 4:00 PM EST, the target date is today.
+    After 4:00 PM EST, the target date officially rolls over to tomorrow.
+    """
+    ny_time = datetime.now(ZoneInfo("America/New_York"))
+    
+    # If the current time is past 4:00 PM (16:00) EST, roll forward 1 day
+    if ny_time.time() >= time(16, 0):
+        return (ny_time + timedelta(days=1)).date()
+        
+    return ny_time.date()
+
 
 def _schwab_symbol(symbol: str) -> str:
     """Return the Schwab API symbol for *symbol*, applying the $ prefix where needed."""
@@ -110,7 +130,7 @@ def _parse_contract(raw: dict[str, Any], contract_type: str) -> OptionContract |
     """Parse a single raw Schwab option dict into an OptionContract."""
     try:
         exp_str = raw.get("expirationDate", "")
-        exp_date = date.fromisoformat(exp_str[:10]) if exp_str else date.today()
+        exp_date = date.fromisoformat(exp_str[:10]) if exp_str else _today_ny()
 
         # Schwab sends volatility as a percentage (e.g. 20.0 → 0.20).
         # It can also be NaN for illiquid contracts — _safe_float handles both.
@@ -146,20 +166,16 @@ def _parse_contract(raw: dict[str, Any], contract_type: str) -> OptionContract |
 def _parse_exp_key(exp_key: str) -> tuple[date, int]:
     """
     Parse Schwab expiration key format: "YYYY-MM-DD:DTE".
-
-    Returns
-    -------
-    tuple[date, int]
-        (expiry_date, dte)
+    We completely ignore Schwab's DTE integer because it goes stale overnight,
+    and calculate it strictly against NY time.
     """
-    date_part, _, dte_part = exp_key.partition(":")
+    date_part, _, _ = exp_key.partition(":")
     exp_date = date.fromisoformat(date_part)
-    if dte_part:
-        try:
-            return exp_date, int(dte_part)
-        except ValueError:
-            pass
-    return exp_date, (exp_date - date.today()).days
+    
+    # Calculate the true DTE using our timezone-aware helper
+    true_dte = (exp_date - _today_ny()).days
+    
+    return exp_date, true_dte
 
 
 def _select_expiration_keys(
@@ -168,17 +184,23 @@ def _select_expiration_keys(
 ) -> set[str]:
     """
     Select nearest available expiration keys for each target DTE.
-
-    This is robust for weekends/overnights where exact 0DTE/1DTE calendar
-    dates may not exist; it chooses the closest listed expiries instead.
+    Filters out expired chains that Schwab caches overnight.
     """
     if not option_map:
         return set()
 
     parsed: list[tuple[str, date, int]] = []
+    current_ny_date = _today_ny()
+    
     for exp_key in option_map.keys():
         try:
             exp_date, dte = _parse_exp_key(exp_key)
+            
+            # ROBUSTNESS CHECK: Instantly drop expired chains
+            if exp_date < current_ny_date:
+                log.debug(f"Dropping expired chain from Schwab payload: {exp_key}")
+                continue
+                
             parsed.append((exp_key, exp_date, dte))
         except ValueError:
             log.debug("Could not parse expiry key: %s", exp_key)
@@ -282,7 +304,8 @@ def fetch_option_chain_data(
         raise ValueError("dte_targets must not be empty.")
 
     api_sym = _schwab_symbol(symbol)
-    today = date.today()
+    
+    today = _today_ny()
     # Query a wide enough window so weekend/overnight runs still return expiries.
     max_dte = max(dte_targets) + 10
 
@@ -321,15 +344,61 @@ def fetch_option_chain_data(
         else payload.get("underlyingPrice")
     )
     spot: float = _safe_float(raw_spot)
+
+    # Extract opening price for anchored basis translation
+    spot_open = _safe_float(
+        underlying.get("openPrice") 
+        or underlying.get("sessionOpen") 
+        or underlying.get("open") 
+    )
+
     if spot == 0:
         log.warning("Spot price is zero for %s — levels may be inaccurate.", symbol)
 
-    call_map = payload.get("callExpDateMap", {})
-    put_map = payload.get("putExpDateMap", {})
+    call_map_raw = payload.get("callExpDateMap", {})
+    put_map_raw = payload.get("putExpDateMap", {})
 
-    # Pick nearest available expirations based on whichever map is populated.
+    def _scrub_expired(raw_map: dict) -> dict:
+        """Purge any options chain that is older than our logical trading day."""
+        clean = {}
+        logical_today = _today_ny()
+        
+        for exp_key, strikes in raw_map.items():
+            try:
+                date_str = exp_key.split(":")[0]
+                exp_date = date.fromisoformat(date_str)
+                
+                # Only keep chains that expire ON or AFTER our logical trading day
+                if exp_date >= logical_today:
+                    clean[exp_key] = strikes
+                else:
+                    log.debug(f"Purging dead expired chain: {exp_key}")
+            except Exception:
+                clean[exp_key] = strikes 
+        return clean
+        
+    # Sanitize the maps before the rest of the script sees them
+    call_map = _scrub_expired(call_map_raw)
+    put_map = _scrub_expired(put_map_raw)
+
+    # Pick nearest available expirations from the cleaned maps
     exp_source_map = call_map if call_map else put_map
     selected_exp_keys = _select_expiration_keys(exp_source_map, dte_targets)
+
+    # ---> NEW CODE TO EXTRACT TOS BLENDED VOLATILITY <---
+    chain_vol = 0.0
+    if selected_exp_keys:
+        # Grab the nearest DTE key (the primary one we care about for the daily expected move)
+        front_exp_key = sorted(list(selected_exp_keys))[0]
+        
+        # Schwab usually stores the blended IV in the first strike's array or right inside the date map.
+        # It's an array of strike arrays, so we peek at the first strike available.
+        if front_exp_key in exp_source_map:
+            first_strike_data = next(iter(exp_source_map[front_exp_key].values()), [])
+            if first_strike_data:
+                # Extract the 'volatility' field (Schwab returns it as a percentage e.g. 29.5)
+                chain_vol = _safe_float(first_strike_data[0].get("volatility", 0.0))
+    # ---> END NEW CODE <---
 
     calls = _extract_contracts(call_map, "CALL", selected_exp_keys)
     puts  = _extract_contracts(put_map,  "PUT",  selected_exp_keys)
@@ -341,6 +410,8 @@ def fetch_option_chain_data(
     return OptionChainData(
         underlying_symbol=api_sym,
         spot_price=spot,
+        spot_open=spot_open,
+        chain_volatility=chain_vol,
         calls=calls,
         puts=puts,
     )
@@ -350,42 +421,43 @@ def fetch_futures_quote(
     symbol: str,
     token_path: Path = TOKEN_PATH,
 ) -> FuturesQuote | None:
-    """
-    Fetch the current price for a front-month futures symbol (e.g. "/ES", "/NQ").
+    # 1. Fetch real-time price and globex open from Schwab Quotes API (fastest)
+    price_sc, open_sc = _fetch_futures_from_schwab(symbol, token_path)
 
-    The Schwab client library does not reliably return futures data, so this
-    function hits the Schwab marketdata REST endpoint directly, then falls back
-    to yfinance if the HTTP request fails or returns no usable price.
+    # 2. Fetch un-delayed RTH open from Schwab Price History API
+    #    (This avoids yfinance's 15min delay and Globex-vs-RTH mismatch)
+    open_rth = _fetch_rth_open_from_schwab(symbol, token_path)
+    
+    # 3. Fallback to yfinance only if both Schwab calls fail
+    if price_sc is None and open_rth is None:
+        price_yf, open_yf = _fetch_futures_from_yfinance(symbol)
+        final_price = price_yf
+        final_open  = open_yf
+        source_lbl = "yfinance"
+    else:
+        final_price = price_sc
+        final_open  = open_rth if open_rth is not None else open_sc
+        source_lbl = "schwab"
 
-    Parameters
-    ----------
-    symbol     : Futures symbol string, e.g. "/ES".
-    token_path : Path to token.json containing the OAuth access token.
+    if final_price is not None:
+        log.info(
+            "Futures quote %s: price=%.2f  open=%.2f  (source=%s)",
+            symbol,
+            final_price,
+            final_open or 0.0,
+            source_lbl
+        )
+        return FuturesQuote(symbol=symbol, price=final_price, open_price=final_open or 0.0)
 
-    Returns
-    -------
-    FuturesQuote on success, None if both sources fail.
-    """
-    price = _fetch_futures_from_schwab(symbol, token_path)
-    if price is not None:
-        log.info("Futures quote %s: %.2f (source=schwab)", symbol, price)
-        return FuturesQuote(symbol=symbol, price=price)
-
-    price = _fetch_futures_from_yfinance(symbol)
-    if price is not None:
-        log.info("Futures quote %s: %.2f (source=yfinance)", symbol, price)
-        return FuturesQuote(symbol=symbol, price=price)
-
-    log.warning("Futures quote unavailable for %s from both Schwab and yfinance.", symbol)
+    log.warning("Futures quote unavailable for %s from all sources.", symbol)
     return None
 
 
-def _fetch_futures_from_schwab(symbol: str, token_path: Path) -> float | None:
+def _fetch_futures_from_schwab(symbol: str, token_path: Path) -> tuple[float | None, float | None]:
     """
     Hit the Schwab marketdata REST endpoint directly for a futures quote.
 
-    Returns the price as a float, or None if the request fails or returns
-    no usable price.
+    Returns (last_price, open_price)
     """
     try:
         token_data = json.loads(token_path.read_text())
@@ -416,7 +488,7 @@ def _fetch_futures_from_schwab(symbol: str, token_path: Path) -> float | None:
     key = next(iter(data.keys()), None)
     if key is None:
         log.warning("Schwab futures response was empty for %s", symbol)
-        return None
+        return None, None
 
     quote = data[key].get("quote", {})
     price = _safe_float(
@@ -425,35 +497,105 @@ def _fetch_futures_from_schwab(symbol: str, token_path: Path) -> float | None:
         or quote.get("mark")
         or quote.get("closePrice")
     )
-    return price if price > 0 else None
+    open_p = _safe_float(
+        quote.get("openPrice")
+        or quote.get("open")
+    )
+    return (price, open_p) if price > 0 else (None, None)
 
 
-def _fetch_futures_from_yfinance(symbol: str) -> float | None:
+def _fetch_rth_open_from_schwab(symbol: str, token_path: Path) -> float | None:
     """
-    Fetch a futures price via yfinance as a fallback.
+    Fetch the 9:30 AM ET bar from Schwab Price History API for futures.
+    This provides un-delayed data required for RTH-anchored basis.
+    """
+    try:
+        token_data = json.loads(token_path.read_text())
+        access_token = token_data["token"]["access_token"]
+    except Exception:
+        return None
 
-    Returns the price as a float, or None if yfinance is unavailable,
-    the symbol isn't mapped, or the fetch fails.
+    # Request 1-day 1-min history including extended hours so 9:30 bar is available
+    url = (
+        f"https://api.schwabapi.com/marketdata/v1/pricehistory"
+        f"?symbol={symbol}&periodType=day&period=1&frequencyType=minute&frequency=1"
+        f"&needExtendedHoursData=true"
+    )
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            return None
+        
+        data = response.json()
+        candles = data.get("candles", [])
+        if not candles:
+            return None
+
+        # RTH Open is the bar at 09:30 AM ET.
+        # Schwab candles use epoch ms (UTC).
+        # We find the bar that corresponds to 09:30 NY time today.
+        ny_tz = ZoneInfo("America/New_York")
+        now_ny = datetime.now(ny_tz)
+        target_time = time(9, 30)
+        
+        for c in candles:
+            dt = datetime.fromtimestamp(c["datetime"] / 1000, tz=ZoneInfo("UTC")).astimezone(ny_tz)
+            if dt.time() == target_time and dt.date() == now_ny.date():
+                return float(c["open"])
+        
+        # Fallback to the very first candle of the day if 9:30 is not found or it's pre-market
+        return float(candles[0]["open"])
+
+    except Exception as exc:
+        log.debug("Schwab price history fetch failed for %s: %s", symbol, exc)
+        return None
+
+
+def _fetch_futures_from_yfinance(symbol: str) -> tuple[float | None, float | None]:
+    """
+    Fetch a futures price and RTH open (9:30 AM) via yfinance.
     """
     if yf is None:
-        return None
+        return None, None
 
     yf_symbol = FUTURES_YF_MAP.get(symbol)
     if not yf_symbol:
         log.debug("No yfinance mapping for futures symbol %s", symbol)
-        return None
+        return None, None
 
     try:
         ticker = yf.Ticker(yf_symbol)
-        hist = ticker.history(period="5d", interval="1d")
-        if not hist.empty:
-            close = hist["Close"].dropna()
-            if not close.empty:
-                return float(close.iloc[-1])
-        # Fall back to fast_info if history is unavailable.
-        info = ticker.fast_info if hasattr(ticker, "fast_info") else {}
-        last = info.get("lastPrice") if info else None
-        return float(last) if last is not None else None
+        # Fetch 1-day 1-min data to extract the precise RTH open bar
+        hist = ticker.history(period="1d", interval="1m")
+        if hist.empty:
+            # Fall back to info 
+            info = ticker.fast_info if hasattr(ticker, "fast_info") else {}
+            last = info.get("lastPrice")
+            open_p = info.get("openPrice")
+            return (float(last) if last else None, float(open_p) if open_p else None)
+
+        last = float(hist["Close"].iloc[-1])
+
+        # Attempt to find the 9:30 AM ET bar to match SPX RTH open
+        # (SPX does not have Globex, so anchored basis must use RTH open for both)
+        try:
+            hist.index = hist.index.tz_convert("America/New_York")
+            rth_bars = hist.between_time("09:30", "09:30")
+            if not rth_bars.empty:
+                open_p = float(rth_bars["Open"].iloc[0])
+                log.debug("Found RTH Open for %s at 09:30 NY: %.2f", symbol, open_p)
+            else:
+                # If 9:30 bar doesn't exist yet (pre-market), use session start (Globex)
+                open_p = float(hist["Open"].iloc[0])
+        except Exception:
+            open_p = float(hist["Open"].iloc[0])
+
+        return last, open_p
     except Exception as exc:
         log.warning("yfinance fallback failed for %s (%s): %s", symbol, yf_symbol, exc)
-        return None
+        return None, None

@@ -41,12 +41,15 @@ NDX_TICKERS: list[str] = ["NDX", "QQQ"]    # Nasdaq-100 family
 # Front-month futures symbols (Schwab API accepts these directly).
 ES_FUTURES_SYMBOL: str = "/ES"
 NQ_FUTURES_SYMBOL: str = "/NQ"
+YM_FUTURES_SYMBOL: str = "/YM"
+RTY_FUTURES_SYMBOL: str = "/RTY"
+
 
 # Source tickers selected for translated futures outputs.
 # Defaults:
 # - ES uses SPX as the primary source (fallback SPY)
 # - NQ uses QQQ as the primary source (fallback NDX)
-PRIMARY_INDEX_TICKERS: list[str] = ["SPX", "QQQ"]
+PRIMARY_INDEX_TICKERS: list[str] = ["SPX", "QQQ", "SPY", "IWM","/ES","/NQ"]
 ETF_FALLBACK: dict[str, str] = {"SPX": "SPY", "QQQ": "NDX"}
 TEST_OUTPUT_TICKERS: list[str] = [
     "SPX",
@@ -55,8 +58,8 @@ TEST_OUTPUT_TICKERS: list[str] = [
     "QQQ",
     "IWM",
     "DIA",
-    "RUT",
-    "DJX",
+#    "RUT",
+#    "DJX",
     "AAPL",
     "MSFT",
     "GOOGL",
@@ -71,6 +74,8 @@ TEST_OUTPUT_TICKERS: list[str] = [
 INDEX_TO_FUTURES: dict[str, str] = {
     "SPX": ES_FUTURES_SYMBOL,
     "QQQ": NQ_FUTURES_SYMBOL,
+    "DIA": YM_FUTURES_SYMBOL,
+    "IWM": RTY_FUTURES_SYMBOL,
 }
 
 # Schwab API requires a leading "$" for cash CBOE indices.
@@ -106,11 +111,18 @@ MIN_NONZERO_OI_CONTRACTS: int = 25
 # ---------------------------------------------------------------------------
 # True  → use ATM straddle (call ask + put ask)
 # False → use IV formula: spot × ATM_IV × √(DTE/365)
-USE_STRADDLE_EM: bool = True
+USE_STRADDLE_EM: bool = False
 
 # Optional scalar applied to the straddle price (0.85 = "85% rule").
 # Set to 1.0 for the raw straddle price.
 EM_STRADDLE_SCALAR: float = 0.85
+
+# ---------------------------------------------------------------------------
+# Basis Translation
+# ---------------------------------------------------------------------------
+# If True, use the basis established at market open (ES Open - SPX Open)
+# for the entire session. If False, use the dynamic real-time basis.
+USE_OPENING_BASIS: bool = True
 
 # ---------------------------------------------------------------------------
 # Output

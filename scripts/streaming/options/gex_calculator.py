@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 from .config import CONTRACT_MULTIPLIER, EM_STRADDLE_SCALAR, MIN_OI_THRESHOLD, USE_STRADDLE_EM
 from .options_fetcher import OptionChainData, OptionContract
@@ -294,8 +296,53 @@ def _atm_straddle_cost(calls: list[OptionContract], puts: list[OptionContract], 
     # bid-ask spread.  mark is already computed as (bid+ask)/2 by the fetcher.
     return atm_call.mark + atm_put.mark
 
+def _expected_move(
+    calls: list[OptionContract], 
+    puts: list[OptionContract], 
+    spot: float,
+    *args, **kwargs
+) -> tuple[float, float]:
+    
+    straddle = _atm_straddle_cost(calls, puts, spot)
+    atm = _atm_contract(calls, spot)
+    
+    if not calls or atm is None or atm.iv <= 0:
+        return straddle * EM_STRADDLE_SCALAR if USE_STRADDLE_EM else 0.0, straddle
 
-def _expected_move(calls: list[OptionContract], puts: list[OptionContract], spot: float) -> tuple[float, float]:
+    tz = ZoneInfo("America/New_York")
+    now = datetime.now(tz)
+    exp_dt = datetime.combine(atm.expiry, time(16, 0), tzinfo=tz)
+    
+    minutes_remaining = (exp_dt - now).total_seconds() / 60.0
+    
+    # Calculate values safely even if minutes are negative (for logging purposes)
+    fractional_dte = minutes_remaining / (24.0 * 60.0) if minutes_remaining > 0 else 0.0
+    years_to_expiry = fractional_dte / 365.0
+    tos_expected_move = spot * atm.iv * math.sqrt(years_to_expiry) if years_to_expiry > 0 else 0.0
+    
+    # Print the verification regardless of whether the market is closed
+    log.info(
+        "\n==================================================\n"
+        "TOS EXPECTED MOVE VERIFICATION\n"
+        f"Spot Price:        ${spot:.2f}\n"
+        f"Expiry Date:       {atm.expiry}\n"
+        f"ATM Vol (IV):      {atm.iv:.4f} ({atm.iv*100:.2f}%)\n"
+        f"Minutes Remaining: {minutes_remaining:.2f}\n"
+        f"Calculated TOS EM: ±${tos_expected_move:.2f}\n"
+        "=================================================="
+    )
+    
+    # Now enforce the cutoff 
+    if minutes_remaining <= 0:
+        log.info("Market closed: Falling back to straddle or zero.")
+        return straddle * EM_STRADDLE_SCALAR if USE_STRADDLE_EM else 0.0, straddle
+        
+    if USE_STRADDLE_EM:
+        return straddle * EM_STRADDLE_SCALAR, straddle
+        
+    return tos_expected_move, straddle
+
+def _expected_move_old(calls: list[OptionContract], puts: list[OptionContract], spot: float) -> tuple[float, float]:
     straddle = _atm_straddle_cost(calls, puts, spot)
     if USE_STRADDLE_EM:
         return straddle * EM_STRADDLE_SCALAR, straddle
@@ -502,7 +549,7 @@ def calculate_price_metrics(chain: OptionChainData) -> dict[str, float | None]:
     if spot <= 0:
         raise ValueError("Spot price is zero — cannot calculate price-derived metrics.")
 
-    em_value, straddle = _expected_move(chain.calls, chain.puts, spot)
+    em_value, straddle = _expected_move(chain.calls, chain.puts, spot, chain.chain_volatility)
     front_calls, front_puts = _find_front_dte_contracts(chain.calls, chain.puts)
     skew_put_25d, skew_call_25d = _find_skew_pivots(front_calls, front_puts)
     vt_u05, vt_l05, vt_u10, vt_l10, vt_u15, vt_l15 = _vol_trigger_bands(front_calls or chain.calls, spot)
@@ -691,7 +738,7 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
     hedge_wall = _find_hedge_wall(strikes, spot)
     max_pain = _find_max_pain(front_calls or chain.calls, front_puts or chain.puts)
 
-    em_value, straddle = _expected_move(chain.calls, chain.puts, spot)
+    em_value, straddle = _expected_move(chain.calls, chain.puts, spot, chain.chain_volatility)
 
     cliff_up, cliff_down = _find_gamma_cliffs(strikes, spot)
 
@@ -889,3 +936,52 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         net_vanna_exposure=levels.net_vanna_exposure,
         strike_gex=[],
     )
+
+def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_volatility: float) -> float:
+    """
+    Calculates the Thinkorswim (TOS) Expected Move using precise fractional DTE
+    and the aggregate expiry volatility.
+    
+    expiry_date_str: 'YYYY-MM-DD'
+    expiry_volatility: The volatility number from Schwab API at the expDateMap level.
+    """
+    tz = ZoneInfo("America/New_York")
+    now = datetime.now(tz)
+    
+    # 1. Calculate precise minutes to expiration (4:00 PM EST on expiry day)
+    try:
+        # Extract just the date part if it comes in as 'YYYY-MM-DD:Days'
+        clean_date_str = expiry_date_str.split(':')[0] 
+        exp_date = datetime.strptime(clean_date_str, "%Y-%m-%d").date()
+        exp_dt = datetime.combine(exp_date, time(16, 0), tzinfo=tz)
+    except Exception as e:
+        # Fallback if date parsing fails
+        return 0.0
+    
+    delta = exp_dt - now
+    minutes_remaining = delta.total_seconds() / 60.0
+    
+    if minutes_remaining <= 0:
+        return 0.0
+        
+    fractional_dte = minutes_remaining / (24 * 60)
+    years_to_expiry = fractional_dte / 365.0
+    
+    # 2. Convert Schwab API volatility to decimal (e.g., 29.5 -> 0.295)
+    # Schwab usually returns this as a whole number percentage.
+    vol_decimal = expiry_volatility / 100.0 if expiry_volatility > 1.0 else expiry_volatility
+    
+    # 3. The TOS Math
+    tos_expected_move = spot_price * vol_decimal * math.sqrt(years_to_expiry)
+    
+    # 4. Output to screen for verification
+    print("\n" + "="*50)
+    print(f"TOS EXPECTED MOVE VERIFICATION")
+    print(f"Spot Price:        ${spot_price:.2f}")
+    print(f"Expiry Date:       {clean_date_str}")
+    print(f"Blended Vol (IV):  {vol_decimal:.4f} ({vol_decimal*100:.2f}%)")
+    print(f"Fractional DTE:    {fractional_dte:.4f} days")
+    print(f"Calculated TOS EM: ±${tos_expected_move:.2f}")
+    print("="*50 + "\n")
+    
+    return tos_expected_move

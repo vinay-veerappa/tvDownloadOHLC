@@ -86,9 +86,20 @@ class TranslatedLevels:
     net_vanna_exposure: float
 
 
-def translate_to_futures(levels: DealerLevels, futures: FuturesQuote) -> TranslatedLevels:
-    spread = futures.price - levels.spot
-    ratio = futures.price / levels.spot if levels.spot else 1.0
+def translate_to_futures(
+    levels: DealerLevels, 
+    futures: FuturesQuote,
+    anchor_basis: float | None = None,
+    anchor_ratio: float | None = None,
+) -> TranslatedLevels:
+    """
+    Translate cash levels to futures space.
+    
+    If anchor_basis or anchor_ratio is provided, it replaces the dynamic (futures.price - levels.spot)
+    or (futures.price / levels.spot) for translation. This pins the basis/scale to the market open.
+    """
+    spread = anchor_basis if anchor_basis is not None else (futures.price - levels.spot)
+    ratio = anchor_ratio if anchor_ratio is not None else (futures.price / levels.spot if levels.spot else 1.0)
 
     # Use multiplicative scaling when cash source and futures trade at different
     # scales (e.g. QQQ ~600 → NQ ~24400, ratio ~41).  Additive basis is correct

@@ -50,6 +50,7 @@ from .config import (
     SECRETS_PATH,
     TEST_OUTPUT_TICKERS,
     TOKEN_PATH,
+    USE_OPENING_BASIS,
 )
 from .discord_notifier import send_discord_update, send_regime_change_alert
 from .file_writer import write_levels
@@ -220,7 +221,24 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
                 # that expect TranslatedLevels attributes.
                 continue
             else:
-                tl = translate_to_futures(levels, fut)
+                anchor_basis = None
+                anchor_ratio = None
+
+                if USE_OPENING_BASIS and fut.open_price > 0 and chain.spot_open > 0:
+                    # Calculate basis established at open (e.g. ES Open - SPX Open)
+                    # and the anchor ratio for multiplicative scaling (e.g. NQ Open / QQQ Open)
+                    anchor_basis = round(fut.open_price - chain.spot_open, 2)
+                    anchor_ratio = round(fut.open_price / chain.spot_open, 4)
+                    log.info(
+                        "Anchor Basis (%s): spread=%.2f ratio=%.4f (from opens: fut=%.2f spot=%.2f)",
+                        ticker,
+                        anchor_basis,
+                        anchor_ratio,
+                        fut.open_price,
+                        chain.spot_open,
+                    )
+                
+                tl = translate_to_futures(levels, fut, anchor_basis=anchor_basis, anchor_ratio=anchor_ratio)
                 translated_levels.append(tl)
 
         except RuntimeError as exc:
