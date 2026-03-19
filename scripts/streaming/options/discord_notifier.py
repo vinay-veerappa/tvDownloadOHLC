@@ -30,6 +30,7 @@ from .formatting import (
     fmt,
     fmt_copy,
     futures_tag,
+    HasLevels,
     traffic_light,
 )
 from .futures_translator import TranslatedLevels
@@ -75,113 +76,146 @@ def _plan_lines(tl: TranslatedLevels) -> str:
     return "\n".join(lines)
 
 
-def _copy_block_payload(
+def _copy_block_payloads(
     translated_levels: list[TranslatedLevels],
     run_label: str,
     cash_levels: list[DealerLevels] | None = None,
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
+    """Build one or more Discord payloads containing the copy-ready strings."""
     lines = [copy_ready_line(futures_tag(tl.futures_symbol), tl) for tl in translated_levels]
     if cash_levels:
+        # Add cash levels that weren't already included as futures translations
+        # (or include all if the user explicitly wants indices too)
         lines.extend(copy_ready_line(levels.ticker, levels) for levels in cash_levels)
+
     header = f"**Dealer Levels — {run_label}**\nCopy directly into TradingView indicator input:\n"
-    content = header + "```\n" + "\n".join(lines) + "\n```"
-
-    if len(content) <= _DISCORD_MAX_CONTENT:
-        return {"content": content}
-
-    trimmed: list[str] = []
-    current_len = len(header) + len("```\n\n```")
+    
+    payloads: list[dict[str, Any]] = []
+    current_lines: list[str] = []
+    current_len = len(header) + 10 # buffer for code block backticks
+    
     for line in lines:
-        add_len = len(line) + 1
-        if current_len + add_len > _DISCORD_MAX_CONTENT:
-            break
-        trimmed.append(line)
-        current_len += add_len
+        if current_len + len(line) + 1 > _DISCORD_MAX_CONTENT:
+            # Seal this batch
+            payloads.append({
+                "content": header + "```\n" + "\n".join(current_lines) + "\n```"
+            })
+            current_lines = [line]
+            current_len = len(header) + 10 + len(line)
+        else:
+            current_lines.append(line)
+            current_len += len(line) + 1
+            
+    if current_lines:
+        payloads.append({
+            "content": header + "```\n" + "\n".join(current_lines) + "\n```"
+        })
+        
+    return payloads
 
-    return {
-        "content": header + "```\n" + "\n".join(trimmed) + "\n```",
-    }
 
-
-def _build_embed(tl: TranslatedLevels, run_label: str) -> dict[str, Any]:
-    """Construct a single Discord embed dict for one TranslatedLevels entry."""
-    color = DISCORD_COLOR_POSITIVE if tl.gex_regime == "POSITIVE" else DISCORD_COLOR_NEGATIVE
-    tag = futures_tag(tl.futures_symbol)
+def _build_embed(levels: HasLevels, run_label: str) -> dict[str, Any]:
+    """Construct a single Discord embed dict for one levels entry (translated or cash)."""
+    color = DISCORD_COLOR_POSITIVE if levels.gex_regime == "POSITIVE" else DISCORD_COLOR_NEGATIVE
+    
+    # ── Tag / Ticker resolution ─────────────────────────────────────
+    # Use hasattr to robustly detect TranslatedLevels regardless of import context
+    is_tl = hasattr(levels, "futures_symbol") and hasattr(levels, "cash_ticker")
+    if is_tl:
+        tag = futures_tag(getattr(levels, "futures_symbol"))
+        title = f"{getattr(levels, 'cash_ticker')} → {tag} Dealer Levels"
+        cash_sym = getattr(levels, "cash_ticker")
+        spot = getattr(levels, "cash_spot")
+    else:
+        # DealerLevels (Cash Only)
+        tag = getattr(levels, "ticker")
+        title = f"{tag} Dealer Levels"
+        cash_sym = tag
+        spot = getattr(levels, "spot")
 
     # Regime + traffic light
-    regime_emoji = {"PINNED": "📌", "TRENDING": "🚀", "COILED": "🔄", "BATTLE_ZONE": "⚔️"}.get(tl.regime_label, "⚪")
-    pin_pct = f"{tl.pin_odds:.0%}" if tl.pin_odds else "N/A"
-    light_color, _light_reason = traffic_light(tl)
+    regime_emoji = {"PINNED": "📌", "TRENDING": "🚀", "COILED": "🔄", "BATTLE_ZONE": "⚔️"}.get(levels.regime_label, "⚪")
+    pin_pct = f"{levels.pin_odds:.0%}" if levels.pin_odds else "N/A"
+    light_color, _light_reason = traffic_light(levels)
     light_emoji = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴"}[light_color]
-    bias_arrow = "↓" if tl.directional_bias == "BEARISH" else "↑" if tl.directional_bias == "BULLISH" else "↔"
-    bias_color = "🔴" if tl.directional_bias == "BEARISH" else "🟢" if tl.directional_bias == "BULLISH" else "⚪"
+    bias_arrow = "↓" if levels.directional_bias == "BEARISH" else "↑" if levels.directional_bias == "BULLISH" else "↔"
+    bias_color = "🔴" if levels.directional_bias == "BEARISH" else "🟢" if levels.directional_bias == "BULLISH" else "⚪"
 
     fields: list[dict[str, Any]] = [
         {
             "name": "Regime",
-            "value": f"{light_emoji} {light_color}  |  {_regime_line(tl.gex_regime)}  {regime_emoji} **{tl.regime_label} {bias_arrow}** {bias_color} {tl.directional_bias}",
+            "value": f"{light_emoji} {light_color}  |  {_regime_line(levels.gex_regime)}  {regime_emoji} **{levels.regime_label} {bias_arrow}** {bias_color} {levels.directional_bias}",
             "inline": False,
         },
         # ── Prices ──────────────────────────────────────────────
-        {"name": f"Cash Index ({tl.cash_ticker})", "value": fmt(tl.cash_spot),      "inline": True},
-        {"name": f"{tag} Futures Price",            "value": fmt(tl.futures_price), "inline": True},
-        {"name": "Basis" if tl.translation_mode == "additive" else "Scale Ratio",
-         "value": f"{tl.basis_spread:+.2f}" if tl.translation_mode == "additive" else f"{tl.basis_ratio:.2f}×",
-         "inline": True},
+        {"name": f"Ticker ({cash_sym})", "value": fmt(spot), "inline": True},
+    ]
+
+    if is_tl:
+        fields.extend([
+            {"name": f"{tag} Futures Price", "value": fmt(getattr(levels, "futures_price")), "inline": True},
+            {"name": "Basis" if getattr(levels, "translation_mode") == "additive" else "Scale Ratio",
+             "value": f"{getattr(levels, 'basis_spread'):+.2f}" if getattr(levels, "translation_mode") == "additive" else f"{getattr(levels, 'basis_ratio'):.2f}×",
+             "inline": True},
+        ])
+
+    fields.extend([
         # ── Spacer ───────────────────────────────────────────────
         {"name": "\u200b", "value": "\u200b", "inline": False},
         # ── Market Structure ─────────────────────────────────────
-        {"name": "🧲 Gamma Magnet",  "value": fmt(tl.gamma_magnet), "inline": True},
-        {"name": f"📌 Pin Strike ({pin_pct})", "value": fmt(tl.pin_strike), "inline": True},
-        {"name": "↔️ Wall Separation",         "value": f"{fmt(tl.wall_separation)} pts", "inline": True},
+        {"name": "🧲 Gamma Magnet",  "value": fmt(levels.gamma_magnet), "inline": True},
+        {"name": f"📌 Pin Strike ({pin_pct})", "value": fmt(levels.pin_strike), "inline": True},
+        {"name": "↔️ Wall Separation",         "value": f"{fmt(levels.wall_separation)} pts", "inline": True},
         # ── Spacer ───────────────────────────────────────────────
         {"name": "\u200b", "value": "\u200b", "inline": False},
-        # ── Key levels (futures-translated) ─────────────────────
-        {"name": f"📈 Call Wall ({tag})",    "value": fmt(tl.call_wall),   "inline": True},
-        {"name": f"📉 Put Wall ({tag})",     "value": fmt(tl.put_wall),    "inline": True},
-        {"name": f"⚡ Zero Gamma ({tag})",   "value": fmt(tl.zero_gamma),  "inline": True},
+        # ── Key levels ─────────────────────
+        {"name": f"📈 Call Wall ({tag})",    "value": fmt(levels.call_wall),   "inline": True},
+        {"name": f"📉 Put Wall ({tag})",     "value": fmt(levels.put_wall),    "inline": True},
+        {"name": f"⚡ Zero Gamma ({tag})",   "value": fmt(levels.zero_gamma),  "inline": True},
         # ── Spacer ───────────────────────────────────────────────
         {"name": "\u200b", "value": "\u200b", "inline": False},
         # ── Expected move ────────────────────────────────────────
-        {"name": f"🔼 EM Upper ({tag})",     "value": fmt(tl.em_upper),    "inline": True},
-        {"name": f"🔽 EM Lower ({tag})",     "value": fmt(tl.em_lower),    "inline": True},
-        {"name": "ATM Straddle (cash)",      "value": fmt(tl.atm_straddle), "inline": True},
+        {"name": f"🔼 EM Upper ({tag})",     "value": fmt(levels.em_upper),    "inline": True},
+        {"name": f"🔽 EM Lower ({tag})",     "value": fmt(levels.em_lower),    "inline": True},
+        {"name": "EMA straddle value" if is_tl else "Straddle (Cash)",
+         "value": fmt(levels.atm_straddle), "inline": True},
         # ── Compact execution plan ──────────────────────────────
-        {"name": "🧠 Execution Plan",          "value": _plan_lines(tl), "inline": False},
+        {"name": "🧠 Execution Plan",          "value": "\n".join(build_plan(tag, levels, extended=False)), "inline": False},
+    ])
+
+    footer_parts = [
+        f"Total GEX: {levels.total_gex:,.0f}",
+        f"EM ±{fmt(levels.em_value)}",
+        f"Vanna: {levels.net_vanna_exposure:,.0f}"
     ]
+    if is_tl:
+        footer_parts.insert(2, f"{'Basis: ' + f'{getattr(levels, 'basis_spread'):+.2f}' if getattr(levels, 'translation_mode') == 'additive' else 'Ratio: ' + f'{getattr(levels, 'basis_ratio'):.2f}×'}")
 
     return {
-        "title": f"{tl.cash_ticker} → {tag} Dealer Levels  |  {run_label}",
+        "title": f"{title}  |  {run_label}",
         "color": color,
         "fields": fields,
         "footer": {
-            "text": (
-                f"Total GEX: {tl.total_gex:,.0f}  "
-                f"•  EM ±{fmt(tl.em_value)}  "
-                f"•  {'Basis: ' + f'{tl.basis_spread:+.2f}' if tl.translation_mode == 'additive' else 'Ratio: ' + f'{tl.basis_ratio:.2f}×'}  "
-                f"•  Vanna: {tl.net_vanna_exposure:,.0f}"
-            )
+            "text": " • ".join(footer_parts)
         },
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
 def _build_coaches_note_payloads(
-    translated_levels: list[TranslatedLevels],
+    levels_list: list[HasLevels],
     run_label: str,
 ) -> list[dict[str, Any]]:
-    """
-    Build one Discord message per instrument with the full Coach's Note.
-
-    Each instrument gets its own message so nothing is truncated — a typical
-    single-instrument note runs 800–1200 characters, well within the 2000
-    character Discord content limit.
-    """
+    """Build one Discord message per instrument with the full Coach's Note."""
     payloads: list[dict[str, Any]] = []
 
-    for tl in translated_levels:
-        tag = futures_tag(tl.futures_symbol)
-        note = build_coaches_note(tag, tl)
+    for levels in levels_list:
+        if hasattr(levels, "futures_symbol") and hasattr(levels, "cash_ticker"):
+            tag = futures_tag(getattr(levels, "futures_symbol"))
+        else:
+            tag = getattr(levels, "ticker")
+            
+        note = build_coaches_note(tag, levels)
         content = f"**🏋️ Coach's Briefing — {tag}  |  {run_label}**\n\n{note}"
 
         if len(content) > _DISCORD_MAX_CONTENT:
@@ -222,36 +256,51 @@ def send_discord_update(
     run_label: str = "",
     cash_levels: list[DealerLevels] | None = None,
     webhook_url: str | None = None,
+    include_cash_embeds: bool = False,
 ) -> None:
     """
-    Post one Discord embed per TranslatedLevels entry via webhook.
-
-    Parameters
-    ----------
-    translated_levels : List of futures-translated dealer levels.
-    run_label         : Human-readable label, e.g. "08:30 Pre-Market".
-                        Defaults to current HH:MM ET wall-clock time.
-    webhook_url       : Override URL; uses discord_webhooks.json default when None.
+    Post one Discord embed per entry via webhook.
     """
     if not run_label:
         run_label = datetime.now().strftime("%H:%M ET")
 
+    log.info(
+        "Preparing Discord update: %d futures, %d cash. full_discord=%s",
+        len(translated_levels),
+        len(cash_levels) if cash_levels else 0,
+        include_cash_embeds,
+    )
+
     url = webhook_url or _load_webhook_url()
 
-    if translated_levels:
-        _post_payload(url, _copy_block_payload(translated_levels, run_label, cash_levels=cash_levels))
+    # 1. Copy Blocks (Always include everything specified)
+    if translated_levels or cash_levels:
+        for payload in _copy_block_payloads(translated_levels, run_label, cash_levels=cash_levels):
+            _post_payload(url, payload)
 
-    embeds = [_build_embed(tl, run_label) for tl in translated_levels]
+    # 2. Detailed Embeds & Notes
+    # If include_cash_embeds is False, we only show detailed cards for the indices we translate.
+    # Otherwise, we show cards for every stock too.
+    targets: list[HasLevels] = list(translated_levels)
+    if include_cash_embeds and cash_levels:
+        # Avoid showing the cash version of a ticker if we already have the futures version
+        futures_indices = {tl.cash_ticker for tl in translated_levels}
+        for cl in cash_levels:
+            if cl.ticker not in futures_indices:
+                targets.append(cl)
+    
+    log.debug("Sending Discord embeds/briefings for %d targets.", len(targets))
 
-    # Discord allows up to _DISCORD_MAX_EMBEDS per POST, so batch if needed.
+    embeds = [_build_embed(t, run_label) for t in targets]
+
+    # Batch and post embeds
     for batch_start in range(0, len(embeds), _DISCORD_MAX_EMBEDS):
         batch = embeds[batch_start : batch_start + _DISCORD_MAX_EMBEDS]
         _post_payload(url, {"embeds": batch})
 
-    # Coach's briefing — plain-English game plan as a separate message
-    if translated_levels:
-        for payload in _build_coaches_note_payloads(translated_levels, run_label):
-            _post_payload(url, payload)
+    # Coach's briefing
+    for payload in _build_coaches_note_payloads(targets, run_label):
+        _post_payload(url, payload)
 
 
 def send_regime_change_alert(

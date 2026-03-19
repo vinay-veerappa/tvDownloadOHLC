@@ -45,28 +45,22 @@ YM_FUTURES_SYMBOL: str = "/YM"
 RTY_FUTURES_SYMBOL: str = "/RTY"
 
 
-# Source tickers selected for translated futures outputs.
-# Defaults:
-# - ES uses SPX as the primary source (fallback SPY)
-# - NQ uses QQQ as the primary source (fallback NDX)
-PRIMARY_INDEX_TICKERS: list[str] = ["SPX", "QQQ", "SPY", "IWM","/ES","/NQ"]
-ETF_FALLBACK: dict[str, str] = {"SPX": "SPY", "QQQ": "NDX"}
-TEST_OUTPUT_TICKERS: list[str] = [
+# Tickers to process in the daily pipeline.
+# All tickers listed here will be calculated and included in the Discord update.
+# Indices (SPX, QQQ, etc.) are translated to futures if a mapping exists below.
+# Single stocks (AAPL, NVDA, etc.) are calculated as cash levels.
+ACTIVE_TICKERS: list[str] = [
     "SPX",
-    "NDX",
-    "SPY",
     "QQQ",
     "IWM",
     "DIA",
-#    "RUT",
-#    "DJX",
     "AAPL",
     "MSFT",
-    "GOOGL",
-    "AMZN",
-    "META",
     "NVDA",
     "TSLA",
+    "META",
+    "GOOGL",
+    "AMZN",
     "AVGO",
 ]
 
@@ -76,6 +70,12 @@ INDEX_TO_FUTURES: dict[str, str] = {
     "QQQ": NQ_FUTURES_SYMBOL,
     "DIA": YM_FUTURES_SYMBOL,
     "IWM": RTY_FUTURES_SYMBOL,
+}
+
+# Fallback tickers used when the primary index has low liquidity/OI.
+ETF_FALLBACK: dict[str, str] = {
+    "SPX": "SPY", 
+    "QQQ": "NDX",
 }
 
 # Schwab API requires a leading "$" for cash CBOE indices.

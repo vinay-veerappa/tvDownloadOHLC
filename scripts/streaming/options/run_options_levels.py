@@ -37,18 +37,17 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .config import (
+    ACTIVE_TICKERS,
     DTE_TARGETS,
     ENABLE_DISCORD_UPDATES,
     ETF_FALLBACK,
     INDEX_TO_FUTURES,
     LOG_FILE,
     MIN_NONZERO_OI_CONTRACTS,
-    PRIMARY_INDEX_TICKERS,
     REPO_ROOT,
     SCHEDULE_TIMES,
     SCHEDULE_TIMEZONE,
     SECRETS_PATH,
-    TEST_OUTPUT_TICKERS,
     TOKEN_PATH,
     USE_OPENING_BASIS,
 )
@@ -68,6 +67,12 @@ from .state_tracker import (
     format_change_alert,
     load_previous_state,
     save_current_state,
+)
+from .formatting import (
+    build_plan,
+    copy_ready_line,
+    fmt,
+    HasLevels,
 )
 
 log = logging.getLogger(__name__)
@@ -108,7 +113,11 @@ def _chain_has_actionable_oi(chain) -> bool:
 # Pipeline
 # ---------------------------------------------------------------------------
 
-def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDATES) -> None:
+def run_pipeline(
+    run_label: str = "",
+    enable_discord: bool = ENABLE_DISCORD_UPDATES,
+    full_discord: bool = False,
+) -> None:
     """
     Execute one complete fetch → calculate → output cycle.
 
@@ -138,13 +147,11 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
     cash_levels_by_ticker: dict[str, DealerLevels] = {}
 
     # --- Process each index / futures pair ----------------------------------
-    for ticker in PRIMARY_INDEX_TICKERS:
+    # --- Process each ticker in the ACTIVE_TICKERS list -----------------------
+    for ticker in ACTIVE_TICKERS:
         futures_sym = INDEX_TO_FUTURES.get(ticker)
-        if futures_sym is None:
-            log.warning("No futures mapping for %s — skipping.", ticker)
-            continue
-
-        log.info("─── Processing: %s → %s ───", ticker, futures_sym)
+        mapping_str = f"→ {futures_sym}" if futures_sym else "(Cash only)"
+        log.info("─── Processing: %s %s ───", ticker, mapping_str)
 
         try:
             # 1. Fetch primary index chain (0DTE + 1DTE)
@@ -209,17 +216,10 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
             cash_levels_by_ticker[ticker] = levels
 
             # 4. Translate levels into futures price space
-            if fut is None:
-                log.warning(
-                    "No futures price for %s — skipping futures translation for %s. "
-                    "Cash levels will still be written.",
-                    futures_sym,
-                    ticker,
-                )
-                # Do NOT append an untranslated DealerLevels to
-                # translated_levels — it would crash downstream consumers
-                # that expect TranslatedLevels attributes.
-                continue
+            if futures_sym is None or fut is None:
+                log.debug("No futures translation for %s (mapping missing or quote failed).", ticker)
+                # We skip appending to translated_levels, but proceed to next steps
+                # so cash_levels_by_ticker is already populated and can be used.
             else:
                 anchor_basis = None
                 anchor_ratio = None
@@ -259,28 +259,6 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
         log.error("No levels were computed — all outputs skipped.")
         return
 
-    # --- Additional cash-space outputs for Pine testing ---------------------
-    for ticker in TEST_OUTPUT_TICKERS:
-        if ticker in cash_levels_by_ticker:
-            continue
-        log.info("─── Processing cash-space test ticker: %s ───", ticker)
-        try:
-            chain = fetch_option_chain_data(client, ticker, DTE_TARGETS)
-            levels = calculate_dealer_levels(chain, ticker)
-            cash_levels_by_ticker[ticker] = levels
-        except Exception as exc:
-            log.error("Cash-space test ticker failed for %s: %s", ticker, exc)
-
-    if "RUT" in cash_levels_by_ticker and "RTY" not in cash_levels_by_ticker:
-        cash_levels_by_ticker["RTY"] = replace(cash_levels_by_ticker["RUT"], ticker="RTY")
-    if "DJX" in cash_levels_by_ticker and "YM" not in cash_levels_by_ticker:
-        djx_levels = cash_levels_by_ticker["DJX"]
-        cash_levels_by_ticker["YM"] = rescale_levels_to_target_spot(
-            djx_levels,
-            target_ticker="YM",
-            target_spot=djx_levels.spot * 100.0,
-        )
-
     # --- Persist to disk ----------------------------------------------------
     try:
         write_levels(
@@ -319,6 +297,7 @@ def run_pipeline(run_label: str = "", enable_discord: bool = ENABLE_DISCORD_UPDA
                 translated_levels,
                 run_label,
                 cash_levels=list(cash_levels_by_ticker.values()),
+                include_cash_embeds=full_discord,
             )
         except Exception as exc:
             log.error("Discord notification failed: %s", exc)
@@ -434,7 +413,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--label",
         metavar="LABEL",
         default="",
-        help="Override the run label embedded in outputs (default: current time).",
+        help="Override the run label (default: current time).",
+    )
+    parser.add_argument(
+        "--full-discord",
+        action="store_true",
+        help="Send Coach's Briefing and embeds for ALL active tickers.",
     )
     parser.add_argument(
         "--discord",
@@ -455,7 +439,7 @@ def main() -> None:
         log.critical("Choose either --discord or --no-discord, not both.")
         sys.exit(2)
 
-    if args.discord:
+    if args.discord or args.full_discord:
         enable_discord = True
     elif args.no_discord:
         enable_discord = False
@@ -465,7 +449,11 @@ def main() -> None:
     if args.schedule:
         run_scheduled(enable_discord=enable_discord)
     else:
-        run_pipeline(run_label=args.label, enable_discord=enable_discord)
+        run_pipeline(
+        run_label=args.label,
+        enable_discord=enable_discord,
+        full_discord=args.full_discord,
+    )
 
 
 if __name__ == "__main__":
