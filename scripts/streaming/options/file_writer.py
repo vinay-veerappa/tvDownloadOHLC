@@ -274,89 +274,66 @@ def write_levels(
         tl.cash_ticker: tl for tl in translated_levels
     }
 
+
+
+    def _sg_to_dict(sg, strike_override=None) -> dict:
+        """Serialize a StrikeGEX to a JSON-friendly dict, including all Greek exposure fields."""
+        return {
+            "strike": round(strike_override, 2) if strike_override is not None else sg.strike,
+            "call_gex": sg.call_gex,
+            "put_gex": sg.put_gex,
+            "net_gex": sg.net_gex,
+            "call_vol": sg.call_vol,
+            "put_vol": sg.put_vol,
+            "call_oi": sg.call_oi,
+            "put_oi": sg.put_oi,
+            "call_iv": sg.call_iv,
+            "put_iv": sg.put_iv,
+            "cumulative_gex": sg.cumulative_gex,
+            # Per-strike Greek exposures (notional, matching ezoptionsschwab.py methodology)
+            "call_dex": sg.call_dex,
+            "put_dex": sg.put_dex,
+            "call_vex": sg.call_vex,
+            "put_vex": sg.put_vex,
+            "call_charm": sg.call_charm,
+            "put_charm": sg.put_charm,
+            "call_speed": sg.call_speed,
+            "put_speed": sg.put_speed,
+            "call_vomma": sg.call_vomma,
+            "put_vomma": sg.put_vomma,
+            "call_premium": sg.call_premium,
+            "put_premium": sg.put_premium,
+        }
+
     for levels in cash_levels or []:
         if not levels.strike_gex:
             continue
         tl = cash_to_translated.get(levels.ticker)
         if tl and tl.translation_mode == "multiplicative" and tl.basis_ratio > 0:
-            # Translate strikes into futures space (e.g. QQQ→NQ: strike × ratio)
             ratio = tl.basis_ratio
-            futures_key = cash_tag(tl.futures_symbol)   # e.g. "NQ", "ES"
+            futures_key = cash_tag(tl.futures_symbol)
             profiles_doc["profiles"][futures_key] = [
-                {
-                    "strike": round(sg.strike * ratio, 2),
-                    "call_gex": sg.call_gex,
-                    "put_gex": sg.put_gex,
-                    "net_gex": sg.net_gex,
-                    "call_vol": sg.call_vol,
-                    "put_vol": sg.put_vol,
-                    "call_oi": sg.call_oi,
-                    "put_oi": sg.put_oi,
-                    "cumulative_gex": sg.cumulative_gex
-                }
+                _sg_to_dict(sg, strike_override=round(sg.strike * ratio, 2))
                 for sg in levels.strike_gex
             ]
-            # Also write cash-space profile under the cash ticker for SPX/NDX view
             profiles_doc["profiles"][levels.ticker] = [
-                {
-                    "strike": sg.strike,
-                    "call_gex": sg.call_gex,
-                    "put_gex": sg.put_gex,
-                    "net_gex": sg.net_gex,
-                    "call_vol": sg.call_vol,
-                    "put_vol": sg.put_vol,
-                    "call_oi": sg.call_oi,
-                    "put_oi": sg.put_oi,
-                    "cumulative_gex": sg.cumulative_gex
-                }
+                _sg_to_dict(sg)
                 for sg in levels.strike_gex
             ]
         elif tl and tl.translation_mode == "additive":
-            # ES/RTY/YM: additive basis — translate each strike by the spread
             spread = tl.basis_spread
             futures_key = cash_tag(tl.futures_symbol)
             profiles_doc["profiles"][futures_key] = [
-                {
-                    "strike": round(sg.strike + spread, 2),
-                    "call_gex": sg.call_gex,
-                    "put_gex": sg.put_gex,
-                    "net_gex": sg.net_gex,
-                    "call_vol": sg.call_vol,
-                    "put_vol": sg.put_vol,
-                    "call_oi": sg.call_oi,
-                    "put_oi": sg.put_oi,
-                    "cumulative_gex": sg.cumulative_gex
-                }
+                _sg_to_dict(sg, strike_override=round(sg.strike + spread, 2))
                 for sg in levels.strike_gex
             ]
             profiles_doc["profiles"][levels.ticker] = [
-                {
-                    "strike": sg.strike,
-                    "call_gex": sg.call_gex,
-                    "put_gex": sg.put_gex,
-                    "net_gex": sg.net_gex,
-                    "call_vol": sg.call_vol,
-                    "put_vol": sg.put_vol,
-                    "call_oi": sg.call_oi,
-                    "put_oi": sg.put_oi,
-                    "cumulative_gex": sg.cumulative_gex
-                }
+                _sg_to_dict(sg)
                 for sg in levels.strike_gex
             ]
         else:
-            # Cash-only tickers (stocks, ETFs without futures mapping) — write as-is
             profiles_doc["profiles"][levels.ticker] = [
-                {
-                    "strike": sg.strike,
-                    "call_gex": sg.call_gex,
-                    "put_gex": sg.put_gex,
-                    "net_gex": sg.net_gex,
-                    "call_vol": sg.call_vol,
-                    "put_vol": sg.put_vol,
-                    "call_oi": sg.call_oi,
-                    "put_oi": sg.put_oi,
-                    "cumulative_gex": sg.cumulative_gex
-                }
+                _sg_to_dict(sg)
                 for sg in levels.strike_gex
             ]
 

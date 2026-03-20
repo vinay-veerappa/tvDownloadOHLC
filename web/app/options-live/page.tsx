@@ -477,6 +477,59 @@ export default function OptionsTacticalDashboard() {
                         ))}
                      </div>
 
+                     {/* Tactical Narrative Section — above charts so context flows downward */}
+                     <Card className="bg-zinc-950 border-white/5 rounded-[2.5rem] overflow-hidden border p-10">
+                        <div className="flex items-center justify-between mb-8">
+                           <div className="flex items-center gap-3">
+                              <div className="h-8 w-8 bg-emerald-500/10 rounded-xl flex items-center justify-center">
+                                 <Info className="text-emerald-500" size={16} />
+                              </div>
+                              <h3 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-400">Tactical Briefing</h3>
+                           </div>
+                           <Badge className="bg-emerald-500/10 text-emerald-500 border-zinc-800 text-[8px] font-black px-3 py-1 uppercase">Live Stream</Badge>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                           <div className="space-y-6">
+                              <div className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Macro Thesis</div>
+                              <p className="text-lg font-bold text-zinc-100 leading-relaxed border-l-4 border-emerald-500 pl-8 py-2 bg-emerald-500/5 rounded-r-3xl pr-6 italic">
+                                 {fixText(Array.isArray(ms.coach_note) ? ms.coach_note[0] : "Initializing narrative intelligence...", activeDetail?.ticker, activeDetail?.spot)}
+                              </p>
+                           </div>
+                           
+                           <div className="space-y-6">
+                              <div className="text-[10px] font-black text-zinc-600 uppercase tracking-widest mt-8">Volatility Outlook</div>
+                               <div className={`p-6 rounded-3xl border ${activeDetail?.total_gex < -1e9 ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : (activeDetail?.total_gex > 0 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-900 border-white/5 text-zinc-400')} animate-pulse-slow`}>
+                                  <div className="flex items-center gap-3 mb-2">
+                                     {activeDetail?.total_gex < -1e9 ? <AlertTriangle size={16} /> : (activeDetail?.total_gex > 0 ? <ShieldCheck size={16} /> : <Activity size={16} />)}
+                                     <span className="font-black text-[10px] uppercase tracking-widest whitespace-nowrap">
+                                        {activeDetail?.total_gex < -1e9 ? 'High Move Probability' : (activeDetail?.total_gex > 0 ? 'Compression Expected' : 'Neutral Position')}
+                                     </span>
+                                  </div>
+                                  <p className="text-sm font-bold tracking-tight leading-snug">
+                                     {activeDetail?.total_gex < -1e9 
+                                        ? "Total GEX below -1B warns of market moves > ±1.0% today." 
+                                        : (activeDetail?.total_gex > 0 
+                                           ? "Positive GEX indicates increased probability of market moves < ±0.5%." 
+                                           : "Standard volatility environment.")}
+                                  </p>
+                               </div>
+                            </div>
+                            
+                            <div className="space-y-6">
+                               <div className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Tactical Directives</div>
+                               <div className="space-y-4">
+                                  {(Array.isArray(ms.coach_note) ? ms.coach_note.slice(1, 10) : ["Maintain discipline"]).map((note: string, idx: number) => (
+                                     <div key={idx} className="flex gap-4 p-5 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-emerald-500/20 transition-all group">
+                                        <div className="text-emerald-500 font-black text-[10px] flex shrink-0 mt-0.5">{String(idx+1).padStart(2,'0')}</div>
+                                        <p className="text-[11px] font-bold text-zinc-300 leading-relaxed group-hover:text-white transition-colors">{fixText(note, activeDetail?.ticker, activeDetail?.spot)}</p>
+                                     </div>
+                                  ))}
+                               </div>
+                           </div>
+                        </div>
+                     </Card>
+
                      {/* Main Chart Section */}
                      <Card className="bg-black/40 border-white/5 rounded-[3rem] overflow-hidden backdrop-blur-xl border flex flex-col min-h-[600px] basis-[600px]">
                         <div className="p-10 border-b border-white/5 flex items-center justify-between bg-black/40">
@@ -796,59 +849,6 @@ export default function OptionsTacticalDashboard() {
                                  )}
                               </div>
                            ) : null}
-                        </div>
-                     </Card>
-
-                     {/* Tactical Narrative Section */}
-                     <Card className="bg-zinc-950 border-white/5 rounded-[2.5rem] overflow-hidden border p-10">
-                        <div className="flex items-center justify-between mb-8">
-                           <div className="flex items-center gap-3">
-                              <div className="h-8 w-8 bg-emerald-500/10 rounded-xl flex items-center justify-center">
-                                 <Info className="text-emerald-500" size={16} />
-                              </div>
-                              <h3 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-400">Tactical Briefing</h3>
-                           </div>
-                           <Badge className="bg-emerald-500/10 text-emerald-500 border-zinc-800 text-[8px] font-black px-3 py-1 uppercase">Live Stream</Badge>
-                        </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                           <div className="space-y-6">
-                              <div className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Macro Thesis</div>
-                              <p className="text-lg font-bold text-zinc-100 leading-relaxed border-l-4 border-emerald-500 pl-8 py-2 bg-emerald-500/5 rounded-r-3xl pr-6 italic">
-                                 {fixText(Array.isArray(ms.coach_note) ? ms.coach_note[0] : "Initializing narrative intelligence...", activeDetail?.ticker, activeDetail?.spot)}
-                              </p>
-                           </div>
-                           
-                           <div className="space-y-6">
-                              <div className="text-[10px] font-black text-zinc-600 uppercase tracking-widest mt-8">Volatility Outlook</div>
-                               <div className={`p-6 rounded-3xl border ${activeDetail?.total_gex < -1e9 ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : (activeDetail?.total_gex > 0 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-900 border-white/5 text-zinc-400')} animate-pulse-slow`}>
-                                  <div className="flex items-center gap-3 mb-2">
-                                     {activeDetail?.total_gex < -1e9 ? <AlertTriangle size={16} /> : (activeDetail?.total_gex > 0 ? <ShieldCheck size={16} /> : <Activity size={16} />)}
-                                     <span className="font-black text-[10px] uppercase tracking-widest whitespace-nowrap">
-                                        {activeDetail?.total_gex < -1e9 ? 'High Move Probability' : (activeDetail?.total_gex > 0 ? 'Compression Expected' : 'Neutral Position')}
-                                     </span>
-                                  </div>
-                                  <p className="text-sm font-bold tracking-tight leading-snug">
-                                     {activeDetail?.total_gex < -1e9 
-                                        ? "Total GEX below -1B warns of market moves > ±1.0% today." 
-                                        : (activeDetail?.total_gex > 0 
-                                           ? "Positive GEX indicates increased probability of market moves < ±0.5%." 
-                                           : "Standard volatility environment.")}
-                                  </p>
-                               </div>
-                            </div>
-                            
-                            <div className="space-y-6">
-                               <div className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Tactical Directives</div>
-                               <div className="space-y-4">
-                                  {(Array.isArray(ms.coach_note) ? ms.coach_note.slice(1, 10) : ["Maintain discipline"]).map((note: string, idx: number) => (
-                                     <div key={idx} className="flex gap-4 p-5 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-emerald-500/20 transition-all group">
-                                        <div className="text-emerald-500 font-black text-[10px] flex shrink-0 mt-0.5">{String(idx+1).padStart(2,'0')}</div>
-                                        <p className="text-[11px] font-bold text-zinc-300 leading-relaxed group-hover:text-white transition-colors">{fixText(note, activeDetail?.ticker, activeDetail?.spot)}</p>
-                                     </div>
-                                  ))}
-                               </div>
-                           </div>
                         </div>
                      </Card>
                   </div>

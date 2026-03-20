@@ -146,6 +146,19 @@ class StrikeGEX:
     call_iv: float = 0.0
     put_iv: float = 0.0
     cumulative_gex: float = 0.0
+    # ── Per-strike Greek exposures (same methodology as ezoptionsschwab.py) ──
+    call_dex: float = 0.0       # Delta exposure: delta × OI × 100 × S
+    put_dex: float = 0.0
+    call_vex: float = 0.0       # Vanna exposure: vanna × OI × 100 × S × 0.01
+    put_vex: float = 0.0
+    call_charm: float = 0.0     # Charm exposure: charm × OI × 100 × S / 365
+    put_charm: float = 0.0
+    call_speed: float = 0.0     # Speed exposure: speed × OI × 100 × S² × 0.01
+    put_speed: float = 0.0
+    call_vomma: float = 0.0     # Vomma exposure: vomma × OI × 100 × 0.01
+    put_vomma: float = 0.0
+    call_premium: float = 0.0   # Dollar premium: mid_price × OI × 100
+    put_premium: float = 0.0
 
 
 @dataclass
@@ -269,6 +282,76 @@ def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], s
             return max(oi, vol)
         return oi  # default: "OI"
 
+    def _calc_per_strike_exposures(c: OptionContract, flag: str, spot: float, weight: int) -> dict:
+        """Compute all per-strike Greek exposures using the same methodology as ezoptionsschwab.py.
+        Exposures are in notional (dollar) terms: Greek × weight × 100 × scale_factor.
+        """
+        tz_et = ZoneInfo("America/New_York")
+        now_et = datetime.now(tz_et)
+        contract_size = 100
+        r, q = 0.02, 0.0
+        try:
+            exp_dt = datetime.combine(c.expiry, time(16, 0), tzinfo=tz_et)
+            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
+        except Exception:
+            t = 1e-5
+        iv = max(c.iv, 1e-4)
+        K = c.strike
+
+        d1, d2, norm_d1_val = _bsm_d1d2(spot, K, t, iv, r, q)
+        if d1 is None:
+            return {"dex": 0.0, "vex": 0.0, "charm": 0.0, "speed": 0.0, "vomma": 0.0, "premium": 0.0}
+
+        # Delta (BSM)
+        try:
+            import math
+            from math import erfc
+            if flag == 'c':
+                delta = math.exp(-q * t) * 0.5 * erfc(-d1 / math.sqrt(2))
+            else:
+                delta = math.exp(-q * t) * (0.5 * erfc(-d1 / math.sqrt(2)) - 1)
+        except Exception:
+            delta = 0.0
+
+        # Vanna: -exp(-q*t) * N'(d1) * d2 / sigma
+        try:
+            vanna = -math.exp(-q * t) * norm_d1_val * d2 / iv
+        except Exception:
+            vanna = 0.0
+
+        # Vomma: vega * d1 * d2 / sigma
+        try:
+            vega = spot * math.exp(-q * t) * norm_d1_val * math.sqrt(t)
+            vomma = vega * (d1 * d2) / iv
+        except Exception:
+            vomma = 0.0
+
+        # Charm
+        charm = _analytical_charm(flag, spot, K, t, iv, r, q)
+
+        # Speed
+        speed = _analytical_speed(spot, K, t, iv, r, q)
+
+        # Mid price for premium (OptionContract.mark = (bid+ask)/2 from options_fetcher.py)
+        mid = getattr(c, 'mark', 0.0) or 0.0
+        premium = mid * weight * contract_size
+
+        # Notional exposures (matching ezoptionsschwab.py exactly)
+        dex   = delta  * weight * contract_size * spot            # DEX = delta × weight × 100 × S
+        vex   = vanna  * weight * contract_size * spot   * 0.01   # VEX similar to GEX scaling
+        charm_exp = charm * weight * contract_size * spot / 365.0  # Charm/day
+        speed_exp = speed * weight * contract_size * spot * spot * 0.01  # Speed × S²
+        vomma_exp = vomma * weight * contract_size * 0.01           # Vomma
+
+        return {
+            "dex": round(dex, 2),
+            "vex": round(vex, 2),
+            "charm": round(charm_exp, 2),
+            "speed": round(speed_exp, 2),
+            "vomma": round(vomma_exp, 2),
+            "premium": round(premium, 2),
+        }
+
     call_map = _best_contract_per_strike(calls)
     put_map = _best_contract_per_strike(puts)
     all_strikes = sorted(set(call_map) | set(put_map))
@@ -277,8 +360,14 @@ def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], s
     for strike in all_strikes:
         call = call_map.get(strike)
         put = put_map.get(strike)
-        call_gex = abs(call.gamma) * _weight(call) * CONTRACT_MULTIPLIER * spot if call else 0.0
-        put_gex = abs(put.gamma) * _weight(put) * CONTRACT_MULTIPLIER * spot if put else 0.0
+        call_wt = _weight(call) if call else 0
+        put_wt = _weight(put) if put else 0
+        call_gex = abs(call.gamma) * call_wt * CONTRACT_MULTIPLIER * spot if call else 0.0
+        put_gex  = abs(put.gamma)  * put_wt  * CONTRACT_MULTIPLIER * spot if put  else 0.0
+
+        c_exp = _calc_per_strike_exposures(call, 'c', spot, call_wt) if call else {"dex": 0.0, "vex": 0.0, "charm": 0.0, "speed": 0.0, "vomma": 0.0, "premium": 0.0}
+        p_exp = _calc_per_strike_exposures(put,  'p', spot, put_wt)  if put  else {"dex": 0.0, "vex": 0.0, "charm": 0.0, "speed": 0.0, "vomma": 0.0, "premium": 0.0}
+
         rows.append(
             StrikeGEX(
                 strike=strike,
@@ -291,6 +380,19 @@ def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], s
                 put_vol=put.volume if put else 0,
                 call_iv=call.iv if call else 0.0,
                 put_iv=put.iv if put else 0.0,
+                # Per-strike exposures
+                call_dex=c_exp["dex"],
+                put_dex=p_exp["dex"],
+                call_vex=c_exp["vex"],
+                put_vex=p_exp["vex"],
+                call_charm=c_exp["charm"],
+                put_charm=p_exp["charm"],
+                call_speed=c_exp["speed"],
+                put_speed=p_exp["speed"],
+                call_vomma=c_exp["vomma"],
+                put_vomma=p_exp["vomma"],
+                call_premium=c_exp["premium"],
+                put_premium=p_exp["premium"],
             )
         )
     return rows
@@ -1131,7 +1233,20 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
                 put_vol=sg.put_vol,
                 call_iv=sg.call_iv,
                 put_iv=sg.put_iv,
-                cumulative_gex=sg.cumulative_gex
+                cumulative_gex=sg.cumulative_gex,
+                # Greek exposures pass through unchanged (not price-scaled)
+                call_dex=sg.call_dex,
+                put_dex=sg.put_dex,
+                call_vex=sg.call_vex,
+                put_vex=sg.put_vex,
+                call_charm=sg.call_charm,
+                put_charm=sg.put_charm,
+                call_speed=sg.call_speed,
+                put_speed=sg.put_speed,
+                call_vomma=sg.call_vomma,
+                put_vomma=sg.put_vomma,
+                call_premium=sg.call_premium,
+                put_premium=sg.put_premium,
             )
             for sg in levels.strike_gex
         ],
