@@ -1,6 +1,6 @@
 {
-  "run_label": "2026-03-20 02:33 ET",
-  "timestamp": "2026-03-20T06:33:58.082698+00:00",
+  "run_label": "2026-03-20 02:37 ET",
+  "timestamp": "2026-03-20T06:37:53.520521+00:00",
   "tickers": {
     "/ES": {
       "ticker": "/ES",
@@ -8,15 +8,15 @@
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "BEARISH",
-      "gamma_magnet": 6610.99,
-      "pin_strike": 6663.25,
+      "gamma_magnet": 6610.74,
+      "pin_strike": 6663.0,
       "pin_odds": 0.2252,
       "wall_separation": 100.13,
-      "call_wall": 6663.25,
-      "put_wall": 6563.12,
-      "zero_gamma": 6658.25,
+      "call_wall": 6663.0,
+      "put_wall": 6562.87,
+      "zero_gamma": 6658.0,
       "net_vanna_exposure": -2617497.26,
-      "spot": 6661.25
+      "spot": 6661.0
     },
     "/NQ": {
       "ticker": "/NQ",
@@ -32,7 +32,7 @@
       "put_wall": 24653.21,
       "zero_gamma": 24841.24,
       "net_vanna_exposure": -553131.46,
-      "spot": 24567.25
+      "spot": 24564.75
     },
     "/RTY": {
       "ticker": "/RTY",
@@ -40,15 +40,15 @@
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "BEARISH",
-      "gamma_magnet": 2516.67,
-      "pin_strike": 2542.7,
+      "gamma_magnet": 2516.17,
+      "pin_strike": 2542.2,
       "pin_odds": 0.1775,
-      "wall_separation": 50.85,
-      "call_wall": 2542.7,
-      "put_wall": 2491.85,
-      "zero_gamma": 2517.28,
+      "wall_separation": 50.84,
+      "call_wall": 2542.2,
+      "put_wall": 2491.36,
+      "zero_gamma": 2516.78,
       "net_vanna_exposure": -831389.77,
-      "spot": 2518.6
+      "spot": 2518.1
     },
     "/YM": {
       "ticker": "/YM",
@@ -56,15 +56,15 @@
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "BEARISH",
-      "gamma_magnet": 46128.55,
-      "pin_strike": 46270.38,
+      "gamma_magnet": 46123.57,
+      "pin_strike": 46265.39,
       "pin_odds": 0.1859,
-      "wall_separation": 502.94,
-      "call_wall": 46773.32,
-      "put_wall": 46270.38,
-      "zero_gamma": 46421.26,
+      "wall_separation": 502.88,
+      "call_wall": 46768.27,
+      "put_wall": 46265.39,
+      "zero_gamma": 46416.25,
       "net_vanna_exposure": -25707.9,
-      "spot": 46377.0
+      "spot": 46372.0
     },
     "SPX": {
       "ticker": "SPX",
