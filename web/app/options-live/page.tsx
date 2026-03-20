@@ -21,7 +21,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, 
   Tooltip as RechartsTooltip, ResponsiveContainer, 
   ReferenceLine, Cell, AreaChart, Area, CartesianGrid,
-  Legend, ComposedChart
+  Legend, ComposedChart, PieChart, Pie, RadarChart, Radar as RechartsRadar
 } from "recharts";
 import {
   Tooltip as UiTooltip,
@@ -64,7 +64,7 @@ export default function OptionsTacticalDashboard() {
   const [priorityTickers, setPriorityTickers] = useState<string[]>(['/ES', '/NQ', 'SPX', 'QQQ', 'NVDA', 'TSLA']);
   const [refreshingTickers, setRefreshingTickers] = useState<Set<string>>(new Set());
   
-  const [mainTab, setMainTab] = useState<'profile' | 'history' | 'heatmap'>('profile');
+  const [mainTab, setMainTab] = useState<'profile' | 'history' | 'dex' | 'skew' | 'cumulative' | 'volsummary'>('profile');
   const [profileOption, setProfileOption] = useState<'nodes' | 'net' | 'liquidity'>('nodes');
   const [rightTab, setRightTab] = useState<'ladder' | 'briefing' | 'nodes'>('ladder');
   const [strikeZoomRange, setStrikeZoomRange] = useState(5); // ±5%
@@ -261,6 +261,60 @@ export default function OptionsTacticalDashboard() {
         
      return { calls: bestCalls, puts: bestPuts };
   }, [activeProfile, drillSpot]);
+
+  // ── DERIVED SERIES FOR NEW CHARTS ──
+  const dexProfile = useMemo(() => {
+    if (!zoomedProfile.length) return [];
+    return zoomedProfile.map((p: any) => ({
+      strike: p.strike,
+      call_dex: p.call_dex ?? 0,
+      put_dex: p.put_dex ?? 0,
+      net_dex: (p.call_dex ?? 0) + (p.put_dex ?? 0),
+    }));
+  }, [zoomedProfile]);
+
+  const skewProfile = useMemo(() => {
+    if (!zoomedProfile.length) return [];
+    return zoomedProfile
+      .filter((p: any) => p.call_iv != null || p.put_iv != null)
+      .map((p: any) => ({
+        strike: p.strike,
+        call_iv: p.call_iv != null ? +(p.call_iv * 100).toFixed(2) : null,
+        put_iv:  p.put_iv  != null ? +(p.put_iv  * 100).toFixed(2) : null,
+        skew: (p.put_iv != null && p.call_iv != null) ? +((p.put_iv - p.call_iv) * 100).toFixed(2) : null,
+      }));
+  }, [zoomedProfile]);
+
+  const cumulativeGex = useMemo(() => {
+    if (!activeProfile.length) return [];
+    const sorted = [...activeProfile].sort((a: any, b: any) => a.strike - b.strike);
+    let running = 0;
+    return sorted.map((p: any) => {
+      running += p.net_gex ?? (p.call_gex ?? 0) + (p.put_gex ?? 0);
+      return { strike: p.strike, cumulative: running };
+    });
+  }, [activeProfile]);
+
+  const volSummary = useMemo(() => {
+    if (!activeProfile.length) return { totalCallVol: 0, totalPutVol: 0, totalCallOI: 0, totalPutOI: 0, callPrem: 0, putPrem: 0, near: [] };
+    let tCV = 0, tPV = 0, tCOI = 0, tPOI = 0, tCP = 0, tPP = 0;
+    activeProfile.forEach((p: any) => {
+      tCV  += p.call_vol ?? 0;
+      tPV  += p.put_vol  ?? 0;
+      tCOI += p.call_oi  ?? 0;
+      tPOI += p.put_oi   ?? 0;
+      tCP  += p.call_premium ?? 0;
+      tPP  += p.put_premium  ?? 0;
+    });
+    const near = zoomedProfile.slice(0, 20).map((p: any) => ({
+      strike: p.strike,
+      call_vol: p.call_vol ?? 0,
+      put_vol:  p.put_vol  ?? 0,
+      call_oi:  p.call_oi  ?? 0,
+      put_oi:   p.put_oi   ?? 0,
+    }));
+    return { totalCallVol: tCV, totalPutVol: tPV, totalCallOI: tCOI, totalPutOI: tPOI, callPrem: tCP, putPrem: tPP, near };
+  }, [activeProfile, zoomedProfile]);
 
   const priceLadder = useMemo(() => {
     if (!activeDetail) return [];
@@ -534,13 +588,17 @@ export default function OptionsTacticalDashboard() {
                      <Card className="bg-black/40 border-white/5 rounded-[3rem] overflow-hidden backdrop-blur-xl border flex flex-col min-h-[600px] basis-[600px]">
                         <div className="p-10 border-b border-white/5 flex items-center justify-between bg-black/40">
                            <Tabs value={mainTab} onValueChange={(v: any) => setMainTab(v)} className="bg-zinc-900/50 p-1.5 rounded-2xl">
-                              <TabsList className="bg-transparent gap-2 h-auto p-0">
-                                 <TabsTrigger value="profile" className="rounded-xl px-8 py-3 text-[10px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-emerald-400">GEX Profile</TabsTrigger>
-                                 <TabsTrigger value="history" className="rounded-xl px-8 py-3 text-[10px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-emerald-400">GEX History</TabsTrigger>
+                              <TabsList className="bg-transparent gap-1.5 h-auto p-0 flex-wrap">
+                                 <TabsTrigger value="profile"    className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-emerald-400">GEX Profile</TabsTrigger>
+                                 <TabsTrigger value="history"    className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-emerald-400">GEX History</TabsTrigger>
+                                 <TabsTrigger value="dex"        className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-blue-400">DEX</TabsTrigger>
+                                 <TabsTrigger value="skew"       className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-purple-400">IV Skew</TabsTrigger>
+                                 <TabsTrigger value="cumulative" className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-amber-400">Cumul GEX</TabsTrigger>
+                                 <TabsTrigger value="volsummary" className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-cyan-400">Vol / OI</TabsTrigger>
                               </TabsList>
                            </Tabs>
                            <div className="flex items-center gap-6">
-                              {(mainTab === 'profile' || mainTab === 'history') && (
+                              {(mainTab === 'profile' || mainTab === 'history' || mainTab === 'dex' || mainTab === 'cumulative') && (
                                  <div className="flex items-center gap-3">
                                     <Dialog>
                                        <DialogTrigger asChild>
@@ -848,6 +906,200 @@ export default function OptionsTacticalDashboard() {
                                  </div>
                                  )}
                               </div>
+
+                           ) : mainTab === 'dex' ? (
+                        <div className="w-full flex-1 flex flex-col">
+                           {!dexProfile.length ? (
+                              <div className="flex-1 flex flex-col items-center justify-center opacity-20 gap-4">
+                                 <Layers size={48} />
+                                 <span className="text-xs font-black uppercase tracking-widest">DEX data unavailable</span>
+                              </div>
+                           ) : (
+                           <div className="h-[450px] w-full">
+                              <div className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mb-3">Delta Exposure — Positive = Dealer Long Delta (buys into rally, suppresses moves)</div>
+                              <ResponsiveContainer width="100%" height="100%">
+                                 <ComposedChart data={dexProfile} layout="vertical" margin={{ left: 30, right: 40, top: 0, bottom: 0 }}>
+                                    <XAxis type="number" hide />
+                                    <YAxis dataKey="strike" type="category" width={75} tick={{ fill: '#a1a1aa', fontSize: 12, fontWeight: 900 }} tickLine={false} axisLine={false} tickFormatter={(v) => Math.round(v).toLocaleString()} />
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff04" horizontal={false} />
+                                    <RechartsTooltip
+                                       cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                                       content={({ active, payload }) => {
+                                          if (!active || !payload?.length) return null;
+                                          const d = payload[0].payload;
+                                          return (
+                                             <div className="bg-black/90 border border-white/10 p-5 rounded-2xl backdrop-blur-3xl shadow-2xl min-w-[180px]">
+                                                <div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-3">Strike {d.strike}</div>
+                                                <div className="space-y-2">
+                                                   <div className="flex justify-between gap-6"><span className="text-[9px] font-black text-blue-400 uppercase">Call DEX</span><span className="font-mono font-black text-blue-400">{fmtGex(d.call_dex)}</span></div>
+                                                   <div className="flex justify-between gap-6"><span className="text-[9px] font-black text-rose-400 uppercase">Put DEX</span><span className="font-mono font-black text-rose-400">{fmtGex(d.put_dex)}</span></div>
+                                                   <div className="flex justify-between gap-6 pt-2 border-t border-white/5"><span className="text-[9px] font-black text-zinc-400 uppercase">Net DEX</span><span className={`font-mono font-black ${d.net_dex >= 0 ? 'text-blue-300' : 'text-rose-300'}`}>{fmtGex(d.net_dex)}</span></div>
+                                                </div>
+                                             </div>
+                                          );
+                                       }}
+                                    />
+                                    <Bar dataKey="call_dex" fill="#3b82f6" radius={[0, 4, 4, 0]} opacity={0.65} />
+                                    <Bar dataKey="put_dex"  fill="#f43f5e" radius={[4, 0, 0, 4]} opacity={0.65} />
+                                    <Line type="monotone" dataKey="net_dex" stroke="#a78bfa" strokeWidth={2} dot={false} />
+                                    <ReferenceLine y={drillSpot} stroke="#10b981" strokeWidth={2} label={{ position: 'right', value: 'Spot', fill: '#10b981', fontSize: 10, fontWeight: '900', dx: 8 }} />
+                                 </ComposedChart>
+                              </ResponsiveContainer>
+                           </div>
+                           )}
+                        </div>
+
+                           ) : mainTab === 'skew' ? (
+                        <div className="w-full flex-1 flex flex-col">
+                           {!skewProfile.length ? (
+                              <div className="flex-1 flex flex-col items-center justify-center opacity-20 gap-4">
+                                 <Activity size={48} />
+                                 <span className="text-xs font-black uppercase tracking-widest text-center">IV Skew data unavailable.<br/>Populates during live RTH session.</span>
+                              </div>
+                           ) : (
+                           <div className="h-[450px] w-full">
+                              <div className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mb-3">IV Skew — Put IV minus Call IV. Positive = Put demand premium (bearish skew)</div>
+                              <ResponsiveContainer width="100%" height="100%">
+                                 <ComposedChart data={skewProfile} margin={{ left: 10, right: 20, top: 10, bottom: 30 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                    <XAxis dataKey="strike" stroke="#ffffff10" fontSize={10} tickFormatter={(v) => Math.round(v).toLocaleString()} label={{ value: 'Strike', position: 'insideBottom', offset: -10, fill: '#52525b', fontSize: 10 }} />
+                                    <YAxis stroke="#ffffff10" fontSize={10} tickFormatter={(v) => v.toFixed(1) + '%'} />
+                                    <RechartsTooltip
+                                       content={({ active, payload }) => {
+                                          if (!active || !payload?.length) return null;
+                                          const d = payload[0].payload;
+                                          return (
+                                             <div className="bg-black/90 border border-white/10 p-5 rounded-2xl backdrop-blur-3xl shadow-2xl min-w-[180px]">
+                                                <div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-3">Strike {d.strike}</div>
+                                                <div className="space-y-2">
+                                                   <div className="flex justify-between gap-6"><span className="text-[9px] font-black text-emerald-400 uppercase">Call IV</span><span className="font-mono font-black text-emerald-400">{d.call_iv?.toFixed(1)}%</span></div>
+                                                   <div className="flex justify-between gap-6"><span className="text-[9px] font-black text-rose-400 uppercase">Put IV</span><span className="font-mono font-black text-rose-400">{d.put_iv?.toFixed(1)}%</span></div>
+                                                   <div className="flex justify-between gap-6 pt-2 border-t border-white/5"><span className="text-[9px] font-black text-purple-400 uppercase">Skew</span><span className={`font-mono font-black ${(d.skew ?? 0) >= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{(d.skew ?? 0) >= 0 ? '+' : ''}{d.skew?.toFixed(1)}%</span></div>
+                                                </div>
+                                             </div>
+                                          );
+                                       }}
+                                    />
+                                    <Area type="monotone" dataKey="call_iv" stroke="#10b981" fill="#10b981" fillOpacity={0.08} strokeWidth={1.5} dot={false} />
+                                    <Area type="monotone" dataKey="put_iv"  stroke="#f43f5e" fill="#f43f5e" fillOpacity={0.08} strokeWidth={1.5} dot={false} />
+                                    <Line type="monotone" dataKey="skew" stroke="#a855f7" strokeWidth={2.5} dot={false} />
+                                    <ReferenceLine x={drillSpot} stroke="#10b981" strokeWidth={2} strokeDasharray="4 4" label={{ value: 'Spot', fill: '#10b981', fontSize: 10, fontWeight: '900' }} />
+                                    <ReferenceLine y={0} stroke="#ffffff20" strokeWidth={1} />
+                                    <Legend iconType="line" iconSize={12} wrapperStyle={{ fontSize: '9px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', paddingTop: '8px' }} />
+                                 </ComposedChart>
+                              </ResponsiveContainer>
+                           </div>
+                           )}
+                        </div>
+
+                           ) : mainTab === 'cumulative' ? (
+                        <div className="w-full flex-1 flex flex-col">
+                           {!cumulativeGex.length ? (
+                              <div className="flex-1 flex flex-col items-center justify-center opacity-20 gap-4">
+                                 <TrendingUp size={48} />
+                                 <span className="text-xs font-black uppercase tracking-widest">No cumulative data</span>
+                              </div>
+                           ) : (
+                           <div className="h-[450px] w-full">
+                              <div className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mb-3">Cumulative Net GEX — Zero-crossing from below = actual Gamma Flip price</div>
+                              <ResponsiveContainer width="100%" height="100%">
+                                 <ComposedChart data={cumulativeGex} margin={{ left: 10, right: 20, top: 10, bottom: 30 }}>
+                                    <defs>
+                                       <linearGradient id="cumulPos" x1="0" y1="0" x2="0" y2="1">
+                                          <stop offset="5%"  stopColor="#f59e0b" stopOpacity={0.25}/>
+                                          <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                                       </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                    <XAxis dataKey="strike" stroke="#ffffff10" fontSize={10} tickFormatter={(v) => Math.round(v).toLocaleString()} />
+                                    <YAxis stroke="#ffffff10" fontSize={10} tickFormatter={(v) => fmtGex(v)} />
+                                    <RechartsTooltip
+                                       content={({ active, payload }) => {
+                                          if (!active || !payload?.length) return null;
+                                          const d = payload[0].payload;
+                                          return (
+                                             <div className="bg-black/90 border border-white/10 p-5 rounded-2xl backdrop-blur-3xl shadow-2xl">
+                                                <div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Strike {d.strike}</div>
+                                                <div className={`text-lg font-mono font-black ${d.cumulative >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{fmtGex(d.cumulative)}</div>
+                                                <div className="text-[9px] font-black text-zinc-600 mt-1">{d.cumulative >= 0 ? 'Dealers absorbing moves' : 'Dealers amplifying moves'}</div>
+                                             </div>
+                                          );
+                                       }}
+                                    />
+                                    <Area type="monotone" dataKey="cumulative" stroke="#f59e0b" strokeWidth={2.5} fill="url(#cumulPos)" dot={false} />
+                                    <ReferenceLine y={0} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="6 3" label={{ value: 'Gamma Flip', position: 'insideTopRight', fill: '#f59e0b', fontSize: 10, fontWeight: '900' }} />
+                                    <ReferenceLine x={drillSpot} stroke="#10b981" strokeWidth={2} strokeDasharray="4 4" label={{ value: 'Spot', fill: '#10b981', fontSize: 10, fontWeight: '900' }} />
+                                 </ComposedChart>
+                              </ResponsiveContainer>
+                           </div>
+                           )}
+                        </div>
+
+                           ) : mainTab === 'volsummary' ? (
+                        <div className="w-full flex-1 flex flex-col gap-6">
+                           <div className="grid grid-cols-3 gap-4">
+                              {([
+                                 { label: 'Call Volume',   val: volSummary.totalCallVol, color: 'text-emerald-400', fmt: 'vol' },
+                                 { label: 'Put Volume',    val: volSummary.totalPutVol,  color: 'text-rose-400',    fmt: 'vol' },
+                                 { label: 'P/C Vol Ratio', val: volSummary.totalCallVol > 0 ? +(volSummary.totalPutVol / volSummary.totalCallVol).toFixed(2) : 0, color: ((volSummary.totalPutVol / Math.max(volSummary.totalCallVol, 1)) > 1.1) ? 'text-rose-400' : 'text-emerald-400', fmt: 'raw' },
+                                 { label: 'Call OI',       val: volSummary.totalCallOI,  color: 'text-emerald-400', fmt: 'vol' },
+                                 { label: 'Put OI',        val: volSummary.totalPutOI,   color: 'text-rose-400',    fmt: 'vol' },
+                                 { label: 'P/C OI Ratio',  val: volSummary.totalCallOI > 0 ? +(volSummary.totalPutOI / volSummary.totalCallOI).toFixed(2) : 0, color: ((volSummary.totalPutOI / Math.max(volSummary.totalCallOI, 1)) > 1.1) ? 'text-rose-400' : 'text-emerald-400', fmt: 'raw' },
+                              ] as const).map((item, i) => (
+                                 <div key={i} className="bg-white/[0.02] border border-white/5 rounded-2xl p-4">
+                                    <div className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mb-1">{item.label}</div>
+                                    <div className={`text-base font-mono font-black ${item.color}`}>
+                                       {item.fmt === 'raw' ? item.val : item.val > 1e6 ? (item.val / 1e6).toFixed(1) + 'M' : item.val > 1e3 ? (item.val / 1e3).toFixed(1) + 'K' : item.val}
+                                    </div>
+                                 </div>
+                              ))}
+                           </div>
+                           <div className="grid grid-cols-2 gap-4">
+                              <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-2xl p-4">
+                                 <div className="text-[9px] font-black text-emerald-600 uppercase tracking-widest mb-1">Total Call Premium</div>
+                                 <div className="text-base font-mono font-black text-emerald-400">{fmtGex(volSummary.callPrem)}</div>
+                              </div>
+                              <div className="bg-rose-500/5 border border-rose-500/10 rounded-2xl p-4">
+                                 <div className="text-[9px] font-black text-rose-600 uppercase tracking-widest mb-1">Total Put Premium</div>
+                                 <div className="text-base font-mono font-black text-rose-400">{fmtGex(volSummary.putPrem)}</div>
+                              </div>
+                           </div>
+                           <div className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Near-ATM Volume &amp; Open Interest</div>
+                           <div className="h-56 w-full">
+                              <ResponsiveContainer width="100%" height="100%">
+                                 <BarChart data={volSummary.near} margin={{ left: 0, right: 10, top: 0, bottom: 20 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                    <XAxis dataKey="strike" fontSize={9} tick={{ fill: '#52525b', fontWeight: 900 }} tickFormatter={(v) => Math.round(v).toLocaleString()} angle={-45} textAnchor="end" />
+                                    <YAxis hide />
+                                    <RechartsTooltip
+                                       cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                                       content={({ active, payload }) => {
+                                          if (!active || !payload?.length) return null;
+                                          const d = payload[0].payload;
+                                          return (
+                                             <div className="bg-black/90 border border-white/10 p-4 rounded-2xl backdrop-blur-3xl shadow-2xl">
+                                                <div className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-2">Strike {d.strike}</div>
+                                                <div className="space-y-1">
+                                                   <div className="flex justify-between gap-4"><span className="text-[8px] text-emerald-400 font-black uppercase">C Vol</span><span className="font-mono text-emerald-400 text-xs">{d.call_vol?.toLocaleString()}</span></div>
+                                                   <div className="flex justify-between gap-4"><span className="text-[8px] text-rose-400 font-black uppercase">P Vol</span><span className="font-mono text-rose-400 text-xs">{d.put_vol?.toLocaleString()}</span></div>
+                                                   <div className="flex justify-between gap-4"><span className="text-[8px] text-emerald-300 font-black uppercase">C OI</span><span className="font-mono text-emerald-300 text-xs">{d.call_oi?.toLocaleString()}</span></div>
+                                                   <div className="flex justify-between gap-4"><span className="text-[8px] text-rose-300 font-black uppercase">P OI</span><span className="font-mono text-rose-300 text-xs">{d.put_oi?.toLocaleString()}</span></div>
+                                                </div>
+                                             </div>
+                                          );
+                                       }}
+                                    />
+                                    <Bar dataKey="call_vol" stackId="vol" fill="#10b981" opacity={0.5} />
+                                    <Bar dataKey="put_vol"  stackId="vol" fill="#f43f5e" opacity={0.5} />
+                                    <Bar dataKey="call_oi"  stackId="oi"  fill="#10b981" opacity={0.9} />
+                                    <Bar dataKey="put_oi"   stackId="oi"  fill="#f43f5e" opacity={0.9} />
+                                    <ReferenceLine x={drillSpot} stroke="#10b981" strokeWidth={1.5} strokeDasharray="4 4" />
+                                    <Legend iconType="square" iconSize={8} wrapperStyle={{ fontSize: '8px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em' }} />
+                                 </BarChart>
+                              </ResponsiveContainer>
+                           </div>
+                        </div>
+
                            ) : null}
                         </div>
                      </Card>

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-03-20T05:16:07.193300+00:00",
+  "generated_at": "2026-03-20T14:42:40.677720+00:00",
   "history": {
     "SPX": [
       {
@@ -126,6 +126,16 @@
         "total_gex": -1520065944.568,
         "gamma_magnet": 66489.82,
         "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -359270612.476,
+        "total_gex_delta_adj": -157912477.8,
+        "gamma_magnet": 6580.65,
+        "call_volume_centroid": 6684.05,
+        "put_volume_centroid": 6540.28,
+        "spot": 6550.63,
         "gex_regime": "NEGATIVE"
       }
     ],
@@ -255,6 +265,16 @@
         "gamma_magnet": 24804.89,
         "spot": 594.14,
         "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -745539911.468,
+        "total_gex_delta_adj": -467514386.55,
+        "gamma_magnet": 24249.87,
+        "call_volume_centroid": 24508.39,
+        "put_volume_centroid": 24194.36,
+        "spot": 586.36,
+        "gex_regime": "NEGATIVE"
       }
     ],
     "IWM": [
@@ -383,6 +403,16 @@
         "gamma_magnet": 2565.01,
         "spot": 248.7,
         "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -1048167721.2280002,
+        "total_gex_delta_adj": -577900713.71,
+        "gamma_magnet": 2478.32,
+        "call_volume_centroid": 2517.67,
+        "put_volume_centroid": 2467.27,
+        "spot": 244.52,
+        "gex_regime": "NEGATIVE"
       }
     ],
     "DIA": [
@@ -510,6 +540,124 @@
         "total_gex": -13169494.8,
         "gamma_magnet": 46274.76,
         "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -16914703.815,
+        "total_gex_delta_adj": -11162181.51,
+        "gamma_magnet": 46152.73,
+        "call_volume_centroid": 46397.41,
+        "put_volume_centroid": 45292.81,
+        "spot": 457.95,
+        "gex_regime": "NEGATIVE"
+      }
+    ],
+    "SPY": [
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -1823162973.75,
+        "total_gex_delta_adj": -872819708.65,
+        "gamma_magnet": 651.1,
+        "call_volume_centroid": 657.04,
+        "put_volume_centroid": 650.11,
+        "spot": 652.5,
+        "gex_regime": "NEGATIVE"
+      }
+    ],
+    "AAPL": [
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -73680074.12999998,
+        "total_gex_delta_adj": -59849593.38,
+        "gamma_magnet": 248.76,
+        "call_volume_centroid": 251.57,
+        "put_volume_centroid": 245.7,
+        "spot": 247.7,
+        "gex_regime": "NEGATIVE"
+      }
+    ],
+    "MSFT": [
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -71742103.84,
+        "total_gex_delta_adj": -46415863.41,
+        "gamma_magnet": 384.24,
+        "call_volume_centroid": 390.41,
+        "put_volume_centroid": 380.46,
+        "spot": 384.19,
+        "gex_regime": "NEGATIVE"
+      }
+    ],
+    "NVDA": [
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -100410373.605,
+        "total_gex_delta_adj": -50049697.02,
+        "gamma_magnet": 176.69,
+        "call_volume_centroid": 178.92,
+        "put_volume_centroid": 172.99,
+        "spot": 175.61,
+        "gex_regime": "NEGATIVE"
+      }
+    ],
+    "TSLA": [
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -98202094.00400001,
+        "total_gex_delta_adj": -64469751.21,
+        "gamma_magnet": 374.2,
+        "call_volume_centroid": 379.88,
+        "put_volume_centroid": 368.94,
+        "spot": 373.24,
+        "gex_regime": "NEGATIVE"
+      }
+    ],
+    "META": [
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -72746804.28400001,
+        "total_gex_delta_adj": -48111767.11,
+        "gamma_magnet": 595.66,
+        "call_volume_centroid": 605.65,
+        "put_volume_centroid": 594.32,
+        "spot": 595.21,
+        "gex_regime": "NEGATIVE"
+      }
+    ],
+    "GOOGL": [
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -7089613.980000003,
+        "total_gex_delta_adj": -11363731.2,
+        "gamma_magnet": 304.0,
+        "call_volume_centroid": 305.48,
+        "put_volume_centroid": 299.86,
+        "spot": 301.8,
+        "gex_regime": "NEGATIVE"
+      }
+    ],
+    "AMZN": [
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -60772879.135000005,
+        "total_gex_delta_adj": -37437544.48,
+        "gamma_magnet": 205.78,
+        "call_volume_centroid": 211.23,
+        "put_volume_centroid": 201.78,
+        "spot": 206.63,
+        "gex_regime": "NEGATIVE"
+      }
+    ],
+    "AVGO": [
+      {
+        "timestamp": "2026-03-20T14:42:40.678143+00:00",
+        "total_gex": -33359550.336000003,
+        "total_gex_delta_adj": -20254481.65,
+        "gamma_magnet": 313.94,
+        "call_volume_centroid": 328.12,
+        "put_volume_centroid": 302.6,
+        "spot": 315.79,
         "gex_regime": "NEGATIVE"
       }
     ]
