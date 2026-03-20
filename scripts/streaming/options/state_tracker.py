@@ -38,15 +38,18 @@ class TickerSnapshot:
     gex_regime: str              # "POSITIVE" or "NEGATIVE"
     regime_label: str            # "PINNED", "TRENDING", "COILED", "BATTLE_ZONE", "NEUTRAL"
     directional_bias: str        # "BEARISH", "BULLISH", "NEUTRAL"
-    gamma_magnet: float | None
-    pin_strike: float | None
-    pin_odds: float
-    wall_separation: float | None
-    call_wall: float | None
-    put_wall: float | None
-    zero_gamma: float | None
-    net_vanna_exposure: float
-    spot: float
+    gamma_magnet: float | None = None
+    pin_strike: float | None = None
+    pin_odds: float = 0
+    wall_separation: float | None = None
+    call_wall: float | None = None
+    put_wall: float | None = None
+    zero_gamma: float | None = None
+    net_vanna_exposure: float = 0
+    call_centroid: float | None = None
+    put_centroid: float | None = None
+    max_pain: float | None = None
+    spot: float = 0
 
 
 @dataclass
@@ -136,6 +139,9 @@ def build_current_state(
             put_wall=tl.put_wall,
             zero_gamma=tl.zero_gamma,
             net_vanna_exposure=tl.net_vanna_exposure,
+            call_centroid=getattr(tl, 'call_centroid', None),
+            put_centroid=getattr(tl, 'put_centroid', None),
+            max_pain=getattr(tl, 'max_pain', None),
             spot=spot,
         )
 
@@ -156,6 +162,9 @@ def build_current_state(
                 put_wall=levels.put_wall,
                 zero_gamma=levels.zero_gamma,
                 net_vanna_exposure=levels.net_vanna_exposure,
+                call_centroid=getattr(levels, 'call_centroid', None),
+                put_centroid=getattr(levels, 'put_centroid', None),
+                max_pain=getattr(levels, 'max_pain', None),
                 spot=levels.spot,
             )
 

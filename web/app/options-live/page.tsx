@@ -11,8 +11,12 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Maximize2, Minimize2, ExternalLink } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { 
+  Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle 
+} from "@/components/ui/dialog";
 import { 
   BarChart, Bar, LineChart, Line, XAxis, YAxis, 
   Tooltip as RechartsTooltip, ResponsiveContainer, 
@@ -150,7 +154,59 @@ export default function OptionsTacticalDashboard() {
   // ── DATA ENGINE ──
   const pipelineState: any = liveData?.pipelineState || {};
   const tickersData = useMemo(() => pipelineState.tickers ? Object.values(pipelineState.tickers) : [], [pipelineState]);
-  const activeDetail = selectedTicker || (tickersData.length > 0 ? tickersData[0] : null);
+  const activeDetailRaw = selectedTicker || (tickersData.length > 0 ? tickersData[0] : null);
+  
+  const activeDetail = useMemo(() => {
+     if (!activeDetailRaw) return null;
+     const ticker = activeDetailRaw.ticker || "";
+     const underlying = ticker.replace(/^\//, '');
+
+     // Initialize with raw values
+     let maxPain = activeDetailRaw.max_pain;
+     let callCentroid = activeDetailRaw.call_centroid;
+     let putCentroid = activeDetailRaw.put_centroid;
+     
+     // 1. Fallback: Find max pain from dailyLevels if missing
+     if (!maxPain && liveData?.dailyLevels?.levels) {
+         const levels = liveData.dailyLevels.levels.filter((l: any) => l.asset === underlying || l.cash_ticker === underlying);
+         maxPain = levels.find((l: any) => l.type === 'Max Pain')?.level;
+     }
+
+     // 2. Fallback: Compute Centroids from profiles if missing
+     if ((!callCentroid || !putCentroid) && liveData?.gexProfiles?.profiles) {
+         const profile = liveData.gexProfiles.profiles[underlying] || [];
+         if (profile.length > 0) {
+             let callGammaSum = 0, callGammaProd = 0;
+             let putGammaSum = 0, putGammaProd = 0;
+             profile.forEach((p: any) => {
+                 if (p.call_gex > 0) {
+                     callGammaSum += p.call_gex;
+                     callGammaProd += p.strike * p.call_gex;
+                 }
+                 if (p.put_gex < 0) {
+                     putGammaSum += Math.abs(p.put_gex);
+                     putGammaProd += p.strike * Math.abs(p.put_gex);
+                 }
+             });
+             if (!callCentroid && callGammaSum > 0) callCentroid = callGammaProd / callGammaSum;
+             if (!putCentroid && putGammaSum > 0) putCentroid = putGammaProd / putGammaSum;
+         }
+     }
+
+     return {
+        ...activeDetailRaw,
+        spot: fixPrice(activeDetailRaw.spot, ticker),
+        put_wall: fixPrice(activeDetailRaw.put_wall, ticker),
+        call_wall: fixPrice(activeDetailRaw.call_wall, ticker),
+        gamma_flip_upper: fixPrice(activeDetailRaw.zero_gamma || activeDetailRaw.gamma_flip_upper, ticker),
+        gamma_magnet: fixPrice(activeDetailRaw.gamma_magnet, ticker),
+        pin_strike: fixPrice(activeDetailRaw.pin_strike, ticker),
+        max_pain: fixPrice(maxPain, ticker),
+        call_centroid: fixPrice(callCentroid, ticker),
+        put_centroid: fixPrice(putCentroid, ticker),
+        zero_gamma: fixPrice(activeDetailRaw.zero_gamma, ticker),
+     };
+  }, [activeDetailRaw, liveData]);
   
   const profilesMap: any = liveData?.gexProfiles?.profiles || {};
   const trendsMap: any = liveData?.liveTrend?.history || {};
@@ -189,13 +245,18 @@ export default function OptionsTacticalDashboard() {
 
   const topNodes = useMemo(() => {
      if (!activeProfile.length) return { calls: [], puts: [] };
-     // Pick top call walls
-     const bestCalls = [...activeProfile].sort((a,b) => b.call_gex - a.call_gex).slice(0, 5);
      
-     // Pick top put walls, but avoid those that are ridiculously far from spot (outliers)
-     const putsNearSpot = activeProfile.filter((p: any) => p.strike > drillSpot * 0.7 && p.strike < drillSpot * 1.3);
-     const bestPuts = [...(putsNearSpot.length > 5 ? putsNearSpot : activeProfile)]
-        .sort((a,b) => a.put_gex - b.put_gex)
+     // Filter for meaningful strikes with non-zero GEX near current price (within 15%)
+     const candidateCalls = activeProfile.filter((p: any) => p.call_gex > 0 && p.strike >= drillSpot * 0.85 && p.strike <= drillSpot * 1.15);
+     const candidatePuts = activeProfile.filter((p: any) => Math.abs(p.put_gex) > 0 && p.strike >= drillSpot * 0.85 && p.strike <= drillSpot * 1.15);
+     
+     // Pick top 5 by magnitude — use DESCENDING sort for both (b - a)
+     const bestCalls = [...(candidateCalls.length >= 3 ? candidateCalls : activeProfile.filter((p: any) => p.call_gex > 0))]
+        .sort((a,b) => b.call_gex - a.call_gex)
+        .slice(0, 5);
+     
+     const bestPuts = [...(candidatePuts.length >= 3 ? candidatePuts : activeProfile.filter((p: any) => Math.abs(p.put_gex) > 0))]
+        .sort((a,b) => Math.abs(b.put_gex) - Math.abs(a.put_gex))
         .slice(0, 5);
         
      return { calls: bestCalls, puts: bestPuts };
@@ -208,6 +269,8 @@ export default function OptionsTacticalDashboard() {
       { price: fixPrice(activeDetail.spot, activeDetail.ticker), label: "Live Price", type: "spot", note: "Current spot tracking" },
       { price: fixPrice(activeDetail.gamma_magnet, activeDetail.ticker), label: "Gamma Magnet", type: "magnet", note: "Attracts price, high liquidity grab" },
       { price: fixPrice(activeDetail.zero_gamma || activeDetail.gamma_flip_upper, activeDetail.ticker), label: "Gamma Flip", type: "regime", note: "Net gamma polarity shifts here" },
+      { price: fixPrice(activeDetail.call_wall, activeDetail.ticker), label: "Primary Call Wall", type: "resistance", note: "Absolute highest Call GEX concentration" },
+      { price: fixPrice(activeDetail.put_wall, activeDetail.ticker), label: "Primary Put Wall", type: "support", note: "Absolute highest Put GEX concentration" },
     ];
     
     // Add top 3 call walls
@@ -220,7 +283,9 @@ export default function OptionsTacticalDashboard() {
         base.push({ price: n.strike, label: `Put Wall ${idx + 1}`, type: "support", note: "High put OI, support expected" });
     });
 
-    return base.filter(l => l.price && l.price > 0).sort((a,b) => b.price - a.price);
+    // Unique levels by price to avoid clutter if primary wall matches top node
+    const unique = Array.from(new Map(base.map(item => [item.price, item])).values());
+    return unique.filter(l => l.price && l.price > 0).sort((a,b) => b.price - a.price);
   }, [activeDetail, topNodes]);
 
   if (loading) return (
@@ -377,18 +442,22 @@ export default function OptionsTacticalDashboard() {
                   <div className="col-span-8 space-y-8">
                      
                      {/* Stats Hero */}
-                     <div className="grid grid-cols-6 gap-4">
+                     <div className="grid grid-cols-5 gap-4">
                         {[
+                          { label: "Total GEX", val: activeDetail?.total_gex, icon: <ShieldCheck className={activeDetail?.total_gex < -1e9 ? "text-rose-500 animate-pulse" : "text-emerald-500"} />, sub: activeDetail?.total_gex < -1e9 ? "High Vol Risk" : "Stable Regime", tip: activeDetail?.total_gex < -1e9 ? "GEX < -1B warns of > ±1.0% price swings. Defensive positioning recommended." : (activeDetail?.total_gex > 0 ? "GEX > 0 indicates < ±0.5% stability expected." : "Dealer Net Gamma Exposure across all strikes."), isGex: true },
+                          { label: "Net Vanna", val: activeDetail?.net_vanna_exposure, icon: <Layers className="text-blue-500" />, sub: "Delta/Vol Sensitivity", tip: "Exposure to changes in implied volatility. Positive means dealers buy into rallies.", isGex: true },
                           { label: "Call Wall", val: activeDetail?.call_wall, icon: <ArrowUpRight className="text-emerald-500" />, sub: "Resistance", tip: "Highest concentration of Positive Gamma exposure.", isGex: false },
                           { label: "Put Wall", val: activeDetail?.put_wall, icon: <ArrowDownRight className="text-rose-500" />, sub: "Support", tip: "Highest concentration of Negative Gamma exposure.", isGex: false },
+                          { label: "Call Center", val: activeDetail?.call_centroid, icon: <TrendingUp className="text-emerald-400" />, sub: "Gamma Bulk", tip: "Concentration point of call-driven gamma. Acts as a price pivot.", isGex: false },
+                          { label: "Put Center", val: activeDetail?.put_centroid, icon: <TrendingDown className="text-rose-400" />, sub: "Delta Bulk", tip: "Concentration point of put-driven gamma. Core downside liquidity floor.", isGex: false },
                           { label: "Gamma Flip", val: activeDetail?.zero_gamma || activeDetail?.gamma_flip_upper, icon: <Gauge className="text-amber-500" />, sub: "Regime Shift", tip: "Price level where net dealer gamma transitions from positive to negative.", isGex: false },
                           { label: "Gamma Magnet", val: activeDetail?.gamma_magnet, icon: <Target className="text-indigo-500" />, sub: "Liquidity Node", tip: "A significant strike point that acts as a focal point for price attraction.", isGex: false },
-                          { label: "Net Vanna", val: activeDetail?.net_vanna_exposure, icon: <Layers className="text-blue-500" />, sub: "Delta Exposure", tip: "Dealer exposure relative to changes in implied volatility. Positive means dealers buy into rallies.", isGex: true },
-                          { label: "Pin Strike", val: activeDetail?.pin_strike, icon: <Hash className="text-purple-500" />, sub: "Expiration Target", tip: `Highest probability strike for price to pin at expiration. Odds: ${(activeDetail?.pin_odds || 0).toFixed(1)}%`, isGex: false },
+                          { label: "Max Pain", val: activeDetail?.max_pain, icon: <Zap className="text-rose-400" />, sub: "Market Anchor", tip: "Strike price that would cause the most financial loss for option buyers upon expiration.", isGex: false },
+                          { label: "Pin Strike", val: activeDetail?.pin_strike, icon: <Hash className="text-purple-500" />, sub: "Expiration Goal", tip: `Highest probability strike for price to pin. Odds: ${(activeDetail?.pin_odds || 0).toFixed(1)}%`, isGex: false },
                         ].map((item, idx) => (
                           <UiTooltip key={idx}>
                              <TooltipTrigger asChild>
-                               <Card className="bg-gradient-to-br from-zinc-900 to-black border-white/5 rounded-[2.5rem] p-5 hover:border-emerald-500/20 transition-all duration-500 cursor-help group border">
+                               <Card className="bg-gradient-to-br from-zinc-900 to-black border-white/5 rounded-[2rem] p-5 hover:border-emerald-500/20 transition-all duration-500 cursor-help group border shadow-2xl">
                                  <div className="flex justify-between items-start mb-4">
                                     <div className="p-3 bg-white/5 rounded-2xl group-hover:bg-emerald-500/10 transition-colors">
                                        {item.icon}
@@ -396,12 +465,12 @@ export default function OptionsTacticalDashboard() {
                                     <span className="text-[9px] font-black text-zinc-700 uppercase tracking-widest text-right leading-none w-1/2">{item.sub}</span>
                                  </div>
                                  <div className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-1">{item.label}</div>
-                                 <div className="text-xl font-mono font-black tracking-tighter">
+                                 <div className={`text-xl font-mono font-black tracking-tighter ${item.label === 'Total GEX' && item.val < -1e9 ? 'text-rose-500' : ''}`}>
                                     {item.val ? (item.isGex ? fmtGex(item.val) : item.val.toLocaleString(undefined, {minimumFractionDigits: 1})) : "—"}
                                  </div>
                                </Card>
                              </TooltipTrigger>
-                             <TooltipContent className="bg-zinc-900 border-zinc-700 p-4 max-w-[250px] rounded-2xl">
+                             <TooltipContent className="bg-zinc-900 border-zinc-700 p-4 max-w-[250px] rounded-2xl shadow-emerald-500/10 shadow-2xl">
                                <p className="text-xs font-semibold leading-relaxed tracking-tight text-white">{item.tip}</p>
                              </TooltipContent>
                           </UiTooltip>
@@ -418,26 +487,106 @@ export default function OptionsTacticalDashboard() {
                               </TabsList>
                            </Tabs>
                            <div className="flex items-center gap-6">
-                              {mainTab === 'profile' && (
-                                 <div className="flex bg-zinc-900/80 p-1 rounded-xl border border-white/5">
-                                    <Button 
-                                       variant="ghost" 
-                                       size="sm" 
-                                       className={`px-4 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${profileOption === 'nodes' ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-                                       onClick={() => setProfileOption('nodes')}
-                                    >Nodes</Button>
-                                    <Button 
-                                       variant="ghost" 
-                                       size="sm" 
-                                       className={`px-4 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${profileOption === 'net' ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-                                       onClick={() => setProfileOption('net')}
-                                    >Net</Button>
-                                    <Button 
-                                       variant="ghost" 
-                                       size="sm" 
-                                       className={`px-4 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${profileOption === 'liquidity' ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-                                       onClick={() => setProfileOption('liquidity')}
-                                    >Liquidity</Button>
+                              {(mainTab === 'profile' || mainTab === 'history') && (
+                                 <div className="flex items-center gap-3">
+                                    <Dialog>
+                                       <DialogTrigger asChild>
+                                          <Button variant="outline" size="sm" className="bg-black/40 border-white/5 rounded-2xl text-[9px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-white/5">
+                                             <Maximize2 size={12} />
+                                             Maximize
+                                          </Button>
+                                       </DialogTrigger>
+                                       <DialogContent className="max-w-[95vw] w-[95vw] h-[90vh] bg-black/95 border-white/10 p-10 rounded-[3rem] flex flex-col">
+                                          <DialogHeader className="mb-6 flex flex-row items-center justify-between">
+                                             <div>
+                                                <DialogTitle className="text-3xl font-black tracking-tighter text-white uppercase">{activeDetail?.ticker} — {mainTab === 'profile' ? 'High Fidelity GEX Analysis' : 'Historical GEX Trend'}</DialogTitle>
+                                                <p className="text-zinc-500 font-bold uppercase tracking-[0.2em] text-[10px] mt-2">Precision Terminal View</p>
+                                             </div>
+                                          </DialogHeader>
+                                          <div className="flex-1 w-full min-h-0 bg-zinc-900/20 rounded-[2rem] border border-white/5 p-10">
+                                             <ResponsiveContainer width="100%" height="100%">
+                                                {mainTab === 'profile' ? (
+                                                  <ComposedChart data={activeProfile} margin={{top: 20, right: 30, left: 20, bottom: 20}}>
+                                                     <CartesianGrid strokeDasharray="3 3" stroke="#ffffff03" vertical={false} />
+                                                     <XAxis dataKey="strike" stroke="#ffffff10" fontSize={10} tickFormatter={(v) => v.toFixed(0)} />
+                                                     <YAxis stroke="#ffffff10" fontSize={10} hide />
+                                                     <RechartsTooltip content={({ active, payload }) => {
+                                                        if (!active || !payload?.length) return null;
+                                                        const d = payload[0].payload;
+                                                        return (
+                                                           <div className="bg-zinc-950 border border-white/10 p-6 rounded-3xl shadow-2xl backdrop-blur-3xl min-w-[200px]">
+                                                              <div className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-4">Strike {d.strike}</div>
+                                                              <div className="space-y-4">
+                                                                 <div className="flex justify-between items-center gap-8">
+                                                                    <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Call GEX</span>
+                                                                    <span className="text-sm font-mono font-black text-emerald-400">{fmtGex(d.call_gex)}</span>
+                                                                 </div>
+                                                                 <div className="flex justify-between items-center gap-8">
+                                                                    <span className="text-[9px] font-black text-rose-400 uppercase tracking-widest">Put GEX</span>
+                                                                    <span className="text-sm font-mono font-black text-rose-400">{fmtGex(d.put_gex)}</span>
+                                                                 </div>
+                                                                 <div className="pt-4 border-t border-white/5 flex justify-between items-center gap-8">
+                                                                    <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Gamma Net</span>
+                                                                    <span className="text-sm font-mono font-black text-white">{fmtGex(d.total_gex)}</span>
+                                                                 </div>
+                                                              </div>
+                                                           </div>
+                                                        );
+                                                     }} cursor={{fill: 'rgba(255,255,255,0.02)'}} />
+                                                     <Bar dataKey="call_gex" fill="#10b981" radius={[4, 4, 0, 0]} opacity={0.6} />
+                                                     <Bar dataKey="put_gex" fill="#f43f5e" radius={[0, 0, 4, 4]} opacity={0.6} />
+                                                     <Line type="stepAfter" dataKey="total_gex" stroke="#ffffff" strokeWidth={3} dot={false} strokeOpacity={0.8} />
+                                                  </ComposedChart>
+                                                ) : (
+                                                  <AreaChart data={activeTrendData} margin={{top: 20, right: 30, left: 20, bottom: 20}}>
+                                                     <defs>
+                                                        <linearGradient id="trendGexMax" x1="0" y1="0" x2="0" y2="1">
+                                                           <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                                                           <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                                                        </linearGradient>
+                                                     </defs>
+                                                     <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                                     <XAxis dataKey="timestamp" stroke="#ffffff10" fontSize={10} tickFormatter={(v) => new Date(v).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} />
+                                                     <YAxis stroke="#ffffff10" fontSize={10} tickFormatter={(v) => fmtGex(v)} />
+                                                     <RechartsTooltip 
+                                                        content={({ active, payload }) => {
+                                                           if (!active || !payload?.length) return null;
+                                                           return (
+                                                              <div className="bg-black/90 border border-white/10 p-6 rounded-3xl shadow-2xl backdrop-blur-3xl">
+                                                                 <div className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-2">Total Net GEX</div>
+                                                                 <div className="text-2xl font-mono font-black">{fmtGex(payload[0].value as number)}</div>
+                                                                 <div className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mt-2">{new Date(payload[0].payload.timestamp).toLocaleTimeString()}</div>
+                                                              </div>
+                                                           );
+                                                        }}
+                                                     />
+                                                     <Area type="monotone" dataKey="total_gex" stroke="#10b981" fillOpacity={1} fill="url(#trendGexMax)" strokeWidth={3} />
+                                                  </AreaChart>
+                                                )}
+                                             </ResponsiveContainer>
+                                          </div>
+                                       </DialogContent>
+                                    </Dialog>
+                                    <div className="flex bg-zinc-900/80 p-1 rounded-xl border border-white/5">
+                                       <Button 
+                                          variant="ghost" 
+                                          size="sm" 
+                                          className={`px-4 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${profileOption === 'nodes' ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                          onClick={() => setProfileOption('nodes')}
+                                       >Nodes</Button>
+                                       <Button 
+                                          variant="ghost" 
+                                          size="sm" 
+                                          className={`px-4 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${profileOption === 'net' ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                          onClick={() => setProfileOption('net')}
+                                       >Net</Button>
+                                       <Button 
+                                          variant="ghost" 
+                                          size="sm" 
+                                          className={`px-4 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${profileOption === 'liquidity' ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                          onClick={() => setProfileOption('liquidity')}
+                                       >Liquidity</Button>
+                                    </div>
                                  </div>
                               )}
                               <span className="text-[10px] font-black text-zinc-700 uppercase tracking-[0.3em]">Precision Render</span>
@@ -671,18 +820,34 @@ export default function OptionsTacticalDashboard() {
                            </div>
                            
                            <div className="space-y-6">
-                              <div className="flex items-center justify-between">
-                                 <div className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Execution Directives</div>
-                                 <ShieldCheck size={14} className="text-zinc-600" />
-                              </div>
-                              <div className="space-y-4">
-                                 {(Array.isArray(ms.coach_note) ? ms.coach_note.slice(1, 4) : ["Awaiting high-confidence signals..."]).map((note: string, idx: number) => (
-                                    <div key={idx} className="flex gap-4 p-5 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-emerald-500/20 transition-all group">
-                                       <div className="text-emerald-500 font-black text-[10px] flex shrink-0 mt-0.5">{String(idx+1).padStart(2,'0')}</div>
-                                       <p className="text-[11px] font-bold text-zinc-300 leading-relaxed group-hover:text-white transition-colors">{fixText(note, lookupTicker, drillSpot)}</p>
-                                    </div>
-                                 ))}
-                              </div>
+                              <div className="text-[10px] font-black text-zinc-600 uppercase tracking-widest mt-8">Volatility Outlook</div>
+                               <div className={`p-6 rounded-3xl border ${activeDetail?.total_gex < -1e9 ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : (activeDetail?.total_gex > 0 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-900 border-white/5 text-zinc-400')} animate-pulse-slow`}>
+                                  <div className="flex items-center gap-3 mb-2">
+                                     {activeDetail?.total_gex < -1e9 ? <AlertTriangle size={16} /> : (activeDetail?.total_gex > 0 ? <ShieldCheck size={16} /> : <Activity size={16} />)}
+                                     <span className="font-black text-[10px] uppercase tracking-widest whitespace-nowrap">
+                                        {activeDetail?.total_gex < -1e9 ? 'High Move Probability' : (activeDetail?.total_gex > 0 ? 'Compression Expected' : 'Neutral Position')}
+                                     </span>
+                                  </div>
+                                  <p className="text-sm font-bold tracking-tight leading-snug">
+                                     {activeDetail?.total_gex < -1e9 
+                                        ? "Total GEX below -1B warns of market moves > ±1.0% today." 
+                                        : (activeDetail?.total_gex > 0 
+                                           ? "Positive GEX indicates increased probability of market moves < ±0.5%." 
+                                           : "Standard volatility environment.")}
+                                  </p>
+                               </div>
+                            </div>
+                            
+                            <div className="space-y-6">
+                               <div className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Tactical Directives</div>
+                               <div className="space-y-4">
+                                  {(Array.isArray(ms.coach_note) ? ms.coach_note.slice(1, 10) : ["Maintain discipline"]).map((note: string, idx: number) => (
+                                     <div key={idx} className="flex gap-4 p-5 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-emerald-500/20 transition-all group">
+                                        <div className="text-emerald-500 font-black text-[10px] flex shrink-0 mt-0.5">{String(idx+1).padStart(2,'0')}</div>
+                                        <p className="text-[11px] font-bold text-zinc-300 leading-relaxed group-hover:text-white transition-colors">{fixText(note, activeDetail?.ticker, activeDetail?.spot)}</p>
+                                     </div>
+                                  ))}
+                               </div>
                            </div>
                         </div>
                      </Card>
