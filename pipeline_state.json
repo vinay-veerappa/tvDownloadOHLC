@@ -1,54 +1,54 @@
 {
-  "run_label": "2026-03-20 02:37 ET",
-  "timestamp": "2026-03-20T06:37:53.520521+00:00",
+  "run_label": "2026-03-20 04:38 ET",
+  "timestamp": "2026-03-20T08:38:57.321199+00:00",
   "tickers": {
     "/ES": {
       "ticker": "/ES",
-      "total_gex": -1517145703.52,
+      "total_gex": -1515651091.96,
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "BEARISH",
-      "gamma_magnet": 6610.74,
-      "pin_strike": 6663.0,
+      "gamma_magnet": 6624.45,
+      "pin_strike": 6676.77,
       "pin_odds": 0.2252,
-      "wall_separation": 100.13,
-      "call_wall": 6663.0,
-      "put_wall": 6562.87,
-      "zero_gamma": 6658.0,
+      "wall_separation": 100.23,
+      "call_wall": 6676.77,
+      "put_wall": 6576.54,
+      "zero_gamma": 6671.76,
       "net_vanna_exposure": -2617497.26,
-      "spot": 6661.0
+      "spot": 6668.25
     },
     "/NQ": {
       "ticker": "/NQ",
-      "total_gex": -597503248.298,
+      "total_gex": -596799285.808,
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
-      "directional_bias": "BEARISH",
-      "gamma_magnet": 24804.89,
-      "pin_strike": 25071.06,
+      "directional_bias": "NEUTRAL",
+      "gamma_magnet": 24592.87,
+      "pin_strike": 24856.77,
       "pin_odds": 0.3038,
-      "wall_separation": 417.85,
-      "call_wall": 25071.06,
-      "put_wall": 24653.21,
-      "zero_gamma": 24841.24,
+      "wall_separation": 414.28,
+      "call_wall": 24856.77,
+      "put_wall": 24442.49,
+      "zero_gamma": 24587.49,
       "net_vanna_exposure": -553131.46,
-      "spot": 24564.75
+      "spot": 24585.0
     },
     "/RTY": {
       "ticker": "/RTY",
-      "total_gex": -1082339247.723,
+      "total_gex": -1086360376.4550002,
       "gex_regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "directional_bias": "BEARISH",
-      "gamma_magnet": 2516.17,
-      "pin_strike": 2542.2,
+      "gamma_magnet": 2509.24,
+      "pin_strike": 2535.2,
       "pin_odds": 0.1775,
-      "wall_separation": 50.84,
-      "call_wall": 2542.2,
-      "put_wall": 2491.36,
-      "zero_gamma": 2516.78,
+      "wall_separation": 20.28,
+      "call_wall": 2535.2,
+      "put_wall": 2514.92,
+      "zero_gamma": 2519.99,
       "net_vanna_exposure": -831389.77,
-      "spot": 2518.1
+      "spot": 2520.5
     },
     "/YM": {
       "ticker": "/YM",
@@ -56,35 +56,35 @@
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "BEARISH",
-      "gamma_magnet": 46123.57,
-      "pin_strike": 46265.39,
+      "gamma_magnet": 46180.27,
+      "pin_strike": 46322.26,
       "pin_odds": 0.1859,
-      "wall_separation": 502.88,
-      "call_wall": 46768.27,
-      "put_wall": 46265.39,
-      "zero_gamma": 46416.25,
+      "wall_separation": 503.5,
+      "call_wall": 46825.76,
+      "put_wall": 46322.26,
+      "zero_gamma": 46473.31,
       "net_vanna_exposure": -25707.9,
-      "spot": 46372.0
+      "spot": 46429.0
     },
     "SPX": {
       "ticker": "SPX",
-      "total_gex": -1517145703.52,
+      "total_gex": -1515651091.96,
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "BEARISH",
-      "gamma_magnet": 6556.23,
-      "pin_strike": 6608.49,
+      "gamma_magnet": 6562.69,
+      "pin_strike": 6615.01,
       "pin_odds": 0.2252,
-      "wall_separation": 100.13,
-      "call_wall": 6608.49,
-      "put_wall": 6508.36,
-      "zero_gamma": 6603.49,
+      "wall_separation": 100.23,
+      "call_wall": 6615.01,
+      "put_wall": 6514.78,
+      "zero_gamma": 6610.0,
       "net_vanna_exposure": -2617497.26,
       "spot": 6606.49
     },
     "SPY": {
       "ticker": "SPY",
-      "total_gex": -1517145703.52,
+      "total_gex": -1515605103.912,
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "BEARISH",
@@ -96,39 +96,39 @@
       "put_wall": 650.0,
       "zero_gamma": 659.5,
       "net_vanna_exposure": -2617497.26,
-      "spot": 659.8
+      "spot": 659.13
     },
     "QQQ": {
       "ticker": "QQQ",
-      "total_gex": -597503248.298,
+      "total_gex": -596799285.808,
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
-      "directional_bias": "BEARISH",
+      "directional_bias": "NEUTRAL",
       "gamma_magnet": 593.63,
       "pin_strike": 600.0,
       "pin_odds": 0.3038,
       "wall_separation": 10.0,
       "call_wall": 600.0,
       "put_wall": 590.0,
-      "zero_gamma": 594.5,
+      "zero_gamma": 593.5,
       "net_vanna_exposure": -553131.46,
-      "spot": 594.14
+      "spot": 593.44
     },
     "IWM": {
       "ticker": "IWM",
-      "total_gex": -1082339247.723,
+      "total_gex": -1086360376.4550002,
       "gex_regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "directional_bias": "BEARISH",
       "gamma_magnet": 247.44,
       "pin_strike": 250.0,
       "pin_odds": 0.1775,
-      "wall_separation": 5.0,
+      "wall_separation": 2.0,
       "call_wall": 250.0,
-      "put_wall": 245.0,
-      "zero_gamma": 247.5,
+      "put_wall": 248.0,
+      "zero_gamma": 248.5,
       "net_vanna_exposure": -831389.77,
-      "spot": 247.63
+      "spot": 248.55
     },
     "DIA": {
       "ticker": "DIA",
@@ -148,7 +148,7 @@
     },
     "AAPL": {
       "ticker": "AAPL",
-      "total_gex": -62144837.58,
+      "total_gex": -62040245.988,
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "BEARISH",
@@ -160,11 +160,11 @@
       "put_wall": 245.0,
       "zero_gamma": 248.75,
       "net_vanna_exposure": -82249.06,
-      "spot": 249.55
+      "spot": 249.13
     },
     "MSFT": {
       "ticker": "MSFT",
-      "total_gex": -69067152.7,
+      "total_gex": -69019275.598,
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "BEARISH",
@@ -176,11 +176,11 @@
       "put_wall": 380.0,
       "zero_gamma": 388.75,
       "net_vanna_exposure": -141188.13,
-      "spot": 389.5
+      "spot": 389.23
     },
     "NVDA": {
       "ticker": "NVDA",
-      "total_gex": -27037921.049999993,
+      "total_gex": -26969986.574999977,
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "NEUTRAL",
@@ -192,11 +192,11 @@
       "put_wall": 175.0,
       "zero_gamma": 178.75,
       "net_vanna_exposure": -130776.98,
-      "spot": 179.1
+      "spot": 178.65
     },
     "TSLA": {
       "ticker": "TSLA",
-      "total_gex": -65868297.75,
+      "total_gex": -65954400.10000001,
       "gex_regime": "NEGATIVE",
       "regime_label": "COILED",
       "directional_bias": "BEARISH",
@@ -206,13 +206,13 @@
       "wall_separation": 5.0,
       "call_wall": 385.0,
       "put_wall": 380.0,
-      "zero_gamma": 382.5,
+      "zero_gamma": 383.75,
       "net_vanna_exposure": -221017.39,
-      "spot": 382.5
+      "spot": 383.0
     },
     "META": {
       "ticker": "META",
-      "total_gex": -38980119.476,
+      "total_gex": -38873756.470000006,
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "BEARISH",
@@ -222,13 +222,13 @@
       "wall_separation": 20.0,
       "call_wall": 620.0,
       "put_wall": 600.0,
-      "zero_gamma": 608.75,
+      "zero_gamma": 606.25,
       "net_vanna_exposure": -124513.79,
-      "spot": 608.36
+      "spot": 606.7
     },
     "GOOGL": {
       "ticker": "GOOGL",
-      "total_gex": 54330652.027,
+      "total_gex": 54289965.51,
       "gex_regime": "POSITIVE",
       "regime_label": "BATTLE_ZONE",
       "directional_bias": "BULLISH",
@@ -240,11 +240,11 @@
       "put_wall": 305.0,
       "zero_gamma": 308.75,
       "net_vanna_exposure": 52025.79,
-      "spot": 307.13
+      "spot": 306.9
     },
     "AMZN": {
       "ticker": "AMZN",
-      "total_gex": -13073943.829999981,
+      "total_gex": -13060175.195999986,
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "NEUTRAL",
@@ -256,23 +256,23 @@
       "put_wall": 205.0,
       "zero_gamma": 208.75,
       "net_vanna_exposure": -41893.69,
-      "spot": 208.9
+      "spot": 208.68
     },
     "AVGO": {
       "ticker": "AVGO",
-      "total_gex": -10722984.91,
+      "total_gex": -10695897.375999996,
       "gex_regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "directional_bias": "BEARISH",
       "gamma_magnet": 319.49,
       "pin_strike": 320.0,
       "pin_odds": 0.2569,
-      "wall_separation": 10.0,
+      "wall_separation": 20.0,
       "call_wall": 330.0,
-      "put_wall": 320.0,
-      "zero_gamma": 321.25,
+      "put_wall": 310.0,
+      "zero_gamma": 318.75,
       "net_vanna_exposure": -28371.97,
-      "spot": 320.65
+      "spot": 319.84
     }
   }
 }
