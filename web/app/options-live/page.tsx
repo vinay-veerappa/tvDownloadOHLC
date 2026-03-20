@@ -18,6 +18,13 @@ import {
   ReferenceLine, Cell, AreaChart, Area, CartesianGrid,
   Legend, ComposedChart
 } from "recharts";
+import {
+  Tooltip as UiTooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Slider } from "@/components/ui/slider";
 
 // ── Display Helpers ──────────────────────────────────────────────────────────
 const fmtGex = (v: number | undefined | null) => {
@@ -49,6 +56,7 @@ export default function OptionsTacticalCommand() {
   const [exposureMode, setExposureMode] = useState<'callsPuts' | 'net' | 'absolute'>('callsPuts');
   const [activityMode, setActivityMode] = useState<'volume' | 'oi'>('volume');
   const [rightTab, setRightTab] = useState<'ladder' | 'briefing' | 'nodes'>('ladder');
+  const [strikeZoomRange, setStrikeZoomRange] = useState(5); // ±5%
   
   const [activeAlert, setActiveAlert] = useState<{message: string, type: 'success'|'error'|'warning', ticker: string} | null>(null);
   
@@ -132,11 +140,12 @@ export default function OptionsTacticalCommand() {
   // Zoom to Spot
   const zoomedProfile = useMemo(() => {
     if (activeProfile.length === 0 || drillSpot === 0) return activeProfile;
-    const lower = drillSpot * 0.94;
-    const upper = drillSpot * 1.06;
+    const factor = strikeZoomRange / 100;
+    const lower = drillSpot * (1 - factor);
+    const upper = drillSpot * (1 + factor);
     const filtered = activeProfile.filter((p: any) => p.strike >= lower && p.strike <= upper);
     return filtered.length > 5 ? filtered : activeProfile;
-  }, [activeProfile, drillSpot]);
+  }, [activeProfile, drillSpot, strikeZoomRange]);
 
   const liveTrendHistory = liveData?.liveTrend?.history || {};
   let activeTrendData = useMemo(() => {
@@ -212,8 +221,15 @@ export default function OptionsTacticalCommand() {
   const topStrikes = useMemo(() => {
     if (!activeProfile.length) return [];
     return [...activeProfile]
-        .sort((a, b) => Math.abs(b.net_gex) - Math.abs(a.net_gex))
+        .sort((a,b) => Math.abs(b.net_gex) - Math.abs(a.net_gex))
         .slice(0, 15);
+  }, [activeProfile]);
+
+  const rankedWalls = useMemo(() => {
+    if (!activeProfile.length) return { calls: [], puts: [] };
+    const sortedCalls = [...activeProfile].sort((a,b) => b.call_gex - a.call_gex).slice(0, 3);
+    const sortedPuts = [...activeProfile].sort((a,b) => a.put_gex - b.put_gex).slice(0, 3);
+    return { calls: sortedCalls, puts: sortedPuts };
   }, [activeProfile]);
 
   if (loading && !liveData) {
@@ -394,26 +410,35 @@ export default function OptionsTacticalCommand() {
                 </div>
 
                 {/* ── TACTICAL TILES ── */}
-                <div className="grid grid-cols-4 gap-6">
+                 <TooltipProvider>
+                 <div className="grid grid-cols-4 gap-6">
                   {[
-                    { label: "Call Wall", val: activeDetail?.call_wall, icon: <ArrowUpRight className="h-5 w-5 text-emerald-400" />, sub: "Primary Resistance", color: "border-emerald-500/20 bg-emerald-500/5 text-emerald-200" },
-                    { label: "Put Wall", val: activeDetail?.put_wall, icon: <ArrowDownRight className="h-5 w-5 text-rose-400" />, sub: "Primary Support", color: "border-rose-500/20 bg-rose-500/5 text-rose-200" },
-                    { label: "Gamma Magnet", val: activeDetail?.gamma_magnet, icon: <Target className="h-5 w-5 text-sky-400" />, sub: "Gravity Point", color: "border-sky-500/20 bg-sky-500/5 text-sky-200" },
-                    { label: "Zero Gamma", val: activeDetail?.zero_gamma, icon: <Zap className="h-5 w-5 text-amber-400" />, sub: "Volatility Flip", color: "border-amber-500/20 bg-amber-500/5 text-amber-200" },
+                    { label: "Call Wall", val: activeDetail?.call_wall, icon: <ArrowUpRight className="h-5 w-5 text-emerald-400" />, sub: "Primary Resistance", color: "border-emerald-500/20 bg-emerald-500/5 text-emerald-200", tip: "The strike with the largest positive dealer gamma. Acts as a price ceiling because dealers sell futures as price rises toward it." },
+                    { label: "Put Wall", val: activeDetail?.put_wall, icon: <ArrowDownRight className="h-5 w-5 text-rose-400" />, sub: "Primary Support", color: "border-rose-500/20 bg-rose-500/5 text-rose-200", tip: "The strike with the largest negative dealer gamma. Acts as a floor because dealers must sell more futures as price falls toward it to stay delta-neutral." },
+                    { label: "Gamma Magnet", val: activeDetail?.gamma_magnet, icon: <Target className="h-5 w-5 text-sky-400" />, sub: "Gravity Point", color: "border-sky-500/20 bg-sky-500/5 text-sky-200", tip: "A level where Gamma flips or clusters significantly. Price is often 'pulled' toward these levels as dealers rehedge their positions." },
+                    { label: "Zero Gamma", val: activeDetail?.zero_gamma, icon: <Zap className="h-5 w-5 text-amber-400" />, sub: "Volatility Flip", color: "border-amber-500/20 bg-amber-500/5 text-amber-200", tip: "The 'Gamma Flip' level. Below this, dealers are short gamma (hedge aggressively with the trend), leading to higher volatility. Above this, they are long gamma (hedge against the trend), suppressing volatility." },
                   ].map((item, i) => (
-                    <div key={i} className={`p-6 rounded-3xl border ${item.color} shadow-lg transition-all hover:scale-[1.03] group relative overflow-hidden`}>
-                      <div className="absolute -right-4 -top-4 opacity-5 group-hover:opacity-10 transition-opacity transform group-hover:scale-110 duration-700">{item.icon}</div>
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex flex-col">
-                          <span className="text-[11px] font-black uppercase tracking-[0.15em] opacity-40">{item.label}</span>
-                          <span className="text-[9px] font-bold opacity-30 uppercase tracking-widest">{item.sub}</span>
+                    <UiTooltip key={i}>
+                      <TooltipTrigger asChild>
+                        <div className={`p-6 rounded-3xl border ${item.color} shadow-lg transition-all hover:scale-[1.03] group relative overflow-hidden cursor-help`}>
+                          <div className="absolute -right-4 -top-4 opacity-5 group-hover:opacity-10 transition-opacity transform group-hover:scale-110 duration-700">{item.icon}</div>
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex flex-col">
+                              <span className="text-[11px] font-black uppercase tracking-[0.15em] opacity-40">{item.label}</span>
+                              <span className="text-[9px] font-bold opacity-30 uppercase tracking-widest">{item.sub}</span>
+                            </div>
+                            <div className="p-2 rounded-xl bg-white/5">{item.icon}</div>
+                          </div>
+                          <div className="text-3xl font-mono font-black tracking-tighter">{(item.val > activeDetail?.spot * 5 ? item.val / 10 : item.val)?.toLocaleString(undefined, {minimumFractionDigits: 1})}</div>
                         </div>
-                        <div className="p-2 rounded-xl bg-white/5">{item.icon}</div>
-                      </div>
-                      <div className="text-3xl font-mono font-black tracking-tighter">{(item.val > activeDetail?.spot * 5 ? item.val / 10 : item.val)?.toLocaleString(undefined, {minimumFractionDigits: 1})}</div>
-                    </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[250px] bg-zinc-900 border-emerald-500/30 text-emerald-100 p-4 rounded-xl shadow-2xl backdrop-blur-3xl animate-in fade-in zoom-in-95 duration-200">
+                        <p className="text-sm font-bold leading-relaxed">{item.tip}</p>
+                      </TooltipContent>
+                    </UiTooltip>
                   ))}
                 </div>
+                </TooltipProvider>
 
                 {/* ── ANALYTICS CORE (CHARTS & LADDER) ── */}
                 <div className="grid grid-cols-12 gap-8">
@@ -429,22 +454,34 @@ export default function OptionsTacticalCommand() {
                                 <TabsTrigger value="trend" className="px-8 rounded-xl font-black text-[10px] uppercase tracking-widest data-[state=active]:bg-emerald-500 data-[state=active]:text-black">Time Decay</TabsTrigger>
                              </TabsList>
 
-                             <div className="flex items-center gap-3">
-                                {mainTab === 'exposure' && (
-                                  <div className="flex bg-black/40 p-1.5 rounded-xl border border-white/10">
-                                    {['callsPuts', 'net', 'absolute'].map(m => (
-                                      <Button key={m} size="sm" variant={exposureMode === m ? 'default' : 'ghost'} onClick={() => setExposureMode(m as any)} className={`text-[9px] font-black h-8 px-4 rounded-lg uppercase transition-all ${exposureMode === m ? 'bg-emerald-500 text-black' : 'text-zinc-500 hover:text-white'}`}>{m}</Button>
-                                    ))}
-                                  </div>
-                                )}
-                                {mainTab === 'activity' && (
-                                  <div className="flex bg-black/40 p-1.5 rounded-xl border border-white/10">
-                                    {['volume', 'oi'].map(m => (
-                                      <Button key={m} size="sm" variant={activityMode === m ? 'default' : 'ghost'} onClick={() => setActivityMode(m as any)} className={`text-[9px] font-black h-8 px-4 rounded-lg uppercase transition-all ${activityMode === m ? 'bg-emerald-500 text-black' : 'text-zinc-500 hover:text-white'}`}>{m}</Button>
-                                    ))}
-                                  </div>
-                                )}
-                             </div>
+                                  <div className="flex items-center gap-6">
+                                    <div className="flex flex-col gap-1 w-32 mr-4">
+                                       <div className="flex items-center justify-between">
+                                          <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Strike Range</span>
+                                          <span className="text-[9px] font-mono font-bold text-emerald-400">±{strikeZoomRange}%</span>
+                                       </div>
+                                       <Slider 
+                                          value={[strikeZoomRange]} 
+                                          onValueChange={(v) => setStrikeZoomRange(v[0])} 
+                                          min={1} max={15} step={1}
+                                          className="h-4"
+                                       />
+                                    </div>
+                                    {mainTab === 'exposure' && (
+                                      <div className="flex bg-black/40 p-1.5 rounded-xl border border-white/10">
+                                        {['callsPuts', 'net', 'absolute'].map(m => (
+                                          <Button key={m} size="sm" variant={exposureMode === m ? 'default' : 'ghost'} onClick={() => setExposureMode(m as any)} className={`text-[9px] font-black h-8 px-4 rounded-lg uppercase transition-all ${exposureMode === m ? 'bg-emerald-500 text-black' : 'text-zinc-500 hover:text-white'}`}>{m}</Button>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {mainTab === 'activity' && (
+                                      <div className="flex bg-black/40 p-1.5 rounded-xl border border-white/10">
+                                        {['volume', 'oi'].map(m => (
+                                          <Button key={m} size="sm" variant={activityMode === m ? 'default' : 'ghost'} onClick={() => setActivityMode(m as any)} className={`text-[9px] font-black h-8 px-4 rounded-lg uppercase transition-all ${activityMode === m ? 'bg-emerald-500 text-black' : 'text-zinc-500 hover:text-white'}`}>{m}</Button>
+                                        ))}
+                                      </div>
+                                    )}
+                                 </div>
                           </div>
                           
                           <div className="flex-1 relative">
@@ -453,40 +490,42 @@ export default function OptionsTacticalCommand() {
                                 <ResponsiveContainer width="100%" height="100%">
                                   {mainTab === 'exposure' ? (
                                     exposureMode === 'callsPuts' ? (
-                                      <BarChart data={zoomedProfile.map((p: any) => ({ ...p, put_gex_down: -p.put_gex }))} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
-                                        <XAxis dataKey="strike" tick={{ fontSize: 11, fill: '#3f3f46', fontWeight: 900 }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toLocaleString()} interval="preserveStartEnd" />
-                                        <YAxis hide />
+                                      <BarChart layout="vertical" data={zoomedProfile.map((p: any) => ({ ...p, put_gex_down: -p.put_gex }))} margin={{ top: 20, right: 40, left: 60, bottom: 0 }}>
+                                        <XAxis type="number" hide domain={['auto', 'auto']} />
+                                        <YAxis dataKey="strike" type="category" tick={{ fontSize: 10, fill: '#71717a', fontWeight: 900 }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toLocaleString()} width={60} interval={Math.max(0, Math.floor(zoomedProfile.length / 15))} />
                                         <RechartsTooltip cursor={{fill: 'rgba(255,255,255,0.03)'}} contentStyle={{backgroundColor: '#09090b', border: '1px solid #18181b', borderRadius: '16px', boxShadow: '0 20px 50px rgba(0,0,0,0.5)'}} />
-                                        <ReferenceLine y={0} stroke="#27272a" strokeWidth={2} />
-                                        <ReferenceLine x={activeDetail?.spot} stroke="#3b82f6" strokeWidth={2} strokeDasharray="8 8" label={{ value: 'SPOT', position: 'top', fill: '#3b82f6', fontSize: 10, fontWeight: 900 }} />
-                                        <Bar dataKey="call_gex" fill="#10b981" radius={[4, 4, 0, 0]} />
-                                        <Bar dataKey="put_gex_down" fill="#f43f5e" radius={[0, 0, 4, 4]} />
+                                        <ReferenceLine x={0} stroke="#27272a" strokeWidth={2} />
+                                        <ReferenceLine y={drillSpot > activeDetail?.spot * 5 ? drillSpot / 10 : drillSpot} stroke="#3b82f6" strokeWidth={2} strokeDasharray="8 8" label={{ value: 'SPOT', position: 'right', fill: '#3b82f6', fontSize: 10, fontWeight: 900 }} />
+                                        <Bar dataKey="call_gex" fill="#10b981" radius={[0, 4, 4, 0]} />
+                                        <Bar dataKey="put_gex_down" fill="#f43f5e" radius={[4, 0, 0, 4]} />
                                       </BarChart>
                                     ) : exposureMode === 'net' ? (
-                                       <BarChart data={zoomedProfile}>
-                                          <XAxis dataKey="strike" tick={{ fontSize: 11, fill: '#3f3f46', fontWeight: 900 }} axisLine={false} tickLine={false} />
-                                          <YAxis hide />
+                                       <BarChart layout="vertical" data={zoomedProfile} margin={{ top: 20, right: 40, left: 60, bottom: 0 }}>
+                                          <XAxis type="number" hide domain={['auto', 'auto']} />
+                                          <YAxis dataKey="strike" type="category" tick={{ fontSize: 10, fill: '#71717a', fontWeight: 900 }} axisLine={false} tickLine={false} width={60} interval={Math.max(0, Math.floor(zoomedProfile.length / 15))} />
                                           <RechartsTooltip cursor={{fill: 'rgba(255,255,255,0.03)'}} contentStyle={{backgroundColor: '#09090b', border: '1px solid #18181b', borderRadius: '16px'}} />
-                                          <ReferenceLine x={activeDetail?.spot} stroke="#3b82f6" strokeWidth={2} strokeDasharray="8 8" />
+                                          <ReferenceLine x={0} stroke="#27272a" strokeWidth={1} />
+                                          <ReferenceLine y={drillSpot > activeDetail?.spot * 5 ? drillSpot / 10 : drillSpot} stroke="#3b82f6" strokeWidth={2} strokeDasharray="8 8" />
                                           <Bar dataKey="net_gex">
                                             {zoomedProfile.map((e: any, i: number) => <Cell key={i} fill={e.net_gex >= 0 ? '#10b981' : '#f43f5e'} />)}
                                           </Bar>
                                        </BarChart>
                                     ) : (
-                                      <BarChart data={zoomedProfile.map((p: any) => ({ ...p, abs_gex: Math.abs(p.net_gex) }))}>
-                                        <XAxis dataKey="strike" tick={{ fontSize: 11, fill: '#3f3f46', fontWeight: 900 }} axisLine={false} tickLine={false} />
-                                        <YAxis hide />
+                                      <BarChart layout="vertical" data={zoomedProfile.map((p: any) => ({ ...p, abs_gex: Math.abs(p.net_gex) }))} margin={{ top: 20, right: 40, left: 60, bottom: 0 }}>
+                                        <XAxis type="number" hide />
+                                        <YAxis dataKey="strike" type="category" tick={{ fontSize: 10, fill: '#71717a', fontWeight: 900 }} axisLine={false} tickLine={false} width={60} interval={Math.max(0, Math.floor(zoomedProfile.length / 15))} />
                                         <RechartsTooltip cursor={{fill: 'rgba(255,255,255,0.03)'}} contentStyle={{backgroundColor: '#09090b', border: '1px solid #18181b', borderRadius: '16px'}} />
-                                        <Bar dataKey="abs_gex" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                                        <Bar dataKey="abs_gex" fill="#3b82f6" radius={[0, 4, 4, 0]} />
                                       </BarChart>
                                     )
                                   ) : mainTab === 'activity' ? (
-                                    <BarChart data={zoomedProfile}>
-                                      <XAxis dataKey="strike" tick={{ fontSize: 11, fill: '#3f3f46', fontWeight: 900 }} />
-                                      <YAxis hide />
+                                    <BarChart layout="vertical" data={zoomedProfile} margin={{ top: 20, right: 40, left: 60, bottom: 0 }}>
+                                      <XAxis type="number" hide />
+                                      <YAxis dataKey="strike" type="category" tick={{ fontSize: 10, fill: '#71717a', fontWeight: 900 }} width={60} interval={Math.max(0, Math.floor(zoomedProfile.length / 15))} />
                                       <RechartsTooltip contentStyle={{backgroundColor: '#09090b', border: '1px solid #18181b', borderRadius: '16px'}} />
-                                      <Bar dataKey={activityMode === 'volume' ? 'call_vol' : 'call_oi'} fill="#10b981" radius={[4, 4, 0, 0]} />
-                                      <Bar dataKey={activityMode === 'volume' ? 'put_vol' : 'put_oi'} fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                                      <ReferenceLine y={drillSpot > activeDetail?.spot * 5 ? drillSpot / 10 : drillSpot} stroke="#3b82f6" strokeWidth={2} strokeDasharray="8 8" />
+                                      <Bar dataKey={activityMode === 'volume' ? 'call_vol' : 'call_oi'} fill="#10b981" radius={[0, 4, 4, 0]} />
+                                      <Bar dataKey={activityMode === 'volume' ? 'put_vol' : 'put_oi'} fill="#f43f5e" radius={[0, 4, 4, 0]} />
                                     </BarChart>
                                   ) : (
                                     <AreaChart data={activeTrendData}>
@@ -513,19 +552,28 @@ export default function OptionsTacticalCommand() {
                           </div>
                           
                           {/* Advanced Marker Stats */}
+                          <TooltipProvider>
                           <div className="mt-8 grid grid-cols-4 gap-4 px-4 py-6 bg-black/40 rounded-3xl border border-white/5">
                              {[
-                               { label: "Call Centroid", val: ms.call_volume_centroid, icon: <Flame size={12} className="text-orange-400" /> },
-                               { label: "Put Centroid", val: ms.put_volume_centroid, icon: <Flame size={12} className="text-sky-400" /> },
-                               { label: "Net Vanna", val: ms.net_vanna_exposure, icon: <Droplets size={12} className="text-indigo-400" />, fmt: true },
-                               { label: "Pin Concentration", val: (ms.pin_odds * 100).toFixed(1) + "%", icon: <Hash size={12} className="text-emerald-400" /> },
+                               { label: "Call Centroid", val: ms.call_volume_centroid, icon: <Flame size={12} className="text-orange-400" />, tip: "The strike where the most Call trading activity is centered (VWAP of strikes)." },
+                               { label: "Put Centroid", val: ms.put_volume_centroid, icon: <Flame size={12} className="text-sky-400" />, tip: "The strike where the most Put trading activity is centered (VWAP of strikes)." },
+                               { label: "Net Vanna", val: ms.net_vanna_exposure, icon: <Droplets size={12} className="text-indigo-400" />, fmt: true, tip: "Vanna is the sensitivity of Delta to Volatility shifts. High positive Vanna means if IV falls, dealers buy futures to stay neutral." },
+                               { label: "Pin Concentration", val: (ms.pin_odds * 100).toFixed(1) + "%", icon: <Hash size={12} className="text-emerald-400" />, tip: "The statistical probability of price finishing near the current strike cluster at expiry." },
                              ].map((st, i) => (
-                               <div key={i} className="flex flex-col gap-1 border-r last:border-0 border-white/5 px-4">
-                                  <div className="flex items-center gap-2 opacity-50"><span className="text-[10px] font-black uppercase tracking-widest">{st.label}</span> {st.icon}</div>
-                                  <div className="text-lg font-mono font-black">{typeof st.val === 'number' ? (st.fmt ? fmtGex(st.val) : st.val.toLocaleString()) : st.val || "—"}</div>
-                               </div>
+                               <UiTooltip key={i}>
+                                 <TooltipTrigger asChild>
+                                   <div className="flex flex-col gap-1 border-r last:border-0 border-white/5 px-4 cursor-help group">
+                                      <div className="flex items-center gap-2 opacity-50"><span className="text-[10px] font-black uppercase tracking-widest group-hover:text-emerald-400 transition-colors">{st.label}</span> {st.icon}</div>
+                                      <div className="text-lg font-mono font-black">{typeof st.val === 'number' ? (st.fmt ? fmtGex(st.val) : st.val.toLocaleString()) : st.val || "—"}</div>
+                                   </div>
+                                 </TooltipTrigger>
+                                 <TooltipContent className="bg-zinc-900 border-zinc-700 p-3 max-w-[200px]">
+                                   <p className="text-xs font-medium leading-relaxed">{st.tip}</p>
+                                 </TooltipContent>
+                               </UiTooltip>
                              ))}
                           </div>
+                          </TooltipProvider>
                        </Tabs>
                     </Card>
                     
@@ -555,7 +603,7 @@ export default function OptionsTacticalCommand() {
                          <TabsList className="w-full bg-black/40 border-b border-white/10 h-16 rounded-none px-10 justify-start gap-10">
                             <TabsTrigger value="ladder" className="px-0 py-2 border-b-2 border-transparent data-[state=active]:bg-transparent data-[state=active]:text-emerald-500 data-[state=active]:border-emerald-500 rounded-none font-black text-[11px] uppercase tracking-widest transition-all">Ladder</TabsTrigger>
                             <TabsTrigger value="briefing" className="px-0 py-2 border-b-2 border-transparent data-[state=active]:bg-transparent data-[state=active]:text-emerald-500 data-[state=active]:border-emerald-500 rounded-none font-black text-[11px] uppercase tracking-widest transition-all">Briefing</TabsTrigger>
-                            <TabsTrigger value="nodes" className="px-0 py-2 border-b-2 border-transparent data-[state=active]:bg-transparent data-[state=active]:text-emerald-500 data-[state=active]:border-emerald-500 rounded-none font-black text-[11px] uppercase tracking-widest transition-all">Strikes</TabsTrigger>
+                            <TabsTrigger value="nodes" className="px-0 py-2 border-b-2 border-transparent data-[state=active]:bg-transparent data-[state=active]:text-emerald-500 data-[state=active]:border-emerald-500 rounded-none font-black text-[11px] uppercase tracking-widest transition-all">Leaderboard</TabsTrigger>
                          </TabsList>
                          
                          <TabsContent value="ladder" className="flex-1 m-0 overflow-hidden relative">
@@ -604,28 +652,69 @@ export default function OptionsTacticalCommand() {
                             </div>
                          </TabsContent>
 
-                         <TabsContent value="nodes" className="flex-1 m-0 overflow-hidden">
-                            <ScrollArea className="h-full px-8">
-                               <table className="w-full text-left mt-6">
-                                  <thead>
-                                     <tr className="text-[10px] font-black text-zinc-600 uppercase tracking-widest border-b border-white/10">
-                                        <th className="pb-4">Strike</th>
-                                        <th className="pb-4 text-right">Net GEX</th>
-                                        <th className="pb-4 text-right">Volume</th>
-                                     </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-white/5">
-                                     {topStrikes.map((s: any, i: number) => (
-                                       <tr key={i} className="hover:bg-white/5 transition-colors">
-                                          <td className="py-4 font-mono font-black text-zinc-300">{s.strike.toLocaleString()}</td>
-                                          <td className={`py-4 text-right font-mono font-bold ${s.net_gex >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{fmtGex(s.net_gex)}</td>
-                                          <td className="py-4 text-right font-mono text-zinc-500">{((s.call_vol || 0) + (s.put_vol || 0)).toLocaleString()}</td>
-                                       </tr>
-                                     ))}
-                                  </tbody>
-                               </table>
-                            </ScrollArea>
-                         </TabsContent>
+                         <TabsContent value="nodes" className="flex-1 m-0 p-8 overflow-y-auto">
+                             <div className="space-y-10">
+                                <div>
+                                  <div className="flex items-center justify-between mb-4 px-2">
+                                     <h3 className="text-xs font-black uppercase tracking-[0.3em] text-zinc-500">Tiered Institutional Walls</h3>
+                                     <div className="flex gap-2">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                        <div className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                                     </div>
+                                  </div>
+                                  <div className="grid grid-cols-1 gap-4">
+                                     <div className="space-y-3">
+                                        {rankedWalls.calls.map((w: any, idx: number) => (
+                                          <div key={idx} className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 flex justify-between items-center group hover:bg-emerald-500/10 transition-colors">
+                                             <div className="flex flex-col">
+                                                <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest">Call Tier {idx+1}</span>
+                                                <span className="text-lg font-mono font-black text-white">{(w.strike > activeDetail?.spot * 5 ? w.strike / 10 : w.strike).toLocaleString()}</span>
+                                             </div>
+                                             <div className="text-right">
+                                                <div className="text-[9px] font-black text-emerald-800 uppercase tracking-widest leading-none">+{fmtGex(w.call_gex)}</div>
+                                                <div className="text-[8px] font-bold text-zinc-600 mt-1">{((w.call_gex / (activeDetail?.total_gex || 1)) * 100).toFixed(1)}% Weight</div>
+                                             </div>
+                                          </div>
+                                        ))}
+                                     </div>
+                                     <div className="space-y-3">
+                                        {rankedWalls.puts.map((w: any, idx: number) => (
+                                          <div key={idx} className="p-4 rounded-2xl bg-rose-500/5 border border-rose-500/10 flex justify-between items-center group hover:bg-rose-500/10 transition-colors">
+                                             <div className="flex flex-col">
+                                                <span className="text-[9px] font-black text-rose-500 uppercase tracking-widest">Put Tier {idx+1}</span>
+                                                <span className="text-lg font-mono font-black text-white">{(w.strike > activeDetail?.spot * 5 ? w.strike / 10 : w.strike).toLocaleString()}</span>
+                                             </div>
+                                             <div className="text-right">
+                                                <div className="text-[9px] font-black text-rose-800 uppercase tracking-widest leading-none">{fmtGex(w.put_gex)}</div>
+                                                <div className="text-[8px] font-bold text-zinc-600 mt-1">{((Math.abs(w.put_gex) / (Math.abs(activeDetail?.total_gex) || 1)) * 100).toFixed(1)}% Weight</div>
+                                             </div>
+                                          </div>
+                                        ))}
+                                     </div>
+                                  </div>
+                                </div>
+
+                                <div className="pt-6 border-t border-white/5">
+                                   <div className="flex items-center gap-2 mb-4 px-2">
+                                      <TrendingUp size={12} className="text-zinc-500" />
+                                      <h3 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-600">Global Strike Map</h3>
+                                   </div>
+                                   <div className="space-y-2">
+                                      {topStrikes.map((s: any, idx: number) => (
+                                         <div key={idx} className="flex items-center justify-between text-xs px-2 py-1.5 hover:bg-white/5 rounded-lg border border-transparent hover:border-white/5 group">
+                                            <span className="font-mono font-black text-zinc-400 group-hover:text-white transition-colors">{(s.strike > activeDetail?.spot * 5 ? s.strike / 10 : s.strike).toLocaleString()}</span>
+                                            <div className="flex items-center gap-4">
+                                               <span className={`font-mono font-bold text-[10px] ${s.net_gex >= 0 ? 'text-emerald-500/60' : 'text-rose-400/60'}`}>{fmtGex(s.net_gex)}</span>
+                                               <div className="w-16 h-1 bg-white/5 rounded-full overflow-hidden">
+                                                  <div className={`h-full ${s.net_gex >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{width: `${Math.min(100, Math.abs(s.net_gex / (activeDetail?.total_gex || 1)) * 100)}%`}} />
+                                               </div>
+                                            </div>
+                                         </div>
+                                      ))}
+                                   </div>
+                                </div>
+                             </div>
+                          </TabsContent>
                       </Tabs>
                   </div>
                 </div>
