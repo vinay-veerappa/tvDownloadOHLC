@@ -193,6 +193,9 @@ export default function OptionsTacticalDashboard() {
          }
      }
 
+     // iv_current: atm_iv from backend is decimal (e.g. 0.20 = 20%)
+     const ivCurrent = activeDetailRaw.atm_iv != null ? +(activeDetailRaw.atm_iv * 100).toFixed(2) : null;
+
      return {
         ...activeDetailRaw,
         spot: fixPrice(activeDetailRaw.spot, ticker),
@@ -205,6 +208,7 @@ export default function OptionsTacticalDashboard() {
         call_centroid: fixPrice(callCentroid, ticker),
         put_centroid: fixPrice(putCentroid, ticker),
         zero_gamma: fixPrice(activeDetailRaw.zero_gamma, ticker),
+        iv_current: ivCurrent,
      };
   }, [activeDetailRaw, liveData]);
   

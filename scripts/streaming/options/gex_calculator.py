@@ -233,6 +233,7 @@ class DealerLevels:
     total_gex_delta_adj: float          # Delta-adjusted GEX: |delta|-weighted gamma exposure
     net_speed_exposure: float           # Rate of gamma change per $1 spot move (3rd order)
     max_gex_strike: float | None        # Strike with the absolute maximum net GEX
+    atm_iv: float | None = None         # ATM implied volatility (decimal, e.g. 0.20 = 20%)
 
     strike_gex: list[StrikeGEX] = field(default_factory=list)
 
@@ -1137,6 +1138,7 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
         total_gex_delta_adj=total_gex_delta_adj,
         net_speed_exposure=net_speed_exposure,
         max_gex_strike=max_gex_strike,
+        atm_iv=_atm_contract(chain.calls, spot).iv if chain.calls else None,
         strike_gex=strikes,
     )
 
@@ -1221,6 +1223,7 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         total_gex_delta_adj=levels.total_gex_delta_adj,
         net_speed_exposure=levels.net_speed_exposure,
         max_gex_strike=_scale(levels.max_gex_strike),
+        atm_iv=levels.atm_iv,  # dimensionless — no rescaling needed
         strike_gex=[
             type(sg)(
                 strike=round(sg.strike * scale, 2),

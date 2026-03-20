@@ -49,6 +49,7 @@ class TickerSnapshot:
     call_centroid: float | None = None
     put_centroid: float | None = None
     max_pain: float | None = None
+    atm_iv: float | None = None
     spot: float = 0
 
 
@@ -139,9 +140,10 @@ def build_current_state(
             put_wall=tl.put_wall,
             zero_gamma=tl.zero_gamma,
             net_vanna_exposure=tl.net_vanna_exposure,
-            call_centroid=getattr(tl, 'call_centroid', None),
-            put_centroid=getattr(tl, 'put_centroid', None),
+            call_centroid=getattr(tl, 'call_volume_centroid', None),
+            put_centroid=getattr(tl, 'put_volume_centroid', None),
             max_pain=getattr(tl, 'max_pain', None),
+            atm_iv=getattr(tl, 'atm_iv', None),
             spot=spot,
         )
 
@@ -162,9 +164,10 @@ def build_current_state(
                 put_wall=levels.put_wall,
                 zero_gamma=levels.zero_gamma,
                 net_vanna_exposure=levels.net_vanna_exposure,
-                call_centroid=getattr(levels, 'call_centroid', None),
-                put_centroid=getattr(levels, 'put_centroid', None),
+                call_centroid=getattr(levels, 'call_volume_centroid', None),
+                put_centroid=getattr(levels, 'put_volume_centroid', None),
                 max_pain=getattr(levels, 'max_pain', None),
+                atm_iv=getattr(levels, 'atm_iv', None),
                 spot=levels.spot,
             )
 

@@ -88,6 +88,7 @@ class TranslatedLevels:
     total_gex_delta_adj: float | None
     call_volume_centroid: float | None
     put_volume_centroid: float | None
+    atm_iv: float | None          # ATM implied volatility from cash chain (passes through unchanged)
 
 
 def translate_to_futures(
@@ -196,4 +197,5 @@ def translate_to_futures(
         total_gex_delta_adj=levels.total_gex_delta_adj,
         call_volume_centroid=_shift(levels.call_volume_centroid),
         put_volume_centroid=_shift(levels.put_volume_centroid),
+        atm_iv=levels.atm_iv,  # dimensionless — pass through unchanged
     )
