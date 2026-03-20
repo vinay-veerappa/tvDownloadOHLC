@@ -602,7 +602,7 @@ export default function OptionsTacticalDashboard() {
                               </TabsList>
                            </Tabs>
                            <div className="flex items-center gap-6">
-                              {(mainTab === 'profile' || mainTab === 'history' || mainTab === 'dex' || mainTab === 'cumulative') && (
+                              {true && (
                                  <div className="flex items-center gap-3">
                                     <Dialog>
                                        <DialogTrigger asChild>
@@ -611,76 +611,204 @@ export default function OptionsTacticalDashboard() {
                                              Maximize
                                           </Button>
                                        </DialogTrigger>
-                                       <DialogContent className="max-w-[95vw] w-[95vw] h-[90vh] bg-black/95 border-white/10 p-10 rounded-[3rem] flex flex-col">
-                                          <DialogHeader className="mb-6 flex flex-row items-center justify-between">
-                                             <div>
-                                                <DialogTitle className="text-3xl font-black tracking-tighter text-white uppercase">{activeDetail?.ticker} — {mainTab === 'profile' ? 'High Fidelity GEX Analysis' : 'Historical GEX Trend'}</DialogTitle>
-                                                <p className="text-zinc-500 font-bold uppercase tracking-[0.2em] text-[10px] mt-2">Precision Terminal View</p>
-                                             </div>
-                                          </DialogHeader>
-                                          <div className="flex-1 w-full min-h-0 bg-zinc-900/20 rounded-[2rem] border border-white/5 p-10">
-                                             <ResponsiveContainer width="100%" height="100%">
-                                                {mainTab === 'profile' ? (
-                                                  <ComposedChart data={activeProfile} margin={{top: 20, right: 30, left: 20, bottom: 20}}>
-                                                     <CartesianGrid strokeDasharray="3 3" stroke="#ffffff03" vertical={false} />
-                                                     <XAxis dataKey="strike" stroke="#ffffff10" fontSize={10} tickFormatter={(v) => v.toFixed(0)} />
-                                                     <YAxis stroke="#ffffff10" fontSize={10} hide />
-                                                     <RechartsTooltip content={({ active, payload }) => {
-                                                        if (!active || !payload?.length) return null;
-                                                        const d = payload[0].payload;
-                                                        return (
-                                                           <div className="bg-zinc-950 border border-white/10 p-6 rounded-3xl shadow-2xl backdrop-blur-3xl min-w-[200px]">
-                                                              <div className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-4">Strike {d.strike}</div>
-                                                              <div className="space-y-4">
-                                                                 <div className="flex justify-between items-center gap-8">
-                                                                    <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Call GEX</span>
-                                                                    <span className="text-sm font-mono font-black text-emerald-400">{fmtGex(d.call_gex)}</span>
-                                                                 </div>
-                                                                 <div className="flex justify-between items-center gap-8">
-                                                                    <span className="text-[9px] font-black text-rose-400 uppercase tracking-widest">Put GEX</span>
-                                                                    <span className="text-sm font-mono font-black text-rose-400">{fmtGex(d.put_gex)}</span>
-                                                                 </div>
-                                                                 <div className="pt-4 border-t border-white/5 flex justify-between items-center gap-8">
-                                                                    <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Gamma Net</span>
-                                                                    <span className="text-sm font-mono font-black text-white">{fmtGex(d.total_gex)}</span>
-                                                                 </div>
-                                                              </div>
-                                                           </div>
-                                                        );
-                                                     }} cursor={{fill: 'rgba(255,255,255,0.02)'}} />
-                                                     <Bar dataKey="call_gex" fill="#10b981" radius={[4, 4, 0, 0]} opacity={0.6} />
-                                                     <Bar dataKey="put_gex" fill="#f43f5e" radius={[0, 0, 4, 4]} opacity={0.6} />
-                                                     <Line type="stepAfter" dataKey="total_gex" stroke="#ffffff" strokeWidth={3} dot={false} strokeOpacity={0.8} />
-                                                  </ComposedChart>
-                                                ) : (
-                                                  <AreaChart data={activeTrendData} margin={{top: 20, right: 30, left: 20, bottom: 20}}>
-                                                     <defs>
-                                                        <linearGradient id="trendGexMax" x1="0" y1="0" x2="0" y2="1">
-                                                           <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                                                           <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                                                        </linearGradient>
-                                                     </defs>
-                                                     <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                                                     <XAxis dataKey="timestamp" stroke="#ffffff10" fontSize={10} tickFormatter={(v) => new Date(v).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} />
-                                                     <YAxis stroke="#ffffff10" fontSize={10} tickFormatter={(v) => fmtGex(v)} />
-                                                     <RechartsTooltip 
-                                                        content={({ active, payload }) => {
-                                                           if (!active || !payload?.length) return null;
-                                                           return (
-                                                              <div className="bg-black/90 border border-white/10 p-6 rounded-3xl shadow-2xl backdrop-blur-3xl">
-                                                                 <div className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-2">Total Net GEX</div>
-                                                                 <div className="text-2xl font-mono font-black">{fmtGex(payload[0].value as number)}</div>
-                                                                 <div className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mt-2">{new Date(payload[0].payload.timestamp).toLocaleTimeString()}</div>
-                                                              </div>
-                                                           );
-                                                        }}
-                                                     />
-                                                     <Area type="monotone" dataKey="total_gex" stroke="#10b981" fillOpacity={1} fill="url(#trendGexMax)" strokeWidth={3} />
-                                                  </AreaChart>
-                                                )}
-                                             </ResponsiveContainer>
-                                          </div>
-                                       </DialogContent>
+                                       <DialogContent className="max-w-none w-screen h-screen bg-zinc-950/98 border-0 p-0 rounded-none flex flex-col overflow-hidden">
+                                           {/* Fullscreen header */}
+                                           <DialogHeader className="flex-shrink-0 flex flex-row items-center justify-between px-10 py-6 border-b border-white/5">
+                                              <div>
+                                                 <DialogTitle className="text-2xl font-black tracking-tighter text-white uppercase">
+                                                    {activeDetail?.ticker}&nbsp;&mdash;&nbsp;
+                                                    {mainTab === 'profile'    ? 'High Fidelity GEX Analysis'
+                                                     : mainTab === 'history'  ? 'Historical GEX Trend'
+                                                     : mainTab === 'dex'      ? 'Delta Exposure by Strike'
+                                                     : mainTab === 'skew'     ? 'Implied Volatility Skew'
+                                                     : mainTab === 'cumulative' ? 'Cumulative Net GEX'
+                                                     : 'Volume & Open Interest'}
+                                                 </DialogTitle>
+                                                 <p className="text-zinc-600 font-bold uppercase tracking-[0.2em] text-[9px] mt-1">Fullscreen Terminal View</p>
+                                              </div>
+                                              {mainTab === 'profile' && (
+                                                 <div className="flex bg-zinc-900/80 p-1 rounded-xl border border-white/5">
+                                                    {(['nodes','net','liquidity'] as const).map(opt => (
+                                                       <button key={opt} onClick={() => setProfileOption(opt)}
+                                                          className={`px-4 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${profileOption === opt ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`}>
+                                                          {opt}
+                                                       </button>
+                                                    ))}
+                                                 </div>
+                                              )}
+                                           </DialogHeader>
+
+                                           {/* Main chart area */}
+                                           <div className="flex-1 min-h-0 flex flex-col p-8">
+
+                                           {mainTab === 'profile' ? (
+                                              <div className="w-full h-full">
+                                                 {!zoomedProfile.length ? (
+                                                    <div className="h-full flex flex-col items-center justify-center opacity-20 gap-4">
+                                                       <ZapOff size={64} /><span className="text-sm font-black uppercase tracking-widest">No exposure clusters found</span>
+                                                    </div>
+                                                 ) : (
+                                                 <ResponsiveContainer width="100%" height="100%">
+                                                    {profileOption === 'nodes' ? (
+                                                       <BarChart data={zoomedProfile} layout="vertical" margin={{ left: 30, right: 80, top: 10, bottom: 10 }} barGap={0}>
+                                                          <XAxis type="number" hide />
+                                                          <YAxis dataKey="strike" type="category" width={80} tick={{ fill: '#a1a1aa', fontSize: 13, fontWeight: 900 }} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={3} />
+                                                          <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,0.03)' }} content={({ active, payload }) => { if (!active || !payload?.length) return null; const data = payload[0].payload; return (<div className="bg-black/90 border border-white/10 p-5 rounded-2xl backdrop-blur-3xl shadow-2xl"><div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-3">Strike {data.strike}</div><div className="grid grid-cols-2 gap-6"><div><div className="text-[8px] font-black text-emerald-500/80 uppercase tracking-widest mb-1">Call GEX</div><div className="text-sm font-mono font-black text-emerald-400">{fmtGex(data.call_gex)}</div></div><div><div className="text-[8px] font-black text-rose-500/80 uppercase tracking-widest mb-1">Put GEX</div><div className="text-sm font-mono font-black text-rose-400">{fmtGex(data.put_gex)}</div></div></div></div>); }} />
+                                                          <Bar dataKey="call_gex" fill="#10b981" radius={[0, 4, 4, 0]} opacity={0.6} />
+                                                          <Bar dataKey="put_gex"  fill="#f43f5e" radius={[4, 0, 0, 4]} opacity={0.6} />
+                                                          {priceLadder.map((l: any, idx) => (<ReferenceLine key={idx} y={l.price} stroke={l.type === 'spot' ? '#10b981' : l.type === 'magnet' ? '#6366f1' : l.type === 'resistance' ? '#f43f5e' : l.type === 'support' ? '#10b981' : '#71717a'} strokeDasharray={l.type === 'spot' ? '0' : '4 4'} strokeWidth={l.type === 'spot' ? 2 : 1} label={{ position: 'right', value: l.label, fill: '#ffffff', fontSize: 12, fontWeight: '900', dx: 10 }} />))}
+                                                       </BarChart>
+                                                    ) : profileOption === 'net' ? (
+                                                       <ComposedChart data={zoomedProfile} layout="vertical" margin={{ left: 30, right: 80, top: 10, bottom: 10 }}>
+                                                          <XAxis type="number" hide />
+                                                          <YAxis dataKey="strike" type="category" width={80} tick={{ fill: '#d4d4d8', fontSize: 13, fontWeight: 900 }} tickLine={false} axisLine={false} tickFormatter={(v) => Math.round(v).toLocaleString()} />
+                                                          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" horizontal={false} />
+                                                          <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,0.03)' }} content={({ active, payload }) => { if (!active || !payload?.length) return null; const data = payload[0].payload; return (<div className="bg-black/90 border border-white/10 p-5 rounded-2xl backdrop-blur-3xl shadow-2xl"><div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-3">Strike {data.strike}</div><div className="text-[8px] font-black text-white/50 uppercase tracking-widest mb-1">Net Exposure</div><div className={`text-xl font-mono font-black ${data.net_gex >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{fmtGex(data.net_gex)}</div></div>); }} />
+                                                          <Bar dataKey="net_gex" radius={[4,4,4,4]}>{zoomedProfile.map((entry: any, index: number) => (<Cell key={`cell-${index}`} fill={entry.net_gex >= 0 ? '#10b981' : '#f43f5e'} opacity={0.7} />))}</Bar>
+                                                          {priceLadder.map((l: any, idx) => (<ReferenceLine key={idx} y={l.price} stroke={l.type === 'spot' ? '#10b981' : '#38bdf8'} strokeDasharray="4 4" label={{ position: 'right', value: l.label, fill: '#ffffff', fontSize: 12, fontWeight: '900', dx: 10 }} />))}
+                                                       </ComposedChart>
+                                                    ) : (
+                                                       <BarChart data={zoomedProfile} layout="vertical" margin={{ left: 30, right: 80, top: 10, bottom: 10 }}>
+                                                          <XAxis type="number" hide />
+                                                          <YAxis dataKey="strike" type="category" width={80} tick={{ fill: '#d4d4d8', fontSize: 13, fontWeight: 900 }} tickLine={false} axisLine={false} tickFormatter={(v) => Math.round(v).toLocaleString()} />
+                                                          <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,0.03)' }} content={({ active, payload }) => { if (!active || !payload?.length) return null; const data = payload[0].payload; return (<div className="bg-black/90 border border-white/10 p-5 rounded-2xl backdrop-blur-3xl"><div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-3">Strike {data.strike} | Liquidity</div><div className="grid grid-cols-2 gap-4"><div><div className="text-[8px] font-black text-zinc-400 uppercase mb-1">Volume</div><div className="text-sm font-mono font-black">{data.call_vol + data.put_vol}</div></div><div><div className="text-[8px] font-black text-zinc-400 uppercase mb-1">Open Int</div><div className="text-sm font-mono font-black">{data.call_oi + data.put_oi}</div></div></div></div>); }} />
+                                                          <Bar dataKey="call_vol" stackId="vol" fill="#10b981" opacity={0.4} />
+                                                          <Bar dataKey="put_vol"  stackId="vol" fill="#f43f5e" opacity={0.4} />
+                                                          <Bar dataKey="call_oi"  stackId="oi"  fill="#10b981" opacity={0.8} />
+                                                          <Bar dataKey="put_oi"   stackId="oi"  fill="#f43f5e" opacity={0.8} />
+                                                       </BarChart>
+                                                    )}
+                                                 </ResponsiveContainer>
+                                                 )}
+                                              </div>
+
+                                           ) : mainTab === 'history' ? (
+                                              <div className="w-full h-full">
+                                                 {!activeTrendData.length ? (
+                                                    <div className="h-full flex flex-col items-center justify-center opacity-20 gap-4">
+                                                       <Activity size={64} /><span className="text-sm font-black uppercase tracking-widest text-center">Trend intelligence unavailable.<br/>Awaiting market telemetry...</span>
+                                                    </div>
+                                                 ) : (
+                                                 <ResponsiveContainer width="100%" height="100%">
+                                                    <AreaChart data={activeTrendData} margin={{top: 20, right: 40, left: 20, bottom: 20}}>
+                                                       <defs><linearGradient id="trendGexFull" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient></defs>
+                                                       <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                                       <XAxis dataKey="timestamp" stroke="#ffffff15" fontSize={11} tickFormatter={(v) => new Date(v).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} />
+                                                       <YAxis stroke="#ffffff15" fontSize={11} tickFormatter={(v) => fmtGex(v)} width={80} />
+                                                       <RechartsTooltip content={({ active, payload }) => { if (!active || !payload?.length) return null; return (<div className="bg-black/90 border border-white/10 p-5 rounded-2xl backdrop-blur-3xl"><div className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Total Net GEX</div><div className="text-2xl font-mono font-black">{fmtGex(payload[0].value as number)}</div><div className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mt-2">{new Date(payload[0].payload.timestamp).toLocaleTimeString()}</div></div>); }} />
+                                                       <Area type="monotone" dataKey="total_gex" stroke="#10b981" fillOpacity={1} fill="url(#trendGexFull)" strokeWidth={3} />
+                                                    </AreaChart>
+                                                 </ResponsiveContainer>
+                                                 )}
+                                              </div>
+
+                                           ) : mainTab === 'dex' ? (
+                                              <div className="w-full h-full">
+                                                 {!dexProfile.length ? (
+                                                    <div className="h-full flex flex-col items-center justify-center opacity-20 gap-4">
+                                                       <Layers size={64} /><span className="text-sm font-black uppercase tracking-widest">DEX data unavailable</span>
+                                                    </div>
+                                                 ) : (
+                                                 <ResponsiveContainer width="100%" height="100%">
+                                                    <ComposedChart data={dexProfile} layout="vertical" margin={{ left: 30, right: 80, top: 10, bottom: 10 }}>
+                                                       <XAxis type="number" hide />
+                                                       <YAxis dataKey="strike" type="category" width={80} tick={{ fill: '#a1a1aa', fontSize: 13, fontWeight: 900 }} tickLine={false} axisLine={false} tickFormatter={(v) => Math.round(v).toLocaleString()} />
+                                                       <CartesianGrid strokeDasharray="3 3" stroke="#ffffff04" horizontal={false} />
+                                                       <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,0.03)' }} content={({ active, payload }) => { if (!active || !payload?.length) return null; const d = payload[0].payload; return (<div className="bg-black/90 border border-white/10 p-5 rounded-2xl backdrop-blur-3xl shadow-2xl min-w-[180px]"><div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-3">Strike {d.strike}</div><div className="space-y-2"><div className="flex justify-between gap-6"><span className="text-[9px] font-black text-blue-400 uppercase">Call DEX</span><span className="font-mono font-black text-blue-400">{fmtGex(d.call_dex)}</span></div><div className="flex justify-between gap-6"><span className="text-[9px] font-black text-rose-400 uppercase">Put DEX</span><span className="font-mono font-black text-rose-400">{fmtGex(d.put_dex)}</span></div><div className="flex justify-between gap-6 pt-2 border-t border-white/5"><span className="text-[9px] font-black text-zinc-400 uppercase">Net DEX</span><span className={`font-mono font-black ${d.net_dex >= 0 ? 'text-blue-300' : 'text-rose-300'}`}>{fmtGex(d.net_dex)}</span></div></div></div>); }} />
+                                                       <Bar dataKey="call_dex" fill="#3b82f6" radius={[0, 4, 4, 0]} opacity={0.65} />
+                                                       <Bar dataKey="put_dex"  fill="#f43f5e" radius={[4, 0, 0, 4]} opacity={0.65} />
+                                                       <Line type="monotone" dataKey="net_dex" stroke="#a78bfa" strokeWidth={2} dot={false} />
+                                                       <ReferenceLine y={drillSpot} stroke="#10b981" strokeWidth={2} label={{ position: 'right', value: 'Spot', fill: '#10b981', fontSize: 12, fontWeight: '900', dx: 8 }} />
+                                                    </ComposedChart>
+                                                 </ResponsiveContainer>
+                                                 )}
+                                              </div>
+
+                                           ) : mainTab === 'skew' ? (
+                                              <div className="w-full h-full">
+                                                 {!skewProfile.length ? (
+                                                    <div className="h-full flex flex-col items-center justify-center opacity-20 gap-4">
+                                                       <Activity size={64} /><span className="text-sm font-black uppercase tracking-widest text-center">IV Skew data unavailable.<br/>Populates during live RTH session.</span>
+                                                    </div>
+                                                 ) : (
+                                                 <ResponsiveContainer width="100%" height="100%">
+                                                    <ComposedChart data={skewProfile} margin={{ left: 20, right: 40, top: 20, bottom: 40 }}>
+                                                       <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                                       <XAxis dataKey="strike" stroke="#ffffff10" fontSize={11} tickFormatter={(v) => Math.round(v).toLocaleString()} label={{ value: 'Strike', position: 'insideBottom', offset: -10, fill: '#52525b', fontSize: 11 }} />
+                                                       <YAxis stroke="#ffffff10" fontSize={11} tickFormatter={(v) => v.toFixed(1) + '%'} />
+                                                       <RechartsTooltip content={({ active, payload }) => { if (!active || !payload?.length) return null; const d = payload[0].payload; return (<div className="bg-black/90 border border-white/10 p-5 rounded-2xl backdrop-blur-3xl shadow-2xl min-w-[180px]"><div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-3">Strike {d.strike}</div><div className="space-y-2"><div className="flex justify-between gap-6"><span className="text-[9px] font-black text-emerald-400 uppercase">Call IV</span><span className="font-mono font-black text-emerald-400">{d.call_iv?.toFixed(1)}%</span></div><div className="flex justify-between gap-6"><span className="text-[9px] font-black text-rose-400 uppercase">Put IV</span><span className="font-mono font-black text-rose-400">{d.put_iv?.toFixed(1)}%</span></div><div className="flex justify-between gap-6 pt-2 border-t border-white/5"><span className="text-[9px] font-black text-purple-400 uppercase">Skew</span><span className={`font-mono font-black ${(d.skew ?? 0) >= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{(d.skew ?? 0) >= 0 ? '+' : ''}{d.skew?.toFixed(1)}%</span></div></div></div>); }} />
+                                                       <Area type="monotone" dataKey="call_iv" stroke="#10b981" fill="#10b981" fillOpacity={0.08} strokeWidth={1.5} dot={false} />
+                                                       <Area type="monotone" dataKey="put_iv"  stroke="#f43f5e" fill="#f43f5e" fillOpacity={0.08} strokeWidth={1.5} dot={false} />
+                                                       <Line type="monotone" dataKey="skew" stroke="#a855f7" strokeWidth={2.5} dot={false} />
+                                                       <ReferenceLine x={drillSpot} stroke="#10b981" strokeWidth={2} strokeDasharray="4 4" label={{ value: 'Spot', fill: '#10b981', fontSize: 11, fontWeight: '900' }} />
+                                                       <ReferenceLine y={0} stroke="#ffffff20" strokeWidth={1} />
+                                                       <Legend iconType="line" iconSize={14} wrapperStyle={{ fontSize: '10px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', paddingTop: '8px' }} />
+                                                    </ComposedChart>
+                                                 </ResponsiveContainer>
+                                                 )}
+                                              </div>
+
+                                           ) : mainTab === 'cumulative' ? (
+                                              <div className="w-full h-full">
+                                                 {!cumulativeGex.length ? (
+                                                    <div className="h-full flex flex-col items-center justify-center opacity-20 gap-4">
+                                                       <TrendingUp size={64} /><span className="text-sm font-black uppercase tracking-widest">No cumulative data</span>
+                                                    </div>
+                                                 ) : (
+                                                 <ResponsiveContainer width="100%" height="100%">
+                                                    <ComposedChart data={cumulativeGex} margin={{ left: 20, right: 40, top: 20, bottom: 40 }}>
+                                                       <defs><linearGradient id="cumulPosFull" x1="0" y1="0" x2="0" y2="1"><stop offset="5%"  stopColor="#f59e0b" stopOpacity={0.25}/><stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/></linearGradient></defs>
+                                                       <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                                       <XAxis dataKey="strike" stroke="#ffffff10" fontSize={11} tickFormatter={(v) => Math.round(v).toLocaleString()} />
+                                                       <YAxis stroke="#ffffff10" fontSize={11} tickFormatter={(v) => fmtGex(v)} width={80} />
+                                                       <RechartsTooltip content={({ active, payload }) => { if (!active || !payload?.length) return null; const d = payload[0].payload; return (<div className="bg-black/90 border border-white/10 p-5 rounded-2xl backdrop-blur-3xl shadow-2xl"><div className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Strike {d.strike}</div><div className={`text-lg font-mono font-black ${d.cumulative >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{fmtGex(d.cumulative)}</div><div className="text-[9px] font-black text-zinc-600 mt-1">{d.cumulative >= 0 ? 'Dealers absorbing moves' : 'Dealers amplifying moves'}</div></div>); }} />
+                                                       <Area type="monotone" dataKey="cumulative" stroke="#f59e0b" strokeWidth={2.5} fill="url(#cumulPosFull)" dot={false} />
+                                                       <ReferenceLine y={0} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="6 3" label={{ value: 'Gamma Flip', position: 'insideTopRight', fill: '#f59e0b', fontSize: 11, fontWeight: '900' }} />
+                                                       <ReferenceLine x={drillSpot} stroke="#10b981" strokeWidth={2} strokeDasharray="4 4" label={{ value: 'Spot', fill: '#10b981', fontSize: 11, fontWeight: '900' }} />
+                                                    </ComposedChart>
+                                                 </ResponsiveContainer>
+                                                 )}
+                                              </div>
+
+                                           ) : (
+                                              /* Vol / OI fullscreen */
+                                              <div className="w-full h-full flex flex-col gap-6">
+                                                 <div className="grid grid-cols-6 gap-4 flex-shrink-0">
+                                                    {([
+                                                      { label: 'Call Volume', val: volSummary.totalCallVol, color: 'text-emerald-400', fmt: 'vol' },
+                                                      { label: 'Put Volume',  val: volSummary.totalPutVol,  color: 'text-rose-400',    fmt: 'vol' },
+                                                      { label: 'P/C Vol',     val: volSummary.totalCallVol > 0 ? +(volSummary.totalPutVol/volSummary.totalCallVol).toFixed(2) : 0, color: (volSummary.totalPutVol/Math.max(volSummary.totalCallVol,1)) > 1.1 ? 'text-rose-400' : 'text-emerald-400', fmt: 'raw' },
+                                                      { label: 'Call OI',     val: volSummary.totalCallOI,  color: 'text-emerald-400', fmt: 'vol' },
+                                                      { label: 'Put OI',      val: volSummary.totalPutOI,   color: 'text-rose-400',    fmt: 'vol' },
+                                                      { label: 'P/C OI',      val: volSummary.totalCallOI > 0 ? +(volSummary.totalPutOI/volSummary.totalCallOI).toFixed(2) : 0, color: (volSummary.totalPutOI/Math.max(volSummary.totalCallOI,1)) > 1.1 ? 'text-rose-400' : 'text-emerald-400', fmt: 'raw' },
+                                                    ] as const).map((item, i) => (
+                                                      <div key={i} className="bg-white/[0.02] border border-white/5 rounded-2xl p-5">
+                                                         <div className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mb-2">{item.label}</div>
+                                                         <div className={`text-xl font-mono font-black ${item.color}`}>{item.fmt === 'raw' ? item.val : item.val > 1e6 ? (item.val/1e6).toFixed(1)+'M' : item.val > 1e3 ? (item.val/1e3).toFixed(1)+'K' : item.val}</div>
+                                                      </div>
+                                                    ))}
+                                                 </div>
+                                                 <div className="flex-1 min-h-0">
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                       <BarChart data={volSummary.near} margin={{ left: 20, right: 20, top: 10, bottom: 50 }}>
+                                                          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                                          <XAxis dataKey="strike" fontSize={11} tick={{ fill: '#52525b', fontWeight: 900 }} tickFormatter={(v) => Math.round(v).toLocaleString()} angle={-45} textAnchor="end" />
+                                                          <YAxis hide />
+                                                          <RechartsTooltip cursor={{ fill: 'rgba(255,255,255,0.03)' }} content={({ active, payload }) => { if (!active || !payload?.length) return null; const d = payload[0].payload; return (<div className="bg-black/90 border border-white/10 p-4 rounded-2xl backdrop-blur-3xl shadow-2xl"><div className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-2">Strike {d.strike}</div><div className="space-y-1"><div className="flex justify-between gap-4"><span className="text-[8px] text-emerald-400 font-black uppercase">C Vol</span><span className="font-mono text-emerald-400 text-xs">{d.call_vol?.toLocaleString()}</span></div><div className="flex justify-between gap-4"><span className="text-[8px] text-rose-400 font-black uppercase">P Vol</span><span className="font-mono text-rose-400 text-xs">{d.put_vol?.toLocaleString()}</span></div><div className="flex justify-between gap-4"><span className="text-[8px] text-emerald-300 font-black uppercase">C OI</span><span className="font-mono text-emerald-300 text-xs">{d.call_oi?.toLocaleString()}</span></div><div className="flex justify-between gap-4"><span className="text-[8px] text-rose-300 font-black uppercase">P OI</span><span className="font-mono text-rose-300 text-xs">{d.put_oi?.toLocaleString()}</span></div></div></div>); }} />
+                                                          <Bar dataKey="call_vol" stackId="vol" fill="#10b981" opacity={0.5} />
+                                                          <Bar dataKey="put_vol"  stackId="vol" fill="#f43f5e" opacity={0.5} />
+                                                          <Bar dataKey="call_oi"  stackId="oi"  fill="#10b981" opacity={0.9} />
+                                                          <Bar dataKey="put_oi"   stackId="oi"  fill="#f43f5e" opacity={0.9} />
+                                                          <ReferenceLine x={drillSpot} stroke="#10b981" strokeWidth={1.5} strokeDasharray="4 4" />
+                                                          <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: '9px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em' }} />
+                                                       </BarChart>
+                                                    </ResponsiveContainer>
+                                                 </div>
+                                              </div>
+                                           )}
+
+                                           </div>
+                                        </DialogContent>
                                     </Dialog>
                                     <div className="flex bg-zinc-900/80 p-1 rounded-xl border border-white/5">
                                        <Button 
