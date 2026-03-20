@@ -44,10 +44,12 @@ from .config import (
     INDEX_TO_FUTURES,
     LOG_FILE,
     MIN_NONZERO_OI_CONTRACTS,
+    PRIORITY_TICKERS,
     REPO_ROOT,
     SCHEDULE_TIMES,
     SCHEDULE_TIMEZONE,
     SECRETS_PATH,
+    TIER2_INTERVAL_SECONDS,
     TOKEN_PATH,
     USE_OPENING_BASIS,
 )
@@ -317,6 +319,98 @@ def run_pipeline(
 
 
 # ---------------------------------------------------------------------------
+# Continuous Priority Loop  (--loop mode)
+# ---------------------------------------------------------------------------
+
+def run_loop(enable_discord: bool = False) -> None:
+    """
+    Continuously run the pipeline in a two-tier priority loop.
+
+    Tier 1 (PRIORITY_TICKERS: SPX, SPY, QQQ) — processed every iteration.
+    Tier 2 (remaining ACTIVE_TICKERS)         — processed only when their
+        last-processed timestamp exceeds TIER2_INTERVAL_SECONDS.
+
+    The base tick is 60 seconds (matching the Schwab API rate limit comfort
+    zone). Tier-2 tickers refresh approximately every 10 minutes.
+    """
+    import time
+    _setup_logging()
+
+    tick_interval = 60          # seconds between Tier-1 passes
+    tier2_due: dict[str, float] = {}   # tracks when each Tier-2 ticker is next eligible
+
+    tier1 = [t for t in ACTIVE_TICKERS if t in PRIORITY_TICKERS]
+    tier2 = [t for t in ACTIVE_TICKERS if t not in PRIORITY_TICKERS]
+
+    log.info("=" * 60)
+    log.info("Continuous Priority Loop starting")
+    log.info("  Tier 1 (%ds):  %s", tick_interval, ", ".join(tier1))
+    log.info("  Tier 2 (%ds): %s", TIER2_INTERVAL_SECONDS, ", ".join(tier2))
+    log.info("=" * 60)
+
+    try:
+        client = create_client(SECRETS_PATH, TOKEN_PATH)
+    except Exception as exc:
+        log.critical("Cannot create Schwab client: %s", exc)
+        return
+
+    while True:
+        cycle_start = time.monotonic()
+        now = time.time()
+
+        # Reload priority tickers dynamically
+        from .config import get_priority_tickers, PRIORITY_TICKERS_FILE
+        dynamic_priority = get_priority_tickers()
+        
+        # Merge hardcoded indices with user-specified priority
+        tier1 = list(set(["SPX", "SPY", "QQQ"] + dynamic_priority))
+        tier2 = [t for t in ACTIVE_TICKERS if t not in tier1]
+
+        # Check for manual trigger file (e.g., from UI 'Refresh' button)
+        manual_trigger_file = REPO_ROOT / "manual_trigger.json"
+        manual_tickers = []
+        if manual_trigger_file.exists():
+            try:
+                with open(manual_trigger_file, "r") as f:
+                    manual_tickers = json.load(f)
+                manual_trigger_file.unlink() # consume the trigger
+                log.info("Manual trigger detected for: %s", ", ".join(manual_tickers))
+            except Exception as e:
+                log.error("Failed to read/delete manual trigger file: %s", e)
+
+        # Decide which Tier-2 tickers are due this cycle
+        due_tier2 = [t for t in tier2 if now >= tier2_due.get(t, 0)]
+
+        # Tickers to process this cycle: Tier 1 + Due Tier 2 + Manual Tickers
+        active_this_cycle = list(set(tier1 + due_tier2 + manual_tickers))
+
+        if active_this_cycle:
+            tz = ZoneInfo(SCHEDULE_TIMEZONE)
+            run_label = datetime.now(tz).strftime("%Y-%m-%d %H:%M ET")
+            log.info("Cycle — processing %d tickers: %s", len(active_this_cycle), ", ".join(active_this_cycle))
+
+            # Temporarily restrict ACTIVE_TICKERS to our cycle subset
+            import scripts.streaming.options.config as _cfg
+            original = _cfg.ACTIVE_TICKERS
+            _cfg.ACTIVE_TICKERS = active_this_cycle
+            try:
+                run_pipeline(run_label=run_label, enable_discord=enable_discord)
+            except Exception as exc:
+                log.error("Pipeline cycle failed: %s", exc)
+            finally:
+                _cfg.ACTIVE_TICKERS = original
+
+            # Mark Tier-2 tickers as done
+            for t in due_tier2:
+                tier2_due[t] = time.time() + TIER2_INTERVAL_SECONDS
+
+        elapsed = time.monotonic() - cycle_start
+        sleep_for = max(0, tick_interval - elapsed)
+        log.info("Cycle done in %.1fs — sleeping %.1fs until next tick", elapsed, sleep_for)
+        time.sleep(sleep_for)
+
+
+# ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
 
@@ -409,6 +503,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "days). Blocks until Ctrl-C."
         ),
     )
+    mode.add_argument(
+        "--loop",
+        action="store_true",
+        help=(
+            "Run continuously with a 2-tier priority scanner: "
+            "Tier-1 (SPX, SPY, QQQ) every 60s; Tier-2 every 10 min. "
+            "Blocks until Ctrl-C."
+        ),
+    )
     parser.add_argument(
         "--label",
         metavar="LABEL",
@@ -448,12 +551,14 @@ def main() -> None:
 
     if args.schedule:
         run_scheduled(enable_discord=enable_discord)
+    elif args.loop:
+        run_loop(enable_discord=enable_discord)
     else:
         run_pipeline(
-        run_label=args.label,
-        enable_discord=enable_discord,
-        full_discord=args.full_discord,
-    )
+            run_label=args.label,
+            enable_discord=enable_discord,
+            full_discord=args.full_discord,
+        )
 
 
 if __name__ == "__main__":

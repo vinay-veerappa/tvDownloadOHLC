@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import DAILY_LEVELS_JSON, DAILY_LEVELS_TXT
+from .config import DAILY_LEVELS_JSON, DAILY_LEVELS_TXT, GEX_PROFILES_JSON, LIVE_TREND_JSON
 from .formatting import (
     build_coaches_note,
     build_plan,
@@ -25,6 +25,18 @@ from .futures_translator import TranslatedLevels
 from .gex_calculator import DealerLevels
 
 log = logging.getLogger(__name__)
+
+
+def _is_rth() -> bool:
+    """Return True if current time falls within Regular Trading Hours (9:30–16:00 ET, Mon-Fri)."""
+    from zoneinfo import ZoneInfo
+    from datetime import time as dt_time
+    now = datetime.now(ZoneInfo("America/New_York"))
+    if now.weekday() >= 5:  # Saturday=5, Sunday=6
+        return False
+    mkt_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    mkt_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+    return mkt_open <= now <= mkt_close
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +213,7 @@ def write_levels(
             "regime_label": tl.regime_label,
             "gex_regime": tl.gex_regime,
             "total_gex": tl.total_gex,
+            "total_gex_delta_adj": tl.total_gex_delta_adj,
             "gamma_magnet": tl.gamma_magnet,
             "pin_strike": tl.pin_strike,
             "pin_odds": tl.pin_odds,
@@ -208,6 +221,34 @@ def write_levels(
             "call_gamma_total": tl.call_gamma_total,
             "put_gamma_total": tl.put_gamma_total,
             "net_vanna_exposure": tl.net_vanna_exposure,
+            "net_speed_exposure": tl.net_speed_exposure,
+            "call_volume_centroid": tl.call_volume_centroid,
+            "put_volume_centroid": tl.put_volume_centroid,
+            "coach_note": build_coaches_note(cash_tag(tl.futures_symbol) if tl.futures_symbol else cash_tag(tl.cash_ticker), tl)
+        })
+    # Also include cash-only tickers (ETFs, stocks) that don't have futures translation
+    translated_cash_tickers = {tl.cash_ticker for tl in translated_levels}
+    for levels in cash_levels or []:
+        if levels.ticker in translated_cash_tickers:
+            continue  # already covered by translated version
+        market_structure.append({
+            "asset": levels.ticker,
+            "cash_ticker": levels.ticker,
+            "regime_label": getattr(levels, 'regime_label', 'NEUTRAL'),
+            "gex_regime": levels.gex_regime,
+            "total_gex": levels.total_gex,
+            "total_gex_delta_adj": levels.total_gex_delta_adj,
+            "gamma_magnet": levels.gamma_magnet,
+            "pin_strike": levels.pin_strike,
+            "pin_odds": levels.pin_odds,
+            "wall_separation": levels.wall_separation,
+            "call_gamma_total": levels.call_gamma_total,
+            "put_gamma_total": levels.put_gamma_total,
+            "net_vanna_exposure": levels.net_vanna_exposure,
+            "net_speed_exposure": levels.net_speed_exposure,
+            "call_volume_centroid": levels.call_volume_centroid,
+            "put_volume_centroid": levels.put_volume_centroid,
+            "coach_note": build_coaches_note(levels.ticker, levels)
         })
 
     doc = {
@@ -220,6 +261,150 @@ def write_levels(
     json_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
     log.info("JSON written → %s  (%d levels)", json_path, len(all_entries))
+
+    # ── GEX Profiles JSON output ───────────────────────────────────────────
+    profiles_doc = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "run_label": run_label,
+        "profiles": {}
+    }
+
+    # Build a lookup: cash_ticker → TranslatedLevels for futures translation
+    cash_to_translated: dict[str, TranslatedLevels] = {
+        tl.cash_ticker: tl for tl in translated_levels
+    }
+
+    for levels in cash_levels or []:
+        if not levels.strike_gex:
+            continue
+        tl = cash_to_translated.get(levels.ticker)
+        if tl and tl.translation_mode == "multiplicative" and tl.basis_ratio > 0:
+            # Translate strikes into futures space (e.g. QQQ→NQ: strike × ratio)
+            ratio = tl.basis_ratio
+            futures_key = cash_tag(tl.futures_symbol)   # e.g. "NQ", "ES"
+            profiles_doc["profiles"][futures_key] = [
+                {
+                    "strike": round(sg.strike * ratio, 2),
+                    "call_gex": sg.call_gex,
+                    "put_gex": sg.put_gex,
+                    "net_gex": sg.net_gex,
+                    "call_vol": sg.call_vol,
+                    "put_vol": sg.put_vol,
+                    "call_oi": sg.call_oi,
+                    "put_oi": sg.put_oi,
+                    "cumulative_gex": sg.cumulative_gex
+                }
+                for sg in levels.strike_gex
+            ]
+            # Also write cash-space profile under the cash ticker for SPX/NDX view
+            profiles_doc["profiles"][levels.ticker] = [
+                {
+                    "strike": sg.strike,
+                    "call_gex": sg.call_gex,
+                    "put_gex": sg.put_gex,
+                    "net_gex": sg.net_gex,
+                    "call_vol": sg.call_vol,
+                    "put_vol": sg.put_vol,
+                    "call_oi": sg.call_oi,
+                    "put_oi": sg.put_oi,
+                    "cumulative_gex": sg.cumulative_gex
+                }
+                for sg in levels.strike_gex
+            ]
+        elif tl and tl.translation_mode == "additive":
+            # ES/RTY/YM: additive basis — translate each strike by the spread
+            spread = tl.basis_spread
+            futures_key = cash_tag(tl.futures_symbol)
+            profiles_doc["profiles"][futures_key] = [
+                {
+                    "strike": round(sg.strike + spread, 2),
+                    "call_gex": sg.call_gex,
+                    "put_gex": sg.put_gex,
+                    "net_gex": sg.net_gex,
+                    "call_vol": sg.call_vol,
+                    "put_vol": sg.put_vol,
+                    "call_oi": sg.call_oi,
+                    "put_oi": sg.put_oi,
+                    "cumulative_gex": sg.cumulative_gex
+                }
+                for sg in levels.strike_gex
+            ]
+            profiles_doc["profiles"][levels.ticker] = [
+                {
+                    "strike": sg.strike,
+                    "call_gex": sg.call_gex,
+                    "put_gex": sg.put_gex,
+                    "net_gex": sg.net_gex,
+                    "call_vol": sg.call_vol,
+                    "put_vol": sg.put_vol,
+                    "call_oi": sg.call_oi,
+                    "put_oi": sg.put_oi,
+                    "cumulative_gex": sg.cumulative_gex
+                }
+                for sg in levels.strike_gex
+            ]
+        else:
+            # Cash-only tickers (stocks, ETFs without futures mapping) — write as-is
+            profiles_doc["profiles"][levels.ticker] = [
+                {
+                    "strike": sg.strike,
+                    "call_gex": sg.call_gex,
+                    "put_gex": sg.put_gex,
+                    "net_gex": sg.net_gex,
+                    "call_vol": sg.call_vol,
+                    "put_vol": sg.put_vol,
+                    "call_oi": sg.call_oi,
+                    "put_oi": sg.put_oi,
+                    "cumulative_gex": sg.cumulative_gex
+                }
+                for sg in levels.strike_gex
+            ]
+
+    GEX_PROFILES_JSON.parent.mkdir(parents=True, exist_ok=True)
+    GEX_PROFILES_JSON.write_text(json.dumps(profiles_doc, indent=2), encoding="utf-8")
+    log.info("GEX Profiles written → %s", GEX_PROFILES_JSON)
+
+    # ── Live Trend JSON Append (RTH only) ────────────────────────────────────
+    # We only write trend data during Regular Trading Hours to avoid polluting
+    # the GEX Trend chart with flat pre-market / post-market / overnight points.
+    if _is_rth():
+        trend_doc = {"generated_at": datetime.now(timezone.utc).isoformat(), "history": {}}
+        if LIVE_TREND_JSON.exists():
+            try:
+                existing_doc = json.loads(LIVE_TREND_JSON.read_text(encoding="utf-8"))
+                # Reset history on a new trading day
+                if "generated_at" in existing_doc:
+                    old_time = datetime.fromisoformat(existing_doc["generated_at"]).astimezone(timezone.utc)
+                    now_time = datetime.now(timezone.utc)
+                    if old_time.date() == now_time.date():
+                        trend_doc["history"] = existing_doc.get("history", {})
+            except Exception as e:
+                log.warning("Failed to parse existing live trend json, resetting. Error: %s", e)
+
+        now_str = datetime.now(timezone.utc).isoformat()
+        spot_by_ticker: dict[str, float] = {lvl.ticker: lvl.spot for lvl in (cash_levels or [])}
+
+        for tl in market_structure:
+            ticker = tl["cash_ticker"]
+            if ticker not in trend_doc["history"]:
+                trend_doc["history"][ticker] = []
+            spot = spot_by_ticker.get(ticker, 0)
+            trend_doc["history"][ticker].append({
+                "timestamp": now_str,
+                "total_gex": tl["total_gex"],
+                "total_gex_delta_adj": tl.get("total_gex_delta_adj"),
+                "gamma_magnet": tl["gamma_magnet"],
+                "call_volume_centroid": tl.get("call_volume_centroid"),
+                "put_volume_centroid": tl.get("put_volume_centroid"),
+                "spot": spot,
+                "gex_regime": tl["gex_regime"]
+            })
+
+        LIVE_TREND_JSON.parent.mkdir(parents=True, exist_ok=True)
+        LIVE_TREND_JSON.write_text(json.dumps(trend_doc, indent=2), encoding="utf-8")
+        log.info("Live Trend written → %s  (RTH only)", LIVE_TREND_JSON)
+    else:
+        log.debug("Skipping live_trend.json update — outside RTH.")
 
     # ── TXT output ─────────────────────────────────────────────────────────
     lines: list[str] = [
@@ -247,7 +432,7 @@ def write_levels(
     lines.extend(["", "Coach's Briefing", "─" * 60, ""])
     for tl in translated_levels:
         tag = futures_tag(tl.futures_symbol)
-        lines.append(build_coaches_note(tag, tl))
+        lines.extend(build_coaches_note(tag, tl))  # now returns list[str]
         lines.append("")
 
     lines.extend(["Detailed Summary", ""])

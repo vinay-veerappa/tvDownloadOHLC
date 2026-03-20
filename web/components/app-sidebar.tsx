@@ -20,7 +20,8 @@ import {
     Library,
     LayoutDashboard,
     AreaChart,
-    Flame
+    Flame,
+    Radar
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -86,6 +87,13 @@ export function AppSidebar() {
             icon: Flame,
             href: "/candle-science",
             active: pathname === "/candle-science",
+        },
+        {
+            label: "Options Live",
+            icon: Radar,
+            href: "/options-live",
+            active: pathname?.startsWith("/options-live"),
+            badge: "Live", // Feature flag for badge
         },
         {
             label: "Journal",

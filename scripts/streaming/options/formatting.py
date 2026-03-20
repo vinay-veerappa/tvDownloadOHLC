@@ -443,7 +443,7 @@ def traffic_light(levels: HasLevels) -> tuple[str, str]:
 # Coach's Note — plain-English game plan per run
 # ---------------------------------------------------------------------------
 
-def build_coaches_note(tag: str, levels: HasLevels) -> str:
+def build_coaches_note(tag: str, levels: HasLevels) -> list[str]:
     """
     Generate a plain-English coaching paragraph that tells a novice day
     trader exactly what the current options landscape means and what to do.
@@ -593,4 +593,6 @@ def build_coaches_note(tag: str, levels: HasLevels) -> str:
         f"Inside the band = two-way chop. Outside = expansion, trend continuation."
     )
 
-    return "\n".join(parts)
+    # Return as a list so callers can render each item as a paragraph.
+    # Filter out empty strings to avoid blank paragraphs in the UI.
+    return [p for p in parts if p.strip()]

@@ -84,6 +84,10 @@ class TranslatedLevels:
     call_gamma_total: float
     put_gamma_total: float
     net_vanna_exposure: float
+    net_speed_exposure: float
+    total_gex_delta_adj: float | None
+    call_volume_centroid: float | None
+    put_volume_centroid: float | None
 
 
 def translate_to_futures(
@@ -106,8 +110,6 @@ def translate_to_futures(
     # only when they trade at the same scale (e.g. SPX ~6632 → ES ~6636, ratio ~1).
     #
     # Threshold: if the ratio deviates from 1.0 by more than 2%, use multiplicative.
-    # Previous 10% threshold was too loose — an 8% ratio (possible with some
-    # ETF/index combos) would incorrectly fall through to additive.
     use_scale = abs(ratio - 1.0) > 0.02
     log.info(
         "%s %s vs %s: %+.2f  (futures=%.2f  cash=%.2f  ratio=%.4f)",
@@ -125,11 +127,7 @@ def translate_to_futures(
             return None
         return round(value * ratio, 2) if use_scale else round(value + spread, 2)
 
-    # em_value is a ± magnitude (not a price level).  It must be scaled by the
-    # same factor as price levels so that:
-    #   futures_price ± translated_em_value == em_upper / em_lower
-    # For additive mode the magnitude doesn't change (spread cancels out).
-    # For multiplicative mode it must be scaled by the ratio.
+    # em_value is a ± magnitude (not a price level).  Magnitude scales with ratio.
     translated_em_value = (
         round(levels.em_value * ratio, 2) if use_scale
         else round(levels.em_value, 2)
@@ -182,7 +180,6 @@ def translate_to_futures(
         liquidity_vacuum_upper=_shift(levels.liquidity_vacuum_upper),
         skew_pivot_put_25d=_shift(levels.skew_pivot_put_25d),
         skew_pivot_call_25d=_shift(levels.skew_pivot_call_25d),
-        # ── Tier 2: price levels get shifted, ratios/labels pass through ──
         gamma_magnet=_shift(levels.gamma_magnet),
         pin_strike=_shift(levels.pin_strike),
         pin_odds=levels.pin_odds,
@@ -195,4 +192,8 @@ def translate_to_futures(
         call_gamma_total=levels.call_gamma_total,
         put_gamma_total=levels.put_gamma_total,
         net_vanna_exposure=levels.net_vanna_exposure,
+        net_speed_exposure=levels.net_speed_exposure,
+        total_gex_delta_adj=levels.total_gex_delta_adj,
+        call_volume_centroid=_shift(levels.call_volume_centroid),
+        put_volume_centroid=_shift(levels.put_volume_centroid),
     )

@@ -1,0 +1,517 @@
+{
+  "generated_at": "2026-03-20T05:16:07.193300+00:00",
+  "history": {
+    "SPX": [
+      {
+        "timestamp": "2026-03-20T04:59:08.579786+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:00:09.064864+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:01:16.502821+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:02:06.519134+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:03:08.490158+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:04:17.175740+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:05:16.347388+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:06:09.890603+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:07:18.094910+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:08:16.600607+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:09:16.608139+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:10:18.555050+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:11:16.371372+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:12:16.207162+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:13:15.837304+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:14:15.644775+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:15:16.802286+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:16:07.193491+00:00",
+        "total_gex": -1520065944.568,
+        "gamma_magnet": 66489.82,
+        "spot": 6606.49,
+        "gex_regime": "NEGATIVE"
+      }
+    ],
+    "QQQ": [
+      {
+        "timestamp": "2026-03-20T04:59:08.579786+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:00:09.064864+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:01:16.502821+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:02:06.519134+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:03:08.490158+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:04:17.175740+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:05:16.347388+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:06:09.890603+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:07:18.094910+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:08:16.600607+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:09:16.608139+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:10:18.555050+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:11:16.371372+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:12:16.207162+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:13:15.837304+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:14:15.644775+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:15:16.802286+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:16:07.193491+00:00",
+        "total_gex": -597503248.298,
+        "gamma_magnet": 24804.89,
+        "spot": 594.14,
+        "gex_regime": "NEGATIVE"
+      }
+    ],
+    "IWM": [
+      {
+        "timestamp": "2026-03-20T04:59:08.579786+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:00:09.064864+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:01:16.502821+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:02:06.519134+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:03:08.490158+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:04:17.175740+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:05:16.347388+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:06:09.890603+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:07:18.094910+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:08:16.600607+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:09:16.608139+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:10:18.555050+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:11:16.371372+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:12:16.207162+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:13:15.837304+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:14:15.644775+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:15:16.802286+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:16:07.193491+00:00",
+        "total_gex": -1087015995.27,
+        "gamma_magnet": 2565.01,
+        "spot": 248.7,
+        "gex_regime": "NEGATIVE"
+      }
+    ],
+    "DIA": [
+      {
+        "timestamp": "2026-03-20T04:59:08.579786+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:00:09.064864+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:01:16.502821+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:02:06.519134+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:03:08.490158+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:04:17.175740+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:05:16.347388+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:06:09.890603+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:07:18.094910+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:08:16.600607+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:09:16.608139+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:10:18.555050+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:11:16.371372+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:12:16.207162+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:13:15.837304+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:14:15.644775+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:15:16.802286+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      },
+      {
+        "timestamp": "2026-03-20T05:16:07.193491+00:00",
+        "total_gex": -13169494.8,
+        "gamma_magnet": 46274.76,
+        "spot": 462.0,
+        "gex_regime": "NEGATIVE"
+      }
+    ]
+  }
+}

@@ -17,6 +17,122 @@ from .options_fetcher import OptionChainData, OptionContract
 log = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Higher-order Greeks (analytical BSM) — ported from ezoptionsschwab.py
+# ---------------------------------------------------------------------------
+
+def _bsm_d1d2(S: float, K: float, t: float, sigma: float,
+               r: float = 0.02, q: float = 0.0) -> tuple:
+    """Return (d1, d2, N'(d1)) for BSM. Returns (None,None,None) on error."""
+    try:
+        t = max(t, 1e-5)
+        sigma = max(sigma, 1e-4)
+        d1 = (math.log(S / K) + (r - q + 0.5 * sigma ** 2) * t) / (sigma * math.sqrt(t))
+        d2 = d1 - sigma * math.sqrt(t)
+        norm_d1 = math.exp(-0.5 * d1 * d1) / math.sqrt(2 * math.pi)  # PDF
+        return d1, d2, norm_d1
+    except Exception:
+        return None, None, None
+
+
+def _analytical_charm(flag: str, S: float, K: float, t: float, sigma: float,
+                       r: float = 0.02, q: float = 0.0) -> float:
+    """Charm = d(delta)/d(t) — rate of delta decay (per calendar day).
+    Analytical formula from Hull's Options textbook.
+    """
+    try:
+        from math import erfc
+        d1, d2, norm_d1 = _bsm_d1d2(S, K, t, sigma, r, q)
+        if d1 is None:
+            return 0.0
+        t = max(t, 1e-5)
+        inner = (2 * (r - q) * t - d2 * sigma * math.sqrt(t)) / (2 * t * sigma * math.sqrt(t))
+        if flag == 'c':
+            N_d1 = 0.5 * erfc(-d1 / math.sqrt(2))
+            charm = -math.exp(-q * t) * (norm_d1 * inner - q * N_d1)
+        else:
+            N_neg_d1 = 0.5 * erfc(d1 / math.sqrt(2))
+            charm = -math.exp(-q * t) * (norm_d1 * inner + q * N_neg_d1)
+        return charm
+    except Exception:
+        return 0.0
+
+
+def _analytical_speed(S: float, K: float, t: float, sigma: float,
+                       r: float = 0.02, q: float = 0.0) -> float:
+    """Speed = d(gamma)/dS — third derivative of option price w.r.t. spot.
+    Speed = -gamma * (d1/(sigma*sqrt(t)) + 1) / S
+    """
+    try:
+        d1, d2, norm_d1 = _bsm_d1d2(S, K, t, sigma, r, q)
+        if d1 is None:
+            return 0.0
+        t = max(t, 1e-5)
+        gamma = math.exp(-q * t) * norm_d1 / (S * sigma * math.sqrt(t))
+        speed = -gamma * (d1 / (sigma * math.sqrt(t)) + 1) / S
+        return speed
+    except Exception:
+        return 0.0
+
+
+def _volume_centroid(contracts: list) -> float | None:
+    """Volume-weighted average strike price (VWAP of strikes).
+    Call centroid above spot = upside activity concentration.
+    Put centroid below spot = downside hedging concentration.
+    """
+    total_vol = sum(c.volume for c in contracts if c.volume > 0)
+    if total_vol == 0:
+        return None
+    weighted = sum(c.strike * c.volume for c in contracts if c.volume > 0)
+    return round(weighted / total_vol, 2)
+
+
+def _delta_adjusted_gex(calls: list, puts: list, spot: float) -> float:
+    """Delta-adjusted GEX: multiplies each contract's gamma exposure by |delta|.
+    This de-emphasises deep ITM/OTM contracts and focuses on hedging near ATM.
+    Returns net delta-adjusted GEX (calls positive, puts negative convention).
+    """
+    total = 0.0
+    for c in calls:
+        gex = abs(c.gamma) * c.open_interest * CONTRACT_MULTIPLIER * spot
+        total += gex * abs(c.delta)
+    for p in puts:
+        gex = abs(p.gamma) * p.open_interest * CONTRACT_MULTIPLIER * spot
+        total -= gex * abs(p.delta)
+    return round(total, 2)
+
+
+def _net_speed_exposure(calls: list, puts: list, spot: float) -> float:
+    """Portfolio-level net speed exposure.
+    Speed tells you how fast gamma (and thus dealer hedging) will change as spot moves.
+    Large positive speed → gamma ramps quickly on rallies (accelerating dealer buying).
+    Large negative speed → gamma ramps on declines (selling pressure accelerates).
+    """
+    tz_et = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz_et)
+    r_rf, q_div = 0.02, 0.0
+    total = 0.0
+    for c in calls:
+        try:
+            exp_dt = datetime.combine(c.expiry, time(16, 0), tzinfo=tz_et)
+            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
+            iv = max(c.iv, 0.01)
+            speed = _analytical_speed(spot, c.strike, t, iv, r_rf, q_div)
+            total += speed * c.open_interest * CONTRACT_MULTIPLIER * spot * 0.01
+        except Exception:
+            pass
+    for p in puts:
+        try:
+            exp_dt = datetime.combine(p.expiry, time(16, 0), tzinfo=tz_et)
+            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
+            iv = max(p.iv, 0.01)
+            speed = _analytical_speed(spot, p.strike, t, iv, r_rf, q_div)
+            total -= speed * p.open_interest * CONTRACT_MULTIPLIER * spot * 0.01
+        except Exception:
+            pass
+    return round(total, 2)
+
+
 @dataclass
 class StrikeGEX:
     strike: float
@@ -27,6 +143,8 @@ class StrikeGEX:
     put_oi: int
     call_vol: int
     put_vol: int
+    call_iv: float = 0.0
+    put_iv: float = 0.0
     cumulative_gex: float = 0.0
 
 
@@ -96,6 +214,13 @@ class DealerLevels:
     put_gamma_total: float              # Aggregate put-side gamma
     net_vanna_exposure: float           # Signed net vanna: negative → IV↓ = bearish pressure
 
+    # ── Enhanced analytics (from ezoptionsschwab integration) ─────────────
+    call_volume_centroid: float | None  # Volume-weighted avg call strike (VWAP-of-strikes)
+    put_volume_centroid: float | None   # Volume-weighted avg put strike
+    total_gex_delta_adj: float          # Delta-adjusted GEX: |delta|-weighted gamma exposure
+    net_speed_exposure: float           # Rate of gamma change per $1 spot move (3rd order)
+    max_gex_strike: float | None        # Strike with the absolute maximum net GEX
+
     strike_gex: list[StrikeGEX] = field(default_factory=list)
 
 
@@ -131,6 +256,19 @@ def _safe_div(num: float, den: float) -> float:
 
 
 def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], spot: float) -> list[StrikeGEX]:
+    from .config import WEIGHT_MODE
+
+    def _weight(c: OptionContract) -> float:
+        """Return the effective position weight for a contract based on WEIGHT_MODE."""
+        oi, vol = c.open_interest, max(c.volume, 0)
+        if WEIGHT_MODE == "VOLUME":
+            return vol if vol > 0 else oi   # fall back to OI if no volume yet
+        if WEIGHT_MODE == "OI_VOL_SUM":
+            return oi + vol
+        if WEIGHT_MODE == "OI_VOL_MAX":
+            return max(oi, vol)
+        return oi  # default: "OI"
+
     call_map = _best_contract_per_strike(calls)
     put_map = _best_contract_per_strike(puts)
     all_strikes = sorted(set(call_map) | set(put_map))
@@ -139,8 +277,8 @@ def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], s
     for strike in all_strikes:
         call = call_map.get(strike)
         put = put_map.get(strike)
-        call_gex = abs(call.gamma) * call.open_interest * CONTRACT_MULTIPLIER * spot if call else 0.0
-        put_gex = abs(put.gamma) * put.open_interest * CONTRACT_MULTIPLIER * spot if put else 0.0
+        call_gex = abs(call.gamma) * _weight(call) * CONTRACT_MULTIPLIER * spot if call else 0.0
+        put_gex = abs(put.gamma) * _weight(put) * CONTRACT_MULTIPLIER * spot if put else 0.0
         rows.append(
             StrikeGEX(
                 strike=strike,
@@ -151,9 +289,12 @@ def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], s
                 put_oi=put.open_interest if put else 0,
                 call_vol=call.volume if call else 0,
                 put_vol=put.volume if put else 0,
+                call_iv=call.iv if call else 0.0,
+                put_iv=put.iv if put else 0.0,
             )
         )
     return rows
+
 
 
 def _build_cumulative_profile(strike_gex: list[StrikeGEX]) -> list[StrikeGEX]:
@@ -744,8 +885,24 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
 
     vanna_call_node = _find_proxy_node(chain.calls, lambda c: c.open_interest * abs(c.vega * c.delta), spot=spot)
     vanna_put_node = _find_proxy_node(chain.puts, lambda p: p.open_interest * abs(p.vega * p.delta), spot=spot)
-    charm_call_node = _find_proxy_node(chain.calls, lambda c: c.open_interest * abs(c.theta * c.delta), spot=spot)
-    charm_put_node = _find_proxy_node(chain.puts, lambda p: p.open_interest * abs(p.theta * p.delta), spot=spot)
+
+    # ── Accurate analytical Charm nodes ──────────────────────────────────────
+    # Uses the full BSM Charm formula rather than the old theta×delta proxy.
+    tz_et = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz_et)
+
+    def _contract_t(c: OptionContract) -> float:
+        exp_dt_c = datetime.combine(c.expiry, time(16, 0), tzinfo=tz_et)
+        return max((exp_dt_c - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
+
+    def _charm_score_call(c: OptionContract) -> float:
+        return c.open_interest * abs(_analytical_charm('c', spot, c.strike, _contract_t(c), max(c.iv, 0.01)))
+
+    def _charm_score_put(p: OptionContract) -> float:
+        return p.open_interest * abs(_analytical_charm('p', spot, p.strike, _contract_t(p), max(p.iv, 0.01)))
+
+    charm_call_node = _find_proxy_node(chain.calls, _charm_score_call, spot=spot)
+    charm_put_node = _find_proxy_node(chain.puts, _charm_score_put, spot=spot)
 
     agg = _aggregate_by_strike(chain.calls, chain.puts)
     vol_imb_call, vol_imb_put = _find_volume_imbalance_nodes(agg)
@@ -755,6 +912,16 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
     skew_put_25d, skew_call_25d = _find_skew_pivots(front_calls, front_puts)
 
     vt_u05, vt_l05, vt_u10, vt_l10, vt_u15, vt_l15 = _vol_trigger_bands(front_calls or chain.calls, spot)
+
+    # ── Volume centroids (VWAP of strikes by volume) ─────────────────────────
+    call_volume_centroid = _volume_centroid(chain.calls)
+    put_volume_centroid = _volume_centroid(chain.puts)
+
+    # ── Delta-adjusted GEX ───────────────────────────────────────────────────
+    total_gex_delta_adj = _delta_adjusted_gex(chain.calls, chain.puts, spot)
+
+    # ── Net Speed exposure ───────────────────────────────────────────────────
+    net_speed_exposure = _net_speed_exposure(chain.calls, chain.puts, spot)
 
     # NOTE: We intentionally leave None levels as None rather than defaulting
     # them to spot.  Collapsing everything to spot produces meaningless trade
@@ -778,6 +945,12 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
     call_gamma_total = round(sum(row.call_gex for row in strikes), 2)
     put_gamma_total = round(sum(row.put_gex for row in strikes), 2)
     net_vanna = _net_vanna_exposure(chain.calls, chain.puts)
+    
+    # Strike with absolute maximum net GEX magnitude
+    max_gex_strike = None
+    if strikes:
+        max_gex_strike = max(strikes, key=lambda x: abs(x.net_gex or 0)).strike
+
     regime_label, directional_bias = _classify_regime(
         total_gex, separation, em_value, spot,
         gamma_magnet, put_gamma_total, call_gamma_total, net_vanna,
@@ -856,6 +1029,12 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
         call_gamma_total=call_gamma_total,
         put_gamma_total=put_gamma_total,
         net_vanna_exposure=net_vanna,
+        # ── Enhanced analytics ──
+        call_volume_centroid=call_volume_centroid,
+        put_volume_centroid=put_volume_centroid,
+        total_gex_delta_adj=total_gex_delta_adj,
+        net_speed_exposure=net_speed_exposure,
+        max_gex_strike=max_gex_strike,
         strike_gex=strikes,
     )
 
@@ -934,7 +1113,28 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         call_gamma_total=levels.call_gamma_total,
         put_gamma_total=levels.put_gamma_total,
         net_vanna_exposure=levels.net_vanna_exposure,
-        strike_gex=[],
+        # ── Enhanced analytics: centroids are price levels → scale; rest pass through ──
+        call_volume_centroid=_scale(levels.call_volume_centroid),
+        put_volume_centroid=_scale(levels.put_volume_centroid),
+        total_gex_delta_adj=levels.total_gex_delta_adj,
+        net_speed_exposure=levels.net_speed_exposure,
+        max_gex_strike=_scale(levels.max_gex_strike),
+        strike_gex=[
+            type(sg)(
+                strike=round(sg.strike * scale, 2),
+                call_gex=sg.call_gex,
+                put_gex=sg.put_gex,
+                net_gex=sg.net_gex,
+                call_oi=sg.call_oi,
+                put_oi=sg.put_oi,
+                call_vol=sg.call_vol,
+                put_vol=sg.put_vol,
+                call_iv=sg.call_iv,
+                put_iv=sg.put_iv,
+                cumulative_gex=sg.cumulative_gex
+            )
+            for sg in levels.strike_gex
+        ],
     )
 
 def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_volatility: float) -> float:

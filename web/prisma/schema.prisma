@@ -470,3 +470,40 @@ model Chart {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+// ==========================================
+// Options Live Dashboard: Intraday GEX Snapshots
+// ==========================================
+// Stores intraday interval data (every ~5 min during RTH) for the GEX Trend chart.
+// This replaces the SQLite interval_data table from ezoptionsschwab.
+// Queryable from the Next.js API routes for the live dashboard.
+model GexSnapshot {
+  id                  Int      @id @default(autoincrement())
+  ticker              String   // e.g. "SPX", "QQQ", "NQ"
+  timestamp           DateTime // The time the snapshot was captured
+  tradingDate         DateTime // The trading date (no time component)
+
+  // Core GEX metrics
+  totalGex            Float    // Net GEX across all strikes (calls - puts)
+  totalGexDeltaAdj    Float?   // Delta-adjusted GEX
+  callGammaTotal      Float?   // Aggregate call-side GEX
+  putGammaTotal       Float?   // Aggregate put-side GEX
+  gexRegime           String   // "POSITIVE" or "NEGATIVE"
+  regimeLabel         String?  // "PINNED", "TRENDING", "COILED", "BATTLE_ZONE"
+
+  // Price context
+  spotPrice           Float    // Underlying spot price at snapshot time
+  gammaMagnet         Float?   // Gamma-weighted average strike
+  pinStrike           Float?   // Strike with highest gamma concentration
+
+  // New analytics
+  callVolumeCentroid  Float?   // Volume-weighted avg call strike
+  putVolumeCentroid   Float?   // Volume-weighted avg put strike
+  netSpeedExposure    Float?   // Portfolio speed (d(gamma)/dS)
+  netVannaExposure    Float?   // Signed net vanna
+
+  createdAt           DateTime @default(now())
+
+  @@index([ticker, tradingDate])
+  @@index([ticker, timestamp])
+}

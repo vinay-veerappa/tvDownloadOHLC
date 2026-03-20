@@ -51,6 +51,7 @@ RTY_FUTURES_SYMBOL: str = "/RTY"
 # Single stocks (AAPL, NVDA, etc.) are calculated as cash levels.
 ACTIVE_TICKERS: list[str] = [
     "SPX",
+    "SPY",
     "QQQ",
     "IWM",
     "DIA",
@@ -63,6 +64,23 @@ ACTIVE_TICKERS: list[str] = [
     "AMZN",
     "AVGO",
 ]
+
+# Tier 1: High-priority tickers scanned every cycle (each run of the loop).
+# Tier 2: All other ACTIVE_TICKERS; only refreshed every TIER2_INTERVAL_SECONDS.
+PRIORITY_TICKERS_FILE: Path = REPO_ROOT / "priority_tickers.json"
+
+def get_priority_tickers() -> list[str]:
+    import json
+    if PRIORITY_TICKERS_FILE.exists():
+        try:
+            with open(PRIORITY_TICKERS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return ["SPX", "SPY", "QQQ"]
+
+PRIORITY_TICKERS: list[str] = get_priority_tickers()
+TIER2_INTERVAL_SECONDS: int = 600   # 10 minutes for lower-priority tickers
 
 # Maps each primary index to its corresponding futures symbol.
 INDEX_TO_FUTURES: dict[str, str] = {
@@ -107,7 +125,15 @@ MIN_OI_THRESHOLD: int = 50
 MIN_NONZERO_OI_CONTRACTS: int = 25
 
 # ---------------------------------------------------------------------------
-# Expected-Move calculation
+# Position weighting mode
+# ---------------------------------------------------------------------------
+# Controls how open-interest and volume are combined when computing GEX and DEX.
+#   "OI"         — Open interest only (default, classic GEX)
+#   "VOLUME"     — Today's volume only (reflects real-money conviction today)
+#   "OI_VOL_SUM" — OI + Volume (emphasises active strikes; useful on opex/FOMC)
+#   "OI_VOL_MAX" — max(OI, Volume) per contract
+WEIGHT_MODE: str = "OI"
+
 # ---------------------------------------------------------------------------
 # True  → use ATM straddle (call ask + put ask)
 # False → use IV formula: spot × ATM_IV × √(DTE/365)
@@ -130,6 +156,8 @@ USE_OPENING_BASIS: bool = True
 OUTPUT_DIR: Path = REPO_ROOT
 DAILY_LEVELS_JSON: Path = OUTPUT_DIR / "daily_levels.json"
 DAILY_LEVELS_TXT: Path = OUTPUT_DIR / "daily_levels.txt"
+GEX_PROFILES_JSON: Path = OUTPUT_DIR / "gex_profiles.json"
+LIVE_TREND_JSON: Path = OUTPUT_DIR / "live_trend.json"
 LOG_FILE: Path = OUTPUT_DIR / "dealer_levels.log"
 
 # ---------------------------------------------------------------------------
