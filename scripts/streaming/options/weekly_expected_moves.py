@@ -1,13 +1,16 @@
+
 import logging
 import math
+import argparse
 from datetime import datetime, time, timedelta, date
 from zoneinfo import ZoneInfo
 
 from scripts.streaming.options.config import (
     SECRETS_PATH, 
     TOKEN_PATH,
-    PRIMARY_INDEX_TICKERS,
-    INDEX_TO_FUTURES
+    ACTIVE_TICKERS,
+    INDEX_TO_FUTURES,
+    EXPECED_MOVE_TXT
 )
 from scripts.streaming.options.options_fetcher import (
     create_client, 
@@ -65,7 +68,20 @@ def fetch_weekly_expected_moves():
     log.info(f"Target Friday:   {target_friday.strftime('%A, %b %d')}")
     log.info(f"==================================================\n")
 
-    for cash_sym in PRIMARY_INDEX_TICKERS:
+    # Command line ticker override and debug flag
+    parser = argparse.ArgumentParser(description="Weekly Expected Moves Calculator")
+    parser.add_argument("--ticker", type=str, help="Specify a single ticker to process")
+    parser.add_argument("--debug", action="store_true", help="Enable debug output for strike comparison")
+    parser.add_argument("--pinefile", action="store_true", help="Write Pine Script EM summary for each ticker to a text file")
+    args, unknown = parser.parse_known_args()
+
+    tickers = [args.ticker] if args.ticker else ACTIVE_TICKERS
+    debug_mode = args.debug
+    pinefile_mode = args.pinefile
+
+    pine_lines = []
+
+    for cash_sym in tickers:
         # Safety check: Ignore futures tickers if accidentally added to PRIMARY_INDEX_TICKERS
         if cash_sym.startswith("/"):
             log.warning(f"Skipping '{cash_sym}' -> Options chains must be fetched using the cash/ETF ticker.")
@@ -123,15 +139,65 @@ def fetch_weekly_expected_moves():
                 
                 day_name = exp_date.strftime('%A')[:3]
                 
-                # Store Cash Data
-                cash_results.append((exp_date, day_name, atm_vol_pct, cash_em))
-                cash_pine.append(f"{cash_em:.2f}:{day_name}")
-                
-                # Store Futures Data if mapped
-                if do_futures:
-                    fut_em = cash_em * ratio if use_scale else cash_em
-                    fut_results.append((exp_date, day_name, atm_vol_pct, fut_em))
-                    fut_pine.append(f"{fut_em:.2f}:{day_name}")
+                if debug_mode:
+                    # --- ATM, Prev, Next Strike Comparison (Debug Mode) ---
+                    available_strikes = sorted([float(k) for k in strikes_dict.keys()])
+                    if not available_strikes:
+                        continue
+                    atm_idx = min(range(len(available_strikes)), key=lambda i: abs(available_strikes[i] - cash_spot))
+                    indices = [atm_idx - 1, atm_idx, atm_idx + 1]
+                    indices = [i for i in indices if 0 <= i < len(available_strikes)]
+                    strike_infos = []
+                    for idx in indices:
+                        strike = available_strikes[idx]
+                        contract_data = strikes_dict[str(strike)][0]
+                        iv_pct = float(contract_data.get("volatility", 0.0))
+                        mark = float(contract_data.get("mark", 0.0))
+                        bid = float(contract_data.get("bid", 0.0))
+                        ask = float(contract_data.get("ask", 0.0))
+                        oi = int(contract_data.get("openInterest", 0))
+                        vol = int(contract_data.get("totalVolume", 0))
+                        tz = ZoneInfo("America/New_York")
+                        now = datetime.now(tz)
+                        exp_dt = datetime.combine(exp_date, time(16, 0), tzinfo=tz)
+                        minutes_remaining = (exp_dt - now).total_seconds() / 60.0
+                        fractional_dte = minutes_remaining / (24.0 * 60.0)
+                        years_to_expiry = fractional_dte / 365.0
+                        iv_decimal = iv_pct / 100.0 if iv_pct > 1.0 else iv_pct
+                        em_val = cash_spot * iv_decimal * math.sqrt(years_to_expiry) if minutes_remaining > 0 else 0.0
+                        strike_infos.append({
+                            "strike": strike,
+                            "iv_pct": iv_pct,
+                            "mark": mark,
+                            "bid": bid,
+                            "ask": ask,
+                            "oi": oi,
+                            "vol": vol,
+                            "em": em_val,
+                            "type": "ATM" if idx == atm_idx else ("Prev" if idx < atm_idx else "Next")
+                        })
+                    # Print comparison
+                    log.info(f"\n  {day_name} ({exp_date.strftime('%m/%d')}) Strike Comparison:")
+                    for info in strike_infos:
+                        log.info(f"    {info['type']} Strike {info['strike']:.2f}: IV {info['iv_pct']:.2f}% | Mark {info['mark']:.2f} | Bid {info['bid']:.2f} | Ask {info['ask']:.2f} | OI {info['oi']} | Vol {info['vol']} | EM ±{info['em']:.2f}")
+                    # Add EM results for each strike type
+                    for info in strike_infos:
+                        label = f"{info['type']}"
+                        if info['em'] > 0:
+                            cash_results.append((exp_date, f"{day_name}-{label}", info['iv_pct'], info['em']))
+                            cash_pine.append(f"{info['em']:.2f}:{day_name}-{label}")
+                            if do_futures:
+                                fut_em = info['em'] * ratio if use_scale else info['em']
+                                fut_results.append((exp_date, f"{day_name}-{label}", info['iv_pct'], fut_em))
+                                fut_pine.append(f"{fut_em:.2f}:{day_name}-{label}")
+                else:
+                    # Store only the original ATM EM result (no duplicates)
+                    cash_results.append((exp_date, day_name, atm_vol_pct, cash_em))
+                    cash_pine.append(f"{cash_em:.2f}:{day_name}")
+                    if do_futures:
+                        fut_em = cash_em * ratio if use_scale else cash_em
+                        fut_results.append((exp_date, day_name, atm_vol_pct, fut_em))
+                        fut_pine.append(f"{fut_em:.2f}:{day_name}")
 
         # --- Print Base Ticker (ETF/Cash) ---
         cash_results.sort(key=lambda x: x[0])
@@ -143,7 +209,9 @@ def fetch_weekly_expected_moves():
             log.info(f"  ↳ {day_name} ({exp_date.strftime('%m/%d')}): ATM IV {vol:>5.2f}% | EM ±${em:<5.2f} | Range: {lower:,.2f} ↔ {upper:,.2f}")
             
         clean_cash_sym = cash_sym.replace("$", "")
-        log.info(f"  Pine Script Copy: {clean_cash_sym}_EM=" + ", ".join(cash_pine))
+        pine_line = f"{clean_cash_sym}_EM=" + ", ".join(cash_pine)
+        log.info(f"  Pine Script Copy: {pine_line}")
+        pine_lines.append(pine_line)
         
         # --- Print Translated Futures Ticker (if applicable) ---
         if do_futures:
@@ -160,6 +228,15 @@ def fetch_weekly_expected_moves():
             log.info(f"  Pine Script Copy: {clean_fut_sym}_EM=" + ", ".join(fut_pine))
             
         log.info("-" * 60 + "\n")
+
+    # Write Pine Script EM summary to file if requested
+    if pinefile_mode and pine_lines:
+        import os
+        pine_path = os.path.join(EXPECED_MOVE_TXT)
+        with open(pine_path, "w", encoding="utf-8") as f:
+            for line in pine_lines:
+                f.write(line + "\n")
+        log.info(f"\nPine Script EM summary written to: {pine_path}\n")
 
 if __name__ == "__main__":
     fetch_weekly_expected_moves()

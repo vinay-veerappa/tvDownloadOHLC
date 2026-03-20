@@ -159,6 +159,7 @@ DAILY_LEVELS_TXT: Path = OUTPUT_DIR / "daily_levels.txt"
 GEX_PROFILES_JSON: Path = OUTPUT_DIR / "gex_profiles.json"
 LIVE_TREND_JSON: Path = OUTPUT_DIR / "live_trend.json"
 LOG_FILE: Path = OUTPUT_DIR / "dealer_levels.log"
+EXPECED_MOVE_TXT: Path = OUTPUT_DIR / "expected_moves.txt"
 
 # ---------------------------------------------------------------------------
 # Discord
