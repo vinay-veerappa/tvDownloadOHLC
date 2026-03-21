@@ -50,6 +50,7 @@ class TickerSnapshot:
     put_centroid: float | None = None
     max_pain: float | None = None
     atm_iv: float | None = None
+    iv_change: float = 0
     spot: float = 0
 
 
@@ -111,6 +112,7 @@ def build_current_state(
     run_label: str,
     translated_levels: list,
     cash_levels_by_ticker: dict,
+    previous_state: PipelineState | None = None,
 ) -> PipelineState:
     """
     Build a PipelineState from the current run's outputs.
@@ -126,6 +128,14 @@ def build_current_state(
     for tl in translated_levels:
         ticker = tl.futures_symbol if hasattr(tl, 'futures_symbol') else tl.ticker
         spot = tl.futures_price if hasattr(tl, 'futures_price') else tl.spot
+        
+        # Calculate iv_change if we have prev
+        iv_change = 0.0
+        if previous_state and ticker in previous_state.tickers:
+            prev = previous_state.tickers[ticker]
+            if prev.atm_iv is not None and getattr(tl, 'atm_iv', None) is not None:
+                iv_change = tl.atm_iv - prev.atm_iv
+                
         state.tickers[ticker] = TickerSnapshot(
             ticker=ticker,
             total_gex=tl.total_gex,
@@ -144,6 +154,7 @@ def build_current_state(
             put_centroid=getattr(tl, 'put_volume_centroid', None),
             max_pain=getattr(tl, 'max_pain', None),
             atm_iv=getattr(tl, 'atm_iv', None),
+            iv_change=iv_change,
             spot=spot,
         )
 
@@ -168,6 +179,7 @@ def build_current_state(
                 put_centroid=getattr(levels, 'put_volume_centroid', None),
                 max_pain=getattr(levels, 'max_pain', None),
                 atm_iv=getattr(levels, 'atm_iv', None),
+                iv_change=getattr(levels, 'iv_change', 0.0),
                 spot=levels.spot,
             )
 
@@ -271,6 +283,27 @@ def detect_changes(
                         "prev_pin": prev.pin_strike,
                         "curr_pin": curr.pin_strike,
                         "shift": round(shift, 2),
+                    },
+                ))
+
+        # 4b. IV Shift — MEDIUM severity
+        if prev.atm_iv is not None and curr.atm_iv is not None and prev.atm_iv > 0:
+            iv_pct_change = (curr.atm_iv - prev.atm_iv) / prev.atm_iv
+            if abs(iv_pct_change) > 0.05:  # 5% change in IV
+                direction = "spiked" if iv_pct_change > 0 else "crushed"
+                changes.append(StateChange(
+                    ticker=ticker,
+                    change_type="VOL_SHIFT",
+                    severity="MEDIUM",
+                    message=(
+                        f"📊 IV {direction} by {iv_pct_change:.1%} for {ticker} "
+                        f"({prev.atm_iv*100:.1f}% → {curr.atm_iv*100:.1f}%). "
+                        f"{'Dealers now selling vol — expect compression.' if direction == 'spiked' else 'Vol compression underwhelms — watch for range expansion.'}"
+                    ),
+                    details={
+                        "prev_iv": prev.atm_iv,
+                        "curr_iv": curr.atm_iv,
+                        "pct_change": iv_pct_change,
                     },
                 ))
 

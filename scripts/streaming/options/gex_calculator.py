@@ -234,6 +234,7 @@ class DealerLevels:
     net_speed_exposure: float           # Rate of gamma change per $1 spot move (3rd order)
     max_gex_strike: float | None        # Strike with the absolute maximum net GEX
     atm_iv: float | None = None         # ATM implied volatility (decimal, e.g. 0.20 = 20%)
+    iv_change: float = 0.0             # Daily change in IV (delta from previous run)
 
     strike_gex: list[StrikeGEX] = field(default_factory=list)
 
@@ -1224,6 +1225,7 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         net_speed_exposure=levels.net_speed_exposure,
         max_gex_strike=_scale(levels.max_gex_strike),
         atm_iv=levels.atm_iv,  # dimensionless — no rescaling needed
+        iv_change=levels.iv_change,
         strike_gex=[
             type(sg)(
                 strike=round(sg.strike * scale, 2),

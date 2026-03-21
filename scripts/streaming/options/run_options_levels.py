@@ -223,21 +223,22 @@ def run_pipeline(
                 # We skip appending to translated_levels, but proceed to next steps
                 # so cash_levels_by_ticker is already populated and can be used.
             else:
-                anchor_basis = None
-                anchor_ratio = None
-
-                if USE_OPENING_BASIS and fut.open_price > 0 and chain.spot_open > 0:
+                # Use primary_chain's opening spot (original index) for basis anchors,
+                # NOT the fallback chain's opening spot (ETF), to avoid double-scaling.
+                base_open = primary_chain.spot_open if primary_chain.spot_open > 0 else chain.spot_open
+                
+                if USE_OPENING_BASIS and fut.open_price > 0 and base_open > 0:
                     # Calculate basis established at open (e.g. ES Open - SPX Open)
-                    # and the anchor ratio for multiplicative scaling (e.g. NQ Open / QQQ Open)
-                    anchor_basis = round(fut.open_price - chain.spot_open, 2)
-                    anchor_ratio = round(fut.open_price / chain.spot_open, 4)
+                    # and the anchor ratio for multiplicative scaling (e.g. NQ Open / NDX Open)
+                    anchor_basis = round(fut.open_price - base_open, 2)
+                    anchor_ratio = round(fut.open_price / base_open, 4)
                     log.info(
-                        "Anchor Basis (%s): spread=%.2f ratio=%.4f (from opens: fut=%.2f spot=%.2f)",
+                        "Anchor Basis (%s): spread=%.2f ratio=%.4f (from opens: fut=%.2f base_open=%.2f)",
                         ticker,
                         anchor_basis,
                         anchor_ratio,
                         fut.open_price,
-                        chain.spot_open,
+                        base_open,
                     )
                 
                 tl = translate_to_futures(levels, fut, anchor_basis=anchor_basis, anchor_ratio=anchor_ratio)
@@ -276,6 +277,7 @@ def run_pipeline(
         previous_state = load_previous_state()
         current_state = build_current_state(
             run_label, translated_levels, cash_levels_by_ticker,
+            previous_state=previous_state,
         )
         changes = detect_changes(previous_state, current_state)
         save_current_state(current_state)

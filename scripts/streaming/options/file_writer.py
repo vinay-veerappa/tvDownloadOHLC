@@ -154,6 +154,8 @@ def _detailed_block(tl: TranslatedLevels) -> list[str]:
         f"  Call Gamma Total   : {tl.call_gamma_total:,.0f}",
         f"  Put Gamma Total    : {tl.put_gamma_total:,.0f}",
         f"  Net Vanna Exposure : {tl.net_vanna_exposure:,.0f}",
+        f"  Implied Vol (ATM)  : {tl.atm_iv*100:,.1f}%" if tl.atm_iv else "  Implied Vol (ATM)  : —",
+        f"  Daily Vol Change   : {tl.iv_change*100:+.1f}%",
         "",
         f"  ── Key Levels ───────────────────────────────",
         f"  Upper EM           : {fmt(tl.em_upper)}",
@@ -224,6 +226,10 @@ def write_levels(
             "net_speed_exposure": tl.net_speed_exposure,
             "call_volume_centroid": tl.call_volume_centroid,
             "put_volume_centroid": tl.put_volume_centroid,
+            "call_centroid": tl.call_volume_centroid, # standardized name
+            "put_centroid": tl.put_volume_centroid,   # standardized name
+            "atm_iv": tl.atm_iv,
+            "iv_change": tl.iv_change,
             "coach_note": build_coaches_note(cash_tag(tl.futures_symbol) if tl.futures_symbol else cash_tag(tl.cash_ticker), tl)
         })
     # Also include cash-only tickers (ETFs, stocks) that don't have futures translation
@@ -248,6 +254,10 @@ def write_levels(
             "net_speed_exposure": levels.net_speed_exposure,
             "call_volume_centroid": levels.call_volume_centroid,
             "put_volume_centroid": levels.put_volume_centroid,
+            "call_centroid": levels.call_volume_centroid,
+            "put_centroid": levels.put_volume_centroid,
+            "atm_iv": levels.atm_iv,
+            "iv_change": levels.iv_change,
             "coach_note": build_coaches_note(levels.ticker, levels)
         })
 

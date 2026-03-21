@@ -329,6 +329,8 @@ export default function OptionsTacticalDashboard() {
       { price: fixPrice(activeDetail.zero_gamma || activeDetail.gamma_flip_upper, activeDetail.ticker), label: "Gamma Flip", type: "regime", note: "Net gamma polarity shifts here" },
       { price: fixPrice(activeDetail.call_wall, activeDetail.ticker), label: "Primary Call Wall", type: "resistance", note: "Absolute highest Call GEX concentration" },
       { price: fixPrice(activeDetail.put_wall, activeDetail.ticker), label: "Primary Put Wall", type: "support", note: "Absolute highest Put GEX concentration" },
+      { price: fixPrice(activeDetail.call_centroid, activeDetail.ticker), label: "Call Center", type: "center", note: "Call-driven gamma gravity point" },
+      { price: fixPrice(activeDetail.put_centroid, activeDetail.ticker), label: "Put Center", type: "center", note: "Put-driven liquidity floor" },
     ];
     
     // Add top 3 call walls
@@ -499,44 +501,8 @@ export default function OptionsTacticalDashboard() {
                   {/* Left Column: Intelligence */}
                   <div className="col-span-8 space-y-8">
                      
-                     {/* Stats Hero */}
-                     <div className="grid grid-cols-5 gap-4">
-                        {[
-                          { label: "Total GEX", val: activeDetail?.total_gex, icon: <ShieldCheck className={activeDetail?.total_gex < -1e9 ? "text-rose-500 animate-pulse" : "text-emerald-500"} />, sub: activeDetail?.total_gex < -1e9 ? "High Vol Risk" : "Stable Regime", tip: activeDetail?.total_gex < -1e9 ? "GEX < -1B warns of > ±1.0% price swings. Defensive positioning recommended." : (activeDetail?.total_gex > 0 ? "GEX > 0 indicates < ±0.5% stability expected." : "Dealer Net Gamma Exposure across all strikes."), isGex: true },
-                          { label: "Net Vanna", val: activeDetail?.net_vanna_exposure, icon: <Layers className="text-blue-500" />, sub: "Delta/Vol Sensitivity", tip: "Exposure to changes in implied volatility. Positive means dealers buy into rallies.", isGex: true },
-                          { label: "Call Wall", val: activeDetail?.call_wall, icon: <ArrowUpRight className="text-emerald-500" />, sub: "Resistance", tip: "Highest concentration of Positive Gamma exposure.", isGex: false },
-                          { label: "Put Wall", val: activeDetail?.put_wall, icon: <ArrowDownRight className="text-rose-500" />, sub: "Support", tip: "Highest concentration of Negative Gamma exposure.", isGex: false },
-                          { label: "Call Center", val: activeDetail?.call_centroid, icon: <TrendingUp className="text-emerald-400" />, sub: "Gamma Bulk", tip: "Concentration point of call-driven gamma. Acts as a price pivot.", isGex: false },
-                          { label: "Put Center", val: activeDetail?.put_centroid, icon: <TrendingDown className="text-rose-400" />, sub: "Delta Bulk", tip: "Concentration point of put-driven gamma. Core downside liquidity floor.", isGex: false },
-                          { label: "Gamma Flip", val: activeDetail?.zero_gamma || activeDetail?.gamma_flip_upper, icon: <Gauge className="text-amber-500" />, sub: "Regime Shift", tip: "Price level where net dealer gamma transitions from positive to negative.", isGex: false },
-                          { label: "Gamma Magnet", val: activeDetail?.gamma_magnet, icon: <Target className="text-indigo-500" />, sub: "Liquidity Node", tip: "A significant strike point that acts as a focal point for price attraction.", isGex: false },
-                          { label: "Max Pain", val: activeDetail?.max_pain, icon: <Zap className="text-rose-400" />, sub: "Market Anchor", tip: "Strike price that would cause the most financial loss for option buyers upon expiration.", isGex: false },
-                          { label: "Pin Strike", val: activeDetail?.pin_strike, icon: <Hash className="text-purple-500" />, sub: "Expiration Goal", tip: `Highest probability strike for price to pin. Odds: ${(activeDetail?.pin_odds || 0).toFixed(1)}%`, isGex: false },
-                        ].map((item, idx) => (
-                          <UiTooltip key={idx}>
-                             <TooltipTrigger asChild>
-                               <Card className="bg-gradient-to-br from-zinc-900 to-black border-white/5 rounded-[2rem] p-5 hover:border-emerald-500/20 transition-all duration-500 cursor-help group border shadow-2xl">
-                                 <div className="flex justify-between items-start mb-4">
-                                    <div className="p-3 bg-white/5 rounded-2xl group-hover:bg-emerald-500/10 transition-colors">
-                                       {item.icon}
-                                    </div>
-                                    <span className="text-[9px] font-black text-zinc-700 uppercase tracking-widest text-right leading-none w-1/2">{item.sub}</span>
-                                 </div>
-                                 <div className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-1">{item.label}</div>
-                                 <div className={`text-xl font-mono font-black tracking-tighter ${item.label === 'Total GEX' && item.val < -1e9 ? 'text-rose-500' : ''}`}>
-                                    {item.val ? (item.isGex ? fmtGex(item.val) : item.val.toLocaleString(undefined, {minimumFractionDigits: 1})) : "—"}
-                                 </div>
-                               </Card>
-                             </TooltipTrigger>
-                             <TooltipContent className="bg-zinc-900 border-zinc-700 p-4 max-w-[250px] rounded-2xl shadow-emerald-500/10 shadow-2xl">
-                               <p className="text-xs font-semibold leading-relaxed tracking-tight text-white">{item.tip}</p>
-                             </TooltipContent>
-                          </UiTooltip>
-                        ))}
-                     </div>
-
                      {/* Tactical Narrative Section — above charts so context flows downward */}
-                     <Card className="bg-zinc-950 border-white/5 rounded-[2.5rem] overflow-hidden border p-10">
+                     <Card className="bg-zinc-950 border-white/5 rounded-[2.5rem] overflow-hidden border p-10 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)]">
                         <div className="flex items-center justify-between mb-8">
                            <div className="flex items-center gap-3">
                               <div className="h-8 w-8 bg-emerald-500/10 rounded-xl flex items-center justify-center">
@@ -557,7 +523,7 @@ export default function OptionsTacticalDashboard() {
                            
                            <div className="space-y-6">
                               <div className="text-[10px] font-black text-zinc-600 uppercase tracking-widest mt-8">Volatility Outlook</div>
-                               <div className={`p-6 rounded-3xl border ${activeDetail?.total_gex < -1e9 ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : (activeDetail?.total_gex > 0 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-900 border-white/5 text-zinc-400')} animate-pulse-slow`}>
+                               <div className={`p-6 rounded-3xl border ${activeDetail?.total_gex < -1e9 ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : (activeDetail?.total_gex > 0 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-900 border-white/5 text-zinc-400')} animate-pulse-slow shadow-lg`}>
                                   <div className="flex items-center gap-3 mb-2">
                                      {activeDetail?.total_gex < -1e9 ? <AlertTriangle size={16} /> : (activeDetail?.total_gex > 0 ? <ShieldCheck size={16} /> : <Activity size={16} />)}
                                      <span className="font-black text-[10px] uppercase tracking-widest whitespace-nowrap">
@@ -574,11 +540,11 @@ export default function OptionsTacticalDashboard() {
                                </div>
                             </div>
                             
-                            <div className="space-y-6">
+                            <div className="space-y-6 md:col-span-2">
                                <div className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Tactical Directives</div>
-                               <div className="space-y-4">
+                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                   {(Array.isArray(ms.coach_note) ? ms.coach_note.slice(1, 10) : ["Maintain discipline"]).map((note: string, idx: number) => (
-                                     <div key={idx} className="flex gap-4 p-5 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-emerald-500/20 transition-all group">
+                                     <div key={idx} className="flex gap-4 p-5 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-emerald-500/20 transition-all group shadow-sm hover:shadow-emerald-500/5 hover:-translate-y-1 duration-300">
                                         <div className="text-emerald-500 font-black text-[10px] flex shrink-0 mt-0.5">{String(idx+1).padStart(2,'0')}</div>
                                         <p className="text-[11px] font-bold text-zinc-300 leading-relaxed group-hover:text-white transition-colors">{fixText(note, activeDetail?.ticker, activeDetail?.spot)}</p>
                                      </div>
@@ -587,6 +553,47 @@ export default function OptionsTacticalDashboard() {
                            </div>
                         </div>
                      </Card>
+
+                     {/* Stats Hero */}
+                     <div className="grid grid-cols-4 gap-4">
+                        {[
+                          { label: "Total GEX", val: activeDetail?.total_gex, icon: <ShieldCheck className={activeDetail?.total_gex < -1e9 ? "text-rose-500 animate-pulse" : "text-emerald-500"} />, sub: activeDetail?.total_gex < -1e9 ? "High Vol Risk" : "Stable Regime", tip: activeDetail?.total_gex < -1e9 ? "GEX < -1B warns of > ±1.0% price swings. Defensive positioning recommended." : (activeDetail?.total_gex > 0 ? "GEX > 0 indicates < ±0.5% stability expected." : "Dealer Net Gamma Exposure across all strikes."), isGex: true },
+                          { label: "Net Vanna", val: activeDetail?.net_vanna_exposure, icon: <Layers className="text-blue-500" />, sub: "Delta/Vol Sensitivity", tip: "Exposure to changes in implied volatility. Positive means dealers buy into rallies.", isGex: true },
+                          { label: "ATM IV", val: activeDetail?.atm_iv ? (activeDetail.atm_iv * 100).toFixed(1) + "%" : "—", icon: <TrendingUp className="text-amber-400" />, sub: "Implied Vol", tip: "ATM Implied Volatility from the central option chain. Indicates market-priced expected move.", isRaw: true },
+                          { label: "Vol Change", val: activeDetail?.iv_change ? (activeDetail.iv_change * 100).toFixed(2) + "%" : "—", icon: <Activity className={(activeDetail?.iv_change || 0) > 0 ? "text-rose-400" : "text-emerald-400"} />, sub: "Daily Shift", tip: "Percentage point change in IV since the previous pipeline run. Positive = Vol Expansion.", isRaw: true },
+                          
+                          { label: "Call Wall", val: activeDetail?.call_wall, icon: <ArrowUpRight className="text-emerald-500" />, sub: "Resistance", tip: "Highest concentration of Positive Gamma exposure.", isGex: false },
+                          { label: "Put Wall", val: activeDetail?.put_wall, icon: <ArrowDownRight className="text-rose-500" />, sub: "Support", tip: "Highest concentration of Negative Gamma exposure.", isGex: false },
+                          { label: "Call Center", val: activeDetail?.call_centroid, icon: <TrendingUp className="text-emerald-400" />, sub: "Gamma Bulk", tip: "Concentration point of call-driven gamma. Acts as a price pivot.", isGex: false },
+                          { label: "Put Center", val: activeDetail?.put_centroid, icon: <TrendingDown className="text-rose-400" />, sub: "Delta Bulk", tip: "Concentration point of put-driven gamma. Core downside liquidity floor.", isGex: false },
+                          
+                          { label: "Gamma Flip", val: activeDetail?.zero_gamma || activeDetail?.gamma_flip_upper, icon: <Gauge className="text-amber-500" />, sub: "Regime Shift", tip: "Price level where net dealer gamma transitions from positive to negative.", isGex: false },
+                          { label: "Gamma Magnet", val: activeDetail?.gamma_magnet, icon: <Target className="text-indigo-500" />, sub: "Liquidity Node", tip: "A significant strike point that acts as a focal point for price attraction.", isGex: false },
+                          { label: "Max Pain", val: activeDetail?.max_pain, icon: <Zap className="text-rose-400" />, sub: "Market Anchor", tip: "Strike price that would cause the most financial loss for option buyers upon expiration.", isGex: false },
+                          { label: "Pin Strike", val: activeDetail?.pin_strike, icon: <Hash className="text-purple-500" />, sub: "Expiration Goal", tip: `Highest probability strike for price to pin. Odds: ${(activeDetail?.pin_odds || 0).toFixed(1)}%`, isGex: false },
+                        ].map((item, idx) => (
+                          <UiTooltip key={idx}>
+                             <TooltipTrigger asChild>
+                               <Card className="bg-gradient-to-br from-zinc-900 to-black border-white/5 rounded-[2rem] p-5 hover:border-emerald-500/20 transition-all duration-500 cursor-help group border shadow-2xl">
+                                 <div className="flex justify-between items-start mb-4">
+                                    <div className="p-3 bg-white/5 rounded-2xl group-hover:bg-emerald-500/10 transition-colors">
+                                       {item.icon}
+                                    </div>
+                                    <span className="text-[9px] font-black text-zinc-700 uppercase tracking-widest text-right leading-none w-1/2">{item.sub}</span>
+                                 </div>
+                                 <div className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-1">{item.label}</div>
+                                 <div className={`text-xl font-mono font-black tracking-tighter ${item.label === 'Total GEX' && item.val < -1e9 ? 'text-rose-500' : ''}`}>
+                                    {item.val ? (item.isRaw ? item.val : (item.isGex ? fmtGex(item.val as any) : (item.val as any).toLocaleString(undefined, {minimumFractionDigits: 1}))) : "—"}
+                                 </div>
+                               </Card>
+                             </TooltipTrigger>
+                             <TooltipContent className="bg-zinc-900 border-zinc-700 p-4 max-w-[250px] rounded-2xl shadow-emerald-500/10 shadow-2xl">
+                               <p className="text-xs font-semibold leading-relaxed tracking-tight text-white">{item.tip}</p>
+                             </TooltipContent>
+                          </UiTooltip>
+                        ))}
+                     </div>
+
 
                      {/* Main Chart Section */}
                      <Card className="bg-black/40 border-white/5 rounded-[3rem] overflow-hidden backdrop-blur-xl border flex flex-col min-h-[600px] basis-[600px]">

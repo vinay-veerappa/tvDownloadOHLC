@@ -1,65 +1,65 @@
 {
-  "generated_at": "2026-03-20T17:54:22.280908+00:00",
-  "run_label": "2026-03-20 13:53 ET",
+  "generated_at": "2026-03-21T04:25:22.904950+00:00",
+  "run_label": "2026-03-21 00:24 ET",
   "market_structure": [
     {
       "asset": "ES",
       "cash_ticker": "SPX",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "gex_regime": "NEGATIVE",
-      "total_gex": -459451528.455,
-      "total_gex_delta_adj": -207185016.48,
-      "gamma_magnet": 6574.59,
-      "pin_strike": 6588.09,
-      "pin_odds": 0.1474,
-      "wall_separation": 90.0,
-      "call_gamma_total": 54256590.76,
-      "put_gamma_total": 513708119.21,
-      "net_vanna_exposure": -1118033.34,
-      "net_speed_exposure": 49191.09,
-      "call_volume_centroid": 6661.86,
-      "put_volume_centroid": 6546.71,
+      "total_gex": -80698650.825,
+      "total_gex_delta_adj": -68101721.5,
+      "gamma_magnet": 66066.05,
+      "pin_strike": 65830.05,
+      "pin_odds": 0.096,
+      "wall_separation": 1012.75,
+      "call_gamma_total": 70168848.75,
+      "put_gamma_total": 150867499.57,
+      "net_vanna_exposure": -461478.46,
+      "net_speed_exposure": 95970.58,
+      "call_volume_centroid": 66659.47,
+      "put_volume_centroid": 64999.61,
       "coach_note": [
-        "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
-        "**ES \u2014 TRENDING \u2193** (GEX: -459,451,528) \ud83d\udd34 BEARISH",
-        "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
+        "\ud83d\udfe1 YELLOW: COILED regime \u2014 negative GEX with tight walls. Market is compressed and can break sharply in either direction. Reduce size, wait for confirmation before entry.",
+        "**ES \u2014 COILED \u2193** (GEX: -80,698,651) \ud83d\udd34 BEARISH",
+        "This is a COILED environment \u2014 dealers are short gamma but the range is compressed. The market is storing energy for a breakout. This is the hardest regime to trade. Wait for a clear break of zero gamma or the gamma flip zone before committing. If you're unsure, stand down entirely.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 6648.09 | Put wall 6558.09 (90.00 pts separation, 28.24 EM).",
-        "Gamma magnet at 6574.59 (13.4 pts below current price) \u2014 price wants to drift here.",
-        "Pin strike at 6588.09 but concentration is low (15%) \u2014 pinning effect is weak today.",
+        "Call wall 66842.80 | Put wall 65830.05 (1012.75 pts separation, 1020.68 EM).",
+        "Gamma magnet at 66066.05 (59477.6 pts above current price) \u2014 price wants to drift here.",
+        "Pin strike at 65830.05 but concentration is low (10%) \u2014 pinning effect is weak today.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
-        "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 6557.34 \u2194 6613.82 (\u00b128.24). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "**What to do:** Be patient. Watch zero gamma and the gamma flip zone. If price breaks and closes outside the flip zone, take the trade in that direction with a stop back inside. If it doesn't break, don't force it.",
+        "Expected move: 65138.51 \u2194 67179.87 (\u00b11020.68). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
       "asset": "NQ",
       "cash_ticker": "QQQ",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "gex_regime": "NEGATIVE",
-      "total_gex": -728051761.192,
-      "total_gex_delta_adj": -366341932.57,
-      "gamma_magnet": 24191.87,
-      "pin_strike": 24236.2,
-      "pin_odds": 0.2197,
-      "wall_separation": 207.15,
-      "call_gamma_total": 226392044.53,
-      "put_gamma_total": 954443805.72,
-      "net_vanna_exposure": -235494.14,
-      "net_speed_exposure": 260640.12,
-      "call_volume_centroid": 24420.15,
-      "put_volume_centroid": 24201.81,
+      "total_gex": -60011883.68,
+      "total_gex_delta_adj": -38627236.99,
+      "gamma_magnet": 24184.29,
+      "pin_strike": 24338.49,
+      "pin_odds": 0.072,
+      "wall_separation": 250.05,
+      "call_gamma_total": 18257024.81,
+      "put_gamma_total": 78268908.49,
+      "net_vanna_exposure": -316299.06,
+      "net_speed_exposure": 33108.62,
+      "call_volume_centroid": 24617.72,
+      "put_volume_centroid": 23927.57,
       "coach_note": [
-        "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
-        "**NQ \u2014 TRENDING \u2193** (GEX: -728,051,761) \ud83d\udd34 BEARISH",
-        "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
+        "\ud83d\udfe1 YELLOW: COILED regime \u2014 negative GEX with tight walls. Market is compressed and can break sharply in either direction. Reduce size, wait for confirmation before entry.",
+        "**NQ \u2014 COILED \u2193** (GEX: -60,011,884) \ud83d\udd34 BEARISH",
+        "This is a COILED environment \u2014 dealers are short gamma but the range is compressed. The market is storing energy for a breakout. This is the hardest regime to trade. Wait for a clear break of zero gamma or the gamma flip zone before committing. If you're unsure, stand down entirely.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 24236.20 | Put wall 24029.05 (207.15 pts separation, 118.49 EM).",
-        "Gamma magnet at 24191.87 (9.9 pts below current price) \u2014 price wants to drift here.",
-        "Pin strike 24236.20 has 22% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
+        "Call wall 24588.54 | Put wall 24338.49 (250.05 pts separation, 375.08 EM).",
+        "Gamma magnet at 24184.29 (33.0 pts below current price) \u2014 price wants to drift here.",
+        "Pin strike at 24338.49 but concentration is low (7%) \u2014 pinning effect is weak today.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
-        "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 24087.05 \u2194 24324.03 (\u00b1118.49). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "**What to do:** Be patient. Watch zero gamma and the gamma flip zone. If price breaks and closes outside the flip zone, take the trade in that direction with a stop back inside. If it doesn't break, don't force it.",
+        "Expected move: 24093.44 \u2194 24843.60 (\u00b1375.08). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -67,89 +67,89 @@
       "cash_ticker": "IWM",
       "regime_label": "TRENDING",
       "gex_regime": "NEGATIVE",
-      "total_gex": -1011024857.9999999,
-      "total_gex_delta_adj": -512954435.81,
-      "gamma_magnet": 2465.54,
-      "pin_strike": 2474.67,
-      "pin_odds": 0.1912,
-      "wall_separation": 50.71,
-      "call_gamma_total": 216007708.53,
-      "put_gamma_total": 1227032566.53,
-      "net_vanna_exposure": -180395.33,
-      "net_speed_exposure": 180725.09,
-      "call_volume_centroid": 2507.53,
-      "put_volume_centroid": 2466.56,
+      "total_gex": -42353659.895,
+      "total_gex_delta_adj": -20696906.04,
+      "gamma_magnet": 2461.96,
+      "pin_strike": 2397.19,
+      "pin_odds": 0.1607,
+      "wall_separation": 153.01,
+      "call_gamma_total": 13040807.93,
+      "put_gamma_total": 55394467.82,
+      "net_vanna_exposure": -97126.29,
+      "net_speed_exposure": 68400.61,
+      "call_volume_centroid": 2527.55,
+      "put_volume_centroid": 2437.79,
       "coach_note": [
         "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
-        "**RTY \u2014 TRENDING \u2193** (GEX: -1,011,024,858) \ud83d\udd34 BEARISH",
+        "**RTY \u2014 TRENDING \u2193** (GEX: -42,353,660) \ud83d\udd34 BEARISH",
         "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 2484.81 | Put wall 2434.10 (50.71 pts separation, 17.14 EM).",
-        "Gamma magnet at 2465.54 (1.6 pts below current price) \u2014 price wants to drift here.",
-        "Pin strike 2474.67 has 19% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
+        "Call wall 2550.20 | Put wall 2397.19 (153.01 pts separation, 56.82 EM).",
+        "Gamma magnet at 2461.96 (5.2 pts below current price) \u2014 price wants to drift here.",
+        "Pin strike 2397.19 has 16% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 2451.24 \u2194 2485.52 (\u00b117.14). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 2443.50 \u2194 2557.14 (\u00b156.82). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
       "asset": "YM",
       "cash_ticker": "DIA",
-      "regime_label": "TRENDING",
-      "gex_regime": "NEGATIVE",
-      "total_gex": -21427785.029999997,
-      "total_gex_delta_adj": -14433652.08,
-      "gamma_magnet": 45983.56,
-      "pin_strike": 46318.87,
-      "pin_odds": 0.2758,
-      "wall_separation": 503.47,
-      "call_gamma_total": 9200789.85,
-      "put_gamma_total": 30628574.88,
-      "net_vanna_exposure": -6981.11,
-      "net_speed_exposure": 16050.63,
-      "call_volume_centroid": 46332.97,
-      "put_volume_centroid": 45505.27,
+      "regime_label": "BATTLE_ZONE",
+      "gex_regime": "POSITIVE",
+      "total_gex": 617856.7799999999,
+      "total_gex_delta_adj": -1881046.14,
+      "gamma_magnet": 47019.03,
+      "pin_strike": 48060.17,
+      "pin_odds": 0.1585,
+      "wall_separation": 2529.48,
+      "call_gamma_total": 5866196.16,
+      "put_gamma_total": 5248339.38,
+      "net_vanna_exposure": -30201.09,
+      "net_speed_exposure": 5567.5,
+      "call_volume_centroid": 47335.72,
+      "put_volume_centroid": 45045.02,
       "coach_note": [
-        "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
-        "**YM \u2014 TRENDING \u2193** (GEX: -21,427,785) \ud83d\udd34 BEARISH",
-        "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
-        "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 46318.87 | Put wall 45815.41 (503.47 pts separation, 218.50 EM).",
-        "Gamma magnet at 45983.56 (93.4 pts below current price) \u2014 price wants to drift here.",
-        "Pin strike 46318.87 has 28% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
+        "\ud83d\udfe2 GREEN: BATTLE_ZONE regime \u2014 positive GEX with wide walls. Expect big swings that reverse at the walls. Trade wall-to-wall if you can handle the movement.",
+        "**YM \u2014 BATTLE_ZONE \u2194** (GEX: 617,857) \u26aa NEUTRAL",
+        "This is a BATTLE_ZONE \u2014 dealers are long gamma but the range is wide. Expect large swings between the call wall and put wall. These swings tend to reverse at the walls. Trade wall-to-wall if you have the stomach for it, but use wider stops.",
+        "Directional lean is NEUTRAL \u2014 mixed signals. No strong directional edge from options positioning. Let price action lead.",
+        "Call wall 48060.17 | Put wall 45530.68 (2529.48 pts separation, 1536.91 EM).",
+        "Gamma magnet at 47019.03 (909.0 pts above current price) \u2014 price wants to drift here.",
+        "Pin strike 48060.17 has 16% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
-        "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 45856.69 \u2194 46293.70 (\u00b1218.50). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "**What to do:** Trade the range. Short at call wall, long at put wall, with stops just beyond. Expect wide swings \u2014 don't get shaken out on noise. The gamma magnet is your mid-range target.",
+        "Expected move: 44914.50 \u2194 47988.33 (\u00b11536.91). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
       "asset": "SPY",
       "cash_ticker": "SPY",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "gex_regime": "NEGATIVE",
-      "total_gex": -2235219064.8900003,
-      "total_gex_delta_adj": -967127006.07,
-      "gamma_magnet": 650.05,
+      "total_gex": -80698650.825,
+      "total_gex_delta_adj": -68101721.5,
+      "gamma_magnet": 652.33,
       "pin_strike": 650.0,
-      "pin_odds": 0.2813,
+      "pin_odds": 0.096,
       "wall_separation": 10.0,
-      "call_gamma_total": 191025290.19,
-      "put_gamma_total": 2426244355.08,
-      "net_vanna_exposure": -558002.96,
-      "net_speed_exposure": 2096893.12,
-      "call_volume_centroid": 655.74,
-      "put_volume_centroid": 649.81,
+      "call_gamma_total": 70168848.75,
+      "put_gamma_total": 150867499.57,
+      "net_vanna_exposure": -461478.46,
+      "net_speed_exposure": 95970.67,
+      "call_volume_centroid": 658.19,
+      "put_volume_centroid": 641.8,
       "coach_note": [
-        "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
-        "**SPY \u2014 TRENDING \u2193** (GEX: -2,235,219,065) \ud83d\udd34 BEARISH",
-        "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
+        "\ud83d\udfe1 YELLOW: COILED regime \u2014 negative GEX with tight walls. Market is compressed and can break sharply in either direction. Reduce size, wait for confirmation before entry.",
+        "**SPY \u2014 COILED \u2193** (GEX: -80,698,651) \ud83d\udd34 BEARISH",
+        "This is a COILED environment \u2014 dealers are short gamma but the range is compressed. The market is storing energy for a breakout. This is the hardest regime to trade. Wait for a clear break of zero gamma or the gamma flip zone before committing. If you're unsure, stand down entirely.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 660.00 | Put wall 650.00 (10.00 pts separation, 3.04 EM).",
-        "Gamma magnet at 650.05 (1.2 pts below current price) \u2014 price wants to drift here.",
-        "Pin strike 650.00 has 28% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
+        "Call wall 660.00 | Put wall 650.00 (10.00 pts separation, 10.25 EM).",
+        "Gamma magnet at 652.33 (0.9 pts below current price) \u2014 price wants to drift here.",
+        "Pin strike at 650.00 but concentration is low (10%) \u2014 pinning effect is weak today.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
-        "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 648.17 \u2194 654.25 (\u00b13.04). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "**What to do:** Be patient. Watch zero gamma and the gamma flip zone. If price breaks and closes outside the flip zone, take the trade in that direction with a stop back inside. If it doesn't break, don't force it.",
+        "Expected move: 643.00 \u2194 663.50 (\u00b110.25). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -157,29 +157,29 @@
       "cash_ticker": "AAPL",
       "regime_label": "TRENDING",
       "gex_regime": "NEGATIVE",
-      "total_gex": -77864721.21,
-      "total_gex_delta_adj": -65911296.95,
-      "gamma_magnet": 248.85,
-      "pin_strike": 250.0,
-      "pin_odds": 0.4638,
-      "wall_separation": 2.5,
-      "call_gamma_total": 99837598.47,
-      "put_gamma_total": 177702319.68,
-      "net_vanna_exposure": -18949.89,
-      "net_speed_exposure": 246736.78,
-      "call_volume_centroid": 250.76,
-      "put_volume_centroid": 246.45,
+      "total_gex": -10077100.8,
+      "total_gex_delta_adj": -5301398.59,
+      "gamma_magnet": 247.28,
+      "pin_strike": 247.5,
+      "pin_odds": 0.2336,
+      "wall_separation": 5.0,
+      "call_gamma_total": 9718899.84,
+      "put_gamma_total": 19796000.64,
+      "net_vanna_exposure": -21650.55,
+      "net_speed_exposure": 39140.68,
+      "call_volume_centroid": 250.96,
+      "put_volume_centroid": 244.93,
       "coach_note": [
-        "\ud83d\udd34 RED: Wall separation is extremely tight (<3 pts). No room to trade \u2014 stand down.",
-        "**AAPL \u2014 TRENDING \u2194** (GEX: -77,864,721) \u26aa NEUTRAL",
+        "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
+        "**AAPL \u2014 TRENDING \u2193** (GEX: -10,077,101) \ud83d\udd34 BEARISH",
         "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
-        "Directional lean is NEUTRAL \u2014 mixed signals. No strong directional edge from options positioning. Let price action lead.",
-        "Call wall 250.00 | Put wall 247.50 (2.50 pts separation, 1.57 EM).",
-        "Gamma magnet at 248.85 (0.8 pts above current price) \u2014 price wants to drift here.",
-        "Pin strike 250.00 has 46% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
+        "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
+        "Call wall 252.50 | Put wall 247.50 (5.00 pts separation, 4.43 EM).",
+        "Gamma magnet at 247.28 (2.3 pts below current price) \u2014 price wants to drift here.",
+        "Pin strike 247.50 has 23% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 246.53 \u2194 249.67 (\u00b11.57). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 245.17 \u2194 254.03 (\u00b14.43). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -187,59 +187,59 @@
       "cash_ticker": "MSFT",
       "regime_label": "TRENDING",
       "gex_regime": "NEGATIVE",
-      "total_gex": -75733295.59,
-      "total_gex_delta_adj": -43290156.24,
-      "gamma_magnet": 383.13,
+      "total_gex": -10812263.399999999,
+      "total_gex_delta_adj": -7838931.99,
+      "gamma_magnet": 384.1,
       "pin_strike": 385.0,
-      "pin_odds": 0.3441,
-      "wall_separation": 5.0,
-      "call_gamma_total": 20171737.45,
-      "put_gamma_total": 95905033.04,
-      "net_vanna_exposure": -18980.63,
-      "net_speed_exposure": 8864.72,
-      "call_volume_centroid": 390.03,
-      "put_volume_centroid": 381.37,
+      "pin_odds": 0.2607,
+      "wall_separation": 20.0,
+      "call_gamma_total": 4272916.32,
+      "put_gamma_total": 15085179.72,
+      "net_vanna_exposure": -48316.51,
+      "net_speed_exposure": 8036.16,
+      "call_volume_centroid": 390.96,
+      "put_volume_centroid": 378.79,
       "coach_note": [
         "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
-        "**MSFT \u2014 TRENDING \u2193** (GEX: -75,733,296) \ud83d\udd34 BEARISH",
+        "**MSFT \u2014 TRENDING \u2194** (GEX: -10,812,263) \u26aa NEUTRAL",
         "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
-        "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 385.00 | Put wall 380.00 (5.00 pts separation, 2.26 EM).",
-        "Gamma magnet at 383.13 (0.2 pts below current price) \u2014 price wants to drift here.",
-        "Pin strike 385.00 has 34% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
+        "Directional lean is NEUTRAL \u2014 mixed signals. No strong directional edge from options positioning. Let price action lead.",
+        "Call wall 400.00 | Put wall 380.00 (20.00 pts separation, 6.68 EM).",
+        "Gamma magnet at 384.10 (0.7 pts above current price) \u2014 price wants to drift here.",
+        "Pin strike 385.00 has 26% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 381.04 \u2194 385.56 (\u00b12.26). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 376.72 \u2194 390.08 (\u00b16.68). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
       "asset": "NVDA",
       "cash_ticker": "NVDA",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "gex_regime": "NEGATIVE",
-      "total_gex": -163171147.35599992,
-      "total_gex_delta_adj": -84564560.74,
-      "gamma_magnet": 175.04,
+      "total_gex": -9467042.801999997,
+      "total_gex_delta_adj": -12315239.26,
+      "gamma_magnet": 173.03,
       "pin_strike": 175.0,
-      "pin_odds": 0.6617,
-      "wall_separation": 5.0,
-      "call_gamma_total": 312884461.93,
-      "put_gamma_total": 476055609.28,
-      "net_vanna_exposure": -10909.81,
-      "net_speed_exposure": 668299.04,
-      "call_volume_centroid": 177.43,
-      "put_volume_centroid": 173.85,
+      "pin_odds": 0.3124,
+      "wall_separation": 2.5,
+      "call_gamma_total": 21061100.13,
+      "put_gamma_total": 30528142.93,
+      "net_vanna_exposure": -32768.21,
+      "net_speed_exposure": 51938.89,
+      "call_volume_centroid": 178.86,
+      "put_volume_centroid": 170.4,
       "coach_note": [
-        "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
-        "**NVDA \u2014 TRENDING \u2194** (GEX: -163,171,147) \u26aa NEUTRAL",
-        "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
-        "Directional lean is NEUTRAL \u2014 mixed signals. No strong directional edge from options positioning. Let price action lead.",
-        "Call wall 175.00 | Put wall 170.00 (5.00 pts separation, 1.23 EM).",
-        "Gamma magnet at 175.04 (0.3 pts above current price) \u2014 price wants to drift here.",
-        "Pin strike 175.00 has 66% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
+        "\ud83d\udd34 RED: Wall separation is extremely tight (<3 pts). No room to trade \u2014 stand down.",
+        "**NVDA \u2014 COILED \u2193** (GEX: -9,467,043) \ud83d\udd34 BEARISH",
+        "This is a COILED environment \u2014 dealers are short gamma but the range is compressed. The market is storing energy for a breakout. This is the hardest regime to trade. Wait for a clear break of zero gamma or the gamma flip zone before committing. If you're unsure, stand down entirely.",
+        "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
+        "Call wall 175.00 | Put wall 172.50 (2.50 pts separation, 4.18 EM).",
+        "Gamma magnet at 173.03 (1.8 pts below current price) \u2014 price wants to drift here.",
+        "Pin strike 175.00 has 31% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
-        "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 173.55 \u2194 176.01 (\u00b11.23). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "**What to do:** Be patient. Watch zero gamma and the gamma flip zone. If price breaks and closes outside the flip zone, take the trade in that direction with a stop back inside. If it doesn't break, don't force it.",
+        "Expected move: 170.68 \u2194 179.04 (\u00b14.18). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -247,29 +247,29 @@
       "cash_ticker": "TSLA",
       "regime_label": "TRENDING",
       "gex_regime": "NEGATIVE",
-      "total_gex": -119598375.79500002,
-      "total_gex_delta_adj": -55570185.52,
-      "gamma_magnet": 371.51,
-      "pin_strike": 370.0,
-      "pin_odds": 0.38,
-      "wall_separation": 5.0,
-      "call_gamma_total": 31000353.62,
-      "put_gamma_total": 150598729.41,
-      "net_vanna_exposure": -28442.8,
-      "net_speed_exposure": 43633.04,
-      "call_volume_centroid": 378.75,
-      "put_volume_centroid": 370.35,
+      "total_gex": -15444205.8,
+      "total_gex_delta_adj": -11931323.24,
+      "gamma_magnet": 368.17,
+      "pin_strike": 380.0,
+      "pin_odds": 0.096,
+      "wall_separation": 22.5,
+      "call_gamma_total": 10221910.55,
+      "put_gamma_total": 25666116.35,
+      "net_vanna_exposure": -121534.14,
+      "net_speed_exposure": 12972.05,
+      "call_volume_centroid": 378.44,
+      "put_volume_centroid": 365.09,
       "coach_note": [
         "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
-        "**TSLA \u2014 TRENDING \u2193** (GEX: -119,598,376) \ud83d\udd34 BEARISH",
+        "**TSLA \u2014 TRENDING \u2193** (GEX: -15,444,206) \ud83d\udd34 BEARISH",
         "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 375.00 | Put wall 370.00 (5.00 pts separation, 2.95 EM).",
-        "Gamma magnet at 371.51 (0.3 pts below current price) \u2014 price wants to drift here.",
-        "Pin strike 370.00 has 38% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
+        "Call wall 382.50 | Put wall 360.00 (22.50 pts separation, 10.54 EM).",
+        "Gamma magnet at 368.17 (4.1 pts below current price) \u2014 price wants to drift here.",
+        "Pin strike at 380.00 but concentration is low (10%) \u2014 pinning effect is weak today.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 368.90 \u2194 374.80 (\u00b12.95). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 361.71 \u2194 382.79 (\u00b110.54). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -277,59 +277,59 @@
       "cash_ticker": "META",
       "regime_label": "TRENDING",
       "gex_regime": "NEGATIVE",
-      "total_gex": -73042196.928,
-      "total_gex_delta_adj": -45557537.13,
-      "gamma_magnet": 593.84,
-      "pin_strike": 600.0,
-      "pin_odds": 0.2631,
-      "wall_separation": 10.0,
-      "call_gamma_total": 13592676.61,
-      "put_gamma_total": 86634873.54,
-      "net_vanna_exposure": -34518.35,
-      "net_speed_exposure": -26543.81,
-      "call_volume_centroid": 603.24,
-      "put_volume_centroid": 592.92,
+      "total_gex": -3308058.75,
+      "total_gex_delta_adj": -2238407.38,
+      "gamma_magnet": 595.49,
+      "pin_strike": 590.0,
+      "pin_odds": 0.1213,
+      "wall_separation": 15.0,
+      "call_gamma_total": 2263927.5,
+      "put_gamma_total": 5571986.25,
+      "net_vanna_exposure": -29695.25,
+      "net_speed_exposure": 2034.38,
+      "call_volume_centroid": 603.58,
+      "put_volume_centroid": 588.01,
       "coach_note": [
         "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
-        "**META \u2014 TRENDING \u2194** (GEX: -73,042,197) \u26aa NEUTRAL",
+        "**META \u2014 TRENDING \u2193** (GEX: -3,308,059) \ud83d\udd34 BEARISH",
         "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
-        "Directional lean is NEUTRAL \u2014 mixed signals. No strong directional edge from options positioning. Let price action lead.",
-        "Call wall 600.00 | Put wall 590.00 (10.00 pts separation, 3.97 EM).",
-        "Gamma magnet at 593.84 (0.7 pts above current price) \u2014 price wants to drift here.",
-        "Pin strike 600.00 has 26% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
+        "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
+        "Call wall 605.00 | Put wall 590.00 (15.00 pts separation, 13.22 EM).",
+        "Gamma magnet at 595.49 (2.0 pts below current price) \u2014 price wants to drift here.",
+        "Pin strike at 590.00 but concentration is low (12%) \u2014 pinning effect is weak today.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 589.19 \u2194 597.13 (\u00b13.97). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 584.28 \u2194 610.72 (\u00b113.22). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
       "asset": "GOOGL",
       "cash_ticker": "GOOGL",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "gex_regime": "NEGATIVE",
-      "total_gex": -14381097.256000007,
-      "total_gex_delta_adj": -5952336.95,
-      "gamma_magnet": 302.22,
-      "pin_strike": 300.0,
-      "pin_odds": 0.6656,
-      "wall_separation": 10.0,
-      "call_gamma_total": 91623684.56,
-      "put_gamma_total": 106004781.82,
-      "net_vanna_exposure": -3617.52,
-      "net_speed_exposure": 131068.79,
-      "call_volume_centroid": 305.05,
-      "put_volume_centroid": 299.16,
+      "total_gex": -2448285.264,
+      "total_gex_delta_adj": -2437842.01,
+      "gamma_magnet": 303.45,
+      "pin_strike": 302.5,
+      "pin_odds": 0.3226,
+      "wall_separation": 5.0,
+      "call_gamma_total": 4064802.83,
+      "put_gamma_total": 6513088.1,
+      "net_vanna_exposure": -13276.68,
+      "net_speed_exposure": 6376.06,
+      "call_volume_centroid": 305.39,
+      "put_volume_centroid": 297.46,
       "coach_note": [
-        "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
-        "**GOOGL \u2014 TRENDING \u2194** (GEX: -14,381,097) \u26aa NEUTRAL",
-        "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
+        "\ud83d\udfe1 YELLOW: COILED regime \u2014 negative GEX with tight walls. Market is compressed and can break sharply in either direction. Reduce size, wait for confirmation before entry.",
+        "**GOOGL \u2014 COILED \u2194** (GEX: -2,448,285) \u26aa NEUTRAL",
+        "This is a COILED environment \u2014 dealers are short gamma but the range is compressed. The market is storing energy for a breakout. This is the hardest regime to trade. Wait for a clear break of zero gamma or the gamma flip zone before committing. If you're unsure, stand down entirely.",
         "Directional lean is NEUTRAL \u2014 mixed signals. No strong directional edge from options positioning. Let price action lead.",
-        "Call wall 310.00 | Put wall 300.00 (10.00 pts separation, 1.96 EM).",
-        "Gamma magnet at 302.22 (1.8 pts above current price) \u2014 price wants to drift here.",
-        "Pin strike 300.00 has 67% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
+        "Call wall 307.50 | Put wall 302.50 (5.00 pts separation, 5.96 EM).",
+        "Gamma magnet at 303.45 (0.9 pts above current price) \u2014 price wants to drift here.",
+        "Pin strike 302.50 has 32% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
-        "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 298.50 \u2194 302.42 (\u00b11.96). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "**What to do:** Be patient. Watch zero gamma and the gamma flip zone. If price breaks and closes outside the flip zone, take the trade in that direction with a stop back inside. If it doesn't break, don't force it.",
+        "Expected move: 296.60 \u2194 308.52 (\u00b15.96). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -337,29 +337,29 @@
       "cash_ticker": "AMZN",
       "regime_label": "TRENDING",
       "gex_regime": "NEGATIVE",
-      "total_gex": -66164185.93,
-      "total_gex_delta_adj": -30404795.18,
-      "gamma_magnet": 205.87,
-      "pin_strike": 205.0,
-      "pin_odds": 0.4442,
-      "wall_separation": 2.5,
-      "call_gamma_total": 75102813.67,
-      "put_gamma_total": 141266999.6,
-      "net_vanna_exposure": -8485.4,
-      "net_speed_exposure": 331903.32,
-      "call_volume_centroid": 209.97,
-      "put_volume_centroid": 203.1,
+      "total_gex": -1837423.5539999998,
+      "total_gex_delta_adj": -2147172.21,
+      "gamma_magnet": 206.06,
+      "pin_strike": 210.0,
+      "pin_odds": 0.196,
+      "wall_separation": 7.5,
+      "call_gamma_total": 6840295.74,
+      "put_gamma_total": 8677719.29,
+      "net_vanna_exposure": -9970.63,
+      "net_speed_exposure": 24906.3,
+      "call_volume_centroid": 209.06,
+      "put_volume_centroid": 202.46,
       "coach_note": [
-        "\ud83d\udd34 RED: Wall separation is extremely tight (<3 pts). No room to trade \u2014 stand down.",
-        "**AMZN \u2014 TRENDING \u2193** (GEX: -66,164,186) \ud83d\udd34 BEARISH",
+        "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
+        "**AMZN \u2014 TRENDING \u2193** (GEX: -1,837,424) \ud83d\udd34 BEARISH",
         "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 207.50 | Put wall 205.00 (2.50 pts separation, 1.46 EM).",
-        "Gamma magnet at 205.87 (0.4 pts below current price) \u2014 price wants to drift here.",
-        "Pin strike 205.00 has 44% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
+        "Call wall 210.00 | Put wall 202.50 (7.50 pts separation, 4.52 EM).",
+        "Gamma magnet at 206.06 (0.9 pts below current price) \u2014 price wants to drift here.",
+        "Pin strike 210.00 has 20% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 204.80 \u2194 207.72 (\u00b11.46). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 202.46 \u2194 211.50 (\u00b14.52). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -367,1515 +367,1515 @@
       "cash_ticker": "AVGO",
       "regime_label": "TRENDING",
       "gex_regime": "NEGATIVE",
-      "total_gex": -45388956.26,
-      "total_gex_delta_adj": -24388295.17,
-      "gamma_magnet": 312.19,
-      "pin_strike": 320.0,
-      "pin_odds": 0.215,
-      "wall_separation": 10.0,
-      "call_gamma_total": 40298734.36,
-      "put_gamma_total": 85687690.62,
-      "net_vanna_exposure": -15081.73,
-      "net_speed_exposure": 99486.18,
-      "call_volume_centroid": 326.12,
-      "put_volume_centroid": 305.48,
+      "total_gex": -2151371.815,
+      "total_gex_delta_adj": -1375506.74,
+      "gamma_magnet": 310.17,
+      "pin_strike": 310.0,
+      "pin_odds": 0.1123,
+      "wall_separation": 20.0,
+      "call_gamma_total": 2010579.57,
+      "put_gamma_total": 4161951.39,
+      "net_vanna_exposure": -12380.78,
+      "net_speed_exposure": 3083.18,
+      "call_volume_centroid": 305.35,
+      "put_volume_centroid": 304.37,
       "coach_note": [
         "\ud83d\udfe2 GREEN: TRENDING regime \u2014 negative GEX with wide separation. Trend-follow environment. Join moves after confirmation, trail stops, don't fight the direction.",
-        "**AVGO \u2014 TRENDING \u2193** (GEX: -45,388,956) \ud83d\udd34 BEARISH",
+        "**AVGO \u2014 TRENDING \u2193** (GEX: -2,151,372) \ud83d\udd34 BEARISH",
         "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 320.00 | Put wall 310.00 (10.00 pts separation, 3.20 EM).",
-        "Gamma magnet at 312.19 (2.8 pts below current price) \u2014 price wants to drift here.",
-        "Pin strike 320.00 has 22% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
+        "Call wall 325.00 | Put wall 305.00 (20.00 pts separation, 9.25 EM).",
+        "Gamma magnet at 310.17 (3.0 pts below current price) \u2014 price wants to drift here.",
+        "Pin strike at 310.00 but concentration is low (11%) \u2014 pinning effect is weak today.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 311.75 \u2194 318.15 (\u00b13.20). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 303.90 \u2194 322.40 (\u00b19.25). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     }
   ],
   "levels": [
     {
-      "level": 6613.82,
+      "level": 67179.87,
       "type": "Upper EM",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6648.09,
+      "level": 66842.8,
       "type": "Absolute Call Wall",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6648.09,
+      "level": 66842.8,
       "type": "Local Call Node",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6648.09,
+      "level": 66842.8,
       "type": "0DTE Call Wall",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6585.59,
+      "level": 66184.51,
       "type": "Zero Gamma",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6738.09,
+      "level": 67349.17,
       "type": "Max Pain",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6558.09,
+      "level": 65830.05,
       "type": "0DTE Put Wall",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6588.09,
+      "level": 65830.05,
       "type": "Local Put Node",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6558.09,
+      "level": 65830.05,
       "type": "Hedge Wall",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6557.34,
+      "level": 65138.51,
       "type": "Lower EM",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6558.09,
+      "level": 65830.05,
       "type": "Absolute Put Wall",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6598.09,
+      "level": 67855.55,
       "type": "Secondary Call Wall",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6548.09,
+      "level": 65627.49,
       "type": "Secondary Put Wall",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6583.09,
+      "level": 66133.87,
       "type": "Gamma Flip Lower",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6588.09,
+      "level": 66235.15,
       "type": "Gamma Flip Upper",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6633.29,
+      "level": 66602.63,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6537.87,
+      "level": 65715.75,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6681.0,
+      "level": 67045.96,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6490.16,
+      "level": 65272.42,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6728.71,
+      "level": 67489.39,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6442.45,
+      "level": 64828.99,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6590.59,
+      "level": 66387.06,
       "type": "Gamma Cliff Up",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6545.59,
+      "level": 65779.41,
       "type": "Gamma Cliff Down",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6558.09,
+      "level": 65830.05,
       "type": "Vanna Call Node",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6588.09,
+      "level": 65830.05,
       "type": "Vanna Put Node",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6648.09,
+      "level": 67855.55,
       "type": "Charm Call Node",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6548.09,
+      "level": 67349.17,
       "type": "Charm Put Node",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6648.09,
+      "level": 66336.42,
       "type": "Volume Imbalance Call Node",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6548.09,
+      "level": 65323.67,
       "type": "Volume Imbalance Put Node",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6173.09,
+      "level": 66842.8,
       "type": "DEX Call Node",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6798.09,
+      "level": 67855.55,
       "type": "DEX Put Node",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6353.09,
+      "level": 63196.89,
       "type": "Liquidity Vacuum Lower",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 7143.09,
+      "level": 70792.64,
       "type": "Liquidity Vacuum Upper",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6563.09,
+      "level": 65737.41,
       "type": "Skew Pivot Put 25D",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6608.09,
+      "level": 67160.96,
       "type": "Skew Pivot Call 25D",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6574.59,
+      "level": 66066.05,
       "type": "Gamma Magnet",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 6588.09,
+      "level": 65830.05,
       "type": "Pin Strike",
       "asset": "ES",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "SPX",
-      "translation_mode": "additive",
-      "basis_spread": 48.09
+      "translation_mode": "multiplicative",
+      "basis_ratio": 10.1682
     },
     {
-      "level": 24324.03,
+      "level": 24843.6,
       "type": "Upper EM",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24236.2,
+      "level": 24588.54,
       "type": "Absolute Call Wall",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24236.2,
+      "level": 24588.54,
       "type": "Local Call Node",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24236.2,
+      "level": 24588.54,
       "type": "0DTE Call Wall",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24215.48,
+      "level": 24484.36,
       "type": "Zero Gamma",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24650.49,
+      "level": 24921.95,
       "type": "Max Pain",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24029.05,
+      "level": 24338.49,
       "type": "0DTE Put Wall",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24236.2,
+      "level": 24338.49,
       "type": "Local Put Node",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24029.05,
+      "level": 24338.49,
       "type": "Hedge Wall",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24087.05,
+      "level": 24093.44,
       "type": "Lower EM",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24029.05,
+      "level": 24338.49,
       "type": "Absolute Put Wall",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24443.35,
+      "level": 24671.9,
       "type": "Secondary Call Wall",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24194.77,
+      "level": 24171.79,
       "type": "Secondary Put Wall",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24194.77,
+      "level": 24463.52,
       "type": "Gamma Flip Lower",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24236.2,
+      "level": 24505.19,
       "type": "Gamma Flip Upper",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24405.65,
+      "level": 24631.47,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24005.44,
+      "level": 24305.57,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24605.75,
+      "level": 24794.42,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 23805.33,
+      "level": 24142.62,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24805.85,
+      "level": 24956.96,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 23605.23,
+      "level": 23980.08,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24256.91,
+      "level": 24526.03,
       "type": "Gamma Cliff Up",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24008.34,
+      "level": 24317.65,
       "type": "Gamma Cliff Down",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24029.05,
+      "level": 24380.17,
       "type": "Vanna Call Node",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24443.35,
+      "level": 24338.49,
       "type": "Vanna Put Node",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24443.35,
+      "level": 25005.3,
       "type": "Charm Call Node",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24443.35,
+      "level": 25005.3,
       "type": "Charm Put Node",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24443.35,
+      "level": 24588.54,
       "type": "Volume Imbalance Call Node",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24111.91,
+      "level": 23963.41,
       "type": "Volume Imbalance Put Node",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 23614.76,
+      "level": 20837.75,
       "type": "DEX Call Node",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24443.35,
+      "level": 25005.3,
       "type": "DEX Put Node",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 23573.33,
+      "level": 23171.58,
       "type": "Liquidity Vacuum Lower",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 26266.24,
+      "level": 25963.84,
       "type": "Liquidity Vacuum Upper",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24111.91,
+      "level": 23963.41,
       "type": "Skew Pivot Put 25D",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24277.63,
+      "level": 24505.19,
       "type": "Skew Pivot Call 25D",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24191.87,
+      "level": 24184.29,
       "type": "Gamma Magnet",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 24236.2,
+      "level": 24338.49,
       "type": "Pin Strike",
       "asset": "NQ",
       "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime_label": "COILED",
       "cash_ticker": "QQQ",
       "translation_mode": "multiplicative",
-      "basis_ratio": 41.4294
+      "basis_ratio": 41.6755
     },
     {
-      "level": 2485.52,
+      "level": 2557.14,
       "type": "Upper EM",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2484.81,
+      "level": 2550.2,
       "type": "Absolute Call Wall",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2484.81,
+      "level": 2529.8,
       "type": "Local Call Node",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2484.81,
+      "level": 2550.2,
       "type": "0DTE Call Wall",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2469.6,
+      "level": 2504.3,
       "type": "Zero Gamma",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2555.81,
+      "level": 2529.8,
       "type": "Max Pain",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2434.1,
+      "level": 2397.19,
       "type": "0DTE Put Wall",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2474.67,
+      "level": 2499.2,
       "type": "Local Put Node",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2454.39,
+      "level": 2397.19,
       "type": "Hedge Wall",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2451.24,
+      "level": 2443.5,
       "type": "Lower EM",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2434.1,
+      "level": 2397.19,
       "type": "Absolute Put Wall",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2474.67,
+      "level": 2529.8,
       "type": "Secondary Call Wall",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2454.39,
+      "level": 2448.19,
       "type": "Secondary Put Wall",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2464.53,
+      "level": 2499.2,
       "type": "Gamma Flip Lower",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2474.67,
+      "level": 2509.4,
       "type": "Gamma Flip Upper",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2497.29,
+      "level": 2525.0,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2439.48,
+      "level": 2475.63,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2526.19,
+      "level": 2549.69,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2410.57,
+      "level": 2450.95,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2555.2,
+      "level": 2574.38,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2381.57,
+      "level": 2426.26,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2479.74,
+      "level": 2504.3,
       "type": "Gamma Cliff Up",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2429.03,
+      "level": 2392.09,
       "type": "Gamma Cliff Down",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2434.1,
+      "level": 2499.2,
       "type": "Vanna Call Node",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2474.67,
+      "level": 2499.2,
       "type": "Vanna Put Node",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2484.81,
+      "level": 2550.2,
       "type": "Charm Call Node",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2434.1,
+      "level": 2397.19,
       "type": "Charm Put Node",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2505.1,
+      "level": 2550.2,
       "type": "Volume Imbalance Call Node",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2464.53,
+      "level": 2397.19,
       "type": "Volume Imbalance Put Node",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2434.1,
+      "level": 2499.2,
       "type": "DEX Call Node",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2535.52,
+      "level": 2499.2,
       "type": "DEX Put Node",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2322.54,
+      "level": 2386.99,
       "type": "Liquidity Vacuum Lower",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2829.65,
+      "level": 2693.01,
       "type": "Liquidity Vacuum Upper",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2454.39,
+      "level": 2427.79,
       "type": "Skew Pivot Put 25D",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2484.81,
+      "level": 2519.6,
       "type": "Skew Pivot Call 25D",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2465.54,
+      "level": 2461.96,
       "type": "Gamma Magnet",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 2474.67,
+      "level": 2397.19,
       "type": "Pin Strike",
       "asset": "RTY",
       "regime": "NEGATIVE",
       "regime_label": "TRENDING",
       "cash_ticker": "IWM",
       "translation_mode": "multiplicative",
-      "basis_ratio": 10.1421
+      "basis_ratio": 10.2008
     },
     {
-      "level": 46293.7,
+      "level": 47988.33,
       "type": "Upper EM",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46318.87,
+      "level": 48060.17,
       "type": "Absolute Call Wall",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46318.87,
+      "level": 47048.37,
       "type": "Local Call Node",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46318.87,
+      "level": 48060.17,
       "type": "0DTE Call Wall",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46067.14,
+      "level": 48211.94,
       "type": "Zero Gamma",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 48332.74,
+      "level": 47554.27,
       "type": "Max Pain",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 45815.41,
+      "level": 45530.68,
       "type": "0DTE Put Wall",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 45815.41,
+      "level": 46947.2,
       "type": "Local Put Node",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 45815.41,
+      "level": 45530.68,
       "type": "Hedge Wall",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 45856.69,
+      "level": 44914.5,
       "type": "Lower EM",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 45815.41,
+      "level": 45530.68,
       "type": "Absolute Put Wall",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46117.49,
+      "level": 48262.53,
       "type": "Secondary Call Wall",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46016.79,
+      "level": 46036.58,
       "type": "Secondary Put Wall",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46016.79,
+      "level": 48161.35,
       "type": "Gamma Flip Lower",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46117.49,
+      "level": 48262.53,
       "type": "Gamma Flip Upper",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46444.74,
+      "level": 47180.92,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 45705.65,
+      "level": 45721.91,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46814.28,
+      "level": 47911.43,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 45336.11,
+      "level": 44991.4,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 47184.83,
+      "level": 48640.94,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 44965.56,
+      "level": 44261.9,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46369.22,
+      "level": 48009.58,
       "type": "Gamma Cliff Up",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 45563.67,
+      "level": 45985.99,
       "type": "Gamma Cliff Down",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46318.87,
+      "level": 47048.37,
       "type": "Vanna Call Node",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46318.87,
+      "level": 46947.2,
       "type": "Vanna Put Node",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46318.87,
+      "level": 48060.17,
       "type": "Charm Call Node",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 45815.41,
+      "level": 44013.0,
       "type": "Charm Put Node",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46218.18,
+      "level": 47048.37,
       "type": "Volume Imbalance Call Node",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46117.49,
+      "level": 46036.58,
       "type": "Volume Imbalance Put Node",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46318.87,
+      "level": 48060.17,
       "type": "DEX Call Node",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 48332.74,
+      "level": 48566.06,
       "type": "DEX Put Node",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 39270.35,
+      "level": 39965.82,
       "type": "Liquidity Vacuum Lower",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 50044.52,
+      "level": 48970.78,
       "type": "Liquidity Vacuum Upper",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 45815.41,
+      "level": 45024.79,
       "type": "Skew Pivot Put 25D",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46218.18,
+      "level": 47250.73,
       "type": "Skew Pivot Call 25D",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 45983.56,
+      "level": 47019.03,
       "type": "Gamma Magnet",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 46318.87,
+      "level": 48060.17,
       "type": "Pin Strike",
       "asset": "YM",
-      "regime": "NEGATIVE",
-      "regime_label": "TRENDING",
+      "regime": "POSITIVE",
+      "regime_label": "BATTLE_ZONE",
       "cash_ticker": "DIA",
       "translation_mode": "multiplicative",
-      "basis_ratio": 100.6932
+      "basis_ratio": 101.1793
     },
     {
-      "level": 6565.73,
+      "level": 6606.86,
       "type": "Upper EM",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1884,7 +1884,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6600.0,
+      "level": 6573.71,
       "type": "Absolute Call Wall",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1893,7 +1893,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6600.0,
+      "level": 6573.71,
       "type": "Local Call Node",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1902,7 +1902,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6600.0,
+      "level": 6573.71,
       "type": "0DTE Call Wall",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1911,7 +1911,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6537.5,
+      "level": 6508.97,
       "type": "Zero Gamma",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1920,7 +1920,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6690.0,
+      "level": 6623.51,
       "type": "Max Pain",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1929,7 +1929,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6510.0,
+      "level": 6474.11,
       "type": "0DTE Put Wall",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1938,7 +1938,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6540.0,
+      "level": 6474.11,
       "type": "Local Put Node",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1947,7 +1947,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6510.0,
+      "level": 6474.11,
       "type": "Hedge Wall",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1956,7 +1956,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6509.25,
+      "level": 6406.1,
       "type": "Lower EM",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1965,7 +1965,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6510.0,
+      "level": 6474.11,
       "type": "Absolute Put Wall",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1974,7 +1974,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6550.0,
+      "level": 6673.31,
       "type": "Secondary Call Wall",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1983,7 +1983,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6500.0,
+      "level": 6454.19,
       "type": "Secondary Put Wall",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1992,7 +1992,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6535.0,
+      "level": 6503.99,
       "type": "Gamma Flip Lower",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2001,7 +2001,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6540.0,
+      "level": 6513.95,
       "type": "Gamma Flip Upper",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2010,7 +2010,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6585.2,
+      "level": 6550.09,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2019,7 +2019,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6489.78,
+      "level": 6462.87,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2028,7 +2028,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6632.91,
+      "level": 6593.69,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2037,7 +2037,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6442.07,
+      "level": 6419.27,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2046,7 +2046,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6680.62,
+      "level": 6637.3,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2055,7 +2055,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6394.36,
+      "level": 6375.66,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2064,7 +2064,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6542.5,
+      "level": 6528.89,
       "type": "Gamma Cliff Up",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2073,7 +2073,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6497.5,
+      "level": 6469.13,
       "type": "Gamma Cliff Down",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2082,7 +2082,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6510.0,
+      "level": 6474.11,
       "type": "Vanna Call Node",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2091,7 +2091,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6540.0,
+      "level": 6474.11,
       "type": "Vanna Put Node",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2100,7 +2100,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6600.0,
+      "level": 6673.31,
       "type": "Charm Call Node",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2109,7 +2109,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6500.0,
+      "level": 6623.51,
       "type": "Charm Put Node",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2118,7 +2118,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6600.0,
+      "level": 6523.91,
       "type": "Volume Imbalance Call Node",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2127,7 +2127,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6500.0,
+      "level": 6424.31,
       "type": "Volume Imbalance Put Node",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2136,7 +2136,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6125.0,
+      "level": 6573.71,
       "type": "DEX Call Node",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2145,7 +2145,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6750.0,
+      "level": 6673.31,
       "type": "DEX Put Node",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2154,7 +2154,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6305.0,
+      "level": 6215.15,
       "type": "Liquidity Vacuum Lower",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2163,7 +2163,7 @@
       "price_space": "cash"
     },
     {
-      "level": 7095.0,
+      "level": 6962.16,
       "type": "Liquidity Vacuum Upper",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2172,7 +2172,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6515.0,
+      "level": 6465.0,
       "type": "Skew Pivot Put 25D",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2181,7 +2181,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6560.0,
+      "level": 6605.0,
       "type": "Skew Pivot Call 25D",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2190,7 +2190,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6526.5,
+      "level": 6497.32,
       "type": "Gamma Magnet",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2199,7 +2199,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6540.0,
+      "level": 6474.11,
       "type": "Pin Strike",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2208,7 +2208,7 @@
       "price_space": "cash"
     },
     {
-      "level": 654.25,
+      "level": 663.5,
       "type": "Upper EM",
       "asset": "SPY",
       "regime": "NEGATIVE",
@@ -2237,159 +2237,6 @@
     {
       "level": 660.0,
       "type": "0DTE Call Wall",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 651.5,
-      "type": "Zero Gamma",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 675.0,
-      "type": "Max Pain",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 650.0,
-      "type": "0DTE Put Wall",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 650.0,
-      "type": "Local Put Node",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 650.0,
-      "type": "Hedge Wall",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 648.17,
-      "type": "Lower EM",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 650.0,
-      "type": "Absolute Put Wall",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 655.0,
-      "type": "Secondary Call Wall",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 645.0,
-      "type": "Secondary Put Wall",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 651.0,
-      "type": "Gamma Flip Lower",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 652.0,
-      "type": "Gamma Flip Upper",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 656.34,
-      "type": "Vol Trigger +0.5\u03c3",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 646.08,
-      "type": "Vol Trigger -0.5\u03c3",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 661.47,
-      "type": "Vol Trigger +1.0\u03c3",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 640.95,
-      "type": "Vol Trigger -1.0\u03c3",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 666.6,
-      "type": "Vol Trigger +1.5\u03c3",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 635.82,
-      "type": "Vol Trigger -1.5\u03c3",
       "asset": "SPY",
       "regime": "NEGATIVE",
       "cash_ticker": "SPY",
@@ -2398,6 +2245,159 @@
     },
     {
       "level": 653.5,
+      "type": "Zero Gamma",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 665.0,
+      "type": "Max Pain",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 650.0,
+      "type": "0DTE Put Wall",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 650.0,
+      "type": "Local Put Node",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 650.0,
+      "type": "Hedge Wall",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 643.0,
+      "type": "Lower EM",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 650.0,
+      "type": "Absolute Put Wall",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 670.0,
+      "type": "Secondary Call Wall",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 648.0,
+      "type": "Secondary Put Wall",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 653.0,
+      "type": "Gamma Flip Lower",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 654.0,
+      "type": "Gamma Flip Upper",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 657.7,
+      "type": "Vol Trigger +0.5\u03c3",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 648.8,
+      "type": "Vol Trigger -0.5\u03c3",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 662.16,
+      "type": "Vol Trigger +1.0\u03c3",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 644.34,
+      "type": "Vol Trigger -1.0\u03c3",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 666.61,
+      "type": "Vol Trigger +1.5\u03c3",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 639.89,
+      "type": "Vol Trigger -1.5\u03c3",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 655.5,
       "type": "Gamma Cliff Up",
       "asset": "SPY",
       "regime": "NEGATIVE",
@@ -2415,7 +2415,7 @@
       "price_space": "cash"
     },
     {
-      "level": 655.0,
+      "level": 650.0,
       "type": "Vanna Call Node",
       "asset": "SPY",
       "regime": "NEGATIVE",
@@ -2433,8 +2433,26 @@
       "price_space": "cash"
     },
     {
-      "level": 660.0,
+      "level": 670.0,
       "type": "Charm Call Node",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 665.0,
+      "type": "Charm Put Node",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 655.0,
+      "type": "Volume Imbalance Call Node",
       "asset": "SPY",
       "regime": "NEGATIVE",
       "cash_ticker": "SPY",
@@ -2443,34 +2461,7 @@
     },
     {
       "level": 645.0,
-      "type": "Charm Put Node",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 655.0,
-      "type": "Volume Imbalance Call Node",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 650.0,
       "type": "Volume Imbalance Put Node",
-      "asset": "SPY",
-      "regime": "NEGATIVE",
-      "cash_ticker": "SPY",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 655.0,
-      "type": "DEX Call Node",
       "asset": "SPY",
       "regime": "NEGATIVE",
       "cash_ticker": "SPY",
@@ -2479,6 +2470,15 @@
     },
     {
       "level": 660.0,
+      "type": "DEX Call Node",
+      "asset": "SPY",
+      "regime": "NEGATIVE",
+      "cash_ticker": "SPY",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 670.0,
       "type": "DEX Put Node",
       "asset": "SPY",
       "regime": "NEGATIVE",
@@ -2487,7 +2487,7 @@
       "price_space": "cash"
     },
     {
-      "level": 626.0,
+      "level": 624.0,
       "type": "Liquidity Vacuum Lower",
       "asset": "SPY",
       "regime": "NEGATIVE",
@@ -2496,7 +2496,7 @@
       "price_space": "cash"
     },
     {
-      "level": 711.0,
+      "level": 699.0,
       "type": "Liquidity Vacuum Upper",
       "asset": "SPY",
       "regime": "NEGATIVE",
@@ -2505,7 +2505,7 @@
       "price_space": "cash"
     },
     {
-      "level": 649.0,
+      "level": 642.0,
       "type": "Skew Pivot Put 25D",
       "asset": "SPY",
       "regime": "NEGATIVE",
@@ -2514,7 +2514,7 @@
       "price_space": "cash"
     },
     {
-      "level": 653.0,
+      "level": 657.0,
       "type": "Skew Pivot Call 25D",
       "asset": "SPY",
       "regime": "NEGATIVE",
@@ -2523,7 +2523,7 @@
       "price_space": "cash"
     },
     {
-      "level": 650.05,
+      "level": 652.33,
       "type": "Gamma Magnet",
       "asset": "SPY",
       "regime": "NEGATIVE",
@@ -2541,7 +2541,7 @@
       "price_space": "cash"
     },
     {
-      "level": 587.12,
+      "level": 596.12,
       "type": "Upper EM",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2550,7 +2550,7 @@
       "price_space": "cash"
     },
     {
-      "level": 585.0,
+      "level": 590.0,
       "type": "Absolute Call Wall",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2559,7 +2559,7 @@
       "price_space": "cash"
     },
     {
-      "level": 585.0,
+      "level": 590.0,
       "type": "Local Call Node",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2568,7 +2568,7 @@
       "price_space": "cash"
     },
     {
-      "level": 585.0,
+      "level": 590.0,
       "type": "0DTE Call Wall",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2577,7 +2577,7 @@
       "price_space": "cash"
     },
     {
-      "level": 584.5,
+      "level": 587.5,
       "type": "Zero Gamma",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2586,7 +2586,7 @@
       "price_space": "cash"
     },
     {
-      "level": 595.0,
+      "level": 598.0,
       "type": "Max Pain",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2595,7 +2595,7 @@
       "price_space": "cash"
     },
     {
-      "level": 580.0,
+      "level": 584.0,
       "type": "0DTE Put Wall",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2604,7 +2604,7 @@
       "price_space": "cash"
     },
     {
-      "level": 585.0,
+      "level": 584.0,
       "type": "Local Put Node",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2613,7 +2613,7 @@
       "price_space": "cash"
     },
     {
-      "level": 580.0,
+      "level": 584.0,
       "type": "Hedge Wall",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2622,7 +2622,7 @@
       "price_space": "cash"
     },
     {
-      "level": 581.4,
+      "level": 578.12,
       "type": "Lower EM",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2631,7 +2631,7 @@
       "price_space": "cash"
     },
     {
-      "level": 580.0,
+      "level": 584.0,
       "type": "Absolute Put Wall",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2640,7 +2640,7 @@
       "price_space": "cash"
     },
     {
-      "level": 590.0,
+      "level": 592.0,
       "type": "Secondary Call Wall",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2649,7 +2649,7 @@
       "price_space": "cash"
     },
     {
-      "level": 584.0,
+      "level": 580.0,
       "type": "Secondary Put Wall",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2658,7 +2658,7 @@
       "price_space": "cash"
     },
     {
-      "level": 584.0,
+      "level": 587.0,
       "type": "Gamma Flip Lower",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2667,7 +2667,7 @@
       "price_space": "cash"
     },
     {
-      "level": 585.0,
+      "level": 588.0,
       "type": "Gamma Flip Upper",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2676,7 +2676,7 @@
       "price_space": "cash"
     },
     {
-      "level": 589.09,
+      "level": 591.03,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2685,7 +2685,7 @@
       "price_space": "cash"
     },
     {
-      "level": 579.43,
+      "level": 583.21,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2694,7 +2694,7 @@
       "price_space": "cash"
     },
     {
-      "level": 593.92,
+      "level": 594.94,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2703,7 +2703,7 @@
       "price_space": "cash"
     },
     {
-      "level": 574.6,
+      "level": 579.3,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2712,7 +2712,7 @@
       "price_space": "cash"
     },
     {
-      "level": 598.75,
+      "level": 598.84,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2721,7 +2721,7 @@
       "price_space": "cash"
     },
     {
-      "level": 569.77,
+      "level": 575.4,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2730,7 +2730,7 @@
       "price_space": "cash"
     },
     {
-      "level": 585.5,
+      "level": 588.5,
       "type": "Gamma Cliff Up",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2739,7 +2739,7 @@
       "price_space": "cash"
     },
     {
-      "level": 579.5,
+      "level": 583.5,
       "type": "Gamma Cliff Down",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2748,7 +2748,7 @@
       "price_space": "cash"
     },
     {
-      "level": 580.0,
+      "level": 585.0,
       "type": "Vanna Call Node",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2757,7 +2757,7 @@
       "price_space": "cash"
     },
     {
-      "level": 590.0,
+      "level": 584.0,
       "type": "Vanna Put Node",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2766,7 +2766,7 @@
       "price_space": "cash"
     },
     {
-      "level": 590.0,
+      "level": 600.0,
       "type": "Charm Call Node",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2775,7 +2775,7 @@
       "price_space": "cash"
     },
     {
-      "level": 590.0,
+      "level": 600.0,
       "type": "Charm Put Node",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2793,7 +2793,7 @@
       "price_space": "cash"
     },
     {
-      "level": 582.0,
+      "level": 575.0,
       "type": "Volume Imbalance Put Node",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2802,7 +2802,7 @@
       "price_space": "cash"
     },
     {
-      "level": 570.0,
+      "level": 500.0,
       "type": "DEX Call Node",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2811,7 +2811,7 @@
       "price_space": "cash"
     },
     {
-      "level": 590.0,
+      "level": 600.0,
       "type": "DEX Put Node",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2820,7 +2820,7 @@
       "price_space": "cash"
     },
     {
-      "level": 569.0,
+      "level": 556.0,
       "type": "Liquidity Vacuum Lower",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2829,7 +2829,7 @@
       "price_space": "cash"
     },
     {
-      "level": 634.0,
+      "level": 623.0,
       "type": "Liquidity Vacuum Upper",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2838,7 +2838,7 @@
       "price_space": "cash"
     },
     {
-      "level": 582.0,
+      "level": 575.0,
       "type": "Skew Pivot Put 25D",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2847,7 +2847,7 @@
       "price_space": "cash"
     },
     {
-      "level": 586.0,
+      "level": 588.0,
       "type": "Skew Pivot Call 25D",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2856,7 +2856,7 @@
       "price_space": "cash"
     },
     {
-      "level": 583.93,
+      "level": 580.3,
       "type": "Gamma Magnet",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2865,7 +2865,7 @@
       "price_space": "cash"
     },
     {
-      "level": 585.0,
+      "level": 584.0,
       "type": "Pin Strike",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2874,7 +2874,7 @@
       "price_space": "cash"
     },
     {
-      "level": 245.07,
+      "level": 250.68,
       "type": "Upper EM",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2883,7 +2883,7 @@
       "price_space": "cash"
     },
     {
-      "level": 245.0,
+      "level": 250.0,
       "type": "Absolute Call Wall",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2892,7 +2892,7 @@
       "price_space": "cash"
     },
     {
-      "level": 245.0,
+      "level": 248.0,
       "type": "Local Call Node",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2901,7 +2901,7 @@
       "price_space": "cash"
     },
     {
-      "level": 245.0,
+      "level": 250.0,
       "type": "0DTE Call Wall",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2910,7 +2910,7 @@
       "price_space": "cash"
     },
     {
-      "level": 243.5,
+      "level": 245.5,
       "type": "Zero Gamma",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2919,7 +2919,7 @@
       "price_space": "cash"
     },
     {
-      "level": 252.0,
+      "level": 248.0,
       "type": "Max Pain",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2928,7 +2928,7 @@
       "price_space": "cash"
     },
     {
-      "level": 240.0,
+      "level": 235.0,
       "type": "0DTE Put Wall",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2937,7 +2937,7 @@
       "price_space": "cash"
     },
     {
-      "level": 244.0,
+      "level": 245.0,
       "type": "Local Put Node",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2946,7 +2946,7 @@
       "price_space": "cash"
     },
     {
-      "level": 242.0,
+      "level": 235.0,
       "type": "Hedge Wall",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2955,7 +2955,7 @@
       "price_space": "cash"
     },
     {
-      "level": 241.69,
+      "level": 239.54,
       "type": "Lower EM",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2964,7 +2964,7 @@
       "price_space": "cash"
     },
     {
-      "level": 240.0,
+      "level": 235.0,
       "type": "Absolute Put Wall",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2973,7 +2973,7 @@
       "price_space": "cash"
     },
     {
-      "level": 244.0,
+      "level": 248.0,
       "type": "Secondary Call Wall",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2982,7 +2982,7 @@
       "price_space": "cash"
     },
     {
-      "level": 242.0,
+      "level": 240.0,
       "type": "Secondary Put Wall",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2991,7 +2991,7 @@
       "price_space": "cash"
     },
     {
-      "level": 243.0,
+      "level": 245.0,
       "type": "Gamma Flip Lower",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3000,7 +3000,7 @@
       "price_space": "cash"
     },
     {
-      "level": 244.0,
+      "level": 246.0,
       "type": "Gamma Flip Upper",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3009,7 +3009,7 @@
       "price_space": "cash"
     },
     {
-      "level": 246.23,
+      "level": 247.53,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3018,7 +3018,7 @@
       "price_space": "cash"
     },
     {
-      "level": 240.53,
+      "level": 242.69,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3027,7 +3027,7 @@
       "price_space": "cash"
     },
     {
-      "level": 249.08,
+      "level": 249.95,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3036,7 +3036,7 @@
       "price_space": "cash"
     },
     {
-      "level": 237.68,
+      "level": 240.27,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3045,7 +3045,7 @@
       "price_space": "cash"
     },
     {
-      "level": 251.94,
+      "level": 252.37,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3054,7 +3054,7 @@
       "price_space": "cash"
     },
     {
-      "level": 234.82,
+      "level": 237.85,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3063,7 +3063,7 @@
       "price_space": "cash"
     },
     {
-      "level": 244.5,
+      "level": 245.5,
       "type": "Gamma Cliff Up",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3072,7 +3072,7 @@
       "price_space": "cash"
     },
     {
-      "level": 239.5,
+      "level": 234.5,
       "type": "Gamma Cliff Down",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3081,7 +3081,7 @@
       "price_space": "cash"
     },
     {
-      "level": 240.0,
+      "level": 245.0,
       "type": "Vanna Call Node",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3090,7 +3090,7 @@
       "price_space": "cash"
     },
     {
-      "level": 244.0,
+      "level": 245.0,
       "type": "Vanna Put Node",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3099,7 +3099,7 @@
       "price_space": "cash"
     },
     {
-      "level": 245.0,
+      "level": 250.0,
       "type": "Charm Call Node",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3108,8 +3108,71 @@
       "price_space": "cash"
     },
     {
-      "level": 240.0,
+      "level": 235.0,
       "type": "Charm Put Node",
+      "asset": "IWM",
+      "regime": "NEGATIVE",
+      "cash_ticker": "IWM",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 250.0,
+      "type": "Volume Imbalance Call Node",
+      "asset": "IWM",
+      "regime": "NEGATIVE",
+      "cash_ticker": "IWM",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 235.0,
+      "type": "Volume Imbalance Put Node",
+      "asset": "IWM",
+      "regime": "NEGATIVE",
+      "cash_ticker": "IWM",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 245.0,
+      "type": "DEX Call Node",
+      "asset": "IWM",
+      "regime": "NEGATIVE",
+      "cash_ticker": "IWM",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 245.0,
+      "type": "DEX Put Node",
+      "asset": "IWM",
+      "regime": "NEGATIVE",
+      "cash_ticker": "IWM",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 234.0,
+      "type": "Liquidity Vacuum Lower",
+      "asset": "IWM",
+      "regime": "NEGATIVE",
+      "cash_ticker": "IWM",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 264.0,
+      "type": "Liquidity Vacuum Upper",
+      "asset": "IWM",
+      "regime": "NEGATIVE",
+      "cash_ticker": "IWM",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 238.0,
+      "type": "Skew Pivot Put 25D",
       "asset": "IWM",
       "regime": "NEGATIVE",
       "cash_ticker": "IWM",
@@ -3118,69 +3181,6 @@
     },
     {
       "level": 247.0,
-      "type": "Volume Imbalance Call Node",
-      "asset": "IWM",
-      "regime": "NEGATIVE",
-      "cash_ticker": "IWM",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 243.0,
-      "type": "Volume Imbalance Put Node",
-      "asset": "IWM",
-      "regime": "NEGATIVE",
-      "cash_ticker": "IWM",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 240.0,
-      "type": "DEX Call Node",
-      "asset": "IWM",
-      "regime": "NEGATIVE",
-      "cash_ticker": "IWM",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 250.0,
-      "type": "DEX Put Node",
-      "asset": "IWM",
-      "regime": "NEGATIVE",
-      "cash_ticker": "IWM",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 229.0,
-      "type": "Liquidity Vacuum Lower",
-      "asset": "IWM",
-      "regime": "NEGATIVE",
-      "cash_ticker": "IWM",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 279.0,
-      "type": "Liquidity Vacuum Upper",
-      "asset": "IWM",
-      "regime": "NEGATIVE",
-      "cash_ticker": "IWM",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 242.0,
-      "type": "Skew Pivot Put 25D",
-      "asset": "IWM",
-      "regime": "NEGATIVE",
-      "cash_ticker": "IWM",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 245.0,
       "type": "Skew Pivot Call 25D",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3189,7 +3189,7 @@
       "price_space": "cash"
     },
     {
-      "level": 243.1,
+      "level": 241.35,
       "type": "Gamma Magnet",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3198,7 +3198,7 @@
       "price_space": "cash"
     },
     {
-      "level": 244.0,
+      "level": 235.0,
       "type": "Pin Strike",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3207,271 +3207,271 @@
       "price_space": "cash"
     },
     {
-      "level": 459.75,
+      "level": 474.29,
       "type": "Upper EM",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 460.0,
+      "level": 475.0,
       "type": "Absolute Call Wall",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 460.0,
+      "level": 465.0,
       "type": "Local Call Node",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 460.0,
+      "level": 475.0,
       "type": "0DTE Call Wall",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 457.5,
+      "level": 476.5,
       "type": "Zero Gamma",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 480.0,
+      "level": 470.0,
       "type": "Max Pain",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 455.0,
+      "level": 450.0,
       "type": "0DTE Put Wall",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 455.0,
+      "level": 464.0,
       "type": "Local Put Node",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 455.0,
+      "level": 450.0,
       "type": "Hedge Wall",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 455.41,
+      "level": 443.91,
       "type": "Lower EM",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 455.0,
+      "level": 450.0,
       "type": "Absolute Put Wall",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 458.0,
+      "level": 477.0,
       "type": "Secondary Call Wall",
       "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 457.0,
-      "type": "Secondary Put Wall",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 457.0,
-      "type": "Gamma Flip Lower",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 458.0,
-      "type": "Gamma Flip Upper",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 461.25,
-      "type": "Vol Trigger +0.5\u03c3",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 453.91,
-      "type": "Vol Trigger -0.5\u03c3",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 464.92,
-      "type": "Vol Trigger +1.0\u03c3",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 450.24,
-      "type": "Vol Trigger -1.0\u03c3",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 468.6,
-      "type": "Vol Trigger +1.5\u03c3",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 446.56,
-      "type": "Vol Trigger -1.5\u03c3",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 460.5,
-      "type": "Gamma Cliff Up",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 452.5,
-      "type": "Gamma Cliff Down",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 460.0,
-      "type": "Vanna Call Node",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 460.0,
-      "type": "Vanna Put Node",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
-      "cash_ticker": "DIA",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 460.0,
-      "type": "Charm Call Node",
-      "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
       "level": 455.0,
+      "type": "Secondary Put Wall",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 476.0,
+      "type": "Gamma Flip Lower",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 477.0,
+      "type": "Gamma Flip Upper",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 466.31,
+      "type": "Vol Trigger +0.5\u03c3",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 451.89,
+      "type": "Vol Trigger -0.5\u03c3",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 473.53,
+      "type": "Vol Trigger +1.0\u03c3",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 444.67,
+      "type": "Vol Trigger -1.0\u03c3",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 480.74,
+      "type": "Vol Trigger +1.5\u03c3",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 437.46,
+      "type": "Vol Trigger -1.5\u03c3",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 474.5,
+      "type": "Gamma Cliff Up",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 454.5,
+      "type": "Gamma Cliff Down",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 465.0,
+      "type": "Vanna Call Node",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 464.0,
+      "type": "Vanna Put Node",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 475.0,
+      "type": "Charm Call Node",
+      "asset": "DIA",
+      "regime": "POSITIVE",
+      "cash_ticker": "DIA",
+      "basis_spread": 0.0,
+      "price_space": "cash"
+    },
+    {
+      "level": 435.0,
       "type": "Charm Put Node",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 459.0,
+      "level": 465.0,
       "type": "Volume Imbalance Call Node",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 458.0,
+      "level": 455.0,
       "type": "Volume Imbalance Put Node",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 460.0,
+      "level": 475.0,
       "type": "DEX Call Node",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
@@ -3480,67 +3480,67 @@
       "level": 480.0,
       "type": "DEX Put Node",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 390.0,
+      "level": 395.0,
       "type": "Liquidity Vacuum Lower",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 497.0,
+      "level": 484.0,
       "type": "Liquidity Vacuum Upper",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 455.0,
+      "level": 445.0,
       "type": "Skew Pivot Put 25D",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 459.0,
+      "level": 467.0,
       "type": "Skew Pivot Call 25D",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 456.67,
+      "level": 464.71,
       "type": "Gamma Magnet",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 460.0,
+      "level": 475.0,
       "type": "Pin Strike",
       "asset": "DIA",
-      "regime": "NEGATIVE",
+      "regime": "POSITIVE",
       "cash_ticker": "DIA",
       "basis_spread": 0.0,
       "price_space": "cash"
     },
     {
-      "level": 249.67,
+      "level": 254.03,
       "type": "Upper EM",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3549,7 +3549,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.0,
+      "level": 252.5,
       "type": "Absolute Call Wall",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3558,7 +3558,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.0,
+      "level": 252.5,
       "type": "Local Call Node",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3567,7 +3567,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.0,
+      "level": 252.5,
       "type": "0DTE Call Wall",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3603,7 +3603,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.0,
+      "level": 247.5,
       "type": "Local Put Node",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3621,7 +3621,7 @@
       "price_space": "cash"
     },
     {
-      "level": 246.53,
+      "level": 245.17,
       "type": "Lower EM",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3639,7 +3639,7 @@
       "price_space": "cash"
     },
     {
-      "level": 252.5,
+      "level": 250.0,
       "type": "Secondary Call Wall",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3675,7 +3675,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.76,
+      "level": 251.52,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3684,7 +3684,7 @@
       "price_space": "cash"
     },
     {
-      "level": 245.44,
+      "level": 247.68,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3693,7 +3693,7 @@
       "price_space": "cash"
     },
     {
-      "level": 253.42,
+      "level": 253.45,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3702,7 +3702,7 @@
       "price_space": "cash"
     },
     {
-      "level": 242.78,
+      "level": 245.75,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3711,7 +3711,7 @@
       "price_space": "cash"
     },
     {
-      "level": 256.08,
+      "level": 255.37,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3720,7 +3720,7 @@
       "price_space": "cash"
     },
     {
-      "level": 240.12,
+      "level": 243.83,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3738,7 +3738,7 @@
       "price_space": "cash"
     },
     {
-      "level": 243.75,
+      "level": 238.75,
       "type": "Gamma Cliff Down",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3747,7 +3747,7 @@
       "price_space": "cash"
     },
     {
-      "level": 247.5,
+      "level": 250.0,
       "type": "Vanna Call Node",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3756,7 +3756,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.0,
+      "level": 247.5,
       "type": "Vanna Put Node",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3765,7 +3765,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.0,
+      "level": 255.0,
       "type": "Charm Call Node",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3774,7 +3774,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.0,
+      "level": 245.0,
       "type": "Charm Put Node",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3792,7 +3792,7 @@
       "price_space": "cash"
     },
     {
-      "level": 245.0,
+      "level": 247.5,
       "type": "Volume Imbalance Put Node",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3801,7 +3801,7 @@
       "price_space": "cash"
     },
     {
-      "level": 240.0,
+      "level": 250.0,
       "type": "DEX Call Node",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3810,7 +3810,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.0,
+      "level": 247.5,
       "type": "DEX Put Node",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3819,7 +3819,7 @@
       "price_space": "cash"
     },
     {
-      "level": 232.5,
+      "level": 222.5,
       "type": "Liquidity Vacuum Lower",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3828,7 +3828,7 @@
       "price_space": "cash"
     },
     {
-      "level": 292.5,
+      "level": 272.5,
       "type": "Liquidity Vacuum Upper",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3837,7 +3837,7 @@
       "price_space": "cash"
     },
     {
-      "level": 247.5,
+      "level": 245.0,
       "type": "Skew Pivot Put 25D",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3846,7 +3846,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.0,
+      "level": 252.5,
       "type": "Skew Pivot Call 25D",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3855,7 +3855,7 @@
       "price_space": "cash"
     },
     {
-      "level": 248.85,
+      "level": 247.28,
       "type": "Gamma Magnet",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3864,7 +3864,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.0,
+      "level": 247.5,
       "type": "Pin Strike",
       "asset": "AAPL",
       "regime": "NEGATIVE",
@@ -3873,7 +3873,7 @@
       "price_space": "cash"
     },
     {
-      "level": 385.56,
+      "level": 390.08,
       "type": "Upper EM",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -3882,7 +3882,7 @@
       "price_space": "cash"
     },
     {
-      "level": 385.0,
+      "level": 400.0,
       "type": "Absolute Call Wall",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -3891,7 +3891,7 @@
       "price_space": "cash"
     },
     {
-      "level": 385.0,
+      "level": 387.5,
       "type": "Local Call Node",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -3900,7 +3900,7 @@
       "price_space": "cash"
     },
     {
-      "level": 385.0,
+      "level": 400.0,
       "type": "0DTE Call Wall",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -3918,7 +3918,7 @@
       "price_space": "cash"
     },
     {
-      "level": 400.0,
+      "level": 392.5,
       "type": "Max Pain",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -3954,7 +3954,7 @@
       "price_space": "cash"
     },
     {
-      "level": 381.04,
+      "level": 376.72,
       "type": "Lower EM",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4008,7 +4008,7 @@
       "price_space": "cash"
     },
     {
-      "level": 387.12,
+      "level": 386.3,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4017,7 +4017,7 @@
       "price_space": "cash"
     },
     {
-      "level": 379.48,
+      "level": 380.5,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4026,7 +4026,7 @@
       "price_space": "cash"
     },
     {
-      "level": 390.94,
+      "level": 389.2,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4035,7 +4035,7 @@
       "price_space": "cash"
     },
     {
-      "level": 375.66,
+      "level": 377.6,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4044,7 +4044,7 @@
       "price_space": "cash"
     },
     {
-      "level": 394.75,
+      "level": 392.1,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4053,7 +4053,7 @@
       "price_space": "cash"
     },
     {
-      "level": 371.85,
+      "level": 374.7,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4080,7 +4080,7 @@
       "price_space": "cash"
     },
     {
-      "level": 380.0,
+      "level": 390.0,
       "type": "Vanna Call Node",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4098,7 +4098,7 @@
       "price_space": "cash"
     },
     {
-      "level": 390.0,
+      "level": 400.0,
       "type": "Charm Call Node",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4116,7 +4116,7 @@
       "price_space": "cash"
     },
     {
-      "level": 390.0,
+      "level": 387.5,
       "type": "Volume Imbalance Call Node",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4125,7 +4125,7 @@
       "price_space": "cash"
     },
     {
-      "level": 382.5,
+      "level": 380.0,
       "type": "Volume Imbalance Put Node",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4134,7 +4134,7 @@
       "price_space": "cash"
     },
     {
-      "level": 380.0,
+      "level": 370.0,
       "type": "DEX Call Node",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4143,17 +4143,8 @@
       "price_space": "cash"
     },
     {
-      "level": 390.0,
+      "level": 385.0,
       "type": "DEX Put Node",
-      "asset": "MSFT",
-      "regime": "NEGATIVE",
-      "cash_ticker": "MSFT",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 367.5,
-      "type": "Liquidity Vacuum Lower",
       "asset": "MSFT",
       "regime": "NEGATIVE",
       "cash_ticker": "MSFT",
@@ -4170,7 +4161,7 @@
       "price_space": "cash"
     },
     {
-      "level": 382.5,
+      "level": 377.5,
       "type": "Skew Pivot Put 25D",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4179,7 +4170,7 @@
       "price_space": "cash"
     },
     {
-      "level": 385.0,
+      "level": 387.5,
       "type": "Skew Pivot Call 25D",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4188,7 +4179,7 @@
       "price_space": "cash"
     },
     {
-      "level": 383.13,
+      "level": 384.1,
       "type": "Gamma Magnet",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4206,7 +4197,7 @@
       "price_space": "cash"
     },
     {
-      "level": 176.01,
+      "level": 179.04,
       "type": "Upper EM",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4251,7 +4242,7 @@
       "price_space": "cash"
     },
     {
-      "level": 170.0,
+      "level": 180.0,
       "type": "Max Pain",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4260,7 +4251,7 @@
       "price_space": "cash"
     },
     {
-      "level": 170.0,
+      "level": 172.5,
       "type": "0DTE Put Wall",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4278,7 +4269,7 @@
       "price_space": "cash"
     },
     {
-      "level": 170.0,
+      "level": 172.5,
       "type": "Hedge Wall",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4287,7 +4278,7 @@
       "price_space": "cash"
     },
     {
-      "level": 173.55,
+      "level": 170.68,
       "type": "Lower EM",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4296,7 +4287,7 @@
       "price_space": "cash"
     },
     {
-      "level": 170.0,
+      "level": 172.5,
       "type": "Absolute Put Wall",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4305,7 +4296,7 @@
       "price_space": "cash"
     },
     {
-      "level": 180.0,
+      "level": 177.5,
       "type": "Secondary Call Wall",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4314,7 +4305,7 @@
       "price_space": "cash"
     },
     {
-      "level": 172.5,
+      "level": 170.0,
       "type": "Secondary Put Wall",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4341,7 +4332,7 @@
       "price_space": "cash"
     },
     {
-      "level": 176.85,
+      "level": 176.68,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4350,7 +4341,7 @@
       "price_space": "cash"
     },
     {
-      "level": 172.71,
+      "level": 173.04,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4359,7 +4350,7 @@
       "price_space": "cash"
     },
     {
-      "level": 178.93,
+      "level": 178.49,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4368,7 +4359,7 @@
       "price_space": "cash"
     },
     {
-      "level": 170.63,
+      "level": 171.23,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4377,7 +4368,7 @@
       "price_space": "cash"
     },
     {
-      "level": 181.0,
+      "level": 180.31,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4386,7 +4377,7 @@
       "price_space": "cash"
     },
     {
-      "level": 168.56,
+      "level": 169.41,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4431,7 +4422,7 @@
       "price_space": "cash"
     },
     {
-      "level": 185.0,
+      "level": 180.0,
       "type": "Charm Call Node",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4440,7 +4431,7 @@
       "price_space": "cash"
     },
     {
-      "level": 170.0,
+      "level": 180.0,
       "type": "Charm Put Node",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4449,7 +4440,7 @@
       "price_space": "cash"
     },
     {
-      "level": 177.5,
+      "level": 180.0,
       "type": "Volume Imbalance Call Node",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4458,7 +4449,7 @@
       "price_space": "cash"
     },
     {
-      "level": 175.0,
+      "level": 170.0,
       "type": "Volume Imbalance Put Node",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4467,7 +4458,7 @@
       "price_space": "cash"
     },
     {
-      "level": 160.0,
+      "level": 175.0,
       "type": "DEX Call Node",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4485,7 +4476,7 @@
       "price_space": "cash"
     },
     {
-      "level": 144.0,
+      "level": 142.0,
       "type": "Liquidity Vacuum Lower",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4494,7 +4485,7 @@
       "price_space": "cash"
     },
     {
-      "level": 222.5,
+      "level": 207.5,
       "type": "Liquidity Vacuum Upper",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4503,7 +4494,7 @@
       "price_space": "cash"
     },
     {
-      "level": 172.5,
+      "level": 170.0,
       "type": "Skew Pivot Put 25D",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4521,7 +4512,7 @@
       "price_space": "cash"
     },
     {
-      "level": 175.04,
+      "level": 173.03,
       "type": "Gamma Magnet",
       "asset": "NVDA",
       "regime": "NEGATIVE",
@@ -4539,7 +4530,7 @@
       "price_space": "cash"
     },
     {
-      "level": 374.8,
+      "level": 382.79,
       "type": "Upper EM",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4548,7 +4539,7 @@
       "price_space": "cash"
     },
     {
-      "level": 375.0,
+      "level": 382.5,
       "type": "Absolute Call Wall",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4557,7 +4548,7 @@
       "price_space": "cash"
     },
     {
-      "level": 370.0,
+      "level": 377.5,
       "type": "Local Call Node",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4566,7 +4557,7 @@
       "price_space": "cash"
     },
     {
-      "level": 375.0,
+      "level": 382.5,
       "type": "0DTE Call Wall",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4584,7 +4575,7 @@
       "price_space": "cash"
     },
     {
-      "level": 382.5,
+      "level": 385.0,
       "type": "Max Pain",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4593,7 +4584,7 @@
       "price_space": "cash"
     },
     {
-      "level": 370.0,
+      "level": 360.0,
       "type": "0DTE Put Wall",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4611,7 +4602,7 @@
       "price_space": "cash"
     },
     {
-      "level": 370.0,
+      "level": 360.0,
       "type": "Hedge Wall",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4620,7 +4611,7 @@
       "price_space": "cash"
     },
     {
-      "level": 368.9,
+      "level": 361.71,
       "type": "Lower EM",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4629,7 +4620,7 @@
       "price_space": "cash"
     },
     {
-      "level": 370.0,
+      "level": 360.0,
       "type": "Absolute Put Wall",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4647,7 +4638,7 @@
       "price_space": "cash"
     },
     {
-      "level": 367.5,
+      "level": 365.0,
       "type": "Secondary Put Wall",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4674,7 +4665,7 @@
       "price_space": "cash"
     },
     {
-      "level": 376.85,
+      "level": 376.83,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4683,7 +4674,7 @@
       "price_space": "cash"
     },
     {
-      "level": 366.85,
+      "level": 367.67,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4692,7 +4683,7 @@
       "price_space": "cash"
     },
     {
-      "level": 381.84,
+      "level": 381.41,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4701,7 +4692,7 @@
       "price_space": "cash"
     },
     {
-      "level": 361.86,
+      "level": 363.09,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4710,7 +4701,7 @@
       "price_space": "cash"
     },
     {
-      "level": 386.84,
+      "level": 385.99,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4719,7 +4710,7 @@
       "price_space": "cash"
     },
     {
-      "level": 356.86,
+      "level": 358.51,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4728,7 +4719,7 @@
       "price_space": "cash"
     },
     {
-      "level": 376.25,
+      "level": 381.25,
       "type": "Gamma Cliff Up",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4737,7 +4728,7 @@
       "price_space": "cash"
     },
     {
-      "level": 368.75,
+      "level": 358.75,
       "type": "Gamma Cliff Down",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4746,7 +4737,7 @@
       "price_space": "cash"
     },
     {
-      "level": 370.0,
+      "level": 382.5,
       "type": "Vanna Call Node",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4755,7 +4746,7 @@
       "price_space": "cash"
     },
     {
-      "level": 375.0,
+      "level": 380.0,
       "type": "Vanna Put Node",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4764,7 +4755,7 @@
       "price_space": "cash"
     },
     {
-      "level": 375.0,
+      "level": 382.5,
       "type": "Charm Call Node",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4773,7 +4764,7 @@
       "price_space": "cash"
     },
     {
-      "level": 370.0,
+      "level": 360.0,
       "type": "Charm Put Node",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4791,7 +4782,7 @@
       "price_space": "cash"
     },
     {
-      "level": 370.0,
+      "level": 357.5,
       "type": "Volume Imbalance Put Node",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4800,7 +4791,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.0,
+      "level": 382.5,
       "type": "DEX Call Node",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4818,7 +4809,7 @@
       "price_space": "cash"
     },
     {
-      "level": 342.5,
+      "level": 270.0,
       "type": "Liquidity Vacuum Lower",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4827,7 +4818,7 @@
       "price_space": "cash"
     },
     {
-      "level": 452.5,
+      "level": 442.5,
       "type": "Liquidity Vacuum Upper",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4836,7 +4827,7 @@
       "price_space": "cash"
     },
     {
-      "level": 370.0,
+      "level": 360.0,
       "type": "Skew Pivot Put 25D",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4854,7 +4845,7 @@
       "price_space": "cash"
     },
     {
-      "level": 371.51,
+      "level": 368.17,
       "type": "Gamma Magnet",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4863,7 +4854,7 @@
       "price_space": "cash"
     },
     {
-      "level": 370.0,
+      "level": 380.0,
       "type": "Pin Strike",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4872,7 +4863,7 @@
       "price_space": "cash"
     },
     {
-      "level": 597.13,
+      "level": 610.72,
       "type": "Upper EM",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -4881,7 +4872,7 @@
       "price_space": "cash"
     },
     {
-      "level": 600.0,
+      "level": 605.0,
       "type": "Absolute Call Wall",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -4890,7 +4881,7 @@
       "price_space": "cash"
     },
     {
-      "level": 600.0,
+      "level": 605.0,
       "type": "Local Call Node",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -4899,7 +4890,7 @@
       "price_space": "cash"
     },
     {
-      "level": 600.0,
+      "level": 605.0,
       "type": "0DTE Call Wall",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -4908,7 +4899,7 @@
       "price_space": "cash"
     },
     {
-      "level": 593.75,
+      "level": 597.5,
       "type": "Zero Gamma",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -4935,7 +4926,7 @@
       "price_space": "cash"
     },
     {
-      "level": 600.0,
+      "level": 590.0,
       "type": "Local Put Node",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -4953,7 +4944,7 @@
       "price_space": "cash"
     },
     {
-      "level": 589.19,
+      "level": 584.28,
       "type": "Lower EM",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -4971,7 +4962,7 @@
       "price_space": "cash"
     },
     {
-      "level": 595.0,
+      "level": 610.0,
       "type": "Secondary Call Wall",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -4980,7 +4971,7 @@
       "price_space": "cash"
     },
     {
-      "level": 592.5,
+      "level": 585.0,
       "type": "Secondary Put Wall",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -4989,7 +4980,7 @@
       "price_space": "cash"
     },
     {
-      "level": 592.5,
+      "level": 597.5,
       "type": "Gamma Flip Lower",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -4998,7 +4989,7 @@
       "price_space": "cash"
     },
     {
-      "level": 595.0,
+      "level": 597.5,
       "type": "Gamma Flip Upper",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5007,7 +4998,7 @@
       "price_space": "cash"
     },
     {
-      "level": 599.87,
+      "level": 603.24,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5016,7 +5007,7 @@
       "price_space": "cash"
     },
     {
-      "level": 586.45,
+      "level": 591.76,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5025,7 +5016,7 @@
       "price_space": "cash"
     },
     {
-      "level": 606.58,
+      "level": 608.98,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5034,7 +5025,7 @@
       "price_space": "cash"
     },
     {
-      "level": 579.74,
+      "level": 586.02,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5043,7 +5034,7 @@
       "price_space": "cash"
     },
     {
-      "level": 613.29,
+      "level": 614.72,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5052,7 +5043,7 @@
       "price_space": "cash"
     },
     {
-      "level": 573.03,
+      "level": 580.28,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5079,7 +5070,7 @@
       "price_space": "cash"
     },
     {
-      "level": 590.0,
+      "level": 605.0,
       "type": "Vanna Call Node",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5097,7 +5088,7 @@
       "price_space": "cash"
     },
     {
-      "level": 600.0,
+      "level": 615.0,
       "type": "Charm Call Node",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5106,7 +5097,7 @@
       "price_space": "cash"
     },
     {
-      "level": 600.0,
+      "level": 585.0,
       "type": "Charm Put Node",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5115,7 +5106,7 @@
       "price_space": "cash"
     },
     {
-      "level": 602.5,
+      "level": 610.0,
       "type": "Volume Imbalance Call Node",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5124,7 +5115,7 @@
       "price_space": "cash"
     },
     {
-      "level": 590.0,
+      "level": 585.0,
       "type": "Volume Imbalance Put Node",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5133,7 +5124,7 @@
       "price_space": "cash"
     },
     {
-      "level": 550.0,
+      "level": 605.0,
       "type": "DEX Call Node",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5151,16 +5142,7 @@
       "price_space": "cash"
     },
     {
-      "level": 567.5,
-      "type": "Liquidity Vacuum Lower",
-      "asset": "META",
-      "regime": "NEGATIVE",
-      "cash_ticker": "META",
-      "basis_spread": 0.0,
-      "price_space": "cash"
-    },
-    {
-      "level": 682.5,
+      "level": 652.5,
       "type": "Liquidity Vacuum Upper",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5169,7 +5151,7 @@
       "price_space": "cash"
     },
     {
-      "level": 590.0,
+      "level": 585.0,
       "type": "Skew Pivot Put 25D",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5178,7 +5160,7 @@
       "price_space": "cash"
     },
     {
-      "level": 597.5,
+      "level": 602.5,
       "type": "Skew Pivot Call 25D",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5187,7 +5169,7 @@
       "price_space": "cash"
     },
     {
-      "level": 593.84,
+      "level": 595.49,
       "type": "Gamma Magnet",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5196,7 +5178,7 @@
       "price_space": "cash"
     },
     {
-      "level": 600.0,
+      "level": 590.0,
       "type": "Pin Strike",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5205,7 +5187,7 @@
       "price_space": "cash"
     },
     {
-      "level": 302.42,
+      "level": 308.52,
       "type": "Upper EM",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5214,7 +5196,7 @@
       "price_space": "cash"
     },
     {
-      "level": 310.0,
+      "level": 307.5,
       "type": "Absolute Call Wall",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5223,7 +5205,7 @@
       "price_space": "cash"
     },
     {
-      "level": 300.0,
+      "level": 305.0,
       "type": "Local Call Node",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5232,7 +5214,7 @@
       "price_space": "cash"
     },
     {
-      "level": 310.0,
+      "level": 307.5,
       "type": "0DTE Call Wall",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5241,7 +5223,7 @@
       "price_space": "cash"
     },
     {
-      "level": 301.25,
+      "level": 303.75,
       "type": "Zero Gamma",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5250,7 +5232,7 @@
       "price_space": "cash"
     },
     {
-      "level": 295.0,
+      "level": 305.0,
       "type": "Max Pain",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5259,7 +5241,7 @@
       "price_space": "cash"
     },
     {
-      "level": 300.0,
+      "level": 302.5,
       "type": "0DTE Put Wall",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5268,7 +5250,7 @@
       "price_space": "cash"
     },
     {
-      "level": 300.0,
+      "level": 302.5,
       "type": "Local Put Node",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5277,7 +5259,7 @@
       "price_space": "cash"
     },
     {
-      "level": 300.0,
+      "level": 302.5,
       "type": "Hedge Wall",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5286,7 +5268,7 @@
       "price_space": "cash"
     },
     {
-      "level": 298.5,
+      "level": 296.6,
       "type": "Lower EM",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5295,7 +5277,7 @@
       "price_space": "cash"
     },
     {
-      "level": 300.0,
+      "level": 302.5,
       "type": "Absolute Put Wall",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5304,7 +5286,7 @@
       "price_space": "cash"
     },
     {
-      "level": 302.5,
+      "level": 305.0,
       "type": "Secondary Call Wall",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5313,7 +5295,7 @@
       "price_space": "cash"
     },
     {
-      "level": 297.5,
+      "level": 300.0,
       "type": "Secondary Put Wall",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5322,7 +5304,7 @@
       "price_space": "cash"
     },
     {
-      "level": 300.0,
+      "level": 302.5,
       "type": "Gamma Flip Lower",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5331,7 +5313,7 @@
       "price_space": "cash"
     },
     {
-      "level": 302.5,
+      "level": 305.0,
       "type": "Gamma Flip Upper",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5340,7 +5322,7 @@
       "price_space": "cash"
     },
     {
-      "level": 303.78,
+      "level": 305.15,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5349,7 +5331,7 @@
       "price_space": "cash"
     },
     {
-      "level": 297.14,
+      "level": 299.97,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5358,7 +5340,7 @@
       "price_space": "cash"
     },
     {
-      "level": 307.1,
+      "level": 307.74,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5367,7 +5349,7 @@
       "price_space": "cash"
     },
     {
-      "level": 293.82,
+      "level": 297.38,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5376,7 +5358,7 @@
       "price_space": "cash"
     },
     {
-      "level": 310.41,
+      "level": 310.33,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5385,7 +5367,7 @@
       "price_space": "cash"
     },
     {
-      "level": 290.51,
+      "level": 294.79,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5394,7 +5376,7 @@
       "price_space": "cash"
     },
     {
-      "level": 301.25,
+      "level": 303.75,
       "type": "Gamma Cliff Up",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5403,7 +5385,7 @@
       "price_space": "cash"
     },
     {
-      "level": 298.75,
+      "level": 301.25,
       "type": "Gamma Cliff Down",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5412,7 +5394,7 @@
       "price_space": "cash"
     },
     {
-      "level": 300.0,
+      "level": 297.5,
       "type": "Vanna Call Node",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5421,7 +5403,7 @@
       "price_space": "cash"
     },
     {
-      "level": 300.0,
+      "level": 302.5,
       "type": "Vanna Put Node",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5430,7 +5412,7 @@
       "price_space": "cash"
     },
     {
-      "level": 310.0,
+      "level": 307.5,
       "type": "Charm Call Node",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5439,7 +5421,7 @@
       "price_space": "cash"
     },
     {
-      "level": 300.0,
+      "level": 305.0,
       "type": "Charm Put Node",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5448,7 +5430,7 @@
       "price_space": "cash"
     },
     {
-      "level": 302.5,
+      "level": 307.5,
       "type": "Volume Imbalance Call Node",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5457,7 +5439,7 @@
       "price_space": "cash"
     },
     {
-      "level": 300.0,
+      "level": 292.5,
       "type": "Volume Imbalance Put Node",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5466,7 +5448,7 @@
       "price_space": "cash"
     },
     {
-      "level": 300.0,
+      "level": 297.5,
       "type": "DEX Call Node",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5475,7 +5457,7 @@
       "price_space": "cash"
     },
     {
-      "level": 330.0,
+      "level": 302.5,
       "type": "DEX Put Node",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5484,7 +5466,7 @@
       "price_space": "cash"
     },
     {
-      "level": 287.5,
+      "level": 265.0,
       "type": "Liquidity Vacuum Lower",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5511,7 +5493,7 @@
       "price_space": "cash"
     },
     {
-      "level": 302.5,
+      "level": 305.0,
       "type": "Skew Pivot Call 25D",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5520,7 +5502,7 @@
       "price_space": "cash"
     },
     {
-      "level": 302.22,
+      "level": 303.45,
       "type": "Gamma Magnet",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5529,7 +5511,7 @@
       "price_space": "cash"
     },
     {
-      "level": 300.0,
+      "level": 302.5,
       "type": "Pin Strike",
       "asset": "GOOGL",
       "regime": "NEGATIVE",
@@ -5538,7 +5520,7 @@
       "price_space": "cash"
     },
     {
-      "level": 207.72,
+      "level": 211.5,
       "type": "Upper EM",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5547,7 +5529,7 @@
       "price_space": "cash"
     },
     {
-      "level": 207.5,
+      "level": 210.0,
       "type": "Absolute Call Wall",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5556,7 +5538,7 @@
       "price_space": "cash"
     },
     {
-      "level": 205.0,
+      "level": 210.0,
       "type": "Local Call Node",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5565,7 +5547,7 @@
       "price_space": "cash"
     },
     {
-      "level": 207.5,
+      "level": 210.0,
       "type": "0DTE Call Wall",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5583,7 +5565,7 @@
       "price_space": "cash"
     },
     {
-      "level": 210.0,
+      "level": 207.5,
       "type": "Max Pain",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5592,7 +5574,7 @@
       "price_space": "cash"
     },
     {
-      "level": 205.0,
+      "level": 202.5,
       "type": "0DTE Put Wall",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5610,7 +5592,7 @@
       "price_space": "cash"
     },
     {
-      "level": 205.0,
+      "level": 202.5,
       "type": "Hedge Wall",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5619,7 +5601,7 @@
       "price_space": "cash"
     },
     {
-      "level": 204.8,
+      "level": 202.46,
       "type": "Lower EM",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5628,7 +5610,7 @@
       "price_space": "cash"
     },
     {
-      "level": 205.0,
+      "level": 202.5,
       "type": "Absolute Put Wall",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5637,7 +5619,7 @@
       "price_space": "cash"
     },
     {
-      "level": 210.0,
+      "level": 207.5,
       "type": "Secondary Call Wall",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5646,7 +5628,7 @@
       "price_space": "cash"
     },
     {
-      "level": 200.0,
+      "level": 205.0,
       "type": "Secondary Put Wall",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5673,7 +5655,7 @@
       "price_space": "cash"
     },
     {
-      "level": 208.73,
+      "level": 208.94,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5682,7 +5664,7 @@
       "price_space": "cash"
     },
     {
-      "level": 203.79,
+      "level": 205.02,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5691,7 +5673,7 @@
       "price_space": "cash"
     },
     {
-      "level": 211.2,
+      "level": 210.91,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5700,7 +5682,7 @@
       "price_space": "cash"
     },
     {
-      "level": 201.32,
+      "level": 203.05,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5709,7 +5691,7 @@
       "price_space": "cash"
     },
     {
-      "level": 213.66,
+      "level": 212.87,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5718,7 +5700,7 @@
       "price_space": "cash"
     },
     {
-      "level": 198.86,
+      "level": 201.09,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5727,7 +5709,7 @@
       "price_space": "cash"
     },
     {
-      "level": 211.25,
+      "level": 208.75,
       "type": "Gamma Cliff Up",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5736,7 +5718,7 @@
       "price_space": "cash"
     },
     {
-      "level": 203.75,
+      "level": 201.25,
       "type": "Gamma Cliff Down",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5745,7 +5727,7 @@
       "price_space": "cash"
     },
     {
-      "level": 205.0,
+      "level": 207.5,
       "type": "Vanna Call Node",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5763,7 +5745,7 @@
       "price_space": "cash"
     },
     {
-      "level": 210.0,
+      "level": 215.0,
       "type": "Charm Call Node",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5772,7 +5754,7 @@
       "price_space": "cash"
     },
     {
-      "level": 205.0,
+      "level": 202.5,
       "type": "Charm Put Node",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5790,7 +5772,7 @@
       "price_space": "cash"
     },
     {
-      "level": 205.0,
+      "level": 200.0,
       "type": "Volume Imbalance Put Node",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5799,7 +5781,7 @@
       "price_space": "cash"
     },
     {
-      "level": 200.0,
+      "level": 210.0,
       "type": "DEX Call Node",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5808,7 +5790,7 @@
       "price_space": "cash"
     },
     {
-      "level": 210.0,
+      "level": 207.5,
       "type": "DEX Put Node",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5817,7 +5799,7 @@
       "price_space": "cash"
     },
     {
-      "level": 135.0,
+      "level": 175.0,
       "type": "Liquidity Vacuum Lower",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5826,7 +5808,7 @@
       "price_space": "cash"
     },
     {
-      "level": 237.5,
+      "level": 230.0,
       "type": "Liquidity Vacuum Upper",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5835,7 +5817,7 @@
       "price_space": "cash"
     },
     {
-      "level": 205.0,
+      "level": 202.5,
       "type": "Skew Pivot Put 25D",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5853,7 +5835,7 @@
       "price_space": "cash"
     },
     {
-      "level": 205.87,
+      "level": 206.06,
       "type": "Gamma Magnet",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5862,7 +5844,7 @@
       "price_space": "cash"
     },
     {
-      "level": 205.0,
+      "level": 210.0,
       "type": "Pin Strike",
       "asset": "AMZN",
       "regime": "NEGATIVE",
@@ -5871,7 +5853,7 @@
       "price_space": "cash"
     },
     {
-      "level": 318.15,
+      "level": 322.4,
       "type": "Upper EM",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -5880,7 +5862,7 @@
       "price_space": "cash"
     },
     {
-      "level": 320.0,
+      "level": 325.0,
       "type": "Absolute Call Wall",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -5889,7 +5871,7 @@
       "price_space": "cash"
     },
     {
-      "level": 315.0,
+      "level": 310.0,
       "type": "Local Call Node",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -5898,7 +5880,7 @@
       "price_space": "cash"
     },
     {
-      "level": 320.0,
+      "level": 325.0,
       "type": "0DTE Call Wall",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -5916,7 +5898,7 @@
       "price_space": "cash"
     },
     {
-      "level": 317.5,
+      "level": 320.0,
       "type": "Max Pain",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -5925,7 +5907,7 @@
       "price_space": "cash"
     },
     {
-      "level": 310.0,
+      "level": 305.0,
       "type": "0DTE Put Wall",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -5934,7 +5916,7 @@
       "price_space": "cash"
     },
     {
-      "level": 315.0,
+      "level": 317.5,
       "type": "Local Put Node",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -5943,7 +5925,7 @@
       "price_space": "cash"
     },
     {
-      "level": 310.0,
+      "level": 305.0,
       "type": "Hedge Wall",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -5952,7 +5934,7 @@
       "price_space": "cash"
     },
     {
-      "level": 311.75,
+      "level": 303.9,
       "type": "Lower EM",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -5961,7 +5943,7 @@
       "price_space": "cash"
     },
     {
-      "level": 310.0,
+      "level": 305.0,
       "type": "Absolute Put Wall",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -5970,7 +5952,7 @@
       "price_space": "cash"
     },
     {
-      "level": 315.0,
+      "level": 330.0,
       "type": "Secondary Call Wall",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -5979,7 +5961,7 @@
       "price_space": "cash"
     },
     {
-      "level": 312.5,
+      "level": 310.0,
       "type": "Secondary Put Wall",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6006,7 +5988,7 @@
       "price_space": "cash"
     },
     {
-      "level": 320.37,
+      "level": 317.17,
       "type": "Vol Trigger +0.5\u03c3",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6015,7 +5997,7 @@
       "price_space": "cash"
     },
     {
-      "level": 309.53,
+      "level": 309.13,
       "type": "Vol Trigger -0.5\u03c3",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6024,7 +6006,7 @@
       "price_space": "cash"
     },
     {
-      "level": 325.79,
+      "level": 321.19,
       "type": "Vol Trigger +1.0\u03c3",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6033,7 +6015,7 @@
       "price_space": "cash"
     },
     {
-      "level": 304.11,
+      "level": 305.11,
       "type": "Vol Trigger -1.0\u03c3",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6042,7 +6024,7 @@
       "price_space": "cash"
     },
     {
-      "level": 331.21,
+      "level": 325.2,
       "type": "Vol Trigger +1.5\u03c3",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6051,7 +6033,7 @@
       "price_space": "cash"
     },
     {
-      "level": 298.69,
+      "level": 301.1,
       "type": "Vol Trigger -1.5\u03c3",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6060,7 +6042,7 @@
       "price_space": "cash"
     },
     {
-      "level": 321.25,
+      "level": 318.75,
       "type": "Gamma Cliff Up",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6069,7 +6051,7 @@
       "price_space": "cash"
     },
     {
-      "level": 308.75,
+      "level": 303.75,
       "type": "Gamma Cliff Down",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6078,7 +6060,7 @@
       "price_space": "cash"
     },
     {
-      "level": 310.0,
+      "level": 307.5,
       "type": "Vanna Call Node",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6087,7 +6069,7 @@
       "price_space": "cash"
     },
     {
-      "level": 320.0,
+      "level": 317.5,
       "type": "Vanna Put Node",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6096,7 +6078,7 @@
       "price_space": "cash"
     },
     {
-      "level": 320.0,
+      "level": 330.0,
       "type": "Charm Call Node",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6105,7 +6087,7 @@
       "price_space": "cash"
     },
     {
-      "level": 310.0,
+      "level": 297.5,
       "type": "Charm Put Node",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6114,7 +6096,7 @@
       "price_space": "cash"
     },
     {
-      "level": 320.0,
+      "level": 250.0,
       "type": "Volume Imbalance Call Node",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6123,7 +6105,7 @@
       "price_space": "cash"
     },
     {
-      "level": 310.0,
+      "level": 305.0,
       "type": "Volume Imbalance Put Node",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6132,7 +6114,7 @@
       "price_space": "cash"
     },
     {
-      "level": 230.0,
+      "level": 307.5,
       "type": "DEX Call Node",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6141,7 +6123,7 @@
       "price_space": "cash"
     },
     {
-      "level": 320.0,
+      "level": 317.5,
       "type": "DEX Put Node",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6150,7 +6132,7 @@
       "price_space": "cash"
     },
     {
-      "level": 302.5,
+      "level": 260.0,
       "type": "Liquidity Vacuum Lower",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6159,7 +6141,7 @@
       "price_space": "cash"
     },
     {
-      "level": 352.5,
+      "level": 347.5,
       "type": "Liquidity Vacuum Upper",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6168,7 +6150,7 @@
       "price_space": "cash"
     },
     {
-      "level": 312.5,
+      "level": 302.5,
       "type": "Skew Pivot Put 25D",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6186,7 +6168,7 @@
       "price_space": "cash"
     },
     {
-      "level": 312.19,
+      "level": 310.17,
       "type": "Gamma Magnet",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -6195,7 +6177,7 @@
       "price_space": "cash"
     },
     {
-      "level": 320.0,
+      "level": 310.0,
       "type": "Pin Strike",
       "asset": "AVGO",
       "regime": "NEGATIVE",
