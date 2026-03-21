@@ -16,19 +16,47 @@ from __future__ import annotations
 
 import json
 import logging
+import traceback
+import math
 from datetime import datetime, timezone, date
 from typing import Any
 
 import requests
+from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter
 
 from .gex_calculator import DealerLevels
 
 log = logging.getLogger(__name__)
 
-# The Next.js dev server URL — set NEXT_APP_URL env var to override.
-import os
-_NEXT_URL = os.environ.get("NEXT_APP_URL", "http://localhost:3000")
-_SNAPSHOT_ENDPOINT = f"{_NEXT_URL}/api/options-live/snapshot"
+from .config import SNAPSHOT_ENDPOINT, MACRO_SNAPSHOT_ENDPOINT
+
+# Configure a resilient session with exponential backoff
+# Retries: 5, Backoff Factor: 1 (1s, 2s, 4s, 8s, 16s)
+# Status codes to retry: 500, 502, 503, 504
+_retry_strategy = Retry(
+    total=5,
+    backoff_factor=1,
+    status_forcelist=[500, 502, 503, 504],
+    allowed_methods=["POST"],
+    raise_on_status=False
+)
+_adapter = HTTPAdapter(max_retries=_retry_strategy)
+_api_session = requests.Session()
+_api_session.mount("http://", _adapter)
+_api_session.mount("https://", _adapter)
+
+
+def _sanitize_payload(data: Any) -> Any:
+    """Recursively replace NaN and Inf with None for JSON compatibility."""
+    if isinstance(data, dict):
+        return {k: _sanitize_payload(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [_sanitize_payload(x) for x in data]
+    elif isinstance(data, float):
+        if math.isnan(data) or math.isinf(data):
+            return None
+    return data
 
 
 def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> bool:
@@ -69,11 +97,13 @@ def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> 
         "netVannaExposure": levels.net_vanna_exposure,
     }
 
+    payload = _sanitize_payload(payload)
+
     try:
-        resp = requests.post(
-            _SNAPSHOT_ENDPOINT,
+        resp = _api_session.post(
+            SNAPSHOT_ENDPOINT,
             json=payload,
-            timeout=5,
+            timeout=10,
             headers={"Content-Type": "application/json"},
         )
         if resp.status_code == 200:
@@ -86,10 +116,63 @@ def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> 
             )
             return False
     except requests.exceptions.ConnectionError:
-        log.debug("Next.js server not reachable — skipping snapshot for %s (not running?)", ticker)
+        log.warning("GexSnapshot write failed for %s: Connection Refused (Is the Next.js server running at %s?)", ticker, SNAPSHOT_ENDPOINT)
         return False
     except Exception as e:
-        log.warning("GexSnapshot write error for %s: %s", ticker, e)
+        log.warning("GexSnapshot write error for %s: %s\n%s", ticker, e, traceback.format_exc())
+        return False
+
+
+def write_macro_snapshot(
+    ticker: str, 
+    spot: float, 
+    levels: dict[str, float | None], 
+    anomalies: dict[str, list[dict[str, Any]]],
+    dominant_nodes: list[dict[str, Any]] = None
+) -> bool:
+    """
+    Pillar 4: POST a macro HTF snapshot to the Next.js API.
+    """
+    now_utc = datetime.now(timezone.utc)
+    trading_date = _trading_date_str(now_utc)
+    
+    endpoint = MACRO_SNAPSHOT_ENDPOINT
+
+    payload: dict[str, Any] = {
+        "ticker": ticker,
+        "timestamp": now_utc.isoformat(),
+        "tradingDate": trading_date,
+        "spotPrice": spot,
+        "macroCallWall": levels.get("macro_call_wall"),
+        "macroPutWall": levels.get("macro_put_wall"),
+        "zeroGamma": levels.get("zero_gamma"),
+        "anomalies": anomalies,
+        "dominantNodes": dominant_nodes or [],
+    }
+
+    payload = _sanitize_payload(payload)
+
+    try:
+        resp = _api_session.post(
+            endpoint,
+            json=payload,
+            timeout=15,
+            headers={"Content-Type": "application/json"},
+        )
+        if resp.status_code in (200, 201):
+            log.info("Macro HTF snapshot written for %s", ticker)
+            return True
+        else:
+            log.warning(
+                "Macro HTF snapshot write failed for %s: HTTP %d — %s",
+                ticker, resp.status_code, resp.text[:200],
+            )
+            return False
+    except requests.exceptions.ConnectionError:
+        log.warning("Macro HTF snapshot write failed for %s: Connection Refused (Is the Next.js server running at %s?)", ticker, endpoint)
+        return False
+    except Exception as e:
+        log.warning("Macro HTF snapshot write error for %s: %s\n%s", ticker, e, traceback.format_exc())
         return False
 
 

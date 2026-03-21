@@ -226,14 +226,25 @@ def _build_coaches_note_payloads(
     return payloads
 
 
-def _post_payload(url: str, payload: dict[str, Any]) -> None:
-    """POST a single Discord webhook payload with error handling."""
+def _post_payload(url: str, payload: dict[str, Any], files: dict[str, Any] | None = None) -> None:
+    """POST a Discord webhook payload (JSON or multipart) with error handling."""
     try:
-        resp = requests.post(url, json=payload, timeout=10)
+        if files:
+            # When sending files, the payload must be passed as 'payload_json' in data
+            resp = requests.post(
+                url, 
+                data={"payload_json": json.dumps(payload)}, 
+                files=files, 
+                timeout=20
+            )
+        else:
+            resp = requests.post(url, json=payload, timeout=10)
+
         if resp.status_code in (200, 204):
             log.info(
-                "Discord update sent (%d embed(s)).",
+                "Discord update sent (%d embed(s), %s).",
                 len(payload.get("embeds", [])),
+                "with file" if files else "no file"
             )
         else:
             log.warning(
@@ -250,6 +261,59 @@ def _post_payload(url: str, payload: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+def send_macro_update(
+    ticker: str,
+    chart_buf: Any,  # io.BytesIO
+    levels: dict[str, float | None],
+    anomalies: list[dict[str, Any]],
+    webhook_url: str | None = None,
+) -> None:
+    """
+    Task 3: Delivers the macro HTF chart and whale summary to Discord.
+    """
+    # Use the specified macro testing webhook if none provided
+    url = webhook_url or "https://discord.com/api/webhooks/1484969523877646541/MSDSgrAcapFTT_xbhxT982gXu1o6ywePaOhGqeu9rkH28zdoeR612gCbfmcr8VS-ltJ3"
+    
+    run_label = datetime.now().strftime("%Y-%m-%d")
+    
+    # 1. Build the summary embed
+    color = 0x9C27B0 # Purple for Macro/Whales
+    
+    fields = [
+        {"name": "Ticker", "value": f"**{ticker}**", "inline": True},
+        {"name": "Macro Call Wall", "value": fmt(levels.get("macro_call_wall")), "inline": True},
+        {"name": "Macro Put Wall", "value": fmt(levels.get("macro_put_wall")), "inline": True},
+        {"name": f"🐋 Top {min(5, len(anomalies))} Whale Anomalies", "value": "\u200b", "inline": False},
+    ]
+    
+    for i, w in enumerate(anomalies[:5]):
+        icon = "🟢" if w["type"] == "CALL" else "🔴"
+        fields.append({
+            "name": f"{icon} {w['strike']} {w['type']} (Tier {w['tier']})",
+            "value": f"DTE: {w['dte_str']} | Notional: ${w['notional']:,.0f} | Vol/OI: {w['avg_vol_oi_ratio']}x",
+            "inline": True
+        })
+
+    embed = {
+        "title": f"Institutional Macro Analysis — {ticker}",
+        "description": f"HTF Vol/OI anomalies detected for the upcoming week ({run_label}).",
+        "color": color,
+        "fields": fields,
+        "image": {"url": "attachment://macro_chart.png"},
+        "footer": {
+            "text": f"Weekly Macro Report • {ticker} • {datetime.now().strftime('%H:%M ET')}"
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # 2. Preparation for upload
+    files = {
+        "file": ("macro_chart.png", chart_buf, "image/png")
+    }
+
+    _post_payload(url, {"embeds": [embed]}, files=files)
+
 
 def send_discord_update(
     translated_levels: list[TranslatedLevels],

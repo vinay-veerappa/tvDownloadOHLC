@@ -12,7 +12,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import DAILY_LEVELS_JSON, DAILY_LEVELS_TXT, GEX_PROFILES_JSON, LIVE_TREND_JSON
+from .config import (
+    DAILY_LEVELS_JSON, 
+    DAILY_LEVELS_TXT, 
+    GEX_PROFILES_JSON, 
+    LIVE_TREND_JSON,
+    MACRO_LEVELS_TXT
+)
 from .formatting import (
     build_coaches_note,
     build_plan,
@@ -30,7 +36,6 @@ log = logging.getLogger(__name__)
 def _is_rth() -> bool:
     """Return True if current time falls within Regular Trading Hours (9:30–16:00 ET, Mon-Fri)."""
     from zoneinfo import ZoneInfo
-    from datetime import time as dt_time
     now = datetime.now(ZoneInfo("America/New_York"))
     if now.weekday() >= 5:  # Saturday=5, Sunday=6
         return False
@@ -500,3 +505,66 @@ def write_levels(
     txt_path.parent.mkdir(parents=True, exist_ok=True)
     txt_path.write_text("\n".join(lines), encoding="utf-8")
     log.info("TXT written  → %s", txt_path)
+
+
+def write_macro_levels(
+    ticker: str, 
+    levels: dict[str, float | None], 
+    anomalies: dict[str, list[dict[str, Any]]],
+    dominant_nodes: list[dict[str, Any]] = None,
+    path: Path = MACRO_LEVELS_TXT
+) -> None:
+    """
+    Pillar 5: Strict text output for Pine Script.
+    Format: TICKER:Price:Label, Price:Label, Price:Label
+    """
+    tokens: list[str] = []
+    
+    # 1. Macro Walls
+    if levels.get("macro_call_wall"):
+        tokens.append(f"{levels['macro_call_wall']:.2f}:Macro Call Wall")
+        
+    if levels.get("macro_put_wall"):
+        tokens.append(f"{levels['macro_put_wall']:.2f}:Macro Put Wall")
+
+    if levels.get("zero_gamma"):
+        tokens.append(f"{levels['zero_gamma']:.2f}:Zero Gamma")
+
+    # 2. Structural Whales (Confluence >= 2)
+    for w in anomalies.get("structural", []):
+        # Add a multiplier tag if there are multiple expirations (e.g., "x5")
+        conf_tag = f" x{w['confluence']}" if w['confluence'] > 1 else ""
+        prefix = "[GOLDEN SWEEP] " if w.get('is_golden_sweep') else ""
+        label = f"{prefix}Whale {w['type']}{conf_tag} {w['dte_str']} ({w['avg_vol_oi_ratio']}x)"
+        tokens.append(f"{w['strike']:.2f}:{label}")
+
+    # 3. Tactical Whales (Confluence == 1)
+    # We label these "Local Whale" so the Pine Script 'isTactical' proximity 
+    # filter automatically catches the word "LOCAL" and hides them if they are far away.
+    for w in anomalies.get("tactical", []):
+        prefix = "[GOLDEN SWEEP] " if w.get('is_golden_sweep') else ""
+        label = f"{prefix}Local Whale {w['type']} {w['dte_str']} ({w['avg_vol_oi_ratio']}x)"
+        tokens.append(f"{w['strike']:.2f}:{label}")
+
+    # 4. Dominant OI Nodes (The Map)
+    if dominant_nodes:
+        for node in dominant_nodes:
+            label = f"Major {node['type'].capitalize()} Node ({node['dominance_pct']}%)"
+            tokens.append(f"{node['strike']:.2f}:{label}")
+
+    # 5. Format for Pine Script Parser
+    if tokens:
+        # The Pine script expects the VERY FIRST token to include the ticker
+        # Example: SPX:5100.00:Macro Call Wall
+        tokens[0] = f"{ticker}:{tokens[0]}"
+        
+    final_string = ", ".join(tokens)
+
+    # Ensure directory exists
+    path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Use append mode ('a') so we don't overwrite previous tickers in the pipeline loop
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(final_string + "\n")
+        
+    log.info("Macro Levels appended to %s", path)

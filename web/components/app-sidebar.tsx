@@ -21,7 +21,8 @@ import {
     LayoutDashboard,
     AreaChart,
     Flame,
-    Radar
+    Radar,
+    Waves
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -81,6 +82,13 @@ export function AppSidebar() {
             icon: Zap,
             href: "/tools/expected-move",
             active: pathname === "/tools/expected-move",
+        },
+        {
+            label: "Macro HTF",
+            icon: Waves,
+            href: "/macro",
+            active: pathname === "/macro",
+            badge: "New",
         },
         {
             label: "Candle Science",

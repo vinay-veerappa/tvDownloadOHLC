@@ -1353,13 +1353,65 @@ def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_
     tos_expected_move = spot_price * vol_decimal * math.sqrt(years_to_expiry)
     
     # 4. Output to screen for verification
-    print("\n" + "="*50)
-    print(f"TOS EXPECTED MOVE VERIFICATION")
-    print(f"Spot Price:        ${spot_price:.2f}")
-    print(f"Expiry Date:       {clean_date_str}")
-    print(f"Blended Vol (IV):  {vol_decimal:.4f} ({vol_decimal*100:.2f}%)")
-    print(f"Fractional DTE:    {fractional_dte:.4f} days")
-    print(f"Calculated TOS EM: ±${tos_expected_move:.2f}")
-    print("="*50 + "\n")
+    #print("\n" + "="*50)
+    # print(f"TOS EXPECTED MOVE VERIFICATION")
+    # print(f"Spot Price:        ${spot_price:.2f}")
+    # print(f"Expiry Date:       {clean_date_str}")
+    # print(f"Blended Vol (IV):  {vol_decimal:.4f} ({vol_decimal*100:.2f}%)")
+    # print(f"Fractional DTE:    {fractional_dte:.4f} days")
+    # print(f"Calculated TOS EM: ±${tos_expected_move:.2f}")
+    # print("="*50 + "\n")
     
     return tos_expected_move
+
+
+def extract_dominant_oi_nodes(
+    chain: OptionChainData, 
+    min_dominance_pct: float = 3.0, 
+    min_oi_threshold: int = 5000
+) -> list[dict[str, Any]]:
+    """
+    Extracts structural nodes based purely on resting Open Interest dominance,
+    ignoring daily volume. 
+    """
+    spot = float(chain.spot_price)
+    
+    total_call_oi = sum(c.open_interest for c in chain.calls)
+    total_put_oi = sum(p.open_interest for p in chain.puts)
+    
+    total_call_oi = max(total_call_oi, 1)
+    total_put_oi = max(total_put_oi, 1)
+
+    dominant_nodes = []
+
+    for c in chain.calls:
+        oi = c.open_interest
+        if oi < min_oi_threshold: continue
+        dominance_pct = (oi / total_call_oi) * 100
+        if dominance_pct >= min_dominance_pct:
+            pct_from_spot = abs(c.strike - spot) / spot
+            if pct_from_spot <= 0.15: # Ignore deep OTM lotto tickets
+                dominant_nodes.append({
+                    "strike": float(c.strike),
+                    "type": "CALL",
+                    "oi": int(oi),
+                    "dominance_pct": round(dominance_pct, 1),
+                    "label": f"Major Call Node ({round(dominance_pct, 1)}%)"
+                })
+
+    for p in chain.puts:
+        oi = p.open_interest
+        if oi < min_oi_threshold: continue
+        dominance_pct = (oi / total_put_oi) * 100
+        if dominance_pct >= min_dominance_pct:
+            pct_from_spot = abs(p.strike - spot) / spot
+            if pct_from_spot <= 0.15:
+                dominant_nodes.append({
+                    "strike": float(p.strike),
+                    "type": "PUT",
+                    "oi": int(oi),
+                    "dominance_pct": round(dominance_pct, 1),
+                    "label": f"Major Put Node ({round(dominance_pct, 1)}%)"
+                })
+
+    return sorted(dominant_nodes, key=lambda x: x["oi"], reverse=True)

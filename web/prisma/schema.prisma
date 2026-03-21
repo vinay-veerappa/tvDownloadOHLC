@@ -6,7 +6,7 @@ generator client {
 }
 
 generator py_client {
-  provider = "C:/Users/vinay/AppData/Roaming/Python/Python314/Scripts/prisma-client-py.exe"
+  provider  = "C:/Users/vinay/AppData/Roaming/Python/Python314/Scripts/prisma-client-py.exe"
   interface = "asyncio"
 }
 
@@ -16,19 +16,19 @@ datasource db {
 }
 
 model Account {
-  id             String   @id @default(cuid())
+  id             String  @id @default(cuid())
   name           String
-  currency       String   @default("USD")
+  currency       String  @default("USD")
   initialBalance Float
   currentBalance Float
-  isDefault      Boolean  @default(false)
+  isDefault      Boolean @default(false)
   trades         Trade[]
-  
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  
-  groupId        String?
-  group          AccountGroup? @relation(fields: [groupId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  groupId String?
+  group   AccountGroup? @relation(fields: [groupId], references: [id])
 }
 
 model AccountGroup {
@@ -36,114 +36,114 @@ model AccountGroup {
   name        String    @unique
   description String?
   accounts    Account[]
-  
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Strategy {
-  id          String   @id @default(cuid())
+  id          String  @id @default(cuid())
   name        String
   description String?
-  color       String   @default("#2962FF") // For UI tagging
+  color       String  @default("#2962FF") // For UI tagging
   trades      Trade[]
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Playbook {
-  id          String   @id @default(cuid())
-  name        String   @unique
+  id          String  @id @default(cuid())
+  name        String  @unique
   description String?
   rules       String?
   trades      Trade[]
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Trade {
-  id          String   @id @default(cuid())
-  ticker      String
-  entryDate   DateTime
-  exitDate    DateTime?
-  entryPrice  Float?   // Optional for Pending orders until filled
-  exitPrice   Float?
-  quantity    Float
-  direction   String   // "LONG" or "SHORT"
-  status      String   // "OPEN", "CLOSED", "PENDING", "CANCELLED"
-  
+  id         String    @id @default(cuid())
+  ticker     String
+  entryDate  DateTime
+  exitDate   DateTime?
+  entryPrice Float? // Optional for Pending orders until filled
+  exitPrice  Float?
+  quantity   Float
+  direction  String // "LONG" or "SHORT"
+  status     String // "OPEN", "CLOSED", "PENDING", "CANCELLED"
+
   // Relations
-  account     Account  @relation(fields: [accountId], references: [id])
-  accountId   String
-  strategy    Strategy? @relation(fields: [strategyId], references: [id])
-  strategyId  String?
+  account    Account   @relation(fields: [accountId], references: [id])
+  accountId  String
+  strategy   Strategy? @relation(fields: [strategyId], references: [id])
+  strategyId String?
 
   // Advanced Order Fields
-  orderType      String   @default("MARKET") // "MARKET", "LIMIT", "STOP"
-  limitPrice     Float?
-  stopPrice      Float?   // Trigger price for Stop orders
-  
+  orderType  String @default("MARKET") // "MARKET", "LIMIT", "STOP"
+  limitPrice Float?
+  stopPrice  Float? // Trigger price for Stop orders
+
   // Bracket Orders
-  stopLoss       Float?
-  takeProfit     Float?
-  
-  pnl         Float?
-  fees        Float?
-  
+  stopLoss   Float?
+  takeProfit Float?
+
+  pnl  Float?
+  fees Float?
+
   // Advanced Journal Metrics
-  risk        Float?   // Intended risk in $
-  mae         Float?   // Max Adverse Excursion price
-  mfe         Float?   // Max Favorable Excursion price
-  duration    Int?     // Duration in seconds
+  risk          Float? // Intended risk in $
+  mae           Float? // Max Adverse Excursion price
+  mfe           Float? // Max Favorable Excursion price
+  duration      Int? // Duration in seconds
   chartSnapshot String? // URL or path to snapshot
 
-  notes       String?
-  tags        Tag[]
-  metadata    String?  // Storage for arbitrary JSON metrics (e.g. correlation data)
+  notes          String?
+  tags           Tag[]
+  metadata       String? // Storage for arbitrary JSON metrics (e.g. correlation data)
   originalSource String? // "TV", "TRADOVATE", "TOPSTEP", "MANUAL"
-  
+
   // Psychology & Playbook
-  playbookId      String?
-  playbook        Playbook? @relation(fields: [playbookId], references: [id])
-  
-  disciplineRating Int?     // 1-10
-  emotions        String?  // Comma-separated tags e.g. "Fear,Greed"
-  mistakes        String?  // Comma-separated tags e.g. "Chasing,WideStop"
-  
+  playbookId String?
+  playbook   Playbook? @relation(fields: [playbookId], references: [id])
+
+  disciplineRating Int? // 1-10
+  emotions         String? // Comma-separated tags e.g. "Fear,Greed"
+  mistakes         String? // Comma-separated tags e.g. "Chasing,WideStop"
+
   // Phase 1: Journal Enhancement Relations
   marketCondition MarketCondition?
   tradeEvents     TradeEvent[]
   tradeNotes      Note[]
   tradePlan       TradePlan?
-  
+
   // Phase 3: Ralph Loop Relations
-  chartLinks      Chart[]
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  chartLinks Chart[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Journal {
-  id        String   @id @default(cuid())
-  date      DateTime @unique
-  content   String
-  mood      String?
-  
+  id      String   @id @default(cuid())
+  date    DateTime @unique
+  content String
+  mood    String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model Rundown {
-  id          String   @id @default(cuid())
-  date        DateTime @unique
-  content     String?
-  mood        String?
-  score       Int?     // Daily discipline score
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id      String   @id @default(cuid())
+  date    DateTime @unique
+  content String?
+  mood    String?
+  score   Int? // Daily discipline score
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Tag {
@@ -155,22 +155,22 @@ model Tag {
 }
 
 model BacktestResult {
-  id          String   @id @default(cuid())
-  strategy    String
-  ticker      String
-  timeframe   String
-  startDate   DateTime
-  endDate     DateTime
-  
-  totalTrades Int
-  winRate     Float
+  id        String   @id @default(cuid())
+  strategy  String
+  ticker    String
+  timeframe String
+  startDate DateTime
+  endDate   DateTime
+
+  totalTrades  Int
+  winRate      Float
   profitFactor Float
-  totalPnl    Float
-  
-  config      String   // JSON string of strategy config
-  trades      String   // JSON string of trade list (or relation to Trade model if we want detailed storage)
-  
-  createdAt   DateTime @default(now())
+  totalPnl     Float
+
+  config String // JSON string of strategy config
+  trades String // JSON string of trade list (or relation to Trade model if we want detailed storage)
+
+  createdAt DateTime @default(now())
 }
 
 // ==========================================
@@ -179,40 +179,40 @@ model BacktestResult {
 
 // Market context captured at trade time
 model MarketCondition {
-  id        String  @id @default(cuid())
-  tradeId   String  @unique
-  trade     Trade   @relation(fields: [tradeId], references: [id], onDelete: Cascade)
-  
-  vix       Float?
-  vvix      Float?
-  atr       Float?
-  trend     String? // "TRENDING_UP" | "RANGING" | "TRENDING_DOWN"
-  session   String? // "ASIAN" | "EUROPEAN" | "US" | "AFTER_HOURS"
-  volume    String? // "LOW" | "NORMAL" | "HIGH"
+  id      String @id @default(cuid())
+  tradeId String @unique
+  trade   Trade  @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  vix     Float?
+  vvix    Float?
+  atr     Float?
+  trend   String? // "TRENDING_UP" | "RANGING" | "TRENDING_DOWN"
+  session String? // "ASIAN" | "EUROPEAN" | "US" | "AFTER_HOURS"
+  volume  String? // "LOW" | "NORMAL" | "HIGH"
 }
 
 // Economic calendar events
 model EconomicEvent {
-  id        String   @id @default(cuid())
-  datetime  DateTime
-  name      String
-  impact    String   // "HIGH" | "MEDIUM" | "LOW"
-  actual    Float?
-  forecast  Float?
-  previous  Float?
-  
-  trades    TradeEvent[]
-  
+  id       String   @id @default(cuid())
+  datetime DateTime
+  name     String
+  impact   String // "HIGH" | "MEDIUM" | "LOW"
+  actual   Float?
+  forecast Float?
+  previous Float?
+
+  trades TradeEvent[]
+
   createdAt DateTime @default(now())
 }
 
 // Many-to-many: Trade to EconomicEvent
 model TradeEvent {
-  tradeId   String
-  eventId   String
-  trade     Trade         @relation(fields: [tradeId], references: [id], onDelete: Cascade)
-  event     EconomicEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  
+  tradeId String
+  eventId String
+  trade   Trade         @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  event   EconomicEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
   @@id([tradeId, eventId])
 }
 
@@ -223,13 +223,13 @@ model Note {
   trade       Trade?    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
   date        DateTime? // For day notes (when tradeId is null)
   type        String    @default("trade") // "trade" | "day" | "misc"
-  mood        String?   // "BULLISH" | "BEARISH" | "NEUTRAL"
+  mood        String? // "BULLISH" | "BEARISH" | "NEUTRAL"
   content     String
   tags        String?
   aiGenerated Boolean   @default(false)
-  
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Trade planning (pre-trade plans)
@@ -243,9 +243,9 @@ model TradePlan {
   riskPlan      String?
   linkedTradeId String?  @unique
   linkedTrade   Trade?   @relation(fields: [linkedTradeId], references: [id], onDelete: SetNull)
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Tag groups for multi-category tagging
@@ -261,20 +261,20 @@ model WatchlistGroup {
   name      String          @unique
   isDefault Boolean         @default(false)
   items     WatchlistItem[]
-  
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model WatchlistItem {
-  id        String         @id @default(cuid())
-  symbol    String
-  name      String?
-  
-  groupId   String
-  group     WatchlistGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  
-  createdAt DateTime       @default(now())
+  id     String  @id @default(cuid())
+  symbol String
+  name   String?
+
+  groupId String
+  group   WatchlistGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
 
   @@unique([groupId, symbol])
 }
@@ -287,9 +287,9 @@ model MarketNews {
   link                String
   providerPublishTime DateTime // Converted from Unix timestamp
   type                String?
-  relatedTickers      String?  // Comma-separated or JSON
-  
-  createdAt           DateTime @default(now())
+  relatedTickers      String? // Comma-separated or JSON
+
+  createdAt DateTime @default(now())
 }
 
 model ExpectedMove {
@@ -297,101 +297,101 @@ model ExpectedMove {
   ticker          String
   calculationDate DateTime // The date the calculation targets (e.g. today's date for current expiry view)
   expiryDate      DateTime
-  
-  price           Float
-  straddle        Float
-  em365           Float
-  em252           Float
-  adjEm           Float
-  
-  manualEm        Float?   // User override/addition
-  
+
+  price    Float
+  straddle Float
+  em365    Float
+  em252    Float
+  adjEm    Float
+
+  manualEm Float? // User override/addition
+
   // Extra Metadata
-  basis           String?  // JSON string of BasisData
-  note            String?  // Information about data source (e.g. "manual", "proxy")
-  
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  basis String? // JSON string of BasisData
+  note  String? // Information about data source (e.g. "manual", "proxy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([ticker, calculationDate, expiryDate])
 }
 
 model SchwabToken {
-  id           String   @id @default("schwab-primary")
+  id           String  @id @default("schwab-primary")
   accessToken  String
   refreshToken String
-  expiresAt    Int      // Unix timestamp
+  expiresAt    Int // Unix timestamp
   idToken      String?
   tokenType    String
   scope        String?
-  
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model HistoricalVolatility {
-  id          Int      @id @default(autoincrement())
-  ticker      String
-  date        DateTime
-  iv          Float    // iv_current (Implied Volatility)
-  hv          Float?   // hv_current (Historical Volatility)
-  
-  closePrice  Float?   // Underlying close price (to be filled during ingestion or later)
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id     Int      @id @default(autoincrement())
+  ticker String
+  date   DateTime
+  iv     Float // iv_current (Implied Volatility)
+  hv     Float? // hv_current (Historical Volatility)
+
+  closePrice Float? // Underlying close price (to be filled during ingestion or later)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([ticker, date])
   @@index([ticker])
 }
 
 model ExpectedMoveHistory {
-  id              Int      @id @default(autoincrement())
-  ticker          String
-  date            DateTime
-  closePrice      Float
+  id         Int      @id @default(autoincrement())
+  ticker     String
+  date       DateTime
+  closePrice Float
 
   // Straddle Data
-  straddlePrice   Float?
-  emStraddle      Float? // Expected Move based on Straddle (e.g. 0.85 * Straddle)
+  straddlePrice Float?
+  emStraddle    Float? // Expected Move based on Straddle (e.g. 0.85 * Straddle)
 
   // IV Data
-  iv365           Float?
-  em365           Float?
-  iv252           Float?
-  em252           Float?
+  iv365 Float?
+  em365 Float?
+  iv252 Float?
+  em252 Float?
 
-  source          String? // "historical", "manual", "computed"
+  source String? // "historical", "manual", "computed"
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([ticker, date])
   @@index([ticker])
 }
 
 model RthExpectedMove {
-  id              Int      @id @default(autoincrement())
-  ticker          String
-  date            DateTime
-  
+  id     Int      @id @default(autoincrement())
+  ticker String
+  date   DateTime
+
   // Market State at Capture (Open)
-  openPrice       Float?
-  vixValue        Float?
-  
+  openPrice Float?
+  vixValue  Float?
+
   // 1. ATM Straddle Method
-  straddlePrice   Float?
-  emStraddle      Float?
-  
+  straddlePrice Float?
+  emStraddle    Float?
+
   // 2. Implied Volatility Method
-  ivAtOpen        Float?
-  emIv            Float?
-  
+  ivAtOpen Float?
+  emIv     Float?
+
   // 3. VIX Method
-  emVix           Float?
-  
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  emVix Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([ticker, date])
   @@index([ticker])
@@ -402,73 +402,73 @@ model RthExpectedMove {
 // ==========================================
 
 model Analysis {
-  id          String   @id @default(cuid())
-  date        DateTime @unique // One main daily context per day
-  
+  id   String   @id @default(cuid())
+  date DateTime @unique // One main daily context per day
+
   // Context
-  sentiment   String?  // BULLISH | BEARISH | NEUTRAL | MIXED
-  bias        String?  // LONG | SHORT | BOTH
-  notes       String?  // Markdown content
-  keyLevels   String?  // JSON string of critical levels
+  sentiment         String? // BULLISH | BEARISH | NEUTRAL | MIXED
+  bias              String? // LONG | SHORT | BOTH
+  notes             String? // Markdown content
+  keyLevels         String? // JSON string of critical levels
   invalidationLevel String?
-  
+
   // Tool Snapshots
   profilerSnapshot      String? // JSON snapshot of Profiler state
   candleScienceSnapshot String? // JSON snapshot of C.Science state
-  
-  charts      Chart[]
-  wargames    Wargame[]
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+
+  charts   Chart[]
+  wargames Wargame[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Wargame {
-  id          String   @id @default(cuid())
-  analysisId  String
-  analysis    Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
-  
-  scenario    String   // "IF price breaks 200..."
-  plan        String   // "THEN I look for short..."
-  probability String?  // "High", "Medium"
-  outcome     String?  // "Played out", "Invalidated"
-  
-  charts      Chart[]
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(cuid())
+  analysisId String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  scenario    String // "IF price breaks 200..."
+  plan        String // "THEN I look for short..."
+  probability String? // "High", "Medium"
+  outcome     String? // "Played out", "Invalidated"
+
+  charts Chart[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Routine {
-  id          String   @id @default(cuid())
-  date        DateTime @unique
-  
-  checklist   String?  // JSON: { "meditate": true, "plan": false }
-  rating      Int?     // 1-10
-  notes       String?
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id   String   @id @default(cuid())
+  date DateTime @unique
+
+  checklist String? // JSON: { "meditate": true, "plan": false }
+  rating    Int? // 1-10
+  notes     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Chart {
-  id          String   @id @default(cuid())
-  url         String   // Path or Base64 (prefer path if file upload)
-  type        String?  // PRE_MARKET | TRADE | REVIEW
-  tags        String?  // Comma-separated or JSON
-  
+  id   String  @id @default(cuid())
+  url  String // Path or Base64 (prefer path if file upload)
+  type String? // PRE_MARKET | TRADE | REVIEW
+  tags String? // Comma-separated or JSON
+
   // Linking Logic (Poly-morphic ish)
-  tradeId     String?
-  trade       Trade?   @relation(fields: [tradeId], references: [id])
-  
-  analysisId  String?
-  analysis    Analysis? @relation(fields: [analysisId], references: [id])
-  
-  wargameId   String?
-  wargame     Wargame?  @relation(fields: [wargameId], references: [id])
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  tradeId String?
+  trade   Trade?  @relation(fields: [tradeId], references: [id])
+
+  analysisId String?
+  analysis   Analysis? @relation(fields: [analysisId], references: [id])
+
+  wargameId String?
+  wargame   Wargame? @relation(fields: [wargameId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ==========================================
@@ -478,32 +478,48 @@ model Chart {
 // This replaces the SQLite interval_data table from ezoptionsschwab.
 // Queryable from the Next.js API routes for the live dashboard.
 model GexSnapshot {
-  id                  Int      @id @default(autoincrement())
-  ticker              String   // e.g. "SPX", "QQQ", "NQ"
-  timestamp           DateTime // The time the snapshot was captured
-  tradingDate         DateTime // The trading date (no time component)
+  id          Int      @id @default(autoincrement())
+  ticker      String // e.g. "SPX", "QQQ", "NQ"
+  timestamp   DateTime // The time the snapshot was captured
+  tradingDate DateTime // The trading date (no time component)
 
   // Core GEX metrics
-  totalGex            Float    // Net GEX across all strikes (calls - puts)
-  totalGexDeltaAdj    Float?   // Delta-adjusted GEX
-  callGammaTotal      Float?   // Aggregate call-side GEX
-  putGammaTotal       Float?   // Aggregate put-side GEX
-  gexRegime           String   // "POSITIVE" or "NEGATIVE"
-  regimeLabel         String?  // "PINNED", "TRENDING", "COILED", "BATTLE_ZONE"
+  totalGex         Float // Net GEX across all strikes (calls - puts)
+  totalGexDeltaAdj Float? // Delta-adjusted GEX
+  callGammaTotal   Float? // Aggregate call-side GEX
+  putGammaTotal    Float? // Aggregate put-side GEX
+  gexRegime        String // "POSITIVE" or "NEGATIVE"
+  regimeLabel      String? // "PINNED", "TRENDING", "COILED", "BATTLE_ZONE"
 
   // Price context
-  spotPrice           Float    // Underlying spot price at snapshot time
-  gammaMagnet         Float?   // Gamma-weighted average strike
-  pinStrike           Float?   // Strike with highest gamma concentration
+  spotPrice   Float // Underlying spot price at snapshot time
+  gammaMagnet Float? // Gamma-weighted average strike
+  pinStrike   Float? // Strike with highest gamma concentration
 
   // New analytics
-  callVolumeCentroid  Float?   // Volume-weighted avg call strike
-  putVolumeCentroid   Float?   // Volume-weighted avg put strike
-  netSpeedExposure    Float?   // Portfolio speed (d(gamma)/dS)
-  netVannaExposure    Float?   // Signed net vanna
+  callVolumeCentroid Float? // Volume-weighted avg call strike
+  putVolumeCentroid  Float? // Volume-weighted avg put strike
+  netSpeedExposure   Float? // Portfolio speed (d(gamma)/dS)
+  netVannaExposure   Float? // Signed net vanna
 
-  createdAt           DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([ticker, tradingDate])
   @@index([ticker, timestamp])
+}
+
+model MacroSnapshot {
+  id            String   @id @default(cuid())
+  ticker        String
+  timestamp     DateTime
+  tradingDate   DateTime
+  spotPrice     Float
+  macroCallWall Float?
+  macroPutWall  Float?
+  zeroGamma     Float?
+  anomalies     String? // Stores the array of Whale anomalies
+  dominantNodes String? // Stores the array of dominant OI nodes
+
+  @@unique([ticker, tradingDate])
+  @@index([ticker])
 }

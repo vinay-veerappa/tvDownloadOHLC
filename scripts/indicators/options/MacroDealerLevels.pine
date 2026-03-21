@@ -1,0 +1,789 @@
+// This Pine Script(TM) source code is subject to the terms of the Mozilla Public License 2.0
+// Copyright (c) antigravity
+//
+// MacroDealerLevels.pine v1.0
+// ======================
+// Superset of DealerLevels: Standard Dealer Levels + Weekly Macro HTF Levels.
+// Dual text-area inputs with independent visibility toggles.
+
+//@version=6
+indicator("Macro Dealer Levels Auto", overlay = true, max_lines_count = 500, max_labels_count = 500, max_bars_back = 5000)
+
+// ═══════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════════════
+
+var string GRP_DATA = "Data Buffers"
+i_showDealer    = input.bool(true,  "Show Dealer Levels", group = GRP_DATA)
+i_pastedDealer  = input.text_area("", "Paste Dealer Levels (daily_levels.txt)", group = GRP_DATA)
+i_showMacro     = input.bool(true,  "Show Macro HTF Levels", group = GRP_DATA)
+i_pastedMacro   = input.text_area("", "Paste Macro Levels (macro_levels.txt)", group = GRP_DATA)
+
+var string GRP_MATCH = "Symbol Matching"
+i_familyPref    = input.string("Auto", "Family Source Preference", options = ["Auto", "Prefer Index", "Prefer ETF"], group = GRP_MATCH)
+i_overrideExact = input.bool(false, "Override Exact Match With Family Preference", group = GRP_MATCH)
+
+var string GRP_FILT = "Level Filters"
+i_proxFilter        = input.float(1.5, "Hide Tactical Levels > X% Away (0=Off)", step=0.5, group=GRP_FILT, tooltip="Applies to 0DTE, Local Nodes, DEX, and Cliffs. Macro levels are always shown.")
+
+var string GRP_LINES = "Line Style"
+i_showEmFill        = input.bool(true, "Show EM Fill", group = GRP_LINES)
+i_lineWidthPrimary  = input.int(2, "Primary Width", minval = 1, maxval = 4, group = GRP_LINES)
+i_lineWidthSecondary= input.int(1, "Secondary Width", minval = 1, maxval = 4, group = GRP_LINES)
+i_lineStylePrimary  = input.string("Solid", "Primary Style", options = ["Solid", "Dashed", "Dotted"], group = GRP_LINES)
+i_lineStyleSecondary= input.string("Dashed", "Secondary Style", options = ["Solid", "Dashed", "Dotted"], group = GRP_LINES)
+i_lineStyle0DTE     = input.string("Dotted", "0DTE Style", options = ["Solid", "Dashed", "Dotted"], group = GRP_LINES)
+
+var string GRP_COLORS = "Theme Colors (Light/Dark Ready)"
+i_colUpperEM        = input.color(color.new(#00FFFF, 0), "Upper EM", group = GRP_COLORS) // Aqua
+i_colAbsCall        = input.color(color.new(#00FF00, 0), "Absolute Call Wall", group = GRP_COLORS) // Lime
+i_colLocalCall      = input.color(color.new(color.lime, 30), "Local Call Node", group = GRP_COLORS)
+i_col0DTECall       = input.color(color.new(color.lime, 60), "0DTE Call Wall", group = GRP_COLORS)
+i_colDexCall        = input.color(color.new(color.lime, 15), "DEX Call Node", group = GRP_COLORS)
+i_colMacroCall      = input.color(color.new(#FFD700, 0), "Macro Call Wall", group = GRP_COLORS) // Gold
+i_colMacroPut       = input.color(color.new(#FFA500, 0), "Macro Put Wall", group = GRP_COLORS) // Orange
+i_colWhaleCall      = input.color(color.new(#00BFFF, 0), "Whale Call", group = GRP_COLORS) // Deep Sky Blue 
+i_colWhalePut       = input.color(color.new(#FF00FF, 0), "Whale Put", group = GRP_COLORS) // Magenta
+i_col0DTEPut        = input.color(color.new(color.red, 60), "0DTE Put Wall", group = GRP_COLORS)
+i_colLocalPut       = input.color(color.new(color.red, 30), "Local Put Node", group = GRP_COLORS)
+i_colDexPut         = input.color(color.new(color.red, 15), "DEX Put Node", group = GRP_COLORS)
+i_colZeroGamma      = input.color(color.new(#FFFF00, 0), "Zero Gamma", group = GRP_COLORS) // Yellow
+i_colGammaFlip      = input.color(color.new(#FFFF00, 45), "Gamma Flip Zone", group = GRP_COLORS)
+i_colGammaCliffUp   = input.color(color.new(#008080, 20), "Gamma Cliff Up", group = GRP_COLORS) // Teal
+i_colGammaCliffDn   = input.color(color.new(#008080, 20), "Gamma Cliff Down", group = GRP_COLORS)
+i_colMaxPain        = input.color(color.new(#FF8C00, 0), "Max Pain", group = GRP_COLORS) // DarkOrange
+i_colHedge          = input.color(color.new(#FF4500, 0), "Hedge Wall", group = GRP_COLORS) // OrangeRed
+i_colLowerEM        = input.color(color.new(#00FFFF, 0), "Lower EM", group = GRP_COLORS)
+i_colGammaMagnet    = input.color(color.new(#EE82EE, 0), "Gamma Magnet", group = GRP_COLORS) // Violet
+i_colPinStrike      = input.color(color.new(#EE82EE, 30), "Pin Strike", group = GRP_COLORS)
+i_colFallback       = input.color(color.new(#C0C0C0, 0), "Fallback", group = GRP_COLORS) // Silver
+i_colEmFill         = input.color(color.new(#00FFFF, 92), "EM Fill", group = GRP_COLORS)
+i_colGammaFlipFill  = input.color(color.new(#FFFF00, 92), "Gamma Flip Fill", group = GRP_COLORS)
+
+var string GRP_LABELS = "Label Collision & Display"
+i_showLabels        = input.bool(true, "Show Labels", group = GRP_LABELS)
+i_showPriceInLabel  = input.bool(true, "Show Price In Label", group = GRP_LABELS)
+i_compactLabels     = input.bool(true, "Compact Label Text", group = GRP_LABELS)
+i_mergeSamePrice    = input.bool(true, "Merge Same-Price Labels", group = GRP_LABELS)
+i_mergeTolerance    = input.float(1.0, "Merge Tolerance (Points)", step=0.5, group=GRP_LABELS, tooltip="Combines levels within this many points of each other.")
+i_labelSize         = input.string("tiny", "Label Size", options = ["tiny", "small", "normal", "large"], group = GRP_LABELS)
+i_labelOffset       = input.int(2, "Label Offset", minval = 0, maxval = 50, group = GRP_LABELS)
+i_labelBgOpacity    = input.int(95, "Label Bg Opacity", minval = 0, maxval = 100, group = GRP_LABELS)
+i_labelCollision    = input.string("Stagger", "Collision Mode", options = ["Stagger", "Hide", "Off"], group = GRP_LABELS)
+i_maxLabelCols      = input.int(4, "Max Columns", minval = 1, maxval = 10, group = GRP_LABELS)
+i_columnStepBars    = input.int(2, "Column Step Bars", minval = 1, maxval = 20, group = GRP_LABELS)
+i_minLabelGapTicks  = input.int(40, "Min Gap (ticks)", minval = 1, maxval = 500, group = GRP_LABELS)
+
+var string GRP_DASH = "Dashboard"
+i_showDash          = input.bool(true, "Show Dashboard", group = GRP_DASH)
+i_dashPos           = input.string("Bottom Right", "Position", options = ["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group = GRP_DASH)
+i_dashSize          = input.string("small", "Text Size", options = ["tiny", "small", "normal", "large"], group = GRP_DASH)
+i_dashBgOpacity     = input.int(95, "Bg Opacity", minval = 0, maxval = 100, group = GRP_DASH)
+
+var string GRP_VIS = "Level Filters"
+i_showEM            = input.bool(true, "Show EM Levels", group = GRP_VIS)
+i_maxEMDte          = input.int(7, "Max EM DTE", minval = 0, maxval = 15, group = GRP_VIS, tooltip = "0 = show all")
+i_showCall          = input.bool(true, "Show Call Levels", group = GRP_VIS)
+i_showPut           = input.bool(true, "Show Put Levels", group = GRP_VIS)
+i_showZeroGamma     = input.bool(true, "Show Zero Gamma", group = GRP_VIS)
+i_showGammaFlip     = input.bool(true, "Show Gamma Flip", group = GRP_VIS)
+i_showGammaCliff    = input.bool(true, "Show Gamma Cliffs", group = GRP_VIS)
+i_showMaxPain       = input.bool(true, "Show Max Pain", group = GRP_VIS)
+i_showHedge         = input.bool(true, "Show Hedge Wall", group = GRP_VIS)
+i_showDex           = input.bool(true, "Show DEX Nodes", group = GRP_VIS)
+i_showMagnet        = input.bool(true, "Show Gamma Magnet", group = GRP_VIS)
+i_showPin           = input.bool(true, "Show Pin Strike", group = GRP_VIS)
+
+// ═══════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════
+
+f_labelSize(string s) => s == "tiny" ? size.tiny : s == "small" ? size.small : s == "normal" ? size.normal : size.large
+f_lineStyle(string s) => s == "Solid" ? line.style_solid : s == "Dashed" ? line.style_dashed : line.style_dotted
+f_pos(string s) =>
+    s == "Top Left" ? position.top_left : s == "Top Center" ? position.top_center : s == "Top Right" ? position.top_right :
+     s == "Middle Left" ? position.middle_left : s == "Middle Center" ? position.middle_center : s == "Middle Right" ? position.middle_right :
+     s == "Bottom Left" ? position.bottom_left : s == "Bottom Center" ? position.bottom_center : position.bottom_right
+
+f_norm(string v) => str.upper(str.trim(v))
+
+f_stripPrefix(string v) =>
+    t = f_norm(v)
+    str.startswith(t, "/") ? str.substring(t, 1, str.length(t)) : t
+
+f_stripContinuousSuffix(string v) =>
+    c = f_stripPrefix(v)
+    l = str.length(c)
+    l > 2 and str.endswith(c, "!") ? str.substring(c, 0, l - 2) : c
+
+f_primarySymbol() =>
+    r = f_stripPrefix(syminfo.root)
+    t = f_stripPrefix(syminfo.ticker)
+    str.length(r) > 0 ? r : t
+
+f_canonicalSymbol(string s) =>
+    c = f_stripContinuousSuffix(s)
+    c == "MES" ? "ES" : c == "MNQ" ? "NQ" : c == "MYM" ? "YM" : c == "M2K" ? "RTY" : c == "MGC" ? "GC" : c == "SIL" ? "SI" : c == "MCL" ? "CL" : c == "MHG" ? "HG" : c == "M6E" ? "6E" : c == "M6A" ? "6A" : c == "M6B" ? "6B" : c == "M6J" ? "6J" : c
+
+f_symbolFamilyKey(string s) =>
+    c = f_canonicalSymbol(s)
+    r = c
+    if c == "ES" or c == "SPX" or c == "SPY"
+        r := "ES_FAMILY"
+    else if c == "NQ" or c == "NDX" or c == "QQQ"
+        r := "NQ_FAMILY"
+    else if c == "YM" or c == "DJX" or c == "DJI" or c == "US30" or c == "DOW" or c == "DIA"
+        r := "YM_FAMILY"
+    else if c == "RTY" or c == "RUT" or c == "IWM"
+        r := "RTY_FAMILY"
+    r
+
+f_sourceKind(string s) =>
+    c = f_canonicalSymbol(s)
+    c == "SPX" or c == "NDX" or c == "DJX" or c == "DJI" or c == "RUT" ? "INDEX" : c == "SPY" or c == "QQQ" or c == "DIA" or c == "IWM" ? "ETF" : "OTHER"
+
+f_isOvernightFutures(string s) =>
+    c = f_canonicalSymbol(s)
+    c == "ES" or c == "NQ" or c == "YM" or c == "RTY" or c == "CL" or c == "GC" or c == "SI" or c == "HG" or c == "6E" or c == "6A" or c == "6B" or c == "6J" or c == "ZN" or c == "ZB"
+
+f_matchScore(string assetTag) =>
+    asset = f_canonicalSymbol(assetTag)
+    aFam = f_symbolFamilyKey(asset)
+    primary = f_canonicalSymbol(f_primarySymbol())
+    pFam = f_symbolFamilyKey(primary)
+    ticker = f_canonicalSymbol(syminfo.ticker)
+    tFam = f_symbolFamilyKey(ticker)
+    root = f_canonicalSymbol(syminfo.root)
+    rFam = f_symbolFamilyKey(root)
+    exact = asset == ticker or asset == root or asset == primary
+    family = aFam == tFam or aFam == rFam or aFam == pFam
+    eBase = i_overrideExact and i_familyPref != "Auto" ? 120 : 200
+    fBase = family ? 100 : 0
+    boost = 0
+    if family and i_familyPref != "Auto"
+        k = f_sourceKind(asset)
+        if i_familyPref == "Prefer ETF" and k == "ETF"
+            boost := 30
+        else if i_familyPref == "Prefer Index" and k == "INDEX"
+            boost := 30
+    exact ? eBase : (fBase + boost)
+
+f_num(float v) => na(v) ? "—" : str.tostring(v, "#.##")
+f_pick(float v1, float v2, float v3) => not na(v1) ? v1 : (not na(v2) ? v2 : v3)
+f_isNear(float value, float ref, float thr) => not na(value) and not na(ref) and math.abs(value - ref) <= thr
+
+f_nearestBelow(float ref, float v1, float v2, float v3) =>
+    float b = na
+    if not na(ref)
+        if not na(v1) and v1 < ref and (na(b) or v1 > b)
+            b := v1
+        if not na(v2) and v2 < ref and (na(b) or v2 > b)
+            b := v2
+        if not na(v3) and v3 < ref and (na(b) or v3 > b)
+            b := v3
+    na(b) ? f_pick(v1, v2, v3) : b
+
+f_nearestAbove(float ref, float v1, float v2, float v3) =>
+    float b = na
+    if not na(ref)
+        if not na(v1) and v1 > ref and (na(b) or v1 < b)
+            b := v1
+        if not na(v2) and v2 > ref and (na(b) or v2 < b)
+            b := v2
+        if not na(v3) and v3 > ref and (na(b) or v3 < b)
+            b := v3
+    na(b) ? f_pick(v1, v2, v3) : b
+
+f_bestShortTrigger(float spot, float thr, float v1, float v2, float v3, float v4, float v5) =>
+    float b = na
+    if f_isNear(v1, spot, thr) and (na(b) or v1 > b)
+        b := v1
+    if f_isNear(v2, spot, thr) and (na(b) or v2 > b)
+        b := v2
+    if f_isNear(v3, spot, thr) and (na(b) or v3 > b)
+        b := v3
+    if f_isNear(v4, spot, thr) and (na(b) or v4 > b)
+        b := v4
+    if f_isNear(v5, spot, thr) and (na(b) or v5 > b)
+        b := v5
+    na(b) ? f_pick(v1, v2, v3) : b
+
+f_bestLongTrigger(float spot, float thr, float v1, float v2, float v3, float v4, float v5) =>
+    float b = na
+    if f_isNear(v1, spot, thr) and (na(b) or v1 < b)
+        b := v1
+    if f_isNear(v2, spot, thr) and (na(b) or v2 < b)
+        b := v2
+    if f_isNear(v3, spot, thr) and (na(b) or v3 < b)
+        b := v3
+    if f_isNear(v4, spot, thr) and (na(b) or v4 < b)
+        b := v4
+    if f_isNear(v5, spot, thr) and (na(b) or v5 < b)
+        b := v5
+    na(b) ? f_pick(v1, v2, v3) : b
+
+f_extractAssetTag(string lineText) =>
+    tokens = str.split(lineText, ",")
+    asset = ""
+    if array.size(tokens) > 0
+        fp = str.split(str.trim(array.get(tokens, 0)), ":")
+        if array.size(fp) >= 3
+            asset := f_stripPrefix(array.get(fp, 0))
+    asset
+
+f_findMatchingLine(string blob) =>
+    string mL = ""
+    string mA = ""
+    int bs = 0
+    rows = str.split(blob, "\n")
+    if array.size(rows) > 0
+        for i = 0 to array.size(rows) - 1
+            row = str.trim(array.get(rows, i))
+            if str.length(row) > 0 and str.contains(row, ",")
+                a = f_extractAssetTag(row)
+                sc = f_matchScore(a)
+                if str.length(a) > 0 and sc > bs
+                    mL := row
+                    mA := a
+                    bs := sc
+    [mL, mA]
+
+f_parseLevels(string lineText, array<float> prices, array<string> titles) =>
+    array.clear(prices)
+    array.clear(titles)
+    tokens = str.split(lineText, ",")
+    if array.size(tokens) > 0
+        for i = 0 to array.size(tokens) - 1
+            token = str.trim(array.get(tokens, i))
+            parts = str.split(token, ":")
+            string px = ""
+            string ti = ""
+            if i == 0
+                if array.size(parts) >= 3
+                    px := str.trim(array.get(parts, 1))
+                    ti := str.trim(array.get(parts, 2))
+            else
+                if array.size(parts) >= 2
+                    px := str.trim(array.get(parts, 0))
+                    ti := str.trim(array.get(parts, 1))
+            lv = str.tonumber(px)
+            if not na(lv) and str.length(ti) > 0
+                array.push(prices, lv)
+                array.push(titles, ti)
+
+// ═══════════════════════════════════════════════════════════════════════
+// STYLING & FILTERING
+// ═══════════════════════════════════════════════════════════════════════
+
+f_levelColor(string title) =>
+    u = f_norm(title)
+    str.contains(u, "UPPER EM") ? i_colUpperEM : 
+     str.contains(u, "LOWER EM") ? i_colLowerEM : 
+     u == "ZERO GAMMA" ? i_colZeroGamma :
+     u == "MACRO CALL WALL" ? i_colMacroCall :
+     u == "MACRO PUT WALL" ? i_colMacroPut :
+     str.contains(u, "WHALE CALL") ? i_colWhaleCall :
+     str.contains(u, "WHALE PUT") ? i_colWhalePut :
+     u == "GAMMA FLIP UPPER" or u == "GAMMA FLIP LOWER" ? i_colGammaFlip :
+     u == "GAMMA CLIFF UP" ? i_colGammaCliffUp : 
+     u == "GAMMA CLIFF DOWN" ? i_colGammaCliffDn :
+     u == "MAX PAIN" ? i_colMaxPain : 
+     u == "HEDGE WALL" ? i_colHedge :
+     u == "0DTE PUT WALL" ? i_col0DTEPut : u == "LOCAL PUT NODE" ? i_colLocalPut : u == "DEX PUT NODE" ? i_colDexPut :
+     u == "0DTE CALL WALL" ? i_col0DTECall : u == "LOCAL CALL NODE" ? i_colLocalCall : u == "DEX CALL NODE" ? i_colDexCall :
+     str.contains(u, "CALL ABS") or u == "ABSOLUTE CALL WALL" or str.contains(u, "MAJOR CALL") ? i_colAbsCall : 
+     str.contains(u, "PUT ABS") or u == "ABSOLUTE PUT WALL" or str.contains(u, "MAJOR PUT") ? i_col0DTEPut :
+     u == "GAMMA MAGNET" ? i_colGammaMagnet : 
+     u == "PIN STRIKE" ? i_colPinStrike : 
+     i_colFallback
+
+f_levelStyle(string title) =>
+    u = f_norm(title)
+    str.contains(u, "GAMMA FLIP") ? line.style_dashed : 
+     str.contains(u, "GAMMA CLIFF") ? line.style_dotted :
+     str.contains(u, "WHALE") ? line.style_dashed :
+     str.contains(u, "DEX") ? line.style_dashed : 
+     u == "GAMMA MAGNET" or u == "PIN STRIKE" ? line.style_dotted :
+     str.contains(u, "0DTE") ? f_lineStyle(i_lineStyle0DTE) : 
+     str.contains(u, "EM") ? line.style_solid : 
+     str.contains(u, "MACRO") ? f_lineStyle(i_lineStylePrimary) :
+     str.contains(u, "LOCAL") ? f_lineStyle(i_lineStyleSecondary) : 
+     f_lineStyle(i_lineStylePrimary)
+
+f_levelWidth(string title) =>
+    u = f_norm(title)
+    isEm = str.contains(u, "EM")
+    isPrimaryEm = u == "UPPER EM" or u == "LOWER EM"
+    isMacro = str.contains(u, "MACRO") or str.contains(u, "MAJOR")
+    str.contains(u, "WHALE") or str.contains(u, "0DTE") or str.contains(u, "LOCAL") or str.contains(u, "GAMMA FLIP") or str.contains(u, "GAMMA CLIFF") or str.contains(u, "DEX") or u == "GAMMA MAGNET" or u == "PIN STRIKE" or (isEm and not isPrimaryEm) ? i_lineWidthSecondary : (isMacro ? i_lineWidthPrimary : i_lineWidthPrimary)
+
+f_compactTitle(string title) =>
+    u = f_norm(title)
+    res = title
+    if str.contains(u, "UPPER EM")
+        res := "EM+"
+    else if str.contains(u, "LOWER EM")
+        res := "EM-"
+    else if str.contains(u, "MAJOR CALL NODE")
+        res := str.replace(u, "MAJOR CALL NODE", "MAJ C")
+    else if str.contains(u, "MAJOR PUT NODE")
+        res := str.replace(u, "MAJOR PUT NODE", "MAJ P")
+    else if u == "MACRO CALL WALL"
+        res := "MAC CALL"
+    else if u == "MACRO PUT WALL"
+        res := "MAC PUT"
+    else if str.contains(u, "LOCAL WHALE")
+        res := str.replace(u, "LOCAL WHALE ", "LW-")
+    else if str.contains(u, "WHALE")
+        res := str.replace(u, "WHALE ", "W-")
+    else if u == "ABSOLUTE CALL WALL"
+        res := "CALL ABS"
+    else if u == "LOCAL CALL NODE"
+        res := "CALL LOC"
+    else if u == "0DTE CALL WALL"
+        res := "CALL 0DTE"
+    else if u == "DEX CALL NODE"
+        res := "DEX C"
+    else if u == "GAMMA FLIP UPPER"
+        res := "GF U"
+    else if u == "GAMMA CLIFF UP"
+        res := "GC U"
+    else if u == "ZERO GAMMA"
+        res := "ZG"
+    else if u == "GAMMA CLIFF DOWN"
+        res := "GC D"
+    else if u == "GAMMA FLIP LOWER"
+        res := "GF L"
+    else if u == "MAX PAIN"
+        res := "MAX"
+    else if u == "0DTE PUT WALL"
+        res := "PUT 0DTE"
+    else if u == "LOCAL PUT NODE"
+        res := "PUT LOC"
+    else if u == "DEX PUT NODE"
+        res := "DEX P"
+    else if u == "HEDGE WALL"
+        res := "HEDGE"
+    else if u == "GAMMA MAGNET"
+        res := "MAG"
+    else if u == "PIN STRIKE"
+        res := "PIN"
+    res
+
+f_showLevel(string title, float price) =>
+    u = f_norm(title)
+    bool show = true
+    
+    // 1. Basic Type Filtering
+    if str.contains(u, "EM")
+        show := i_showEM
+        if show and i_maxEMDte > 0 and str.contains(u, "(") and str.contains(u, "D)")
+            openParen = str.pos(u, "(")
+            closeD = str.pos(u, "D)")
+            if not na(openParen) and not na(closeD) and closeD > openParen + 1
+                dteStr = str.substring(u, openParen + 1, closeD)
+                dte = str.tonumber(dteStr)
+                if not na(dte) and dte > i_maxEMDte
+                    show := false
+    else if u == "GAMMA MAGNET"
+        show := i_showMagnet
+    else if u == "PIN STRIKE"
+        show := i_showPin
+    else if str.contains(u, "DEX CALL") or str.contains(u, "DEX PUT")
+        show := i_showDex
+    else if str.contains(u, "CALL")
+        show := i_showCall
+    else if str.contains(u, "PUT")
+        show := i_showPut
+    else if u == "ZERO GAMMA"
+        show := i_showZeroGamma
+    else if str.contains(u, "GAMMA FLIP")
+        show := i_showGammaFlip
+    else if str.contains(u, "GAMMA CLIFF")
+        show := i_showGammaCliff
+    else if u == "MAX PAIN"
+        show := i_showMaxPain
+    else if u == "HEDGE WALL"
+        show := i_showHedge
+        
+    // 2. Smart Proximity Filtering (Only apply if the basic filter is true and setting > 0)
+    if show and i_proxFilter > 0.0
+        // Define what constitutes a "Tactical" level that should be hidden if far away
+        isTactical = str.contains(u, "0DTE") or str.contains(u, "LOCAL") or str.contains(u, "DEX") or str.contains(u, "CLIFF")
+        
+        if isTactical
+            // Calculate percentage distance from current spot price
+            pctDistance = (math.abs(price - close) / close) * 100.0
+            if pctDistance > i_proxFilter
+                show := false
+
+    show
+
+f_assignLabelColumn(float level, array<float> cols, float gap, int maxC) =>
+    int a = -1
+    if i_labelCollision == "Off"
+        a := 0
+    else
+        if array.size(cols) > 0
+            for c = 0 to array.size(cols) - 1
+                if math.abs(level - array.get(cols, c)) >= gap
+                    a := c
+                    break
+        if a == -1
+            if array.size(cols) < maxC
+                array.push(cols, level)
+                a := array.size(cols) - 1
+            else if i_labelCollision == "Hide"
+                a := -1
+            else
+                bG = -1.0
+                bC = 0
+                for c = 0 to array.size(cols) - 1
+                    g = math.abs(level - array.get(cols, c))
+                    if g > bG
+                        bG := g
+                        bC := c
+                a := bC
+    if a >= 0
+        if a >= array.size(cols)
+            array.push(cols, level)
+        else
+            array.set(cols, a, level)
+    a
+
+// ═══════════════════════════════════════════════════════════════════════
+// STATE & EXECUTION
+// ═══════════════════════════════════════════════════════════════════════
+
+var string TZ = "America/New_York"
+f_sessionKey() => dayofmonth(time, TZ) + month(time, TZ) * 31 + year(time, TZ) * 400
+isNewSession = ta.change(f_sessionKey()) != 0
+var int sessionStartBar = 0
+if barstate.isfirst or isNewSession
+    sessionStartBar := bar_index
+
+var array<line> allLines = array.new_line()
+var array<label> allLabels = array.new_label()
+var array<int> labelCols = array.new_int()
+var array<float> colLastPrices = array.new_float()
+
+// OPTIMIZATION: Parse pasted text only once when the script loads
+var string rawDealer = ""
+var string matchDealer = ""
+var string rawMacro = ""
+var string matchMacro = ""
+
+if barstate.isfirst
+    [rD, mD] = f_findMatchingLine(i_pastedDealer)
+    rawDealer := rD
+    matchDealer := mD
+    
+    [rM, mM] = f_findMatchingLine(i_pastedMacro)
+    rawMacro := rM
+    matchMacro := mM
+
+// Redraw / Calculation State
+var float st_ZG = na, var float st_MAG = na, var float st_PIN = na
+var float st_CW = na, var float st_PW = na, var float st_EU = na, var float st_EL = na
+var float st_GFU = na, var float st_GFL = na, var float st_GCU = na, var float st_GCD = na
+var float st_CW0 = na, var float st_PW0 = na, var float st_MP = na, var float st_HW = na
+var float st_LCN = na, var float st_LPN = na, var float st_DCN = na, var float st_DPN = na
+var string st_Asset = ""
+
+f_clearAll() =>
+    while array.size(allLines) > 0
+        line.delete(array.shift(allLines))
+    while array.size(allLabels) > 0
+        label.delete(array.shift(allLabels))
+    array.clear(labelCols)
+    array.clear(colLastPrices)
+
+needsUpdate = barstate.isfirst or isNewSession
+
+if needsUpdate
+    f_clearAll()
+    st_ZG := na, st_MAG := na, st_PIN := na
+    st_CW := na, st_PW := na, st_EU := na, st_EL := na
+    st_GFU := na, st_GFL := na, st_GCU := na, st_GCD := na
+    st_CW0 := na, st_PW0 := na, st_MP := na, st_HW := na
+    st_LCN := na, st_LPN := na, st_DCN := na, st_DPN := na
+    st_Asset := matchDealer != "" ? matchDealer : matchMacro
+    
+    var line line_emUp = na
+    var line line_emDn = na
+    
+    // Arrays to process both sources
+    srcRaw = array.new_string()
+    srcShow = array.new_bool()
+    if matchDealer != ""
+        array.push(srcRaw, rawDealer)
+        array.push(srcShow, i_showDealer)
+    if matchMacro != ""
+        array.push(srcRaw, rawMacro)
+        array.push(srcShow, i_showMacro)
+    
+    if array.size(srcRaw) > 0
+        for sIdx = 0 to array.size(srcRaw) - 1
+            if not array.get(srcShow, sIdx)
+                continue
+                
+            pPrices = array.new_float()
+            pTitles = array.new_string()
+            f_parseLevels(array.get(srcRaw, sIdx), pPrices, pTitles)
+
+            // ── Futures Anchor Scaling ──
+            sC = f_canonicalSymbol(array.get(srcRaw, sIdx) == rawDealer ? matchDealer : matchMacro)
+            pC = f_canonicalSymbol(f_primarySymbol())
+            sF = f_symbolFamilyKey(sC)
+            cF = f_symbolFamilyKey(pC)
+            sFut = f_isOvernightFutures(sC)
+            cFut = f_isOvernightFutures(pC)
+
+            if cFut and sF == cF and not sFut
+                // We are on a futures ticker but data is from Spot/ETF
+                anc = sC == "ES" or sC == "SPX" or sC == "SPY" ? "ES" : sC == "NQ" or sC == "NDX" or sC == "QQQ" ? "NQ" : sC == "YM" or sC == "DJI" or sC == "DIA" ? "YM" : sC == "RTY" or sC == "RUT" or sC == "IWM" ? "RTY" : ""
+                if anc != ""
+                    if array.size(pPrices) > 0
+                        sR = array.get(pPrices, 0)
+                        if math.abs(sR) > syminfo.mintick
+                            fs = close / sR
+                            if math.abs(fs - 1.0) > 0.001 
+                                for k = 0 to array.size(pPrices) - 1
+                                    array.set(pPrices, k, array.get(pPrices, k) * fs)
+            
+            if array.size(pPrices) > 0
+                // Temporary arrays for aggregated levels
+                aggPrices = array.new_float()
+                aggTitles = array.new_string()
+                aggColors = array.new_color()
+                aggStyles = array.new_string()
+                aggWidths = array.new_int()
+
+                // Step 1: Filter, Merge, and Track Dashboard State
+                for i = 0 to array.size(pPrices) - 1
+                    float lv = array.get(pPrices, i)
+                    string ti = array.get(pTitles, i)
+                    
+                    // --- Dashboard Tracking (Must stay inside this loop!) ---
+                    u = f_norm(ti)
+                    if u == "ZERO GAMMA" or u == "MACRO ZERO GAMMA" 
+                        st_ZG := lv
+                    if u == "GAMMA FLIP UPPER"
+                        st_GFU := lv
+                    if u == "GAMMA FLIP LOWER"
+                        st_GFL := lv
+                    if u == "GAMMA CLIFF UP"
+                        st_GCU := lv
+                    if u == "GAMMA CLIFF DOWN"
+                        st_GCD := lv
+                    if u == "MAX PAIN"
+                        st_MP := lv
+                    if u == "GAMMA MAGNET" 
+                        st_MAG := lv
+                    if u == "PIN STRIKE"  
+                        st_PIN := lv
+                    if u == "ABSOLUTE CALL WALL" or u == "MACRO CALL WALL"  
+                        st_CW := lv
+                    if u == "0DTE CALL WALL"
+                        st_CW0 := lv
+                    if u == "0DTE PUT WALL"
+                        st_PW0 := lv
+                    if u == "LOCAL CALL NODE"
+                        st_LCN := lv
+                    if u == "LOCAL PUT NODE"
+                        st_LPN := lv
+                    if u == "DEX CALL NODE"
+                        st_DCN := lv
+                    if u == "DEX PUT NODE"
+                        st_DPN := lv
+                    if u == "HEDGE WALL" or u == "MACRO PUT WALL"  
+                        st_PW := lv
+                        st_HW := lv
+                    if u == "UPPER EM"  
+                        st_EU := lv
+                    if u == "LOWER EM"  
+                        st_EL := lv
+
+                    // --- Smart Proximity & Merging ---
+                    isTactical = str.contains(f_norm(ti), "0DTE") or str.contains(f_norm(ti), "LOCAL") or str.contains(f_norm(ti), "DEX") or str.contains(f_norm(ti), "CLIFF")
+                    pctDistance = (math.abs(lv - close) / close) * 100.0
+                    passedProx = (i_proxFilter == 0.0) or (not isTactical) or (pctDistance <= i_proxFilter)
+                    
+                    // Make sure to pass BOTH arguments to f_showLevel
+                    if f_showLevel(ti, lv) and passedProx
+                        clr = f_levelColor(ti)
+                        stl = f_levelStyle(ti)
+                        wid = f_levelWidth(ti)
+                        txt = i_compactLabels ? f_compactTitle(ti) : ti
+                        
+                        merged = false
+                        if i_mergeSamePrice and array.size(aggPrices) > 0
+                            for j = 0 to array.size(aggPrices) - 1
+                                if math.abs(array.get(aggPrices, j) - lv) <= i_mergeTolerance
+                                    existingTxt = array.get(aggTitles, j)
+                                    // Append text if it's not already there
+                                    if not str.contains(existingTxt, txt)
+                                        array.set(aggTitles, j, existingTxt + " + " + txt)
+                                    // Promote the line width if this new level is structurally thicker
+                                    if wid > array.get(aggWidths, j)
+                                        array.set(aggWidths, j, wid)
+                                        array.set(aggColors, j, clr)
+                                    merged := true
+                                    break
+                                    
+                        if not merged
+                            array.push(aggPrices, lv)
+                            array.push(aggTitles, txt)
+                            array.push(aggColors, clr)
+                            array.push(aggStyles, stl)
+                            array.push(aggWidths, wid)
+
+                // Step 2: Draw the Merged Levels
+                if array.size(aggPrices) > 0
+                    for a = 0 to array.size(aggPrices) - 1
+                        a_lv = array.get(aggPrices, a)
+                        a_ti = array.get(aggTitles, a)
+                        a_cl = array.get(aggColors, a)
+                        a_st = f_lineStyle(array.get(aggStyles, a))
+                        a_wi = array.get(aggWidths, a)
+                        
+                        line ln = na
+                        ln := line.new(sessionStartBar, a_lv, bar_index, a_lv, color=a_cl, width=a_wi, style=a_st)
+                        array.push(allLines, ln)
+                        
+                        // Capture EM lines for fills (from the merged output)
+                        if str.contains(a_ti, "EM+") or str.contains(a_ti, "UPPER EM")
+                            line_emUp := ln
+                        if str.contains(a_ti, "EM-") or str.contains(a_ti, "LOWER EM")
+                            line_emDn := ln
+                        
+                        if i_showLabels
+                            mg = syminfo.mintick * i_minLabelGapTicks
+                            lc = f_assignLabelColumn(a_lv, colLastPrices, mg, i_maxLabelCols)
+                            if lc >= 0
+                                dispTxt = i_showPriceInLabel ? a_ti + " (" + str.tostring(a_lv, "#.##") + ")" : a_ti
+                                lb = label.new(bar_index + i_labelOffset, a_lv, dispTxt, textcolor=a_cl, color=color.new(#131722, 100 - i_labelBgOpacity), style=label.style_label_left, size=f_labelSize(i_labelSize))
+                                array.push(allLabels, lb)
+                                array.push(labelCols, lc)
+                    
+    // OPTIMIZATION: Apply linefills immediately after line creation
+    if i_showEmFill and not na(line_emUp) and not na(line_emDn)
+        linefill.new(line_emUp, line_emDn, i_colEmFill)
+
+// ── OPTIMIZED Realtime Extension ──
+// By wrapping this in barstate.islast, we prevent the script from trying 
+// to extend lines on thousands of historical bars.
+if barstate.islast
+    if array.size(allLines) > 0
+        for i = 0 to array.size(allLines) - 1
+            line.set_x2(array.get(allLines, i), bar_index)
+            
+    if array.size(allLabels) > 0
+        for i = 0 to array.size(allLabels) - 1
+            c = i < array.size(labelCols) ? array.get(labelCols, i) : 0
+            label.set_x(array.get(allLabels, i), bar_index + i_labelOffset + (c * i_columnStepBars))
+
+// ═══════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════
+
+var table dash = na
+if barstate.isfirst
+    dash := table.new(f_pos(i_dashPos), 2, 14, bgcolor=color.new(#131722, 100 - i_dashBgOpacity), border_width=0)
+
+if barstate.islast and i_showDash
+    tSz = f_labelSize(i_dashSize)
+    
+    // ── Derived metrics ──
+    emV = not na(st_EU) and not na(st_EL) ? (st_EU - st_EL) / 2.0 : na
+    wSep = not na(st_CW) and not na(st_PW) ? math.abs(st_CW - st_PW) : na
+    tight = not na(wSep) and not na(emV) and emV > 0 ? wSep < emV : false
+    regime = tight ? "COILED / PINNED" : "TRENDING / BATTLE"
+    lClr = tight ? color.yellow : color.lime
+    lE = tight ? "🟡" : "🟢"
+
+    // ── Directional bias: price vs magnet ──
+    biasScore = 0
+    if not na(st_MAG) and close > st_MAG
+        biasScore -= 1
+    if not na(st_MAG) and close < st_MAG
+        biasScore += 1
+    // Put wall below call wall = normal; if most gamma is put-side, bearish
+    if not na(st_PW) and not na(st_CW) and st_PW < st_CW
+        biasScore -= 1
+    biasArrow = biasScore <= -1 ? " ↓" : biasScore >= 1 ? " ↑" : " ↔"
+    biasLabel = biasScore <= -1 ? "BEARISH" : biasScore >= 1 ? "BULLISH" : "NEUTRAL"
+    biasClr = biasScore <= -1 ? color.red : biasScore >= 1 ? color.lime : color.gray
+
+    // ── Proximity triggers ──
+    emV2 = not na(emV) ? emV : 50.0
+    thr = emV2 * 3.0
+    sTrig = f_bestShortTrigger(close, thr, st_GFL, st_PW, st_LPN, st_HW, st_ZG)
+    lTrig = f_bestLongTrigger(close, thr, st_CW, st_GFU, st_CW0, st_LCN, st_ZG)
+    sTgt = f_nearestBelow(sTrig, st_PW, st_HW, st_EL)
+    sInv = f_nearestAbove(sTrig, st_CW, st_GFU, st_EU)
+    lTgt = f_nearestAbove(lTrig, st_MP, st_EU, st_GFU)
+    lInv = f_nearestBelow(lTrig, st_ZG, st_GFL, st_PW)
+
+    primary = f_primarySymbol()
+    resolved = str.length(st_Asset) > 0 ? st_Asset : "—"
+    modeText = f_isOvernightFutures(primary) ? "Globex" : "Calendar"
+
+    // Row  0: Header
+    table.cell(dash, 0, 0, primary + " | " + modeText, text_color = color.white, text_size = tSz)
+    table.cell(dash, 1, 0, "Loaded: " + resolved, text_color = str.length(st_Asset) > 0 ? color.lime : color.red, text_size = tSz)
+    // Row  1: Regime + Direction
+    table.cell(dash, 0, 1, "REGIME", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, 1, lE + " " + regime + biasArrow + " " + biasLabel, text_color = biasClr, text_size = tSz)
+    // Row  2: Market structure
+    table.cell(dash, 0, 2, "MAGNET", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, 2, f_num(st_MAG), text_color = i_colGammaMagnet, text_size = tSz)
+    // Row  3: Pin
+    table.cell(dash, 0, 3, "PIN", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, 3, f_num(st_PIN), text_color = i_colPinStrike, text_size = tSz)
+    // Row  4: Separation + EM
+    table.cell(dash, 0, 4, "SEP | EM±", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, 4, f_num(wSep) + " | " + f_num(emV), text_color = color.white, text_size = tSz)
+    // Row  5: ZG
+    table.cell(dash, 0, 5, "ZERO γ", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, 5, f_num(st_ZG), text_color = i_colZeroGamma, text_size = tSz)
+    // Row  6: Cliffs
+    table.cell(dash, 0, 6, "CLIFFS", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, 6, "↓" + f_num(st_GCD) + " | ↑" + f_num(st_GCU), text_color = color.teal, text_size = tSz)
+    // Row  7: Separator
+    table.cell(dash, 0, 7, "", text_size = size.tiny)
+    table.cell(dash, 1, 7, "", text_size = size.tiny)
+    // Row  8: Narrative header
+    table.cell(dash, 0, 8, "PLAN", text_color = color.white, text_size = tSz)
+    dexInfo = ""
+    if not na(st_DPN) or not na(st_DCN)
+        dexInfo := "DEX " + f_num(st_DPN) + "/" + f_num(st_DCN)
+    table.cell(dash, 1, 8, dexInfo, text_color = color.white, text_size = tSz)
+    // Row  9: Short
+    sZ = ""
+    if not na(st_GCD)
+        sZ := "GC↓" + f_num(st_GCD) + " "
+    if not na(st_DPN)
+        sZ := sZ + "DEX " + f_num(st_DPN)
+    table.cell(dash, 0, 9, "SHORT", text_color = color.red, text_size = tSz)
+    table.cell(dash, 1, 9, "< " + f_num(sTrig) + " → " + f_num(sTgt) + " inv > " + f_num(sInv), text_color = color.red, text_size = tSz)
+    // Row 10: Short zones
+    table.cell(dash, 0, 10, "", text_size = size.tiny)
+    table.cell(dash, 1, 10, str.length(sZ) > 0 ? sZ : "", text_color = color.new(color.red, 40), text_size = tSz)
+    // Row 11: Long
+    lZ = ""
+    if not na(st_GCU)
+        lZ := "GC↑" + f_num(st_GCU) + " "
+    if not na(st_DCN)
+        lZ := lZ + "DEX " + f_num(st_DCN)
+    table.cell(dash, 0, 11, "LONG", text_color = color.lime, text_size = tSz)
+    table.cell(dash, 1, 11, "> " + f_num(lTrig) + " → " + f_num(lTgt) + " inv < " + f_num(lInv), text_color = color.lime, text_size = tSz)
+    // Row 12: Long zones
+    table.cell(dash, 0, 12, "", text_size = size.tiny)
+    table.cell(dash, 1, 12, str.length(lZ) > 0 ? lZ : "", text_color = color.new(color.lime, 40), text_size = tSz)
+    // Row 13: EM
+    table.cell(dash, 0, 13, "EM", text_color = color.aqua, text_size = tSz)
+    table.cell(dash, 1, 13, f_num(st_EL) + " ↔ " + f_num(st_EU), text_color = color.aqua, text_size = tSz)
+
+if barstate.islast and not i_showDash and not na(dash)
+    table.clear(dash, 0, 0, 1, 13)

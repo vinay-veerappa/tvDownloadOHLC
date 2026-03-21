@@ -8,7 +8,9 @@ import {
     Zap,
     History,
     ArrowRight,
-    Flame
+    Flame,
+    Radar,
+    Waves
 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
@@ -63,10 +65,26 @@ export function QuickLinksWidget() {
             color: "text-orange-500",
             bg: "bg-orange-500/10",
         },
+        {
+            title: "Options Live",
+            description: "Live Options Flow",
+            icon: Radar,
+            href: "/options-live",
+            color: "text-rose-500",
+            bg: "bg-rose-500/10",
+        },
+        {
+            title: "Macro HTF",
+            description: "Quant Macro Levels",
+            icon: Waves,
+            href: "/macro",
+            color: "text-indigo-500",
+            bg: "bg-indigo-500/10",
+        },
     ]
 
     return (
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {links.map((link) => (
                 <Link key={link.href} href={link.href} className="block group">
                     <Card className="h-full transition-all duration-200 hover:shadow-md hover:border-primary/50">

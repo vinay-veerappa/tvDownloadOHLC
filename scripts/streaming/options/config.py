@@ -91,6 +91,24 @@ INDEX_TO_FUTURES: dict[str, str] = {
     "IWM": RTY_FUTURES_SYMBOL,
 }
 
+# yfinance ticker mappings for futures symbols.
+FUTURES_YF_MAP: dict[str, str] = {
+    "/ES": "ES=F",
+    "/NQ": "NQ=F",
+    "/RTY": "RTY=F",
+    "/YM": "YM=F",
+    "/VX": "VX=F",
+    "/GC": "GC=F",
+    "/CL": "CL=F",
+    "/SI": "SI=F",
+    "/HG": "HG=F",
+    "/NG": "NG=F",
+    "/ZB": "ZB=F",
+    "/ZT": "ZT=F",
+    "/ZF": "ZF=F",
+    "/ZN": "ZN=F"
+}
+
 # Fallback tickers used when the primary index has low liquidity/OI.
 ETF_FALLBACK: dict[str, str] = {
     "SPX": "SPY", 
@@ -115,6 +133,9 @@ CONTRACT_MULTIPLIER: int = 100
 # ---------------------------------------------------------------------------
 # 0 = today (0DTE), 1 = next calendar day (1DTE).
 DTE_TARGETS: list[int] = list(range(14))
+
+# Multi-expiry targets for Macro HTF (Weekly/Monthly)
+MACRO_DTE_TARGETS: list[int] = [0, 7, 30, 45, 60, 90, 120, 150, 180, 270, 365]
 
 # ---------------------------------------------------------------------------
 # GEX / wall detection
@@ -164,6 +185,17 @@ GEX_PROFILES_JSON: Path = DATA_DIR / "gex_profiles.json"
 LIVE_TREND_JSON: Path = DATA_DIR / "live_trend.json"
 LOG_FILE: Path = DATA_DIR / "dealer_levels.log"
 EXPECTED_MOVE_TXT: Path = DATA_DIR / "expected_moves.txt"
+MACRO_LEVELS_TXT: Path = DATA_DIR / "macro_levels.txt"
+
+# ---------------------------------------------------------------------------
+# Next.js UI API Integration
+# ---------------------------------------------------------------------------
+# The base URL for the Next.js dashboard backend.
+NEXT_APP_URL: str = os.environ.get("NEXT_APP_URL", "http://localhost:3000")
+
+# API Endpoints for GEX snapshots and Macro HTF updates.
+SNAPSHOT_ENDPOINT: str = f"{NEXT_APP_URL}/api/options-live/snapshot"
+MACRO_SNAPSHOT_ENDPOINT: str = f"{NEXT_APP_URL}/api/options-macro/snapshot"
 
 # ---------------------------------------------------------------------------
 # Discord

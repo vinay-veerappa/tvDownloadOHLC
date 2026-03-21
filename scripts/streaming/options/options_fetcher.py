@@ -40,16 +40,11 @@ from .config import (
     SECRETS_PATH, 
     TOKEN_PATH,
     NY_SESSION_ROLLOVER_TIME,
-    OPTION_CHAIN_WIDE_WINDOW
+    OPTION_CHAIN_WIDE_WINDOW,
+    FUTURES_YF_MAP
 )
 
 log = logging.getLogger(__name__)
-
-
-FUTURES_YF_MAP = {
-    "/ES": "ES=F",
-    "/NQ": "NQ=F",
-}
 
 
 # ---------------------------------------------------------------------------

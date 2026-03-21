@@ -86,6 +86,7 @@ from .state_tracker import (
     load_previous_state,
     save_current_state,
 )
+from .macro_pipeline import run_macro_pipeline
 from .formatting import (
     build_plan,
     copy_ready_line,
@@ -132,6 +133,7 @@ def _chain_has_actionable_oi(chain) -> bool:
 # ---------------------------------------------------------------------------
 
 def run_pipeline(
+    tickers: list[str] | None = None,
     run_label: str = "",
     enable_discord: bool = ENABLE_DISCORD_UPDATES,
     full_discord: bool = False,
@@ -164,9 +166,9 @@ def run_pipeline(
     translated_levels = []
     cash_levels_by_ticker: dict[str, DealerLevels] = {}
 
-    # --- Process each index / futures pair ----------------------------------
-    # --- Process each ticker in the ACTIVE_TICKERS list -----------------------
-    for ticker in ACTIVE_TICKERS:
+    # --- Process each ticker --------------------------------------------------
+    target_tickers = tickers if tickers is not None else ACTIVE_TICKERS
+    for ticker in target_tickers:
         futures_sym = INDEX_TO_FUTURES.get(ticker)
         mapping_str = f"→ {futures_sym}" if futures_sym else "(Cash only)"
         log.info("─── Processing: %s %s ───", ticker, mapping_str)
@@ -581,10 +583,26 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Force-disable Discord webhook updates for this run.",
     )
+    parser.add_argument(
+        "--tickers",
+        metavar="TICKER,TICKER",
+        help="Comma-separated list of tickers to process (overrides ACTIVE_TICKERS).",
+    )
+    parser.add_argument(
+        "--macro",
+        action="store_true",
+        help="Run the Weekly Macro HTF pipeline instead of the intraday GEX pipeline.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force refresh data (ignore cache) in macro mode.",
+    )
     return parser
 
 
 def main() -> None:
+    _setup_logging()
     args = _build_parser().parse_args()
     if args.discord and args.no_discord:
         log.critical("Choose either --discord or --no-discord, not both.")
@@ -597,12 +615,24 @@ def main() -> None:
     else:
         enable_discord = ENABLE_DISCORD_UPDATES
 
-    if args.schedule:
+    # Parse tickers if provided
+    tickers = None
+    if args.tickers:
+        tickers = [t.strip().upper() for t in args.tickers.split(",")]
+
+    if args.macro:
+        from .macro_pipeline import run_macro_pipeline
+        # If no tickers provided for macro, use ACTIVE_TICKERS or a subset?
+        # Usually macro is run on index family. Let's use provided tickers or ACTIVE_TICKERS.
+        macro_tickers = tickers if tickers else ACTIVE_TICKERS
+        run_macro_pipeline(macro_tickers, force_refresh=args.force)
+    elif args.schedule:
         run_scheduled(enable_discord=enable_discord)
     elif args.loop:
         run_loop(enable_discord=enable_discord)
     else:
         run_pipeline(
+            tickers=tickers,
             run_label=args.label,
             enable_discord=enable_discord,
             full_discord=args.full_discord,
