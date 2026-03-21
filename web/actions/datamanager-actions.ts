@@ -20,7 +20,7 @@ export interface DataFileStatus {
 export async function getDataStatus() {
     try {
         const projectRoot = path.resolve(process.cwd(), "..")
-        const scriptAbsPath = path.join(projectRoot, "scripts", "check_data_status.py")
+        const scriptAbsPath = path.join(projectRoot, "scripts", "validation", "check_data_status.py")
 
         const command = `python "${scriptAbsPath}"`
 

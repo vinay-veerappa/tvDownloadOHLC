@@ -225,7 +225,9 @@ def fetch_weekly_expected_moves():
                 log.info(f"  ↳ {day_name} ({exp_date.strftime('%m/%d')}): ATM IV {vol:>5.2f}% | EM ±{em:<5.2f} | Range: {lower:,.2f} ↔ {upper:,.2f}")
                 
             clean_fut_sym = fut_sym.replace("/", "")
-            log.info(f"  Pine Script Copy: {clean_fut_sym}_EM=" + ", ".join(fut_pine))
+            fut_pine_line = f"{clean_fut_sym}_EM=" + ", ".join(fut_pine)
+            log.info(f"  Pine Script Copy: {fut_pine_line}")
+            pine_lines.append(fut_pine_line)
             
         log.info("-" * 60 + "\n")
 

@@ -3,7 +3,7 @@ import fs from "fs/promises";
 import path from "path";
 
 // Define where the Python script is writing the files
-const DATA_DIR = path.join(process.cwd(), "..", ""); // Up one level from /web since python runs in root
+const DATA_DIR = path.join(process.cwd(), "..", "data"); // Point to /data folder in root
 
 export async function GET() {
   try {

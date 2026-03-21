@@ -5,7 +5,8 @@ import json
 import pandas as pd
 from datetime import datetime
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+# Go up 3 levels: scripts/validation/script.py -> scripts/validation/ -> scripts/ -> root/
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
 
 def get_file_info(filepath):
     try:
