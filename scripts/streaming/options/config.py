@@ -186,6 +186,7 @@ LIVE_TREND_JSON: Path = DATA_DIR / "live_trend.json"
 LOG_FILE: Path = DATA_DIR / "dealer_levels.log"
 EXPECTED_MOVE_TXT: Path = DATA_DIR / "expected_moves.txt"
 MACRO_LEVELS_TXT: Path = DATA_DIR / "macro_levels.txt"
+MACRO_QUANT_JSON: Path = DATA_DIR / "macro_quant.json"
 
 # ---------------------------------------------------------------------------
 # Next.js UI API Integration

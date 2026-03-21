@@ -34,7 +34,7 @@ from .whale_detector import detect_volume_anomalies
 from .macro_charting import generate_macro_chart_bytes
 from .discord_notifier import send_macro_update
 from .interval_writer import write_macro_snapshot
-from .file_writer import write_macro_levels
+from .file_writer import write_macro_levels, write_quant_json
 from .gex_calculator import calculate_dealer_levels, extract_dominant_oi_nodes
 
 log = logging.getLogger(__name__)
@@ -302,6 +302,9 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
                     # Write the futures translated levels to the text file
                     write_macro_levels(output_ticker, fut_macro_levels, fut_anomalies, fut_dominant_nodes)
                     
+                    # Write high-signal Quant JSON for futures
+                    write_quant_json(output_ticker, fut.price, fut_macro_levels, fut_anomalies, fut_dominant_nodes)
+
                     # Push the futures translated levels to the Next.js API
                     write_macro_snapshot(output_ticker, fut.price, fut_macro_levels, fut_anomalies, fut_dominant_nodes)
 
@@ -320,6 +323,9 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
 
             # 7. Delivery Pillar 5: Pine Script Text Append
             write_macro_levels(ticker, macro_levels, anomalies, dominant_nodes)
+            
+            # 8. Delivery Pillar 6: Quant JSON Output
+            write_quant_json(ticker, float(chain.spot_price), macro_levels, anomalies, dominant_nodes)
             
             log.info("Macro HTF Pipeline completed for %s", ticker)
 

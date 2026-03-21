@@ -18,8 +18,10 @@ import json
 import logging
 import traceback
 import math
+import asyncio
 from datetime import datetime, timezone, date
 from typing import Any
+from prisma import Prisma
 
 import requests
 from urllib3.util.retry import Retry
@@ -57,6 +59,17 @@ def _sanitize_payload(data: Any) -> Any:
         if math.isnan(data) or math.isinf(data):
             return None
     return data
+
+
+_prisma_instance: Prisma | None = None
+
+async def _get_prisma() -> Prisma:
+    """Lazy initialization of Prisma client."""
+    global _prisma_instance
+    if _prisma_instance is None:
+        _prisma_instance = Prisma()
+        await _prisma_instance.connect()
+    return _prisma_instance
 
 
 def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> bool:
@@ -116,10 +129,39 @@ def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> 
             )
             return False
     except requests.exceptions.ConnectionError:
-        log.warning("GexSnapshot write failed for %s: Connection Refused (Is the Next.js server running at %s?)", ticker, SNAPSHOT_ENDPOINT)
-        return False
+        log.info("Server offline for %s. Attempting direct Database write...", ticker)
+        return asyncio.run(_write_snapshot_direct(payload))
     except Exception as e:
         log.warning("GexSnapshot write error for %s: %s\n%s", ticker, e, traceback.format_exc())
+        return False
+
+
+async def _write_snapshot_direct(payload: dict[str, Any]) -> bool:
+    """Write GexSnapshot directly to the database via Prisma."""
+    try:
+        db = await _get_prisma()
+        await db.gexsnapshot.create(data={
+            "ticker": payload["ticker"],
+            "timestamp": datetime.fromisoformat(payload["timestamp"]),
+            "tradingDate": datetime.fromisoformat(payload["tradingDate"]),
+            "totalGex": payload["totalGex"],
+            "totalGexDeltaAdj": payload.get("totalGexDeltaAdj"),
+            "callGammaTotal": payload.get("callGammaTotal"),
+            "putGammaTotal": payload.get("putGammaTotal"),
+            "gexRegime": payload["gexRegime"],
+            "regimeLabel": payload.get("regimeLabel"),
+            "spotPrice": payload["spotPrice"],
+            "gammaMagnet": payload.get("gammaMagnet"),
+            "pinStrike": payload.get("pinStrike"),
+            "callVolumeCentroid": payload.get("callVolumeCentroid"),
+            "putVolumeCentroid": payload.get("putVolumeCentroid"),
+            "netSpeedExposure": payload.get("netSpeedExposure"),
+            "netVannaExposure": payload.get("netVannaExposure"),
+        })
+        log.info("GexSnapshot written DIRECTLY to DB (Offline Mode) for %s", payload["ticker"])
+        return True
+    except Exception as e:
+        log.warning("Direct DB write failed for %s: %s", payload["ticker"], e)
         return False
 
 
@@ -169,10 +211,54 @@ def write_macro_snapshot(
             )
             return False
     except requests.exceptions.ConnectionError:
-        log.warning("Macro HTF snapshot write failed for %s: Connection Refused (Is the Next.js server running at %s?)", ticker, endpoint)
-        return False
+        log.info("Server offline for %s. Attempting direct Macro Database write...", ticker)
+        return asyncio.run(_write_macro_snapshot_direct(payload))
     except Exception as e:
         log.warning("Macro HTF snapshot write error for %s: %s\n%s", ticker, e, traceback.format_exc())
+        return False
+
+
+async def _write_macro_snapshot_direct(payload: dict[str, Any]) -> bool:
+    """Write MacroSnapshot directly to the database via Prisma."""
+    try:
+        db = await _get_prisma()
+        
+        # We use upsert to match the API behavior (unique on ticker + tradingDate)
+        # Note: formatting anomalies/dominantNodes as JSON string for DB
+        await db.macrosnapshot.upsert(
+            where={
+                "ticker_tradingDate": {
+                    "ticker": payload["ticker"],
+                    "tradingDate": datetime.fromisoformat(payload["tradingDate"]),
+                }
+            },
+            data={
+                "create": {
+                    "ticker": payload["ticker"],
+                    "timestamp": datetime.fromisoformat(payload["timestamp"]),
+                    "tradingDate": datetime.fromisoformat(payload["tradingDate"]),
+                    "spotPrice": payload["spotPrice"],
+                    "macroCallWall": payload.get("macroCallWall"),
+                    "macroPutWall": payload.get("macroPutWall"),
+                    "zeroGamma": payload.get("zeroGamma"),
+                    "anomalies": json.dumps(payload.get("anomalies", [])),
+                    "dominantNodes": json.dumps(payload.get("dominantNodes", [])),
+                },
+                "update": {
+                    "timestamp": datetime.fromisoformat(payload["timestamp"]),
+                    "spotPrice": payload["spotPrice"],
+                    "macroCallWall": payload.get("macroCallWall"),
+                    "macroPutWall": payload.get("macroPutWall"),
+                    "zeroGamma": payload.get("zeroGamma"),
+                    "anomalies": json.dumps(payload.get("anomalies", [])),
+                    "dominantNodes": json.dumps(payload.get("dominantNodes", [])),
+                }
+            }
+        )
+        log.info("Macro HTF snapshot written DIRECTLY to DB (Offline Mode) for %s", payload["ticker"])
+        return True
+    except Exception as e:
+        log.warning("Direct Macro DB write failed for %s: %s", payload["ticker"], e)
         return False
 
 

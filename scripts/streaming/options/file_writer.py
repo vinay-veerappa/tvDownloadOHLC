@@ -17,7 +17,8 @@ from .config import (
     DAILY_LEVELS_TXT, 
     GEX_PROFILES_JSON, 
     LIVE_TREND_JSON,
-    MACRO_LEVELS_TXT
+    MACRO_LEVELS_TXT,
+    MACRO_QUANT_JSON
 )
 from .formatting import (
     build_coaches_note,
@@ -534,7 +535,7 @@ def write_macro_levels(
     for w in anomalies.get("structural", []):
         # Add a multiplier tag if there are multiple expirations (e.g., "x5")
         conf_tag = f" x{w['confluence']}" if w['confluence'] > 1 else ""
-        prefix = "[GOLDEN SWEEP] " if w.get('is_golden_sweep') else ""
+        prefix = "GOLDEN SWEEP: " if w.get('is_golden_sweep') else ""
         label = f"{prefix}Whale {w['type']}{conf_tag} {w['dte_str']} ({w['avg_vol_oi_ratio']}x)"
         tokens.append(f"{w['strike']:.2f}:{label}")
 
@@ -542,7 +543,7 @@ def write_macro_levels(
     # We label these "Local Whale" so the Pine Script 'isTactical' proximity 
     # filter automatically catches the word "LOCAL" and hides them if they are far away.
     for w in anomalies.get("tactical", []):
-        prefix = "[GOLDEN SWEEP] " if w.get('is_golden_sweep') else ""
+        prefix = "GOLDEN SWEEP: " if w.get('is_golden_sweep') else ""
         label = f"{prefix}Local Whale {w['type']} {w['dte_str']} ({w['avg_vol_oi_ratio']}x)"
         tokens.append(f"{w['strike']:.2f}:{label}")
 
@@ -568,3 +569,41 @@ def write_macro_levels(
         f.write(final_string + "\n")
         
     log.info("Macro Levels appended to %s", path)
+
+
+def write_quant_json(
+    ticker: str,
+    spot: float,
+    levels: dict[str, float | None],
+    anomalies: dict[str, list[dict[str, Any]]],
+    dominant_nodes: list[dict[str, Any]],
+    path: Path = MACRO_QUANT_JSON
+) -> None:
+    """
+    Pillar 6: High-signal Quant JSON output.
+    Filters major nodes (>4%) and top 3 golden sweeps.
+    """
+    quant_payload = {
+        "ticker": ticker,
+        "spot": spot,
+        "zero_gamma": levels.get("zero_gamma"),
+        "call_wall": levels.get("macro_call_wall"),
+        "put_wall": levels.get("macro_put_wall"),
+        "major_nodes": [n for n in dominant_nodes if n.get('dominance_pct', 0) > 4.0],
+        "top_call_sweeps": [w for w in anomalies.get("structural", []) if w.get("type") == "CALL" and w.get("is_golden_sweep")][:3],
+        "top_put_sweeps": [w for w in anomalies.get("structural", []) if w.get("type") == "PUT" and w.get("is_golden_sweep")][:3]
+    }
+
+    # Use a dictionary in the file keyed by ticker
+    existing = {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+            
+    existing[ticker] = quant_payload
+    
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    log.info("Quant JSON updated for %s → %s", ticker, path)

@@ -282,6 +282,7 @@ f_levelColor(string title) =>
      u == "ZERO GAMMA" ? i_colZeroGamma :
      u == "MACRO CALL WALL" ? i_colMacroCall :
      u == "MACRO PUT WALL" ? i_colMacroPut :
+     str.contains(u, "GOLDEN SWEEP") ? color.new(#FFD700, 0) :
      str.contains(u, "WHALE CALL") ? i_colWhaleCall :
      str.contains(u, "WHALE PUT") ? i_colWhalePut :
      u == "GAMMA FLIP UPPER" or u == "GAMMA FLIP LOWER" ? i_colGammaFlip :
@@ -332,6 +333,10 @@ f_compactTitle(string title) =>
         res := "MAC CALL"
     else if u == "MACRO PUT WALL"
         res := "MAC PUT"
+    else if str.contains(u, "GOLDEN SWEEP: LOCAL WHALE")
+        res := str.replace(u, "GOLDEN SWEEP: LOCAL WHALE ", "GS-LW-")
+    else if str.contains(u, "GOLDEN SWEEP: WHALE")
+        res := str.replace(u, "GOLDEN SWEEP: WHALE ", "GS-W-")
     else if str.contains(u, "LOCAL WHALE")
         res := str.replace(u, "LOCAL WHALE ", "LW-")
     else if str.contains(u, "WHALE")

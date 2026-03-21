@@ -89,12 +89,13 @@ def detect_volume_anomalies(
                 "has_golden_sweep": False  # Add the new flag here
             }
         
-        # --- THE GOLDEN SWEEP TEST ---
-        # 1. Fresh Capital: Volume is greater than existing Open Interest
-        # 2. Urgency/Squeeze: Expiration is less than 35 days away
-        # 3. Conviction: The premium spent on this specific contract is massive
+       # --- THE GOLDEN SWEEP TEST (STRICT) ---
+        # 1. Extreme Fresh Capital: Volume must be at least 2.5x the resting OI.
+        # 2. Urgency: DTE <= 35, but strictly > 0 (0DTE ruins Vol/OI math).
+        # 3. Conviction: Premium must meet the DYNAMIC threshold, not a flat $1M.
         notional_val = vol * float(c.mark) * 100.0
-        if (vol > oi) and (c.dte <= 35) and (notional_val >= 1_000_000):
+        
+        if (ratio >= 2.5) and (0 < c.dte <= 35) and (notional_val >= dynamic_min_notional):
             agg_map[key]["has_golden_sweep"] = True
 
         agg_map[key]["dtes"].add(int(c.dte))
