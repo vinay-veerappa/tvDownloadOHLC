@@ -162,6 +162,10 @@ def run_pipeline(
             target_cash_spot = primary_chain.spot_price
             source_ticker = ticker
             direct_price_metrics = None
+            
+            # Reset translation anchors for each ticker to avoid variable leakage
+            anchor_basis = None
+            anchor_ratio = None
 
             # 1b. ETF fallback if index chain is empty or has unusable OI profile
             if (not chain.calls and not chain.puts) or (not _chain_has_actionable_oi(chain)):

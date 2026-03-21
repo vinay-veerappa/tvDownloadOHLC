@@ -153,13 +153,16 @@ USE_OPENING_BASIS: bool = True
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
-OUTPUT_DIR: Path = REPO_ROOT
-DAILY_LEVELS_JSON: Path = OUTPUT_DIR / "daily_levels.json"
-DAILY_LEVELS_TXT: Path = OUTPUT_DIR / "daily_levels.txt"
-GEX_PROFILES_JSON: Path = OUTPUT_DIR / "gex_profiles.json"
-LIVE_TREND_JSON: Path = OUTPUT_DIR / "live_trend.json"
-LOG_FILE: Path = OUTPUT_DIR / "dealer_levels.log"
-EXPECED_MOVE_TXT: Path = OUTPUT_DIR / "expected_moves.txt"
+DATA_DIR: Path = REPO_ROOT / "data"
+# Create the directory if it doesn't exist to avoid path resolution errors.
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+DAILY_LEVELS_JSON: Path = DATA_DIR / "daily_levels.json"
+DAILY_LEVELS_TXT: Path = DATA_DIR / "daily_levels.txt"
+GEX_PROFILES_JSON: Path = DATA_DIR / "gex_profiles.json"
+LIVE_TREND_JSON: Path = DATA_DIR / "live_trend.json"
+LOG_FILE: Path = DATA_DIR / "dealer_levels.log"
+EXPECED_MOVE_TXT: Path = DATA_DIR / "expected_moves.txt"
 
 # ---------------------------------------------------------------------------
 # Discord

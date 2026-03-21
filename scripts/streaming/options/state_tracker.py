@@ -19,11 +19,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import OUTPUT_DIR
+from .config import DATA_DIR
 
 log = logging.getLogger(__name__)
 
-STATE_FILE: Path = OUTPUT_DIR / "pipeline_state.json"
+STATE_FILE: Path = DATA_DIR / "pipeline_state.json"
 
 
 # ---------------------------------------------------------------------------
