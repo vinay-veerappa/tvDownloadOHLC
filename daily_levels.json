@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-03-21T04:25:22.904950+00:00",
-  "run_label": "2026-03-21 00:24 ET",
+  "generated_at": "2026-03-21T04:30:27.850066+00:00",
+  "run_label": "2026-03-21 00:29 ET",
   "market_structure": [
     {
       "asset": "ES",
@@ -16,7 +16,7 @@
       "call_gamma_total": 70168848.75,
       "put_gamma_total": 150867499.57,
       "net_vanna_exposure": -461478.46,
-      "net_speed_exposure": 95970.58,
+      "net_speed_exposure": 95976.17,
       "call_volume_centroid": 66659.47,
       "put_volume_centroid": 64999.61,
       "coach_note": [
@@ -24,12 +24,12 @@
         "**ES \u2014 COILED \u2193** (GEX: -80,698,651) \ud83d\udd34 BEARISH",
         "This is a COILED environment \u2014 dealers are short gamma but the range is compressed. The market is storing energy for a breakout. This is the hardest regime to trade. Wait for a clear break of zero gamma or the gamma flip zone before committing. If you're unsure, stand down entirely.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 66842.80 | Put wall 65830.05 (1012.75 pts separation, 1020.68 EM).",
+        "Call wall 66842.80 | Put wall 65830.05 (1012.75 pts separation, 1019.97 EM).",
         "Gamma magnet at 66066.05 (59477.6 pts above current price) \u2014 price wants to drift here.",
         "Pin strike at 65830.05 but concentration is low (10%) \u2014 pinning effect is weak today.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Be patient. Watch zero gamma and the gamma flip zone. If price breaks and closes outside the flip zone, take the trade in that direction with a stop back inside. If it doesn't break, don't force it.",
-        "Expected move: 65138.51 \u2194 67179.87 (\u00b11020.68). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 65139.22 \u2194 67179.16 (\u00b11019.97). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -46,7 +46,7 @@
       "call_gamma_total": 18257024.81,
       "put_gamma_total": 78268908.49,
       "net_vanna_exposure": -316299.06,
-      "net_speed_exposure": 33108.62,
+      "net_speed_exposure": 33098.34,
       "call_volume_centroid": 24617.72,
       "put_volume_centroid": 23927.57,
       "coach_note": [
@@ -54,12 +54,12 @@
         "**NQ \u2014 COILED \u2193** (GEX: -60,011,884) \ud83d\udd34 BEARISH",
         "This is a COILED environment \u2014 dealers are short gamma but the range is compressed. The market is storing energy for a breakout. This is the hardest regime to trade. Wait for a clear break of zero gamma or the gamma flip zone before committing. If you're unsure, stand down entirely.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 24588.54 | Put wall 24338.49 (250.05 pts separation, 375.08 EM).",
+        "Call wall 24588.54 | Put wall 24338.49 (250.05 pts separation, 374.66 EM).",
         "Gamma magnet at 24184.29 (33.0 pts below current price) \u2014 price wants to drift here.",
         "Pin strike at 24338.49 but concentration is low (7%) \u2014 pinning effect is weak today.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Be patient. Watch zero gamma and the gamma flip zone. If price breaks and closes outside the flip zone, take the trade in that direction with a stop back inside. If it doesn't break, don't force it.",
-        "Expected move: 24093.44 \u2194 24843.60 (\u00b1375.08). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 24093.86 \u2194 24843.18 (\u00b1374.66). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -76,7 +76,7 @@
       "call_gamma_total": 13040807.93,
       "put_gamma_total": 55394467.82,
       "net_vanna_exposure": -97126.29,
-      "net_speed_exposure": 68400.61,
+      "net_speed_exposure": 68456.78,
       "call_volume_centroid": 2527.55,
       "put_volume_centroid": 2437.79,
       "coach_note": [
@@ -84,12 +84,12 @@
         "**RTY \u2014 TRENDING \u2193** (GEX: -42,353,660) \ud83d\udd34 BEARISH",
         "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 2550.20 | Put wall 2397.19 (153.01 pts separation, 56.82 EM).",
+        "Call wall 2550.20 | Put wall 2397.19 (153.01 pts separation, 56.72 EM).",
         "Gamma magnet at 2461.96 (5.2 pts below current price) \u2014 price wants to drift here.",
         "Pin strike 2397.19 has 16% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 2443.50 \u2194 2557.14 (\u00b156.82). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 2443.60 \u2194 2557.03 (\u00b156.72). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -106,7 +106,7 @@
       "call_gamma_total": 5866196.16,
       "put_gamma_total": 5248339.38,
       "net_vanna_exposure": -30201.09,
-      "net_speed_exposure": 5567.5,
+      "net_speed_exposure": 5568.94,
       "call_volume_centroid": 47335.72,
       "put_volume_centroid": 45045.02,
       "coach_note": [
@@ -114,12 +114,12 @@
         "**YM \u2014 BATTLE_ZONE \u2194** (GEX: 617,857) \u26aa NEUTRAL",
         "This is a BATTLE_ZONE \u2014 dealers are long gamma but the range is wide. Expect large swings between the call wall and put wall. These swings tend to reverse at the walls. Trade wall-to-wall if you have the stomach for it, but use wider stops.",
         "Directional lean is NEUTRAL \u2014 mixed signals. No strong directional edge from options positioning. Let price action lead.",
-        "Call wall 48060.17 | Put wall 45530.68 (2529.48 pts separation, 1536.91 EM).",
+        "Call wall 48060.17 | Put wall 45530.68 (2529.48 pts separation, 1535.90 EM).",
         "Gamma magnet at 47019.03 (909.0 pts above current price) \u2014 price wants to drift here.",
         "Pin strike 48060.17 has 16% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Trade the range. Short at call wall, long at put wall, with stops just beyond. Expect wide swings \u2014 don't get shaken out on noise. The gamma magnet is your mid-range target.",
-        "Expected move: 44914.50 \u2194 47988.33 (\u00b11536.91). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 44915.51 \u2194 47987.32 (\u00b11535.90). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -136,7 +136,7 @@
       "call_gamma_total": 70168848.75,
       "put_gamma_total": 150867499.57,
       "net_vanna_exposure": -461478.46,
-      "net_speed_exposure": 95970.67,
+      "net_speed_exposure": 95976.27,
       "call_volume_centroid": 658.19,
       "put_volume_centroid": 641.8,
       "coach_note": [
@@ -166,7 +166,7 @@
       "call_gamma_total": 9718899.84,
       "put_gamma_total": 19796000.64,
       "net_vanna_exposure": -21650.55,
-      "net_speed_exposure": 39140.68,
+      "net_speed_exposure": 39170.72,
       "call_volume_centroid": 250.96,
       "put_volume_centroid": 244.93,
       "coach_note": [
@@ -196,7 +196,7 @@
       "call_gamma_total": 4272916.32,
       "put_gamma_total": 15085179.72,
       "net_vanna_exposure": -48316.51,
-      "net_speed_exposure": 8036.16,
+      "net_speed_exposure": 8033.57,
       "call_volume_centroid": 390.96,
       "put_volume_centroid": 378.79,
       "coach_note": [
@@ -204,12 +204,12 @@
         "**MSFT \u2014 TRENDING \u2194** (GEX: -10,812,263) \u26aa NEUTRAL",
         "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
         "Directional lean is NEUTRAL \u2014 mixed signals. No strong directional edge from options positioning. Let price action lead.",
-        "Call wall 400.00 | Put wall 380.00 (20.00 pts separation, 6.68 EM).",
+        "Call wall 400.00 | Put wall 380.00 (20.00 pts separation, 6.67 EM).",
         "Gamma magnet at 384.10 (0.7 pts above current price) \u2014 price wants to drift here.",
         "Pin strike 385.00 has 26% gamma concentration \u2014 watch for convergence, especially after 2pm ET.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 376.72 \u2194 390.08 (\u00b16.68). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 376.73 \u2194 390.07 (\u00b16.67). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -226,7 +226,7 @@
       "call_gamma_total": 21061100.13,
       "put_gamma_total": 30528142.93,
       "net_vanna_exposure": -32768.21,
-      "net_speed_exposure": 51938.89,
+      "net_speed_exposure": 51957.56,
       "call_volume_centroid": 178.86,
       "put_volume_centroid": 170.4,
       "coach_note": [
@@ -256,7 +256,7 @@
       "call_gamma_total": 10221910.55,
       "put_gamma_total": 25666116.35,
       "net_vanna_exposure": -121534.14,
-      "net_speed_exposure": 12972.05,
+      "net_speed_exposure": 12976.44,
       "call_volume_centroid": 378.44,
       "put_volume_centroid": 365.09,
       "coach_note": [
@@ -264,12 +264,12 @@
         "**TSLA \u2014 TRENDING \u2193** (GEX: -15,444,206) \ud83d\udd34 BEARISH",
         "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 382.50 | Put wall 360.00 (22.50 pts separation, 10.54 EM).",
+        "Call wall 382.50 | Put wall 360.00 (22.50 pts separation, 10.53 EM).",
         "Gamma magnet at 368.17 (4.1 pts below current price) \u2014 price wants to drift here.",
         "Pin strike at 380.00 but concentration is low (10%) \u2014 pinning effect is weak today.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 361.71 \u2194 382.79 (\u00b110.54). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 361.72 \u2194 382.78 (\u00b110.53). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -286,7 +286,7 @@
       "call_gamma_total": 2263927.5,
       "put_gamma_total": 5571986.25,
       "net_vanna_exposure": -29695.25,
-      "net_speed_exposure": 2034.38,
+      "net_speed_exposure": 2035.52,
       "call_volume_centroid": 603.58,
       "put_volume_centroid": 588.01,
       "coach_note": [
@@ -294,12 +294,12 @@
         "**META \u2014 TRENDING \u2193** (GEX: -3,308,059) \ud83d\udd34 BEARISH",
         "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 605.00 | Put wall 590.00 (15.00 pts separation, 13.22 EM).",
+        "Call wall 605.00 | Put wall 590.00 (15.00 pts separation, 13.21 EM).",
         "Gamma magnet at 595.49 (2.0 pts below current price) \u2014 price wants to drift here.",
         "Pin strike at 590.00 but concentration is low (12%) \u2014 pinning effect is weak today.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 584.28 \u2194 610.72 (\u00b113.22). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 584.29 \u2194 610.71 (\u00b113.21). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     },
     {
@@ -316,7 +316,7 @@
       "call_gamma_total": 4064802.83,
       "put_gamma_total": 6513088.1,
       "net_vanna_exposure": -13276.68,
-      "net_speed_exposure": 6376.06,
+      "net_speed_exposure": 6376.36,
       "call_volume_centroid": 305.39,
       "put_volume_centroid": 297.46,
       "coach_note": [
@@ -346,7 +346,7 @@
       "call_gamma_total": 6840295.74,
       "put_gamma_total": 8677719.29,
       "net_vanna_exposure": -9970.63,
-      "net_speed_exposure": 24906.3,
+      "net_speed_exposure": 24924.38,
       "call_volume_centroid": 209.06,
       "put_volume_centroid": 202.46,
       "coach_note": [
@@ -376,7 +376,7 @@
       "call_gamma_total": 2010579.57,
       "put_gamma_total": 4161951.39,
       "net_vanna_exposure": -12380.78,
-      "net_speed_exposure": 3083.18,
+      "net_speed_exposure": 3084.68,
       "call_volume_centroid": 305.35,
       "put_volume_centroid": 304.37,
       "coach_note": [
@@ -384,18 +384,18 @@
         "**AVGO \u2014 TRENDING \u2193** (GEX: -2,151,372) \ud83d\udd34 BEARISH",
         "This is a TRENDING environment \u2014 dealers are short gamma and amplifying moves. Don't fade. Wait for a direction to establish, then join the trend with a trailing stop. Moves can extend further than you'd expect.",
         "Directional lean is BEARISH \u2014 gamma magnet is below price, put gamma dominates, and/or vanna favors downside. Look for short setups first.",
-        "Call wall 325.00 | Put wall 305.00 (20.00 pts separation, 9.25 EM).",
+        "Call wall 325.00 | Put wall 305.00 (20.00 pts separation, 9.24 EM).",
         "Gamma magnet at 310.17 (3.0 pts below current price) \u2014 price wants to drift here.",
         "Pin strike at 310.00 but concentration is low (11%) \u2014 pinning effect is weak today.",
         "Net vanna is negative \u2014 if IV drops into the close, expect bearish dealer hedging pressure.",
         "**What to do:** Wait for price to break and hold above call wall (bullish) or below put wall (bearish). Join the trend on a retest. Trail your stop to the previous level. Don't try to pick tops or bottoms.",
-        "Expected move: 303.90 \u2194 322.40 (\u00b19.25). Inside the band = two-way chop. Outside = expansion, trend continuation."
+        "Expected move: 303.91 \u2194 322.39 (\u00b19.24). Inside the band = two-way chop. Outside = expansion, trend continuation."
       ]
     }
   ],
   "levels": [
     {
-      "level": 67179.87,
+      "level": 67179.16,
       "type": "Upper EM",
       "asset": "ES",
       "regime": "NEGATIVE",
@@ -485,7 +485,7 @@
       "basis_ratio": 10.1682
     },
     {
-      "level": 65138.51,
+      "level": 65139.22,
       "type": "Lower EM",
       "asset": "ES",
       "regime": "NEGATIVE",
@@ -765,7 +765,7 @@
       "basis_ratio": 10.1682
     },
     {
-      "level": 24843.6,
+      "level": 24843.18,
       "type": "Upper EM",
       "asset": "NQ",
       "regime": "NEGATIVE",
@@ -855,7 +855,7 @@
       "basis_ratio": 41.6755
     },
     {
-      "level": 24093.44,
+      "level": 24093.86,
       "type": "Lower EM",
       "asset": "NQ",
       "regime": "NEGATIVE",
@@ -1135,7 +1135,7 @@
       "basis_ratio": 41.6755
     },
     {
-      "level": 2557.14,
+      "level": 2557.03,
       "type": "Upper EM",
       "asset": "RTY",
       "regime": "NEGATIVE",
@@ -1225,7 +1225,7 @@
       "basis_ratio": 10.2008
     },
     {
-      "level": 2443.5,
+      "level": 2443.6,
       "type": "Lower EM",
       "asset": "RTY",
       "regime": "NEGATIVE",
@@ -1505,7 +1505,7 @@
       "basis_ratio": 10.2008
     },
     {
-      "level": 47988.33,
+      "level": 47987.32,
       "type": "Upper EM",
       "asset": "YM",
       "regime": "POSITIVE",
@@ -1595,7 +1595,7 @@
       "basis_ratio": 101.1793
     },
     {
-      "level": 44914.5,
+      "level": 44915.51,
       "type": "Lower EM",
       "asset": "YM",
       "regime": "POSITIVE",
@@ -1875,7 +1875,7 @@
       "basis_ratio": 101.1793
     },
     {
-      "level": 6606.86,
+      "level": 6606.79,
       "type": "Upper EM",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -1956,7 +1956,7 @@
       "price_space": "cash"
     },
     {
-      "level": 6406.1,
+      "level": 6406.17,
       "type": "Lower EM",
       "asset": "SPX",
       "regime": "NEGATIVE",
@@ -2541,7 +2541,7 @@
       "price_space": "cash"
     },
     {
-      "level": 596.12,
+      "level": 596.11,
       "type": "Upper EM",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2622,7 +2622,7 @@
       "price_space": "cash"
     },
     {
-      "level": 578.12,
+      "level": 578.13,
       "type": "Lower EM",
       "asset": "QQQ",
       "regime": "NEGATIVE",
@@ -2874,7 +2874,7 @@
       "price_space": "cash"
     },
     {
-      "level": 250.68,
+      "level": 250.67,
       "type": "Upper EM",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -2955,7 +2955,7 @@
       "price_space": "cash"
     },
     {
-      "level": 239.54,
+      "level": 239.55,
       "type": "Lower EM",
       "asset": "IWM",
       "regime": "NEGATIVE",
@@ -3207,7 +3207,7 @@
       "price_space": "cash"
     },
     {
-      "level": 474.29,
+      "level": 474.28,
       "type": "Upper EM",
       "asset": "DIA",
       "regime": "POSITIVE",
@@ -3288,7 +3288,7 @@
       "price_space": "cash"
     },
     {
-      "level": 443.91,
+      "level": 443.92,
       "type": "Lower EM",
       "asset": "DIA",
       "regime": "POSITIVE",
@@ -3873,7 +3873,7 @@
       "price_space": "cash"
     },
     {
-      "level": 390.08,
+      "level": 390.07,
       "type": "Upper EM",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -3954,7 +3954,7 @@
       "price_space": "cash"
     },
     {
-      "level": 376.72,
+      "level": 376.73,
       "type": "Lower EM",
       "asset": "MSFT",
       "regime": "NEGATIVE",
@@ -4530,7 +4530,7 @@
       "price_space": "cash"
     },
     {
-      "level": 382.79,
+      "level": 382.78,
       "type": "Upper EM",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4611,7 +4611,7 @@
       "price_space": "cash"
     },
     {
-      "level": 361.71,
+      "level": 361.72,
       "type": "Lower EM",
       "asset": "TSLA",
       "regime": "NEGATIVE",
@@ -4863,7 +4863,7 @@
       "price_space": "cash"
     },
     {
-      "level": 610.72,
+      "level": 610.71,
       "type": "Upper EM",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -4944,7 +4944,7 @@
       "price_space": "cash"
     },
     {
-      "level": 584.28,
+      "level": 584.29,
       "type": "Lower EM",
       "asset": "META",
       "regime": "NEGATIVE",
@@ -5853,7 +5853,7 @@
       "price_space": "cash"
     },
     {
-      "level": 322.4,
+      "level": 322.39,
       "type": "Upper EM",
       "asset": "AVGO",
       "regime": "NEGATIVE",
@@ -5934,7 +5934,7 @@
       "price_space": "cash"
     },
     {
-      "level": 303.9,
+      "level": 303.91,
       "type": "Lower EM",
       "asset": "AVGO",
       "regime": "NEGATIVE",

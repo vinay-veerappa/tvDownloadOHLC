@@ -223,9 +223,11 @@ def run_pipeline(
                 # We skip appending to translated_levels, but proceed to next steps
                 # so cash_levels_by_ticker is already populated and can be used.
             else:
-                # Use primary_chain's opening spot (original index) for basis anchors,
-                # NOT the fallback chain's opening spot (ETF), to avoid double-scaling.
-                base_open = primary_chain.spot_open if primary_chain.spot_open > 0 else chain.spot_open
+                # Use primary_chain's opening spot (original index) for basis anchors.
+                # If we fell back to an ETF (source_ticker != ticker), we should NOT
+                # use the ETF's opening price here as that would cause a 10x/40x 
+                # scale error in the anchor_ratio.
+                base_open = primary_chain.spot_open
                 
                 if USE_OPENING_BASIS and fut.open_price > 0 and base_open > 0:
                     # Calculate basis established at open (e.g. ES Open - SPX Open)
