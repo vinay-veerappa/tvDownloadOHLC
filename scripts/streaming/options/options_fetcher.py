@@ -35,7 +35,13 @@ try:
 except ImportError:
     yf = None
 
-from .config import SCHWAB_INDEX_PREFIX, SECRETS_PATH, TOKEN_PATH
+from .config import (
+    SCHWAB_INDEX_PREFIX, 
+    SECRETS_PATH, 
+    TOKEN_PATH,
+    NY_SESSION_ROLLOVER_TIME,
+    OPTION_CHAIN_WIDE_WINDOW
+)
 
 log = logging.getLogger(__name__)
 
@@ -99,8 +105,8 @@ def _today_ny() -> date:
     """
     ny_time = datetime.now(ZoneInfo("America/New_York"))
     
-    # If the current time is past 4:00 PM (16:00) EST, roll forward 1 day
-    if ny_time.time() >= time(16, 0):
+    # If the current time is past the rollover time (e.g. 16:00 EST), roll forward 1 day
+    if ny_time.time() >= NY_SESSION_ROLLOVER_TIME:
         return (ny_time + timedelta(days=1)).date()
         
     return ny_time.date()
@@ -307,7 +313,7 @@ def fetch_option_chain_data(
     
     today = _today_ny()
     # Query a wide enough window so weekend/overnight runs still return expiries.
-    max_dte = max(dte_targets) + 10
+    max_dte = max(dte_targets) + OPTION_CHAIN_WIDE_WINDOW
 
     response = client.get_option_chain(
         api_sym,

@@ -110,6 +110,22 @@ def _to_entries(tl: TranslatedLevels) -> list[dict[str, Any]]:
         else:
             entry["basis_ratio"] = tl.basis_ratio
         rows.append(entry)
+    for em in tl.expected_moves:
+        base_entry = {
+            "asset": tag,
+            "regime": tl.gex_regime,
+            "regime_label": tl.regime_label,
+            "cash_ticker": tl.cash_ticker,
+            "translation_mode": tl.translation_mode,
+        }
+        if tl.translation_mode == "additive":
+            base_entry["basis_spread"] = tl.basis_spread
+        else:
+            base_entry["basis_ratio"] = tl.basis_ratio
+
+        rows.append({**base_entry, "level": round(float(em.em_upper), 2), "type": f"{em.expiry} Upper EM"})
+        rows.append({**base_entry, "level": round(float(em.em_lower), 2), "type": f"{em.expiry} Lower EM"})
+
     return rows
 
 
@@ -130,6 +146,29 @@ def _to_cash_entries(levels: DealerLevels) -> list[dict[str, Any]]:
                 "price_space": "cash",
             }
         )
+    
+    for em in levels.expected_moves:
+        # Add dte-prefixed labels to the copy-ready string for Pine Script filtering
+        label_dte = f" ({em.dte}d)" if em.dte is not None else ""
+        rows.append({
+            "level": round(float(em.em_upper), 2),
+            "type": f"{em.expiry}{label_dte} Upper EM",
+            "asset": levels.ticker,
+            "regime": levels.gex_regime,
+            "cash_ticker": levels.ticker,
+            "basis_spread": 0.0,
+            "price_space": "cash",
+        })
+        rows.append({
+            "level": round(float(em.em_lower), 2),
+            "type": f"{em.expiry} Lower EM",
+            "asset": levels.ticker,
+            "regime": levels.gex_regime,
+            "cash_ticker": levels.ticker,
+            "basis_spread": 0.0,
+            "price_space": "cash",
+        })
+
     return rows
 
 
@@ -139,7 +178,7 @@ def _to_cash_entries(levels: DealerLevels) -> list[dict[str, Any]]:
 
 def _detailed_block(tl: TranslatedLevels) -> list[str]:
     tag = futures_tag(tl.futures_symbol)
-    return [
+    block = [
         f"── {tl.cash_ticker} → {tag} {'─' * 40}",
         f"  Regime             : {tl.gex_regime} GEX — {tl.regime_label} ({tl.directional_bias})  (total GEX = {tl.total_gex:,.0f})",
         f"  Cash Spot          : {tl.cash_spot:,.2f}",
@@ -178,11 +217,21 @@ def _detailed_block(tl: TranslatedLevels) -> list[str]:
         f"  DEX Nodes C/P      : {fmt(tl.dex_call_node)} / {fmt(tl.dex_put_node)}",
         f"  Liquidity Vacuum   : {fmt(tl.liquidity_vacuum_lower)} ↔ {fmt(tl.liquidity_vacuum_upper)}",
         f"  Skew Pivots 25D    : Put {fmt(tl.skew_pivot_put_25d)} | Call {fmt(tl.skew_pivot_call_25d)}",
+        "",
+        "  ── Expected Moves (All Expiries) ──────────",
+    ]
+
+    for em in tl.expected_moves:
+        block.append(f"  {em.expiry} ({em.dte}d) : {fmt(em.em_lower)} ↔ {fmt(em.em_upper)}  (±{em.em_value:,.2f})")
+
+    block.extend([
+        "",
         f"  Vol Triggers       : 0.5σ {fmt(tl.vol_trigger_lower_05)}-{fmt(tl.vol_trigger_upper_05)} | "
         f"1.0σ {fmt(tl.vol_trigger_lower_10)}-{fmt(tl.vol_trigger_upper_10)} | "
         f"1.5σ {fmt(tl.vol_trigger_lower_15)}-{fmt(tl.vol_trigger_upper_15)}",
         "",
-    ]
+    ])
+    return block
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +279,17 @@ def write_levels(
             "put_centroid": tl.put_volume_centroid,   # standardized name
             "atm_iv": tl.atm_iv,
             "iv_change": tl.iv_change,
+            "expected_moves": [
+                {
+                    "expiry": em.expiry,
+                    "dte": em.dte,
+                    "em_upper": em.em_upper,
+                    "em_lower": em.em_lower,
+                    "em_value": em.em_value,
+                    "straddle": em.straddle
+                }
+                for em in tl.expected_moves
+            ],
             "coach_note": build_coaches_note(cash_tag(tl.futures_symbol) if tl.futures_symbol else cash_tag(tl.cash_ticker), tl)
         })
     # Also include cash-only tickers (ETFs, stocks) that don't have futures translation
@@ -258,6 +318,17 @@ def write_levels(
             "put_centroid": levels.put_volume_centroid,
             "atm_iv": levels.atm_iv,
             "iv_change": levels.iv_change,
+            "expected_moves": [
+                {
+                    "expiry": em.expiry,
+                    "dte": em.dte,
+                    "em_upper": em.em_upper,
+                    "em_lower": em.em_lower,
+                    "em_value": em.em_value,
+                    "straddle": em.straddle
+                }
+                for em in getattr(levels, 'expected_moves', [])
+            ],
             "coach_note": build_coaches_note(levels.ticker, levels)
         })
 

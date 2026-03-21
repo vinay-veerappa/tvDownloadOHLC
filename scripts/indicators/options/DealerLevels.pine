@@ -68,6 +68,7 @@ dashBgOpacity = input.int(82, "Dashboard Background Opacity", minval = 0, maxval
 
 var string grp_visibility = "Level Visibility"
 showEMLevels = input.bool(true, "Show EM Levels", group = grp_visibility)
+maxEMDte = input.int(7, "Max EM DTE to Show", minval = 0, maxval = 15, group = grp_visibility, tooltip = "Only show EM levels for expiries within this many days. 0 = show all.")
 showCallLevels = input.bool(true, "Show Call Levels", group = grp_visibility)
 showPutLevels = input.bool(true, "Show Put Levels", group = grp_visibility)
 showZeroGammaLevel = input.bool(true, "Show Zero Gamma", group = grp_visibility)
@@ -265,7 +266,7 @@ f_parse_levels(string lineText, array<float> prices, array<string> titles) =>
 // ═══════════════════════════════════════════════════════════════════════
 f_level_color(string title) =>
     u = f_norm(title)
-    u == "UPPER EM" ? colUpperEM : u == "LOWER EM" ? colLowerEM : u == "ZERO GAMMA" ? colZeroGamma :
+    str.contains(u, "UPPER EM") ? colUpperEM : str.contains(u, "LOWER EM") ? colLowerEM : u == "ZERO GAMMA" ? colZeroGamma :
      u == "GAMMA FLIP UPPER" or u == "GAMMA FLIP LOWER" ? colGammaFlip :
      u == "GAMMA CLIFF UP" ? colGammaCliffUp : u == "GAMMA CLIFF DOWN" ? colGammaCliffDown :
      u == "MAX PAIN" ? colMaxPain : u == "HEDGE WALL" ? colHedge :
@@ -276,24 +277,100 @@ f_level_style(string title) =>
     u = f_norm(title)
     str.contains(u, "GAMMA FLIP") ? line.style_dashed : str.contains(u, "GAMMA CLIFF") ? line.style_dotted :
      str.contains(u, "DEX") ? line.style_dashed : u == "GAMMA MAGNET" or u == "PIN STRIKE" ? line.style_dotted :
-     str.contains(u, "0DTE") ? f_line_style(lineStyle0DTEInp) : str.contains(u, "LOCAL") ? f_line_style(lineStyleSecondaryInp) : f_line_style(lineStylePrimaryInp)
+     str.contains(u, "0DTE") ? f_line_style(lineStyle0DTEInp) : str.contains(u, "EM") ? line.style_solid : str.contains(u, "LOCAL") ? f_line_style(lineStyleSecondaryInp) : f_line_style(lineStylePrimaryInp)
 f_level_width(string title) =>
     u = f_norm(title)
-    str.contains(u, "0DTE") or str.contains(u, "LOCAL") or str.contains(u, "GAMMA FLIP") or str.contains(u, "GAMMA CLIFF") or str.contains(u, "DEX") or u == "GAMMA MAGNET" or u == "PIN STRIKE" ? lineWidthSecondary : lineWidthPrimary
+    isEm = str.contains(u, "EM")
+    isPrimaryEm = u == "UPPER EM" or u == "LOWER EM"
+    str.contains(u, "0DTE") or str.contains(u, "LOCAL") or str.contains(u, "GAMMA FLIP") or str.contains(u, "GAMMA CLIFF") or str.contains(u, "DEX") or u == "GAMMA MAGNET" or u == "PIN STRIKE" or (isEm and not isPrimaryEm) ? lineWidthSecondary : lineWidthPrimary
 f_compact_title(string title) =>
     u = f_norm(title)
-    u == "UPPER EM" ? "EM+" : u == "LOWER EM" ? "EM-" : u == "ABSOLUTE CALL WALL" ? "CALL ABS" : u == "LOCAL CALL NODE" ? "CALL LOC" :
-     u == "0DTE CALL WALL" ? "CALL 0DTE" : u == "DEX CALL NODE" ? "DEX C" : u == "GAMMA FLIP UPPER" ? "GF U" : u == "GAMMA CLIFF UP" ? "GC U" :
-     u == "ZERO GAMMA" ? "ZG" : u == "GAMMA CLIFF DOWN" ? "GC D" : u == "GAMMA FLIP LOWER" ? "GF L" : u == "MAX PAIN" ? "MAX" :
-     u == "0DTE PUT WALL" ? "PUT 0DTE" : u == "LOCAL PUT NODE" ? "PUT LOC" : u == "DEX PUT NODE" ? "DEX P" : u == "HEDGE WALL" ? "HEDGE" :
-     u == "GAMMA MAGNET" ? "MAG" : u == "PIN STRIKE" ? "PIN" : title
-f_show_level(string title) =>
+    res = title
+    if str.contains(u, "UPPER EM")
+        res := str.replace(u, "UPPER EM", "EM+")
+        // Remove year for brevity if date present (e.g. 2026-03-23 -> 03-23)
+        if str.startswith(res, "20") and str.substring(res, 4, 5) == "-"
+            res := str.substring(res, 5)
+    else if str.contains(u, "LOWER EM")
+        res := str.replace(u, "LOWER EM", "EM-")
+        if str.startswith(res, "20") and str.substring(res, 4, 5) == "-"
+            res := str.substring(res, 5)
+    else if u == "ABSOLUTE CALL WALL"
+        res := "CALL ABS"
+    else if u == "LOCAL CALL NODE"
+        res := "CALL LOC"
+    else if u == "0DTE CALL WALL"
+        res := "CALL 0DTE"
+    else if u == "DEX CALL NODE"
+        res := "DEX C"
+    else if u == "GAMMA FLIP UPPER"
+        res := "GF U"
+    else if u == "GAMMA CLIFF UP"
+        res := "GC U"
+    else if u == "ZERO GAMMA"
+        res := "ZG"
+    else if u == "GAMMA CLIFF DOWN"
+        res := "GC D"
+    else if u == "GAMMA FLIP LOWER"
+        res := "GF L"
+    else if u == "MAX PAIN"
+        res := "MAX"
+    else if u == "0DTE PUT WALL"
+        res := "PUT 0DTE"
+    else if u == "LOCAL PUT NODE"
+        res := "PUT LOC"
+    else if u == "DEX PUT NODE"
+        res := "DEX P"
+    else if u == "HEDGE WALL"
+        res := "HEDGE"
+    else if u == "GAMMA MAGNET"
+        res := "MAG"
+    else if u == "PIN STRIKE"
+        res := "PIN"
+    res
+f_show_level(string title, string lineText) =>
     u = f_norm(title)
-    u == "UPPER EM" or u == "LOWER EM" ? showEMLevels : u == "GAMMA MAGNET" ? showGammaMagnet : u == "PIN STRIKE" ? showPinStrike :
-     str.contains(u, "DEX CALL") or str.contains(u, "DEX PUT") ? showDexLevels :
-     str.contains(u, "CALL") ? showCallLevels : str.contains(u, "PUT") ? showPutLevels :
-     u == "ZERO GAMMA" ? showZeroGammaLevel : str.contains(u, "GAMMA FLIP") ? showGammaFlipLevels :
-     str.contains(u, "GAMMA CLIFF") ? showGammaCliffLevels : u == "MAX PAIN" ? showMaxPainLevel : u == "HEDGE WALL" ? showHedgeLevel : true
+    bool show = true
+    if str.contains(u, "EM")
+        show := showEMLevels
+        if show and maxEMDte > 0 and str.contains(u, "(") and str.contains(u, "D)")
+            // Extract the DTE number between '(' and 'd)'
+            openParen = str.pos(u, "(")
+            closeD = str.pos(u, "D)")
+            if not na(openParen) and not na(closeD) and closeD > openParen + 1
+                dteStr = str.substring(u, openParen + 1, closeD)
+                dte = str.tonumber(dteStr)
+                if not na(dte) and dte > maxEMDte
+                    show := false
+    else if u == "GAMMA MAGNET"
+        show := showGammaMagnet
+    else if u == "PIN STRIKE"
+        show := showPinStrike
+    else if str.contains(u, "DEX CALL") or str.contains(u, "DEX PUT")
+        show := showDexLevels
+    else if str.contains(u, "CALL")
+        show := showCallLevels
+    else if str.contains(u, "PUT")
+        show := showPutLevels
+    else if u == "ZERO GAMMA"
+        show := showZeroGammaLevel
+    else if str.contains(u, "GAMMA FLIP")
+        show := showGammaFlipLevels
+    else if str.contains(u, "GAMMA CLIFF")
+        show := showGammaCliffLevels
+    else if u == "MAX PAIN"
+        show := showMaxPainLevel
+    else if u == "HEDGE WALL"
+        show := showHedgeLevel
+    show
+
+f_parse_dte_from_title(string title) =>
+    // Expected format: "2026-03-23 EM+" or "2026-03-23 UPPER EM"
+    // We can't easily calculate DTE from a date string in Pine Script without heavy logic.
+    // So we'll skip the DTE filter in the script for now and just show all if EM is on.
+    // UNLESS we add DTE to the label in the python script.
+    0
+
 f_is_same_price(float l, float r) => math.abs(l - r) <= syminfo.mintick * 0.25
 f_has_merged_token(string merged, string token) =>
     bool found = false
@@ -502,7 +579,7 @@ if needsDraw
             for idx = 0 to array.size(pPrices) - 1
                 lv = array.get(pPrices, idx)
                 ti = array.get(pTitles, idx)
-                show = f_show_level(ti)
+                show = f_show_level(ti, selLine)
                 if show
                     ct = compactLabels ? f_compact_title(ti) : ti
                     ei = -1

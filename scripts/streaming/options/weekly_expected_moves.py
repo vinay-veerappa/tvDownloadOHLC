@@ -10,7 +10,7 @@ from scripts.streaming.options.config import (
     TOKEN_PATH,
     ACTIVE_TICKERS,
     INDEX_TO_FUTURES,
-    EXPECED_MOVE_TXT
+    EXPECTED_MOVE_TXT
 )
 from scripts.streaming.options.options_fetcher import (
     create_client, 
@@ -234,7 +234,7 @@ def fetch_weekly_expected_moves():
     # Write Pine Script EM summary to file if requested
     if pinefile_mode and pine_lines:
         import os
-        pine_path = os.path.join(EXPECED_MOVE_TXT)
+        pine_path = EXPECTED_MOVE_TXT
         with open(pine_path, "w", encoding="utf-8") as f:
             for line in pine_lines:
                 f.write(line + "\n")

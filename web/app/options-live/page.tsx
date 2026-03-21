@@ -343,6 +343,25 @@ export default function OptionsTacticalDashboard() {
         base.push({ price: n.strike, label: `Put Wall ${idx + 1}`, type: "support", note: "High put OI, support expected" });
     });
 
+    // ── Multi-Expiry Expected Moves ──
+    if (ms.expected_moves && Array.isArray(ms.expected_moves)) {
+        ms.expected_moves.forEach((em: any) => {
+            const label = em.dte === 0 ? "0DTE" : (em.dte === 1 ? "1DTE" : `${em.expiry}`);
+            base.push({ 
+                price: fixPrice(em.em_upper, activeDetail.ticker), 
+                label: `${label} Upper EM`, 
+                type: "em", 
+                note: `±${em.em_value} Expected Move` 
+            });
+            base.push({ 
+                price: fixPrice(em.em_lower, activeDetail.ticker), 
+                label: `${label} Lower EM`, 
+                type: "em", 
+                note: `±${em.em_value} Expected Move` 
+            });
+        });
+    }
+
     // Unique levels by price to avoid clutter if primary wall matches top node
     const unique = Array.from(new Map(base.map(item => [item.price, item])).values());
     return unique.filter(l => l.price && l.price > 0).sort((a,b) => b.price - a.price);
@@ -1264,6 +1283,7 @@ export default function OptionsTacticalDashboard() {
                                           l.type === 'spot' ? 'bg-emerald-500/10 border-emerald-500/20 shadow-[0_0_20px_rgba(16,185,129,0.1)]' : 
                                           l.type === 'magnet' ? 'bg-indigo-500/10 border-indigo-500/20 shadow-[0_0_20px_rgba(99,102,241,0.1)]' :
                                           l.type === 'resistance' ? 'bg-rose-500/10 border-rose-500/20 shadow-[0_0_20px_rgba(244,63,94,0.1)]' :
+                                          l.type === 'em' ? 'bg-amber-500/10 border-amber-500/20 shadow-[0_0_20px_rgba(245,158,11,0.1)]' :
                                           'bg-emerald-500/5 border-emerald-500/10'
                                        }`}>
                                           <div className="flex justify-between items-start relative z-10">
@@ -1272,7 +1292,8 @@ export default function OptionsTacticalDashboard() {
                                                    <div className={`w-1.5 h-1.5 rounded-full ${
                                                       l.type === 'spot' ? 'bg-emerald-500 animate-pulse' :
                                                       l.type === 'magnet' ? 'bg-indigo-500' :
-                                                      l.type === 'resistance' ? 'bg-rose-500' : 'bg-emerald-400'
+                                                      l.type === 'resistance' ? 'bg-rose-500' : 
+                                                      l.type === 'em' ? 'bg-amber-500' : 'bg-emerald-400'
                                                    }`} />
                                                    <div className="text-[9px] font-black text-zinc-400 tracking-[0.2em] uppercase">{l.label}</div>
                                                 </div>
@@ -1290,6 +1311,8 @@ export default function OptionsTacticalDashboard() {
                                                 <Target className="text-indigo-500" size={20} />
                                              ) : l.type === 'resistance' ? (
                                                 <ArrowUpRight className="text-rose-500" size={20} />
+                                             ) : l.type === 'em' ? (
+                                                <Zap className="text-amber-500" size={20} />
                                              ) : (
                                                 <ArrowDownRight className="text-emerald-500" size={20} />
                                              )}

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from datetime import time
 
 # ---------------------------------------------------------------------------
 # Repository root
@@ -113,7 +114,7 @@ CONTRACT_MULTIPLIER: int = 100
 # Expiration windows
 # ---------------------------------------------------------------------------
 # 0 = today (0DTE), 1 = next calendar day (1DTE).
-DTE_TARGETS: list[int] = [0, 1]
+DTE_TARGETS: list[int] = list(range(14))
 
 # ---------------------------------------------------------------------------
 # GEX / wall detection
@@ -153,7 +154,7 @@ USE_OPENING_BASIS: bool = True
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
-DATA_DIR: Path = REPO_ROOT / "data"
+DATA_DIR: Path = REPO_ROOT / "data" / "options"
 # Create the directory if it doesn't exist to avoid path resolution errors.
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -162,7 +163,7 @@ DAILY_LEVELS_TXT: Path = DATA_DIR / "daily_levels.txt"
 GEX_PROFILES_JSON: Path = DATA_DIR / "gex_profiles.json"
 LIVE_TREND_JSON: Path = DATA_DIR / "live_trend.json"
 LOG_FILE: Path = DATA_DIR / "dealer_levels.log"
-EXPECED_MOVE_TXT: Path = DATA_DIR / "expected_moves.txt"
+EXPECTED_MOVE_TXT: Path = DATA_DIR / "expected_moves.txt"
 
 # ---------------------------------------------------------------------------
 # Discord
@@ -180,7 +181,36 @@ DISCORD_COLOR_NEGATIVE: int = 0xD50000   # red    — negative GEX regime
 # Scheduler
 # ---------------------------------------------------------------------------
 SCHEDULE_TIMEZONE: str = "America/New_York"
+# --- Adaptive Refreshing ---
+# (RTH: 9:20 - 16:10 ET Weekdays)
+EQUITY_RTH_START_TIME: time = time(8, 20)
+EQUITY_RTH_END_TIME: time = time(16, 10)
+RTH_T1_INTERVAL: int = 60          # Tier-1 (Priority) 1 min
+RTH_T2_INTERVAL: int = 600         # Tier-2 (All others) 10 min
+
+# (Off-hours: Monday-Friday pre/post market)
+OFF_HOURS_T1_INTERVAL: int = 1800  # 30 min
+OFF_HOURS_T2_INTERVAL: int = 3600  # 1 hour
+
+# (Weekend: Fri 17:00 ET to Sun 18:00 ET)
+FUTURES_CLOSE_FRIDAY_TIME: time = time(17, 0)
+FUTURES_OPEN_SUNDAY_TIME: time = time(18, 0)
+WEEKEND_T1_INTERVAL: int = 3600 * 4 # 4 hours
+WEEKEND_T2_INTERVAL: int = 3600 * 4 # 4 hours
+
+# (Session Rollover: 16:00 ET)
+NY_SESSION_ROLLOVER_TIME: time = time(16, 0)
+
+# --- Loop Control ---
+MANUAL_TRIGGER_FILENAME: str = "manual_trigger.json"
+TIER1_TICKERS_DEFAULT: list[str] = ["SPX", "SPY", "QQQ"]
+LOOP_BEAT_SECONDS: int = 5 
+
+# --- Options Chain ---
+OPTION_CHAIN_WIDE_WINDOW: int = 10
+
 # HH:MM times (24-hour clock, Eastern) at which the pipeline runs on trading days.
 # NOTE: duplicates are silently ignored by run_options_levels.py, but keep
 # this list clean to avoid confusion.
 SCHEDULE_TIMES: list[str] = ["08:30", "09:30", "10:00", "11:00", "12:00", "13:00", "15:00"]
+SCHEDULER_MISFIRE_GRACE_TIME: int = 300

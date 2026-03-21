@@ -162,6 +162,15 @@ class StrikeGEX:
 
 
 @dataclass
+class ExpectedMove:
+    expiry: str        # YYYY-MM-DD
+    dte: int
+    em_value: float
+    em_upper: float
+    em_lower: float
+    straddle: float
+
+@dataclass
 class DealerLevels:
     ticker: str
     spot: float
@@ -236,6 +245,7 @@ class DealerLevels:
     atm_iv: float | None = None         # ATM implied volatility (decimal, e.g. 0.20 = 20%)
     iv_change: float = 0.0             # Daily change in IV (delta from previous run)
 
+    expected_moves: list[ExpectedMove] = field(default_factory=list)
     strike_gex: list[StrikeGEX] = field(default_factory=list)
 
 
@@ -582,10 +592,43 @@ def _expected_move(
         log.info("Market closed: Falling back to straddle or zero.")
         return straddle * EM_STRADDLE_SCALAR if USE_STRADDLE_EM else 0.0, straddle
         
-    if USE_STRADDLE_EM:
-        return straddle * EM_STRADDLE_SCALAR, straddle
-        
     return tos_expected_move, straddle
+
+def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
+    """Calculate the Expected Move for every unique expiry in the chain."""
+    by_expiry: dict[datetime.date, tuple[list[OptionContract], list[OptionContract]]] = {}
+    
+    for c in chain.calls:
+        by_expiry.setdefault(c.expiry, ([], []))[0].append(c)
+    for p in chain.puts:
+        by_expiry.setdefault(p.expiry, ([], []))[1].append(p)
+        
+    spot = chain.spot_price
+    ems = []
+    
+    tz = ZoneInfo("America/New_York")
+    now_ny = datetime.now(tz)
+    
+    for expiry, (calls, puts) in sorted(by_expiry.items()):
+        if not calls or not puts:
+            continue
+            
+        move, straddle = _expected_move(calls, puts, spot)
+        if move <= 0:
+            continue
+            
+        # DTE calculation (calendar days)
+        dte = (expiry - now_ny.date()).days
+        
+        ems.append(ExpectedMove(
+            expiry=expiry.isoformat(),
+            dte=max(0, dte),
+            em_value=round(move, 2),
+            em_upper=round(spot + move, 2),
+            em_lower=round(spot - move, 2),
+            straddle=round(straddle, 2)
+        ))
+    return ems
 
 def _expected_move_old(calls: list[OptionContract], puts: list[OptionContract], spot: float) -> tuple[float, float]:
     straddle = _atm_straddle_cost(calls, puts, spot)
@@ -1055,6 +1098,9 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
     if strikes:
         max_gex_strike = max(strikes, key=lambda x: abs(x.net_gex or 0)).strike
 
+    # ── Multi-Expiry Expected Moves ──────────────────────────────────────────
+    expected_moves = _calculate_all_ems(chain)
+
     regime_label, directional_bias = _classify_regime(
         total_gex, separation, em_value, spot,
         gamma_magnet, put_gamma_total, call_gamma_total, net_vanna,
@@ -1133,6 +1179,7 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
         call_gamma_total=call_gamma_total,
         put_gamma_total=put_gamma_total,
         net_vanna_exposure=net_vanna,
+        expected_moves=expected_moves,
         # ── Enhanced analytics ──
         call_volume_centroid=call_volume_centroid,
         put_volume_centroid=put_volume_centroid,
@@ -1254,6 +1301,17 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
                 put_premium=sg.put_premium,
             )
             for sg in levels.strike_gex
+        ],
+        expected_moves=[
+            ExpectedMove(
+                expiry=em.expiry,
+                dte=em.dte,
+                em_value=round(em.em_value * scale, 2),
+                em_upper=round(em.em_upper * scale, 2),
+                em_lower=round(em.em_lower * scale, 2),
+                straddle=round(em.straddle * scale, 2)
+            )
+            for em in levels.expected_moves
         ],
     )
 

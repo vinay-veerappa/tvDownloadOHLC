@@ -32,6 +32,8 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import json
+import time
 from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -52,6 +54,20 @@ from .config import (
     TIER2_INTERVAL_SECONDS,
     TOKEN_PATH,
     USE_OPENING_BASIS,
+    RTH_T1_INTERVAL,
+    RTH_T2_INTERVAL,
+    OFF_HOURS_T1_INTERVAL,
+    OFF_HOURS_T2_INTERVAL,
+    WEEKEND_T1_INTERVAL,
+    WEEKEND_T2_INTERVAL,
+    EQUITY_RTH_START_TIME,
+    EQUITY_RTH_END_TIME,
+    FUTURES_CLOSE_FRIDAY_TIME,
+    FUTURES_OPEN_SUNDAY_TIME,
+    MANUAL_TRIGGER_FILENAME,
+    TIER1_TICKERS_DEFAULT,
+    LOOP_BEAT_SECONDS,
+    SCHEDULER_MISFIRE_GRACE_TIME,
 )
 from .discord_notifier import send_discord_update, send_regime_change_alert
 from .file_writer import write_levels
@@ -352,9 +368,12 @@ def run_loop(enable_discord: bool = False) -> None:
 
     log.info("=" * 60)
     log.info("Continuous Priority Loop starting")
-    log.info("  Tier 1 (%ds):  %s", tick_interval, ", ".join(tier1))
-    log.info("  Tier 2 (%ds): %s", TIER2_INTERVAL_SECONDS, ", ".join(tier2))
+    log.info("  Standard Tier-1: 60s (RTH) | 30m (Off-hours) | 4h (Weekends)")
+    log.info("  Standard Tier-2: 10m (RTH) | 1h  (Off-hours) | 4h (Weekends)")
     log.info("=" * 60)
+
+    tier1_last_run = 0.0
+    tier2_last_run: dict[str, float] = {}
 
     try:
         client = create_client(SECRETS_PATH, TOKEN_PATH)
@@ -363,19 +382,41 @@ def run_loop(enable_discord: bool = False) -> None:
         return
 
     while True:
-        cycle_start = time.monotonic()
-        now = time.time()
+        ny_now = datetime.now(ZoneInfo(SCHEDULE_TIMEZONE))
+        now = time.time() # Current timestamp for interval checks
+        
+        # Futures Market Weekend Timing: Friday 17:00 ET to Sunday 18:00 ET
+        is_weekend_closed = (
+            (ny_now.weekday() == 4 and ny_now.time() >= FUTURES_CLOSE_FRIDAY_TIME) or  # Friday after 5pm
+            (ny_now.weekday() == 5) or                                                # Saturday
+            (ny_now.weekday() == 6 and ny_now.time() < FUTURES_OPEN_SUNDAY_TIME)      # Sunday before 6pm
+        )
+        
+        # Regular Trading Hours (Equity RTH)
+        is_equity_rth = (EQUITY_RTH_START_TIME <= ny_now.time() <= EQUITY_RTH_END_TIME) and not is_weekend_closed
+
+        # --- Adaptive Intervals ---
+        if is_equity_rth:
+            t1_interval = RTH_T1_INTERVAL
+            t2_interval = RTH_T2_INTERVAL
+        elif is_weekend_closed:
+            t1_interval = WEEKEND_T1_INTERVAL
+            t2_interval = WEEKEND_T2_INTERVAL
+        else:
+            # Active futures but not equity RTH (e.g. overnight/pre-market)
+            t1_interval = OFF_HOURS_T1_INTERVAL
+            t2_interval = OFF_HOURS_T2_INTERVAL
 
         # Reload priority tickers dynamically
-        from .config import get_priority_tickers, PRIORITY_TICKERS_FILE
+        from .config import get_priority_tickers
         dynamic_priority = get_priority_tickers()
         
         # Merge hardcoded indices with user-specified priority
-        tier1 = list(set(["SPX", "SPY", "QQQ"] + dynamic_priority))
-        tier2 = [t for t in ACTIVE_TICKERS if t not in tier1]
+        tier1_tickers = list(set(TIER1_TICKERS_DEFAULT + dynamic_priority))
+        tier2_tickers = [t for t in ACTIVE_TICKERS if t not in tier1_tickers]
 
         # Check for manual trigger file (e.g., from UI 'Refresh' button)
-        manual_trigger_file = REPO_ROOT / "manual_trigger.json"
+        manual_trigger_file = REPO_ROOT / MANUAL_TRIGGER_FILENAME
         manual_tickers = []
         if manual_trigger_file.exists():
             try:
@@ -386,16 +427,16 @@ def run_loop(enable_discord: bool = False) -> None:
             except Exception as e:
                 log.error("Failed to read/delete manual trigger file: %s", e)
 
-        # Decide which Tier-2 tickers are due this cycle
-        due_tier2 = [t for t in tier2 if now >= tier2_due.get(t, 0)]
+        # Decide what is due
+        due_tier1 = tier1_tickers if (now - tier1_last_run) >= t1_interval else []
+        due_tier2 = [t for t in tier2_tickers if (now - tier2_last_run.get(t, 0)) >= t2_interval]
 
-        # Tickers to process this cycle: Tier 1 + Due Tier 2 + Manual Tickers
-        active_this_cycle = list(set(tier1 + due_tier2 + manual_tickers))
+        # Tickers to process this cycle: Tier 1 (if due) + Due Tier 2 + Manual Tickers
+        active_this_cycle = list(set(due_tier1 + due_tier2 + manual_tickers))
 
         if active_this_cycle:
-            tz = ZoneInfo(SCHEDULE_TIMEZONE)
-            run_label = datetime.now(tz).strftime("%Y-%m-%d %H:%M ET")
-            log.info("Cycle — processing %d tickers: %s", len(active_this_cycle), ", ".join(active_this_cycle))
+            run_label = ny_now.strftime("%Y-%m-%d %H:%M ET")
+            log.info("Cycle start — processing %d tickers: %s", len(active_this_cycle), ", ".join(active_this_cycle))
 
             # Temporarily restrict ACTIVE_TICKERS to our cycle subset
             import scripts.streaming.options.config as _cfg
@@ -403,19 +444,18 @@ def run_loop(enable_discord: bool = False) -> None:
             _cfg.ACTIVE_TICKERS = active_this_cycle
             try:
                 run_pipeline(run_label=run_label, enable_discord=enable_discord)
+                # Successful run! Update timestamps
+                if due_tier1:
+                    tier1_last_run = now
+                for t in due_tier2:
+                    tier2_last_run[t] = now
             except Exception as exc:
                 log.error("Pipeline cycle failed: %s", exc)
             finally:
                 _cfg.ACTIVE_TICKERS = original
 
-            # Mark Tier-2 tickers as done
-            for t in due_tier2:
-                tier2_due[t] = time.time() + TIER2_INTERVAL_SECONDS
-
-        elapsed = time.monotonic() - cycle_start
-        sleep_for = max(0, tick_interval - elapsed)
-        log.info("Cycle done in %.1fs — sleeping %.1fs until next tick", elapsed, sleep_for)
-        time.sleep(sleep_for)
+        # Sleep for a short beat to check for manual triggers frequently
+        time.sleep(LOOP_BEAT_SECONDS)
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +519,7 @@ def run_scheduled(enable_discord: bool = ENABLE_DISCORD_UPDATES) -> None:
             trigger=CronTrigger(hour=hour, minute=minute, timezone=tz),
             id=f"dealer_levels_{time_str.replace(':', '')}",
             replace_existing=True,
-            misfire_grace_time=300,   # allow up to 5-minute delay before skipping
+            misfire_grace_time=SCHEDULER_MISFIRE_GRACE_TIME,   # allow for delayed execution before skipping
         )
         log.info("Scheduled: %s ET", time_str)
 

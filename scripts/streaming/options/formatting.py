@@ -68,6 +68,7 @@ class HasLevels(Protocol):
     call_gamma_total: float
     put_gamma_total: float
     net_vanna_exposure: float
+    expected_moves: list[Any]
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +168,15 @@ def copy_ready_line(tag: str, levels: Any) -> str:
         f"{fmt_copy(getattr(levels, attr, None))}:{label}"
         for attr, label in _COPY_LEVEL_SPEC
     ]
+    
+    # ── Multi-Expiry Expected Moves ──
+    ems = getattr(levels, "expected_moves", [])
+    for em in ems:
+        # Use descriptive labels with DTE suffix
+        prefix = f"{em.expiry} ({em.dte}d) "
+        parts.append(f"{fmt_copy(em.em_upper)}:{prefix}Upper EM")
+        parts.append(f"{fmt_copy(em.em_lower)}:{prefix}Lower EM")
+
     return f"{tag}: " + ", ".join(parts)
 
 

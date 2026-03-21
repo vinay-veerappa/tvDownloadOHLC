@@ -5,10 +5,10 @@ Translate cash-index levels (SPX/NDX) into futures-space (ES/NQ).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import logging
-from dataclasses import dataclass
 
-from .gex_calculator import DealerLevels
+from .gex_calculator import DealerLevels, ExpectedMove, StrikeGEX
 from .options_fetcher import FuturesQuote
 
 log = logging.getLogger(__name__)
@@ -90,6 +90,9 @@ class TranslatedLevels:
     put_volume_centroid: float | None
     atm_iv: float | None          # ATM implied volatility from cash chain (passes through unchanged)
     iv_change: float               # Percentage change in IV
+
+    expected_moves: list[ExpectedMove]
+    strike_gex: list[StrikeGEX] = field(default_factory=list) # Re-add just in case needed for UI pass-through
 
 
 def translate_to_futures(
@@ -198,6 +201,18 @@ def translate_to_futures(
         total_gex_delta_adj=levels.total_gex_delta_adj,
         call_volume_centroid=_shift(levels.call_volume_centroid),
         put_volume_centroid=_shift(levels.put_volume_centroid),
-        atm_iv=levels.atm_iv,  # dimensionless — pass through unchanged
+        atm_iv=levels.atm_iv,
         iv_change=levels.iv_change,
+        expected_moves=[
+            ExpectedMove(
+                expiry=em.expiry,
+                dte=em.dte,
+                em_value=round(em.em_value * ratio, 2) if use_scale else em.em_value,
+                em_upper=_shift(em.em_upper),
+                em_lower=_shift(em.em_lower),
+                straddle=round(em.straddle * ratio, 2) if use_scale else em.straddle
+            )
+            for em in levels.expected_moves
+        ],
+        strike_gex=levels.strike_gex,
     )
