@@ -8,6 +8,8 @@ The primary interface for active day trading. Accessible at `/options-live`.
 
 ### Core Features
 - **Neon Tactical UI**: High-density monitoring with glassmorphism and real-time pulse alerts.
+- **Volatility Skew Monitoring**: Real-time "Fear Premium" tracking (25D Skew) to detect institutional tail-risk hedging.
+- **Cumulative IV Shift**: Tracks total implied volatility expansion/contraction since market open.
 - **Dynamic Charting**: Toggle between Net GEX, Call/Put Walls, Volume Profiles, and OI Profiles.
 - **Vertical Price Ladder**: DOM-style vertical mapping of reaction zones aligned with live price.
 - **Coach's Briefing**: AI-generated narrative translation of the current market structure.

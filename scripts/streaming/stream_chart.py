@@ -8,10 +8,8 @@ import sqlite3
 import pandas as pd
 from datetime import datetime, timezone, timedelta, time as dt_time
 from zoneinfo import ZoneInfo
-from schwab.auth import easy_client
-from schwab.client import Client
-from schwab.streaming import StreamClient
-from schwab_token_sync import sync_token_to_db, restore_token_from_db
+import httpx
+import websockets
 
 try:
     import yfinance as yf
@@ -43,7 +41,22 @@ def resolve_futures_htf_source():
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "web", "prisma", "dev.db")
 
-# ... existing imports ...
+HUB_URL = "http://127.0.0.1:8080"
+HUB_WS = "ws://127.0.0.1:8080/ws"
+
+async def hub_request(endpoint, params=None):
+    """Utility to make asynchronous requests to the Schwab Hub."""
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(f"{HUB_URL}/{endpoint}", params=params, timeout=30.0)
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                print(f"❌ Hub Request Failed [{resp.status_code}]: {resp.text}")
+                return {"status": "error", "message": resp.text}
+        except Exception as e:
+            print(f"❌ Hub Connection Error: {e}")
+            return {"status": "error", "message": str(e)}
 
 # Global State
 charts = {} # Key: Symbol -> { data: {}, data_15s: {}, data_30s: {}, file_json: str, file_15s: str, file_30s: str, ... }
@@ -237,14 +250,11 @@ def detect_gaps(candles, symbol, threshold_minutes=5):
         if not is_weekend:
             print(f"🔍 [{symbol}] Gap detected since last data point (UTC): {last_dt} -> {now_dt}")
             gaps.append((last_time, now_ms))
-    
-    return gaps
 
-def bridge_gaps(client, symbol, gaps):
+async def bridge_gaps(symbol, gaps):
     """
-    Fetch missing data for each gap from Schwab API.
+    Fetch missing data for each gap from Schwab Hub.
     Returns combined list of candles for all gaps.
-    Note: Schwab API only allows ~45 days of historical data.
     """
     all_bridged = []
     max_age_days = 45
@@ -254,7 +264,6 @@ def bridge_gaps(client, symbol, gaps):
         start_dt = datetime.fromtimestamp(gap_start_ms / 1000)
         end_dt = datetime.fromtimestamp(gap_end_ms / 1000)
         
-        # Skip if gap is too old for Schwab API
         if (now - end_dt).days > max_age_days:
             print(f"⚠️ [{symbol}] Gap too old to bridge via API: {start_dt} -> {end_dt}")
             continue
@@ -262,18 +271,19 @@ def bridge_gaps(client, symbol, gaps):
         print(f"🔧 [{symbol}] Bridging gap: {start_dt} -> {end_dt}")
         
         try:
-            resp = client.get_price_history(
-                symbol,
-                period_type=Client.PriceHistory.PeriodType.DAY,
-                frequency_type=Client.PriceHistory.FrequencyType.MINUTE,
-                frequency=Client.PriceHistory.Frequency.EVERY_MINUTE,
-                start_datetime=start_dt,
-                end_datetime=end_dt,
-                need_extended_hours_data=True
-            )
+            # When providing start_datetime and end_datetime, Schwab API prefers NO period/periodType
+            resp = await hub_request("get_price_history", {
+                "symbol": symbol,
+                "frequency_type": "minute",
+                "frequency": 1,
+                "start_datetime": int(gap_start_ms),
+                "end_datetime": int(gap_end_ms),
+                "need_extended_hours_data": True
+            })
             
-            if resp.status_code == 200:
-                candles = resp.json().get('candles', [])
+            if resp.get("status") == "success":
+                data = resp.get("data", {})
+                candles = data.get('candles', [])
                 for c in candles:
                     all_bridged.append({
                         "time": c.get("datetime", 0),
@@ -285,10 +295,10 @@ def bridge_gaps(client, symbol, gaps):
                     })
                 print(f"   ✅ Fetched {len(candles)} bars")
             else:
-                print(f"   ❌ API returned {resp.status_code}")
+                print(f"  ❌ Hub Request Failed for {symbol} gap: {resp.get('message')}")
         except Exception as e:
-            print(f"⚠️ [{symbol}] Bridge failed: {e}")
-    
+            print(f"  ❌ Bridge error: {e}")
+            
     return all_bridged
 
 def init_chart_data(symbol):
@@ -337,40 +347,33 @@ def init_chart_data(symbol):
         "files": files 
     }
 
-def get_client():
-    if not os.path.exists("secrets.json") or not os.path.exists("token.json"):
-        print("Missing credentials")
-        return None
+HUB_URL = "http://127.0.0.1:8080"
+HUB_WS = "ws://127.0.0.1:8080/ws"
 
-    with open("secrets.json", "r") as f:
-        secrets = json.load(f)
-        
-    try:
-        return easy_client(
-            api_key=secrets["app_key"],
-            app_secret=secrets["app_secret"],
-            callback_url='https://127.0.0.1:8182',
-            token_path='token.json',
-            enforce_enums=False)
-    except Exception as e:
-        print(f"Auth failed: {e}")
-        return None
+async def hub_request(method, params):
+    """Send a REST request through the Hub's proxy."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=30)
+        return resp.json()
 
-def fetch_bootstrap_data(client, symbol):
-    print(f"🚀 [{symbol}] Bootstrapping...")
+async def fetch_bootstrap_data(symbol):
+    print(f"🚀 [{symbol}] Bootstrapping via Hub...")
     try:
-        resp = client.get_price_history(symbol, 
-                                        period_type=Client.PriceHistory.PeriodType.DAY,
-                                        period=Client.PriceHistory.Period.THREE_MONTHS,
-                                        frequency_type=Client.PriceHistory.FrequencyType.MINUTE,
-                                        frequency=Client.PriceHistory.Frequency.EVERY_MINUTE,
-                                        need_extended_hours_data=True)
+        params = {
+            "symbol": symbol,
+            "period_type": "day",
+            "period": 3, # period enum value or string matches Schwab
+            "frequency_type": "minute",
+            "frequency": 1,
+            "need_extended_hours_data": True
+        }
+        result = await hub_request("get_price_history", params)
         
-        if resp.status_code != 200:
-            print(f"❌ [{symbol}] Bootstrap failed: {resp.status_code}")
+        if result.get("status") != "success":
+            print(f"❌ [{symbol}] Hub bootstrap failed: {result.get('message')}")
             return []
 
-        data = resp.json()
+        data = result.get("data", {})
         candles = data.get('candles', [])
         
         formatted = []
@@ -387,7 +390,7 @@ def fetch_bootstrap_data(client, symbol):
         return formatted
         
     except Exception as e:
-        print(f"❌ [{symbol}] Bootstrap exception: {e}")
+        print(f"❌ [{symbol}] Hub bootstrap exception: {e}")
         return []
 
 def update_sub_candle(container, price, time_curr, interval_sec):
@@ -546,7 +549,8 @@ def filter_finalized_daily_rows(df, symbol, now_utc):
     filtered = df.loc[keep_mask].copy()
     return filtered.sort_index()
 
-def get_quote_settlement_info(client, symbol):
+async def get_quote_settlement_info(symbol):
+    """Retrieves settlement-ready quote info via Hub."""
     candidates = [symbol]
     stripped = symbol.lstrip('/')
     if stripped not in candidates:
@@ -554,82 +558,68 @@ def get_quote_settlement_info(client, symbol):
 
     for candidate in candidates:
         try:
-            response = client.get_quotes([candidate]).json()
-        except Exception:
-            continue
-
-        if not isinstance(response, dict) or 'errors' in response:
-            continue
-
-        for payload in response.values():
-            if not isinstance(payload, dict):
-                continue
-
-            reference = payload.get('reference', {})
-            quote = payload.get('quote', {})
-            payload_symbol = payload.get('symbol', '')
-            product = reference.get('product', '')
-
-            symbol_matches = (
-                payload_symbol == symbol or
-                payload_symbol == candidate or
-                product == symbol or
-                product == f'/{stripped}' or
-                product == candidate
-            )
-            if not symbol_matches:
-                continue
-
-            settlement_price = reference.get('futureSettlementPrice')
-            if settlement_price is None:
-                settlement_price = quote.get('closePrice')
-
-            if settlement_price is not None:
-                try:
-                    settle_time = quote.get('settleTime')
-                    settle_dt = None
-                    if settle_time is not None:
-                        settle_dt = pd.to_datetime(settle_time, unit='ms', utc=True).to_pydatetime()
-                    return {
-                        'price': float(settlement_price),
-                        'settle_datetime': settle_dt,
-                    }
-                except (TypeError, ValueError):
+            result = await hub_request("get_quotes", {"symbols": [candidate]})
+            if result.get("status") == "success":
+                response = result.get("data", {})
+                if not isinstance(response, dict) or 'errors' in response:
                     continue
+
+                for payload in response.values():
+                    if not isinstance(payload, dict): continue
+                    
+                    reference = payload.get('reference', {})
+                    quote = payload.get('quote', {})
+                    payload_symbol = payload.get('symbol', '')
+                    product = reference.get('product', '')
+
+                    symbol_matches = (
+                        payload_symbol == symbol or
+                        payload_symbol == candidate or
+                        product == symbol or
+                        product == f'/{stripped}' or
+                        product == candidate
+                    )
+                    if not symbol_matches: continue
+
+                    settlement_price = reference.get('futureSettlementPrice')
+                    if settlement_price is None:
+                        settlement_price = quote.get('closePrice')
+
+                    if settlement_price is not None:
+                        try:
+                            settle_time = quote.get('settleTime')
+                            settle_dt = None
+                            if settle_time is not None:
+                                settle_dt = pd.to_datetime(settle_time, unit='ms', utc=True).to_pydatetime()
+                            return {
+                                'price': float(settlement_price),
+                                'settle_datetime': settle_dt,
+                            }
+                        except (TypeError, ValueError):
+                            continue
+        except Exception as e:
+            print(f"⚠️ Failed to get quote for {candidate}: {e}")
+            continue
 
     return None
 
-def get_quote_close_price(client, symbol):
-    settlement = get_quote_settlement_info(client, symbol)
-    return settlement['price'] if settlement else None
+async def get_quote_close_price(symbol):
+    info = await get_quote_settlement_info(symbol)
+    return info['price'] if info else None
 
-def apply_daily_settlement_override(df, client, symbol, now_utc):
-    if df.empty:
-        return df
-
-    settlement_info = get_quote_settlement_info(client, symbol)
-    if settlement_info is None:
-        return df
+async def apply_daily_settlement_override(df, symbol, now_utc):
+    if df.empty: return df
+    settlement_info = await get_quote_settlement_info(symbol)
+    if settlement_info is None: return df
 
     settlement_close = settlement_info['price']
-    settlement_dt = settlement_info.get('settle_datetime')
-
-    if settlement_dt is not None:
-        latest_closed_trade_date = get_trade_date_for_timestamp(settlement_dt, symbol)
-    else:
-        now_et = now_utc.astimezone(ET_TZ)
-        latest_closed_trade_date = get_latest_closed_trade_date(now_et, symbol)
+    now_et = now_utc.astimezone(ET_TZ)
+    latest_closed_trade_date = get_latest_closed_trade_date(now_et, symbol)
 
     matching_rows = [ts for ts in df.index if get_trade_date_for_timestamp(ts, symbol) == latest_closed_trade_date]
-    if not matching_rows:
-        return df
+    if not matching_rows: return df
 
     latest_idx = max(matching_rows)
-    day_high = float(df.loc[latest_idx, 'high'])
-    day_low = float(df.loc[latest_idx, 'low'])
-    if not (day_low <= settlement_close <= day_high):
-        return df
-
     df.loc[latest_idx, 'close'] = settlement_close
     return df
 
@@ -670,37 +660,29 @@ def fetch_yfinance_daily_history(symbol, start_dt, end_dt, now_utc):
 
     return filter_finalized_daily_rows(daily_df, symbol, now_utc)
 
-def fetch_schwab_daily_history(client, symbol, start_dt, end_dt, now_utc):
-    resp = client.get_price_history(
-        symbol,
-        period_type="year",
-        frequency_type="daily",
-        frequency=1,
-        start_datetime=start_dt,
-        end_datetime=end_dt,
-        need_extended_hours_data=False
-    )
-
-    if resp.status_code != 200:
-        raise RuntimeError(f"API Error updating 1d: {resp.status_code}")
-
-    candles = resp.json().get('candles', [])
-    if not candles:
-        return pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
-
-    daily_df = pd.DataFrame([
-        {
-            'datetime': pd.to_datetime(c.get('datetime', 0), unit='ms', utc=True),
-            'open': c.get('open', 0),
-            'high': c.get('high', 0),
-            'low': c.get('low', 0),
-            'close': c.get('close', 0),
-            'volume': c.get('volume', 0),
-        }
-        for c in candles
-    ]).set_index('datetime')
-
-    return filter_finalized_daily_rows(daily_df, symbol, now_utc)
+async def fetch_schwab_daily_history(symbol, start_dt, end_dt, now_utc):
+    """Fetches daily history via Hub's REST proxy."""
+    resp = await hub_request("get_price_history", {
+        "symbol": symbol,
+        "period_type": "year",
+        "period": 1,
+        "frequency_type": "daily",
+        "frequency": 1,
+        "need_extended_hours_data": True
+    })
+    
+    if resp.get("status") != "success":
+        print(f"  ❌ Failed to fetch daily history for {symbol}: {resp.get('message')}")
+        return pd.DataFrame()
+        
+    data = resp.get("data", {})
+    candles = data.get('candles', [])
+    if not candles: return pd.DataFrame()
+    
+    df = pd.DataFrame(candles)
+    df['datetime'] = pd.to_datetime(df['datetime'], unit='ms', utc=True)
+    df.set_index('datetime', inplace=True)
+    return df
 
 def get_week_start_for_trade_date(trade_date, symbol):
     schedule = get_symbol_schedule(symbol)
@@ -733,10 +715,10 @@ def build_weekly_from_daily(daily_df, symbol, now_utc):
     week_is_final = now_et >= (get_settlement_datetime(current_trade_date, symbol) + timedelta(minutes=10)) and current_trade_date.weekday() == 4
     if not week_is_final and current_week_start in weekly.index:
         weekly = weekly.drop(index=current_week_start)
-
+        
     return weekly
 
-def update_historical_files(client, symbol):
+async def update_historical_files(symbol):
     """
     Updates Daily (1d) with finalized bars only and rebuilds Weekly (1W) from Daily.
     Futures default to yfinance for HTF data, with Schwab available via FUTURES_HTF_SOURCE=schwab.
@@ -759,7 +741,9 @@ def update_historical_files(client, symbol):
     existing_daily = pd.DataFrame()
     if os.path.exists(daily_path):
         try:
-            existing_daily = canonicalize_daily_bars(pd.read_parquet(daily_path), symbol)
+            existing_daily = pd.read_parquet(daily_path)
+            if not existing_daily.empty:
+                existing_daily = canonicalize_daily_bars(existing_daily, symbol)
         except Exception as e:
             print(f"  ⚠️ Error reading 1d: {e}")
 
@@ -783,7 +767,7 @@ def update_historical_files(client, symbol):
             combined_daily.to_parquet(daily_path)
             print(f"   ✅ Rebuilt 1d from yfinance: {len(combined_daily)} rows")
         else:
-            new_df = fetch_schwab_daily_history(client, symbol, start_dt, end_dt, now_utc)
+            new_df = await fetch_schwab_daily_history(symbol, start_dt, end_dt, now_utc)
 
             if not new_df.empty:
                 if not existing_daily.empty:
@@ -792,7 +776,7 @@ def update_historical_files(client, symbol):
                     combined_daily = new_df.sort_index()
 
                 combined_daily = canonicalize_daily_bars(combined_daily, symbol)
-                combined_daily = apply_daily_settlement_override(combined_daily, client, symbol, now_utc)
+                combined_daily = await apply_daily_settlement_override(combined_daily, symbol, now_utc)
                 combined_daily.to_parquet(daily_path)
                 print(f"   ✅ Updated 1d: {len(combined_daily)} rows (Fetched {len(new_df)})")
             else:
@@ -811,35 +795,125 @@ def update_historical_files(client, symbol):
         traceback.print_exc()
         print(f"   ⚠️ Historical update failed: {e}")
 
+async def level_one_handler(msg):
+    # msg is the data portion of the broadcast
+    if 'content' in msg:
+        for c in msg['content']:
+            key = c.get('key')
+            if key in charts:
+                last_price = c.get("3") or c.get("LAST_PRICE")
+                if last_price:
+                    chart_ctx = charts[key]
+                    cdata = chart_ctx["data"]
+                    cdata["live_price"] = last_price
+                    cdata["last_update"] = get_now_iso()
+                    
+                    # Write Fast Quote
+                    safe_symbol = get_safe_symbol(key)
+                    quote_file = os.path.join(DATA_DIR, "live", f"latest_quote_{safe_symbol}.json")
+                    try:
+                        with open(quote_file, "w") as f:
+                            json.dump({
+                                "symbol": key,
+                                "price": last_price,
+                                "time": cdata["last_update"]
+                            }, f)
+                    except: pass
+
+                    # --- Sub-Minute Aggregation ---
+                    curr_time = time.time()
+                    update_sub_candle(chart_ctx["data_15s"], last_price, curr_time, 15)
+                    with open(chart_ctx["files"]["json_15s"], "w") as f:
+                        json.dump(chart_ctx["data_15s"], f)
+                        
+                    update_sub_candle(chart_ctx["data_30s"], last_price, curr_time, 30)
+                    with open(chart_ctx["files"]["json_30s"], "w") as f:
+                        json.dump(chart_ctx["data_30s"], f)
+
+async def chart_handler(msg):
+    if 'content' in msg:
+        for c in msg['content']:
+            key = c.get('key')
+            if key in charts:
+                cdata = charts[key]["data"]
+                files = charts[key]["files"]
+                
+                candle = {
+                    "time": c.get("CHART_TIME_MILLIS", 0),
+                    "open": c.get("OPEN_PRICE", 0),
+                    "high": c.get("HIGH_PRICE", 0),
+                    "low": c.get("LOW_PRICE", 0),
+                    "close": c.get("CLOSE_PRICE", 0),
+                    "volume": c.get("VOLUME", 0)
+                }
+                
+                # Archive Logic
+                if cdata["candles"] and cdata["candles"][-1]["time"] != candle["time"]:
+                    completed_candle = cdata["candles"][-1]
+                    try:
+                        df = pd.DataFrame([completed_candle])
+                        df['timestamp'] = pd.to_datetime(df['time'], unit='ms')
+                        
+                        if not os.path.exists(files["parquet"]):
+                            df.to_parquet(files["parquet"], index=False)
+                        else:
+                            existing_df = pd.read_parquet(files["parquet"])
+                            pd.concat([existing_df, df]).drop_duplicates(subset=['time']).to_parquet(files["parquet"], index=False)
+                        print(f"📁 [{key}] Archived {completed_candle['time']}")
+                    except Exception as e:
+                        print(f"Error saving parquet for {key}: {e}")
+
+                # Update Buffer
+                if cdata["candles"] and cdata["candles"][-1]["time"] == candle["time"]:
+                    cdata["candles"][-1] = candle
+                else:
+                    cdata["candles"].append(candle)
+                    if len(cdata["candles"]) > 500000:
+                        cdata["candles"].pop(0)
+                    
+                cdata["last_update"] = get_now_iso()
+                cdata["candles"] = deduplicate_candles(cdata["candles"])
+                
+                if cdata["live_price"] == 0:
+                    cdata["live_price"] = candle["close"]
+                
+                try:
+                    now = time.time()
+                    last_snap = cdata.get("_last_snap_ts", 0)
+                    if now - last_snap > 0.25:
+                        snapshot = {
+                            "symbol": cdata["symbol"],
+                            "last_update": cdata["last_update"],
+                            "live_price": cdata["live_price"],
+                            "candles": cdata["candles"][-50:] if cdata["candles"] else []
+                        }
+                        snap_file = files["json"].replace(".json", "_snapshot.json")
+                        with open(snap_file, "w") as f:
+                            json.dump(snapshot, f)
+                        cdata["_last_snap_ts"] = now
+
+                    last_write = cdata.get("_last_write_ts", 0)
+                    if now - last_write > 60:
+                        with open(files["json"], "w") as f:
+                            json.dump(cdata, f)
+                        cdata["_last_write_ts"] = now
+                        print(f"pw Checkpoint saved for {key}")
+                except Exception as e:
+                    print(f"Write error {key}: {e}")
+
 async def main():
-    # ... Setup ...
-    os.makedirs(DATA_DIR, exist_ok=True)
-    restore_token_from_db()
+    print("🚀 [StreamChart] Starting as Spoke...")
+    os.makedirs(os.path.join(DATA_DIR, "live"), exist_ok=True)
 
-    client = get_client()
-    if not client: return
-
-    try:
-        print("Verifying session...")
-        client.get_account_numbers()
-        sync_token_to_db()
-        print("Session verified.")
-    except Exception as e:
-        print(f"[CRITICAL] Session failed: {e}")
-        return
-
-    # 2. Initialize Symbols
+    # 1. Initialize Symbols
     symbols = get_watchlist_symbols()
     print(f"📋 Watching {len(symbols)} tickers: {symbols}")
 
     for sym in symbols:
         charts[sym] = init_chart_data(sym)
-        # Bootstrap valid only for 1m (Schwab restrictions)
-        boot = fetch_bootstrap_data(client, sym)
+        boot = await fetch_bootstrap_data(sym)
         if boot:
-            # Validate bootstrap data against historical parquet to prevent corrupt data
             boot = validate_bootstrap_data(sym, boot)
-            
             cdata = charts[sym]["data"]
             existing_times = {c["time"] for c in cdata["candles"]}
             cdata["candles"] = deduplicate_candles(cdata["candles"] + [c for c in boot if c["time"] not in existing_times])
@@ -850,218 +924,37 @@ async def main():
             with open(charts[sym]["files"]["json"], "w") as f:
                 json.dump(cdata, f, indent=2)
 
-    # 2.5. Gap Detection & Bridging (after all data is loaded)
-    print("\n🔍 Checking for data gaps...")
+    # 2. Historical Data Update (Daily/Weekly)
+    print("\n📅 Updating Historical Files (Daily/Weekly)...")
     for sym in symbols:
-        cdata = charts[sym]["data"]
-        files = charts[sym]["files"]
-        
-        # Detect gaps in the merged data
-        gaps = detect_gaps(cdata["candles"], sym, threshold_minutes=5)
-        
-        if gaps:
-            print(f"⚠️ [{sym}] Found {len(gaps)} data gap(s)")
-            
-            # Bridge gaps via Schwab API
-            bridged = bridge_gaps(client, sym, gaps)
-            if bridged:
-                # Validate bridged data against historical parquet
-                bridged = validate_bootstrap_data(sym, bridged)
-                
-                cdata["candles"] = deduplicate_candles(cdata["candles"] + bridged)
-                cdata["last_update"] = get_now_iso()
-                print(f"✅ [{sym}] Merged {len(bridged)} bridged bars")
-                
-                # Save updated data back to parquet
-                try:
-                    df = pd.DataFrame(cdata["candles"])
-                    df['timestamp'] = pd.to_datetime(df['time'], unit='ms')
-                    df.to_parquet(files["parquet"], index=False)
-                    print(f"📁 [{sym}] Updated parquet storage")
-                except Exception as e:
-                    print(f"⚠️ [{sym}] Failed to save parquet: {e}")
-                
-                # Also update JSON
-                with open(files["json"], "w") as f:
-                    json.dump(cdata, f, indent=2)
-        else:
-            print(f"✅ [{sym}] No gaps detected")
+        await update_historical_files(sym)
 
-    # 2.6. Historical Data Update (Daily/Weekly)
-    print("\n📅 updating Historical Files (Daily/Weekly)...")
-    for sym in symbols:
-        # Run this for mapped futures/indices
-        update_historical_files(client, sym)
-
-    # 3. Stream Setup
-    stream_client = StreamClient(client, account_id='BB4E515511E76B8B035DC72194CA615919766D183922871CF062DB9ACA6E0EBD') 
-
-    async def level_one_handler(msg):
-        if 'content' in msg:
-            for c in msg['content']:
-                key = c.get('key')
-                if key in charts:
-                    last_price = c.get("3") or c.get("LAST_PRICE")
-                    if last_price:
-                        chart_ctx = charts[key]
-                        cdata = chart_ctx["data"]
-                        cdata["live_price"] = last_price
-                        cdata["last_update"] = get_now_iso()
-                        
-                        # Write Fast Quote
-                        safe_symbol = get_safe_symbol(key)
-                        quote_file = os.path.join(DATA_DIR, "live", f"latest_quote_{safe_symbol}.json")
-                        try:
-                            # Use try-block for atomic-ish write (rename would be better but this is Windows)
-                            with open(quote_file, "w") as f:
-                                json.dump({
-                                    "symbol": key,
-                                    "price": last_price,
-                                    "time": cdata["last_update"]
-                                }, f)
-                        except: pass
-
-                        # NOTE: We do NOT write the full JSON here anymore
-                        # The chart_handler writes both snapshot and full with proper throttling
-                        # This keeps level_one updates fast (just the tiny quote file)
-
-                        # --- Sub-Minute Aggregation ---
-                        curr_time = time.time()
-                        
-                        # Update 15s
-                        update_sub_candle(chart_ctx["data_15s"], last_price, curr_time, 15)
-                        with open(chart_ctx["files"]["json_15s"], "w") as f:
-                            json.dump(chart_ctx["data_15s"], f)
-                            
-                        # Update 30s
-                        update_sub_candle(chart_ctx["data_30s"], last_price, curr_time, 30)
-                        with open(chart_ctx["files"]["json_30s"], "w") as f:
-                            json.dump(chart_ctx["data_30s"], f)
-
-    async def chart_handler(msg):
-        # Keeps 1m bars in sync and archived
-        if 'content' in msg:
-            for c in msg['content']:
-                key = c.get('key')
-                if key in charts:
-                    cdata = charts[key]["data"]
-                    files = charts[key]["files"]
-                    
-                    candle = {
-                        "time": c.get("CHART_TIME_MILLIS", 0),
-                        "open": c.get("OPEN_PRICE", 0),
-                        "high": c.get("HIGH_PRICE", 0),
-                        "low": c.get("LOW_PRICE", 0),
-                        "close": c.get("CLOSE_PRICE", 0),
-                        "volume": c.get("VOLUME", 0)
-                    }
-                    
-                    # Archive Logic
-                    if cdata["candles"] and cdata["candles"][-1]["time"] != candle["time"]:
-                        completed_candle = cdata["candles"][-1]
-                        try:
-                            df = pd.DataFrame([completed_candle])
-                            df['timestamp'] = pd.to_datetime(df['time'], unit='ms')
-                            
-                            if not os.path.exists(files["parquet"]):
-                                df.to_parquet(files["parquet"], index=False)
-                            else:
-                                existing_df = pd.read_parquet(files["parquet"])
-                                pd.concat([existing_df, df]).drop_duplicates(subset=['time']).to_parquet(files["parquet"], index=False)
-                            print(f"📁 [{key}] Archived {completed_candle['time']}")
-                        except Exception as e:
-                            print(f"Error saving parquet for {key}: {e}")
-
-                    # Update Buffer
-                    if cdata["candles"] and cdata["candles"][-1]["time"] == candle["time"]:
-                        cdata["candles"][-1] = candle
-                    else:
-                        cdata["candles"].append(candle)
-                        # Keep full history (up to ~1 year ~ 360k bars)
-                        if len(cdata["candles"]) > 500000:
-                            cdata["candles"].pop(0)
-                        
-                    cdata["last_update"] = get_now_iso()
-                    cdata["candles"] = deduplicate_candles(cdata["candles"])
-                    
-                    if cdata["live_price"] == 0:
-                        cdata["live_price"] = candle["close"]
-                    
-                    try:
-                        # 1. Write Snapshot (Fast, Frequent)
-                        # Contains metadata + last 50 candles
-                        # Update: Throttled to max 4 times/sec (250ms) to prevent excessive IO/Watcher triggers
-                        now = time.time()
-                        last_snap = cdata.get("_last_snap_ts", 0)
-                        
-                        if now - last_snap > 0.25:
-                            snapshot = {
-                                "symbol": cdata["symbol"],
-                                "last_update": cdata["last_update"],
-                                "live_price": cdata["live_price"],
-                                "candles": cdata["candles"][-50:] if cdata["candles"] else []
-                            }
-                            snap_file = files["json"].replace(".json", "_snapshot.json")
-                            with open(snap_file, "w") as f:
-                                json.dump(snapshot, f)
-                            cdata["_last_snap_ts"] = now
-
-                        # 2. Write Full History (Heavy, Throttled)
-                        # Only write every 60 seconds OR if it's the first time
-                        last_write = cdata.get("_last_write_ts", 0)
-                        
-                        if now - last_write > 60:
-                            with open(files["json"], "w") as f:
-                                json.dump(cdata, f) # Minified (no indent) to save space
-                            cdata["_last_write_ts"] = now
-                            print(f"pw Checkpoint saved for {key}")
-
-                        # Only print log occasionally to reduce noise
-                        # print(f"📈 [{key}] {candle['time']} C:{candle['close']}") 
-                    except Exception as e:
-                        print(f"Write error {key}: {e}")
-
-    # Login & Subs
-    # ... (Rest is similar, just ensuring new handlers are attached)
-    await stream_client.login()
-    
-    futures = [s for s in symbols if s.startswith("/") or s.endswith("!")]
-    equities = [s for s in symbols if s not in futures]
-    
-    if futures:
-        stream_client.add_chart_futures_handler(chart_handler)
-        stream_client.add_level_one_futures_handler(level_one_handler)
-        await stream_client.chart_futures_subs(futures)
-        await stream_client.level_one_futures_subs(futures)
-        active_subscriptions["futures"] = futures
-        
-    if equities:
-        stream_client.add_chart_equity_handler(chart_handler)
-        stream_client.add_level_one_equity_handler(level_one_handler)
-        await stream_client.chart_equity_subs(equities)
-        await stream_client.level_one_equity_subs(equities)
-        active_subscriptions["equities"] = equities
-
-    print(f"Streaming initialized for {len(symbols)} symbols.")
-    
-    last_sync = time.time()
+    # 3. Main Loop
     while True:
         try:
-            await stream_client.handle_message()
-            
-            if time.time() - last_sync > 1800:
-                print("⏳ Token Sync...")
-                sync_token_to_db()
-                last_sync = time.time()
-                
-        except Exception as e:
-            print(f"⚠️ Error: {e}. Retry in 5s...")
+            async with websockets.connect(HUB_WS) as ws:
+                print(f"✅ Connected to Hub at {HUB_WS}")
+                while True:
+                    msg_raw = await ws.recv()
+                    msg = json.loads(msg_raw)
+                    event_data = msg.get("data", {})
+                    
+                    service = event_data.get("service")
+                    if service == "LEVELONE_FUTURES":
+                        await level_one_handler(event_data)
+                    elif service in ["CHART_FUTURES", "CHART_EQUITY"]:
+                        await chart_handler(event_data)
+                    
+        except websockets.ConnectionClosed:
+            print("❌ Hub connection closed. Retrying in 5s...")
             await asyncio.sleep(5)
-            # ... Reconnect logic ...
-
+        except Exception as e:
+            print(f"⚠️ Spoke Error: {e}. Retrying in 5s...")
+            await asyncio.sleep(5)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("Stopping...")
+

@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Slider } from "@/components/ui/slider";
 import { VolatilitySkewChart } from "@/components/chart/VolatilitySkewChart";
+import { L2Heatmap } from "@/components/chart/L2Heatmap";
 
 // ── UTILITIES ─────────────────────────────────────────────────────────────
 const fmtGex = (v: number | undefined | null) => {
@@ -65,7 +66,7 @@ export default function OptionsTacticalDashboard() {
   const [priorityTickers, setPriorityTickers] = useState<string[]>(['/ES', '/NQ', 'SPX', 'QQQ', 'NVDA', 'TSLA']);
   const [refreshingTickers, setRefreshingTickers] = useState<Set<string>>(new Set());
   
-  const [mainTab, setMainTab] = useState<'profile' | 'history' | 'dex' | 'skew' | 'cumulative' | 'volsummary' | 'fearpremium'>('profile');
+  const [mainTab, setMainTab] = useState<'profile' | 'history' | 'dex' | 'skew' | 'cumulative' | 'volsummary' | 'fearpremium' | 'bookmap'>('profile');
   const [profileOption, setProfileOption] = useState<'nodes' | 'net' | 'liquidity'>('nodes');
   const [rightTab, setRightTab] = useState<'ladder' | 'briefing' | 'nodes'>('ladder');
   const [strikeZoomRange, setStrikeZoomRange] = useState(5); // ±5%
@@ -588,7 +589,7 @@ export default function OptionsTacticalDashboard() {
                         {[
                           { label: "Total GEX", val: activeDetail?.total_gex, icon: <ShieldCheck className={activeDetail?.total_gex < -1e9 ? "text-rose-500 animate-pulse" : "text-emerald-500"} />, sub: activeDetail?.total_gex < -1e9 ? "High Vol Risk" : "Stable Regime", tip: activeDetail?.total_gex < -1e9 ? "GEX < -1B warns of > ±1.0% price swings. Defensive positioning recommended." : (activeDetail?.total_gex > 0 ? "GEX > 0 indicates < ±0.5% stability expected." : "Dealer Net Gamma Exposure across all strikes."), isGex: true },
                           { label: "Net Vanna", val: activeDetail?.net_vanna_exposure, icon: <Layers className="text-blue-500" />, sub: "Delta/Vol Sensitivity", tip: "Exposure to changes in implied volatility. Positive means dealers buy into rallies.", isGex: true },
-                          { label: "ATM IV", val: ivCurrent ? ivCurrent + "%" : "—", icon: <TrendingUp className="text-amber-400" />, sub: "Implied Vol", tip: "ATM Implied Volatility from the central option chain. Indicates market-priced expected move.", isRaw: true },
+                          { label: "ATM IV", val: activeDetail?.iv_current ? activeDetail.iv_current + "%" : "—", icon: <TrendingUp className="text-amber-400" />, sub: "Implied Vol", tip: "ATM Implied Volatility from the central option chain. Indicates market-priced expected move.", isRaw: true },
                           { label: "Vol Change", val: activeDetail?.iv_change != null ? (activeDetail.iv_change >= 0 ? "+" : "") + activeDetail.iv_change.toFixed(2) + "%" : "—", icon: <Activity className={(activeDetail?.iv_change || 0) > 0 ? "text-rose-400" : "text-emerald-400"} />, sub: "Daily Shift", tip: "Cumulative change in ATM IV since the session start. Positive = Vol Expansion.", isRaw: true },
                           
                           { label: "Call Wall", val: activeDetail?.call_wall, icon: <ArrowUpRight className="text-emerald-500" />, sub: "Resistance", tip: "Highest concentration of Positive Gamma exposure.", isGex: false },
@@ -633,9 +634,13 @@ export default function OptionsTacticalDashboard() {
                                  <TabsTrigger value="history"    className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-emerald-400">GEX History</TabsTrigger>
                                  <TabsTrigger value="dex"        className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-blue-400">DEX</TabsTrigger>
                                  <TabsTrigger value="skew"       className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-purple-400">IV Skew</TabsTrigger>
-                                 <TabsTrigger value="fearpremium" className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-rose-400">Fear Premium</TabsTrigger>
+                                 <TabsTrigger value="fearpremium" className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-indigo-500/20 data-[state=active]:text-indigo-400">Fear/Premium</TabsTrigger>
                                  <TabsTrigger value="cumulative" className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-amber-400">Cumul GEX</TabsTrigger>
                                  <TabsTrigger value="volsummary" className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-cyan-400">Vol / OI</TabsTrigger>
+                                 <TabsTrigger value="bookmap" className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-orange-500/20 data-[state=active]:text-orange-400">
+                                    <Layers className="w-3.5 h-3.5 mr-1.5" />
+                                    Bookmap
+                                 </TabsTrigger>
                               </TabsList>
                            </Tabs>
                            <div className="flex items-center gap-6">

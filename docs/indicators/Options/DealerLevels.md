@@ -28,11 +28,18 @@ The regime tells you **HOW** to trade—not the direction, but the style of trad
 | **COILED** | Negative GEX + tight walls. Compressed spring. | Wait. Watch for a break of the gamma flip zone. Then join the breakout direction. | False breakouts. Require a candle close outside the zone before entry. |
 | **BATTLE ZONE** | Positive GEX + wide walls. Big swings that reverse. | Trade wall-to-wall. Short at call wall, long at put wall. Use wider stops. | Getting stopped out on the swing. Position size for the range. |
 
-### 🧭 The Directional Bias
-The arrow next to your regime (↑ / ↓ / ↔) indicates which direction options positioning favors. It’s based on three signals:
-1.  **Price vs Gamma Magnet:** If price is above the magnet, gravity pulls down (↓). If below, gravity pulls up (↑).
-2.  **Put/Call Gamma Ratio:** If put gamma is >60% of total gamma, dealers are hedging the downside (↓ bearish). If call gamma dominates, it is (↑ bullish).
-3.  **Net Vanna:** Negative vanna means if IV drops into the close, dealers sell (↓). Positive vanna means they buy (↑).
+### 🧭 The Structural Bias & Volatility Context
+The dashboard provides a unified view of both directional bias and volatility regime.
+
+1.  **Directional Bias (↑ / ↓ / ↔)**:
+    *   **Price vs Gamma Magnet**: Gravity pulls toward the magnet.
+    *   **Put/Call Gamma Ratio**: Hedging dominance (>60% put/call ratio).
+    *   **Net Vanna**: Sensitivity to IV drops (Negative Vanna = Selling pressure on IV contraction).
+2.  **Volatility Context (Fear Premium / Skew)**:
+    *   **Fear Premium (Skew Premium)**: The extra cost of OTM Puts relative to Calls. High premium (>4.0) = extreme anxiety / hedging.
+    *   **IV Shift (VOL Change)**: The **cumulative** change in ATM Implied Volatility since the market open.
+        *   🟢 **Negative Shift**: Volatility is contracting (crushing). Markets stabilizing.
+        *   🔴 **Positive Shift**: Volatility is expanding (spiking). Markets in discovery or panic.
 
 ---
 
@@ -56,10 +63,11 @@ These are dynamic labels injected directly from the live options flow, represent
 * **Confluent Whales (e.g., `W-PUT x5`):** Multiple expirations are piling massive volume onto the exact same strike. *Action:* Treat this as a heavily defended institutional fortress.
 * **Local Whales (e.g., `LW-CALL`):** An isolated, massive intraday sniper bet. *Action:* Use as an immediate Draw on Liquidity (DOL) for day trades. (These vanish if price moves too far away).
 
-### 🔬 Secondary Levels (Finesse & Timing)
+### 🔬 Secondary Levels & Advanced Alpha
 * **Gamma Flip Zone:** The narrow, shaded zone around zero gamma. In COILED regimes, a candle close outside this zone confirms the breakout.
 * **Gamma Cliffs:** Where GEX builds or falls off most steeply. Price often stalls or accelerates violently at these cliffs.
-* **DEX Nodes:** Strikes with the highest directional hedging (Delta exposure).
+* **Fear Premium (Skew):** Visualized in the Skew Chart. High Skew + Negative GEX = "The Crash Trap".
+* **Cumulative IV Shift:** Located in the Stats Hero and Daily Shift card. Tracks the total daily volatility expansion/contraction.
 * **Pin Strike:** The convergence target into the close. If Pin Odds are >25%, expect price to magnetize here after 2:00 PM ET.
 
 ---

@@ -1,8 +1,8 @@
 # Dealer Levels — Technical Design
 
 **Feature**: Automated Dealer Positioning Levels via Options GEX  
-**Version**: 2.5 (Ultimate Upgrade)
-**Last Updated**: 2026-03-20
+**Version**: 3.0 (Volatility & Skew Integration)
+**Last Updated**: 2026-03-22
 
 ---
 
@@ -31,6 +31,9 @@ Responsible for orchestrating:
 - **Prioritized Scanning**: Tiered polling (60s for SPX/QQQ, 10m for secondary).
 - **Strike Aggregation**: Multi-expiry flattening to calculate dealer exposure over specific DTE windows.
 - **Centroids**: Calculation of Volume-Weighted (VWAP) centroids of strikes for the "True Center" of dealer position.
+- **Volatility & Skew**: 
+    - **ATM IV**: Tracks the At-The-Money implied volatility.
+    - **25D Skew**: Compares 25-delta Puts vs Calls to calculate the **Volatility Skew Premium**.
 - **Vanna/Charm Proxies**: Sensitivity analysis of dealer gamma relative to implied volatility and time decay.
 
 ### 2.2 Translation & Normalization (`futures_translator.py`)
@@ -46,9 +49,10 @@ The **Options Tactical Command** is a Next.js application designed as a real-tim
 
 ### 3.2 Display Philosophy
 - **Immersive Visuals**: High-contrast, neon-on-dark HUD with glassmorphism overlays.
+- **Volatility Skew Chart**: Real-time line chart tracking the "Fear Premium" pulse throughout the session.
+- **Cumulative IV Shift**: Unified calculation in `page.tsx` that compares current IV against the first recorded IV of the day, displayed in both the Stats Hero and Daily Shift cards.
 - **Pulsing Alerts**: Visual pulsing and audio chimes trigger on **Regime Shifts** (e.g., Battle Zone -> Trending Bullish).
 - **Precision Zoom**: Multi-mode charts (GEX, Volume, OI) with automatic strike-window zooming based on current spot range.
-- **Basis Normalization**: Frontend logic prevents "Off-by-10x" display for futures by comparing levels against basis ratios and current spot price before rendering.
 
 ---
 

@@ -926,11 +926,11 @@ if i_showEmaZones and not na(weeklyEma)
             box.set_right(upperZoneBox, time[1])
         if not na(lowerZoneBox)
             box.set_right(lowerZoneBox, time[1])
-        if i_showProbability
-            if not na(upperProbZoneBox)
-                box.set_right(upperProbZoneBox, time[1])
-            if not na(lowerProbZoneBox)
-                box.set_right(lowerProbZoneBox, time[1])
+        //if i_showProbability
+        if not na(upperProbZoneBox)
+            box.set_right(upperProbZoneBox, time[1])
+        if not na(lowerProbZoneBox)
+            box.set_right(lowerProbZoneBox, time[1])
 
         // TOGGLE: If "Current Week Only" is ON, destroy the old boxes entirely
         if i_currentWeekOnly
@@ -950,9 +950,9 @@ if i_showEmaZones and not na(weeklyEma)
         upperZoneBox := box.new(startT, upperZoneHi, zEndTime, upperZoneLo, xloc=xloc.bar_time, border_color=color.new(i_cUpper, 60), bgcolor=color.new(i_cUpper, i_zoneFillOpacity), border_width=1)
         lowerZoneBox := box.new(startT, lowerZoneHi, zEndTime, lowerZoneLo, xloc=xloc.bar_time, border_color=color.new(i_cLower, 60), bgcolor=color.new(i_cLower, i_zoneFillOpacity), border_width=1)
         
-        if i_showProbability
-            upperProbZoneBox := box.new(startT, upperProbZoneHi, zEndTime, upperProbZoneLo, xloc=xloc.bar_time, border_color=color.new(i_cUpper, 60), bgcolor=color.new(i_cUpper, i_zoneFillOpacity), border_width=1)
-            lowerProbZoneBox := box.new(startT, lowerProbZoneHi, zEndTime, lowerProbZoneLo, xloc=xloc.bar_time, border_color=color.new(i_cLower, 60), bgcolor=color.new(i_cLower, i_zoneFillOpacity), border_width=1)
+        //if i_showProbability
+        upperProbZoneBox := box.new(startT, upperProbZoneHi, zEndTime, upperProbZoneLo, xloc=xloc.bar_time, border_color=color.new(i_cUpper, 60), bgcolor=color.new(i_cUpper, i_zoneFillOpacity), border_width=1)
+        lowerProbZoneBox := box.new(startT, lowerProbZoneHi, zEndTime, lowerProbZoneLo, xloc=xloc.bar_time, border_color=color.new(i_cLower, 60), bgcolor=color.new(i_cLower, i_zoneFillOpacity), border_width=1)
     else
         // Mid-week updating: simply push the right edge forward with price
         int zEndTime = time_close + (time_close - time) * 5
@@ -960,11 +960,11 @@ if i_showEmaZones and not na(weeklyEma)
             box.set_right(upperZoneBox, zEndTime)
         if not na(lowerZoneBox)
             box.set_right(lowerZoneBox, zEndTime)
-        if i_showProbability
-            if not na(upperProbZoneBox)
-                box.set_right(upperProbZoneBox, zEndTime)
-            if not na(lowerProbZoneBox)
-                box.set_right(lowerProbZoneBox, zEndTime)
+        //if i_showProbability
+        if not na(upperProbZoneBox)
+            box.set_right(upperProbZoneBox, zEndTime)
+        if not na(lowerProbZoneBox)
+            box.set_right(lowerProbZoneBox, zEndTime)
 
 // ============================================
 // Monthly Level Lines

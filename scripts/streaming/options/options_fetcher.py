@@ -46,6 +46,21 @@ from .config import (
 
 log = logging.getLogger(__name__)
 
+HUB_URL = "http://127.0.0.1:8000"
+
+def _hub_request(method: str, params: dict) -> dict:
+    """Send a REST request through the Hub's proxy."""
+    try:
+        resp = requests.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=30)
+        resp.raise_for_status()
+        result = resp.json()
+        if result.get("status") != "success":
+            raise RuntimeError(f"Hub proxy error: {result.get('message')}")
+        return result.get("data", {})
+    except Exception as e:
+        log.error(f"Failed to reach Hub proxy: {e}")
+        raise RuntimeError(f"Hub proxy unreachable: {e}")
+
 
 # ---------------------------------------------------------------------------
 # Domain objects
@@ -254,31 +269,11 @@ def create_client(
     token_path: Path = TOKEN_PATH,
 ) -> Any:
     """
-    Build an authenticated Schwab API client.
-
-    Parameters
-    ----------
-    secrets_path : Path to secrets.json (app_key / app_secret).
-    token_path   : Path to token.json (OAuth tokens).
-
-    Returns
-    -------
-    schwab.client.Client
+    NOTE: In the Hub-and-Spoke model, the Spoke does NOT need a full Client.
+    It uses the Hub's REST proxy. This function now returns a 'Dummy' or 
+    Proxy-aware object, or is bypassed by callers.
     """
-    if not secrets_path.exists():
-        raise FileNotFoundError(f"secrets.json not found at {secrets_path}")
-    if not token_path.exists():
-        raise FileNotFoundError(f"token.json not found at {token_path}")
-
-    secrets = json.loads(secrets_path.read_text())
-    client = schwab.auth.client_from_token_file(
-        token_path=str(token_path),
-        api_key=secrets["app_key"],
-        app_secret=secrets["app_secret"],
-        enforce_enums=False,
-    )
-    log.info("Schwab client created (token: %s)", token_path.name)
-    return client
+    return None
 
 
 def fetch_option_chain_data(
@@ -310,23 +305,14 @@ def fetch_option_chain_data(
     # Query a wide enough window so weekend/overnight runs still return expiries.
     max_dte = max(dte_targets) + OPTION_CHAIN_WIDE_WINDOW
 
-    response = client.get_option_chain(
-        api_sym,
-        from_date=today,
-        to_date=today + timedelta(days=max_dte),
-        include_underlying_quote=True,
-    )
-
-    if response.status_code == 429:
-        raise RuntimeError(
-            f"Schwab API rate-limited while fetching option chain for {symbol}"
-        )
-    if response.status_code != 200:
-        raise RuntimeError(
-            f"Option chain HTTP {response.status_code} for {symbol} ({api_sym})"
-        )
-
-    payload = response.json()
+    params = {
+        "symbol": api_sym,
+        "from_date": today.isoformat(),
+        "to_date": (today + timedelta(days=max_dte)).isoformat(),
+        "include_underlying_quote": True,
+    }
+    
+    payload = _hub_request("get_option_chain", params)
     status = payload.get("status")
     if status and status != "SUCCESS":
         raise RuntimeError(
@@ -456,90 +442,49 @@ def fetch_futures_quote(
 
 def _fetch_futures_from_schwab(symbol: str, token_path: Path) -> tuple[float | None, float | None]:
     """
-    Hit the Schwab marketdata REST endpoint directly for a futures quote.
-
-    Returns (last_price, open_price)
+    Hit the Hub Proxy for a futures quote.
     """
     try:
-        token_data = json.loads(token_path.read_text())
-        access_token = token_data["token"]["access_token"]
-    except Exception as exc:
-        log.warning("Could not read access token from %s: %s", token_path, exc)
-        return None
+        data = _hub_request("get_quotes", {"symbols": [symbol]})
+        key = next(iter(data.keys()), None)
+        if key is None:
+            return None, None
 
-    url = f"https://api.schwabapi.com/marketdata/v1/quotes?symbols={symbol}&fields=quote"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
-    }
-
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-    except requests.RequestException as exc:
-        log.warning("Schwab futures HTTP request failed for %s: %s", symbol, exc)
-        return None
-
-    if response.status_code != 200:
-        log.warning(
-            "Schwab futures HTTP %d for %s", response.status_code, symbol
+        quote = data[key].get("quote", {})
+        price = _safe_float(
+            quote.get("lastPrice")
+            or quote.get("last")
+            or quote.get("mark")
         )
-        return None
-
-    data = response.json()
-    key = next(iter(data.keys()), None)
-    if key is None:
-        log.warning("Schwab futures response was empty for %s", symbol)
+        open_p = _safe_float(
+            quote.get("openPrice")
+            or quote.get("open")
+        )
+        return (price, open_p) if price > 0 else (None, None)
+    except Exception as e:
+        log.warning(f"Hub futures fetch failed for {symbol}: {e}")
         return None, None
-
-    quote = data[key].get("quote", {})
-    price = _safe_float(
-        quote.get("lastPrice")
-        or quote.get("last")
-        or quote.get("mark")
-        or quote.get("closePrice")
-    )
-    open_p = _safe_float(
-        quote.get("openPrice")
-        or quote.get("open")
-    )
-    return (price, open_p) if price > 0 else (None, None)
 
 
 def _fetch_rth_open_from_schwab(symbol: str, token_path: Path) -> float | None:
     """
-    Fetch the 9:30 AM ET bar from Schwab Price History API for futures.
-    This provides un-delayed data required for RTH-anchored basis.
+    Fetch the 9:30 AM ET bar from Schwab Price History API via Hub.
     """
     try:
-        token_data = json.loads(token_path.read_text())
-        access_token = token_data["token"]["access_token"]
-    except Exception:
-        return None
-
-    # Request 1-day 1-min history including extended hours so 9:30 bar is available
-    url = (
-        f"https://api.schwabapi.com/marketdata/v1/pricehistory"
-        f"?symbol={symbol}&periodType=day&period=1&frequencyType=minute&frequency=1"
-        f"&needExtendedHoursData=true"
-    )
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
-    }
-
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            return None
-        
-        data = response.json()
+        params = {
+            "symbol": symbol,
+            "period_type": "day",
+            "period": 1,
+            "frequency_type": "minute",
+            "frequency": 1,
+            "need_extended_hours_data": True
+        }
+        data = _hub_request("get_price_history", params)
         candles = data.get("candles", [])
         if not candles:
             return None
 
         # RTH Open is the bar at 09:30 AM ET.
-        # Schwab candles use epoch ms (UTC).
-        # We find the bar that corresponds to 09:30 NY time today.
         ny_tz = ZoneInfo("America/New_York")
         now_ny = datetime.now(ny_tz)
         target_time = time(9, 30)
@@ -549,11 +494,10 @@ def _fetch_rth_open_from_schwab(symbol: str, token_path: Path) -> float | None:
             if dt.time() == target_time and dt.date() == now_ny.date():
                 return float(c["open"])
         
-        # Fallback to the very first candle of the day if 9:30 is not found or it's pre-market
         return float(candles[0]["open"])
 
     except Exception as exc:
-        log.debug("Schwab price history fetch failed for %s: %s", symbol, exc)
+        log.debug("Hub price history fetch failed for %s: %s", symbol, exc)
         return None
 
 
