@@ -16,8 +16,7 @@ import requests
 
 # Named webhook channels (can be extended via discord_webhooks.json)
 WEBHOOK_CHANNELS = {
-    "test_channel": "https://discord.com/api/webhooks/1463758018096271483/dW3Q5Y9IyuQIhykvN2z-YSR3F5Qa2OKfiUcSezh3cqX-IOItzAEWJrGXFRZmr0qZRZtt",
-    # Add more channels here or in discord_webhooks.json
+    # Add manual overrides here or use discord_webhooks.json
 }
 
 DEFAULT_CHANNEL = "test_channel"

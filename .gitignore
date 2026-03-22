@@ -45,6 +45,7 @@ credentials.json
 token.json
 secrets.json
 token_backup.json
+discord_webhooks.json
 
 # Temp
 temp_repo/

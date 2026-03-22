@@ -157,6 +157,9 @@ async def _write_snapshot_direct(payload: dict[str, Any]) -> bool:
             "putVolumeCentroid": payload.get("putVolumeCentroid"),
             "netSpeedExposure": payload.get("netSpeedExposure"),
             "netVannaExposure": payload.get("netVannaExposure"),
+            "put25dIv": payload.get("put25dIv"),
+            "call25dIv": payload.get("call25dIv"),
+            "volatilitySkewPremium": payload.get("volatilitySkewPremium"),
         })
         log.info("GexSnapshot written DIRECTLY to DB (Offline Mode) for %s", payload["ticker"])
         return True
@@ -188,6 +191,9 @@ def write_macro_snapshot(
         "macroCallWall": levels.get("macro_call_wall"),
         "macroPutWall": levels.get("macro_put_wall"),
         "zeroGamma": levels.get("zero_gamma"),
+        "put25dIv": levels.get("put_25d_iv"),
+        "call25dIv": levels.get("call_25d_iv"),
+        "volatilitySkewPremium": levels.get("volatility_skew_premium"),
         "anomalies": anomalies,
         "dominantNodes": dominant_nodes or [],
     }
@@ -241,6 +247,9 @@ async def _write_macro_snapshot_direct(payload: dict[str, Any]) -> bool:
                     "macroCallWall": payload.get("macroCallWall"),
                     "macroPutWall": payload.get("macroPutWall"),
                     "zeroGamma": payload.get("zeroGamma"),
+                    "put25dIv": payload.get("put25dIv"),
+                    "call25dIv": payload.get("call25dIv"),
+                    "volatilitySkewPremium": payload.get("volatilitySkewPremium"),
                     "anomalies": json.dumps(payload.get("anomalies", [])),
                     "dominantNodes": json.dumps(payload.get("dominantNodes", [])),
                 },
@@ -250,6 +259,9 @@ async def _write_macro_snapshot_direct(payload: dict[str, Any]) -> bool:
                     "macroCallWall": payload.get("macroCallWall"),
                     "macroPutWall": payload.get("macroPutWall"),
                     "zeroGamma": payload.get("zeroGamma"),
+                    "put25dIv": payload.get("put25dIv"),
+                    "call25dIv": payload.get("call25dIv"),
+                    "volatilitySkewPremium": payload.get("volatilitySkewPremium"),
                     "anomalies": json.dumps(payload.get("anomalies", [])),
                     "dominantNodes": json.dumps(payload.get("dominantNodes", [])),
                 }

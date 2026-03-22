@@ -90,9 +90,12 @@ class TranslatedLevels:
     put_volume_centroid: float | None
     atm_iv: float | None          # ATM implied volatility from cash chain (passes through unchanged)
     iv_change: float               # Percentage change in IV
-
     expected_moves: list[ExpectedMove]
     strike_gex: list[StrikeGEX] = field(default_factory=list) # Re-add just in case needed for UI pass-through
+
+    put_25d_iv: float | None = None
+    call_25d_iv: float | None = None
+    volatility_skew_premium: float | None = None
 
 
 def translate_to_futures(
@@ -203,6 +206,9 @@ def translate_to_futures(
         put_volume_centroid=_shift(levels.put_volume_centroid),
         atm_iv=levels.atm_iv,
         iv_change=levels.iv_change,
+        put_25d_iv=levels.put_25d_iv,
+        call_25d_iv=levels.call_25d_iv,
+        volatility_skew_premium=levels.volatility_skew_premium,
         expected_moves=[
             ExpectedMove(
                 expiry=em.expiry,

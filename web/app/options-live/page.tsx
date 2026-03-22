@@ -30,6 +30,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Slider } from "@/components/ui/slider";
+import { VolatilitySkewChart } from "@/components/chart/VolatilitySkewChart";
 
 // ── UTILITIES ─────────────────────────────────────────────────────────────
 const fmtGex = (v: number | undefined | null) => {
@@ -64,7 +65,7 @@ export default function OptionsTacticalDashboard() {
   const [priorityTickers, setPriorityTickers] = useState<string[]>(['/ES', '/NQ', 'SPX', 'QQQ', 'NVDA', 'TSLA']);
   const [refreshingTickers, setRefreshingTickers] = useState<Set<string>>(new Set());
   
-  const [mainTab, setMainTab] = useState<'profile' | 'history' | 'dex' | 'skew' | 'cumulative' | 'volsummary'>('profile');
+  const [mainTab, setMainTab] = useState<'profile' | 'history' | 'dex' | 'skew' | 'cumulative' | 'volsummary' | 'fearpremium'>('profile');
   const [profileOption, setProfileOption] = useState<'nodes' | 'net' | 'liquidity'>('nodes');
   const [rightTab, setRightTab] = useState<'ladder' | 'briefing' | 'nodes'>('ladder');
   const [strikeZoomRange, setStrikeZoomRange] = useState(5); // ±5%
@@ -152,14 +153,19 @@ export default function OptionsTacticalDashboard() {
   };
 
   // ── DATA ENGINE ──
+  const profilesMap: any = liveData?.gexProfiles?.profiles || {};
+  const trendsMap: any = liveData?.liveTrend?.history || {};
   const pipelineState: any = liveData?.pipelineState || {};
   const tickersData = useMemo(() => pipelineState.tickers ? Object.values(pipelineState.tickers) : [], [pipelineState]);
   const activeDetailRaw = selectedTicker || (tickersData.length > 0 ? tickersData[0] : null);
-  
+
   const activeDetail = useMemo(() => {
      if (!activeDetailRaw) return null;
-     const ticker = activeDetailRaw.ticker || "";
+     const ticker = (activeDetailRaw as any).ticker || "";
      const underlying = ticker.replace(/^\//, '');
+
+     // ── Derived Data from History ──
+     const activeTrendData = trendsMap[underlying] || [];
 
      // Initialize with raw values
      let maxPain = activeDetailRaw.max_pain;
@@ -196,27 +202,32 @@ export default function OptionsTacticalDashboard() {
      // iv_current: atm_iv from backend is decimal (e.g. 0.20 = 20%)
      const ivCurrent = activeDetailRaw.atm_iv != null ? +(activeDetailRaw.atm_iv * 100).toFixed(2) : null;
 
+     // Calculate Daily Shift (Cumulative) if history is available
+     let dailyIvChange = activeDetailRaw.iv_change || 0;
+     if (activeTrendData && activeTrendData.length > 0) {
+         const firstIv = activeTrendData.find((d: any) => d.atm_iv != null)?.atm_iv;
+         if (firstIv != null && activeDetailRaw.atm_iv != null) {
+             dailyIvChange = activeDetailRaw.atm_iv - firstIv;
+         }
+     }
+
      return {
-        ...activeDetailRaw,
-        spot: fixPrice(activeDetailRaw.spot, ticker),
-        put_wall: fixPrice(activeDetailRaw.put_wall, ticker),
-        call_wall: fixPrice(activeDetailRaw.call_wall, ticker),
-        gamma_flip_upper: fixPrice(activeDetailRaw.zero_gamma || activeDetailRaw.gamma_flip_upper, ticker),
-        gamma_magnet: fixPrice(activeDetailRaw.gamma_magnet, ticker),
-        pin_strike: fixPrice(activeDetailRaw.pin_strike, ticker),
+        ...(activeDetailRaw as any),
+        spot: fixPrice((activeDetailRaw as any).spot, ticker),
+        put_wall: fixPrice((activeDetailRaw as any).put_wall, ticker),
+        call_wall: fixPrice((activeDetailRaw as any).call_wall, ticker),
+        gamma_flip_upper: fixPrice((activeDetailRaw as any).zero_gamma || (activeDetailRaw as any).gamma_flip_upper, ticker),
+        gamma_magnet: fixPrice((activeDetailRaw as any).gamma_magnet, ticker),
+        pin_strike: fixPrice((activeDetailRaw as any).pin_strike, ticker),
         max_pain: fixPrice(maxPain, ticker),
         call_centroid: fixPrice(callCentroid, ticker),
         put_centroid: fixPrice(putCentroid, ticker),
-        zero_gamma: fixPrice(activeDetailRaw.zero_gamma, ticker),
+        zero_gamma: fixPrice((activeDetailRaw as any).zero_gamma, ticker),
         iv_current: ivCurrent,
+        iv_change: dailyIvChange,
      };
-  }, [activeDetailRaw, liveData]);
+  }, [activeDetailRaw, liveData, trendsMap]);
   
-  const profilesMap: any = liveData?.gexProfiles?.profiles || {};
-  const trendsMap: any = liveData?.liveTrend?.history || {};
-
-  // Normalization logic for futures to underlying
-  // Normalization logic for futures to underlying
   const lookupTicker = useMemo(() => {
      if (!activeDetail) return "";
      // Prioritize the actual ticker to keep futures and ETFs separate for profile mapping
@@ -226,7 +237,6 @@ export default function OptionsTacticalDashboard() {
   
   const activeProfileRaw = useMemo(() => profilesMap[lookupTicker] || [], [lookupTicker, profilesMap]);
   const activeProfile = useMemo(() => activeProfileRaw.map((p: any) => ({ ...p, strike: fixPrice(p.strike, lookupTicker) })), [activeProfileRaw, lookupTicker]);
-  const activeTrendData = useMemo(() => trendsMap[lookupTicker] || [], [lookupTicker, trendsMap]);
   const ms = useMemo(() => liveData?.dailyLevels?.market_structure?.find((m: any) => m.asset === lookupTicker || m.cash_ticker === lookupTicker) || {}, [liveData, lookupTicker]);
   const drillSpot = fixPrice(activeDetail?.spot, activeDetail?.ticker);
 
@@ -578,8 +588,8 @@ export default function OptionsTacticalDashboard() {
                         {[
                           { label: "Total GEX", val: activeDetail?.total_gex, icon: <ShieldCheck className={activeDetail?.total_gex < -1e9 ? "text-rose-500 animate-pulse" : "text-emerald-500"} />, sub: activeDetail?.total_gex < -1e9 ? "High Vol Risk" : "Stable Regime", tip: activeDetail?.total_gex < -1e9 ? "GEX < -1B warns of > ±1.0% price swings. Defensive positioning recommended." : (activeDetail?.total_gex > 0 ? "GEX > 0 indicates < ±0.5% stability expected." : "Dealer Net Gamma Exposure across all strikes."), isGex: true },
                           { label: "Net Vanna", val: activeDetail?.net_vanna_exposure, icon: <Layers className="text-blue-500" />, sub: "Delta/Vol Sensitivity", tip: "Exposure to changes in implied volatility. Positive means dealers buy into rallies.", isGex: true },
-                          { label: "ATM IV", val: activeDetail?.atm_iv ? (activeDetail.atm_iv * 100).toFixed(1) + "%" : "—", icon: <TrendingUp className="text-amber-400" />, sub: "Implied Vol", tip: "ATM Implied Volatility from the central option chain. Indicates market-priced expected move.", isRaw: true },
-                          { label: "Vol Change", val: activeDetail?.iv_change ? (activeDetail.iv_change * 100).toFixed(2) + "%" : "—", icon: <Activity className={(activeDetail?.iv_change || 0) > 0 ? "text-rose-400" : "text-emerald-400"} />, sub: "Daily Shift", tip: "Percentage point change in IV since the previous pipeline run. Positive = Vol Expansion.", isRaw: true },
+                          { label: "ATM IV", val: ivCurrent ? ivCurrent + "%" : "—", icon: <TrendingUp className="text-amber-400" />, sub: "Implied Vol", tip: "ATM Implied Volatility from the central option chain. Indicates market-priced expected move.", isRaw: true },
+                          { label: "Vol Change", val: activeDetail?.iv_change != null ? (activeDetail.iv_change >= 0 ? "+" : "") + activeDetail.iv_change.toFixed(2) + "%" : "—", icon: <Activity className={(activeDetail?.iv_change || 0) > 0 ? "text-rose-400" : "text-emerald-400"} />, sub: "Daily Shift", tip: "Cumulative change in ATM IV since the session start. Positive = Vol Expansion.", isRaw: true },
                           
                           { label: "Call Wall", val: activeDetail?.call_wall, icon: <ArrowUpRight className="text-emerald-500" />, sub: "Resistance", tip: "Highest concentration of Positive Gamma exposure.", isGex: false },
                           { label: "Put Wall", val: activeDetail?.put_wall, icon: <ArrowDownRight className="text-rose-500" />, sub: "Support", tip: "Highest concentration of Negative Gamma exposure.", isGex: false },
@@ -623,6 +633,7 @@ export default function OptionsTacticalDashboard() {
                                  <TabsTrigger value="history"    className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-emerald-400">GEX History</TabsTrigger>
                                  <TabsTrigger value="dex"        className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-blue-400">DEX</TabsTrigger>
                                  <TabsTrigger value="skew"       className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-purple-400">IV Skew</TabsTrigger>
+                                 <TabsTrigger value="fearpremium" className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-rose-400">Fear Premium</TabsTrigger>
                                  <TabsTrigger value="cumulative" className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-amber-400">Cumul GEX</TabsTrigger>
                                  <TabsTrigger value="volsummary" className="rounded-xl px-5 py-3 text-[9px] font-black uppercase tracking-widest data-[state=active]:bg-black data-[state=active]:text-cyan-400">Vol / OI</TabsTrigger>
                               </TabsList>
@@ -647,6 +658,7 @@ export default function OptionsTacticalDashboard() {
                                                      : mainTab === 'history'  ? 'Historical GEX Trend'
                                                      : mainTab === 'dex'      ? 'Delta Exposure by Strike'
                                                      : mainTab === 'skew'     ? 'Implied Volatility Skew'
+                                                     : mainTab === 'fearpremium' ? 'Institutional Fear Premium'
                                                      : mainTab === 'cumulative' ? 'Cumulative Net GEX'
                                                      : 'Volume & Open Interest'}
                                                  </DialogTitle>
@@ -774,6 +786,10 @@ export default function OptionsTacticalDashboard() {
                                                  )}
                                               </div>
 
+                                           ) : mainTab === 'fearpremium' ? (
+                                              <div className="w-full h-full p-4">
+                                                 <VolatilitySkewChart ticker={lookupTicker} data={activeTrendData} />
+                                              </div>
                                            ) : mainTab === 'cumulative' ? (
                                               <div className="w-full h-full">
                                                  {!cumulativeGex.length ? (
@@ -1150,6 +1166,10 @@ export default function OptionsTacticalDashboard() {
                            )}
                         </div>
 
+                           ) : mainTab === 'fearpremium' ? (
+                              <div className="w-full h-full p-4">
+                                 <VolatilitySkewChart ticker={lookupTicker} data={activeTrendData} />
+                              </div>
                            ) : mainTab === 'cumulative' ? (
                         <div className="w-full flex-1 flex flex-col">
                            {!cumulativeGex.length ? (

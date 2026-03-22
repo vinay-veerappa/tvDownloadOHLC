@@ -204,6 +204,7 @@ MACRO_SNAPSHOT_ENDPOINT: str = f"{NEXT_APP_URL}/api/options-macro/snapshot"
 DISCORD_WEBHOOKS_PATH: Path = REPO_ROOT / "discord_webhooks.json"
 # Key inside discord_webhooks.json to use for dealer-level notifications.
 DISCORD_TARGET_KEY: str = "option-levels"
+DISCORD_MACRO_KEY: str = "macro-alerts"
 ENABLE_DISCORD_UPDATES: bool = False
 
 # Embed accent colours (Discord integer format: 0xRRGGBB).

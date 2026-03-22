@@ -501,6 +501,9 @@ model GexSnapshot {
   putVolumeCentroid  Float? // Volume-weighted avg put strike
   netSpeedExposure   Float? // Portfolio speed (d(gamma)/dS)
   netVannaExposure   Float? // Signed net vanna
+  put25dIv           Float? // 25d Put Implied Volatility
+  call25dIv          Float? // 25d Call Implied Volatility
+  volatilitySkewPremium Float? // Put IV - Call IV
 
   createdAt DateTime @default(now())
 
@@ -517,6 +520,9 @@ model MacroSnapshot {
   macroCallWall Float?
   macroPutWall  Float?
   zeroGamma     Float?
+  put25dIv      Float?
+  call25dIv     Float?
+  volatilitySkewPremium Float?
   anomalies     String? // Stores the array of Whale anomalies
   dominantNodes String? // Stores the array of dominant OI nodes
 

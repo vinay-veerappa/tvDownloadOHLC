@@ -20,6 +20,7 @@ import requests
 from .config import (
     DISCORD_WEBHOOKS_PATH,
     DISCORD_TARGET_KEY,
+    DISCORD_MACRO_KEY,
     DISCORD_COLOR_POSITIVE,
     DISCORD_COLOR_NEGATIVE,
 )
@@ -47,18 +48,18 @@ _DISCORD_MAX_CONTENT = 2000
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _load_webhook_url() -> str:
-    """Read the webhook URL for DISCORD_TARGET_KEY from discord_webhooks.json."""
+def _load_webhook_url(target_key: str = DISCORD_TARGET_KEY) -> str:
+    """Read the webhook URL for the specified key from discord_webhooks.json."""
     try:
         data: dict[str, str] = json.loads(DISCORD_WEBHOOKS_PATH.read_text())
     except FileNotFoundError:
         raise FileNotFoundError(
             f"discord_webhooks.json not found at {DISCORD_WEBHOOKS_PATH}"
         )
-    url = data.get(DISCORD_TARGET_KEY)
+    url = data.get(target_key)
     if not url:
         raise KeyError(
-            f"Webhook key '{DISCORD_TARGET_KEY}' not found in {DISCORD_WEBHOOKS_PATH}. "
+            f"Webhook key '{target_key}' not found in {DISCORD_WEBHOOKS_PATH}. "
             f"Available keys: {list(data.keys())}"
         )
     return url
@@ -264,56 +265,64 @@ def _post_payload(url: str, payload: dict[str, Any], files: dict[str, Any] | Non
 
 def send_macro_update(
     ticker: str,
-    chart_buf: Any,  # io.BytesIO
+    spot: float,
+    chart_buf: Any,  
     levels: dict[str, float | None],
     anomalies: list[dict[str, Any]],
+    dominant_nodes: list[dict[str, Any]], # Explicitly received
     webhook_url: str | None = None,
 ) -> None:
     """
-    Task 3: Delivers the macro HTF chart and whale summary to Discord.
+    Delivers the macro HTF chart and formatted institutional brief to Discord.
     """
-    # Use the specified macro testing webhook if none provided
-    url = webhook_url or "https://discord.com/api/webhooks/1484969523877646541/MSDSgrAcapFTT_xbhxT982gXu1o6ywePaOhGqeu9rkH28zdoeR612gCbfmcr8VS-ltJ3"
+    url = webhook_url or _load_webhook_url(DISCORD_MACRO_KEY)
     
-    run_label = datetime.now().strftime("%Y-%m-%d")
+    # Extract variables safely
+    zg = levels.get("zero_gamma")
+    cw = levels.get("macro_call_wall")
+    pw = levels.get("macro_put_wall")
     
-    # 1. Build the summary embed
-    color = 0x9C27B0 # Purple for Macro/Whales
-    
-    fields = [
-        {"name": "Ticker", "value": f"**{ticker}**", "inline": True},
-        {"name": "Macro Call Wall", "value": fmt(levels.get("macro_call_wall")), "inline": True},
-        {"name": "Macro Put Wall", "value": fmt(levels.get("macro_put_wall")), "inline": True},
-        {"name": f"🐋 Top {min(5, len(anomalies))} Whale Anomalies", "value": "\u200b", "inline": False},
+    # 1. Regime Formatting
+    if zg and spot:
+        regime = "🟢 POSITIVE GAMMA" if spot >= zg else "🔴 NEGATIVE GAMMA"
+        regime_text = f"{regime} (Above {zg:,.2f})" if spot >= zg else f"{regime} (Below {zg:,.2f})"
+    else:
+        regime_text = "⚪ NEUTRAL"
+
+    # 2. Major Nodes Formatting (using the explicitly passed list)
+    nodes_str = ", ".join([f"{n['strike']:g} {'C' if n['type']=='CALL' else 'P'} ({n['dominance_pct']}%)" for n in dominant_nodes[:3]])
+    if not nodes_str:
+        nodes_str = "N/A"
+
+    # 3. Build the Institutional Markdown
+    lines = [
+        f"🏦 **INSTITUTIONAL MACRO BRIEF — ${ticker}**",
+        f"Spot: **{spot:,.2f}** | Regime: **{regime_text}**",
+        "",
+        "🏛️ **THE STRUCTURAL MAP (Resting Liquidity)**",
+        f"• Ceiling (Call Wall): {cw:,.2f}" if cw else "• Ceiling: N/A",
+        f"• Floor (Put Wall): {pw:,.2f}" if pw else "• Floor: N/A",
+        f"• Pivot (Zero Gamma): {zg:,.2f}" if zg else "• Pivot: N/A",
+        f"• Major Nodes: {nodes_str}",
+        "",
+        "🚨 **THE URGENT TAPE (Top Institutional Flow)**"
     ]
-    
-    for i, w in enumerate(anomalies[:5]):
-        icon = "🟢" if w["type"] == "CALL" else "🔴"
-        fields.append({
-            "name": f"{icon} {w['strike']} {w['type']} (Tier {w['tier']})",
-            "value": f"DTE: {w['dte_str']} | Notional: ${w['notional']:,.0f} | Vol/OI: {w['avg_vol_oi_ratio']}x",
-            "inline": True
-        })
 
-    embed = {
-        "title": f"Institutional Macro Analysis — {ticker}",
-        "description": f"HTF Vol/OI anomalies detected for the upcoming week ({run_label}).",
-        "color": color,
-        "fields": fields,
-        "image": {"url": "attachment://macro_chart.png"},
-        "footer": {
-            "text": f"Weekly Macro Report • {ticker} • {datetime.now().strftime('%H:%M ET')}"
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
+    # 4. Append the Anomalies (Formatted with Golden Sweeps)
+    for w in anomalies[:5]:
+        is_gs = w.get("is_golden_sweep", False)
+        icon = "🏆" if is_gs else "🌊"
+        gs_tag = " — GOLDEN SWEEP" if is_gs else ""
+        notional_m = w['notional'] / 1_000_000.0
+        
+        lines.append(f"{icon} **{w['strike']:g} {w['type']} (Tier {w['tier']}){gs_tag}**")
+        lines.append(f"DTE: {w['dte_str']} | Confluence: x{w['confluence']} | Notional: ${notional_m:.1f}M | Vol/OI: {w['avg_vol_oi_ratio']}x\n")
 
-    # 2. Preparation for upload
-    files = {
-        "file": ("macro_chart.png", chart_buf, "image/png")
-    }
+    content = "\n".join(lines)
 
-    _post_payload(url, {"embeds": [embed]}, files=files)
-
+    # 5. Post to Discord
+    files = {"file": ("macro_chart.png", chart_buf, "image/png")}
+    _post_payload(url, {"content": content}, files=files)
 
 def send_discord_update(
     translated_levels: list[TranslatedLevels],

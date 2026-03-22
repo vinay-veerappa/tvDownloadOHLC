@@ -229,6 +229,9 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
                 "macro_call_wall": dl.call_wall,
                 "macro_put_wall": dl.put_wall,
                 "zero_gamma": dl.zero_gamma,
+                "put_25d_iv": dl.put_25d_iv,
+                "call_25d_iv": dl.call_25d_iv,
+                "volatility_skew_premium": dl.volatility_skew_premium,
                 "strikes_oi": [
                     {"strike": sg.strike, "call_oi": sg.call_oi, "put_oi": sg.put_oi}
                     for sg in dl.strike_gex
@@ -236,14 +239,12 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
             }
 
             # 3. Pillar 1: Whale Detection
-            anomalies = detect_volume_anomalies(chain,ticker)
+            anomalies = detect_volume_anomalies(chain, ticker)
             total_anomalies = len(anomalies.get("structural", [])) + len(anomalies.get("tactical", []))
             log.info("Detected %d whale anomalies for %s", total_anomalies, ticker)
 
             # NEW: Structural Nodes (The Map)
             dominant_nodes = extract_dominant_oi_nodes(chain)
-
-            # ... pass dominant_nodes into write_macro_levels alongside the anomalies
 
             # --- TRANSLATE TO FUTURES SPACE ---
             futures_sym = INDEX_TO_FUTURES.get(ticker)
@@ -270,7 +271,7 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
                     import copy
                     fut_macro_levels = copy.deepcopy(macro_levels)
                     fut_anomalies = copy.deepcopy(anomalies)
-                    fut_dominant_nodes = copy.deepcopy(dominant_nodes)
+                    fut_dominant_nodes = copy.deepcopy(dominant_nodes) # Explicit Copy
                     
                     if mode == "multiplicative" and anchor_ratio > 0:
                         for k, v in fut_macro_levels.items():
@@ -278,47 +279,43 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
                                 fut_macro_levels[k] = round(v * anchor_ratio, 2)
                         for sg in fut_macro_levels.get("strikes_oi", []):
                             sg["strike"] = round(sg["strike"] * anchor_ratio, 2)
+                        for node in fut_dominant_nodes: # Explicit Scaling
+                            node["strike"] = round(node["strike"] * anchor_ratio, 2)
                         # Update BOTH buckets in the anomalies dict
                         for bucket in ["structural", "tactical"]:
                             for w in fut_anomalies.get(bucket, []):
                                 w["strike"] = round(w["strike"] * anchor_ratio, 2)
-                        for node in fut_dominant_nodes:
-                            node["strike"] = round(node["strike"] * anchor_ratio, 2)
+                                
                     elif mode == "additive" and anchor_basis != 0:
                         for k, v in fut_macro_levels.items():
                             if k in ["macro_call_wall", "macro_put_wall", "zero_gamma"] and v is not None:
                                 fut_macro_levels[k] = round(v + anchor_basis, 2)
                         for sg in fut_macro_levels.get("strikes_oi", []):
                             sg["strike"] = round(sg["strike"] + anchor_basis, 2)
+                        for node in fut_dominant_nodes: # Explicit Scaling
+                            node["strike"] = round(node["strike"] + anchor_basis, 2)
                         # Update BOTH buckets in the anomalies dict
                         for bucket in ["structural", "tactical"]:
                             for w in fut_anomalies.get(bucket, []):
                                 w["strike"] = round(w["strike"] + anchor_basis, 2)
-                        for node in fut_dominant_nodes:
-                            node["strike"] = round(node["strike"] + anchor_basis, 2)
                             
                     output_ticker = futures_tag(futures_sym)
                     
-                    # Write the futures translated levels to the text file
+                    # Pass all 5 arguments cleanly for Futures!
                     write_macro_levels(output_ticker, fut_macro_levels, fut_anomalies, fut_dominant_nodes)
-                    
-                    # Write high-signal Quant JSON for futures
                     write_quant_json(output_ticker, fut.price, fut_macro_levels, fut_anomalies, fut_dominant_nodes)
-
-                    # Push the futures translated levels to the Next.js API
                     write_macro_snapshot(output_ticker, fut.price, fut_macro_levels, fut_anomalies, fut_dominant_nodes)
 
             # 4. Pillar 3: Charting
-            # Pass ONLY the structural whales to the matplotlib chart to keep it clean
-            chart_buf = generate_macro_chart_bytes(ticker, macro_levels, anomalies["structural"])
+            chart_buf = generate_macro_chart_bytes(ticker, float(chain.spot_price), macro_levels, anomalies["structural"])
             
             # 5. Delivery Pillar 2: Discord Update
             if chart_buf.getbuffer().nbytes > 0:
-                send_macro_update(ticker, chart_buf, macro_levels, anomalies["structural"])
+                # Explicitly pass spot price and dominant_nodes
+                send_macro_update(ticker, float(chain.spot_price), chart_buf, macro_levels, anomalies["structural"], dominant_nodes)
                 chart_buf.seek(0)
             
             # 6. Delivery Pillar 4: Next.js UI Push
-            # Pass the whole dictionary to the UI so you can filter it dynamically in React
             write_macro_snapshot(ticker, float(chain.spot_price), macro_levels, anomalies, dominant_nodes)
 
             # 7. Delivery Pillar 5: Pine Script Text Append

@@ -248,6 +248,11 @@ class DealerLevels:
     expected_moves: list[ExpectedMove] = field(default_factory=list)
     strike_gex: list[StrikeGEX] = field(default_factory=list)
 
+    # ── Institutional Skew Metrics (passed through) ───────────────────────
+    put_25d_iv: float | None = None
+    call_25d_iv: float | None = None
+    volatility_skew_premium: float | None = None
+
 
 def _best_contract_per_strike(contracts: list[OptionContract]) -> dict[float, OptionContract]:
     """
@@ -806,13 +811,30 @@ def _find_liquidity_vacuum(agg: dict[float, dict[str, float]], spot: float) -> t
     return lower, upper
 
 
-def _find_skew_pivots(front_calls: list[OptionContract], front_puts: list[OptionContract]) -> tuple[float | None, float | None]:
+def _find_skew_pivots(front_calls: list[OptionContract], front_puts: list[OptionContract]) -> tuple[float | None, float | None, float | None, float | None, float | None]:
+    """
+    Finds the 25-Delta strikes and extracts their Implied Volatility (IV)
+    to calculate the Volatility Skew Premium (Put IV - Call IV).
+    Returns: (put_strike, call_strike, put_iv, call_iv, skew_premium)
+    """
     if not front_calls and not front_puts:
-        return None, None
+        return None, None, None, None, None
 
-    call_25d = min(front_calls, key=lambda contract: abs(abs(contract.delta) - 0.25)).strike if front_calls else None
-    put_25d = min(front_puts, key=lambda contract: abs(abs(contract.delta) - 0.25)).strike if front_puts else None
-    return put_25d, call_25d
+    call_25d = min(front_calls, key=lambda contract: abs(abs(contract.delta) - 0.25)) if front_calls else None
+    put_25d = min(front_puts, key=lambda contract: abs(abs(contract.delta) - 0.25)) if front_puts else None
+    
+    call_strike = call_25d.strike if call_25d else None
+    call_iv = call_25d.iv if call_25d else None
+    
+    put_strike = put_25d.strike if put_25d else None
+    put_iv = put_25d.iv if put_25d else None
+    
+    skew_premium = None
+    if put_iv is not None and call_iv is not None:
+        # Positive = Puts are more expensive (Fear). Negative = Calls are more expensive (Greed).
+        skew_premium = round(put_iv - call_iv, 4)
+
+    return put_strike, call_strike, put_iv, call_iv, skew_premium
 
 
 def _vol_trigger_bands(front_calls: list[OptionContract], spot: float) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None]:
@@ -839,7 +861,7 @@ def calculate_price_metrics(chain: OptionChainData) -> dict[str, float | None]:
 
     em_value, straddle = _expected_move(chain.calls, chain.puts, spot, chain.chain_volatility)
     front_calls, front_puts = _find_front_dte_contracts(chain.calls, chain.puts)
-    skew_put_25d, skew_call_25d = _find_skew_pivots(front_calls, front_puts)
+    skew_put_25d, skew_call_25d, _, _, _ = _find_skew_pivots(front_calls, front_puts)
     vt_u05, vt_l05, vt_u10, vt_l10, vt_u15, vt_l15 = _vol_trigger_bands(front_calls or chain.calls, spot)
 
     return {
@@ -1056,7 +1078,7 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
     dex_call_node, dex_put_node = _find_dex_nodes(agg)
     vacuum_lower, vacuum_upper = _find_liquidity_vacuum(agg, spot)
 
-    skew_put_25d, skew_call_25d = _find_skew_pivots(front_calls, front_puts)
+    skew_put_25d, skew_call_25d, put_25d_iv, call_25d_iv, skew_premium = _find_skew_pivots(front_calls, front_puts)
 
     vt_u05, vt_l05, vt_u10, vt_l10, vt_u15, vt_l15 = _vol_trigger_bands(front_calls or chain.calls, spot)
 
@@ -1108,7 +1130,7 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
 
     log.info(
         "%s levels: spot=%.2f gex=%.0f regime=%s(%s %s) zg=%s cw=%s pw=%s "
-        "mp=%s em=±%.2f magnet=%s pin=%s(%.0f%%) sep=%s vanna=%.0f",
+        "mp=%s em=±%.2f magnet=%s pin=%s(%.0f%%) sep=%s vanna=%.0f skew=%.4f (P:%.4f C:%.4f)",
         ticker,
         spot,
         total_gex,
@@ -1125,6 +1147,9 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
         pin_odds * 100,
         separation,
         net_vanna,
+        skew_premium or 0.0,
+        put_25d_iv or 0.0,
+        call_25d_iv or 0.0
     )
 
     return DealerLevels(
@@ -1169,6 +1194,9 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
         liquidity_vacuum_upper=vacuum_upper,
         skew_pivot_put_25d=skew_put_25d,
         skew_pivot_call_25d=skew_call_25d,
+        put_25d_iv=put_25d_iv,
+        call_25d_iv=call_25d_iv,
+        volatility_skew_premium=skew_premium,
         # ── Tier 2 ──
         gamma_magnet=gamma_magnet,
         pin_strike=pin_strike,
@@ -1255,6 +1283,9 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         liquidity_vacuum_upper=_scale(levels.liquidity_vacuum_upper),
         skew_pivot_put_25d=_scale(levels.skew_pivot_put_25d),
         skew_pivot_call_25d=_scale(levels.skew_pivot_call_25d),
+        put_25d_iv=levels.put_25d_iv,                           # <--- NEW (Pass through)
+        call_25d_iv=levels.call_25d_iv,                         # <--- NEW (Pass through)
+        volatility_skew_premium=levels.volatility_skew_premium,
         # ── Tier 2: price levels get scaled, ratios/labels pass through ──
         gamma_magnet=_scale(levels.gamma_magnet),
         pin_strike=_scale(levels.pin_strike),

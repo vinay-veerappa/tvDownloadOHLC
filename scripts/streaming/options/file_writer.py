@@ -285,6 +285,9 @@ def write_levels(
             "put_centroid": tl.put_volume_centroid,   # standardized name
             "atm_iv": tl.atm_iv,
             "iv_change": tl.iv_change,
+            "put_25d_iv": tl.put_25d_iv,
+            "call_25d_iv": tl.call_25d_iv,
+            "volatility_skew_premium": tl.volatility_skew_premium,
             "expected_moves": [
                 {
                     "expiry": em.expiry,
@@ -324,6 +327,9 @@ def write_levels(
             "put_centroid": levels.put_volume_centroid,
             "atm_iv": levels.atm_iv,
             "iv_change": levels.iv_change,
+            "put_25d_iv": levels.put_25d_iv,
+            "call_25d_iv": levels.call_25d_iv,
+            "volatility_skew_premium": levels.volatility_skew_premium,
             "expected_moves": [
                 {
                     "expiry": em.expiry,
@@ -431,12 +437,11 @@ def write_levels(
     # ── Live Trend JSON Append (RTH only) ────────────────────────────────────
     # We only write trend data during Regular Trading Hours to avoid polluting
     # the GEX Trend chart with flat pre-market / post-market / overnight points.
-    if _is_rth():
+    if self._is_rth():
         trend_doc = {"generated_at": datetime.now(timezone.utc).isoformat(), "history": {}}
         if LIVE_TREND_JSON.exists():
             try:
                 existing_doc = json.loads(LIVE_TREND_JSON.read_text(encoding="utf-8"))
-                # Reset history on a new trading day
                 if "generated_at" in existing_doc:
                     old_time = datetime.fromisoformat(existing_doc["generated_at"]).astimezone(timezone.utc)
                     now_time = datetime.now(timezone.utc)
@@ -452,6 +457,7 @@ def write_levels(
             ticker = tl["cash_ticker"]
             if ticker not in trend_doc["history"]:
                 trend_doc["history"][ticker] = []
+            
             spot = spot_by_ticker.get(ticker, 0)
             trend_doc["history"][ticker].append({
                 "timestamp": now_str,
@@ -461,7 +467,10 @@ def write_levels(
                 "call_volume_centroid": tl.get("call_volume_centroid"),
                 "put_volume_centroid": tl.get("put_volume_centroid"),
                 "spot": spot,
-                "gex_regime": tl["gex_regime"]
+                "gex_regime": tl["gex_regime"],
+                "volatility_skew_premium": tl.get("volatility_skew_premium"),
+                "atm_iv": tl.get("atm_iv"),
+                "iv_change": tl.get("iv_change", 0.0)
             })
 
         LIVE_TREND_JSON.parent.mkdir(parents=True, exist_ok=True)
