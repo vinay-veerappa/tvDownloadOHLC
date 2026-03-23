@@ -42,7 +42,7 @@ def _get_dynamic_threshold(ticker: str, spot: float) -> float:
             
             # Adjusted Tiering based on daily dollar flow
             if addv > 20_000_000_000:     # > $20B/day (The Black Holes: SPY, QQQ, NVDA)
-                threshold = 2_000_000.0   # Lowered from $5M to $2.5M
+                threshold = 1_500_000.0   # Lowered from $5M to $2.5M
             elif addv > 5_000_000_000:    # > $5B/day (Heavyweights: TSLA, AAPL, AMZN)
                 threshold = 1_000_000.0   # Lowered from $2M to $1M
             elif addv > 1_000_000_000:    # > $1B/day (Standard liquid equities)
@@ -62,8 +62,8 @@ def _get_dynamic_threshold(ticker: str, spot: float) -> float:
 def detect_volume_anomalies(
     chain: OptionChainData, 
     ticker: str,
-    min_vol_oi_ratio: float = 0.5, 
-    min_volume: int = 200
+    min_vol_oi_ratio: float = 0.2, 
+    min_volume: int = 100
 ) -> dict[str, list[dict[str, Any]]]:
     """
     Returns a dictionary separating anomalies into 'structural' (confluence >= 2)

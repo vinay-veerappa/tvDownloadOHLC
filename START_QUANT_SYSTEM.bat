@@ -33,4 +33,14 @@ start "SPOKE_L2" cmd /k "cd /d %BASE_DIR% && python -m scripts.streaming.l2_proc
 echo 🚀 Starting Web Dashboard...
 start "WEB_DASHBOARD" cmd /k "cd /d %BASE_DIR%\web && npm run dev"
 
+:: 6. [NEW] Start Spoke: Dealer Options Pipeline (GEX)
+:: This runs the 2-Tier Priority Loop: Tier 1 every 60s, Tier 2 every 10 min.
+echo 🚀 Starting Dealer Options Pipeline...
+start "OPTIONS_GEX" cmd /k "cd /d %BASE_DIR% && python -m scripts.streaming.options.run_options_levels --loop"
+
+:: 7. [NEW] Start Spoke: Weekly Macro HTF Pipeline (Manual/Optional)
+:: Uncomment the line below if you want the macro refresh to run on every system startup.
+:: echo 🚀 Starting Macro HTF Pipeline...
+:: start "MACRO_PIPELINE" cmd /k "cd /d %BASE_DIR% && python -m scripts.streaming.options.run_options_levels --macro"
+
 pause
