@@ -19,23 +19,24 @@ try:
 except ImportError:
     yf = None
 
-from .options_fetcher import (
+from scripts.streaming.options.options_fetcher import (
     OptionChainData, 
     OptionContract, 
     fetch_option_chain_data, 
+    fetch_futures_option_chain_data, # NEW
     create_client,
     _today_ny,
     _safe_float,
     fetch_futures_quote
 )
-from .config import DATA_DIR, MACRO_DTE_TARGETS, MACRO_LEVELS_TXT, INDEX_TO_FUTURES, USE_OPENING_BASIS
-from .formatting import futures_tag
-from .whale_detector import detect_volume_anomalies
-from .macro_charting import generate_macro_chart_bytes
-from .discord_notifier import send_macro_update
-from .interval_writer import write_macro_snapshot
-from .file_writer import write_macro_levels, write_quant_json
-from .gex_calculator import calculate_dealer_levels, extract_dominant_oi_nodes
+from scripts.streaming.options.config import DATA_DIR, MACRO_DTE_TARGETS, MACRO_LEVELS_TXT, INDEX_TO_FUTURES, USE_OPENING_BASIS, FUTURES_YF_MAP
+from scripts.streaming.options.formatting import futures_tag
+from scripts.streaming.options.whale_detector import detect_volume_anomalies
+from scripts.streaming.options.macro_charting import generate_macro_chart_bytes
+from scripts.streaming.options.discord_notifier import send_macro_update
+from scripts.streaming.options.interval_writer import write_macro_snapshot
+from scripts.streaming.options.file_writer import write_macro_levels, write_quant_json
+from scripts.streaming.options.gex_calculator import calculate_dealer_levels, extract_dominant_oi_nodes
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +92,11 @@ def _fetch_from_yfinance(ticker: str) -> OptionChainData | None:
 
     log.info("Attempting yfinance fallback for %s...", ticker)
     try:
-        yf_ticker = f"^{ticker}" if ticker in ("SPX", "NDX", "DJX", "RUT", "VIX") else ticker
+        if ticker.startswith('/'):
+            yf_ticker = FUTURES_YF_MAP.get(ticker, ticker)
+        else:
+            yf_ticker = f"^{ticker}" if ticker in ("SPX", "NDX", "DJX", "RUT", "VIX") else ticker
+            
         yft = yf.Ticker(yf_ticker)
         # yf.Ticker.options returns a list of expiration dates
         expiries = yft.options
@@ -107,15 +112,19 @@ def _fetch_from_yfinance(ticker: str) -> OptionChainData | None:
         today = _today_ny()
 
         for exp in expiries:
-            chain = yft.option_chain(exp)
-            exp_date = date.fromisoformat(exp)
-            dte = (exp_date - today).days
-            
-            # Map yfinance DataFrame to OptionContract
-            for _, row in chain.calls.iterrows():
-                calls.append(_parse_yf_contract(row, exp_date, dte, "CALL"))
-            for _, row in chain.puts.iterrows():
-                puts.append(_parse_yf_contract(row, exp_date, dte, "PUT"))
+            try:
+                chain = yft.option_chain(exp)
+                exp_date = date.fromisoformat(exp)
+                dte = (exp_date - today).days
+                
+                # Map yfinance DataFrame to OptionContract
+                for _, row in chain.calls.iterrows():
+                    calls.append(_parse_yf_contract(row, exp_date, dte, "CALL"))
+                for _, row in chain.puts.iterrows():
+                    puts.append(_parse_yf_contract(row, exp_date, dte, "PUT"))
+            except Exception as e:
+                log.warning("Failed to fetch expiry %s for %s: %s", exp, ticker, e)
+                continue
 
         return OptionChainData(
             underlying_symbol=ticker,
@@ -163,44 +172,50 @@ def _parse_yf_contract(row: Any, expiry: date, dte: int, contract_type: str) -> 
 # Public API
 # ---------------------------------------------------------------------------
 
-def fetch_macro_data(ticker: str, force_refresh: bool = False) -> OptionChainData | None:
+def fetch_macro_data(ticker: str, force_refresh: bool = False, resolved_sym: str = None) -> OptionChainData | None:
     """
     Implements Task 1: Cache & Cascade.
-    1. Check Local Cache
-    2. Primary Fetch (Schwab)
-    3. Fallback (yfinance)
+    1. Check Local Cache (using root ticker)
+    2. Primary Fetch (Schwab) using resolved_sym
+    3. Fallback (yfinance) using root ticker
     """
-    cache_file = DATA_DIR / f"macro_cache_{ticker.upper()}_{date.today().isoformat()}.json"
+    cache_ticker = ticker # Use root for cache name consistency
+    today_str = date.today().isoformat()
+    # Check for existing cache files for today (can be multiple if different suffixes)
+    cache_file = DATA_DIR / f"macro_cache_{cache_ticker.upper().replace('/', '')}_{today_str}.json"
     
     # 1. Local Cache First
     if cache_file.exists() and not force_refresh:
-        log.info("Loading %s from local cache...", ticker)
+        log.info("Loading %s from local cache...", cache_ticker)
         try:
             return _deserialize_chain(json.loads(cache_file.read_text()))
         except Exception as e:
             log.warning("Failed to load cache: %s", e)
 
     # 2. Primary Fetch (Schwab)
-    log.info("Starting primary fetch for %s (Schwab)...", ticker)
+    fetch_sym = resolved_sym or ticker
+    log.info("Starting primary fetch for %s (resolved: %s) (Schwab)...", ticker, fetch_sym)
     try:
-        client = create_client()
-        # For macro HTF, we use the targets defined in config
-        chain = fetch_option_chain_data(client, ticker, MACRO_DTE_TARGETS)
+        # Check if this is a futures symbol for Direct [D] mode
+        if ticker.startswith('/'):
+            log.info("Detected futures symbol. Using specialized direct fetcher for %s", ticker)
+            chain = fetch_futures_option_chain_data(ticker, MACRO_DTE_TARGETS)
+        else:
+            client = create_client()
+            chain = fetch_option_chain_data(client, fetch_sym, MACRO_DTE_TARGETS)
         
         # Save to cache
         cache_file.write_text(json.dumps(_serialize_chain(chain), cls=DateEncoder, indent=2))
         return chain
     except Exception as e:
-        log.warning("Schwab fetch failed/limited: %s", e)
-
-    # 3. Fallback (yfinance)
+        log.warning("Schwab fetch failed/limited for %s: %s", fetch_sym, e)
+        
+    # 3. Fallback (yfinance) using the root ticker
     chain = _fetch_from_yfinance(ticker)
     if chain:
         # Save to cache if fallback succeeded
         cache_file.write_text(json.dumps(_serialize_chain(chain), cls=DateEncoder, indent=2))
-        return chain
-
-    return None
+    return chain
 
 def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
     """
@@ -211,120 +226,160 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
     path: Path = MACRO_LEVELS_TXT
     if path.exists(): 
         path.unlink()
+        
+    # Resolve all tickers via hub to get dual mapping metadata
+    try:
+        hub_url = "http://127.0.0.1:8080/resolve"
+        resp = requests.post(hub_url, json={"symbols": tickers})
+        if resp.status_code == 200:
+            resolution_data = resp.json().get("data", {})
+        else:
+            log.warning("Hub resolution failed, using defaults.")
+            resolution_data = {}
+    except Exception as e:
+        log.warning(f"Could not connect to Hub for resolution: {e}")
+        resolution_data = {}
     
     for ticker in tickers:
         try:
-            # 1. Fetch Data (Cache & Cascade)
-            chain = fetch_macro_data(ticker, force_refresh=force_refresh)
-            if not chain:
-                log.error("No data for %s, skipping.", ticker)
-                continue
-            
-            # 2. Institutional Macro Calculations
-            # We use the existing GEX calculator but on the HTF chain
-            log.info("Calculating Macro HTF levels for %s...", ticker)
-            dl = calculate_dealer_levels(chain, ticker)
-            
-            macro_levels = {
-                "macro_call_wall": dl.call_wall,
-                "macro_put_wall": dl.put_wall,
-                "zero_gamma": dl.zero_gamma,
-                "put_25d_iv": dl.put_25d_iv,
-                "call_25d_iv": dl.call_25d_iv,
-                "volatility_skew_premium": dl.volatility_skew_premium,
-                "strikes_oi": [
-                    {"strike": sg.strike, "call_oi": sg.call_oi, "put_oi": sg.put_oi}
-                    for sg in dl.strike_gex
-                ]
-            }
+            res_info = resolution_data.get(ticker, {
+                "direct": ticker, 
+                "mapped": INDEX_TO_FUTURES.get(ticker, ticker),
+                "active": ticker
+            })
 
-            # 3. Pillar 1: Whale Detection
-            anomalies = detect_volume_anomalies(chain, ticker)
-            total_anomalies = len(anomalies.get("structural", [])) + len(anomalies.get("tactical", []))
-            log.info("Detected %d whale anomalies for %s", total_anomalies, ticker)
-
-            # NEW: Structural Nodes (The Map)
-            dominant_nodes = extract_dominant_oi_nodes(chain)
-
-            # --- TRANSLATE TO FUTURES SPACE ---
-            futures_sym = INDEX_TO_FUTURES.get(ticker)
-            output_ticker = ticker
+            # 1. Primary Variant Processing
+            # ----------------------------
+            chain = None
+            resolved_info = res_info.get("active", ticker)
+            # Handle cases where res_info might be the nested dict instead of the resolved string
+            resolved_sym = resolved_info if isinstance(resolved_info, str) else resolved_info.get("active", ticker)
             
-            if futures_sym:
-                fut = fetch_futures_quote(futures_sym)
-                if fut:
-                    base_open = chain.spot_open
-                    anchor_basis = 0.0
-                    anchor_ratio = 1.0
+            log.info("Processing primary variant for %s (resolved: %s)...", ticker, resolved_sym)
+            chain = fetch_macro_data(ticker, force_refresh=force_refresh, resolved_sym=resolved_sym)
+            
+            if chain:
+                # Institutional Macro Calculations
+                chain.underlying_symbol = ticker
+                dl = calculate_dealer_levels(chain, ticker)
+                
+                macro_levels = {
+                    "macro_call_wall": dl.call_wall,
+                    "macro_put_wall": dl.put_wall,
+                    "zero_gamma": dl.zero_gamma,
+                    "put_25d_iv": dl.put_25d_iv,
+                    "call_25d_iv": dl.call_25d_iv,
+                    "volatility_skew_premium": dl.volatility_skew_premium,
+                    "strikes_oi": [{"strike": sg.strike, "call_oi": sg.call_oi, "put_oi": sg.put_oi} for sg in dl.strike_gex]
+                }
+                anomalies = detect_volume_anomalies(chain, ticker)
+                dominant_nodes = extract_dominant_oi_nodes(chain)
+
+                output_tag = f"{ticker}[D]" if ticker.startswith('/') else ticker
+                log.info("Saving primary results for %s as %s", ticker, output_tag)
+                write_macro_levels(output_tag, macro_levels, anomalies, dominant_nodes)
+                write_quant_json(output_tag, float(chain.spot_price), macro_levels, anomalies, dominant_nodes)
+                write_macro_snapshot(output_tag, float(chain.spot_price), macro_levels, anomalies, dominant_nodes)
+
+                # Charting & Discord (Primary only)
+                chart_buf = generate_macro_chart_bytes(ticker, float(chain.spot_price), macro_levels, anomalies["structural"])
+                if chart_buf.getbuffer().nbytes > 0:
+                    send_macro_update(ticker, float(chain.spot_price), chart_buf, macro_levels, anomalies["structural"], dominant_nodes)
+                    chart_buf.seek(0)
+            else:
+                log.warning("No primary data fetched for %s, skipping primary processing.", ticker)
+
+            # 2. Mapped Variant Processing (Comparison)
+            # ----------------------------------------
+            mapped_ticker = None
+            target_tag = None
+            fetch_sym = None
+            
+            if ticker.startswith('/'):
+                # Future -> Index (Reverse)
+                mapped_ticker = res_info.get("mapped")
+                target_tag = f"{ticker}[M]"
+                fetch_sym = mapped_ticker
+            else:
+                # Index -> Future (Forward)
+                mapped_ticker = INDEX_TO_FUTURES.get(ticker)
+                target_tag = f"{mapped_ticker}[M]"
+                fetch_sym = ticker # Reuse current chain if possible
+
+            if mapped_ticker and target_tag:
+                log.info("Processing mapped variant for %s -> %s (fetch: %s)...", ticker, target_tag, fetch_sym)
+                m_chain = chain if (fetch_sym == ticker and chain) else fetch_macro_data(fetch_sym, force_refresh=force_refresh)
+                
+                if m_chain:
+                    fut_root = mapped_ticker if mapped_ticker.startswith('/') else INDEX_TO_FUTURES.get(mapped_ticker, ticker)
+                    fut = fetch_futures_quote(fut_root)
                     
-                    if USE_OPENING_BASIS and fut.open_price > 0 and base_open > 0:
-                        anchor_basis = round(fut.open_price - base_open, 2)
-                        anchor_ratio = round(fut.open_price / base_open, 4)
+                    if fut:
+                        m_dl = calculate_dealer_levels(m_chain, fetch_sym)
+                        m_levels = {
+                            "macro_call_wall": m_dl.call_wall,
+                            "macro_put_wall": m_dl.put_wall,
+                            "zero_gamma": m_dl.zero_gamma,
+                            "put_25d_iv": m_dl.put_25d_iv,
+                            "call_25d_iv": m_dl.call_25d_iv,
+                            "volatility_skew_premium": m_dl.volatility_skew_premium,
+                            "strikes_oi": [{"strike": sg.strike, "call_oi": sg.call_oi, "put_oi": sg.put_oi} for sg in m_dl.strike_gex]
+                        }
+                        m_anomalies = detect_volume_anomalies(m_chain, fetch_sym)
+                        m_nodes = extract_dominant_oi_nodes(m_chain)
+
+                        # Basis Translation
+                        spot_ratio = round(fut.price / m_chain.spot_price, 4) if m_chain.spot_price > 0 else 1.0
+                        spot_basis = round(fut.price - m_chain.spot_price, 2)
                         
-                    mode = "additive"
-                    if fut.price > 0 and chain.spot_price > 0:
-                        if (fut.price / chain.spot_price) > 2.0:
-                            mode = "multiplicative"
+                        # Decide on translation mode
+                        mode = "multiplicative" if spot_ratio > 2.0 or spot_ratio < 0.5 else "additive"
+                        
+                        # Preferred basis (Opening if available and configured)
+                        anchor_basis = round(fut.open_price - m_chain.spot_open, 2) if (USE_OPENING_BASIS and fut.open_price > 0 and m_chain.spot_open > 0) else spot_basis
+                        anchor_ratio = round(fut.open_price / m_chain.spot_open, 4) if (USE_OPENING_BASIS and fut.open_price > 0 and m_chain.spot_open > 0) else spot_ratio
 
-                    log.info("Translating %s macro levels to %s (mode: %s, basis: %.2f, ratio: %.4f)", ticker, futures_sym, mode, anchor_basis, anchor_ratio)
-                    
-                    import copy
-                    fut_macro_levels = copy.deepcopy(macro_levels)
-                    fut_anomalies = copy.deepcopy(anomalies)
-                    fut_dominant_nodes = copy.deepcopy(dominant_nodes) # Explicit Copy
-                    
-                    if mode == "multiplicative" and anchor_ratio > 0:
-                        for k, v in fut_macro_levels.items():
-                            if k in ["macro_call_wall", "macro_put_wall", "zero_gamma"] and v is not None:
-                                fut_macro_levels[k] = round(v * anchor_ratio, 2)
-                        for sg in fut_macro_levels.get("strikes_oi", []):
-                            sg["strike"] = round(sg["strike"] * anchor_ratio, 2)
-                        for node in fut_dominant_nodes: # Explicit Scaling
-                            node["strike"] = round(node["strike"] * anchor_ratio, 2)
-                        # Update BOTH buckets in the anomalies dict
-                        for bucket in ["structural", "tactical"]:
-                            for w in fut_anomalies.get(bucket, []):
-                                w["strike"] = round(w["strike"] * anchor_ratio, 2)
-                                
-                    elif mode == "additive" and anchor_basis != 0:
-                        for k, v in fut_macro_levels.items():
-                            if k in ["macro_call_wall", "macro_put_wall", "zero_gamma"] and v is not None:
-                                fut_macro_levels[k] = round(v + anchor_basis, 2)
-                        for sg in fut_macro_levels.get("strikes_oi", []):
-                            sg["strike"] = round(sg["strike"] + anchor_basis, 2)
-                        for node in fut_dominant_nodes: # Explicit Scaling
-                            node["strike"] = round(node["strike"] + anchor_basis, 2)
-                        # Update BOTH buckets in the anomalies dict
-                        for bucket in ["structural", "tactical"]:
-                            for w in fut_anomalies.get(bucket, []):
-                                w["strike"] = round(w["strike"] + anchor_basis, 2)
-                            
-                    output_ticker = futures_tag(futures_sym)
-                    
-                    # Pass all 5 arguments cleanly for Futures!
-                    write_macro_levels(output_ticker, fut_macro_levels, fut_anomalies, fut_dominant_nodes)
-                    write_quant_json(output_ticker, fut.price, fut_macro_levels, fut_anomalies, fut_dominant_nodes)
-                    write_macro_snapshot(output_ticker, fut.price, fut_macro_levels, fut_anomalies, fut_dominant_nodes)
+                        log.info("Translation for %s: mode=%s, ratio=%.4f, basis=%.2f", target_tag, mode, anchor_ratio, anchor_basis)
 
-            # 4. Pillar 3: Charting
-            chart_buf = generate_macro_chart_bytes(ticker, float(chain.spot_price), macro_levels, anomalies["structural"])
-            
-            # 5. Delivery Pillar 2: Discord Update
-            if chart_buf.getbuffer().nbytes > 0:
-                # Explicitly pass spot price and dominant_nodes
-                send_macro_update(ticker, float(chain.spot_price), chart_buf, macro_levels, anomalies["structural"], dominant_nodes)
-                chart_buf.seek(0)
-            
-            # 6. Delivery Pillar 4: Next.js UI Push
-            write_macro_snapshot(ticker, float(chain.spot_price), macro_levels, anomalies, dominant_nodes)
+                        import copy
+                        f_l, f_a, f_n = copy.deepcopy(m_levels), copy.deepcopy(m_anomalies), copy.deepcopy(m_nodes)
 
-            # 7. Delivery Pillar 5: Pine Script Text Append
-            write_macro_levels(ticker, macro_levels, anomalies, dominant_nodes)
-            
-            # 8. Delivery Pillar 6: Quant JSON Output
-            write_quant_json(ticker, float(chain.spot_price), macro_levels, anomalies, dominant_nodes)
-            
+                        if mode == "multiplicative":
+                            for k in ["macro_call_wall", "macro_put_wall", "zero_gamma"]:
+                                if f_l.get(k): f_l[k] = round(f_l[k] * anchor_ratio, 2)
+                            for sg in f_l.get("strikes_oi", []): 
+                                sg["strike"] = round(sg["strike"] * anchor_ratio, 2)
+                            for node in f_n: 
+                                node["strike"] = round(node["strike"] * anchor_ratio, 2)
+                            for bucket in ["structural", "tactical"]:
+                                for w in f_a.get(bucket, []): 
+                                    w["strike"] = round(w["strike"] * anchor_ratio, 2)
+                        else:
+                            for k in ["macro_call_wall", "macro_put_wall", "zero_gamma"]:
+                                if f_l.get(k): f_l[k] = round(f_l[k] + anchor_basis, 2)
+                            for sg in f_l.get("strikes_oi", []): 
+                                sg["strike"] = round(sg["strike"] + anchor_basis, 2)
+                            for node in f_n: 
+                                node["strike"] = round(node["strike"] + anchor_basis, 2)
+                            for bucket in ["structural", "tactical"]:
+                                for w in f_a.get(bucket, []): 
+                                    w["strike"] = round(w["strike"] + anchor_basis, 2)
+
+                        write_macro_levels(target_tag, f_l, f_a, f_n)
+                        write_quant_json(target_tag, fut.price, f_l, f_a, f_n)
+                        write_macro_snapshot(target_tag, fut.price, f_l, f_a, f_n)
+
             log.info("Macro HTF Pipeline completed for %s", ticker)
 
         except Exception as e:
             log.exception("Error in Macro Pipeline for %s: %s", ticker, e)
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Macro HTF Options Pipeline")
+    parser.add_argument("tickers", nargs="*", default=["SPX", "QQQ"], help="Tickers to process")
+    parser.add_argument("--force-refresh", action="store_true", help="Force a fresh data fetch")
+    args = parser.parse_args()
+    
+    logging.basicConfig(level=logging.INFO)
+    run_macro_pipeline(args.tickers, force_refresh=args.force_refresh)

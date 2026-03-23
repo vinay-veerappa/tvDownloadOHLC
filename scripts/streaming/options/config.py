@@ -91,6 +91,9 @@ INDEX_TO_FUTURES: dict[str, str] = {
     "IWM": RTY_FUTURES_SYMBOL,
 }
 
+# Reverse map for navigating from futures to indices for mapped variants.
+FUTURES_TO_INDEX: dict[str, str] = {v: k for k, v in INDEX_TO_FUTURES.items()}
+
 # yfinance ticker mappings for futures symbols.
 FUTURES_YF_MAP: dict[str, str] = {
     "/ES": "ES=F",
@@ -112,7 +115,7 @@ FUTURES_YF_MAP: dict[str, str] = {
 # Fallback tickers used when the primary index has low liquidity/OI.
 ETF_FALLBACK: dict[str, str] = {
     "SPX": "SPY", 
-    "QQQ": "NDX",
+    "NDX": "QQQ",
 }
 
 # Schwab API requires a leading "$" for cash CBOE indices.
@@ -194,9 +197,12 @@ MACRO_QUANT_JSON: Path = DATA_DIR / "macro_quant.json"
 # The base URL for the Next.js dashboard backend.
 NEXT_APP_URL: str = os.environ.get("NEXT_APP_URL", "http://localhost:3000")
 
-# API Endpoints for GEX snapshots and Macro HTF updates.
+# # API Endpoints for GEX snapshots and Macro HTF updates.
 SNAPSHOT_ENDPOINT: str = f"{NEXT_APP_URL}/api/options-live/snapshot"
 MACRO_SNAPSHOT_ENDPOINT: str = f"{NEXT_APP_URL}/api/options-macro/snapshot"
+
+# Schwab Unified Hub
+HUB_URL: str = os.environ.get("HUB_URL", "http://localhost:8080")
 
 # ---------------------------------------------------------------------------
 # Discord
