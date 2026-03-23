@@ -47,12 +47,30 @@ class SchwabDevProvider(SchwabHubProvider):
 
     def _internal_receiver(self, message):
         """Thread-safe bridge from schwabdev's thread to asyncio."""
-        if self._on_message:
-            # schwabdev calls this from a background thread
-            # We need to use call_soon_threadsafe or a queue
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(self._on_message(message), loop)
+        if not self._on_message:
+            return
+
+        # schwabdev calls this from a background thread
+        # 1. Parse string if needed
+        if isinstance(message, str):
+            try:
+                message = json.loads(message)
+            except Exception as e:
+                logger.error(f"Failed to parse streaming message: {e}")
+                return
+
+        # 2. Get the loop
+        loop = asyncio.get_event_loop()
+        if not loop.is_running():
+            return
+
+        # 3. Flatten 'data' list if present (emulates schwab-py handler behavior)
+        if isinstance(message, dict) and "data" in message and isinstance(message["data"], list):
+            for item in message["data"]:
+                asyncio.run_coroutine_threadsafe(self._on_message(item), loop)
+        else:
+            # Send other messages (notify, response, heartbeat) as-is (but now parsed)
+            asyncio.run_coroutine_threadsafe(self._on_message(message), loop)
 
     async def execute_rest(self, method_name: str, params: dict):
         logger.info(f"DEBUG: Entering execute_rest with {method_name}")

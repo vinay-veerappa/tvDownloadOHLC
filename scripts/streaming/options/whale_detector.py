@@ -42,7 +42,7 @@ def _get_dynamic_threshold(ticker: str, spot: float) -> float:
             
             # Adjusted Tiering based on daily dollar flow
             if addv > 20_000_000_000:     # > $20B/day (The Black Holes: SPY, QQQ, NVDA)
-                threshold = 2_500_000.0   # Lowered from $5M to $2.5M
+                threshold = 2_000_000.0   # Lowered from $5M to $2.5M
             elif addv > 5_000_000_000:    # > $5B/day (Heavyweights: TSLA, AAPL, AMZN)
                 threshold = 1_000_000.0   # Lowered from $2M to $1M
             elif addv > 1_000_000_000:    # > $1B/day (Standard liquid equities)

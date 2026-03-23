@@ -100,7 +100,7 @@ class L2BookmapEngine:
                     msg = json.loads(msg_raw)
                     event_data = msg.get("data", {})
                     
-                    if event_data.get("service") == "LEVELTWO_FUTURES":
+                    if isinstance(event_data, dict) and event_data.get("service") == "LEVELTWO_FUTURES":
                         self._update_depth(event_data.get("content", []))
                     
                     self._take_snapshot()

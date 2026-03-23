@@ -22,6 +22,7 @@ i_pastedMacro   = input.text_area("", "Paste Macro Levels (macro_levels.txt)", g
 var string GRP_MATCH = "Symbol Matching"
 i_familyPref    = input.string("Auto", "Family Source Preference", options = ["Auto", "Prefer Index", "Prefer ETF"], group = GRP_MATCH)
 i_overrideExact = input.bool(false, "Override Exact Match With Family Preference", group = GRP_MATCH)
+i_variantPref   = input.string("Auto", "Macro Variant Preference", options = ["Auto", "Direct [D]", "Mapped [M]"], group = GRP_MATCH, tooltip="Which data variant to prefer when multiple exist (e.g. /NQ[D] vs /NQ[M])")
 
 var string GRP_FILT = "Level Filters"
 i_proxFilter        = input.float(1.5, "Hide Tactical Levels > X% Away (0=Off)", step=0.5, group=GRP_FILT, tooltip="Applies to 0DTE, Local Nodes, DEX, and Cliffs. Macro levels are always shown.")
@@ -114,6 +115,12 @@ f_stripPrefix(string v) =>
 f_stripContinuousSuffix(string v) =>
     c = f_stripPrefix(v)
     l = str.length(c)
+    // 1. Strip [D] or [M] suffixes first
+    if l > 3
+        if str.endswith(c, "[D]") or str.endswith(c, "[M]")
+            c := str.substring(c, 0, l - 3)
+            l := str.length(c)
+    // 2. Strip continuous ! suffix
     l > 2 and str.endswith(c, "!") ? str.substring(c, 0, l - 2) : c
 
 f_primarySymbol() =>
@@ -166,7 +173,16 @@ f_matchScore(string assetTag) =>
             boost := 30
         else if i_familyPref == "Prefer Index" and k == "INDEX"
             boost := 30
-    exact ? eBase : (fBase + boost)
+    
+    // Add variant preference boost
+    vBoost = 0
+    if i_variantPref != "Auto"
+        if i_variantPref == "Direct [D]" and str.endswith(f_norm(assetTag), "[D]")
+            vBoost := 50
+        else if i_variantPref == "Mapped [M]" and str.endswith(f_norm(assetTag), "[M]")
+            vBoost := 50
+            
+    exact ? (eBase + vBoost) : (fBase + boost + vBoost)
 
 f_num(float v) => na(v) ? "—" : str.tostring(v, "#.##")
 f_pick(float v1, float v2, float v3) => not na(v1) ? v1 : (not na(v2) ? v2 : v3)

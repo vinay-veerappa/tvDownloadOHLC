@@ -16,6 +16,7 @@ var string grp_data = "Dealer Levels"
 pastedData = input.text_area("", "Paste Dealer Levels", group = grp_data, tooltip = "Paste formatted lines from daily_levels.txt")
 familySourcePreference = input.string("Auto", "Family Source Preference", options = ["Auto", "Prefer Index", "Prefer ETF"], group = grp_data)
 overrideExactWithFamilyPreference = input.bool(false, "Override Exact Match With Family Preference", group = grp_data)
+variantPreference = input.string("Auto", "Macro Variant Preference", options = ["Auto", "Direct [D]", "Mapped [M]"], group = grp_data, tooltip="Which data variant to prefer when multiple exist (e.g. /NQ[D] vs /NQ[M])")
 
 var string grp_lines = "Line Style"
 showEmFill = input.bool(true, "Show EM Fill", group = grp_lines)
@@ -96,6 +97,12 @@ f_strip_prefix(string v) =>
 f_strip_continuous_suffix(string v) =>
     c = f_strip_prefix(v)
     l = str.length(c)
+    // 1. Strip [D] or [M] suffixes first
+    if l > 3
+        if str.endswith(c, "[D]") or str.endswith(c, "[M]")
+            c := str.substring(c, 0, l - 3)
+            l := str.length(c)
+    // 2. Strip continuous ! suffix
     l > 2 and str.endswith(c, "!") ? str.substring(c, 0, l - 2) : c
 f_primary_symbol() =>
     r = f_strip_prefix(syminfo.root)
@@ -142,7 +149,16 @@ f_match_score(string assetTag) =>
             boost := 30
         else if familySourcePreference == "Prefer Index" and k == "INDEX"
             boost := 30
-    exact ? eBase : (fBase + boost)
+
+    // Add variant preference boost
+    vBoost = 0
+    if variantPreference != "Auto"
+        if variantPreference == "Direct [D]" and str.endswith(f_norm(assetTag), "[D]")
+            vBoost := 50
+        else if variantPreference == "Mapped [M]" and str.endswith(f_norm(assetTag), "[M]")
+            vBoost := 50
+
+    exact ? (eBase + vBoost) : (fBase + boost + vBoost)
 
 f_num(float v) => na(v) ? "—" : str.tostring(v, "#.##")
 f_pick(float v1, float v2, float v3) => not na(v1) ? v1 : (not na(v2) ? v2 : v3)
