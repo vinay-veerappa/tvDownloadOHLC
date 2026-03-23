@@ -121,8 +121,8 @@ class OptionChainData:
 @dataclass
 class FuturesQuote:
     symbol: str
-    last: float | None
-    open: float | None
+    price: float | None
+    open_price: float | None
 
 
 class DateEncoder(json.JSONEncoder):
@@ -132,7 +132,7 @@ class DateEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def create_client() -> schwab.Client:
+def create_client(secrets_path: Path = SECRETS_PATH, token_path: Path = TOKEN_PATH) -> schwab.Client:
     """
     Dummy/Legacy client creator. 
     In the Hub-based architecture, we proxy most calls.
@@ -147,9 +147,10 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
     if not dte_targets:
         raise ValueError("dte_targets must not be empty.")
 
-    api_sym = symbol
-    if not api_sym.startswith("$") and not api_sym.startswith("/"):
-        pass
+    if symbol.startswith("/"):
+        return fetch_futures_option_chain_data(symbol, dte_targets)
+
+    api_sym = SCHWAB_INDEX_PREFIX.get(symbol, symbol)
     
     today = _today_ny()
     max_dte = max(dte_targets) + OPTION_CHAIN_WIDE_WINDOW
@@ -158,6 +159,7 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
         "symbol": api_sym,
         "fromDate": today.isoformat(),
         "toDate": (today + timedelta(days=max_dte)).isoformat(),
+        "strikeCount": 150 # Avoid 413 TooBigBody for large indices like SPX
     }
     
     payload = _hub_request("get_option_chain", params)
@@ -232,11 +234,11 @@ def fetch_futures_quote(symbol: str) -> FuturesQuote:
         
         log.info(f"Quote for {active}: last={last}, open={open_p}")
         
-        return FuturesQuote(symbol=symbol, last=last, open=open_p)
+        return FuturesQuote(symbol=symbol, price=last, open_price=open_p)
     except Exception as e:
         log.error("Failed to fetch futures quote for %s: %s", symbol, e)
         last, open_p = _fetch_futures_from_yfinance(symbol)
-        return FuturesQuote(symbol=symbol, last=last, open=open_p)
+        return FuturesQuote(symbol=symbol, price=last, open_price=open_p)
 
 
 def fetch_futures_option_chain_data(symbol: str, dte_targets: list[int]) -> OptionChainData:
@@ -253,10 +255,10 @@ def fetch_futures_option_chain_data(symbol: str, dte_targets: list[int]) -> Opti
     log.info(f"Using active contract {active_contract} (clean: {root_clean}) for option resolution.")
     
     spot_info = fetch_futures_quote(symbol)
-    if not spot_info or spot_info.last is None:
+    if not spot_info or spot_info.price is None:
         raise RuntimeError(f"Could not get spot price for {symbol} to generate strikes.")
     
-    spot = spot_info.last
+    spot = spot_info.price
     
     increment = 100 if "NQ" in symbol else 5
     base_strike = round(spot / increment) * increment

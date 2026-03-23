@@ -29,7 +29,8 @@ class SchwabDevProvider(SchwabHubProvider):
                 secrets["app_key"], 
                 secrets["app_secret"], 
                 secrets["callback_url"],
-                tokens_db="tokens.db"
+                tokens_db="tokens.db",
+                timeout=30
             )
             self.stream = Stream(self.client)
             
@@ -111,13 +112,19 @@ class SchwabDevProvider(SchwabHubProvider):
                 logger.error(f"Method {target_method} NOT FOUND on schwabdev Client.")
                 return {"status": "error", "message": f"Method {target_method} not found on Client"}
             
+            # Safety check for symbols parameter (must be list[str], no None)
+            if "symbols" in final_params and isinstance(final_params["symbols"], list):
+                final_params["symbols"] = [s for s in final_params["symbols"] if isinstance(s, str)]
+                if not final_params["symbols"]:
+                    return {"status": "error", "message": "Symbols list is empty after filtering NoneType"}
+            
             resp = method(**final_params)
             if resp is None:
                 return {"status": "error", "message": "Method returned None (check if async/await needed or if method exists)"}
 
             if hasattr(resp, "status_code"):
                 if resp.status_code == 200:
-                    return resp.json()
+                    return {"status": "success", "data": resp.json()}
                 else:
                     return {"status": "error", "code": resp.status_code, "message": resp.text}
             return resp
@@ -188,14 +195,12 @@ class SchwabDevProvider(SchwabHubProvider):
             
         try:
             futures = [s for s in root_symbols if s.startswith('/')]
-            if not futures:
-                return {s: {"direct": s, "mapped": INDEX_MAP.get(s, s), "active": s} for s in root_symbols}
-                
-            resp = self.client.quotes(futures)
-            if resp.status_code != 200:
-                return {s: {"direct": s, "mapped": INDEX_MAP.get(s, s), "active": s} for s in root_symbols}
-                
-            data = resp.json()
+            
+            data = {}
+            if futures:
+                resp = self.client.quotes(futures)
+                if resp.status_code == 200:
+                    data = resp.json()
             mapping = {}
             for target in root_symbols:
                 resolved = None
@@ -205,6 +210,10 @@ class SchwabDevProvider(SchwabHubProvider):
                         if ref.get("product") == target:
                             resolved = sym
                             break
+                elif target in INDEX_MAP.values(): # It's a mapped index
+                    # Check for prefixes like $SPX
+                    from scripts.streaming.options.config import SCHWAB_INDEX_PREFIX
+                    resolved = SCHWAB_INDEX_PREFIX.get(target, target)
                 
                 mapping[target] = {
                     "direct": resolved if resolved else target,

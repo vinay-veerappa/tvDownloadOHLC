@@ -48,10 +48,12 @@ log = logging.getLogger(__name__)
 def _serialize_chain(chain: OptionChainData) -> dict[str, Any]:
     """Convert OptionChainData dataclass to a JSON-serializable dict."""
     return {
+        "ticker": chain.ticker,
+        "spot": chain.spot,
+        "spot_open": chain.spot_open,
+        "timestamp": chain.timestamp,
         "underlying_symbol": chain.underlying_symbol,
         "spot_price": chain.spot_price,
-        "spot_open": chain.spot_open,
-        "chain_volatility": chain.chain_volatility,
         "calls": [vars(c) for c in chain.calls],
         "puts": [vars(p) for p in chain.puts]
     }
@@ -67,12 +69,13 @@ def _deserialize_chain(data: dict[str, Any]) -> OptionChainData:
             put["expiry"] = date.fromisoformat(put["expiry"])
 
     return OptionChainData(
+        ticker=data.get("ticker", data.get("underlying_symbol", "")),
+        spot=data.get("spot", data.get("spot_price", 0.0)),
+        spot_open=data["spot_open"],
+        timestamp=datetime.fromisoformat(data["timestamp"]) if isinstance(data.get("timestamp"), str) else datetime.now(tz=ZoneInfo("UTC")),
         underlying_symbol=data["underlying_symbol"],
         spot_price=data["spot_price"],
-        spot_open=data["spot_open"],
-        chain_volatility=data.get("chain_volatility", 0.0),
-        calls=[OptionContract(**c) for c in data["calls"]],
-        puts=[OptionContract(**p) for p in data["puts"]]
+        contracts=[OptionContract(**c) for c in data["calls"]] + [OptionContract(**p) for p in data["puts"]]
     )
 
 class DateEncoder(json.JSONEncoder):

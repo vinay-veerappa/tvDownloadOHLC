@@ -160,13 +160,17 @@ export default function OptionsTacticalDashboard() {
   const tickersData = useMemo(() => pipelineState.tickers ? Object.values(pipelineState.tickers) : [], [pipelineState]);
   const activeDetailRaw = selectedTicker || (tickersData.length > 0 ? tickersData[0] : null);
 
+  const activeTrendData = useMemo(() => {
+    if (!activeDetailRaw) return [];
+    const ticker = (activeDetailRaw as any).ticker || "";
+    const underlying = ticker.replace(/^\//, '');
+    return trendsMap[underlying] || [];
+  }, [activeDetailRaw, trendsMap]);
+
   const activeDetail = useMemo(() => {
      if (!activeDetailRaw) return null;
      const ticker = (activeDetailRaw as any).ticker || "";
      const underlying = ticker.replace(/^\//, '');
-
-     // ── Derived Data from History ──
-     const activeTrendData = trendsMap[underlying] || [];
 
      // Initialize with raw values
      let maxPain = activeDetailRaw.max_pain;
@@ -204,11 +208,11 @@ export default function OptionsTacticalDashboard() {
      const ivCurrent = activeDetailRaw.atm_iv != null ? +(activeDetailRaw.atm_iv * 100).toFixed(2) : null;
 
      // Calculate Daily Shift (Cumulative) if history is available
-     let dailyIvChange = activeDetailRaw.iv_change || 0;
+     let dailyIvChange = (activeDetailRaw.iv_change || 0) * 100;
      if (activeTrendData && activeTrendData.length > 0) {
          const firstIv = activeTrendData.find((d: any) => d.atm_iv != null)?.atm_iv;
          if (firstIv != null && activeDetailRaw.atm_iv != null) {
-             dailyIvChange = activeDetailRaw.atm_iv - firstIv;
+             dailyIvChange = (activeDetailRaw.atm_iv - firstIv) * 100;
          }
      }
 
@@ -227,7 +231,7 @@ export default function OptionsTacticalDashboard() {
         iv_current: ivCurrent,
         iv_change: dailyIvChange,
      };
-  }, [activeDetailRaw, liveData, trendsMap]);
+  }, [activeDetailRaw, liveData, trendsMap, activeTrendData]);
   
   const lookupTicker = useMemo(() => {
      if (!activeDetail) return "";

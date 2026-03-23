@@ -437,7 +437,7 @@ def write_levels(
     # ── Live Trend JSON Append (RTH only) ────────────────────────────────────
     # We only write trend data during Regular Trading Hours to avoid polluting
     # the GEX Trend chart with flat pre-market / post-market / overnight points.
-    if self._is_rth():
+    if _is_rth():
         trend_doc = {"generated_at": datetime.now(timezone.utc).isoformat(), "history": {}}
         if LIVE_TREND_JSON.exists():
             try:

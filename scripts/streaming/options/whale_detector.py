@@ -62,8 +62,8 @@ def _get_dynamic_threshold(ticker: str, spot: float) -> float:
 def detect_volume_anomalies(
     chain: OptionChainData, 
     ticker: str,
-    min_vol_oi_ratio: float = 0.2, 
-    min_volume: int = 100
+    min_vol_oi_ratio: float = 0.4, 
+    min_volume: int = 200
 ) -> dict[str, list[dict[str, Any]]]:
     """
     Returns a dictionary separating anomalies into 'structural' (confluence >= 2)
