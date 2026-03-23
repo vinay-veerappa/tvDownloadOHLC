@@ -11,6 +11,7 @@ import logging
 import os
 import requests
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any
 
@@ -127,11 +128,13 @@ def _fetch_from_yfinance(ticker: str) -> OptionChainData | None:
                 continue
 
         return OptionChainData(
-            underlying_symbol=ticker,
-            spot_price=spot,
+            ticker=ticker,
+            spot=spot,
             spot_open=spot_open,
-            calls=calls,
-            puts=puts
+            timestamp=datetime.now(tz=ZoneInfo("UTC")),
+            contracts=calls + puts,
+            underlying_symbol=ticker,
+            spot_price=spot
         )
     except Exception as e:
         log.error("yfinance fetch failed: %s", e)
@@ -152,19 +155,16 @@ def _parse_yf_contract(row: Any, expiry: date, dte: int, contract_type: str) -> 
     return OptionContract(
         symbol=str(row.get("contractSymbol", "")),
         strike=float(row.get("strike", 0.0)),
-        expiry=expiry,
+        type=contract_type,
         contract_type=contract_type,
+        expiry=expiry,
         open_interest=_safe_int(row.get("openInterest")),
         volume=_safe_int(row.get("volume")),
-        mark=(float(row.get("bid", 0.0)) + float(row.get("ask", 0.0))) / 2.0,
+        last=float(row.get("lastPrice", 0.0)),
         bid=float(row.get("bid", 0.0)),
         ask=float(row.get("ask", 0.0)),
+        mark=(float(row.get("bid", 0.0)) + float(row.get("ask", 0.0))) / 2.0,
         iv=float(row.get("impliedVolatility", 0.0)),
-        delta=0.0, # yfinance doesn't provide these directly in the chain DF reliably
-        gamma=0.0,
-        theta=0.0,
-        vega=0.0,
-        rho=0.0,
         dte=dte
     )
 
@@ -315,6 +315,7 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
                     fut = fetch_futures_quote(fut_root)
                     
                     if fut:
+                        m_chain.underlying_symbol = fetch_sym
                         m_dl = calculate_dealer_levels(m_chain, fetch_sym)
                         m_levels = {
                             "macro_call_wall": m_dl.call_wall,

@@ -112,6 +112,19 @@ FUTURES_YF_MAP: dict[str, str] = {
     "/ZN": "ZN=F"
 }
 
+# Contract multipliers for futures symbols (dollars per point/contract).
+# Standard index/equity options default to 100 via CONTRACT_MULTIPLIER.
+FUTURES_MULTIPLIER: dict[str, int] = {
+    "/ES": 50,
+    "/NQ": 20,
+    "/YM": 5,
+    "/RTY": 50,
+    "/VX": 1000,
+    "/GC": 100,
+    "/CL": 1000,
+    "/SI": 5000,
+}
+
 # Fallback tickers used when the primary index has low liquidity/OI.
 ETF_FALLBACK: dict[str, str] = {
     "SPX": "SPY", 

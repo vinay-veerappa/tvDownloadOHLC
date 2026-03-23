@@ -1399,7 +1399,7 @@ def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_
 def extract_dominant_oi_nodes(
     chain: OptionChainData, 
     min_dominance_pct: float = 3.0, 
-    min_oi_threshold: int = 5000
+    min_oi_threshold: int | None = None
 ) -> list[dict[str, Any]]:
     """
     Extracts structural nodes based purely on resting Open Interest dominance,
@@ -1407,6 +1407,19 @@ def extract_dominant_oi_nodes(
     """
     spot = float(chain.spot_price)
     
+    # Dynamic thresholding if not provided
+    if min_oi_threshold is None:
+        # Check underlying symbol if attached to chain
+        underlying = getattr(chain, 'underlying_symbol', '').upper()
+        if underlying.startswith('/'):
+            # Futures options are less liquid strike-by-strike
+            if 'NQ' in underlying:
+                min_oi_threshold = 500    # NQ is thinner
+            else:
+                min_oi_threshold = 1000   # ES, RTY, etc.
+        else:
+            min_oi_threshold = 5000       # Standard for SPX/QQQ
+            
     total_call_oi = sum(c.open_interest for c in chain.calls)
     total_put_oi = sum(p.open_interest for p in chain.puts)
     
@@ -1419,7 +1432,9 @@ def extract_dominant_oi_nodes(
         oi = c.open_interest
         if oi < min_oi_threshold: continue
         dominance_pct = (oi / total_call_oi) * 100
-        if dominance_pct >= min_dominance_pct:
+        # For futures, we allow lower dominance % because strikes are more fragmented
+        curr_min_dominance = 1.5 if underlying.startswith('/') else min_dominance_pct
+        if dominance_pct >= curr_min_dominance:
             pct_from_spot = abs(c.strike - spot) / spot
             if pct_from_spot <= 0.15: # Ignore deep OTM lotto tickets
                 dominant_nodes.append({
@@ -1434,7 +1449,9 @@ def extract_dominant_oi_nodes(
         oi = p.open_interest
         if oi < min_oi_threshold: continue
         dominance_pct = (oi / total_put_oi) * 100
-        if dominance_pct >= min_dominance_pct:
+        # For futures, we allow lower dominance % 
+        curr_min_dominance = 1.5 if underlying.startswith('/') else min_dominance_pct
+        if dominance_pct >= curr_min_dominance:
             pct_from_spot = abs(p.strike - spot) / spot
             if pct_from_spot <= 0.15:
                 dominant_nodes.append({

@@ -11,6 +11,7 @@ from typing import Any
 import yfinance as yf
 
 from .options_fetcher import OptionChainData
+from .config import FUTURES_YF_MAP, FUTURES_MULTIPLIER, CONTRACT_MULTIPLIER
 
 log = logging.getLogger(__name__)
 
@@ -22,12 +23,21 @@ def _get_dynamic_threshold(ticker: str, spot: float) -> float:
     Calculates the minimum notional premium for a 'Whale'.
     Thresholds lowered to cast a wider, more realistic net for institutional flow.
     """
-    yf_ticker = "^SPX" if ticker == "SPX" else "^NDX" if ticker == "NDX" else ticker
+    # 1. Resolve to yfinance-compatible ticker
+    if ticker in FUTURES_YF_MAP:
+        yf_ticker = FUTURES_YF_MAP[ticker]
+    else:
+        yf_ticker = "^SPX" if ticker == "SPX" else "^NDX" if ticker == "NDX" else ticker
 
     if yf_ticker not in _LIQUIDITY_CACHE:
         try:
             ticker_obj = yf.Ticker(yf_ticker)
-            avg_vol = ticker_obj.fast_info.get("tenDayAverageVolume") or 10_000_000
+            # Use fast_info if available, else fallback
+            info = ticker_obj.fast_info
+            avg_vol = info.get("tenDayAverageVolume") or info.get("averageVolume") or 10_000_000
+            
+            # For futures, the volume is often in contracts, but ADDV calculation 
+            # is just a heuristic for "how big is this market".
             addv = avg_vol * spot
             
             # Adjusted Tiering based on daily dollar flow
@@ -62,15 +72,25 @@ def detect_volume_anomalies(
     spot = float(chain.spot_price)
     dynamic_min_notional = _get_dynamic_threshold(ticker, spot)
     
+    # Determine the correct multiplier (e.g. 50 for /ES, 100 for SPY)
+    # Check both the raw ticker and its root (e.g. /ES[D] or /ES[M] -> /ES)
+    base_ticker = ticker.split('[')[0]
+    multiplier = FUTURES_MULTIPLIER.get(base_ticker, CONTRACT_MULTIPLIER)
+    
     agg_map: dict[tuple[float, str], dict[str, Any]] = {}
 
     for c in chain.calls + chain.puts:
         oi = max(c.open_interest, 1)
         vol = int(c.volume)
         ratio = vol / oi
-        notional = vol * float(c.mark) * 100.0
+        # Use the correct multiplier for notional calculation
+        notional = vol * float(c.mark) * float(multiplier)
 
-        if ratio < min_vol_oi_ratio or vol < min_volume:
+        # For futures, we relax the volume/OI ratio and base volume floor
+        curr_min_ratio = 0.1 if ticker.startswith("/") else min_vol_oi_ratio
+        curr_min_vol = 50 if ticker.startswith("/") else min_volume
+
+        if ratio < curr_min_ratio or vol < curr_min_vol:
             continue
 
         # Moneyness check
@@ -86,16 +106,12 @@ def detect_volume_anomalies(
                 "total_notional": 0.0,
                 "total_volume": 0,
                 "ratios": [],
-                "has_golden_sweep": False  # Add the new flag here
+                "has_golden_sweep": False
             }
         
-       # --- THE GOLDEN SWEEP TEST (STRICT) ---
-        # 1. Extreme Fresh Capital: Volume must be at least 2.5x the resting OI.
-        # 2. Urgency: DTE <= 35, but strictly > 0 (0DTE ruins Vol/OI math).
-        # 3. Conviction: Premium must meet the DYNAMIC threshold, not a flat $1M.
-        notional_val = vol * float(c.mark) * 100.0
-        
-        if (ratio >= 2.5) and (0 < c.dte <= 35) and (notional_val >= dynamic_min_notional):
+        # --- THE GOLDEN SWEEP TEST (STRICT) ---
+        # multiplier-adjusted notional
+        if (ratio >= 2.5) and (0 < c.dte <= 35) and (notional >= dynamic_min_notional):
             agg_map[key]["has_golden_sweep"] = True
 
         agg_map[key]["dtes"].add(int(c.dte))

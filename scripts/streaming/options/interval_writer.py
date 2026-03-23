@@ -21,7 +21,10 @@ import math
 import asyncio
 from datetime import datetime, timezone, date
 from typing import Any
-from prisma import Prisma
+# try:
+#     from prisma import Prisma
+# except Exception:
+Prisma = None
 
 import requests
 from urllib3.util.retry import Retry
@@ -66,6 +69,8 @@ _prisma_instance: Prisma | None = None
 async def _get_prisma() -> Prisma:
     """Lazy initialization of Prisma client."""
     global _prisma_instance
+    if Prisma is None:
+        raise RuntimeError("Prisma client is not available")
     if _prisma_instance is None:
         _prisma_instance = Prisma()
         await _prisma_instance.connect()
