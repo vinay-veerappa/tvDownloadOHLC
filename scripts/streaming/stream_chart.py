@@ -41,22 +41,23 @@ def resolve_futures_htf_source():
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "web", "prisma", "dev.db")
 
-HUB_URL = "http://127.0.0.1:8080"
-HUB_WS = "ws://127.0.0.1:8080/ws"
+from scripts.streaming.options.config import HUB_URL, HUB_WS_ENDPOINT as HUB_WS
 
-async def hub_request(endpoint, params=None):
-    """Utility to make asynchronous requests to the Schwab Hub."""
+async def hub_request(method, params):
+    """Send a REST request through the Hub's proxy."""
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.get(f"{HUB_URL}/{endpoint}", params=params, timeout=30.0)
+            resp = await client.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=30.0)
             if resp.status_code == 200:
-                return resp.json()
+                result = resp.json()
+                # Ensure result has status/data structure if not present
+                if isinstance(result, dict) and "status" not in result:
+                    return {"status": "success", "data": result}
+                return result
             else:
-                print(f"❌ Hub Request Failed [{resp.status_code}]: {resp.text}")
-                return {"status": "error", "message": resp.text}
+                return {"status": "error", "message": f"Hub Error [{resp.status_code}]: {resp.text}"}
         except Exception as e:
-            print(f"❌ Hub Connection Error: {e}")
-            return {"status": "error", "message": str(e)}
+            return {"status": "error", "message": f"Hub Connection Error: {str(e)}"}
 
 # Global State
 charts = {} # Key: Symbol -> { data: {}, data_15s: {}, data_30s: {}, file_json: str, file_15s: str, file_30s: str, ... }
@@ -347,14 +348,9 @@ def init_chart_data(symbol):
         "files": files 
     }
 
-HUB_URL = "http://127.0.0.1:8080"
-HUB_WS = "ws://127.0.0.1:8080/ws"
+# HUB_URL and HUB_WS imported at top
 
-async def hub_request(method, params):
-    """Send a REST request through the Hub's proxy."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(f"{HUB_URL}/request", json={"method": method, "params": params}, timeout=30)
-        return resp.json()
+# Consolidated hub_request defined at top
 
 async def fetch_bootstrap_data(symbol):
     print(f"🚀 [{symbol}] Bootstrapping via Hub...")

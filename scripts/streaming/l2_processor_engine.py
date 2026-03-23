@@ -10,7 +10,7 @@ from collections import defaultdict
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("L2Engine")
 
-HUB_WS = "ws://127.0.0.1:8080/ws"
+from scripts.streaming.options.config import HUB_WS_ENDPOINT as HUB_WS
 
 class L2BookmapEngine:
     """

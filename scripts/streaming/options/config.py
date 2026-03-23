@@ -215,7 +215,11 @@ SNAPSHOT_ENDPOINT: str = f"{NEXT_APP_URL}/api/options-live/snapshot"
 MACRO_SNAPSHOT_ENDPOINT: str = f"{NEXT_APP_URL}/api/options-macro/snapshot"
 
 # Schwab Unified Hub
-HUB_URL: str = os.environ.get("HUB_URL", "http://localhost:8080")
+HUB_HOST: str = os.environ.get("HUB_HOST", "127.0.0.1")
+HUB_PORT: int = int(os.environ.get("HUB_PORT", 8080))
+HUB_URL: str = os.environ.get("HUB_URL", f"http://{HUB_HOST}:{HUB_PORT}")
+HUB_WS_ENDPOINT: str = HUB_URL.replace("http://", "ws://") + "/ws"
+HUB_RESOLVE_ENDPOINT: str = f"{HUB_URL}/resolve"
 
 # ---------------------------------------------------------------------------
 # Discord

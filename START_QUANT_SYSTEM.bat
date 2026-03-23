@@ -7,12 +7,14 @@ echo ===================================================
 echo.
 
 :: 1. Start the Producer (Hub)
-:: 1. Start Schwab Unified Hub (Producer) on Port 8080
+set HUB_PORT=8080
+:: 1. Start the Producer (Hub)
+:: 1. Start Schwab Unified Hub (Producer) on Port %HUB_PORT%
 echo 🚀 Starting Schwab Unified Hub...
-start "SCHWAB_HUB" cmd /k "cd /d %BASE_DIR% && python -m scripts.streaming.schwab_hub --port 8080"
+start "SCHWAB_HUB" cmd /k "cd /d %BASE_DIR% && python -m scripts.streaming.schwab_hub --port %HUB_PORT%"
 timeout /t 10 /nobreak
-echo ✅ Hub should be ready. Checking port 8080...
-netstat -ano | findstr :8080
+echo ✅ Hub should be ready. Checking port %HUB_PORT%...
+netstat -ano | findstr :%HUB_PORT%
 
 :: 2. Start API Backend on Port 8000
 echo 🚀 Starting API Backend...

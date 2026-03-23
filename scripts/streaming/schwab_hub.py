@@ -172,8 +172,9 @@ async def main():
                 await asyncio.sleep(60)
 
     try:
+        from scripts.streaming.options.config import HUB_HOST, HUB_PORT
         # FastAPI server
-        config = uvicorn.Config(hub.app, host="127.0.0.1", port=8080, log_level="info")
+        config = uvicorn.Config(hub.app, host=HUB_HOST, port=HUB_PORT, log_level="info")
         server = uvicorn.Server(config)
 
         await asyncio.gather(
@@ -181,6 +182,8 @@ async def main():
             hub._rest_worker(),
             run_stream()
         )
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        logger.info("Hub shutdown initiated...")
     except Exception as e:
         logger.error(f"Hub catastrophic failure: {e}")
     finally:
@@ -190,4 +193,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Hub stopped by user.")
+        pass # Already handled in main() or suppressed for clean exit

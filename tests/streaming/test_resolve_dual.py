@@ -2,8 +2,10 @@ import requests
 import json
 import pprint
 
+from scripts.streaming.options.config import HUB_RESOLVE_ENDPOINT
+
 def test_resolve_dual():
-    url = "http://127.0.0.1:8080/resolve"
+    url = HUB_RESOLVE_ENDPOINT
     payload = {"symbols": ["/ES", "/NQ", "AAPL"]}
     
     try:

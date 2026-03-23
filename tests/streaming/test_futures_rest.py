@@ -6,7 +6,7 @@ import sys
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("TestFuturesREST")
 
-HUB_URL = "http://127.0.0.1:8080"
+from scripts.streaming.options.config import HUB_URL
 
 def hub_request(method, params):
     try:

@@ -30,7 +30,7 @@ from scripts.streaming.options.options_fetcher import (
     _safe_float,
     fetch_futures_quote
 )
-from scripts.streaming.options.config import DATA_DIR, MACRO_DTE_TARGETS, MACRO_LEVELS_TXT, INDEX_TO_FUTURES, USE_OPENING_BASIS, FUTURES_YF_MAP
+from scripts.streaming.options.config import DATA_DIR, MACRO_DTE_TARGETS, MACRO_LEVELS_TXT, INDEX_TO_FUTURES, USE_OPENING_BASIS, FUTURES_YF_MAP, HUB_RESOLVE_ENDPOINT
 from scripts.streaming.options.formatting import futures_tag
 from scripts.streaming.options.whale_detector import detect_volume_anomalies
 from scripts.streaming.options.macro_charting import generate_macro_chart_bytes
@@ -229,8 +229,7 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
         
     # Resolve all tickers via hub to get dual mapping metadata
     try:
-        hub_url = "http://127.0.0.1:8080/resolve"
-        resp = requests.post(hub_url, json={"symbols": tickers})
+        resp = requests.post(HUB_RESOLVE_ENDPOINT, json={"symbols": tickers}, timeout=15)
         if resp.status_code == 200:
             resolution_data = resp.json().get("data", {})
         else:
