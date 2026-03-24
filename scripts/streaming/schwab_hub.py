@@ -106,8 +106,11 @@ class SchwabUnifiedHub:
                 pass
 
         # Log periodically
-        if event.get("service") != "HEARTBEAT":
-            logger.debug(f"Received {event.get('service')} event")
+        service = event.get("service")
+        if service != "HEARTBEAT":
+            logger.info(f"Received {service} event: {str(event)[:200]}...")
+            if service and "TIMESALE" in service:
+                logger.info(f">>> Raw Trade Event: {event}")
 
     async def _rest_worker(self):
         """Processes REST requests via the provider."""
@@ -154,8 +157,10 @@ async def main():
         return
 
     # Subscriptions from environment or defaults
-    symbols_l1 = ["/ES", "/NQ"]
-    symbols_l2 = ["/ES", "/NQ", "AAPL", "SPY"] # Hub now resolves these!
+    symbols_l1 = ["AAPL", "SPY", "QQQ", "SPX"]
+    symbols_l2 = ["AAPL", "SPY", "QQQ"]
+ 
+
 
     # Run everything together
     # We wrap start_stream in its own try-except via gather logic or a wrapper

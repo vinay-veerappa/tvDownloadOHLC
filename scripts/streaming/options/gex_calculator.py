@@ -575,12 +575,19 @@ def _expected_move(
     
     minutes_remaining = (exp_dt - now).total_seconds() / 60.0
     
-    # Calculate values safely even if minutes are negative (for logging purposes)
-    fractional_dte = minutes_remaining / (24.0 * 60.0) if minutes_remaining > 0 else 0.0
-    years_to_expiry = fractional_dte / 365.0
-    tos_expected_move = spot * atm.iv * math.sqrt(years_to_expiry) if years_to_expiry > 0 else 0.0
+    # Calculate values safely. 
+    # If we are after hours but looking at a FUTURE expiry, minutes_remaining will be positive.
+    # If it's today's expiry and it's after 4pm, we fallback.
     
-    # Print the verification regardless of whether the market is closed
+    if minutes_remaining <= 0:
+        log.info(f"Contract {atm.expiry} expired (minutes: {minutes_remaining:.1f}). Falling back.")
+        return straddle * EM_STRADDLE_SCALAR if USE_STRADDLE_EM else 0.0, straddle
+
+    fractional_dte = minutes_remaining / (24.0 * 60.0)
+    years_to_expiry = fractional_dte / 365.0
+    tos_expected_move = spot * atm.iv * math.sqrt(years_to_expiry)
+    
+    # Print the verification
     log.info(
         "\n==================================================\n"
         "TOS EXPECTED MOVE VERIFICATION\n"
@@ -592,11 +599,6 @@ def _expected_move(
         "=================================================="
     )
     
-    # Now enforce the cutoff 
-    if minutes_remaining <= 0:
-        log.info("Market closed: Falling back to straddle or zero.")
-        return straddle * EM_STRADDLE_SCALAR if USE_STRADDLE_EM else 0.0, straddle
-        
     return tos_expected_move, straddle
 
 def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:

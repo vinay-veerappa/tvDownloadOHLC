@@ -152,7 +152,8 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
 
     api_sym = SCHWAB_INDEX_PREFIX.get(symbol, symbol)
     
-    today = _today_ny()
+    from scripts.streaming.options.config import NY_SESSION_ROLLOVER_TIME
+    today = _today_ny(rollover_time=NY_SESSION_ROLLOVER_TIME)
     max_dte = max(dte_targets) + OPTION_CHAIN_WIDE_WINDOW
 
     params = {
@@ -161,7 +162,7 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
         "toDate": (today + timedelta(days=max_dte)).isoformat(),
         "strikeCount": 150 # Avoid 413 TooBigBody for large indices like SPX
     }
-    
+
     payload = _hub_request("get_option_chain", params)
     
     underlying = payload.get("underlying") or {}
@@ -371,8 +372,16 @@ def _select_expiration_keys(exp_map: dict, dte_targets: list[int]) -> list[str]:
     return results
 
 
-def _today_ny() -> date:
-    return datetime.now(ZoneInfo("America/New_York")).date()
+def _today_ny(rollover_time: Optional[time] = None) -> date:
+    tz = ZoneInfo("America/New_York")
+    now = datetime.now(tz)
+    
+    # If a rollover time is provided (e.g. 4 PM ET), treat time 
+    # at/after that as the "next" day for option chain fetching.
+    if rollover_time and now.time() >= rollover_time:
+        return (now + timedelta(days=1)).date()
+        
+    return now.date()
 
 
 def _safe_float(val: Any) -> float:

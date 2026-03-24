@@ -795,7 +795,18 @@ export default function OptionsTacticalDashboard() {
                                                  )}
                                               </div>
 
-                                           ) : mainTab === 'fearpremium' ? (
+                                            ) : mainTab === 'bookmap' ? (
+                                               <div className="w-full h-full p-10 flex flex-col items-center justify-center bg-transparent rounded-[2rem]">
+                                                  <Layers size={64} className="text-amber-500 opacity-50 mb-6" />
+                                                  <h2 className="text-2xl font-black uppercase tracking-widest text-zinc-300 mb-2">Bookmap Workspace</h2>
+                                                  <p className="text-sm text-zinc-500 font-medium max-w-md text-center mb-8">
+                                                    The Level 2 Heatmap has been upgraded to a dedicated, full-screen professional workspace with granular zoom, size filtering, and DOM controls.
+                                                  </p>
+                                                  <a href="/bookmap" className="px-8 py-4 flex items-center gap-3 bg-amber-500 text-black font-black uppercase tracking-widest text-sm rounded-xl hover:bg-amber-400 transition-colors shadow-[0_0_30px_rgba(245,158,11,0.3)] hover:scale-105 active:scale-95 duration-200">
+                                                    Launch Full Workspace
+                                                  </a>
+                                               </div>
+                                            ) : mainTab === 'fearpremium' ? (
                                               <div className="w-full h-full p-4">
                                                  <VolatilitySkewChart ticker={lookupTicker} data={activeTrendData} />
                                               </div>
@@ -1222,6 +1233,10 @@ export default function OptionsTacticalDashboard() {
                            )}
                         </div>
 
+                           ) : mainTab === 'bookmap' ? (
+                              <div className="w-full flex-1 flex flex-col min-h-[500px] overflow-hidden rounded-3xl">
+                                 <L2Heatmap ticker={lookupTicker} />
+                              </div>
                            ) : mainTab === 'volsummary' ? (
                         <div className="w-full flex-1 flex flex-col gap-6">
                            <div className="grid grid-cols-3 gap-4">

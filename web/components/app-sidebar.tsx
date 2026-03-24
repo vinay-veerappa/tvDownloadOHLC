@@ -22,7 +22,8 @@ import {
     AreaChart,
     Flame,
     Radar,
-    Waves
+    Waves,
+    Layers
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -102,6 +103,13 @@ export function AppSidebar() {
             href: "/options-live",
             active: pathname?.startsWith("/options-live"),
             badge: "Live", // Feature flag for badge
+        },
+        {
+            label: "Bookmap",
+            icon: Layers,
+            href: "/bookmap",
+            active: pathname?.startsWith("/bookmap"),
+            badge: "Pro",
         },
         {
             label: "Journal",

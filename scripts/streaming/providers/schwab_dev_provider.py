@@ -132,47 +132,73 @@ class SchwabDevProvider(SchwabHubProvider):
             logger.error(f"Error in Schwab-Dev REST request ({target_method}): {e}")
             return {"status": "error", "message": str(e)}
 
-    async def start_stream(self, symbols_l1: list[str] = None, symbols_l2: list[str] = None, on_message_cb=None):
+    async def start_stream(self, symbols_l1: list[str], symbols_l2: list[str], on_message_cb=None):
+        """
+        Starts the Schwab stream and subscribes to requested symbols.
+        For Equities, we use NASDAQ_BOOK and TIMESALE_EQUITY.
+        """
         self._on_message = on_message_cb
         
+        if not self.stream:
+            logger.error("Stream not initialized. Call initialize() first.")
+            return
+
         logger.info("Starting Schwab-Dev Stream...")
         self.stream.start(receiver=self._internal_receiver)
         
         # Wait for login/startup
         await asyncio.sleep(3)
         
-        # 1. Level 1 Subscriptions
+        # 1. Level 1 Subscriptions (SPX/Indices vs Equities)
         if symbols_l1:
-            # level_one_futures fields (all)
-            l1_fields = "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40"
-            logger.info(f"Subscribing to L1 Futures: {symbols_l1}")
-            self.stream.send(self.stream.level_one_futures(symbols_l1, l1_fields))
+            indices = [s for s in symbols_l1 if s == "SPX" or s.startswith("$")]
+            equities = [s for s in symbols_l1 if s not in indices]
+            
+            if equities:
+                logger.info(f"Subscribing to LEVELONE_EQUITIES: {equities}")
+                self.stream.send(self.stream.level_one_equities(equities, "0,1,2,8,9"))
+            if indices:
+                logger.info(f"Subscribing to LEVELONE_INDICES: {indices}")
+                # Try adding $SPX if SPX is requested
+                if "SPX" in indices and "$SPX" not in indices:
+                    indices.append("$SPX")
+                self.stream.send(self.stream.level_one_indices(indices, "0,1,2,3"))
 
-        # 2. Level 2 Subscriptions
+        # 2. Time & Sales (Trade Bubbles)
+        equities = [s for s in symbols_l2 if not s.startswith("/")]
+        if equities:
+            logger.info(f"Subscribing to TIMESALE: {equities}")
+            # Numeric fields for TIMESALE: 0(Symbol), 1(Time), 2(Price), 3(Size)
+            self.stream.send(self.stream.basic_request("TIMESALE", "SUBS", parameters={
+                "keys": ",".join(equities),
+                "fields": "0,1,2,3,4"
+            }))
+
+        # 3. Level 2 (Book)
         if symbols_l2:
             asyncio.create_task(self.subscribe_level_two(symbols_l2))
 
         self.is_running = True
-        # Since schwabdev.stream is threaded, we just keep this coroutine alive
         while self.is_running:
             await asyncio.sleep(1)
 
     async def subscribe_level_two(self, symbols: list[str]):
         """
-        Subscribes to Level 2 (FUTURES_BOOK) with automatic contract resolution.
+        Subscribes to Level 2 (Equities only for now).
         """
         if not self.stream: return
 
-        # Resolve root symbols
-        resolved_info = await self.resolve_futures_symbols(symbols)
-        transformed = [resolved_info[s]["active"] for s in symbols]
-        
-        logger.info(f"Subscribing to FUTURES_BOOK: {transformed}")
-        # Use basic_request since level_two_futures might not be in the library helper
-        self.stream.send(self.stream.basic_request("FUTURES_BOOK", "ADD", parameters={
-            "keys": self.stream._list_to_string(transformed),
-            "fields": "0,1,2,3"
-        }))
+        equities = [s for s in symbols if not s.startswith("/")]
+        if equities:
+            s_list = ",".join(equities)
+            logger.info(f"Subscribing to NASDAQ_BOOK: {s_list}")
+            # Fields: 0(Symbol), 1(Bids), 2(Asks)
+            self.stream.send(self.stream.basic_request("NASDAQ_BOOK", "SUBS", parameters={
+                "keys": s_list,
+                "fields": "0,1,2"
+            }))
+
+
 
     async def resolve_futures_symbols(self, root_symbols: list[str]) -> dict:
         """

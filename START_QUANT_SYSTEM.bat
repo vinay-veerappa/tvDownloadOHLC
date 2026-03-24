@@ -6,6 +6,10 @@ echo     STARTING QUANT UNIFIED HUD SYSTEM
 echo ===================================================
 echo.
 
+:: 0. Sanity Check: Clean up old instances
+echo 🧹 Performing System Sanity Check...
+python scripts/utils/cleanup_system.py
+
 :: 1. Start the Producer (Hub)
 set HUB_PORT=8080
 :: 1. Start the Producer (Hub)

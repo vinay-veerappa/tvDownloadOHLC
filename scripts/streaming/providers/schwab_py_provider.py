@@ -57,7 +57,9 @@ class SchwabPyProvider(SchwabHubProvider):
         possible_handlers = [
             "add_level_one_futures_handler",
             "add_level_one_futures_options_handler",
-            "add_chart_futures_handler"
+            "add_chart_futures_handler",
+            "add_timesale_equities_handler",
+            "add_timesale_futures_handler"
         ]
         for h_name in possible_handlers:
             if hasattr(self.stream_client, h_name):
@@ -67,6 +69,19 @@ class SchwabPyProvider(SchwabHubProvider):
         if symbols_l1:
             logger.info(f"Subscribing to L1 Futures (root): {symbols_l1}")
             await self.stream_client.level_one_futures_subs(symbols_l1)
+            
+            # TIMESALE Subscriptions
+            equities = [s for s in symbols_l1 if not s.startswith('/')]
+            futures = [s for s in symbols_l1 if s.startswith('/')]
+            
+            if equities:
+                logger.info(f"Subscribing to TIMESALE_EQUITIES: {equities}")
+                await self.stream_client.timesale_equities_subs(equities)
+            if futures:
+                resolved_info = await self.resolve_futures_symbols(futures)
+                targets = [resolved_info[s]["active"] for s in futures]
+                logger.info(f"Subscribing to TIMESALE_FUTURES: {targets}")
+                await self.stream_client.timesale_futures_subs(targets)
         
         # 2. Level 2 Subscriptions (dynamic resolution)
         if symbols_l2:
