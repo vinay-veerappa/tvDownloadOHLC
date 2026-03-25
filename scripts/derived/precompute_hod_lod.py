@@ -15,9 +15,9 @@ import os
 sys.path.append(os.getcwd())
 
 def precompute_hod_lod(ticker="NQ1"):
-    from api.services.data_loader import DATA_DIR
+    from api.features.shared.data_loader import DATA_DIR
     
-    from api.services.data_loader import load_parquet
+    from api.features.shared.data_loader import load_parquet
     df = load_parquet(ticker, "1m")
     
     if df is None or df.empty:

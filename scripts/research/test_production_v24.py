@@ -9,7 +9,7 @@ from datetime import datetime
 # Add project root to python path
 sys.path.append(os.getcwd())
 
-from api.services.profiler_service import ProfilerService
+from api.features.profiler.service import ProfilerService
 
 async def test_v24():
     ticker = "NQ1"

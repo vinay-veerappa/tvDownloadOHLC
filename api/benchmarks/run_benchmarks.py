@@ -102,7 +102,7 @@ def run_data_loader_benchmarks() -> List[BenchmarkResult]:
     print("DATA LOADER BENCHMARKS")
     print("=" * 60 + "\n")
     
-    from api.services.data_loader import load_parquet, get_available_data
+    from api.features.shared.data_loader import load_parquet, get_available_data
     
     results = []
     
@@ -154,8 +154,8 @@ def run_session_benchmarks() -> List[BenchmarkResult]:
     print("SESSION SERVICE BENCHMARKS")
     print("=" * 60 + "\n")
     
-    from api.services.data_loader import load_parquet
-    from api.services.session_service import SessionService
+    from api.features.shared.data_loader import load_parquet
+    from api.features.sessions.service import SessionService
     
     results = []
     
@@ -232,8 +232,8 @@ def run_vwap_benchmarks() -> List[BenchmarkResult]:
     print("VWAP BENCHMARKS")
     print("=" * 60 + "\n")
     
-    from api.services.data_loader import load_parquet
-    from api.services.vwap import calculate_vwap_with_settings
+    from api.features.shared.data_loader import load_parquet
+    from api.features.vwap.service import calculate_vwap_with_settings
     
     results = []
     
@@ -302,8 +302,8 @@ def run_indicator_benchmarks() -> List[BenchmarkResult]:
     print("INDICATOR BENCHMARKS")
     print("=" * 60 + "\n")
     
-    from api.services.data_loader import load_parquet
-    from api.services.indicators import calculate_indicator, calculate_indicators
+    from api.features.shared.data_loader import load_parquet
+    from api.features.indicators.service import calculate_indicator, calculate_indicators
     
     results = []
     
@@ -344,8 +344,8 @@ def run_resampling_benchmarks() -> List[BenchmarkResult]:
     print("RESAMPLING BENCHMARKS")
     print("=" * 60 + "\n")
     
-    from api.services.data_loader import load_parquet
-    from api.services.resampling import resample_ohlc, can_resample
+    from api.features.shared.data_loader import load_parquet
+    from api.features.shared.resampling import resample_ohlc, can_resample
     
     results = []
     

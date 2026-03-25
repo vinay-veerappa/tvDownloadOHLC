@@ -11,7 +11,7 @@ import sys
 import os
 sys.path.append(os.getcwd())
 
-from api.services.profiler_service import ProfilerService
+from api.features.profiler.service import ProfilerService
 
 def precompute_ticker(ticker="NQ1", days=10000):
     print(f"Loading data for {ticker} (Lookback: {days} days)...")

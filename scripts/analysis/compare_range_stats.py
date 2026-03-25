@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from api.services.data_loader import DATA_DIR
+from api.features.shared.data_loader import DATA_DIR
 
 
 import pandas as pd
@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from api.services.data_loader import DATA_DIR
+from api.features.shared.data_loader import DATA_DIR
 
 SESSIONS = [
     {"name": "Asia", "start": "18:00", "end": "03:00"},

@@ -10,8 +10,8 @@ from datetime import timedelta
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from api.services.profiler_service import ProfilerService
-from api.services.data_loader import DATA_DIR
+from api.features.profiler.service import ProfilerService
+from api.features.shared.data_loader import DATA_DIR
 
 def compare_full_day():
     ticker = "NQ1"

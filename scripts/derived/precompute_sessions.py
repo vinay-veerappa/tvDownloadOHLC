@@ -24,8 +24,8 @@ from datetime import datetime
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from api.services.data_loader import load_parquet, get_available_data
-from api.services.session_service import SessionService
+from api.features.shared.data_loader import load_parquet, get_available_data
+from api.features.sessions.service import SessionService
 
 # Output directories
 SESSIONS_DIR = PROJECT_ROOT.parent / 'data' / 'sessions'

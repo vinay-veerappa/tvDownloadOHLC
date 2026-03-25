@@ -1245,7 +1245,7 @@ class ProfilerService:
             
         try:
             # Use robust loader to get synchronized Unix timestamps
-            from api.services.data_loader import load_parquet
+            from api.features.shared.data_loader import load_parquet
             df = load_parquet(ticker, "1m")
             
             if df is None or df.empty:

@@ -5,7 +5,7 @@ import json
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from api.services.profiler_service import ProfilerService
+from api.features.profiler.service import ProfilerService
 
 def test_asia_prediction():
     print("Testing Asia Prediction...")

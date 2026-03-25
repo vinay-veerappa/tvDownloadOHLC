@@ -10,7 +10,7 @@ The application serves chart data in two distinct modes: **Historical** and **Li
     *   Live Storage: `data/live/live_storage_-{ticker}.parquet` (Recent, e.g., 2025–Present).
 *   **Mechanism**:
     1.  Frontend calls `POST /api/indicators/calculate-from-file`.
-    2.  Backend `api.services.data_loader.load_parquet` reads both files.
+    2.  Backend `api.features.shared.data_loader.load_parquet` reads both files.
     3.  Pandas concatenates them, de-duplicates, and returns a single DataFrame.
 *   **Pros**: Full history, indicator calculations possible.
 *   **Cons**: Slower (reading large files), per-request overhead.

@@ -18,8 +18,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from api.services.data_loader import load_parquet, get_available_data
-from api.services.vwap import calculate_vwap_with_settings
+from api.features.shared.data_loader import load_parquet, get_available_data
+from api.features.vwap.service import calculate_vwap_with_settings
 
 
 # Default settings for pre-computation (covers 90%+ of use cases)

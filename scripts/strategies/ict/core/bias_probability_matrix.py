@@ -7,7 +7,7 @@ import sys
 from datetime import timedelta, time
 
 # Define paths
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 DATA_DIR = os.path.join(ROOT_DIR, "data")
 
 def load_data(ticker, timeframe):
@@ -18,22 +18,34 @@ def load_data(ticker, timeframe):
         if timeframe == "1h": path = os.path.join(DATA_DIR, f"{ticker}_1H.parquet")
         
     if not os.path.exists(path):
-        # Create empty if not found? No, critical.
         return pd.DataFrame()
         
     df = pd.read_parquet(path)
-    if isinstance(df.index, pd.DatetimeIndex): df = df.reset_index()
+    
+    # Handle index if it contains datetime/time
+    if isinstance(df.index, pd.DatetimeIndex) or df.index.name in ['datetime', 'time', 'Date', 'Time', 'index']:
+        df = df.reset_index()
+
+    # Handle columns
     df.columns = [c.lower() for c in df.columns]
     
     if 'time' in df.columns and 'datetime' not in df.columns:
-        df['datetime'] = pd.to_datetime(df['time'], unit='s' if df['time'].iloc[0] > 1e10 else 'ms')
+        # Check if empty before iloc
+        if not df.empty:
+            df['datetime'] = pd.to_datetime(df['time'], unit='s' if df['time'].iloc[0] > 1e10 else 'ms', utc=True)
     elif 'datetime' not in df.columns:
-         df.rename(columns={df.columns[0]: 'datetime'}, inplace=True)
-         
-    # Timezone handling
-    if df['datetime'].dt.tz is None:
-        # Assume generic, but for alignment with hardcoded times we might need to be careful
-        pass
+         # Try to find a datetime-like column
+         for col in df.columns:
+             if 'date' in col or 'time' in col:
+                 df.rename(columns={col: 'datetime'}, inplace=True)
+                 break
+                 
+    if 'datetime' not in df.columns:
+        return pd.DataFrame()
+
+    # CRITICAL: Always use naive timestamps for internal ICT comparisons
+    if df['datetime'].dt.tz is not None:
+        df['datetime'] = df['datetime'].dt.tz_localize(None)
         
     df = df.sort_values('datetime').reset_index(drop=True)
     return df
@@ -161,11 +173,7 @@ def calculate_probability_matrix(ticker):
         ny_start_dt = pd.Timestamp.combine(date_obj, t_0930)
         ny_end_dt = pd.Timestamp.combine(date_obj, t_1200)
         
-        # Localize
-        if df_15m['datetime'].dt.tz is not None:
-             if ny_start_dt.tzinfo is None:
-                 ny_start_dt = ny_start_dt.tz_localize(df_15m['datetime'].dt.tz)
-                 ny_end_dt = ny_end_dt.tz_localize(df_15m['datetime'].dt.tz)
+                # Timestamps are naive due to load_data fix
 
         # Get NY Price Action (Outcome)
         ny_data = df_15m[(df_15m['datetime'] >= ny_start_dt) & (df_15m['datetime'] <= ny_end_dt)]

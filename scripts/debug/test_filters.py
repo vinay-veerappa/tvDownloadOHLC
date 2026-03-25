@@ -4,7 +4,7 @@ import os
 import pandas as pd
 sys.path.append(os.getcwd())
 
-from api.services.profiler_service import ProfilerService
+from api.features.profiler.service import ProfilerService
 
 def test_filters():
     # Mock Sessions

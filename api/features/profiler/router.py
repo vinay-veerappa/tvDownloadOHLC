@@ -22,7 +22,7 @@ async def get_profiler_stats(ticker: str, days: int = Query(50)):
 
 
 
-@router.post("/stats/profiler/{ticker}/filtered", tags=["Stats"])
+@router.post("/{ticker}/filtered", tags=["Stats"])
 async def get_profiler_filtered_stats(
     ticker: str,
     payload: dict = Body(...)
@@ -51,7 +51,7 @@ async def get_profiler_filtered_stats(
     return result
 
 
-@router.post("/stats/profiler/{ticker}/price-model", tags=["Stats"])
+@router.post("/{ticker}/price-model", tags=["Stats"])
 async def get_profiler_filtered_price_model(
     ticker: str,
     payload: dict = Body(...)
@@ -130,13 +130,13 @@ async def clear_profiler_cache(ticker: str = "NQ1"):
     Clear the in-memory cache for profiler data.
     This forces the server to reload from the JSON file on next request.
     """
-    from api.services.profiler_service import ProfilerService
+    from api.features.profiler.service import ProfilerService
     return ProfilerService.clear_cache(ticker)
 
 @router.post("/stats/clear-cache", tags=["Stats"])
 async def clear_all_profiler_cache():
     """Clear all in-memory cache."""
-    from api.services.profiler_service import ProfilerService
+    from api.features.profiler.service import ProfilerService
     return ProfilerService.clear_cache()
 
 @router.get("/stats/daily-hod-lod/{ticker}", tags=["Stats"])
@@ -188,7 +188,7 @@ async def get_reference_stats():
         "median": ref_med
     }
 
-@router.get("/stats/price-model/{ticker}", tags=["Stats"])
+@router.get("/{ticker}/price-model", tags=["Stats"])
 async def get_price_model(
     ticker: str,
     session: str,

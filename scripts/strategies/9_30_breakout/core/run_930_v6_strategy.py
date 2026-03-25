@@ -56,6 +56,12 @@ def load_data():
     with open(or_path, 'r') as f:
         or_data = json.load(f)
     or_df = pd.DataFrame(or_data)
+    # Flatten nested OR data
+    if 'or_1m' in or_df.columns:
+        or_df['high'] = or_df['or_1m'].apply(lambda x: x['high'])
+        or_df['low'] = or_df['or_1m'].apply(lambda x: x['low'])
+        or_df['open'] = or_df['or_1m'].apply(lambda x: x['open'])
+        
     or_df['date'] = pd.to_datetime(or_df['date'])
     or_df = or_df.set_index('date')
     print(f"Loaded {len(or_df)} Opening Range records from {or_path}")

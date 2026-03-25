@@ -11,7 +11,7 @@ from collections import Counter
 # Add project root
 sys.path.append(os.getcwd())
 
-from api.services.data_loader import DATA_DIR
+from api.features.shared.data_loader import DATA_DIR
 
 def parse_filter_string(filter_str):
     """

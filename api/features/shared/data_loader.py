@@ -9,7 +9,7 @@ from typing import Optional
 
 
 # Path to data directory - relative to project root
-DATA_DIR = Path(__file__).parent.parent.parent / "data"
+DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 
 
 def load_parquet(ticker: str, timeframe: str) -> Optional[pd.DataFrame]:

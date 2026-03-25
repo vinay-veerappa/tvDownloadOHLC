@@ -22,7 +22,7 @@ import os
 # Add project root to path
 sys.path.insert(0, os.getcwd())
 
-from api.services.data_loader import load_parquet
+from api.features.shared.data_loader import load_parquet
 
 # --- CONFIGURATION (Match User's Verified Settings) ---
 TICKER = "NQ1"

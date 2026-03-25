@@ -22,7 +22,7 @@ def compute_daily_hod_lod(ticker: str) -> dict:
     Returns dict mapping date -> {hod_time, lod_time, hod_price, lod_price}
     """
     # Load 1-minute data using unified utility
-    from api.services.data_loader import load_parquet
+    from api.features.shared.data_loader import load_parquet
     df = load_parquet(ticker, '1m')
     if df is None or df.empty:
         raise FileNotFoundError(f"No data found for {ticker}")

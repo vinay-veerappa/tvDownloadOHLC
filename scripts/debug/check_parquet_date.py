@@ -1,5 +1,5 @@
 import pandas as pd
-from api.services.data_loader import load_parquet
+from api.features.shared.data_loader import load_parquet
 
 def check_parquet():
     print("Loading NQ1_1m.parquet...")

@@ -6,7 +6,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(r"c:\Users\vinay\tvDownloadOHLC")
 
-from api.services.profiler_service import ProfilerService
+from api.features.profiler.service import ProfilerService
 
 def test_service():
     print("Testing ProfilerService.get_daily_hod_lod...")

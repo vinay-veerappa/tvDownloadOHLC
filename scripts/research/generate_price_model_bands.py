@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from api.services.profiler_service import ProfilerService
+from api.features.profiler.service import ProfilerService
 from datetime import timedelta
 import sys
 import os
@@ -52,7 +52,7 @@ async def generate_charts():
     def calculate_bands(bucket_minutes):
         df = ProfilerService._cache.get(ticker)
         if df is None:
-             from api.services.data_loader import DATA_DIR
+             from api.features.shared.data_loader import DATA_DIR
              file_path = DATA_DIR / f"{ticker}_1m.parquet"
              df = pd.read_parquet(file_path)
              df = df.sort_index()

@@ -1,4 +1,4 @@
-
+﻿
 import pandas as pd
 import numpy as np
 import os
@@ -6,7 +6,7 @@ import argparse
 import sys
 
 # Define paths
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 DATA_DIR = os.path.join(ROOT_DIR, "data")
 
 def load_data(ticker):
@@ -20,6 +20,8 @@ def load_data(ticker):
         sys.exit(1)
         
     df = pd.read_parquet(path)
+    if 'datetime' in df.columns and df['datetime'].dt.tz is not None:
+        df['datetime'] = df['datetime'].dt.tz_localize(None)
     
     if isinstance(df.index, pd.DatetimeIndex):
         df = df.reset_index()
@@ -27,7 +29,7 @@ def load_data(ticker):
              df.rename(columns={df.columns[0]: 'datetime'}, inplace=True)
     
     if 'time' in df.columns and 'datetime' not in df.columns:
-        df['datetime'] = pd.to_datetime(df['time'], unit='s' if df['time'].iloc[0] > 1e10 else 'ms')
+        df['datetime'] = pd.to_datetime(df['time'], unit='s' if df['time'].iloc[0] > 1e10 else 'ms', utc=True)
         
     if 'datetime' not in df.columns:
          for col in df.columns:

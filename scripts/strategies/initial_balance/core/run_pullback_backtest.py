@@ -6,11 +6,14 @@ Tests the pullback entry strategy with optimized parameters from MAE/MFE analysi
 
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent / 'scripts'))
-sys.path.insert(0, str(Path(__file__).parent))
 
-from enhanced_backtest_engine import EnhancedBacktestEngine
-from initial_balance_pullback import IBPullbackStrategy
+# Project root-based imports
+project_root = str(Path(__file__).parent.parent.parent.parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from scripts.strategies.framework.core.enhanced_backtest_engine import EnhancedBacktestEngine
+from scripts.strategies.initial_balance.core.initial_balance_pullback import IBPullbackStrategy
 import pandas as pd
 
 

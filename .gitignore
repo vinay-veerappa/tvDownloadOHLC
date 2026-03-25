@@ -60,3 +60,6 @@ mcp/bin/
 bin/
 *.exe
 *.dll
+args.json
+tokens.db
+tmp/

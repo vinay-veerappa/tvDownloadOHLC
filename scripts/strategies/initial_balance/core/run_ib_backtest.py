@@ -9,11 +9,12 @@ comprehensive statistics.
 import sys
 from pathlib import Path
 
-# Add scripts directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent / 'scripts'))
-sys.path.insert(0, str(Path(__file__).parent))
+# Add project root to path
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../..")))
+sys.path.insert(0, os.path.dirname(__file__))
 
-from backtest_engine import BacktestEngine
+from scripts.strategies.framework.core.backtest_engine import BacktestEngine
 from initial_balance_break import IBBreakStrategy
 import pandas as pd
 

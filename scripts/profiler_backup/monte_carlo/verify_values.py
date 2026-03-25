@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import sys
 from pathlib import Path
-from api.services.profiler_service import ProfilerService
+from api.features.profiler.service import ProfilerService
 
 def verify_value_to_value():
     ticker = "NQ1"

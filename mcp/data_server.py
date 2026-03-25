@@ -10,9 +10,9 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
 
-from api.services.indicators import calculate_indicators, get_available_indicators
-from api.services.data_loader import load_parquet, get_available_data
-from api.services.profiler_service import ProfilerService
+from api.features.indicators.service import calculate_indicators, get_available_indicators
+from api.features.shared.data_loader import load_parquet, get_available_data
+from api.features.profiler.service import ProfilerService
 
 # Paths
 DATA_DIR = os.path.join(BASE_DIR, "data")

@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from api.services.profiler_service import ProfilerService
+from api.features.profiler.service import ProfilerService
 from datetime import timedelta
 import sys
 import os
@@ -19,7 +19,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from api.services.profiler_service import ProfilerService
+from api.features.profiler.service import ProfilerService
 from datetime import timedelta
 import sys
 import os
@@ -81,7 +81,7 @@ async def run_comparison():
     # Increase to 10000 to capture full history (2008+)
     stats_result = ProfilerService.analyze_profiler_stats(ticker, days=10000)
     all_sessions = stats_result.get("sessions", [])
-    from api.services.data_loader import DATA_DIR
+    from api.features.shared.data_loader import DATA_DIR
     file_path = DATA_DIR / f"{ticker}_1m.parquet"
     df = pd.read_parquet(file_path).sort_index()
 

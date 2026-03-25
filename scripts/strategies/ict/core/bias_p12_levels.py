@@ -1,4 +1,4 @@
-
+﻿
 import pandas as pd
 import numpy as np
 import os
@@ -8,7 +8,7 @@ import json
 from datetime import timedelta, time
 
 # Define paths
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 DATA_DIR = os.path.join(ROOT_DIR, "data")
 
 def load_p12_levels(ticker):
@@ -70,24 +70,40 @@ def load_p12_levels(ticker):
 
 def load_data(ticker, timeframe):
     path = os.path.join(DATA_DIR, f"{ticker}_{timeframe}.parquet")
+    # Fallbacks
     if not os.path.exists(path):
-         if timeframe == "15m": path = os.path.join(DATA_DIR, f"{ticker}_15m.parquet")
+        if timeframe == "1d": path = os.path.join(DATA_DIR, f"{ticker}_1D.parquet")
+        if timeframe == "1h": path = os.path.join(DATA_DIR, f"{ticker}_1H.parquet")
+        
     if not os.path.exists(path):
-        sys.exit(1)
+        return pd.DataFrame()
+        
     df = pd.read_parquet(path)
-    if isinstance(df.index, pd.DatetimeIndex): df = df.reset_index()
-    # names
+    
+    # Handle index if it contains datetime/time
+    if isinstance(df.index, pd.DatetimeIndex) or df.index.name in ['datetime', 'time', 'Date', 'Time', 'index']:
+        df = df.reset_index()
+
+    # Handle columns
     df.columns = [c.lower() for c in df.columns]
     
-    # datetime
     if 'time' in df.columns and 'datetime' not in df.columns:
-        df['datetime'] = pd.to_datetime(df['time'], unit='s' if df['time'].iloc[0] > 1e10 else 'ms')
+        # Check if empty before iloc
+        if not df.empty:
+            df['datetime'] = pd.to_datetime(df['time'], unit='s' if df['time'].iloc[0] > 1e10 else 'ms', utc=True)
     elif 'datetime' not in df.columns:
-         df.rename(columns={df.columns[0]: 'datetime'}, inplace=True)
-         
-    if df['datetime'].dt.tz is None:
-        # Assume UTC? Or convert.
-        pass
+         # Try to find a datetime-like column
+         for col in df.columns:
+             if 'date' in col or 'time' in col:
+                 df.rename(columns={col: 'datetime'}, inplace=True)
+                 break
+                 
+    if 'datetime' not in df.columns:
+        return pd.DataFrame()
+
+    # CRITICAL: Always use naive timestamps for internal ICT comparisons
+    if df['datetime'].dt.tz is not None:
+        df['datetime'] = df['datetime'].dt.tz_localize(None)
         
     df = df.sort_values('datetime').reset_index(drop=True)
     return df

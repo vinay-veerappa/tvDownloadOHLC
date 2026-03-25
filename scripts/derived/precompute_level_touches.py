@@ -41,7 +41,7 @@ def compute_level_touches(ticker: str) -> dict:
     Compute reference level touch data for each trading day.
     """
     # Load 1-minute data using unified utility
-    from api.services.data_loader import load_parquet
+    from api.features.shared.data_loader import load_parquet
     df = load_parquet(ticker, '1m')
     if df is None or df.empty:
         raise FileNotFoundError(f"No data found for {ticker}")

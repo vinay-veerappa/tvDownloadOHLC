@@ -7,8 +7,8 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from api.services.data_loader import load_parquet
-from api.services.session_service import SessionService
+from api.features.shared.data_loader import load_parquet
+from api.features.sessions.service import SessionService
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 SESSIONS_DIR = DATA_DIR / "sessions"

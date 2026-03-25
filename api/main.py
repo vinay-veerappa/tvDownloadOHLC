@@ -41,7 +41,7 @@ from api.features.profiler.router import router as profiler_router
 
 app.include_router(indicators_router, prefix="/api/indicators", tags=["indicators"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
-app.include_router(profiler_router, prefix="/api/profiler", tags=["profiler"])
+app.include_router(profiler_router, tags=["profiler"])
 
 
 @app.on_event("startup")

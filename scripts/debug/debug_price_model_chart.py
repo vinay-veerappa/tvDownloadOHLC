@@ -2,7 +2,7 @@
 import asyncio
 import pandas as pd
 import plotly.graph_objects as go
-from api.services.profiler_service import ProfilerService
+from api.features.profiler.service import ProfilerService
 
 # Force pandas to display all columns
 pd.set_option('display.max_columns', None)

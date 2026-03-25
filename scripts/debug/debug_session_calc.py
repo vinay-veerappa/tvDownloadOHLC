@@ -5,7 +5,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from api.services.session_service import SessionService
+from api.features.sessions.service import SessionService
 
 def debug_calculation():
     print("Testing Hourly/3H Calculation...")

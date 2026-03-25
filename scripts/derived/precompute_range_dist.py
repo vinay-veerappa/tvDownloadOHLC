@@ -24,10 +24,10 @@ SESSIONS = [
 ]
 
 def precompute_range_distribution(ticker="NQ1", timeframe="1m"):
-    from api.services.data_loader import DATA_DIR
+    from api.features.shared.data_loader import DATA_DIR
     
     # Load data using unified utility
-    from api.services.data_loader import load_parquet
+    from api.features.shared.data_loader import load_parquet
     df = load_parquet(ticker, timeframe)
     if df is None or df.empty:
         print(f"Error: No data found for {ticker}")

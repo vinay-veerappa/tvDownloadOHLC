@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from api.services.data_loader import DATA_DIR
+from api.features.shared.data_loader import DATA_DIR
 
 def load_data(ticker="NQ1"):
     # 1D Data

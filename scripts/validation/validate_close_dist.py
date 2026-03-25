@@ -11,7 +11,7 @@ import numpy as np
 sys.path.append(os.getcwd())
 
 def validate_close_dist(ticker="RTY1"):
-    from api.services.data_loader import DATA_DIR
+    from api.features.shared.data_loader import DATA_DIR
     
     print(f"Loading 1m data for {ticker}...")
     file_path = DATA_DIR / f"{ticker}_1m.parquet"

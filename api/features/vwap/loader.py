@@ -7,8 +7,8 @@ import pyarrow.parquet as pq
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from api.services.vwap import calculate_vwap_with_settings
-from api.services.data_loader import load_parquet
+from api.features.vwap.service import calculate_vwap_with_settings
+from api.features.shared.data_loader import load_parquet
 
 
 # Path to pre-computed indicator data

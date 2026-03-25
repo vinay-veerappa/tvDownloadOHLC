@@ -3,8 +3,8 @@ import time
 import pandas as pd
 import sys
 sys.path.insert(0, '.')
-from api.services.data_loader import load_parquet
-from api.services.vwap import calculate_vwap_with_settings
+from api.features.shared.data_loader import load_parquet
+from api.features.vwap.service import calculate_vwap_with_settings
 
 df = load_parquet('ES1', '1m')
 print(f'Data: {len(df):,} rows')

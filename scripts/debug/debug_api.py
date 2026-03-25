@@ -5,7 +5,7 @@ import pandas as pd
 import json
 sys.path.append(os.getcwd())
 
-from api.services.profiler_service import ProfilerService
+from api.features.profiler.service import ProfilerService
 
 def debug_api_logic():
     # Simulate the payload received by the API

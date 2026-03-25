@@ -6,8 +6,8 @@ from datetime import timedelta, time
 # Add parent directory to path to import services
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from api.services.session_service import SessionService
-from api.services.data_loader import DATA_DIR
+from api.features.sessions.service import SessionService
+from api.features.shared.data_loader import DATA_DIR
 
 def debug_midnight_hits():
     ticker = "NQ1"

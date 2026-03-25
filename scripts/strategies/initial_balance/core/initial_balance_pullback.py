@@ -13,14 +13,19 @@ Pullback entries expected to improve this to 40-50%.
 
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent / 'scripts'))
+
+# Project root-based imports
+project_root = str(Path(__file__).parent.parent.parent.parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 import pandas as pd
 import numpy as np
 from datetime import time, timedelta
 from typing import Dict, List, Optional, Tuple
-from enhanced_backtest_engine import EnhancedBacktestEngine
-from fibonacci_calculator import FibonacciCalculator
+
+from scripts.strategies.framework.core.enhanced_backtest_engine import EnhancedBacktestEngine
+from scripts.analysis.fibonacci_calculator import FibonacciCalculator
 
 
 class IBPullbackStrategy:
