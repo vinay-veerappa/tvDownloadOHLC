@@ -170,4 +170,4 @@ To maximize Alpha, the 9:30 Strategy should be traded with the following filters
 
 ---
 *Analysis Date: December 27, 2025*
-*Data Source: scripts/backtest/9_30_breakout/results/*
+*Data Source: scripts/strategies/9_30_breakout/results/*

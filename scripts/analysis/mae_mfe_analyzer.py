@@ -318,7 +318,7 @@ def analyze_backtest_results(csv_path: str, output_path: str = None):
 
 if __name__ == '__main__':
     # Example usage
-    csv_path = 'docs/strategies/initial_balance_break/backtest_results_45min.csv'
-    output_path = 'docs/strategies/initial_balance_break/mae_mfe_optimization.txt'
+    csv_path = 'scripts/strategies/initial_balance/data/backtest_results_45min.csv'
+    output_path = 'scripts/strategies/initial_balance/data/mae_mfe_optimization.txt'
     
     analyzer = analyze_backtest_results(csv_path, output_path)

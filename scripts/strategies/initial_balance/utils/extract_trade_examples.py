@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 
 # Load Fib 38.2% results
-df = pd.read_csv('docs/strategies/initial_balance_break/mechanism_evaluation/Fib_38.2_Only.csv')
+df = pd.read_csv('scripts/strategies/initial_balance/data/mechanism_evaluation/Fib_38.2_Only.csv')
 
 print("="*80)
 print("FIB 38.2% TRADE EXAMPLES")
@@ -72,8 +72,8 @@ for i, (idx, trade) in enumerate(losers.head(3).iterrows(), 1):
     print(f"Matched Expectation: {trade['matched_expectation']}")
 
 # Save examples to CSV for charting
-winners.head(3).to_csv('docs/strategies/initial_balance_break/winning_trade_examples.csv', index=False)
-losers.head(3).to_csv('docs/strategies/initial_balance_break/losing_trade_examples.csv', index=False)
+winners.head(3).to_csv('scripts/strategies/initial_balance/data/winning_trade_examples.csv', index=False)
+losers.head(3).to_csv('scripts/strategies/initial_balance/data/losing_trade_examples.csv', index=False)
 
 print("\n" + "="*80)
 print("Examples saved for charting")

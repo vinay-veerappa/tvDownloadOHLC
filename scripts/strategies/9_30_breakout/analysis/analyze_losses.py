@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 
 # Load baseline data
-df = pd.read_csv('scripts/backtest/9_30_breakout/results/v6_backtest_details.csv')
+df = pd.read_csv('scripts/strategies/9_30_breakout/results/v6_backtest_details.csv')
 print(f"Loaded {len(df)} trades")
 
 winners = df[df['Result'] == 'WIN']
@@ -159,6 +159,6 @@ RECOMMENDATIONS:
 - Consider VVIX threshold = 105
 - Use Cover the Queen TP at 0.05-0.10%
 """
-with open('scripts/backtest/9_30_breakout/results/loss_analysis_summary.txt', 'w') as f:
+with open('scripts/strategies/9_30_breakout/results/loss_analysis_summary.txt', 'w') as f:
     f.write(summary)
 print("\nSaved: loss_analysis_summary.txt")

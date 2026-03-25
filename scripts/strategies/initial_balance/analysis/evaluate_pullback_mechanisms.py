@@ -160,7 +160,7 @@ def run_mechanism_evaluation(
         metrics = strategy.run()
         
         # Export results
-        output_dir = Path('docs/strategies/initial_balance_break/mechanism_evaluation')
+        output_dir = Path('scripts/strategies/initial_balance/data/mechanism_evaluation')
         output_dir.mkdir(parents=True, exist_ok=True)
         
         csv_path = output_dir / f"{config['name']}.csv"
@@ -191,7 +191,7 @@ def run_mechanism_evaluation(
     df_results = pd.DataFrame(results)
     
     # Save comparison
-    comparison_path = Path('docs/strategies/initial_balance_break/mechanism_evaluation/comparison.csv')
+    comparison_path = Path('scripts/strategies/initial_balance/data/mechanism_evaluation/comparison.csv')
     df_results.to_csv(comparison_path, index=False)
     
     # Print comparison

@@ -72,7 +72,7 @@ All backtests must be validated across these benchmark periods (per BACKTEST_STA
 ## 🚀 Quick Start Command
 
 ```bash
-python scripts/backtest/9_30_breakout/run_930_v6_strategy.py
+python scripts/strategies/9_30_breakout/run_930_v6_strategy.py
 ```
 
-Output saved to: `scripts/backtest/9_30_breakout/results/v6_backtest_details.csv`
+Output saved to: `scripts/strategies/9_30_breakout/results/v6_backtest_details.csv`

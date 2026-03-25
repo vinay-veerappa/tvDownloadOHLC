@@ -41,7 +41,7 @@ MAX_SL_PCT    = 0.30   # Cap SL at 0.30% distance
 HARD_EXIT     = time(10, 0)
 
 # Output
-OUTPUT_DIR    = "scripts/backtest/9_30_breakout/results"
+OUTPUT_DIR    = "scripts/strategies/9_30_breakout/results"
 OUTPUT_FILE   = "v6_backtest_details.csv"
 
 # ==============================================================================

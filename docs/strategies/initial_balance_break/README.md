@@ -77,5 +77,5 @@ The **Initial Balance** is the high and low range established during the first h
 ---
 
 ## Implementation
-- **Logic**: `scripts/backtest/initial_balance/run_ib_backtest.py`
-- **Verifier**: `scripts/backtest/initial_balance/run_comprehensive_validation.py`
+- **Logic**: `scripts/strategies/initial_balance/run_ib_backtest.py`
+- **Verifier**: `scripts/strategies/initial_balance/run_comprehensive_validation.py`

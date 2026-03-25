@@ -10,8 +10,8 @@ def test_pullback_efficiency(ticker="NQ1", years=5):
     
     # --- CONFIG ---
     HARD_EXIT = time(10, 0)
-    CSV_PATH = "scripts/backtest/9_30_breakout/results/pullback_test_results.csv"
-    os.makedirs("scripts/backtest/9_30_breakout/results", exist_ok=True)
+    CSV_PATH = "scripts/strategies/9_30_breakout/results/pullback_test_results.csv"
+    os.makedirs("scripts/strategies/9_30_breakout/results", exist_ok=True)
     
     # Load Data
     data_path = f"data/{ticker}_1m.parquet"

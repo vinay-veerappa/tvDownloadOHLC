@@ -306,8 +306,8 @@ Each outcome panel contains:
 ### Backend
 | File | Purpose |
 |------|---------|
-| `api/routers/profiler.py` | API endpoints |
-| `api/services/profiler_service.py` | Calculation logic (optimized) |
+| `api/features/profiler/router.py` | API endpoints |
+| `api/features/profiler/service.py` | Calculation logic (optimized) |
 | `scripts/derived/precompute_daily_hod_lod.py` | Daily HOD/LOD times |
 | `scripts/derived/precompute_level_touches.py` | Level touch data |
 | `scripts/derived/precompute_profiler.py` | Session statistics |

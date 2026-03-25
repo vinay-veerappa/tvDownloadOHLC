@@ -48,5 +48,5 @@ def analyze_losses(csv_path, name):
         print("\nAvg MAE of Losing Trades:", losses['MAE_Pts'].mean())
 
 if __name__ == "__main__":
-    analyze_losses('scripts/backtest/9_30_breakout/results/multi_year_backtest_2016_2025.csv', 'Base Strategy (V1)')
-    analyze_losses('scripts/backtest/9_30_breakout/results/930_v2_all_trades.csv', 'Optimized Strategy (V2)')
+    analyze_losses('scripts/strategies/9_30_breakout/results/multi_year_backtest_2016_2025.csv', 'Base Strategy (V1)')
+    analyze_losses('scripts/strategies/9_30_breakout/results/930_v2_all_trades.csv', 'Optimized Strategy (V2)')

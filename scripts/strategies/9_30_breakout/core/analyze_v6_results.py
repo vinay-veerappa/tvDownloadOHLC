@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-df = pd.read_csv('scripts/backtest/9_30_breakout/results/v6_backtest_details.csv')
+df = pd.read_csv('scripts/strategies/9_30_breakout/results/v6_backtest_details.csv')
 
 print('=== V6 BACKTEST ANALYSIS ===')
 print(f'Total Trades: {len(df)}')

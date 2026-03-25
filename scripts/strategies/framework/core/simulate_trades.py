@@ -455,5 +455,5 @@ if __name__ == '__main__':
         print(f"  {reason}: {count} trades, PnL: {pnl:.2f}%")
     
     # Save results
-    trades_df.to_csv('scripts/backtest/9_30_breakout/results/v7_simulation_trades.csv', index=False)
+    trades_df.to_csv('scripts/strategies/9_30_breakout/results/v7_simulation_trades.csv', index=False)
     print("\nSaved: v7_simulation_trades.csv")

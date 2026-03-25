@@ -1,7 +1,7 @@
 import pandas as pd
 
 # Load pullback results
-df = pd.read_csv('docs/strategies/initial_balance_break/pullback_results_45min.csv')
+df = pd.read_csv('scripts/strategies/initial_balance/data/pullback_results_45min.csv')
 
 print("="*80)
 print("PULLBACK STRATEGY DIAGNOSTIC ANALYSIS")

@@ -41,8 +41,8 @@ def get_detailed_metrics(csv_path):
 
 results = []
 folders = [
-    Path('docs/strategies/initial_balance_break/mechanism_evaluation'),
-    Path('docs/strategies/initial_balance_break/multi_asset_validation'),
+    Path('scripts/strategies/initial_balance/data/mechanism_evaluation'),
+    Path('scripts/strategies/initial_balance/data/multi_asset_validation'),
 ]
 
 for folder in folders:
@@ -61,7 +61,7 @@ if results:
     df_final = pd.DataFrame(results)
     cols = ['config', 'trades', 'win_rate', 'profit_factor', 'avg_mae', 'avg_mfe', 'reach_0.5r', 'reach_1.0r', 'reach_1.5r', 'reach_2.0r']
     df_final = df_final[cols]
-    output_path = Path('docs/strategies/initial_balance_break/omnibus_granular_results.csv')
+    output_path = Path('scripts/strategies/initial_balance/data/omnibus_granular_results.csv')
     df_final.to_csv(output_path, index=False)
     print(f"Omnibus granular results saved to {output_path}")
     print(df_final.to_string(index=False))

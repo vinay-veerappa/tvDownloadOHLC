@@ -128,11 +128,11 @@ def analyze_asset(asset_name, csv_path):
 
 # Analyze each asset
 assets = [
-    ('NQ1', 'docs/strategies/initial_balance_break/historical_validation/nq_2019_2020.csv'),
-    ('ES1', 'docs/strategies/initial_balance_break/multi_asset_validation/es1_2019_2020.csv'),
-    ('RTY1', 'docs/strategies/initial_balance_break/multi_asset_validation/rty1_2019_2020.csv'),
-    ('YM1', 'docs/strategies/initial_balance_break/multi_asset_validation/ym1_2019_2020.csv'),
-    ('GC1', 'docs/strategies/initial_balance_break/multi_asset_validation/gc1_2019_2020.csv'),
+    ('NQ1', 'scripts/strategies/initial_balance/data/historical_validation/nq_2019_2020.csv'),
+    ('ES1', 'scripts/strategies/initial_balance/data/multi_asset_validation/es1_2019_2020.csv'),
+    ('RTY1', 'scripts/strategies/initial_balance/data/multi_asset_validation/rty1_2019_2020.csv'),
+    ('YM1', 'scripts/strategies/initial_balance/data/multi_asset_validation/ym1_2019_2020.csv'),
+    ('GC1', 'scripts/strategies/initial_balance/data/multi_asset_validation/gc1_2019_2020.csv'),
 ]
 
 results = []
@@ -150,6 +150,6 @@ df_summary = pd.DataFrame(results)
 print(df_summary.to_string(index=False))
 
 # Save detailed analysis
-output_path = Path('docs/strategies/initial_balance_break/multi_asset_validation/detailed_analysis.csv')
+output_path = Path('scripts/strategies/initial_balance/data/multi_asset_validation/detailed_analysis.csv')
 df_summary.to_csv(output_path, index=False)
 print(f"\n✓ Detailed analysis saved to: {output_path}")

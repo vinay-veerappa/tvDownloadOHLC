@@ -55,8 +55,8 @@ PARAM_GRID = {
 }
 
 # Output Directories
-OUTPUT_DIR = "scripts/backtest/9_30_breakout/results/optimization"
-SUMMARY_FILE = "scripts/backtest/9_30_breakout/results/optimization_summary.csv"
+OUTPUT_DIR = "scripts/strategies/9_30_breakout/results/optimization"
+SUMMARY_FILE = "scripts/strategies/9_30_breakout/results/optimization_summary.csv"
 
 # ==============================================================================
 # DATA LOADING (Same as main script)

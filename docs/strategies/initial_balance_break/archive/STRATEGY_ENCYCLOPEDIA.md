@@ -46,17 +46,17 @@ Tested on NQ1 Futures (2019-2020) using a fixed MAE-optimized stop of -0.253%.
 ### Fibonacci 38.2% (The Winner)
 The 38.2% level represents the "momentum pullback." Price breaks, takes a shallow breath, and continues.
 
-![Fib 38.2 WIN Example](file:///c:/Users/vinay/tvDownloadOHLC/docs/strategies/initial_balance_break/charts/comparative/Fib_38.2_Only_WIN_2025-10-31.png)
+![Fib 38.2 WIN Example](file:///c:/Users/vinay/tvDownloadOHLC/scripts/strategies/initial_balance/data/charts/comparative/Fib_38.2_Only_WIN_2025-10-31.png)
 
 ### Fair Value Gap Only (The Rare/Erratic)
 FVG entries often occur in high-volatility environments but lack the structural anchoring of the Fibonacci sequence in this specific strategy.
 
-![FVG WIN Example](file:///c:/Users/vinay/tvDownloadOHLC/docs/strategies/initial_balance_break/charts/comparative/FVG_5m_Only_WIN_2025-10-08.png)
+![FVG WIN Example](file:///c:/Users/vinay/tvDownloadOHLC/scripts/strategies/initial_balance/data/charts/comparative/FVG_5m_Only_WIN_2025-10-08.png)
 
 ### Fib 61.8% (The Deep Trap)
 While we can find wins with deep retracements, the frequency of "price running away without us" or "reversing completely" makes this level inferior for a trend-continuation strategy.
 
-![Fib 61.8 WIN Example](file:///c:/Users/vinay/tvDownloadOHLC/docs/strategies/initial_balance_break/charts/comparative/Fib_61.8_Only_WIN_2025-11-28.png)
+![Fib 61.8 WIN Example](file:///c:/Users/vinay/tvDownloadOHLC/scripts/strategies/initial_balance/data/charts/comparative/Fib_61.8_Only_WIN_2025-11-28.png)
 
 ---
 

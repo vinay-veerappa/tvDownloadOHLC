@@ -48,7 +48,7 @@ strategy1 = IBPullbackStrategy(
 
 metrics1 = strategy1.run()
 
-output_dir = Path('docs/strategies/initial_balance_break/stop_loss_comparison')
+output_dir = Path('scripts/strategies/initial_balance/data/stop_loss_comparison')
 output_dir.mkdir(parents=True, exist_ok=True)
 
 csv1 = output_dir / 'fib382_ib_opposite_stop.csv'

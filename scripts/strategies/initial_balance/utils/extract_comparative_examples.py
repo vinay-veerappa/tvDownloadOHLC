@@ -28,7 +28,7 @@ configs = [
 ]
 
 all_examples = []
-base_path = Path('docs/strategies/initial_balance_break')
+base_path = Path('scripts/strategies/initial_balance/data')
 for folder_name, config_name, ticker in configs:
     csv_path = base_path / f"{folder_name}.csv"
     examples = extract_examples(csv_path, config_name, ticker)

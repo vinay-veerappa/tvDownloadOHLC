@@ -16,7 +16,7 @@ FastAPI service for technical indicator calculations using pandas-ta.
 
 - **Chart display** and **indicators** use exact same OHLCV data
 - **Backtesting** reads from same JSON chunks as frontend
-- **Resampling logic** in `api/services/resampling.py` matches `web/lib/resampling.ts`
+- **Resampling logic** in `api/features/shared/resampling.py` matches `web/lib/resampling.ts`
 
 ---
 

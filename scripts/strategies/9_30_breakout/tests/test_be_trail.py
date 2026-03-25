@@ -174,5 +174,5 @@ for confirm in ['0.05%', '0.10%']:
         if not no_trail.empty and not with_trail.empty:
             print(f"  Confirm {confirm}, TP1 {tp1}: NO={no_trail.iloc[0]['PnL']}, YES={with_trail.iloc[0]['PnL']}")
 
-df_results.to_csv('scripts/backtest/9_30_breakout/results/be_trail_test.csv', index=False)
+df_results.to_csv('scripts/strategies/9_30_breakout/results/be_trail_test.csv', index=False)
 print("\nSaved: be_trail_test.csv")

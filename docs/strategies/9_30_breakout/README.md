@@ -47,4 +47,4 @@ Contains obsolete versions (V1-V5) and legacy specifications. Referenced for his
 ## 🚀 Quick Start
 1.  **Read the Spec**: [ORB_STRATEGY_MASTER_SPEC.md](ORB_STRATEGY_MASTER_SPEC.md) to understand the Rules.
 2.  **Visual Check**: Install `ORB_V6_Indicator` on NinjaTrader or TradingView to visualize the setup on historical data.
-3.  **Backtest**: Run `scripts/backtest/9_30_breakout/run_930_v6_strategy.py` to verify logic against local data.
+3.  **Backtest**: Run `scripts/strategies/9_30_breakout/run_930_v6_strategy.py` to verify logic against local data.

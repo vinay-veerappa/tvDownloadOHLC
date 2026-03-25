@@ -19,7 +19,7 @@
 *   **Concept:** Breakout of 9:30-9:40 range using 20-day median distribution as a filter.
 
 ### B. Initial Balance Break
-*   **Path:** `docs/strategies/initial_balance_break/`
+*   **Path:** `scripts/strategies/initial_balance/data/`
 *   **Status:** ✅ Proven (See results folder)
 *   **Core Data:** `initial_balance` stats
 *   **Concept:** Breakout of first hour range.

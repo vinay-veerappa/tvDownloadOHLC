@@ -12,7 +12,7 @@ import os
 from datetime import time
 
 print("=== MAE/MFE ANALYSIS FOR SCALPING ===")
-df = pd.read_csv('scripts/backtest/9_30_breakout/results/v6_backtest_details.csv')
+df = pd.read_csv('scripts/strategies/9_30_breakout/results/v6_backtest_details.csv')
 
 print("\nMAE (Max Adverse Excursion):")
 print(f"  Mean:   {df['MAE_Pct'].mean():.4f}%")
@@ -172,5 +172,5 @@ print(f"\n=== BEST SCALPING CONFIG ===")
 print(f"Exit: {best['Exit']}, TP: {best['TP']}, SL: {best['SL']}")
 print(f"Trades: {best['Trades']}, Win Rate: {best['WinRate']}, PnL: {best['PnL']}, PF: {best['PF']}")
 
-df_results.to_csv('scripts/backtest/9_30_breakout/results/scalping_grid_search.csv', index=False)
+df_results.to_csv('scripts/strategies/9_30_breakout/results/scalping_grid_search.csv', index=False)
 print("\nSaved: scalping_grid_search.csv")

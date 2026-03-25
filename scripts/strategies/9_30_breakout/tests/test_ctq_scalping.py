@@ -170,5 +170,5 @@ print("\n=== TOP 5 CONFIGURATIONS ===")
 for i, row in df_results.head(5).iterrows():
     print(f"  Exit {row['Exit']}, TP1 {row['TP1']}, TP2 {row['TP2']}: PnL={row['PnL']}, WR={row['WinRate']}, PF={row['PF']}")
 
-df_results.to_csv('scripts/backtest/9_30_breakout/results/ctq_scalping_grid.csv', index=False)
+df_results.to_csv('scripts/strategies/9_30_breakout/results/ctq_scalping_grid.csv', index=False)
 print("\nSaved: ctq_scalping_grid.csv")

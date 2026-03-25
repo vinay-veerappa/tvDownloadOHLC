@@ -153,5 +153,5 @@ for confirm in ['0.03%', '0.05%', '0.07%', '0.10%']:
         trades_lost = b_trades - f_trades
         print(f"  {confirm} confirmation: -{trades_lost} trades ({trades_lost/b_trades*100:.1f}% filtered out)")
 
-df_results.to_csv('scripts/backtest/9_30_breakout/results/confirmed_breakout_test.csv', index=False)
+df_results.to_csv('scripts/strategies/9_30_breakout/results/confirmed_breakout_test.csv', index=False)
 print("\nSaved: confirmed_breakout_test.csv")

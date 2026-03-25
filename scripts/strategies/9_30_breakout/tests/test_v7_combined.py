@@ -273,7 +273,7 @@ if not trades.empty:
         print(f"  {reason}: {count} ({count/len(trades)*100:.1f}%)")
     
     # Save results
-    output_dir = "scripts/backtest/9_30_breakout/results"
+    output_dir = "scripts/strategies/9_30_breakout/results"
     trades.to_csv(os.path.join(output_dir, "v7_optimized_immediate_multitp.csv"), index=False)
     print(f"\nSaved: v7_optimized_immediate_multitp.csv")
 else:

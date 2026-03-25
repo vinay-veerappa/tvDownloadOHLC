@@ -50,7 +50,7 @@ python scripts/backtest/framework/simulate_trades.py
 ### Key Files:
 - `docs/strategies/9_30_breakout/ORB_V7_SPEC.md` - Strategy specification
 - `docs/strategies/9_30_breakout/SIMULATION_GUIDE.md` - Simulation rules
-- `scripts/backtest/9_30_breakout/analyze_realistic_scenarios.py` - Post-breakout analysis
+- `scripts/strategies/9_30_breakout/analyze_realistic_scenarios.py` - Post-breakout analysis
 ```
 
 ---

@@ -79,7 +79,7 @@ def run_multi_timeframe_backtest(
         results[ib_duration] = metrics
         
         # Export trades
-        output_dir = Path(f'docs/strategies/initial_balance_break')
+        output_dir = Path(f'scripts/strategies/initial_balance/data')
         output_dir.mkdir(parents=True, exist_ok=True)
         
         csv_path = output_dir / f'backtest_results_{ib_duration}min.csv'
@@ -94,7 +94,7 @@ def run_multi_timeframe_backtest(
     # Combine all trades
     if len(all_trades) > 0:
         combined_trades = pd.concat(all_trades, ignore_index=True)
-        combined_path = Path('docs/strategies/initial_balance_break/backtest_results_all.csv')
+        combined_path = Path('scripts/strategies/initial_balance/data/backtest_results_all.csv')
         combined_trades.to_csv(combined_path, index=False)
         print(f"\n✓ Combined results saved to: {combined_path}")
     
@@ -109,7 +109,7 @@ def run_multi_timeframe_backtest(
     print(comparison_df.to_string())
     
     # Save comparison
-    comparison_path = Path('docs/strategies/initial_balance_break/timeframe_comparison.csv')
+    comparison_path = Path('scripts/strategies/initial_balance/data/timeframe_comparison.csv')
     comparison_df.to_csv(comparison_path)
     print(f"\n✓ Comparison saved to: {comparison_path}")
     
@@ -145,7 +145,7 @@ if __name__ == '__main__':
     print(f"\n{'='*80}")
     print(f"BACKTEST COMPLETE!")
     print(f"{'='*80}")
-    print(f"\nResults saved to: docs/strategies/initial_balance_break/")
+    print(f"\nResults saved to: scripts/strategies/initial_balance/data/")
     print(f"  - backtest_results_15min.csv")
     print(f"  - backtest_results_30min.csv")
     print(f"  - backtest_results_45min.csv")

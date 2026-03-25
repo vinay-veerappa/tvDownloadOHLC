@@ -37,17 +37,17 @@ How different entry triggers affected NQ performance.
 ### A. ES1 (E-mini S&P 500) - The Mean-Reverting Challenger
 ES showed high win rates but low profit factor. This is due to "paper cuts"—frequent small wins overwhelmed by deeper drawdowns. The 0.5R reach is only 31.8% compared to NQ's 64.4%.
 
-![ES1 WIN Example](file:///c:/Users/vinay/tvDownloadOHLC/docs/strategies/initial_balance_break/charts/omnibus/ES1_MultiAsset_WIN_2020-03-10.png)
+![ES1 WIN Example](file:///c:/Users/vinay/tvDownloadOHLC/scripts/strategies/initial_balance/data/charts/omnibus/ES1_MultiAsset_WIN_2020-03-10.png)
 
 ### B. RTY1 (Russell 2000) - The High-Volatility Victim
 RTY's adverse excursion (MAE) is deeply negative (-0.45%). Pullbacks in RTY often overshoot the Fibonacci levels significantly, leading to stop-outs before eventual targets are hit.
 
-![RTY1 WIN Example](file:///c:/Users/vinay/tvDownloadOHLC/docs/strategies/initial_balance_break/charts/omnibus/RTY1_MultiAsset_WIN_2020-04-03.png)
+![RTY1 WIN Example](file:///c:/Users/vinay/tvDownloadOHLC/scripts/strategies/initial_balance/data/charts/omnibus/RTY1_MultiAsset_WIN_2020-04-03.png)
 
 ### C. YM1 (E-mini Dow Jones) - The Steady Performer
 YM performed similarly to ES but with slightly better Profit Factor (0.93). It is the most viable "second-best" asset after NQ, though still less efficient.
 
-![YM1 WIN Example](file:///c:/Users/vinay/tvDownloadOHLC/docs/strategies/initial_balance_break/charts/omnibus/YM1_MultiAsset_WIN_2020-06-11.png)
+![YM1 WIN Example](file:///c:/Users/vinay/tvDownloadOHLC/scripts/strategies/initial_balance/data/charts/omnibus/YM1_MultiAsset_WIN_2020-06-11.png)
 
 ### D. GC1 (Gold) - The Directional Mismatch
 Gold showed the worst performance (43% WR, 0.29 PF). The IB break concept relies on intraday momentum follow-through, whereas Gold often behaves with its own unique supply/demand cycles that don't align with the Equities' Open.

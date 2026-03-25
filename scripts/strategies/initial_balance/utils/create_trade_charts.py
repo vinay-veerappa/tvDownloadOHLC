@@ -165,8 +165,8 @@ elif data_5m.index.tz != pd.DatetimeTZDtype(tz='US/Eastern'):
     data_5m.index = data_5m.index.tz_convert('US/Eastern')
 
 # Load trade examples
-winners = pd.read_csv('docs/strategies/initial_balance_break/winning_trade_examples.csv')
-losers = pd.read_csv('docs/strategies/initial_balance_break/losing_trade_examples.csv')
+winners = pd.read_csv('scripts/strategies/initial_balance/data/winning_trade_examples.csv')
+losers = pd.read_csv('scripts/strategies/initial_balance/data/losing_trade_examples.csv')
 
 print("="*80)
 print("CREATING TRADE VISUALIZATION CHARTS")
@@ -175,13 +175,13 @@ print("="*80)
 # Create charts for winners
 for i, (idx, trade) in enumerate(winners.iterrows(), 1):
     title = f"Winning Trade #{i} - Fib 38.2% Pullback Entry"
-    filename = f"docs/strategies/initial_balance_break/charts/winner_{i}_fib382.png"
+    filename = f"scripts/strategies/initial_balance/data/charts/winner_{i}_fib382.png"
     create_trade_chart(trade, data_5m, title, filename)
 
 # Create charts for losers
 for i, (idx, trade) in enumerate(losers.iterrows(), 1):
     title = f"Losing Trade #{i} - Fib 38.2% Pullback Entry"
-    filename = f"docs/strategies/initial_balance_break/charts/loser_{i}_fib382.png"
+    filename = f"scripts/strategies/initial_balance/data/charts/loser_{i}_fib382.png"
     create_trade_chart(trade, data_5m, title, filename)
 
 print("\n" + "="*80)

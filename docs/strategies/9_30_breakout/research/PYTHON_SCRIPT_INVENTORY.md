@@ -1,7 +1,7 @@
 # Python Backtest Script Inventory
 
 This document catalogs the existing Python scripts used to research and validate the 9:30 Breakout Strategy variants.
-Scripts are located in: `scripts/backtest/9_30_breakout/`
+Scripts are located in: `scripts/strategies/9_30_breakout/`
 
 ## Core Backtesters
 

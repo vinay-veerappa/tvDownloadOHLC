@@ -108,5 +108,5 @@ def create_comparative_charts(examples_path, output_dir):
         plt.close()
 
 if __name__ == "__main__":
-    create_comparative_charts('docs/strategies/initial_balance_break/comparative_trade_examples.csv', 
-                             'docs/strategies/initial_balance_break/charts/omnibus')
+    create_comparative_charts('scripts/strategies/initial_balance/data/comparative_trade_examples.csv', 
+                             'scripts/strategies/initial_balance/data/charts/omnibus')

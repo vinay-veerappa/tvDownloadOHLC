@@ -27,7 +27,7 @@ Trades the breakout of the 9:30 AM opening candle on NQ.
 | [9_30_NQ_V2_STRATEGY.md](9_30_breakout/9_30_NQ_V2_STRATEGY.md) | Enhanced version with filters |
 | [nq_930_breakout.md](9_30_breakout/nq_930_breakout.md) | Backtest results and analysis |
 
-**Scripts:** (`scripts/backtest/9_30_breakout/`)
+**Scripts:** (`scripts/strategies/9_30_breakout/`)
 - `verify_930_strategy.py` - Quick verification script
 - `run_930_v2_strategy.py` - V2 strategy runner
 - `compare_930_variants.py` - Variant comparison

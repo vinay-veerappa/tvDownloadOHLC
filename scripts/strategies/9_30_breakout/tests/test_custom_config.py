@@ -204,7 +204,7 @@ print(f"PF Change: {baseline_pf:.2f} -> {new_pf:.2f} ({(new_pf/baseline_pf - 1)*
 print(f"PnL Change: {baseline_trades['PnL_Pct'].sum():.2f}% -> {new_trades['PnL_Pct'].sum():.2f}%")
 
 # Save results with descriptive names
-output_dir = "scripts/backtest/9_30_breakout/results"
+output_dir = "scripts/strategies/9_30_breakout/results"
 os.makedirs(output_dir, exist_ok=True)
 
 # Baseline

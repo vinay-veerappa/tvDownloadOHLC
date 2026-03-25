@@ -64,7 +64,7 @@ def run_historical_validation():
             metrics = strategy.run()
             
             # Export results
-            output_dir = Path('docs/strategies/initial_balance_break/historical_validation')
+            output_dir = Path('scripts/strategies/initial_balance/data/historical_validation')
             output_dir.mkdir(parents=True, exist_ok=True)
             
             csv_path = output_dir / f"nq_{start_date[:4]}_{end_date[:4]}.csv"
@@ -88,7 +88,7 @@ def run_historical_validation():
     # Save comparison
     if results:
         df_results = pd.DataFrame(results)
-        comparison_path = Path('docs/strategies/initial_balance_break/historical_validation/comparison.csv')
+        comparison_path = Path('scripts/strategies/initial_balance/data/historical_validation/comparison.csv')
         df_results.to_csv(comparison_path, index=False)
         
         print(f"\n{'='*100}")
@@ -168,7 +168,7 @@ def run_multi_asset_validation():
             metrics = strategy.run()
             
             # Export results
-            output_dir = Path('docs/strategies/initial_balance_break/multi_asset_validation')
+            output_dir = Path('scripts/strategies/initial_balance/data/multi_asset_validation')
             output_dir.mkdir(parents=True, exist_ok=True)
             
             csv_path = output_dir / f"{ticker.lower()}_2019_2020.csv"
@@ -190,7 +190,7 @@ def run_multi_asset_validation():
     # Save comparison
     if results:
         df_results = pd.DataFrame(results)
-        comparison_path = Path('docs/strategies/initial_balance_break/multi_asset_validation/comparison.csv')
+        comparison_path = Path('scripts/strategies/initial_balance/data/multi_asset_validation/comparison.csv')
         df_results.to_csv(comparison_path, index=False)
         
         print(f"\n{'='*100}")

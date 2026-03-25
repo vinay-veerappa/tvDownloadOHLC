@@ -14,8 +14,8 @@ This document serves as a living record of ideas, use cases, and technical desig
 - **Goal:** Expose internal quant logic as standardized Tools.
 - **Server:** `mcp/data_server.py`
 - **Implemented Tools:**
-    - `calculate_indicator(ticker, tf, indicators)`: Wraps `api/services/indicators.py`.
-    - `get_profiler_stats(ticker)`: Wraps `api/services/profiler_service.py`.
+    - `calculate_indicator(ticker, tf, indicators)`: Wraps `api/features/indicators/service.py`.
+    - `get_profiler_stats(ticker)`: Wraps `api/features/profiler/service.py`.
     - `get_market_levels(ticker)`: Direct access to GEX/Regime JSON.
     - `get_script_for_task(query)`: **(The Librarian)** Searches 230+ scripts.
     - `get_repo_map()`: High-level architectural navigation.
@@ -112,8 +112,8 @@ These routes are the primary way the frontend interacts with the quant logic. Ex
 ## 📉 Token Efficiency Analysis: Why MCP Wins
 Today, to understand how a "calculate" request works, the AI must:
 1. `list_dir api/routers` (~100 tokens)
-2. `view_file api/routers/indicators.py` (~4,000 tokens)
-3. `view_file api/services/indicator_service.py` (~3,000 tokens)
+2. `view_file api/features/indicators/router.py` (~4,000 tokens)
+3. `view_file api/features/indicators/service.py` (~3,000 tokens)
 4. Total: **~7,100 tokens per investigation.**
 
 **With CBM-MCP & Custom Tools:**

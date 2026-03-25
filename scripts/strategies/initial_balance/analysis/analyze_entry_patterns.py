@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 
 # Load 45-min IB results (best performer)
-df = pd.read_csv('docs/strategies/initial_balance_break/backtest_results_45min.csv')
+df = pd.read_csv('scripts/strategies/initial_balance/data/backtest_results_45min.csv')
 
 print("="*80)
 print("ENTRY PATTERN ANALYSIS - 45-Minute Initial Balance")

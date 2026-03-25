@@ -13,8 +13,8 @@ def compare_strategies(ticker="NQ1", years=5):
     HARD_EXIT = time(10, 0)
     MAX_ATTEMPTS = 3
     PENETRATION_THH = 0.0 # Strict Exit (Close inside range)
-    CSV_PATH = "scripts/backtest/9_30_breakout/results/930_backtest_all_trades.csv"
-    os.makedirs("scripts/backtest/9_30_breakout/results", exist_ok=True)
+    CSV_PATH = "scripts/strategies/9_30_breakout/results/930_backtest_all_trades.csv"
+    os.makedirs("scripts/strategies/9_30_breakout/results", exist_ok=True)
     
     # Load Data
     data_path = f"data/{ticker}_1m.parquet"

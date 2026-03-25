@@ -30,12 +30,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(indicators.router, prefix="/api/indicators", tags=["indicators"])
-app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
-app.include_router(profiler.router)
+# app.include_router(indicators.router, prefix="/api/indicators", tags=["indicators"])
+# app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
+# app.include_router(profiler.router)
 
-from api.routers.candle_science import router as candle_science_router
-app.include_router(candle_science_router, prefix="/api/candle-science", tags=["candle-science"])
+# Import routers from features
+from api.features.indicators.router import router as indicators_router
+from api.features.sessions.router import router as sessions_router
+from api.features.profiler.router import router as profiler_router
+
+app.include_router(indicators_router, prefix="/api/indicators", tags=["indicators"])
+app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
+app.include_router(profiler_router, prefix="/api/profiler", tags=["profiler"])
 
 
 @app.on_event("startup")

@@ -198,7 +198,7 @@ if __name__ == '__main__':
         print(f"{row['Strategy']:25s} SL: {row['SL_PnL']:+7.1f}%  TIME: {row['TIME_PnL']:+7.1f}%  TP1: {row['TP1_PnL']:+7.1f}%")
     
     # Save results
-    results.to_csv('scripts/backtest/9_30_breakout/results/variant_comparison_final.csv', index=False)
+    results.to_csv('scripts/strategies/9_30_breakout/results/variant_comparison_final.csv', index=False)
     print("\nSaved: variant_comparison_final.csv")
     
     # Best strategy

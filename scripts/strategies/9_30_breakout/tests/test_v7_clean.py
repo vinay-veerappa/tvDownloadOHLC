@@ -105,5 +105,5 @@ print(f'Profit Factor: {pf:.2f}')
 print(f'Avg Trade: {df_trades["PnL_Pct"].mean():.4f}%')
 
 # Save
-df_trades.to_csv('scripts/backtest/9_30_breakout/results/v7_optimized_clean.csv', index=False)
+df_trades.to_csv('scripts/strategies/9_30_breakout/results/v7_optimized_clean.csv', index=False)
 print('\nSaved: v7_optimized_clean.csv')

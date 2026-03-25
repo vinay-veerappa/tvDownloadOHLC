@@ -13,11 +13,11 @@ import numpy as np
 import os
 
 # Load the baseline trades which has full MAE/MFE data
-trades_file = "scripts/backtest/9_30_breakout/results/v6_backtest_details.csv"
+trades_file = "scripts/strategies/9_30_breakout/results/v6_backtest_details.csv"
 
 if not os.path.exists(trades_file):
     # Try optimization combined file as backup
-    trades_file = "scripts/backtest/9_30_breakout/results/optimization/all_trades_combined.csv"
+    trades_file = "scripts/strategies/9_30_breakout/results/optimization/all_trades_combined.csv"
 
 df = pd.read_csv(trades_file)
 print(f"Loaded {len(df)} trades from {trades_file}")
@@ -137,5 +137,5 @@ output = {
               f"{winners['MFE_Pct'].mean():.4f}%", f"{losers['MFE_Pct'].mean():.4f}%",
               f"{suggested_sl:.4f}%", f"{suggested_tp:.4f}%"]
 }
-pd.DataFrame(output).to_csv('scripts/backtest/9_30_breakout/results/mae_mfe_analysis.csv', index=False)
+pd.DataFrame(output).to_csv('scripts/strategies/9_30_breakout/results/mae_mfe_analysis.csv', index=False)
 print("\n\nSaved: mae_mfe_analysis.csv")

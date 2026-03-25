@@ -69,7 +69,7 @@ def run_pullback_backtest(
     metrics = strategy.run()
     
     # Export results
-    output_dir = Path('docs/strategies/initial_balance_break')
+    output_dir = Path('scripts/strategies/initial_balance/data')
     output_dir.mkdir(parents=True, exist_ok=True)
     
     csv_path = output_dir / f'pullback_results_{ib_duration}min.csv'

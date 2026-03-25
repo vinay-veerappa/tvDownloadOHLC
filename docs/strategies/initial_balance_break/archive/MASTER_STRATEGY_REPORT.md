@@ -65,7 +65,7 @@ MAE/MFE analysis proved that winning trades often retraced slightly before resum
 
 ### High-Probability Winner
 - **Characteristics**: Bias correctly sets, price provides a clear touch of the 50% level within the noon hour, followed by follow-through.
-- **Charts**: Available in `docs/strategies/initial_balance_break/charts/omnibus/`.
+- **Charts**: Available in `scripts/strategies/initial_balance/data/charts/omnibus/`.
 
 ---
 
@@ -84,6 +84,6 @@ MAE/MFE analysis proved that winning trades often retraced slightly before resum
 The strategy is **validated and ready** for NQ1. The introduction of sequence-based bias and touch-based triggers has stabilized the win rate above 60%, making it a robust intraday system.
 
 **Documentation Library**:
-- Comprehensive Omnibus: [STRATEGY_ENCYCLOPEDIA_OMNIBUS.md](file:///c:/Users/vinay/tvDownloadOHLC/docs/strategies/initial_balance_break/STRATEGY_ENCYCLOPEDIA_OMNIBUS.md)
+- Comprehensive Omnibus: [STRATEGY_ENCYCLOPEDIA_OMNIBUS.md](file:///c:/Users/vinay/tvDownloadOHLC/scripts/strategies/initial_balance/data/STRATEGY_ENCYCLOPEDIA_OMNIBUS.md)
 - Complete Walkthrough: [walkthrough.md](file:///C:/Users/vinay/.gemini/antigravity/brain/0011b2a5-c74d-4c60-940a-a1afd51a0678/walkthrough.md)
 - Codebase: `strategies/initial_balance_pullback.py`
