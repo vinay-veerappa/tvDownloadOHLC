@@ -5,6 +5,10 @@ __pycache__/
 .venv/
 venv/
 env/
+.agent/scratch/
+logs/*.log
+web/logs/
+**/tsconfig.tsbuildinfo
 
 # Data
 downloads_es_futures/
@@ -51,3 +55,7 @@ discord_webhooks.json
 temp_repo/
 temp_risk.zip
 temp_risk/
+mcp/bin/
+bin/
+*.exe
+*.dll

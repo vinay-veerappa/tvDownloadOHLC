@@ -1,7 +1,7 @@
 # Project Roadmap
 
-**Version:** 0.5.0
-**Last Updated:** December 18, 2025
+**Version:** 1.0.0 (AI-Native Command Center)
+**Last Updated:** March 25, 2026
 
 This document consolidates all planned features, requirements, and known technical debt for the **tvDownloadOHLC** platform.
 

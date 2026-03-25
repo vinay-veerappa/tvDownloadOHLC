@@ -11,7 +11,7 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 | Folder | Count | Status |
 |:---|:---:|:---|
 | `analysis/` | 40 | ⚠️ Contains duplicates |
-| `backtest/` | ~35 | ✅ Organized |
+| `strategies/` | ~90 | ✅ Unified Strategy Hub |
 | `data_processing/` | 42 | ✅ Organized into subfolders |
 | `debug/` | 47 | ⚠️ Many one-off scripts |
 | `derived/` | 9 | ✅ Core scripts |
@@ -21,6 +21,7 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 | `validation/` | 53 | ⚠️ Contains duplicates |
 | `streaming/` | ~12 | ✅ Schwab API |
 | `utils/` | ~10 | ✅ Shared libraries |
+| `mcp/` | 5 | 🤖 AI Infrastructure |
 
 **Total: ~230 scripts** (including .ts, .js, .ps1)
 
@@ -80,15 +81,14 @@ Complete inventory of all scripts with purposes and cleanup recommendations.
 | `generate_bias_charts.py` | ICT bias chart generation |
 | `extrapolate_em_to_futures.py` | EM extrapolation for futures |
 
-### Backtest (`backtest/`)
-| Script | Purpose |
+### Quantitative Strategies (`scripts/strategies/`)
+| Category | Purpose |
 |:---|:---|
-| `backtest_engine.py` | Core Python backtest engine |
-| `enhanced_backtest_engine.py` | Enhanced backtest with more features |
-| `9_30_breakout/verify_930_strategy.py` | 9:30 strategy verification |
-| `9_30_breakout/run_930_v2_strategy.py` | Run V2 strategy |
-| `initial_balance/*.py` | (15 files) IB Break & Pullback logic |
-| `ICT/*.py` | 10 ICT bias strategies |
+| `9_30_breakout/` | **Primary:** NQ 9:30 V3 and Optimization suite (50+ scripts). |
+| `ict/` | ICT Bias, Displacement, Liquidity Sweep, and FVG strategies. |
+| `initial_balance/` | IB Breakout and Pullback mechanisms. |
+| `magic_hour_analysis/` | Magic Hour Strategy (Pine/Python). |
+| `framework/` | Core Backtest Engines (Python/VectorBT). |
 
 ---
 

@@ -1,7 +1,7 @@
 # 📚 Documentation Index
 
-**Version:** 0.7.0
-**Last Updated:** March 14, 2026
+**Version:** 1.0.0 (AI-Native)
+**Last Updated:** March 25, 2026
 
 ---
 
@@ -17,7 +17,13 @@
 - **[LLM Setup Guide](setup/LLM_SETUP.md)**: Instructions for setting up Local LLMs (Ollama).
 - **[UX Guidelines](ui/UX_GUIDELINES.md)**: Design patterns for Modals, Settings, and Review.
 - **[Roadmap](ROADMAP.md)**: Feature requirements and status.
+- **[Platform Standards](file:///C:/Users/vinay/.gemini/antigravity/brain/6e495637-f9f3-4976-b053-eff0060d9d9a/platform_standards.md)**: Rules for code and documentation placement.
 - **[Journal Requirements](JournalRequirements/trading_journal_requirements.md)**: Trading Journal enhancements.
+
+## 🤖 AI-Native Integration (MCP)
+- **[Data Bridge Server](file:///c:/Users/vinay/tvDownloadOHLC/mcp/data_server.py)**: The central tool hub for AI assistants.
+- **[Structural Truth](mcp_brainstorming/structural_truth.md)**: The repo-wide knowledge graph (36k nodes).
+- **[Second Brain](file:///c:/Users/vinay/tvDownloadOHLC/mcp/memory.db)**: Persistent semantic memory for strategies and ADRs.
 
 ---
 

@@ -7,8 +7,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import ORJSONResponse
-from api.routers import indicators
-from api.routers import sessions
+from api.features.indicators import router as indicators
+from api.features.sessions import router as sessions
+from api.features.profiler import router as profiler
 
 app = FastAPI(
     title="Trading Indicators API",
@@ -31,7 +32,6 @@ app.add_middleware(
 
 app.include_router(indicators.router, prefix="/api/indicators", tags=["indicators"])
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
-from api.routers import profiler
 app.include_router(profiler.router)
 
 from api.routers.candle_science import router as candle_science_router
@@ -42,7 +42,7 @@ app.include_router(candle_science_router, prefix="/api/candle-science", tags=["c
 async def startup_event():
     """Run pre-warming logic on startup."""
     print("Pre-warming cache...")
-    from api.services.profiler_service import ProfilerService
+    from api.features.profiler.service import ProfilerService
     # Warm up for default ticker NQ1
     ProfilerService.prewarm_cache("NQ1")
 
