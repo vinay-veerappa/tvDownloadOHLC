@@ -13,6 +13,7 @@ if BASE_DIR not in sys.path:
 from api.features.indicators.service import calculate_indicators, get_available_indicators
 from api.features.shared.data_loader import load_parquet, get_available_data
 from api.features.profiler.service import ProfilerService
+from api.features.candle_science.service import CandleScienceService
 
 # Paths
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -83,9 +84,45 @@ def query_memory(query: str) -> str:
 def bootstrap_memory() -> str:
     """Initializes the memory with known foundations from the brainstorming phase."""
     seeds = [
+        # Architecture
         ("ADR", "MCP Architecture", "Platform transitioned to AI-Native using CBM-MCP and custom DataBridge."),
         ("Nuance", "Token Efficiency", "Structural Graph (36k nodes) reduces navigation tokens by ~90%."),
-        ("Nuance", "Data Access", "Indicators and Market Levels are now served via MCP tools to bypass file parsing.")
+        ("Nuance", "Data Access", "Indicators and Market Levels are now served via MCP tools to bypass file parsing."),
+        # Shell Gotchas (Windows/PowerShell)
+        ("Shell", "curl", "Always use `curl.exe -i` on Windows to avoid interactive Invoke-WebRequest prompts."),
+        ("Shell", "ls", "Use `Get-ChildItem` for reliable file listing; be wary of `ls` alias limits."),
+        ("Shell", "rm", "Use `Remove-Item -Force -Recurse` for clean deletions."),
+        ("Shell", "mv", "Use `Move-Item -Force` for reliable moves, especially across different drives."),
+        ("Shell", "paths", "schema.prisma is at web/prisma/schema.prisma NOT in root prisma/ directory."),
+        ("Shell", "multiline-args", "Avoid multiline strings in PowerShell CLI args; use single-line strings instead."),
+        # Data Cards
+        ("DataCard", "NQ1", "Parquet OHLCV. Timeframes: 1m,5m,15m,1h,4h,1d,1W. Columns: [time,open,high,low,close,volume]. Timezone: US/Eastern. Source: TradingView."),
+        ("DataCard", "ES1", "Parquet OHLCV. Timeframes: 1m,5m,15m,1h,4h,1d,1W. Same schema as NQ1. Source: TradingView."),
+        ("DataCard", "all_tickers", "Futures: NQ1,ES1,RTY1,YM1,GC1,CL1. ETFs: QQQ,SPY,IWM,GLD,TLT. Equities: AAPL,NVDA,MSFT,META,TSLA,AMZN,GOOGL,AMD,PLTR. Indices: NDX,SPX,RUT,DJI. Vols: VIX,VVIX."),
+        ("DataCard", "json_files", "Per-ticker derived files: _profiler.json, _hod_lod.json, _daily_hod_lod.json, _opening_range.json, _level_touches.json, _range_dist.json, _ny_levels_stats.json."),
+        # Schema Cards
+        ("SchemaCard", "Trade", "Core journal model. Key fields: id,ticker,entryDate,exitDate,entryPrice,exitPrice,quantity,direction(LONG/SHORT),status(OPEN/CLOSED/PENDING),pnl,notes,metadata(JSON). Relations: account,strategy,playbook,marketCondition."),
+        ("SchemaCard", "MacroSnapshot", "Institutional options dashboard model. Fields: id,ticker,timestamp,tradingDate,spotPrice,macroCallWall,macroPutWall,zeroGamma,anomalies(JSON),dominantNodes(JSON). Unique on [ticker,tradingDate]."),
+        ("SchemaCard", "Analysis", "Daily pre-market context model. Fields: date(unique),sentiment,bias,notes,keyLevels,profilerSnapshot,candleScienceSnapshot. Relations: charts,wargames."),
+        ("SchemaCard", "GexSnapshot", "Intraday GEX timeseries. Fields: ticker,timestamp,tradingDate,totalGex,gexRegime,spotPrice,gammaMagnet,pinStrike. Index on [ticker,tradingDate]."),
+        # DevOps Runner Cards
+        ("DevOps", "Ports", "Frontend: 3000 | FastAPI: 8000 | MCP: Dynamic. Check .env for GEX_PORT overrides."),
+        ("DevOps", "Commands", "Web: `npm run dev` (in /web) | Backend: `fastapi dev api/main.py` | DataBridge: `python mcp/data_server.py`."),
+        # Incident Records (The "Never Again" List)
+        ("Incident", "Prisma Path", "ALWAYS run `npx prisma generate` inside the `web/` directory. Schema is at `web/prisma/schema.prisma`."),
+        ("Incident", "API Types", "POST /candle-science/calculate requires STRICT integers for min_ticks. 1.0 will fail with 422; use 1."),
+        ("Incident", "MCP Args", "FastMCP `call` CLI fails on multiline strings. Always use single-line single-quoted strings for manual tool testing."),
+        # Shell Enforcement (Windows/PowerShell Standard)
+        ("Shell", "Enforcement", "THIS IS A WINDOWS/POWERSHELL ENVIRONMENT. NEVER use Unix commands (grep, ls, rm, mv). USE: Select-String, Get-ChildItem, Remove-Item -Force, Move-Item -Force."),
+        ("Shell", "paths", "schema.prisma is at web/prisma/schema.prisma NOT in root prisma/ directory."),
+        ("Shell", "multiline-args", "Avoid multiline strings in PowerShell CLI args; use single-line strings instead."),
+        # Library & Domain Manuals (Foundational Knowledge)
+        ("Lib", "SchwabAPI", "Use `schwabdev`. Client init requires `app_key, app_secret, callback_url`. KEY STEP: call `linked_accounts()` to get `hashValue` for account/order calls. Orders use strict JSON mappings from the Guide."),
+        ("Lib", "PineScript", "TradingView v6 standard: Use //@version=6. ALWAYS use UDTs (User Defined Types) for entities with 3+ fields. NEVER delete historical drawings (boxes/lines) — only update live ones or trim based on max count."),
+        ("Lib", "FastAPI", "Project standard: Feature-First. Routers go in `api/features/{name}/router.py`. Mount in `api/main.py`."),
+        ("Lib", "Prisma", "Use `db.macroSnapshot.upsert` with `ticker_tradingDate` compound unique index for daily options data."),
+        ("Domain", "ICT", "Core Logic: Killzones (London: 02-05, NYAM: 09:30-11:00). Bias Stacking = HTF Sweep + LTF CISD (Change in State of Delivery). SMT Divergence = Crack in correlation between NQ, ES, YM."),
+        ("Data", "Inventory", "Derived Data at `/data/derived/`. Use `ict_nwog_ndog.json` for gaps, `NQ1_daily_classification.parquet` for bias, and `hourly_quarter_stats_NQ1.json` for intraday probabilities. DON'T RE-CALC!"),
     ]
     for cat, topic, content in seeds:
         memory.add(cat, topic, content)
@@ -141,6 +178,15 @@ def get_profiler_stats(ticker: str, days: int = 50) -> str:
     Analyzes Open/High/Low/Close relative to previous sessions.
     """
     result = ProfilerService.analyze_profiler_stats(ticker, days=days)
+    return json.dumps(result, indent=2)
+
+@mcp.tool()
+def calculate_candle_science(ticker: str, timeframe: str, filters: dict = None) -> str:
+    """
+    Executes Candle Science statistical analysis using the Filter-then-Compute methodology.
+    Returns probabilities for 3-candle patterns based on provided filters.
+    """
+    result = CandleScienceService.calculate_stats(ticker, timeframe, filters)
     return json.dumps(result, indent=2)
 
 @mcp.tool()

@@ -295,7 +295,7 @@ export default async function MacroDashboard(props: {
                   OI Hubs
                 </h3>
               </div>
-              {data.dominantNodes.length === 0 ? (
+              {(!data.dominantNodes || data.dominantNodes.length === 0) ? (
                 <div className="py-12 text-center text-[10px] font-black uppercase tracking-widest text-zinc-700">Equilibrium / No Major Nodes</div>
               ) : (
                 <div className="space-y-4">
