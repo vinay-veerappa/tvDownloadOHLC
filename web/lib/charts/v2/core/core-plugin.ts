@@ -75,6 +75,16 @@ export class LineToolsCorePlugin<HorzScaleItem> implements ILineToolsApi {
 	}
 
 	/**
+	 * Stops the current tool creation process and deselects all tools.
+	 * This effectively switches the chart back to the "cursor" mode.
+	 */
+	public clearActiveTool(): void {
+		this._interactionManager.setCurrentToolCreating(null);
+		this._interactionManager.deselectAllTools();
+		this.requestUpdate();
+	}
+
+	/**
 	 * Returns a specific line tool by its ID.
 	 * @param id - The ID of the tool to retrieve.
 	 * @returns The tool instance or undefined.

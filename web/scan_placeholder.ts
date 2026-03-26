@@ -1,5 +1,5 @@
 
-import { calculateMissionMatrix } from './web/lib/mission-control/calculators/mission-matrix.ts';
+import { calculateMissionMatrix } from '@/lib/mission-control/calculators/mission-matrix';
 
 // We can bypass valid calc and just import the data loader if exposed,
 // but calculateMissionMatrix is easier. We will modify it to expose the raw sessions lists if needed,

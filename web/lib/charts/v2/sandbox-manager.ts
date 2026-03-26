@@ -54,7 +54,6 @@ export class V2SandboxManager<HorzScaleItem> {
         this._plugin = createLineToolsPlugin(chart, series);
 
         // Register V2-compatible tools available in the sandbox
-        // In the future, we could dynamic import these or register them one by one
         this._plugin.registerLineTool('TrendLine', TrendLineV2);
         this._plugin.registerLineTool('Rectangle', RectangleV2);
         this._plugin.registerLineTool('HorizontalLine', HorizontalLineV2);
@@ -82,8 +81,6 @@ export class V2SandboxManager<HorzScaleItem> {
         // Subscribe to Core Plugin Events
         this._plugin.subscribeLineToolsAfterEdit((params: any) => {
             const { selectedLineTool, stage } = params;
-            // console.log('[V2SandboxManager] Tool Edited:', params);
-
             if (stage === 'lineToolFinished') {
                 this._callbacks.onDrawingCreated?.(selectedLineTool);
             } else if (stage === 'lineToolEdited') {
@@ -94,23 +91,12 @@ export class V2SandboxManager<HorzScaleItem> {
         // Subscribe to Selection Events
         this._plugin.subscribeLineToolsSelectionChanged((params: any) => {
             const { selectedLineTools } = params;
-            console.log('[SandboxManager] SelectionChanged callback. selectedLineTools:', selectedLineTools);
-            if (selectedLineTools && selectedLineTools.length > 0) {
-                // For now, we only support single selection synchronization
-                const tool = selectedLineTools[0];
-                const toolId = typeof tool.id === 'function' ? tool.id() : tool.id;
-                console.log('[SandboxManager] Selected tool:', toolId, tool);
-                this._callbacks.onSelectionChanged?.(toolId, tool);
-            } else {
-                console.log('[SandboxManager] No tools selected, clearing selection');
-                this._callbacks.onSelectionChanged?.(null, null);
-            }
+            this._notifySelectionChange(selectedLineTools?.[0] || null);
         });
 
         // Double Click
         this._plugin.subscribeLineToolsDoubleClick((params: any) => {
             const { selectedLineTool } = params;
-            console.log('[SandboxManager] DoubleClick callback. selectedLineTool:', selectedLineTool);
             if (selectedLineTool) {
                 this._callbacks.onDrawingDoubleClick?.(selectedLineTool);
             }
@@ -119,23 +105,46 @@ export class V2SandboxManager<HorzScaleItem> {
         console.log("V2 Sandbox Manager Initialized and Tools Registered.");
     }
 
-    /**
-     * @returns The underlying core plugin instance for API access
-     */
     public get plugin() {
         return this._plugin;
     }
 
-    /**
-     * Load an array of serialized tools into the sandbox.
-     * @param tools - Array of serialized tool objects.
-     */
+    private _selectionHandlers: Set<(event: { drawing: any | null; position: { x: number; y: number } | null }) => void> = new Set();
+
+    public on(event: string, handler: Function) {
+        if (event === 'drawing:created') this._callbacks.onDrawingCreated = handler as any;
+        if (event === 'drawing:modified') this._callbacks.onDrawingModified = handler as any;
+        if (event === 'drawing:deleted') this._callbacks.onDrawingDeleted = handler as any;
+        if (event === 'drawing:double-click') this._callbacks.onDrawingDoubleClick = handler as any;
+        if (event === 'selection:changed') this._callbacks.onSelectionChanged = handler as any;
+    }
+
+    public subscribeSelectionChange(handler: (event: { drawing: any | null; position: { x: number; y: number } | null }) => void) {
+        this._selectionHandlers.add(handler);
+    }
+
+    public unsubscribeSelectionChange(handler: (event: { drawing: any | null; position: { x: number; y: number } | null }) => void) {
+        this._selectionHandlers.delete(handler);
+    }
+
+    private _notifySelectionChange(drawing: any | null, position: { x: number; y: number } | null = null) {
+        const id = drawing ? (typeof drawing.id === 'function' ? drawing.id() : drawing.id) : null;
+        this._callbacks.onSelectionChanged?.(id, drawing);
+        this._selectionHandlers.forEach(handler => handler({ drawing, position }));
+    }
+
+    public updateStorageKey(key: string) {
+        console.log(`[V2SandboxManager] Storage key updated to: ${key}`);
+    }
+
+    public updateTheme(theme: any) {
+        console.log(`[V2SandboxManager] Updating theme:`, theme);
+    }
+
     public loadTools(tools: any[]) {
         tools.forEach(tool => {
             if (!tool.toolType || !tool.points) return;
             try {
-                // Use createOrUpdateLineTool to preserve ID and state
-                // Note: We need to cast points and options as they come from storage/outside
                 this._plugin.createOrUpdateLineTool(tool.toolType, tool.points, tool.options, tool.id);
             } catch (e) {
                 console.error(`[V2SandboxManager] Failed to load tool ${tool.id}:`, e);
@@ -146,13 +155,59 @@ export class V2SandboxManager<HorzScaleItem> {
     /**
      * Starts interactive creation of a tool.
      */
-    public addTool(type: 'TrendLine' | 'Rectangle' | 'HorizontalLine' | 'Ray' | 'VerticalLine' | 'Text' | 'PriceLabel' | 'PriceRange' | 'DateRange' | 'Measure' | 'FibRetracement' | 'LongShortPosition' | 'Arrow' | 'ExtendedLine' | 'HorizontalRay' | 'CrossLine' | 'Circle' | 'Triangle' | 'ParallelChannel' | 'Brush' | 'Path' | 'Highlighter' | 'Callout') {
-        return this._plugin.addLineTool(type, [], undefined);
+    public addTool(type: string | null) {
+        if (type === null) {
+            this._plugin.clearActiveTool();
+            return;
+        }
+        return this._plugin.addLineTool(type as any, [], undefined);
     }
 
     /**
-     * Utility to destroy the plugin when the chart or sandbox is closed.
+     * Delete a drawing by its ID.
      */
+    public deleteDrawing(id: string) {
+        if (this._plugin) {
+            this._plugin.removeLineToolsById([id]);
+            this._callbacks.onDrawingDeleted?.(id);
+        }
+    }
+
+    /**
+     * Clone a drawing by its ID.
+     */
+    public cloneDrawing(id: string) {
+        if (this._plugin) {
+            const tool = this._plugin.getLineTool(id);
+            if (tool) {
+                const data = tool.getExportData();
+                this._plugin.addLineTool(
+                    data.toolType,
+                    data.points,
+                    data.options as any
+                );
+            }
+        }
+    }
+
+    /**
+     * Update a drawing's options or points.
+     */
+    public updateDrawing(id: string, points: any[], options: any) {
+        if (this._plugin) {
+            const tool = this._plugin.getLineTool(id);
+            if (tool) {
+                this._plugin.createOrUpdateLineTool(
+                    tool.toolType as any,
+                    points,
+                    options,
+                    id
+                );
+                this._callbacks.onDrawingModified?.(tool);
+            }
+        }
+    }
+
     public destroy() {
         if (this._plugin) {
             this._plugin.removeAllLineTools();

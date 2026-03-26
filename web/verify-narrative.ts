@@ -1,4 +1,4 @@
-import { MissionControlService } from './web/lib/mission-control/service';
+import { MissionControlService } from '@/lib/mission-control/service';
 
 async function verify() {
     console.log("--- Verifying Narrative Synthesis ---");
@@ -8,10 +8,10 @@ async function verify() {
     try {
         const summary = await service.getSummary();
         console.log("Ticker:", summary.ticker);
-        console.log("Bias:", summary.bias.bias, "(Score:", summary.bias.score, ")");
+        console.log("Bias:", (summary.bias as any).bias, "(Score:", (summary.bias as any).score, ")");
 
         console.log("\n--- Narrative Feed Items ---");
-        summary.panels.narrative.forEach((item, i) => {
+        (summary.panels.narrative as any[]).forEach((item: any, i: number) => {
             console.log(`[Item ${i + 1}] ${item.title} (${item.category}):`);
             console.log(`   ${item.content}`);
         });
