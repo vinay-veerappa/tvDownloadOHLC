@@ -3,6 +3,9 @@ NQStats Library Entrance - Simplified interface for fetching status.
 """
 
 import pandas as pd
+# Silence Pandas warnings for downcasting
+pd.set_option('future.no_silent_downcasting', True)
+
 from .sessions import extract_all_sessions
 from .classifiers import (
     classify_aln_vectorized, 
