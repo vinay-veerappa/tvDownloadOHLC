@@ -113,21 +113,23 @@ export const SessionAnalysisView = memo(function SessionAnalysisView({ session, 
                     </button>
                 </div>
                 <Tabs defaultValue={validOutcomes[0]} className="w-full">
-                    <TabsList className="w-full justify-start h-auto p-1 bg-muted mb-4 overflow-x-auto">
-                        {validOutcomes.map(outcome => {
-                            const count = outcomeGroups.groups[outcome].length;
-                            return (
-                                <TabsTrigger
-                                    key={outcome}
-                                    value={outcome}
-                                    className="px-4 py-2 flex items-center gap-2"
-                                >
-                                    {outcome}
-                                    <span className="text-xs bg-muted text-muted-foreground px-1.5 rounded-full">{count}</span>
-                                </TabsTrigger>
-                            )
-                        })}
-                    </TabsList>
+                    <div className="flex justify-start">
+                        <TabsList className="h-10 p-1 bg-muted/60 inline-flex mb-8 border border-border/40">
+                            {validOutcomes.map(outcome => {
+                                const count = outcomeGroups.groups[outcome].length;
+                                return (
+                                    <TabsTrigger
+                                        key={outcome}
+                                        value={outcome}
+                                        className="px-6 py-2 flex items-center gap-2 font-semibold"
+                                    >
+                                        {outcome}
+                                        <span className="text-[10px] bg-background text-foreground/70 px-1.5 py-0.5 rounded-full border border-border/50">{count}</span>
+                                    </TabsTrigger>
+                                )
+                            })}
+                        </TabsList>
+                    </div>
 
                     {validOutcomes.map(outcome => (
                         <TabsContent key={outcome} value={outcome} className="mt-0">

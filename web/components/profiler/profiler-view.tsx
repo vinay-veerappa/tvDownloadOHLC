@@ -284,24 +284,38 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                     <h1 className="text-3xl font-bold tracking-tight">Market Profiler</h1>
                 </div>
 
-                <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                    <TabsList className="h-10 p-1 bg-muted inline-flex border border-border/50">
-                        <TabsTrigger value="daily" className="px-6">Daily Overview</TabsTrigger>
-                        <TabsTrigger value="sessions" className="px-6">Session Analysis</TabsTrigger>
-                    </TabsList>
+                <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-8">
+                    <div className="flex justify-start">
+                        <TabsList className="h-12 p-1.5 bg-muted/80 backdrop-blur-sm inline-flex border border-border/50 shadow-md">
+                            <TabsTrigger 
+                                value="daily" 
+                                className="px-8 font-bold text-base data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all duration-300"
+                            >
+                                Daily Overview
+                            </TabsTrigger>
+                            <TabsTrigger 
+                                value="sessions" 
+                                className="px-8 font-bold text-base data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all duration-300"
+                            >
+                                Session Analysis
+                            </TabsTrigger>
+                        </TabsList>
+                    </div>
 
-                    <TabsContent value="daily" className="mt-6">
+                    <TabsContent value="daily" className="mt-2 w-full animate-in fade-in slide-in-from-top-4 duration-500">
                         {dailyTabContent}
                     </TabsContent>
 
-                    <TabsContent value="sessions" className="mt-6">
+                    <TabsContent value="sessions" className="mt-2 w-full animate-in fade-in slide-in-from-top-4 duration-500">
                         <Tabs value={subTab} onValueChange={setSubTab} className="w-full">
-                            <TabsList className="h-9 p-1 bg-muted/50 inline-flex mb-6 border border-border/30">
-                                <TabsTrigger value="asia" className="px-4">Asia</TabsTrigger>
-                                <TabsTrigger value="london" className="px-4">London</TabsTrigger>
-                                <TabsTrigger value="ny1" className="px-4">NY1</TabsTrigger>
-                                <TabsTrigger value="ny2" className="px-4">NY2</TabsTrigger>
-                            </TabsList>
+                            <div className="flex justify-start">
+                                <TabsList className="h-10 p-1 bg-muted/50 inline-flex mb-8 border border-border/30">
+                                    <TabsTrigger value="asia" className="px-6">Asia</TabsTrigger>
+                                    <TabsTrigger value="london" className="px-6">London</TabsTrigger>
+                                    <TabsTrigger value="ny1" className="px-6">NY1</TabsTrigger>
+                                    <TabsTrigger value="ny2" className="px-6">NY2</TabsTrigger>
+                                </TabsList>
+                            </div>
 
                             {['asia', 'london', 'ny1', 'ny2'].map(sessKey => {
                                 const sessName = sessKey === 'asia' ? 'Asia' : sessKey === 'london' ? 'London' : sessKey === 'ny1' ? 'NY1' : 'NY2';

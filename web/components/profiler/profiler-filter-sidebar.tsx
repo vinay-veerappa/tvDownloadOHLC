@@ -112,23 +112,28 @@ export const ProfilerFilterSidebar = memo(function ProfilerFilterSidebar(props: 
                     </div>
                 </div>
 
-                {/* Target Session Selection */}
-                <div className="space-y-1.5 border border-primary/20 p-2 rounded-md bg-primary/5">
-                    <Label className="text-xs font-semibold text-primary uppercase flex items-center gap-1">
+                <div className="space-y-2 border border-primary/20 p-3 rounded-md bg-primary/5">
+                    <Label className="text-[10px] font-bold text-primary uppercase flex items-center gap-1 tracking-wider">
                         <Sparkles className="h-3 w-3" />
                          Target / Predict
                     </Label>
-                    <Select value={targetSession} onValueChange={onTargetSessionChange}>
-                        <SelectTrigger className="border-primary/30 font-medium">
-                            <SelectValue placeholder="Select session" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="Daily">Daily Model</SelectItem>
-                            {SESSIONS.map(s => (
-                                <SelectItem key={s} value={s}>{s} Session</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                        {['Daily', ...SESSIONS].map(s => (
+                            <Button
+                                key={s}
+                                variant={targetSession === s ? "default" : "outline"}
+                                size="sm"
+                                className={`h-8 px-2.5 text-xs font-semibold flex-1 min-w-[60px] ${
+                                    targetSession === s 
+                                    ? 'bg-primary text-primary-foreground shadow-sm' 
+                                    : 'bg-background hover:bg-muted text-muted-foreground border-border/50'
+                                }`}
+                                onClick={() => onTargetSessionChange(s)}
+                            >
+                                {s}
+                            </Button>
+                        ))}
+                    </div>
                 </div>
 
                 {/* Common Ticker Selection */}
