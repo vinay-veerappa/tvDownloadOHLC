@@ -113,48 +113,52 @@ def main():
         print("❌ Error: No data available for analysis.")
         return
 
-    # 2. Get Sessions
-    asia = get_session_data(df, 'Asia', target_date)
-    london = get_session_data(df, 'London', target_date)
-    preny = get_session_data(df, 'Pre-NY', target_date)
+    # 3. Get Engine Status
+    from scripts.libs.nqstats.engine import NQStatsEngine
     
-    # 3. Get Prior Close (P12)
-    prior_df = df[df.index.date < target_date]
-    prior_close = None
-    if not prior_df.empty:
-        prior_close_dt = datetime.combine(target_date - timedelta(days=1), time(16, 0))
-        if target_date.weekday() == 0: 
-            prior_close_dt = datetime.combine(target_date - timedelta(days=3), time(16, 0))
-            
-        try:
-             closest_bar = df.index.get_indexer([pd.Timestamp(prior_close_dt).tz_localize('US/Eastern')], method='pad')[0]
-             prior_close = df['close'].iloc[closest_bar]
-        except:
-             prior_close = prior_df['close'].iloc[-1]
-
-    # 4. Classify
-    aln = classify_aln(asia, london)
-    broken = get_broken_status(asia, london, preny)
-    status = get_profiler_status(asia, london, prior_close)
+    engine = NQStatsEngine(df, ticker=args.ticker)
+    # Filter for target date
+    day_df = df[df.index.date == target_date]
+    if day_df.empty:
+        print(f"❌ Error: No data for {target_date}")
+        return
+        
+    # We run the engine on the full DF to get correct P12/prior context, 
+    # then extract the last status for the target date.
+    stats_df = engine.process()
+    target_stats = stats_df[stats_df.index.date == target_date]
+    if target_stats.empty:
+        print(f"❌ Error: No stats generated for {target_date}")
+        return
+        
+    latest = target_stats.iloc[-1]
+    
+    # Map back to report variables for compatibility
+    aln = latest['aln']
+    broken = latest['broken']
+    # status in report was Asia/London LT/ST style, which matches the quadrants
+    status = f"{latest['asia_quadrant']}/{latest['london_quadrant']}"
+    prior_close = latest['p12']
     
     combo_key = f"{aln} | {broken} | {status}"
     
-    # 5. Determine Bias
+    # 5. Determine Bias (Refined Logic)
     bias = "NEUTRAL / WAIT"
     conviction = "LOW"
-    action = "Wait for NY Open (9:30) to establish direction."
-    logic_reasoning = "Default: No high-probability pattern matched."
+    action = latest.get('action', "Wait for NY Open (9:30) to establish direction.")
+    logic_reasoning = f"NQStats Logic: {aln} + {broken} + {status}"
     
-    if aln == "LPEU" and (broken == "Held/Held" or broken == "Broken/Held") and status == "L/L":
+    # Handle specific ALN models (DRY: this logic is now partly in the engine, but we'll present it)
+    if aln == "LPEU" and (broken == "Held/Held" or broken == "Broken/Held") and latest['asia_quadrant'] == "LT":
         bias = "STRONG BULLISH"
         conviction = "HIGH"
         action = "Look for Longs on pullbacks to London Mid."
-        logic_reasoning = "LPEU (78% Continuation) + Strong Alignment (L/L) + Clean Structure (Held)."
-    elif aln == "LPEU" and broken == "Broken/Held" and status == "L/S":
+        logic_reasoning = "LPEU (78% Continuation) + Strong Alignment + Clean Structure (Held)."
+    elif aln == "LPEU" and broken == "Broken/Held" and latest['london_quadrant'] == "ST":
         bias = "STRONG BEARISH (REVERSAL)"
         conviction = "HIGH"
         action = "Look for Shorts on rallies to London Mid."
-        logic_reasoning = "LPEU (63% Reversal) + Broken Asia + London Reversal (L/S)."
+        logic_reasoning = "LPEU (63% Reversal) + Broken Asia + London Reversal."
     elif broken == "Broken/Broken":
         bias = "NEUTRAL / CHOP"
         conviction = "LOW"

@@ -74,17 +74,22 @@ def apply_midnight_open_filter(ohlc: pd.DataFrame, bias: pd.Series) -> pd.Series
     - If Bullish: Buy only below Midnight Open (Discount of the day).
     - If Bearish: Sell only above Midnight Open (Premium of the day).
     """
+    # Ensure US/Eastern normalization (Midnight Open is 00:00 ET)
+    if ohlc.index.tz is not None:
+        et_df = ohlc.tz_convert("US/Eastern")
+    else:
+        et_df = ohlc.tz_localize("UTC").tz_convert("US/Eastern")
+
     # Identify Midnight Open (00:00)
-    # We assume 'ohlc' index is datetime
-    is_midnight = ohlc.index.time == pd.Timestamp("00:00").time()
-    midnight_opens = ohlc["open"].where(is_midnight).ffill()
+    is_midnight = et_df.index.time == pd.Timestamp("00:00").time()
+    midnight_opens = et_df["open"].where(is_midnight).ffill()
     
-    in_execution_zone = np.zeros(len(ohlc), dtype=bool)
+    in_execution_zone = np.zeros(len(et_df), dtype=bool)
     
     # Bullish Rule: Buy below Midnight Open
-    bull_mask = (bias == 1) & (ohlc["close"] < midnight_opens)
+    bull_mask = (bias.values == 1) & (et_df["close"] < midnight_opens)
     # Bearish Rule: Sell above Midnight Open
-    bear_mask = (bias == -1) & (ohlc["close"] > midnight_opens)
+    bear_mask = (bias.values == -1) & (et_df["close"] > midnight_opens)
     
     in_execution_zone[bull_mask | bear_mask] = True
     

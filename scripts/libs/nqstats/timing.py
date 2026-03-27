@@ -46,7 +46,7 @@ def identify_hourly_mode(df_1m: pd.DataFrame) -> pd.DataFrame:
     
     # 2. 5-Minute ORB Prediction
     # Hourly start prices
-    hourly_open = et_df['open'].where(et_df.index.minute == 0).groupby(pd.Grouper(freq='H')).transform('first')
+    hourly_open = et_df['open'].where(et_df.index.minute == 0).groupby(pd.Grouper(freq='h')).transform('first')
     hourly_open = hourly_open.reindex(et_df.index, method='ffill')
     
     # Is it Green 5m? (Check at minute 4/5)
@@ -54,7 +54,7 @@ def identify_hourly_mode(df_1m: pd.DataFrame) -> pd.DataFrame:
     orb_green = (et_df['close'] > hourly_open) & is_orb_candle
     
     # Spread the ORB result to the entire hour
-    orb_status = orb_green.groupby(pd.Grouper(freq='H')).transform('max').reindex(et_df.index, method='ffill')
+    orb_status = orb_green.groupby(pd.Grouper(freq='h')).transform('max').reindex(et_df.index, method='ffill')
     res_df['orb_status'] = np.where(orb_status, "GREEN", "RED")
     
     # 3. Expected Timing Rule

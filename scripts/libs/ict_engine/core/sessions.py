@@ -3,15 +3,15 @@ import numpy as np
 from datetime import datetime
 from .validation import validate_ohlc
 
-# Official ICT Killzones (UTC Standard)
+# Official ICT Killzones (New York / ET Standard)
 KILLZONES = {
-    "asian": ("00:00", "04:00"),
-    "london_open": ("07:00", "09:00"),
-    "ny_open": ("12:00", "15:00"),
-    "london_close": ("15:00", "17:00")
+    "asian": ("20:00", "00:00"),
+    "london_open": ("02:00", "05:00"),
+    "ny_open": ("08:30", "11:00"),
+    "london_close": ("10:00", "12:00")
 }
 
-# Official ICT Macros
+# Official ICT Macros (New York / ET Standard)
 MACROS = {
     "london_macro_1": ("02:33", "03:00"),
     "london_macro_2": ("04:03", "04:30"),
@@ -34,10 +34,10 @@ RTH_SESSIONS = {
 }
 
 @validate_ohlc(input_type="ohlc")
-def get_session_data(ohlc: pd.DataFrame, session_name: str, timezone: str = "UTC") -> pd.DataFrame:
+def get_session_data(ohlc: pd.DataFrame, session_name: str, timezone: str = "US/Eastern") -> pd.DataFrame:
     """
     Vectorized session detection for Killzones.
-    Checks if OHLC index (as time) falls within the session window.
+    Normalized to US/Eastern to match institutional standards.
     """
     if session_name not in KILLZONES:
         raise ValueError(f"Unknown session: {session_name}")
@@ -46,8 +46,14 @@ def get_session_data(ohlc: pd.DataFrame, session_name: str, timezone: str = "UTC
     start_t = datetime.strptime(start, "%H:%M").time()
     end_t = datetime.strptime(end, "%H:%M").time()
     
-    # Convert index to time objects (vectorized)
-    times = ohlc.index.time
+    # Ensure index is localized and converted to US/Eastern
+    if ohlc.index.tz is not None:
+        et_df = ohlc.tz_convert(timezone)
+    else:
+        # Assume UTC if no tz found and convert
+        et_df = ohlc.tz_localize('UTC').tz_convert(timezone)
+        
+    times = et_df.index.time
     
     # Check if time falls within the window (handle overnight sessions)
     if start_t < end_t:
@@ -58,8 +64,8 @@ def get_session_data(ohlc: pd.DataFrame, session_name: str, timezone: str = "UTC
     session_active = np.where(mask, 1, 0)
     
     # High/Low for the specific session
-    high = ohlc["high"].where(mask).groupby(ohlc.index.date).transform("max")
-    low = ohlc["low"].where(mask).groupby(ohlc.index.date).transform("min")
+    high = et_df["high"].where(mask).groupby(et_df.index.date).transform("max")
+    low = et_df["low"].where(mask).groupby(et_df.index.date).transform("min")
     
     return pd.DataFrame({
         "active": session_active,
@@ -82,11 +88,12 @@ def get_macro_data(ohlc: pd.DataFrame, macro_name: str, timezone: str = "US/East
     
     # Convert index to timezone if needed and get time
     if ohlc.index.tz is not None:
-        times = ohlc.index.tz_convert(timezone).time
+        et_df = ohlc.tz_convert(timezone)
     else:
-        # Assume it's already in the target timezone or warn? 
-        # For consistency with get_session_data, let's keep it simple
-        times = ohlc.index.time
+        # Assume UTC if no tz found and convert
+        et_df = ohlc.tz_localize('UTC').tz_convert(timezone)
+        
+    times = et_df.index.time
     
     # Check if time falls within the window
     if start_t < end_t:

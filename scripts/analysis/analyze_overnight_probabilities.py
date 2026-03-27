@@ -39,89 +39,45 @@ def analyze_probabilities(ticker="NQ1"):
         suffixes=('_asia', '_london')
     )
     
-    # Logic: Asia Broken in London?
-    # Check if Asia's broken_ts falls within London's start and end time
-    # Note: broken_ts is defined if Asia mid was broken at ANY time. 
-    # We check if that time was specifically during London.
-    
-    def check_broken_in_london(row):
-        if pd.isna(row['broken_ts_asia']):
-            return False
-        
-        # Ensure we are comparing compatible types (int/float timestamps)
-        b_ts = row['broken_ts_asia'] 
-        l_start = row['start_ts_london']
-        l_end = row['end_ts_london']
-        
-        return (b_ts >= l_start) and (b_ts <= l_end)
-
-    df_sessions['asia_broken_in_london'] = df_sessions.apply(check_broken_in_london, axis=1)
+    # Vectorized check: Asia Broken in London?
+    if not df_sessions.empty:
+        # Check if Asia's broken_ts falls within London's start and end time
+        df_sessions['asia_broken_in_london'] = (
+            (~df_sessions['broken_ts_asia'].isna()) & 
+            (df_sessions['broken_ts_asia'] >= df_sessions['start_ts_london']) & 
+            (df_sessions['broken_ts_asia'] <= df_sessions['end_ts_london'])
+        )
+    else:
+        df_sessions['asia_broken_in_london'] = False
     
     # Format Statuses (Lowercase)
     df_sessions['status_asia'] = df_sessions['status_asia'].str.lower()
     df_sessions['status_london'] = df_sessions['status_london'].str.lower()
     
     # Create Composite Key
-    # Format: "Asia Status | London Status | BrokenInLdn: T/F"
     df_sessions['overnight_key'] = (
         df_sessions['status_asia'] + " | " + 
         df_sessions['status_london'] + " | " + 
         "LdnBreak:" + df_sessions['asia_broken_in_london'].astype(str)
     )
     
-    # --- SCENARIO MAPPING ---
-    def get_scenario(row):
-        a = row['status_asia']
-        l = row['status_london']
-        
-        # Bullish Combinations
-        # Long True (Full Bull) or Short False (Failed Bear -> Bull)
-        bulls = [
-            ('long true', 'short false'),
-            ('long true', 'long true'),
-            ('short false', 'short false'),
-            ('short false', 'long true')
-        ]
-        
-        # Bearish Combinations
-        # Short True (Full Bear) or Long False (Failed Bull -> Bear)
-        bears = [
-            ('long false', 'short true'),
-            ('long false', 'long false'),
-            ('short true', 'long false'),
-            ('short true', 'short true')
-        ]
-        
-        pair = (a, l)
-        
-        if pair in bulls:
-            return "Bullish"
-        elif pair in bears:
-            return "Bearish"
-        else:
-            # All others are Contradicting (including 'None' or mixed signals)
-            # The User specifically listed contradicting pairs, but broadly 'everything else'
-            # fits the 'Mixed/Range' description if not explicitly Bull/Bear aligned.
-            # We will explicitly check the user's Contradicting list to be precise, 
-            # and label others as "Neutral/Other" if they contain 'none'.
-            
-            contradicting = [
-                ('long true', 'short true'),
-                ('long true', 'long false'),
-                ('long false', 'long true'),
-                ('long false', 'short false'),
-                ('short true', 'long true'),
-                ('short true', 'short false'),
-                ('short false', 'long false'),
-                ('short false', 'short true')
-            ]
-            
-            if pair in contradicting:
-                return "Contradicting"
-            else:
-                return "Neutral/Other" # Includes 'none', 'missing', etc.
+    # --- SCENARIO MAPPING (Vectorized) ---
+    bulls = [('long true', 'short false'), ('long true', 'long true'), 
+             ('short false', 'short false'), ('short false', 'long true')]
+    bears = [('long false', 'short true'), ('long false', 'long false'), 
+             ('short true', 'long false'), ('short true', 'short true')]
+    contradicting = [('long true', 'short true'), ('long true', 'long false'), 
+                    ('long false', 'long true'), ('long false', 'short false'), 
+                    ('short true', 'long true'), ('short true', 'short false'), 
+                    ('short false', 'long false'), ('short false', 'short true')]
 
-    df_sessions['scenario'] = df_sessions.apply(get_scenario, axis=1)
+    # Vectorized mapping using zip + isin
+    pairs = list(zip(df_sessions['status_asia'], df_sessions['status_london']))
+    
+    df_sessions['scenario'] = "Neutral/Other"
+    df_sessions.loc[pd.Series(pairs).isin(bulls).values, 'scenario'] = "Bullish"
+    df_sessions.loc[pd.Series(pairs).isin(bears).values, 'scenario'] = "Bearish"
+    df_sessions.loc[pd.Series(pairs).isin(contradicting).values, 'scenario'] = "Contradicting"
 
     # 4. Merge with Daily Classification
     df_merged = pd.merge(

@@ -43,37 +43,31 @@ def analyze_hod_lod(ticker="NQ1"):
         df_hod['ht'] = pd.to_datetime(df_hod['hod_time'], format='%H:%M').dt.time
         df_hod['lt'] = pd.to_datetime(df_hod['lod_time'], format='%H:%M').dt.time
         
-        # Define 30-min Buckets
-        bins = [
-            (time(9,30), time(10,0), "09:30-10:00 (Open)"),
-            (time(10,0), time(10,30), "10:00-10:30 (Reversal)"),
-            (time(10,30), time(11,30), "10:30-11:30 (Morning)"),
-            (time(11,30), time(13,30), "11:30-13:30 (Lunch)"),
-            (time(13,30), time(15,0), "13:30-15:00 (Afternoon)"),
-            (time(15,0), time(16,0), "15:00-16:00 (Power Hour)"),
-            (time(16,0), time(16,15), "16:00+ (Close)")
-        ]
+        # Define 30-min Buckets for Binning
+        bins_vals = [time(9,30), time(10,0), time(10,30), time(11,30), time(13,30), time(15,0), time(16,0), time(23,59)]
+        labels = ["09:30-10:00 (Open)", "10:00-10:30 (Reversal)", "10:30-11:30 (Morning)", 
+                  "11:30-13:30 (Lunch)", "13:30-15:00 (Afternoon)", "15:00-16:00 (Power Hour)", "16:00+ (Close)"]
         
-        def get_bin(t):
-            for start, end, label in bins:
-                if start <= t < end:
-                    return label
-            if t >= time(16,0): return "16:00+ (Close)"
-            return "Other"
-
-        df_hod['high_bin'] = df_hod['ht'].apply(get_bin)
-        df_hod['low_bin'] = df_hod['lt'].apply(get_bin)
+        # Vectorized time binning using pd.cut
+        # Need to convert time objects to minutes from midnight or similar for pd.cut to work easily
+        def time_to_min(t): return t.hour * 60 + t.minute
+        bins_mins = [time_to_min(t) for t in bins_vals]
+        
+        df_hod['ht_min'] = df_hod['ht'].apply(time_to_min)
+        df_hod['lt_min'] = df_hod['lt'].apply(time_to_min)
+        
+        df_hod['high_bin'] = pd.cut(df_hod['ht_min'], bins=bins_mins, labels=labels, right=False)
+        df_hod['low_bin'] = pd.cut(df_hod['lt_min'], bins=bins_mins, labels=labels, right=False)
         
         # Calculate Distributions
         n = len(df_hod)
-        h_dist = df_hod['high_bin'].value_counts(normalize=True) * 100
-        l_dist = df_hod['low_bin'].value_counts(normalize=True) * 100
+        h_dist = df_hod['high_bin'].value_counts(normalize=True).sort_index() * 100
+        l_dist = df_hod['low_bin'].value_counts(normalize=True).sort_index() * 100
         
         print(f"\n### HOD/LOD Heatmap (n={n} days)")
         print("| Time Window | High Set % | Low Set % | Insight |")
         print("| :--- | :--- | :--- | :--- |")
         
-        labels = [b[2] for b in bins]
         for label in labels:
             h = h_dist.get(label, 0)
             l = l_dist.get(label, 0)
@@ -88,9 +82,7 @@ def analyze_hod_lod(ticker="NQ1"):
             print(f"| **{label.split(' ')[0]}** | {h:.1f}% | {l:.1f}% | {insight} |")
 
         # Master Trader Insight: Last Hour Extension
-        # How often is HOD set after 3 PM?
-        late_highs = df_hod[df_hod['ht'] >= time(15,0)]
-        prob_late_high = (len(late_highs) / n) * 100
+        prob_late_high = (df_hod['ht'] >= time(15,0)).mean() * 100
         print(f"\n> **Power Hour Stat**: {prob_late_high:.1f}% of Daily Highs are set AFTER 3:00 PM.")
     
     # ---------------------------------------------------------
@@ -105,31 +97,25 @@ def analyze_hod_lod(ticker="NQ1"):
         # Filter for Asia and London
         on_sessions = df_sess[df_sess['session'].isin(['Asia', 'London'])]
         
-        # Group by 'date' (which is the Trade Date)
-        # We need max(high) and min(low) across both sessions for that date
+        # Group by 'date' (Trade Date)
         on_stats = on_sessions.groupby('date').agg({
             'high': 'max',
             'low': 'min'
         }).reset_index()
         
         on_stats['on_range'] = on_stats['high'] - on_stats['low']
-        
-        # filter valid ranges
-        on_stats = on_stats[on_stats['on_range'] > 0]
-        
-        # Calculate Rolling 20-Day Average
-        on_stats = on_stats.sort_values('date')
+        on_stats = on_stats[on_stats['on_range'] > 0].sort_values('date')
         on_stats['avg_range'] = on_stats['on_range'].rolling(20).mean()
         
-        # Define Regimes
-        def get_regime(row):
-            if pd.isna(row['avg_range']): return None
-            ratio = row['on_range'] / row['avg_range']
-            if ratio < 0.75: return "Compressed (<75%)"  # Tight
-            if ratio > 1.25: return "Expanded (>125%)"   # Loose
-            return "Normal"
-            
-        on_stats['regime'] = on_stats.apply(get_regime, axis=1)
+        # Vectorized Regime Calculation using np.select
+        ratio = on_stats['on_range'] / on_stats['avg_range']
+        conditions = [
+            (ratio < 0.75),
+            (ratio > 1.25),
+            (ratio.notna())
+        ]
+        choices = ["Compressed (<75%)", "Expanded (>125%)", "Normal"]
+        on_stats['regime'] = np.select(conditions, choices, default=None)
         
         # Merge with Daily Classification
         df_merged = pd.merge(df_class, on_stats, left_on='date_str', right_on='date', how='inner')
@@ -139,6 +125,7 @@ def analyze_hod_lod(ticker="NQ1"):
         print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
         
         regimes = ["Compressed (<75%)", "Normal", "Expanded (>125%)"]
+
         
         for r in regimes:
             subset = df_merged[df_merged['regime'] == r]
