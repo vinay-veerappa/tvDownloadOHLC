@@ -55,6 +55,84 @@ function mode(arr: string[]): string {
     return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
 }
 
+/**
+ * Extracted inner chart component to ensure ResponsiveContainer 
+ * always has a stable parent and doesn't re-render its internal logic 
+ * during parent state transitions.
+ */
+const HodLodInnerChart = memo(function HodLodInnerChart({ data, granularity }: { data: any[], granularity: number }) {
+    return (
+        <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={data} margin={{ top: 10, right: 10, bottom: 30, left: 10 }} stackOffset="sign">
+                <XAxis
+                    dataKey="time"
+                    fontSize={11}
+                    tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                    interval={0}
+                    ticks={Array.from(new Set(data
+                        .filter(d => {
+                            const [h, m] = d.time.split(':').map(Number);
+                            if (granularity >= 60) return true;
+                            if (granularity === 30) return m === 0;
+                            return m === 0;
+                        })
+                        .map(d => d.time)
+                    ))}
+                    angle={-45}
+                    textAnchor="end"
+                    height={60}
+                    axisLine={false}
+                    tickLine={false}
+                />
+                <YAxis
+                    fontSize={11}
+                    tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                    tickFormatter={(v) => `${Math.abs(v).toFixed(0)}%`}
+                    domain={['auto', 'auto']}
+                    axisLine={false}
+                    tickLine={false}
+                />
+                <Tooltip
+                    cursor={{ fill: 'hsl(var(--muted)/0.3)' }}
+                    content={({ active, payload, label }) => {
+                        if (!active || !payload || !payload.length) return null;
+                        return (
+                            <ChartTooltipFrame>
+                                <ChartTooltipHeader>{label}</ChartTooltipHeader>
+                                {payload.map((entry: any, index: number) => {
+                                    const isHod = entry.name === 'HOD';
+                                    const count = isHod ? entry.payload.hodCount : entry.payload.lodCount;
+                                    return (
+                                        <ChartTooltipRow
+                                            key={index}
+                                            label={entry.name}
+                                            value={`${Math.abs(Number(entry.value)).toFixed(1)}%`}
+                                            subValue={`${count} days`}
+                                            indicatorColor={entry.fill}
+                                        />
+                                    );
+                                })}
+                            </ChartTooltipFrame>
+                        );
+                    }}
+                />
+                <ReferenceLine x="00:00" stroke="#6b7280" strokeDasharray="3 3" opacity={0.5} strokeWidth={1} label={{ value: "00:00", position: "insideTop", fontSize: 9, fill: "#6b7280" }} />
+                <ReferenceLine x="09:30" stroke="#f59e0b" strokeDasharray="3 3" opacity={0.8} strokeWidth={1} label={{ value: "09:30", position: "insideTop", fontSize: 9, fill: "#f59e0b" }} />
+                <ReferenceLine y={0} stroke="hsl(var(--border))" />
+                <Bar dataKey="hodPercent" name="HOD" fill="#22c55e" radius={[2, 2, 0, 0]} stackId="stack" />
+                <Bar dataKey="lodPercent" name="LOD" fill="#ef4444" radius={[0, 0, 2, 2]} stackId="stack" />
+                <Brush
+                    dataKey="time"
+                    height={30}
+                    stroke="#8884d8"
+                    travellerWidth={10}
+                    alwaysShowText={false}
+                />
+            </ComposedChart>
+        </ResponsiveContainer>
+    );
+});
+
 export const HodLodChart = memo(function HodLodChart({ sessions, dailyHodLod }: Props) {
     const [granularity, setGranularity] = useState<number>(15);
     const [isExpanded, setIsExpanded] = useState(false);
@@ -180,79 +258,6 @@ export const HodLodChart = memo(function HodLodChart({ sessions, dailyHodLod }: 
         { value: 60, label: '1h' },
     ];
 
-    const ChartContent = () => (
-        <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={timeHistogramData} margin={{ top: 10, right: 10, bottom: 30, left: 10 }} stackOffset="sign">
-                <XAxis
-                    dataKey="time"
-                    fontSize={12}
-                    interval={0} // Force show provided ticks
-                    ticks={useMemo(() => {
-                        // Calculate explicit ticks to show (e.g. every hour or 30 mins)
-                        // timeHistogramData has "HH:MM" strings
-                        if (!timeHistogramData || timeHistogramData.length === 0) return undefined;
-
-                        return timeHistogramData
-                            .filter(d => {
-                                const [h, m] = d.time.split(':').map(Number);
-                                // Show if minute is 0 (top of hour)
-                                // If granularity is > 60 (unlikely), show all
-                                if (granularity >= 60) return true;
-                                if (granularity === 30) return m === 0; // Show 18:00, 19:00...
-                                // For 15m/5m, show top of hour
-                                return m === 0;
-                            })
-                            .map(d => d.time);
-                    }, [timeHistogramData, granularity])}
-                    angle={-45}
-                    textAnchor="end"
-                    height={60}
-                />
-                <YAxis
-                    fontSize={12} // Increased from 10 to 12
-                    tickFormatter={(v) => `${Math.abs(v).toFixed(0)}%`}
-                    domain={['auto', 'auto']}
-                />
-                <Tooltip
-                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
-                    content={({ active, payload, label }) => {
-                        if (!active || !payload || !payload.length) return null;
-                        return (
-                            <ChartTooltipFrame>
-                                <ChartTooltipHeader>{label}</ChartTooltipHeader>
-                                {payload.map((entry: any, index: number) => {
-                                    const isHod = entry.name === 'HOD';
-                                    const count = isHod ? entry.payload.hodCount : entry.payload.lodCount;
-                                    return (
-                                        <ChartTooltipRow
-                                            key={index}
-                                            label={entry.name}
-                                            value={`${Math.abs(Number(entry.value)).toFixed(1)}%`}
-                                            subValue={`${count} days`}
-                                            indicatorColor={entry.fill}
-                                        />
-                                    );
-                                })}
-                            </ChartTooltipFrame>
-                        );
-                    }}
-                />
-                <ReferenceLine x="00:00" stroke="#6b7280" strokeDasharray="3 3" opacity={0.5} strokeWidth={1} label={{ value: "00:00", position: "insideTop", fontSize: 9, fill: "#6b7280" }} />
-                <ReferenceLine x="09:30" stroke="#f59e0b" strokeDasharray="3 3" opacity={0.8} strokeWidth={1} label={{ value: "09:30", position: "insideTop", fontSize: 9, fill: "#f59e0b" }} />
-                <ReferenceLine y={0} stroke="hsl(var(--border))" />
-                <Bar dataKey="hodPercent" name="HOD" fill="#22c55e" radius={[2, 2, 0, 0]} stackId="stack" />
-                <Bar dataKey="lodPercent" name="LOD" fill="#ef4444" radius={[0, 0, 2, 2]} stackId="stack" />
-                <Brush
-                    dataKey="time"
-                    height={30}
-                    stroke="#8884d8"
-                    travellerWidth={10}
-                    alwaysShowText={false}
-                />
-            </ComposedChart>
-        </ResponsiveContainer>
-    );
-
     return (
         <>
             <Card>
@@ -298,7 +303,9 @@ export const HodLodChart = memo(function HodLodChart({ sessions, dailyHodLod }: 
                     </div>
                 </CardHeader>
                 <CardContent className="h-[280px] pt-0">
-                    <ChartContent />
+                    <div className="w-full h-full min-h-0 overflow-hidden">
+                        <HodLodInnerChart data={timeHistogramData} granularity={granularity} />
+                    </div>
                 </CardContent>
             </Card>
 
@@ -307,8 +314,8 @@ export const HodLodChart = memo(function HodLodChart({ sessions, dailyHodLod }: 
                     <DialogHeader>
                         <DialogTitle>High and Low of Day Times ({granularity}m)</DialogTitle>
                     </DialogHeader>
-                    <div className="flex-1 w-full min-h-0 mt-4">
-                        <ChartContent />
+                    <div className="flex-1 w-full min-h-0 mt-4 overflow-hidden border rounded-md p-4">
+                        <HodLodInnerChart data={timeHistogramData} granularity={granularity} />
                     </div>
                 </DialogContent>
             </Dialog>

@@ -32,7 +32,8 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
     // 1. Global State
     const [ticker, setTicker] = useState(initialTicker);
     const [activeTab, setActiveTab] = useState('daily');
-    const [targetSession, setTargetSession] = useState('NY1'); // Standalone state now!
+    const [subTab, setSubTab] = useState('asia');
+    const [targetSession, setTargetSession] = useState('NY1');
 
     const [filters, setFilters] = useState<Record<string, string>>({});
     const [brokenFilters, setBrokenFilters] = useState<Record<string, string>>({});
@@ -116,7 +117,7 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
 
     // --- Memoized Tab Content ---
     const dailyTabContent = useMemo(() => (
-        <TabsContent value="daily" className="mt-6 space-y-8">
+        <div className="space-y-8">
             
             {/* 0. NEW: Outcome Probabilities (Prediction replacement) */}
             {distributionChartData.length > 0 && (
@@ -237,7 +238,7 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                 <h2 className="text-xl font-semibold mb-4">Session HOD/LOD Contribution</h2>
                 <SessionStats sessions={deferredFilteredSessions} />
             </section>
-        </TabsContent>
+        </div>
     ), [
         deferredFilteredSessions,
         deferredDailyHodLod,
@@ -250,39 +251,6 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
         filteredDates,
         distributionChartData,
         maxProb
-    ]);
-
-    const sessionTabsContent = useMemo(() => (
-        <>
-            {['asia', 'london', 'ny1', 'ny2'].map(sessKey => {
-                const sessName = sessKey === 'asia' ? 'Asia' : sessKey === 'london' ? 'London' : sessKey === 'ny1' ? 'NY1' : 'NY2';
-                return (
-                    <TabsContent key={sessKey} value={sessKey} className="mt-6">
-                        <SessionAnalysisView
-                            session={sessName}
-                            sessions={deferredFilteredSessions}
-                            allSessions={deferredFilteredSessions}
-                            dailyHodLod={deferredDailyHodLod || null}
-                            filteredDates={filteredDates}
-                            ticker={debouncedTicker}
-                            levelTouches={deferredLevelTouches}
-                            filters={debouncedFilters}
-                            brokenFilters={debouncedBrokenFilters}
-                            intraState={intraState}
-                        />
-                    </TabsContent>
-                );
-            })}
-        </>
-    ), [
-        deferredFilteredSessions,
-        deferredDailyHodLod,
-        filteredDates,
-        debouncedTicker,
-        deferredLevelTouches,
-        debouncedFilters,
-        debouncedBrokenFilters,
-        intraState
     ]);
 
     if (filterError) return <div className="p-8 text-center text-red-500">Failed to load profiler data.</div>;
@@ -317,19 +285,45 @@ export function ProfilerView({ ticker: initialTicker = "NQ1" }: ProfilerViewProp
                 </div>
 
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                    <TabsList className="w-full justify-start h-auto p-1 bg-muted">
-                        <TabsTrigger value="daily" className="px-6 py-2">Daily Overview</TabsTrigger>
-                        <TabsTrigger value="asia" className="px-6 py-2">Asia</TabsTrigger>
-                        <TabsTrigger value="london" className="px-6 py-2">London</TabsTrigger>
-                        <TabsTrigger value="ny1" className="px-6 py-2">NY1</TabsTrigger>
-                        <TabsTrigger value="ny2" className="px-6 py-2">NY2</TabsTrigger>
+                    <TabsList className="h-10 p-1 bg-muted inline-flex border border-border/50">
+                        <TabsTrigger value="daily" className="px-6">Daily Overview</TabsTrigger>
+                        <TabsTrigger value="sessions" className="px-6">Session Analysis</TabsTrigger>
                     </TabsList>
 
-                    {/* --- Tab 1: Daily Overview (Memoized) --- */}
-                    {dailyTabContent}
+                    <TabsContent value="daily" className="mt-6">
+                        {dailyTabContent}
+                    </TabsContent>
 
-                    {/* --- Session Tabs (Memoized) --- */}
-                    {sessionTabsContent}
+                    <TabsContent value="sessions" className="mt-6">
+                        <Tabs value={subTab} onValueChange={setSubTab} className="w-full">
+                            <TabsList className="h-9 p-1 bg-muted/50 inline-flex mb-6 border border-border/30">
+                                <TabsTrigger value="asia" className="px-4">Asia</TabsTrigger>
+                                <TabsTrigger value="london" className="px-4">London</TabsTrigger>
+                                <TabsTrigger value="ny1" className="px-4">NY1</TabsTrigger>
+                                <TabsTrigger value="ny2" className="px-4">NY2</TabsTrigger>
+                            </TabsList>
+
+                            {['asia', 'london', 'ny1', 'ny2'].map(sessKey => {
+                                const sessName = sessKey === 'asia' ? 'Asia' : sessKey === 'london' ? 'London' : sessKey === 'ny1' ? 'NY1' : 'NY2';
+                                return (
+                                    <TabsContent key={sessKey} value={sessKey}>
+                                        <SessionAnalysisView
+                                            session={sessName}
+                                            sessions={deferredFilteredSessions}
+                                            allSessions={deferredFilteredSessions}
+                                            dailyHodLod={deferredDailyHodLod || null}
+                                            filteredDates={filteredDates}
+                                            ticker={debouncedTicker}
+                                            levelTouches={deferredLevelTouches}
+                                            filters={debouncedFilters}
+                                            brokenFilters={debouncedBrokenFilters}
+                                            intraState={intraState}
+                                        />
+                                    </TabsContent>
+                                );
+                            })}
+                        </Tabs>
+                    </TabsContent>
                 </Tabs>
             </div>
         </div>

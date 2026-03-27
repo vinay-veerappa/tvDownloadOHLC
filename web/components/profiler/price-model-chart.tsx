@@ -19,6 +19,7 @@ import {
 } from 'recharts';
 import { Loader2, Maximize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ChartTooltipFrame, ChartTooltipHeader, ChartTooltipRow } from '@/components/ui/chart-tooltip';
 import {
     Dialog,
     DialogContent,
@@ -208,33 +209,47 @@ export const PriceModelChart = memo(function PriceModelChart({
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
             >
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                 <XAxis
                     dataKey="time_idx"
                     tickFormatter={formatXAxis}
-                    tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
+                    tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
                     axisLine={false}
                     tickLine={false}
                     ticks={xAxisTicks}
-                    interval={0} // Force show all calculated ticks
+                    interval={0}
                     type="number"
-                    domain={[0, 'auto']} // Force start at 0 to ensure shading is visible
+                    domain={[0, 'auto']}
                 />
                 <YAxis
-                    tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
+                    tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
                     axisLine={false}
                     tickLine={false}
                     domain={['auto', 'auto']}
                     tickFormatter={(val) => `${val.toFixed(2)}%`}
                     width={50}
                 />
-                {/* Grey line at 0 */}
-                <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
+                <ReferenceLine y={0} stroke="hsl(var(--border))" strokeDasharray="3 3" />
 
-                {/* Tooltip hidden via opacity to ensure events fire but no popover */}
                 <Tooltip
-                    wrapperStyle={{ opacity: 0 }}
-                    cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '4 4' }}
+                    content={({ active, payload, label }) => {
+                        if (!active || !payload || !payload.length) return null;
+                        const time = formatXAxis(label, 0);
+                        return (
+                            <ChartTooltipFrame>
+                                <ChartTooltipHeader>{time}</ChartTooltipHeader>
+                                {payload.map((entry: any, index: number) => (
+                                    <ChartTooltipRow
+                                        key={index}
+                                        label={entry.name === "high" ? "High %" : "Low %"}
+                                        value={`${entry.value.toFixed(3)}%`}
+                                        indicatorColor={entry.stroke}
+                                    />
+                                ))}
+                            </ChartTooltipFrame>
+                        );
+                    }}
+                    cursor={{ stroke: 'hsl(var(--muted-foreground))', strokeWidth: 1, strokeDasharray: '4 4' }}
                 />
 
                 {/* Session Shading (Opening Range / Classification Window) */}
@@ -280,7 +295,8 @@ export const PriceModelChart = memo(function PriceModelChart({
                 <Brush
                     dataKey="time_idx"
                     height={30}
-                    stroke="#8884d8"
+                    stroke="hsl(var(--primary))"
+                    fill="hsl(var(--secondary))"
                     tickFormatter={formatXAxis}
                     travellerWidth={10}
                     alwaysShowText={false}
