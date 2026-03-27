@@ -165,13 +165,18 @@ async def main():
     async def run_stream():
         while True:
             try:
+                # RE-INITIALIZE to refresh token before every connection attempt.
+                # This ensures we pick up a fresh session after sleep or expiry.
+                logger.info("🔄 Refreshing Hub provider credentials...")
+                await hub.initialize()
+                
                 await hub.start_stream(
                     symbols_l1=symbols_l1,
                     symbols_l2=symbols_l2
                 )
             except Exception as e:
-                logger.warning(f"⚠️ Stream exited: {e}. Reconnecting in 10s...")
-                await asyncio.sleep(10)
+                logger.warning(f"⚠️ Stream connection lost: {e}. Reconnecting in 15s...")
+                await asyncio.sleep(15)
 
     # Run everything together
     try:

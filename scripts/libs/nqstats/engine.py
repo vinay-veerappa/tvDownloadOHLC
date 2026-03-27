@@ -163,7 +163,9 @@ class NQStatsEngine:
         self.stats['prev_ny1_broken'] = _get_daily_shift_bool('ny1box_broken')
         self.stats['prev_ny2_broken'] = _get_daily_shift_bool('ny2box_broken')
         self.stats['prev_asia_broken'] = _get_daily_shift_bool('asiabox_broken')
-            
+        
+        return self.stats
+
     def _calculate_session_broken(self):
         """Vectorized calculation of session breakout reversion (broken) status."""
         # Config matches ProfilerService.apply_filters

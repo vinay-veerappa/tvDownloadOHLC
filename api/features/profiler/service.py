@@ -436,22 +436,6 @@ class ProfilerService:
             "extreme": ext_path,
             "count": len(sessions)
         }
-    @staticmethod
-    def get_daily_hod_lod(ticker: str, unadjusted: bool = False) -> Dict:
-        """
-        Get pre-computed true daily HOD/LOD times (from 1-minute data).
-        """
-        from api.features.shared.data_loader import DATA_DIR
-        suffix = "_unadjusted" if unadjusted else ""
-        json_path = DATA_DIR / f"{ticker}_daily_hod_lod{suffix}.json"
-        
-        if json_path.exists():
-            try:
-                with open(json_path, 'r') as f:
-                    return json.load(f)
-            except Exception as e:
-                return {"error": str(e)}
-        return {"error": f"Daily HOD/LOD data for {ticker} not found (File missing: {json_path.name})"}
 
     @staticmethod
     def get_custom_price_model(ticker: str, target_session: str, dates: List[str], bucket_minutes: int = 1):
@@ -898,7 +882,6 @@ class ProfilerService:
         ProfilerService._price_model_cache[cache_key] = result
         return result
 
-    @staticmethod
     @staticmethod
     def get_daily_hod_lod(ticker: str, unadjusted: bool = False) -> Dict:
         """

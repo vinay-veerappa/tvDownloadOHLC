@@ -156,13 +156,12 @@ def get_quadrant_status(df_1m: pd.DataFrame, boxes_df: pd.DataFrame) -> pd.DataF
         # We find the MIN index (time) where the condition is True
         dates = et_df.index.date
         
-        # Use trading dates for grouping (shifts AM hours to the session's starting date)
-        # For Asia (18:00 - 02:30), AM hours (00:00 - 02:30) belong to the previous day's session.
+        # Use trading dates for grouping (matches sessions.py logic)
         if box_prefix == 'asiabox': 
-            am_mask = et_df.index.time < pd.Timestamp('03:00').time()
-            adjusted_dates = pd.Series(dates, index=et_df.index)
-            adjusted_dates.loc[am_mask] = adjusted_dates.loc[am_mask] - pd.Timedelta(days=1)
-            groups = adjusted_dates
+            start_t = pd.Timestamp(eval_config[box_prefix]['start']).time()
+            pm_mask = et_df.index.time >= start_t
+            groups = pd.Series(dates, index=et_df.index)
+            groups.loc[pm_mask] = groups.loc[pm_mask] + pd.Timedelta(days=1)
         else:
             groups = pd.Series(dates, index=et_df.index)
             

@@ -34,16 +34,27 @@ app.add_middleware(
 # app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
 # app.include_router(profiler.router)
 
+@app.get("/")
+async def root():
+    return {"message": "Trading Indicators API", "version": "1.0.0"}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+
+
 # Import routers from features
 from api.features.indicators.router import router as indicators_router
 from api.features.sessions.router import router as sessions_router
 from api.features.profiler.router import router as profiler_router
 from api.features.candle_science.router import router as candle_science_router
 
-app.include_router(indicators_router, prefix="/api/indicators", tags=["indicators"])
-app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
-app.include_router(profiler_router, prefix="/api/profiler", tags=["profiler"])
-app.include_router(candle_science_router, prefix="/api/candle-science", tags=["candle-science"])
+# Include specific routers first, greedy ones last
+app.include_router(indicators_router, tags=["indicators"])
+app.include_router(profiler_router, tags=["profiler"])
+app.include_router(candle_science_router, tags=["candle-science"])
+app.include_router(sessions_router, tags=["sessions"]) # Greedy /{ticker} last
 
 
 @app.on_event("startup")
@@ -54,15 +65,6 @@ async def startup_event():
     # Warm up for default ticker NQ1
     ProfilerService.prewarm_cache("NQ1")
 
-
-@app.get("/")
-async def root():
-    return {"message": "Trading Indicators API", "version": "1.0.0"}
-
-
-@app.get("/health")
-async def health():
-    return {"status": "healthy"}
 
 # Force Reload Touch
 

@@ -4,12 +4,10 @@ import { useMemo, useState, useEffect, memo } from 'react';
 import { ProfilerSession, DailyHodLodResponse } from '@/lib/api/profiler';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ComposedChart, Bar, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { TrendingUp, TrendingDown, Layers, Maximize2 } from 'lucide-react';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
+import { TrendingUp, TrendingDown, Maximize2 } from 'lucide-react';
 import { ChartTooltipFrame, ChartTooltipHeader, ChartTooltipRow } from '@/components/ui/chart-tooltip';
 import { Button } from '@/components/ui/button';
 import {
@@ -58,6 +56,104 @@ function modeBin(arr: number[], bucketSize: number = 0.1, referenceDist?: Record
     const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
     return sorted.length > 0 ? parseFloat(sorted[0][0]) : null;
 }
+
+/**
+ * Extracted high chart component to ensure ResponsiveContainer 
+ * receives a stable parent and consistent dimensions.
+ */
+const RangeHighChart = memo(function RangeHighChart({ data, stats }: { data: any[], stats: any }) {
+    return (
+        <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                <XAxis
+                    dataKey="pct"
+                    fontSize={9}
+                    tickFormatter={(v) => {
+                        if (v >= 5) return '>5%';
+                        if (v <= -5) return '<-5%';
+                        return `${v}%`;
+                    }}
+                    interval="preserveStartEnd"
+                />
+                <YAxis
+                    fontSize={10}
+                    tickFormatter={(v) => `${v.toFixed(0)}%`}
+                />
+                <Tooltip
+                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                    content={({ active, payload, label }) => {
+                        if (!active || !payload || !payload.length) return null;
+                        return (
+                            <ChartTooltipFrame>
+                                <ChartTooltipHeader>High: {getBinRangeResult(Number(label))}</ChartTooltipHeader>
+                                {payload.map((entry: any, index: number) => (
+                                    <ChartTooltipRow
+                                        key={index}
+                                        label="Distribution"
+                                        value={`${Number(entry.value).toFixed(1)}%`}
+                                        subValue={`${entry.payload.count} days`}
+                                        indicatorColor={entry.fill}
+                                    />
+                                ))}
+                            </ChartTooltipFrame>
+                        );
+                    }}
+                />
+                {stats?.medianBin && <ReferenceLine x={stats.medianBin} stroke="#22c55e" strokeDasharray="3 3" />}
+                <Bar dataKey="percent" fill="#22c55e" radius={[2, 2, 0, 0]} name="Current" opacity={0.8} barSize={100} />
+            </ComposedChart>
+        </ResponsiveContainer>
+    );
+});
+
+/**
+ * Extracted low chart component to ensure ResponsiveContainer 
+ * receives a stable parent and consistent dimensions.
+ */
+const RangeLowChart = memo(function RangeLowChart({ data, stats }: { data: any[], stats: any }) {
+    return (
+        <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
+                <XAxis
+                    dataKey="pct"
+                    fontSize={9}
+                    tickFormatter={(v) => {
+                        if (v >= 5) return '>5%';
+                        if (v <= -5) return '<-5%';
+                        return `${v}%`;
+                    }}
+                    interval="preserveStartEnd"
+                />
+                <YAxis
+                    fontSize={10}
+                    tickFormatter={(v) => `${v.toFixed(0)}%`}
+                />
+                <Tooltip
+                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
+                    content={({ active, payload, label }) => {
+                        if (!active || !payload || !payload.length) return null;
+                        return (
+                            <ChartTooltipFrame>
+                                <ChartTooltipHeader>Low: {getBinRangeResult(Number(label))}</ChartTooltipHeader>
+                                {payload.map((entry: any, index: number) => (
+                                    <ChartTooltipRow
+                                        key={index}
+                                        label="Distribution"
+                                        value={`${Number(entry.value).toFixed(1)}%`}
+                                        subValue={`${entry.payload.count} days`}
+                                        indicatorColor={entry.fill}
+                                    />
+                                ))}
+                            </ChartTooltipFrame>
+                        );
+                    }}
+                />
+                {stats?.medianBin && <ReferenceLine x={stats.medianBin} stroke="#ef4444" strokeDasharray="3 3" />}
+                <Bar dataKey="percent" fill="#ef4444" radius={[2, 2, 0, 0]} name="Current" opacity={0.8} barSize={100} />
+            </ComposedChart>
+        </ResponsiveContainer>
+    );
+});
 
 export const RangeDistribution = memo(function RangeDistribution({ sessions, forcedSession, dailyHodLod }: Props) {
     const [selectedSession, setSelectedSession] = useState<string>(forcedSession || 'daily');
@@ -190,93 +286,6 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
         };
     }
 
-    const HighChart = () => (
-        <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={highData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
-                <XAxis
-                    dataKey="pct"
-                    fontSize={9}
-                    tickFormatter={(v) => {
-                        if (v >= 5) return '>5%';
-                        if (v <= -5) return '<-5%';
-                        return `${v}%`;
-                    }}
-                    interval="preserveStartEnd"
-                />
-                <YAxis
-                    fontSize={10}
-                    tickFormatter={(v) => `${v.toFixed(0)}%`}
-                />
-                <Tooltip
-                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
-                    content={({ active, payload, label }) => {
-                        if (!active || !payload || !payload.length) return null;
-                        return (
-                            <ChartTooltipFrame>
-                                <ChartTooltipHeader>High: {getBinRangeResult(Number(label))}</ChartTooltipHeader>
-                                {payload.map((entry: any, index: number) => (
-                                    <ChartTooltipRow
-                                        key={index}
-                                        label="Distribution"
-                                        value={`${Number(entry.value).toFixed(1)}%`}
-                                        subValue={`${entry.payload.count} days`}
-                                        indicatorColor={entry.fill}
-                                    />
-                                ))}
-                            </ChartTooltipFrame>
-                        );
-                    }}
-                />
-                {highStats?.medianBin && <ReferenceLine x={highStats.medianBin} stroke="#22c55e" strokeDasharray="3 3" />}
-                <Bar dataKey="percent" fill="#22c55e" radius={[2, 2, 0, 0]} name="Current" opacity={0.8} barSize={100} />
-            </ComposedChart>
-        </ResponsiveContainer>
-    );
-
-    const LowChart = () => (
-        <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={lowData} margin={{ top: 10, right: 10, bottom: 20, left: 10 }}>
-                <XAxis
-                    dataKey="pct"
-                    fontSize={9}
-                    tickFormatter={(v) => {
-                        if (v >= 5) return '>5%';
-                        if (v <= -5) return '<-5%';
-                        return `${v}%`;
-                    }}
-                    interval="preserveStartEnd"
-                />
-                <YAxis
-                    fontSize={10}
-                    tickFormatter={(v) => `${v.toFixed(0)}%`}
-                />
-                <Tooltip
-                    cursor={{ fill: 'hsl(var(--muted)/0.2)' }}
-                    content={({ active, payload, label }) => {
-                        if (!active || !payload || !payload.length) return null;
-                        return (
-                            <ChartTooltipFrame>
-                                <ChartTooltipHeader>Low: {getBinRangeResult(Number(label))}</ChartTooltipHeader>
-                                {payload.map((entry: any, index: number) => (
-                                    <ChartTooltipRow
-                                        key={index}
-                                        label="Distribution"
-                                        value={`${Number(entry.value).toFixed(1)}%`}
-                                        subValue={`${entry.payload.count} days`}
-                                        indicatorColor={entry.fill}
-                                    />
-                                ))}
-                            </ChartTooltipFrame>
-                        );
-                    }}
-                />
-                {lowStats?.medianBin && <ReferenceLine x={lowStats.medianBin} stroke="#ef4444" strokeDasharray="3 3" />}
-                <Bar dataKey="percent" fill="#ef4444" radius={[2, 2, 0, 0]} name="Current" opacity={0.8} barSize={100} />
-            </ComposedChart>
-        </ResponsiveContainer>
-    );
-
-
     return (
         <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -331,7 +340,9 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
                         </Button>
                     </CardHeader>
                     <CardContent className="h-[220px] pt-0">
-                        <HighChart />
+                        <div className="w-full h-full min-h-0 overflow-hidden">
+                            <RangeHighChart data={highData} stats={highStats} />
+                        </div>
                     </CardContent>
                 </Card>
 
@@ -369,7 +380,9 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
                         </Button>
                     </CardHeader>
                     <CardContent className="h-[220px] pt-0">
-                        <LowChart />
+                        <div className="w-full h-full min-h-0 overflow-hidden">
+                            <RangeLowChart data={lowData} stats={lowStats} />
+                        </div>
                     </CardContent>
                 </Card>
             </div>
@@ -379,8 +392,8 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
                     <DialogHeader>
                         <DialogTitle>High Distribution ({selectedSession})</DialogTitle>
                     </DialogHeader>
-                    <div className="flex-1 w-full min-h-0 mt-4">
-                        <HighChart />
+                    <div className="flex-1 w-full min-h-0 mt-4 overflow-hidden border rounded-md p-4">
+                        <RangeHighChart data={highData} stats={highStats} />
                     </div>
                 </DialogContent>
             </Dialog>
@@ -390,8 +403,8 @@ export const RangeDistribution = memo(function RangeDistribution({ sessions, for
                     <DialogHeader>
                         <DialogTitle>Low Distribution ({selectedSession})</DialogTitle>
                     </DialogHeader>
-                    <div className="flex-1 w-full min-h-0 mt-4">
-                        <LowChart />
+                    <div className="flex-1 w-full min-h-0 mt-4 overflow-hidden border rounded-md p-4">
+                        <RangeLowChart data={lowData} stats={lowStats} />
                     </div>
                 </DialogContent>
             </Dialog>
