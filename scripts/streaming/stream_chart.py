@@ -826,6 +826,25 @@ async def level_one_handler(msg):
                     with open(chart_ctx["files"]["json_30s"], "w") as f:
                         json.dump(chart_ctx["data_30s"], f)
 
+def save_candles_to_parquet(symbol, candles, parquet_path):
+    """Saves a list of candles to the live storage parquet, ensuring no duplicates."""
+    if not candles: return
+    try:
+        new_df = pd.DataFrame(candles)
+        # Ensure timestamp column for consistency (though we primarily use 'time' ms)
+        if 'time' in new_df.columns:
+            new_df['timestamp'] = pd.to_datetime(new_df['time'], unit='ms')
+            
+        if not os.path.exists(parquet_path):
+            new_df.to_parquet(parquet_path, index=False)
+        else:
+            existing_df = pd.read_parquet(parquet_path)
+            # Combine, deduplicate on 'time', and save
+            pd.concat([existing_df, new_df]).drop_duplicates(subset=['time']).sort_values('time').to_parquet(parquet_path, index=False)
+        # print(f"📁 [{symbol}] Archived {len(candles)} bars to {os.path.basename(parquet_path)}")
+    except Exception as e:
+        print(f"❌ Error saving parquet for {symbol}: {e}")
+
 async def chart_handler(msg):
     if 'content' in msg:
         for c in msg['content']:
@@ -843,23 +862,13 @@ async def chart_handler(msg):
                     "volume": c.get("VOLUME", 0)
                 }
                 
-                # Archive Logic
+                # Archive Logic: Save PREVIOUS candle when a new one starts
                 if cdata["candles"] and cdata["candles"][-1]["time"] != candle["time"]:
                     completed_candle = cdata["candles"][-1]
-                    try:
-                        df = pd.DataFrame([completed_candle])
-                        df['timestamp'] = pd.to_datetime(df['time'], unit='ms')
-                        
-                        if not os.path.exists(files["parquet"]):
-                            df.to_parquet(files["parquet"], index=False)
-                        else:
-                            existing_df = pd.read_parquet(files["parquet"])
-                            pd.concat([existing_df, df]).drop_duplicates(subset=['time']).to_parquet(files["parquet"], index=False)
-                        print(f"📁 [{key}] Archived {completed_candle['time']}")
-                    except Exception as e:
-                        print(f"Error saving parquet for {key}: {e}")
+                    save_candles_to_parquet(key, [completed_candle], files["parquet"])
 
                 # Update Buffer
+
                 if cdata["candles"] and cdata["candles"][-1]["time"] == candle["time"]:
                     cdata["candles"][-1] = candle
                 else:
@@ -907,18 +916,33 @@ async def main():
 
     for sym in symbols:
         charts[sym] = init_chart_data(sym)
+        # 1.1 Fetch Bootstrap
         boot = await fetch_bootstrap_data(sym)
         if boot:
             boot = validate_bootstrap_data(sym, boot)
             cdata = charts[sym]["data"]
             existing_times = {c["time"] for c in cdata["candles"]}
             cdata["candles"] = deduplicate_candles(cdata["candles"] + [c for c in boot if c["time"] not in existing_times])
+            
+            # 1.2 Detect and bridge gaps between restored data and bootstrap
+            gaps = detect_gaps(cdata["candles"], sym)
+            if gaps:
+                print(f"🔧 [{sym}] Attempting to bridge {len(gaps)} gaps...")
+                bridged = await bridge_gaps(sym, gaps)
+                if bridged:
+                    print(f"✅ [{sym}] Bridged {len(bridged)} missing bars.")
+                    cdata["candles"] = deduplicate_candles(cdata["candles"] + bridged)
+            
             if len(cdata["candles"]) > 500000:
                 cdata["candles"] = cdata["candles"][-500000:]
             cdata["last_update"] = get_now_iso()
             
+            # Commit bootstrap/bridged data to live storage parquet
+            save_candles_to_parquet(sym, cdata["candles"], charts[sym]["files"]["parquet"])
+            
             with open(charts[sym]["files"]["json"], "w") as f:
                 json.dump(cdata, f, indent=2)
+
 
     # 2. Historical Data Update (Daily/Weekly)
     print("\n📅 Updating Historical Files (Daily/Weekly)...")

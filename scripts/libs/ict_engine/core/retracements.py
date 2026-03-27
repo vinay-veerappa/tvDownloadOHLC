@@ -41,3 +41,32 @@ def calculate_retracements(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.DataF
         "equilibrium": equilibrium,
         "current_retracement": np.where(last_high > last_low, bullish_retracement, bearish_retracement)
     }, index=ohlc.index)
+
+@validate_ohlc(input_type="ohlc")
+def detect_dealing_range(ohlc: pd.DataFrame, swings: pd.DataFrame) -> pd.DataFrame:
+    """
+    Dealing Range Narrative Detection.
+    Identifies the Premium (above 0.5) and Discount (below 0.5) zones.
+    - If price is in DISCOUNT -> Look for BUYS.
+    - If price is in PREMIUM -> Look for SELLS.
+    Used for filtering signals.
+    """
+    last_sh = swings["level"].where(swings["shl"] == 1).ffill().values
+    last_sl = swings["level"].where(swings["shl"] == -1).ffill().values
+    
+    close = ohlc["close"].values
+    equilibrium = (last_sh + last_sl) / 2
+    
+    # Identify type
+    # A bar is in Discount if its Close is below equilibrium
+    # (Simplified: using close)
+    is_discount = (close < equilibrium)
+    is_premium = (close > equilibrium)
+    
+    return pd.DataFrame({
+        "equilibrium": equilibrium,
+        "is_discount": is_discount,
+        "is_premium": is_premium,
+        "range_high": last_sh,
+        "range_low": last_sl
+    }, index=ohlc.index)

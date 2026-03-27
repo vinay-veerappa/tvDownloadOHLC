@@ -8,13 +8,14 @@
 *   **Noon Line**: 12:00 PM ET.
 *   **Close**: 16:00 PM ET.
 
-## 2. The Core Stats
-*   **Break Today (Before 16:00)**: **~96%** probability that the IB High OR IB Low will be broken before the session ends.
-*   **Break Before Noon**: **~83-86%** probability that the break happens before 12:00 PM.
+## 2. The Core Stats (10-Year Study: 2016-2026)
+*   **Break Today (Before 16:00)**: **96.1%** probability that either the IB High or IB Low will be broken before the close.
+*   **Break Before Noon**: **82.5%** probability that the break happens before 12:00 PM.
 
-## 3. Directional Bias (The "Close" Rule)
-*   **Upper Half Close**: If the 10:30 AM candle closes in the **Upper 50%** of the Initial Balance range -> **High Probability of breaking IB High**.
-*   **Lower Half Close**: If the 10:30 AM candle closes in the **Lower 50%** of the Initial Balance range -> **High Probability of breaking IB Low**.
+## 3. Directional Bias & Specific Probability
+*   **The Upper 50% Rule**: If the 10:30 AM candle closes in the **Upper 50%** of the IB range -> **82.3%** high-conviction probability of breaking the **IB High**.
+*   **The Lower 50% Rule**: If the 10:30 AM candle closes in the **Lower 50%** of the IB range -> **80%+** probability of breaking the **IB Low**.
+*   **Specific Catalyst**: If the Low is set *before* the High and price is in the Upper 50% at 10:30 -> Probability of High break jumps to **84.0%**.
 
 ## 4. Operational Strategy
 *   **Context**: At 10:30 AM, mark the High and Low.

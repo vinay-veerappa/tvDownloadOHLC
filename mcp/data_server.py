@@ -262,13 +262,69 @@ def get_repo_map() -> str:
     return json.dumps(repo_map, indent=2)
 
 @mcp.tool()
-def get_system_health() -> str:
-    """Checks directory structure and venv status."""
-    return json.dumps({
-        "status": "healthy",
-        "root": BASE_DIR,
-        "data_sync": len(get_available_data())
-    }, indent=2)
+def check_data_freshness(ticker: str = "NQ1") -> str:
+    """
+    Checks the latest timestamp in live storage vs current time.
+    Helps determine if the streaming spoke or hub is lagging.
+    """
+    # Standardize ticker to live format
+    live_map = {"NQ1": "-NQ", "ES1": "-ES", "YM1": "-YM", "RTY1": "-RTY", "CL1": "-CL", "GC1": "-GC"}
+    safe_ticker = live_map.get(ticker, ticker)
+    
+    live_path = os.path.join(DATA_DIR, "live", f"live_storage_{safe_ticker}.parquet")
+    if not os.path.exists(live_path):
+        return f"Error: Live storage file for {ticker} not found at {live_path}"
+    
+    try:
+        import pandas as pd
+        df = pd.read_parquet(live_path)
+        if df.empty:
+            return f"Error: Live storage for {ticker} is empty."
+            
+        last_ts = pd.to_datetime(df['time'].max(), unit='ms') # Assuming ms based on stream_chart logic
+        now = datetime.utcnow()
+        gap_mins = (now - last_ts).total_seconds() / 60
+        
+        status = "✅ CURRENT" if gap_mins < 15 else "❌ STALE"
+        return json.dumps({
+            "ticker": ticker,
+            "last_timestamp_utc": last_ts.isoformat(),
+            "now_utc": now.isoformat(),
+            "gap_minutes": round(gap_mins, 2),
+            "status": status
+        }, indent=2)
+    except Exception as e:
+        return f"Technical Error checking freshness: {str(e)}"
+
+@mcp.tool()
+def get_detailed_data_status() -> str:
+    """Returns a comprehensive report of all tickers in data/ and data/live/ with their last modified times and row counts."""
+    report = {"history": {}, "live": {}}
+    
+    # Check History
+    for f in os.listdir(DATA_DIR):
+        if f.endswith(".parquet") and "_" in f:
+            path = os.path.join(DATA_DIR, f)
+            stats = os.stat(path)
+            report["history"][f] = {
+                "size_kb": round(stats.st_size / 1024, 2),
+                "modified": datetime.fromtimestamp(stats.st_mtime).isoformat()
+            }
+            
+    # Check Live
+    live_dir = os.path.join(DATA_DIR, "live")
+    if os.path.exists(live_dir):
+        for f in os.listdir(live_dir):
+            if f.startswith("live_storage_") and f.endswith(".parquet"):
+                path = os.path.join(live_dir, f)
+                stats = os.stat(path)
+                report["live"][f] = {
+                    "size_kb": round(stats.st_size / 1024, 2),
+                    "modified": datetime.fromtimestamp(stats.st_mtime).isoformat()
+                }
+                
+    return json.dumps(report, indent=2)
 
 if __name__ == "__main__":
     mcp.run()
+

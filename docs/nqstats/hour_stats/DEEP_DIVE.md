@@ -9,7 +9,10 @@ The data reveals three distinct "Hour Personalities" during the trading day:
 ### A. The "Volatile expansion" (09:00 AM)
 *   **Behavior**: The High or Low is often set at the **END** of the hour (Q4).
 *   **Implication**: Don't trust the early moves (Low ORB win rate). The hour expands late.
-*   **Key Stat**: 40% chance High/Low forms in the last 15 mins.
+*   **Key Stats**:
+    *   **9 AM Reversion Rule**: **75.2%** probability that if the 09:00 hour breaks the 08:00 high or low, it returns to the 09:00 open price at least once.
+    *   **1H Continuation Anchor**: If the 09:00-10:00 AM candle is **Green**, there is a **70.6% probability** the full NY session (until 16:00) closes Green.
+    *   **Timing**: 40% chance High/Low forms in the last 15 mins (Q4).
 
 ### B. The "Reversion Grind" (10:00 AM - 02:00 PM)
 *   **Behavior**: The High or Low is usually set in the **FIRST 15 MINS** (Q1).

@@ -24,6 +24,8 @@
 - **[Data Bridge Server](file:///c:/Users/vinay/tvDownloadOHLC/mcp/data_server.py)**: The central tool hub for AI assistants.
 - **[Structural Truth](mcp_brainstorming/structural_truth.md)**: The repo-wide knowledge graph (36k nodes).
 - **[Second Brain](file:///c:/Users/vinay/tvDownloadOHLC/mcp/memory.db)**: Persistent semantic memory for strategies and ADRs.
+- **[Trading Second Brain](SecondBrain_Trading.md)**: Unified rules and statistics for ALN, NQStats (RTH/6AM), and ICT concepts.
+
 
 ---
 

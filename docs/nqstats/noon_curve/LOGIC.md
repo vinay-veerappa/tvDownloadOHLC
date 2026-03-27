@@ -9,11 +9,10 @@
 *   **AM Session**: 08:00 - 12:00.
 *   **PM Session**: 12:00 - 16:00.
 
-## 2. Statistical Claims
-*   **Opposite Sides (The Edge)**: **~74-75%** of the time, the Session High and Session Low form on **opposite sides** of Noon.
-    *   *Example*: If the High is set in the AM (e.g., 9:30), the Low is likely to form in the PM.
-*   **Same Side (AM)**: **~20%** of the time, both High and Low form in the AM.
-*   **Same Side (PM)**: **~5%** of the time, both High and Low form in the PM.
+## 2. Statistical Claims (10-Year Study: 2016-2026)
+*   **Opposite Sides (The Edge)**: **72.81%** of the time, the Session High and Session Low form on **opposite sides** of 12:00 PM (Noon).
+*   **Same Side (AM)**: **21.82%** of the time, both High and Low form before Noon.
+*   **Same Side (PM)**: **5.37%** of the time, both High and Low form after Noon.
 
 ## 3. Timing Expectations
 *   **AM High/Low**: Typically forms around **09:30 - 10:00**.

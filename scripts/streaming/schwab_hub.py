@@ -165,16 +165,15 @@ async def main():
     # Run everything together
     # We wrap start_stream in its own try-except via gather logic or a wrapper
     async def run_stream():
-        try:
-            await hub.start_stream(
-                symbols_l1=symbols_l1,
-                symbols_l2=symbols_l2
-            )
-        except Exception as e:
-            logger.warning(f"⚠️ Stream exited: {e}. REST services will continue.")
-            # Keep the coroutine alive so gather doesn't exit
-            while True:
-                await asyncio.sleep(60)
+        while True:
+            try:
+                await hub.start_stream(
+                    symbols_l1=symbols_l1,
+                    symbols_l2=symbols_l2
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Stream exited: {e}. Reconnecting in 10s...")
+                await asyncio.sleep(10)
 
     try:
         from scripts.streaming.options.config import HUB_HOST, HUB_PORT
