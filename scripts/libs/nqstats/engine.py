@@ -170,14 +170,19 @@ class NQStatsEngine:
         """Vectorized calculation of session breakout reversion (broken) status."""
         # Config matches ProfilerService.apply_filters
         configs = [
-            ('asiabox',   '02:30', '16:00'),
-            ('londonbox', '07:30', '16:00'),
-            ('ny1box',    '10:30', '16:00'),
-            ('ny2box',    '13:00', '16:00')
+            ('asiabox',   '02:30', '16:00'), # Broken if touched during London/NY
+            ('londonbox', '07:30', '16:00'), # Broken if touched during NY
+            ('ny1box',    '11:30', '16:00'), # Broken if touched during NY2 (Next Session)
+            ('ny2box',    '18:00', '11:30')  # Broken if touched during Next Asia (Cycle Loop)
         ]
         
         for prefix, start_time, end_time in configs:
             mid_col = f'{prefix}_mid'
+            if prefix == 'ny2box' and f'prev_{mid_col}' in self.stats.columns:
+                # NY2 is broken in the NEXT cycle (18:00+), so we evaluate the 
+                # NEXT day's prices (Today) against the PREVIOUS day's mid.
+                mid_col = f'prev_{mid_col}'
+
             if mid_col not in self.stats.columns:
                 self.stats[f'{prefix}_broken'] = False
                 continue
@@ -189,13 +194,19 @@ class NQStatsEngine:
             post_mask = et_df.between_time(start_time, end_time)
             
             # Check for touch: low <= mid <= high
-            is_broken = (post_mask['low'] <= mid_vals.reindex(post_mask.index)) & \
-                        (post_mask['high'] >= mid_vals.reindex(post_mask.index))
+            # mid_vals.reindex(post_mask.index) correctly aligns the mid (which is daily)
+            # to every minute in the post-session mask.
+            is_broken_mask = (post_mask['low'] <= mid_vals.reindex(post_mask.index)) & \
+                             (post_mask['high'] >= mid_vals.reindex(post_mask.index))
             
-            # Group by day and see if it was ever broken
-            broken_days = is_broken.groupby(is_broken.index.date).any()
+            # Group by date and see if it was ever broken on that date
+            broken_days = is_broken_mask.groupby(is_broken_mask.index.date).any()
             
             # Map back to full stats index
+            # IMPORTANT: For NY2, 'broken_days' on Date T (using prev_mid) 
+            # means Date T-1 was broken. However, our context shift in process() 
+            # handles the mapping for future days. For the raw 'ny2box_broken' 
+            # column, we keep it aligned with the date the price touch occurred.
             self.stats[f'{prefix}_broken'] = broken_days.reindex(self.stats.index.date).values
 
         self._processed = True
