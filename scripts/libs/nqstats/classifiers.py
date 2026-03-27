@@ -113,9 +113,10 @@ def classify_noon_curve_vectorized(ohlc: pd.DataFrame) -> pd.Series:
     results = pd.Series("Same Side", index=hod_times.index)
     results[opposite] = "Opposite"
     
-    # Map back to original index using dict lookup for speed and stability
-    results_map = results.to_dict()
-    final_output = [results_map.get(d, "Unknown") for d in ohlc.index.date]
+    # Map back to original index using vectorized reindexing
+    # Performance: Avoid list comprehension over ohlc.index.date
+    dates = ohlc.index.date
+    final_output = results.reindex(dates).values
     
     return pd.Series(final_output, index=ohlc.index)
 def get_quadrant_status(df_1m: pd.DataFrame, boxes_df: pd.DataFrame) -> pd.DataFrame:
@@ -151,32 +152,45 @@ def get_quadrant_status(df_1m: pd.DataFrame, boxes_df: pd.DataFrame) -> pd.DataF
         broke_high = (et_df['high'] > bh_series) & time_mask
         broke_low = (et_df['low'] < bl_series) & time_mask
         
-        # Determine first occurrence per day using groupby
+        # 3. Determine first occurrence per day using groupby
         # We find the MIN index (time) where the condition is True
         dates = et_df.index.date
-        h_triggers = et_df.index[broke_high].to_series().groupby(lambda x: x.date()).min()
-        l_triggers = et_df.index[broke_low].to_series().groupby(lambda x: x.date()).min()
         
-        # 3. Create Status mapping for each day
-        unique_dates = np.unique(dates)
-        status_map = {}
+        # Use trading dates for grouping (shifts AM hours to the session's starting date)
+        # For Asia (18:00 - 02:30), AM hours (00:00 - 02:30) belong to the previous day's session.
+        if box_prefix == 'asiabox': 
+            am_mask = et_df.index.time < pd.Timestamp('03:00').time()
+            adjusted_dates = pd.Series(dates, index=et_df.index)
+            adjusted_dates.loc[am_mask] = adjusted_dates.loc[am_mask] - pd.Timedelta(days=1)
+            groups = adjusted_dates
+        else:
+            groups = pd.Series(dates, index=et_df.index)
+            
+        h_triggers = et_df.index[broke_high].to_series().groupby(groups[broke_high]).min()
+        l_triggers = et_df.index[broke_low].to_series().groupby(groups[broke_low]).min()
         
-        for date in unique_dates:
-            dt_h = h_triggers.get(date)
-            dt_l = l_triggers.get(date)
-            
-            has_h = dt_h is not None and not pd.isna(dt_h)
-            has_l = dt_l is not None and not pd.isna(dt_l)
-            
-            if has_h and (not has_l or dt_h < dt_l):
-                # Triggered HIGH first
-                status_map[date] = "LF" if has_l else "LT"
-            elif has_l and (not has_h or dt_l < dt_h):
-                status_map[date] = "SF" if has_h else "ST"
-            else:
-                status_map[date] = "None"
-                
-        # Map back to full index
-        results[f'{box_prefix}_status'] = [status_map.get(d, "None") for d in dates]
+        # 4. Create Status Series for each day
+        unique_groups = np.unique(groups.values)
+        status_series = pd.Series("None", index=unique_groups)
+        
+        # Vectorized identification of statuses
+        triggered_h = h_triggers.reindex(unique_groups)
+        triggered_l = l_triggers.reindex(unique_groups)
+        
+        has_h = triggered_h.notna()
+        has_l = triggered_l.notna()
+        
+        # First High: has high AND (no low OR high before low)
+        first_h = has_h & (~has_l | (triggered_h < triggered_l))
+        # First Low: has low AND (no high OR low before high)
+        first_l = has_l & (~has_h | (triggered_l < triggered_h))
+        
+        status_series.loc[first_h & ~has_l] = "LT"
+        status_series.loc[first_h & has_l] = "LF"
+        status_series.loc[first_l & ~has_h] = "ST"
+        status_series.loc[first_l & has_h] = "SF"
+        
+        # Map back to full index efficiently
+        results[f'{box_prefix}_status'] = status_series.reindex(groups.values).values
         
     return results

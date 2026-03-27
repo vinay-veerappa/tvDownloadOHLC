@@ -157,12 +157,10 @@ async def main():
         return
 
     # Subscriptions from environment or defaults
-    symbols_l1 = ["AAPL", "SPY", "QQQ", "SPX"]
-    symbols_l2 = ["AAPL", "SPY", "QQQ"]
+    # Define default symbols to stream if none provided via command line
+    symbols_l1 = ["AAPL", "SPY", "QQQ", "SPX", "/ES", "/NQ", "/YM", "/RTY"]
+    symbols_l2 = ["AAPL", "SPY", "QQQ", "/ES", "/NQ"]
  
-
-
-    # Run everything together
     # We wrap start_stream in its own try-except via gather logic or a wrapper
     async def run_stream():
         while True:
@@ -175,6 +173,7 @@ async def main():
                 logger.warning(f"⚠️ Stream exited: {e}. Reconnecting in 10s...")
                 await asyncio.sleep(10)
 
+    # Run everything together
     try:
         from scripts.streaming.options.config import HUB_HOST, HUB_PORT
         # FastAPI server

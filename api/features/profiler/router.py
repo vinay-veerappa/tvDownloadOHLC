@@ -1,10 +1,45 @@
 
 from fastapi import APIRouter, HTTPException, Query, Body
 from .service import ProfilerService
-from api.features.shared.data_loader import DATA_DIR
+from scripts.libs.nqstats.engine import NQStatsEngine
+from api.features.shared.data_loader import load_parquet
+import pandas as pd
 import json
 
 router = APIRouter()
+
+
+def _load_engine_df(ticker: str) -> pd.DataFrame:
+    """
+    Load 1m parquet data (with live fusion) and convert to DatetimeIndex
+    as required by NQStatsEngine.
+    """
+    df = load_parquet(ticker, "1m")
+    if df is None or df.empty:
+        return None
+    # load_parquet returns 'time' as Unix seconds (int)
+    df['datetime'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df = df.set_index('datetime')
+    df.index.name = 'datetime'
+    return df
+
+
+@router.get("/{ticker}/status", tags=["Stats"])
+async def get_profiler_live_status(ticker: str):
+    """
+    Get current NQStats live status summarizing all sessions in the current trading day.
+    Returns session statuses (asiabox_status, london_status, etc.) for use as filter context.
+    """
+    ticker = ticker.upper()
+    df = _load_engine_df(ticker)
+    if df is None or df.empty:
+        raise HTTPException(status_code=404, detail=f"No data for {ticker}")
+    
+    engine = NQStatsEngine(df, ticker=ticker)
+    engine.process()
+    latest = engine.get_latest_status()
+    # Convert numpy types to native Python for JSON serialization
+    return {k: (v.item() if hasattr(v, 'item') else v) for k, v in latest.items()}
 
 
 @router.get("/stats/profiler/{ticker}", tags=["Stats"])

@@ -15,6 +15,8 @@ class SchwabDevProvider(SchwabHubProvider):
         self.client = None
         self.is_running = False
         self._on_message = None
+        self._main_loop = None
+        self._reverse_map = {} # Map active contract (/ESM25) back to root (/ES)
 
     async def initialize(self) -> bool:
         if not os.path.exists(self.secrets_path):
@@ -46,13 +48,12 @@ class SchwabDevProvider(SchwabHubProvider):
             logger.error(f"❌ Failed to initialize Schwab-Dev provider: {e}")
             return False
 
-    def _internal_receiver(self, message):
+    async def _internal_receiver(self, message):
         """Thread-safe bridge from schwabdev's thread to asyncio."""
-        if not self._on_message:
+        if not self._on_message or not self._main_loop:
             return
 
-        # schwabdev calls this from a background thread
-        # 1. Parse string if needed
+        # Parse string if needed
         if isinstance(message, str):
             try:
                 message = json.loads(message)
@@ -60,18 +61,21 @@ class SchwabDevProvider(SchwabHubProvider):
                 logger.error(f"Failed to parse streaming message: {e}")
                 return
 
-        # 2. Get the loop
-        loop = asyncio.get_event_loop()
-        if not loop.is_running():
-            return
-
-        # 3. Flatten 'data' list if present (emulates schwab-py handler behavior)
+        # Flatten 'data' list if present (emulates schwab-py handler behavior)
         if isinstance(message, dict) and "data" in message and isinstance(message["data"], list):
             for item in message["data"]:
-                asyncio.run_coroutine_threadsafe(self._on_message(item), loop)
+                # Reverse map symbols (e.g. /ESM25 -> /ES)
+                if isinstance(item, dict) and "key" in item:
+                    item["key"] = self._reverse_map.get(item["key"], item["key"])
+                asyncio.run_coroutine_threadsafe(self._on_message(item), self._main_loop)
         else:
-            # Send other messages (notify, response, heartbeat) as-is (but now parsed)
-            asyncio.run_coroutine_threadsafe(self._on_message(message), loop)
+            # Send other messages (notify, response, heartbeat) as-is
+            # Some responses might have keys too
+            if isinstance(message, dict) and "content" in message and isinstance(message["content"], list):
+                for sub in message["content"]:
+                    if isinstance(sub, dict) and "key" in sub:
+                         sub["key"] = self._reverse_map.get(sub["key"], sub["key"])
+            asyncio.run_coroutine_threadsafe(self._on_message(message), self._main_loop)
 
     async def execute_rest(self, method_name: str, params: dict):
         logger.info(f"DEBUG: Entering execute_rest with {method_name}")
@@ -138,6 +142,7 @@ class SchwabDevProvider(SchwabHubProvider):
         For Equities, we use NASDAQ_BOOK and TIMESALE_EQUITY.
         """
         self._on_message = on_message_cb
+        self._main_loop = asyncio.get_event_loop()
         
         if not self.stream:
             logger.error("Stream not initialized. Call initialize() first.")
@@ -152,25 +157,48 @@ class SchwabDevProvider(SchwabHubProvider):
         # 1. Level 1 Subscriptions (SPX/Indices vs Equities)
         if symbols_l1:
             indices = [s for s in symbols_l1 if s == "SPX" or s.startswith("$")]
-            equities = [s for s in symbols_l1 if s not in indices]
+            futures = [s for s in symbols_l1 if s.startswith("/")]
+            equities = [s for s in symbols_l1 if s not in indices and s not in futures]
             
             if equities:
                 logger.info(f"Subscribing to LEVELONE_EQUITIES: {equities}")
                 self.stream.send(self.stream.level_one_equities(equities, "0,1,2,8,9"))
+                logger.info(f"Subscribing to CHART_EQUITY: {equities}")
+                self.stream.send(self.stream.chart_equity(equities, "0,1,2,3,4,5,6,7,8"))
+
             if indices:
                 logger.info(f"Subscribing to LEVELONE_INDICES: {indices}")
                 # Try adding $SPX if SPX is requested
                 if "SPX" in indices and "$SPX" not in indices:
                     indices.append("$SPX")
                 self.stream.send(self.stream.level_one_indices(indices, "0,1,2,3"))
+            
+            if futures:
+                # For schwabdev, CHART_FUTURES and LEVELONE_FUTURES often require the active contract (e.g. /ESH25)
+                # rather than the root symbol (/ES).
+                logger.info(f"Resolving futures roots: {futures}")
+                mapping = await self.resolve_futures_symbols(futures)
+                active_contracts = [mapping[f]["active"] for f in futures]
+                
+                # Update reverse map for the internal receiver
+                for root, info in mapping.items():
+                    self._reverse_map[info["active"]] = root
+                    if info["direct"] != info["active"]:
+                         self._reverse_map[info["direct"]] = root
+                
+                logger.info(f"Subscribing to LEVELONE_FUTURES: {active_contracts}")
+                self.stream.send(self.stream.level_one_futures(active_contracts, "0,1,2,3,4,5,6"))
+                
+                logger.info(f"Subscribing to CHART_FUTURES: {active_contracts}")
+                self.stream.send(self.stream.chart_futures(active_contracts, "0,1,2,3,4,5,6,7,8"))
 
         # 2. Time & Sales (Trade Bubbles)
-        equities = [s for s in symbols_l2 if not s.startswith("/")]
-        if equities:
-            logger.info(f"Subscribing to TIMESALE: {equities}")
+        equities_l2 = [s for s in symbols_l2 if not s.startswith("/")]
+        if equities_l2:
+            logger.info(f"Subscribing to TIMESALE: {equities_l2}")
             # Numeric fields for TIMESALE: 0(Symbol), 1(Time), 2(Price), 3(Size)
             self.stream.send(self.stream.basic_request("TIMESALE", "SUBS", parameters={
-                "keys": ",".join(equities),
+                "keys": ",".join(equities_l2),
                 "fields": "0,1,2,3,4"
             }))
 

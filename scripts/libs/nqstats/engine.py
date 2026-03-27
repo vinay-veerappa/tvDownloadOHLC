@@ -12,6 +12,7 @@ from .classifiers import (
 )
 from .ib import calculate_ib_bias
 from .timing import identify_hourly_mode
+from .levels import calculate_daily_levels, calculate_session_opens, calculate_p12_levels, get_session_mids
 
 class NQStatsEngine:
     """Core Engine for calculating NQStats based on Unified Bias Algorithm."""
@@ -85,15 +86,36 @@ class NQStatsEngine:
         
         # New: Detailed Quadrant Profiler (LT/ST/LF/SF) - SPECIFICALLY FOR THE BOXES
         quadrants = get_quadrant_status(self.df, self.sessions)
-        self.stats['asia_quadrant'] = quadrants['asiabox_status']
-        self.stats['london_quadrant'] = quadrants['londonbox_status']
-        self.stats['ny1_quadrant'] = quadrants['ny1box_status']
-        self.stats['ny2_quadrant'] = quadrants['ny2box_status']
+        self.stats['asiabox_status'] = quadrants['asiabox_status']
+        self.stats['londonbox_status'] = quadrants['londonbox_status']
+        self.stats['ny1box_status'] = quadrants['ny1box_status']
+        self.stats['ny2box_status'] = quadrants['ny2box_status']
 
         
         self.stats['noon_curve'] = classify_noon_curve_vectorized(self.df)
         
-        # 4. New Statistical Modules
+        # 4. Extract Institutional Levels
+        lvl_daily = calculate_daily_levels(self.df)
+        lvl_opens = calculate_session_opens(self.df)
+        lvl_p12   = calculate_p12_levels(self.df)
+        lvl_mids  = get_session_mids(self.sessions)
+        
+        # 5. Combine everything
+        self.stats = pd.concat([
+            self.stats,
+            lvl_daily,
+            lvl_opens,
+            lvl_p12,
+            lvl_mids
+        ], axis=1)
+
+        # 5b. Calculate PER-SESSION BROKEN (Reversion to Mid)
+        # Asia Broken: if price touches asia_mid between 02:30 and 16:00
+        # London Broken: if price touches london_mid between 07:30 and 16:00
+        # NY1 Broken: if price touches ny1_mid between 11:30 and 16:00
+        self._calculate_session_broken()
+
+        # 6. New Statistical Modules
         ib_info = calculate_ib_bias(self.sessions)
         self.stats['ib_bias'] = ib_info['ib_bias']
         self.stats['ib_conviction'] = ib_info['ib_conviction']
@@ -113,8 +135,67 @@ class NQStatsEngine:
         
         # Add session highs/lows for reference
         for col in self.sessions.columns:
-            self.stats[col] = self.sessions[col]
+            if col not in self.stats.columns:
+                self.stats[col] = self.sessions[col]
+
+        # 7. Transition Matrix Context (Shifted statuses)
+        # We need to shift across trading days, not across 1m bars.
+        # We do this by resampling the daily status from the sessions dataframe
+        # then mapping back to the 1m timeline.
+        def _get_daily_shift(col: str) -> pd.Series:
+            # Map each 1m bar to its trading date
+            trading_dates = self.sessions.index.date
+            # Create a per-date series of final statuses
+            daily = self.stats[col].groupby(trading_dates).last().shift(1).fillna("None")
+            # Map back to the stats index
+            return daily.reindex(trading_dates).values
+
+        self.stats['prev_ny1_status'] = _get_daily_shift('ny1box_status')
+        self.stats['prev_ny2_status'] = _get_daily_shift('ny2box_status')
+        self.stats['prev_asia_status'] = _get_daily_shift('asiabox_status')
+        
+        # Broken status context for prior days
+        def _get_daily_shift_bool(col: str) -> pd.Series:
+            trading_dates = self.sessions.index.date
+            daily = self.stats[col].groupby(trading_dates).last().shift(1).fillna(False)
+            return daily.reindex(trading_dates).values
+
+        self.stats['prev_ny1_broken'] = _get_daily_shift_bool('ny1box_broken')
+        self.stats['prev_ny2_broken'] = _get_daily_shift_bool('ny2box_broken')
+        self.stats['prev_asia_broken'] = _get_daily_shift_bool('asiabox_broken')
             
+    def _calculate_session_broken(self):
+        """Vectorized calculation of session breakout reversion (broken) status."""
+        # Config matches ProfilerService.apply_filters
+        configs = [
+            ('asiabox',   '02:30', '16:00'),
+            ('londonbox', '07:30', '16:00'),
+            ('ny1box',    '10:30', '16:00'),
+            ('ny2box',    '13:00', '16:00')
+        ]
+        
+        for prefix, start_time, end_time in configs:
+            mid_col = f'{prefix}_mid'
+            if mid_col not in self.stats.columns:
+                self.stats[f'{prefix}_broken'] = False
+                continue
+            
+            mid_vals = self.stats[mid_col]
+            
+            # Mask for the "Post-Session" window
+            et_df = self.df # Already ET from process()
+            post_mask = et_df.between_time(start_time, end_time)
+            
+            # Check for touch: low <= mid <= high
+            is_broken = (post_mask['low'] <= mid_vals.reindex(post_mask.index)) & \
+                        (post_mask['high'] >= mid_vals.reindex(post_mask.index))
+            
+            # Group by day and see if it was ever broken
+            broken_days = is_broken.groupby(is_broken.index.date).any()
+            
+            # Map back to full stats index
+            self.stats[f'{prefix}_broken'] = broken_days.reindex(self.stats.index.date).values
+
         self._processed = True
         return self.stats
 
@@ -141,7 +222,7 @@ class NQStatsEngine:
         report.append(f"---")
         report.append(f"ALN Pattern: {latest['aln']}")
         report.append(f"Broken Status: {latest['broken']}")
-        report.append(f"Profiler Boxes: Asia:{latest['asia_quadrant']} | London:{latest['london_quadrant']} | NY1:{latest['ny1_quadrant']} | NY2:{latest['ny2_quadrant']}")
+        report.append(f"Profiler Boxes: Asia:{latest['asiabox_status']} | London:{latest['londonbox_status']} | NY1:{latest['ny1box_status']} | NY2:{latest['ny2box_status']}")
         report.append(f"Noon Curve: {latest['noon_curve']}")
         report.append(f"IB Bias: {latest['ib_bias']} ({latest['ib_conviction']*100:.1f}%)")
         report.append(f"Anchor (9AM): {latest['anchor']}")

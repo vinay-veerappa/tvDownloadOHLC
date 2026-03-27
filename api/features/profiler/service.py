@@ -9,6 +9,12 @@ from api.features.sessions.service import SessionService
 import time
 from pathlib import Path
 from api.features.shared.data_loader import DATA_DIR
+from scripts.libs.nqstats.levels import (
+    calculate_daily_levels, 
+    calculate_session_opens, 
+    calculate_p12_levels, 
+    get_session_mids
+)
 
 class ProfilerService:
     _cache = {}
@@ -130,237 +136,25 @@ class ProfilerService:
                 }
 
 
-        # 2. Fallback to Calculation (Original Logic)
-        # ... (Previous implementation below, kept as fallback)
-        
-        # Load Data (with Cache)
-        df = ProfilerService._load_df(ticker)
-        
-        if df is None or df.empty:
-            return {"error": f"Data file for {ticker} not found or empty"}
-        
-        # ... (Rest of the calculation logic)
-        # For brevity in this edit, I will call the internal method _calculate_from_df
-        # But to be safe with this 'write_to_file', I must include the logic or it breaks.
-        # I'll paste the optimized logic I wrote in the previous step.
-        
-        sessions_def = [
-            # Trading day sessions - all should share the same trading_date
-            # Asia starts at 18:00 on (trading_date - 1 day)
-            # London/NY sessions are on the actual trading_date
-            # skip_broken: NY2 has no broken window since trading ends at 17:00
-            {"name": "Asia",   "start": "18:00", "end": "19:30", "next_start": "02:30", "day_offset_start": -1, "day_offset_end": -1, "skip_broken": False}, 
-            {"name": "London", "start": "02:30", "end": "03:30", "next_start": "07:30", "day_offset_start": 0, "day_offset_end": 0, "skip_broken": False},
-            {"name": "NY1",    "start": "07:30", "end": "08:30", "next_start": "11:30", "day_offset_start": 0, "day_offset_end": 0, "skip_broken": False},
-            {"name": "NY2",    "start": "11:30", "end": "12:30", "next_start": "17:00", "day_offset_start": 0, "day_offset_end": 0, "skip_broken": True}, 
-        ]
-
-        # Get unique calendar dates and derive trading dates
-        # Trading date = the date on which the session ENDS (i.e., 18:00 on Dec 3 → trading date Dec 4)
-        from datetime import time as dt_time
-        
-        def get_trading_date(ts):
-            """Get trading date: if time >= 18:00, it belongs to next calendar day's trading session"""
-            if ts.time() >= dt_time(18, 0):
-                return (ts.date() + timedelta(days=1))
-            return ts.date()
-        
-        # Get unique trading dates from the data
-        trading_dates = sorted(list(set(get_trading_date(ts) for ts in df.index)))
-        target_dates = trading_dates[-days:]
-        
-        if target_dates:
-            # Need to include data from previous calendar day for Asia session
-            slice_start = pd.Timestamp(target_dates[0]) - timedelta(days=2)
-            if df.index.tz:
-                 slice_start = slice_start.tz_localize(df.index.tz)
-            df_slice = df.loc[slice_start:] 
-        else:
-            df_slice = df
-        
-        tz = df.index.tz
-        collected_stats = []
-
-        for trading_date in target_dates:
-            trading_date_str = trading_date.strftime('%Y-%m-%d')
+        # 2. Fallback to Calculation (Modular Library)
+        try:
+            from scripts.libs.profiler import ProfilerData
+            data = ProfilerData.from_parquet(ticker, days=days)
             
-            for sess in sessions_def:
-                # Calculate session start/end based on trading date and offsets
-                sess_cal_date_start = trading_date + timedelta(days=sess['day_offset_start'])
-                sess_cal_date_end = trading_date + timedelta(days=sess['day_offset_end'])
-                
-                start_naive = pd.Timestamp(f"{sess_cal_date_start.strftime('%Y-%m-%d')} {sess['start']}")
-                end_naive = pd.Timestamp(f"{sess_cal_date_end.strftime('%Y-%m-%d')} {sess['end']}")
+            elapsed = time.time() - start_time
+            return {
+                "sessions": data.sessions,
+                "metadata": {
+                    "ticker": ticker,
+                    "days": days,
+                    "count": len(data.sessions),
+                    "source": "dynamic_calculation",
+                    "elapsed_seconds": round(elapsed, 4)
+                }
+            }
+        except Exception as e:
+            return {"error": f"Calculation failed: {str(e)}"}
 
-                
-                try:
-                    start_ts = start_naive.tz_localize(tz)
-                    end_ts = end_naive.tz_localize(tz)
-                except: continue
-
-                try:
-                    sess_data = df_slice.loc[start_ts : end_ts - timedelta(seconds=1)]
-                except KeyError: continue
-                
-                if sess_data.empty: continue
-                
-                # Basic price data
-                sess_open = float(sess_data.iloc[0]['open'])
-                high = sess_data['high'].max()
-                low = sess_data['low'].min()
-                mid = (high + low) / 2
-                
-                # Prior Close (for V14/V24 anchoring)
-                # Find the close of the bar exactly before start_ts
-                prior_close = sess_open # Fallback
-                try:
-                    prior_bar_idx = df_slice.index.get_indexer([start_ts], method='pad')[0]
-                    if prior_bar_idx >= 0:
-                        # Ensure we don't pick a bar from a completely different day if there's a huge gap
-                        # Pad finds the nearest previous. If it's 10 mins before, it's fine.
-                        prior_ts = df_slice.index[prior_bar_idx]
-                        if (start_ts - prior_ts) < timedelta(hours=24):
-                            prior_close = float(df_slice.iloc[prior_bar_idx]['close'])
-                except:
-                    pass
-                # Time when high/low occurred
-                high_idx = sess_data['high'].idxmax()
-                low_idx = sess_data['low'].idxmin()
-                high_time = high_idx.strftime('%H:%M') if pd.notna(high_idx) else None
-                low_time = low_idx.strftime('%H:%M') if pd.notna(low_idx) else None
-                
-                # Percentage from open
-                high_pct = round(((high - sess_open) / sess_open) * 100, 2) if sess_open > 0 else 0
-                low_pct = round(((low - sess_open) / sess_open) * 100, 2) if sess_open > 0 else 0
-                
-                # Close % (Path)
-                sess_close = float(sess_data.iloc[-1]['close'])
-                close_pct = round(((sess_close - sess_open) / sess_open) * 100, 2) if sess_open > 0 else 0
-                
-                mon_start = end_ts
-                next_start_time = sess['next_start']
-                
-                # For next_start calculation: Asia's next_start (02:30) is on the trading_date
-                # All other sessions' next_start is also on the trading_date  
-                if sess['name'] == 'Asia':
-                    # Asia ends at 19:30 on (trading_date - 1), next_start 02:30 is on trading_date
-                    mon_end_day = trading_date
-                else:
-                    # London/NY: next_start is on the same trading_date
-                    mon_end_day = trading_date
-                
-                mon_end_naive = pd.Timestamp(f"{mon_end_day.strftime('%Y-%m-%d')} {next_start_time}")
-                try: status_end = mon_end_naive.tz_localize(tz)
-                except: continue
-
-                reset_time_naive = pd.Timestamp(f"{trading_date.strftime('%Y-%m-%d')} 18:00")
-                try: reset_time = reset_time_naive.tz_localize(tz)
-                except: continue
-                
-                if reset_time <= status_end: reset_time += timedelta(days=1)
-                broken_start = status_end
-                broken_end = reset_time
-
-                try: status_data = df_slice.loc[mon_start : status_end - timedelta(seconds=1)]
-                except KeyError: status_data = pd.DataFrame()
-                
-                status = 'None'
-                triggered_side = None
-                status_time = None
-                status_ts = None
-                
-                if not status_data.empty:
-                    for ts, row in status_data.iterrows():
-                        h, l = row['high'], row['low']
-                        # Current bar checks
-                        broke_high = h > high
-                        broke_low = l < low
-                        
-                        if triggered_side is None:
-                            if broke_high and broke_low:
-                                # Both broken on same bar - infer direction from bar open
-                                # If open is closer to low, assume went up first (Long False)
-                                # If open is closer to high, assume went down first (Short False)
-                                bar_open = row['open']
-                                bar_mid = (h + l) / 2
-                                if bar_open < bar_mid:
-                                    status = 'Long False'  # Started low, went up first
-                                else:
-                                    status = 'Short False'  # Started high, went down first
-                                triggered_side = 'Both'
-                                status_time = ts.isoformat()
-                                status_ts = int(ts.timestamp())
-                                break
-                            elif broke_high:
-                                triggered_side = 'High'; status = 'Long True'; status_time = ts.isoformat(); status_ts = int(ts.timestamp())
-                            elif broke_low:
-                                triggered_side = 'Low'; status = 'Short True'; status_time = ts.isoformat(); status_ts = int(ts.timestamp())
-                        else:
-                            if triggered_side == 'High':
-                                if broke_low:
-                                    status = 'Long False'; status_time = ts.isoformat(); status_ts = int(ts.timestamp()); break 
-                            elif triggered_side == 'Low':
-                                if broke_high:
-                                    status = 'Short False'; status_time = ts.isoformat(); status_ts = int(ts.timestamp()); break
-
-                try: broken_data = df_slice.loc[broken_start : broken_end - timedelta(seconds=1)]
-                except KeyError: broken_data = pd.DataFrame()
-                
-                broken = False
-                broken_time = None
-                
-                # Skip broken calculation for sessions with no broken window (e.g., NY2 - trading ends at 17:00)
-                if not sess.get('skip_broken', False) and not broken_data.empty:
-                    break_mask = (broken_data['low'] <= mid) & (broken_data['high'] >= mid)
-                    if break_mask.any():
-                        broken = True
-                        broken_idx = break_mask.idxmax()
-                        broken_time = broken_idx.strftime('%H:%M')
-                        broken_ts = int(broken_idx.timestamp())
-                    else:
-                        broken_ts = None
-                else:
-                    broken_ts = None
-
-                collected_stats.append({
-                    "date": trading_date_str,
-                    "session": sess['name'],
-                    "open": sess_open,
-                    "prior_close": prior_close,
-                    "range_high": float(high),
-                    "range_low": float(low),
-                    "mid": float(mid),
-                    "high_time": high_time,
-                    "low_time": low_time,
-                    "high_pct": high_pct,
-                    "low_pct": low_pct,
-                    "close_pct": close_pct,
-                    "status": status,
-                    "status_time": status_time,
-                    "broken": broken,
-                    "broken_time": broken_time,
-                    "broken_ts": broken_ts,
-                    "start_time": start_ts.isoformat(),
-                    "start_ts": int(start_ts.timestamp()),
-                    "end_time": end_ts.isoformat(),
-                    "end_ts": int(end_ts.timestamp()),
-                    "high_ts": int(high_idx.timestamp()) if pd.notna(high_idx) else None,
-                    "low_ts": int(low_idx.timestamp()) if pd.notna(low_idx) else None,
-                    "status_ts": status_ts
-                })
-
-        collected_stats.sort(key=lambda x: x['start_time'])
-        
-        # --- UPDATE IN-MEMORY CACHE ONLY ---
-        ProfilerService._json_cache[ticker] = collected_stats
-        
-        elapsed = time.time() - start_time
-
-        return {
-            "sessions": collected_stats,
-            "count": len(collected_stats),
-            "elapsed_seconds": round(elapsed, 4)
-        }
 
     @staticmethod
     def get_level_stats(ticker: str) -> Dict:
@@ -760,6 +554,23 @@ class ProfilerService:
                     date_sessions[date] = {}
                 date_sessions[date][sess_name] = s
         
+        # Add "Prev" context for each date to support transition matrix filters (e.g. yesterday's NY feeding today's Asia)
+        sorted_dates = sorted(date_sessions.keys())
+        for i in range(1, len(sorted_dates)):
+            curr_date = sorted_dates[i]
+            prev_date = sorted_dates[i-1]
+            
+            # Map previous NY1/NY2 into current day's context for filtering
+            if 'NY1' in date_sessions[prev_date]:
+                date_sessions[curr_date]['Prev NY1'] = date_sessions[prev_date]['NY1']
+            if 'NY2' in date_sessions[prev_date]:
+                date_sessions[curr_date]['Prev NY2'] = date_sessions[prev_date]['NY2']
+            if 'Asia' in date_sessions[prev_date]:
+                date_sessions[curr_date]['Prev Asia'] = date_sessions[prev_date]['Asia']
+            
+            # Contextual "Broken" flags
+            # (Note: Logic already exists to pull .get('broken') from these Dict objects)
+        
         # Apply filters - find intersection of all conditions
         matched_dates = []
         
@@ -815,15 +626,19 @@ class ProfilerService:
             if not matches_all:
                 continue
             
-            # Check intra-session state (direction filter on target session)
+            # Check intra-session state (current status of target session)
             if intra_state and intra_state != 'Any':
                 target_sess = sessions_by_name.get(target_session)
                 if target_sess:
                     status = target_sess.get('status', '')
-                    if intra_state == 'Long' and not status.startswith('Long'):
-                        matches_all = False
-                    elif intra_state == 'Short' and not status.startswith('Short'):
-                        matches_all = False
+                    # If intra_state is just "Long", match any Long status
+                    if intra_state in ['Long', 'Short']:
+                        if not status.startswith(intra_state):
+                            matches_all = False
+                    else:
+                        # Exact match (e.g. "Long False") or partial match for "Broken"
+                        if intra_state not in status:
+                            matches_all = False
             
             if matches_all:
                 matched_dates.append(date)
@@ -907,6 +722,38 @@ class ProfilerService:
             range_stats["low_pct"]["median"] = round(float(np.median(low_pcts)), 3)
             range_stats["low_pct"]["mean"] = round(float(np.mean(low_pcts)), 3)
         
+        # 6. Calculate Level Hit Rates
+        level_hit_rates = {}
+        level_keys = [
+            "hit_pdh", "hit_pdm", "hit_pdl", 
+            "hit_midnight", "hit_0730", 
+            "hit_ny_p12h", "hit_ny_p12m", "hit_ny_p12l",
+            "hit_p12h", "hit_p12m", "hit_p12l",
+            "hit_p_asia_mid", "hit_p_lon_mid", "hit_p_ny1_mid", "hit_p_ny2_mid"
+        ]
+        
+        total_matched = len(target_sessions) if target_sessions else 1
+        for k in level_keys:
+            hits = sum(1 for s in target_sessions if s.get(k, False))
+            level_hit_rates[k] = round((hits / total_matched) * 100, 1) if target_sessions else 0
+            
+        # 7. HOD / LOD Timing Distribution
+        def get_time_buckets(sessions, field):
+            buckets = {}
+            for s in sessions:
+                t = s.get(field)
+                if t:
+                    # Round to 15m bucket for cleaner table display
+                    try:
+                        h, m = map(int, t.split(':'))
+                        m_bucket = (m // 15) * 15
+                        t_bucket = f"{h:02d}:{m_bucket:02d}"
+                        buckets[t_bucket] = buckets.get(t_bucket, 0) + 1
+                    except: continue
+            return buckets
+
+        hod_timing = get_time_buckets(target_sessions, 'high_time')
+        lod_timing = get_time_buckets(target_sessions, 'low_time')
 
         # Optimize payload size: Strip unused fields locally
         # We only need enough info for charts.
@@ -942,6 +789,9 @@ class ProfilerService:
             "count": len(matched_dates),
             "distribution": distribution,
             "range_stats": range_stats,
+            "level_hit_rates": level_hit_rates,
+            "hod_timing": hod_timing,
+            "lod_timing": lod_timing,
             "sessions": lean_sessions, # Reduced size payload
             "target_session": target_session,
             "filters_applied": filters or {},

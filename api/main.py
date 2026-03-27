@@ -42,7 +42,7 @@ from api.features.candle_science.router import router as candle_science_router
 
 app.include_router(indicators_router, prefix="/api/indicators", tags=["indicators"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
-app.include_router(profiler_router, tags=["profiler"])
+app.include_router(profiler_router, prefix="/api/profiler", tags=["profiler"])
 app.include_router(candle_science_router, prefix="/api/candle-science", tags=["candle-science"])
 
 

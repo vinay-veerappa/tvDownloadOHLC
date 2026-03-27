@@ -12,8 +12,8 @@ if BASE_DIR not in sys.path:
 
 from api.features.indicators.service import calculate_indicators, get_available_indicators
 from api.features.shared.data_loader import load_parquet, get_available_data
-from api.features.profiler.service import ProfilerService
 from api.features.candle_science.service import CandleScienceService
+from scripts.libs.profiler import ProfilerData, ProfilerFilter, ProfilerStats, get_live_context
 
 # Paths
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -175,10 +175,50 @@ def calculate_indicator(ticker: str, timeframe: str, indicators: list[str]) -> s
 def get_profiler_stats(ticker: str, days: int = 50) -> str:
     """
     Gets session-based profiler statistics and probabilities for a ticker.
-    Analyzes Open/High/Low/Close relative to previous sessions.
+    Analyzes historical sessions from the pre-computed JSON.
     """
-    result = ProfilerService.analyze_profiler_stats(ticker, days=days)
-    return json.dumps(result, indent=2)
+    try:
+        data = ProfilerData.load(ticker)
+        # Calculate stats for the last N sessions
+        # (A day usually has 4 sessions, so days*4 is approximate)
+        subset = data.sessions[-(days*4):]
+        res = ProfilerStats.compute(subset)
+        
+        # Remove raw session list from output to keep it compact for the LLM
+        if "all_sessions" in res:
+             del res["all_sessions"]
+             
+        return json.dumps(res, indent=2)
+    except Exception as e:
+        return f"Error loading profiler stats: {str(e)}"
+
+@mcp.tool()
+def get_profiler_combinations(
+    ticker: str, 
+    target_session: str, 
+    filters: dict = None, 
+    broken_filter: bool = None, 
+    intra_state: str = "Any"
+) -> str:
+    """
+    Returns probabilities for a target session based on a specific combination of prior session profiles.
+    Example: ticker="NQ1", target_session="London", filters={"asia_status": "Long False"}
+    
+    Filters keys should match keys in ProfilerData.get_trading_day_context():
+    ['prev_ny1_status', 'prev_ny2_status', 'prev_asia_status', 'prev_lon_status', 'asia_status', 'lon_status', 'ny1_status']
+    """
+    try:
+        data = ProfilerData.load(ticker)
+        # ProfilerFilter expects context as a dict
+        matched = ProfilerFilter.filter(data, target_session, filters or {}, broken_filter=broken_filter, intra_state=intra_state)
+        res = ProfilerStats.compute(matched)
+        
+        if "all_sessions" in res:
+             del res["all_sessions"]
+             
+        return json.dumps(res, indent=2)
+    except Exception as e:
+        return f"Error computing profiler combinations: {str(e)}"
 
 @mcp.tool()
 def calculate_candle_science(ticker: str, timeframe: str, filters: dict = None) -> str:
@@ -190,19 +230,38 @@ def calculate_candle_science(ticker: str, timeframe: str, filters: dict = None) 
     return json.dumps(result, indent=2)
 
 @mcp.tool()
-def get_prediction(session: str, context: dict) -> str:
+def get_prediction(session: str, ticker: str = "NQ1") -> str:
     """
-    Predicts session outcomes based on prior session status.
-    session: 'asia' or 'london'
-    context: {'prev_ny1': 'Long True', 'prev_ny2': 'Short False', 'asia_status': 'Any'}
+    Predicts session outcomes based on current institutional state (from Parquet source of truth).
+    Determines Asia, London, or NY probabilities given the already-completed sessions today.
     """
-    if session.lower() == 'asia':
-        res = ProfilerService.get_asia_prediction(context.get('prev_ny1'), context.get('prev_ny2'))
-    elif session.lower() == 'london':
-        res = ProfilerService.get_london_prediction(context.get('prev_ny2'), context.get('asia_status'))
-    else:
-        return "Unknown session. Use 'asia' or 'london'."
-    return json.dumps(res, indent=2)
+    session_map = {"asia": "Asia", "london": "London", "ny1": "NY1", "ny2": "NY2"}
+    target = session_map.get(session.lower())
+    if not target:
+        return "Invalid session. Use 'asia', 'london', 'ny1', or 'ny2'."
+
+    try:
+        # 1. Get current LIVE state from Parquet (Source of truth)
+        context = get_live_context(ticker)
+        
+        # 2. Filter historical JSON by this context
+        data = ProfilerData.load(ticker)
+        matched = ProfilerFilter.filter(data, target, context)
+        res = ProfilerStats.compute(matched)
+        
+        # 3. Add context to output so the LLM knows what we filtered by
+        output = {
+            "prediction_for": target,
+            "current_context": context,
+            "matched_historical_days": res.get("count"),
+            "probabilities": res.get("distribution_pct"),
+            "timing": res.get("timing"),
+            "range": res.get("range"),
+            "hit_rates": res.get("hit_rates")
+        }
+        return json.dumps(output, indent=2)
+    except Exception as e:
+        return f"Prediction failed: {str(e)}"
 
 @mcp.tool()
 def get_market_levels(ticker: str) -> str:
