@@ -70,7 +70,9 @@ def check_9am_reversion(df_1m: pd.DataFrame) -> pd.DataFrame:
     Implements the 75.2% Reversion Rule for the 09:00 hour.
     If price breaks the 08:00 high or low, it must return to the 09:00 open.
     """
-    hours = df_1m.index.hour
+    # Ensure US/Eastern normalization
+    et_df = df_1m.tz_convert('US/Eastern') if df_1m.index.tz else df_1m
+    hours = et_df.index.hour
     
     # Get 08:00 High/Low
     # (Simplified: Extracting from a 1H resample just once per day)

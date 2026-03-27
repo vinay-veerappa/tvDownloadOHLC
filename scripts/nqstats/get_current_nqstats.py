@@ -22,15 +22,15 @@ def main():
     
     ticker = args.ticker
     
-    print(f"🔍 Fetching {ticker} data for NQStats analysis...")
+    print(f"[*] Fetching {ticker} data for NQStats analysis...")
     df = load_fused_data(ticker, timeframe="1m")
     
     if df.empty:
-        print(f"❌ Error: No data found for {ticker}")
+        print(f"[!] Error: No data found for {ticker}")
         return
         
-    engine = NQStatsEngine(df)
-    print(f"⚙️  Processing Unified Bias Algorithm...")
+    engine = NQStatsEngine(df, ticker=ticker)
+    print(f"[*] Processing Unified Bias Algorithm...")
     engine.process()
     
     print("\n" + "="*45)
@@ -39,7 +39,7 @@ def main():
     
     # Also output raw key for potential automation
     latest = engine.get_latest_status()
-    print(f"\nCombo Key: {latest['aln']} | {latest['broken']} | {latest['status']}")
+    print(f"\nCombo Key: {latest['aln']} | {latest['broken']} | {latest.get('status', 'N/A')}")
 
 if __name__ == "__main__":
     main()

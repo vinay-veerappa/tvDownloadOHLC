@@ -37,10 +37,14 @@ def check_ib_broken_vectorized(df_1m: pd.DataFrame, sessions_df: pd.DataFrame) -
     """
     Checks if IB High or Low has been broken in the RTH session.
     """
-    rth_mask = (df_1m.index.time >= pd.Timestamp("09:30").time()) & (df_1m.index.time < pd.Timestamp("16:00").time())
+    # Ensure US/Eastern for time-based masking
+    et_df = df_1m.tz_convert('US/Eastern') if df_1m.index.tz else df_1m
+    times = et_df.index.time
     
-    high_broken = (df_1m['high'] > sessions_df['ib_high']) & rth_mask
-    low_broken = (df_1m['low'] < sessions_df['ib_low']) & rth_mask
+    rth_mask = (times >= pd.Timestamp("09:30").time()) & (times < pd.Timestamp("16:00").time())
+    
+    high_broken = (et_df['high'] > sessions_df['ib_high']) & rth_mask
+    low_broken = (et_df['low'] < sessions_df['ib_low']) & rth_mask
     
     # Group by day to see if it EVER broke
     groups = df_1m.index.date

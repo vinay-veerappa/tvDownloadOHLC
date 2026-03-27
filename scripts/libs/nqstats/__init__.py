@@ -3,10 +3,10 @@ NQStats Library - Unified Bias Algorithm Implementation.
 """
 
 from .sessions import (
-    NQ_KILLZONES, 
-    PROFILER_BOXES,
+    DEFAULT_SESSION_CONFIG, 
+    PROFILER_BOX_CONFIG,
     get_nq_session_ranges, 
-    extract_all_nq_sessions
+    extract_all_sessions
 )
 from .classifiers import (
     classify_aln_vectorized, 
@@ -21,10 +21,10 @@ from .timing import (
 from .engine import NQStatsEngine
 
 __all__ = [
-    'NQ_KILLZONES',
-    'PROFILER_BOXES',
+    'DEFAULT_SESSION_CONFIG',
+    'PROFILER_BOX_CONFIG',
     'get_nq_session_ranges',
-    'extract_all_nq_sessions',
+    'extract_all_sessions',
     'classify_aln_vectorized',
     'get_broken_status_vectorized',
     'get_quadrant_status',

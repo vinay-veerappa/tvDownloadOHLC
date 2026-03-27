@@ -8,7 +8,8 @@ import numpy as np
 from datetime import time, datetime, timedelta
 
 # NQStats Official Killzone Windows (US/Eastern)
-NQ_KILLZONES = {
+# Unified Bias Algorithm Official Windows (US/Eastern)
+DEFAULT_SESSION_CONFIG = {
     'Asia': {'start': time(18, 0), 'end': time(2, 0)},
     'London': {'start': time(3, 0), 'end': time(8, 0)},
     'Pre-NY': {'start': time(8, 0), 'end': time(9, 30)},
@@ -17,9 +18,7 @@ NQ_KILLZONES = {
     'NY_AM': {'start': time(9, 30), 'end': time(12, 0)},
 }
 
-# NQStats Profiler "Box" Windows (US/Eastern)
-# Narrow windows used for evaluation of Breakout Direction vs Holding Power.
-PROFILER_BOXES = {
+PROFILER_BOX_CONFIG = {
     'AsiaBox': {'start': time(18, 0), 'end': time(19, 30)},
     'LondonBox': {'start': time(2, 30), 'end': time(3, 30)},
     'NY1Box': {'start': time(7, 30), 'end': time(8, 30)},
@@ -87,23 +86,23 @@ def get_nq_session_ranges(ohlc: pd.DataFrame, session_name: str, config: dict,
         f"{prefix}_active": np.where(mask, 1, 0)
     }, index=df.index)
 
-def extract_all_nq_sessions(ohlc: pd.DataFrame) -> pd.DataFrame:
-    """Combines all NQ session ranges and Profiler Boxes into a single DataFrame."""
-    # Pre-calculate to speed up the 10+ groupby operations
-    df_et = ohlc.tz_convert('US/Eastern') if ohlc.index.tz else ohlc
+def extract_all_sessions(df_et: pd.DataFrame, 
+                         killzone_config: dict = DEFAULT_SESSION_CONFIG, 
+                         box_config: dict = PROFILER_BOX_CONFIG) -> pd.DataFrame:
+    """
+    Wrapper to extract ALL relevant session ranges for a ticker.
+    Automatically handles pre-calculation for performance.
+    """
     times = df_et.index.time
     dates = df_et.index.date
-    
     results = []
     
     # 1. Standard Killzones
-    for sess in NQ_KILLZONES.keys():
-        results.append(get_nq_session_ranges(df_et, sess, NQ_KILLZONES, times, dates))
+    for sess in killzone_config.keys():
+        results.append(get_nq_session_ranges(df_et, sess, killzone_config, times, dates))
         
     # 2. Profiler Boxes
-    for sess in PROFILER_BOXES.keys():
-        results.append(get_nq_session_ranges(df_et, sess, PROFILER_BOXES, times, dates))
+    for sess in box_config.keys():
+        results.append(get_nq_session_ranges(df_et, sess, box_config, times, dates))
     
     return pd.concat(results, axis=1)
-
-

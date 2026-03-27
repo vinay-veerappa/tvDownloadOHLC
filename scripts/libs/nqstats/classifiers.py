@@ -120,91 +120,63 @@ def classify_noon_curve_vectorized(ohlc: pd.DataFrame) -> pd.Series:
     return pd.Series(final_output, index=ohlc.index)
 def get_quadrant_status(df_1m: pd.DataFrame, boxes_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Detailed Profiler Quadrant logic (Verified Study).
-    LT (Long True): Break High, Hold Low.
-    ST (Short True): Break Low, Hold High.
-    LF (Long False): Break High, THEN Break Low.
-    SF (Short False): Break Low, THEN Break High.
+    High-Performance Vectorized Profiler Quadrant logic.
+    Identifies session breakout direction and holding power (True vs False).
     """
     et_df = df_1m.tz_convert('US/Eastern') if df_1m.index.tz else df_1m
     
-    # We will compute status for each box type
     box_names = ['asiabox', 'londonbox', 'ny1box', 'ny2box']
     results = pd.DataFrame(index=df_1m.index)
     
-    # Next session starts for evaluation windows
-    next_starts = {
-        'asiabox':   '02:30',
-        'londonbox': '07:30',
-        'ny1box':    '11:30',
-        'ny2box':    '16:00'
+    # Pre-calculated evaluations start/end
+    eval_config = {
+        'asiabox':   {'start': '19:30', 'end': '02:30'},
+        'londonbox': {'start': '03:30', 'end': '07:30'},
+        'ny1box':    {'start': '08:30', 'end': '11:00'},
+        'ny2box':    {'start': '12:30', 'end': '16:00'}
     }
     
     for box_prefix in box_names:
-        # Get daily box extremes
-        bh = boxes_df[f'{box_prefix}_high'].values
-        bl = boxes_df[f'{box_prefix}_low'].values
+        bh_series = boxes_df[f'{box_prefix}_high']
+        bl_series = boxes_df[f'{box_prefix}_low']
         
-        status_col = np.full(len(df_1m), "None", dtype=object)
+        # 1. Create evaluation window mask
+        cfg = eval_config[box_prefix]
+        if cfg['start'] < cfg['end']:
+            time_mask = (et_df.index.time >= pd.Timestamp(cfg['start']).time()) & (et_df.index.time < pd.Timestamp(cfg['end']).time())
+        else: # AsiaBox is overnight
+            time_mask = (et_df.index.time >= pd.Timestamp(cfg['start']).time()) | (et_df.index.time < pd.Timestamp(cfg['end']).time())
         
-        # Iterate days for stateful breakout check
-        for date, group in et_df.groupby(et_df.index.date):
-            # Find the box extremes for this day
-            day_mask = et_df.index.date == date
-            day_bh = bh[day_mask][0]
-            day_bl = bl[day_mask][0]
+        # 2. Vectorized Breakout detection
+        broke_high = (et_df['high'] > bh_series) & time_mask
+        broke_low = (et_df['low'] < bl_series) & time_mask
+        
+        # Determine first occurrence per day using groupby
+        # We find the MIN index (time) where the condition is True
+        dates = et_df.index.date
+        h_triggers = et_df.index[broke_high].to_series().groupby(lambda x: x.date()).min()
+        l_triggers = et_df.index[broke_low].to_series().groupby(lambda x: x.date()).min()
+        
+        # 3. Create Status mapping for each day
+        unique_dates = np.unique(dates)
+        status_map = {}
+        
+        for date in unique_dates:
+            dt_h = h_triggers.get(date)
+            dt_l = l_triggers.get(date)
             
-            if np.isnan(day_bh): continue
+            has_h = dt_h is not None and not pd.isna(dt_h)
+            has_l = dt_l is not None and not pd.isna(dt_l)
             
-            # Define evaluation window: from Box End to Next Session Start
-            # (Simplified for the library: we just check the rest of the calendar day)
-            eval_start_map = {'asiabox': '19:30', 'londonbox': '03:30', 'ny1box': '08:30', 'ny2box': '12:30'}
-            eval_start = eval_start_map[box_prefix]
-            eval_end = next_starts[box_prefix]
-            
-            # Create the eval slice
-            try:
-                # Use between_time for the daily slice
-                eval_data = group.between_time(eval_start, eval_end)
-            except:
-                continue
+            if has_h and (not has_l or dt_h < dt_l):
+                # Triggered HIGH first
+                status_map[date] = "LF" if has_l else "LT"
+            elif has_l and (not has_h or dt_l < dt_h):
+                status_map[date] = "SF" if has_h else "ST"
+            else:
+                status_map[date] = "None"
                 
-            if eval_data.empty: continue
-            
-            # Stateful check
-            triggered = None
-            final_status = "None"
-            
-            for _, row in eval_data.iterrows():
-                h, l, c = row['high'], row['low'], row['close']
-                
-                if triggered is None:
-                    if h > day_bh:
-                        triggered = "High"
-                    elif l < day_bl:
-                        triggered = "Low"
-                
-                # Determine status based on triggering and current extremes (wicks)
-                if triggered == "High":
-                    # Long True only if the LOW of the candle stays above the broke level
-                    final_status = "LT" if l >= day_bh else "LF"
-                elif triggered == "Low":
-                    # Short True only if the HIGH of the candle stays below the broke level
-                    final_status = "ST" if h <= day_bl else "SF"
-                else:
-                    final_status = "None"
-                
-                # Special Case: Check for "Stop Out" (Broken OTHER side)
-                if triggered == "High" and l < day_bl:
-                    final_status = "LF"
-                elif triggered == "Low" and h > day_bh:
-                    final_status = "SF"
-
-            
-            # Apply to the group
-            status_col[day_mask] = final_status
-
-            
-        results[f'{box_prefix}_status'] = status_col
+        # Map back to full index
+        results[f'{box_prefix}_status'] = [status_map.get(d, "None") for d in dates]
         
     return results

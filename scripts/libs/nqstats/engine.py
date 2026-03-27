@@ -3,7 +3,7 @@ NQStats Library Entrance - Simplified interface for fetching status.
 """
 
 import pandas as pd
-from .sessions import extract_all_nq_sessions
+from .sessions import extract_all_sessions
 from .classifiers import (
     classify_aln_vectorized, 
     get_broken_status_vectorized, 
@@ -16,16 +16,26 @@ from .timing import identify_hourly_mode
 class NQStatsEngine:
     """Core Engine for calculating NQStats based on Unified Bias Algorithm."""
     
-    def __init__(self, t1m_df: pd.DataFrame):
+    def __init__(self, t1m_df: pd.DataFrame, ticker: str = "NQ1"):
         """
         Initialize with a 1-minute OHLC DataFrame.
         Expected index: DatetimeIndex (localized or UTC).
         """
         self.df = t1m_df
+        self.ticker = ticker
         self._processed = False
         self.sessions = None
         self.stats = None
         
+    def check_9am_reversion(self, df_1m: pd.DataFrame) -> pd.DataFrame:
+        """
+        Implements the 75.2% Reversion Rule for the 09:00 hour.
+        If price breaks the 08:00 high or low, it must return to the 09:00 open.
+        """
+        # Ensure US/Eastern normalization
+        et_df = df_1m.tz_convert('US/Eastern') if df_1m.index.tz else df_1m
+        hours = et_df.index.hour
+
     def _get_prior_close(self, df: pd.DataFrame) -> pd.Series:
         """
         Extract P12 (Prior Close) for every day in the DataFrame.
@@ -49,8 +59,17 @@ class NQStatsEngine:
 
     def process(self):
         """Run all vectorized classifications."""
+        # 0. NORMALIZE TO US/EASTERN DATA LAYER
+        # All NQStats logic depends on Eastern Time (institutional standard)
+        if self.df.index.tz:
+            self.df = self.df.tz_convert('US/Eastern')
+        else:
+            # Assume UTC if no TZ info, then localize and convert
+            self.df = self.df.tz_localize('UTC').tz_convert('US/Eastern')
+
         # 1. Extract session ranges
-        self.sessions = extract_all_nq_sessions(self.df)
+        # from .sessions import extract_all_sessions # This line is now redundant as it's defined above or imported
+        self.sessions = extract_all_sessions(self.df)
         
         # 2. Extract Prior Close (P12)
         p12 = self._get_prior_close(self.df)
@@ -66,9 +85,10 @@ class NQStatsEngine:
         
         # New: Detailed Quadrant Profiler (LT/ST/LF/SF) - SPECIFICALLY FOR THE BOXES
         quadrants = get_quadrant_status(self.df, self.sessions)
-        self.stats['asiabox_quadrant'] = quadrants['asiabox_status']
-        self.stats['londonbox_quadrant'] = quadrants['londonbox_status']
-        self.stats['ny1box_quadrant'] = quadrants['ny1box_status']
+        self.stats['asia_quadrant'] = quadrants['asiabox_status']
+        self.stats['london_quadrant'] = quadrants['londonbox_status']
+        self.stats['ny1_quadrant'] = quadrants['ny1box_status']
+        self.stats['ny2_quadrant'] = quadrants['ny2box_status']
 
         
         self.stats['noon_curve'] = classify_noon_curve_vectorized(self.df)
@@ -109,12 +129,19 @@ class NQStatsEngine:
         """Generates a human-friendly briefing of the current status."""
         latest = self.get_latest_status()
         
+        # Ensure the timestamp is in US/Eastern for the report
+        last_ts = self.df.index[-1]
+        if last_ts.tzinfo is None:
+            last_ts = last_ts.tz_localize('UTC').tz_convert('US/Eastern')
+        else:
+            last_ts = last_ts.tz_convert('US/Eastern')
+
         report = []
-        report.append(f"📊 NQStats Briefing: {self.df.index[-1]}")
+        report.append(f"📊 NQStats Briefing: {last_ts}")
         report.append(f"---")
         report.append(f"ALN Pattern: {latest['aln']}")
         report.append(f"Broken Status: {latest['broken']}")
-        report.append(f"Profiler Boxes: Asia:{latest['asia_quadrant']} | London:{latest['london_quadrant']} | NY1:{latest['ny1_quadrant']}")
+        report.append(f"Profiler Boxes: Asia:{latest['asia_quadrant']} | London:{latest['london_quadrant']} | NY1:{latest['ny1_quadrant']} | NY2:{latest['ny2_quadrant']}")
         report.append(f"Noon Curve: {latest['noon_curve']}")
         report.append(f"IB Bias: {latest['ib_bias']} ({latest['ib_conviction']*100:.1f}%)")
         report.append(f"Anchor (9AM): {latest['anchor']}")
