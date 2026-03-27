@@ -72,33 +72,37 @@ def check_symbol(symbol):
         }
         
         def get_label(prefix):
-            raw = latest[f'{prefix}box_status']
+            raw = latest.get(f'{prefix}box_status', 'None')
             label = status_map.get(raw, raw)
             
             # 1. EVALUATION WINDOW (Immediate Status)
             eval_end = windows[prefix]
-            is_final = current_time >= eval_end or label in ['Long False', 'Short False']
+            
+            # For AsiaBox (overnight), handle cross-midnight
+            if prefix == 'asia':
+                # Asia evaluation ends at 2:30 AM
+                is_final = current_time >= eval_end and current_time < time(18, 0)
+            else:
+                is_final = current_time >= eval_end or label in ['Long False', 'Short False']
             
             # Handle user requested 'Short Pending' style
             if not is_final:
                 if label == 'Short True': label = 'Short'
                 elif label == 'Long True': label = 'Long'
                 elif label == 'None': label = 'Inside'
-                return f"{label} Pending"
+                return f"{label} Pending..."
             
             # 2. BROKEN WINDOW (Next Session starts)
             broken_status = ""
-            if current_time >= eval_end: # Broken check starts after eval_end
-                 is_broken = latest[f'{prefix}box_broken']
-                 broken_status = " Broken" if is_broken else " Held"
-            else:
-                 broken_status = " (Pending)"
+            is_broken = latest.get(f'{prefix}box_broken', False)
+            broken_status = " Broken" if is_broken else " Held"
                  
             return f"{label}{broken_status}"
 
         asia_label = get_label('asia')
         london_label = get_label('london')
         ny1_label = get_label('ny1')
+        ny2_label = get_label('ny2')
         
         print(f"\n{'='*50}")
         print(f"UNIFIED BIAS BRIEFING | {symbol} | {df.index[-1]}")
@@ -112,11 +116,17 @@ def check_symbol(symbol):
         print(f"Asia:   {asia_label}")
         print(f"London: {london_label}")
         print(f"NY1:    {ny1_label}")
+        print(f"NY2:    {ny2_label}")
         
         # --- STEP 4: PROBABILITY OUTCOMES ---
         def calculate_historical_probs():
             try:
-                with open("c:/Users/vinay/tvDownloadOHLC/data/NQ1_profiler.json") as f:
+                # Use the correct profiler JSON for the symbol
+                clean_symbol = symbol.replace("-", "")
+                json_name = f"{clean_symbol}1_profiler.json" if "ES" in symbol or "NQ" in symbol else f"{clean_symbol}_profiler.json"
+                json_path = f"c:/Users/vinay/tvDownloadOHLC/data/{json_name}"
+                
+                with open(json_path) as f:
                     data = json.load(f)
                 
                 days_data = defaultdict(dict)
@@ -127,17 +137,6 @@ def check_symbol(symbol):
                 curr_asia_status = latest['asiabox_status']
                 curr_lon_status = latest['londonbox_status']
                 
-                # 1. London Outlook (Given Asia Status)
-                matches_lon = []
-                # 2. Level Reach / Times
-                matches_ny1 = []
-                matches_ny2 = []
-                # Detailed stats
-                reach = {"Asia High": 0, "Asia Low": 0, "Lon High": 0, "Lon Low": 0}
-                hod_counts = {"Asia": 0, "London": 0, "NY1": 0, "NY2": 0}
-                lod_counts = {"Asia": 0, "London": 0, "NY1": 0, "NY2": 0}
-
-                # Map statuses to shorthands for consistent matching
                 shorthand = {'Long True': 'LT', 'Short True': 'ST', 'Long False': 'LF', 'Short False': 'SF', 'None': 'None'}
                 
                 # We want a summary for EACH possible London outcome given the current Asia state
@@ -266,5 +265,5 @@ def check_symbol(symbol):
         traceback.print_exc()
 
 if __name__ == "__main__":
-    check_symbol("NQ1") # Check the actual data file symbols
-    check_symbol("ES1")
+    check_symbol("-NQ") 
+    check_symbol("-ES")
