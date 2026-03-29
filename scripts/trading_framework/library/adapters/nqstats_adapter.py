@@ -42,25 +42,37 @@ class NQStatsAdapter:
             "Pending": 0
         }
         
-        feature_df = pd.DataFrame(index=stats.index)
+        # 0. Align index Timezones and forward-fill Daily stats to the 1m timeline
+        if stats.index.tz is not None:
+            stats.index = stats.index.tz_convert('US/Eastern').tz_localize(None)
+            
+        stats_aligned = stats.reindex(df_1m.index, method='ffill')
+        feature_df = pd.DataFrame(index=df_1m.index)
         
         # 1. Map session box statuses
         for session in ['asia', 'london', 'ny1', 'ny2']:
             col = f'{session}box_status'
-            feature_df[f'feat_{session}_status'] = stats[col].map(status_map).fillna(0)
+            if col in stats_aligned.columns:
+                feature_df[f'feat_{session}_status'] = stats_aligned[col].map(status_map).fillna(0)
+            else:
+                feature_df[f'feat_{session}_status'] = 0
             
             # 2. Add 'broken' status as binary
-            feature_df[f'feat_{session}_broken'] = stats[f'{session}box_broken'].astype(int)
+            broken_col = f'{session}box_broken'
+            if broken_col in stats_aligned.columns:
+                feature_df[f'feat_{session}_broken'] = stats_aligned[broken_col].fillna(0).astype(int)
+            else:
+                feature_df[f'feat_{session}_broken'] = 0
             
-        # 3. Add ALN Pattern as a feature (Categorical or One-Hot could be used later)
-        # For now, just pass through essential context
-        feature_df['feat_aln_raw'] = stats['aln']
+        # 3. Add ALN Pattern as a feature
+        feature_df['feat_aln_raw'] = stats_aligned['aln']
         
         # 4. Stationarity: Mid-points are normalized to % distance from current price
-        # This keeps the feature stationary for ML models.
+        # IMPORTANT: We use 'close' from the input df_1m because it is the actual 1m price.
+        price_close = df_1m['close']
         for session in ['asia', 'london', 'ny1']:
-            mid_col = f'{session}box_mid'
-            if mid_col in stats.columns:
-                feature_df[f'feat_{session}_mid_dist'] = (stats[mid_col] - stats['close']) / stats['close']
+            mid_col = f'{session}_mid'
+            if mid_col in stats_aligned.columns:
+                feature_df[f'feat_{session}_mid_dist'] = (stats_aligned[mid_col] - price_close) / price_close
         
         return feature_df

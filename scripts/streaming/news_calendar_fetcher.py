@@ -28,6 +28,8 @@ import argparse
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
+import asyncio
+from prisma import Prisma
 
 # =============================================================================
 # CONFIGURATION — Edit these to match your setup
@@ -163,6 +165,46 @@ def parse_ff_xml(xml_text: str, target_date: date = None,
     return events
 
 
+async def save_to_prisma(events: list):
+    """Save events to the Prisma EconomicEvent model."""
+    db = Prisma()
+    try:
+        await db.connect()
+        count = 0
+        for ev in events:
+            # Create datetime in UTC for storage
+            # Note: ev['date'] is YYYY-MM-DD, ev['time_et'] is HH:MM
+            dt_str = f"{ev['date']} {ev['time_et']}"
+            dt_et = datetime.strptime(dt_str, "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("America/New_York"))
+            dt_utc = dt_et.astimezone(ZoneInfo("UTC"))
+
+            # Check for existing event to avoid duplicates
+            # (Simple check: same name and same timestamp)
+            existing = await db.economicevent.find_first(
+                where={
+                    'name': ev['event'],
+                    'datetime': dt_utc
+                }
+            )
+
+            if not existing:
+                await db.economicevent.create(
+                    data={
+                        'name': ev['event'],
+                        'datetime': dt_utc,
+                        'impact': ev['impact'].upper(),
+                        'forecast': float(ev['forecast'].replace('%','')) if ev['forecast'] and '%' in ev['forecast'] else None,
+                        'previous': float(ev['previous'].replace('%','')) if ev['previous'] and '%' in ev['previous'] else None,
+                    }
+                )
+                count += 1
+        return count
+    except Exception as e:
+        print(f"    Error saving to Prisma: {e}")
+        return 0
+    finally:
+        await db.disconnect()
+
 def write_csv(events: list, output_path: str):
     """
     Write events to CSV in format NinjaScript can easily parse.
@@ -266,7 +308,7 @@ def fetch_and_save(target_date: date = None, fetch_week: bool = False,
 # CLI
 # =============================================================================
 
-if __name__ == "__main__":
+async def main():
     parser = argparse.ArgumentParser(description="Fetch ForexFactory economic calendar for NinjaTrader news blackout")
     parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD). If set, fetches this specific date.")
     parser.add_argument("--day", action="store_true", help="Fetch single trading day (Today, or Tomorrow if > 17:00 ET). Default is FULL WEEK.")
@@ -313,9 +355,16 @@ if __name__ == "__main__":
     if args.currencies:
         CURRENCIES[:] = [x.strip() for x in args.currencies.split(",")]
 
-    fetch_and_save(
+    events = fetch_and_save(
         target_date=target,
         fetch_week=fetch_week_mode,
         output_dir=args.output_dir,
         output_filename=args.output_file,
     )
+
+    if events:
+        db_count = await save_to_prisma(events)
+        print(f"  Added {db_count} new events to Prisma DB.")
+
+if __name__ == "__main__":
+    asyncio.run(main())

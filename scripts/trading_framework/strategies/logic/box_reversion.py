@@ -29,7 +29,8 @@ class BoxMeanReversionSignal(SignalGenerator):
         
         # 2. Extract mapped statuses (LF = 1, SF = -1)
         # We look at NY1 (AM session) status as our primary driver
-        ny1_status = features['feat_ny1_status']
+        # Fallback to zero if feature is not present in initial hours
+        ny1_status = features.get('feat_ny1_status', pd.Series(0, index=data.index))
         
         # 3. Entry Logic
         # Signal LONG if SF (Short False - Low broken then High)
@@ -40,7 +41,8 @@ class BoxMeanReversionSignal(SignalGenerator):
         
         # 4. Exit Logic (Close at Mid-point touch)
         # Using the normalized % distance to mid from the adapter
-        mid_dist = features['feat_ny1_mid_dist']
+        # Fallback to 1 (far from mid) if feature is missing
+        mid_dist = features.get('feat_ny1_mid_dist', pd.Series(1, index=data.index))
         
         # If we are LONG and price reaches Mid (dist close to 0), flatten
         # We use a 5-tick buffer for 'real-world' touch
