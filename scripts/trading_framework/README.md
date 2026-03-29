@@ -1,77 +1,46 @@
-# 📊 Statistical Trading Framework v2.0: User Guide
+# Statistical Trading Framework v2
 
-Welcome to the **7-Layer Statistical Trading Framework**, a high-performance research and optimization infrastructure designed to bridge institutional logic (**NQStats/ICT**) with modern quantitative methods.
+The Statistical Trading Framework is a unified, 7-layer institutional research pipeline. This framework enables seamless fusion of 18+ years of historical Parquet data (e.g. `NQ1_1m.parquet`) with millisecond live storage (`live_storage_-NQ.parquet`), automatically conforming to ADR-002 (%-normalized price distance) logic for institutional-grade quantitative backtesting.
 
----
+## Setup & Architecture Overview
 
-## 🏗️ The 7-Layer Architecture
+The system architecture spans 7 layers to cleanly separate data ingestion from alpha generation and tear-sheet reporting.
 
-The framework is strictly decoupled from legacy code via the **Adapter Pattern**, ensuring that research remains stationary and leakage-free.
+### 1. Data Loader (Layer 1)
+- `FrameworkLoader` inside `scripts/trading_framework/data/loader.py`
+- Connects disjointed historical indices with real-time live trading pipelines. Both pipelines are intrinsically normalized to purely naive `DatetimeIndex` structures to securely merge years ranging from 2006 up through yesterday. 
 
-| Layer | Component | Responsibility | Relevant Files |
-| :--- | :--- | :--- | :--- |
-| **1** | **Data Loader** | Fuses historical & live data, enforces ADR-002 normalization. | `data/loader.py` |
-| **2** | **Features/Adapters**| Translates legacy statuses into numeric-vectorized features. | `library/adapters/` |
-| **3** | **Regime Detection**| Categorizes market context (e.g., High Volatility vs. Low Vol). | `regime/regime_models.py`|
-| **4** | **Signal Generation**| Implements backtestable institutional logic. | `strategies/logic/` |
-| **5** | **Backtest Engine** | Vectorized speed, ADR-002 returns calculation. | `core/backtest_engine.py` |
-| **6** | **Optimization (ML)** | Hyper-parameter tuning & persistent audit trail. | `ml/optimizer.py` |
-| **7** | **Reporting** | Institutional tear sheets and visualization. | `reporting/reporter.py` |
+### 2. Event Splicing & Market Regimes (Layers 2 & 3)
+- Connects to SQLite (Prisma) to inject macroeconomic catalysts dynamically.
+- Segments the time series data across normalized clusters natively based on Volatility. 
 
----
+### 3. Logic Execution & Signal Mapping (Layer 4)
+- Integrates legacy script strategies (like `NQStatsAdapter`) into modern Pandas series processing logic.
+- Resolves daily/hourly data into the precise localized 1-minute `ffill` required to cleanly vectorize strategies into buy/sell matrices (`1` or `-1`).
 
-## 🚀 Getting Started
+### 4. Vectorized Engines (Layer 5) 
+- `VectorizedBacktester` within `scripts/trading_framework/core/backtest_engine.py` processes raw integer signal outputs against index-matched returns series, generating net calculations, incorporating estimated slippage, and delivering `sharpe_ratio`, `max_drawdown_%`, and the underlying `equity_curve`.
 
-### 1. Environment Setup
-The framework requires quantitative libraries in your local `.venv`:
+### 5. Research & Orchestration (Layer 6 & 7)
+- Hyperparameter optimization is fully handled by `OptunaOptimizer` (which wraps `optuna.create_study`).
+- The research suite seamlessly splices `In-Sample` ranges against purely untainted `Out-of-Sample` ranges (default splitting applies an extensive 1.5 million bars for training and the most recent 600K bars for inference testing).
+- Results generate fully interactive HTML institutional Tear Sheets.
+
+## User Guide: Strategy Verification
+
+You can instantly deploy a full top-to-bottom strategy test by executing `lifecycle_runner.py` directly from the base `venv`:
+
 ```powershell
-.\.venv\Scripts\python.exe -m pip install hmmlearn quantstats optuna pyarrow matplotlib statsmodels bottleneck
+# Set root path reference
+$env:PYTHONPATH = "C:\Users\vinay\tvDownloadOHLC"
+
+# Launch 2-trial Lifecycle Strategy test with Institutional Reports
+.\.venv\Scripts\python.exe scripts/trading_framework/research/lifecycle_runner.py
 ```
 
-### 2. Research Data Exploration
-Use the **[`01_data_exploration.ipynb`](scripts/trading_framework/research/01_data_exploration.ipynb)** to:
-- Load 20 years of NQ data.
-- Verify **ADR-002** (%-normalization) returns distributions.
-- Run **Regime Analysis** (HMM or Threshold-based).
+### Outputs
 
-### 3. Creating a New Strategy (Layer 4)
-Implementing a strategy requires inheriting from `SignalGenerator`. Access institutional features via adapters:
-```python
-from scripts.trading_framework.core.base import SignalGenerator
-from scripts.trading_framework.library.adapters.nqstats_adapter import NQStatsAdapter
+The test will dump all metrics sequentially on the CLI output, including dynamic OOS comparison thresholds. Your tear sheets will be immediately dropped to the `/reporting/outputs/` directory in interactive HTML format:
 
-class YourStrategy(SignalGenerator):
-    def generate_signals(self, data, config):
-        adapter = NQStatsAdapter()
-        features = adapter.get_box_features(data)
-        # Your logic here...
-        return signals
-```
-
-### 4. Running a Backtest (Layer 5)
-```python
-from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
-# ... Initialize signal generator ...
-signals = strategy.generate_signals(df, config)
-engine = VectorizedBacktester()
-results = engine.run_backtest(df, signals)
-```
-
-### 5. Managing the Research Audit Trail (Layer 6)
-All optimizations are recorded in **`scripts/trading_framework/research.db`** (SQLite). This ensures every "Golden Sharpe" you find is tied to an exact git commit and configuration hash.
-
----
-
-## 📏 Core Standards (ADR Compliance)
-
-- **ADR-001 (Timezone)**: All timestamps are NY Time (ET).
-- **ADR-002 (Normalization)**: Never backtest on raw price/points. Always use **% returns**, **log returns**, and **%-range**.
-- **ADR-004 (Institutional Windows)**: Strategy windows must strictly align with `config/sessions.yaml`.
-- **ADR-007 (News Fusion)**: High-impact economic events must be injected into the Backtest Engine as contextual features.
-
----
-
-## 🛠️ Maintenance & Refactoring
-- To update NQStats mapping: Edit `library/adapters/nqstats_adapter.py`.
-- To add a new ML Optimizer: Implement in `ml/optimizer.py`.
-- To generate new reporting metrics: Add to `reporting/reporter.py`.
+- `Lifecycle_Test_IS_tearsheet.html`
+- `Lifecycle_Test_OOS_tearsheet.html`
