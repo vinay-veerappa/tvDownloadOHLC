@@ -32,27 +32,60 @@ class BoxMeanReversionSignal(SignalGenerator):
         # Fallback to zero if feature is not present in initial hours
         ny1_status = features.get('feat_ny1_status', pd.Series(0, index=data.index))
         
-        # 3. Entry Logic
-        # Signal LONG if SF (Short False - Low broken then High)
-        signals[ny1_status == -1] = 1
+        # 3. Dynamic Hyperparameters
+        min_dist = config.get('min_dist', 0.0005)    # Min distance required to enter
+        tp_buffer = config.get('tp_buffer', 0.0001)  # Take Profit (distance inside mid)
+        sl_dist = config.get('sl_dist', 0.0050)      # Stop Loss (distance outside mid)
         
-        # Signal SHORT if LF (Long False - High broken then Low)
-        signals[ny1_status == 1] = -1
+        # 4. Entry Filters (Regime & Distance)
+        valid_entry = pd.Series(True, index=data.index)
         
-        # 4. Exit Logic (Close at Mid-point touch)
-        # Using the normalized % distance to mid from the adapter
-        # Fallback to 1 (far from mid) if feature is missing
-        mid_dist = features.get('feat_ny1_mid_dist', pd.Series(1, index=data.index))
-        
-        # If we are LONG and price reaches Mid (dist close to 0), flatten
-        # We use a 5-tick buffer for 'real-world' touch
-        buffer = 0.0001 
-        signals[(signals == 1) & (mid_dist.abs() < buffer)] = 0
-        signals[(signals == -1) & (mid_dist.abs() < buffer)] = 0
-        
-        # 5. Regime Filtering (Optional - from Layer 3)
-        # If the market is in High Volatility (Regime 2), we might want to skip mean reversion.
+        # A. High Volatility Filter
         if config.get('filter_high_vol', False) and 'regime' in data.columns:
-            signals[data['regime'] == 2] = 0
+            valid_entry &= (data['regime'] != 2)
             
+        # B. Trend Sequence Filter (Skip if overnight was pure trend)
+        if config.get('filter_trend_sequence', False):
+            trend_up = (features['feat_asia_status'] == 2) & (features['feat_london_status'] == 2)
+            trend_down = (features['feat_asia_status'] == -2) & (features['feat_london_status'] == -2)
+            valid_entry &= ~(trend_up | trend_down)
+            
+        # C. Minimum Distance to Target Filter (Avoid tiny EV trades)
+        mid_dist = features.get('feat_ny1_mid_dist', pd.Series(1, index=data.index))
+        valid_entry &= (mid_dist.abs() >= min_dist)
+        
+        # D. London Breakout Requirement
+        if config.get('require_london_breakout', False):
+            valid_entry &= (features['feat_london_broken'] == 1)
+
+        # E. Institutional News Filter (ADR-007)
+        if 'sec_to_news' in data.columns:
+            # 1. Block Entry if News is Imminent (60 min window)
+            valid_entry &= (data['sec_to_news'] > 3600)
+            
+            # 2. Forced Exit for Existing Positions (15 min safety window)
+            # We flatten signals if we are too close to the news bar
+            imminent_news = (data['sec_to_news'] <= 900)
+            # Note: We apply this after initial signal generation below
+        
+        # 5. Core Entry Logic
+        ny1_status = features.get('feat_ny1_status', pd.Series(0, index=data.index))
+        # LONG: Short False (-1) + valid entry filters
+        signals[(ny1_status == -1) & valid_entry] = 1
+        # SHORT: Long False (1) + valid entry filters
+        signals[(ny1_status == 1) & valid_entry] = -1
+        
+        # 6. Core Exit Logic (SL, TP, & News)
+        # Flatten if price touches Mid (Take Profit)
+        signals[(signals != 0) & (mid_dist.abs() <= tp_buffer)] = 0
+        
+        # Flatten if price blasts away from Mid uncontrollably (Stop Loss)
+        signals[(signals != 0) & (mid_dist.abs() >= sl_dist)] = 0
+        
+        # Flatten for Imminent High Impact News (Institutional Safety)
+        if 'sec_to_news' in data.columns:
+            signals[(signals != 0) & (data['sec_to_news'] <= 900)] = 0
+
+        # Note: In a fully continuous live market, we block re-entry by session ID
+        # but for vectorized approximation this strictly trims exposure distributions
         return signals
