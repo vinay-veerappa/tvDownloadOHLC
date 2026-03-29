@@ -79,5 +79,18 @@ Classifying market behavior based on high/low break sequences within session "Bo
 ### Context
 Separation of deep historical data (`data/`) and recent streaming data (`data/live/`).
 
+## [ADR-007] Economic Event Data Fusion
+**Status:** Approved
+**Date:** 2026-03-29
+
+### Context
+Maintaining a comprehensive 26-year historical database of news events (EconomicEvent) while providing real-time scheduling.
+
 ### Decision
-All analytical services MUST use the `data_loader.py` fusion layer to merge historical and live Parquet files into a contiguous timeline. **Historical minute data (`*_1m.parquet`) is strictly read-only for live processes.**
+The **Prisma `EconomicEvent` Table** is officially designated as a **Secondary Source of Truth** for all news-based analytical services, alongside the live ForexFactory/Yahoo feeds.
+
+### Implementation Rules
+1.  **Passive Sync**: The Web UI `getDashboardContext` acts as the primary background sync trigger, upserting live feed data into the DB on load.
+2.  **Historical Priority**: For backtesting, correlation studies, and "Day-at-a-Glance" history, services MUST query the `EconomicEvent` table to leverage the 9,800+ record archive.
+3.  **Blackout Protocol**: The `news_calendar_fetcher.py` script bridges the DB and legacy bots by mirroring the current schedule to `news_blackout.csv`.
+4.  **Timezone Integrity**: All dates in the `EconomicEvent` table MUST be stored in **UTC** (per ADR-001) for cross-platform compatibility.

@@ -1,0 +1,49 @@
+# Institutional Session Windows (ADR-004 & ADR-001)
+# All times in ET (America/New_York)
+
+sessions:
+  asia:
+    name: "Asia"
+    start: "20:00"
+    end: "02:00"
+    purpose: "Range Establishment"
+    color: "#2962FF" # Blue
+    
+  london:
+    name: "London"
+    start: "02:00"
+    end: "08:00"
+    purpose: "Range Expansion"
+    color: "#E91E63" # Pink
+    
+  new_york:
+    name: "New York"
+    start: "08:00"
+    end: "16:00"
+    purpose: "Execution"
+    color: "#4CAF50" # Green
+
+  rth:
+    name: "Regular Trading Hours"
+    start: "09:30"
+    end: "16:00"
+    purpose: "Equities / High Liquidity"
+    color: "#FF9800" # Orange
+
+# Special Institutional Killzones
+killzones:
+  london_open:
+    start: "02:00"
+    end: "05:00"
+  ny_open:
+    start: "08:30"
+    end: "11:00"
+  london_close:
+    start: "10:00"
+    end: "12:00"
+
+# Timezone Contract (ADR-001)
+timezone:
+  storage: "UTC"
+  calculation: "America/New_York"
+  display: "America/New_York"
