@@ -16,6 +16,7 @@ from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from scripts.trading_framework.ml.optimizer import OptunaOptimizer
 from scripts.trading_framework.reporting.reporter import QuantReporter
 from scripts.trading_framework.reporting.risk_profiler import RiskProfiler
+from scripts.trading_framework.reporting.monte_carlo import MonteCarloSimulator
 
 def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31", oos_end="2025-12-31"):
     """
@@ -48,10 +49,22 @@ def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31",
 
     # --- Layer 6: In-Sample Optimization (Optuna) ---
     def objective(trial):
-        # Hyperparameters to tune
+        # Multi-parameter Hyperparameter Grid
         config = {
             'filter_high_vol': trial.suggest_categorical('filter_high_vol', [True, False]),
-            'strategy_name': 'BoxReversion_Lifecycle_Test'
+            'filter_trend_sequence': trial.suggest_categorical('filter_trend_sequence', [True, False]),
+            'require_london_breakout': trial.suggest_categorical('require_london_breakout', [True, False]),
+            
+            # Minimum distance from Mid required to enter a trade (~5 to 30 bps)
+            'min_dist': trial.suggest_float('min_dist', 0.0005, 0.0030, step=0.0005),
+            
+            # Take Profit Touch Buffer (~0 to 5 bps)
+            'tp_buffer': trial.suggest_float('tp_buffer', 0.0000, 0.0005, step=0.0001),
+            
+            # Stop Loss Maximum Distance (~30 to 100 bps)
+            'sl_dist': trial.suggest_float('sl_dist', 0.0030, 0.0100, step=0.0010),
+            
+            'strategy_name': 'BoxReversion_MultiOpt'
         }
         
         strategy = BoxMeanReversionSignal()
@@ -64,8 +77,9 @@ def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31",
         # We optimize for Sharpe Ratio
         return metrics['sharpe_ratio']
 
-    optimizer = OptunaOptimizer(study_name=f"lifecycle_{ticker}_{datetime.now().strftime('%Y%m%d')}")
-    study = optimizer.run_optimization(objective, n_trials=2)
+    # Increase n_trials to 20 for the multi-parameter space
+    optimizer = OptunaOptimizer(study_name=f"multi_opt_{ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    study = optimizer.run_optimization(objective, n_trials=20)
     
     # Check if we have trials
     if len(study.trials) == 0:
@@ -79,7 +93,7 @@ def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31",
     # --- Layer 5: Out-of-Sample Validation ---
     print("🔬 Running OOS Validation...")
     strategy = BoxMeanReversionSignal()
-    best_config = {**best_params, 'strategy_name': 'BoxReversion_Lifecycle_Test'}
+    best_config = {**best_params, 'strategy_name': 'BoxReversion_MultiOpt'}
     
     # IS Performance
     is_signals = strategy.generate_signals(df_is, best_config)
@@ -117,12 +131,18 @@ def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31",
         print(f"{key.ljust(25)}: {val}")
     print("="*50)
     
+    # --- Layer 8: Monte Carlo Simulation Strings ---
+    mc_sim = MonteCarloSimulator(iterations=10000, account_size=50000.0, risk_per_trade=500.0)
+    mc_metrics = mc_sim.simulate(oos_metrics['trade_returns_pct'])
+    mc_sim.print_report(mc_metrics)
+    
     # --- Layer 6 audit persistence ---
     summary_metrics = {
         'is_sharpe': is_metrics['sharpe_ratio'],
         'oos_sharpe': oos_metrics['sharpe_ratio'],
         'is_drawdown': is_metrics['max_drawdown_%'],
-        'oos_drawdown': oos_metrics['max_drawdown_%']
+        'oos_drawdown': oos_metrics['max_drawdown_%'],
+        'mc_drr_99': mc_metrics.get('DRR_99%', 'N/A')
     }
     run_id = optimizer.log_experiment(best_config, summary_metrics)
     
