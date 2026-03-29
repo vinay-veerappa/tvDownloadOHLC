@@ -182,7 +182,7 @@ This protocol is the absolute rule for all time-based calculations and data proc
 All analytical services (Profiler, NQStats) must use the `data_loader.py` fusion layer to merge `data/` (History) and `data/live/` (Recent) into a single contiguous timeline.
 
 ---
-**Last Updated**: 2026-03-26
-**Status**: Persistent Brain Knowledge
+**Last Updated**: 2026-03-29
+**Status**: Persistent Brain Knowledge (Synchronized with [ADR.md](file:///C:/Users/vinay/tvDownloadOHLC/docs/architecture/ADR.md))
 
 

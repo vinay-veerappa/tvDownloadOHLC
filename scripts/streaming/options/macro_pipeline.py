@@ -332,15 +332,30 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
                         m_nodes = extract_dominant_oi_nodes(m_chain)
 
                         # Basis Translation
-                        spot_ratio = round(fut.price / m_chain.spot_price, 4) if m_chain.spot_price > 0 else 1.0
-                        spot_basis = round(fut.price - m_chain.spot_price, 2)
-                        
-                        # Decide on translation mode
-                        mode = "multiplicative" if spot_ratio > 2.0 or spot_ratio < 0.5 else "additive"
-                        
-                        # Preferred basis (Opening if available and configured)
-                        anchor_basis = round(fut.open_price - m_chain.spot_open, 2) if (USE_OPENING_BASIS and fut.open_price > 0 and m_chain.spot_open > 0) else spot_basis
-                        anchor_ratio = round(fut.open_price / m_chain.spot_open, 4) if (USE_OPENING_BASIS and fut.open_price > 0 and m_chain.spot_open > 0) else spot_ratio
+                        if m_chain.spot_price is None or m_chain.spot_price <= 0:
+                            log.warning("Spot price missing or zero for %s, skipping basis translation.", target_tag)
+                            spot_ratio = 1.0
+                            spot_basis = 0.0
+                            anchor_ratio = 1.0
+                            anchor_basis = 0.0
+                            mode = "additive"
+                        elif fut.price is None or fut.price <= 0:
+                            log.warning("Futures price missing for %s, skipping basis translation.", target_tag)
+                            spot_ratio = 1.0
+                            spot_basis = 0.0
+                            anchor_ratio = 1.0
+                            anchor_basis = 0.0
+                            mode = "additive"
+                        else:
+                            spot_ratio = round(fut.price / m_chain.spot_price, 4)
+                            spot_basis = round(fut.price - m_chain.spot_price, 2)
+                            
+                            # Decide on translation mode
+                            mode = "multiplicative" if spot_ratio > 2.0 or spot_ratio < 0.5 else "additive"
+                            
+                            # Preferred basis (Opening if available and configured)
+                            anchor_basis = round(fut.open_price - m_chain.spot_open, 2) if (USE_OPENING_BASIS and fut.open_price > 0 and m_chain.spot_open > 0 and fut.open_price and m_chain.spot_open) else spot_basis
+                            anchor_ratio = round(fut.open_price / m_chain.spot_open, 4) if (USE_OPENING_BASIS and fut.open_price > 0 and m_chain.spot_open > 0 and fut.open_price and m_chain.spot_open) else spot_ratio
 
                         log.info("Translation for %s: mode=%s, ratio=%.4f, basis=%.2f", target_tag, mode, anchor_ratio, anchor_basis)
 

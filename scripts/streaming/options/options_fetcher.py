@@ -237,8 +237,10 @@ def fetch_futures_quote(symbol: str) -> FuturesQuote:
         
         return FuturesQuote(symbol=symbol, price=last, open_price=open_p)
     except Exception as e:
-        log.error("Failed to fetch futures quote for %s: %s", symbol, e)
+        log.error("Failed to fetch futures quote for %s from Hub: %s", symbol, e)
         last, open_p = _fetch_futures_from_yfinance(symbol)
+        if last is None:
+            log.error(f"Total failure to quote {symbol} (Hub and yfinance both failed).")
         return FuturesQuote(symbol=symbol, price=last, open_price=open_p)
 
 
@@ -389,13 +391,26 @@ def _safe_float(val: Any) -> float:
     except: return 0.0
 
 
+
 def _fetch_futures_from_yfinance(symbol: str) -> tuple[float | None, float | None]:
-    if yf is None: return None, None
+    if yf is None: 
+        log.warning('yfinance not installed, cannot fetch fallback quote.')
+        return None, None
     yf_symbol = FUTURES_YF_MAP.get(symbol)
-    if not yf_symbol: return None, None
+    if not yf_symbol: 
+        log.warning(f'No yfinance mapping for {symbol}')
+        return None, None
     try:
         ticker = yf.Ticker(yf_symbol)
-        hist = ticker.history(period="1d")
-        if hist.empty: return None, None
-        return float(hist["Close"].iloc[-1]), float(hist["Open"].iloc[0])
-    except: return None, None
+        hist = ticker.history(period='1d')
+        if hist.empty: 
+            log.warning(f'yfinance returned empty history for {yf_symbol}')
+            return None, None
+        last = float(hist['Close'].iloc[-1])
+        open_p = float(hist['Open'].iloc[0])
+        log.info(f'yfinance fallback for {symbol} ({yf_symbol}): last={last}, open={open_p}')
+        return last, open_p
+    except Exception as e: 
+        log.error(f'yfinance fetch failed for {yf_symbol}: {e}')
+        return None, None
+
