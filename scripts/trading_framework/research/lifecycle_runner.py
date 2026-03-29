@@ -15,6 +15,7 @@ from scripts.trading_framework.strategies.logic.box_reversion import BoxMeanReve
 from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from scripts.trading_framework.ml.optimizer import OptunaOptimizer
 from scripts.trading_framework.reporting.reporter import QuantReporter
+from scripts.trading_framework.reporting.risk_profiler import RiskProfiler
 
 def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31", oos_end="2025-12-31"):
     """
@@ -102,6 +103,19 @@ def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31",
     
     reporter.generate_tear_sheet(is_returns, "Lifecycle_Test_IS")
     reporter.generate_tear_sheet(oos_returns, "Lifecycle_Test_OOS")
+    
+    # --- Layer 7: Prop Firm Risk Profiling (Out of Sample) ---
+    print("\n" + "="*50)
+    print("📈 PROP FIRM RISK PROFILER (OOS 50K ACCOUNT)")
+    print("="*50)
+    # Assumes a typical $50k prop firm eval with $500 risk constraint per trade 
+    # to measure EV, PF, Sqn, RoR, and DRR accurately according to the document
+    risk_profiler = RiskProfiler(account_size=50000.0, risk_per_trade=500.0) 
+    oos_risk_metrics = risk_profiler.calculate_metrics(oos_metrics['trade_returns_pct'], oos_metrics['max_drawdown_%'])
+    
+    for key, val in oos_risk_metrics.items():
+        print(f"{key.ljust(25)}: {val}")
+    print("="*50)
     
     # --- Layer 6 audit persistence ---
     summary_metrics = {

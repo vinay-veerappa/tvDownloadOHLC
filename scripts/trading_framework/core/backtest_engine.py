@@ -50,12 +50,19 @@ class VectorizedBacktester(BaseBacktester):
         sharpe = self._calculate_sharpe(net_returns)
         max_drawdown = self._calculate_max_drawdown(cum_returns)
         
+        # Group returns by trade block to get actual trade returns
+        trade_blocks = (execution_signals.diff() != 0).cumsum()
+        active_returns = net_returns[execution_signals != 0]
+        active_blocks = trade_blocks[execution_signals != 0]
+        trade_returns_pct = active_returns.groupby(active_blocks).apply(lambda x: (1 + x).prod() - 1)
+        
         return {
             'total_return_%': (cum_returns.iloc[-1] - 1) * 100,
             'sharpe_ratio': sharpe,
             'max_drawdown_%': max_drawdown * 100,
             'num_trades': int(trades.sum()),
-            'equity_curve': cum_returns
+            'equity_curve': cum_returns,
+            'trade_returns_pct': trade_returns_pct
         }
         
     def _calculate_sharpe(self, returns: pd.Series, periods: int = 252 * 6.5 * 60) -> float:
