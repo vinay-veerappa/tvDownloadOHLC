@@ -42,12 +42,19 @@ class NQStatsAdapter:
             "Pending": 0
         }
         
-        # 0. Align index Timezones and forward-fill Daily stats to the 1m timeline
+        # 0. NORMALIZE TIMEFRAMES
+        # Ensure stats has a naive Eastern index to match NQStats logic
         if stats.index.tz is not None:
             stats.index = stats.index.tz_convert('US/Eastern').tz_localize(None)
             
-        stats_aligned = stats.reindex(df_1m.index, method='ffill')
-        feature_df = pd.DataFrame(index=df_1m.index)
+        # Ensure input df_1m is also naive Eastern for alignment
+        df_1m_et = df_1m.copy()
+        if df_1m_et.index.tz is not None:
+            df_1m_et.index = df_1m_et.index.tz_convert('US/Eastern').tz_localize(None)
+            
+        # Reindex stats to the 1m timeline using ffill
+        stats_aligned = stats.reindex(df_1m_et.index, method='ffill')
+        feature_df = pd.DataFrame(index=df_1m_et.index)
         
         # 1. Map session box statuses
         for session in ['asia', 'london', 'ny1', 'ny2']:
@@ -68,11 +75,13 @@ class NQStatsAdapter:
         feature_df['feat_aln_raw'] = stats_aligned['aln']
         
         # 4. Stationarity: Mid-points are normalized to % distance from current price
-        # IMPORTANT: We use 'close' from the input df_1m because it is the actual 1m price.
-        price_close = df_1m['close']
+        # IMPORTANT: Use price from the ALIGNED 1m dataframe
+        price_close = df_1m_et['close']
         for session in ['asia', 'london', 'ny1']:
             mid_col = f'{session}_mid'
             if mid_col in stats_aligned.columns:
                 feature_df[f'feat_{session}_mid_dist'] = (stats_aligned[mid_col] - price_close) / price_close
         
+        # 5. Restore original UTC Index for integration with FrameworkLoader
+        feature_df.index = df_1m.index
         return feature_df

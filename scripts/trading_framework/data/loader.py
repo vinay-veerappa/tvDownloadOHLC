@@ -58,6 +58,9 @@ class FrameworkLoader:
             df.index = df.index.tz_localize('UTC')
         df.index = df.index.tz_convert('US/Eastern').tz_localize(None)
 
+        # 4b. ADR-008: Load and Merge Precomputed Features (Cache-First)
+        df = self.merge_precomputed_features(df)
+
         # 5. ADR-002: Statistical Normalization
         df['returns'] = df['close'].pct_change()
         df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
@@ -73,6 +76,45 @@ class FrameworkLoader:
         
         self.raw_data = df
         return self.raw_data
+
+    def merge_precomputed_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        [ADR-008] Checks 'data/derived/' for precomputed stationary features.
+        If found, performs a vectorized left-merge on the 1m timeline.
+        """
+        try:
+            from scripts.utils.fused_data_loader import DERIVED_DIR
+            feat_path = os.path.join(DERIVED_DIR, f"{self.ticker}_features_1m.parquet")
+            
+            if os.path.exists(feat_path):
+                print(f"  [ADR-008] Cache Hit: Merging precomputed features from {feat_path}")
+                feat_df = pd.read_parquet(feat_path)
+                
+                # Check for timezone parity (Cache should be NAIVE Eastern if generated via sync_features)
+                if feat_df.index.tz is not None:
+                    feat_df.index = feat_df.index.tz_convert('US/Eastern').tz_localize(None)
+                
+                # Perform vectorized left join (preserve OHLCV timeline)
+                # This is extremely memory-efficient in pandas
+                df = df.join(feat_df, how='left')
+                
+                # Handle NaNs (Forward fill for regimes/boxes, zero for broken indicators)
+                # Note: This is crucial if the feature cache is lagging slightly behind live data
+                ffill_cols = [c for c in df.columns if 'regime' in c or 'status' in c or 'aln' in c]
+                df[ffill_cols] = df[ffill_cols].ffill()
+                
+                # Zero fill for broken indicators (binary)
+                broken_cols = [c for c in df.columns if 'broken' in c]
+                df[broken_cols] = df[broken_cols].fillna(0)
+                
+                print(f"  [ADR-008] Merged {len(feat_df.columns)} precomputed features.")
+            else:
+                print(f"  [ADR-008] Cache Miss: No precomputed features found for {self.ticker}")
+                
+        except Exception as e:
+            print(f"Warning: Failed to merge precomputed features: {e}")
+            
+        return df
 
     def fuse_economic_events(self, df: pd.DataFrame) -> pd.DataFrame:
         """

@@ -12,6 +12,7 @@ class HMMRegimeModel(RegimeModel):
     """
     
     def __init__(self, n_regimes: int = 3, covariance_type: str = "diag", n_iter: int = 100):
+        super().__init__(name=f"hmm_{n_regimes}")
         self.n_regimes = n_regimes
         self.model = hmm.GaussianHMM(n_components=n_regimes, covariance_type=covariance_type, n_iter=n_iter)
         
@@ -36,6 +37,7 @@ class GMMRegimeModel(RegimeModel):
     """
     
     def __init__(self, n_clusters: int = 3, n_init: int = 5):
+        super().__init__(name=f"gmm_{n_clusters}")
         self.n_clusters = n_clusters
         self.model = GaussianMixture(n_components=n_clusters, n_init=n_init, reg_covar=1e-6)
         
@@ -52,6 +54,7 @@ class ThresholdRegimeModel(RegimeModel):
     """
     
     def __init__(self, high_vol_threshold: float = 0.002, low_vol_threshold: float = 0.0005):
+        super().__init__(name="threshold")
         self.hv_threshold = high_vol_threshold
         self.lv_threshold = low_vol_threshold
         

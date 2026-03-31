@@ -2,7 +2,9 @@ import os
 import sys
 import pandas as pd
 import numpy as np
-import optuna
+from optuna.pruners import MedianPruner
+from optuna.samplers import TPESampler
+import concurrent.futures
 from datetime import datetime, timedelta
 
 # Ensure project root is in path
@@ -17,6 +19,7 @@ from scripts.trading_framework.ml.optimizer import OptunaOptimizer
 from scripts.trading_framework.reporting.reporter import QuantReporter
 from scripts.trading_framework.reporting.risk_profiler import RiskProfiler
 from scripts.trading_framework.reporting.monte_carlo import MonteCarloSimulator
+from scripts.trading_framework.ml.walk_forward import PurgedKFold
 
 def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31", oos_end="2025-12-31"):
     """
@@ -67,19 +70,38 @@ def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31",
             'strategy_name': 'BoxReversion_MultiOpt'
         }
         
-        strategy = BoxMeanReversionSignal()
-        signals = strategy.generate_signals(df_is, config)
+        # --- Layer 6: Purged Cross-Validation Optimization ---
+        # Instead of one Sharpe, we calculate the Average Sharpe across 5 Purged Folds
+        pkf = PurgedKFold(n_splits=3, purge_window=100) # 3 splits for speed in test, 100 bar purge
+        fold_sharpes = []
         
-        engine = VectorizedBacktester()
-        # Layer 5 engine uses .run(signals, data, risk_params)
-        metrics = engine.run(signals, df_is, {'leverage': 1.0})
-        
-        # We optimize for Sharpe Ratio
-        return metrics['sharpe_ratio']
+        for fold_idx, (train_idx, test_idx) in enumerate(pkf.split(df_is)):
+            fold_train = df_is.iloc[train_idx]
+            fold_test = df_is.iloc[test_idx]
+            
+            strategy = BoxMeanReversionSignal()
+            signals = strategy.generate_signals(fold_train, config)
+            
+            engine = VectorizedBacktester()
+            metrics = engine.run(signals, fold_test, {'leverage': 1.0})
+            
+            sharpe = metrics['sharpe_ratio']
+            fold_sharpes.append(sharpe)
+            
+            # --- Layer 6: Early Pruning (Inter-fold) ---
+            # Report the intermediate sharpe to Optuna
+            trial.report(sharpe, fold_idx)
+            
+            # Prune if the trial is performing significantly worse than the median
+            if trial.should_prune():
+                raise optuna.exceptions.TrialPruned()
+            
+        # Return the conservative Mean Sharpe across folds to prevent overfitting
+        return np.mean(fold_sharpes) if fold_sharpes else 0.0
 
     # Increase n_trials to 20 for the multi-parameter space
     optimizer = OptunaOptimizer(study_name=f"multi_opt_{ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-    study = optimizer.run_optimization(objective, n_trials=20)
+    study = optimizer.run_optimization(objective, n_trials=20, n_jobs=4)
     
     # Check if we have trials
     if len(study.trials) == 0:

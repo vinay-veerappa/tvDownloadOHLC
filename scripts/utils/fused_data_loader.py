@@ -15,6 +15,8 @@ import pandas as pd
 
 DATA_DIR = "c:/Users/vinay/tvDownloadOHLC/data"
 LIVE_DIR = os.path.join(DATA_DIR, "live")
+DERIVED_DIR = os.path.join(DATA_DIR, "derived")
+REGIME_DIR = os.path.join(DERIVED_DIR, "regimes")
 
 # Ticker -> Schwab Symbol Mapping (for live storage filenames)
 TICKER_MAP = {
