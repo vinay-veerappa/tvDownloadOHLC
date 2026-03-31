@@ -23,6 +23,7 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 | Range Distribution       | `{ticker}_range_dist.json`              | `data/`            | `precompute_range_dist.py`           |
 | Opening Range            | `{ticker}_opening_range.json`           | `data/`            | `precompute_opening_range.py`        |
 | **NY Levels Stats**      | `{ticker}_ny_levels_stats.json`         | `data/`            | `precompute_ny_levels.py`            |
+| **Feature Store**       | `{ticker}_features_1m.parquet`         | `data/derived/`    | `sync_features.py` (ADR-008)         |
 | **Daily Classification** | `{ticker}_daily_classification.parquet` | `data/derived/`    | `precompute_daily_classification.py` |
 | **ICT NWOG/NDOG**        | `ict_nwog_ndog.json`                    | `data/derived/`    | `generate_ict_nwog_ndog.py`          |
 | Sessions                 | `{ticker}_sessions.json`                | `data/sessions/`   | `precompute_sessions.py`             |
@@ -305,7 +306,23 @@ Derived data is precomputed from raw parquet OHLC data to support charting featu
 
 ---
 
-### 2.8 Hourly Quarter Stats (`data/derived/hourly_quarter_stats_{ticker}.json`)
+### 2.12 Stationary Feature Store (`data/derived/{ticker}_features_1m.parquet`)
+
+**Purpose:** Implementation of ADR-008 ("Calculate Once, Persist Everywhere"). Replaces redundant on-the-fly calculations with a persistent Parquet cache for stationary market features. This enables O(1) feature ingestion for backtesting and ensures research/production parity.
+
+**Columns (feat_ prefix):**
+- `feat_ny1_status`, `feat_asia_status`: ALN session classifications from ADR-005.
+- `feat_dist_mid`: Normalized price distance from session midpoints.
+- `feat_vol_z`: Z-score of volume relative to its 20-period moving average.
+- `feat_news_dist`: Minutes until/since the nearest high-impact news event (ADR-007).
+
+**Integration:**
+- **Layer 6 (Loader)**: `FrameworkLoader` automatically merges this file into the OHLCV dataframe if present.
+- **Layer 8 (Sync)**: `scripts/data_management/sync_features.py` manages bulk updates and regeneration.
+
+---
+
+### 2.13 Hourly Quarter Stats (`data/derived/hourly_quarter_stats_{ticker}.json`)
 
 **Purpose:** Quantitative distribution of High/Low formation within 15-minute quarters for each hour.
 

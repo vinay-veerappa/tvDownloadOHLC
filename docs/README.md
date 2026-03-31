@@ -1,7 +1,14 @@
 # 📚 Documentation Index
 
-**Version:** 1.0.0 (AI-Native)
-**Last Updated:** March 25, 2026
+**Version:** 1.1.0 (Performance Optimized)
+**Last Updated:** March 31, 2026
+
+---
+
+## ⚡ Performance Framework (ADR-008)
+- **[Vectorized Engine](architecture/ADR.md#adr-008-vectorized-backtesting)**: O(1) broadcasted matrix search for SL/TP (10-20x speedup).
+- **[Derived Feature Store](data/core/DERIVED.md#212-stationary-feature-store-adr-008)**: "Calculate Once, Persist Everywhere" Parquet caching logic.
+- **[Parallel Optimization](research/OPTIMIZATION_GUIDE.md)**: Multi-core Optuna with Median Pruning.
 
 ---
 
@@ -80,6 +87,7 @@ Documentation for the session profiler feature.
 
 - **[Daily Profiler Requirements](profiler/daily_profiler_requirements.md)**: Feature specifications.
 - **[Profiler Data Verification](profiler/profiler_data_verification.md)**: Data quality checks.
+- **[Profiler Summary Stats](profiler/profiler_summary_stats.md)**: Statistical outputs.
 - **[Profiler Summary Stats](profiler/profiler_summary_stats.md)**: Statistical outputs.
 
 ---

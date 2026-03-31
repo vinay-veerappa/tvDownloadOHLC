@@ -17,16 +17,19 @@ class PurgedKFold:
        to avoid serial correlation leakage.
     """
     
-    def __init__(self, n_splits: int = 5, purge_window: int = 60, pct_embargo: float = 0.05):
+    def __init__(self, n_splits: int = 5, purge_window: int = 60, pct_embargo: float = 0.01):
         """
         Args:
             n_splits: Number of folds.
             purge_window: Number of bars used for the forward label (e.g., target/stop window).
-            pct_embargo: Percentage of training set to remove after the test set.
+            pct_embargo: Percentage of training set to remove after the test set (ADR-002: usually 1%).
         """
         self.n_splits = n_splits
         self.purge_window = purge_window
         self.pct_embargo = pct_embargo
+        
+    def get_n_splits(self, X=None, y=None, groups=None):
+        return self.n_splits
         
     def split(self, X: pd.DataFrame, y: pd.Series = None, groups=None) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
         """

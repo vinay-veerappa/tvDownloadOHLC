@@ -60,39 +60,77 @@ def run_v3_lifecycle(ticker="NQ1"):
     # Generate labels for training (we need target/stop results)
     engine = VectorizedBacktester()
     
-    # Initial mechanical signals across training set
+    # 1. Capture mechanical signals (Series: -1, 0, 1)
     raw_train_signals = strategy.generate_signals(train_df, {'strategy_name': 'v3_base'})
     
-    # Collect Labels (Success = 1, Fail = 0)
-    labels_df = engine.collect_ml_labels(raw_train_signals, train_df)
+    # 2. Standardize signals into DataFrame for ML labeling (SIGNAL_SCHEMA)
+    # We reconstruct the 'Box' context for each signal to define targets/stops
+    signals_list = []
+    # Identify non-zero signal entries
+    entries = raw_train_signals[raw_train_signals != 0]
     
-    if not labels_df.empty:
+    for time, sig in entries.items():
+        row = train_df.loc[time]
+        direction = 'long' if sig == 1 else 'short'
+        
+        # Borrow targets/stops from strategy logic (using ADR-relative exits roughly)
+        entry_price = row['close']
+        # BoxReversion typically targets the mid and stops at the extremes
+        # For labeling, we use a fixed 20-tick target/stop as a proxy for 'Success' vs 'Failure'
+        # Or better: use the same logic as the strategy
+        target = entry_price + (0.0010 * entry_price * sig) # 10 bps target
+        stop = entry_price - (0.0020 * entry_price * sig)   # 20 bps stop
+        
+        signals_list.append({
+            'signal_id': str(uuid.uuid4()),
+            'signal_time': time,
+            'direction': direction,
+            'entry_price': entry_price,
+            'target1_price': target,
+            'stop_price': stop
+        })
+    
+    train_signals_df = pd.DataFrame(signals_list)
+    
+    # 3. Collect Labels (Success = 1, Fail = 0)
+    if not train_signals_df.empty:
+        # We need to rejoin features at the signal time
+        labels_df = engine.collect_ml_labels(train_signals_df, train_df)
+        # Rejoin features for X factor training
+        X_train = train_df.loc[labels_df.index]
+        
         classifier = SignalClassifier(model_path=f"models/v3_{ticker}_classifier.joblib")
         # Features used for signal classification (exclude target, timing, price)
-        feature_cols = [c for c in train_df.columns if c not in ['open', 'high', 'low', 'close', 'volume', 'returns', 'log_returns']]
-        classifier.train(labels_df[feature_cols], labels_df['label'])
+        feature_cols = [c for c in X_train.columns if c not in ['open', 'high', 'low', 'close', 'volume', 'returns', 'log_returns']]
+        classifier.train(X_train[feature_cols], labels_df['label'])
     else:
         print("⚠️ No labels collected in training set. Skipping ML filtering.")
         classifier = None
 
     # --- 6. Execution & Filtering (OOS Validation) ---
     print("\n🔬 Executing OOS Validation with ML Filtering...")
-    oos_signals = strategy.generate_signals(test_df, {'strategy_name': 'v3_oos'})
+    raw_oos_signals = strategy.generate_signals(test_df, {'strategy_name': 'v3_oos'})
     
-    if classifier and not oos_signals.empty:
+    if classifier and not raw_oos_signals.empty:
         # Convert Series signals to the Schema DataFrame format for classifier
-        # SignalClassifier expects a signals DataFrame with 'signal_time'
-        signals_df = pd.DataFrame({
-            'signal_time': oos_signals[oos_signals != 0].index,
-            'signal': oos_signals[oos_signals != 0].values
-        })
+        oos_entries = raw_oos_signals[raw_oos_signals != 0]
+        oos_list = []
+        for time, sig in oos_entries.items():
+            row = test_df.loc[time]
+            oos_list.append({
+                'signal_time': time,
+                'signal': sig
+            })
+        signals_df = pd.DataFrame(oos_list)
+        
         filtered_signals_df = classifier.filter_signals(signals_df, test_df)
         
         # Re-map filtered signals back to index
         final_oos_signals = pd.Series(0, index=test_df.index)
-        final_oos_signals.loc[filtered_signals_df['signal_time']] = filtered_signals_df['signal']
+        if not filtered_signals_df.empty:
+            final_oos_signals.loc[filtered_signals_df['signal_time']] = filtered_signals_df['signal'].values
     else:
-        final_oos_signals = oos_signals
+        final_oos_signals = raw_oos_signals
 
     # --- 7. Backtest Results (Layer 5) ---
     oos_metrics = engine.run(final_oos_signals, test_df, {'leverage': 1.0})
@@ -120,4 +158,5 @@ def run_v3_lifecycle(ticker="NQ1"):
     print(f"📂 Report: scripts/trading_framework/reporting/outputs/Institutional_v3_{ticker}_OOS_tearsheet.html")
 
 if __name__ == "__main__":
+    import uuid
     run_v3_lifecycle()

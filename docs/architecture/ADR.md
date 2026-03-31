@@ -94,3 +94,23 @@ The **Prisma `EconomicEvent` Table** is officially designated as a **Secondary S
 2.  **Historical Priority**: For backtesting, correlation studies, and "Day-at-a-Glance" history, services MUST query the `EconomicEvent` table to leverage the 9,800+ record archive.
 3.  **Blackout Protocol**: The `news_calendar_fetcher.py` script bridges the DB and legacy bots by mirroring the current schedule to `news_blackout.csv`.
 4.  **Timezone Integrity**: All dates in the `EconomicEvent` table MUST be stored in **UTC** (per ADR-001) for cross-platform compatibility.
+---
+
+## [ADR-008] Derived Feature Persistence (Stationary Features)
+**Status:** Approved
+**Date:** 2026-03-31
+
+### Context
+Complexity in backtesting (Layer 6) and real-time inference (Layer 8) often leads to redundant, expensive re-calculations of stationary market features (Regimes, ALN Status, News proximity, and Normalized Distances). This causes performance bottlenecks in optimization loops and potential logic drift between research and production.
+
+### Decision
+The project will enforce a **"Calculate Once, Persist Everywhere"** pattern for all features that only depend on historical OHLCV or external events (News).
+
+### Implementation Rules
+1.  **Storage Target**: High-performance features are stored in `data/derived/{ticker}_features_1m.parquet` using the UTC timeline from ADR-001.
+2.  **Stationarity Rule**: Only features that are independent of model hyperparameters (e.g., ATR, Session Status, Time-to-News) may be globally persisted. Target-specific features (e.g., Signal entries) remain in the Strategy layer.
+3.  **Automatic Synchronization**:
+    *   The `NQStatsAdapter` (Layer 8) acts as the primary writer/sync-agent for institutional features.
+    *   Backtesting `FrameworkLoader` MUST attempt to load the Parquet feature store before falling back to raw calculation.
+4.  **Schema Governance**: All derived columns must be prefixed with `feat_` to prevent collisions with raw data (e.g., `feat_ny1_status`, `feat_vol_z`).
+5.  **Auditability**: Each derived file must contain a `metadata_json` footer or sidecar file documenting the engine version used to generate the features.

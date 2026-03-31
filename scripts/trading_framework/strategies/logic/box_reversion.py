@@ -25,7 +25,10 @@ class BoxMeanReversionSignal(SignalGenerator):
         adapter = NQStatsAdapter()
         features = adapter.get_box_features(data)
         
-        signals = pd.Series(0, index=data.index)
+        # 2. Extract necessary price columns for signal metadata
+        close = data['close']
+        
+        raw_signals = pd.Series(0, index=data.index)
         
         # 2. Extract mapped statuses (LF = 1, SF = -1)
         # We look at NY1 (AM session) status as our primary driver
@@ -68,24 +71,39 @@ class BoxMeanReversionSignal(SignalGenerator):
             imminent_news = (data['sec_to_news'] <= 900)
             # Note: We apply this after initial signal generation below
         
-        # 5. Core Entry Logic
-        ny1_status = features.get('feat_ny1_status', pd.Series(0, index=data.index))
+        # 6. Core Entry Logic
         # LONG: Short False (-1) + valid entry filters
-        signals[(ny1_status == -1) & valid_entry] = 1
+        raw_signals[(ny1_status == -1) & valid_entry] = 1
         # SHORT: Long False (1) + valid entry filters
-        signals[(ny1_status == 1) & valid_entry] = -1
+        raw_signals[(ny1_status == 1) & valid_entry] = -1
         
-        # 6. Core Exit Logic (SL, TP, & News)
-        # Flatten if price touches Mid (Take Profit)
-        signals[(signals != 0) & (mid_dist.abs() <= tp_buffer)] = 0
-        
-        # Flatten if price blasts away from Mid uncontrollably (Stop Loss)
-        signals[(signals != 0) & (mid_dist.abs() >= sl_dist)] = 0
-        
-        # Flatten for Imminent High Impact News (Institutional Safety)
-        if 'sec_to_news' in data.columns:
-            signals[(signals != 0) & (data['sec_to_news'] <= 900)] = 0
-
-        # Note: In a fully continuous live market, we block re-entry by session ID
-        # but for vectorized approximation this strictly trims exposure distributions
-        return signals
+        # 7. Convert Series to Standardized Signal DataFrame (Layer 4 Schema)
+        # This converts a flat Series into the Metadata-rich DF the engine expects
+        entry_indices = raw_signals[raw_signals != 0].index
+        if entry_indices.empty:
+            return pd.DataFrame()
+            
+        signal_list = []
+        for idx in entry_indices:
+            direction = "long" if raw_signals.loc[idx] == 1 else "short"
+            entry_price = close.loc[idx]
+            m_dist = mid_dist.loc[idx]
+            
+            # Map parameters to relative targets
+            # Target is the Mid point
+            target = entry_price * (1 - m_dist) # Reverses the (mid-close)/close normalization
+            
+            # Stop is dist away
+            stop = entry_price * (1 - (sl_dist * raw_signals.loc[idx]))
+            
+            signal_list.append({
+                'signal_id': str(uuid.uuid4()) if 'uuid' in globals() else idx,
+                'signal_time': idx,
+                'direction': direction,
+                'entry_price': entry_price,
+                'stop_price': stop,
+                'target1_price': target,
+                'status': 'active'
+            })
+            
+        return pd.DataFrame(signal_list)
