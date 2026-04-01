@@ -223,6 +223,10 @@ export default function OptionsLivePage() {
         setRefreshInterval={setRefreshInterval}
         strikeZoomRange={strikeZoomRange}
         setStrikeZoomRange={setStrikeZoomRange}
+        onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+        onToggleRightSidebar={() => setRightSidebarOpen(!rightSidebarOpen)}
+        sidebarOpen={sidebarOpen}
+        rightSidebarOpen={rightSidebarOpen}
       />
 
       <div className="flex flex-1 overflow-hidden bg-zinc-950 relative">
@@ -264,15 +268,7 @@ export default function OptionsLivePage() {
             </ScrollArea>
          </aside>
 
-         {!sidebarOpen && (
-            <button 
-               onClick={() => setSidebarOpen(true)}
-               className="absolute left-6 top-10 z-50 p-3 bg-zinc-900 border border-white/10 rounded-xl text-emerald-500 hover:scale-110 transition-all shadow-2xl group"
-               title="Expand Watchlist (>>)"
-            >
-               <ChevronRight size={18} className="group-hover:translate-x-0.5 transition-transform" />
-            </button>
-         )}
+         {/* Redundant floating button removed - consolidated in DashboardTopBar */}
 
          {/* ── Main Content Area (Center) ── */}
          <main className="flex-1 min-w-0 flex flex-col relative overflow-hidden bg-zinc-950">
@@ -542,15 +538,7 @@ export default function OptionsLivePage() {
            onToggle={() => setRightSidebarOpen(false)}
          />
 
-         {!rightSidebarOpen && (
-            <button 
-               onClick={() => setRightSidebarOpen(true)}
-               className="absolute right-6 top-10 z-50 p-3 bg-zinc-900 border border-white/10 rounded-xl text-emerald-500 hover:scale-110 transition-all shadow-2xl group"
-               title="Expand Briefing (<<)"
-            >
-               <ChevronLeft size={18} className="group-hover:-translate-x-0.5 transition-transform" />
-            </button>
-         )}
+         {/* Redundant floating button removed - consolidated in DashboardTopBar */}
       </div>
       
     </div>

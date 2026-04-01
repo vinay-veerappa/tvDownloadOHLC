@@ -27,6 +27,10 @@ interface DashboardTopBarProps {
   setRefreshInterval: (ms: number) => void
   strikeZoomRange: number
   setStrikeZoomRange: (val: number) => void
+  onToggleSidebar: () => void
+  onToggleRightSidebar: () => void
+  sidebarOpen: boolean
+  rightSidebarOpen: boolean
 }
 
 export function DashboardTopBar({ 
@@ -36,11 +40,15 @@ export function DashboardTopBar({
   refreshInterval, 
   setRefreshInterval,
   strikeZoomRange,
-  setStrikeZoomRange
+  setStrikeZoomRange,
+  onToggleSidebar,
+  onToggleRightSidebar,
+  sidebarOpen,
+  rightSidebarOpen
 }: DashboardTopBarProps) {
   return (
     <header className="h-20 border-b border-white/5 bg-zinc-950/80 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 z-50">
-      <div className="flex items-center gap-12">
+      <div className="flex items-center gap-10">
         <div className="flex items-center gap-4">
           <div className="h-12 w-12 bg-emerald-500 rounded-2xl flex items-center justify-center shadow-[0_0_30px_rgba(16,185,129,0.3)]">
             <Zap className="text-black fill-black" size={24} />
@@ -53,6 +61,31 @@ export function DashboardTopBar({
             </div>
           </div>
         </div>
+
+        <div className="h-10 w-[1px] bg-white/5 mx-2" />
+
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={onToggleSidebar}
+            className={`h-11 w-11 rounded-xl border transition-all ${sidebarOpen ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-900/50 border-white/5 text-zinc-500 hover:text-white'}`}
+            title="Toggle Watchlist (L)"
+          >
+            <LayoutGrid size={18} />
+          </Button>
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={onToggleRightSidebar}
+            className={`h-11 w-11 rounded-xl border transition-all ${rightSidebarOpen ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-900/50 border-white/5 text-zinc-500 hover:text-white'}`}
+            title="Toggle Briefing (R)"
+          >
+            <Activity size={18} />
+          </Button>
+        </div>
+
+        <div className="h-10 w-[1px] bg-white/5 mx-2" />
 
         <div className="flex items-center gap-6 bg-zinc-900/30 px-8 py-3 rounded-2xl border border-white/5 group hover:border-emerald-500/20 transition-all duration-500 shadow-sm">
             <div className="flex flex-col">
@@ -121,12 +154,6 @@ export function DashboardTopBar({
             <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Active: </span>
             <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">{activeTicker}</span>
           </div>
-          <Button variant="ghost" size="icon" className="h-12 w-12 rounded-2xl bg-zinc-900/50 border border-white/5 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all">
-            <LayoutGrid size={20} />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-12 w-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 transition-all shadow-[0_0_20px_rgba(16,185,129,0.1)]">
-            <Activity size={20} />
-          </Button>
         </div>
       </div>
     </header>

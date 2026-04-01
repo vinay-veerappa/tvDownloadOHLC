@@ -60,7 +60,7 @@ export function TacticalBriefingSidebar({ activeDetail, ms, isOpen, onToggle }: 
   return (
     <aside 
       className={`border-l border-white/5 flex flex-col bg-zinc-950/80 backdrop-blur-3xl shrink-0 transition-all duration-500 ease-in-out z-40 overflow-hidden ${
-        isOpen ? 'w-[450px] translate-x-0 opacity-100' : 'w-0 translate-x-full opacity-0 pointer-events-none'
+        isOpen ? 'w-80 translate-x-0 opacity-100' : 'w-0 translate-x-full opacity-0 pointer-events-none'
       }`}
     >
       <ScrollArea className="flex-1">
