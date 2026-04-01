@@ -448,7 +448,7 @@ def write_levels(
 
     json_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-    log.info("JSON written → %s  (%d levels)", json_path, len(all_entries))
+    log.info("JSON written -> %s  (%d levels)", json_path, len(all_entries))
 
     # ── GEX Profiles JSON output ───────────────────────────────────────────
     profiles_doc = {
@@ -457,7 +457,7 @@ def write_levels(
         "profiles": {}
     }
 
-    # Build a lookup: cash_ticker → TranslatedLevels for futures translation
+    # Build a lookup: cash_ticker -> TranslatedLevels for futures translation
     cash_to_translated: dict[str, TranslatedLevels] = {
         tl.cash_ticker: tl for tl in translated_levels
     }
@@ -527,7 +527,7 @@ def write_levels(
 
     GEX_PROFILES_JSON.parent.mkdir(parents=True, exist_ok=True)
     GEX_PROFILES_JSON.write_text(json.dumps(profiles_doc, indent=2), encoding="utf-8")
-    log.info("GEX Profiles written → %s", GEX_PROFILES_JSON)
+    log.info("GEX Profiles written -> %s", GEX_PROFILES_JSON)
 
     # ── Live Trend JSON Append (RTH only) ────────────────────────────────────
     # We only write trend data during Regular Trading Hours to avoid polluting
@@ -570,7 +570,7 @@ def write_levels(
 
         LIVE_TREND_JSON.parent.mkdir(parents=True, exist_ok=True)
         LIVE_TREND_JSON.write_text(json.dumps(trend_doc, indent=2), encoding="utf-8")
-        log.info("Live Trend written → %s  (RTH only)", LIVE_TREND_JSON)
+        log.info("Live Trend written -> %s  (RTH only)", LIVE_TREND_JSON)
     else:
         log.debug("Skipping live_trend.json update — outside RTH.")
 
@@ -609,7 +609,7 @@ def write_levels(
 
     txt_path.parent.mkdir(parents=True, exist_ok=True)
     txt_path.write_text("\n".join(lines), encoding="utf-8")
-    log.info("TXT written  → %s", txt_path)
+    log.info("TXT written  -> %s", txt_path)
 
 
 def write_macro_levels(

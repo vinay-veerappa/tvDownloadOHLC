@@ -228,7 +228,7 @@ def run_pipeline(
             intraday_puts = _filter_dte(chain.puts, 14)
             
             # Construct a virtual intraday chain
-            intraday_chain = replace(chain, calls=intraday_calls, puts=intraday_puts)
+            intraday_chain = replace(chain, contracts=intraday_calls + intraday_puts)
 
             # 4. Calculate Dealer Levels for both timeframes
             log.info("Calculating [%s] and [MACRO] levels structure...", ticker)

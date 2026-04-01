@@ -105,7 +105,7 @@ def save_current_state(state: PipelineState, path: Path = STATE_FILE) -> None:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-    log.info("Pipeline state saved → %s", path)
+    log.info("Pipeline state saved -> %s", path)
 
 
 def build_current_state(
