@@ -160,7 +160,7 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
         "symbol": api_sym,
         "fromDate": today.isoformat(),
         "toDate": (today + timedelta(days=max_dte)).isoformat(),
-        "strikeCount": 150 # Avoid 413 TooBigBody for large indices like SPX
+        "strikeCount": 100 # Avoid 413 TooBigBody for large indices like SPX
     }
 
     payload = _hub_request("get_option_chain", params)

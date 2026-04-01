@@ -171,7 +171,10 @@ class SchwabDevProvider(SchwabHubProvider):
                 # Try adding $SPX if SPX is requested
                 if "SPX" in indices and "$SPX" not in indices:
                     indices.append("$SPX")
-                self.stream.send(self.stream.level_one_indices(indices, "0,1,2,3"))
+                self.stream.send(self.stream.basic_request("LEVELONE_INDICES", "SUBS", parameters={
+                    "keys": ",".join(indices),
+                    "fields": "0,1,2,3"
+                }))
             
             if futures:
                 # For schwabdev, CHART_FUTURES and LEVELONE_FUTURES often require the active contract (e.g. /ESH25)

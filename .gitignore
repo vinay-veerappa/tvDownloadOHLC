@@ -51,6 +51,7 @@ token.json
 secrets.json
 token_backup.json
 discord_webhooks.json
+c7.json
 
 # Temp
 temp_repo/
