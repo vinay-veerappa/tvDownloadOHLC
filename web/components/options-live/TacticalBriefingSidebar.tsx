@@ -42,9 +42,18 @@ interface TacticalBriefingSidebarProps {
 
 export function TacticalBriefingSidebar({ activeDetail, ms, isOpen, onToggle }: TacticalBriefingSidebarProps) {
   const narrative = useMemo(() => {
-    if (Array.isArray(ms.coach_note) && ms.coach_note.length > 0) return ms.coach_note;
+    // 1. Try to find the coach_note for the active ticker in the dailyLevels market_structure
+    const ticker = activeDetail?.ticker;
+    if (ticker && ms.dailyLevels?.market_structure) {
+      const structure = ms.dailyLevels.market_structure.find((m: any) => 
+        m.asset === ticker || m.cash_ticker === ticker
+      );
+      if (structure && Array.isArray(structure.coach_note)) {
+        return structure.coach_note;
+      }
+    }
     
-    // Fallback narrative based on institutional telemetry
+    // 2. Fallback narrative based on institutional telemetry
     const bias = activeDetail?.directional_bias || "NEUTRAL";
     const regime = activeDetail?.gex_regime || "UNDEFINED";
     const label = activeDetail?.regime_label || "STABILIZING";
@@ -55,7 +64,7 @@ export function TacticalBriefingSidebar({ activeDetail, ms, isOpen, onToggle }: 
       `Zero Gamma level at ${activeDetail?.zero_gamma} remains the critical volatility flip point for ${activeDetail?.ticker}.`,
       "Monitor institutional flow for delta-neutral rebalancing at session open."
     ];
-  }, [ms.coach_note, activeDetail]);
+  }, [ms.dailyLevels, activeDetail]);
 
   return (
     <aside 

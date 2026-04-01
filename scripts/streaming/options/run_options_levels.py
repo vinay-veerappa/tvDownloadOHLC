@@ -68,6 +68,10 @@ from .config import (
     TIER1_TICKERS_DEFAULT,
     LOOP_BEAT_SECONDS,
     SCHEDULER_MISFIRE_GRACE_TIME,
+    MACRO_DTE_TARGETS,
+    MACRO_VIEW,
+    INTRADAY_VIEW,
+    get_ticker_profile,
 )
 from .discord_notifier import send_discord_update, send_regime_change_alert
 from .file_writer import write_levels
@@ -77,8 +81,10 @@ from .gex_calculator import (
     calculate_dealer_levels,
     calculate_price_metrics,
     rescale_levels_to_target_spot,
+    ScoredLevels,
 )
 from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data
+from .level_scorer import score_levels
 from .state_tracker import (
     build_current_state,
     detect_changes,
@@ -164,20 +170,24 @@ def run_pipeline(
         return
 
     translated_levels = []
+    translated_macro_levels = []
     cash_levels_by_ticker: dict[str, DealerLevels] = {}
+    macro_levels_by_ticker: dict[str, DealerLevels] = {}
+    scored_intraday_by_ticker: dict[str, ScoredLevels] = {}
+    scored_macro_by_ticker: dict[str, ScoredLevels] = {}
 
     # --- Process each ticker --------------------------------------------------
     target_tickers = tickers if tickers is not None else ACTIVE_TICKERS
     for ticker in target_tickers:
         futures_sym = INDEX_TO_FUTURES.get(ticker)
-        mapping_str = f"→ {futures_sym}" if futures_sym else "(Cash only)"
-        log.info("─── Processing: %s %s ───", ticker, mapping_str)
+        mapping_str = f"-> {futures_sym}" if futures_sym else "(Cash only)"
+        log.info("--- Processing: %s %s ---", ticker, mapping_str)
 
         try:
-            # 1. Fetch primary index chain (0DTE + 1DTE)
-            primary_chain = fetch_option_chain_data(client, ticker, DTE_TARGETS)
-            chain = primary_chain
-            target_cash_spot = primary_chain.spot_price
+            # 1. Fetch macro-scale option chain (covers 0DTE to 365DTE targets)
+            full_chain = fetch_option_chain_data(client, ticker, MACRO_DTE_TARGETS)
+            chain = full_chain
+            target_cash_spot = full_chain.spot_price
             source_ticker = ticker
             direct_price_metrics = None
             
@@ -187,8 +197,8 @@ def run_pipeline(
 
             # 1b. ETF fallback if index chain is empty or has unusable OI profile
             if (not chain.calls and not chain.puts) or (not _chain_has_actionable_oi(chain)):
-                if primary_chain.calls and primary_chain.puts:
-                    direct_price_metrics = calculate_price_metrics(primary_chain)
+                if full_chain.calls and full_chain.puts:
+                    direct_price_metrics = calculate_price_metrics(full_chain)
                 fallback = ETF_FALLBACK.get(ticker)
                 if fallback:
                     log.warning(
@@ -196,50 +206,74 @@ def run_pipeline(
                         ticker,
                         fallback,
                     )
-                    chain = fetch_option_chain_data(client, fallback, DTE_TARGETS)
+                    chain = fetch_option_chain_data(client, fallback, MACRO_DTE_TARGETS)
                     source_ticker = fallback
                 else:
                     log.error("No fallback available for %s — skipping.", ticker)
                     continue
 
-            # 2. Fetch front-month futures quote.
-            #    NOTE: fetch_futures_quote reads the token file directly for
-            #    REST calls, then falls back to yfinance.  It does not use the
-            #    schwab client object because the client library doesn't
-            #    reliably return futures data.
+            # 2. Fetch front-month futures quote
             fut = fetch_futures_quote(futures_sym)
 
-            # 3. Calculate GEX / walls / EM from the selected source chain
-            levels = calculate_dealer_levels(chain, source_ticker)
+            # 3. Create Intraday Subset for tactical wall detection
+            # Filter the full chain to just the near-term (<= 14 DTE) window
+            tz_ny = ZoneInfo("America/New_York")
+            today = datetime.now(tz_ny).date()
+            
+            # Helper to filter contracts
+            def _filter_dte(contracts, max_dte):
+                return [c for c in contracts if (c.expiry - today).days <= max_dte]
+
+            intraday_calls = _filter_dte(chain.calls, 14)
+            intraday_puts = _filter_dte(chain.puts, 14)
+            
+            # Construct a virtual intraday chain
+            intraday_chain = replace(chain, calls=intraday_calls, puts=intraday_puts)
+
+            # 4. Calculate Dealer Levels for both timeframes
+            log.info("Calculating [%s] and [MACRO] levels structure...", ticker)
+            levels_intraday = calculate_dealer_levels(intraday_chain, source_ticker)
+            levels_macro = calculate_dealer_levels(chain, source_ticker)
 
             # 3b. If fallback source differs from target ticker, rescale levels
             # back into target cash index space before futures translation.
             if source_ticker != ticker and target_cash_spot > 0:
-                levels = rescale_levels_to_target_spot(
-                    levels,
+                levels_intraday = rescale_levels_to_target_spot(
+                    levels_intraday,
+                    target_ticker=ticker,
+                    target_spot=target_cash_spot,
+                )
+                levels_macro = rescale_levels_to_target_spot(
+                    levels_macro,
                     target_ticker=ticker,
                     target_spot=target_cash_spot,
                 )
                 if direct_price_metrics is not None:
-                    levels = replace(
-                        levels,
-                        **direct_price_metrics,
-                    )
-                    log.info(
-                        "Overlayed direct %s EM/vol metrics onto %s-derived structure.",
-                        ticker,
-                        source_ticker,
-                    )
-                log.info(
-                    "Rescaled %s-derived levels into %s space (target spot=%.2f).",
-                    source_ticker,
-                    ticker,
-                    target_cash_spot,
-                )
+                    levels_intraday = replace(levels_intraday, **direct_price_metrics)
+                    levels_macro = replace(levels_macro, **direct_price_metrics)
 
-            cash_levels_by_ticker[ticker] = levels
+                log.info("Rescaled %s-derived levels into %s space.", source_ticker, ticker)
 
-            # 4. Translate levels into futures price space
+            cash_levels_by_ticker[ticker] = levels_intraday 
+            macro_levels_by_ticker[ticker] = levels_macro
+
+            # 5. Compute ScoredLevels for both views
+            profile = get_ticker_profile(ticker)
+            
+            # Intraday Scoring (filters to ±6% spot, Primary/Secondary/Context)
+            scored_intraday = score_levels(levels_intraday, intraday_chain, ticker, profile, INTRADAY_VIEW)
+            scored_intraday_by_ticker[ticker] = scored_intraday
+            
+            # Macro Scoring (filters to ±15% spot, Primary only)
+            scored_macro = score_levels(levels_macro, chain, ticker, profile, MACRO_VIEW)
+            scored_macro_by_ticker[ticker] = scored_macro
+
+            # 7. Write per-ticker snapshot to DB
+            if _is_rth():
+                from .interval_writer import write_snapshot
+                write_snapshot(levels_intraday, ticker_override=ticker)
+
+            # 6. Translate levels into futures price space
             if futures_sym is None or fut is None:
                 log.debug("No futures translation for %s (mapping missing or quote failed).", ticker)
                 # We skip appending to translated_levels, but proceed to next steps
@@ -249,24 +283,12 @@ def run_pipeline(
                 # If we fell back to an ETF (source_ticker != ticker), we should NOT
                 # use the ETF's opening price here as that would cause a 10x/40x 
                 # scale error in the anchor_ratio.
-                base_open = primary_chain.spot_open
-                
-                if USE_OPENING_BASIS and fut.open_price > 0 and base_open > 0:
-                    # Calculate basis established at open (e.g. ES Open - SPX Open)
-                    # and the anchor ratio for multiplicative scaling (e.g. NQ Open / NDX Open)
-                    anchor_basis = round(fut.open_price - base_open, 2)
-                    anchor_ratio = round(fut.open_price / base_open, 4)
-                    log.info(
-                        "Anchor Basis (%s): spread=%.2f ratio=%.4f (from opens: fut=%.2f base_open=%.2f)",
-                        ticker,
-                        anchor_basis,
-                        anchor_ratio,
-                        fut.open_price,
-                        base_open,
-                    )
-                
-                tl = translate_to_futures(levels, fut, anchor_basis=anchor_basis, anchor_ratio=anchor_ratio)
-                translated_levels.append(tl)
+                translated_levels.append(tl_intraday)
+                translated_macro_levels.append(tl_macro)
+
+            # 8. Support basis anchors for next loop
+            # (Keeping base_open logic for opening basis detection)
+            base_open = full_chain.spot_open
 
         except RuntimeError as exc:
             # API errors (HTTP failures, rate limits, bad responses)
@@ -288,10 +310,32 @@ def run_pipeline(
 
     # --- Persist to disk ----------------------------------------------------
     try:
+        from .config import DATA_DIR, DAILY_LEVELS_JSON, DAILY_LEVELS_TXT, INTRADAY_LEVELS_JSON, MACRO_LEVELS_JSON
+        
+        # 1. Intraday View (Legacy paths + Intraday JSON)
         write_levels(
             translated_levels,
             run_label,
             cash_levels=list(cash_levels_by_ticker.values()),
+            scored_levels=list(scored_intraday_by_ticker.values()),
+            json_path=DAILY_LEVELS_JSON, # Legacy
+        )
+        write_levels(
+            translated_levels,
+            run_label,
+            cash_levels=list(cash_levels_by_ticker.values()),
+            scored_levels=list(scored_intraday_by_ticker.values()),
+            json_path=INTRADAY_LEVELS_JSON, # Explicit
+        )
+        
+        # 2. Macro View (Macro paths)
+        write_levels(
+            translated_macro_levels,
+            run_label,
+            cash_levels=list(macro_levels_by_ticker.values()),
+            scored_levels=list(scored_macro_by_ticker.values()),
+            json_path=MACRO_LEVELS_JSON,
+            txt_path=DATA_DIR / "macro_levels.txt",
         )
     except Exception as exc:
         log.error("File write failed: %s", exc)
@@ -325,6 +369,7 @@ def run_pipeline(
                 translated_levels,
                 run_label,
                 cash_levels=list(cash_levels_by_ticker.values()),
+                scored_levels=list(scored_levels_by_ticker.values()),
                 include_cash_embeds=full_discord,
             )
         except Exception as exc:

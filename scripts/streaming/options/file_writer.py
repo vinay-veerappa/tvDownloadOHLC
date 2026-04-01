@@ -30,6 +30,7 @@ from .formatting import (
 )
 from .futures_translator import TranslatedLevels
 from .gex_calculator import DealerLevels
+from .level_scorer import ScoredLevels
 
 log = logging.getLogger(__name__)
 
@@ -129,10 +130,25 @@ def _to_entries(tl: TranslatedLevels) -> list[dict[str, Any]]:
         else:
             base_entry["basis_ratio"] = tl.basis_ratio
 
-        rows.append({**base_entry, "level": round(float(em.em_upper), 2), "type": f"{em.expiry} Upper EM"})
-        rows.append({**base_entry, "level": round(float(em.em_lower), 2), "type": f"{em.expiry} Lower EM"})
-
     return rows
+
+
+def _to_scored_entries(scored: ScoredLevels) -> list[dict[str, Any]]:
+    """Converts TaggedLevels into JSON-serializable entries for the UI."""
+    return [
+        {
+            "strike": tl.strike,
+            "label": tl.label,
+            "significance": tl.significance,
+            "side": tl.side,
+            "strength": round(tl.strength_score, 3),
+            "description": tl.description,
+            "field": tl.field_name,
+            "asset": scored.ticker,
+            "type": "TAGGED_LEVEL"
+        }
+        for tl in scored.tagged_levels
+    ]
 
 
 def _to_cash_entries(levels: DealerLevels) -> list[dict[str, Any]]:
@@ -248,6 +264,7 @@ def write_levels(
     translated_levels: list[TranslatedLevels],
     run_label: str = "",
     cash_levels: list[DealerLevels] | None = None,
+    scored_levels: list[ScoredLevels] | None = None,
     json_path: Path = DAILY_LEVELS_JSON,
     txt_path: Path = DAILY_LEVELS_TXT,
 ) -> None:
@@ -256,10 +273,18 @@ def write_levels(
 
     # ── JSON output ────────────────────────────────────────────────────────
     all_entries: list[dict[str, Any]] = []
+    # Legacy flat-list format for back-compat
     for tl in translated_levels:
         all_entries.extend(_to_entries(tl))
     for levels in cash_levels or []:
         all_entries.extend(_to_cash_entries(levels))
+        
+    # New Tagged Levels format
+    tagged_entries: list[dict[str, Any]] = []
+    for sl in scored_levels or []:
+        tagged_entries.extend(_to_scored_entries(sl))
+
+    # Market structure summary per translated instrument (Tier 2 metrics).
 
     # Market structure summary per translated instrument (Tier 2 metrics).
     market_structure: list[dict[str, Any]] = []
@@ -299,7 +324,8 @@ def write_levels(
                 }
                 for em in tl.expected_moves
             ],
-            "coach_note": build_coaches_note(cash_tag(tl.futures_symbol) if tl.futures_symbol else cash_tag(tl.cash_ticker), tl)
+            "coach_note": build_coaches_note(cash_tag(tl.futures_symbol) if tl.futures_symbol else cash_tag(tl.cash_ticker), tl),
+            "tactical_plan": build_plan(cash_tag(tl.futures_symbol) if tl.futures_symbol else cash_tag(tl.cash_ticker), tl)
         })
     # Also include cash-only tickers (ETFs, stocks) that don't have futures translation
     translated_cash_tickers = {tl.cash_ticker for tl in translated_levels}
@@ -341,14 +367,83 @@ def write_levels(
                 }
                 for em in getattr(levels, 'expected_moves', [])
             ],
-            "coach_note": build_coaches_note(levels.ticker, levels)
+            "coach_note": build_coaches_note(levels.ticker, levels),
+            "tactical_plan": build_plan(levels.ticker, levels)
         })
+
+    # --- Append Scored Analysis Data (Filter Data) ---
+    scored_lookup: dict[str, ScoredLevels] = {s.ticker: s for s in (scored_levels or [])}
+    def _scored_to_dict(s: ScoredLevels) -> dict:
+        return {
+            "view_mode": s.view_mode,
+            "regime": s.regime,
+            "bias": s.bias,
+            "strategic": [
+                {
+                    "strike": l.strike,
+                    "label": l.label,
+                    "side": l.side,
+                    "strength": l.strength_score,
+                    "desc": l.description
+                } for l in s.strategic
+            ],
+            "pivots": [
+                {
+                    "strike": l.strike,
+                    "label": l.label,
+                    "side": l.side,
+                    "strength": l.strength_score,
+                    "desc": l.description
+                } for l in s.pivots
+            ],
+            "contextual": [
+                {
+                    "strike": l.strike,
+                    "label": l.label,
+                    "side": l.side,
+                    "strength": l.strength_score,
+                    "desc": l.description
+                } for l in s.contextual
+            ],
+            "resistance_walls": [
+                {
+                    "strike": l.strike,
+                    "label": l.label,
+                    "side": l.side,
+                    "strength": l.strength_score
+                } for l in s.resistance_walls
+            ],
+            "support_walls": [
+                {
+                    "strike": l.strike,
+                    "label": l.label,
+                    "side": l.side,
+                    "strength": l.strength_score
+                } for l in s.support_walls
+            ],
+            "all_tagged": [
+                {
+                    "strike": l.strike,
+                    "label": l.label,
+                    "significance": l.significance,
+                    "side": l.side,
+                    "strength": l.strength_score,
+                    "field": l.field_name
+                } for l in s.tagged_levels
+            ]
+        }
+
+    for ms in market_structure:
+        ticker = ms["cash_ticker"]
+        if ticker in scored_lookup:
+            ms["scored_analysis"] = _scored_to_dict(scored_lookup[ticker])
 
     doc = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "run_label": run_label,
         "market_structure": market_structure,
         "levels": all_entries,
+        "tagged_levels": tagged_entries,
     }
 
     json_path.parent.mkdir(parents=True, exist_ok=True)

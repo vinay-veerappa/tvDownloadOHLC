@@ -35,7 +35,7 @@ from .formatting import (
     traffic_light,
 )
 from .futures_translator import TranslatedLevels
-from .gex_calculator import DealerLevels
+from .gex_calculator import DealerLevels, ScoredLevels, TaggedLevel
 
 log = logging.getLogger(__name__)
 
@@ -115,7 +115,32 @@ def _copy_block_payloads(
     return payloads
 
 
-def _build_embed(levels: HasLevels, run_label: str) -> dict[str, Any]:
+def _build_scored_fields(scored: ScoredLevels) -> list[dict[str, Any]]:
+    """Construct embed fields for the Three-Filter Architecture."""
+    fields = []
+    
+    # 1. Strategic Anchors
+    strategic = scored.strategic
+    if strategic:
+        lines = [f"• **{l.strike:g}** {l.side}: {l.label} — *{l.description}*" for l in strategic[:3]]
+        fields.append({"name": "⚓ Strategic Anchors (Primary Walls)", "value": "\n".join(lines), "inline": False})
+
+    # 2. Key Pivots
+    pivots = scored.pivots
+    if pivots:
+        lines = [f"• **{l.strike:g}**: {l.label} — *{l.description}*" for l in pivots[:3]]
+        fields.append({"name": "⚖️ Key Pivots & Transitions", "value": "\n".join(lines), "inline": False})
+        
+    # 3. Contextual Clusters
+    contextual = scored.contextual
+    if contextual:
+        lines = [f"• **{l.strike:g}**: {l.label}" for l in contextual[:5]]
+        fields.append({"name": "🧩 Contextual Magnets", "value": "\n".join(lines), "inline": False})
+        
+    return fields
+
+
+def _build_embed(levels: HasLevels, run_label: str, scored: ScoredLevels | None = None) -> dict[str, Any]:
     """Construct a single Discord embed dict for one levels entry (translated or cash)."""
     color = DISCORD_COLOR_POSITIVE if levels.gex_regime == "POSITIVE" else DISCORD_COLOR_NEGATIVE
     
@@ -183,6 +208,10 @@ def _build_embed(levels: HasLevels, run_label: str) -> dict[str, Any]:
         # ── Compact execution plan ──────────────────────────────
         {"name": "🧠 Execution Plan",          "value": "\n".join(build_plan(tag, levels, extended=False)), "inline": False},
     ])
+
+    if scored:
+        fields.append({"name": "\u200b", "value": "── **THREE-FILTER ANALYSIS** ──", "inline": False})
+        fields.extend(_build_scored_fields(scored))
 
     footer_parts = [
         f"Total GEX: {levels.total_gex:,.0f}",
@@ -271,6 +300,7 @@ def send_macro_update(
     anomalies: list[dict[str, Any]],
     dominant_nodes: list[dict[str, Any]], # Explicitly received
     webhook_url: str | None = None,
+    scored: ScoredLevels | None = None,
 ) -> None:
     """
     Delivers the macro HTF chart and formatted institutional brief to Discord.
@@ -305,8 +335,24 @@ def send_macro_update(
         f"• Pivot (Zero Gamma): {zg:,.2f}" if zg else "• Pivot: N/A",
         f"• Major Nodes: {nodes_str}",
         "",
-        "🚨 **THE URGENT TAPE (Top Institutional Flow)**"
     ]
+
+    # Add Scored Briefing
+    if scored:
+        best_anchor = scored.strategic[0] if scored.strategic else None
+        res = scored.resistance_walls[0] if scored.resistance_walls else None
+        sup = scored.support_walls[0] if scored.support_walls else None
+
+        lines.extend([
+            "🪜 **THREE-FILTER SCORECARD**",
+            f"• Sentiment: **{scored.bias}** ({scored.regime} GEX)",
+            f"• Mech. Resistance: {res.strike:g} ({res.label})" if res else "• Mech. Resistance: N/A",
+            f"• Mech. Support: {sup.strike:g} ({sup.label})" if sup else "• Mech. Support: N/A",
+            f"• Best Anchor: {best_anchor.strike:g} ({best_anchor.label})" if best_anchor else "• Best Anchor: N/A",
+            ""
+        ])
+
+    lines.append("🚨 **THE URGENT TAPE (Top Institutional Flow)**")
 
     # 4. Append the Anomalies (Formatted with Golden Sweeps)
     for w in anomalies[:5]:
@@ -328,6 +374,7 @@ def send_discord_update(
     translated_levels: list[TranslatedLevels],
     run_label: str = "",
     cash_levels: list[DealerLevels] | None = None,
+    scored_levels: list[ScoredLevels] | None = None,
     webhook_url: str | None = None,
     include_cash_embeds: bool = False,
 ) -> None:
@@ -364,7 +411,8 @@ def send_discord_update(
     
     log.debug("Sending Discord embeds/briefings for %d targets.", len(targets))
 
-    embeds = [_build_embed(t, run_label) for t in targets]
+    scored_lookup = {s.ticker: s for s in (scored_levels or [])}
+    embeds = [_build_embed(t, run_label, scored=scored_lookup.get(t.cash_ticker if hasattr(t, 'cash_ticker') else t.ticker)) for t in targets]
 
     # Batch and post embeds
     for batch_start in range(0, len(embeds), _DISCORD_MAX_EMBEDS):

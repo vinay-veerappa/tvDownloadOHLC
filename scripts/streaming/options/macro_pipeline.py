@@ -30,7 +30,17 @@ from scripts.streaming.options.options_fetcher import (
     _safe_float,
     fetch_futures_quote
 )
-from scripts.streaming.options.config import DATA_DIR, MACRO_DTE_TARGETS, MACRO_LEVELS_TXT, INDEX_TO_FUTURES, USE_OPENING_BASIS, FUTURES_YF_MAP, HUB_RESOLVE_ENDPOINT
+from scripts.streaming.options.config import (
+    DATA_DIR,
+    MACRO_DTE_TARGETS,
+    MACRO_LEVELS_TXT,
+    INDEX_TO_FUTURES,
+    USE_OPENING_BASIS,
+    FUTURES_YF_MAP,
+    HUB_RESOLVE_ENDPOINT,
+    get_ticker_profile,
+    MACRO_VIEW,
+)
 from scripts.streaming.options.formatting import futures_tag
 from scripts.streaming.options.whale_detector import detect_volume_anomalies
 from scripts.streaming.options.macro_charting import generate_macro_chart_bytes
@@ -38,6 +48,7 @@ from scripts.streaming.options.discord_notifier import send_macro_update
 from scripts.streaming.options.interval_writer import write_macro_snapshot
 from scripts.streaming.options.file_writer import write_macro_levels, write_quant_json
 from scripts.streaming.options.gex_calculator import calculate_dealer_levels, extract_dominant_oi_nodes
+from scripts.streaming.options.level_scorer import score_levels
 
 log = logging.getLogger(__name__)
 
@@ -283,10 +294,15 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
                 write_quant_json(output_tag, float(chain.spot_price), macro_levels, anomalies, dominant_nodes)
                 write_macro_snapshot(output_tag, float(chain.spot_price), macro_levels, anomalies, dominant_nodes)
 
+                # 3c. Compute ScoredLevels (Three-Filter Architecture)
+                profile = get_ticker_profile(ticker)
+                scored = score_levels(dl, chain, ticker, profile, view_config=MACRO_VIEW)
+                macro_levels["scored"] = scored
+
                 # Charting & Discord (Primary only)
-                chart_buf = generate_macro_chart_bytes(ticker, float(chain.spot_price), macro_levels, anomalies["structural"])
+                chart_buf = generate_macro_chart_bytes(ticker, float(chain.spot_price), macro_levels, anomalies["structural"], scored=scored)
                 if chart_buf.getbuffer().nbytes > 0:
-                    send_macro_update(ticker, float(chain.spot_price), chart_buf, macro_levels, anomalies["structural"], dominant_nodes)
+                    send_macro_update(ticker, float(chain.spot_price), chart_buf, macro_levels, anomalies["structural"], dominant_nodes, scored=scored)
                     chart_buf.seek(0)
             else:
                 log.warning("No primary data fetched for %s, skipping primary processing.", ticker)

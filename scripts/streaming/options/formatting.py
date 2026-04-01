@@ -455,154 +455,98 @@ def traffic_light(levels: HasLevels) -> tuple[str, str]:
 
 def build_coaches_note(tag: str, levels: HasLevels) -> list[str]:
     """
-    Generate a plain-English coaching paragraph that tells a novice day
-    trader exactly what the current options landscape means and what to do.
-
-    Parameters
-    ----------
-    tag    : Display tag, e.g. ``"/ES"`` or ``"SPX"``.
-    levels : Any object carrying dealer-level + Tier 2 attributes.
+    Generate a professional tactical briefing that tells a day trader
+    exactly how to approach the current session based on options telemetry.
     """
     f = fmt_copy
     light_color, light_reason = traffic_light(levels)
     light_emoji = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴"}[light_color]
-
-    # ── Regime description ──────────────────────────────────────────────
-    regime_descriptions = {
-        "PINNED": (
-            "This is a PINNED environment — dealers are long gamma and hedging keeps price "
-            "range-bound. Fade moves toward the walls. This is the most forgiving regime for "
-            "newer traders because overextensions tend to snap back."
-        ),
-        "TRENDING": (
-            "This is a TRENDING environment — dealers are short gamma and amplifying moves. "
-            "Don't fade. Wait for a direction to establish, then join the trend with a trailing "
-            "stop. Moves can extend further than you'd expect."
-        ),
-        "COILED": (
-            "This is a COILED environment — dealers are short gamma but the range is compressed. "
-            "The market is storing energy for a breakout. This is the hardest regime to trade. "
-            "Wait for a clear break of zero gamma or the gamma flip zone before committing. "
-            "If you're unsure, stand down entirely."
-        ),
-        "BATTLE_ZONE": (
-            "This is a BATTLE_ZONE — dealers are long gamma but the range is wide. Expect large "
-            "swings between the call wall and put wall. These swings tend to reverse at the walls. "
-            "Trade wall-to-wall if you have the stomach for it, but use wider stops."
-        ),
-        "NEUTRAL": (
-            "Regime is unclear — the options data isn't giving a strong signal. "
-            "Trade lighter than normal and rely more on price action than levels."
-        ),
-    }
-    regime_text = regime_descriptions.get(levels.regime_label, regime_descriptions["NEUTRAL"])
-
-    # ── Directional bias ────────────────────────────────────────────────
+    
+    # 1. Macro Thesis
+    # This becomes the first paragraph in the UI (styled as italic/highlighted)
     bias = levels.directional_bias
     bias_arrow = "↓" if bias == "BEARISH" else "↑" if bias == "BULLISH" else "↔"
-    bias_emoji = "🔴" if bias == "BEARISH" else "🟢" if bias == "BULLISH" else "⚪"
-
-    bias_text = ""
-    if bias == "BEARISH":
-        bias_text = (
-            "Directional lean is BEARISH — gamma magnet is below price, put gamma dominates, "
-            "and/or vanna favors downside. Look for short setups first."
-        )
-    elif bias == "BULLISH":
-        bias_text = (
-            "Directional lean is BULLISH — gamma magnet is above price, call gamma dominates, "
-            "and/or vanna favors upside. Look for long setups first."
-        )
-    else:
-        bias_text = (
-            "Directional lean is NEUTRAL — mixed signals. No strong directional edge from "
-            "options positioning. Let price action lead."
-        )
-
-    # ── Key levels summary ──────────────────────────────────────────────
-    parts: list[str] = []
-
-    parts.append(f"{light_emoji} {light_color}: {light_reason}")
-    parts.append("")
-    parts.append(f"**{tag} — {levels.regime_label} {bias_arrow}** (GEX: {levels.total_gex:,.0f}) {bias_emoji} {bias}")
-    parts.append(regime_text)
-    parts.append(bias_text)
-
-    # Wall structure
-    if levels.call_wall is not None and levels.put_wall is not None:
-        sep_text = f"{f(levels.wall_separation)} pts" if levels.wall_separation is not None else "N/A"
-        parts.append(
-            f"Call wall {f(levels.call_wall)} | Put wall {f(levels.put_wall)} "
-            f"({sep_text} separation, {f(levels.em_value)} EM)."
-        )
-
-    # Gravity
-    if levels.gamma_magnet is not None:
-        magnet_vs_spot = ""
-        if hasattr(levels, 'spot'):
-            spot = getattr(levels, 'spot', None)
-            if spot is not None and levels.gamma_magnet is not None:
-                diff = levels.gamma_magnet - spot
-                direction = "above" if diff > 0 else "below"
-                magnet_vs_spot = f" ({abs(diff):.1f} pts {direction} current price)"
-        elif hasattr(levels, 'futures_price'):
-            fp = getattr(levels, 'futures_price', None)
-            if fp is not None and levels.gamma_magnet is not None:
-                diff = levels.gamma_magnet - fp
-                direction = "above" if diff > 0 else "below"
-                magnet_vs_spot = f" ({abs(diff):.1f} pts {direction} current price)"
-        parts.append(f"Gamma magnet at {f(levels.gamma_magnet)}{magnet_vs_spot} — price wants to drift here.")
-
-    # Pin
-    if levels.pin_strike is not None and levels.pin_odds > 0.15:
-        parts.append(
-            f"Pin strike {f(levels.pin_strike)} has {levels.pin_odds:.0%} gamma concentration — "
-            f"watch for convergence, especially after 2pm ET."
-        )
-    elif levels.pin_strike is not None:
-        parts.append(
-            f"Pin strike at {f(levels.pin_strike)} but concentration is low ({levels.pin_odds:.0%}) — "
-            f"pinning effect is weak today."
-        )
-
-    # Vanna context
-    if abs(levels.net_vanna_exposure) > 0:
-        if levels.net_vanna_exposure < 0:
-            parts.append(
-                "Net vanna is negative — if IV drops into the close, expect bearish dealer hedging pressure."
-            )
-        else:
-            parts.append(
-                "Net vanna is positive — if IV drops into the close, expect supportive dealer hedging."
-            )
-
-    # Action items based on regime
-    parts.append("")
+    
+    macro_thesis = (
+        f"The {tag} options chain is currently in a {levels.regime_label} regime ({levels.gex_regime} GEX) "
+        f"with a {bias} lean. "
+    )
+    
     if levels.regime_label == "PINNED":
-        parts.append("**What to do:** Fade moves toward the walls. Short near call wall, long near put wall. "
-                      "Use zero gamma as your pivot — above it lean long, below it lean short. "
-                      "Take profit at the gamma magnet or the opposite wall.")
+        macro_thesis += "Dealers are providing high liquidity; expect price to seek the 🧲 Gamma Magnet and stall at the walls."
     elif levels.regime_label == "TRENDING":
-        parts.append("**What to do:** Wait for price to break and hold above call wall (bullish) or "
-                      "below put wall (bearish). Join the trend on a retest. Trail your stop to the "
-                      "previous level. Don't try to pick tops or bottoms.")
+        macro_thesis += "Short gamma is active; expect price to accelerate away from the walls with expanding volatility."
     elif levels.regime_label == "COILED":
-        parts.append("**What to do:** Be patient. Watch zero gamma and the gamma flip zone. "
-                      "If price breaks and closes outside the flip zone, take the trade in that direction "
-                      "with a stop back inside. If it doesn't break, don't force it.")
+        macro_thesis += "The range is extremely tight; a high-velocity volatility breakout is imminent. Wait for the pivot break."
     elif levels.regime_label == "BATTLE_ZONE":
-        parts.append("**What to do:** Trade the range. Short at call wall, long at put wall, "
-                      "with stops just beyond. Expect wide swings — don't get shaken out on noise. "
-                      "The gamma magnet is your mid-range target.")
+        macro_thesis += "Expect heavy two-way volume with sharp reversals at the Call and Put walls today."
     else:
-        parts.append("**What to do:** Trade lighter. Let the first 30 minutes develop, then reassess.")
+        macro_thesis += "Market structure is stabilizing. Monitor price action around the primary walls for early conviction."
 
-    # EM reminder
+    parts: list[str] = [macro_thesis]
+
+    # 2. Execution Directives
+    # These will be numbered in the UI
+    
+    # Directive: The Pivot
+    pivot = levels.zero_gamma if levels.zero_gamma else (levels.gamma_flip_lower if levels.gamma_flip_lower else levels.max_pain)
+    if pivot is not None:
+        parts.append(
+            f"**THE PIVOT:** Use {f(pivot)} as today's line-in-the-sand. "
+            f"Trading above = Buyers in control, targeting higher DEX nodes. "
+            f"Trading below = Sellers in control, seeking GC↓ liquidity."
+        )
+
+    # Directive: What to do (Regime Specific)
+    if levels.regime_label == "PINNED":
+        parts.append(
+            "**TACTICAL DELTA:** Favor mean-reversion. Long at Put Wall/EM Lower, Short at Call Wall/EM Upper. "
+            "Keep take-profits frequent as the magnet pulls price back to the center."
+        )
+    elif levels.regime_label == "TRENDING":
+        parts.append(
+            "**TACTICAL DELTA:** Join the trend. Do not fade the walls. "
+            "Wait for a 5-min candle to close outside the 0DTE wall, then enter on a retest in the same direction."
+        )
+    elif levels.regime_label == "COILED":
+        parts.append(
+            "**TACTICAL DELTA:** Stay flat until a breakout. If price breaks {f(pivot)} with volume, "
+            "join the move. If price remains inside the GF range, do not take mid-range entries."
+        )
+    elif levels.regime_label == "BATTLE_ZONE":
+        parts.append(
+            "**TACTICAL DELTA:** Trade wall-to-wall. These are wide swings—ensure your stop is outside the ATR, "
+            "not just at the level. Target the Gamma Magnet as your target 1."
+        )
+    else:
+        parts.append("**TACTICAL DELTA:** Reassess at the 10:30am ET liquidity window to confirm if a new regime is forming.")
+
+    # Directive: Gravity & Flow
+    if levels.gamma_magnet is not None:
+        parts.append(
+            f"**GRAVITY:** Price is likely to drift toward the {f(levels.gamma_magnet)} Gamma Magnet. "
+            "Use this as your primary profit-taking zone for range trades."
+        )
+
+    # Directive: The Pin
+    if levels.pin_strike is not None and levels.pin_odds > 0.12:
+        parts.append(
+            f"**THETA RISK:** High pinning probability at {f(levels.pin_strike)} ({levels.pin_odds:.0%}). "
+            "Expect a price squeeze toward this level in the final 90 minutes of the session."
+        )
+
+    # Directive: Vanna/Vol
+    if abs(levels.net_vanna_exposure) > 0 and abs(levels.iv_change) > 0.02:
+        vanna_direction = "supportive" if levels.net_vanna_exposure > 0 else "bearish"
+        parts.append(
+            f"**VOL SQUEEZE:** Net Vanna is {vanna_direction}. If current IV expansion/contraction persists, "
+            "dealers will be forced to hedge aggressively, amplifying the move."
+        )
+
+    # Directive: The Envelope (EM)
     parts.append(
-        f"Expected move: {f(levels.em_lower)} ↔ {f(levels.em_upper)} (±{f(levels.em_value)}). "
-        f"Inside the band = two-way chop. Outside = expansion, trend continuation."
+        f"**RISK ENVELOPE:** Today's ±1.0σ Expected Move is {f(levels.em_lower)} ↔ {f(levels.em_upper)}. "
+        "Any trade outside this range is a 'regime break'—reset your stops and look for a multi-day trend."
     )
 
-    # Return as a list so callers can render each item as a paragraph.
-    # Filter out empty strings to avoid blank paragraphs in the UI.
-    return [p for p in parts if p.strip()]
+    return parts

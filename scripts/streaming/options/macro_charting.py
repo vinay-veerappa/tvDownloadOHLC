@@ -15,6 +15,7 @@ import matplotlib.gridspec as gridspec
 import mplfinance as mpf
 import pandas as pd
 import yfinance as yf
+from .level_scorer import ScoredLevels
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +23,8 @@ def generate_macro_chart_bytes(
     ticker: str, 
     spot: float,                    
     levels: dict[str, Any],          # <--- Update to Any (since it holds dominant_nodes now)
-    anomalies: list[dict[str, Any]]
+    anomalies: list[dict[str, Any]],
+    scored: ScoredLevels | None = None
 ) -> io.BytesIO:
     """
     Generates a clamped macro HTF chart.
@@ -95,6 +97,23 @@ def generate_macro_chart_bytes(
             ax1.axhline(strike, color='fuchsia', linestyle='-', alpha=0.6, linewidth=1.0)
             ax1.text(x_right, strike, f" {label}", color='fuchsia', va='center', fontsize=7, bbox=dict(facecolor='black', alpha=0.5, edgecolor='none', pad=1))
     
+    # ── Scored Analysis Overlays (Filters) ──────────────────────
+    if scored:
+        # Mechanical Walls (Support/Resistance)
+        for w in scored.resistance_walls[:2]:
+            ax1.axhline(w.strike, color='#FF5555', linestyle='-', alpha=0.3, linewidth=2)
+            ax1.text(x_left, w.strike, f" {w.label} (S: {w.strength_score:.1f})", color='#FF5555', va='bottom', fontsize=7, alpha=0.6)
+            
+        for w in scored.support_walls[:2]:
+            ax1.axhline(w.strike, color='#55FF55', linestyle='-', alpha=0.3, linewidth=2)
+            ax1.text(x_left, w.strike, f" {w.label} (S: {w.strength_score:.1f})", color='#55FF55', va='top', fontsize=7, alpha=0.6)
+
+        # Strategic Anchors
+        for a in scored.strategic[:2]:
+            ax1.axhline(a.strike, color='#AAAAAA', linestyle='--', alpha=0.4, linewidth=1.5)
+            label = f" ANCHOR: {a.label}"
+            ax1.text(x_right, a.strike, label, color='#AAAAAA', va='center', fontsize=7, alpha=0.7)
+
     # 5. OI Profile (Right)
     strikes_data = levels.get("strikes_oi", [])
     if strikes_data:
