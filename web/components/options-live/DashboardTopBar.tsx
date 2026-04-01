@@ -69,8 +69,12 @@ export function DashboardTopBar({
             variant="ghost" 
             size="icon" 
             onClick={onToggleSidebar}
-            className={`h-11 w-11 rounded-xl border transition-all ${sidebarOpen ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-900/50 border-white/5 text-zinc-500 hover:text-white'}`}
-            title="Toggle Watchlist (L)"
+            className={`h-11 w-11 rounded-xl border transition-all shadow-sm ${
+              sidebarOpen 
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                : 'bg-zinc-800 border-emerald-500/30 text-white hover:text-emerald-400 hover:border-emerald-500/50'
+            }`}
+            title={sidebarOpen ? "Collapse Watchlist" : "Expand Watchlist"}
           >
             <LayoutGrid size={18} />
           </Button>
@@ -78,8 +82,12 @@ export function DashboardTopBar({
             variant="ghost" 
             size="icon" 
             onClick={onToggleRightSidebar}
-            className={`h-11 w-11 rounded-xl border transition-all ${rightSidebarOpen ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-900/50 border-white/5 text-zinc-500 hover:text-white'}`}
-            title="Toggle Briefing (R)"
+            className={`h-11 w-11 rounded-xl border transition-all shadow-sm ${
+              rightSidebarOpen 
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                : 'bg-zinc-800 border-emerald-500/30 text-white hover:text-emerald-400 hover:border-emerald-500/50'
+            }`}
+            title={rightSidebarOpen ? "Collapse Briefing" : "Expand Briefing"}
           >
             <Activity size={18} />
           </Button>
