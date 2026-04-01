@@ -51,10 +51,10 @@ from api.features.profiler.router import router as profiler_router
 from api.features.candle_science.router import router as candle_science_router
 
 # Include specific routers first, greedy ones last
-app.include_router(indicators_router, tags=["indicators"])
+app.include_router(indicators_router, prefix="/api/indicators", tags=["indicators"])
 app.include_router(profiler_router, tags=["profiler"])
-app.include_router(candle_science_router, tags=["candle-science"])
-app.include_router(sessions_router, tags=["sessions"]) # Greedy /{ticker} last
+app.include_router(candle_science_router, prefix="/api/candle-science", tags=["candle-science"])
+app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"]) # Greedy /{ticker} last
 
 
 @app.on_event("startup")
