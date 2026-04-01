@@ -15,7 +15,12 @@ import matplotlib.gridspec as gridspec
 import mplfinance as mpf
 import pandas as pd
 import yfinance as yf
-from .level_scorer import ScoredLevels
+from .level_scorer import (
+    ScoredLevels, 
+    MechanicalWall, 
+    StructuralAnchor, 
+    InflectionPoint
+)
 
 log = logging.getLogger(__name__)
 
@@ -99,20 +104,32 @@ def generate_macro_chart_bytes(
     
     # ── Scored Analysis Overlays (Filters) ──────────────────────
     if scored:
-        # Mechanical Walls (Support/Resistance)
+        # --- Layer 1: Resistance Walls (Filter 1) ---
         for w in scored.resistance_walls[:2]:
-            ax1.axhline(w.strike, color='#FF5555', linestyle='-', alpha=0.3, linewidth=2)
-            ax1.text(x_left, w.strike, f" {w.label} (S: {w.strength_score:.1f})", color='#FF5555', va='bottom', fontsize=7, alpha=0.6)
-            
-        for w in scored.support_walls[:2]:
-            ax1.axhline(w.strike, color='#55FF55', linestyle='-', alpha=0.3, linewidth=2)
-            ax1.text(x_left, w.strike, f" {w.label} (S: {w.strength_score:.1f})", color='#55FF55', va='top', fontsize=7, alpha=0.6)
+            ax1.axhline(w.strike, color='#FF5555', linestyle='--', alpha=0.9, linewidth=1.5)
+            # Use pct_of_book for visual weight
+            ax1.text(x_left, w.strike, f" {w.label} ({w.pct_of_book*100:.1f}% BOOK)", 
+                    color='#FF5555', fontsize=8, fontweight='bold', va='bottom', ha='left')
 
-        # Strategic Anchors
-        for a in scored.strategic[:2]:
-            ax1.axhline(a.strike, color='#AAAAAA', linestyle='--', alpha=0.4, linewidth=1.5)
-            label = f" ANCHOR: {a.label}"
-            ax1.text(x_right, a.strike, label, color='#AAAAAA', va='center', fontsize=7, alpha=0.7)
+        for w in scored.support_walls[:2]:
+            ax1.axhline(w.strike, color='#55FF55', linestyle='--', alpha=0.9, linewidth=1.5)
+            ax1.text(x_left, w.strike, f" {w.label} ({w.pct_of_book*100:.1f}% BOOK)", 
+                    color='#55FF55', fontsize=8, fontweight='bold', va='top', ha='left')
+
+        # --- Layer 2: Structural Anchors (Filter 2) ---
+        anchors = [l for l in scored.tagged_levels if isinstance(l, StructuralAnchor)]
+        for a in anchors[:2]:
+            ax1.axhline(a.strike, color='#FFD700', linestyle='-', alpha=0.8, linewidth=2.0)
+            ax1.text(x_left, a.strike, f" [{a.matched_program}] ({a.relevance})", 
+                    color='#FFD700', fontsize=8, fontweight='bold', va='center', ha='left')
+
+        # --- Layer 3: Inflection Points (Filter 3) ---
+        pts = [l for l in scored.tagged_levels if isinstance(l, InflectionPoint)]
+        for p in pts:
+            if p.label == "Zero Gamma Level":
+                ax1.axhline(p.strike, color='#ffffff', linestyle=':', alpha=0.9, linewidth=1.5)
+                ax1.text(x_right, p.strike, " ZERO GEX ", color='#ffffff', 
+                        fontsize=7, bbox=dict(facecolor='black', alpha=0.5), va='center', ha='right')
 
     # 5. OI Profile (Right)
     strikes_data = levels.get("strikes_oi", [])

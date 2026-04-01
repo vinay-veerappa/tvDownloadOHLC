@@ -35,7 +35,14 @@ from .formatting import (
     traffic_light,
 )
 from .futures_translator import TranslatedLevels
-from .gex_calculator import DealerLevels, ScoredLevels, TaggedLevel
+from .gex_calculator import DealerLevels
+from .level_scorer import (
+    ScoredLevels, 
+    TaggedLevel, 
+    MechanicalWall, 
+    StructuralAnchor, 
+    InflectionPoint
+)
 
 log = logging.getLogger(__name__)
 
@@ -119,23 +126,30 @@ def _build_scored_fields(scored: ScoredLevels) -> list[dict[str, Any]]:
     """Construct embed fields for the Three-Filter Architecture."""
     fields = []
     
-    # 1. Strategic Anchors
-    strategic = scored.strategic
-    if strategic:
-        lines = [f"• **{l.strike:g}** {l.side}: {l.label} — *{l.description}*" for l in strategic[:3]]
-        fields.append({"name": "⚓ Strategic Anchors (Primary Walls)", "value": "\n".join(lines), "inline": False})
+    # 1. Mechanical Walls (Filter 1)
+    res_walls = scored.resistance_walls
+    sup_walls = scored.support_walls
+    if res_walls or sup_walls:
+        lines = []
+        for w in (res_walls[:2] + sup_walls[:2]):
+            book_str = f" ({w.pct_of_book*100:.1f}% book)" if w.pct_of_book > 0 else ""
+            lines.append(f"• **{w.strike:g}** {w.side}: {w.label}{book_str}")
+        if lines:
+            fields.append({"name": "🧱 Gamma Walls (Mechanical)", "value": "\n".join(lines), "inline": False})
 
-    # 2. Key Pivots
-    pivots = scored.pivots
-    if pivots:
-        lines = [f"• **{l.strike:g}**: {l.label} — *{l.description}*" for l in pivots[:3]]
-        fields.append({"name": "⚖️ Key Pivots & Transitions", "value": "\n".join(lines), "inline": False})
+    # 2. Structural Anchors (Filter 2)
+    anchors = [l for l in scored.tagged_levels if isinstance(l, StructuralAnchor)]
+    if anchors:
+        lines = []
+        for a in anchors[:3]:
+            lines.append(f"• **{a.strike:g}**: [{a.matched_program}] — *{a.relevance}* ({a.days_to_expiry}d)")
+        fields.append({"name": "⚓ Structural Anchors (Institutional)", "value": "\n".join(lines), "inline": False})
         
-    # 3. Contextual Clusters
-    contextual = scored.contextual
-    if contextual:
-        lines = [f"• **{l.strike:g}**: {l.label}" for l in contextual[:5]]
-        fields.append({"name": "🧩 Contextual Magnets", "value": "\n".join(lines), "inline": False})
+    # 3. Transitions & Inflections (Filter 3)
+    pts = [l for l in scored.tagged_levels if isinstance(l, InflectionPoint)]
+    if pts:
+        lines = [f"• **{l.strike:g}**: {l.label}" for l in pts[:3]]
+        fields.append({"name": "⚖️ Transitions & Inflections", "value": "\n".join(lines), "inline": False})
         
     return fields
 

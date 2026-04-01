@@ -106,10 +106,14 @@ class TickerProfile:
 class StructuralProgram:
     """Metadata for known institutional hedging programs."""
     name: str
-    description: str
-    typical_expiry_type: str = "quarterly"  # "monthly", "quarterly", "custom"
-    typical_side: str = "BOTH"              # "CALL", "PUT", "BOTH" (collar)
-    minimum_notional_m: float = 500.0       # Minimum notional to flag ($M)
+    underlying: str                     # "SPX", "QQQ"
+    structure: str                      # "collar", "put_spread", "call_spread"
+    schedule: str                       # "quarterly", "monthly"
+    roll_months: list[int]              # [3, 6, 9, 12]
+    roll_window_days: int = 21
+    typical_oi_min: int = 50000         # Minimum OI per leg
+    moneyness_range: tuple[float, float] = (0.90, 1.10)
+    description: str = ""
 
 @dataclass
 class ViewModeConfig:
@@ -125,7 +129,7 @@ class ViewModeConfig:
     @property
     def significance_mask(self) -> set[str]:
         """Derive the set of allowed significance tags based on the display threshold."""
-        ranks = {"PRIMARY": 0, "SECONDARY": 1, "PIVOT": 1, "CONTEXTUAL": 2}
+        ranks = {"PRIMARY": 0, "SECONDARY": 1, "CONTEXT": 2}
         min_rank = ranks.get(self.min_significance_for_display, 2)
         return {s for s, r in ranks.items() if r <= min_rank}
 
@@ -189,16 +193,26 @@ def get_ticker_profile(ticker: str) -> TickerProfile:
 
 STRUCTURAL_PROGRAMS: dict[str, StructuralProgram] = {
     "JHEQX": StructuralProgram(
-        name="JHEQX",
-        description="JPMorgan Hedged Equity Fund quarterly rebalance collar",
-        typical_expiry_type="quarterly",
-        typical_side="BOTH",
+        name="JPM Hedged Equity (JHEQX)",
+        underlying="SPX",
+        structure="collar",
+        schedule="quarterly",
+        roll_months=[3, 6, 9, 12],
+        roll_window_days=21,
+        typical_oi_min=80000,
+        moneyness_range=(0.92, 1.06),
+        description="JPMorgan Hedged Equity Fund quarterly rebalance collar"
     ),
     "JEPI": StructuralProgram(
-        name="JEPI",
-        description="JPMorgan Equity Premium Income ETF weekly short calls",
-        typical_expiry_type="monthly",
-        typical_side="CALL",
+        name="JPM Equity Premium Income (JEPI)",
+        underlying="SPX",
+        structure="call_spread",
+        schedule="monthly",
+        roll_months=list(range(1, 13)),
+        roll_window_days=7,
+        typical_oi_min=20000,
+        moneyness_range=(1.00, 1.05),
+        description="JPMorgan Equity Premium Income ETF weekly short calls"
     ),
 }
 
@@ -277,6 +291,10 @@ SCHWAB_INDEX_PREFIX: dict[str, str] = {
     "DJX":  "$DJX",
     "RUT":  "$RUT",
 }
+
+# Tickers that typically have very dense chains and may cause buffer overflows 
+# when fetching a full year's range in one call.
+LARGE_INDICES: set[str] = {"SPX", "NDX", "RUT", "SPXW", "NDXP"}
 
 # Standard equity-index option contract multiplier.
 CONTRACT_MULTIPLIER: int = 100

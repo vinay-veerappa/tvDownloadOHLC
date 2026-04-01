@@ -74,17 +74,16 @@ from .config import (
     get_ticker_profile,
 )
 from .discord_notifier import send_discord_update, send_regime_change_alert
-from .file_writer import write_levels
+from .file_writer import write_levels, _is_rth
 from .futures_translator import translate_to_futures
 from .gex_calculator import (
     DealerLevels,
     calculate_dealer_levels,
     calculate_price_metrics,
     rescale_levels_to_target_spot,
-    ScoredLevels,
 )
+from .level_scorer import score_levels, ScoredLevels
 from .options_fetcher import create_client, fetch_futures_quote, fetch_option_chain_data
-from .level_scorer import score_levels
 from .state_tracker import (
     build_current_state,
     detect_changes,
@@ -279,10 +278,10 @@ def run_pipeline(
                 # We skip appending to translated_levels, but proceed to next steps
                 # so cash_levels_by_ticker is already populated and can be used.
             else:
-                # Use primary_chain's opening spot (original index) for basis anchors.
-                # If we fell back to an ETF (source_ticker != ticker), we should NOT
-                # use the ETF's opening price here as that would cause a 10x/40x 
-                # scale error in the anchor_ratio.
+                # 6. Translate levels into futures price space
+                tl_intraday = translate_to_futures(levels_intraday, fut)
+                tl_macro = translate_to_futures(levels_macro, fut)
+                
                 translated_levels.append(tl_intraday)
                 translated_macro_levels.append(tl_macro)
 
@@ -369,7 +368,7 @@ def run_pipeline(
                 translated_levels,
                 run_label,
                 cash_levels=list(cash_levels_by_ticker.values()),
-                scored_levels=list(scored_levels_by_ticker.values()),
+                scored_levels=list(scored_intraday_by_ticker.values()),
                 include_cash_embeds=full_discord,
             )
         except Exception as exc:

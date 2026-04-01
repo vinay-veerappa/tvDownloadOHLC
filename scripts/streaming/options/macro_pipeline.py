@@ -296,7 +296,7 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
 
                 # 3c. Compute ScoredLevels (Three-Filter Architecture)
                 profile = get_ticker_profile(ticker)
-                scored = score_levels(dl, chain, ticker, profile, view_config=MACRO_VIEW)
+                scored = score_levels(dl, chain, ticker, profile, view_mode=MACRO_VIEW)
                 macro_levels["scored"] = scored
 
                 # Charting & Discord (Primary only)

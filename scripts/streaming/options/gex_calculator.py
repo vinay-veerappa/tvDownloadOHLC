@@ -171,46 +171,7 @@ class ExpectedMove:
     straddle: float
 
 
-@dataclass
-class TaggedLevel:
-    """A scored and contextualized dealer level."""
-    strike: float
-    label: str
-    significance: str  # STRATEGIC, PIVOT, CONTEXTUAL
-    side: str          # CALL, PUT, NEUTRAL
-    strength_score: float = 0.5
-    description: str = ""
-    field_name: str = ""
 
-
-@dataclass
-class ScoredLevels:
-    """A collection of prioritized levels for a specific view."""
-    ticker: str
-    view_mode: str  # INTRADAY, MACRO
-    tagged_levels: list[TaggedLevel] = field(default_factory=list)
-    bias: str = "NEUTRAL"
-    regime: str = "NEUTRAL"
-
-    @property
-    def strategic(self) -> list[TaggedLevel]:
-        return [l for l in self.tagged_levels if l.significance == "STRATEGIC"]
-
-    @property
-    def pivots(self) -> list[TaggedLevel]:
-        return [l for l in self.tagged_levels if l.significance == "PIVOT"]
-
-    @property
-    def contextual(self) -> list[TaggedLevel]:
-        return [l for l in self.tagged_levels if l.significance == "CONTEXTUAL"]
-
-    @property
-    def resistance_walls(self) -> list[TaggedLevel]:
-        return [l for l in self.tagged_levels if l.side == "CALL" and l.significance in ("STRATEGIC", "PIVOT")]
-
-    @property
-    def support_walls(self) -> list[TaggedLevel]:
-        return [l for l in self.tagged_levels if l.side == "PUT" and l.significance in ("STRATEGIC", "PIVOT")]
 
 @dataclass
 class DealerLevels:

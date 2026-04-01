@@ -30,10 +30,18 @@ from .formatting import (
 )
 from .futures_translator import TranslatedLevels
 from .gex_calculator import DealerLevels
-from .level_scorer import ScoredLevels
+from .level_scorer import ScoredLevels, MechanicalWall, StructuralAnchor, InflectionPoint
 
 log = logging.getLogger(__name__)
 
+def _get_strength(tl):
+    if isinstance(tl, MechanicalWall):
+        return round(tl.pct_of_book, 4)
+    if isinstance(tl, StructuralAnchor):
+        return round(tl.oi_zscore, 2)
+    if isinstance(tl, InflectionPoint):
+        return round(tl.slope_magnitude, 4)
+    return 0.0
 
 def _is_rth() -> bool:
     """Return True if current time falls within Regular Trading Hours (9:30–16:00 ET, Mon-Fri)."""
@@ -141,7 +149,7 @@ def _to_scored_entries(scored: ScoredLevels) -> list[dict[str, Any]]:
             "label": tl.label,
             "significance": tl.significance,
             "side": tl.side,
-            "strength": round(tl.strength_score, 3),
+            "strength": round(_get_strength(tl), 3),
             "description": tl.description,
             "field": tl.field_name,
             "asset": scored.ticker,
@@ -370,6 +378,7 @@ def write_levels(
             "coach_note": build_coaches_note(levels.ticker, levels),
             "tactical_plan": build_plan(levels.ticker, levels)
         })
+    
 
     # --- Append Scored Analysis Data (Filter Data) ---
     scored_lookup: dict[str, ScoredLevels] = {s.ticker: s for s in (scored_levels or [])}
@@ -383,7 +392,7 @@ def write_levels(
                     "strike": l.strike,
                     "label": l.label,
                     "side": l.side,
-                    "strength": l.strength_score,
+                    "strength": _get_strength(l),
                     "desc": l.description
                 } for l in s.strategic
             ],
@@ -392,7 +401,7 @@ def write_levels(
                     "strike": l.strike,
                     "label": l.label,
                     "side": l.side,
-                    "strength": l.strength_score,
+                    "strength": _get_strength(l),
                     "desc": l.description
                 } for l in s.pivots
             ],
@@ -401,7 +410,7 @@ def write_levels(
                     "strike": l.strike,
                     "label": l.label,
                     "side": l.side,
-                    "strength": l.strength_score,
+                    "strength": _get_strength(l),
                     "desc": l.description
                 } for l in s.contextual
             ],
@@ -410,7 +419,7 @@ def write_levels(
                     "strike": l.strike,
                     "label": l.label,
                     "side": l.side,
-                    "strength": l.strength_score
+                    "strength":_get_strength(l)
                 } for l in s.resistance_walls
             ],
             "support_walls": [
@@ -418,7 +427,7 @@ def write_levels(
                     "strike": l.strike,
                     "label": l.label,
                     "side": l.side,
-                    "strength": l.strength_score
+                    "strength": _get_strength(l)
                 } for l in s.support_walls
             ],
             "all_tagged": [
@@ -427,7 +436,7 @@ def write_levels(
                     "label": l.label,
                     "significance": l.significance,
                     "side": l.side,
-                    "strength": l.strength_score,
+                    "strength": _get_strength(l),
                     "field": l.field_name
                 } for l in s.tagged_levels
             ]

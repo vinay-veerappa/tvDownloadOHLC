@@ -19,7 +19,8 @@ from scripts.streaming.options.config import (
     NY_SESSION_ROLLOVER_TIME,
     OPTION_CHAIN_WIDE_WINDOW,
     FUTURES_YF_MAP,
-    HUB_URL
+    HUB_URL,
+    LARGE_INDICES
 )
 
 log = logging.getLogger(__name__)
@@ -152,62 +153,102 @@ def fetch_option_chain_data(client: Any, symbol: str, dte_targets: list[int]) ->
 
     api_sym = SCHWAB_INDEX_PREFIX.get(symbol, symbol)
     
-    from scripts.streaming.options.config import NY_SESSION_ROLLOVER_TIME
     today = _today_ny(rollover_time=NY_SESSION_ROLLOVER_TIME)
     max_dte = max(dte_targets) + OPTION_CHAIN_WIDE_WINDOW
-
-    params = {
-        "symbol": api_sym,
-        "fromDate": today.isoformat(),
-        "toDate": (today + timedelta(days=max_dte)).isoformat(),
-        "strikeCount": 100 # Avoid 413 TooBigBody for large indices like SPX
-    }
-
-    payload = _hub_request("get_option_chain", params)
     
-    underlying = payload.get("underlying") or {}
-    raw_spot = (
-        underlying.get("mark")
-        if underlying.get("mark") is not None
-        else underlying.get("last")
-        if underlying.get("last") is not None
-        else payload.get("underlyingPrice")
-    )
-    spot: float = _safe_float(raw_spot)
+    is_large = symbol in LARGE_INDICES or api_sym in LARGE_INDICES
+    # Total strikes across whole YEAR for SPX etc. needs to be tighter
+    # than current 100 to avoid overflow even with chunking.
+    strike_count = 60 if is_large and max_dte > 30 else 100
 
-    spot_open = _safe_float(
-        underlying.get("openPrice") 
-        or underlying.get("sessionOpen") 
-        or underlying.get("open") 
-    )
+    # Date partitioning (for Hub proxy stability)
+    # If the range is > 45 days, fetch in chunks.
+    partition_size = 45 if is_large else 366
+    
+    all_contracts: list[OptionContract] = []
+    spot: float = 0.0
+    spot_open: float = 0.0
+    
+    current_dte = 0
+    while current_dte <= max_dte:
+        from_dte = current_dte
+        to_dte = min(current_dte + partition_size, max_dte)
+        
+        from_date = today + timedelta(days=from_dte)
+        to_date = today + timedelta(days=to_dte)
+        
+        params = {
+            "symbol": api_sym,
+            "fromDate": from_date.isoformat(),
+            "toDate": to_date.isoformat(),
+            "strikeCount": strike_count
+        }
+        
+        log.info(f"Fetching chain chunk for {symbol}: DTE {from_dte}-{to_dte}...")
+        try:
+            payload = _hub_request("get_option_chain", params)
+        except RuntimeError as e:
+            if "TooBigBody" in str(e) and strike_count > 20:
+                log.warning(f"Body too big for {symbol} at strikeCount={strike_count}. Reducing and retrying...")
+                params["strikeCount"] = 25
+                payload = _hub_request("get_option_chain", params)
+            else:
+                raise
+
+        # Extract underlying metrics from the first successful chunk
+        if spot == 0:
+            underlying = payload.get("underlying") or {}
+            raw_spot = (
+                underlying.get("mark")
+                if underlying.get("mark") is not None
+                else underlying.get("last")
+                if underlying.get("last") is not None
+                else payload.get("underlyingPrice")
+            )
+            spot = _safe_float(raw_spot)
+            spot_open = _safe_float(
+                underlying.get("openPrice") 
+                or underlying.get("sessionOpen") 
+                or underlying.get("open") 
+            )
+
+        call_map = payload.get("callExpDateMap", {})
+        put_map = payload.get("putExpDateMap", {})
+
+        # Process this chunk's expirations
+        all_exp_keys = sorted(set(call_map.keys()) | set(put_map.keys()))
+        selected_exp_keys = _select_expiration_keys({k: {} for k in all_exp_keys}, dte_targets)
+        
+        # Only add contracts that match our target DTE list AND were found in this batch
+        for exp_key in selected_exp_keys:
+            # Check if this exp_key was returned in THIS chunk
+            # If so, process its contracts.
+            if exp_key in call_map:
+                for strike_str, strike_list in call_map[exp_key].items():
+                    for c in strike_list:
+                        all_contracts.append(_map_contract(c, "CALL"))
+            if exp_key in put_map:
+                for strike_str, strike_list in put_map[exp_key].items():
+                    for c in strike_list:
+                        all_contracts.append(_map_contract(c, "PUT"))
+
+        current_dte = to_dte + 1
+        if current_dte > max_dte:
+            break
 
     if spot == 0:
         log.warning("Spot price is zero for %s — levels may be inaccurate.", symbol)
 
-    call_map = payload.get("callExpDateMap", {})
-    put_map = payload.get("putExpDateMap", {})
-
-    exp_source_map = call_map if call_map else put_map
-    selected_exp_keys = _select_expiration_keys(exp_source_map, dte_targets)
-
-    contracts: list[OptionContract] = []
+    # Deduplicate in case expiries overlap chunks (shouldn't happen with +1 but safe)
+    # Using a simple dict-based dedup on contract symbol
+    unique_contracts = {c.symbol: c for c in all_contracts}
     
-    for exp_key in selected_exp_keys:
-        # Calls
-        for strike_str, strike_list in call_map.get(exp_key, {}).items():
-            for c in strike_list:
-                contracts.append(_map_contract(c, "CALL"))
-        # Puts
-        for strike_str, strike_list in put_map.get(exp_key, {}).items():
-            for c in strike_list:
-                contracts.append(_map_contract(c, "PUT"))
-
     return OptionChainData(
         ticker=symbol,
         spot=spot,
         spot_open=spot_open,
         timestamp=datetime.now(ZoneInfo("UTC")),
-        contracts=contracts
+        contracts=list(unique_contracts.values())
     )
 
 
