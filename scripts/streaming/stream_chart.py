@@ -96,14 +96,31 @@ def deduplicate_candles(candles):
     """
     Ensures candles are unique by 'time' and sorted.
     IMPORTANT: Preserves FIRST occurrence to prevent new data from overwriting existing.
+    Optimized for large lists: avoids full sort if already sorted.
     """
     if not candles: return []
+    if len(candles) < 2: return candles
+    
     unique = {}
+    is_sorted = True
+    last_time = -1
+    
     for c in candles:
-        # Only add if time not already present (preserve first occurrence)
-        if c['time'] not in unique:
-            unique[c['time']] = c
-    return sorted(unique.values(), key=lambda x: x['time'])
+        t = c['time']
+        if t not in unique:
+            unique[t] = c
+            if t < last_time:
+                is_sorted = False
+            last_time = t
+            
+    if is_sorted and len(unique) == len(candles):
+        return candles # Already unique and sorted
+        
+    vals = list(unique.values())
+    if is_sorted:
+        return vals # Unique and already in correct order
+        
+    return sorted(vals, key=lambda x: x['time'])
 
 def validate_bootstrap_data(symbol, bootstrap_candles):
     """
@@ -819,12 +836,17 @@ async def level_one_handler(msg):
                     # --- Sub-Minute Aggregation ---
                     curr_time = time.time()
                     update_sub_candle(chart_ctx["data_15s"], last_price, curr_time, 15)
-                    with open(chart_ctx["files"]["json_15s"], "w") as f:
-                        json.dump(chart_ctx["data_15s"], f)
-                        
                     update_sub_candle(chart_ctx["data_30s"], last_price, curr_time, 30)
-                    with open(chart_ctx["files"]["json_30s"], "w") as f:
-                        json.dump(chart_ctx["data_30s"], f)
+
+        # Batch write sub-minute JSONs after processing all quotes in message
+        for key in {c.get('key') for c in msg['content'] if c.get('key') in charts}:
+            chart_ctx = charts[key]
+            try:
+                with open(chart_ctx["files"]["json_15s"], "w") as f:
+                    json.dump(chart_ctx["data_15s"], f)
+                with open(chart_ctx["files"]["json_30s"], "w") as f:
+                    json.dump(chart_ctx["data_30s"], f)
+            except: pass
 
 def save_candles_to_parquet(symbol, candles, parquet_path):
     """Saves a list of candles to the live storage parquet, ensuring no duplicates."""
@@ -846,65 +868,79 @@ def save_candles_to_parquet(symbol, candles, parquet_path):
         print(f"❌ Error saving parquet for {symbol}: {e}")
 
 async def chart_handler(msg):
-    if 'content' in msg:
-        for c in msg['content']:
-            key = c.get('key')
-            if key in charts:
-                cdata = charts[key]["data"]
-                files = charts[key]["files"]
-                
-                candle = {
-                    "time": c.get("CHART_TIME_MILLIS", 0),
-                    "open": c.get("OPEN_PRICE", 0),
-                    "high": c.get("HIGH_PRICE", 0),
-                    "low": c.get("LOW_PRICE", 0),
-                    "close": c.get("CLOSE_PRICE", 0),
-                    "volume": c.get("VOLUME", 0)
+    if 'content' not in msg: return
+    
+    impacted_symbols = set()
+    
+    for c in msg['content']:
+        key = c.get('key')
+        if key in charts:
+            cdata = charts[key]["data"]
+            files = charts[key]["files"]
+            impacted_symbols.add(key)
+            
+            candle = {
+                "time": c.get("CHART_TIME_MILLIS", 0),
+                "open": c.get("OPEN_PRICE", 0),
+                "high": c.get("HIGH_PRICE", 0),
+                "low": c.get("LOW_PRICE", 0),
+                "close": c.get("CLOSE_PRICE", 0),
+                "volume": c.get("VOLUME", 0)
+            }
+            
+            # Archive Logic: Save PREVIOUS candle when a new one starts
+            if cdata["candles"] and cdata["candles"][-1]["time"] != candle["time"]:
+                completed_candle = cdata["candles"][-1]
+                save_candles_to_parquet(key, [completed_candle], files["parquet"])
+
+            # Update Buffer
+            if cdata["candles"] and cdata["candles"][-1]["time"] == candle["time"]:
+                cdata["candles"][-1] = candle
+            else:
+                cdata["candles"].append(candle)
+                # Soft prune if too large
+                if len(cdata["candles"]) > 600000:
+                    cdata["candles"] = cdata["candles"][-500000:]
+            
+            cdata["last_update"] = get_now_iso()
+            if cdata["live_price"] == 0:
+                cdata["live_price"] = candle["close"]
+
+    # Perform expensive operations (dedup, sort, write) ONCE per symbol per message
+    for key in impacted_symbols:
+        chart_ctx = charts[key]
+        cdata = chart_ctx["data"]
+        files = chart_ctx["files"]
+        
+        # Deduplicate ONCE per batch
+        cdata["candles"] = deduplicate_candles(cdata["candles"])
+        
+        try:
+            now = time.time()
+            
+            # Snapshot writer (throttled)
+            last_snap = cdata.get("_last_snap_ts", 0)
+            if now - last_snap > 0.5: # Relaxed from 0.25 to 0.5 during volume spikes
+                snapshot = {
+                    "symbol": cdata["symbol"],
+                    "last_update": cdata["last_update"],
+                    "live_price": cdata["live_price"],
+                    "candles": cdata["candles"][-50:] if cdata["candles"] else []
                 }
-                
-                # Archive Logic: Save PREVIOUS candle when a new one starts
-                if cdata["candles"] and cdata["candles"][-1]["time"] != candle["time"]:
-                    completed_candle = cdata["candles"][-1]
-                    save_candles_to_parquet(key, [completed_candle], files["parquet"])
+                snap_file = files["json"].replace(".json", "_snapshot.json")
+                with open(snap_file, "w") as f:
+                    json.dump(snapshot, f)
+                cdata["_last_snap_ts"] = now
 
-                # Update Buffer
-
-                if cdata["candles"] and cdata["candles"][-1]["time"] == candle["time"]:
-                    cdata["candles"][-1] = candle
-                else:
-                    cdata["candles"].append(candle)
-                    if len(cdata["candles"]) > 500000:
-                        cdata["candles"].pop(0)
-                    
-                cdata["last_update"] = get_now_iso()
-                cdata["candles"] = deduplicate_candles(cdata["candles"])
-                
-                if cdata["live_price"] == 0:
-                    cdata["live_price"] = candle["close"]
-                
-                try:
-                    now = time.time()
-                    last_snap = cdata.get("_last_snap_ts", 0)
-                    if now - last_snap > 0.25:
-                        snapshot = {
-                            "symbol": cdata["symbol"],
-                            "last_update": cdata["last_update"],
-                            "live_price": cdata["live_price"],
-                            "candles": cdata["candles"][-50:] if cdata["candles"] else []
-                        }
-                        snap_file = files["json"].replace(".json", "_snapshot.json")
-                        with open(snap_file, "w") as f:
-                            json.dump(snapshot, f)
-                        cdata["_last_snap_ts"] = now
-
-                    last_write = cdata.get("_last_write_ts", 0)
-                    if now - last_write > 60:
-                        with open(files["json"], "w") as f:
-                            json.dump(cdata, f)
-                        cdata["_last_write_ts"] = now
-                        print(f"pw Checkpoint saved for {key}")
-                except Exception as e:
-                    print(f"Write error {key}: {e}")
+            # Full JSON Checkpoint writer (throttled)
+            last_write = cdata.get("_last_write_ts", 0)
+            if now - last_write > 60:
+                with open(files["json"], "w") as f:
+                    json.dump(cdata, f)
+                cdata["_last_write_ts"] = now
+                print(f"📁 Checkpoint saved for {key}")
+        except Exception as e:
+            print(f"❌ Write error {key}: {e}")
 
 async def main():
     print("🚀 [StreamChart] Starting as Spoke...")
