@@ -4,6 +4,7 @@ import logging
 import os
 import websockets
 import httpx
+import socket
 from datetime import datetime, timezone
 from collections import defaultdict, deque
 
@@ -270,29 +271,55 @@ class L2BookmapEngine:
 
     async def run(self):
         logger.info(f"🚀 L2 Engine (High-Performance) started for {', '.join(self.tickers)}")
-        await self._resolve_tickers()
         
-        async with websockets.connect(HUB_WS) as ws:
-            while True:
-                try:
-                    msg_raw = await ws.recv()
-                    msg = json.loads(msg_raw)
-                    event_data = msg.get("data", {})
-                    if not isinstance(event_data, dict): continue
-                        
-                    service = event_data.get("service")
-                    if service in ("NASDAQ_BOOK", "NYSE_BOOK", "LEVELTWO_FUTURES", "FUTURES_BOOK"):
-                        self._update_depth(event_data.get("content", []))
-                    elif service in ("TIMESALE_EQUITY", "TIMESALE_FUTURES", "TIMESALE"):
-                        self._update_trades(event_data.get("content", []))
-                    elif service in ("LEVELONE_EQUITIES", "LEVELONE_INDICES"):
-                        self._update_spot(event_data.get("content", []))
+        retry_delay = 5  # Start with 5s delay
+        max_retry_delay = 60 # Max delay of 60s
+        
+        while True:
+            try:
+                # 1. Resolve Root Tickers (/ES -> Active Contract) inside the loop 
+                # so we can recover from contract expiration during long hub downtime.
+                await self._resolve_tickers()
+                
+                logger.info(f"🔄 Connecting to Hub at {HUB_WS} (Timeout: 30s)...")
+                async with websockets.connect(HUB_WS, open_timeout=30) as ws:
+                    logger.info("✅ Connection established to L2 Hub.")
+                    retry_delay = 5 # Reset delay on success
                     
-                    await self._take_snapshots()
+                    while True:
+                        try:
+                            msg_raw = await ws.recv()
+                            msg = json.loads(msg_raw)
+                            event_data = msg.get("data", {})
+                            if not isinstance(event_data, dict): continue
+                                
+                            service = event_data.get("service")
+                            if service in ("NASDAQ_BOOK", "NYSE_BOOK", "LEVELTWO_FUTURES", "FUTURES_BOOK"):
+                                self._update_depth(event_data.get("content", []))
+                            elif service in ("TIMESALE_EQUITY", "TIMESALE_FUTURES", "TIMESALE"):
+                                self._update_trades(event_data.get("content", []))
+                            elif service in ("LEVELONE_EQUITIES", "LEVELONE_INDICES"):
+                                self._update_spot(event_data.get("content", []))
+                            
+                            await self._take_snapshots()
 
-                except Exception as e:
-                    logger.error(f"Loop error: {e}")
-                    await asyncio.sleep(0.1)
+                        except websockets.exceptions.ConnectionClosed:
+                            logger.warning("⚠️ L2 Hub connection closed. Reconnecting...")
+                            break
+                        except Exception as e:
+                            logger.error(f"Loop error: {e}")
+                            await asyncio.sleep(0.1)
+
+            except (asyncio.TimeoutError, TimeoutError) as e:
+                logger.warning(f"⏳ Hub connection timed out during handshake: {e}. Retrying in {retry_delay}s...")
+            except (ConnectionRefusedError, socket.error) as e:
+                logger.warning(f"❌ Hub connection refused at {HUB_WS}: {e}. Ensure Hub is running. Retrying in {retry_delay}s...")
+            except Exception as e:
+                logger.error(f"🚨 Unexpected L2 Engine error: {e}. Retrying in {retry_delay}s...")
+            
+            await asyncio.sleep(retry_delay)
+            # Simple exponential backoff up to max_retry_delay
+            retry_delay = min(retry_delay * 1.5, max_retry_delay)
 
 if __name__ == "__main__":
     import argparse
