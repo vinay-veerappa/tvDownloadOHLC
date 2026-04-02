@@ -72,9 +72,11 @@ from .config import (
     MACRO_VIEW,
     INTRADAY_VIEW,
     get_ticker_profile,
+    SCORED_LEVELS_TXT,
+    SCORED_MACRO_LEVELS_TXT
 )
 from .discord_notifier import send_discord_update, send_regime_change_alert
-from .file_writer import write_levels, _is_rth
+from .file_writer import write_levels, _is_rth, write_scored_levels_txt
 from .futures_translator import translate_to_futures
 from .gex_calculator import (
     DealerLevels,
@@ -175,6 +177,9 @@ def run_pipeline(
     scored_intraday_by_ticker: dict[str, ScoredLevels] = {}
     scored_macro_by_ticker: dict[str, ScoredLevels] = {}
 
+    SCORED_LEVELS_TXT.write_text("")  
+
+
     # --- Process each ticker --------------------------------------------------
     target_tickers = tickers if tickers is not None else ACTIVE_TICKERS
     for ticker in target_tickers:
@@ -266,6 +271,9 @@ def run_pipeline(
             # Macro Scoring (filters to ±15% spot, Primary only)
             scored_macro = score_levels(levels_macro, chain, ticker, profile, MACRO_VIEW)
             scored_macro_by_ticker[ticker] = scored_macro
+
+            write_scored_levels_txt(ticker, scored_intraday)
+            write_scored_levels_txt(ticker, scored_macro, path=SCORED_MACRO_LEVELS_TXT)
 
             # 7. Write per-ticker snapshot to DB
             if _is_rth():

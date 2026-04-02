@@ -31,6 +31,8 @@ from .formatting import (
 from .futures_translator import TranslatedLevels
 from .gex_calculator import DealerLevels
 from .level_scorer import ScoredLevels, MechanicalWall, StructuralAnchor, InflectionPoint
+from .config import SCORED_LEVELS_TXT
+from .level_scorer import ScoredLevels, MechanicalWall, StructuralAnchor, InflectionPoint
 
 log = logging.getLogger(__name__)
 
@@ -720,3 +722,108 @@ def write_quant_json(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
     log.info("Quant JSON updated for %s → %s", ticker, path)
+ 
+ 
+def write_scored_levels_txt(
+    ticker: str,
+    scored: Any,  # ScoredLevels
+    path: Path | None = None,
+) -> None:
+    """
+    Export ScoredLevels as Pine Script-compatible TXT.
+    
+    Format per level:  STRIKE:FILTER|SIG|LABEL
+    First token gets:  TICKER:STRIKE:FILTER|SIG|LABEL
+    
+    Encoding:
+      FILTER: W = MechanicalWall, A = StructuralAnchor, I = InflectionPoint, X = other
+      SIG:    P = PRIMARY, S = SECONDARY, C = CONTEXT
+      LABEL:  Human-readable, compact. Includes filter-specific metrics:
+              - Walls:   "CW 18%BK" or "PW 22%BK" or "0D CW" or "HW"
+              - Anchors: "JHEQX C 14d" or "UNK 3.2σ P 45d" 
+              - Inflect: "ZERO GEX" or "CLIFF UP" or "VOID LOW" or "MAGNET"
+    
+    Only PRIMARY and SECONDARY levels are exported (CONTEXT stays in JSON for dashboard).
+    """
+    # Import here to avoid circular deps at module level
+    from .level_scorer import MechanicalWall, StructuralAnchor, InflectionPoint
+ 
+    if path is None:
+        from .config import SCORED_LEVELS_TXT
+        path = SCORED_LEVELS_TXT
+ 
+    tokens: list[str] = []
+ 
+    for tl in scored.tagged_levels:
+        # Skip CONTEXT — too noisy for chart
+        if tl.significance == "CONTEXT":
+            continue
+ 
+        sig = {"PRIMARY": "P", "SECONDARY": "S"}.get(tl.significance, "C")
+ 
+        if isinstance(tl, MechanicalWall):
+            filt = "W"
+            # Build compact wall label
+            # Map field_name to short prefix
+            prefix_map = {
+                "call_wall":     "CW",
+                "put_wall":      "PW",
+                "call_wall_0dte": "0D CW",
+                "put_wall_0dte":  "0D PW",
+                "hedge_wall":    "HW",
+                "local_call_node": "LOC C",
+                "local_put_node":  "LOC P",
+                "max_gex_strike":  "MAX GEX",
+            }
+            short = prefix_map.get(tl.field_name, tl.label[:8])
+            # Append book depth % if available
+            if tl.pct_of_book > 0:
+                label = f"{short} {tl.pct_of_book * 100:.0f}%BK"
+            else:
+                label = short
+ 
+        elif isinstance(tl, StructuralAnchor):
+            filt = "A"
+            prog = tl.matched_program if tl.matched_program else "UNK"
+            if prog == "UNK" and tl.oi_zscore > 0:
+                prog = f"UNK {tl.oi_zscore:.1f}σ"
+            side_char = tl.side[0] if tl.side else "N"
+            dte_str = f"{tl.days_to_expiry}d" if tl.days_to_expiry > 0 else ""
+            # Include relevance for ACTIVE/CRITICAL
+            rel = ""
+            if tl.relevance in ("ACTIVE", "CRITICAL"):
+                rel = f" [{tl.relevance[:4]}]"
+            label = f"{prog} {side_char} {dte_str}{rel}".strip()
+ 
+        elif isinstance(tl, InflectionPoint):
+            filt = "I"
+            # Map inflection types to compact labels
+            type_map = {
+                "FLIP":   "ZERO GEX" if "zero" in tl.field_name.lower() else "FLIP",
+                "MAGNET": "MAGNET",
+                "CLIFF":  f"CLIFF {'UP' if 'up' in tl.field_name.lower() else 'DN'}",
+                "VOID":   f"VOID {'LO' if 'lower' in tl.field_name.lower() else 'HI'}",
+            }
+            label = type_map.get(tl.inflection_type, tl.label[:10])
+ 
+        else:
+            filt = "X"
+            label = tl.label[:12]
+ 
+        tokens.append(f"{tl.strike:.2f}:{filt}|{sig}|{label}")
+ 
+    if not tokens:
+        log.info("No scored levels to write for %s", ticker)
+        return
+ 
+    # First token gets ticker prefix (matching existing Pine parser convention)
+    tokens[0] = f"{ticker}:{tokens[0]}"
+ 
+    final_string = ", ".join(tokens)
+ 
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(final_string + "\n")
+ 
+    log.info("Scored levels TXT appended for %s → %s (%d levels)", ticker, path, len(tokens))
+ 

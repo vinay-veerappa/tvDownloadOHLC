@@ -360,6 +360,8 @@ LOG_FILE: Path = DATA_DIR / "dealer_levels.log"
 EXPECTED_MOVE_TXT: Path = DATA_DIR / "expected_moves.txt"
 MACRO_LEVELS_TXT: Path = DATA_DIR / "macro_levels.txt"
 MACRO_QUANT_JSON: Path = DATA_DIR / "macro_quant.json"
+SCORED_LEVELS_TXT: Path = DATA_DIR / "scored_levels.txt"
+SCORED_MACRO_LEVELS_TXT: Path = DATA_DIR / "scored_macro_levels.txt"
 
 # ---------------------------------------------------------------------------
 # Next.js UI API Integration

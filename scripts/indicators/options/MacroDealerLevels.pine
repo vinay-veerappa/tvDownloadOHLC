@@ -6,6 +6,11 @@
 // Superset of DealerLevels: Standard Dealer Levels + Weekly Macro HTF Levels.
 // Dual text-area inputs with independent visibility toggles.
 
+// Format: TICKER:STRIKE:FILTER|SIG|LABEL, STRIKE:FILTER|SIG|LABEL, ...
+//   FILTER: W (Wall), A (Anchor), I (Inflection), X (Other)
+//   SIG:    P (Primary), S (Secondary), C (Context)
+//   LABEL:  Human-readable compact text
+
 //@version=6
 indicator("Macro Dealer Levels Auto", overlay = true, max_lines_count = 500, max_labels_count = 500, max_bars_back = 5000)
 
@@ -18,11 +23,12 @@ i_showDealer    = input.bool(true,  "Show Dealer Levels", group = GRP_DATA)
 i_pastedDealer  = input.text_area("", "Paste Dealer Levels (daily_levels.txt)", group = GRP_DATA)
 i_showMacro     = input.bool(true,  "Show Macro HTF Levels", group = GRP_DATA)
 i_pastedMacro   = input.text_area("", "Paste Macro Levels (macro_levels.txt)", group = GRP_DATA)
+i_showScored    = input.bool(true,  "Show Scored Levels", group = GRP_DATA)
+i_pastedScored  = input.text_area("", "Paste Scored Levels (scored_levels.txt)", group = GRP_DATA)
 
 var string GRP_MATCH = "Symbol Matching"
 i_familyPref    = input.string("Auto", "Family Source Preference", options = ["Auto", "Prefer Index", "Prefer ETF"], group = GRP_MATCH)
 i_overrideExact = input.bool(false, "Override Exact Match With Family Preference", group = GRP_MATCH)
-i_variantPref   = input.string("Auto", "Macro Variant Preference", options = ["Auto", "Direct [D]", "Mapped [M]"], group = GRP_MATCH, tooltip="Which data variant to prefer when multiple exist (e.g. /NQ[D] vs /NQ[M])")
 
 var string GRP_FILT = "Level Filters"
 i_proxFilter        = input.float(1.5, "Hide Tactical Levels > X% Away (0=Off)", step=0.5, group=GRP_FILT, tooltip="Applies to 0DTE, Local Nodes, DEX, and Cliffs. Macro levels are always shown.")
@@ -60,6 +66,20 @@ i_colPinStrike      = input.color(color.new(#EE82EE, 30), "Pin Strike", group = 
 i_colFallback       = input.color(color.new(#C0C0C0, 0), "Fallback", group = GRP_COLORS) // Silver
 i_colEmFill         = input.color(color.new(#00FFFF, 92), "EM Fill", group = GRP_COLORS)
 i_colGammaFlipFill  = input.color(color.new(#FFFF00, 92), "Gamma Flip Fill", group = GRP_COLORS)
+
+// ─────────────────────────────────────────────────────────────────────
+// 2. COLOR INPUTS — Add a new group after GRP_COLORS:
+// ─────────────────────────────────────────────────────────────────────
+
+var string GRP_SCORED = "Scored Level Theme"
+i_colWallCall   = input.color(color.new(#00FF00, 0),  "Wall: Call Side",      group = GRP_SCORED)
+i_colWallPut    = input.color(color.new(#FF4444, 0),  "Wall: Put Side",       group = GRP_SCORED)
+i_colAnchor     = input.color(color.new(#FFD700, 0),  "Structural Anchor",    group = GRP_SCORED)
+i_colAnchorCrit = input.color(color.new(#FF6600, 0),  "Anchor (Critical)",    group = GRP_SCORED)
+i_colInflFlip   = input.color(color.new(#FFFFFF, 0),  "Inflection: Flip",     group = GRP_SCORED)
+i_colInflCliff  = input.color(color.new(#008080, 0),  "Inflection: Cliff",    group = GRP_SCORED)
+i_colInflVoid   = input.color(color.new(#9966FF, 0),  "Inflection: Void",     group = GRP_SCORED)
+i_colInflMagnet = input.color(color.new(#EE82EE, 0),  "Inflection: Magnet",   group = GRP_SCORED)
 
 var string GRP_LABELS = "Label Collision & Display"
 i_showLabels        = input.bool(true, "Show Labels", group = GRP_LABELS)
@@ -115,12 +135,6 @@ f_stripPrefix(string v) =>
 f_stripContinuousSuffix(string v) =>
     c = f_stripPrefix(v)
     l = str.length(c)
-    // 1. Strip [D] or [M] suffixes first
-    if l > 3
-        if str.endswith(c, "[D]") or str.endswith(c, "[M]")
-            c := str.substring(c, 0, l - 3)
-            l := str.length(c)
-    // 2. Strip continuous ! suffix
     l > 2 and str.endswith(c, "!") ? str.substring(c, 0, l - 2) : c
 
 f_primarySymbol() =>
@@ -173,16 +187,7 @@ f_matchScore(string assetTag) =>
             boost := 30
         else if i_familyPref == "Prefer Index" and k == "INDEX"
             boost := 30
-    
-    // Add variant preference boost
-    vBoost = 0
-    if i_variantPref != "Auto"
-        if i_variantPref == "Direct [D]" and str.endswith(f_norm(assetTag), "[D]")
-            vBoost := 50
-        else if i_variantPref == "Mapped [M]" and str.endswith(f_norm(assetTag), "[M]")
-            vBoost := 50
-            
-    exact ? (eBase + vBoost) : (fBase + boost + vBoost)
+    exact ? eBase : (fBase + boost)
 
 f_num(float v) => na(v) ? "—" : str.tostring(v, "#.##")
 f_pick(float v1, float v2, float v3) => not na(v1) ? v1 : (not na(v2) ? v2 : v3)
@@ -282,10 +287,46 @@ f_parseLevels(string lineText, array<float> prices, array<string> titles) =>
                 if array.size(parts) >= 2
                     px := str.trim(array.get(parts, 0))
                     ti := str.trim(array.get(parts, 1))
-            lv = str.tonumber(px)
+            lv = math.round_to_mintick(str.tonumber(px))
             if not na(lv) and str.length(ti) > 0
                 array.push(prices, lv)
                 array.push(titles, ti)
+
+f_parseScoredLevels(string lineText, 
+    array<float> prices, array<string> filters, 
+    array<string> sigs, array<string> labels) =>
+    array.clear(prices)
+    array.clear(filters)
+    array.clear(sigs)
+    array.clear(labels)
+    tokens = str.split(lineText, ",")
+    if array.size(tokens) > 0
+        for i = 0 to array.size(tokens) - 1
+            token = str.trim(array.get(tokens, i))
+            parts = str.split(token, ":")
+            string px = ""
+            string raw_label = ""
+            if i == 0
+                // First token: TICKER:PRICE:FILTER|SIG|LABEL
+                if array.size(parts) >= 3
+                    px := str.trim(array.get(parts, 1))
+                    raw_label := str.trim(array.get(parts, 2))
+            else
+                // Subsequent: PRICE:FILTER|SIG|LABEL
+                if array.size(parts) >= 2
+                    px := str.trim(array.get(parts, 0))
+                    raw_label := str.trim(array.get(parts, 1))
+            lv = math.round_to_mintick(str.tonumber(px))
+            if not na(lv) and str.length(raw_label) > 0
+                // Split FILTER|SIG|LABEL
+                meta = str.split(raw_label, "|")
+                if array.size(meta) >= 3
+                    array.push(prices, lv)
+                    array.push(filters, str.trim(array.get(meta, 0)))
+                    array.push(sigs, str.trim(array.get(meta, 1)))
+                    array.push(labels, str.trim(array.get(meta, 2)))
+
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // STYLING & FILTERING
@@ -367,14 +408,14 @@ f_compactTitle(string title) =>
         res := "DEX C"
     else if u == "GAMMA FLIP UPPER"
         res := "GF U"
+    else if u == "GAMMA FLIP LOWER"
+        res := "GF L"
     else if u == "GAMMA CLIFF UP"
         res := "GC U"
     else if u == "ZERO GAMMA"
         res := "ZG"
     else if u == "GAMMA CLIFF DOWN"
         res := "GC D"
-    else if u == "GAMMA FLIP LOWER"
-        res := "GF L"
     else if u == "MAX PAIN"
         res := "MAX"
     else if u == "0DTE PUT WALL"
@@ -440,6 +481,45 @@ f_showLevel(string title, float price) =>
 
     show
 
+
+f_scoredColor(string filter_code, string sig_code, string label_text) =>
+    // Color is driven by FILTER TYPE (what kind of level)
+    // plus context from the label for side detection
+    u = str.upper(label_text)
+    result = color.silver
+    if filter_code == "W"
+        // Wall: red for calls/resistance, green for puts/support
+        is_put = str.contains(u, "PW") or str.contains(u, "PUT") or str.contains(u, "HW") or str.contains(u, "LOC P")
+        result := is_put ? i_colWallPut : i_colWallCall
+    else if filter_code == "A"
+        // Anchor: gold normally, orange-red if CRIT in label
+        result := str.contains(u, "CRIT") ? i_colAnchorCrit : i_colAnchor
+    else if filter_code == "I"
+        // Inflection: depends on inflection subtype
+        result := str.contains(u, "ZERO") or str.contains(u, "FLIP") ? i_colInflFlip :
+             str.contains(u, "CLIFF") ? i_colInflCliff :
+             str.contains(u, "VOID") ? i_colInflVoid :
+             str.contains(u, "MAGNET") ? i_colInflMagnet :
+             color.white
+    result
+
+f_scoredStyle(string sig_code) =>
+    // Style is driven by SIGNIFICANCE (how important)
+    sig_code == "P" ? line.style_solid : 
+     sig_code == "S" ? line.style_dashed : 
+     line.style_dotted
+
+f_scoredWidth(string sig_code) =>
+    // Width is driven by SIGNIFICANCE
+    sig_code == "P" ? i_lineWidthPrimary : i_lineWidthSecondary
+
+f_scoredCompactLabel(string filter_code, string label_text) =>
+    // Labels are already compact from the Python export.
+    // Add a visual prefix based on filter type for quick scanning.
+    prefix = filter_code == "W" ? "▌" : filter_code == "A" ? "⚓" : filter_code == "I" ? "◆" : "•"
+    prefix + " " + label_text
+
+
 f_assignLabelColumn(float level, array<float> cols, float gap, int maxC) =>
     int a = -1
     if i_labelCollision == "Off"
@@ -493,6 +573,8 @@ var string rawDealer = ""
 var string matchDealer = ""
 var string rawMacro = ""
 var string matchMacro = ""
+var string rawScored = ""
+var string matchScored = ""
 
 if barstate.isfirst
     [rD, mD] = f_findMatchingLine(i_pastedDealer)
@@ -502,6 +584,10 @@ if barstate.isfirst
     [rM, mM] = f_findMatchingLine(i_pastedMacro)
     rawMacro := rM
     matchMacro := mM
+
+    [rS, mS] = f_findMatchingLine(i_pastedScored)
+    rawScored := rS
+    matchScored := mS
 
 // Redraw / Calculation State
 var float st_ZG = na, var float st_MAG = na, var float st_PIN = na
@@ -521,6 +607,9 @@ f_clearAll() =>
 
 needsUpdate = barstate.isfirst or isNewSession
 
+
+var s_flt = ""
+var s_sig = ""
 if needsUpdate
     f_clearAll()
     st_ZG := na, st_MAG := na, st_PIN := na
@@ -532,6 +621,8 @@ if needsUpdate
     
     var line line_emUp = na
     var line line_emDn = na
+    var line line_gcUp = na
+    var line line_gcDn = na
     
     // Arrays to process both sources
     srcRaw = array.new_string()
@@ -673,10 +764,18 @@ if needsUpdate
                         array.push(allLines, ln)
                         
                         // Capture EM lines for fills (from the merged output)
-                        if str.contains(a_ti, "EM+") or str.contains(a_ti, "UPPER EM")
+                        if str.contains(a_ti, "EM+") or str.contains(a_ti, "Upper EM")
                             line_emUp := ln
-                        if str.contains(a_ti, "EM-") or str.contains(a_ti, "LOWER EM")
+                        if str.contains(a_ti, "EM-") or str.contains(a_ti, "Lower EM")
                             line_emDn := ln
+                        
+                        // Capture EM lines for fills (from the merged output)
+                        if str.contains(a_ti, "GF U") or str.contains(a_ti, "Gamma Flip Upper")
+                            line_gcUp := ln
+                            log.info("Got line object for gamma fill")
+                        if str.contains(a_ti, "GF L") or str.contains(a_ti, "Flip Lower")
+                            line_gcDn := ln
+
                         
                         if i_showLabels
                             mg = syminfo.mintick * i_minLabelGapTicks
@@ -686,10 +785,82 @@ if needsUpdate
                                 lb = label.new(bar_index + i_labelOffset, a_lv, dispTxt, textcolor=a_cl, color=color.new(#131722, 100 - i_labelBgOpacity), style=label.style_label_left, size=f_labelSize(i_labelSize))
                                 array.push(allLabels, lb)
                                 array.push(labelCols, lc)
-                    
+
+    if i_showScored and str.length(rawScored) > 0
+        sPrices  = array.new_float()
+        sFilters = array.new_string()
+        sSigs    = array.new_string()
+        sLabels  = array.new_string()
+        f_parseScoredLevels(rawScored, sPrices, sFilters, sSigs, sLabels)
+    
+        if array.size(sPrices) > 0
+            // Optional: apply same futures anchor scaling as dealer levels
+            // (copy the scaling block from the existing dealer/macro processing)
+            
+            for i = 0 to array.size(sPrices) - 1
+                s_lv  = array.get(sPrices, i)
+                s_flt := array.get(sFilters, i)
+                s_sig := array.get(sSigs, i)
+                s_lbl = array.get(sLabels, i)
+                
+                s_clr = f_scoredColor(s_flt, s_sig, s_lbl)
+                s_sty = f_scoredStyle(s_sig)
+                s_wid = f_scoredWidth(s_sig)
+                
+                ln = line.new(sessionStartBar, s_lv, bar_index, s_lv, 
+                    color=s_clr, width=s_wid, style=s_sty)
+                array.push(allLines, ln)
+                
+                if i_showLabels
+                    mg = syminfo.mintick * i_minLabelGapTicks
+                    lc = f_assignLabelColumn(s_lv, colLastPrices, mg, i_maxLabelCols)
+                    if lc >= 0
+                        dispTxt = f_scoredCompactLabel(s_flt, s_lbl)
+                        if i_showPriceInLabel
+                            dispTxt := dispTxt + " (" + str.tostring(s_lv, "#.##") + ")"
+                        lb = label.new(bar_index + i_labelOffset, s_lv, dispTxt, 
+                            textcolor=s_clr, 
+                            color=color.new(#131722, 100 - i_labelBgOpacity), 
+                            style=label.style_label_left, 
+                            size=f_labelSize(i_labelSize))
+                        array.push(allLabels, lb)
+                        array.push(labelCols, lc)
+
+            // ── Dashboard Tracking for Scored Levels ──
+            // Override dashboard state variables with scored data if present.
+            // This lets the dashboard show scored-derived values when available.
+            for i = 0 to array.size(sPrices) - 1
+                s_flt := array.get(sFilters, i)
+                s_sig := array.get(sSigs, i)
+                s_lbl = str.upper(array.get(sLabels, i))
+                s_lv  = array.get(sPrices, i)
+                
+                // Walls → override CW/PW
+                if s_flt == "W" and s_sig == "P"
+                    if str.contains(s_lbl, "CW") and not str.contains(s_lbl, "0D")
+                        st_CW := s_lv
+                    if str.contains(s_lbl, "PW") or str.contains(s_lbl, "HW")
+                        st_PW := s_lv
+                        st_HW := s_lv
+                // Anchors → no direct dashboard mapping yet, but track best anchor
+                // Inflections → override ZG
+                if s_flt == "I" and str.contains(s_lbl, "ZERO")
+                    st_ZG := s_lv
+                if s_flt == "I" and str.contains(s_lbl, "MAGNET")
+                    st_MAG := s_lv
+                if s_flt == "I" and str.contains(s_lbl, "CLIFF UP")
+                    st_GCU := s_lv
+                if s_flt == "I" and str.contains(s_lbl, "CLIFF DN")
+                    st_GCD := s_lv
+
+
+    
     // OPTIMIZATION: Apply linefills immediately after line creation
     if i_showEmFill and not na(line_emUp) and not na(line_emDn)
         linefill.new(line_emUp, line_emDn, i_colEmFill)
+    //if i_showEmFill and not na(line_emUp) and not na(line_emDn)
+    linefill.new(line_gcUp, line_gcDn, i_colGammaFlipFill)
+    
 
 // ── OPTIMIZED Realtime Extension ──
 // By wrapping this in barstate.islast, we prevent the script from trying 
@@ -709,8 +880,11 @@ if barstate.islast
 // ═══════════════════════════════════════════════════════════════════════
 
 var table dash = na
+var float st_ANCHOR = na
+var string st_ANCHOR_LABEL = ""
+
 if barstate.isfirst
-    dash := table.new(f_pos(i_dashPos), 2, 14, bgcolor=color.new(#131722, 100 - i_dashBgOpacity), border_width=0)
+    dash := table.new(f_pos(i_dashPos), 2, 16, bgcolor=color.new(#131722, 100 - i_dashBgOpacity), border_width=0)
 
 if barstate.islast and i_showDash
     tSz = f_labelSize(i_dashSize)
@@ -750,61 +924,87 @@ if barstate.islast and i_showDash
     resolved = str.length(st_Asset) > 0 ? st_Asset : "—"
     modeText = f_isOvernightFutures(primary) ? "Globex" : "Calendar"
 
+    row = 0
     // Row  0: Header
-    table.cell(dash, 0, 0, primary + " | " + modeText, text_color = color.white, text_size = tSz)
-    table.cell(dash, 1, 0, "Loaded: " + resolved, text_color = str.length(st_Asset) > 0 ? color.lime : color.red, text_size = tSz)
+    table.cell(dash, 0, row, primary + " | " + modeText, text_color = color.white, text_size = tSz)
+    table.cell(dash, 1, row, "Loaded: " + resolved, text_color = str.length(st_Asset) > 0 ? color.lime : color.red, text_size = tSz)
     // Row  1: Regime + Direction
-    table.cell(dash, 0, 1, "REGIME", text_color = color.gray, text_size = tSz)
-    table.cell(dash, 1, 1, lE + " " + regime + biasArrow + " " + biasLabel, text_color = biasClr, text_size = tSz)
+    row := row+1
+    table.cell(dash, 0, row, "REGIME", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, row, lE + " " + regime + biasArrow + " " + biasLabel, text_color = biasClr, text_size = tSz)
+
     // Row  2: Market structure
-    table.cell(dash, 0, 2, "MAGNET", text_color = color.gray, text_size = tSz)
-    table.cell(dash, 1, 2, f_num(st_MAG), text_color = i_colGammaMagnet, text_size = tSz)
+    row := row+1
+    table.cell(dash, 0, row, "MAGNET", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, row, f_num(st_MAG), text_color = i_colGammaMagnet, text_size = tSz)
     // Row  3: Pin
-    table.cell(dash, 0, 3, "PIN", text_color = color.gray, text_size = tSz)
-    table.cell(dash, 1, 3, f_num(st_PIN), text_color = i_colPinStrike, text_size = tSz)
+    row := row+1
+    table.cell(dash, 0, row, "PIN", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, row, f_num(st_PIN), text_color = i_colPinStrike, text_size = tSz)
     // Row  4: Separation + EM
-    table.cell(dash, 0, 4, "SEP | EM±", text_color = color.gray, text_size = tSz)
-    table.cell(dash, 1, 4, f_num(wSep) + " | " + f_num(emV), text_color = color.white, text_size = tSz)
+    row := row+1
+    table.cell(dash, 0, row, "SEP | EM±", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, row, f_num(wSep) + " | " + f_num(emV), text_color = color.white, text_size = tSz)
     // Row  5: ZG
-    table.cell(dash, 0, 5, "ZERO γ", text_color = color.gray, text_size = tSz)
-    table.cell(dash, 1, 5, f_num(st_ZG), text_color = i_colZeroGamma, text_size = tSz)
+    row := row+1
+    table.cell(dash, 0, row, "ZERO γ", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, row, f_num(st_ZG), text_color = i_colZeroGamma, text_size = tSz)
     // Row  6: Cliffs
-    table.cell(dash, 0, 6, "CLIFFS", text_color = color.gray, text_size = tSz)
-    table.cell(dash, 1, 6, "↓" + f_num(st_GCD) + " | ↑" + f_num(st_GCU), text_color = color.teal, text_size = tSz)
+    row := row+1
+    table.cell(dash, 0, row, "CLIFFS", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, row, "↓" + f_num(st_GCD) + " | ↑" + f_num(st_GCU), text_color = color.teal, text_size = tSz)
+
+    //if s_flt == "A" and s_sig == "P" and na(st_ANCHOR)
+    //    st_ANCHOR := s_lv
+    //    st_ANCHOR_LABEL := array.get(sLabels, i)
+
+    // New dashboard row (insert before PLAN row):
+    row := row+1
+    table.cell(dash, 0, row, "ANCHOR", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, row, na(st_ANCHOR) ? "—" : f_num(st_ANCHOR) + " " + st_ANCHOR_LABEL, text_color = i_colAnchor, text_size = tSz)
+
     // Row  7: Separator
-    table.cell(dash, 0, 7, "", text_size = size.tiny)
-    table.cell(dash, 1, 7, "", text_size = size.tiny)
+    row := row+1
+    table.cell(dash, 0, row, "", text_size = size.tiny)
+    table.cell(dash, 1, row, "", text_size = size.tiny)
     // Row  8: Narrative header
-    table.cell(dash, 0, 8, "PLAN", text_color = color.white, text_size = tSz)
+    row := row+1
+    table.cell(dash, 0, row, "PLAN", text_color = color.white, text_size = tSz)
     dexInfo = ""
     if not na(st_DPN) or not na(st_DCN)
         dexInfo := "DEX " + f_num(st_DPN) + "/" + f_num(st_DCN)
-    table.cell(dash, 1, 8, dexInfo, text_color = color.white, text_size = tSz)
+    row := row+1
+    table.cell(dash, 1, row, dexInfo, text_color = color.white, text_size = tSz)
     // Row  9: Short
+    row := row+1
     sZ = ""
     if not na(st_GCD)
         sZ := "GC↓" + f_num(st_GCD) + " "
     if not na(st_DPN)
         sZ := sZ + "DEX " + f_num(st_DPN)
-    table.cell(dash, 0, 9, "SHORT", text_color = color.red, text_size = tSz)
-    table.cell(dash, 1, 9, "< " + f_num(sTrig) + " → " + f_num(sTgt) + " inv > " + f_num(sInv), text_color = color.red, text_size = tSz)
+    table.cell(dash, 0, row, "SHORT", text_color = color.red, text_size = tSz)
+    table.cell(dash, 1, row, "< " + f_num(sTrig) + " → " + f_num(sTgt) + " inv > " + f_num(sInv), text_color = color.red, text_size = tSz)
     // Row 10: Short zones
-    table.cell(dash, 0, 10, "", text_size = size.tiny)
-    table.cell(dash, 1, 10, str.length(sZ) > 0 ? sZ : "", text_color = color.new(color.red, 40), text_size = tSz)
+    row := row+1
+    table.cell(dash, 0, row, "", text_size = size.tiny)
+    table.cell(dash, 1, row, str.length(sZ) > 0 ? sZ : "", text_color = color.new(color.red, 40), text_size = tSz)
     // Row 11: Long
+    row := row+1
     lZ = ""
     if not na(st_GCU)
         lZ := "GC↑" + f_num(st_GCU) + " "
     if not na(st_DCN)
         lZ := lZ + "DEX " + f_num(st_DCN)
-    table.cell(dash, 0, 11, "LONG", text_color = color.lime, text_size = tSz)
-    table.cell(dash, 1, 11, "> " + f_num(lTrig) + " → " + f_num(lTgt) + " inv < " + f_num(lInv), text_color = color.lime, text_size = tSz)
+    table.cell(dash, 0, row, "LONG", text_color = color.lime, text_size = tSz)
+    table.cell(dash, 1, row, "> " + f_num(lTrig) + " → " + f_num(lTgt) + " inv < " + f_num(lInv), text_color = color.lime, text_size = tSz)
     // Row 12: Long zones
-    table.cell(dash, 0, 12, "", text_size = size.tiny)
-    table.cell(dash, 1, 12, str.length(lZ) > 0 ? lZ : "", text_color = color.new(color.lime, 40), text_size = tSz)
+    row := row+1
+    table.cell(dash, 0, row, "", text_size = size.tiny)
+    table.cell(dash, 1, row, str.length(lZ) > 0 ? lZ : "", text_color = color.new(color.lime, 40), text_size = tSz)
     // Row 13: EM
-    table.cell(dash, 0, 13, "EM", text_color = color.aqua, text_size = tSz)
-    table.cell(dash, 1, 13, f_num(st_EL) + " ↔ " + f_num(st_EU), text_color = color.aqua, text_size = tSz)
-
+    row := row+1
+    table.cell(dash, 0, row, "EM", text_color = color.aqua, text_size = tSz)
+    table.cell(dash, 1, row, f_num(st_EL) + " ↔ " + f_num(st_EU), text_color = color.aqua, text_size = tSz)
+    
 if barstate.islast and not i_showDash and not na(dash)
-    table.clear(dash, 0, 0, 1, 13)
+    table.clear(dash, 0, 0, 1, 16)
