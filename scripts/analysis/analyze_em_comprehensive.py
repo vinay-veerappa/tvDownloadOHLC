@@ -44,24 +44,22 @@ async def analyze_comprehensive():
     
     # 2. Load Price Data (1d for static levels, 5m for intraday)
     try:
-        df_1d = pd.read_parquet(f'data/{ticker}_1d.parquet')
+        df_1d = pd.read_parquet(f'data/{ticker}_1d.parquet', columns=['datetime', 'open', 'close'])
         if df_1d.index.name == 'datetime': df_1d = df_1d.reset_index()
-        df_1d['date_str'] = pd.to_datetime(df_1d['datetime']).dt.strftime('%Y-%m-%d')
+        dt_1d = pd.to_datetime(df_1d['datetime'])
+        df_1d['date_str'] = dt_1d.dt.strftime('%Y-%m-%d')
         
         # Calculate Weekly Close (Previous Week)
-        df_1d['week'] = pd.to_datetime(df_1d['datetime']).dt.isocalendar().week
-        df_1d['year'] = pd.to_datetime(df_1d['datetime']).dt.isocalendar().year
-        
-        weekly_close = df_1d.groupby(['year', 'week'])['close'].last().shift(1)
-        # Map this back to daily
-        df_1d['prev_week_close'] = df_1d.apply(lambda x: weekly_close.get((x['year'], x['week'])), axis=1)
+        df_1d['week_key'] = dt_1d.dt.to_period('W-FRI')
+        weekly_close = df_1d.groupby('week_key')['close'].last().shift(1)
+        df_1d['prev_week_close'] = df_1d['week_key'].map(weekly_close)
         
         # Daily Open
         df_1d['daily_open'] = df_1d['open']
         
         static_levels = df_1d.set_index('date_str')[['prev_week_close', 'daily_open']].to_dict('index')
         
-        df_5m = pd.read_parquet(f'data/{ticker}_5m.parquet')
+        df_5m = pd.read_parquet(f'data/{ticker}_5m.parquet', columns=['datetime', 'high', 'low', 'close'])
         if df_5m.index.name == 'datetime': df_5m = df_5m.reset_index()
         df_5m['date_str'] = pd.to_datetime(df_5m['datetime']).dt.strftime('%Y-%m-%d')
     except Exception as e:
@@ -78,17 +76,24 @@ async def analyze_comprehensive():
     confluence_touches = 0
 
     print(f"Analyzing {len(em_df)} days...")
+    daily_extremes = df_5m.groupby('date_str').agg(hod=('high', 'max'), lod=('low', 'min'))
+    bars_by_day = {day: grp[['high', 'low', 'close']] for day, grp in df_5m.groupby('date_str', sort=False)}
 
-    for idx, em_row in em_df.iterrows():
-        day = em_row['date_str']
-        pc = em_row['prev_close']
-        em_val = em_row['em_straddle']
+    for em_row in em_df.itertuples(index=False):
+        day = em_row.date_str
+        pc = em_row.prev_close
+        em_val = em_row.em_straddle
         
-        day_bars = df_5m[df_5m['date_str'] == day]
-        if day_bars.empty: continue
-        
-        hod = day_bars['high'].max()
-        lod = day_bars['low'].min()
+        day_bars = bars_by_day.get(day)
+        if day_bars is None:
+            continue
+
+        extremes = daily_extremes.loc[day] if day in daily_extremes.index else None
+        if extremes is None:
+            continue
+
+        hod = extremes['hod']
+        lod = extremes['lod']
         
         # MFE/MAE: Max distance from Prev Close in direction of max move vs opposite
         # For simplicity, let's just use Max Excursion Multiple
@@ -111,12 +116,12 @@ async def analyze_comprehensive():
             
             # Check if any static level is near this EM level
             near_u = False
-            if pwc and abs(lvl_u - pwc) < tol: near_u = True
-            if do and abs(lvl_u - do) < tol: near_u = True
+            if pd.notna(pwc) and abs(lvl_u - pwc) < tol: near_u = True
+            if pd.notna(do) and abs(lvl_u - do) < tol: near_u = True
             
             near_l = False
-            if pwc and abs(lvl_l - pwc) < tol: near_l = True
-            if do and abs(lvl_l - do) < tol: near_l = True
+            if pd.notna(pwc) and abs(lvl_l - pwc) < tol: near_l = True
+            if pd.notna(do) and abs(lvl_l - do) < tol: near_l = True
             
             if near_u:
                 confluence_touches += 1

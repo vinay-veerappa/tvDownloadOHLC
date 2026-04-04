@@ -13,7 +13,7 @@ def analyze_all_magnets(ticker="NQ1", output_path=None):
     sessions_path = f"{base_dir}/sessions/{ticker}_sessions.json"
     
     print("Loading 1m Data...")
-    df_1m = pd.read_parquet(parquet_path)
+    df_1m = pd.read_parquet(parquet_path, columns=['datetime', 'open', 'high', 'low', 'close'])
     
     # Timezone Handling
     if not isinstance(df_1m.index, pd.DatetimeIndex):
@@ -71,8 +71,7 @@ def analyze_all_magnets(ticker="NQ1", output_path=None):
         df_sess = df_sess.sort_values('start_time')
     
     # 4. Load Session Levels (London/Asia)
-    # Pivot to get access to all session prices by date
-    # We need 'GlobexOpen' specifically for NDOG
+    # Pivot to get access to all session prices by date.
     pivoted = df_sess.pivot_table(index='date', columns='session', values=['high', 'low', 'price', 'mid'], aggfunc='first')
     pivoted.columns = [f"{c[0]}_{c[1]}" for c in pivoted.columns]
     pivoted.index = pd.to_datetime(pivoted.index).date
@@ -139,14 +138,13 @@ def analyze_all_magnets(ticker="NQ1", output_path=None):
     am_highs = am_data.groupby('date')['high'].agg(['max', 'idxmax'])
     am_highs.columns = ['AM_High', 'AM_High_Time']
     
-    # 4. Load Session Levels (London/Asia)
-    pivoted = df_sess.pivot_table(index='date', columns='session', values=['high', 'low', 'price', 'mid'], aggfunc='first')
-    pivoted.columns = [f"{c[0]}_{c[1]}" for c in pivoted.columns]
-    pivoted.index = pd.to_datetime(pivoted.index).date
-    
     # Midnight Open
     midnight_mask = (df_1m.index.hour == 0) & (df_1m.index.minute == 0)
     midnight_opens = df_1m[midnight_mask].groupby('date')['open'].first().rename("Midnight_Open")
+
+    # Precompute structures used repeatedly in the reversal loop.
+    open_at_bar = df_1m['open']
+    p12_mid_series = (df_1m['high'].rolling('12h').max() + df_1m['low'].rolling('12h').min()) / 2
     
     # 5. Master Merge
     
@@ -154,10 +152,11 @@ def analyze_all_magnets(ticker="NQ1", output_path=None):
     
     print("analyzing Confluences...")
     
-    for date, row in daily_rth.iterrows():
+    for row in daily_rth.itertuples():
+        date = row.Index
         # Get AM Extreme Price & Time
         event_time = None
-        if row['Color'] == 'Green':
+        if row.Color == 'Green':
             if date not in am_lows.index: continue
             event_price = am_lows.loc[date, 'AM_Low']
             event_time = am_lows.loc[date, 'AM_Low_Time']
@@ -179,7 +178,7 @@ def analyze_all_magnets(ticker="NQ1", output_path=None):
         
         # 1. Gap Percentiles (RTH Gap)
         
-        rth_open = row['open']
+        rth_open = row.open
         prev_close = d_lev['PDC']
         
         # Gap is between PDC (Prior Daily Close - usually RTH close) and Today Open (RTH Open)
@@ -220,10 +219,7 @@ def analyze_all_magnets(ticker="NQ1", output_path=None):
             # Optimization: Use global lookup?
             # Or just filter small slice
             try:
-                # 1 Minute slice at t1h
-                slice_1h = df_1m.loc[t1h : t1h + pd.Timedelta(minutes=1)]
-                if not slice_1h.empty:
-                    open_1h = slice_1h['open'].iloc[0]
+                open_1h = open_at_bar.get(t1h, np.nan)
                     
                 # 4H Open
                 # Standard buckets: 02, 06, 10, 14, 18, 22
@@ -239,22 +235,12 @@ def analyze_all_magnets(ticker="NQ1", output_path=None):
                     target_h = past_buckets[-1]
                 
                 t4h = event_time.replace(hour=target_h, minute=0, second=0)
-                slice_4h = df_1m.loc[t4h : t4h + pd.Timedelta(minutes=1)]
-                if not slice_4h.empty:
-                    open_4h = slice_4h['open'].iloc[0]
+                open_4h = open_at_bar.get(t4h, np.nan)
             except:
                 pass
 
         # 3. Rolling 12H Mid (P12 Approximation)
-        p12_mid = np.nan
-        if event_time is not None:
-            start_window = event_time - pd.Timedelta(hours=12)
-            try:
-                window_slice = df_1m.loc[start_window:event_time]
-                if not window_slice.empty:
-                    p12_mid = (window_slice['high'].max() + window_slice['low'].min()) / 2
-            except:
-                pass
+        p12_mid = p12_mid_series.get(event_time, np.nan) if event_time is not None else np.nan
 
         # Build Magnets
         magnets = {

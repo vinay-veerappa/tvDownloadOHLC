@@ -17,7 +17,7 @@ def analyze_key_levels(ticker="NQ1"):
         return
 
     print(f"Loading 1m Data: {parquet_path}")
-    df_1m = pd.read_parquet(parquet_path)
+    df_1m = pd.read_parquet(parquet_path, columns=['datetime', 'open', 'high', 'low'])
     
     # Ensure Index
     if not isinstance(df_1m.index, pd.DatetimeIndex):
@@ -72,11 +72,9 @@ def analyze_key_levels(ticker="NQ1"):
     
     # Merge Sequence
     # Outer merge? No, we need dates with RTH data.
-    df = pd.merge(rth_stats, midnight_opens, left_index=True, right_index=True, how='inner')
-    df = pd.merge(df, pre_stats, left_index=True, right_index=True, how='left') # Pre stats might be missing if data starts mid-day?
-    df = pd.merge(df, am_stats, left_index=True, right_index=True, how='left')
-    df = pd.merge(df, pm_stats, left_index=True, right_index=True, how='left')
-    df = pd.merge(df, pivoted, left_index=True, right_index=True, how='inner')
+    df = rth_stats.join(midnight_opens, how='inner')
+    df = df.join([pre_stats, am_stats, pm_stats], how='left')
+    df = df.join(pivoted, how='inner')
     
     # Fill missing session highs/lows with NaNs or handle logic?
     # If Pre_High is NaN, it means no data before 9:30.

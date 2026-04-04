@@ -224,45 +224,40 @@ def store_interval_data(ticker, price, strike_range, calls, puts):
     range_calls = calls[(calls['strike'] >= min_strike) & (calls['strike'] <= max_strike)]
     range_puts = puts[(puts['strike'] >= min_strike) & (puts['strike'] <= max_strike)]
     
-    # Calculate net gamma, delta, and vanna for each strike
-    exposure_by_strike = {}
-    for _, row in range_calls.iterrows():
-        strike = row['strike']
-        gamma = row['GEX']
-        delta = row['DEX']
-        vanna = row['VEX']
-        charm = row['Charm']
-        cur = exposure_by_strike.get(strike, {'gamma':0,'delta':0,'vanna':0,'charm':0,'call_gamma':0,'put_gamma':0})
-        cur['gamma'] = cur.get('gamma',0) + gamma
-        cur['delta'] = cur.get('delta',0) + delta
-        cur['vanna'] = cur.get('vanna',0) + vanna
-        cur['charm'] = cur.get('charm',0) + charm
-        cur['call_gamma'] = cur.get('call_gamma',0) + gamma
-        exposure_by_strike[strike] = cur
-        
-    for _, row in range_puts.iterrows():
-        strike = row['strike']
-        gamma = row['GEX']
-        delta = row['DEX']
-        vanna = row['VEX']
-        charm = row['Charm']
-        cur = exposure_by_strike.get(strike, {'gamma':0,'delta':0,'vanna':0,'charm':0,'call_gamma':0,'put_gamma':0})
-        cur['gamma'] = cur.get('gamma',0) - gamma
-        cur['delta'] = cur.get('delta',0) + delta
-        cur['vanna'] = cur.get('vanna',0) + vanna
-        cur['charm'] = cur.get('charm',0) + charm
-        cur['put_gamma'] = cur.get('put_gamma',0) + gamma
-        exposure_by_strike[strike] = cur
+    if range_calls.empty and range_puts.empty:
+        return
+
+    def _prepare_side(df, prefix):
+        if df.empty:
+            return pd.DataFrame(columns=['strike', f'{prefix}_gamma', f'{prefix}_delta', f'{prefix}_vanna', f'{prefix}_charm']).set_index('strike')
+        work = df.copy()
+        for col in ['GEX', 'DEX', 'VEX', 'Charm']:
+            if col not in work.columns:
+                work[col] = 0.0
+        agg = work.groupby('strike', as_index=True)[['GEX', 'DEX', 'VEX', 'Charm']].sum()
+        agg.columns = [f'{prefix}_gamma', f'{prefix}_delta', f'{prefix}_vanna', f'{prefix}_charm']
+        return agg
+
+    calls_agg = _prepare_side(range_calls, 'call')
+    puts_agg = _prepare_side(range_puts, 'put')
+    combined = calls_agg.join(puts_agg, how='outer').fillna(0.0)
+
+    exposure_df = pd.DataFrame(index=combined.index)
+    exposure_df['gamma'] = combined['call_gamma'] - combined['put_gamma']
+    exposure_df['delta'] = combined['call_delta'] + combined['put_delta']
+    exposure_df['vanna'] = combined['call_vanna'] + combined['put_vanna']
+    exposure_df['charm'] = combined['call_charm'] + combined['put_charm']
+    exposure_df['abs_gex_total'] = combined['call_gamma'].abs() + combined['put_gamma'].abs()
     
     # Store data for each strike
     with closing(sqlite3.connect('options_data.db')) as conn:
         with closing(conn.cursor()) as cursor:
-            for strike, exposure in exposure_by_strike.items():
-                abs_gex_total = abs(exposure.get('call_gamma',0)) + abs(exposure.get('put_gamma',0))
+            for exposure in exposure_df.itertuples():
+                strike = exposure.Index
                 cursor.execute('''
                     INSERT INTO interval_data (ticker, timestamp, price, strike, net_gamma, net_delta, net_vanna, net_charm, abs_gex_total, date)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (ticker, interval_timestamp, price, strike, exposure['gamma'], exposure['delta'], exposure['vanna'], exposure['charm'], abs_gex_total, current_date))
+                ''', (ticker, interval_timestamp, price, strike, exposure.gamma, exposure.delta, exposure.vanna, exposure.charm, exposure.abs_gex_total, current_date))
             conn.commit()
 
 # Function to get interval data

@@ -13,6 +13,32 @@ Key Questions:
 import pandas as pd
 import numpy as np
 import os
+from datetime import time as dt_time
+
+
+def _build_overnight_stats(es_5m: pd.DataFrame) -> pd.DataFrame:
+    """Pre-aggregate overnight bars keyed by the session's current trade date."""
+    work = es_5m.copy()
+    work['dt'] = pd.to_datetime(work['datetime'])
+    work['trade_date'] = work['dt'].dt.floor('D')
+    work['time'] = work['dt'].dt.time
+
+    overnight_mask = (work['time'] >= dt_time(16, 0)) | (work['time'] < dt_time(9, 30))
+    overnight = work.loc[overnight_mask, ['dt', 'trade_date', 'time', 'open', 'high', 'low', 'close']].copy()
+
+    overnight['overnight_date'] = overnight['trade_date']
+    after_close_mask = overnight['time'] >= dt_time(16, 0)
+    overnight.loc[after_close_mask, 'overnight_date'] = overnight.loc[after_close_mask, 'trade_date'] + pd.Timedelta(days=1)
+
+    overnight = overnight.sort_values('dt')
+    agg = overnight.groupby('overnight_date', sort=False).agg(
+        overnight_high=('high', 'max'),
+        overnight_low=('low', 'min'),
+        overnight_open=('open', 'first'),
+        overnight_close=('close', 'last'),
+    )
+    agg.index = agg.index.strftime('%Y-%m-%d')
+    return agg
 
 def analyze_overnight_em():
     print("\n" + "="*80)
@@ -20,17 +46,15 @@ def analyze_overnight_em():
     print("="*80)
     
     # Load ES 5m data for overnight analysis
-    es_5m = pd.read_parquet('data/ES1_5m.parquet')
+    es_5m = pd.read_parquet('data/ES1_5m.parquet', columns=['datetime', 'open', 'high', 'low', 'close'])
     if es_5m.index.name == 'datetime': es_5m = es_5m.reset_index()
-    es_5m['dt'] = pd.to_datetime(es_5m['datetime'])
-    es_5m['date'] = es_5m['dt'].dt.strftime('%Y-%m-%d')
-    es_5m['time'] = es_5m['dt'].dt.time
+    overnight_stats = _build_overnight_stats(es_5m)
     
     # Load SPY EM data (we'll scale to ES)
     spy_master = pd.read_csv('docs/expected_moves/analysis_data/em_master_dataset.csv')
     
     # Load ES daily for scaling
-    es_daily = pd.read_parquet('data/ES1_1d.parquet')
+    es_daily = pd.read_parquet('data/ES1_1d.parquet', columns=['datetime', 'open', 'high', 'low', 'close'])
     if es_daily.index.name == 'datetime': es_daily = es_daily.reset_index()
     
     # Correction: Futures daily bars often start the previous evening
@@ -43,7 +67,7 @@ def analyze_overnight_em():
     es_daily['date'] = es_daily['datetime_obj'].apply(normalize_trade_date)
     
     # Load SPY daily for scaling
-    spy_daily = pd.read_parquet('data/SPY_1d.parquet')
+    spy_daily = pd.read_parquet('data/SPY_1d.parquet', columns=['datetime', 'close'])
     if spy_daily.index.name == 'datetime': spy_daily = spy_daily.reset_index()
     spy_daily['date'] = pd.to_datetime(spy_daily['datetime']).dt.strftime('%Y-%m-%d')
     
@@ -96,34 +120,26 @@ def analyze_overnight_em():
     
     print("\n[2] Analyzing overnight session (16:00 - 09:30)...")
     
-    from datetime import time as dt_time
-    
     overnight_results = []
-    
-    for idx, row in df.iterrows():
-        if pd.isna(row['es_prev_close']): continue
-        
-        current_date = row['date']
-        prev_date = df.iloc[idx-1]['date'] if idx > 0 else None
-        if not prev_date: continue
-        
-        # Get overnight bars (after 16:00 on prev day OR before 09:30 on current day)
-        overnight_bars = es_5m[
-            ((es_5m['date'] == prev_date) & (es_5m['time'] >= dt_time(16, 0))) |
-            ((es_5m['date'] == current_date) & (es_5m['time'] < dt_time(9, 30)))
-        ]
-        
-        if overnight_bars.empty: continue
-        
-        overnight_high = overnight_bars['high'].max()
-        overnight_low = overnight_bars['low'].min()
-        overnight_open = overnight_bars.iloc[0]['open']
-        overnight_close = overnight_bars.iloc[-1]['close']
+
+    for row in df.itertuples(index=False):
+        if pd.isna(row.es_prev_close):
+            continue
+
+        current_date = row.date
+        stats = overnight_stats.loc[current_date] if current_date in overnight_stats.index else None
+        if stats is None:
+            continue
+
+        overnight_high = stats['overnight_high']
+        overnight_low = stats['overnight_low']
+        overnight_open = stats['overnight_open']
+        overnight_close = stats['overnight_close']
         
         # Check level interactions
-        for anchor_name, anchor_val in [('prev_close', row['es_prev_close']), ('prev_open', row['es_prev_open'])]:
+        for anchor_name, anchor_val in [('prev_close', row.es_prev_close), ('prev_open', row.es_prev_open)]:
             for mult in [0.5, 1.0]:
-                em_val = row['em_straddle_085_es']
+                em_val = row.em_straddle_085_es
                 if pd.isna(em_val): continue
                 
                 level_upper = anchor_val + em_val * mult

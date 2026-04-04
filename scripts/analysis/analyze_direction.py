@@ -1,25 +1,6 @@
 
 import pandas as pd
 import numpy as np
-import json
-import os
-
-
-import pandas as pd
-import numpy as np
-import json
-import os
-
-
-import pandas as pd
-import numpy as np
-import json
-import os
-
-
-import pandas as pd
-import numpy as np
-import json
 import os
 
 def analyze_direction(ticker="NQ1"):
@@ -36,7 +17,7 @@ def analyze_direction(ticker="NQ1"):
 
     # Load Hourly Data
     print(f"Loading Hourly Data: {hourly_path}")
-    df_h = pd.read_parquet(hourly_path)
+    df_h = pd.read_parquet(hourly_path, columns=['start_time', 'open', 'high', 'low', 'close'])
     # Fix column name & Timezone
     df_h['time'] = pd.to_datetime(df_h['start_time'], utc=True).dt.tz_convert('US/Eastern')
     df_h = df_h.sort_values('time')
@@ -53,25 +34,25 @@ def analyze_direction(ticker="NQ1"):
     # Day Close: Close of the 16:00 bar (Settlement)
     
     # Filter for Open
-    df_open = df_h[df_h['hour'] == 9][['date', 'open']].rename(columns={'open': 'daily_open'})
+    df_open = df_h[df_h['hour'] == 9].groupby('date', as_index=False)['open'].first().rename(columns={'open': 'daily_open'})
     
     # Filter for Close (Hour 16 usually, but sometimes 15 if half day? taking last RTH bar)
     # Better method: Take last bar between 9 and 16 for each date.
     df_rth = df_h[df_h['hour'].between(9, 16)]
-    daily_close = df_rth.groupby('date')['close'].last().reset_index()
+    daily_close = df_rth.groupby('date', as_index=False)['close'].last()
     
     # Merge Open and Close
-    daily_ohlc = pd.merge(df_open, daily_close, on='date', how='inner')
+    daily_ohlc = df_open.merge(daily_close, on='date', how='inner')
     
     # 3. Load Classification
-    df_class = pd.read_parquet(class_path)
+    df_class = pd.read_parquet(class_path, columns=['date', 'type'])
     df_class['date'] = pd.to_datetime(df_class['date'])
     
     # 4. Merge All
     # Note: daily_ohlc['date'] is object (date), df_class['date'] is timestamp
     daily_ohlc['date'] = pd.to_datetime(daily_ohlc['date'])
     
-    df = pd.merge(df_class, daily_ohlc, on='date', how='inner')
+    df = df_class.merge(daily_ohlc, on='date', how='inner')
     
     # 5. Directional Calc
     df['is_green'] = df['close'] > df['daily_open']
@@ -116,10 +97,6 @@ def analyze_direction(ticker="NQ1"):
     seq_stats = df.groupby('prev_type')['is_green'].agg(['mean', 'count'])
     seq_stats['mean'] = seq_stats['mean'] * 100
     print(seq_stats.rename(columns={'mean': 'Green Day %'}))
-
-if __name__ == "__main__":
-    analyze_direction("NQ1")
-
 
 if __name__ == "__main__":
     analyze_direction("NQ1")

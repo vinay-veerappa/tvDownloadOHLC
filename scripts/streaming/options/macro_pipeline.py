@@ -133,9 +133,9 @@ def _fetch_from_yfinance(ticker: str) -> OptionChainData | None:
                 dte = (exp_date - today).days
                 
                 # Map yfinance DataFrame to OptionContract
-                for _, row in chain.calls.iterrows():
+                for row in chain.calls.itertuples(index=False):
                     calls.append(_parse_yf_contract(row, exp_date, dte, "CALL"))
-                for _, row in chain.puts.iterrows():
+                for row in chain.puts.itertuples(index=False):
                     puts.append(_parse_yf_contract(row, exp_date, dte, "PUT"))
             except Exception as e:
                 log.warning("Failed to fetch expiry %s for %s: %s", exp, ticker, e)
@@ -157,6 +157,11 @@ def _fetch_from_yfinance(ticker: str) -> OptionChainData | None:
 def _parse_yf_contract(row: Any, expiry: date, dte: int, contract_type: str) -> OptionContract:
     # yfinance greeks are often missing or in 'impliedVolatility'
     # Fallback to 0.0 for higher order greeks if not present
+
+    def _get_field(obj: Any, field: str, default: Any = None) -> Any:
+        if hasattr(obj, 'get'):
+            return obj.get(field, default)
+        return getattr(obj, field, default)
     
     def _safe_int(val: Any) -> int:
         try:
@@ -167,18 +172,18 @@ def _parse_yf_contract(row: Any, expiry: date, dte: int, contract_type: str) -> 
             return 0
 
     return OptionContract(
-        symbol=str(row.get("contractSymbol", "")),
-        strike=float(row.get("strike", 0.0)),
+        symbol=str(_get_field(row, "contractSymbol", "")),
+        strike=float(_get_field(row, "strike", 0.0)),
         type=contract_type,
         contract_type=contract_type,
         expiry=expiry,
-        open_interest=_safe_int(row.get("openInterest")),
-        volume=_safe_int(row.get("volume")),
-        last=float(row.get("lastPrice", 0.0)),
-        bid=float(row.get("bid", 0.0)),
-        ask=float(row.get("ask", 0.0)),
-        mark=(float(row.get("bid", 0.0)) + float(row.get("ask", 0.0))) / 2.0,
-        iv=float(row.get("impliedVolatility", 0.0)),
+        open_interest=_safe_int(_get_field(row, "openInterest")),
+        volume=_safe_int(_get_field(row, "volume")),
+        last=float(_get_field(row, "lastPrice", 0.0)),
+        bid=float(_get_field(row, "bid", 0.0)),
+        ask=float(_get_field(row, "ask", 0.0)),
+        mark=(float(_get_field(row, "bid", 0.0)) + float(_get_field(row, "ask", 0.0))) / 2.0,
+        iv=float(_get_field(row, "impliedVolatility", 0.0)),
         dte=dte
     )
 

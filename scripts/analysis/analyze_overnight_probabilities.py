@@ -10,7 +10,7 @@ def analyze_probabilities(ticker="NQ1"):
         print(f"Error: Classification file not found at {class_path}")
         return
     
-    df_class = pd.read_parquet(class_path)
+    df_class = pd.read_parquet(class_path, columns=['date', 'type'])
     df_class['date'] = pd.to_datetime(df_class['date']).dt.date
     
     # 2. Load Session Profiler Data
@@ -72,12 +72,12 @@ def analyze_probabilities(ticker="NQ1"):
                     ('short false', 'long false'), ('short false', 'short true')]
 
     # Vectorized mapping using zip + isin
-    pairs = list(zip(df_sessions['status_asia'], df_sessions['status_london']))
+    pair_index = pd.MultiIndex.from_arrays([df_sessions['status_asia'], df_sessions['status_london']])
     
     df_sessions['scenario'] = "Neutral/Other"
-    df_sessions.loc[pd.Series(pairs).isin(bulls).values, 'scenario'] = "Bullish"
-    df_sessions.loc[pd.Series(pairs).isin(bears).values, 'scenario'] = "Bearish"
-    df_sessions.loc[pd.Series(pairs).isin(contradicting).values, 'scenario'] = "Contradicting"
+    df_sessions.loc[pair_index.isin(bulls), 'scenario'] = "Bullish"
+    df_sessions.loc[pair_index.isin(bears), 'scenario'] = "Bearish"
+    df_sessions.loc[pair_index.isin(contradicting), 'scenario'] = "Contradicting"
 
     # 4. Merge with Daily Classification
     df_merged = pd.merge(
@@ -179,11 +179,11 @@ def analyze_probabilities(ticker="NQ1"):
         df_results['Trend%'] = df_results['DWP%'] + df_results['DNP%']
         trend_setups = df_results[df_results['n'] >= 10].sort_values('Trend%', ascending=False).head(10)
         
-        f.write("| Setup (Asia \| London \| Broken) | Trend% (DWP+DNP) | DWP% | DNP% | n |\n")
+        f.write("| Setup (Asia \\| London \\| Broken) | Trend% (DWP+DNP) | DWP% | DNP% | n |\n")
         f.write("| :--- | :--- | :--- | :--- | :--- |\n")
         
         for idx, row in trend_setups.iterrows():
-            key_clean = idx.replace(" | ", " \| ").replace("LdnBreak:", "Brk:")
+            key_clean = idx.replace(" | ", " \\| ").replace("LdnBreak:", "Brk:")
             f.write(f"| {key_clean} | **{row['Trend%']}%** | {row['DWP%']}% | {row['DNP%']}% | {row['n']} |\n")
 
         f.write("\n> [!TIP]\n")
@@ -207,12 +207,12 @@ def analyze_probabilities(ticker="NQ1"):
                 f.write("_No setups met the threshold._\n\n")
                 return
 
-            f.write("| Setup (Asia \| London) | Broken? | Prob % | n |\n")
+            f.write("| Setup (Asia \\| London) | Broken? | Prob % | n |\n")
             f.write("| :--- | :--- | :--- | :--- |\n")
             
             for idx, row in matches.iterrows():
                 parts = idx.split(" | ")
-                asia_london = f"{parts[0]} \| {parts[1]}"
+                asia_london = f"{parts[0]} \\| {parts[1]}"
                 broken_status = "Yes" if "True" in parts[2] else "No"
                 prob = row[f"{target_class}%"]
                 f.write(f"| {asia_london} | {broken_status} | **{prob}%** | {row['n']} |\n")
@@ -237,7 +237,7 @@ def analyze_probabilities(ticker="NQ1"):
             f.write(separator + "\n")
             
             for idx, row in subset.iterrows():
-                key_clean = idx.replace(" | ", " \| ").replace("LdnBreak:", "Broken:")
+                key_clean = idx.replace(" | ", " \\| ").replace("LdnBreak:", "Broken:")
                 pct_str = " | ".join([str(row[f'{c}%']) for c in all_classes])
                 f.write(f"| {key_clean} | {row['n']} | {row['most_likely']} | {pct_str} |\n")
             f.write("\n")
