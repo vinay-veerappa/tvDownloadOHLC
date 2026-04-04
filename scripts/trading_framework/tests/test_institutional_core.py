@@ -10,7 +10,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from scripts.libs.data.loader import FrameworkLoader
-from scripts.libs.regime.regime_models import EnsembleRegimeModel
+from scripts.libs.regime.ensemble import EnsembleRegimeModel
 from scripts.trading_framework.ml.walk_forward import PurgedKFold
 
 class TestInstitutionalFramework(unittest.TestCase):
