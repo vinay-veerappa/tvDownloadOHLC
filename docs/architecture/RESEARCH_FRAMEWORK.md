@@ -41,3 +41,14 @@ Standardized scoring system (A-F) based on Expectancy (EV), System Quality (SQN)
 - **Timezone**: All internal timestamps are Naive UTC (ADR-001).
 - **Normalization**: Performance is measured in % of entry price or ATR (ADR-002).
 - **Sessions**: Uses the Institutional ALN window standard (ADR-004).
+
+## Performance Guardrails (ADR-011)
+To maintain our "10-Second-Backtest" contract, the research framework enforces strict performance rules:
+
+1.  **Zero Python Loops**: No Python `for` or `while` loops are allowed over time series bars. Use NumPy/Pandas vectorization.
+2.  **Vectorized Excursions**: All MFE/MAE calculations must use `rolling(h).max().shift(-h+1)`. This reduces O(N*H) complexity to O(N).
+3.  **Broadcasting**: Use NumPy broadcasting for multi-horizon analysis.
+4.  **Static Memory**: Price arrays should be converted to `float32` once at the entry layer.
+
+> [!IMPORTANT]
+> Any new strategy or research module that introduces a Python loop over individual bars in the 1m dataset will be failed by the Performance CI benchmark (ADR-009).

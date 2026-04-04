@@ -176,3 +176,26 @@ The project adopts a **Unified Research Suite** powered by a **Categorical Gradi
 ### Verification
 - `scripts/trading_framework/run_backtest.py` is the official implementation of this protocol.
 - `scripts/trading_framework/tests/test_grading.py` enforces these thresholds.
+
+---
+
+## [ADR-011] High-Performance Vectorized Research Analysis
+**Status:** Approved
+**Date:** 2026-04-04
+
+### Context
+Research analysis (MFE/MAE and Monte Carlo) typically involves N trades looking H bars forward. A naive Python loop implementation results in O(N*H) complexity, taking minutes for 10 years of data. This makes rapid iteration and Optuna optimization impossible.
+
+### Decision
+All post-signal research analysis MUST use **Vectorized Windowing** and **NumPy-First Execution**. Manual Python loops over bars or trades are strictly prohibited in the `core/` and `reporting/` layers.
+
+### Implementation Rules
+1. **Windowed Forward-Looking (Excursions)**: Use the `rolling(h).max().shift(-h+1)` pattern to compute MFE/MAE. This calculates the entire time series of potential excursions in a single vectorized pass.
+2. **Pure NumPy Execution**: The `VectorizedBacktester` must use cumulative sums and masking rather than bar-by-bar iteration.
+3. **Horizon Broadcasting**: When computing multiple horizons (5m, 1h, etc.), calculations should be broadcasted to avoid redundant `shift` operations where possible.
+4. **Memory Management**: Use `float32` for all large-scale price arrays to double processing throughput (SIMD optimization) and halve memory footprint.
+5. **No `iterrows()`**: Use of `df.iterrows()` or `df.apply()` with Python functions is considered a performance failure for datasets > 50,000 rows.
+
+### Verification
+- `scripts/trading_framework/core/mfe_mae.py` demonstrates the vectorized windowing pattern.
+- Benchmark: Calculating 5 excursion horizons on 1 million bars must complete in < 100ms.
