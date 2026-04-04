@@ -4,7 +4,7 @@ import uuid
 from typing import Dict, Any
 
 from scripts.trading_framework.core.base import SignalGenerator
-from scripts.trading_framework.features.feature_registry import FeatureRegistry
+from scripts.libs.features.feature_registry import FeatureRegistry
 from scripts.trading_framework.signals.signal_schema import SIGNAL_SCHEMA
 
 class MeanReversionSignal(SignalGenerator):

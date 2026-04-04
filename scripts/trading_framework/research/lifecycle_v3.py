@@ -9,9 +9,9 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.getcwd(), "../../"))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
-from scripts.trading_framework.data.loader import FrameworkLoader
-from scripts.trading_framework.features.feature_registry import FeatureRegistry
-from scripts.trading_framework.regime.regime_models import EnsembleRegimeModel
+from scripts.libs.data.loader import FrameworkLoader
+from scripts.libs.features.feature_registry import FeatureRegistry
+from scripts.libs.regime.regime_models import EnsembleRegimeModel
 from scripts.trading_framework.strategies.logic.box_reversion import BoxMeanReversionSignal
 from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from scripts.trading_framework.ml.signal_classifier import SignalClassifier

@@ -5,12 +5,12 @@ import os
 import sys
 
 # Ensure project root is in path
-PROJECT_ROOT = os.path.abspath(os.path.join(os.getcwd(), "../../"))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
+    sys.path.insert(0, PROJECT_ROOT)
 
-from scripts.trading_framework.data.loader import FrameworkLoader
-from scripts.trading_framework.regime.regime_models import EnsembleRegimeModel
+from scripts.libs.data.loader import FrameworkLoader
+from scripts.libs.regime.regime_models import EnsembleRegimeModel
 from scripts.trading_framework.ml.walk_forward import PurgedKFold
 
 class TestInstitutionalFramework(unittest.TestCase):

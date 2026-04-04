@@ -1,15 +1,15 @@
 import pandas as pd
 from typing import List, Dict, Callable, Any
-from scripts.trading_framework.features.indicators import (
+from scripts.libs.features.indicators import (
     compute_bollinger_bands,
     compute_keltner_channels,
     compute_squeeze
 )
-from scripts.trading_framework.features.microstructure import (
+from scripts.libs.features.microstructure import (
     compute_arrival_velocity,
     compute_momentum_features
 )
-from scripts.trading_framework.features.volume_features import (
+from scripts.libs.features.volume_features import (
     compute_volume_features
 )
 
