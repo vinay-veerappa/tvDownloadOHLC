@@ -1,49 +1,119 @@
-# Institutional Session Windows (ADR-004 & ADR-001)
-# All times in ET (America/New_York)
+# ═══════════════════════════════════════════════════════════════
+# Master Configuration
+# ═══════════════════════════════════════════════════════════════
+
+data:
+  parquet_dir: "data/parquet"
+  symbols:
+    price: ["MES", "MNQ"]
+    internals: ["TICK", "TICKQ", "UVOL", "DVOL", "TRIN", "TRINQ", "ADV", "VIX"]
+  date_range:
+    start: "2016-01-01"
+    end: "2026-03-31"
 
 sessions:
-  asia:
-    name: "Asia"
-    start: "20:00"
-    end: "02:00"
-    purpose: "Range Establishment"
-    color: "#2962FF" # Blue
-    
-  london:
-    name: "London"
-    start: "02:00"
-    end: "08:00"
-    purpose: "Range Expansion"
-    color: "#E91E63" # Pink
-    
-  new_york:
-    name: "New York"
-    start: "08:00"
-    end: "16:00"
-    purpose: "Execution"
-    color: "#4CAF50" # Green
+  # All times in US/Eastern
+  rth_start: "09:30"
+  rth_end: "16:00"
+  ib_end: "10:30" # Initial balance period end
+  ny_am_end: "11:00"
+  lunch_start: "11:00"
+  lunch_end: "13:30"
+  ny_pm_start: "13:30"
+  last_entry: "14:30" # No new entries after this
+  flatten_by: "15:45" # Flatten all positions
 
-  rth:
-    name: "Regular Trading Hours"
-    start: "09:30"
-    end: "16:00"
-    purpose: "Equities / High Liquidity"
-    color: "#FF9800" # Orange
+risk_mode: "raw" # "raw", "strategy", or "portfolio"
 
-# Special Institutional Killzones
-killzones:
-  london_open:
-    start: "02:00"
-    end: "05:00"
-  ny_open:
-    start: "08:30"
-    end: "11:00"
-  london_close:
-    start: "10:00"
-    end: "12:00"
+# ── Trade-level risk (active in "strategy" and "portfolio" modes) ──
+trade_risk:
+  default_policy: "cover_the_queen" # Policy name from trade_policies.py
+  policies:
+    cover_the_queen:
+      partial_exit_pct: 0.50 # Take 50% off at first target
+      partial_target_rr: 1.0 # First target at 1:1 R:R
+      remainder_trail_method: "atr" # "atr", "structure", "fixed"
+      trail_atr_multiplier: 2.0 # For ATR trailing
+      trail_atr_period: 14
+      move_stop_to_breakeven: true # After partial, move stop to entry
+    fixed_target:
+      target_rr: 2.0 # Take 100% at 2:1 R:R
+    scaled_exit:
+      exits: # List of {pct, target_rr}
+        - { pct: 0.33, target_rr: 1.0 }
+        - { pct: 0.33, target_rr: 2.0 }
+        - { pct: 0.34, trail: true, trail_atr_multiplier: 2.0 }
+    breakeven_trail:
+      breakeven_trigger_rr: 1.0 # Move stop to BE at 1R
+      trail_atr_multiplier: 1.5
+    time_stop:
+      max_bars: 30 # Exit if target not hit in N bars
+      applies_to: "remainder" # "full" or "remainder" (after partial)
 
-# Timezone Contract (ADR-001)
-timezone:
-  storage: "UTC"
-  calculation: "America/New_York"
-  display: "America/New_York"
+# ── Session-level risk (active in "portfolio" mode) ──
+session_risk:
+  daily_max_loss: 400.0 # USD — flatten and stop if hit
+  max_consecutive_losers: 2 # Pause 30 min after 2 consecutive losses
+  pause_after_consecutive_minutes: 30
+  hard_stop_consecutive_losers: 3 # Done for day after 3 consecutive losses
+  max_trades_per_day: 3 # Across all strategies
+  max_concurrent_positions: 1 # Only 1 position at a time
+
+# ── Account-level risk (active in "portfolio" mode) ──
+account_risk:
+  starting_equity: 50000.0
+  trailing_drawdown: 2000.0 # EOD trailing — adjust per firm
+  trailing_type: "eod" # "eod" or "intraday"
+  profit_target: 3000.0 # Eval profit target
+  weekly_drawdown_limit: 800.0 # 40% of trailing DD
+  weekly_action: "observation" # "observation" or "reduce_size"
+
+# ── Execution model ──
+execution:
+  slippage_ticks: 1 # 1 tick each way
+  commission_per_contract: 0.62 # Round-trip
+  tick_size:
+    MES: 0.25
+    MNQ: 0.25
+  point_value:
+    MES: 5.0 # $5 per point
+    MNQ: 2.0 # $2 per point
+  default_contracts: 1
+
+# ── Chop detection ──
+chop:
+  tick_persistence:
+    window_minutes: 30
+    thresholds: [150, 350] # Score: 0 if <150, 1 if 150-350, 2 if >350
+  vold_slope:
+    method: "linreg" # Linear regression slope from session open
+    threshold: 0.0 # Positive slope = score 1
+  trin_regime:
+    window_minutes: 30
+    chop_band: [0.9, 1.1] # Inside band = score 0, outside = score 1
+  vwap_cross:
+    window_bars_5m: 12 # 1 hour of 5-min bars
+    max_crosses: 4 # >4 = instrument in chop
+
+# ── MFE/MAE analysis (raw mode) ──
+mfe_mae:
+  forward_horizons_minutes: [5, 15, 30, 60, 120]
+  max_forward_bars_1m: 120 # Track up to 2 hours forward
+  normalize_by: "atr" # "atr", "points", "dollars"
+  atr_period: 14
+  atr_timeframe: "5min"
+
+# ── Optimization ──
+optimization:
+  n_trials: 200
+  n_jobs: 1
+  primary_metric: "prop_pass_rate" # For portfolio mode
+  secondary_metrics: ["calmar", "profit_factor", "win_rate"]
+  walk_forward:
+    train_days: 504 # ~2 years of trading days
+    test_days: 126 # ~6 months
+    step_days: 63 # ~3 months
+    embargo_bars: 120 # 2 hours at 1-min
+  monte_carlo:
+    n_simulations: 10000
+    eval_days: 30 # Simulated eval period

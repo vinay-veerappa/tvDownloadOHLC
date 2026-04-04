@@ -114,3 +114,65 @@ The project will enforce a **"Calculate Once, Persist Everywhere"** pattern for 
     *   Backtesting `FrameworkLoader` MUST attempt to load the Parquet feature store before falling back to raw calculation.
 4.  **Schema Governance**: All derived columns must be prefixed with `feat_` to prevent collisions with raw data (e.g., `feat_ny1_status`, `feat_vol_z`).
 5.  **Auditability**: Each derived file must contain a `metadata_json` footer or sidecar file documenting the engine version used to generate the features.
+
+---
+
+## [ADR-009] High-Performance Parallel Data Processing
+**Status:** Approved
+**Date:** 2026-04-04
+
+### Context
+The backtesting framework processes 10+ years of 1-minute bars across multiple instruments and feature groups. Sequential loading and Python-loop-based computation routinely takes minutes, which is unacceptable for interactive research and Optuna optimization loops (hundreds of trials per run).
+
+### Decision
+All data loading and feature computation in `scripts/libs/` MUST meet the following **performance contract: full pipeline (load + enrich + all features) completes in under 10 seconds for a single instrument on 10 years of 1m data.**
+
+### Implementation Rules
+1. **Parallel I/O**: All parquet reads MUST use `concurrent.futures.ThreadPoolExecutor`. Price and internals files are loaded concurrently. Target wall-time = time of the slowest single file, not the sum of all files.
+2. **pyarrow engine**: All parquet reads MUST use `pyarrow.parquet.read_table()` directly. pyarrow releases the GIL during I/O, enabling true thread parallelism.
+3. **Column pruning**: Only request the columns needed via `pq.read_table(..., columns=[...])`. Never read a wide derived parquet when only OHLCV is required.
+4. **No Python loops in hot paths**: Any computation over bars or sessions MUST be vectorised using numpy/pandas native ops (cumsum, rolling, groupby-transform). Python `for` loops over individual bars are banned in `scripts/libs/` code.
+5. **Vectorised OLS**: Expanding/rolling regression slopes MUST use the closed-form cumsum formulation `(n·Σxy − Σx·Σy) / (n·Σx² − (Σx)²)` via groupby-transform — not scipy or per-bar loops.
+6. **Independent feature groups run in parallel**: `FeatureRegistry.ensure_features()` MUST dispatch independent feature groups (those with no shared dependency at that depth) to a `ThreadPoolExecutor`. Only strictly ordered (upstream dependency) groups run sequentially.
+7. **Cache-first**: `DataLoader._cache` and the ADR-008 derived-features parquet store are checked before any computation. A cache hit skips all downstream work.
+
+### Verification
+- `python scripts/tools/benchmark_pipeline.py NQ1` must complete in < 10s on the developer machine.
+- Any new feature module must be profiled before merging. Modules exceeding 2s on 10 years of 1m data must be vectorised before acceptance.
+
+---
+
+## [ADR-010] Institutional Risk Grading & Unified Research Suite
+**Status:** Approved
+**Date:** 2026-04-04
+
+### Context
+Strategy assessment often relies on noisy metrics (absolute P&L) that don't account for risk efficiency or institutional "passability" (Prop Firm standards). This leads to backtest overfitting and poor capital allocation.
+
+### Decision
+The project adopts a **Unified Research Suite** powered by a **Categorical Grading System (A-F)**. All backtests MUST report these grades to ensure cross-strategy comparability.
+
+### Implementation Rules
+1. **The 7-Layer Pipeline**: Every research run must follow the standard sequence:
+   - Layer 1: Parallel Parquet Loading
+   - Layer 2: Stationary Feature Enrichment
+   - Layer 3: Signal Logic Discovery
+   - Layer 4: Vectorized Backtest Engine
+   - Layer 5: Excursion Analysis (MFE/MAE)
+   - Layer 6: ML/Prop Evaluation (Monte Carlo)
+   - Layer 7: Consolidated Reporting (Tearsheet + Dashboard)
+
+2. **Grading Rubric**:
+   | Metric | A (Excellent) | B (Good) | C (Fair) | D (Poor) | F (Fail) |
+   | :--- | :--- | :--- | :--- | :--- | :--- |
+   | **EV ($)** | >100 | >50 | >10 | >0 | <0 |
+   | **PF** | >1.8 | >1.4 | >1.2 | >1.0 | <1.0 |
+   | **SQN** | >3.0 | >2.5 | >2.0 | >1.5 | <1.5 |
+   | **DRR** | <4.0 | <6.0 | <8.0 | <10.0 | >10.0 |
+
+3. **Combined Edge**: Calculated as `EV_R * ProfitFactor`. This acts as the primary "Leaderboard" sorting key.
+4. **Risk of Ruin (RoR)**: Probability of a fixed bankroll loss (per account size) MUST be < 1% for institutional acceptance.
+
+### Verification
+- `scripts/trading_framework/run_backtest.py` is the official implementation of this protocol.
+- `scripts/trading_framework/tests/test_grading.py` enforces these thresholds.
