@@ -72,12 +72,17 @@ account_risk:
 execution:
   slippage_ticks: 1 # 1 tick each way
   commission_per_contract: 0.62 # Round-trip
+  use_micro_multipliers: true # ADR-009: Scale Mini data to Micro risk
   tick_size:
     MES: 0.25
     MNQ: 0.25
+    ES: 0.25
+    NQ: 0.25
   point_value:
     MES: 5.0 # $5 per point
     MNQ: 2.0 # $2 per point
+    ES: 50.0 # Standard Mini (will be scaled to 5.0 by ADR-009 logic)
+    NQ: 20.0 # Standard Mini (will be scaled to 2.0 by ADR-009 logic)
   default_contracts: 1
 
 # ── Chop detection ──

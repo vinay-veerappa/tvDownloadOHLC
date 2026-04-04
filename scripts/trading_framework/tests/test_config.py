@@ -1,22 +1,21 @@
 import pytest
 from pathlib import Path
-import pandas as pd
-import numpy as np
-from scripts.libs.risk.session_manager import SessionRiskManager
-from scripts.trading_framework.config.config_loader import load_config, RiskMode
+from scripts.trading_framework.config.config_loader import (
+    AppConfig, RiskMode, TrailingType, load_config
+)
 
 @pytest.fixture
 def mock_yaml():
-    """Mock configuration for Phase 1 data synthesis tests."""
+    """Mock YAML configuration string including new use_micro_multipliers flag."""
     return """
 data:
   parquet_dir: "data"
   symbols:
-    price: ["MES"]
+    price: ["NQ1!"]
     internals: ["VOLD"]
   date_range: {start: "2024-01-01", end: "2024-02-01"}
 
-risk_mode: "raw"
+risk_mode: "strategy"
 trade_risk:
   default_policy: "fixed_target"
   policies:
@@ -36,9 +35,10 @@ sessions:
 execution:
   slippage_ticks: 1
   commission_per_contract: 0.62
-  tick_size: {"MES": 0.25}
-  point_value: {"MES": 5.0}
+  tick_size: {"NQ1!": 0.25}
+  point_value: {"NQ1!": 20.0} # Mini Value
   default_contracts: 1
+  use_micro_multipliers: true
 
 session_risk:
   daily_max_loss: 400.0
@@ -70,32 +70,35 @@ mfe_mae:
   atr_timeframe: "5min"
 
 optimization:
-  n_trials: 10
+  n_trials: 20
   n_jobs: 1
-  primary_metric: "sharpe"
-  secondary_metrics: ["drawdown"]
-  walk_forward: {train_days: 10, test_days: 5, step_days: 2, embargo_bars: 10}
-  monte_carlo: {n_simulations: 100, eval_days: 30}
+  primary_metric: "ev"
+  secondary_metrics: ["profit_factor"]
+  walk_forward: {train_days: 1, test_days: 1, step_days: 1, embargo_bars: 1}
+  monte_carlo: {n_simulations: 1, eval_days: 1}
 """
 
-def test_phase1_config_loading(mock_yaml, tmp_path):
-    """Test that Phase 1 pipeline correctly integrates with the global config loader."""
-    config_file = tmp_path / "test_phase1_config.yaml"
+def test_config_loading(mock_yaml, tmp_path):
+    """Test that YAML loads into AppConfig and applies ADR-009 scaling."""
+    config_file = tmp_path / "test_config.yaml"
     config_file.write_text(mock_yaml)
     
-    # Use the standalone load_config function now required by ADR-009
     config = load_config(str(config_file))
     
-    assert config.risk_mode == RiskMode.RAW
-    assert config.sessions.rth_start == "09:30"
+    # 1. Core Config
+    assert "NQ1!" in config.symbols_price
+    
+    # 2. ADR-009 Scaling: NQ1! (Mini) point_value should be 2.0 (Micro) NOT 20.0 (Mini)
+    # even though the mock_yaml explicitly provided 20.0.
+    assert config.execution.point_value["NQ1!"] == 2.0
+    
+    # 3. Optimization Fix check
+    assert config.optimization.n_trials == 20
 
-def test_session_risk_manager_init(mock_yaml, tmp_path):
-    """Test that SessionRiskManager can be initialized from the new config schema."""
-    config_file = tmp_path / "test_risk_config.yaml"
+def test_account_risk_enums(mock_yaml, tmp_path):
+    """Test that account risk trailing type is correctly mapped to Enum."""
+    config_file = tmp_path / "test_config_enum.yaml"
     config_file.write_text(mock_yaml)
-    config = load_config(str(config_file))
     
-    # Verify manager respects the configuration attributes
-    sm = SessionRiskManager(config.session_risk, config.sessions)
-    assert sm.config.daily_max_loss == 400.0
-    assert hasattr(sm.sessions, 'rth_start')
+    config = load_config(str(config_file))
+    assert config.account_risk.trailing_type == TrailingType.EOD

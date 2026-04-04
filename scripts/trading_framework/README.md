@@ -23,8 +23,23 @@ The system architecture spans 7 layers to cleanly separate data ingestion from a
 
 ### 5. Research & Orchestration (Layer 6 & 7)
 - Hyperparameter optimization is fully handled by `OptunaOptimizer` (which wraps `optuna.create_study`).
-- The research suite seamlessly splices `In-Sample` ranges against purely untainted `Out-of-Sample` ranges (default splitting applies an extensive 1.5 million bars for training and the most recent 600K bars for inference testing).
+- The research suite seamlessly splices `In-Sample` ranges against purely untainted `Out-of-Sample` ranges.
 - Results generate fully interactive HTML institutional Tear Sheets.
+
+## Core Components
+
+- **Config Loader**: Dynamic validation of YAML settings with ADR-009 "Contract Duality" scaling.
+- **Engine**: Precision backtest simulator with slippage and commission modeling.
+- **Risk Layer**: Institutional session-level and account-level risk enforcement.
+- **ML Pipeline**: Purged Walk-Forward Cross-Validation to prevent data leakage.
+
+## ADR-009: Data vs. Execution Duality
+
+The framework allows for **institutional-grade data ingestion** (Minis) with **retail-grade risk execution** (Micros). By setting `use_micro_multipliers: true` in `sessions.yaml`, the system automatically re-values standard Mini contracts to their Micro equivalents (e.g., NQ $20.00 -> $2.00 per point).
+
+### Configuration Standard
+
+All framework modules now rely on the standalone `load_config()` utility located in `config_loader.py`. This ensures that ADR protocols are applied consistently before any strategy logic is executed.
 
 ## User Guide: Strategy Verification
 

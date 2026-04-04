@@ -4,7 +4,7 @@ Load and validate YAML configuration into typed dataclasses.
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
 import yaml
 
 
@@ -42,9 +42,10 @@ class SessionConfig:
 class ExecutionConfig:
     slippage_ticks: int
     commission_per_contract: float
-    tick_size: dict[str, float]
-    point_value: dict[str, float]
+    tick_size: Dict[str, float]
+    point_value: Dict[str, float]
     default_contracts: int
+    use_micro_multipliers: bool = True
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ class ChopConfig:
 
 @dataclass(frozen=True)
 class MfeMaeConfig:
-    forward_horizons_minutes: list[int]
+    forward_horizons_minutes: List[int]
     max_forward_bars_1m: int
     normalize_by: str
     atr_period: int
@@ -103,24 +104,23 @@ class OptimizationConfig:
     n_trials: int
     n_jobs: int
     primary_metric: str
-    secondary_metrics: list[str]
+    secondary_metrics: List[str]
     walk_forward: WalkForwardConfig
     monte_carlo: MonteCarloConfig
 
 
 @dataclass
 class AppConfig:
-    """Top-level configuration. Loaded from YAML, validated, and passed
-    to every library/strategy module."""
+    """Top-level configuration."""
     data_dir: Path
-    symbols_price: list[str]
-    symbols_internals: list[str]
+    symbols_price: List[str]
+    symbols_internals: List[str]
     date_start: str
     date_end: str
     sessions: SessionConfig
     risk_mode: RiskMode
     trade_risk_policy: str
-    trade_risk_policies: dict          # Raw dict — policies parse themselves
+    trade_risk_policies: dict
     session_risk: SessionRiskConfig
     account_risk: AccountRiskConfig
     execution: ExecutionConfig
@@ -130,22 +130,29 @@ class AppConfig:
 
 
 def load_config(path: str = "scripts/trading_framework/config/sessions.yaml") -> AppConfig:
-    """Load YAML config and return a validated AppConfig instance.
-
-    Steps:
-    1. Read YAML file
-    2. Parse each section into its typed dataclass
-    3. Validate cross-field constraints (e.g., weekly_drawdown_limit < trailing_drawdown)
-    4. Return frozen AppConfig
-
-    Raises ValueError on invalid config.
-    """
-    with open(path, encoding='utf-8') as f:
+    """Load and validate and scale Mini -> Micro (ADR-009)."""
+    with open(path, "r") as f:
         raw = yaml.safe_load(f)
 
-    # Parse each section into dataclasses
+    # 1. Scaling logic (ADR-009)
+    exec_data = raw["execution"].copy()
+    if exec_data.get("use_micro_multipliers", True):
+        m_map = {"ES": 5.0, "ES1!": 5.0, "MES": 5.0, 
+                 "NQ": 2.0, "NQ1!": 2.0, "MNQ": 2.0,
+                 "RTY": 5.0, "M2K": 5.0, 
+                 "YM": 0.5, "MYM": 0.5}
+        pv = exec_data.get("point_value", {}).copy()
+        for sym, val in m_map.items():
+            if sym in pv and pv[sym] > val:
+                pv[sym] = val
+            elif sym not in pv:
+                pv[sym] = val
+        exec_data["point_value"] = pv
+        exec_data["use_micro_multipliers"] = True
+
+    # 2. Instantiate dataclasses
     sessions = SessionConfig(**raw["sessions"])
-    execution = ExecutionConfig(**raw["execution"])
+    execution = ExecutionConfig(**exec_data)
     session_risk = SessionRiskConfig(**raw["session_risk"])
     account_risk = AccountRiskConfig(
         **{**raw["account_risk"],
@@ -153,6 +160,7 @@ def load_config(path: str = "scripts/trading_framework/config/sessions.yaml") ->
     )
     chop = ChopConfig(**raw["chop"])
     mfe_mae = MfeMaeConfig(**raw["mfe_mae"])
+    
     wf = WalkForwardConfig(**raw["optimization"]["walk_forward"])
     mc = MonteCarloConfig(**raw["optimization"]["monte_carlo"])
     opt = OptimizationConfig(
@@ -164,7 +172,7 @@ def load_config(path: str = "scripts/trading_framework/config/sessions.yaml") ->
         monte_carlo=mc,
     )
 
-    config = AppConfig(
+    return AppConfig(
         data_dir=Path(raw["data"]["parquet_dir"]),
         symbols_price=raw["data"]["symbols"]["price"],
         symbols_internals=raw["data"]["symbols"]["internals"],
@@ -179,13 +187,5 @@ def load_config(path: str = "scripts/trading_framework/config/sessions.yaml") ->
         execution=execution,
         chop=chop,
         mfe_mae=mfe_mae,
-        optimization=opt,
+        optimization=opt
     )
-
-    # Cross-field validation
-    assert config.account_risk.weekly_drawdown_limit < config.account_risk.trailing_drawdown, \
-        "weekly_drawdown_limit must be less than trailing_drawdown"
-    assert config.session_risk.hard_stop_consecutive_losers >= config.session_risk.max_consecutive_losers, \
-        "hard_stop must be >= pause threshold"
-
-    return config

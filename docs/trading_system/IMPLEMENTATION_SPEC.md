@@ -2397,7 +2397,16 @@ Usage: python scripts/run_portfolio_sim.py --symbol MES
 
 ```python
 """
-Optuna optimization across walk-forward folds.
+## Configuration & Orchestration (ADR-009)
+
+The system enforces a **Contract Duality** model to allow institutional-grade testing on retail-size accounts.
+
+- **Data Ingestion**: Standardizes on high-volume Mini contracts (ES/NQ) for superior liquidity and tick depth analysis.
+- **Risk Execution**: Re-values Mini ticks to their Micro equivalent (e.g. 0.25 ticks = $0.50 risk for NQ) at the configuration layer.
+- **Unified Loader**: All components must initialize via `scripts/trading_framework/config/config_loader.py:load_config()` to ensure multipliers are correctly applied before engine start.
+
+### Layer 6: ML Optimization
+- **Purged Walk-Forward**: Uses Lopez de Prado's "Purging and Embargo" logic in `PurgedKFold` to prevent temporal leakage between train/test folds.
 
 Usage: python scripts/run_optimization.py --strategy vwap_reclaim --metric prop_pass_rate
 """

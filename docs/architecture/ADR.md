@@ -98,6 +98,24 @@ The **Prisma `EconomicEvent` Table** is officially designated as a **Secondary S
 
 ## [ADR-008] Derived Feature Persistence (Stationary Features)
 **Status:** Approved
+**Date:** 2026-03-30
+
+### Context
+Features derived from price must be stationary to ensure model stability across different periods.
+
+---
+
+## [ADR-009] Data vs. Execution Contract Duality
+**Status:** Approved
+**Date:** 2026-04-04
+
+### Context
+Mini-contracts (ES/NQ) provide significantly deeper historical depth and liquid volume for alpha research, but Micro-contracts (MES/MNQ) are the primary execution vehicle for institutional-style risk management in prop firms.
+
+### Decision
+*   **Data Source**: Continue using Mini-contract OHLCV for feature engineering and signal generation.
+*   **Sizing Rule**: All calculations involving dollars ($) — including P&L, Session Max Loss, Trailing Drawdown, and Commissions — MUST assume Micro-contract multipliers (e.g., $5/point for MES, $2/point for MNQ) unless explicitly overridden in the `ExecutionConfig`.
+*   **Risk Symmetry**: Backtests performed on Mini data are automatically scaled to Micro units during the "Grading" and "Portfolio" phases of the research pipeline.
 **Date:** 2026-03-31
 
 ### Context

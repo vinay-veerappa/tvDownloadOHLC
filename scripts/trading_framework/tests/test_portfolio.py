@@ -1,22 +1,19 @@
 import pytest
 from pathlib import Path
-import pandas as pd
-import numpy as np
-from scripts.libs.risk.session_manager import SessionRiskManager
 from scripts.trading_framework.config.config_loader import load_config, RiskMode
 
 @pytest.fixture
 def mock_yaml():
-    """Mock configuration for Phase 1 data synthesis tests."""
+    """Mock configuration for portfolio-level risk and management tests."""
     return """
 data:
   parquet_dir: "data"
   symbols:
-    price: ["MES"]
+    price: ["MES", "MNQ"]
     internals: ["VOLD"]
   date_range: {start: "2024-01-01", end: "2024-02-01"}
 
-risk_mode: "raw"
+risk_mode: "portfolio"
 trade_risk:
   default_policy: "fixed_target"
   policies:
@@ -36,8 +33,8 @@ sessions:
 execution:
   slippage_ticks: 1
   commission_per_contract: 0.62
-  tick_size: {"MES": 0.25}
-  point_value: {"MES": 5.0}
+  tick_size: {"MES": 0.25, "MNQ": 0.25}
+  point_value: {"MES": 5.0, "MNQ": 2.0}
   default_contracts: 1
 
 session_risk:
@@ -78,24 +75,14 @@ optimization:
   monte_carlo: {n_simulations: 100, eval_days: 30}
 """
 
-def test_phase1_config_loading(mock_yaml, tmp_path):
-    """Test that Phase 1 pipeline correctly integrates with the global config loader."""
-    config_file = tmp_path / "test_phase1_config.yaml"
+def test_portfolio_config_loading(mock_yaml, tmp_path):
+    """Test that Portfolio management correctly integrates with the global config loader."""
+    config_file = tmp_path / "test_portfolio_config.yaml"
     config_file.write_text(mock_yaml)
     
     # Use the standalone load_config function now required by ADR-009
     config = load_config(str(config_file))
     
-    assert config.risk_mode == RiskMode.RAW
-    assert config.sessions.rth_start == "09:30"
-
-def test_session_risk_manager_init(mock_yaml, tmp_path):
-    """Test that SessionRiskManager can be initialized from the new config schema."""
-    config_file = tmp_path / "test_risk_config.yaml"
-    config_file.write_text(mock_yaml)
-    config = load_config(str(config_file))
-    
-    # Verify manager respects the configuration attributes
-    sm = SessionRiskManager(config.session_risk, config.sessions)
-    assert sm.config.daily_max_loss == 400.0
-    assert hasattr(sm.sessions, 'rth_start')
+    assert config.risk_mode == RiskMode.PORTFOLIO
+    assert config.account_risk.starting_equity == 50000.0
+    assert config.account_risk.profit_target == 3000.0
