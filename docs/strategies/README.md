@@ -39,15 +39,22 @@ This central catalog documents all strategies, hunters, and statistical models i
 
 ---
 
-## 📊 3. Statistical Verifiers (Layer 8)
+## 📊 3. Descriptive Statistics (Research Tools)
 
-| Model | Standard | Location | Status |
+> **Note**: These are statistical verifiers for pattern discovery — not trading strategies.
+> They do **not** need `hunt()`/`get_param_grid()` ADR-017 interfaces.
+> All scripts use **percentage-based metrics** and comply with the Backtest Standards ADR (no dollar multipliers).
+
+| Model | Location | ADR Compliant | Status |
 | :--- | :--- | :--- | :--- |
-| **Morning Judas** | **Legacy** | `scripts/nqstats/morning_judas/` | [ ] Iterative ❌ |
-| **Noon Curve** | **Legacy** | `scripts/nqstats/noon_curve/` | [ ] Iterative ❌ |
-| **ALN Sessions** | **Legacy** | `scripts/nqstats/aln_sessions/` | [ ] Iterative ❌ |
-| **Net Change SDevs** | **Legacy** | `scripts/nqstats/net_change_sdevs/` | [ ] Iterative ❌ |
-| **Hour Stats** | **Legacy** | `scripts/nqstats/hour_stats/` | [ ] Iterative ❌ |
+| **Morning Judas** | `scripts/nqstats/morning_judas/` | ✅ Pct-based | Verified ✅ |
+| **Noon Curve** | `scripts/nqstats/noon_curve/` | ✅ Pct-based | Verified ✅ |
+| **ALN Sessions** | `scripts/nqstats/aln_sessions/` | ✅ Price-relative | Verified ✅ |
+| **Net Change SDevs** | `scripts/nqstats/net_change_sdevs/` | ✅ Pct-based | Verified ✅ |
+| **Hour Stats** | `scripts/nqstats/hour_stats/` | ✅ Price-relative | Verified ✅ |
+| **RTH Breaks** | `scripts/nqstats/rth_breaks/` | ✅ Price-relative | Verified ✅ |
+| **1H Continuation** | `scripts/nqstats/1h_continuation/` | ✅ Price-relative | Verified ✅ |
+| **IB Breaks (Stats)** | `scripts/nqstats/initial_balance/` | ✅ Price-relative | Verified ✅ |
 
 ---
 
@@ -68,4 +75,4 @@ Documentation for specific high-conviction models:
 ### 🚀 Strategic Recommendations
 
 1. **Migration Focus**: **EMA Pullback** and **VWAP Reclaim** are the next "Vectorization" priorities to enhance the [lifecycle_runner.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_framework/research/lifecycle_runner.py) flow.
-2. **Consolidation**: The statistical verifiers in `nqstats` should be unified into a single **Multi-Stats Hunter** for institutional NQ/ES analysis.
+2. **Performance Optimization**: The `nqstats` scripts use iterative loops (groupby + iterrows) which are functionally correct but could be vectorized for speed on large datasets. This is a "nice-to-have" — statistical outputs are identical either way.
