@@ -14,7 +14,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../..")))
 sys.path.insert(0, os.path.dirname(__file__))
 
-from scripts.strategies.framework.core.backtest_engine import BacktestEngine
+from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from initial_balance_break import IBBreakStrategy
 import pandas as pd
 

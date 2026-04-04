@@ -20,7 +20,7 @@ import pandas as pd
 import numpy as np
 from datetime import time
 from typing import Dict, List, Optional
-from scripts.strategies.framework.core.backtest_engine import BacktestEngine
+from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 
 
 class IBBreakStrategy:

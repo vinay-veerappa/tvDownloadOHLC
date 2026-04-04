@@ -154,6 +154,48 @@ model Tag {
   group   TagGroup? @relation(fields: [groupId], references: [id])
 }
 
+
+// ==========================================
+// Centralized Research Hub Models (ADR-016)
+// ==========================================
+
+model ResearchStrategy {
+  id          String         @id @default(cuid())
+  name        String         @unique // e.g. "9:30 Breakout"
+  description String?
+  color       String         @default("#2962FF")
+  runs        ResearchRun[]
+  
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model ResearchRun {
+  id           String           @id @default(cuid())
+  runId        String           @unique // e.g. "RUN_20260404_0930"
+  ticker       String
+  environment  String           @default("Backtest") // "Backtest" | "Paper" | "Live"
+  strategyId   String
+  strategy     ResearchStrategy  @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  
+  // Results & Analytics
+  metricsJson  String?          // Serialized performance metrics (Sharpe, EV, etc.)
+  configJson   String?          // Hyperparameter configuration
+  thumbnailJson String?         // Downsampled equity curve (e.g. 200 points) for dashboard preview
+  equityCurvePath String?       // Absolute path to the 1-minute high-granularity file (Parquet/JSON)
+  grade        String?          // Institutional A-F Grade
+  
+  // Traceability
+  filePath     String?          // Absolute path to results/RESEARCH/ folder
+  gitHash      String?          
+  
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([strategyId])
+  @@index([ticker])
+}
+
 model BacktestResult {
   id        String   @id @default(cuid())
   strategy  String

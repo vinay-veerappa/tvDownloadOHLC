@@ -12,7 +12,7 @@ project_root = str(Path(__file__).parent.parent.parent.parent.parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from scripts.strategies.framework.core.enhanced_backtest_engine import EnhancedBacktestEngine
+from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from scripts.strategies.initial_balance.core.initial_balance_pullback import IBPullbackStrategy
 import pandas as pd
 

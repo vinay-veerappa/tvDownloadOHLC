@@ -23,7 +23,8 @@ import {
     Flame,
     Radar,
     Waves,
-    Layers
+    Layers,
+    Beaker
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -137,6 +138,13 @@ export function AppSidebar() {
             icon: HardDrive,
             href: "/data",
             active: pathname === "/data",
+        },
+        {
+            label: "Research Hub",
+            icon: Beaker,
+            href: "/research",
+            active: pathname === "/research" || pathname?.startsWith("/research/"),
+            badge: "New",
         },
         {
             label: "Reference",

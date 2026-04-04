@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'scripts'))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from enhanced_backtest_engine import EnhancedBacktestEngine
+from scripts.trading_framework.core.backtest_engine import VectorizedBacktester as EnhancedBacktestEngine
 from initial_balance_pullback import IBPullbackStrategy
 import pandas as pd
 

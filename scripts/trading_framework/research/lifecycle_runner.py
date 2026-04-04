@@ -1,204 +1,183 @@
 import os
 import sys
+import json
+import asyncio
 import pandas as pd
 import numpy as np
 import optuna
-from optuna.pruners import MedianPruner
-from optuna.samplers import TPESampler
-import concurrent.futures
-from datetime import datetime, timedelta
+from datetime import datetime
+from prisma import Prisma
 
-# Ensure project root is in path
-PROJECT_ROOT = os.path.abspath(os.path.join(os.getcwd(), "../../"))
+# --- Failsafe Root Detection (ADR-017) ---
+# 3 levels up from scripts/trading_framework/research/ -> root/
+script_dir = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(script_dir, "../../../"))
 if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
+    sys.path.insert(0, PROJECT_ROOT)
 
 from scripts.libs.data.loader import DataLoader
 from scripts.trading_framework.config.config_loader import load_config
-from scripts.strategies.logic.box_reversion import BoxMeanReversionSignal
 from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
-from scripts.trading_framework.ml.optimizer import OptunaOptimizer
-from scripts.trading_framework.reporting.reporter import QuantReporter
-from scripts.trading_framework.reporting.risk_profiler import RiskProfiler
-from scripts.trading_framework.reporting.monte_carlo import MonteCarloSimulator
+from scripts.strategies.logic.box_reversion import BoxMeanReversionSignal as BoxStrategy
+from scripts.strategies.logic.ib_breakout_modular import IBBreakoutModular as IBStrategy
 from scripts.trading_framework.ml.walk_forward import PurgedKFold
+from scripts.trading_framework.reporting.risk_profiler import RiskProfiler
 
-def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31", oos_end="2025-12-31"):
+class ResearchLifecycleRunner:
     """
-    Executes the full 7-layer lifecycle test:
-    1. IN-SAMPLE (IS) Optimization (Layer 6)
-    2. OUT-OF-SAMPLE (OOS) Validation (Layer 5)
-    3. Performance Contrast (Layer 7)
-    4. Audit Recording (research.db)
+    Standardized institutional lifecycle for strategy research.
+    Implements Layers 5, 6, and 7 of the framework.
     """
-    print(f"🚀 Initializing Lifecycle Test for {ticker}...")
-    
-    # --- Layer 1: Data Loading (Full Range) ---
-    config = load_config()
-    loader = DataLoader(config)
-    df = loader.load_enriched(ticker)
-    
-    # --- Purged & Embargoed Split (80/20 Rule) ---
-    # Convert boundary years to integers for robust filtering
-    is_yr_start = int(is_start.split('-')[0])
-    is_yr_end = int(is_end.split('-')[0])
-    oos_yr_end = int(oos_end.split('-')[0])
-    
-    # Robust year-based filtering to bypass string/TZ slicing pitfalls
-    df_is = df[(df.index.year >= is_yr_start) & (df.index.year <= is_yr_end)]
-    # Embargo: Leave a 3-day gap between IS and OOS to prevent spillover
-    df_oos_full = df[(df.index.year > is_yr_end) & (df.index.year <= oos_yr_end)]
-    df_oos = df_oos_full.iloc[4320:] if len(df_oos_full) > 4320 else pd.DataFrame()
-    
-    print(f"IS Range: {df_is.index.min()} to {df_is.index.max()} ({len(df_is)} bars)")
-    print(f"OOS Range: {df_oos.index.min()} to {df_oos.index.max()} ({len(df_oos)} bars)")
-
-    # --- Layer 6: In-Sample Optimization (Optuna) ---
-    def objective(trial):
-        # Multi-parameter Hyperparameter Grid
-        config = {
-            'filter_high_vol': trial.suggest_categorical('filter_high_vol', [True, False]),
-            'filter_trend_sequence': trial.suggest_categorical('filter_trend_sequence', [True, False]),
-            'require_london_breakout': trial.suggest_categorical('require_london_breakout', [True, False]),
-            
-            # Minimum distance from Mid required to enter a trade (~5 to 30 bps)
-            'min_dist': trial.suggest_float('min_dist', 0.0005, 0.0030, step=0.0005),
-            
-            # Take Profit Touch Buffer (~0 to 5 bps)
-            'tp_buffer': trial.suggest_float('tp_buffer', 0.0000, 0.0005, step=0.0001),
-            
-            # Stop Loss Maximum Distance (~30 to 100 bps)
-            'sl_dist': trial.suggest_float('sl_dist', 0.0030, 0.0100, step=0.0010),
-            
-            'strategy_name': 'BoxReversion_MultiOpt'
-        }
+    def __init__(self, ticker="NQ1", strategy_key="box"):
+        self.ticker = ticker
+        self.strategy_key = strategy_key
         
-        # --- Layer 6: Purged Cross-Validation Optimization ---
-        # Instead of one Sharpe, we calculate the Average Sharpe across 5 Purged Folds
-        pkf = PurgedKFold(n_splits=3, purge_window=100) # 3 splits for speed in test, 100 bar purge
-        fold_sharpes = []
-        
-        for fold_idx, (train_idx, test_idx) in enumerate(pkf.split(df_is)):
-            fold_train = df_is.iloc[train_idx]
-            fold_test = df_is.iloc[test_idx]
+        # Select Strategy Class
+        if strategy_key == "ib":
+            self.strategy = IBStrategy()
+        else:
+            self.strategy = BoxStrategy()
             
-            strategy = BoxMeanReversionSignal()
-            signals = strategy.generate_signals(fold_train, config)
-            
-            engine = VectorizedBacktester()
-            metrics = engine.run(signals, fold_test, {'leverage': 1.0})
-            
-            sharpe = metrics['sharpe_ratio']
-            fold_sharpes.append(sharpe)
-            
-            # --- Layer 6: Early Pruning (Inter-fold) ---
-            # Report the intermediate sharpe to Optuna
-            trial.report(sharpe, fold_idx)
-            
-            # Prune if the trial is performing significantly worse than the median
-            if trial.should_prune():
-                raise optuna.exceptions.TrialPruned()
-            
-        # Return the conservative Mean Sharpe across folds to prevent overfitting
-        return np.mean(fold_sharpes) if fold_sharpes else 0.0
+        self.strategy_name = self.strategy.strategy_name
+        self.backtester = VectorizedBacktester()
 
-    try:
-        # Optimization: Use fixed name for Optuna RDB persistence
+    def _optimize_params(self, data, trials=10):
+        """Standardized Layer 6 Optuna optimization."""
+        def objective(trial):
+            # Dynamic grid from strategy architecture (ADR-017)
+            grid = self.strategy.get_param_grid()
+            params = {}
+            for k, v in grid.items():
+                if isinstance(v[0], bool):
+                    params[k] = trial.suggest_categorical(k, [True, False])
+                elif isinstance(v[0], str):
+                    params[k] = trial.suggest_categorical(k, v)
+                elif isinstance(v[0], int):
+                    params[k] = trial.suggest_int(k, min(v), max(v))
+                else:
+                    params[k] = trial.suggest_float(k, min(v), max(v))
+            
+            # --- Layer 6: Purged Cross-Validation ---
+            pkf = PurgedKFold(n_splits=3, purge_window=100)
+            fold_sharpes = []
+            
+            for fold_idx, (train_idx, test_idx) in enumerate(pkf.split(data)):
+                fold_train = data.iloc[train_idx]
+                fold_test = data.iloc[test_idx]
+                
+                signals = self.strategy.generate_signals(fold_train, params)
+                if signals.empty:
+                    fold_sharpes.append(-1.0)
+                    continue
+                    
+                metrics = self.backtester.run(signals, fold_test, {'leverage': 1.0})
+                fold_sharpes.append(metrics.get('sharpe_ratio', -1.0))
+                
+                trial.report(fold_sharpes[-1], fold_idx)
+                if trial.should_prune():
+                    raise optuna.exceptions.TrialPruned()
+                    
+            return np.mean(fold_sharpes) if fold_sharpes else -1.0
+
         study = optuna.create_study(
-            study_name=f"multi_opt_{ticker}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}",
+            study_name=f"{self.strategy_name}_{self.ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             storage="sqlite:///optuna_research.db",
             direction="maximize",
             load_if_exists=True
         )
-        study.optimize(objective, n_trials=20, n_jobs=4)
-    except Exception as e:
-        print(f"❌ Optimization failed: {e}")
-        return
-    finally:
-        print("✅ Study complete (Institutional Mode: 20 trials).")
-    
-    # Check if we have trials
-    if len(study.trials) == 0:
-        print("❌ No successful trials. Aborting.")
-        return
+        study.optimize(objective, n_trials=trials, n_jobs=4)
+        return study.best_params
 
-    best_params = study.best_params
-    print(f"🏆 Best IS Parameters: {best_params}")
-    print(f"📈 Best IS Sharpe: {study.best_value:.2f}")
+    async def _persist_to_hub(self, run_id, ticker, best_params, oos_metrics, run_dir):
+        """Syncs high-fidelity research results to the Hub Database."""
+        db = Prisma()
+        await db.connect()
+        try:
+            # 1. Ensure Strategy Container Exists
+            strategy_record = await db.researchstrategy.upsert(
+                where={'name': self.strategy_name},
+                data={
+                    'create': {'name': self.strategy_name, 'description': "Modular Vectorized Strategy"},
+                    'update': {}
+                }
+            )
+            
+            # 2. Serialize 1m Equity Curve (High Fidelity)
+            equity_full = oos_metrics['equity_curve']
+            equity_path = os.path.join(run_dir, "equity_1m.json")
+            with open(equity_path, 'w') as f:
+                json.dump({
+                    'timestamps': [t.isoformat() for t in equity_full.index],
+                    'values': [float(v) for v in equity_full.values]
+                }, f)
+            
+            # 3. Create Research Run
+            risk_profiler = RiskProfiler(account_size=50000.0, risk_per_trade=500.0)
+            risk_metrics = risk_profiler.calculate_metrics(oos_metrics['trade_returns_pct'], oos_metrics['max_drawdown_%'])
+            
+            await db.researchrun.create(
+                data={
+                    'runId': run_id,
+                    'ticker': ticker,
+                    'strategyId': strategy_record.id,
+                    'metricsJson': json.dumps({
+                        'sharpe': float(oos_metrics.get('sharpe_ratio', 0)),
+                        'drawdown': float(oos_metrics.get('max_drawdown_%', 0)),
+                        'win_rate': float(oos_metrics.get('win_rate_%', 0)),
+                        'total_trades': int(oos_metrics.get('total_trades', 0)),
+                        'grading': risk_metrics.get('Institutional Grade', 'C')
+                    }),
+                    'configJson': json.dumps(best_params),
+                    'equityCurvePath': equity_path,
+                    'grade': risk_metrics.get('Institutional Grade', 'C'),
+                    'filePath': run_dir
+                }
+            )
+            print(f"✅ Research Hub Sync Complete for {run_id}")
+        finally:
+            await db.disconnect()
 
-    # --- Layer 5: Out-of-Sample Validation ---
-    print("🔬 Running OOS Validation...")
-    strategy = BoxMeanReversionSignal()
-    best_config = {**best_params, 'strategy_name': 'BoxReversion_MultiOpt'}
-    
-    # IS Performance
-    is_signals = strategy.generate_signals(df_is, best_config)
-    is_engine = VectorizedBacktester()
-    is_metrics = is_engine.run(is_signals, df_is, {'leverage': 1.0})
-    
-    # OOS Performance
-    oos_signals = strategy.generate_signals(df_oos, best_config)
-    oos_engine = VectorizedBacktester()
-    oos_metrics = oos_engine.run(oos_signals, df_oos, {'leverage': 1.0})
-    
-    print(f"📊 OOS Sharpe: {oos_metrics['sharpe_ratio']:.2f} (vs IS {is_metrics['sharpe_ratio']:.2f})")
-    print(f"📉 OOS Max Drawdown: {oos_metrics['max_drawdown_%']:.2f}%")
-
-    # --- Layer 7: Institutional Reporting ---
-    run_id = f"RUN_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{ticker}_{best_params.get('strategy_name', 'BoxRev')}"
-    reporter = QuantReporter(run_id=run_id)
-    
-    # Save Metadata (ADR-010)
-    run_metadata = {
-        "run_id": run_id,
-        "ticker": ticker,
-        "is_range": f"{is_start} to {is_end}",
-        "oos_range": f"{is_end} to {oos_end}",
-        "best_params": best_params,
-        "is_sharpe": float(is_metrics['sharpe_ratio']),
-        "oos_sharpe": float(oos_metrics['sharpe_ratio']),
-        "oos_drawdown": float(oos_metrics['max_drawdown_%'])
-    }
-    reporter.save_metadata(run_metadata)
-    print(f"📁 Reports saved to: {reporter.output_dir}")
-
-    # Generate Contrast Visualization
-    is_returns = is_metrics['equity_curve'].pct_change().fillna(0)
-    oos_returns = oos_metrics['equity_curve'].pct_change().fillna(0)
-    
-    reporter.generate_tear_sheet(is_returns, "Lifecycle_Test_IS")
-    reporter.generate_tear_sheet(oos_returns, "Lifecycle_Test_OOS")
-    
-    # --- Layer 7: Prop Firm Risk Profiling (Out of Sample) ---
-    print("\n" + "="*50)
-    print("📈 PROP FIRM RISK PROFILER (OOS 50K ACCOUNT)")
-    print("="*50)
-    # Assumes a typical $50k prop firm eval with $500 risk constraint per trade 
-    # to measure EV, PF, Sqn, RoR, and DRR accurately according to the document
-    risk_profiler = RiskProfiler(account_size=50000.0, risk_per_trade=500.0) 
-    oos_risk_metrics = risk_profiler.calculate_metrics(oos_metrics['trade_returns_pct'], oos_metrics['max_drawdown_%'])
-    
-    for key, val in oos_risk_metrics.items():
-        print(f"{key.ljust(25)}: {val}")
-    print("="*50)
-    
-    # --- Layer 8: Monte Carlo Simulation Strings ---
-    mc_sim = MonteCarloSimulator(iterations=10000, account_size=50000.0, risk_per_trade=500.0)
-    mc_metrics = mc_sim.simulate(oos_metrics['trade_returns_pct'])
-    mc_sim.print_report(mc_metrics)
-    
-    # --- Layer 6 audit persistence ---
-    summary_metrics = {
-        'is_sharpe': is_metrics['sharpe_ratio'],
-        'oos_sharpe': oos_metrics['sharpe_ratio'],
-        'is_drawdown': is_metrics['max_drawdown_%'],
-        'oos_drawdown': oos_metrics['max_drawdown_%'],
-        'mc_drr_99': mc_metrics.get('DRR_99%', 'N/A')
-    }
-    run_id = optimizer.log_experiment(best_config, summary_metrics)
-    
-    print(f"✅ Lifecycle Test Complete. Audit recorded as RUN_ID: {run_id}")
-    print(f"📂 Tear sheets saved to: scripts/trading_framework/reporting/outputs/")
+    def run_full_cycle(self, trials=10):
+        print(f"🚀 Initializing Institutional Lifecycle for {self.ticker} [{self.strategy_name}]...")
+        
+        # 1. Load Data (Layer 1/2)
+        loader = DataLoader(load_config())
+        df = loader.load_enriched(self.ticker)
+        
+        # 2. In-Sample / Out-of-Sample Split (Layer 5)
+        # IS: 2018-2023 | OOS: 2024-Present
+        df_is = df[df.index.year <= 2023]
+        df_oos = df[df.index.year >= 2024]
+        
+        # 3. Optimize (Layer 6)
+        print(f"🔬 Running In-Sample Optimization ({trials} trials)...")
+        best_params = self._optimize_params(df_is, trials=trials)
+        print(f"🏆 Best Params: {best_params}")
+        
+        # 4. Validate (OOS)
+        print(f"🔬 Running Out-of-Sample Validation...")
+        oos_signals = self.strategy.generate_signals(df_oos, best_params)
+        oos_metrics = self.backtester.run(oos_signals, df_oos, {'leverage': 1.0})
+        
+        # 5. Persist & Sync (Layer 7)
+        RESULTS_ROOT = os.path.join(PROJECT_ROOT, "results/RESEARCH")
+        TIMESTAMP = datetime.now().strftime('%Y%m%d_%H%M%S')
+        RUN_ID = f"RUN_{TIMESTAMP}_{self.ticker}_{self.strategy_key.upper()}"
+        RUN_DIR = os.path.join(RESULTS_ROOT, self.strategy_name, self.ticker, RUN_ID)
+        os.makedirs(RUN_DIR, exist_ok=True)
+        
+        asyncio.run(self._persist_to_hub(RUN_ID, self.ticker, best_params, oos_metrics, RUN_DIR))
+        
+        print(f"📊 OOS Sharpe: {oos_metrics.get('sharpe_ratio', 0):.2f}")
+        print(f"✅ Lifecycle Test Complete. Artifacts in {RUN_DIR}")
 
 if __name__ == "__main__":
-    run_lifecycle_test()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ticker", default="NQ1")
+    parser.add_argument("--strategy", default="box", choices=["box", "ib"])
+    parser.add_argument("--trials", type=int, default=10)
+    args = parser.parse_args()
+
+    runner = ResearchLifecycleRunner(ticker=args.ticker, strategy_key=args.strategy)
+    runner.run_full_cycle(trials=args.trials)
