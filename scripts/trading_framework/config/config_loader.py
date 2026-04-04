@@ -131,7 +131,7 @@ class AppConfig:
 
 def load_config(path: str = "scripts/trading_framework/config/sessions.yaml") -> AppConfig:
     """Load and validate and scale Mini -> Micro (ADR-009)."""
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
     # 1. Scaling logic (ADR-009)

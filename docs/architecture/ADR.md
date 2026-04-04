@@ -79,6 +79,8 @@ Classifying market behavior based on high/low break sequences within session "Bo
 ### Context
 Separation of deep historical data (`data/`) and recent streaming data (`data/live/`).
 
+---
+
 ## [ADR-007] Economic Event Data Fusion
 **Status:** Approved
 **Date:** 2026-03-29
@@ -94,6 +96,7 @@ The **Prisma `EconomicEvent` Table** is officially designated as a **Secondary S
 2.  **Historical Priority**: For backtesting, correlation studies, and "Day-at-a-Glance" history, services MUST query the `EconomicEvent` table to leverage the 9,800+ record archive.
 3.  **Blackout Protocol**: The `news_calendar_fetcher.py` script bridges the DB and legacy bots by mirroring the current schedule to `news_blackout.csv`.
 4.  **Timezone Integrity**: All dates in the `EconomicEvent` table MUST be stored in **UTC** (per ADR-001) for cross-platform compatibility.
+
 ---
 
 ## [ADR-008] Derived Feature Persistence (Stationary Features)
@@ -101,7 +104,17 @@ The **Prisma `EconomicEvent` Table** is officially designated as a **Secondary S
 **Date:** 2026-03-30
 
 ### Context
-Features derived from price must be stationary to ensure model stability across different periods.
+Complexity in backtesting (Layer 6) and real-time inference (Layer 8) often leads to redundant, expensive re-calculations of stationary market features (Regimes, ALN Status, News proximity, and Normalized Distances).
+
+### Decision
+The project will enforce a **"Calculate Once, Persist Everywhere"** pattern for all features that only depend on historical OHLCV or external events (News).
+
+### Implementation Rules
+1.  **Storage Target**: High-performance features are stored in `data/derived/{ticker}_features_1m.parquet` using the UTC timeline from ADR-001.
+2.  **Automatic Synchronization**:
+    *   The `NQStatsAdapter` acts as the primary writer/sync-agent for institutional features.
+    *   Backtesting `FrameworkLoader` MUST attempt to load the Parquet feature store before falling back to raw calculation.
+3.  **Schema Governance**: All derived columns must be prefixed with `feat_` to prevent collisions with raw data (e.g., `feat_ny1_status`, `feat_vol_z`).
 
 ---
 
@@ -110,53 +123,12 @@ Features derived from price must be stationary to ensure model stability across 
 **Date:** 2026-04-04
 
 ### Context
-Mini-contracts (ES/NQ) provide significantly deeper historical depth and liquid volume for alpha research, but Micro-contracts (MES/MNQ) are the primary execution vehicle for institutional-style risk management in prop firms.
+Mini-contracts (ES/NQ) provide deep historical depth, but Micro-contracts (MES/MNQ) are the primary execution vehicle.
 
 ### Decision
 *   **Data Source**: Continue using Mini-contract OHLCV for feature engineering and signal generation.
-*   **Sizing Rule**: All calculations involving dollars ($) — including P&L, Session Max Loss, Trailing Drawdown, and Commissions — MUST assume Micro-contract multipliers (e.g., $5/point for MES, $2/point for MNQ) unless explicitly overridden in the `ExecutionConfig`.
-*   **Risk Symmetry**: Backtests performed on Mini data are automatically scaled to Micro units during the "Grading" and "Portfolio" phases of the research pipeline.
-**Date:** 2026-03-31
-
-### Context
-Complexity in backtesting (Layer 6) and real-time inference (Layer 8) often leads to redundant, expensive re-calculations of stationary market features (Regimes, ALN Status, News proximity, and Normalized Distances). This causes performance bottlenecks in optimization loops and potential logic drift between research and production.
-
-### Decision
-The project will enforce a **"Calculate Once, Persist Everywhere"** pattern for all features that only depend on historical OHLCV or external events (News).
-
-### Implementation Rules
-1.  **Storage Target**: High-performance features are stored in `data/derived/{ticker}_features_1m.parquet` using the UTC timeline from ADR-001.
-2.  **Stationarity Rule**: Only features that are independent of model hyperparameters (e.g., ATR, Session Status, Time-to-News) may be globally persisted. Target-specific features (e.g., Signal entries) remain in the Strategy layer.
-3.  **Automatic Synchronization**:
-    *   The `NQStatsAdapter` (Layer 8) acts as the primary writer/sync-agent for institutional features.
-    *   Backtesting `FrameworkLoader` MUST attempt to load the Parquet feature store before falling back to raw calculation.
-4.  **Schema Governance**: All derived columns must be prefixed with `feat_` to prevent collisions with raw data (e.g., `feat_ny1_status`, `feat_vol_z`).
-5.  **Auditability**: Each derived file must contain a `metadata_json` footer or sidecar file documenting the engine version used to generate the features.
-
----
-
-## [ADR-009] High-Performance Parallel Data Processing
-**Status:** Approved
-**Date:** 2026-04-04
-
-### Context
-The backtesting framework processes 10+ years of 1-minute bars across multiple instruments and feature groups. Sequential loading and Python-loop-based computation routinely takes minutes, which is unacceptable for interactive research and Optuna optimization loops (hundreds of trials per run).
-
-### Decision
-All data loading and feature computation in `scripts/libs/` MUST meet the following **performance contract: full pipeline (load + enrich + all features) completes in under 10 seconds for a single instrument on 10 years of 1m data.**
-
-### Implementation Rules
-1. **Parallel I/O**: All parquet reads MUST use `concurrent.futures.ThreadPoolExecutor`. Price and internals files are loaded concurrently. Target wall-time = time of the slowest single file, not the sum of all files.
-2. **pyarrow engine**: All parquet reads MUST use `pyarrow.parquet.read_table()` directly. pyarrow releases the GIL during I/O, enabling true thread parallelism.
-3. **Column pruning**: Only request the columns needed via `pq.read_table(..., columns=[...])`. Never read a wide derived parquet when only OHLCV is required.
-4. **No Python loops in hot paths**: Any computation over bars or sessions MUST be vectorised using numpy/pandas native ops (cumsum, rolling, groupby-transform). Python `for` loops over individual bars are banned in `scripts/libs/` code.
-5. **Vectorised OLS**: Expanding/rolling regression slopes MUST use the closed-form cumsum formulation `(n·Σxy − Σx·Σy) / (n·Σx² − (Σx)²)` via groupby-transform — not scipy or per-bar loops.
-6. **Independent feature groups run in parallel**: `FeatureRegistry.ensure_features()` MUST dispatch independent feature groups (those with no shared dependency at that depth) to a `ThreadPoolExecutor`. Only strictly ordered (upstream dependency) groups run sequentially.
-7. **Cache-first**: `DataLoader._cache` and the ADR-008 derived-features parquet store are checked before any computation. A cache hit skips all downstream work.
-
-### Verification
-- `python scripts/tools/benchmark_pipeline.py NQ1` must complete in < 10s on the developer machine.
-- Any new feature module must be profiled before merging. Modules exceeding 2s on 10 years of 1m data must be vectorised before acceptance.
+*   **Sizing Rule**: All calculations involving dollars ($) — including P&L, Session Max Loss, Trailing Drawdown, and Commissions — MUST assume Micro-contract multipliers (e.g., $5/point for MES, $2/point for MNQ).
+*   **Risk Symmetry**: Backtests performed on Mini data are automatically scaled to Micro units during the "Grading" and "Portfolio" phases.
 
 ---
 
@@ -165,7 +137,7 @@ All data loading and feature computation in `scripts/libs/` MUST meet the follow
 **Date:** 2026-04-04
 
 ### Context
-Strategy assessment often relies on noisy metrics (absolute P&L) that don't account for risk efficiency or institutional "passability" (Prop Firm standards). This leads to backtest overfitting and poor capital allocation.
+Strategy assessment often relies on noisy metrics (absolute P&L). We need institutional "passability" (Prop Firm standards).
 
 ### Decision
 The project adopts a **Unified Research Suite** powered by a **Categorical Grading System (A-F)**. All backtests MUST report these grades to ensure cross-strategy comparability.
@@ -180,20 +152,7 @@ The project adopts a **Unified Research Suite** powered by a **Categorical Gradi
    - Layer 6: ML/Prop Evaluation (Monte Carlo)
    - Layer 7: Consolidated Reporting (Tearsheet + Dashboard)
 
-2. **Grading Rubric**:
-   | Metric | A (Excellent) | B (Good) | C (Fair) | D (Poor) | F (Fail) |
-   | :--- | :--- | :--- | :--- | :--- | :--- |
-   | **EV ($)** | >100 | >50 | >10 | >0 | <0 |
-   | **PF** | >1.8 | >1.4 | >1.2 | >1.0 | <1.0 |
-   | **SQN** | >3.0 | >2.5 | >2.0 | >1.5 | <1.5 |
-   | **DRR** | <4.0 | <6.0 | <8.0 | <10.0 | >10.0 |
-
-3. **Combined Edge**: Calculated as `EV_R * ProfitFactor`. This acts as the primary "Leaderboard" sorting key.
-4. **Risk of Ruin (RoR)**: Probability of a fixed bankroll loss (per account size) MUST be < 1% for institutional acceptance.
-
-### Verification
-- `scripts/trading_framework/run_backtest.py` is the official implementation of this protocol.
-- `scripts/trading_framework/tests/test_grading.py` enforces these thresholds.
+2. **Grading Rubric**: Standardized thresholds for EV ($), PF, SQN, and DRR.
 
 ---
 
@@ -202,18 +161,83 @@ The project adopts a **Unified Research Suite** powered by a **Categorical Gradi
 **Date:** 2026-04-04
 
 ### Context
-Research analysis (MFE/MAE and Monte Carlo) typically involves N trades looking H bars forward. A naive Python loop implementation results in O(N*H) complexity, taking minutes for 10 years of data. This makes rapid iteration and Optuna optimization impossible.
+Research analysis (MFE/MAE and Monte Carlo) typically involves N trades looking H bars forward. Naive implementing is too slow for Optuna. However, pure vectorized broadcasting on multi-million bar datasets (e.g., 2M+ NQ1 bars) can lead to massive memory allocation failures (8GB+ for a single result matrix).
 
 ### Decision
-All post-signal research analysis MUST use **Vectorized Windowing** and **NumPy-First Execution**. Manual Python loops over bars or trades are strictly prohibited in the `core/` and `reporting/` layers.
+1. **Vectorized First**: All post-signal research analysis MUST use **Vectorized Windowing** and **NumPy-First Execution**.
+2. **Chunked Memory Safety**: For datasets exceeding 1,000,000 bars or 100,000 signals, operations MUST be **Chunked** (recommended `CHUNK_SIZE = 50000`) to keep memory allocation within safe hardware bounds.
+3. **Precision Optimization**: Use `float32` for search/lookahead buffers to reduce memory footprint by 50% without loss of significant accuracy in statistical analysis.
+4. **Banned Patterns**: Manual Python loops over bars or trades are strictly prohibited in the `core/` layers.
 
-### Implementation Rules
-1. **Windowed Forward-Looking (Excursions)**: Use the `rolling(h).max().shift(-h+1)` pattern to compute MFE/MAE. This calculates the entire time series of potential excursions in a single vectorized pass.
-2. **Pure NumPy Execution**: The `VectorizedBacktester` must use cumulative sums and masking rather than bar-by-bar iteration.
-3. **Horizon Broadcasting**: When computing multiple horizons (5m, 1h, etc.), calculations should be broadcasted to avoid redundant `shift` operations where possible.
-4. **Memory Management**: Use `float32` for all large-scale price arrays to double processing throughput (SIMD optimization) and halve memory footprint.
-5. **No `iterrows()`**: Use of `df.iterrows()` or `df.apply()` with Python functions is considered a performance failure for datasets > 50,000 rows.
+---
 
-### Verification
-- `scripts/trading_framework/core/mfe_mae.py` demonstrates the vectorized windowing pattern.
-- Benchmark: Calculating 5 excursion horizons on 1 million bars must complete in < 100ms.
+## [ADR-012] Traceable Research Standard (TRS)
+**Status:** Approved
+**Date:** 2026-04-04
+
+### Context
+Research runs often litter the root or `results/` folder with cryptic names, making it impossible to audit past optimizations or parameter choices.
+
+### Decision
+All research executions (Backtests, Optimizations) MUST utilize a **RunID-based partitioning** system:
+1. **Subfolder Pattern**: `results/RESEARCH/RUN_<timestamp>_<ticker>_<strategy>/`
+2. **Mandatory Metadata**: Every run MUST persist a `run_metadata.json` containing:
+    - Git Commit Hash
+    - Hyperparameters (Optuna trail inputs)
+    - Source Data Hash
+    - Scaling Multipliers (ADR-009)
+
+---
+
+## [ADR-013] Institutional Reporting Suite
+**Status:** Approved
+**Date:** 2026-04-04
+
+### Context
+Backtest results must be "institutional grade" to enable rapid decision-making across symbols and regimes.
+
+### Decision
+1. **Automated Tear Sheets**: Every run MUST generate a `report.html` (QuantStats) and a `full_stats.json`.
+2. **Leaderboard Update**: Results must be appended to the global research ledger for cross-strategy comparison.
+
+---
+
+## [ADR-014] Shell Native Execution Standard
+**Status:** Approved
+**Date:** 2026-04-04
+
+### Context
+Terminal interactions on Windows frequently fail when using Unix-style aliases (e.g., `ls | grep`). 
+
+### Decision
+1. **PowerShell-First**: All automated and research-level terminal interactions MUST use native PowerShell cmdlets (`Get-ChildItem -Filter`, `Move-Item`, `New-Item`).
+2. **Path Integrity**: Use backslashes (`\`) or `Join-Path` for reliability across Windows environments.
+
+---
+
+## [ADR-015] Architectural Bootstrapping Standard (ABS)
+**Status:** Approved
+**Date:** 2026-04-04
+
+### Context
+Agents occasionally skip reading the ADR or lose context during a turn.
+
+### Decision
+1. **Synchronization First**: The `sync-trading-brain` skill is the non-negotiable entry point for all development work.
+2. **Explicit Verification**: Every task MUST begin by stating: "I have read and synchronized with the latest ADRs."
+
+---
+
+## [ADR-016] Unified Knowledge Hierarchy
+**Status:** Approved
+**Date:** 2026-04-04
+
+### Context
+Disconnected sources of truth (Second Brain, ADRs, MCP) create confusion.
+
+### Decision
+1. **Source of Truth Definitions**:
+    - **Architectural Hub**: `docs/architecture/ADR.md` (Software, environment, process).
+    - **Trading Hub**: `docs/SecondBrain_Trading.md` (Market logic, stats, bias).
+2. **Mandatory Synchronization**: Every agent session MUST begin by synchronizing with this hierarchy via the `sync-trading-brain` skill and the root `README.md` protocol.
+3. **MCP Role**: `codebase-memory-mcp` is an **Indexer & Searcher**, not an independent repository for decisions.

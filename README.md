@@ -1,3 +1,12 @@
+# 🤖 MANDATORY AGENT STARTUP 🚨
+**All sessions MUST begin with:**
+1.  **Synchronize**: Invoke the `sync-trading-brain` skill immediately.
+2.  **Architectural Hub**: Read `docs/architecture/ADR.md` (Software & Rules).
+3.  **Trading Hub**: Read `docs/SecondBrain_Trading.md` (Domain Logic & Stats).
+4.  **Verify**: State: "I have synchronized with ADR-016 (Unified Hierarchy)."
+
+---
+
 # tvDownloadOHLC - Trading Platform
 
 **Version 0.4.0** - Timeframe Standardization & Performance Refactor

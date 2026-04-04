@@ -22,6 +22,7 @@ Before initiating any analysis or code modification, perform the following:
     *   Verify `scripts/profiler/PROFILER_ARCHITECTURE.md` or `PROFILER_REQUIREMENTS.md` for any recent logic updates to Quadrants/Hourly personalities.
 4.  **Announce Loaded Rules & ADRs**:
     *   State the current ALN, NQStats baseline, and any applicable ADRs (e.g., Statistical Normalization) you are operating under.
+    *   **MANDATORY**: Explicitly state: "I have synchronized with ADR-015 (Bootstrapping), ADR-014 (Shell Native), and ADR-012 (Traceable Research)."
 
 ## Logic Guardrails
 

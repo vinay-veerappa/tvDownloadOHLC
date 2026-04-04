@@ -2,6 +2,7 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+import optuna
 from optuna.pruners import MedianPruner
 from optuna.samplers import TPESampler
 import concurrent.futures
@@ -12,8 +13,9 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.getcwd(), "../../"))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
-from scripts.libs.data.loader import FrameworkLoader
-from scripts.trading_framework.strategies.logic.box_reversion import BoxMeanReversionSignal
+from scripts.libs.data.loader import DataLoader
+from scripts.trading_framework.config.config_loader import load_config
+from scripts.strategies.logic.box_reversion import BoxMeanReversionSignal
 from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from scripts.trading_framework.ml.optimizer import OptunaOptimizer
 from scripts.trading_framework.reporting.reporter import QuantReporter
@@ -32,8 +34,9 @@ def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31",
     print(f"🚀 Initializing Lifecycle Test for {ticker}...")
     
     # --- Layer 1: Data Loading (Full Range) ---
-    loader = FrameworkLoader(ticker=ticker)
-    df = loader.load(include_historical=True)
+    config = load_config()
+    loader = DataLoader(config)
+    df = loader.load_enriched(ticker)
     
     # --- Purged & Embargoed Split (80/20 Rule) ---
     # Convert boundary years to integers for robust filtering
@@ -99,9 +102,20 @@ def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31",
         # Return the conservative Mean Sharpe across folds to prevent overfitting
         return np.mean(fold_sharpes) if fold_sharpes else 0.0
 
-    # Increase n_trials to 20 for the multi-parameter space
-    optimizer = OptunaOptimizer(study_name=f"multi_opt_{ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-    study = optimizer.run_optimization(objective, n_trials=20, n_jobs=4)
+    try:
+        # Optimization: Use fixed name for Optuna RDB persistence
+        study = optuna.create_study(
+            study_name=f"multi_opt_{ticker}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}",
+            storage="sqlite:///optuna_research.db",
+            direction="maximize",
+            load_if_exists=True
+        )
+        study.optimize(objective, n_trials=20, n_jobs=4)
+    except Exception as e:
+        print(f"❌ Optimization failed: {e}")
+        return
+    finally:
+        print("✅ Study complete (Institutional Mode: 20 trials).")
     
     # Check if we have trials
     if len(study.trials) == 0:
@@ -131,8 +145,23 @@ def run_lifecycle_test(ticker="NQ1", is_start="2018-01-01", is_end="2023-12-31",
     print(f"📉 OOS Max Drawdown: {oos_metrics['max_drawdown_%']:.2f}%")
 
     # --- Layer 7: Institutional Reporting ---
-    reporter = QuantReporter()
+    run_id = f"RUN_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{ticker}_{best_params.get('strategy_name', 'BoxRev')}"
+    reporter = QuantReporter(run_id=run_id)
     
+    # Save Metadata (ADR-010)
+    run_metadata = {
+        "run_id": run_id,
+        "ticker": ticker,
+        "is_range": f"{is_start} to {is_end}",
+        "oos_range": f"{is_end} to {oos_end}",
+        "best_params": best_params,
+        "is_sharpe": float(is_metrics['sharpe_ratio']),
+        "oos_sharpe": float(oos_metrics['sharpe_ratio']),
+        "oos_drawdown": float(oos_metrics['max_drawdown_%'])
+    }
+    reporter.save_metadata(run_metadata)
+    print(f"📁 Reports saved to: {reporter.output_dir}")
+
     # Generate Contrast Visualization
     is_returns = is_metrics['equity_curve'].pct_change().fillna(0)
     oos_returns = oos_metrics['equity_curve'].pct_change().fillna(0)

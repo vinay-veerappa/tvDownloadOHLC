@@ -87,47 +87,68 @@ class VectorizedBacktester(BaseBacktester):
         n_sigs = len(signals)
         n_bars = len(data)
 
-        # Vectorized Index Map: Create a 2D matrix of indices representing future bars
-        offsets = np.arange(MAX_SEARCH)
-        future_indices = entry_indices[:, None] + offsets  # (N_sigs, 1440)
-        future_indices = np.clip(future_indices, 0, n_bars - 1)
+        # Optimization: Process in chunks to prevent 8GB+ memory allocation failure
+        # ADR-011: Hardware-aware chunking for large datasets (e.g., 2M+ NQ1 bars)
+        CHUNK_SIZE = 50000
+        all_trade_returns = []
+        all_hit_bars = []
+        all_hit_occurred = []
+        all_is_sl = []
+        all_exit_closes = []
 
-        # Sample Prices (Efficiently vectorized)
-        highs = data['high'].values[future_indices]
-        lows = data['low'].values[future_indices]
-        closes = data['close'].values[future_indices]
+        # Convert price buffers to float32 to reduce memory footprint by 50% during search pass
+        high_vals = data['high'].values.astype(np.float32)
+        low_vals = data['low'].values.astype(np.float32)
+        close_vals = data['close'].values.astype(np.float32)
 
-        targets = signals['target1_price'].values[:, None]
-        stops = signals['stop_price'].values[:, None]
-        is_long = (signals['direction'] == 'long').values[:, None]
+        for i in range(0, n_sigs, CHUNK_SIZE):
+            chunk_indices = entry_indices[i : i + CHUNK_SIZE]
+            chunk_targets = signals['target1_price'].values[i : i + CHUNK_SIZE, None].astype(np.float32)
+            chunk_stops = signals['stop_price'].values[i : i + CHUNK_SIZE, None].astype(np.float32)
+            chunk_is_long = (signals['direction'] == 'long').values[i : i + CHUNK_SIZE, None]
 
-        # 3. Compute HIT MATRICES
-        # Long Logic: High >= Target OR Low <= Stop
-        # Short Logic: Low <= Target OR High >= Stop
-        tp_hits = np.where(is_long, highs >= targets, lows <= targets)
-        sl_hits = np.where(is_long, lows <= stops, highs >= stops)
+            # Vectorized Index Map for Chunk
+            offsets = np.arange(MAX_SEARCH)
+            chunk_future_indices = chunk_indices[:, None] + offsets
+            chunk_future_indices = np.clip(chunk_future_indices, 0, n_bars - 1)
 
-        # 4. Resolve Outcomes (Strict Priority: Stop Loss wins if same bar)
-        # Find first bar where ANY hit occurs
-        any_hit = tp_hits | sl_hits
-        
-        # argmax returns the first index of Truth
-        hit_occurred = np.any(any_hit, axis=1)
-        hit_bars = np.argmax(any_hit, axis=1)
-        
-        # Outcome Logic:
-        # If both hit in the same bar, SL wins (Conservative)
-        is_sl = sl_hits[np.arange(n_sigs), hit_bars] # True if SL hit at the hit_bar
-        
+            # Sample Prices
+            chunk_highs = high_vals[chunk_future_indices]
+            chunk_lows = low_vals[chunk_future_indices]
+            chunk_closes = close_vals[chunk_future_indices]
+
+            # Compute HIT MATRICES
+            tp_hits = np.where(chunk_is_long, chunk_highs >= chunk_targets, chunk_lows <= chunk_targets)
+            sl_hits = np.where(chunk_is_long, chunk_lows <= chunk_stops, chunk_highs >= chunk_stops)
+
+            # Resolve Outcomes (First occurrence)
+            any_hit = tp_hits | sl_hits
+            chunk_hit_occurred = np.any(any_hit, axis=1)
+            chunk_hit_bars = np.argmax(any_hit, axis=1)
+            
+            # SL wins on same-bar hit (Conservative)
+            chunk_is_sl = sl_hits[np.arange(len(chunk_indices)), chunk_hit_bars]
+
+            all_hit_occurred.append(chunk_hit_occurred)
+            all_hit_bars.append(chunk_hit_bars)
+            all_is_sl.append(chunk_is_sl)
+            all_exit_closes.append(chunk_closes[np.arange(len(chunk_indices)), MAX_SEARCH - 1])
+
+        # Concatenate Chunk Results
+        hit_occurred = np.concatenate(all_hit_occurred)
+        hit_bars = np.concatenate(all_hit_bars)
+        is_sl = np.concatenate(all_is_sl)
+        exit_closes = np.concatenate(all_exit_closes)
+
         # 5. Compute Returns
         entry_prices = signals['entry_price'].values
-        exit_prices = np.where(is_sl, stops.flatten(), targets.flatten())
+        exit_prices = np.where(is_sl, signals['stop_price'].values, signals['target1_price'].values)
         
         # If no hit occurred in the 24h window, use final Close (Timeout)
-        no_hit_indices = ~hit_occurred
-        exit_prices[no_hit_indices] = closes[no_hit_indices, -1]
+        exit_prices[~hit_occurred] = exit_closes[~hit_occurred]
         
-        direction_vec = np.where(is_long.flatten(), 1, -1)
+        is_long_flat = (signals['direction'] == 'long').values
+        direction_vec = np.where(is_long_flat, 1, -1)
         
         # Base trade returns
         trade_returns = ((exit_prices - entry_prices) / entry_prices) * direction_vec
