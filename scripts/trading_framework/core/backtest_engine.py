@@ -26,6 +26,44 @@ class VectorizedBacktester(BaseBacktester):
             'CL': 1000.0,
             'GC': 100.0
         }
+
+    @staticmethod
+    def _standard_signal_columns() -> List[str]:
+        return ['signal_time', 'direction', 'entry_price', 'stop_price', 'target1_price']
+
+    def _normalize_standardized_signals(self, signals: pd.DataFrame) -> pd.DataFrame:
+        """Defensive normalization for standardized signal frames.
+
+        Ensures missing/invalid no-signal outputs never crash the engine and
+        returns an empty canonical-schema DataFrame when input is unusable.
+        """
+        cols = self._standard_signal_columns()
+        if signals is None or not isinstance(signals, pd.DataFrame):
+            return pd.DataFrame(columns=cols)
+
+        if signals.empty:
+            if not all(c in signals.columns for c in cols):
+                return pd.DataFrame(columns=cols)
+            return signals[cols].copy()
+
+        if not all(c in signals.columns for c in cols):
+            return pd.DataFrame(columns=cols)
+
+        out = signals[cols].copy()
+        out['signal_time'] = pd.to_datetime(out['signal_time'], errors='coerce')
+        out['direction'] = out['direction'].astype(str).str.lower()
+
+        for c in ['entry_price', 'stop_price', 'target1_price']:
+            out[c] = pd.to_numeric(out[c], errors='coerce')
+
+        out = out[
+            out['signal_time'].notna()
+            & out['direction'].isin(['long', 'short'])
+            & out['entry_price'].notna()
+            & out['stop_price'].notna()
+            & out['target1_price'].notna()
+        ]
+        return out
         
     def run(self, signals: Union[pd.Series, pd.DataFrame], data: pd.DataFrame, risk_params: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(signals, pd.Series):
@@ -53,6 +91,10 @@ class VectorizedBacktester(BaseBacktester):
         }
 
     def _run_standardized_matches(self, signals: pd.DataFrame, data: pd.DataFrame, risk_params: Dict[str, Any]) -> Dict[str, Any]:
+        signals = self._normalize_standardized_signals(signals)
+        if signals.empty:
+            return self._null_metrics(data)
+
         # 1. Alignment and Pre-check
         entry_indices = data.index.get_indexer(signals['signal_time'], method='bfill')
         valid_mask = entry_indices != -1

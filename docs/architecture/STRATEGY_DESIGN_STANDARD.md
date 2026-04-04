@@ -21,6 +21,7 @@ The `hunt(data)` vectorized interface is now the MANDATORY standard for all new 
     - `entry_price`: (float) The target price for entry.
     - `stop_price`: (float) The price to exit if the trade fails.
     - `target1_price`: (float) The price to exit if the trade succeeds.
+- **No-Signal Output Rule (MANDATORY)**: If no setups are found, return an empty `pd.DataFrame` with the same canonical columns (`signal_time`, `direction`, `entry_price`, `stop_price`, `target1_price`). Do not return a column-less DataFrame.
 
 ---
 
@@ -65,3 +66,12 @@ By following this standard, all strategies automatically benefit from:
 1. **Institutional-Grade MAE/MFE** reporting.
 2. **200x Performance Boost** in Optuna sweeps.
 3. **No "Shadowing" Bugs** (Single Engine).
+
+---
+
+## 4. Mandatory Verification Gate (Once Per Change)
+
+For every new/ported hunter strategy and for any lifecycle schema change, you MUST run one full ADR-017 matrix smoke pass once before marking work complete.
+
+PowerShell command (repo root):
+`$strategies = @('ib_pullback','box_reversion','mean_reversion','ema_pullback','vwap_reclaim','failed_auction','six_am_reversal'); foreach ($s in $strategies) { & .\\.venv\\Scripts\\python.exe -m scripts.trading_framework.research.lifecycle_runner --ticker NQ1 --strategy $s --trials 1 --skip-persist; if ($LASTEXITCODE -ne 0) { throw "FAILED:$s" } }`

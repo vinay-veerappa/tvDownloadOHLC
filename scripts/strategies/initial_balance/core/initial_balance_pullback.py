@@ -15,6 +15,7 @@ class IBPullbackStrategy:
     def __init__(self, ticker: str = "NQ1", ib_duration_min: int = 45):
         self.ticker = ticker
         self.ib_duration_min = ib_duration_min
+        self.output_cols = ['signal_time', 'direction', 'entry_price', 'stop_price', 'target1_price']
         
     def hunt(self, data: pd.DataFrame, params: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         """
@@ -25,10 +26,9 @@ class IBPullbackStrategy:
             params: Dictionary of overrides for optimization (Optuna).
             
         Returns:
-            Signal DataFrame compliant with the Design Standard.
+            Signal DataFrame compliant with the Design Standard (Zero-Loop).
         """
         p = params or {}
-        ticker = self.ticker
         
         # 1. Pre-calculate Daily IB (Vectorized)
         data = data.copy()
@@ -44,11 +44,8 @@ class IBPullbackStrategy:
         # Join IB levels back to the main dataframe
         data['ib_high'] = data['date'].map(ib_highs)
         data['ib_low'] = data['date'].map(ib_lows)
-        data['ib_range'] = data['ib_high'] - data['ib_low']
         
         # 3. Define Bias (High first vs Low first in IB)
-        # We need the time of the IB High and IB Low for bias
-        # Re-slice ib_window to ensure it has the latest mapped columns
         ib_window = data.between_time(ib_start, ib_end).copy()
         ib_window['datetime'] = ib_window.index
         
@@ -67,65 +64,72 @@ class IBPullbackStrategy:
         fib_df = VectorizedIndicators.calculate_daily_fibs(data)
         data = pd.concat([data, fib_df], axis=1)
         
-        # 4. Entry Window Mask (10:16 AM - 12:00 PM per USER REQUEST)
+        # 6. Entry Window Mask (10:16 AM - 12:00 PM per USER REQUEST)
         window_mask = (data.index.time >= time(10, 16)) & (data.index.time <= time(12, 0))
         
-        # 5. Pullback Trigger Logic (Touch-Based)
+        # 7. Pullback Trigger Logic (Zero-Loop)
         # Price must have been 'Above' Fib for Long, or 'Below' Fib for Short before retracing
-        # We calculate 'Has Pulsed Away' per day
         data['long_pulsed'] = (data['low'] > data['fib_long_50']).groupby(data['date']).cummax()
         data['short_pulsed'] = (data['high'] < data['fib_short_50']).groupby(data['date']).cummax()
         
         # Entry Masks
-        long_entry_mask = (
+        long_mask = (
             window_mask & 
-            (data['bias'] == 'long') & # New: Bias Aware
+            (data['bias'] == 'long') &
             data['long_pulsed'] & 
             (data['low'] <= data['fib_long_50']) & 
             (data['low'] >= data['ib_low'])
         )
         
-        short_entry_mask = (
+        short_mask = (
             window_mask & 
-            (data['bias'] == 'short') & # New: Bias Aware
+            (data['bias'] == 'short') &
             data['short_pulsed'] & 
             (data['high'] >= data['fib_short_50']) & 
             (data['high'] <= data['ib_high'])
         )
         
-        # Filter for first entry per day
-        long_signals = data[long_entry_mask].groupby('date').head(1)
-        short_signals = data[short_entry_mask].groupby('date').head(1)
+        # Filter for first entry per day (Zero-Loop Vectorized)
+        long_signals = data[long_mask].copy()
+        long_signals['direction'] = 'long'
         
-        # 6. Schema Synthesis
-        signals = []
+        short_signals = data[short_mask].copy()
+        short_signals['direction'] = 'short'
         
-        # Long Signals
-        for _, sig in long_signals.iterrows():
-            entry_price = sig['fib_long_50']
-            stop_price = sig['ib_low']
-            risk = abs(entry_price - stop_price)
+        combined = pd.concat([long_signals, short_signals]).sort_index()
+        if combined.empty:
+            return pd.DataFrame(columns=self.output_cols)
             
-            signals.append({
-                'signal_time': sig.name,
-                'direction': 'long',
-                'entry_price': entry_price,
-                'stop_price': stop_price,
-                'target1_price': entry_price + (risk * p.get('tp_r_mult', 1.0))
-            })
-            
-        # Short Signals
-        for _, sig in short_signals.iterrows():
-            entry_price = sig['fib_short_50']
-            stop_price = sig['ib_high']
-            risk = abs(entry_price - stop_price)
-            
-            signals.append({
-                'signal_time': sig.name,
-                'direction': 'short',
-                'entry_price': entry_price,
-                'stop_price': stop_price,
-                'target1_price': entry_price - (risk * p.get('tp_r_mult', 1.0))
-            })
-            
-        return pd.DataFrame(signals).sort_values('signal_time') if signals else pd.DataFrame()
+        # Select first signal per day
+        combined['date'] = combined.index.normalize()
+        first_sigs = combined.groupby('date').head(1).copy()
+        
+        # 8. Optimized Synthesis (Zero-Loop)
+        # Instead of for-loops, we use vectorized column operations
+        first_sigs['signal_time'] = first_sigs.index
+        first_sigs['entry_price'] = np.where(first_sigs['direction'] == 'long', first_sigs['fib_long_50'], first_sigs['fib_short_50'])
+        first_sigs['stop_price'] = np.where(first_sigs['direction'] == 'long', first_sigs['ib_low'], first_sigs['ib_high'])
+        
+        risk = (first_sigs['entry_price'] - first_sigs['stop_price']).abs()
+        tp_mult = p.get('tp_r_mult', 1.0)
+        
+        first_sigs['target1_price'] = np.where(
+            first_sigs['direction'] == 'long',
+            first_sigs['entry_price'] + (risk * tp_mult),
+            first_sigs['entry_price'] - (risk * tp_mult)
+        )
+        
+        # Final Schema Formatting
+        return first_sigs[self.output_cols].reset_index(drop=True)
+
+    @staticmethod
+    def get_param_grid() -> Dict[str, Any]:
+        """
+        Returns the standard optimization grid for Optuna.
+        Adheres to ADR-017 for strategy research.
+        """
+        return {
+            'tp_r_mult': ('float', 0.5, 3.0),
+            'ib_duration_min': ('int', 30, 60),
+            # Add other relevant hunters parameters here
+        }

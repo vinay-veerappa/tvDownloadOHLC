@@ -241,3 +241,33 @@ Disconnected sources of truth (Second Brain, ADRs, MCP) create confusion.
     - **Trading Hub**: `docs/SecondBrain_Trading.md` (Market logic, stats, bias).
 2. **Mandatory Synchronization**: Every agent session MUST begin by synchronizing with this hierarchy via the `sync-trading-brain` skill and the root `README.md` protocol.
 3. **MCP Role**: `codebase-memory-mcp` is an **Indexer & Searcher**, not an independent repository for decisions.
+
+---
+
+## [ADR-017] Modular Vectorized Strategy Architecture
+**Status:** Approved
+**Date:** 2026-04-04
+
+### Context
+As the Statistical Trading Framework scales, we require a high-performance, standardized way to write, optimize, and visualize strategies. Legacy iterative patterns (looping over bars) are insufficient for high-trial Optuna sweeps.
+
+### Decision
+All future and research-grade strategies MUST follow the **Modular Vectorized Signal Pattern**, decomposing the system into three atomic layers:
+1.  **Triggers (Layer 4a)**: Vectorized mathematical logic for raw entry/exit signals.
+2.  **Filters (Layer 4b)**: Contextual "gates" (Kill Zones, Regimes, News) that block or allow signals.
+3.  **Risk Modules (Layer 4c)**: Standardized methods for calculating stops and targets (ATR, Fibs, Institutional Zones).
+
+### Mandatory Implementation Rules
+1. **Zero-Loop Requirement**: Total removal of `for` loops in signal generation. Use NumPy/Pandas native operations.
+2. **Optuna Hook**: Strategies must expose a `get_param_grid()` method to define their hyperparameter search space.
+3. **Interoperable Schema**: Signal generators must output a standardized `pd.DataFrame` containing `signal_time`, `direction`, `entry_price`, `stop_price`, and `target1_price`.
+4. **No-Signal Contract (Mandatory)**: If no entries are found, strategies MUST return an **empty DataFrame with the same standardized columns** (not a bare `pd.DataFrame()`). This prevents downstream KeyError failures (for example on `signal_time`) in lifecycle/backtester integrations.
+5. **Matrix Verification Gate (Run Once Per Change Set)**: For any new/ported hunter strategy or lifecycle schema change, run a one-time full matrix lifecycle smoke test across all ADR-017 hunter keys before completion. This gate is mandatory to catch no-signal and parameter-shape regressions early.
+
+### Required Matrix Command (PowerShell)
+Run from repo root:
+`$strategies = @('ib_pullback','box_reversion','mean_reversion','ema_pullback','vwap_reclaim','failed_auction','six_am_reversal'); foreach ($s in $strategies) { & .\\.venv\\Scripts\\python.exe -m scripts.trading_framework.research.lifecycle_runner --ticker NQ1 --strategy $s --trials 1 --skip-persist; if ($LASTEXITCODE -ne 0) { throw "FAILED:$s" } }`
+
+### Consequences
+*   **Research Velocity**: Backtests on multi-year 1m datasets take seconds, enabling massive Optuna sweeps.
+*   **Layered Flexibility**: Filters and Risk modules become "hot-swappable" across different strategy triggers.

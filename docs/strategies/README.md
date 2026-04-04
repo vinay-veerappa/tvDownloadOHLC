@@ -1,87 +1,71 @@
-# Trading Strategies Documentation
+# Master Strategy Inventory: Institutional NQ/ES Research
 
-This folder contains strategy documentation, backtesting results, and research files organized by strategy type.
-
-> [!TIP]
-> For backtest standards and data sources, see [BACKTEST_STANDARDS.md](BACKTEST_STANDARDS.md).
+This central catalog documents all strategies, hunters, and statistical models in the `tvDownloadOHLC` platform. Use this as the "Source of Truth" for prioritizing **ADR-017 "Zero-Loop"** migrations and Optuna research sweeps.
 
 ---
 
-## Strategies Overview
+## 🏗️ Research Hierarchy
 
-| Strategy | Description | Status |
-|:---|:---|:---|
-| [9:30 Opening Range Breakout](9_30_breakout/) | NQ breakout based on first candle | ✅ Backtested |
-| [Initial Balance Break](initial_balance_break/) | IB range breakout (10-year stats) | ✅ Validated |
-| [Expected Moves](expected_moves/) | EM-based trading strategies | 📊 Research |
-
----
-
-## 9:30 Opening Range Breakout (`9_30_breakout/`)
-
-Trades the breakout of the 9:30 AM opening candle on NQ.
-
-| Document | Description |
-|:---|:---|
-| [9_30_NQ_STRATEGY.md](9_30_breakout/9_30_NQ_STRATEGY.md) | Original strategy rules and logic |
-| [9_30_NQ_V2_STRATEGY.md](9_30_breakout/9_30_NQ_V2_STRATEGY.md) | Enhanced version with filters |
-| [nq_930_breakout.md](9_30_breakout/nq_930_breakout.md) | Backtest results and analysis |
-
-**Scripts:** (`scripts/strategies/9_30_breakout/`)
-- `verify_930_strategy.py` - Quick verification script
-- `run_930_v2_strategy.py` - V2 strategy runner
-- `compare_930_variants.py` - Variant comparison
-- `generate_930_charts.py` - Chart generation
-- `web/lib/backtest/strategies/nq-1min-strategy.ts` - TypeScript strategy class
+| Status | Code Standard | Description |
+| :--- | :--- | :--- |
+| **✅ Vectorized** | **ADR-017 (Zero-Loop)** | High-performance, Optuna-ready, vectorized research modules. |
+| **❌ Iterative** | **Legacy (Loop-Based)** | Original iterative models; pending migration to vectorized standard. |
+| **📊 Research** | **Draft/Analysis** | Initial statistical verification or pattern discovery phase. |
 
 ---
 
-## Initial Balance Break (`initial_balance_break/`)
+## 🏛️ 1. Breakout Models (Layer 4)
 
-Trades breakouts of the Initial Balance (first hour) range with 96% historical break probability.
-
-| Document | Description |
-|:---|:---|
-| [README.md](initial_balance_break/README.md) | Strategy overview and rules |
-| [STRATEGY_COMPLETE_GUIDE.md](initial_balance_break/STRATEGY_COMPLETE_GUIDE.md) | Comprehensive strategy guide |
-| [STRATEGY_ENCYCLOPEDIA.md](initial_balance_break/STRATEGY_ENCYCLOPEDIA.md) | All strategy variants |
-| [TRADE_EXAMPLES.md](initial_balance_break/TRADE_EXAMPLES.md) | Example trades with charts |
-| [MAE_MFE_FINDINGS.md](initial_balance_break/MAE_MFE_FINDINGS.md) | MAE/MFE optimization |
-| [VALIDATION_RESULTS.md](initial_balance_break/VALIDATION_RESULTS.md) | Backtest validation results |
-
-**Subfolders:**
-- `charts/` - Visual trade examples
-- `historical_validation/` - Historical validation data
-- `mechanism_evaluation/` - Entry mechanism comparisons
-- `multi_asset_validation/` - Cross-asset testing
-- `stop_loss_comparison/` - Stop loss optimization
-
-**Backtest Results:**
-- `backtest_results_all.csv` - Full 10-year backtest (94 KB)
-- `backtest_results_*min.csv` - By timeframe (15m, 30m, 45m, 60m)
+| Strategy | Standard | Location | Status |
+| :--- | :--- | :--- | :--- |
+| **Initial Balance Breakout (IBB)** | **ADR-017** | `scripts/strategies/initial_balance/core/` | **Vectorized ✅** |
+| **9:30 Breakout (v1-v6)** | **ADR-015** | `scripts/strategies/9_30_breakout/core/` | **Vectorized ✅** |
+| **RTH Session Breaks** | **Legacy** | `scripts/nqstats/rth_breaks/` | [ ] Iterative ❌ |
+| **ORB Generic** | **Legacy** | `scripts/orb_generic/` | [ ] Audit Pending 📊 |
 
 ---
 
-## Expected Moves (`expected_moves/`)
+## 🔬 2. Pullback & Reversal Hunters (Layer 4)
 
-Research on expected move calculations and trading applications.
-
-| Document | Description |
-|:---|:---|
-| [README.md](expected_moves/README.md) | EM methodology overview |
-| [DATA_DICTIONARY.md](expected_moves/DATA_DICTIONARY.md) | EM data fields and calculations |
-| [METHODOLOGY_COMPARISON.md](expected_moves/METHODOLOGY_COMPARISON.md) | Straddle vs IV approaches |
-| [ES_COMPREHENSIVE_ANALYSIS.md](expected_moves/ES_COMPREHENSIVE_ANALYSIS.md) | ES-specific findings |
-| [INTRADAY_TRADING_PLAYBOOK.md](expected_moves/INTRADAY_TRADING_PLAYBOOK.md) | EM-based trading strategies |
-| [OVERNIGHT_ANALYSIS.md](expected_moves/OVERNIGHT_ANALYSIS.md) | Overnight session statistics |
-| [INTRADAY_SR_ANALYSIS.md](expected_moves/INTRADAY_SR_ANALYSIS.md) | Support/Resistance analysis |
+| Strategy | Standard | Location | Status |
+| :--- | :--- | :--- | :--- |
+| **IB Pullback (ICT FVG)** | **ADR-017** | `scripts/strategies/initial_balance/core/` | **Vectorized ✅** |
+| **Box Reversion (False Break)**| **ADR-017** | `scripts/strategies/reversal/core/` | **Vectorized ✅** |
+| **Mean Reversion (Bollinger)** | **ADR-017** | `scripts/strategies/reversal/core/` | **Vectorized ✅** |
+| **EMA Pullback** | **ADR-017** | `scripts/strategies/ema_pullback/core/` | **Vectorized ✅** |
+| **VWAP Reclaim** | **ADR-017** | `scripts/strategies/vwap_reclaim/core/` | **Vectorized ✅** |
+| **Failed Auction** | **ADR-017** | `scripts/strategies/failed_auction/core/` | **Vectorized ✅** |
+| **6 AM Reversal** | **ADR-017** | `scripts/strategies/reversal/core/` | **Vectorized ✅** |
 
 ---
 
-## Backtest Standards
+## 📊 3. Statistical Verifiers (Layer 8)
 
-See [BACKTEST_STANDARDS.md](BACKTEST_STANDARDS.md) for:
-- Required CSV fields (Context, Execution, Outcome)
-- Metric standardization (percentages)
-- Visualization requirements
-- Market regime validation periods
+| Model | Standard | Location | Status |
+| :--- | :--- | :--- | :--- |
+| **Morning Judas** | **Legacy** | `scripts/nqstats/morning_judas/` | [ ] Iterative ❌ |
+| **Noon Curve** | **Legacy** | `scripts/nqstats/noon_curve/` | [ ] Iterative ❌ |
+| **ALN Sessions** | **Legacy** | `scripts/nqstats/aln_sessions/` | [ ] Iterative ❌ |
+| **Net Change SDevs** | **Legacy** | `scripts/nqstats/net_change_sdevs/` | [ ] Iterative ❌ |
+| **Hour Stats** | **Legacy** | `scripts/nqstats/hour_stats/` | [ ] Iterative ❌ |
+
+---
+
+## 🛡️ Architecture & Guidelines
+
+### Backtest Standards
+See [BACKTEST_STANDARDS.md](BACKTEST_STANDARDS.md) for required CSV fields (Context, Execution, Outcome).
+
+### Institutional Strategy Logic
+Documentation for specific high-conviction models:
+- [9:30 AM Opening Range Breakout](9_30_breakout/README.md)
+- [Initial Balance Complete Guide](initial_balance_break/STRATEGY_COMPLETE_GUIDE.md)
+- [Reversal & Mean Reversion Suite](reversal/README.md)
+- [Expected Moves Methodology](expected_moves/README.md)
+
+---
+
+### 🚀 Strategic Recommendations
+
+1. **Migration Focus**: **EMA Pullback** and **VWAP Reclaim** are the next "Vectorization" priorities to enhance the [lifecycle_runner.py](file:///c:/Users/vinay/tvDownloadOHLC/scripts/trading_framework/research/lifecycle_runner.py) flow.
+2. **Consolidation**: The statistical verifiers in `nqstats` should be unified into a single **Multi-Stats Hunter** for institutional NQ/ES analysis.

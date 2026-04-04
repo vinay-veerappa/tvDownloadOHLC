@@ -20,10 +20,12 @@
 12. [STRATEGY: Initial Balance Breakout/Failure](#12-strategy-initial-balance-breakoutfailure)
 13. [STRATEGY: EMA Pullback Continuation](#13-strategy-ema-pullback-continuation)
 14. [STRATEGY: Failed Auction Fill](#14-strategy-failed-auction-fill)
-15. [UTILITY: Acceptance/Rejection Classifier](#15-utility-acceptancerejection-classifier)
-16. [UTILITY: Chop Detection Composite](#16-utility-chop-detection-composite)
-17. [Orchestration & Run Scripts](#17-orchestration--run-scripts)
-18. [Testing Strategy](#18-testing-strategy)
+15. [STRATEGY: Initial Balance Pullback (ICT)](#15-strategy-initial-balance-pullback-ict)
+16. [STRATEGY: Reversal & Mean Reversion Suite](#16-strategy-reversal--mean-reversion-suite)
+17. [UTILITY: Acceptance/Rejection Classifier](#17-utility-acceptancerejection-classifier)
+18. [UTILITY: Chop Detection Composite](#18-utility-chop-detection-composite)
+19. [Orchestration & Run Scripts](#19-orchestration--run-scripts)
+20. [Testing Strategy](#20-testing-strategy)
 
 ---
 
@@ -2262,7 +2264,57 @@ class FailedAuctionStrategy(StrategyBase):
 
 ---
 
-## 15. UTILITY: Acceptance/Rejection Classifier
+## 15. STRATEGY: Initial Balance Pullback (ICT)
+
+**File: `scripts/strategies/initial_balance/core/initial_balance_pullback.py`**
+
+```python
+"""
+ICT-style Initial Balance Retracement signal generator.
+"""
+
+class IBPullbackStrategy(StrategyBase):
+    """
+    Required features: ib_high, ib_low, ib_mid, atr_14, session_block
+
+    Signal logic (ADR-017 Optimized):
+    
+    1. IB Range Check: Wait for IB to form.
+    2. Pullback Confirmation: Price breaks IB level, then retraces to touch/approach it.
+    3. Rejection Filter: Uses 1-min candle patterns (wick rejection) at the level.
+    4. Entry: Market on close of confirmation bar.
+    5. Stop: Middle of IB range or 1.5x ATR.
+    6. Target: Next liquidity level (NY1 High/Low or daily EM).
+    """
+```
+
+---
+
+## 16. STRATEGY: Reversal & Mean Reversion Suite
+
+**Files: `scripts/strategies/reversal/core/box_reversion.py`, `mean_reversion.py`**
+
+```python
+"""
+Modular Reversal strategies utilizing exhaustion and false breakouts.
+"""
+
+class BoxReversionStrategy(StrategyBase):
+    """
+    Detects false breakouts of session boxes.
+    Requires: Ny1_High, Ny1_Low, Box_Width_ATR.
+    """
+
+class MeanReversionStrategy(StrategyBase):
+    """
+    Statistical exhaustion via Bollinger Bands.
+    Requires: bb_upper, bb_lower, bb_pctile.
+    """
+```
+
+---
+
+## 17. UTILITY: Acceptance/Rejection Classifier
 
 Already specified in Section 5 under `scripts/libs/features/acceptance_rejection.py`.
 
@@ -2279,7 +2331,7 @@ if state == LevelState.SHARP_REJECT:
 
 ---
 
-## 16. UTILITY: Chop Detection Composite
+## 18. UTILITY: Chop Detection Composite
 
 Already specified in Section 5 under `scripts/libs/features/chop.py` and `scripts/libs/features/internals.py`.
 
@@ -2288,7 +2340,7 @@ columns that are pre-computed on the enriched DataFrame.
 
 ---
 
-## 17. Orchestration & Run Scripts
+## 19. Orchestration & Run Scripts
 
 **File: `scripts/strategies/base.py`**
 
