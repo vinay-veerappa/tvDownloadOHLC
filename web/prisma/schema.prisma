@@ -6,7 +6,7 @@ generator client {
 }
 
 generator py_client {
-  provider  = "C:/Users/vinay/AppData/Roaming/Python/Python314/Scripts/prisma-client-py.exe"
+  provider  = "prisma-client-py"
   interface = "asyncio"
 }
 

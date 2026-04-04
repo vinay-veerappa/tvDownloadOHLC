@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import asyncio
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import optuna
@@ -155,6 +156,16 @@ class ResearchLifecycleRunner:
         finally:
             await db.disconnect()
 
+    @staticmethod
+    def _can_persist_to_hub() -> tuple[bool, str]:
+        db_url = os.getenv('DATABASE_URL')
+        if not db_url:
+            db_file = Path(PROJECT_ROOT) / 'web' / 'prisma' / 'dev.db'
+            db_file.parent.mkdir(parents=True, exist_ok=True)
+            os.environ['DATABASE_URL'] = f"file:{db_file.as_posix()}"
+            return True, f"DATABASE_URL not set; defaulted to {os.environ['DATABASE_URL']}"
+        return True, "ok"
+
     def run_full_cycle(self, trials=10, persist_to_hub=True):
         print(f"🚀 Initializing Institutional Lifecycle for {self.ticker} [{self.strategy_name}]...")
         
@@ -185,7 +196,18 @@ class ResearchLifecycleRunner:
         os.makedirs(RUN_DIR, exist_ok=True)
         
         if persist_to_hub:
-            asyncio.run(self._persist_to_hub(RUN_ID, self.ticker, best_params, oos_metrics, RUN_DIR))
+            can_persist, reason = self._can_persist_to_hub()
+            if not can_persist:
+                print(f"⚠️ Skipping hub persistence: {reason}.")
+                print("ℹ️ Set DATABASE_URL (and ensure Prisma client is generated) to enable persistence.")
+            else:
+                if reason != 'ok':
+                    print(f"ℹ️ {reason}")
+                try:
+                    asyncio.run(self._persist_to_hub(RUN_ID, self.ticker, best_params, oos_metrics, RUN_DIR))
+                except Exception as exc:
+                    print(f"⚠️ Hub persistence failed: {exc}")
+                    print("ℹ️ Continuing without persistence. Use --skip-persist to silence this path.")
         else:
             print("ℹ️ Skipping hub persistence (--skip-persist enabled).")
         
