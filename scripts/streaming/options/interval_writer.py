@@ -1,16 +1,14 @@
 """
 interval_writer.py
 ==================
-Writes intraday GEX snapshots to the Prisma/SQLite database via the Next.js
-internal API route (POST /api/options-live/snapshot).
+Writes intraday GEX snapshots directly to Prisma/SQLite from Python.
 
 This replaces the SQLite interval_data table from ezoptionsschwab.py with
 Prisma-managed storage queryable from the web dashboard.
 
 During each pipeline cycle (RTH only), call `write_snapshot()` with the
 current DealerLevels for each ticker.  The Next.js API route handles the
-actual Prisma upsert so we don't need Python Prisma client installed in
-the pipeline environment.
+actual Prisma upsert only as an optional fallback path.
 """
 from __future__ import annotations
 
@@ -19,12 +17,15 @@ import logging
 import traceback
 import math
 import asyncio
+import os
 from datetime import datetime, timezone, date
+from pathlib import Path
 from typing import Any
-# try:
-#     from prisma import Prisma
-# except Exception:
-Prisma = None
+
+try:
+    from prisma import Prisma
+except Exception:
+    Prisma = None
 
 import requests
 from urllib3.util.retry import Retry
@@ -66,12 +67,24 @@ def _sanitize_payload(data: Any) -> Any:
 
 _prisma_instance: Prisma | None = None
 
+
+def _ensure_database_url() -> None:
+    if os.getenv("DATABASE_URL"):
+        return
+    # Repo root: scripts/streaming/options -> project root
+    project_root = Path(__file__).resolve().parents[3]
+    db_file = project_root / "web" / "prisma" / "dev.db"
+    db_file.parent.mkdir(parents=True, exist_ok=True)
+    os.environ["DATABASE_URL"] = f"file:{db_file.as_posix()}"
+
+
 async def _get_prisma() -> Prisma:
     """Lazy initialization of Prisma client."""
     global _prisma_instance
     if Prisma is None:
         raise RuntimeError("Prisma client is not available")
     if _prisma_instance is None:
+        _ensure_database_url()
         _prisma_instance = Prisma()
         await _prisma_instance.connect()
     return _prisma_instance
@@ -117,6 +130,13 @@ def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> 
 
     payload = _sanitize_payload(payload)
 
+    # Prefer direct Prisma writes so this path has no runtime Node dependency.
+    try:
+        return asyncio.run(_write_snapshot_direct(payload))
+    except Exception:
+        pass
+
+    # Optional fallback to API route for environments without python prisma.
     try:
         resp = _api_session.post(
             SNAPSHOT_ENDPOINT,
@@ -125,17 +145,13 @@ def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> 
             headers={"Content-Type": "application/json"},
         )
         if resp.status_code == 200:
-            log.debug("GexSnapshot written for %s @ %s", ticker, now_utc.strftime("%H:%M"))
+            log.debug("GexSnapshot written via API fallback for %s @ %s", ticker, now_utc.strftime("%H:%M"))
             return True
-        else:
-            log.warning(
-                "GexSnapshot write failed for %s: HTTP %d — %s",
-                ticker, resp.status_code, resp.text[:200],
-            )
-            return False
-    except requests.exceptions.ConnectionError:
-        log.info("Server offline for %s. Attempting direct Database write...", ticker)
-        return asyncio.run(_write_snapshot_direct(payload))
+        log.warning(
+            "GexSnapshot API fallback failed for %s: HTTP %d — %s",
+            ticker, resp.status_code, resp.text[:200],
+        )
+        return False
     except Exception as e:
         log.warning("GexSnapshot write error for %s: %s\n%s", ticker, e, traceback.format_exc())
         return False
@@ -147,8 +163,8 @@ async def _write_snapshot_direct(payload: dict[str, Any]) -> bool:
         db = await _get_prisma()
         await db.gexsnapshot.create(data={
             "ticker": payload["ticker"],
-            "timestamp": datetime.fromisoformat(payload["timestamp"]),
-            "tradingDate": datetime.fromisoformat(payload["tradingDate"]),
+            "timestamp": datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00")),
+            "tradingDate": datetime.fromisoformat(payload["tradingDate"].replace("Z", "+00:00")),
             "totalGex": payload["totalGex"],
             "totalGexDeltaAdj": payload.get("totalGexDeltaAdj"),
             "callGammaTotal": payload.get("callGammaTotal"),
@@ -205,6 +221,13 @@ def write_macro_snapshot(
 
     payload = _sanitize_payload(payload)
 
+    # Prefer direct Prisma writes so this path has no runtime Node dependency.
+    try:
+        return asyncio.run(_write_macro_snapshot_direct(payload))
+    except Exception:
+        pass
+
+    # Optional fallback to API route for environments without python prisma.
     try:
         resp = _api_session.post(
             endpoint,
@@ -213,17 +236,13 @@ def write_macro_snapshot(
             headers={"Content-Type": "application/json"},
         )
         if resp.status_code in (200, 201):
-            log.info("Macro HTF snapshot written for %s", ticker)
+            log.info("Macro HTF snapshot written via API fallback for %s", ticker)
             return True
-        else:
-            log.warning(
-                "Macro HTF snapshot write failed for %s: HTTP %d — %s",
-                ticker, resp.status_code, resp.text[:200],
-            )
-            return False
-    except requests.exceptions.ConnectionError:
-        log.info("Server offline for %s. Attempting direct Macro Database write...", ticker)
-        return asyncio.run(_write_macro_snapshot_direct(payload))
+        log.warning(
+            "Macro HTF snapshot API fallback failed for %s: HTTP %d — %s",
+            ticker, resp.status_code, resp.text[:200],
+        )
+        return False
     except Exception as e:
         log.warning("Macro HTF snapshot write error for %s: %s\n%s", ticker, e, traceback.format_exc())
         return False
@@ -240,14 +259,14 @@ async def _write_macro_snapshot_direct(payload: dict[str, Any]) -> bool:
             where={
                 "ticker_tradingDate": {
                     "ticker": payload["ticker"],
-                    "tradingDate": datetime.fromisoformat(payload["tradingDate"]),
+                    "tradingDate": datetime.fromisoformat(payload["tradingDate"].replace("Z", "+00:00")),
                 }
             },
             data={
                 "create": {
                     "ticker": payload["ticker"],
-                    "timestamp": datetime.fromisoformat(payload["timestamp"]),
-                    "tradingDate": datetime.fromisoformat(payload["tradingDate"]),
+                    "timestamp": datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00")),
+                    "tradingDate": datetime.fromisoformat(payload["tradingDate"].replace("Z", "+00:00")),
                     "spotPrice": payload["spotPrice"],
                     "macroCallWall": payload.get("macroCallWall"),
                     "macroPutWall": payload.get("macroPutWall"),
@@ -259,7 +278,7 @@ async def _write_macro_snapshot_direct(payload: dict[str, Any]) -> bool:
                     "dominantNodes": json.dumps(payload.get("dominantNodes", [])),
                 },
                 "update": {
-                    "timestamp": datetime.fromisoformat(payload["timestamp"]),
+                    "timestamp": datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00")),
                     "spotPrice": payload["spotPrice"],
                     "macroCallWall": payload.get("macroCallWall"),
                     "macroPutWall": payload.get("macroPutWall"),
