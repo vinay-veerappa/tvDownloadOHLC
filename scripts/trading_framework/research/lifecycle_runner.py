@@ -107,6 +107,12 @@ class ResearchLifecycleRunner:
 
     async def _persist_to_hub(self, run_id, ticker, best_params, oos_metrics, run_dir):
         """Syncs high-fidelity research results to the Hub Database."""
+        # --- Prisma Environment Setup (ADR-017) ---
+        if 'DATABASE_URL' not in os.environ:
+            # Standard location for the Hub Database (SQLite)
+            db_path = os.path.join(PROJECT_ROOT, "web/prisma/dev.db")
+            os.environ['DATABASE_URL'] = f"file:{db_path}"
+            
         from prisma import Prisma
 
         db = Prisma()
@@ -133,25 +139,60 @@ class ResearchLifecycleRunner:
             # 3. Create Research Run
             risk_profiler = RiskProfiler(account_size=50000.0, risk_per_trade=500.0)
             risk_metrics = risk_profiler.calculate_metrics(oos_metrics['trade_returns_pct'], oos_metrics['max_drawdown_%'])
-            
-            await db.researchrun.create(
-                data={
-                    'runId': run_id,
-                    'ticker': ticker,
+
+            base_metrics = {
+                'sharpe': float(oos_metrics.get('sharpe_ratio', 0)),
+                'drawdown': float(oos_metrics.get('max_drawdown_%', 0)),
+                'win_rate': float(oos_metrics.get('win_rate_%', 0)),
+                'total_trades': int(oos_metrics.get('total_trades', 0)),
+                'grading': risk_metrics.get('Institutional Grade', 'C')
+            }
+
+            base_payload = {
+                'runId': run_id,
+                'ticker': ticker,
+                'metricsJson': json.dumps(base_metrics),
+                'configJson': json.dumps(best_params),
+                'grade': risk_metrics.get('Institutional Grade', 'C'),
+                'filePath': run_dir,
+            }
+
+            create_variants = [
+                {
+                    **base_payload,
                     'strategyId': strategy_record.id,
-                    'metricsJson': json.dumps({
-                        'sharpe': float(oos_metrics.get('sharpe_ratio', 0)),
-                        'drawdown': float(oos_metrics.get('max_drawdown_%', 0)),
-                        'win_rate': float(oos_metrics.get('win_rate_%', 0)),
-                        'total_trades': int(oos_metrics.get('total_trades', 0)),
-                        'grading': risk_metrics.get('Institutional Grade', 'C')
-                    }),
-                    'configJson': json.dumps(best_params),
                     'equityCurvePath': equity_path,
-                    'grade': risk_metrics.get('Institutional Grade', 'C'),
-                    'filePath': run_dir
-                }
-            )
+                },
+                {
+                    **base_payload,
+                    'strategy': {'connect': {'id': strategy_record.id}},
+                    'equityCurvePath': equity_path,
+                },
+                {
+                    **base_payload,
+                    'strategy': {'connect': {'id': strategy_record.id}},
+                    # Compatibility fallback for older/generated Prisma clients
+                    # that reject equityCurvePath in create input.
+                    'thumbnailJson': equity_path,
+                },
+                {
+                    **base_payload,
+                    'strategy': {'connect': {'id': strategy_record.id}},
+                },
+            ]
+
+            last_error = None
+            for payload in create_variants:
+                try:
+                    await db.researchrun.create(data=payload)
+                    last_error = None
+                    break
+                except Exception as exc:
+                    last_error = exc
+
+            if last_error is not None:
+                raise last_error
+
             print(f"✅ Research Hub Sync Complete for {run_id}")
         finally:
             await db.disconnect()
