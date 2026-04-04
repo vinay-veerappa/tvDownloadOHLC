@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { createChart, ColorType, ISeriesApi, LineData } from 'lightweight-charts';
+import { createChart, ColorType, LineData, LineSeries } from 'lightweight-charts';
 import { 
   ArrowLeft, 
   Settings2, 
@@ -60,7 +60,7 @@ export default function ResearchDetailPage() {
             height: 400,
           });
 
-          const lineSeries = (chart as any).addLineSeries({ 
+          const lineSeries = chart.addSeries(LineSeries, {
             color: '#2962FF',
             lineWidth: 2,
           });
