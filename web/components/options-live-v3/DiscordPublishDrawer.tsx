@@ -35,6 +35,21 @@ type Props = {
   onClose: () => void;
 };
 
+function formatEmbedAsText(symbol: string, embed: PreviewEmbed): string {
+  const lines: string[] = [];
+  lines.push(`**${embed.title}**`);
+  if (embed.description) lines.push(embed.description);
+  if (embed.fields.length > 0) {
+    lines.push("");
+    const maxName = Math.max(...embed.fields.map((f) => f.name.length));
+    for (const f of embed.fields) {
+      lines.push(`${f.name.padEnd(maxName)}  ${f.value}`);
+    }
+  }
+  if (embed.footer) lines.push(`\n*${embed.footer}*`);
+  return lines.join("\n");
+}
+
 export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
   const [channel, setChannel] = useState("test_channel");
   const [dryRun, setDryRun] = useState(true);
@@ -46,6 +61,7 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [sendStatus, setSendStatus] = useState<SendStatus>({ state: "idle" });
+  const [copied, setCopied] = useState(false);
 
   const fetchPreview = useCallback(async () => {
     setPreviewLoading(true);
@@ -69,6 +85,18 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
       setPreviewLoading(false);
     }
   }, [symbol, publishMode]);
+
+  const copyPreviewAsText = useCallback(async () => {
+    if (!preview) return;
+    const text = formatEmbedAsText(symbol, preview.embed);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // fallback: select a hidden textarea
+    }
+  }, [preview, symbol]);
 
   const handleSaveRule = useCallback(async () => {
     const ruleName = eventRuleName.trim() || `${symbol}-${triggerMode}-${channel}`;
@@ -242,13 +270,23 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
           <div>
             <div className="mb-2 flex items-center justify-between">
               <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">Preview</p>
-              <button
-                onClick={fetchPreview}
-                disabled={previewLoading}
-                className="rounded px-2.5 py-1 text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 transition-colors disabled:opacity-50"
-              >
-                {previewLoading ? "Loading…" : "Load Preview"}
-              </button>
+              <div className="flex items-center gap-2">
+                {preview && (
+                  <button
+                    onClick={() => void copyPreviewAsText()}
+                    className="rounded px-2.5 py-1 text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 transition-colors"
+                  >
+                    {copied ? "✓ Copied!" : "📋 Copy Text"}
+                  </button>
+                )}
+                <button
+                  onClick={fetchPreview}
+                  disabled={previewLoading}
+                  className="rounded px-2.5 py-1 text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 transition-colors disabled:opacity-50"
+                >
+                  {previewLoading ? "Loading…" : "Load Preview"}
+                </button>
+              </div>
             </div>
 
             {previewError && (

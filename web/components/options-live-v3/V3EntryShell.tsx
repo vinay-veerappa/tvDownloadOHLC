@@ -18,6 +18,8 @@ import { LargestByStrikeExpiryTable } from "@/components/options-live-v3/Largest
 import { IntegratedViewPane } from "@/components/options-live-v3/IntegratedViewPane";
 import { DataStatusStrip } from "@/components/options-live-v3/DataStatusStrip";
 import { ExplainabilityDrawer } from "@/components/options-live-v3/ExplainabilityDrawer";
+import { ModuleEmptyBanner } from "@/components/options-live-v3/ModuleEmptyBanner";
+import { AlertRulesPanel } from "@/components/options-live-v3/AlertRulesPanel";
 
 type SummaryData = {
   runLabel: string | null;
@@ -578,8 +580,11 @@ export function V3EntryShell() {
 
   function renderByStrike() {
     const rows = byStrike?.data?.rows ?? [];
+    if (!isLoading && byStrike?.error) return <ModuleEmptyBanner state="error" moduleName="By-Strike" message={byStrike.error} />;
+    if (!isLoading && !byStrike?.data) return <ModuleEmptyBanner state="empty" moduleName="By-Strike" />;
     return (
       <div className="space-y-4">
+        {(byStrike?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="By-Strike" warnings={byStrike?.warnings ?? []} />}
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs">
           <span className="text-zinc-500">Sort:</span>
           <button
@@ -621,8 +626,11 @@ export function V3EntryShell() {
   }
 
   function renderByExpiry() {
+    if (!isLoading && byExpiry?.error) return <ModuleEmptyBanner state="error" moduleName="By-Expiry" message={byExpiry.error} />;
+    if (!isLoading && !byExpiry?.data) return <ModuleEmptyBanner state="empty" moduleName="By-Expiry" />;
     return (
       <div className="space-y-4">
+        {(byExpiry?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="By-Expiry" warnings={byExpiry?.warnings ?? []} />}
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs">
           <span className="text-zinc-500">View:</span>
           <button
@@ -704,8 +712,11 @@ export function V3EntryShell() {
 
   function renderLevels() {
     const lvls = levels?.data?.levels;
+    if (!isLoading && levels?.error) return <ModuleEmptyBanner state="error" moduleName="Key Levels" message={levels.error} />;
+    if (!isLoading && !levels?.data) return <ModuleEmptyBanner state="empty" moduleName="Key Levels" />;
     return (
       <div className="space-y-4">
+        {(levels?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="Key Levels" warnings={levels?.warnings ?? []} />}
         <LiveLevelsLadder
           spot={lvls?.spot ?? null}
           gammaFlip={lvls?.gammaFlip ?? null}
@@ -730,6 +741,7 @@ export function V3EntryShell() {
             </ul>
           </div>
         )}
+        <AlertRulesPanel symbol={symbol} />
       </div>
     );
   }
@@ -749,11 +761,16 @@ export function V3EntryShell() {
   }
 
   function renderSpotGamma() {
+    if (!isLoading && spotGamma?.error) return <ModuleEmptyBanner state="error" moduleName="Spot Gamma" message={spotGamma.error} />;
+    if (!isLoading && !spotGamma?.data) return <ModuleEmptyBanner state="empty" moduleName="Spot Gamma" />;
     return (
-      <SpotGammaPanel
-        data={spotGamma?.data ?? null}
-        isLoading={isLoading}
-      />
+      <div className="space-y-3">
+        {(spotGamma?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="Spot Gamma" warnings={spotGamma?.warnings ?? []} />}
+        <SpotGammaPanel
+          data={spotGamma?.data ?? null}
+          isLoading={isLoading}
+        />
+      </div>
     );
   }
 
@@ -834,6 +851,8 @@ export function V3EntryShell() {
   }
 
   function renderFlow() {
+    if (!isLoading && recentFlow?.error) return <ModuleEmptyBanner state="error" moduleName="Recent Flow" message={recentFlow.error} />;
+    if (!isLoading && !recentFlow?.data) return <ModuleEmptyBanner state="empty" moduleName="Recent Flow" />;
     return (
       <RecentFlowTape
         data={
