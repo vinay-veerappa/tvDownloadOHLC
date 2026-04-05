@@ -58,3 +58,8 @@ The dashboard is now fully operational with the following core modules:
 1.  **Sentiment Overlay**: Integrate Discord/News sentiment scores into the Briefing panel.
 2.  **Historical Analysis**: Add the ability to "Time Travel" through previous sessions' GEX trends.
 3.  **Prisma DB Integration**: Migrate intermediate JSON state to the project's PostgreSQL/SQLite Prisma store for faster historical queries.
+
+## 7. Related Brainstorm PRD
+For the next-generation GEX visualization requirements (strike-count filtering and multi-segmentation views), see:
+
+- `docs/features/options_dashboard/prd_gex_visualization_v3.md`
