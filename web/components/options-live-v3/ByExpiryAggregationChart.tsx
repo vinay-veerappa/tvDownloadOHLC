@@ -120,12 +120,7 @@ export function ByExpiryAggregationChart({ rows, isLoading, viewMode = "split" }
               fontSize: "12px",
               color: "#e4e4e7",
             }}
-            formatter={(value: number, name: string) => {
-              if (name === "call_gex") return [fmt(value), "Call GEX"];
-              if (name === "put_gex_neg") return [fmt(value), "Put GEX"];
-              if (name === "net_gex") return [fmt(value), "Net GEX"];
-              return [value, name];
-            }}
+            formatter={(value: number, name: string) => [fmt(value), name]}
             labelFormatter={(label: string) => `Expiry: ${label}`}
           />
           <Legend

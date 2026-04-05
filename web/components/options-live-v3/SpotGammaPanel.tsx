@@ -247,6 +247,11 @@ export function SpotGammaPanel({ data, isLoading }: Props) {
           <AreaChart data={displaySeries} margin={{ top: 2, right: 12, bottom: 2, left: 8 }}>
             <XAxis dataKey="strike" hide />
             <YAxis hide />
+            <Tooltip
+              contentStyle={{ backgroundColor: "#09090b", border: "1px solid #27272a", borderRadius: "8px", fontSize: "12px", color: "#e4e4e7" }}
+              labelFormatter={(label) => `Strike: ${Number(label).toFixed(0)}`}
+              formatter={(value: number) => [fmt(value), "Net GEX"]}
+            />
             <ReferenceLine y={0} stroke="#3f3f46" strokeWidth={1} />
             {current?.atm_strike && (
               <ReferenceLine x={current.atm_strike} stroke="#34d399" strokeWidth={1} strokeDasharray="3 2" />
