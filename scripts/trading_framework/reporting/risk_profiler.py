@@ -13,7 +13,7 @@ class RiskProfiler:
         self.risk_per_trade = risk_per_trade
         self.risk_pct = risk_per_trade / account_size
 
-    def calculate_metrics(self, trade_returns_pct: pd.Series, max_drawdown_pct: float) -> Dict[str, Any]:
+    def calculate_metrics(self, trade_returns_pct: pd.Series, max_drawdown_pct: float, formatted: bool = True) -> Dict[str, Any]:
         """
         Calculates institutional risk metrics given a series of trade percentage returns.
         """
@@ -77,20 +77,46 @@ class RiskProfiler:
         std_r = r_multiples.std()
         sqn = (r_multiples.mean() * np.sqrt(n_trades)) / std_r if std_r > 0 else 0
         
+        raw = {
+            'account_size': self.account_size,
+            'risk_per_trade': self.risk_per_trade,
+            'risk_pct': self.risk_pct * 100,
+            'total_trades': n_trades,
+            'win_rate': win_rate * 100,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'ev_dollars': ev_dollars,
+            'ev_grade': self._grade_ev(ev_dollars),
+            'profit_factor': pf,
+            'pf_grade': self._grade_pf(pf),
+            'sqn': sqn,
+            'sqn_grade': self._grade_sqn(sqn),
+            'combined_edge': combined_edge,
+            'ce_grade': self._grade_ce(combined_edge),
+            'ror': ror * 100,
+            'ror_grade': 'Excellent' if ror < 0.01 else 'Dangerous' if ror > 0.1 else 'OK',
+            'max_streak': int(np.ceil(max_streak)),
+            'drr': drr,
+            'drr_grade': self._grade_drr(drr)
+        }
+
+        if not formatted:
+            return raw
+
         return {
-            'Account Size': f"${self.account_size:,.2f}",
-            'Risk Per Trade': f"${self.risk_per_trade:,.2f} ({self.risk_pct*100:.2f}%)",
-            'Total Trades': n_trades,
-            'Win Rate': f"{win_rate*100:.1f}%",
-            'Avg Win': f"${avg_win:.2f}",
-            'Avg Loss': f"${avg_loss:.2f}",
-            'EV ($)': f"${ev_dollars:.2f} (Grade: {self._grade_ev(ev_dollars)})",
-            'Profit Factor': f"{pf:.2f} (Grade: {self._grade_pf(pf)})",
-            'SQN': f"{sqn:.2f} (Grade: {self._grade_sqn(sqn)})",
-            'Combined Edge': f"{combined_edge:.2f} (Grade: {self._grade_ce(combined_edge)})",
-            'Risk of Ruin': f"{ror*100:.2f}% (Grade: {'Excellent' if ror < 0.01 else 'Dangerous' if ror > 0.1 else 'OK'})",
-            'Max Losing Streak': f"{int(np.ceil(max_streak))} trades",
-            'DRR': f"{drr:.2f} (Grade: {self._grade_drr(drr)})"
+            'Account Size': f"${raw['account_size']:,.2f}",
+            'Risk Per Trade': f"${raw['risk_per_trade']:,.2f} ({raw['risk_pct']:.2f}%)",
+            'Total Trades': raw['total_trades'],
+            'Win Rate': f"{raw['win_rate']:.1f}%",
+            'Avg Win': f"${raw['avg_win']:.2f}",
+            'Avg Loss': f"${raw['avg_loss']:.2f}",
+            'EV ($)': f"${raw['ev_dollars']:.2f} (Grade: {raw['ev_grade']})",
+            'Profit Factor': f"{raw['profit_factor']:.2f} (Grade: {raw['pf_grade']})",
+            'SQN': f"{raw['sqn']:.2f} (Grade: {raw['sqn_grade']})",
+            'Combined Edge': f"{raw['combined_edge']:.2f} (Grade: {raw['ce_grade']})",
+            'Risk of Ruin': f"{raw['ror']:.2f}% (Grade: {raw['ror_grade']})",
+            'Max Losing Streak': f"{raw['max_streak']} trades",
+            'DRR': f"{raw['drr']:.2f} (Grade: {raw['drr_grade']})"
         }
 
     def _grade_ev(self, ev: float) -> str:

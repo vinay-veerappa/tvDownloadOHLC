@@ -21,6 +21,7 @@ from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from scripts.trading_framework.strategies.registry import get_strategy
 from scripts.trading_framework.ml.walk_forward import PurgedKFold
 from scripts.trading_framework.reporting.risk_profiler import RiskProfiler
+from scripts.trading_framework.reporting.optimization_summary import OptimizationReporter
 
 class ResearchLifecycleRunner:
     """
@@ -103,7 +104,7 @@ class ResearchLifecycleRunner:
             load_if_exists=True
         )
         study.optimize(objective, n_trials=trials, n_jobs=4)
-        return study.best_params
+        return study
 
     async def _persist_to_hub(self, run_id, ticker, best_params, oos_metrics, run_dir):
         """Syncs high-fidelity research results to the Hub Database."""
@@ -221,13 +222,18 @@ class ResearchLifecycleRunner:
         
         # 3. Optimize (Layer 6)
         print(f"🔬 Running In-Sample Optimization ({trials} trials)...")
-        best_params = self._optimize_params(df_is, trials=trials)
+        study = self._optimize_params(df_is, trials=trials)
+        best_params = study.best_params
         print(f"🏆 Best Params: {best_params}")
         
         # 4. Validate (OOS)
         print(f"🔬 Running Out-of-Sample Validation...")
         oos_signals = self.strategy.generate_signals(df_oos, best_params)
         oos_metrics = self.backtester.run(oos_signals, df_oos, {'leverage': 1.0})
+        
+        # --- NEW: Calculate Raw Risk Metrics for HTML ---
+        risk_profiler = RiskProfiler(account_size=50000.0, risk_per_trade=500.0)
+        raw_risk_metrics = risk_profiler.calculate_metrics(oos_metrics['trade_returns_pct'], oos_metrics['max_drawdown_%'], formatted=False)
         
         # 5. Persist & Sync (Layer 7)
         RESULTS_ROOT = os.path.join(PROJECT_ROOT, "results/RESEARCH")
@@ -252,8 +258,22 @@ class ResearchLifecycleRunner:
         else:
             print("ℹ️ Skipping hub persistence (--skip-persist enabled).")
         
+        # --- NEW: Generate Institutional Optimization Summary HTML ---
+        print("📊 Generating Institutional Research Summary...")
+        opt_reporter = OptimizationReporter(RUN_DIR)
+        trials_df = study.trials_dataframe() 
+        summary_path = opt_reporter.generate_report(
+            run_id=RUN_ID,
+            ticker=self.ticker,
+            strategy_name=self.strategy_name,
+            best_params=best_params,
+            risk_metrics=raw_risk_metrics,
+            trials_df=trials_df
+        )
+
         print(f"📊 OOS Sharpe: {oos_metrics.get('sharpe_ratio', 0):.2f}")
         print(f"✅ Lifecycle Test Complete. Artifacts in {RUN_DIR}")
+        print(f"📂 Summary Report: {summary_path}")
 
 if __name__ == "__main__":
     import argparse
