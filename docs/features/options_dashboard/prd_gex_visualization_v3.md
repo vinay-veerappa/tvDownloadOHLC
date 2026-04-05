@@ -888,3 +888,12 @@ These are additional requirements that will reduce false confidence, improve ope
 1. Must: validation metrics, SLOs, degraded mode, model/version audit trail.
 2. Should: replay mode, alert dedupe/routing, user presets.
 3. Could: what-if simulator, reconciliation against secondary feeds, external webhooks.
+
+## 24. Artifact Index (Execution Package)
+1. Product design spec: `docs/features/options_dashboard/design_spec_gex_v3.md`
+2. Technical architecture and API design: `docs/features/options_dashboard/technical_design_gex_v3.md`
+3. Phased implementation plan: `docs/features/options_dashboard/implementation_plan_gex_v3.md`
+4. API contract (V3): `docs/features/options_dashboard/contracts/api_contract_v3.md`
+5. Snapshot schema (V3): `docs/features/options_dashboard/contracts/snapshot_v3.schema.json`
+6. Publish request schema (V3): `docs/features/options_dashboard/contracts/publish_request_v3.schema.json`
+7. Milestone task board: `docs/features/options_dashboard/task_board_gex_v3.md`

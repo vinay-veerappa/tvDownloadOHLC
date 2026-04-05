@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input'
 
 interface DashboardTopBarProps {
   activeTicker: string
+  activePrice?: number
   setActiveTicker: (t: string) => void
   lastSync: Date | null
   refreshInterval: number
@@ -35,6 +36,7 @@ interface DashboardTopBarProps {
 
 export function DashboardTopBar({ 
   activeTicker, 
+  activePrice,
   setActiveTicker, 
   lastSync, 
   refreshInterval, 
@@ -46,6 +48,11 @@ export function DashboardTopBar({
   sidebarOpen,
   rightSidebarOpen
 }: DashboardTopBarProps) {
+  const formattedActivePrice =
+    typeof activePrice === 'number' && Number.isFinite(activePrice)
+      ? activePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : '—'
+
   return (
     <header className="h-20 border-b border-white/5 bg-zinc-950/80 backdrop-blur-2xl px-10 flex items-center justify-between shrink-0 z-50">
       <div className="flex items-center gap-10">
@@ -161,6 +168,10 @@ export function DashboardTopBar({
           <div className="px-4 py-2 bg-zinc-900/50 rounded-xl border border-white/5">
             <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Active: </span>
             <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">{activeTicker}</span>
+          </div>
+          <div className="px-4 py-2 bg-zinc-900/50 rounded-xl border border-white/5">
+            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Price: </span>
+            <span className="text-[10px] font-black text-white tracking-widest">${formattedActivePrice}</span>
           </div>
         </div>
       </div>

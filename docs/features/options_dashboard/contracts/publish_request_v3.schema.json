@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "options-live/publish-request-v3.schema.json",
+  "title": "OptionsLivePublishRequestV3",
+  "type": "object",
+  "required": ["target", "symbol", "mode", "idempotencyKey", "metadata"],
+  "properties": {
+    "target": {
+      "type": "string",
+      "enum": ["discord"]
+    },
+    "symbol": { "type": "string" },
+    "mode": {
+      "type": "string",
+      "enum": ["single", "module", "pack"]
+    },
+    "modules": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "idempotencyKey": { "type": "string", "minLength": 8 },
+    "metadata": {
+      "type": "object",
+      "required": ["asOf", "freshnessMs", "strikeCount", "expiryScope"],
+      "properties": {
+        "asOf": { "type": "string" },
+        "freshnessMs": { "type": "number" },
+        "strikeCount": { "type": "number" },
+        "expiryScope": { "type": "string" },
+        "metricFamily": { "type": "string" },
+        "flowDelayMs": { "type": "number" },
+        "confidenceCaveat": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "annotations": {
+      "type": "object",
+      "properties": {
+        "includePinnedLevels": { "type": "boolean" },
+        "includeSignalBadges": { "type": "boolean" },
+        "includeNarrative": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

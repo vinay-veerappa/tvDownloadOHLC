@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "options-live/snapshot-v3.schema.json",
+  "title": "OptionsLiveSnapshotV3",
+  "type": "object",
+  "required": ["success", "data", "meta", "warnings", "error"],
+  "properties": {
+    "success": { "type": "boolean" },
+    "data": {
+      "type": "object",
+      "required": ["symbol", "spot", "as_of_timestamp"],
+      "properties": {
+        "symbol": { "type": "string" },
+        "spot": { "type": "number" },
+        "as_of_timestamp": { "type": "string" },
+        "gex_total": { "type": "number" },
+        "dex_total": { "type": "number" },
+        "charm_total": { "type": "number" },
+        "vanna_total": { "type": "number" },
+        "open_interest_call": { "type": "number" },
+        "open_interest_put": { "type": "number" },
+        "oi_change_call": { "type": "number" },
+        "oi_change_put": { "type": "number" },
+        "gamma_flip": { "type": "number" },
+        "call_wall": { "type": "number" },
+        "put_wall": { "type": "number" },
+        "max_pos_gamma": { "type": "number" },
+        "max_neg_gamma": { "type": "number" },
+        "by_strike": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["strike"],
+            "properties": {
+              "strike": { "type": "number" },
+              "call_gex": { "type": "number" },
+              "put_gex": { "type": "number" },
+              "net_gex": { "type": "number" },
+              "call_dex": { "type": "number" },
+              "put_dex": { "type": "number" },
+              "net_dex": { "type": "number" },
+              "call_oi": { "type": "number" },
+              "put_oi": { "type": "number" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "by_expiry": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["expiry"],
+            "properties": {
+              "expiry": { "type": "string" },
+              "call_gex": { "type": "number" },
+              "put_gex": { "type": "number" },
+              "net_gex": { "type": "number" }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "meta": {
+      "type": "object",
+      "required": ["symbol", "asOf", "freshnessMs", "computeVersion"],
+      "properties": {
+        "symbol": { "type": "string" },
+        "asOf": { "type": "string" },
+        "freshnessMs": { "type": "number" },
+        "source": { "type": "string" },
+        "computeVersion": { "type": "string" },
+        "adapterVersion": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "error": {
+      "type": ["string", "null"]
+    }
+  },
+  "additionalProperties": false
+}

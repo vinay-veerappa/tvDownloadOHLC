@@ -217,6 +217,7 @@ export default function OptionsLivePage() {
       
       <DashboardTopBar 
         activeTicker={activeTicker} 
+            activePrice={activeDetail?.spot}
         setActiveTicker={setActiveTicker}
         lastSync={lastSync}
         refreshInterval={refreshInterval}

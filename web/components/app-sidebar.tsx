@@ -102,8 +102,15 @@ export function AppSidebar() {
             label: "Options Live",
             icon: Radar,
             href: "/options-live",
-            active: pathname?.startsWith("/options-live"),
+            active: pathname === "/options-live",
             badge: "Live", // Feature flag for badge
+        },
+        {
+            label: "GEX Dashboard V3",
+            icon: Radar,
+            href: "/options-live-v3",
+            active: pathname === "/options-live-v3",
+            badge: "New", // Feature flag for badge
         },
         {
             label: "Bookmap",
