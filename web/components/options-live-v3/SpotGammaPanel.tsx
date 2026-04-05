@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   AreaChart,
   Area,
@@ -52,6 +52,7 @@ type Props = {
 };
 
 export function SpotGammaPanel({ data, isLoading }: Props) {
+  const [smoothWindow, setSmoothWindow] = useState<1 | 3 | 5>(1);
   const series = data?.series ?? [];
   const current = data?.current ?? null;
 
@@ -61,24 +62,41 @@ export function SpotGammaPanel({ data, isLoading }: Props) {
     return [...series].sort((a, b) => a.strike - b.strike);
   }, [series]);
 
+  const smoothedSeries = useMemo(() => {
+    if (!displaySeries.length || smoothWindow === 1) return displaySeries;
+    return displaySeries.map((row, idx) => {
+      const start = Math.max(0, idx - (smoothWindow - 1));
+      const window = displaySeries.slice(start, idx + 1);
+      const avg = window.reduce((sum, p) => sum + p.cumulative_gex, 0) / window.length;
+      return { ...row, cumulative_gex: avg };
+    });
+  }, [displaySeries, smoothWindow]);
+
   // Find domain extremes for cumulative_gex
   const [minCum, maxCum] = useMemo(() => {
-    if (!displaySeries.length) return [0, 0];
-    const vals = displaySeries.map((d) => d.cumulative_gex);
+    if (!smoothedSeries.length) return [0, 0];
+    const vals = smoothedSeries.map((d) => d.cumulative_gex);
     return [Math.min(...vals), Math.max(...vals)];
-  }, [displaySeries]);
+  }, [smoothedSeries]);
 
   const zeroFlipStrike = useMemo(() => {
     // Find strike where cumulative_gex crosses zero
-    for (let i = 1; i < displaySeries.length; i++) {
-      const prev = displaySeries[i - 1];
-      const curr = displaySeries[i];
+    for (let i = 1; i < smoothedSeries.length; i++) {
+      const prev = smoothedSeries[i - 1];
+      const curr = smoothedSeries[i];
       if ((prev.cumulative_gex >= 0) !== (curr.cumulative_gex >= 0)) {
         return (prev.strike + curr.strike) / 2;
       }
     }
     return null;
-  }, [displaySeries]);
+  }, [smoothedSeries]);
+
+  const interpretation = useMemo(() => {
+    const net = current?.net_gex ?? 0;
+    if (net > 0) return "Positive spot gamma regime: dealer hedging is more likely to dampen large directional swings until key levels break.";
+    if (net < 0) return "Negative spot gamma regime: dealer hedging may amplify directional moves, so level breaches can extend quickly.";
+    return "Neutral spot gamma regime: directional impact is balanced; monitor gamma flip and wall proximity for confirmation.";
+  }, [current?.net_gex]);
 
   if (isLoading) {
     return (
@@ -100,13 +118,26 @@ export function SpotGammaPanel({ data, isLoading }: Props) {
 
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-zinc-200">Spot-Gamma Profile</h2>
-        {current?.atm_strike && (
-          <span className="text-xs text-zinc-400">
-            ATM: <span className="font-mono text-emerald-300">{current.atm_strike.toFixed(2)}</span>
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {current?.atm_strike && (
+            <span className="text-xs text-zinc-400">
+              ATM: <span className="font-mono text-emerald-300">{current.atm_strike.toFixed(2)}</span>
+            </span>
+          )}
+          <div className="flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900 px-1 py-1 text-xs">
+            {[1, 3, 5].map((w) => (
+              <button
+                key={w}
+                onClick={() => setSmoothWindow(w as 1 | 3 | 5)}
+                className={`rounded px-2 py-0.5 ${smoothWindow === w ? "bg-emerald-700 text-white" : "text-zinc-300 hover:bg-zinc-800"}`}
+              >
+                {w}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* ATM stats */}
@@ -139,7 +170,7 @@ export function SpotGammaPanel({ data, isLoading }: Props) {
       <div>
         <p className="mb-1 text-xs text-zinc-500 uppercase tracking-wider">Cumulative GEX Profile</p>
         <ResponsiveContainer width="100%" height={220}>
-          <AreaChart data={displaySeries} margin={{ top: 4, right: 12, bottom: 4, left: 8 }}>
+          <AreaChart data={smoothedSeries} margin={{ top: 4, right: 12, bottom: 4, left: 8 }}>
             <defs>
               <linearGradient id="cumGexPositive" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#059669" stopOpacity={0.3} />
@@ -231,6 +262,11 @@ export function SpotGammaPanel({ data, isLoading }: Props) {
             />
           </AreaChart>
         </ResponsiveContainer>
+      </div>
+
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 text-sm text-zinc-300">
+        <p className="text-xs uppercase tracking-wider text-zinc-500">Interpretation</p>
+        <p className="mt-1">{interpretation}</p>
       </div>
     </div>
   );

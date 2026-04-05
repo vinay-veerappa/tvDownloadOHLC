@@ -25,6 +25,7 @@ type ByExpiryRow = {
 type Props = {
   rows: ByExpiryRow[] | null;
   isLoading?: boolean;
+  viewMode?: "split" | "net";
 };
 
 function fmt(v: number): string {
@@ -35,7 +36,7 @@ function fmt(v: number): string {
   return v.toFixed(0);
 }
 
-export function ByExpiryAggregationChart({ rows, isLoading }: Props) {
+export function ByExpiryAggregationChart({ rows, isLoading, viewMode = "split" }: Props) {
   if (isLoading) {
     return (
       <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
@@ -132,26 +133,30 @@ export function ByExpiryAggregationChart({ rows, isLoading }: Props) {
             iconType="line"
           />
           <ReferenceLine y={0} stroke="#3f3f46" strokeWidth={1} />
-          <Area
-            type="monotone"
-            dataKey="call_gex"
-            name="Call GEX"
-            stroke="#10b981"
-            strokeWidth={2}
-            fill="url(#callGradient)"
-            dot={false}
-            isAnimationActive={false}
-          />
-          <Area
-            type="monotone"
-            dataKey="put_gex_neg"
-            name="Put GEX"
-            stroke="#ef4444"
-            strokeWidth={2}
-            fill="url(#putGradient)"
-            dot={false}
-            isAnimationActive={false}
-          />
+          {viewMode === "split" && (
+            <Area
+              type="monotone"
+              dataKey="call_gex"
+              name="Call GEX"
+              stroke="#10b981"
+              strokeWidth={2}
+              fill="url(#callGradient)"
+              dot={false}
+              isAnimationActive={false}
+            />
+          )}
+          {viewMode === "split" && (
+            <Area
+              type="monotone"
+              dataKey="put_gex_neg"
+              name="Put GEX"
+              stroke="#ef4444"
+              strokeWidth={2}
+              fill="url(#putGradient)"
+              dot={false}
+              isAnimationActive={false}
+            />
+          )}
           <Area
             type="monotone"
             dataKey="net_gex"

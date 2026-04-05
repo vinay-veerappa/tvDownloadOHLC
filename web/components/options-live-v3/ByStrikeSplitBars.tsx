@@ -26,6 +26,8 @@ type Props = {
   rows: ByStrikeRow[];
   spot: number | null;
   gammaFlip?: number | null;
+  highlightedStrike?: number | null;
+  sortMode?: "strike" | "abs";
 };
 
 function fmt(v: number): string {
@@ -44,13 +46,21 @@ type ChartRow = {
   isAtm: boolean;
 };
 
-export function ByStrikeSplitBars({ rows, spot, gammaFlip }: Props) {
+export function ByStrikeSplitBars({ rows, spot, gammaFlip, highlightedStrike = null, sortMode = "strike" }: Props) {
   const chartData = useMemo((): ChartRow[] => {
     if (!rows.length) return [];
-    // Sort ascending by strike
-    const sorted = [...rows]
+    const base = [...rows]
       .filter((r) => r.strike != null)
       .sort((a, b) => (a.strike ?? 0) - (b.strike ?? 0));
+
+    const sorted =
+      sortMode === "abs"
+        ? [...base].sort(
+            (a, b) =>
+              Math.abs((b.net_gex ?? 0)) - Math.abs((a.net_gex ?? 0)) ||
+              (a.strike ?? 0) - (b.strike ?? 0)
+          )
+        : base;
 
     return sorted.map((r) => {
       const strike = r.strike ?? 0;
@@ -65,7 +75,7 @@ export function ByStrikeSplitBars({ rows, spot, gammaFlip }: Props) {
         isAtm: atmDistance === minDist,
       };
     });
-  }, [rows, spot]);
+  }, [rows, spot, sortMode]);
 
   if (!chartData.length) {
     return (
@@ -169,8 +179,8 @@ export function ByStrikeSplitBars({ rows, spot, gammaFlip }: Props) {
             {chartData.map((entry, idx) => (
               <Cell
                 key={idx}
-                fill={entry.isAtm ? "#059669" : "#16a34a"}
-                opacity={entry.isAtm ? 1 : 0.75}
+                fill={highlightedStrike === entry.strike ? "#22c55e" : entry.isAtm ? "#059669" : "#16a34a"}
+                opacity={highlightedStrike === entry.strike ? 1 : entry.isAtm ? 1 : 0.75}
               />
             ))}
           </Bar>
@@ -180,8 +190,8 @@ export function ByStrikeSplitBars({ rows, spot, gammaFlip }: Props) {
             {chartData.map((entry, idx) => (
               <Cell
                 key={idx}
-                fill={entry.isAtm ? "#dc2626" : "#e11d48"}
-                opacity={entry.isAtm ? 1 : 0.75}
+                fill={highlightedStrike === entry.strike ? "#fb7185" : entry.isAtm ? "#dc2626" : "#e11d48"}
+                opacity={highlightedStrike === entry.strike ? 1 : entry.isAtm ? 1 : 0.75}
               />
             ))}
           </Bar>

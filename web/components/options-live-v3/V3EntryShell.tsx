@@ -14,6 +14,8 @@ import { DiscordPublishDrawer } from "@/components/options-live-v3/DiscordPublis
 import { MatrixHeatmap } from "@/components/options-live-v3/MatrixHeatmap";
 import { TreemapHeatmap } from "@/components/options-live-v3/TreemapHeatmap";
 import { ByExpiryAggregationChart } from "@/components/options-live-v3/ByExpiryAggregationChart";
+import { LargestByStrikeExpiryTable } from "@/components/options-live-v3/LargestByStrikeExpiryTable";
+import { IntegratedViewPane } from "@/components/options-live-v3/IntegratedViewPane";
 
 type SummaryData = {
   runLabel: string | null;
@@ -195,6 +197,18 @@ export function V3EntryShell() {
   const [strikeCount, setStrikeCount] = useState(20);
   const [expiryScope, setExpiryScope] = useState("all");
   const [metricFamily, setMetricFamily] = useState<MetricFamily>("GEX");
+  const [byStrikeSortMode, setByStrikeSortMode] = useState<"strike" | "abs">("strike");
+  const [byExpirySortMode, setByExpirySortMode] = useState<"nearest" | "abs">("nearest");
+  const [byExpiryViewMode, setByExpiryViewMode] = useState<"split" | "net">("split");
+  const [largestLimit, setLargestLimit] = useState(25);
+  const [largestSortMode, setLargestSortMode] = useState<"abs_net" | "call_gex" | "put_gex">("abs_net");
+  const [pinnedStrike, setPinnedStrike] = useState<number | null>(null);
+
+  const [heatmapMarket, setHeatmapMarket] = useState<"spx" | "ndx">("spx");
+  const [heatmapMode, setHeatmapMode] = useState<"pcr" | "regular">("pcr");
+  const [heatmapMetric, setHeatmapMetric] = useState<"net_gex" | "abs_gex" | "volume" | "oi">("net_gex");
+  const [heatmapExpiryMode, setHeatmapExpiryMode] = useState<"bucketed" | "exact">("bucketed");
+  const [selectedHeatmapCell, setSelectedHeatmapCell] = useState<{ strike: number; expiry: string } | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -208,6 +222,65 @@ export function V3EntryShell() {
   const [largest, setLargest] = useState<LargestResponse | null>(null);
   const [heatmap, setHeatmap] = useState<HeatmapResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const key = `options-live-v3:prefs:${symbol}`;
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return;
+    try {
+      const saved = JSON.parse(raw) as {
+        strikeCount?: number;
+        expiryScope?: string;
+        metricFamily?: MetricFamily;
+        activeTab?: GexTabId;
+      };
+      if (typeof saved.strikeCount === "number") setStrikeCount(saved.strikeCount);
+      if (typeof saved.expiryScope === "string") setExpiryScope(saved.expiryScope);
+      if (saved.metricFamily) setMetricFamily(saved.metricFamily);
+      if (saved.activeTab) setActiveTab(saved.activeTab);
+    } catch {
+      // ignore malformed saved prefs
+    }
+  }, [symbol]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const key = `options-live-v3:prefs:${symbol}`;
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ strikeCount, expiryScope, metricFamily, activeTab })
+    );
+  }, [symbol, strikeCount, expiryScope, metricFamily, activeTab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const key = "options-live-v3:heatmap-prefs";
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return;
+    try {
+      const saved = JSON.parse(raw) as Record<string, { mode?: "pcr" | "regular"; metric?: "net_gex" | "abs_gex" | "volume" | "oi"; expiryMode?: "bucketed" | "exact" }>;
+      const marketPrefs = saved[heatmapMarket];
+      if (marketPrefs?.mode) setHeatmapMode(marketPrefs.mode);
+      if (marketPrefs?.metric) setHeatmapMetric(marketPrefs.metric);
+      if (marketPrefs?.expiryMode) setHeatmapExpiryMode(marketPrefs.expiryMode);
+    } catch {
+      // ignore malformed saved prefs
+    }
+  }, [heatmapMarket]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const key = "options-live-v3:heatmap-prefs";
+    let saved: Record<string, { mode?: "pcr" | "regular"; metric?: "net_gex" | "abs_gex" | "volume" | "oi"; expiryMode?: "bucketed" | "exact" }> = {};
+    try {
+      saved = JSON.parse(window.localStorage.getItem(key) ?? "{}") as typeof saved;
+    } catch {
+      saved = {};
+    }
+    saved[heatmapMarket] = { mode: heatmapMode, metric: heatmapMetric, expiryMode: heatmapExpiryMode };
+    window.localStorage.setItem(key, JSON.stringify(saved));
+  }, [heatmapMarket, heatmapMode, heatmapMetric, heatmapExpiryMode]);
 
   useEffect(() => {
     let alive = true;
@@ -226,8 +299,8 @@ export function V3EntryShell() {
           fetchEnvelope<NarrativeData>(`/api/options-live/v3/narrative?symbol=${encoded}`),
           fetchEnvelope<RecentFlowData>(`/api/options-live/v3/recent-flow?symbol=${encoded}&limit=20`),
           fetchEnvelope<SpotGammaData>(`/api/options-live/v3/spot-gamma?symbol=${encoded}&smooth=1`),
-          fetchEnvelope<LargestData>(`/api/options-live/v3/largest?symbol=${encoded}&limit=15&sort=abs_net`),
-          fetchEnvelope<HeatmapData>(`/api/options-live/v3/heatmap?symbol=${encoded}&strikes=${strikes}&metric=net_gex`),
+          fetchEnvelope<LargestData>(`/api/options-live/v3/largest?symbol=${encoded}&limit=${largestLimit}&sort=${largestSortMode}`),
+          fetchEnvelope<HeatmapData>(`/api/options-live/v3/heatmap?symbol=${encoded}&strikes=${strikes}&market=${heatmapMarket}&mode=${heatmapMode}&metric=${heatmapMetric}&expiryMode=${heatmapExpiryMode}`),
         ]);
 
         if (!alive) return;
@@ -253,7 +326,7 @@ export function V3EntryShell() {
     return () => {
       alive = false;
     };
-  }, [symbol, strikeCount, expiryScope, metricFamily]);
+  }, [symbol, strikeCount, expiryScope, metricFamily, largestLimit, largestSortMode, heatmapMarket, heatmapMode, heatmapMetric, heatmapExpiryMode]);
 
   const strikeRows = useMemo(() => {
     const rows = byStrike?.data?.rows ?? [];
@@ -267,8 +340,18 @@ export function V3EntryShell() {
     ]);
   }, [byStrike]);
 
+  const byExpirySortedRows = useMemo(() => {
+    const rows = [...(byExpiry?.data?.rows ?? [])];
+    if (byExpirySortMode === "abs") {
+      rows.sort((a, b) => Math.abs((b.net_gex ?? 0)) - Math.abs((a.net_gex ?? 0)) || (a.expiry ?? "").localeCompare(b.expiry ?? ""));
+    } else {
+      rows.sort((a, b) => (a.dte ?? Number.MAX_SAFE_INTEGER) - (b.dte ?? Number.MAX_SAFE_INTEGER));
+    }
+    return rows;
+  }, [byExpiry, byExpirySortMode]);
+
   const expiryRows = useMemo(() => {
-    const rows = byExpiry?.data?.rows ?? [];
+    const rows = byExpirySortedRows;
     return rows.slice(0, 12).map((row) => [
       row.expiry ?? "-",
       String(row.dte ?? "-"),
@@ -278,7 +361,7 @@ export function V3EntryShell() {
       fmtNum(row.call_oi, 0),
       fmtNum(row.put_oi, 0),
     ]);
-  }, [byExpiry]);
+  }, [byExpirySortedRows]);
 
   const recentFlowRows = useMemo(() => {
     const rows = recentFlow?.data?.rows ?? [];
@@ -321,6 +404,12 @@ export function V3EntryShell() {
       fmtNum(row.put_oi, 0),
     ]);
   }, [largest]);
+
+  const largestStrikeExpiryRows = useMemo(() => {
+    const matrix = heatmap?.data?.matrix ?? [];
+    if (!selectedHeatmapCell) return matrix;
+    return matrix.filter((row) => row.expiry === selectedHeatmapCell.expiry);
+  }, [heatmap, selectedHeatmapCell]);
 
   const allWarnings = useMemo(() => {
     return [
@@ -437,10 +526,35 @@ export function V3EntryShell() {
     const rows = byStrike?.data?.rows ?? [];
     return (
       <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs">
+          <span className="text-zinc-500">Sort:</span>
+          <button
+            onClick={() => setByStrikeSortMode("strike")}
+            className={`rounded px-2 py-1 ${byStrikeSortMode === "strike" ? "bg-emerald-700 text-white" : "bg-zinc-800 text-zinc-300"}`}
+          >
+            Strike Order
+          </button>
+          <button
+            onClick={() => setByStrikeSortMode("abs")}
+            className={`rounded px-2 py-1 ${byStrikeSortMode === "abs" ? "bg-emerald-700 text-white" : "bg-zinc-800 text-zinc-300"}`}
+          >
+            Abs Magnitude
+          </button>
+          {pinnedStrike !== null && (
+            <button
+              onClick={() => setPinnedStrike(null)}
+              className="ml-auto rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-300"
+            >
+              Clear Highlight ({fmtNum(pinnedStrike, 2)})
+            </button>
+          )}
+        </div>
         <ByStrikeSplitBars
           rows={rows}
           spot={byStrike?.data?.spot ?? null}
           gammaFlip={levels?.data?.levels?.gammaFlip ?? null}
+          highlightedStrike={pinnedStrike}
+          sortMode={byStrikeSortMode}
         />
         <SimpleTable
           title={`By Strike — ${rows.length} rows (${byStrike?.data?.filters?.expiryScope ?? expiryScope})`}
@@ -454,23 +568,83 @@ export function V3EntryShell() {
 
   function renderByExpiry() {
     return (
-      <SimpleTable
-        title={`By Expiry (${byExpiry?.data?.dataSource ?? "—"})`}
-        columns={["Expiry", "DTE", "Call GEX", "Put GEX", "Net GEX", "Call OI", "Put OI"]}
-        rows={expiryRows}
-        emptyLabel="No expiry rows returned"
-      />
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs">
+          <span className="text-zinc-500">View:</span>
+          <button
+            onClick={() => setByExpiryViewMode("split")}
+            className={`rounded px-2 py-1 ${byExpiryViewMode === "split" ? "bg-emerald-700 text-white" : "bg-zinc-800 text-zinc-300"}`}
+          >
+            Net + Split
+          </button>
+          <button
+            onClick={() => setByExpiryViewMode("net")}
+            className={`rounded px-2 py-1 ${byExpiryViewMode === "net" ? "bg-emerald-700 text-white" : "bg-zinc-800 text-zinc-300"}`}
+          >
+            Net Only
+          </button>
+          <span className="ml-3 text-zinc-500">Rank:</span>
+          <button
+            onClick={() => setByExpirySortMode("nearest")}
+            className={`rounded px-2 py-1 ${byExpirySortMode === "nearest" ? "bg-emerald-700 text-white" : "bg-zinc-800 text-zinc-300"}`}
+          >
+            Nearest Expiry
+          </button>
+          <button
+            onClick={() => setByExpirySortMode("abs")}
+            className={`rounded px-2 py-1 ${byExpirySortMode === "abs" ? "bg-emerald-700 text-white" : "bg-zinc-800 text-zinc-300"}`}
+          >
+            Abs GEX
+          </button>
+        </div>
+
+        <ByExpiryAggregationChart rows={byExpirySortedRows} isLoading={isLoading} viewMode={byExpiryViewMode} />
+
+        <SimpleTable
+          title={`By Expiry (${byExpiry?.data?.dataSource ?? "—"})`}
+          columns={["Expiry", "DTE", "Call GEX", "Put GEX", "Net GEX", "Call OI", "Put OI"]}
+          rows={expiryRows}
+          emptyLabel="No expiry rows returned"
+        />
+      </div>
     );
   }
 
   function renderLargest() {
     return (
-      <SimpleTable
-        title={`Largest Strikes by GEX (${largest?.data?.filters?.sort ?? "abs_net"}, ${largest?.data?.cacheDate ?? "—"})`}
-        columns={["Strike", "Call GEX", "Put GEX", "Net GEX", "Call OI", "Put OI"]}
-        rows={largestRows}
-        emptyLabel="No largest strike data"
-      />
+      <div className="space-y-4">
+        {selectedHeatmapCell && (
+          <div className="rounded-xl border border-indigo-900/70 bg-indigo-950/20 px-3 py-2 text-xs text-indigo-200">
+            Filtered from heatmap cell: expiry <strong>{selectedHeatmapCell.expiry}</strong>, strike <strong>{fmtNum(selectedHeatmapCell.strike, 2)}</strong>
+            <button
+              onClick={() => setSelectedHeatmapCell(null)}
+              className="ml-3 rounded border border-indigo-700 px-2 py-0.5 text-indigo-200 hover:bg-indigo-900/40"
+            >
+              Clear Filter
+            </button>
+          </div>
+        )}
+
+        <LargestByStrikeExpiryTable
+          rows={largestStrikeExpiryRows}
+          spot={summary?.data?.spot ?? null}
+          limit={largestLimit}
+          sortMode={largestSortMode}
+          onLimitChange={setLargestLimit}
+          onSortModeChange={setLargestSortMode}
+          onSelectRow={(row) => {
+            setPinnedStrike(row.strike);
+            setActiveTab("by-strike");
+          }}
+        />
+
+        <SimpleTable
+          title={`Largest Strikes by GEX (${largest?.data?.filters?.sort ?? "abs_net"}, ${largest?.data?.cacheDate ?? "—"})`}
+          columns={["Strike", "Call GEX", "Put GEX", "Net GEX", "Call OI", "Put OI"]}
+          rows={largestRows}
+          emptyLabel="No largest strike data"
+        />
+      </div>
     );
   }
 
@@ -500,6 +674,17 @@ export function V3EntryShell() {
     );
   }
 
+  function renderIntegrated() {
+    return (
+      <IntegratedViewPane
+        rows={byStrike?.data?.rows ?? []}
+        spot={summary?.data?.spot ?? null}
+        pinnedStrike={pinnedStrike}
+        onPinStrike={(strike) => setPinnedStrike(strike)}
+      />
+    );
+  }
+
   function renderSpotGamma() {
     return (
       <SpotGammaPanel
@@ -512,6 +697,44 @@ export function V3EntryShell() {
   function renderHeatmap() {
     return (
       <div className="space-y-4">
+        <div className="grid gap-2 rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+          <select
+            value={heatmapMarket}
+            onChange={(e) => setHeatmapMarket(e.target.value as "spx" | "ndx")}
+            className="h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-zinc-200"
+          >
+            <option value="spx">S&P</option>
+            <option value="ndx">Nasdaq</option>
+          </select>
+          <select
+            value={heatmapMode}
+            onChange={(e) => setHeatmapMode(e.target.value as "pcr" | "regular")}
+            className="h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-zinc-200"
+          >
+            <option value="pcr">P/C Ratio Heatmap</option>
+            <option value="regular">Regular Heatmap</option>
+          </select>
+          <select
+            value={heatmapMetric}
+            onChange={(e) => setHeatmapMetric(e.target.value as "net_gex" | "abs_gex" | "volume" | "oi")}
+            className="h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-zinc-200"
+            disabled={heatmapMode === "pcr"}
+          >
+            <option value="net_gex">Net GEX</option>
+            <option value="abs_gex">Abs GEX</option>
+            <option value="volume">Volume</option>
+            <option value="oi">Open Interest</option>
+          </select>
+          <select
+            value={heatmapExpiryMode}
+            onChange={(e) => setHeatmapExpiryMode(e.target.value as "bucketed" | "exact")}
+            className="h-8 rounded border border-zinc-700 bg-zinc-900 px-2 text-zinc-200"
+          >
+            <option value="bucketed">Bucketed Expiry</option>
+            <option value="exact">Exact Expiry</option>
+          </select>
+        </div>
+
         {/* Treemap + By Expiry Chart */}
         <div className="grid gap-4 lg:grid-cols-2">
           <TreemapHeatmap
@@ -519,8 +742,9 @@ export function V3EntryShell() {
             isLoading={isLoading}
           />
           <ByExpiryAggregationChart
-            rows={byExpiry?.data?.rows ?? null}
+            rows={byExpirySortedRows}
             isLoading={isLoading}
+            viewMode={byExpiryViewMode}
           />
         </div>
 
@@ -536,6 +760,11 @@ export function V3EntryShell() {
               : null
           }
           isLoading={isLoading}
+          onCellClick={(cell) => {
+            setSelectedHeatmapCell({ strike: cell.strike, expiry: cell.expiry });
+            setPinnedStrike(cell.strike);
+            setActiveTab("largest");
+          }}
         />
       </div>
     );
@@ -562,6 +791,7 @@ export function V3EntryShell() {
     "daily-gex": renderDailyGex,
     "by-strike": renderByStrike,
     "by-expiry": renderByExpiry,
+    "integrated": renderIntegrated,
     "largest": renderLargest,
     "levels": renderLevels,
     "spot-gamma": renderSpotGamma,

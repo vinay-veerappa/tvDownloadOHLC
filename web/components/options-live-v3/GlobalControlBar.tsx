@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 export type GexTabId =
   | "daily-gex"
   | "by-strike"
   | "by-expiry"
+  | "integrated"
   | "largest"
   | "levels"
   | "spot-gamma"
@@ -14,12 +15,13 @@ export type GexTabId =
 
 export type MetricFamily = "GEX" | "DEX" | "VANNA" | "CHARM";
 
-const STRIKE_PRESETS = [10, 20, 40] as const;
+const STRIKE_PRESETS = [5, 10, 15, 20, 30, 50] as const;
 
 const TABS: { id: GexTabId; label: string }[] = [
   { id: "daily-gex", label: "Daily GEX" },
   { id: "by-strike", label: "By Strike" },
   { id: "by-expiry", label: "By Expiry" },
+  { id: "integrated", label: "Integrated" },
   { id: "largest", label: "Largest" },
   { id: "levels", label: "Levels" },
   { id: "spot-gamma", label: "Spot Γ" },
@@ -59,10 +61,24 @@ export function GlobalControlBar({
   freshness,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [customStrike, setCustomStrike] = useState<string>("");
+
+  useEffect(() => {
+    if (strikeCount > 0 && !STRIKE_PRESETS.includes(strikeCount as (typeof STRIKE_PRESETS)[number])) {
+      setCustomStrike(String(strikeCount));
+    }
+  }, [strikeCount]);
 
   const handleSymbolCommit = () => {
     const val = inputRef.current?.value.trim().toUpperCase() ?? "";
     if (val && val !== symbol) onSymbolChange(val);
+  };
+
+  const applyCustomStrike = () => {
+    const parsed = Number(customStrike);
+    if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 200) {
+      onStrikeCountChange(Math.round(parsed));
+    }
   };
 
   return (
@@ -115,6 +131,22 @@ export function GlobalControlBar({
             }`}
           >
             All
+          </button>
+          <input
+            value={customStrike}
+            onChange={(e) => setCustomStrike(e.target.value.replace(/[^\d]/g, ""))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applyCustomStrike();
+            }}
+            placeholder="Custom"
+            className="h-6 w-16 rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-200 focus:outline-none"
+            aria-label="Custom strikes"
+          />
+          <button
+            onClick={applyCustomStrike}
+            className="h-6 rounded bg-zinc-800 px-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700"
+          >
+            Apply
           </button>
         </div>
 

@@ -22,6 +22,7 @@ type HeatmapData = {
 type Props = {
   data: HeatmapData | null;
   isLoading?: boolean;
+  onCellClick?: (cell: HeatmapCell) => void;
 };
 
 function fmt(v: number): string {
@@ -71,7 +72,7 @@ function getCellBgStyle(netGex: number, minVal: number, maxVal: number): React.C
   }
 }
 
-export function MatrixHeatmap({ data, isLoading }: Props) {
+export function MatrixHeatmap({ data, isLoading, onCellClick }: Props) {
   const { cellMap, minVal, maxVal, strikes, expiries } = useMemo(() => {
     if (!data || !data.matrix.length) {
       return { cellMap: new Map(), minVal: 0, maxVal: 0, strikes: [], expiries: [] };
@@ -167,6 +168,9 @@ export function MatrixHeatmap({ data, isLoading }: Props) {
                       className="border border-zinc-800 px-2 py-1 text-center font-mono text-zinc-100 cursor-help hover:ring-1 hover:ring-yellow-500"
                       style={bgStyle}
                       title={`Net GEX: ${fmt(netGex)}\nCall GEX: ${fmt(cell?.call_gex ?? 0)}\nPut GEX: ${fmt(cell?.put_gex ?? 0)}`}
+                      onClick={() => {
+                        if (cell) onCellClick?.(cell);
+                      }}
                     >
                       {fmt(netGex)}
                     </td>

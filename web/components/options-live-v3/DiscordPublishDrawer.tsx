@@ -38,6 +38,10 @@ type Props = {
 export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
   const [channel, setChannel] = useState("test_channel");
   const [dryRun, setDryRun] = useState(true);
+  const [publishMode, setPublishMode] = useState<"spot" | "full" | "heatmap-pack">("spot");
+  const [triggerMode, setTriggerMode] = useState<"manual" | "scheduled" | "event">("manual");
+  const [scheduleCron, setScheduleCron] = useState("0 9 * * 1-5");
+  const [eventRuleName, setEventRuleName] = useState("");
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -48,17 +52,49 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
     setPreviewError(null);
     setPreview(null);
     try {
-      const res = await fetch(
-        `/api/options-live/v3/publish/preview?symbol=${encodeURIComponent(symbol)}&mode=spot`
-      );
+      const res = await fetch("/api/options-live/v3/publish/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, mode: publishMode === "heatmap-pack" ? "full" : publishMode }),
+      });
       const json = await res.json();
+      if (!res.ok) {
+        setPreviewError(json?.meta?.message ?? `Preview failed (${res.status})`);
+        return;
+      }
       setPreview(json?.data ?? null);
     } catch (err: unknown) {
       setPreviewError(err instanceof Error ? err.message : "Preview failed");
     } finally {
       setPreviewLoading(false);
     }
-  }, [symbol]);
+  }, [symbol, publishMode]);
+
+  const handleSaveRule = useCallback(async () => {
+    const ruleName = eventRuleName.trim() || `${symbol}-${triggerMode}-${channel}`;
+    setSendStatus({ state: "sending" });
+    try {
+      const res = await fetch("/api/options-live/v3/publish/event-rule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol,
+          channel,
+          ruleName,
+          mode: publishMode === "heatmap-pack" ? "full" : publishMode,
+          cron: scheduleCron,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setSendStatus({ state: "error", message: json?.meta?.message ?? `HTTP ${res.status}` });
+        return;
+      }
+      setSendStatus({ state: "sent", message: `Rule saved: ${ruleName}`, dryRun: false });
+    } catch (err: unknown) {
+      setSendStatus({ state: "error", message: err instanceof Error ? err.message : "Rule save failed" });
+    }
+  }, [eventRuleName, symbol, triggerMode, channel, publishMode, scheduleCron]);
 
   const handleSend = useCallback(async () => {
     setSendStatus({ state: "sending" });
@@ -108,6 +144,59 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
         </div>
 
         <div className="px-5 py-4 space-y-5">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-400">Publish Scope</p>
+              <select
+                value={publishMode}
+                onChange={(e) => setPublishMode(e.target.value as "spot" | "full" | "heatmap-pack")}
+                className="h-9 w-full rounded border border-zinc-700 bg-zinc-900 px-2 text-sm text-zinc-200"
+              >
+                <option value="spot">Active Chart Only</option>
+                <option value="full">Full Tab Summary</option>
+                <option value="heatmap-pack">Multi-Chart Pack</option>
+              </select>
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-400">Trigger</p>
+              <select
+                value={triggerMode}
+                onChange={(e) => setTriggerMode(e.target.value as "manual" | "scheduled" | "event")}
+                className="h-9 w-full rounded border border-zinc-700 bg-zinc-900 px-2 text-sm text-zinc-200"
+              >
+                <option value="manual">Manual Publish</option>
+                <option value="scheduled">Scheduled Interval</option>
+                <option value="event">Event Driven</option>
+              </select>
+            </div>
+          </div>
+
+          {triggerMode !== "manual" && (
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 space-y-2">
+              <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">Automation Rule</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <input
+                  value={eventRuleName}
+                  onChange={(e) => setEventRuleName(e.target.value)}
+                  placeholder="Rule name"
+                  className="h-9 rounded border border-zinc-700 bg-zinc-900 px-2 text-sm text-zinc-200"
+                />
+                <input
+                  value={scheduleCron}
+                  onChange={(e) => setScheduleCron(e.target.value)}
+                  placeholder="Cron (e.g. 0 9 * * 1-5)"
+                  className="h-9 rounded border border-zinc-700 bg-zinc-900 px-2 text-sm text-zinc-200"
+                />
+              </div>
+              <button
+                onClick={handleSaveRule}
+                className="rounded border border-indigo-700 bg-indigo-900/40 px-3 py-1.5 text-xs font-semibold text-indigo-300 hover:bg-indigo-900/60"
+              >
+                Save Automation Rule
+              </button>
+            </div>
+          )}
+
           {/* Channel selector */}
           <div>
             <p className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-400">Channel</p>
@@ -212,14 +301,16 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
           <div className="flex gap-3 pt-1">
             <button
               onClick={handleSend}
-              disabled={sendStatus.state === "sending"}
+              disabled={sendStatus.state === "sending" || triggerMode !== "manual"}
               className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition-colors ${
                 dryRun
                   ? "bg-amber-700 hover:bg-amber-600 text-white disabled:opacity-50"
                   : "bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-50"
               }`}
             >
-              {sendStatus.state === "sending"
+              {triggerMode !== "manual"
+                ? "Use Save Automation Rule"
+                : sendStatus.state === "sending"
                 ? "Sending…"
                 : dryRun
                 ? "Dry Run Send"
