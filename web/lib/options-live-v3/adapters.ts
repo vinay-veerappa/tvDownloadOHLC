@@ -492,7 +492,8 @@ export async function buildByExpiryTrue(
 
     const acc = new Map<string, Acc>();
 
-    function processContracts(contracts: typeof macro.calls, side: "call" | "put") {
+    function processContracts(contracts: any[], side: "call" | "put") {
+      if (!contracts || contracts.length === 0) return;
       for (const c of contracts) {
         if (!c.expiry) continue;
         // Standard GEX formula: γ × OI × S² × 0.01
@@ -688,7 +689,8 @@ export async function buildRecentFlow(
     score: number;
   };
 
-  function rankContracts(contracts: typeof macro.calls, side: "call" | "put"): ContractRow[] {
+  function rankContracts(contracts: any[], side: "call" | "put"): ContractRow[] {
+    if (!contracts || contracts.length === 0) return [];
     return contracts
       .filter((c) => (c.volume ?? 0) > 0 && (c.gamma ?? 0) !== 0)
       .map((c) => {
@@ -895,7 +897,8 @@ export async function buildLargest(
     };
     const acc = new Map<number, Acc>();
 
-    function addContracts(contracts: typeof macro.calls, side: "call" | "put") {
+    function addContracts(contracts: any[], side: "call" | "put") {
+      if (!contracts || contracts.length === 0) return;
       for (const c of contracts) {
         const strike = c.strike ?? 0;
         const gex = (c.gamma ?? 0) * (c.open_interest ?? 0) * spot * spot * 0.01;
@@ -1095,7 +1098,8 @@ export async function buildHeatmap(
   };
   const cellMap = new Map<string, CellAcc>();
 
-  function addToCell(contracts: typeof macro.calls, side: "call" | "put") {
+  function addToCell(contracts: any[], side: "call" | "put") {
+    if (!contracts || contracts.length === 0) return;
     for (const c of contracts) {
       if (c.strike == null || !c.expiry) continue;
       const key = `${c.strike}:${c.expiry}`;

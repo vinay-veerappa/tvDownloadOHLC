@@ -31,7 +31,7 @@ function fmtScore(score: number | null | undefined): { label: string; cls: strin
   return { label: score.toFixed(1), cls: "text-rose-400" };
 }
 
-function cpBadge(cp: string | null | undefined): JSX.Element {
+function cpBadge(cp: string | null | undefined): React.ReactElement {
   if (cp?.toLowerCase().startsWith("c")) {
     return (
       <span className="rounded px-1.5 py-0.5 text-xs font-medium bg-emerald-900/50 text-emerald-400">

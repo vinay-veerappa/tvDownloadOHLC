@@ -11,6 +11,9 @@ import { SpotGammaPanel } from "@/components/options-live-v3/SpotGammaPanel";
 import { SqueezeScreenerCard } from "@/components/options-live-v3/SqueezeScreenerCard";
 import { RecentFlowTape } from "@/components/options-live-v3/RecentFlowTape";
 import { DiscordPublishDrawer } from "@/components/options-live-v3/DiscordPublishDrawer";
+import { MatrixHeatmap } from "@/components/options-live-v3/MatrixHeatmap";
+import { TreemapHeatmap } from "@/components/options-live-v3/TreemapHeatmap";
+import { ByExpiryAggregationChart } from "@/components/options-live-v3/ByExpiryAggregationChart";
 
 type SummaryData = {
   runLabel: string | null;
@@ -151,6 +154,24 @@ type LargestRow = {
 type LargestData = { cacheDate: string | null; filters: { limit: number; sort: string }; rows: LargestRow[] };
 type LargestResponse = V3Envelope<LargestData>;
 
+type HeatmapCell = {
+  strike: number;
+  expiry: string;
+  call_gex: number;
+  put_gex: number;
+  net_gex: number;
+  call_oi: number;
+  put_oi: number;
+  pcr: number | null;
+};
+type HeatmapData = {
+  strikes: number[];
+  expiries: string[];
+  matrix: HeatmapCell[];
+  treemap: Array<{ expiry: string; net_gex: number; call_gex: number; put_gex: number; total_oi: number }>;
+};
+type HeatmapResponse = V3Envelope<HeatmapData>;
+
 function fmtNum(v: number | null | undefined, digits = 2): string {
   if (typeof v !== "number" || Number.isNaN(v)) return "-";
   return v.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
@@ -185,6 +206,7 @@ export function V3EntryShell() {
   const [recentFlow, setRecentFlow] = useState<RecentFlowResponse | null>(null);
   const [spotGamma, setSpotGamma] = useState<SpotGammaResponse | null>(null);
   const [largest, setLargest] = useState<LargestResponse | null>(null);
+  const [heatmap, setHeatmap] = useState<HeatmapResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -196,7 +218,7 @@ export function V3EntryShell() {
       try {
         const encoded = encodeURIComponent(symbol);
         const strikes = strikeCount > 0 ? strikeCount : 60;
-        const [s, l, bs, be, n, rf, sg, lg] = await Promise.all([
+        const [s, l, bs, be, n, rf, sg, lg, hm] = await Promise.all([
           fetchEnvelope<SummaryData>(`/api/options-live/v3/summary?symbol=${encoded}`),
           fetchEnvelope<LevelsData>(`/api/options-live/v3/levels?symbol=${encoded}`),
           fetchEnvelope<ByStrikeData>(`/api/options-live/v3/by-strike?symbol=${encoded}&strikes=${strikes}&expiryScope=${expiryScope}&metricFamily=${metricFamily.toLowerCase()}`),
@@ -205,6 +227,7 @@ export function V3EntryShell() {
           fetchEnvelope<RecentFlowData>(`/api/options-live/v3/recent-flow?symbol=${encoded}&limit=20`),
           fetchEnvelope<SpotGammaData>(`/api/options-live/v3/spot-gamma?symbol=${encoded}&smooth=1`),
           fetchEnvelope<LargestData>(`/api/options-live/v3/largest?symbol=${encoded}&limit=15&sort=abs_net`),
+          fetchEnvelope<HeatmapData>(`/api/options-live/v3/heatmap?symbol=${encoded}&strikes=${strikes}&metric=net_gex`),
         ]);
 
         if (!alive) return;
@@ -216,6 +239,7 @@ export function V3EntryShell() {
         setRecentFlow(rf);
         setSpotGamma(sg);
         setLargest(lg);
+        setHeatmap(hm);
       } catch (error) {
         if (alive) {
           setLoadError(String(error));
@@ -308,8 +332,9 @@ export function V3EntryShell() {
       ...(recentFlow?.warnings ?? []),
       ...(spotGamma?.warnings ?? []),
       ...(largest?.warnings ?? []),
+      ...(heatmap?.warnings ?? []),
     ];
-  }, [summary, levels, byStrike, byExpiry, narrative, recentFlow, spotGamma, largest]);
+  }, [summary, levels, byStrike, byExpiry, narrative, recentFlow, spotGamma, largest, heatmap]);
 
   const coachLines = levels?.data?.notes?.coach ?? [];
   const signals = narrative?.data?.signals ?? [];
@@ -486,19 +511,32 @@ export function V3EntryShell() {
 
   function renderHeatmap() {
     return (
-      <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-        <h2 className="mb-2 text-sm font-semibold text-zinc-200">Heatmap</h2>
-        <p className="text-sm text-zinc-500">
-          Heatmap visualization coming soon.{" "}
-          <a
-            href={`/api/options-live/v3/heatmap?symbol=${encodeURIComponent(symbol)}`}
-            className="text-emerald-400 hover:underline"
-            target="_blank"
-            rel="noreferrer"
-          >
-            View raw data ↗
-          </a>
-        </p>
+      <div className="space-y-4">
+        {/* Treemap + By Expiry Chart */}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <TreemapHeatmap
+            data={heatmap?.data?.treemap ?? null}
+            isLoading={isLoading}
+          />
+          <ByExpiryAggregationChart
+            rows={byExpiry?.data?.rows ?? null}
+            isLoading={isLoading}
+          />
+        </div>
+
+        {/* Matrix Heatmap */}
+        <MatrixHeatmap
+          data={
+            heatmap?.data
+              ? {
+                  strikes: heatmap.data.strikes,
+                  expiries: heatmap.data.expiries,
+                  matrix: heatmap.data.matrix,
+                }
+              : null
+          }
+          isLoading={isLoading}
+        />
       </div>
     );
   }
