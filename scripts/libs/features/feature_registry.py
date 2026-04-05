@@ -41,6 +41,8 @@ _DEPENDENCIES: dict[str, list[str]] = {
     "keltner":          ["atr"],
     "acceptance":       ["vwap", "ib"],
     "auction":          [],
+    "context":          [],
+    "session":          [],
 }
 
 # ---------------------------------------------------------------------------
@@ -59,6 +61,8 @@ _GROUP_SENTINEL: dict[str, str] = {
     "keltner":    "kc_mid",
     "acceptance": "level_state",
     "auction":    "fast_move_detected",
+    "context":    "vix_regime",
+    "session":    "session_block",
 }
 
 # Convenience map: individual feature name → group name
@@ -122,8 +126,20 @@ _FEATURE_TO_GROUP: dict[str, str] = {
     # Acceptance / Rejection
     "level_state":          "acceptance",
     # Auction
+    "roc_10bar":            "auction",
     "fast_move_detected":   "auction",
+    "fast_move_origin":     "auction",
+    "fast_move_direction":  "auction",
     "single_print_level":   "auction",
+    # Context (externally added by DataLoader)
+    "vix_regime":           "context",
+    "vix_daily":            "context",
+    "vix_close":            "context",
+    "vvix_level":           "context",
+    "vvix_regime":          "context",
+    # Session (externally added by DataLoader)
+    "session_block":        "session",
+    "context_session_block":"session",
 }
 
 

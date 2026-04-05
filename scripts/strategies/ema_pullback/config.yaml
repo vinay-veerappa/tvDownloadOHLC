@@ -1,0 +1,3 @@
+chop_filter:
+  min_chop_score: 2
+  use_vwap_chop_flag: true

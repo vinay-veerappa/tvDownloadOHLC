@@ -43,6 +43,31 @@ class EMAPullbackStrategy:
         df.loc[long_mask, "direction"] = "long"
         df.loc[short_mask, "direction"] = "short"
 
+        # ---------------------------------------------------------------------
+        # Layer 1: Chop Filter (Institutional Context)
+        # ---------------------------------------------------------------------
+        if p.get("chop_filter", False):
+            # Optimization: only compute for points near potential signals
+            potential_mask = long_mask | short_mask
+            if potential_mask.any():
+                from scripts.libs.indicators.market_regime import compute_chop_score
+                
+                # Chop score looks back 14 bars by default
+                results = compute_chop_score(df, lookback=14)
+                df['chop_score_1'] = results['chop_score']
+                df['chop_score_0'] = df['chop_score_1'].shift(1)
+                
+                # Veto if BOTH signal bar and prior bar are below threshold (2.0)
+                # This ensures we aren't entering into deep compression
+                veto_mask = (df['chop_score_1'] < 2.0) & (df['chop_score_0'] < 2.0)
+                
+                df.loc[veto_mask & potential_mask, "direction"] = pd.NA
+                
+                # Log vetoes if in debug/detailed mode
+                vetoes = (veto_mask & potential_mask).sum()
+                if vetoes > 0:
+                    print(f"[EMA PULLBACK] Vetoed {vetoes} signals due to Chop Filter (< 2.0)")
+
         combined = df.dropna(subset=["direction"]).copy()
         if combined.empty:
             return pd.DataFrame(columns=self.OUTPUT_COLUMNS)

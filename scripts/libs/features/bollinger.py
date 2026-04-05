@@ -21,6 +21,8 @@ def compute_bollinger_bands(df: pd.DataFrame, config=None) -> pd.DataFrame:
     rolling = df["close"].rolling(window=period, min_periods=period)
     df["bb_mid"]   = rolling.mean()
     std            = rolling.std(ddof=1)
+    # Keep strict ordering bb_upper > bb_mid > bb_lower even on flat windows.
+    std = std.clip(lower=1e-12)
     df["bb_upper"] = df["bb_mid"] + n_std * std
     df["bb_lower"] = df["bb_mid"] - n_std * std
 

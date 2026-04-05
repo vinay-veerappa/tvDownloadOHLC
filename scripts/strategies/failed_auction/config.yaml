@@ -1,0 +1,3 @@
+chop_filter:
+  min_chop_score: 1              # Low threshold — structural edge
+  use_vwap_chop_flag: false      # Not VWAP-dependent

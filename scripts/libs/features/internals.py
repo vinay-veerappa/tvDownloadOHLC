@@ -58,6 +58,10 @@ def compute_internals_features(df: pd.DataFrame, config=None) -> pd.DataFrame:
     if "UVOL" in df.columns and "DVOL" in df.columns and "VOLD" not in df.columns:
         df["VOLD"] = df["UVOL"] - df["DVOL"]
 
+    # Keep both spellings for compatibility across older/newer call sites.
+    if "VOLD" in df.columns:
+        df["vold"] = df["VOLD"]
+
     # ── TICK-derived ──────────────────────────────────────────────────────
     if "TICK" in df.columns:
         df["tick_abs"] = df["TICK"].abs()

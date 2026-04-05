@@ -50,13 +50,19 @@ def compute_vwap(df: pd.DataFrame, config=None) -> pd.DataFrame:
     tp = (df["high"] + df["low"] + df["close"]) / 3.0
     tpv = tp * df["volume"]
 
-    # ── Per-session cumulative sums (groupby preserves index order) ──────
-    grp = df["trading_date"]
-    cum_tpv = tpv.groupby(grp).cumsum()
-    cum_vol = df["volume"].groupby(grp).cumsum()
+    # ── Per-session cumulative sums (RTH-only accumulation) ──────────────
+    # Keep VWAP anchored to 09:30 session open for each trading_date.
+    is_rth = df["is_rth"] if "is_rth" in df.columns else pd.Series(True, index=df.index)
+    tpv_rth = tpv.where(is_rth, 0.0)
+    vol_rth = df["volume"].where(is_rth, 0.0)
 
-    # Guard against zero volume bars (e.g., pre-market gaps)
+    grp = df["trading_date"]
+    cum_tpv = tpv_rth.groupby(grp).cumsum()
+    cum_vol = vol_rth.groupby(grp).cumsum()
+
+    # Guard against zero volume bars and keep non-RTH VWAP as NaN.
     df["vwap"] = np.where(cum_vol > 0, cum_tpv / cum_vol, np.nan)
+    df.loc[~is_rth, "vwap"] = np.nan
 
     # ── VWAP distance ────────────────────────────────────────────────────
     df["vwap_distance"] = df["close"] - df["vwap"]
@@ -73,7 +79,7 @@ def compute_vwap(df: pd.DataFrame, config=None) -> pd.DataFrame:
     # Closed-form OLS: slope = (n·Σxy − Σx·Σy) / (n·Σx² − (Σx)²)
     # where x = [0,1,...,win-1] is constant — so Σx, Σx² can be precomputed.
     win = 12
-    vwap_s = df["vwap"].fillna(method="ffill")
+    vwap_s = df["vwap"].ffill()
 
     # Rolling sums of y and x*y over a fixed window
     sum_y  = vwap_s.rolling(win, min_periods=2).sum()

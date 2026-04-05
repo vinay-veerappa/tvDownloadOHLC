@@ -30,6 +30,10 @@ class QuantReporter:
         daily_returns = (1 + returns).resample('D').prod() - 1
         daily_returns = daily_returns[daily_returns != 0] # Remove non-trading days
         
+        if daily_returns.empty:
+            print(f"Warning: No returns data for {strategy_name}. Skipping tear sheet generation.")
+            return ""
+            
         qs.reports.html(daily_returns, title=f"{strategy_name} Performance Report", output=output_path)
         return output_path
 

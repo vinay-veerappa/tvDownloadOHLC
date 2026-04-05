@@ -35,7 +35,8 @@ class IBPullbackStrategy:
         data['date'] = data.index.normalize()
         
         ib_start = time(9, 30)
-        ib_end = (pd.Timestamp.combine(pd.Timestamp.today(), ib_start) + pd.Timedelta(minutes=self.ib_duration_min)).time()
+        from datetime import datetime, timedelta
+        ib_end = (datetime.combine(datetime.min, ib_start) + timedelta(minutes=self.ib_duration_min)).time()
         
         ib_window = data.between_time(ib_start, ib_end)
         ib_highs = ib_window.groupby('date')['high'].max()
