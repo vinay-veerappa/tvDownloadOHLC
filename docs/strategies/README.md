@@ -69,6 +69,7 @@ Documentation for specific high-conviction models:
 - [Initial Balance Complete Guide](initial_balance_break/STRATEGY_COMPLETE_GUIDE.md)
 - [Reversal & Mean Reversion Suite](reversal/README.md)
 - [Expected Moves Methodology](expected_moves/README.md)
+- [NinjaTrader Risk Manager Suite](ninjatrader/risk_manager_suite/README.md)
 
 ---
 

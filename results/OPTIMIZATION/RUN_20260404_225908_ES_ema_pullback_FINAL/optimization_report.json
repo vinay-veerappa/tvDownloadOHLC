@@ -1,0 +1,27 @@
+{
+  "symbol": "ES",
+  "strategy": "ema_pullback",
+  "best_params": {
+    "stop_atr_mult": 2.75,
+    "policy_type": "scaled_exit",
+    "exit1_rr": 1.25,
+    "exit1_pct": 0.45,
+    "exit2_rr": 1.75,
+    "exit2_pct": 0.45,
+    "use_time_stop": true,
+    "time_stop_bars": 85,
+    "partial_target_rr": 0.0,
+    "partial_exit_pct": 0.0,
+    "trail_method": "atr",
+    "trail_atr_mult": 1.0,
+    "target_rr": 2.0,
+    "breakeven_trigger_rr": 1.0
+  },
+  "best_score": 8.59656458027149,
+  "improvement": 0.689418158681281,
+  "artifacts": {
+    "tearsheet": "results/OPTIMIZATION\\RUN_20260404_225908_ES_ema_pullback_FINAL\\ema_pullback_tearsheet.html",
+    "equity_curve": "results/OPTIMIZATION\\RUN_20260404_225908_ES_ema_pullback_FINAL\\ema_pullback_equity.png",
+    "opt_history": "results\\OPTIMIZATION\\RUN_20260404_225908_ES_ema_pullback_FINAL\\optimization_history.png"
+  }
+}

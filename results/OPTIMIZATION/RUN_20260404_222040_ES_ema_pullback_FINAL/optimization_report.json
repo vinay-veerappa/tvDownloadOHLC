@@ -1,0 +1,196 @@
+{
+  "symbol": "ES",
+  "strategy": "ema_pullback",
+  "best_params": {
+    "stop_atr_mult": 3.5,
+    "policy_type": "cover_the_queen",
+    "partial_target_rr": 1.75,
+    "partial_exit_pct": 0.6000000000000001,
+    "trail_method": "fixed",
+    "use_time_stop": false,
+    "trail_atr_mult": 0.0,
+    "target_rr": 2.0,
+    "exit1_rr": 1.0,
+    "exit1_pct": 0.33,
+    "exit2_rr": 2.0,
+    "exit2_pct": 0.33,
+    "breakeven_trigger_rr": 1.0,
+    "time_stop_bars": 0
+  },
+  "best_score": 33.783761621377344,
+  "metrics": {
+    "expectancy_per_trade": 21.119606715528953,
+    "expectancy_pct": 0.00860247215169398,
+    "total_pnl": 5258.782072166709,
+    "total_trades": 249,
+    "win_rate": 0.42971887550200805,
+    "avg_winner": 526.6229906542055,
+    "avg_loser": -359.78787273122043,
+    "profit_factor": 1.102931975676179,
+    "max_drawdown": 4339.546539619824,
+    "calmar": 1.2166943321559114,
+    "avg_bars_in_trade": 82.10441767068274,
+    "partial_rate": 0.2570281124497992,
+    "exit_reasons": {
+      "end_of_path": 126,
+      "stop": 123
+    },
+    "mfe": {
+      "p25": 1.25,
+      "p50": 4.25,
+      "p75": 11.75
+    },
+    "mae": {
+      "p25": 2.0,
+      "p50": 5.0,
+      "p75": 9.0
+    },
+    "winner_heat_mae": 1.75,
+    "conditional_metrics": {
+      "direction": {
+        "long": {
+          "count": 123,
+          "expectancy": 53.76,
+          "win_rate": 0.5,
+          "mfe_median": 4.25,
+          "mae_median": 3.75
+        },
+        "short": {
+          "count": 126,
+          "expectancy": -10.74,
+          "win_rate": 0.37,
+          "mfe_median": 4.75,
+          "mae_median": 5.88
+        }
+      },
+      "context_vix_regime": {
+        "Elevated": {
+          "count": 74,
+          "expectancy": 22.93,
+          "win_rate": 0.43,
+          "mfe_median": 7.75,
+          "mae_median": 7.75
+        },
+        "High": {
+          "count": 13,
+          "expectancy": 156.26,
+          "win_rate": 0.46,
+          "mfe_median": 13.25,
+          "mae_median": 8.5
+        },
+        "Low": {
+          "count": 45,
+          "expectancy": -52.06,
+          "win_rate": 0.33,
+          "mfe_median": 1.5,
+          "mae_median": 3.0
+        },
+        "Normal": {
+          "count": 117,
+          "expectancy": 33.11,
+          "win_rate": 0.46,
+          "mfe_median": 4.25,
+          "mae_median": 5.0
+        }
+      },
+      "context_session_block": {
+        "pre_market": {
+          "count": 0,
+          "expectancy": NaN,
+          "win_rate": NaN,
+          "mfe_median": NaN,
+          "mae_median": NaN
+        },
+        "ib": {
+          "count": 13,
+          "expectancy": 263.6,
+          "win_rate": 0.54,
+          "mfe_median": 10.5,
+          "mae_median": 5.75
+        },
+        "ny_am": {
+          "count": 153,
+          "expectancy": 0.07,
+          "win_rate": 0.41,
+          "mfe_median": 4.25,
+          "mae_median": 5.0
+        },
+        "lunch": {
+          "count": 83,
+          "expectancy": 21.94,
+          "win_rate": 0.45,
+          "mfe_median": 4.25,
+          "mae_median": 5.0
+        },
+        "ny_pm": {
+          "count": 0,
+          "expectancy": NaN,
+          "win_rate": NaN,
+          "mfe_median": NaN,
+          "mae_median": NaN
+        },
+        "post_market": {
+          "count": 0,
+          "expectancy": NaN,
+          "win_rate": NaN,
+          "mfe_median": NaN,
+          "mae_median": NaN
+        }
+      },
+      "context_chop_regime": {
+        "choppy": {
+          "count": 0,
+          "expectancy": NaN,
+          "win_rate": NaN,
+          "mfe_median": NaN,
+          "mae_median": NaN
+        },
+        "mixed": {
+          "count": 117,
+          "expectancy": -7.03,
+          "win_rate": 0.41,
+          "mfe_median": 3.5,
+          "mae_median": 4.0
+        },
+        "trending": {
+          "count": 132,
+          "expectancy": 46.07,
+          "win_rate": 0.45,
+          "mfe_median": 5.0,
+          "mae_median": 5.38
+        }
+      }
+    }
+  },
+  "baseline": {
+    "expectancy_per_trade": -6.476200889731052,
+    "expectancy_pct": -0.0036285848131042495,
+    "total_pnl": -1612.574021543032,
+    "total_trades": 249,
+    "win_rate": 0.46184738955823296,
+    "avg_winner": 376.56765740961794,
+    "avg_loser": -335.2078703257394,
+    "profit_factor": 0.9640994870513249,
+    "max_drawdown": 6368.947148317812,
+    "calmar": -0.25421002635583057,
+    "avg_bars_in_trade": 53.04016064257028,
+    "partial_rate": 0.42971887550200805,
+    "exit_reasons": {
+      "stop": 218,
+      "end_of_path": 31
+    },
+    "mfe": {
+      "p25": 1.0,
+      "p50": 3.75,
+      "p75": 10.25
+    },
+    "mae": {
+      "p25": 1.5,
+      "p50": 4.0,
+      "p75": 8.0
+    },
+    "winner_heat_mae": 1.5,
+    "conditional_metrics": {}
+  },
+  "improvement": 27.595807605260006
+}

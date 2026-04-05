@@ -1,0 +1,13 @@
+{
+  "ticker": "ES",
+  "strategy": "ema_pullback",
+  "best_params": {
+    "partial_target_rr": 2.1,
+    "partial_exit_pct": 0.4,
+    "trail_atr_multiplier": 1.8,
+    "move_to_be": false
+  },
+  "best_ev": 2.2511805188593894,
+  "total_signals": 249,
+  "timestamp": "2026-04-04T21:48:32.389670"
+}

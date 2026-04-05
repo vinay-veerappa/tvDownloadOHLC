@@ -15,6 +15,7 @@ from scripts.trading_framework.core.signal_adapter import enrich_signals, split_
 STRATEGY_MAP = {
     "vwap_reclaim": ("scripts.strategies.vwap_reclaim.core.vwap_reclaim", "VWAPReclaimStrategy"),
     "ib_breakout": ("scripts.strategies.initial_balance.core.initial_balance_break", "IBBreakStrategy"),
+    "ib_pullback": ("scripts.strategies.initial_balance.core.initial_balance_pullback", "IBPullbackStrategy"),
     "ema_pullback": ("scripts.strategies.ema_pullback.core.ema_pullback", "EMAPullbackStrategy"),
     "failed_auction": ("scripts.strategies.failed_auction.core.failed_auction", "FailedAuctionStrategy"),
 }

@@ -1,0 +1,59 @@
+{
+  "symbol": "ES",
+  "strategy": "ema_pullback",
+  "best_params": {
+    "stop_atr_mult": 1.25,
+    "policy_type": "fixed_target",
+    "target_rr": 3.75,
+    "use_time_stop": false,
+    "partial_target_rr": 0.0,
+    "partial_exit_pct": 0.0,
+    "trail_method": "none",
+    "trail_atr_mult": 0.0,
+    "exit1_rr": 1.0,
+    "exit1_pct": 0.33,
+    "exit2_rr": 2.0,
+    "exit2_pct": 0.33,
+    "breakeven_trigger_rr": 1.0,
+    "time_stop_bars": 0
+  },
+  "best_score": 62.04111126684207,
+  "metrics": {
+    "expectancy_per_trade": 45.47804007899243,
+    "expectancy_pct": 0.01696358916983812,
+    "total_pnl": 11324.031979669115,
+    "total_trades": 249,
+    "win_rate": 0.2891566265060241,
+    "avg_winner": 551.6369444444445,
+    "avg_loser": -160.41710745949652,
+    "profit_factor": 1.3988201933025988,
+    "max_drawdown": 2693.750462085266,
+    "calmar": 4.220699051294762,
+    "avg_bars_in_trade": 28.27309236947791,
+    "partial_rate": 0.0,
+    "exit_reasons": {
+      "stop": 177,
+      "target": 63,
+      "end_of_path": 9
+    }
+  },
+  "baseline": {
+    "expectancy_per_trade": -6.476200889731052,
+    "expectancy_pct": -0.0036285848131042495,
+    "total_pnl": -1612.574021543032,
+    "total_trades": 249,
+    "win_rate": 0.46184738955823296,
+    "avg_winner": 376.56765740961794,
+    "avg_loser": -335.2078703257394,
+    "profit_factor": 0.9640994870513245,
+    "max_drawdown": 6368.947148317812,
+    "calmar": -0.25421002635583057,
+    "avg_bars_in_trade": 53.04016064257028,
+    "partial_rate": 0.42971887550200805,
+    "exit_reasons": {
+      "stop": 218,
+      "end_of_path": 31
+    }
+  },
+  "improvement": 51.95424096872348
+}
