@@ -16,6 +16,8 @@ import { TreemapHeatmap } from "@/components/options-live-v3/TreemapHeatmap";
 import { ByExpiryAggregationChart } from "@/components/options-live-v3/ByExpiryAggregationChart";
 import { LargestByStrikeExpiryTable } from "@/components/options-live-v3/LargestByStrikeExpiryTable";
 import { IntegratedViewPane } from "@/components/options-live-v3/IntegratedViewPane";
+import { DataStatusStrip } from "@/components/options-live-v3/DataStatusStrip";
+import { ExplainabilityDrawer } from "@/components/options-live-v3/ExplainabilityDrawer";
 
 type SummaryData = {
   runLabel: string | null;
@@ -209,6 +211,8 @@ export function V3EntryShell() {
   const [heatmapMetric, setHeatmapMetric] = useState<"net_gex" | "abs_gex" | "volume" | "oi">("net_gex");
   const [heatmapExpiryMode, setHeatmapExpiryMode] = useState<"bucketed" | "exact">("bucketed");
   const [selectedHeatmapCell, setSelectedHeatmapCell] = useState<{ strike: number; expiry: string } | null>(null);
+  const [selectedLevel, setSelectedLevel] = useState<number | null>(null);
+  const [explainOpen, setExplainOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -222,6 +226,31 @@ export function V3EntryShell() {
   const [largest, setLargest] = useState<LargestResponse | null>(null);
   const [heatmap, setHeatmap] = useState<HeatmapResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) {
+        return;
+      }
+      if (event.altKey) {
+        if (event.key === "1") setActiveTab("daily-gex");
+        if (event.key === "2") setActiveTab("by-strike");
+        if (event.key === "3") setActiveTab("by-expiry");
+        if (event.key === "4") setActiveTab("integrated");
+        if (event.key === "5") setActiveTab("heatmap");
+        if (event.key === "6") setActiveTab("levels");
+      }
+      if (event.shiftKey) {
+        if (event.key === "1") setStrikeCount(10);
+        if (event.key === "2") setStrikeCount(20);
+        if (event.key === "3") setStrikeCount(50);
+        if (event.key.toLowerCase() === "p") setPublishOpen(true);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -429,6 +458,20 @@ export function V3EntryShell() {
   const signals = narrative?.data?.signals ?? [];
   const screener = narrative?.data?.screener ?? null;
   const freshness = summary?.meta?.asOf ?? null;
+  const activeStatus = useMemo(() => {
+    if (activeTab === "by-strike") return { meta: byStrike?.meta, warnings: byStrike?.warnings ?? [], error: byStrike?.error ?? null };
+    if (activeTab === "by-expiry") return { meta: byExpiry?.meta, warnings: byExpiry?.warnings ?? [], error: byExpiry?.error ?? null };
+    if (activeTab === "largest") return { meta: largest?.meta, warnings: largest?.warnings ?? [], error: largest?.error ?? null };
+    if (activeTab === "levels") return { meta: levels?.meta, warnings: levels?.warnings ?? [], error: levels?.error ?? null };
+    if (activeTab === "spot-gamma") return { meta: spotGamma?.meta, warnings: spotGamma?.warnings ?? [], error: spotGamma?.error ?? null };
+    if (activeTab === "heatmap") return { meta: heatmap?.meta, warnings: heatmap?.warnings ?? [], error: heatmap?.error ?? null };
+    if (activeTab === "flow") return { meta: recentFlow?.meta, warnings: recentFlow?.warnings ?? [], error: recentFlow?.error ?? null };
+    return {
+      meta: summary?.meta,
+      warnings: [...(summary?.warnings ?? []), ...(narrative?.warnings ?? [])],
+      error: summary?.error ?? narrative?.error ?? null,
+    };
+  }, [activeTab, byStrike, byExpiry, largest, levels, spotGamma, heatmap, recentFlow, summary, narrative]);
 
   // ---------------------------------------------------------------------------
   // Tab pane renderers
@@ -476,6 +519,7 @@ export function V3EntryShell() {
                 : null
             }
             isLoading={isLoading}
+            onExplain={() => setExplainOpen(true)}
           />
 
           <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
@@ -500,6 +544,12 @@ export function V3EntryShell() {
                     <p className="mt-1 text-xs text-zinc-500">
                       Level: {fmtNum(signal.level)} | Dist: {fmtNum(signal.distancePct)}%
                     </p>
+                    <button
+                      onClick={() => setExplainOpen(true)}
+                      className="mt-2 text-xs text-indigo-300 hover:text-indigo-200"
+                    >
+                      Why this score?
+                    </button>
                   </div>
                 ))}
               </div>
@@ -518,6 +568,10 @@ export function V3EntryShell() {
             </ul>
           </div>
         )}
+
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-xs text-zinc-400">
+          Shortcuts: Alt+1..6 switches major tabs. Shift+1/2/3 sets 10, 20, 50 strikes. Shift+P opens Discord publish.
+        </div>
       </div>
     );
   }
@@ -553,7 +607,7 @@ export function V3EntryShell() {
           rows={rows}
           spot={byStrike?.data?.spot ?? null}
           gammaFlip={levels?.data?.levels?.gammaFlip ?? null}
-          highlightedStrike={pinnedStrike}
+          highlightedStrike={pinnedStrike ?? selectedLevel}
           sortMode={byStrikeSortMode}
         />
         <SimpleTable
@@ -659,6 +713,12 @@ export function V3EntryShell() {
           putWall={lvls?.putWall ?? null}
           gammaMagnet={lvls?.gammaMagnet ?? null}
           pinStrike={lvls?.pinStrike ?? null}
+          symbol={symbol}
+          selectedLevel={selectedLevel}
+          onSelectLevel={(level) => {
+            setSelectedLevel(level);
+            setPinnedStrike(level);
+          }}
         />
         {coachLines.length > 0 && (
           <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
@@ -679,8 +739,11 @@ export function V3EntryShell() {
       <IntegratedViewPane
         rows={byStrike?.data?.rows ?? []}
         spot={summary?.data?.spot ?? null}
-        pinnedStrike={pinnedStrike}
-        onPinStrike={(strike) => setPinnedStrike(strike)}
+        pinnedStrike={pinnedStrike ?? selectedLevel}
+        onPinStrike={(strike) => {
+          setPinnedStrike(strike);
+          setSelectedLevel(strike);
+        }}
       />
     );
   }
@@ -843,6 +906,13 @@ export function V3EntryShell() {
         {/* Active tab content */}
         <div>{tabContent[activeTab]?.()}</div>
 
+        <DataStatusStrip
+          asOf={activeStatus.meta?.asOf ?? null}
+          freshnessMs={activeStatus.meta?.freshnessMs ?? null}
+          warnings={activeStatus.warnings}
+          error={activeStatus.error}
+        />
+
         {/* Publish button — always visible at bottom */}
         <div className="flex justify-end pt-2">
           <button
@@ -858,6 +928,13 @@ export function V3EntryShell() {
         symbol={symbol}
         isOpen={publishOpen}
         onClose={() => setPublishOpen(false)}
+      />
+
+      <ExplainabilityDrawer
+        symbol={symbol}
+        snapshotId={summary?.meta?.asOf ? `${summary.meta.asOf}:${activeTab}` : null}
+        isOpen={explainOpen}
+        onClose={() => setExplainOpen(false)}
       />
     </div>
   );

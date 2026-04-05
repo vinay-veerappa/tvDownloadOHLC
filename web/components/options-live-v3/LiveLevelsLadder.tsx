@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 
 type Level = {
   label: string;
@@ -17,6 +17,9 @@ type Props = {
   putWall: number | null;
   gammaMagnet: number | null;
   pinStrike: number | null;
+  symbol?: string;
+  selectedLevel?: number | null;
+  onSelectLevel?: (level: number) => void;
 };
 
 function pct(value: number, spot: number): string {
@@ -32,7 +35,13 @@ export function LiveLevelsLadder({
   putWall,
   gammaMagnet,
   pinStrike,
+  symbol = "SPY",
+  selectedLevel = null,
+  onSelectLevel,
 }: Props) {
+  const [alertBandPct, setAlertBandPct] = useState("0.50");
+  const [savingLevel, setSavingLevel] = useState<string | null>(null);
+
   // Build sorted level list
   const rawLevels: Level[] = [
     { label: "Call Wall", value: callWall, color: "bg-emerald-900/60", textColor: "text-emerald-300" },
@@ -61,9 +70,38 @@ export function LiveLevelsLadder({
   const max = levels[0].value as number;
   const range = max - min || 1;
 
+  async function saveAlertRule(levelLabel: string, levelValue: number) {
+    setSavingLevel(levelLabel);
+    try {
+      await fetch("/api/options-live/v3/publish/event-rule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol,
+          channel: "alerts",
+          ruleName: `${symbol}-${levelLabel.toLowerCase().replace(/\s+/g, "-")}-prox`,
+          mode: "full",
+          cron: `proximity<=${alertBandPct}%@${levelValue}`,
+        }),
+      });
+    } finally {
+      setSavingLevel(null);
+    }
+  }
+
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-      <h2 className="mb-3 text-sm font-semibold text-zinc-200">Key Levels Ladder</h2>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-zinc-200">Key Levels Ladder</h2>
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-zinc-500">Alert band %</span>
+          <input
+            value={alertBandPct}
+            onChange={(e) => setAlertBandPct(e.target.value)}
+            className="h-7 w-16 rounded border border-zinc-700 bg-zinc-900 px-2 text-zinc-200"
+          />
+        </div>
+      </div>
       <div className="relative">
         {/* Rail line */}
         <div className="absolute left-[7.5rem] top-0 bottom-0 w-px bg-zinc-700" />
@@ -82,9 +120,13 @@ export function LiveLevelsLadder({
 
             return (
               <React.Fragment key={lvl.label}>
-                <div
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (lvl.value != null) onSelectLevel?.(lvl.value);
+                  }}
                   className={`flex items-center gap-3 rounded-lg px-3 py-1.5 ${
-                    lvl.isSpot ? "ring-1 ring-emerald-500/50" : ""
+                    lvl.isSpot || selectedLevel === lvl.value ? "ring-1 ring-emerald-500/50" : ""
                   } ${lvl.color}`}
                 >
                   {/* Label area */}
@@ -115,7 +157,18 @@ export function LiveLevelsLadder({
                   {distLabel ? (
                     <span className="ml-auto text-xs text-zinc-400">{distLabel}</span>
                   ) : null}
-                </div>
+                  {!lvl.isSpot && lvl.value != null && (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void saveAlertRule(lvl.label, lvl.value as number);
+                      }}
+                      className="rounded border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800"
+                    >
+                      {savingLevel === lvl.label ? "Saving…" : "Set Alert"}
+                    </span>
+                  )}
+                </button>
 
                 {/* Gap bar between levels */}
                 {gap !== null && gap > 0.03 && (

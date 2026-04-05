@@ -30,6 +30,11 @@ const TABS: { id: GexTabId; label: string }[] = [
 ];
 
 const METRIC_FAMILIES: MetricFamily[] = ["GEX", "DEX", "VANNA", "CHARM"];
+const WORKFLOW_PRESETS = [
+  { label: "Scalper", strikeCount: 10 },
+  { label: "Intraday", strikeCount: 20 },
+  { label: "Swing", strikeCount: 50 },
+] as const;
 
 type Props = {
   symbol: string;
@@ -148,6 +153,21 @@ export function GlobalControlBar({
           >
             Apply
           </button>
+        </div>
+
+        <div className="h-4 w-px bg-zinc-800" />
+
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-zinc-500">Preset:</span>
+          {WORKFLOW_PRESETS.map((preset) => (
+            <button
+              key={preset.label}
+              onClick={() => onStrikeCountChange(preset.strikeCount)}
+              className="h-6 rounded bg-zinc-800 px-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700"
+            >
+              {preset.label}
+            </button>
+          ))}
         </div>
 
         <div className="h-4 w-px bg-zinc-800" />

@@ -19,6 +19,7 @@ type ScreenerData = {
 type Props = {
   screener: ScreenerData | null | undefined;
   isLoading?: boolean;
+  onExplain?: () => void;
 };
 
 function confidenceColor(confidence: string | null | undefined): string {
@@ -47,7 +48,7 @@ function scoreGradient(score: number): string {
   return "from-rose-700 to-rose-500";
 }
 
-export function SqueezeScreenerCard({ screener, isLoading }: Props) {
+export function SqueezeScreenerCard({ screener, isLoading, onExplain }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   if (isLoading) {
@@ -104,13 +105,23 @@ export function SqueezeScreenerCard({ screener, isLoading }: Props) {
       {/* Why this score? expandable */}
       {factors.length > 0 && (
         <div>
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-          >
-            <span className="font-medium">{expanded ? "▾" : "▸"} Why this score?</span>
-            <span className="text-zinc-600">({factors.length} factors)</span>
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              <span className="font-medium">{expanded ? "▾" : "▸"} Why this score?</span>
+              <span className="text-zinc-600">({factors.length} factors)</span>
+            </button>
+            {onExplain && (
+              <button
+                onClick={onExplain}
+                className="text-xs text-indigo-300 hover:text-indigo-200"
+              >
+                Open factor math
+              </button>
+            )}
+          </div>
 
           {expanded && (
             <div className="mt-2 space-y-1.5">
