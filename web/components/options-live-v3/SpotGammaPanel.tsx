@@ -46,6 +46,23 @@ function toneByNumber(v: number | null | undefined): "positive" | "negative" | "
   return v >= 0 ? "positive" : "negative";
 }
 
+function SpotGammaTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: SpotGammaSeries }> }) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  if (!row) return null;
+  return (
+    <div className="min-w-[190px] rounded-md border border-zinc-800 bg-zinc-950/95 p-3 shadow-xl">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-300">Strike {row.strike.toFixed(2)}</div>
+      <div className="space-y-1 text-xs">
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Net GEX</span><span className="text-violet-300">{fmt(row.net_gex)}</span></div>
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Call GEX</span><span className="text-emerald-300">{fmt(row.call_gex)}</span></div>
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Put GEX</span><span className="text-rose-300">{fmt(row.put_gex)}</span></div>
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Cum GEX</span><span className="text-zinc-100">{fmt(row.cumulative_gex)}</span></div>
+      </div>
+    </div>
+  );
+}
+
 type Props = {
   data: SpotGammaData | null;
   isLoading?: boolean;
@@ -197,15 +214,7 @@ export function SpotGammaPanel({ data, isLoading }: Props) {
               width={48}
             />
             <Tooltip
-              contentStyle={{
-                backgroundColor: "#09090b",
-                border: "1px solid #27272a",
-                borderRadius: "8px",
-                fontSize: "12px",
-                color: "#e4e4e7",
-              }}
-              formatter={(value: number) => [fmt(value), "Cum GEX"]}
-              labelFormatter={(label: number) => `Strike: ${label}`}
+              content={<SpotGammaTooltip />}
             />
             <ReferenceLine y={0} stroke="#3f3f46" strokeWidth={1.5} label={{ value: "0", fill: "#71717a", fontSize: 10 }} />
             {/* ATM reference line */}
@@ -248,9 +257,7 @@ export function SpotGammaPanel({ data, isLoading }: Props) {
             <XAxis dataKey="strike" hide />
             <YAxis hide />
             <Tooltip
-              contentStyle={{ backgroundColor: "#09090b", border: "1px solid #27272a", borderRadius: "8px", fontSize: "12px", color: "#e4e4e7" }}
-              labelFormatter={(label) => `Strike: ${Number(label).toFixed(0)}`}
-              formatter={(value: number) => [fmt(value), "Net GEX"]}
+              content={<SpotGammaTooltip />}
             />
             <ReferenceLine y={0} stroke="#3f3f46" strokeWidth={1} />
             {current?.atm_strike && (

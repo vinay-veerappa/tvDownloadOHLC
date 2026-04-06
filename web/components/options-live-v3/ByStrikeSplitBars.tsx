@@ -127,6 +127,9 @@ type BarRow = {
   callVal: number;
   putValNeg: number;
   netSort: number;
+  callOi: number;
+  putOi: number;
+  totalOi: number;
   isAtm: boolean;
 };
 
@@ -135,8 +138,32 @@ type LineRow = {
   callVal: number;
   putVal: number;
   netVal: number;
+  callOi: number;
+  putOi: number;
+  totalOi: number;
   isAtm: boolean;
 };
+
+type TooltipBlockProps = {
+  title: string;
+  rows: Array<{ label: string; value: string; tone?: string }>;
+};
+
+function TooltipBlock({ title, rows }: TooltipBlockProps) {
+  return (
+    <div className="min-w-[180px] rounded-md border border-zinc-800 bg-zinc-950/95 p-3 shadow-xl">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-300">{title}</div>
+      <div className="space-y-1 text-xs">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-center justify-between gap-4">
+            <span className="text-zinc-400">{row.label}</span>
+            <span className={row.tone ?? "text-zinc-100"}>{row.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function ByStrikeSplitBars({
   rows,
@@ -171,6 +198,9 @@ export function ByStrikeSplitBars({
       callVal: cfg.callVal(r),
       putValNeg: cfg.putValNeg(r),
       netSort: cfg.netSort(r),
+      callOi: r.call_oi ?? 0,
+      putOi: r.put_oi ?? 0,
+      totalOi: (r.call_oi ?? 0) + (r.put_oi ?? 0),
       isAtm: spotDists[i] === minDist,
     }));
     if (sortMode === "abs") {
@@ -190,6 +220,9 @@ export function ByStrikeSplitBars({
       callVal: cfg.callVal(r),
       putVal: cfg.putVal(r),
       netVal: cfg.netVal(r),
+      callOi: r.call_oi ?? 0,
+      putOi: r.put_oi ?? 0,
+      totalOi: (r.call_oi ?? 0) + (r.put_oi ?? 0),
       isAtm: spotDists[i] === minDist,
     }));
   }, [isLineChart, metricFamily, sortedBase, spotDists, minDist]);
@@ -210,6 +243,27 @@ export function ByStrikeSplitBars({
   if (isLineChart) {
     const lcfg = LINE_CONFIG[metricFamily as "VANNA" | "CHARM"];
     const metricName = metricFamily === "VANNA" ? "Vanna" : "Charm";
+    const renderLineTooltip = ({ active, payload }: { active?: boolean; payload?: ReadonlyArray<{ payload: LineRow }> }) => {
+      if (!active || !payload?.length) return null;
+      const row = payload[0]?.payload;
+      if (!row) return null;
+      const spotDistance = typeof spot === "number" ? Math.abs(row.strike - spot) : null;
+      return (
+        <TooltipBlock
+          title={`Strike ${row.strike.toFixed(2)}`}
+          rows={[
+            { label: lcfg.netLabel, value: fmt(row.netVal), tone: "text-violet-300" },
+            { label: lcfg.callLabel, value: fmt(row.callVal), tone: "text-emerald-300" },
+            { label: lcfg.putLabel, value: fmt(row.putVal), tone: "text-rose-300" },
+            { label: "Call OI", value: fmt(row.callOi) },
+            { label: "Put OI", value: fmt(row.putOi) },
+            { label: "Total OI", value: fmt(row.totalOi) },
+            ...(spotDistance !== null ? [{ label: "Dist. to Spot", value: spotDistance.toFixed(2) }] : []),
+            ...(row.isAtm ? [{ label: "ATM", value: "Yes", tone: "text-emerald-300" }] : []),
+          ]}
+        />
+      );
+    };
 
     return (
       <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
@@ -239,9 +293,7 @@ export function ByStrikeSplitBars({
                   width={52}
                 />
                 <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
-                  labelFormatter={(label) => `Strike: ${Number(label).toFixed(2)}`}
-                  formatter={(value: number) => [fmt(value), lcfg.netLabel]}
+                  content={renderLineTooltip}
                 />
                 <ReferenceLine y={0} stroke="#3f3f46" strokeWidth={1.5} />
                 {spot && (
@@ -295,13 +347,7 @@ export function ByStrikeSplitBars({
                   width={52}
                 />
                 <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
-                  labelFormatter={(label) => `Strike: ${Number(label).toFixed(2)}`}
-                  formatter={(value: number, name: string) => {
-                    if (name === lcfg.callLabel) return [fmt(value), lcfg.callLabel];
-                    if (name === lcfg.putLabel) return [fmt(value), lcfg.putLabel];
-                    return [fmt(value), name];
-                  }}
+                  content={renderLineTooltip}
                 />
                 <Legend
                   wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }}
@@ -353,6 +399,27 @@ export function ByStrikeSplitBars({
   const maxAbs = Math.max(
     ...barRows.map((d) => Math.max(Math.abs(d.callVal), Math.abs(d.putValNeg)))
   );
+  const renderBarTooltip = ({ active, payload }: { active?: boolean; payload?: ReadonlyArray<{ payload: BarRow }> }) => {
+    if (!active || !payload?.length) return null;
+    const row = payload[0]?.payload;
+    if (!row) return null;
+    const spotDistance = typeof spot === "number" ? Math.abs(row.strike - spot) : null;
+    return (
+      <TooltipBlock
+        title={`Strike ${row.strike.toFixed(2)}`}
+        rows={[
+          { label: bcfg.callLabel, value: fmt(row.callVal), tone: "text-emerald-300" },
+          { label: bcfg.putLabel, value: fmt(-row.putValNeg), tone: "text-rose-300" },
+          { label: `Net ${metricFamily}`, value: fmt(row.netSort), tone: "text-violet-300" },
+          { label: "Call OI", value: fmt(row.callOi) },
+          { label: "Put OI", value: fmt(row.putOi) },
+          { label: "Total OI", value: fmt(row.totalOi) },
+          ...(spotDistance !== null ? [{ label: "Dist. to Spot", value: spotDistance.toFixed(2) }] : []),
+          ...(row.isAtm ? [{ label: "ATM", value: "Yes", tone: "text-emerald-300" }] : []),
+        ]}
+      />
+    );
+  };
 
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
@@ -410,13 +477,7 @@ export function ByStrikeSplitBars({
           />
           <Tooltip
             cursor={{ fill: "rgba(255,255,255,0.04)" }}
-            contentStyle={TOOLTIP_STYLE}
-            labelFormatter={(label) => `Strike: ${Number(label).toFixed(2)}`}
-            formatter={(value: number, name: string) => {
-              if (name === "callVal") return [fmt(value), bcfg.callLabel];
-              if (name === "putValNeg") return [fmt(-value), bcfg.putLabel];
-              return [fmt(value), name];
-            }}
+            content={renderBarTooltip}
           />
 
           <ReferenceLine x={0} stroke="#3f3f46" strokeWidth={1} />

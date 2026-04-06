@@ -15,11 +15,14 @@ import {
 
 type ByExpiryRow = {
   expiry?: string;
+  dte?: number;
   call_gex?: number;
   put_gex?: number;
   net_gex?: number;
   call_oi?: number;
   put_oi?: number;
+  call_vol?: number;
+  put_vol?: number;
 };
 
 type Props = {
@@ -34,6 +37,43 @@ function fmt(v: number): string {
   if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
   return v.toFixed(0);
+}
+
+function ExpiryTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: {
+  expiry: string;
+  dte: number | null;
+  call_gex: number;
+  put_gex: number;
+  net_gex: number;
+  call_oi: number;
+  put_oi: number;
+  total_oi: number;
+  call_vol: number;
+  put_vol: number;
+  total_vol: number;
+} }> }) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  if (!row) return null;
+  return (
+    <div className="min-w-[190px] rounded-md border border-zinc-800 bg-zinc-950/95 p-3 shadow-xl">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-300">Expiry {row.expiry}</div>
+      <div className="space-y-1 text-xs">
+        {row.dte !== null && (
+          <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">DTE</span><span className="text-zinc-100">{row.dte}</span></div>
+        )}
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Call GEX</span><span className="text-emerald-300">{fmt(row.call_gex)}</span></div>
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Put GEX</span><span className="text-rose-300">{fmt(row.put_gex)}</span></div>
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Net GEX</span><span className="text-violet-300">{fmt(row.net_gex)}</span></div>
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Call OI</span><span className="text-zinc-100">{fmt(row.call_oi)}</span></div>
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Put OI</span><span className="text-zinc-100">{fmt(row.put_oi)}</span></div>
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Total OI</span><span className="text-zinc-100">{fmt(row.total_oi)}</span></div>
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Call Vol</span><span className="text-zinc-100">{fmt(row.call_vol)}</span></div>
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Put Vol</span><span className="text-zinc-100">{fmt(row.put_vol)}</span></div>
+        <div className="flex items-center justify-between gap-4"><span className="text-zinc-400">Total Vol</span><span className="text-zinc-100">{fmt(row.total_vol)}</span></div>
+      </div>
+    </div>
+  );
 }
 
 export function ByExpiryAggregationChart({ rows, isLoading, viewMode = "split" }: Props) {
@@ -63,11 +103,17 @@ export function ByExpiryAggregationChart({ rows, isLoading, viewMode = "split" }
   // Transform for Recharts (add put_gex as negative for stacked area)
   const chartData = sortedRows.map((row) => ({
     expiry: row.expiry ?? "Unknown",
+    dte: row.dte ?? null,
     call_gex: Math.max(0, row.call_gex ?? 0),
     put_gex_neg: Math.min(0, row.put_gex ?? 0), // Keep as negative
+    put_gex: row.put_gex ?? 0,
     net_gex: row.net_gex ?? 0,
     call_oi: row.call_oi ?? 0,
     put_oi: row.put_oi ?? 0,
+    total_oi: (row.call_oi ?? 0) + (row.put_oi ?? 0),
+    call_vol: row.call_vol ?? 0,
+    put_vol: row.put_vol ?? 0,
+    total_vol: (row.call_vol ?? 0) + (row.put_vol ?? 0),
   }));
 
   const [minNet, maxNet] = chartData.reduce(
@@ -113,15 +159,7 @@ export function ByExpiryAggregationChart({ rows, isLoading, viewMode = "split" }
             width={48}
           />
           <Tooltip
-            contentStyle={{
-              backgroundColor: "#09090b",
-              border: "1px solid #27272a",
-              borderRadius: "8px",
-              fontSize: "12px",
-              color: "#e4e4e7",
-            }}
-            formatter={(value: number, name: string) => [fmt(value), name]}
-            labelFormatter={(label: string) => `Expiry: ${label}`}
+            content={<ExpiryTooltip />}
           />
           <Legend
             wrapperStyle={{ paddingTop: "12px" }}
