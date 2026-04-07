@@ -4,6 +4,13 @@ import type { V3Meta } from "@/lib/options-live-v3/contracts/types";
 
 const DEFAULT_SYMBOL = "SPY";
 
+function normalizeSymbol(raw: string): string {
+  const clean = raw.trim().toUpperCase().replace(/^\//, "");
+  // Futures-style symbols often include a month/continuous suffix (e.g. NQ1, NQ1!).
+  const futuresRoot = clean.match(/^([A-Z]{1,8})\d+!?$/);
+  return (futuresRoot?.[1] ?? clean).trim();
+}
+
 // ---------------------------------------------------------------------------
 // Zod envelope validation (only runs in development to avoid prod overhead)
 // ---------------------------------------------------------------------------
@@ -35,7 +42,7 @@ function validateEnvelope(payload: unknown): void {
 
 export function readSymbol(req: NextRequest): string {
   const symbol = req.nextUrl.searchParams.get("symbol")?.trim();
-  return symbol && symbol.length > 0 ? symbol.toUpperCase() : DEFAULT_SYMBOL;
+  return symbol && symbol.length > 0 ? normalizeSymbol(symbol) : DEFAULT_SYMBOL;
 }
 
 export function readIntParam(

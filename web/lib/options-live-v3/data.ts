@@ -130,8 +130,15 @@ function dedupe(items: string[]): string[] {
   return out;
 }
 
+function normalizeSymbolRoot(symbol: string): string {
+  const clean = symbol.trim().toUpperCase().replace(/^\//, "");
+  const futuresRoot = clean.match(/^([A-Z]{1,8})\d+!?$/);
+  return futuresRoot?.[1] ?? clean;
+}
+
 function buildCandidates(symbol: string): string[] {
-  const clean = symbol.trim().toUpperCase();
+  const normalized = normalizeSymbolRoot(symbol);
+  const clean = normalized;
   const noSlash = clean.startsWith("/") ? clean.slice(1) : clean;
   const withSlash = noSlash.startsWith("/") ? noSlash : `/${noSlash}`;
 
@@ -205,7 +212,7 @@ export function resolveDailyStructure(levels: DailyLevels | null, symbol: string
  * Macro cache files are named by equity/ETF symbol (SPY, QQQ, IWM, SPX, …).
  */
 function buildMacroCandidates(symbol: string): string[] {
-  const clean = symbol.trim().toUpperCase().replace(/^\//, "");
+  const clean = normalizeSymbolRoot(symbol);
   const groupMap: Record<string, string[]> = {
     ES: ["SPY", "SPX", "ES"],
     SPX: ["SPX", "SPY"],
@@ -236,9 +243,11 @@ export async function loadMacroCache(symbol: string): Promise<MacroCacheResult |
       continue;
     }
 
+    const latestPerCandidate: Array<{ cand: string; file: string; dateStr: string }> = [];
+
     for (const cand of candidates) {
       const prefix = `macro_cache_${cand}_`;
-      // ISO date strings sort lexically — descending = latest first
+      // ISO date strings sort lexically — descending = latest first.
       const matching = files
         .filter((f) => f.startsWith(prefix) && f.endsWith(".json"))
         .sort()
@@ -248,11 +257,17 @@ export async function loadMacroCache(symbol: string): Promise<MacroCacheResult |
 
       const latestFile = matching[0];
       const dateStr = latestFile.slice(prefix.length, -5); // strip prefix + ".json"
+      latestPerCandidate.push({ cand, file: latestFile, dateStr });
+    }
 
+    // Choose freshest snapshot across aliases (e.g. NQ -> QQQ latest over stale NQ file).
+    latestPerCandidate.sort((a, b) => b.dateStr.localeCompare(a.dateStr));
+
+    for (const candidate of latestPerCandidate) {
       try {
-        const content = await fs.readFile(path.join(root, latestFile), "utf-8");
+        const content = await fs.readFile(path.join(root, candidate.file), "utf-8");
         const data = JSON.parse(content) as MacroCache;
-        return { ...data, _sym: cand, _date: dateStr };
+        return { ...data, _sym: candidate.cand, _date: candidate.dateStr };
       } catch {
         // unreadable — try next candidate
       }

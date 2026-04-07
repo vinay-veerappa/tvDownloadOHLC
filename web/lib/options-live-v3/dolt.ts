@@ -26,7 +26,9 @@ function getDoltDir(): string {
 
 /** Map input symbol to candidate act_symbol values used in Dolt's option_chain. */
 function toDoltSymbols(symbol: string): string[] {
-  const clean = symbol.trim().toUpperCase().replace(/^\//, "");
+  const raw = symbol.trim().toUpperCase().replace(/^\//, "");
+  const futuresRoot = raw.match(/^([A-Z]{1,8})\d+!?$/);
+  const clean = futuresRoot?.[1] ?? raw;
   const map: Record<string, string[]> = {
     ES: ["SPY", "SPX"],
     SPX: ["SPX", "SPY"],
