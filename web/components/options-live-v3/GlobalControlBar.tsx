@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 
 export type GexTabId =
   | "daily-gex"
@@ -14,6 +14,7 @@ export type GexTabId =
   | "flow";
 
 export type MetricFamily = "GEX" | "DEX" | "VANNA" | "CHARM";
+export type WorkflowPresetId = "scalper" | "intraday" | "swing";
 
 const STRIKE_PRESETS = [5, 10, 15, 20, 30, 50] as const;
 
@@ -30,10 +31,10 @@ const TABS: { id: GexTabId; label: string }[] = [
 ];
 
 const METRIC_FAMILIES: MetricFamily[] = ["GEX", "DEX", "VANNA", "CHARM"];
-const WORKFLOW_PRESETS = [
-  { label: "Scalper", strikeCount: 10 },
-  { label: "Intraday", strikeCount: 20 },
-  { label: "Swing", strikeCount: 50 },
+const WORKFLOW_PRESETS: Array<{ id: WorkflowPresetId; label: string; strikeCount: number }> = [
+  { id: "scalper", label: "Scalper", strikeCount: 10 },
+  { id: "intraday", label: "Intraday", strikeCount: 20 },
+  { id: "swing", label: "Swing", strikeCount: 50 },
 ] as const;
 
 type Props = {
@@ -45,6 +46,8 @@ type Props = {
   onExpiryScopeChange: (s: string) => void;
   metricFamily: MetricFamily;
   onMetricFamilyChange: (m: MetricFamily) => void;
+  activeWorkflowPreset: WorkflowPresetId | null;
+  onWorkflowPresetChange: (preset: WorkflowPresetId) => void;
   activeTab: GexTabId;
   onTabChange: (t: GexTabId) => void;
   isLoading: boolean;
@@ -60,6 +63,8 @@ export function GlobalControlBar({
   onExpiryScopeChange,
   metricFamily,
   onMetricFamilyChange,
+  activeWorkflowPreset,
+  onWorkflowPresetChange,
   activeTab,
   onTabChange,
   isLoading,
@@ -67,12 +72,12 @@ export function GlobalControlBar({
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [customStrike, setCustomStrike] = useState<string>("");
-
-  useEffect(() => {
-    if (strikeCount > 0 && !STRIKE_PRESETS.includes(strikeCount as (typeof STRIKE_PRESETS)[number])) {
-      setCustomStrike(String(strikeCount));
-    }
-  }, [strikeCount]);
+  const customStrikeDisplay =
+    customStrike.length > 0
+      ? customStrike
+      : strikeCount > 0 && !STRIKE_PRESETS.includes(strikeCount as (typeof STRIKE_PRESETS)[number])
+        ? String(strikeCount)
+        : "";
 
   const handleSymbolCommit = () => {
     const val = inputRef.current?.value.trim().toUpperCase() ?? "";
@@ -138,7 +143,7 @@ export function GlobalControlBar({
             All
           </button>
           <input
-            value={customStrike}
+            value={customStrikeDisplay}
             onChange={(e) => setCustomStrike(e.target.value.replace(/[^\d]/g, ""))}
             onKeyDown={(e) => {
               if (e.key === "Enter") applyCustomStrike();
@@ -161,9 +166,13 @@ export function GlobalControlBar({
           <span className="text-xs text-zinc-500">Preset:</span>
           {WORKFLOW_PRESETS.map((preset) => (
             <button
-              key={preset.label}
-              onClick={() => onStrikeCountChange(preset.strikeCount)}
-              className="h-6 rounded bg-zinc-800 px-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700"
+              key={preset.id}
+              onClick={() => onWorkflowPresetChange(preset.id)}
+              className={`h-6 rounded px-2 text-xs font-medium transition-colors ${
+                activeWorkflowPreset === preset.id
+                  ? "bg-emerald-700 text-white"
+                  : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+              }`}
             >
               {preset.label}
             </button>

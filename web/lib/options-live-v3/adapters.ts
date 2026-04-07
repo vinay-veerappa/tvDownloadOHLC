@@ -6,6 +6,7 @@ import {
   loadGexProfiles,
   loadMacroCache,
   loadPipelineState,
+  type MacroContract,
   resolveDailyStructure,
   resolveProfileRows,
   resolveTickerEntry,
@@ -88,6 +89,10 @@ type NarrativeData = {
   module: "narrative";
   symbol: string;
   runLabel: string | null;
+  /** Data quality tier for this narrative, derived from the backing data source. */
+  integrityTier: "Measured" | "Proxy" | "Low-Integrity";
+  /** Human-readable label for the backing data source. */
+  dataSourceLabel: string;
   intradayDelta: {
     session: number | null;
     sessionPct: number | null;
@@ -105,8 +110,19 @@ type NarrativeData = {
     setup: string;
     probabilityScore: number;
     confidence: "POSSIBLE" | "LIKELY" | "IMMINENT";
+    scope: string;
+    scopedNetGex: number | null;
+    integrityTier: "Measured" | "Proxy" | "Low-Integrity";
     factors: Array<{ name: string; score: number }>;
   };
+  perspectives: Array<{
+    mode: "Scalper" | "Intraday" | "Swing";
+    scope: "0dte" | "weekly" | "monthly";
+    netGex: number | null;
+    bias: "Expansion" | "Compression" | "Unavailable";
+    /** Mode-specific weighted tactical quality score (0-100). */
+    tacticalScore: number;
+  }>;
   notes: {
     coach: string[];
     tactical: string[];
@@ -219,6 +235,12 @@ export async function buildByStrike(
   const warnings: string[] = [];
   const [profiles, state] = await Promise.all([loadGexProfiles(), loadPipelineState()]);
 
+  if (expiryScope !== "all") {
+    warnings.push(
+      `By-strike rows are sourced from consolidated gex_profiles; expiry scope '${expiryScope}' is informational only.`
+    );
+  }
+
   const rows = resolveProfileRows(profiles, symbol)
     .map((row) => ({ ...row }))
     .sort((a, b) => Number(a.strike ?? 0) - Number(b.strike ?? 0));
@@ -312,7 +334,60 @@ function bucketScore(score: number): "POSSIBLE" | "LIKELY" | "IMMINENT" {
   return "POSSIBLE";
 }
 
-export async function buildNarrative(symbol: string): Promise<{ data: NarrativeData; warnings: string[] }> {
+/**
+ * Compute a mode-specific tactical quality score (0–100) by weighting regime,
+ * wall proximity, and net-GEX signal strength differently per trading mode.
+ *
+ *  Scalper  — proximity-heavy (scalpers live near pinch points)
+ *  Intraday — balanced
+ *  Swing    — regime+flow-heavy (directional clarity matters more than proximity)
+ */
+function computeTacticalScore(
+  mode: "Scalper" | "Intraday" | "Swing",
+  netGex: number | null,
+  totalGex: number | null,
+  isNegativeRegime: boolean,
+  callWallDistPct: number | null,
+  putWallDistPct: number | null
+): number {
+  const weights =
+    mode === "Scalper"
+      ? { regime: 20, proximity: 45, flow: 35 }
+      : mode === "Intraday"
+        ? { regime: 35, proximity: 30, flow: 35 }
+        : { regime: 40, proximity: 15, flow: 45 }; // Swing
+
+  // Regime: negative GEX = amplified moves — universally meaningful but weighted by mode
+  const regimeScore = isNegativeRegime ? 1.0 : 0.35;
+
+  // Proximity: how close is spot to the nearest wall (lower distance = higher pinch pressure)
+  const minDistAbs = Math.min(
+    Math.abs(callWallDistPct ?? 100),
+    Math.abs(putWallDistPct ?? 100)
+  );
+  // Full score within 0 %, zero score at ≥ 6 % away
+  const proximityScore = Math.max(0, 1 - minDistAbs / 6);
+
+  // Flow signal: magnitude of net GEX as share of total GEX
+  let flowScore = 0;
+  if (netGex !== null && totalGex !== null && totalGex !== 0) {
+    flowScore = Math.min(1, Math.abs(netGex / totalGex) * 2.5);
+  } else if (netGex !== null && netGex !== 0) {
+    flowScore = 0.4;
+  }
+
+  const raw =
+    regimeScore * weights.regime +
+    proximityScore * weights.proximity +
+    flowScore * weights.flow;
+
+  return Math.round(Math.min(100, raw));
+}
+
+export async function buildNarrative(
+  symbol: string,
+  expiryScope = "all"
+): Promise<{ data: NarrativeData; warnings: string[] }> {
   const warnings: string[] = [];
   const [state, levels] = await Promise.all([loadPipelineState(), loadDailyLevels()]);
 
@@ -331,16 +406,123 @@ export async function buildNarrative(symbol: string): Promise<{ data: NarrativeD
   const sessionPct =
     sessionDelta !== null && totalGex !== null && totalGex !== 0 ? (sessionDelta / totalGex) * 100 : null;
 
+  const scopeData = await buildByExpiryTrue(symbol, 20, "gamma", expiryScope).catch(() => null);
+  const scopedNetGex = scopeData
+    ? scopeData.data.rows.reduce((sum, row) => sum + (toNum((row as Record<string, unknown>).net_gex) ?? 0), 0)
+    : null;
+
+  const perspectiveDefs = [
+    { mode: "Scalper" as const, scope: "0dte" as const },
+    { mode: "Intraday" as const, scope: "weekly" as const },
+    { mode: "Swing" as const, scope: "monthly" as const },
+  ];
+  const perspectiveData = await Promise.all(
+    perspectiveDefs.map(async (def) => {
+      const result = await buildByExpiryTrue(symbol, 20, "gamma", def.scope).catch(() => null);
+      const net = result
+        ? result.data.rows.reduce((sum, row) => sum + (toNum((row as Record<string, unknown>).net_gex) ?? 0), 0)
+        : null;
+      const tacticalScore = computeTacticalScore(
+        def.mode,
+        net,
+        totalGex,
+        ticker?.gex_regime === "NEGATIVE",
+        calcDistancePct(callWall, spot),
+        calcDistancePct(putWall, spot)
+      );
+      return {
+        mode: def.mode,
+        scope: def.scope,
+        netGex: net,
+        bias: (net === null ? "Unavailable" : net < 0 ? "Expansion" : "Compression") as "Expansion" | "Compression" | "Unavailable",
+        tacticalScore,
+      };
+    })
+  );
+
+  // ── Integrity tier: derived from the backing data source ─────────────────
+  const rawSource = scopeData?.data?.dataSource ?? "expected-moves";
+  const integrityTier: "Measured" | "Proxy" | "Low-Integrity" =
+    rawSource === "macro-cache"
+      ? "Measured"
+      : rawSource === "dolt"
+        ? "Proxy"
+        : "Low-Integrity";
+  const dataSourceLabel =
+    rawSource === "macro-cache"
+      ? `Macro cache (${scopeData?.data?.cacheDate ?? "?"})`
+      : rawSource === "dolt"
+        ? `Dolt DB (gamma sums — no OI)`
+        : "Expected-move fallback";
+
+  const scopeLabelMap: Record<string, string> = {
+    all: "Full Curve",
+    "0dte": "0DTE",
+    weekly: "Weekly",
+    monthly: "Monthly",
+  };
+  const scopeLabel = scopeLabelMap[expiryScope] ?? expiryScope.toUpperCase();
+
+  if (!scopeData || scopeData.data.rows.length === 0) {
+    warnings.push(`No scoped expiry rows available for narrative scope '${expiryScope}'`);
+  }
+
   const factors = [
     { name: "Gamma Regime", score: ticker?.gex_regime === "NEGATIVE" ? 25 : 10 },
     { name: "Call Wall Proximity", score: Math.max(0, 20 - Math.abs(calcDistancePct(callWall, spot) ?? 20)) },
+    {
+      name: `${scopeLabel} Net GEX`,
+      score:
+        scopedNetGex === null
+          ? 5
+          : scopedNetGex < 0
+            ? 20
+            : 8,
+    },
     { name: "Flow Alignment", score: 10 },
     { name: "Volume Confirm", score: 5 },
     { name: "DEX Bias", score: 5 },
   ];
   const probabilityScore = Math.round(factors.reduce((sum, f) => sum + f.score, 0));
 
-  const setup = ticker?.gex_regime === "NEGATIVE" ? "Bullish Squeeze" : "Vol Compression";
+  const setupBase = ticker?.gex_regime === "NEGATIVE" ? "Bullish Squeeze" : "Vol Compression";
+  const setup = `${setupBase} (${scopeLabel})`;
+
+  // ── Tier-aware signal wording ─────────────────────────────────────────────
+  const tierQualifier =
+    integrityTier === "Measured"
+      ? ""
+      : integrityTier === "Proxy"
+        ? " (gamma-sum proxy — treat as directional, not magnitude)"
+        : " (expected-move estimate — limited confidence)";
+
+  const scopeMessage =
+    scopedNetGex === null
+      ? `${scopeLabel} lens: scoped net GEX unavailable.`
+      : `${scopeLabel} lens: scoped net GEX ${scopedNetGex >= 0 ? "supports mean reversion" : "warns of expansion"}${tierQualifier}.`;
+
+  const volSignalBase =
+    ticker?.gex_regime === "NEGATIVE"
+      ? "Short gamma regime can amplify directional price movement."
+      : "Regime currently favors more contained movement.";
+  const volSignalMsg =
+    integrityTier === "Measured"
+      ? `${volSignalBase} ${scopeMessage}`
+      : integrityTier === "Proxy"
+        ? `${volSignalBase} Gamma-sum proxy suggests similar dynamics; verify with live OI. ${scopeMessage}`
+        : `${volSignalBase} Using expected-move estimates — regime read has reduced confidence. ${scopeMessage}`;
+
+  const tacticalScoped = [
+    `${scopeLabel} mode active for narrative scoring and signal framing (${integrityTier} — ${dataSourceLabel}).`,
+    scopedNetGex === null
+      ? `${scopeLabel} scoped net GEX could not be computed from current source data.`
+      : `${scopeLabel} scoped net GEX = ${Math.round(scopedNetGex).toLocaleString()}.`,
+    ...perspectiveData.map((p) =>
+      p.netGex === null
+        ? `${p.mode} (${p.scope.toUpperCase()}): data unavailable.`
+        : `${p.mode} (${p.scope.toUpperCase()}): ${Math.round(p.netGex).toLocaleString()} (${p.bias}) — tactical score ${p.tacticalScore}/100.`
+    ),
+  ];
 
   return {
     data: {
@@ -348,6 +530,8 @@ export async function buildNarrative(symbol: string): Promise<{ data: NarrativeD
       module: "narrative",
       symbol,
       runLabel: (state?.run_label as string | undefined) ?? (levels?.run_label as string | undefined) ?? null,
+      integrityTier,
+      dataSourceLabel,
       intradayDelta: {
         session: sessionDelta,
         sessionPct,
@@ -358,24 +542,21 @@ export async function buildNarrative(symbol: string): Promise<{ data: NarrativeD
         {
           type: "volatility",
           severity: ticker?.gex_regime === "NEGATIVE" ? "STRONG" : "MODERATE",
-          message:
-            ticker?.gex_regime === "NEGATIVE"
-              ? "Short gamma regime can amplify directional price movement"
-              : "Regime currently favors more contained movement",
+          message: volSignalMsg,
           level: zeroGamma,
           distancePct: calcDistancePct(zeroGamma, spot),
         },
         {
           type: "resistance",
           severity: "MODERATE",
-          message: "Call wall can act as resistance if approached from below",
+          message: `Call wall can act as resistance if approached from below (${scopeLabel} context${tierQualifier}).`,
           level: callWall,
           distancePct: calcDistancePct(callWall, spot),
         },
         {
           type: "support",
           severity: "MODERATE",
-          message: "Put wall can act as support if approached from above",
+          message: `Put wall can act as support if approached from above (${scopeLabel} context${tierQualifier}).`,
           level: putWall,
           distancePct: calcDistancePct(putWall, spot),
         },
@@ -384,11 +565,18 @@ export async function buildNarrative(symbol: string): Promise<{ data: NarrativeD
         setup,
         probabilityScore,
         confidence: bucketScore(probabilityScore),
+        scope: expiryScope,
+        scopedNetGex,
+        integrityTier,
         factors,
       },
+      perspectives: perspectiveData,
       notes: {
         coach: (structure?.coach_note as string[] | undefined) ?? [],
-        tactical: (structure?.tactical_plan as string[] | undefined) ?? [],
+        tactical: [
+          ...tacticalScoped,
+          ...((structure?.tactical_plan as string[] | undefined) ?? []),
+        ],
       },
     },
     warnings,
@@ -457,14 +645,32 @@ type ByExpiryTrueData = {
   symbol: string;
   dataSource: "macro-cache" | "dolt" | "expected-moves";
   cacheDate: string | null;
-  filters: { strikes: number; metricFamily: string };
+  filters: { strikes: number; metricFamily: string; expiryScope: string };
   rows: Array<Record<string, unknown>>;
 };
+
+function isThirdFriday(date: Date): boolean {
+  const day = date.getUTCDay();
+  const dom = date.getUTCDate();
+  return day === 5 && dom >= 15 && dom <= 21;
+}
+
+function isInExpiryScope(expiry: string | undefined, scope: string, now: Date): boolean {
+  if (!expiry || scope === "all") return true;
+  const dt = new Date(expiry);
+  if (Number.isNaN(dt.getTime())) return false;
+  const dte = Math.max(0, Math.round((dt.getTime() - now.getTime()) / 86_400_000));
+  if (scope === "0dte") return dte === 0;
+  if (scope === "monthly") return isThirdFriday(dt);
+  if (scope === "weekly") return dte > 0 && !isThirdFriday(dt);
+  return true;
+}
 
 export async function buildByExpiryTrue(
   symbol: string,
   strikes: number,
-  metricFamily: string
+  metricFamily: string,
+  expiryScope = "all"
 ): Promise<{ data: ByExpiryTrueData; warnings: string[] }> {
   const warnings: string[] = [];
 
@@ -473,6 +679,7 @@ export async function buildByExpiryTrue(
 
   if (macro && ((macro.calls?.length ?? 0) > 0 || (macro.puts?.length ?? 0) > 0)) {
     const spot = macro.spot ?? 1;
+    const now = new Date();
 
     type Acc = {
       expiry: string;
@@ -492,10 +699,11 @@ export async function buildByExpiryTrue(
 
     const acc = new Map<string, Acc>();
 
-    function processContracts(contracts: any[], side: "call" | "put") {
+    function processContracts(contracts: MacroContract[], side: "call" | "put") {
       if (!contracts || contracts.length === 0) return;
       for (const c of contracts) {
         if (!c.expiry) continue;
+        if (!isInExpiryScope(c.expiry, expiryScope, now)) continue;
         // Standard GEX formula: γ × OI × S² × 0.01
         const gex = (c.gamma ?? 0) * (c.open_interest ?? 0) * spot * spot * 0.01;
         if (!acc.has(c.expiry)) {
@@ -531,7 +739,6 @@ export async function buildByExpiryTrue(
     processContracts(macro.calls ?? [], "call");
     processContracts(macro.puts ?? [], "put");
 
-    const now = new Date();
     const rows = Array.from(acc.values())
       .map((r) => {
         const expiryDate = new Date(r.expiry);
@@ -553,7 +760,7 @@ export async function buildByExpiryTrue(
       .sort((a, b) => a.dte - b.dte);
 
     warnings.push(
-      `Expiry GEX from macro cache (${macro._sym}, ${macro._date}): ${macro.calls?.length ?? 0} calls, ${macro.puts?.length ?? 0} puts`
+      `Expiry GEX from macro cache (${macro._sym}, ${macro._date}, scope=${expiryScope}): ${macro.calls?.length ?? 0} calls, ${macro.puts?.length ?? 0} puts`
     );
 
     return {
@@ -563,7 +770,7 @@ export async function buildByExpiryTrue(
         symbol,
         dataSource: "macro-cache",
         cacheDate: macro._date,
-        filters: { strikes, metricFamily },
+        filters: { strikes, metricFamily, expiryScope },
         rows,
       },
       warnings,
@@ -579,7 +786,10 @@ export async function buildByExpiryTrue(
         "Dolt option_chain has no open_interest — values are gamma sums, not proper GEX."
     );
 
-    const rows = dolt.rows.map((r) => ({
+    const now = new Date();
+    const rows = dolt.rows
+      .filter((r) => isInExpiryScope(r.expiry, expiryScope, now))
+      .map((r) => ({
       expiry: r.expiry,
       dte: r.dte,
       call_gex: r.call_gamma_sum,   // labelled gex but is actually gamma sum
@@ -600,7 +810,7 @@ export async function buildByExpiryTrue(
         symbol,
         dataSource: "dolt",
         cacheDate: dolt.date,
-        filters: { strikes, metricFamily },
+        filters: { strikes, metricFamily, expiryScope },
         rows,
       },
       warnings,
@@ -609,9 +819,17 @@ export async function buildByExpiryTrue(
 
   // ── 3. Expected-moves fallback ────────────────────────────────────────────
   warnings.push("Macro cache and Dolt unavailable — falling back to expected-move data");
+  if (expiryScope !== "all") {
+    warnings.push(`Expiry scope '${expiryScope}' cannot be strictly enforced in expected-moves fallback`);
+  }
   const fallback = await buildByExpiry(symbol, strikes, metricFamily);
   return {
-    data: { ...fallback.data, dataSource: "expected-moves" as const, cacheDate: null },
+    data: {
+      ...fallback.data,
+      dataSource: "expected-moves" as const,
+      cacheDate: null,
+      filters: { strikes, metricFamily, expiryScope },
+    },
     warnings: [...warnings, ...fallback.warnings],
   };
 }
@@ -689,7 +907,7 @@ export async function buildRecentFlow(
     score: number;
   };
 
-  function rankContracts(contracts: any[], side: "call" | "put"): ContractRow[] {
+  function rankContracts(contracts: MacroContract[], side: "call" | "put"): ContractRow[] {
     if (!contracts || contracts.length === 0) return [];
     return contracts
       .filter((c) => (c.volume ?? 0) > 0 && (c.gamma ?? 0) !== 0)
@@ -870,14 +1088,15 @@ type LargestData = {
   module: "largest";
   symbol: string;
   cacheDate: string | null;
-  filters: { limit: number; sort: string };
+  filters: { limit: number; sort: string; expiryScope: string };
   rows: LargestRow[];
 };
 
 export async function buildLargest(
   symbol: string,
   limit: number,
-  sort: string
+  sort: string,
+  expiryScope = "all"
 ): Promise<{ data: LargestData; warnings: string[] }> {
   const warnings: string[] = [];
 
@@ -886,6 +1105,7 @@ export async function buildLargest(
 
   if (macro && ((macro.calls?.length ?? 0) > 0 || (macro.puts?.length ?? 0) > 0)) {
     const spot = macro.spot ?? 1;
+    const now = new Date();
     type Acc = {
       strike: number;
       call_gex: number;
@@ -897,9 +1117,10 @@ export async function buildLargest(
     };
     const acc = new Map<number, Acc>();
 
-    function addContracts(contracts: any[], side: "call" | "put") {
+    function addContracts(contracts: MacroContract[], side: "call" | "put") {
       if (!contracts || contracts.length === 0) return;
       for (const c of contracts) {
+        if (!isInExpiryScope(c.expiry, expiryScope, now)) continue;
         const strike = c.strike ?? 0;
         const gex = (c.gamma ?? 0) * (c.open_interest ?? 0) * spot * spot * 0.01;
         const premium = (c.mark ?? 0) * (c.open_interest ?? 0) * 100;
@@ -922,7 +1143,7 @@ export async function buildLargest(
     addContracts(macro.calls ?? [], "call");
     addContracts(macro.puts ?? [], "put");
 
-    let rows: LargestRow[] = Array.from(acc.values()).map((r) => ({
+    const rows: LargestRow[] = Array.from(acc.values()).map((r) => ({
       strike: r.strike,
       call_gex: Math.round(r.call_gex),
       put_gex: Math.round(r.put_gex),
@@ -940,7 +1161,7 @@ export async function buildLargest(
     else if (sort === "put_gex") rows.sort((a, b) => b.put_gex - a.put_gex);
     else rows.sort((a, b) => b.abs_net_gex - a.abs_net_gex); // default: abs_net
 
-    warnings.push(`Largest strikes from macro cache (${macro._sym}, ${macro._date})`);
+    warnings.push(`Largest strikes from macro cache (${macro._sym}, ${macro._date}, scope=${expiryScope})`);
 
     return {
       data: {
@@ -948,7 +1169,7 @@ export async function buildLargest(
         module: "largest",
         symbol,
         cacheDate: macro._date,
-        filters: { limit, sort },
+        filters: { limit, sort, expiryScope },
         rows: rows.slice(0, limit),
       },
       warnings,
@@ -962,12 +1183,12 @@ export async function buildLargest(
   if (!rawRows.length) {
     warnings.push("No profile rows found for symbol");
     return {
-      data: { implemented: true, module: "largest", symbol, cacheDate: null, filters: { limit, sort }, rows: [] },
+      data: { implemented: true, module: "largest", symbol, cacheDate: null, filters: { limit, sort, expiryScope }, rows: [] },
       warnings,
     };
   }
 
-  let rows: LargestRow[] = rawRows.map((r) => {
+  const rows: LargestRow[] = rawRows.map((r) => {
     const callGex = Number(r.call_gex ?? 0);
     const putGex = Number(r.put_gex ?? 0);
     const netGex = Number(r.net_gex ?? callGex - putGex);
@@ -992,6 +1213,9 @@ export async function buildLargest(
   const ticker = resolveTickerEntry(state, symbol);
   const spot = toNum(ticker?.spot);
   warnings.push("Macro cache unavailable — largest from gex_profiles (no per-expiry breakdown)");
+  if (expiryScope !== "all") {
+    warnings.push(`Expiry scope '${expiryScope}' is not applied to gex_profiles fallback rows`);
+  }
 
   return {
     data: {
@@ -999,7 +1223,7 @@ export async function buildLargest(
       module: "largest",
       symbol,
       cacheDate: null,
-      filters: { limit, sort },
+      filters: { limit, sort, expiryScope },
       rows: rows.slice(0, limit),
     },
     warnings,
@@ -1083,7 +1307,6 @@ export async function buildHeatmap(
     .sort((a, b) => a - b)
     // Center slice around spot
     .reduce<number[]>((acc, s) => {
-      const dist = Math.abs(s - spot);
       acc.push(s);
       acc.sort((a, b) => Math.abs(a - spot) - Math.abs(b - spot));
       return acc.slice(0, strikes * 2);
@@ -1098,7 +1321,7 @@ export async function buildHeatmap(
   };
   const cellMap = new Map<string, CellAcc>();
 
-  function addToCell(contracts: any[], side: "call" | "put") {
+  function addToCell(contracts: MacroContract[], side: "call" | "put") {
     if (!contracts || contracts.length === 0) return;
     for (const c of contracts) {
       if (c.strike == null || !c.expiry) continue;
@@ -1197,9 +1420,13 @@ type PublishPreviewData = {
   };
 };
 
+type PublishMode = "spot" | "full" | "heatmap-pack";
+type PublishChannel = "test_channel" | "option-levels" | "alerts" | "macro-alerts" | string;
+
 export async function buildPublishPreview(
   symbol: string,
-  mode: string
+  mode: string,
+  channel: PublishChannel = "test_channel"
 ): Promise<{ data: PublishPreviewData; warnings: string[] }> {
   const warnings: string[] = [];
   const [state, levels] = await Promise.all([loadPipelineState(), loadDailyLevels()]);
@@ -1235,31 +1462,83 @@ export async function buildPublishPreview(
     `• Call Wall: ${fmt(callWall)} | Put Wall: ${fmt(putWall)}\n` +
     `• Bias: ${bias}`;
 
-  const fullText = mode === "full" ? `${shortText}\n\n${coachText}` : shortText;
+  const normalizedMode: PublishMode =
+    mode === "full" || mode === "heatmap-pack" || mode === "spot" ? mode : "spot";
+  const fullText = normalizedMode === "full" ? `${shortText}\n\n${coachText}` : shortText;
 
   // Deterministic token so same content = same token
-  const previewToken = Buffer.from(`${symbol}-${runLabel}-${mode}`).toString("base64").slice(0, 24);
+  const previewToken = Buffer.from(`${symbol}-${runLabel}-${normalizedMode}-${channel}`).toString("base64").slice(0, 24);
+
+  const baseFields: Array<{ name: string; value: string; inline: boolean }> = [
+    { name: "Regime", value: `${regime} | Bias: ${bias}`, inline: true },
+    { name: "GEX", value: gexStr, inline: true },
+  ];
+
+  const modeFields =
+    normalizedMode === "spot"
+      ? [
+          { name: "Key Levels", value: `Flip: ${fmt(gammaFlip)} | Calls: ${fmt(callWall)} | Puts: ${fmt(putWall)}`, inline: false },
+          ...baseFields,
+        ]
+      : normalizedMode === "full"
+        ? [
+            { name: "Key Levels", value: `Flip: ${fmt(gammaFlip)} | Calls: ${fmt(callWall)} | Puts: ${fmt(putWall)}`, inline: false },
+            ...baseFields,
+            { name: "Coach Note", value: coachText, inline: false },
+            { name: "Tactical Plan", value: tacticalText, inline: false },
+          ]
+        : [
+            { name: "Heatmap Pack", value: "Visual-first publish. Use image to read per-expiry/per-strike pressure.", inline: false },
+            ...baseFields,
+            { name: "Key Levels", value: `Flip: ${fmt(gammaFlip)} | Calls: ${fmt(callWall)} | Puts: ${fmt(putWall)}`, inline: false },
+          ];
+
+  const moveSummary =
+    spot !== null && gammaFlip !== null
+      ? `Flip gap: ${fmt(gammaFlip - spot, 2)} (${(((gammaFlip - spot) / spot) * 100).toFixed(2)}%)`
+      : "Flip gap: N/A";
+
+  let channelDescription = shortText;
+  let channelFields = modeFields;
+
+  if (channel === "alerts") {
+    channelDescription = `**${symbol} Alert** | ${runLabel}\nSpot $${fmt(spot)} | ${regime} | Bias ${bias}`;
+    channelFields = [
+      { name: "Action Context", value: moveSummary, inline: false },
+      { name: "Key Levels", value: `Flip ${fmt(gammaFlip)} | Call ${fmt(callWall)} | Put ${fmt(putWall)}`, inline: false },
+      { name: "GEX", value: gexStr, inline: true },
+    ];
+  } else if (channel === "macro-alerts") {
+    channelDescription = `**${symbol} Macro Regime** | ${runLabel}\nSpot $${fmt(spot)} | ${regime}`;
+    channelFields = [
+      { name: "Regime", value: `${regime} | Bias: ${bias}`, inline: true },
+      { name: "GEX", value: gexStr, inline: true },
+      { name: "Macro Note", value: coachText, inline: false },
+    ];
+  } else if (channel === "option-levels") {
+    channelDescription = `**${symbol} Levels Update** | ${runLabel}\nSpot $${fmt(spot)} | ${regime} | ${moveSummary}`;
+    channelFields = [
+      { name: "Key Levels", value: `Flip: ${fmt(gammaFlip)} | Calls: ${fmt(callWall)} | Puts: ${fmt(putWall)}`, inline: false },
+      { name: "Regime", value: `${regime} | Bias: ${bias}`, inline: true },
+      { name: "GEX", value: gexStr, inline: true },
+      ...(normalizedMode === "full" ? [{ name: "Tactical Plan", value: tacticalText, inline: false }] : []),
+    ];
+  }
 
   return {
     data: {
       implemented: true,
       module: "publish-preview",
       symbol,
-      mode,
+      mode: normalizedMode,
       previewToken,
       text: fullText,
       embed: {
         title: `${symbol} — GEX Dashboard | ${runLabel}`,
-        description: shortText,
-        fields: [
-          { name: "Key Levels", value: `Flip: ${fmt(gammaFlip)} | Calls: ${fmt(callWall)} | Puts: ${fmt(putWall)}`, inline: false },
-          { name: "Regime", value: `${regime} | Bias: ${bias}`, inline: true },
-          { name: "GEX", value: gexStr, inline: true },
-          { name: "Coach Note", value: coachText, inline: false },
-          ...(mode === "full" ? [{ name: "Tactical Plan", value: tacticalText, inline: false }] : []),
-        ],
+        description: channelDescription,
+        fields: channelFields,
         color,
-        footer: `Generated by V3 pipeline | ${new Date().toISOString()}`,
+        footer: `Generated by V3 pipeline | channel=${channel} | ${new Date().toISOString()}`,
       },
     },
     warnings: ticker ? warnings : [...warnings, "Pipeline ticker not found; preview may be incomplete"],
@@ -1292,12 +1571,14 @@ export async function buildPublishDiscord(
   channel: string,
   idempotencyKey: string,
   previewToken: string,
-  dryRun = false
+  mode: string,
+  dryRun = false,
+  chartImageDataUrl?: string
 ): Promise<{ data: PublishDiscordData; warnings: string[] }> {
   const warnings: string[] = [];
 
   // Build the preview first
-  const { data: preview, warnings: pWarn } = await buildPublishPreview(symbol, "full");
+  const { data: preview, warnings: pWarn } = await buildPublishPreview(symbol, mode, channel);
   warnings.push(...pWarn);
 
   if (dryRun) {
@@ -1353,18 +1634,42 @@ export async function buildPublishDiscord(
   // Sign idempotency key as username suffix so Discord deduplicates visually
   const keyHash = createHash("sha256").update(idempotencyKey).digest("hex").slice(0, 8);
 
+  const embedPayload: {
+    title: string;
+    description: string;
+    color: number;
+    fields: Array<{ name: string; value: string; inline: boolean }>;
+    footer: { text: string };
+    timestamp: string;
+    image?: { url: string };
+  } = {
+    title: preview.embed.title,
+    description: preview.embed.description,
+    color: preview.embed.color,
+    fields: preview.embed.fields,
+    footer: { text: preview.embed.footer },
+    timestamp: new Date().toISOString(),
+  };
+
+  let chartImageBuffer: Buffer | null = null;
+  if (chartImageDataUrl && chartImageDataUrl.startsWith("data:image/png;base64,")) {
+    try {
+      const b64 = chartImageDataUrl.slice("data:image/png;base64,".length);
+      chartImageBuffer = Buffer.from(b64, "base64");
+      if (chartImageBuffer.length > 0) {
+        embedPayload.image = { url: "attachment://chart.png" };
+      }
+    } catch {
+      warnings.push("Chart image payload could not be decoded; posting without attachment");
+      chartImageBuffer = null;
+    }
+  } else if (chartImageDataUrl) {
+    warnings.push("Chart image payload is not a PNG data URL; posting without attachment");
+  }
+
   const body = {
     username: `GEX-Bot [${symbol}] #${keyHash}`,
-    embeds: [
-      {
-        title: preview.embed.title,
-        description: preview.embed.description,
-        color: preview.embed.color,
-        fields: preview.embed.fields,
-        footer: { text: preview.embed.footer },
-        timestamp: new Date().toISOString(),
-      },
-    ],
+    embeds: [embedPayload],
   };
 
   let status: "sent" | "error" = "sent";
@@ -1372,11 +1677,22 @@ export async function buildPublishDiscord(
   let message = "Posted to Discord";
 
   try {
-    const res = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    if (chartImageBuffer && chartImageBuffer.length > 0) {
+      const form = new FormData();
+      form.append("payload_json", JSON.stringify(body));
+      form.append("files[0]", new Blob([new Uint8Array(chartImageBuffer)], { type: "image/png" }), "chart.png");
+      res = await fetch(webhookUrl, {
+        method: "POST",
+        body: form,
+      });
+    } else {
+      res = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
     discordStatusCode = res.status;
     if (!res.ok) {
       const text = await res.text().catch(() => "");

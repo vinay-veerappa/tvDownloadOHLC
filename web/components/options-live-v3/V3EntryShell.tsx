@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import type { V3Envelope } from "@/lib/options-live-v3/contracts/types";
 import { StatCard } from "@/components/options-live-v3/StatCard";
 import { SimpleTable } from "@/components/options-live-v3/SimpleTable";
-import { GlobalControlBar, type GexTabId, type MetricFamily } from "@/components/options-live-v3/GlobalControlBar";
+import { GlobalControlBar, type GexTabId, type MetricFamily, type WorkflowPresetId } from "@/components/options-live-v3/GlobalControlBar";
 import { LiveLevelsLadder } from "@/components/options-live-v3/LiveLevelsLadder";
 import { ByStrikeSplitBars } from "@/components/options-live-v3/ByStrikeSplitBars";
 import { SpotGammaPanel } from "@/components/options-live-v3/SpotGammaPanel";
@@ -60,6 +60,12 @@ type ByStrikeRow = {
   call_gex?: number;
   put_gex?: number;
   net_gex?: number;
+  call_vex?: number;
+  put_vex?: number;
+  call_charm?: number;
+  put_charm?: number;
+  call_dex?: number;
+  put_dex?: number;
   call_oi?: number;
   put_oi?: number;
 };
@@ -94,6 +100,8 @@ type ByExpiryData = {
 };
 
 type NarrativeData = {
+  integrityTier?: "Measured" | "Proxy" | "Low-Integrity";
+  dataSourceLabel?: string;
   intradayDelta: {
     session: number | null;
     sessionPct: number | null;
@@ -111,8 +119,22 @@ type NarrativeData = {
     setup: string;
     probabilityScore: number;
     confidence: "POSSIBLE" | "LIKELY" | "IMMINENT";
+    scope?: string;
+    scopedNetGex?: number | null;
+    integrityTier?: "Measured" | "Proxy" | "Low-Integrity";
     factors: Array<{ name: string; score: number }>;
   };
+  notes?: {
+    coach?: string[];
+    tactical?: string[];
+  };
+  perspectives?: Array<{
+    mode: "Scalper" | "Intraday" | "Swing";
+    scope: "0dte" | "weekly" | "monthly";
+    netGex: number | null;
+    bias: "Expansion" | "Compression" | "Unavailable";
+    tacticalScore?: number;
+  }>;
 };
 
 type SummaryResponse = V3Envelope<SummaryData>;
@@ -157,7 +179,7 @@ type LargestRow = {
   call_oi: number;
   put_oi: number;
 };
-type LargestData = { cacheDate: string | null; filters: { limit: number; sort: string }; rows: LargestRow[] };
+type LargestData = { cacheDate: string | null; filters: { limit: number; sort: string; expiryScope?: string }; rows: LargestRow[] };
 type LargestResponse = V3Envelope<LargestData>;
 
 type HeatmapCell = {
@@ -190,6 +212,19 @@ function toneByNumber(v: number | null | undefined): "neutral" | "positive" | "n
   return "neutral";
 }
 
+function integrityTierClasses(tier: string | null | undefined): string {
+  switch (tier) {
+    case "Measured":
+      return "border-emerald-700 bg-emerald-950/40 text-emerald-300";
+    case "Proxy":
+      return "border-amber-700 bg-amber-950/40 text-amber-300";
+    case "Low-Integrity":
+      return "border-zinc-600 bg-zinc-900/60 text-zinc-400";
+    default:
+      return "border-zinc-700 bg-zinc-900/40 text-zinc-500";
+  }
+}
+
 async function fetchEnvelope<T>(url: string): Promise<V3Envelope<T>> {
   const res = await fetch(url);
   return (await res.json()) as V3Envelope<T>;
@@ -201,6 +236,7 @@ export function V3EntryShell() {
   const [strikeCount, setStrikeCount] = useState(20);
   const [expiryScope, setExpiryScope] = useState("all");
   const [metricFamily, setMetricFamily] = useState<MetricFamily>("GEX");
+  const [workflowPreset, setWorkflowPreset] = useState<WorkflowPresetId | null>(null);
   const [byStrikeSortMode, setByStrikeSortMode] = useState<"strike" | "abs">("strike");
   const [byExpirySortMode, setByExpirySortMode] = useState<"nearest" | "abs">("nearest");
   const [byExpiryViewMode, setByExpiryViewMode] = useState<"split" | "net">("split");
@@ -229,6 +265,32 @@ export function V3EntryShell() {
   const [heatmap, setHeatmap] = useState<HeatmapResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const setStrikeCountManual = (value: number) => {
+    setWorkflowPreset(null);
+    setStrikeCount(value);
+  };
+
+  const setExpiryScopeManual = (value: string) => {
+    setWorkflowPreset(null);
+    setExpiryScope(value);
+  };
+
+  const applyWorkflowPreset = (preset: WorkflowPresetId) => {
+    setWorkflowPreset(preset);
+    if (preset === "scalper") {
+      setStrikeCount(10);
+      setExpiryScope("0dte");
+      return;
+    }
+    if (preset === "intraday") {
+      setStrikeCount(20);
+      setExpiryScope("weekly");
+      return;
+    }
+    setStrikeCount(50);
+    setExpiryScope("monthly");
+  };
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) {
@@ -243,9 +305,9 @@ export function V3EntryShell() {
         if (event.key === "6") setActiveTab("levels");
       }
       if (event.shiftKey) {
-        if (event.key === "1") setStrikeCount(10);
-        if (event.key === "2") setStrikeCount(20);
-        if (event.key === "3") setStrikeCount(50);
+        if (event.key === "1") setStrikeCountManual(10);
+        if (event.key === "2") setStrikeCountManual(20);
+        if (event.key === "3") setStrikeCountManual(50);
         if (event.key.toLowerCase() === "p") setPublishOpen(true);
       }
     }
@@ -326,11 +388,11 @@ export function V3EntryShell() {
           fetchEnvelope<SummaryData>(`/api/options-live/v3/summary?symbol=${encoded}`),
           fetchEnvelope<LevelsData>(`/api/options-live/v3/levels?symbol=${encoded}`),
           fetchEnvelope<ByStrikeData>(`/api/options-live/v3/by-strike?symbol=${encoded}&strikes=${strikes}&expiryScope=${expiryScope}&metricFamily=${metricFamily.toLowerCase()}`),
-          fetchEnvelope<ByExpiryData>(`/api/options-live/v3/by-expiry?symbol=${encoded}&strikes=${strikes}&metricFamily=${metricFamily.toLowerCase()}`),
-          fetchEnvelope<NarrativeData>(`/api/options-live/v3/narrative?symbol=${encoded}`),
+          fetchEnvelope<ByExpiryData>(`/api/options-live/v3/by-expiry?symbol=${encoded}&strikes=${strikes}&metricFamily=${metricFamily.toLowerCase()}&expiryScope=${expiryScope}`),
+          fetchEnvelope<NarrativeData>(`/api/options-live/v3/narrative?symbol=${encoded}&expiryScope=${expiryScope}`),
           fetchEnvelope<RecentFlowData>(`/api/options-live/v3/recent-flow?symbol=${encoded}&limit=20`),
           fetchEnvelope<SpotGammaData>(`/api/options-live/v3/spot-gamma?symbol=${encoded}&smooth=1`),
-          fetchEnvelope<LargestData>(`/api/options-live/v3/largest?symbol=${encoded}&limit=${largestLimit}&sort=${largestSortMode}`),
+          fetchEnvelope<LargestData>(`/api/options-live/v3/largest?symbol=${encoded}&limit=${largestLimit}&sort=${largestSortMode}&expiryScope=${expiryScope}`),
           fetchEnvelope<HeatmapData>(`/api/options-live/v3/heatmap?symbol=${encoded}&strikes=${strikes}&market=${heatmapMarket}&mode=${heatmapMode}&metric=${heatmapMetric}&expiryMode=${heatmapExpiryMode}`),
         ]);
 
@@ -361,15 +423,47 @@ export function V3EntryShell() {
 
   const strikeRows = useMemo(() => {
     const rows = byStrike?.data?.rows ?? [];
-    return rows.slice(0, 12).map((row) => [
-      fmtNum(row.strike, 2),
-      fmtNum(row.call_gex, 0),
-      fmtNum(row.put_gex, 0),
-      fmtNum(row.net_gex, 0),
-      fmtNum(row.call_oi, 0),
-      fmtNum(row.put_oi, 0),
-    ]);
-  }, [byStrike]);
+    return rows.slice(0, 12).map((row) => {
+      switch (metricFamily) {
+        case "VANNA":
+          return [
+            fmtNum(row.strike, 2),
+            fmtNum(row.call_vex, 0),
+            fmtNum(row.put_vex, 0),
+            fmtNum((row.call_vex ?? 0) + (row.put_vex ?? 0), 0),
+            fmtNum(row.call_oi, 0),
+            fmtNum(row.put_oi, 0),
+          ];
+        case "CHARM":
+          return [
+            fmtNum(row.strike, 2),
+            fmtNum(row.call_charm, 0),
+            fmtNum(row.put_charm, 0),
+            fmtNum((row.call_charm ?? 0) - (row.put_charm ?? 0), 0),
+            fmtNum(row.call_oi, 0),
+            fmtNum(row.put_oi, 0),
+          ];
+        case "DEX":
+          return [
+            fmtNum(row.strike, 2),
+            fmtNum(row.call_dex, 0),
+            fmtNum(row.put_dex, 0),
+            fmtNum((row.call_dex ?? 0) + (row.put_dex ?? 0), 0),
+            fmtNum(row.call_oi, 0),
+            fmtNum(row.put_oi, 0),
+          ];
+        default: // GEX
+          return [
+            fmtNum(row.strike, 2),
+            fmtNum(row.call_gex, 0),
+            fmtNum(row.put_gex, 0),
+            fmtNum(row.net_gex, 0),
+            fmtNum(row.call_oi, 0),
+            fmtNum(row.put_oi, 0),
+          ];
+      }
+    });
+  }, [byStrike, metricFamily]);
 
   const byExpirySortedRows = useMemo(() => {
     const rows = [...(byExpiry?.data?.rows ?? [])];
@@ -457,8 +551,12 @@ export function V3EntryShell() {
   }, [summary, levels, byStrike, byExpiry, narrative, recentFlow, spotGamma, largest, heatmap]);
 
   const coachLines = levels?.data?.notes?.coach ?? [];
+  const modeTacticalLines = narrative?.data?.notes?.tactical ?? [];
+  const perspectiveRows = narrative?.data?.perspectives ?? [];
   const signals = narrative?.data?.signals ?? [];
   const screener = narrative?.data?.screener ?? null;
+  const narrativeIntegrityTier = narrative?.data?.integrityTier ?? null;
+  const narrativeDataSourceLabel = narrative?.data?.dataSourceLabel ?? null;
   const freshness = summary?.meta?.asOf ?? null;
   const activeStatus = useMemo(() => {
     if (activeTab === "by-strike") return { meta: byStrike?.meta, warnings: byStrike?.warnings ?? [], error: byStrike?.error ?? null };
@@ -504,8 +602,18 @@ export function V3EntryShell() {
               : (summary?.data?.gex?.directionalBias ?? "").includes("BEAR") ? "negative"
               : "neutral"
             }
+            subValue={narrativeIntegrityTier ?? undefined}
           />
         </div>
+
+        {/* Integrity tier strip */}
+        {narrativeIntegrityTier && (
+          <div className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs ${integrityTierClasses(narrativeIntegrityTier)}`}>
+            <span className="font-semibold uppercase tracking-wider">{narrativeIntegrityTier}</span>
+            <span className="opacity-60">·</span>
+            <span>{narrativeDataSourceLabel}</span>
+          </div>
+        )}
 
         {/* Screener + Signals */}
         <div className="grid gap-4 lg:grid-cols-2">
@@ -524,8 +632,34 @@ export function V3EntryShell() {
             onExplain={() => setExplainOpen(true)}
           />
 
+          {screener && (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+              <h2 className="mb-2 text-sm font-semibold text-zinc-200">Mode Analysis Context</h2>
+              <div className="space-y-1 text-sm text-zinc-300">
+                <p>
+                  Scope: <span className="font-semibold text-zinc-100 uppercase">{screener.scope ?? expiryScope}</span>
+                </p>
+                <p>
+                  Scoped Net GEX: <span className={`font-mono font-semibold ${(screener.scopedNetGex ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{fmtNum(screener.scopedNetGex, 0)}</span>
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-            <h2 className="mb-2 text-sm font-semibold text-zinc-200">Narrative Signals</h2>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-zinc-200">Narrative Signals</h2>
+              <div className="flex items-center gap-1.5">
+                {narrativeIntegrityTier && (
+                  <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${integrityTierClasses(narrativeIntegrityTier)}`}>
+                    {narrativeIntegrityTier}
+                  </span>
+                )}
+                <span className="rounded border border-indigo-800 bg-indigo-950/50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-200">
+                  Scope: {screener?.scope ?? expiryScope}
+                </span>
+              </div>
+            </div>
             {isLoading ? (
               <p className="text-sm animate-pulse text-zinc-500">Loading…</p>
             ) : signals.length === 0 ? (
@@ -571,6 +705,64 @@ export function V3EntryShell() {
           </div>
         )}
 
+        {perspectiveRows.length > 0 && (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-zinc-200">Multi-Timeframe Tactical View</h3>
+              {narrativeIntegrityTier && (
+                <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${integrityTierClasses(narrativeIntegrityTier)}`}>
+                  {narrativeIntegrityTier}
+                </span>
+              )}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[520px] text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-800 text-left text-zinc-400">
+                    <th className="py-1.5">Mode</th>
+                    <th className="py-1.5">Scope</th>
+                    <th className="py-1.5 text-right">Net GEX</th>
+                    <th className="py-1.5 text-right">Bias</th>
+                    <th className="py-1.5 text-right">Tactical Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {perspectiveRows.map((row) => (
+                    <tr key={row.mode} className="border-b border-zinc-900 text-zinc-300 last:border-b-0">
+                      <td className="py-1.5 font-medium text-zinc-100">{row.mode}</td>
+                      <td className="py-1.5 uppercase text-zinc-400">{row.scope}</td>
+                      <td className="py-1.5 text-right font-mono">{fmtNum(row.netGex, 0)}</td>
+                      <td className={`py-1.5 text-right font-semibold ${row.bias === "Expansion" ? "text-rose-400" : row.bias === "Compression" ? "text-emerald-400" : "text-zinc-400"}`}>
+                        {row.bias}
+                      </td>
+                      <td className="py-1.5 text-right">
+                        {row.tacticalScore != null ? (
+                          <span className={`font-mono font-semibold ${row.tacticalScore >= 60 ? "text-emerald-400" : row.tacticalScore >= 35 ? "text-amber-400" : "text-zinc-400"}`}>
+                            {row.tacticalScore}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-600">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {modeTacticalLines.length > 0 && (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+            <h3 className="mb-2 text-sm font-semibold text-zinc-200">Mode Tactical Notes</h3>
+            <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-300">
+              {modeTacticalLines.slice(0, 5).map((line, idx) => (
+                <li key={idx}>{line}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-xs text-zinc-400">
           Shortcuts: Alt+1..6 switches major tabs. Shift+1/2/3 sets 10, 20, 50 strikes. Shift+P opens Discord publish.
         </div>
@@ -584,7 +776,16 @@ export function V3EntryShell() {
     if (!isLoading && !byStrike?.data) return <ModuleEmptyBanner state="empty" moduleName="By-Strike" />;
     return (
       <div className="space-y-4">
-        {(byStrike?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="By-Strike" warnings={byStrike?.warnings ?? []} />}
+        {/* Panel scope applicability label — by-strike uses consolidated gex_profiles (not expiry-filtered) */}
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="rounded border border-zinc-700 bg-zinc-900/40 px-2 py-0.5 font-semibold uppercase tracking-wider text-zinc-400">
+            Consolidated
+          </span>
+          <span className="text-zinc-500">Source: gex_profiles (all-expiry rollup)</span>
+          <span className="ml-auto rounded border border-indigo-800/60 bg-indigo-950/30 px-2 py-0.5 text-indigo-300 uppercase">
+            Scope: {byStrike?.data?.filters?.expiryScope ?? expiryScope}
+          </span>
+        </div>
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs">
           <span className="text-zinc-500">Sort:</span>
           <button
@@ -614,13 +815,18 @@ export function V3EntryShell() {
           gammaFlip={levels?.data?.levels?.gammaFlip ?? null}
           highlightedStrike={pinnedStrike ?? selectedLevel}
           sortMode={byStrikeSortMode}
+          metricFamily={metricFamily}
         />
         <SimpleTable
           title={`By Strike — ${rows.length} rows (${byStrike?.data?.filters?.expiryScope ?? expiryScope})`}
-          columns={["Strike", "Call GEX", "Put GEX", "Net GEX", "Call OI", "Put OI"]}
+          columns={(() => {
+            const suffix = metricFamily === "VANNA" ? "VEX" : metricFamily === "CHARM" ? "Charm" : metricFamily === "DEX" ? "DEX" : "GEX";
+            return ["Strike", `Call ${suffix}`, `Put ${suffix}`, `Net ${suffix}`, "Call OI", "Put OI"];
+          })()}
           rows={strikeRows}
           emptyLabel="No strike rows returned"
         />
+        {(byStrike?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="By-Strike" warnings={byStrike?.warnings ?? []} />}
       </div>
     );
   }
@@ -628,9 +834,24 @@ export function V3EntryShell() {
   function renderByExpiry() {
     if (!isLoading && byExpiry?.error) return <ModuleEmptyBanner state="error" moduleName="By-Expiry" message={byExpiry.error} />;
     if (!isLoading && !byExpiry?.data) return <ModuleEmptyBanner state="empty" moduleName="By-Expiry" />;
+    const byExpirySource = byExpiry?.data?.dataSource;
+    const byExpiryTier: "Measured" | "Proxy" | "Low-Integrity" | null =
+      byExpirySource === "macro-cache" ? "Measured"
+      : byExpirySource === "dolt" ? "Proxy"
+      : byExpirySource === "expected-moves" ? "Low-Integrity"
+      : null;
     return (
       <div className="space-y-4">
-        {(byExpiry?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="By-Expiry" warnings={byExpiry?.warnings ?? []} />}
+        {/* Panel scope applicability label */}
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className={`rounded border px-2 py-0.5 font-semibold uppercase tracking-wider ${integrityTierClasses(byExpiryTier)}`}>
+            {byExpiryTier ?? "Unknown"}
+          </span>
+          <span className="text-zinc-500">Source: {byExpirySource ?? "—"}</span>
+          <span className="ml-auto rounded border border-indigo-800/60 bg-indigo-950/30 px-2 py-0.5 text-indigo-300 uppercase">
+            Scope: {expiryScope}
+          </span>
+        </div>
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs">
           <span className="text-zinc-500">View:</span>
           <button
@@ -668,6 +889,7 @@ export function V3EntryShell() {
           rows={expiryRows}
           emptyLabel="No expiry rows returned"
         />
+        {(byExpiry?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="By-Expiry" warnings={byExpiry?.warnings ?? []} />}
       </div>
     );
   }
@@ -716,7 +938,6 @@ export function V3EntryShell() {
     if (!isLoading && !levels?.data) return <ModuleEmptyBanner state="empty" moduleName="Key Levels" />;
     return (
       <div className="space-y-4">
-        {(levels?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="Key Levels" warnings={levels?.warnings ?? []} />}
         <LiveLevelsLadder
           spot={lvls?.spot ?? null}
           gammaFlip={lvls?.gammaFlip ?? null}
@@ -742,6 +963,7 @@ export function V3EntryShell() {
           </div>
         )}
         <AlertRulesPanel symbol={symbol} />
+        {(levels?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="Key Levels" warnings={levels?.warnings ?? []} />}
       </div>
     );
   }
@@ -765,18 +987,18 @@ export function V3EntryShell() {
     if (!isLoading && !spotGamma?.data) return <ModuleEmptyBanner state="empty" moduleName="Spot Gamma" />;
     return (
       <div className="space-y-3">
-        {(spotGamma?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="Spot Gamma" warnings={spotGamma?.warnings ?? []} />}
         <SpotGammaPanel
           data={spotGamma?.data ?? null}
           isLoading={isLoading}
         />
+        {(spotGamma?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="Spot Gamma" warnings={spotGamma?.warnings ?? []} />}
       </div>
     );
   }
 
   function renderHeatmap() {
     return (
-      <div className="space-y-4">
+      <div id="options-live-v3-heatmap-pack-capture" className="space-y-4">
         <div className="grid gap-2 rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
           <select
             value={heatmapMarket}
@@ -887,11 +1109,13 @@ export function V3EntryShell() {
         symbol={symbol}
         onSymbolChange={setSymbol}
         strikeCount={strikeCount}
-        onStrikeCountChange={setStrikeCount}
+        onStrikeCountChange={setStrikeCountManual}
         expiryScope={expiryScope}
-        onExpiryScopeChange={setExpiryScope}
+        onExpiryScopeChange={setExpiryScopeManual}
         metricFamily={metricFamily}
         onMetricFamilyChange={setMetricFamily}
+        activeWorkflowPreset={workflowPreset}
+        onWorkflowPresetChange={applyWorkflowPreset}
         activeTab={activeTab}
         onTabChange={setActiveTab}
         isLoading={isLoading}
@@ -906,24 +1130,8 @@ export function V3EntryShell() {
           </div>
         )}
 
-        {/* Warnings */}
-        {allWarnings.length > 0 && (
-          <div className="rounded-xl border border-amber-900/70 bg-amber-950/30 p-3">
-            <details>
-              <summary className="cursor-pointer text-xs font-semibold text-amber-300">
-                {allWarnings.length} module warning{allWarnings.length !== 1 ? "s" : ""}
-              </summary>
-              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-amber-200">
-                {allWarnings.map((w, i) => (
-                  <li key={`${w}-${i}`}>{w}</li>
-                ))}
-              </ul>
-            </details>
-          </div>
-        )}
-
         {/* Active tab content */}
-        <div>{tabContent[activeTab]?.()}</div>
+        <div id="options-live-v3-publish-capture">{tabContent[activeTab]?.()}</div>
 
         <DataStatusStrip
           asOf={activeStatus.meta?.asOf ?? null}
@@ -931,6 +1139,20 @@ export function V3EntryShell() {
           warnings={activeStatus.warnings}
           error={activeStatus.error}
         />
+
+        {/* Module warnings — collapsed, low-priority info */}
+        {allWarnings.length > 0 && (
+          <details className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+            <summary className="cursor-pointer text-xs text-zinc-500">
+              {allWarnings.length} module warning{allWarnings.length !== 1 ? "s" : ""}
+            </summary>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-zinc-400">
+              {allWarnings.map((w, i) => (
+                <li key={`${w}-${i}`}>{w}</li>
+              ))}
+            </ul>
+          </details>
+        )}
 
         {/* Publish button — always visible at bottom */}
         <div className="flex justify-end pt-2">
@@ -945,6 +1167,8 @@ export function V3EntryShell() {
 
       <DiscordPublishDrawer
         symbol={symbol}
+        activeTab={activeTab}
+        onRequestTabChange={setActiveTab}
         isOpen={publishOpen}
         onClose={() => setPublishOpen(false)}
       />

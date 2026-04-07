@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useCallback } from "react";
+import type { GexTabId } from "@/components/options-live-v3/GlobalControlBar";
 
 const CHANNELS = [
   { id: "test_channel", label: "Test Channel", desc: "Safe test destination" },
@@ -31,6 +32,8 @@ type SendStatus =
 
 type Props = {
   symbol: string;
+  activeTab: GexTabId;
+  onRequestTabChange: (tab: GexTabId) => void;
   isOpen: boolean;
   onClose: () => void;
 };
@@ -50,7 +53,7 @@ function formatEmbedAsText(symbol: string, embed: PreviewEmbed): string {
   return lines.join("\n");
 }
 
-export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
+export function DiscordPublishDrawer({ symbol, activeTab, onRequestTabChange, isOpen, onClose }: Props) {
   const [channel, setChannel] = useState("test_channel");
   const [dryRun, setDryRun] = useState(true);
   const [publishMode, setPublishMode] = useState<"spot" | "full" | "heatmap-pack">("spot");
@@ -62,16 +65,56 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [sendStatus, setSendStatus] = useState<SendStatus>({ state: "idle" });
   const [copied, setCopied] = useState(false);
+  const [previewImageDataUrl, setPreviewImageDataUrl] = useState<string | null>(null);
+
+  const shouldAttachImage = useCallback(
+    (mode: "spot" | "full" | "heatmap-pack") => mode === "spot" || mode === "heatmap-pack",
+    []
+  );
+
+  const waitForElement = useCallback(async (elementId: string, maxFrames = 24): Promise<HTMLElement | null> => {
+    for (let i = 0; i < maxFrames; i += 1) {
+      const node = document.getElementById(elementId) as HTMLElement | null;
+      if (node) return node;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+    return null;
+  }, []);
+
+  const captureChartImage = useCallback(async (mode: "spot" | "full" | "heatmap-pack"): Promise<string | null> => {
+    const targetId = mode === "heatmap-pack" ? "options-live-v3-heatmap-pack-capture" : "options-live-v3-publish-capture";
+
+    if (mode === "heatmap-pack" && activeTab !== "heatmap") {
+      onRequestTabChange("heatmap");
+      // Allow React + browser layout to settle after tab switch.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+
+    const captureNode = await waitForElement(targetId);
+    if (!captureNode) return null;
+    try {
+      const { domToPng } = await import("modern-screenshot");
+      return await domToPng(captureNode, {
+        quality: 0.92,
+        scale: 1,
+      });
+    } catch {
+      return null;
+    }
+  }, [activeTab, onRequestTabChange, waitForElement]);
 
   const fetchPreview = useCallback(async () => {
     setPreviewLoading(true);
     setPreviewError(null);
     setPreview(null);
+    setPreviewImageDataUrl(null);
     try {
+      const chartImageDataUrl = shouldAttachImage(publishMode) ? await captureChartImage(publishMode) : null;
       const res = await fetch("/api/options-live/v3/publish/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, mode: publishMode === "heatmap-pack" ? "full" : publishMode }),
+        body: JSON.stringify({ symbol, mode: publishMode, channel }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -79,12 +122,13 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
         return;
       }
       setPreview(json?.data ?? null);
+      setPreviewImageDataUrl(chartImageDataUrl);
     } catch (err: unknown) {
       setPreviewError(err instanceof Error ? err.message : "Preview failed");
     } finally {
       setPreviewLoading(false);
     }
-  }, [symbol, publishMode]);
+  }, [symbol, channel, publishMode, shouldAttachImage, captureChartImage]);
 
   const copyPreviewAsText = useCallback(async () => {
     if (!preview) return;
@@ -109,7 +153,7 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
           symbol,
           channel,
           ruleName,
-          mode: publishMode === "heatmap-pack" ? "full" : publishMode,
+          mode: publishMode,
           cron: scheduleCron,
         }),
       });
@@ -128,6 +172,7 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
     setSendStatus({ state: "sending" });
     const idempotencyKey = `${symbol}-${channel}-${Date.now()}`;
     try {
+      const chartImageDataUrl = shouldAttachImage(publishMode) ? await captureChartImage(publishMode) : null;
       const res = await fetch("/api/options-live/v3/publish/discord", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -136,7 +181,9 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
           channel,
           idempotencyKey,
           dryRun,
+          mode: publishMode,
           previewToken: preview?.previewToken ?? "",
+          chartImageDataUrl,
         }),
       });
       const json = await res.json();
@@ -149,7 +196,7 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
     } catch (err: unknown) {
       setSendStatus({ state: "error", message: err instanceof Error ? err.message : "Send failed" });
     }
-  }, [symbol, channel, dryRun, preview]);
+  }, [symbol, channel, dryRun, preview, publishMode, shouldAttachImage, captureChartImage]);
 
   if (!isOpen) return null;
 
@@ -297,6 +344,22 @@ export function DiscordPublishDrawer({ symbol, isOpen, onClose }: Props) {
 
             {preview && (
               <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-3 space-y-2">
+                <div className="rounded border border-zinc-800 bg-zinc-950/50 px-2 py-1 text-[11px] text-zinc-400">
+                  {shouldAttachImage(publishMode)
+                    ? previewImageDataUrl
+                      ? "Preview includes chart image attachment"
+                      : "Image attachment unavailable in preview; send will still post text/embed"
+                    : "Text-only mode (no image attachment)"}
+                </div>
+                {shouldAttachImage(publishMode) && previewImageDataUrl && (
+                  <div className="overflow-hidden rounded border border-zinc-800 bg-zinc-950/60">
+                    <img
+                      src={previewImageDataUrl}
+                      alt="Publish preview chart"
+                      className="h-auto max-h-64 w-full object-contain"
+                    />
+                  </div>
+                )}
                 <div className="text-sm font-semibold text-indigo-300 border-l-4 border-indigo-500 pl-2">
                   {preview.embed.title}
                 </div>
