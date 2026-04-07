@@ -266,6 +266,65 @@ async function loadExpectedMoveBandFromDb(symbol: string): Promise<{
   };
 }
 
+function deriveExpectedMoveFromSnapshot(
+  snapshot: import("@/lib/options-live-v3/data").MacroCacheResult | null | undefined,
+  fallbackSpot: number | null | undefined
+): {
+  lower: number | null;
+  upper: number | null;
+  width: number | null;
+  expiry: string | null;
+} {
+  const spot = snapshot?.spot ?? fallbackSpot ?? null;
+  if (spot === null || !Number.isFinite(spot) || spot <= 0) {
+    return { lower: null, upper: null, width: null, expiry: null };
+  }
+
+  const calls = snapshot?.calls ?? [];
+  const puts = snapshot?.puts ?? [];
+  if (!calls.length || !puts.length) {
+    return { lower: null, upper: null, width: null, expiry: null };
+  }
+
+  const expirySet = new Set<string>();
+  for (const contract of calls) {
+    if (typeof contract.expiry === "string" && contract.expiry) expirySet.add(contract.expiry);
+  }
+  for (const contract of puts) {
+    if (typeof contract.expiry === "string" && contract.expiry) expirySet.add(contract.expiry);
+  }
+
+  const sortedExpiries = Array.from(expirySet)
+    .map((expiry) => ({ expiry, time: new Date(expiry).getTime() }))
+    .filter((entry) => Number.isFinite(entry.time))
+    .sort((a, b) => a.time - b.time);
+
+  for (const entry of sortedExpiries) {
+    const callCandidates = calls.filter((contract) => contract.expiry === entry.expiry && typeof contract.strike === "number");
+    const putCandidates = puts.filter((contract) => contract.expiry === entry.expiry && typeof contract.strike === "number");
+    if (!callCandidates.length || !putCandidates.length) continue;
+
+    const nearestCall = [...callCandidates].sort((a, b) => Math.abs((a.strike ?? 0) - spot) - Math.abs((b.strike ?? 0) - spot))[0];
+    const nearestPut = [...putCandidates].sort((a, b) => Math.abs((a.strike ?? 0) - spot) - Math.abs((b.strike ?? 0) - spot))[0];
+    if (!nearestCall || !nearestPut) continue;
+
+    const callMark = nearestCall.mark ?? nearestCall.last ?? 0;
+    const putMark = nearestPut.mark ?? nearestPut.last ?? 0;
+    const straddle = callMark + putMark;
+    const width = Number.isFinite(straddle) && straddle > 0 ? straddle * 0.85 : null;
+    if (width === null || width <= 0) continue;
+
+    return {
+      lower: spot - width,
+      upper: spot + width,
+      width,
+      expiry: entry.expiry,
+    };
+  }
+
+  return { lower: null, upper: null, width: null, expiry: null };
+}
+
 function firstNumericLevel(rows: Array<Record<string, unknown>> | undefined): number | null {
   if (!rows || rows.length === 0) return null;
   for (const row of rows) {
@@ -674,16 +733,22 @@ export async function buildLevels(symbol: string): Promise<{ data: LevelsData; w
     ? resolveExpectedMoveFromStructure(structure, symbol, spot)
     : { lower: null, upper: null, width: null };
   const noteExpectedMove = parseExpectedMoveFromNotes((structure?.coach_note as string[] | undefined) ?? []);
+  const snapshotExpectedMove = deriveExpectedMoveFromSnapshot(snapshotBundle?.snapshot, spot);
   const expectedMove = dbExpectedMove
     ? { lower: dbExpectedMove.lower, upper: dbExpectedMove.upper, width: dbExpectedMove.width }
     : structuredExpectedMove.width !== null
       ? structuredExpectedMove
+    : snapshotExpectedMove.width !== null
+      ? { lower: snapshotExpectedMove.lower, upper: snapshotExpectedMove.upper, width: snapshotExpectedMove.width }
     : protectedExpectedMoveRoots.has(root)
       ? { lower: null, upper: null, width: null }
       : noteExpectedMove;
 
   if (!dbExpectedMove && structuredExpectedMove.width === null && protectedExpectedMoveRoots.has(root)) {
     warnings.push(`Expected-move DB row not found for canonical ticker ${resolveExpectedMoveTicker(symbol)}; EM levels withheld to avoid cross-symbol scaling.`);
+  }
+  if (!dbExpectedMove && structuredExpectedMove.width === null && snapshotExpectedMove.width !== null) {
+    warnings.push(`Expected move derived from live option snapshot (${snapshotExpectedMove.expiry ?? "nearest expiry"}) because EM cache is unavailable for ${symbol}.`);
   }
 
   return {

@@ -1,11 +1,11 @@
 'use server'; // Ensure directive is present
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import util from 'util';
 import path from 'path';
 import prisma from '@/lib/prisma'; // Default import
 
-const execPromise = util.promisify(exec);
+const execFilePromise = util.promisify(execFile);
 
 function isPositiveNumber(value: unknown): value is number {
     return typeof value === 'number' && Number.isFinite(value) && value > 0;
@@ -23,18 +23,21 @@ function hasUsableExpectedMove(exp: {
 
 export async function getExpectedMoveData(tickers: string[], refresh: boolean = false) {
     try {
+        const normalizedTickers = [...new Set(tickers.map((ticker) => ticker.trim().toUpperCase()).filter(Boolean))];
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        const requestedTickers = [...tickers];
+        const requestedTickers = [...normalizedTickers];
 
-        // 1. Check DB First (Read-Through Cache)
-        if (!refresh && tickers.length > 0) {
+        const readFromDb = async (symbols: string[]) => {
             const dbDataRaw = await prisma.expectedMove.findMany({
                 where: {
-                    ticker: { in: tickers },
+                    ticker: { in: symbols },
                     calculationDate: today
                 },
-                orderBy: { expiryDate: 'asc' }
+                orderBy: [
+                    { ticker: 'asc' },
+                    { expiryDate: 'asc' }
+                ]
             });
             const dbData = dbDataRaw.filter((row) => isPositiveNumber(row.price) && hasUsableExpectedMove({
                 straddle: row.straddle,
@@ -44,71 +47,63 @@ export async function getExpectedMoveData(tickers: string[], refresh: boolean = 
                 manual_em: row.manualEm,
             }));
 
-            // Group by Ticker to check completeness
             const grouped = new Map<string, any[]>();
-            tickers.forEach(t => grouped.set(t, []));
-
-            let hasAll = true;
+            symbols.forEach((ticker) => grouped.set(ticker, []));
             for (const row of dbData) {
                 const list = grouped.get(row.ticker);
                 if (list) list.push(row);
             }
 
-            // Verify we have at least one record for every requested ticker?
-            // Or just return what we have? 
-            // The requirement is "fetch from DB". If missing, maybe fetch live.
-            // Let's being strict: If ANY requested ticker is missing, we treat as "refresh needed" for the whole set (simpler)
-            // OR we fetch only missing.
-            // For now, simpler: If any ticker has NO data, refresh ALL (or refresh missing).
-            // Current script takes a list. Let's filter missing.
+            const result = symbols.map((ticker) => {
+                const rows = grouped.get(ticker) || [];
+                const price = rows.length > 0 ? rows[0].price : null;
 
-            const missingTickers = tickers.filter(t => (grouped.get(t)?.length || 0) === 0);
+                const expirations = rows.map((r) => {
+                    let basisObj = undefined;
+                    try {
+                        if (r.basis) basisObj = JSON.parse(r.basis);
+                    } catch {
+                        // ignore malformed basis payloads
+                    }
 
-            if (missingTickers.length === 0) {
-                console.log('Using Cached DB Data for Expected Move');
-                // Format and Return
-                const result = tickers.map(ticker => {
-                    const rows = grouped.get(ticker) || [];
-                    const price = rows.length > 0 ? rows[0].price : null;
-
-                    const expirations = rows.map(r => {
-                        let basisObj = undefined;
-                        try {
-                            if (r.basis) basisObj = JSON.parse(r.basis);
-                        } catch (e) { /* ignore */ }
-
-                        // Calculate DTE roughly
-                        const dte = Math.ceil((r.expiryDate.getTime() - Date.now()) / (1000 * 3600 * 24));
-
-                        return {
-                            id: r.id,
-                            date: r.expiryDate.toISOString().split('T')[0],
-                            dte: dte,
-                            straddle: r.straddle,
-                            em_365: r.em365,
-                            em_252: r.em252,
-                            adj_em: r.adjEm,
-                            manual_em: r.manualEm,
-                            basis: basisObj,
-                            note: r.note
-                        };
-                    }).filter((exp) => hasUsableExpectedMove(exp));
+                    const dte = Math.ceil((r.expiryDate.getTime() - Date.now()) / (1000 * 3600 * 24));
 
                     return {
-                        ticker,
-                        price,
-                        expirations
+                        id: r.id,
+                        date: r.expiryDate.toISOString().split('T')[0],
+                        dte,
+                        straddle: r.straddle,
+                        em_365: r.em365,
+                        em_252: r.em252,
+                        adj_em: r.adjEm,
+                        manual_em: r.manualEm,
+                        basis: basisObj,
+                        note: r.note
                     };
-                }).filter((item) => isPositiveNumber(item.price) && item.expirations.length > 0);
+                }).filter((exp) => hasUsableExpectedMove(exp));
+
+                return {
+                    ticker,
+                    price,
+                    expirations
+                };
+            }).filter((item) => isPositiveNumber(item.price) && item.expirations.length > 0);
+
+            const missingTickers = symbols.filter((ticker) => !result.some((item) => item.ticker === ticker));
+            return { result, missingTickers };
+        };
+
+        // 1. Check DB First (Read-Through Cache)
+        let tickersToFetch = requestedTickers;
+        if (!refresh && requestedTickers.length > 0) {
+            const { result, missingTickers } = await readFromDb(requestedTickers);
+            if (missingTickers.length === 0) {
+                console.log('Using Cached DB Data for Expected Move');
                 return { success: true, data: result };
             }
 
             console.log(`Cache Miss for: ${missingTickers.join(', ')}. Fetching live.`);
-            // Optimization: Only fetch missing if we want to mix.
-            // But the python script is designed to handle a list.
-            // If we fetch only missing, we need to merge with DB data.
-            // Let's implement robust "Fetch Missing Only and Merge".
-            tickers = missingTickers; // Only fetch what we need
+            tickersToFetch = missingTickers;
         }
 
         // --- Live Fetch Logic ---
@@ -117,17 +112,17 @@ export async function getExpectedMoveData(tickers: string[], refresh: boolean = 
         const projectRoot = path.resolve(process.cwd(), '..');
         const scriptPath = path.join(projectRoot, 'scripts', 'streaming', 'api_expected_move.py');
 
-        let cmd = `python "${scriptPath}"`;
-        if (tickers && tickers.length > 0) {
-            cmd += ` --tickers ${tickers.join(' ')}`;
+        const args = [scriptPath];
+        if (tickersToFetch.length > 0) {
+            args.push('--tickers', ...tickersToFetch);
         }
         if (refresh) {
-            cmd += ` --refresh`;
+            args.push('--refresh');
         }
 
-        console.log(`Executing Expected Move Script: ${cmd} (CWD: ${projectRoot})`);
+        console.log(`Executing Expected Move Script: python ${args.join(' ')} (CWD: ${projectRoot})`);
 
-        const { stdout, stderr } = await execPromise(cmd, { cwd: projectRoot });
+        const { stdout, stderr } = await execFilePromise('python', args, { cwd: projectRoot });
 
         if (stderr) {
             if (stderr.toLowerCase().includes('error')) {
@@ -194,43 +189,8 @@ export async function getExpectedMoveData(tickers: string[], refresh: boolean = 
                 }
             }
 
-            // If we did a partial fetch, we need to return FULL data (DB + Fresh)
-            // So we just call ourselves recursively with refresh=false ? 
-            // Or just fetch from DB again for simplicity/consistency.
-
-            // Re-fetch EVERYTHING from DB to ensure consistent format and merged results
-            // This is safer than trying to stitch partial rawData with partial DB data manually.
-            // But we must pass the ORIGINAL full list of tickers, not the truncated 'missingTickers'.
-            // However, 'tickers' variable was mutated above.
-
-            // Actually, returning the recursive call result is elegant.
-            // But wait, the function takes `tickers`. If we mutated it, we lost the original list?
-            // Ah, I need to preserve original tickers if I want to return full set.
-            // But cleaner: Just return { success: true, data: processedData } for the fetched part, 
-            // AND for the parts we skipped, we need to add them.
-
-            // Simplest: Just re-query DB for the *original* request if we did a fetch.
-            // BUT: This function is called with a specific list.
-            // If I mutated `tickers`, I should have kept `allTickers`.
-
-            return { success: true, data: processedData };
-            // Note: If we did partial fetch, the UI will only get partial data + whatever it had?
-            // The UI state replaces `data`. So we should ensure we return EVERYTHING requested.
-
-            // Let's rely on the fact that if we had to fetch, we probably want to return what we just fetched.
-            // The mixed case is tricky. 
-            // If UI requests [A, B]. A is in DB. B is missing.
-            // We fetch B.
-            // We return B.
-            // UI gets [B]. A is lost?
-            // YES. 
-
-            // FIX: We must return the union.
-            // Since we just upserted B to DB, accessing DB now returns A and B.
-            // So, recursively calling getExpectedMoveData would work if we pass original list.
-            // But recursive calls might loop if logic is buggy.
-
-            // Let's just do a DB fetch for ALL needed tickers at the end.
+            const { result } = await readFromDb(requestedTickers);
+            return { success: true, data: result.length > 0 ? result : processedData };
         } catch (dbError: any) {
             console.error('DB Sync Error:', dbError);
             // If DB fails, return raw data at least

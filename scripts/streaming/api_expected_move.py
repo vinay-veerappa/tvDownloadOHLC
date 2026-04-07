@@ -1,11 +1,21 @@
-import schwab
 import json
 import os
 import sys
 import datetime
 import math
 import argparse
-import copy
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.streaming.options.options_fetcher import (
+    create_client,
+    fetch_futures_option_chain_data,
+    fetch_option_chain_data,
+    _today_ny,
+)
 
 # --- Constants ---
 DEFAULT_TICKERS = [
@@ -29,10 +39,10 @@ CACHE_FILE = "data/expected_moves.json"
 # Maps Futures -> { index: UnderlyingIndex, etf: UnderlyingETF }
 # For Commodities (Gold, Oil), we map Index to the Future itself (for spot price) and ETF to the liquid ETF.
 PROXY_MAP = {
-    "/ES": {"index": "$SPX", "etf": "SPY"},
-    "/NQ": {"index": "$NDX", "etf": "QQQ"},
-    "/YM": {"index": "$DJI", "etf": "DIA"},
-    "/RTY": {"index": "$RUT", "etf": "IWM"},
+    "/ES": {"index": "SPX", "etf": "SPY"},
+    "/NQ": {"index": "NDX", "etf": "QQQ"},
+    "/YM": {"index": "DJX", "etf": "DIA"},
+    "/RTY": {"index": "RUT", "etf": "IWM"},
     
     # Commodities
     "/GC": {"index": "/GC", "etf": "GLD"},
@@ -192,38 +202,107 @@ def calculate_em_values(chain_resp, date_obj, reference_price):
         "adj_em": round(adj_em, 2) if is_positive_number(adj_em) else None
     }
 
-def fetch_ticker_data(client, symbol, target_fridays):
+
+def _dte_targets_for_dates(target_dates):
+    logical_today = _today_ny()
+    targets = []
+    for target_date in target_dates:
+        try:
+            dte = max((target_date - logical_today).days, 0)
+        except Exception:
+            continue
+        if dte not in targets:
+            targets.append(dte)
+    return targets or [0]
+
+
+def _chain_to_quote(chain):
+    spot = getattr(chain, "spot_price", 0.0) or getattr(chain, "spot", 0.0) or 0.0
+    spot_open = getattr(chain, "spot_open", 0.0) or spot
+    return {
+        "lastPrice": spot,
+        "openPrice": spot_open,
+        "closePrice": spot,
+    }
+
+
+def _chain_to_exp_maps(chain):
+    call_map = {}
+    put_map = {}
+    logical_today = _today_ny()
+
+    for contract in getattr(chain, "calls", []):
+        expiry = getattr(contract, "expiry", None)
+        if not expiry:
+            continue
+        expiry_date = expiry if isinstance(expiry, datetime.date) else None
+        if expiry_date is None and hasattr(expiry, "date"):
+            expiry_date = expiry.date()
+        if expiry_date is None:
+            continue
+        dte = int(getattr(contract, "dte", 0) or max((expiry_date - logical_today).days, 0))
+        expiry_key = f"{expiry_date.isoformat()}:{dte}"
+        strike_key = str(float(getattr(contract, "strike", 0.0) or 0.0))
+        call_map.setdefault(expiry_key, {}).setdefault(strike_key, []).append({
+            "strikePrice": getattr(contract, "strike", 0.0),
+            "volatility": (getattr(contract, "iv", 0.0) or 0.0) * 100.0,
+            "mark": getattr(contract, "mark", 0.0),
+            "bid": getattr(contract, "bid", 0.0),
+            "ask": getattr(contract, "ask", 0.0),
+            "last": getattr(contract, "last", 0.0),
+        })
+
+    for contract in getattr(chain, "puts", []):
+        expiry = getattr(contract, "expiry", None)
+        if not expiry:
+            continue
+        expiry_date = expiry if isinstance(expiry, datetime.date) else None
+        if expiry_date is None and hasattr(expiry, "date"):
+            expiry_date = expiry.date()
+        if expiry_date is None:
+            continue
+        dte = int(getattr(contract, "dte", 0) or max((expiry_date - logical_today).days, 0))
+        expiry_key = f"{expiry_date.isoformat()}:{dte}"
+        strike_key = str(float(getattr(contract, "strike", 0.0) or 0.0))
+        put_map.setdefault(expiry_key, {}).setdefault(strike_key, []).append({
+            "strikePrice": getattr(contract, "strike", 0.0),
+            "volatility": (getattr(contract, "iv", 0.0) or 0.0) * 100.0,
+            "mark": getattr(contract, "mark", 0.0),
+            "bid": getattr(contract, "bid", 0.0),
+            "ask": getattr(contract, "ask", 0.0),
+            "last": getattr(contract, "last", 0.0),
+        })
+
+    return {
+        "callExpDateMap": call_map,
+        "putExpDateMap": put_map,
+    }
+
+def fetch_ticker_data(_client, symbol, target_fridays):
     """
     Fetches Quote and Chain for a symbol. 
     Returns: { quote_obj, chain_obj_map } where chain_obj_map is keyed by date.
     """
-    # 1. Get Quote
+    dte_targets = _dte_targets_for_dates(target_fridays)
     quote_obj = {}
-    try:
-        resp = client.get_quote(symbol).json()
-        found_key = None
-        if isinstance(resp, dict):
-            for k in resp.keys():
-                if k.upper() == symbol.upper(): found_key = k; break
-            if not found_key and len(resp) > 0: found_key = list(resp.keys())[0]
-        
-        if found_key and isinstance(resp[found_key], dict):
-             quote_obj = resp[found_key].get('quote', {})
-    except Exception as e:
-        print(f"  Quote Error {symbol}: {e}", file=sys.stderr)
-
-    # 2. Get Chain for target dates
     chain_obj_map = {}
-    for d in target_fridays:
-        try:
-            chain_resp = client.get_option_chain(
-                symbol, strike_count=20, strategy='ANALYTICAL', from_date=d, to_date=d
-            ).json()
-            if chain_resp.get('status') == 'SUCCESS':
-                chain_obj_map[d] = chain_resp
-        except Exception as e:
-            print(f"  Chain Error {symbol} {d}: {e}", file=sys.stderr)
-            
+
+    try:
+        if symbol.startswith("/"):
+            chain = fetch_futures_option_chain_data(symbol, dte_targets)
+        else:
+            client = create_client()
+            chain = fetch_option_chain_data(client, symbol, dte_targets)
+
+        quote_obj = _chain_to_quote(chain)
+        chain_resp = _chain_to_exp_maps(chain)
+        for target_date in target_fridays:
+            expiry_key = get_closest_expiry_key(chain_resp.get("callExpDateMap", {}), target_date)
+            if expiry_key:
+                chain_obj_map[target_date] = chain_resp
+    except Exception as e:
+        print(f"  Shared Fetch Error {symbol}: {e}", file=sys.stderr)
+
     return quote_obj, chain_obj_map
 
 
@@ -245,21 +324,8 @@ def fetch_expected_moves(tickers=None, force_refresh=False):
              # For now, let's just proceed to fetch if we need specific tickers not in cache.
              pass
 
-    # Setup Client
-    ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    if not os.path.exists("secrets.json") or not os.path.exists("token.json"):
-        return {"error": "Missing credentials"}
-    with open("secrets.json", "r") as f: secrets = json.load(f)
-    
-    try:
-        client = schwab.auth.client_from_token_file(
-            token_path="token.json", api_key=secrets["app_key"], app_secret=secrets["app_secret"], enforce_enums=False
-        )
-    except Exception as e:
-         return {"error": f"Auth failed: {str(e)}"}
-
     # Date Logic
-    today = datetime.date.today()
+    today = _today_ny()
     friday = today + datetime.timedelta(days=(4 - today.weekday() + 7) % 7)
     current_weekday = today.weekday() 
     target_friday = today + datetime.timedelta(days=(4 - current_weekday + 7)) if current_weekday >= 4 else friday
@@ -293,9 +359,9 @@ def fetch_expected_moves(tickers=None, force_refresh=False):
             etf_sym = p_map['etf']
             
             # Fetch Index
-            idx_quote, idx_chains = fetch_ticker_data(client, idx_sym, target_dates)
+            idx_quote, idx_chains = fetch_ticker_data(None, idx_sym, target_dates)
             # Fetch ETF
-            etf_quote, etf_chains = fetch_ticker_data(client, etf_sym, target_dates)
+            etf_quote, etf_chains = fetch_ticker_data(None, etf_sym, target_dates)
             
             # Reference Prices (Index)
             idx_last = idx_quote.get('lastPrice', 0)
@@ -381,7 +447,7 @@ def fetch_expected_moves(tickers=None, force_refresh=False):
                 
         else:
             # Standard Ticker
-            quote, chains = fetch_ticker_data(client, req_ticker, target_dates)
+            quote, chains = fetch_ticker_data(None, req_ticker, target_dates)
             
             last = quote.get('lastPrice', 0)
             opn = quote.get('openPrice', last)
