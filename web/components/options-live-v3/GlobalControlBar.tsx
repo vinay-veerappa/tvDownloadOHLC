@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 export type GexTabId =
   | "daily-gex"
@@ -52,6 +52,14 @@ type Props = {
   freshness?: string | null;
 };
 
+type SymbolLookupItem = {
+  symbol: string;
+  sources?: string[];
+  name?: string | null;
+  exchange?: string | null;
+  type?: string | null;
+};
+
 export function GlobalControlBar({
   symbol,
   onSymbolChange,
@@ -70,6 +78,11 @@ export function GlobalControlBar({
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [customStrike, setCustomStrike] = useState<string>("");
+  const [inputValue, setInputValue] = useState(symbol);
+  const [lookupOpen, setLookupOpen] = useState(false);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupItems, setLookupItems] = useState<SymbolLookupItem[]>([]);
+  const [activeLookupIndex, setActiveLookupIndex] = useState(-1);
   const customStrikeDisplay =
     customStrike.length > 0
       ? customStrike
@@ -77,8 +90,50 @@ export function GlobalControlBar({
         ? String(strikeCount)
         : "";
 
-  const handleSymbolCommit = () => {
-    const val = inputRef.current?.value.trim().toUpperCase() ?? "";
+  useEffect(() => {
+    setInputValue(symbol);
+  }, [symbol]);
+
+  useEffect(() => {
+    const q = inputValue.trim().toUpperCase();
+    if (!q) {
+      setLookupItems([]);
+      setLookupOpen(false);
+      setLookupLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const handle = window.setTimeout(async () => {
+      setLookupLoading(true);
+      try {
+        const res = await fetch(`/api/options-live/v3/symbol-lookup?q=${encodeURIComponent(q)}&limit=10`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const payload = await res.json();
+        const items = (payload?.data?.results ?? []) as SymbolLookupItem[];
+        setLookupItems(items);
+        setLookupOpen(items.length > 0);
+        setActiveLookupIndex(items.length > 0 ? 0 : -1);
+      } catch {
+        // ignore transient lookup failures
+      } finally {
+        setLookupLoading(false);
+      }
+    }, 120);
+
+    return () => {
+      window.clearTimeout(handle);
+      controller.abort();
+    };
+  }, [inputValue]);
+
+  const handleSymbolCommit = (candidate?: string) => {
+    const val = (candidate ?? inputValue).trim().toUpperCase();
+    setInputValue(val);
+    setLookupOpen(false);
     if (val && val !== symbol) onSymbolChange(val);
   };
 
@@ -94,17 +149,78 @@ export function GlobalControlBar({
       {/* Upper row: symbol + controls */}
       <div className="flex flex-wrap items-center gap-3 px-4 py-2">
         {/* Symbol input */}
-        <div className="flex items-center gap-2">
+        <div className="relative flex items-center gap-2">
           <input
             ref={inputRef}
-            defaultValue={symbol}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSymbolCommit();
+            value={inputValue}
+            onChange={(e) => {
+              setInputValue(e.target.value.toUpperCase());
+              setLookupOpen(true);
             }}
-            onBlur={handleSymbolCommit}
+            onFocus={() => {
+              if (lookupItems.length > 0) setLookupOpen(true);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                if (!lookupItems.length) return;
+                setLookupOpen(true);
+                setActiveLookupIndex((prev) => (prev + 1) % lookupItems.length);
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                if (!lookupItems.length) return;
+                setLookupOpen(true);
+                setActiveLookupIndex((prev) => (prev <= 0 ? lookupItems.length - 1 : prev - 1));
+                return;
+              }
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (lookupOpen && activeLookupIndex >= 0 && lookupItems[activeLookupIndex]) {
+                  handleSymbolCommit(lookupItems[activeLookupIndex].symbol);
+                  return;
+                }
+                handleSymbolCommit();
+                return;
+              }
+              if (e.key === "Escape") {
+                setLookupOpen(false);
+              }
+            }}
+            onBlur={() => {
+              window.setTimeout(() => handleSymbolCommit(), 100);
+            }}
             className="h-8 w-28 rounded border border-zinc-700 bg-black px-2 text-sm font-mono text-zinc-100 focus:border-emerald-600 focus:outline-none"
             placeholder="SPY"
           />
+          {lookupOpen && lookupItems.length > 0 && (
+            <div className="absolute left-0 top-9 z-50 w-72 overflow-hidden rounded-md border border-zinc-700 bg-zinc-950 shadow-2xl">
+              {lookupItems.map((item, idx) => (
+                <button
+                  key={`${item.symbol}-${idx}`}
+                  type="button"
+                  className={`flex w-full items-start justify-between gap-2 px-2 py-1.5 text-left transition-colors ${
+                    idx === activeLookupIndex ? "bg-zinc-800 text-zinc-100" : "text-zinc-300 hover:bg-zinc-900"
+                  }`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    handleSymbolCommit(item.symbol);
+                  }}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-mono text-zinc-100">{item.symbol}</div>
+                    {item.name ? <div className="truncate text-[11px] text-zinc-400">{item.name}</div> : null}
+                  </div>
+                  <div className="mt-[1px] text-right text-[10px] leading-4 text-zinc-500">
+                    <div>{item.exchange ?? item.sources?.[0] ?? "lookup"}</div>
+                    {item.type ? <div>{item.type}</div> : null}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+          {lookupLoading && <span className="text-[10px] text-zinc-500">lookup…</span>}
           {isLoading ? (
             <span className="text-xs text-zinc-500 animate-pulse">loading…</span>
           ) : freshness ? (
