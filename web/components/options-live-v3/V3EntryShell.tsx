@@ -217,6 +217,47 @@ function toneByNumber(v: number | null | undefined): "neutral" | "positive" | "n
   return "neutral";
 }
 
+function deriveExpectedMoveFromText(lines: string[] | undefined, spot: number | null | undefined): {
+  expectedMoveUpper: number | null;
+  expectedMoveLower: number | null;
+  expectedMoveWidth: number | null;
+} {
+  if (!lines?.length || typeof spot !== "number" || !Number.isFinite(spot) || spot <= 0) {
+    return { expectedMoveUpper: null, expectedMoveLower: null, expectedMoveWidth: null };
+  }
+
+  const patterns = [
+    /Expected Move is\s*([\d,]+(?:\.\d+)?)\s*[↔→\-–—]\s*([\d,]+(?:\.\d+)?)/i,
+    /Risk map:\s*EM\s*([\d,]+(?:\.\d+)?)\s*[↔→\-–—]\s*([\d,]+(?:\.\d+)?)/i,
+  ];
+
+  for (const line of lines) {
+    const normalized = line.replace(/[ÂÏâ]/g, " ");
+    for (const pattern of patterns) {
+      const match = pattern.exec(normalized);
+      if (!match) continue;
+      const lowerRaw = Number(match[1].replace(/,/g, ""));
+      const upperRaw = Number(match[2].replace(/,/g, ""));
+      if (!Number.isFinite(lowerRaw) || !Number.isFinite(upperRaw) || upperRaw <= lowerRaw) continue;
+
+      const widthRaw = (upperRaw - lowerRaw) / 2;
+      const midRaw = (upperRaw + lowerRaw) / 2;
+      if (widthRaw <= 0 || midRaw <= 0) continue;
+
+      const scaledWidth = (widthRaw / midRaw) * spot;
+      if (!Number.isFinite(scaledWidth) || scaledWidth <= 0) continue;
+
+      return {
+        expectedMoveUpper: spot + scaledWidth,
+        expectedMoveLower: spot - scaledWidth,
+        expectedMoveWidth: scaledWidth,
+      };
+    }
+  }
+
+  return { expectedMoveUpper: null, expectedMoveLower: null, expectedMoveWidth: null };
+}
+
 function integrityTierClasses(tier: string | null | undefined): string {
   switch (tier) {
     case "Measured":
@@ -231,7 +272,7 @@ function integrityTierClasses(tier: string | null | undefined): string {
 }
 
 async function fetchEnvelope<T>(url: string): Promise<V3Envelope<T>> {
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: "no-store" });
   return (await res.json()) as V3Envelope<T>;
 }
 
@@ -609,7 +650,17 @@ export function V3EntryShell() {
   // ---------------------------------------------------------------------------
 
   function renderDailyGex() {
-    const lvls = levels?.data?.levels;
+    const lvlsRaw = levels?.data?.levels;
+    const derivedExpectedMove = deriveExpectedMoveFromText(
+      [...(levels?.data?.notes?.coach ?? []), ...(narrative?.data?.notes?.tactical ?? []), ...(narrative?.data?.notes?.coach ?? [])],
+      lvlsRaw?.spot ?? summary?.data?.spot ?? null
+    );
+    const lvls = {
+      ...lvlsRaw,
+      expectedMoveUpper: lvlsRaw?.expectedMoveUpper ?? derivedExpectedMove.expectedMoveUpper,
+      expectedMoveLower: lvlsRaw?.expectedMoveLower ?? derivedExpectedMove.expectedMoveLower,
+      expectedMoveWidth: lvlsRaw?.expectedMoveWidth ?? derivedExpectedMove.expectedMoveWidth,
+    };
     return (
       <div className="space-y-4">
         {/* KPI row */}
@@ -625,6 +676,20 @@ export function V3EntryShell() {
             label="Gamma Flip"
             value={fmtNum(levels?.data?.levels?.gammaFlip)}
             subValue={`CW ${fmtNum(levels?.data?.levels?.callWall)} | PW ${fmtNum(levels?.data?.levels?.putWall)}`}
+          />
+          <StatCard
+            label="Expected Move"
+            value={
+              lvls?.expectedMoveWidth != null
+                ? `±${fmtNum(lvls.expectedMoveWidth)}`
+                : "-"
+            }
+            subValue={
+              lvls?.expectedMoveLower != null && lvls?.expectedMoveUpper != null
+                ? `${fmtNum(lvls.expectedMoveLower)} ↔ ${fmtNum(lvls.expectedMoveUpper)}`
+                : undefined
+            }
+            tone={lvls?.expectedMoveWidth != null ? "neutral" : undefined}
           />
           <StatCard
             label="Directional Bias"

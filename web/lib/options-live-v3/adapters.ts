@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { readFile } from "fs/promises";
 import path from "path";
 import {
+  type DailyStructure,
   loadDailyLevels,
   loadGexProfiles,
   loadMacroCache,
@@ -15,6 +16,7 @@ import {
 } from "@/lib/options-live-v3/data";
 import { queryDoltByExpiry } from "@/lib/options-live-v3/dolt";
 import prisma from "@/lib/prisma";
+import { getExpectedMoveData } from "@/actions/get-expected-move";
 
 type SummaryData = {
   implemented: true;
@@ -104,35 +106,153 @@ function parseExpectedMoveFromNotes(lines: string[] | undefined): {
   return { lower: null, upper: null, width: null };
 }
 
+function parseExpectedMoveFromStructure(structure: DailyStructure | null | undefined): {
+  lower: number | null;
+  upper: number | null;
+  width: number | null;
+} {
+  const rows = (structure?.expected_moves as Array<Record<string, unknown>> | undefined) ?? [];
+  for (const row of rows) {
+    const lower = toNum(row.em_lower);
+    const upper = toNum(row.em_upper);
+    const width = toNum(row.em_value) ?? (lower !== null && upper !== null ? Math.abs(upper - lower) / 2 : null);
+    if (lower !== null && upper !== null && width !== null && width > 0) {
+      return { lower, upper, width };
+    }
+  }
+  return { lower: null, upper: null, width: null };
+}
+
+function structureSupportsExpectedMove(structure: DailyStructure | null | undefined, symbol: string): boolean {
+  if (!structure) return false;
+  const root = normalizeSymbolRoot(symbol);
+  const asset = normalizeSymbolRoot(String(structure.asset ?? ""));
+  const cash = normalizeSymbolRoot(String(structure.cash_ticker ?? ""));
+  const canonical = resolveExpectedMoveTicker(symbol);
+  return asset === root || cash === root || cash === canonical;
+}
+
+function resolveExpectedMoveFromStructure(
+  structure: DailyStructure | null | undefined,
+  symbol: string,
+  targetSpot: number | null
+): {
+  lower: number | null;
+  upper: number | null;
+  width: number | null;
+} {
+  if (!structure) return { lower: null, upper: null, width: null };
+
+  const parsed = parseExpectedMoveFromStructure(structure);
+  if (parsed.width === null || parsed.lower === null || parsed.upper === null) {
+    return parsed;
+  }
+
+  const root = normalizeSymbolRoot(symbol);
+  const asset = normalizeSymbolRoot(String(structure.asset ?? ""));
+  const cash = normalizeSymbolRoot(String(structure.cash_ticker ?? ""));
+  const canonical = resolveExpectedMoveTicker(symbol);
+
+  // Exact asset-space match: already in the correct space.
+  if (asset === root) {
+    return parsed;
+  }
+
+  // Cash-ticker match from translated futures structure: scale EM by percentage
+  // back into the requested cash symbol's spot space.
+  if ((cash === root || cash === canonical) && targetSpot !== null && targetSpot > 0) {
+    const sourceMid = (parsed.upper + parsed.lower) / 2;
+    if (sourceMid > 0) {
+      const scaledWidth = (parsed.width / sourceMid) * targetSpot;
+      if (scaledWidth > 0) {
+        return {
+          lower: targetSpot - scaledWidth,
+          upper: targetSpot + scaledWidth,
+          width: scaledWidth,
+        };
+      }
+    }
+  }
+
+  return { lower: null, upper: null, width: null };
+}
+
 async function loadExpectedMoveBandFromDb(symbol: string): Promise<{
   lower: number | null;
   upper: number | null;
   width: number | null;
   ticker: string;
 } | null> {
+  const isPositiveFinite = (value: unknown): value is number =>
+    typeof value === "number" && Number.isFinite(value) && value > 0;
+
   const ticker = resolveExpectedMoveTicker(symbol);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const row = await prisma.expectedMove.findFirst({
-    where: {
-      ticker,
-      calculationDate: today,
-    },
-    orderBy: {
-      expiryDate: "asc",
-    },
-  });
+  const queryFirstRow = async () =>
+    prisma.expectedMove.findFirst({
+      where: {
+        ticker,
+        calculationDate: today,
+      },
+      orderBy: {
+        expiryDate: "asc",
+      },
+    });
+
+  let row = await queryFirstRow();
+
+  // New symbols may not be in today's EM cache yet. Trigger one live pull
+  // for the canonical ticker and re-check DB before giving up.
+  if (!row) {
+    try {
+      const live = await getExpectedMoveData([ticker], false);
+      row = await queryFirstRow();
+
+      // Brand-new tickers may not have an immediately queryable DB row yet.
+      // If live fetch succeeded, derive EM band directly from response payload.
+      if (!row && live?.success && Array.isArray(live.data)) {
+        const item = live.data.find((entry: unknown) => {
+          if (!entry || typeof entry !== "object") return false;
+          const t = (entry as { ticker?: unknown }).ticker;
+          return typeof t === "string" && t.toUpperCase() === ticker;
+        }) as { price?: unknown; expirations?: Array<Record<string, unknown>> } | undefined;
+
+        if (item && isPositiveFinite(item.price)) {
+          const firstExp = Array.isArray(item.expirations) ? item.expirations[0] : undefined;
+          const widthCandidates = [
+            firstExp?.manual_em,
+            firstExp?.adj_em,
+            firstExp?.em_252,
+            firstExp?.em_365,
+          ];
+          const width = widthCandidates.find((v) => isPositiveFinite(v));
+
+          if (typeof width === "number") {
+            return {
+              lower: item.price - width,
+              upper: item.price + width,
+              width,
+              ticker,
+            };
+          }
+        }
+      }
+    } catch {
+      // Keep null row path; callers will apply guarded fallback behavior.
+    }
+  }
 
   if (!row) return null;
 
   const width =
-    (typeof row.manualEm === "number" && Number.isFinite(row.manualEm) ? row.manualEm : null) ??
-    (typeof row.adjEm === "number" && Number.isFinite(row.adjEm) ? row.adjEm : null) ??
-    (typeof row.em252 === "number" && Number.isFinite(row.em252) ? row.em252 : null) ??
-    (typeof row.em365 === "number" && Number.isFinite(row.em365) ? row.em365 : null);
+    (isPositiveFinite(row.manualEm) ? row.manualEm : null) ??
+    (isPositiveFinite(row.adjEm) ? row.adjEm : null) ??
+    (isPositiveFinite(row.em252) ? row.em252 : null) ??
+    (isPositiveFinite(row.em365) ? row.em365 : null);
 
-  const anchor = typeof row.price === "number" && Number.isFinite(row.price) ? row.price : null;
+  const anchor = isPositiveFinite(row.price) ? row.price : null;
   if (width === null || anchor === null) {
     return { lower: null, upper: null, width: null, ticker };
   }
@@ -327,16 +447,21 @@ export async function buildLevels(symbol: string): Promise<{ data: LevelsData; w
         : null;
 
   const root = normalizeSymbolRoot(symbol);
-  const protectedExpectedMoveRoots = new Set(["ES", "SPX", "SPY", "NQ", "NDX", "QQQ", "RTY", "RUT", "IWM", "YM", "DJI", "DIA"]);
+  const protectedExpectedMoveRoots = new Set(["ES", "MES", "SPX", "SPY", "NQ", "MNQ", "NDX", "QQQ", "RTY", "M2K", "RUT", "IWM", "YM", "MYM", "DJI", "DIA"]);
   const dbExpectedMove = await loadExpectedMoveBandFromDb(symbol).catch(() => null);
+  const structuredExpectedMove = structureSupportsExpectedMove(structure, symbol)
+    ? resolveExpectedMoveFromStructure(structure, symbol, spot)
+    : { lower: null, upper: null, width: null };
   const noteExpectedMove = parseExpectedMoveFromNotes((structure?.coach_note as string[] | undefined) ?? []);
   const expectedMove = dbExpectedMove
     ? { lower: dbExpectedMove.lower, upper: dbExpectedMove.upper, width: dbExpectedMove.width }
+    : structuredExpectedMove.width !== null
+      ? structuredExpectedMove
     : protectedExpectedMoveRoots.has(root)
       ? { lower: null, upper: null, width: null }
       : noteExpectedMove;
 
-  if (!dbExpectedMove && protectedExpectedMoveRoots.has(root)) {
+  if (!dbExpectedMove && structuredExpectedMove.width === null && protectedExpectedMoveRoots.has(root)) {
     warnings.push(`Expected-move DB row not found for canonical ticker ${resolveExpectedMoveTicker(symbol)}; EM levels withheld to avoid cross-symbol scaling.`);
   }
 

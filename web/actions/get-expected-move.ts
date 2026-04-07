@@ -7,20 +7,42 @@ import prisma from '@/lib/prisma'; // Default import
 
 const execPromise = util.promisify(exec);
 
+function isPositiveNumber(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function hasUsableExpectedMove(exp: {
+    straddle?: unknown;
+    em_365?: unknown;
+    em_252?: unknown;
+    adj_em?: unknown;
+    manual_em?: unknown;
+}): boolean {
+    return [exp.manual_em, exp.adj_em, exp.em_252, exp.em_365, exp.straddle].some(isPositiveNumber);
+}
+
 export async function getExpectedMoveData(tickers: string[], refresh: boolean = false) {
     try {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
+        const requestedTickers = [...tickers];
 
         // 1. Check DB First (Read-Through Cache)
         if (!refresh && tickers.length > 0) {
-            const dbData = await prisma.expectedMove.findMany({
+            const dbDataRaw = await prisma.expectedMove.findMany({
                 where: {
                     ticker: { in: tickers },
                     calculationDate: today
                 },
                 orderBy: { expiryDate: 'asc' }
             });
+            const dbData = dbDataRaw.filter((row) => isPositiveNumber(row.price) && hasUsableExpectedMove({
+                straddle: row.straddle,
+                em_365: row.em365,
+                em_252: row.em252,
+                adj_em: row.adjEm,
+                manual_em: row.manualEm,
+            }));
 
             // Group by Ticker to check completeness
             const grouped = new Map<string, any[]>();
@@ -47,7 +69,7 @@ export async function getExpectedMoveData(tickers: string[], refresh: boolean = 
                 // Format and Return
                 const result = tickers.map(ticker => {
                     const rows = grouped.get(ticker) || [];
-                    const price = rows.length > 0 ? rows[0].price : 0;
+                    const price = rows.length > 0 ? rows[0].price : null;
 
                     const expirations = rows.map(r => {
                         let basisObj = undefined;
@@ -70,14 +92,14 @@ export async function getExpectedMoveData(tickers: string[], refresh: boolean = 
                             basis: basisObj,
                             note: r.note
                         };
-                    });
+                    }).filter((exp) => hasUsableExpectedMove(exp));
 
                     return {
                         ticker,
                         price,
                         expirations
                     };
-                });
+                }).filter((item) => isPositiveNumber(item.price) && item.expirations.length > 0);
                 return { success: true, data: result };
             }
 
@@ -127,9 +149,16 @@ export async function getExpectedMoveData(tickers: string[], refresh: boolean = 
         }
 
         try {
-            const processedData = rawData; // pass through for now, but we sync to DB
+            const processedData = rawData
+                .map((item: any) => ({
+                    ...item,
+                    expirations: Array.isArray(item?.expirations)
+                        ? item.expirations.filter((exp: any) => hasUsableExpectedMove(exp))
+                        : [],
+                }))
+                .filter((item: any) => isPositiveNumber(item?.price) && item.expirations.length > 0);
 
-            for (const item of rawData) {
+            for (const item of processedData) {
                 for (const exp of item.expirations) {
                     await prisma.expectedMove.upsert({
                         where: {
@@ -184,7 +213,7 @@ export async function getExpectedMoveData(tickers: string[], refresh: boolean = 
             // BUT: This function is called with a specific list.
             // If I mutated `tickers`, I should have kept `allTickers`.
 
-            return { success: true, data: rawData }; // Return the fresh data for now.
+            return { success: true, data: processedData };
             // Note: If we did partial fetch, the UI will only get partial data + whatever it had?
             // The UI state replaces `data`. So we should ensure we return EVERYTHING requested.
 
@@ -205,7 +234,17 @@ export async function getExpectedMoveData(tickers: string[], refresh: boolean = 
         } catch (dbError: any) {
             console.error('DB Sync Error:', dbError);
             // If DB fails, return raw data at least
-            return { success: true, data: rawData };
+            const processedData = Array.isArray(rawData)
+                ? rawData
+                    .map((item: any) => ({
+                        ...item,
+                        expirations: Array.isArray(item?.expirations)
+                            ? item.expirations.filter((exp: any) => hasUsableExpectedMove(exp))
+                            : [],
+                    }))
+                    .filter((item: any) => isPositiveNumber(item?.price) && item.expirations.length > 0)
+                : [];
+            return { success: true, data: processedData };
         }
 
     } catch (error: any) {

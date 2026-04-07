@@ -155,6 +155,11 @@ export function LiveLevelsLadder({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-zinc-200">Key Levels Ladder</h2>
         <div className="flex items-center gap-2 text-xs">
+          {expectedMoveLower !== null && expectedMoveUpper !== null && (
+            <span className="rounded border border-teal-800/60 bg-teal-950/30 px-2 py-0.5 text-teal-300">
+              EM {expectedMoveLower.toFixed(2)} ↔ {expectedMoveUpper.toFixed(2)}
+            </span>
+          )}
           {expectedMoveWidth !== null && (
             <span className="rounded border border-teal-800/60 bg-teal-950/30 px-2 py-0.5 text-teal-300">
               EM ±{expectedMoveWidth.toFixed(2)}

@@ -49,6 +49,19 @@ def get_mark(o):
     if 'mark' in o: return o['mark']
     return (o.get('bid',0) + o.get('ask',0))/2
 
+def is_positive_number(value):
+    return isinstance(value, (int, float)) and value > 0
+
+def has_usable_em_payload(item):
+    if not isinstance(item, dict):
+        return False
+    if not is_positive_number(item.get('price')):
+        return False
+    expirations = item.get('expirations') or []
+    if not isinstance(expirations, list) or len(expirations) == 0:
+        return False
+    return True
+
 def load_cache():
     if os.path.exists(CACHE_FILE):
         try:
@@ -58,7 +71,7 @@ def load_cache():
                 if 'timestamp' in data:
                      ts = datetime.datetime.fromisoformat(data['timestamp'])
                      if ts.date() == datetime.date.today():
-                         return data['data']
+                         return [item for item in data['data'] if has_usable_em_payload(item)]
         except: pass
     return None
 
@@ -128,7 +141,7 @@ def calculate_em_values(chain_resp, date_obj, reference_price):
     expiry_key = get_closest_expiry_key(call_map, date_obj)
     
     if not expiry_key or not reference_price or reference_price == 0:
-        return {"straddle": 0, "em_365": 0, "em_252": 0, "adj_em": 0}
+        return {"straddle": None, "em_365": None, "em_252": None, "adj_em": None}
 
     # 1. Straddle Cost
     straddle = calculate_straddle_cost(call_map, put_map, expiry_key, reference_price)
@@ -159,24 +172,24 @@ def calculate_em_values(chain_resp, date_obj, reference_price):
         except: dte = 0
 
     # Avoid div by 0
-    em_365 = 0
-    em_252 = 0
+    em_365 = None
+    em_252 = None
     
     # Standard Rule of 16 (IV / 16 * Price * Sqrt(DTE)) - roughly
     # Text book: Price * IV * Sqrt(DTE/365)
-    if dte >= 0:
+    if dte > 0 and iv > 0:
         em_365 = reference_price * iv * math.sqrt(dte / 365.0)
         em_252 = reference_price * iv * math.sqrt(dte / 252.0)
     
     # Adjusted EM (85% of Straddle or similar rule of thumb)
     # User's logic: 0.85 * Straddle
-    adj_em = straddle * 0.85
+    adj_em = straddle * 0.85 if is_positive_number(straddle) else None
 
     return {
         "straddle": straddle,
-        "em_365": round(em_365, 2),
-        "em_252": round(em_252, 2),
-        "adj_em": round(adj_em, 2)
+        "em_365": round(em_365, 2) if is_positive_number(em_365) else None,
+        "em_252": round(em_252, 2) if is_positive_number(em_252) else None,
+        "adj_em": round(adj_em, 2) if is_positive_number(adj_em) else None
     }
 
 def fetch_ticker_data(client, symbol, target_fridays):
@@ -313,7 +326,8 @@ def fetch_expected_moves(tickers=None, force_refresh=False):
                 # Form: ETF_EM / ETF_Ref * Index_Ref
                 
                 def normalize(val, etf_ref, idx_ref):
-                    if etf_ref == 0: return 0
+                    if not is_positive_number(val) or not is_positive_number(etf_ref) or not is_positive_number(idx_ref):
+                        return None
                     pct = val / etf_ref
                     return round(pct * idx_ref, 2)
 
@@ -360,7 +374,10 @@ def fetch_expected_moves(tickers=None, force_refresh=False):
                     },
                     "note": f"Proxies: {idx_sym} & {etf_sym}"
                 }
-                output_item['expirations'].append(exp_data)
+                if is_positive_number(idx_close) and any(
+                    is_positive_number(exp_data.get(k)) for k in ("adj_em", "em_252", "em_365", "straddle")
+                ):
+                    output_item['expirations'].append(exp_data)
                 
         else:
             # Standard Ticker
@@ -373,15 +390,15 @@ def fetch_expected_moves(tickers=None, force_refresh=False):
             output_item['price'] = last
             
             for d in target_dates:
-                 chain = chains.get(d, {})
-                 
-                 res_last = calculate_em_values(chain, d, last)
-                 res_open = calculate_em_values(chain, d, opn)
-                 res_close = calculate_em_values(chain, d, cls)
-                 
-                 dte = (d - today).days if d >= today else 0
+                chain = chains.get(d, {})
 
-                 exp_data = {
+                res_last = calculate_em_values(chain, d, last)
+                res_open = calculate_em_values(chain, d, opn)
+                res_close = calculate_em_values(chain, d, cls)
+
+                dte = (d - today).days if d >= today else 0
+
+                exp_data = {
                     "date": d.strftime("%Y-%m-%d"),
                     "dte": dte,
                     "straddle": res_close['straddle'], # Default to Close/Settlement
@@ -394,10 +411,14 @@ def fetch_expected_moves(tickers=None, force_refresh=False):
                         "close": { "price": cls, "index_em": res_close['adj_em'] },
                         "last": { "price": last, "index_em": res_last['adj_em'] }
                     }
-                 }
-                 output_item['expirations'].append(exp_data)
+                }
+                if is_positive_number(cls) and any(
+                    is_positive_number(exp_data.get(k)) for k in ("adj_em", "em_252", "em_365", "straddle")
+                ):
+                    output_item['expirations'].append(exp_data)
                  
-        final_results.append(output_item)
+        if has_usable_em_payload(output_item):
+            final_results.append(output_item)
         
     save_cache(final_results)
     

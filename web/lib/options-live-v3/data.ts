@@ -26,7 +26,7 @@ type PipelineState = {
   [key: string]: unknown;
 };
 
-type DailyStructure = {
+export type DailyStructure = {
   asset?: string;
   cash_ticker?: string;
   regime_label?: string;
@@ -146,15 +146,19 @@ export function resolveExpectedMoveTicker(symbol: string): string {
   const root = normalizeSymbolRoot(symbol);
   const map: Record<string, string> = {
     ES: "SPX",
+    MES: "SPX",
     SPX: "SPX",
     SPY: "SPY",
     NQ: "QQQ",
+    MNQ: "QQQ",
     NDX: "QQQ",
     QQQ: "QQQ",
     RTY: "IWM",
+    M2K: "IWM",
     RUT: "IWM",
     IWM: "IWM",
     YM: "DIA",
+    MYM: "DIA",
     DJI: "DIA",
     DIA: "DIA",
   };
@@ -170,15 +174,19 @@ function buildCandidates(symbol: string): string[] {
   const aliasMap: Record<string, string[]> = {
     // Futures roots may resolve to cash proxies.
     ES: ["/ES", "ES", "SPX", "SPY"],
+    MES: ["/MES", "MES", "/ES", "ES", "SPX", "SPY"],
     // Cash/ETF/index symbols must stay in their own price space.
     SPX: ["SPX", "SPY"],
     SPY: ["SPY", "SPX"],
     NQ: ["/NQ", "NQ", "QQQ", "NDX"],
+    MNQ: ["/MNQ", "MNQ", "/NQ", "NQ", "QQQ", "NDX"],
     NDX: ["NDX", "QQQ"],
     QQQ: ["QQQ", "NDX"],
     RTY: ["/RTY", "RTY", "IWM"],
+    M2K: ["/M2K", "M2K", "/RTY", "RTY", "IWM"],
     IWM: ["IWM", "RUT"],
     YM: ["/YM", "YM", "DIA"],
+    MYM: ["/MYM", "MYM", "/YM", "YM", "DIA"],
     DIA: ["DIA", "DJI"],
   };
 
@@ -259,14 +267,18 @@ function buildMacroCandidates(symbol: string): string[] {
   const clean = normalizeSymbolRoot(symbol);
   const groupMap: Record<string, string[]> = {
     ES: ["SPX", "SPY", "ES"],
+    MES: ["SPX", "SPY", "ES", "MES"],
     SPX: ["SPX", "SPY"],
     SPY: ["SPY", "SPX"],
     NQ: ["QQQ", "NDX", "NQ"],
+    MNQ: ["QQQ", "NDX", "NQ", "MNQ"],
     NDX: ["NDX", "QQQ"],
     QQQ: ["QQQ", "NDX"],
     RTY: ["IWM", "RTY"],
+    M2K: ["IWM", "RTY", "M2K"],
     IWM: ["IWM", "RTY"],
     YM: ["DIA", "YM"],
+    MYM: ["DIA", "YM", "MYM"],
     DIA: ["DIA", "YM"],
   };
   return dedupe([clean, ...(groupMap[clean] ?? [])]);

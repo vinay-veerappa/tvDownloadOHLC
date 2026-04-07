@@ -88,7 +88,13 @@ export function ok(data: unknown, symbol = DEFAULT_SYMBOL, warnings: string[] = 
     error: null,
   };
   validateEnvelope(payload);
-  return NextResponse.json(payload);
+  return NextResponse.json(payload, {
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+    },
+  });
 }
 
 export function badRequest(message: string, symbol = DEFAULT_SYMBOL) {
@@ -100,7 +106,14 @@ export function badRequest(message: string, symbol = DEFAULT_SYMBOL) {
       warnings: [],
       error: message,
     },
-    { status: 400 }
+    {
+      status: 400,
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
+    }
   );
 }
 
@@ -113,6 +126,13 @@ export function serverError(message: string, symbol = DEFAULT_SYMBOL) {
       warnings: [],
       error: message,
     },
-    { status: 500 }
+    {
+      status: 500,
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
+    }
   );
 }
