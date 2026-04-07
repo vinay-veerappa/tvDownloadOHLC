@@ -197,14 +197,31 @@ export function resolveDailyStructure(levels: DailyLevels | null, symbol: string
   const structures = levels?.market_structure;
   if (!structures?.length) return null;
 
-  const candidates = new Set(buildCandidates(symbol).map((s) => s.toUpperCase().replace(/^\//, "")));
-  const found = structures.find((item) => {
-    const asset = String(item.asset ?? "").toUpperCase().replace(/^\//, "");
-    const cash = String(item.cash_ticker ?? "").toUpperCase().replace(/^\//, "");
-    return candidates.has(asset) || candidates.has(cash);
+  const orderedCandidates = buildCandidates(symbol).map((s) => s.toUpperCase().replace(/^\//, ""));
+  const candidateIndex = new Map<string, number>();
+  orderedCandidates.forEach((candidate, index) => {
+    if (!candidateIndex.has(candidate)) candidateIndex.set(candidate, index);
   });
 
-  return found ?? null;
+  let best: { item: DailyStructure; score: number } | null = null;
+  for (const item of structures) {
+    const asset = String(item.asset ?? "").toUpperCase().replace(/^\//, "");
+    const cash = String(item.cash_ticker ?? "").toUpperCase().replace(/^\//, "");
+    const assetScore = candidateIndex.get(asset);
+    const cashScore = candidateIndex.get(cash);
+    const score =
+      assetScore !== undefined
+        ? assetScore
+        : cashScore !== undefined
+          ? cashScore
+          : null;
+    if (score === null) continue;
+    if (!best || score < best.score) {
+      best = { item, score };
+    }
+  }
+
+  return best?.item ?? null;
 }
 
 /**

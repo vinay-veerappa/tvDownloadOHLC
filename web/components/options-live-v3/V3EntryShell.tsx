@@ -45,9 +45,14 @@ type LevelsData = {
     spot: number | null;
     gammaFlip: number | null;
     callWall: number | null;
+    secondaryCallWall?: number | null;
     putWall: number | null;
+    secondaryPutWall?: number | null;
     gammaMagnet: number | null;
     pinStrike: number | null;
+    expectedMoveUpper?: number | null;
+    expectedMoveLower?: number | null;
+    expectedMoveWidth?: number | null;
   };
   notes: {
     coach: string[];
@@ -300,9 +305,9 @@ export function V3EntryShell() {
         if (event.key === "1") setActiveTab("daily-gex");
         if (event.key === "2") setActiveTab("by-strike");
         if (event.key === "3") setActiveTab("by-expiry");
-        if (event.key === "4") setActiveTab("integrated");
+        if (event.key === "4") setActiveTab("spot-gamma");
         if (event.key === "5") setActiveTab("heatmap");
-        if (event.key === "6") setActiveTab("levels");
+        if (event.key === "6") setActiveTab("flow");
       }
       if (event.shiftKey) {
         if (event.key === "1") setStrikeCountManual(10);
@@ -554,6 +559,33 @@ export function V3EntryShell() {
   const modeTacticalLines = narrative?.data?.notes?.tactical ?? [];
   const perspectiveRows = narrative?.data?.perspectives ?? [];
   const signals = narrative?.data?.signals ?? [];
+  const tacticalUnifiedLines = useMemo(() => {
+    const seen = new Set<string>();
+    const dropPrefixes = [
+      "Scalper (",
+      "Intraday (",
+      "Swing (",
+      "Scope mode active",
+      "scoped net GEX",
+      "0DTE scoped net GEX",
+      "Weekly scoped net GEX",
+      "Monthly scoped net GEX",
+    ];
+
+    const merged = [...coachLines, ...modeTacticalLines]
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .filter((line) => !dropPrefixes.some((prefix) => line.startsWith(prefix)));
+
+    const deduped: string[] = [];
+    for (const line of merged) {
+      const key = line.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(line);
+    }
+    return deduped.slice(0, 8);
+  }, [coachLines, modeTacticalLines]);
   const screener = narrative?.data?.screener ?? null;
   const narrativeIntegrityTier = narrative?.data?.integrityTier ?? null;
   const narrativeDataSourceLabel = narrative?.data?.dataSourceLabel ?? null;
@@ -562,14 +594,13 @@ export function V3EntryShell() {
     if (activeTab === "by-strike") return { meta: byStrike?.meta, warnings: byStrike?.warnings ?? [], error: byStrike?.error ?? null };
     if (activeTab === "by-expiry") return { meta: byExpiry?.meta, warnings: byExpiry?.warnings ?? [], error: byExpiry?.error ?? null };
     if (activeTab === "largest") return { meta: largest?.meta, warnings: largest?.warnings ?? [], error: largest?.error ?? null };
-    if (activeTab === "levels") return { meta: levels?.meta, warnings: levels?.warnings ?? [], error: levels?.error ?? null };
     if (activeTab === "spot-gamma") return { meta: spotGamma?.meta, warnings: spotGamma?.warnings ?? [], error: spotGamma?.error ?? null };
     if (activeTab === "heatmap") return { meta: heatmap?.meta, warnings: heatmap?.warnings ?? [], error: heatmap?.error ?? null };
     if (activeTab === "flow") return { meta: recentFlow?.meta, warnings: recentFlow?.warnings ?? [], error: recentFlow?.error ?? null };
     return {
-      meta: summary?.meta,
-      warnings: [...(summary?.warnings ?? []), ...(narrative?.warnings ?? [])],
-      error: summary?.error ?? narrative?.error ?? null,
+      meta: summary?.meta ?? levels?.meta,
+      warnings: [...(summary?.warnings ?? []), ...(narrative?.warnings ?? []), ...(levels?.warnings ?? [])],
+      error: summary?.error ?? narrative?.error ?? levels?.error ?? null,
     };
   }, [activeTab, byStrike, byExpiry, largest, levels, spotGamma, heatmap, recentFlow, summary, narrative]);
 
@@ -578,6 +609,7 @@ export function V3EntryShell() {
   // ---------------------------------------------------------------------------
 
   function renderDailyGex() {
+    const lvls = levels?.data?.levels;
     return (
       <div className="space-y-4">
         {/* KPI row */}
@@ -615,95 +647,107 @@ export function V3EntryShell() {
           </div>
         )}
 
-        {/* Screener + Signals */}
-        <div className="grid gap-4 lg:grid-cols-2">
-          <SqueezeScreenerCard
-            screener={
-              screener
-                ? {
-                    probabilityScore: screener.probabilityScore,
-                    setup: screener.setup,
-                    confidence: screener.confidence,
-                    factors: screener.factors?.map((f) => ({ name: f.name, value: f.score })),
-                  }
-                : null
-            }
-            isLoading={isLoading}
-            onExplain={() => setExplainOpen(true)}
-          />
+        <div className="grid gap-4 xl:grid-cols-3">
+          <div className="space-y-4 xl:col-span-2">
+            <LiveLevelsLadder
+              spot={lvls?.spot ?? null}
+              gammaFlip={lvls?.gammaFlip ?? null}
+              callWall={lvls?.callWall ?? null}
+              secondaryCallWall={lvls?.secondaryCallWall ?? null}
+              putWall={lvls?.putWall ?? null}
+              secondaryPutWall={lvls?.secondaryPutWall ?? null}
+              gammaMagnet={lvls?.gammaMagnet ?? null}
+              pinStrike={lvls?.pinStrike ?? null}
+              expectedMoveUpper={lvls?.expectedMoveUpper ?? null}
+              expectedMoveLower={lvls?.expectedMoveLower ?? null}
+              expectedMoveWidth={lvls?.expectedMoveWidth ?? null}
+              symbol={symbol}
+              selectedLevel={selectedLevel}
+              onSelectLevel={(level) => {
+                setSelectedLevel(level);
+                setPinnedStrike(level);
+              }}
+            />
+            <AlertRulesPanel symbol={symbol} />
+          </div>
 
-          {screener && (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-              <h2 className="mb-2 text-sm font-semibold text-zinc-200">Mode Analysis Context</h2>
-              <div className="space-y-1 text-sm text-zinc-300">
-                <p>
-                  Scope: <span className="font-semibold text-zinc-100 uppercase">{screener.scope ?? expiryScope}</span>
-                </p>
-                <p>
-                  Scoped Net GEX: <span className={`font-mono font-semibold ${(screener.scopedNetGex ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{fmtNum(screener.scopedNetGex, 0)}</span>
-                </p>
-              </div>
-            </div>
-          )}
+          <div className="space-y-4">
+            <SqueezeScreenerCard
+              screener={
+                screener
+                  ? {
+                      probabilityScore: screener.probabilityScore,
+                      setup: screener.setup,
+                      confidence: screener.confidence,
+                      factors: screener.factors?.map((f) => ({ name: f.name, value: f.score })),
+                    }
+                  : null
+              }
+              isLoading={isLoading}
+              onExplain={() => setExplainOpen(true)}
+            />
 
-          <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-zinc-200">Narrative Signals</h2>
-              <div className="flex items-center gap-1.5">
-                {narrativeIntegrityTier && (
-                  <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${integrityTierClasses(narrativeIntegrityTier)}`}>
-                    {narrativeIntegrityTier}
-                  </span>
-                )}
-                <span className="rounded border border-indigo-800 bg-indigo-950/50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-200">
-                  Scope: {screener?.scope ?? expiryScope}
-                </span>
-              </div>
-            </div>
-            {isLoading ? (
-              <p className="text-sm animate-pulse text-zinc-500">Loading…</p>
-            ) : signals.length === 0 ? (
-              <p className="text-sm text-zinc-500">No signals yet.</p>
-            ) : (
-              <div className="space-y-2 text-sm">
-                {signals.map((signal, idx) => (
-                  <div key={idx} className="rounded-lg border border-zinc-800 bg-black p-3">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium capitalize text-zinc-200">{signal.type}</span>
-                      <span className={`text-xs uppercase tracking-widest ${
-                        signal.severity === "STRONG" ? "text-rose-400"
-                        : signal.severity === "MODERATE" ? "text-amber-400"
-                        : "text-zinc-400"
-                      }`}>{signal.severity}</span>
-                    </div>
-                    <p className="mt-1 text-zinc-400">{signal.message}</p>
-                    <p className="mt-1 text-xs text-zinc-500">
-                      Level: {fmtNum(signal.level)} | Dist: {fmtNum(signal.distancePct)}%
-                    </p>
-                    <button
-                      onClick={() => setExplainOpen(true)}
-                      className="mt-2 text-xs text-indigo-300 hover:text-indigo-200"
-                    >
-                      Why this score?
-                    </button>
-                  </div>
-                ))}
+            {screener && (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                <h2 className="mb-2 text-sm font-semibold text-zinc-200">Mode Analysis Context</h2>
+                <div className="space-y-1 text-sm text-zinc-300">
+                  <p>
+                    Scope: <span className="font-semibold text-zinc-100 uppercase">{screener.scope ?? expiryScope}</span>
+                  </p>
+                  <p>
+                    Scoped Net GEX: <span className={`font-mono font-semibold ${(screener.scopedNetGex ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{fmtNum(screener.scopedNetGex, 0)}</span>
+                  </p>
+                </div>
               </div>
             )}
           </div>
         </div>
 
-        {/* Coach notes */}
-        {coachLines.length > 0 && (
-          <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-            <h3 className="mb-2 text-sm font-semibold text-zinc-200">Coach Notes</h3>
-            <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-300">
-              {coachLines.slice(0, 5).map((line, idx) => (
-                <li key={idx}>{line}</li>
-              ))}
-            </ul>
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-zinc-200">Narrative Signals</h2>
+            <div className="flex items-center gap-1.5">
+              {narrativeIntegrityTier && (
+                <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${integrityTierClasses(narrativeIntegrityTier)}`}>
+                  {narrativeIntegrityTier}
+                </span>
+              )}
+              <span className="rounded border border-indigo-800 bg-indigo-950/50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-200">
+                Scope: {screener?.scope ?? expiryScope}
+              </span>
+            </div>
           </div>
-        )}
+          {isLoading ? (
+            <p className="text-sm animate-pulse text-zinc-500">Loading…</p>
+          ) : signals.length === 0 ? (
+            <p className="text-sm text-zinc-500">No signals yet.</p>
+          ) : (
+            <div className="space-y-2 text-sm">
+              {signals.map((signal, idx) => (
+                <div key={idx} className="rounded-lg border border-zinc-800 bg-black p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium capitalize text-zinc-200">{signal.type}</span>
+                    <span className={`text-xs uppercase tracking-widest ${
+                      signal.severity === "STRONG" ? "text-rose-400"
+                      : signal.severity === "MODERATE" ? "text-amber-400"
+                      : "text-zinc-400"
+                    }`}>{signal.severity}</span>
+                  </div>
+                  <p className="mt-1 text-zinc-400">{signal.message}</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Level: {fmtNum(signal.level)} | Dist: {fmtNum(signal.distancePct)}%
+                  </p>
+                  <button
+                    onClick={() => setExplainOpen(true)}
+                    className="mt-2 text-xs text-indigo-300 hover:text-indigo-200"
+                  >
+                    Why this score?
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {perspectiveRows.length > 0 && (
           <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
@@ -752,16 +796,18 @@ export function V3EntryShell() {
           </div>
         )}
 
-        {modeTacticalLines.length > 0 && (
+        {tacticalUnifiedLines.length > 0 && (
           <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-            <h3 className="mb-2 text-sm font-semibold text-zinc-200">Mode Tactical Notes</h3>
+            <h3 className="mb-2 text-sm font-semibold text-zinc-200">Tactical Guidance</h3>
             <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-300">
-              {modeTacticalLines.slice(0, 5).map((line, idx) => (
+              {tacticalUnifiedLines.map((line, idx) => (
                 <li key={idx}>{line}</li>
               ))}
             </ul>
           </div>
         )}
+
+        {(levels?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="Key Levels" warnings={levels?.warnings ?? []} />}
 
         <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-xs text-zinc-400">
           Shortcuts: Alt+1..6 switches major tabs. Shift+1/2/3 sets 10, 20, 50 strikes. Shift+P opens Discord publish.
@@ -932,42 +978,6 @@ export function V3EntryShell() {
     );
   }
 
-  function renderLevels() {
-    const lvls = levels?.data?.levels;
-    if (!isLoading && levels?.error) return <ModuleEmptyBanner state="error" moduleName="Key Levels" message={levels.error} />;
-    if (!isLoading && !levels?.data) return <ModuleEmptyBanner state="empty" moduleName="Key Levels" />;
-    return (
-      <div className="space-y-4">
-        <LiveLevelsLadder
-          spot={lvls?.spot ?? null}
-          gammaFlip={lvls?.gammaFlip ?? null}
-          callWall={lvls?.callWall ?? null}
-          putWall={lvls?.putWall ?? null}
-          gammaMagnet={lvls?.gammaMagnet ?? null}
-          pinStrike={lvls?.pinStrike ?? null}
-          symbol={symbol}
-          selectedLevel={selectedLevel}
-          onSelectLevel={(level) => {
-            setSelectedLevel(level);
-            setPinnedStrike(level);
-          }}
-        />
-        {coachLines.length > 0 && (
-          <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-            <h3 className="mb-2 text-sm font-semibold text-zinc-200">Tactical Notes</h3>
-            <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-300">
-              {coachLines.map((line, idx) => (
-                <li key={idx}>{line}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-        <AlertRulesPanel symbol={symbol} />
-        {(levels?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="Key Levels" warnings={levels?.warnings ?? []} />}
-      </div>
-    );
-  }
-
   function renderIntegrated() {
     return (
       <IntegratedViewPane
@@ -1097,7 +1107,6 @@ export function V3EntryShell() {
     "by-expiry": renderByExpiry,
     "integrated": renderIntegrated,
     "largest": renderLargest,
-    "levels": renderLevels,
     "spot-gamma": renderSpotGamma,
     "heatmap": renderHeatmap,
     "flow": renderFlow,

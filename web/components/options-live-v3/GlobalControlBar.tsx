@@ -8,7 +8,6 @@ export type GexTabId =
   | "by-expiry"
   | "integrated"
   | "largest"
-  | "levels"
   | "spot-gamma"
   | "heatmap"
   | "flow";
@@ -22,12 +21,11 @@ const TABS: { id: GexTabId; label: string }[] = [
   { id: "daily-gex", label: "Daily GEX" },
   { id: "by-strike", label: "By Strike" },
   { id: "by-expiry", label: "By Expiry" },
-  { id: "integrated", label: "Integrated" },
-  { id: "largest", label: "Largest" },
-  { id: "levels", label: "Levels" },
   { id: "spot-gamma", label: "Spot Γ" },
   { id: "heatmap", label: "Heatmap" },
   { id: "flow", label: "Flow" },
+  { id: "largest", label: "Largest" },
+  { id: "integrated", label: "Integrated" },
 ];
 
 const METRIC_FAMILIES: MetricFamily[] = ["GEX", "DEX", "VANNA", "CHARM"];

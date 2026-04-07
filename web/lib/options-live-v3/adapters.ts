@@ -45,9 +45,14 @@ type LevelsData = {
     spot: number | null;
     gammaFlip: number | null;
     callWall: number | null;
+      secondaryCallWall: number | null;
     putWall: number | null;
+      secondaryPutWall: number | null;
     gammaMagnet: number | null;
     pinStrike: number | null;
+      expectedMoveUpper: number | null;
+      expectedMoveLower: number | null;
+      expectedMoveWidth: number | null;
   };
   scored: {
     resistanceWalls: Array<Record<string, unknown>>;
@@ -59,6 +64,63 @@ type LevelsData = {
     tactical: string[];
   };
 };
+
+function parseNumericToken(value: string): number | null {
+  const cleaned = value.replace(/,/g, "").trim();
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseExpectedMoveFromNotes(lines: string[] | undefined): {
+  lower: number | null;
+  upper: number | null;
+  width: number | null;
+} {
+  if (!lines || lines.length === 0) {
+    return { lower: null, upper: null, width: null };
+  }
+  const patterns = [
+    /Expected move:\s*([\d,]+(?:\.\d+)?)\s*[↔→\-–—]\s*([\d,]+(?:\.\d+)?)(?:\s*\(±\s*([\d,]+(?:\.\d+)?)\))?/i,
+    /Expected\s*Move\s*(?:is|:)\s*([\d,]+(?:\.\d+)?)\s*[↔→\-–—]\s*([\d,]+(?:\.\d+)?)(?:\s*\(±\s*([\d,]+(?:\.\d+)?)\))?/i,
+  ];
+
+  for (const line of lines) {
+    for (const pattern of patterns) {
+      const match = pattern.exec(line);
+      if (!match) continue;
+      const lower = parseNumericToken(match[1]);
+      const upper = parseNumericToken(match[2]);
+      const width = match[3]
+        ? parseNumericToken(match[3])
+        : lower !== null && upper !== null
+          ? Math.abs(upper - lower) / 2
+          : null;
+      return { lower, upper, width };
+    }
+  }
+  return { lower: null, upper: null, width: null };
+}
+
+function firstNumericLevel(rows: Array<Record<string, unknown>> | undefined): number | null {
+  if (!rows || rows.length === 0) return null;
+  for (const row of rows) {
+    const value =
+      toNum(row.level) ??
+      toNum(row.price) ??
+      toNum(row.strike) ??
+      toNum(row.value) ??
+      toNum(row.wall);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function isReasonableSecondaryLevel(level: number | null, spot: number | null): boolean {
+  if (level === null) return false;
+  if (spot === null || spot === 0) return true;
+  const pct = Math.abs((level - spot) / spot);
+  return pct <= 0.35;
+}
 
 type ByStrikeData = {
   implemented: true;
@@ -196,6 +258,30 @@ export async function buildLevels(symbol: string): Promise<{ data: LevelsData; w
   if (!structure) warnings.push("Daily levels structure entry not found for symbol");
 
   const scored = (structure?.scored_analysis as Record<string, unknown> | undefined) ?? {};
+  const resistanceWalls = (scored.resistance_walls as Array<Record<string, unknown>> | undefined) ?? [];
+  const supportWalls = (scored.support_walls as Array<Record<string, unknown>> | undefined) ?? [];
+  const expectedMove = parseExpectedMoveFromNotes((structure?.coach_note as string[] | undefined) ?? []);
+
+  const primaryCallWall = toNum(ticker?.call_wall);
+  const primaryPutWall = toNum(ticker?.put_wall);
+  const centroidCallWall = toNum((ticker as Record<string, unknown> | undefined)?.call_centroid);
+  const centroidPutWall = toNum((ticker as Record<string, unknown> | undefined)?.put_centroid);
+  const scoredCallWall = firstNumericLevel(resistanceWalls);
+  const scoredPutWall = firstNumericLevel(supportWalls);
+
+  const spot = toNum(ticker?.spot);
+  const secondaryCallWall =
+    scoredCallWall !== null && scoredCallWall !== primaryCallWall && isReasonableSecondaryLevel(scoredCallWall, spot)
+      ? scoredCallWall
+      : centroidCallWall !== null && centroidCallWall !== primaryCallWall && isReasonableSecondaryLevel(centroidCallWall, spot)
+        ? centroidCallWall
+        : null;
+  const secondaryPutWall =
+    scoredPutWall !== null && scoredPutWall !== primaryPutWall && isReasonableSecondaryLevel(scoredPutWall, spot)
+      ? scoredPutWall
+      : centroidPutWall !== null && centroidPutWall !== primaryPutWall && isReasonableSecondaryLevel(centroidPutWall, spot)
+        ? centroidPutWall
+        : null;
 
   return {
     data: {
@@ -205,16 +291,21 @@ export async function buildLevels(symbol: string): Promise<{ data: LevelsData; w
       runLabel: (state?.run_label as string | undefined) ?? (levels?.run_label as string | undefined) ?? null,
       spot: toNum(ticker?.spot),
       levels: {
-        spot: toNum(ticker?.spot),
+        spot,
         gammaFlip: toNum(ticker?.zero_gamma),
-        callWall: toNum(ticker?.call_wall),
-        putWall: toNum(ticker?.put_wall),
+        callWall: primaryCallWall,
+        secondaryCallWall,
+        putWall: primaryPutWall,
+        secondaryPutWall,
         gammaMagnet: toNum(ticker?.gamma_magnet),
         pinStrike: toNum(ticker?.pin_strike),
+        expectedMoveUpper: expectedMove.upper,
+        expectedMoveLower: expectedMove.lower,
+        expectedMoveWidth: expectedMove.width,
       },
       scored: {
-        resistanceWalls: (scored.resistance_walls as Array<Record<string, unknown>> | undefined) ?? [],
-        supportWalls: (scored.support_walls as Array<Record<string, unknown>> | undefined) ?? [],
+        resistanceWalls,
+        supportWalls,
         pivots: (scored.pivots as Array<Record<string, unknown>> | undefined) ?? [],
       },
       notes: {
