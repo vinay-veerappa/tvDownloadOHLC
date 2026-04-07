@@ -15,6 +15,7 @@ import {
   resolveTickerEntry,
 } from "@/lib/options-live-v3/data";
 import { queryDoltByExpiry } from "@/lib/options-live-v3/dolt";
+import { loadLiveOptionSnapshot } from "@/lib/options-live-v3/live-chain";
 import prisma from "@/lib/prisma";
 import { getExpectedMoveData } from "@/actions/get-expected-move";
 
@@ -286,6 +287,203 @@ function isReasonableSecondaryLevel(level: number | null, spot: number | null): 
   return pct <= 0.35;
 }
 
+type OptionSnapshotSource = "macro-cache" | "live-chain";
+
+type OptionSnapshot = {
+  snapshot: import("@/lib/options-live-v3/data").MacroCacheResult;
+  source: OptionSnapshotSource;
+};
+
+type StrikeAggregateRow = {
+  strike: number;
+  call_gex: number;
+  put_gex: number;
+  net_gex: number;
+  cumulative_gex: number;
+  call_oi: number;
+  put_oi: number;
+  call_vol: number;
+  put_vol: number;
+  call_premium: number;
+  put_premium: number;
+  call_dex: number | null;
+  put_dex: number | null;
+  call_charm: number | null;
+  put_charm: number | null;
+};
+
+async function loadOptionSnapshot(symbol: string): Promise<OptionSnapshot | null> {
+  const macro = await loadMacroCache(symbol).catch(() => null);
+  if (macro && ((macro.calls?.length ?? 0) > 0 || (macro.puts?.length ?? 0) > 0)) {
+    return { snapshot: macro, source: "macro-cache" };
+  }
+
+  const live = await loadLiveOptionSnapshot(symbol).catch(() => null);
+  if (live && ((live.calls?.length ?? 0) > 0 || (live.puts?.length ?? 0) > 0)) {
+    return { snapshot: live, source: "live-chain" };
+  }
+
+  return null;
+}
+
+function buildStrikeAggregatesFromSnapshot(
+  snapshot: import("@/lib/options-live-v3/data").MacroCacheResult,
+  expiryScope = "all"
+): StrikeAggregateRow[] {
+  const spot = snapshot.spot ?? 0;
+  const now = new Date();
+
+  type Acc = Omit<StrikeAggregateRow, "net_gex" | "cumulative_gex">;
+  const acc = new Map<number, Acc>();
+
+  function ensure(strike: number): Acc {
+    if (!acc.has(strike)) {
+      acc.set(strike, {
+        strike,
+        call_gex: 0,
+        put_gex: 0,
+        call_oi: 0,
+        put_oi: 0,
+        call_vol: 0,
+        put_vol: 0,
+        call_premium: 0,
+        put_premium: 0,
+        call_dex: 0,
+        put_dex: 0,
+        call_charm: 0,
+        put_charm: 0,
+      });
+    }
+    return acc.get(strike)!;
+  }
+
+  function addContracts(contracts: MacroContract[], side: "call" | "put") {
+    if (!contracts || contracts.length === 0) return;
+    for (const contract of contracts) {
+      if (!isInExpiryScope(contract.expiry, expiryScope, now)) continue;
+      const strike = contract.strike ?? null;
+      if (strike === null || !Number.isFinite(strike)) continue;
+
+      const row = ensure(strike);
+      const openInterest = contract.open_interest ?? 0;
+      const volume = contract.volume ?? 0;
+      const gamma = contract.gamma ?? 0;
+      const delta = contract.delta ?? 0;
+      const theta = contract.theta ?? 0;
+      const mark = contract.mark ?? contract.last ?? 0;
+      const gex = gamma * openInterest * spot * spot * 0.01;
+      const dex = delta * openInterest * spot * 100;
+      const charm = theta * openInterest * 100;
+      const premium = mark * openInterest * 100;
+
+      if (side === "call") {
+        row.call_gex += gex;
+        row.call_oi += openInterest;
+        row.call_vol += volume;
+        row.call_premium += premium;
+        row.call_dex = (row.call_dex ?? 0) + dex;
+        row.call_charm = (row.call_charm ?? 0) + charm;
+      } else {
+        row.put_gex += gex;
+        row.put_oi += openInterest;
+        row.put_vol += volume;
+        row.put_premium += premium;
+        row.put_dex = (row.put_dex ?? 0) + dex;
+        row.put_charm = (row.put_charm ?? 0) + charm;
+      }
+    }
+  }
+
+  addContracts(snapshot.calls ?? [], "call");
+  addContracts(snapshot.puts ?? [], "put");
+
+  let cumulative = 0;
+  return Array.from(acc.values())
+    .sort((a, b) => a.strike - b.strike)
+    .map((row) => {
+      const net = row.call_gex - row.put_gex;
+      cumulative += net;
+      return {
+        ...row,
+        net_gex: net,
+        cumulative_gex: cumulative,
+      };
+    });
+}
+
+function deriveGammaFlip(rows: StrikeAggregateRow[]): number | null {
+  for (let i = 1; i < rows.length; i += 1) {
+    const previous = rows[i - 1];
+    const current = rows[i];
+    if (previous.cumulative_gex === 0) return previous.strike;
+    if ((previous.cumulative_gex > 0) !== (current.cumulative_gex > 0)) {
+      const span = current.cumulative_gex - previous.cumulative_gex;
+      if (span === 0) return (previous.strike + current.strike) / 2;
+      const weight = Math.abs(previous.cumulative_gex) / Math.abs(span);
+      return previous.strike + (current.strike - previous.strike) * weight;
+    }
+  }
+  return null;
+}
+
+function deriveScoredWalls(rows: StrikeAggregateRow[], spot: number | null) {
+  const resistanceWalls = rows
+    .filter((row) => row.call_gex > 0 && (spot === null || row.strike >= spot))
+    .sort((a, b) => b.call_gex - a.call_gex)
+    .slice(0, 3)
+    .map((row) => ({ level: row.strike, strike: row.strike, score: Math.round(row.call_gex), type: "call-wall" }));
+
+  const supportWalls = rows
+    .filter((row) => row.put_gex > 0 && (spot === null || row.strike <= spot))
+    .sort((a, b) => b.put_gex - a.put_gex)
+    .slice(0, 3)
+    .map((row) => ({ level: row.strike, strike: row.strike, score: Math.round(row.put_gex), type: "put-wall" }));
+
+  return { resistanceWalls, supportWalls };
+}
+
+function deriveLiveSnapshotMetrics(rows: StrikeAggregateRow[], spot: number | null) {
+  const totalGex = rows.reduce((sum, row) => sum + row.net_gex, 0);
+  const gammaFlip = deriveGammaFlip(rows);
+  const strongestCall = rows.reduce<StrikeAggregateRow | null>((best, row) =>
+    !best || row.call_gex > best.call_gex ? row : best,
+  null);
+  const strongestPut = rows.reduce<StrikeAggregateRow | null>((best, row) =>
+    !best || row.put_gex > best.put_gex ? row : best,
+  null);
+  const pinStrike = rows.reduce<StrikeAggregateRow | null>((best, row) => {
+    const score = row.call_oi + row.put_oi;
+    const bestScore = best ? best.call_oi + best.put_oi : -1;
+    return score > bestScore ? row : best;
+  }, null);
+  const gammaMagnet = rows.reduce<StrikeAggregateRow | null>((best, row) => {
+    const rowDist = spot === null ? 0 : Math.abs(row.strike - spot);
+    const bestDist = best && spot !== null ? Math.abs(best.strike - spot) : Number.POSITIVE_INFINITY;
+    if (!best) return row;
+    if (rowDist === bestDist) {
+      return Math.abs(row.net_gex) > Math.abs(best.net_gex) ? row : best;
+    }
+    return rowDist < bestDist ? row : best;
+  }, null);
+
+  return {
+    totalGex,
+    gammaFlip,
+    callWall: strongestCall?.strike ?? null,
+    putWall: strongestPut?.strike ?? null,
+    pinStrike: pinStrike?.strike ?? null,
+    gammaMagnet: gammaMagnet?.strike ?? null,
+    regime: totalGex < 0 ? "NEGATIVE" : totalGex > 0 ? "POSITIVE" : null,
+    regimeLabel: totalGex < 0 ? "Negative Gamma" : totalGex > 0 ? "Positive Gamma" : null,
+    directionalBias:
+      totalGex < 0
+        ? "Expansion risk"
+        : totalGex > 0
+          ? "Mean reversion bias"
+          : null,
+  };
+}
+
 type ByStrikeData = {
   implemented: true;
   module: "by-strike";
@@ -379,11 +577,19 @@ export async function buildSummary(symbol: string): Promise<{ data: SummaryData;
 
   const ticker = resolveTickerEntry(state, symbol);
   const structure = resolveDailyStructure(levels, symbol);
+  const snapshotBundle = !ticker || !structure ? await loadOptionSnapshot(symbol) : null;
+  const snapshotRows = snapshotBundle ? buildStrikeAggregatesFromSnapshot(snapshotBundle.snapshot) : [];
+  const liveMetrics = snapshotBundle
+    ? deriveLiveSnapshotMetrics(snapshotRows, snapshotBundle.snapshot.spot ?? null)
+    : null;
 
   if (!ticker) warnings.push("Pipeline ticker entry not found for symbol; fallback used where available");
   if (!structure) warnings.push("Daily levels structure entry not found for symbol");
+  if (snapshotBundle?.source === "live-chain") {
+    warnings.push(`Using live option-chain fallback for ${symbol}; precomputed universe entry is unavailable.`);
+  }
 
-  const spot = toNum(ticker?.spot) ?? toNum(structure?.scored_analysis?.spot) ?? null;
+  const spot = toNum(ticker?.spot) ?? toNum(structure?.scored_analysis?.spot) ?? snapshotBundle?.snapshot.spot ?? null;
 
   return {
     data: {
@@ -394,17 +600,17 @@ export async function buildSummary(symbol: string): Promise<{ data: SummaryData;
       asOf: (state?.timestamp as string | undefined) ?? (levels?.generated_at as string | undefined) ?? null,
       spot,
       gex: {
-        total: toNum(ticker?.total_gex) ?? toNum(structure?.total_gex),
-        regime: (ticker?.gex_regime as string | undefined) ?? (structure?.gex_regime as string | undefined) ?? null,
-        regimeLabel: (ticker?.regime_label as string | undefined) ?? (structure?.regime_label as string | undefined) ?? null,
-        directionalBias: (ticker?.directional_bias as string | undefined) ?? null,
+        total: toNum(ticker?.total_gex) ?? toNum(structure?.total_gex) ?? liveMetrics?.totalGex ?? null,
+        regime: (ticker?.gex_regime as string | undefined) ?? (structure?.gex_regime as string | undefined) ?? liveMetrics?.regime ?? null,
+        regimeLabel: (ticker?.regime_label as string | undefined) ?? (structure?.regime_label as string | undefined) ?? liveMetrics?.regimeLabel ?? null,
+        directionalBias: (ticker?.directional_bias as string | undefined) ?? liveMetrics?.directionalBias ?? null,
       },
       keyLevels: {
-        gammaFlip: toNum(ticker?.zero_gamma),
-        callWall: toNum(ticker?.call_wall),
-        putWall: toNum(ticker?.put_wall),
-        gammaMagnet: toNum(ticker?.gamma_magnet),
-        pinStrike: toNum(ticker?.pin_strike),
+        gammaFlip: toNum(ticker?.zero_gamma) ?? liveMetrics?.gammaFlip ?? null,
+        callWall: toNum(ticker?.call_wall) ?? liveMetrics?.callWall ?? null,
+        putWall: toNum(ticker?.put_wall) ?? liveMetrics?.putWall ?? null,
+        gammaMagnet: toNum(ticker?.gamma_magnet) ?? liveMetrics?.gammaMagnet ?? null,
+        pinStrike: toNum(ticker?.pin_strike) ?? liveMetrics?.pinStrike ?? null,
       },
     },
     warnings,
@@ -417,22 +623,37 @@ export async function buildLevels(symbol: string): Promise<{ data: LevelsData; w
 
   const ticker = resolveTickerEntry(state, symbol);
   const structure = resolveDailyStructure(levels, symbol);
+  const snapshotBundle = !ticker || !structure ? await loadOptionSnapshot(symbol) : null;
+  const snapshotRows = snapshotBundle ? buildStrikeAggregatesFromSnapshot(snapshotBundle.snapshot) : [];
+  const liveMetrics = snapshotBundle
+    ? deriveLiveSnapshotMetrics(snapshotRows, snapshotBundle.snapshot.spot ?? null)
+    : null;
+  const derivedWalls = snapshotBundle ? deriveScoredWalls(snapshotRows, snapshotBundle.snapshot.spot ?? null) : null;
 
   if (!ticker) warnings.push("Pipeline ticker entry not found for symbol");
   if (!structure) warnings.push("Daily levels structure entry not found for symbol");
+  if (snapshotBundle?.source === "live-chain") {
+    warnings.push(`Using live option-chain fallback for ${symbol}; scored walls and summary levels are derived on demand.`);
+  }
 
   const scored = (structure?.scored_analysis as Record<string, unknown> | undefined) ?? {};
-  const resistanceWalls = (scored.resistance_walls as Array<Record<string, unknown>> | undefined) ?? [];
-  const supportWalls = (scored.support_walls as Array<Record<string, unknown>> | undefined) ?? [];
+  const resistanceWalls =
+    (scored.resistance_walls as Array<Record<string, unknown>> | undefined) ??
+    derivedWalls?.resistanceWalls ??
+    [];
+  const supportWalls =
+    (scored.support_walls as Array<Record<string, unknown>> | undefined) ??
+    derivedWalls?.supportWalls ??
+    [];
 
-  const primaryCallWall = toNum(ticker?.call_wall);
-  const primaryPutWall = toNum(ticker?.put_wall);
+  const primaryCallWall = toNum(ticker?.call_wall) ?? liveMetrics?.callWall ?? null;
+  const primaryPutWall = toNum(ticker?.put_wall) ?? liveMetrics?.putWall ?? null;
   const centroidCallWall = toNum((ticker as Record<string, unknown> | undefined)?.call_centroid);
   const centroidPutWall = toNum((ticker as Record<string, unknown> | undefined)?.put_centroid);
   const scoredCallWall = firstNumericLevel(resistanceWalls);
   const scoredPutWall = firstNumericLevel(supportWalls);
 
-  const spot = toNum(ticker?.spot);
+  const spot = toNum(ticker?.spot) ?? snapshotBundle?.snapshot.spot ?? null;
   const secondaryCallWall =
     scoredCallWall !== null && scoredCallWall !== primaryCallWall && isReasonableSecondaryLevel(scoredCallWall, spot)
       ? scoredCallWall
@@ -474,13 +695,13 @@ export async function buildLevels(symbol: string): Promise<{ data: LevelsData; w
       spot: toNum(ticker?.spot),
       levels: {
         spot,
-        gammaFlip: toNum(ticker?.zero_gamma),
+        gammaFlip: toNum(ticker?.zero_gamma) ?? liveMetrics?.gammaFlip ?? null,
         callWall: primaryCallWall,
         secondaryCallWall,
         putWall: primaryPutWall,
         secondaryPutWall,
-        gammaMagnet: toNum(ticker?.gamma_magnet),
-        pinStrike: toNum(ticker?.pin_strike),
+        gammaMagnet: toNum(ticker?.gamma_magnet) ?? liveMetrics?.gammaMagnet ?? null,
+        pinStrike: toNum(ticker?.pin_strike) ?? liveMetrics?.pinStrike ?? null,
         expectedMoveUpper: expectedMove.upper,
         expectedMoveLower: expectedMove.lower,
         expectedMoveWidth: expectedMove.width,
@@ -492,7 +713,11 @@ export async function buildLevels(symbol: string): Promise<{ data: LevelsData; w
       },
       notes: {
         coach: (structure?.coach_note as string[] | undefined) ?? [],
-        tactical: (structure?.tactical_plan as string[] | undefined) ?? [],
+        tactical:
+          (structure?.tactical_plan as string[] | undefined) ??
+          (snapshotBundle?.source === "live-chain"
+            ? ["Live chain fallback active; levels are synthesized from the current option snapshot."]
+            : []),
       },
     },
     warnings,
@@ -514,14 +739,39 @@ export async function buildByStrike(
     );
   }
 
-  const rows = resolveProfileRows(profiles, symbol)
+  let rows = resolveProfileRows(profiles, symbol)
     .map((row) => ({ ...row }))
     .sort((a, b) => Number(a.strike ?? 0) - Number(b.strike ?? 0));
 
-  if (!rows.length) warnings.push("No strike profile rows found for symbol");
-
   const ticker = resolveTickerEntry(state, symbol);
-  const spot = toNum(ticker?.spot);
+  let spot = toNum(ticker?.spot);
+
+  if (!rows.length) {
+    const snapshotBundle = await loadOptionSnapshot(symbol).catch(() => null);
+    if (snapshotBundle) {
+      rows = buildStrikeAggregatesFromSnapshot(snapshotBundle.snapshot, expiryScope).map((row) => ({
+        strike: row.strike,
+        call_gex: Math.round(row.call_gex),
+        put_gex: Math.round(row.put_gex),
+        net_gex: Math.round(row.net_gex),
+        cumulative_gex: Math.round(row.cumulative_gex),
+        call_oi: row.call_oi,
+        put_oi: row.put_oi,
+        call_vol: row.call_vol,
+        put_vol: row.put_vol,
+        call_premium: Math.round(row.call_premium),
+        put_premium: Math.round(row.put_premium),
+        call_dex: row.call_dex !== null ? Math.round(row.call_dex) : null,
+        put_dex: row.put_dex !== null ? Math.round(row.put_dex) : null,
+        call_charm: row.call_charm !== null ? Math.round(row.call_charm) : null,
+        put_charm: row.put_charm !== null ? Math.round(row.put_charm) : null,
+      }));
+      spot = snapshotBundle.snapshot.spot ?? spot;
+      warnings.push(`No gex_profiles rows found for ${symbol}; using ${snapshotBundle.source} strike aggregates.`);
+    } else {
+      warnings.push("No strike profile rows found for symbol");
+    }
+  }
 
   let filtered = rows;
   if (rows.length > 0 && spot !== null) {
@@ -948,10 +1198,10 @@ export async function buildByExpiryTrue(
   const warnings: string[] = [];
 
   // ── 1. Macro cache (true GEX = gamma × OI × spot² × 0.01) ──────────────
-  const macro = await loadMacroCache(symbol).catch(() => null);
+  const snapshotBundle = await loadOptionSnapshot(symbol).catch(() => null);
 
-  if (macro && ((macro.calls?.length ?? 0) > 0 || (macro.puts?.length ?? 0) > 0)) {
-    const spot = macro.spot ?? 1;
+  if (snapshotBundle && ((snapshotBundle.snapshot.calls?.length ?? 0) > 0 || (snapshotBundle.snapshot.puts?.length ?? 0) > 0)) {
+    const spot = snapshotBundle.snapshot.spot ?? 1;
     const now = new Date();
 
     type Acc = {
@@ -1009,8 +1259,8 @@ export async function buildByExpiryTrue(
       }
     }
 
-    processContracts(macro.calls ?? [], "call");
-    processContracts(macro.puts ?? [], "put");
+    processContracts(snapshotBundle.snapshot.calls ?? [], "call");
+    processContracts(snapshotBundle.snapshot.puts ?? [], "put");
 
     const rows = Array.from(acc.values())
       .map((r) => {
@@ -1033,7 +1283,9 @@ export async function buildByExpiryTrue(
       .sort((a, b) => a.dte - b.dte);
 
     warnings.push(
-      `Expiry GEX from macro cache (${macro._sym}, ${macro._date}, scope=${expiryScope}): ${macro.calls?.length ?? 0} calls, ${macro.puts?.length ?? 0} puts`
+      snapshotBundle.source === "macro-cache"
+        ? `Expiry GEX from macro cache (${snapshotBundle.snapshot._sym}, ${snapshotBundle.snapshot._date}, scope=${expiryScope}): ${snapshotBundle.snapshot.calls?.length ?? 0} calls, ${snapshotBundle.snapshot.puts?.length ?? 0} puts`
+        : `Expiry GEX from live option chain (${snapshotBundle.snapshot._sym}, ${snapshotBundle.snapshot._date}, scope=${expiryScope}): ${snapshotBundle.snapshot.calls?.length ?? 0} calls, ${snapshotBundle.snapshot.puts?.length ?? 0} puts`
     );
 
     return {
@@ -1042,7 +1294,7 @@ export async function buildByExpiryTrue(
         module: "by-expiry",
         symbol,
         dataSource: "macro-cache",
-        cacheDate: macro._date,
+        cacheDate: snapshotBundle.snapshot._date,
         filters: { strikes, metricFamily, expiryScope },
         rows,
       },
@@ -1142,7 +1394,8 @@ export async function buildRecentFlow(
 ): Promise<{ data: RecentFlowData; warnings: string[] }> {
   const warnings: string[] = [];
 
-  const macro = await loadMacroCache(symbol).catch(() => null);
+  const snapshotBundle = await loadOptionSnapshot(symbol).catch(() => null);
+  const macro = snapshotBundle?.snapshot ?? null;
 
   if (!macro || ((macro.calls?.length ?? 0) === 0 && (macro.puts?.length ?? 0) === 0)) {
     warnings.push("Macro cache not found for symbol; no flow data available");
@@ -1163,7 +1416,7 @@ export async function buildRecentFlow(
   }
 
   warnings.push(
-    `Flow proxy derived from macro cache contract anomalies (${macro._sym}, ${macro._date}). ` +
+    `${snapshotBundle?.source === "live-chain" ? "Live chain" : "Macro cache"} flow proxy (${macro._sym}, ${macro._date}). ` +
       "This is NOT a real-time flow feed — it ranks contracts by |gamma|×volume×√OI."
   );
 
@@ -1274,7 +1527,7 @@ export async function buildSpotGamma(
   const warnings: string[] = [];
   const [profiles, state] = await Promise.all([loadGexProfiles(), loadPipelineState()]);
 
-  const rawRows = resolveProfileRows(profiles, symbol)
+  let rawRows = resolveProfileRows(profiles, symbol)
     .map((r) => ({
       strike: Number(r.strike ?? 0),
       call_gex: Number(r.call_gex ?? 0),
@@ -1288,10 +1541,29 @@ export async function buildSpotGamma(
     }))
     .sort((a, b) => a.strike - b.strike);
 
-  if (!rawRows.length) warnings.push("No spot-gamma profile rows found for symbol");
-
   const ticker = resolveTickerEntry(state, symbol);
-  const spot = toNum(ticker?.spot);
+  let spot = toNum(ticker?.spot);
+
+  if (!rawRows.length) {
+    const snapshotBundle = await loadOptionSnapshot(symbol).catch(() => null);
+    if (snapshotBundle) {
+      rawRows = buildStrikeAggregatesFromSnapshot(snapshotBundle.snapshot).map((row) => ({
+        strike: row.strike,
+        call_gex: row.call_gex,
+        put_gex: row.put_gex,
+        net_gex: row.net_gex,
+        cumulative_gex: row.cumulative_gex,
+        call_dex: row.call_dex,
+        put_dex: row.put_dex,
+        call_charm: row.call_charm,
+        put_charm: row.put_charm,
+      }));
+      spot = snapshotBundle.snapshot.spot ?? spot;
+      warnings.push(`No spot-gamma profile rows found for ${symbol}; using ${snapshotBundle.source} strike aggregates.`);
+    } else {
+      warnings.push("No spot-gamma profile rows found for symbol");
+    }
+  }
 
   // Apply simple moving-average smoothing to net_gex and cumulative_gex
   const series: SpotGammaRow[] = rawRows.map((row, i) => {
@@ -1374,7 +1646,8 @@ export async function buildLargest(
   const warnings: string[] = [];
 
   // Primary: aggregate macro cache contracts by strike (true GEX = γ × OI × S²)
-  const macro = await loadMacroCache(symbol).catch(() => null);
+  const snapshotBundle = await loadOptionSnapshot(symbol).catch(() => null);
+  const macro = snapshotBundle?.snapshot ?? null;
 
   if (macro && ((macro.calls?.length ?? 0) > 0 || (macro.puts?.length ?? 0) > 0)) {
     const spot = macro.spot ?? 1;
@@ -1434,7 +1707,11 @@ export async function buildLargest(
     else if (sort === "put_gex") rows.sort((a, b) => b.put_gex - a.put_gex);
     else rows.sort((a, b) => b.abs_net_gex - a.abs_net_gex); // default: abs_net
 
-    warnings.push(`Largest strikes from macro cache (${macro._sym}, ${macro._date}, scope=${expiryScope})`);
+    warnings.push(
+      snapshotBundle?.source === "live-chain"
+        ? `Largest strikes from live option chain (${macro._sym}, ${macro._date}, scope=${expiryScope})`
+        : `Largest strikes from macro cache (${macro._sym}, ${macro._date}, scope=${expiryScope})`
+    );
 
     return {
       data: {
@@ -1542,10 +1819,11 @@ export async function buildHeatmap(
 ): Promise<{ data: HeatmapData; warnings: string[] }> {
   const warnings: string[] = [];
 
-  const [macro, state] = await Promise.all([
-    loadMacroCache(symbol).catch(() => null),
+  const [snapshotBundle, state] = await Promise.all([
+    loadOptionSnapshot(symbol).catch(() => null),
     loadPipelineState(),
   ]);
+  const macro = snapshotBundle?.snapshot ?? null;
 
   if (!macro || ((macro.calls?.length ?? 0) === 0 && (macro.puts?.length ?? 0) === 0)) {
     warnings.push("Macro cache unavailable; heatmap cannot be computed");
@@ -1655,7 +1933,9 @@ export async function buildHeatmap(
     .map(([expiry, ea]) => ({ expiry, ...ea }))
     .sort((a, b) => a.expiry.localeCompare(b.expiry));
 
-  warnings.push(`Heatmap from macro cache (${macro._sym}, ${macro._date}), ${sortedStrikes.length} strikes × ${sortedExpiries.length} expiries`);
+  warnings.push(
+    `${snapshotBundle?.source === "live-chain" ? "Heatmap from live option chain" : "Heatmap from macro cache"} (${macro._sym}, ${macro._date}), ${sortedStrikes.length} strikes × ${sortedExpiries.length} expiries`
+  );
 
   return {
     data: {
