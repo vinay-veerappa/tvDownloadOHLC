@@ -130,10 +130,35 @@ function dedupe(items: string[]): string[] {
   return out;
 }
 
-function normalizeSymbolRoot(symbol: string): string {
+export function normalizeSymbolRoot(symbol: string): string {
   const clean = symbol.trim().toUpperCase().replace(/^\//, "");
   const futuresRoot = clean.match(/^([A-Z]{1,8})\d+!?$/);
   return futuresRoot?.[1] ?? clean;
+}
+
+/**
+ * Canonical ticker used for expected-move sourcing.
+ * Rules:
+ * - ETF/index inputs stay in their own price space.
+ * - Futures roots map to their canonical cash proxy (ES->SPX, NQ->QQQ, RTY->IWM, YM->DIA).
+ */
+export function resolveExpectedMoveTicker(symbol: string): string {
+  const root = normalizeSymbolRoot(symbol);
+  const map: Record<string, string> = {
+    ES: "SPX",
+    SPX: "SPX",
+    SPY: "SPY",
+    NQ: "QQQ",
+    NDX: "QQQ",
+    QQQ: "QQQ",
+    RTY: "IWM",
+    RUT: "IWM",
+    IWM: "IWM",
+    YM: "DIA",
+    DJI: "DIA",
+    DIA: "DIA",
+  };
+  return map[root] ?? root;
 }
 
 function buildCandidates(symbol: string): string[] {
@@ -143,16 +168,18 @@ function buildCandidates(symbol: string): string[] {
   const withSlash = noSlash.startsWith("/") ? noSlash : `/${noSlash}`;
 
   const aliasMap: Record<string, string[]> = {
+    // Futures roots may resolve to cash proxies.
     ES: ["/ES", "ES", "SPX", "SPY"],
-    SPX: ["SPX", "SPY", "/ES", "ES"],
-    SPY: ["SPY", "SPX", "/ES", "ES"],
+    // Cash/ETF/index symbols must stay in their own price space.
+    SPX: ["SPX", "SPY"],
+    SPY: ["SPY", "SPX"],
     NQ: ["/NQ", "NQ", "QQQ", "NDX"],
-    NDX: ["NDX", "QQQ", "/NQ", "NQ"],
-    QQQ: ["QQQ", "NDX", "/NQ", "NQ"],
+    NDX: ["NDX", "QQQ"],
+    QQQ: ["QQQ", "NDX"],
     RTY: ["/RTY", "RTY", "IWM"],
-    IWM: ["IWM", "RTY", "/RTY"],
+    IWM: ["IWM", "RUT"],
     YM: ["/YM", "YM", "DIA"],
-    DIA: ["DIA", "YM", "/YM"],
+    DIA: ["DIA", "DJI"],
   };
 
   const aliases = aliasMap[noSlash] ?? [noSlash, withSlash];
@@ -231,7 +258,7 @@ export function resolveDailyStructure(levels: DailyLevels | null, symbol: string
 function buildMacroCandidates(symbol: string): string[] {
   const clean = normalizeSymbolRoot(symbol);
   const groupMap: Record<string, string[]> = {
-    ES: ["SPY", "SPX", "ES"],
+    ES: ["SPX", "SPY", "ES"],
     SPX: ["SPX", "SPY"],
     SPY: ["SPY", "SPX"],
     NQ: ["QQQ", "NDX", "NQ"],
