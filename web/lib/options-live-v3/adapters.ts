@@ -776,14 +776,30 @@ export async function buildLevels(symbol: string): Promise<{ data: LevelsData; w
         supportWalls,
         pivots: (scored.pivots as Array<Record<string, unknown>> | undefined) ?? [],
       },
-      notes: {
-        coach: (structure?.coach_note as string[] | undefined) ?? [],
-        tactical:
-          (structure?.tactical_plan as string[] | undefined) ??
-          (snapshotBundle?.source === "live-chain"
-            ? ["Live chain fallback active; levels are synthesized from the current option snapshot."]
-            : []),
-      },
+      notes: (() => {
+        const preCoach = (structure?.coach_note as string[] | undefined) ?? [];
+        const preTactical = (structure?.tactical_plan as string[] | undefined) ?? [];
+        const synth = preCoach.length === 0
+          ? synthesizeCoachNotes(
+              symbol, spot, primaryCallWall, primaryPutWall,
+              toNum(ticker?.zero_gamma) ?? liveMetrics?.gammaFlip ?? null,
+              ticker?.gex_regime as string | undefined,
+              ticker?.directional_bias as string | undefined,
+              expectedMove, []
+            )
+          : null;
+        const liveChainNote = snapshotBundle?.source === "live-chain"
+          ? "Live chain fallback active; levels are synthesized from the current option snapshot."
+          : null;
+        return {
+          coach: synth ? synth.coach : preCoach,
+          tactical: preTactical.length > 0
+            ? preTactical
+            : synth
+              ? (liveChainNote ? [liveChainNote, ...synth.tactical] : synth.tactical)
+              : (liveChainNote ? [liveChainNote] : []),
+        };
+      })(),
     },
     warnings,
   };
@@ -923,6 +939,92 @@ function bucketScore(score: number): "POSSIBLE" | "LIKELY" | "IMMINENT" {
 }
 
 /**
+ * Synthesize coach + tactical notes from live market data when a ticker has no
+ * precomputed coach_note / tactical_plan in the daily-levels JSON.  Produces
+ * human-readable context lines that mirror the style of hand-written notes so
+ * the notes panel is never empty for a valid ticker.
+ */
+function synthesizeCoachNotes(
+  symbol: string,
+  spot: number | null,
+  callWall: number | null,
+  putWall: number | null,
+  gammaFlip: number | null,
+  regime: string | undefined,
+  bias: string | undefined,
+  em: { lower: number | null; upper: number | null; width: number | null },
+  perspectives: Array<{ mode: string; scope: string; netGex: number | null; bias: string; tacticalScore: number }>
+): { coach: string[]; tactical: string[] } {
+  const fmt = (v: number | null, d = 2) =>
+    v !== null ? `$${v.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d })}` : "N/A";
+  const fmtPct = (v: number | null) => (v !== null ? `${v >= 0 ? "+" : ""}${v.toFixed(2)}%` : "N/A");
+
+  const isNeg = regime === "NEGATIVE";
+  const biasLabel = bias ?? (isNeg ? "Expansion" : "Compression");
+  const regimeDesc = isNeg
+    ? "negative gamma (short-gamma regime — dealers amplify moves)"
+    : "positive gamma (dealers dampen moves, favoring mean-reversion)";
+
+  const callDist = calcDistancePct(callWall, spot);
+  const putDist = calcDistancePct(putWall, spot);
+  const flipDist = calcDistancePct(gammaFlip, spot);
+
+  const coach: string[] = [];
+
+  // Line 1: spot + walls context
+  if (spot !== null) {
+    const wallContext =
+      callWall !== null && putWall !== null
+        ? `Call wall overhead at ${fmt(callWall)} (${fmtPct(callDist)}), put wall below at ${fmt(putWall)} (${fmtPct(putDist)}).`
+        : callWall !== null
+          ? `Call wall at ${fmt(callWall)} (${fmtPct(callDist)}).`
+          : putWall !== null
+            ? `Put wall at ${fmt(putWall)} (${fmtPct(putDist)}).`
+            : "Key walls not yet resolved.";
+    coach.push(`${symbol} trading at ${fmt(spot)} in a ${regimeDesc}. ${wallContext}`);
+  }
+
+  // Line 2: gamma flip context
+  if (gammaFlip !== null && spot !== null) {
+    const side = spot > gammaFlip ? "above" : "below";
+    const implication =
+      spot > gammaFlip
+        ? "Dealer hedging flows should support upward continuation above the flip."
+        : "Price is below the flip — dealer hedging flows may amplify downside.";
+    coach.push(`Gamma flip at ${fmt(gammaFlip)} (${fmtPct(flipDist)}). Spot is ${side} the flip. ${implication}`);
+  }
+
+  // Line 3: EM + bias context
+  if (em.width !== null) {
+    const emBound =
+      em.lower !== null && em.upper !== null
+        ? `Expected-move band: ${fmt(em.lower)} – ${fmt(em.upper)} (±${fmt(em.width, 2)}).`
+        : `Expected-move width: ±${fmt(em.width, 2)}.`;
+    coach.push(`${emBound} Directional bias: ${biasLabel}. Treat levels as live-derived until next precomputed run.`);
+  } else {
+    coach.push(`Directional bias: ${biasLabel}. No expected-move band available — use walls as range boundaries.`);
+  }
+
+  // Tactical: one line per mode perspective
+  const tactical: string[] = [];
+  for (const p of perspectives) {
+    if (p.netGex === null) {
+      tactical.push(`${p.mode} (${p.scope.toUpperCase()}): GEX data unavailable — no tactical read.`);
+    } else {
+      const dirHint =
+        p.bias === "Expansion"
+          ? "directional bias — momentum setups preferred"
+          : "compression bias — fade breakouts, target mean-reversion";
+      tactical.push(
+        `${p.mode} (${p.scope.toUpperCase()}): net GEX ${Math.round(p.netGex).toLocaleString()} (${p.bias}) | score ${p.tacticalScore}/100 — ${dirHint}.`
+      );
+    }
+  }
+
+  return { coach, tactical };
+}
+
+/**
  * Compute a mode-specific tactical quality score (0–100) by weighting regime,
  * wall proximity, and net-GEX signal strength differently per trading mode.
  *
@@ -982,13 +1084,23 @@ export async function buildNarrative(
   const ticker = resolveTickerEntry(state, symbol);
   const structure = resolveDailyStructure(levels, symbol);
 
+  // When ticker is absent (ad-hoc / new symbol), load a live snapshot so that
+  // spot + walls are available for the synthesized coach notes and signal distances.
+  const narrativeSnapshot = !ticker ? await loadOptionSnapshot(symbol).catch(() => null) : null;
+  const narrativeSnapshotRows = narrativeSnapshot
+    ? buildStrikeAggregatesFromSnapshot(narrativeSnapshot.snapshot)
+    : [];
+  const narrativeLiveMetrics = narrativeSnapshot
+    ? deriveLiveSnapshotMetrics(narrativeSnapshotRows, narrativeSnapshot.snapshot.spot ?? null)
+    : null;
+
   if (!ticker) warnings.push("Pipeline ticker entry not found for symbol");
   if (!structure) warnings.push("Daily levels structure entry not found for symbol");
 
-  const spot = toNum(ticker?.spot);
-  const callWall = toNum(ticker?.call_wall);
-  const putWall = toNum(ticker?.put_wall);
-  const zeroGamma = toNum(ticker?.zero_gamma);
+  const spot = toNum(ticker?.spot) ?? narrativeSnapshot?.snapshot.spot ?? null;
+  const callWall = toNum(ticker?.call_wall) ?? narrativeLiveMetrics?.callWall ?? null;
+  const putWall = toNum(ticker?.put_wall) ?? narrativeLiveMetrics?.putWall ?? null;
+  const zeroGamma = toNum(ticker?.zero_gamma) ?? narrativeLiveMetrics?.gammaFlip ?? null;
   const sessionDelta = toNum(structure?.total_gex_delta_adj);
   const totalGex = toNum(ticker?.total_gex) ?? toNum(structure?.total_gex);
   const sessionPct =
@@ -1159,13 +1271,26 @@ export async function buildNarrative(
         factors,
       },
       perspectives: perspectiveData,
-      notes: {
-        coach: (structure?.coach_note as string[] | undefined) ?? [],
-        tactical: [
-          ...tacticalScoped,
-          ...((structure?.tactical_plan as string[] | undefined) ?? []),
-        ],
-      },
+      notes: (() => {
+        const preCoach = (structure?.coach_note as string[] | undefined) ?? [];
+        const preTactical = (structure?.tactical_plan as string[] | undefined) ?? [];
+        const synth = preCoach.length === 0
+          ? synthesizeCoachNotes(
+              symbol, spot, callWall, putWall, zeroGamma,
+              ticker?.gex_regime as string | undefined,
+              ticker?.directional_bias as string | undefined,
+              { lower: null, upper: null, width: null },
+              perspectiveData
+            )
+          : null;
+        return {
+          coach: synth ? synth.coach : preCoach,
+          tactical: [
+            ...tacticalScoped,
+            ...(preTactical.length > 0 ? preTactical : (synth?.tactical ?? [])),
+          ],
+        };
+      })(),
     },
     warnings,
   };
@@ -2068,8 +2193,19 @@ export async function buildPublishPreview(
 
   const color = regime.includes("NEGATIVE") ? 0xe74c3c : regime.includes("POSITIVE") ? 0x2ecc71 : 0x95a5a6;
 
-  const coachLines = (structure?.coach_note as string[] | undefined) ?? [];
-  const tacticalLines = (structure?.tactical_plan as string[] | undefined) ?? [];
+  const preCoachPP = (structure?.coach_note as string[] | undefined) ?? [];
+  const preTacticalPP = (structure?.tactical_plan as string[] | undefined) ?? [];
+  const synthPP = preCoachPP.length === 0
+    ? synthesizeCoachNotes(
+        symbol, spot, callWall, putWall, gammaFlip,
+        ticker?.gex_regime as string | undefined,
+        bias,
+        { lower: null, upper: null, width: null },
+        []
+      )
+    : null;
+  const coachLines = synthPP ? synthPP.coach : preCoachPP;
+  const tacticalLines = synthPP ? synthPP.tactical : preTacticalPP;
   const coachText = coachLines.slice(0, 2).join("\n") || "No notes available";
   const tacticalText = tacticalLines.slice(0, 2).join("\n") || "No notes available";
 
