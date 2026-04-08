@@ -21,6 +21,7 @@ import { ExplainabilityDrawer } from "@/components/options-live-v3/Explainabilit
 import { ModuleEmptyBanner } from "@/components/options-live-v3/ModuleEmptyBanner";
 import { AlertRulesPanel } from "@/components/options-live-v3/AlertRulesPanel";
 import { LlmNarrativeComparePanel } from "@/components/options-live-v3/LlmNarrativeComparePanel";
+import { LegacyProfileViewsPanel } from "@/components/options-live-v3/LegacyProfileViewsPanel";
 
 type SummaryData = {
   runLabel: string | null;
@@ -74,6 +75,8 @@ type ByStrikeRow = {
   put_dex?: number;
   call_oi?: number;
   put_oi?: number;
+  call_avg_iv?: number | null;
+  put_avg_iv?: number | null;
 };
 
 type ByStrikeData = {
@@ -206,6 +209,71 @@ type HeatmapData = {
 };
 type HeatmapResponse = V3Envelope<HeatmapData>;
 
+type MacroTierBucket = {
+  tier: number;
+  count: number;
+  topNotional: number | null;
+};
+
+type MacroDominantNode = {
+  strike: number | null;
+  type: "CALL" | "PUT" | null;
+  label: string | null;
+  oi: number | null;
+  dominancePct: number | null;
+};
+
+type MacroAnomaly = {
+  tier: number | null;
+  strike: number | null;
+  type: "CALL" | "PUT" | null;
+  dte: string | null;
+  volOi: number | null;
+  notional: number | null;
+};
+
+type MacroData = {
+  ticker: string;
+  tradingDate: string;
+  timestamp: string;
+  spotPrice: number | null;
+  levels: {
+    zeroGamma: number | null;
+    macroCallWall: number | null;
+    macroPutWall: number | null;
+  };
+  dominantNodes: MacroDominantNode[];
+  tierBuckets: MacroTierBucket[];
+  topAnomalies: MacroAnomaly[];
+};
+type MacroResponse = V3Envelope<MacroData>;
+
+type OpsSnapshotRow = {
+  timestamp: string;
+  totalGex: number | null;
+  totalGexDeltaAdj: number | null;
+  gexRegime: string | null;
+  regimeLabel: string | null;
+  spotPrice: number | null;
+  gammaMagnet: number | null;
+  pinStrike: number | null;
+  netSpeedExposure: number | null;
+  netVannaExposure: number | null;
+};
+
+type OpsData = {
+  symbol: string;
+  date: string;
+  priorityList: string[];
+  snapshotSummary: {
+    count: number;
+    firstTs: string | null;
+    lastTs: string | null;
+  };
+  snapshots: OpsSnapshotRow[];
+};
+type OpsResponse = V3Envelope<OpsData>;
+
 function fmtNum(v: number | null | undefined, digits = 2): string {
   if (typeof v !== "number" || Number.isNaN(v)) return "-";
   return v.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
@@ -310,6 +378,11 @@ export function V3EntryShell() {
   const [spotGamma, setSpotGamma] = useState<SpotGammaResponse | null>(null);
   const [largest, setLargest] = useState<LargestResponse | null>(null);
   const [heatmap, setHeatmap] = useState<HeatmapResponse | null>(null);
+  const [macro, setMacro] = useState<MacroResponse | null>(null);
+  const [ops, setOps] = useState<OpsResponse | null>(null);
+  const [opsPriorityDraft, setOpsPriorityDraft] = useState("");
+  const [opsActionBusy, setOpsActionBusy] = useState(false);
+  const [opsActionMessage, setOpsActionMessage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const setStrikeCountManual = (value: number) => {
@@ -431,7 +504,7 @@ export function V3EntryShell() {
       try {
         const encoded = encodeURIComponent(symbol);
         const strikes = strikeCount > 0 ? strikeCount : 60;
-        const [s, l, bs, be, n, rf, sg, lg, hm] = await Promise.all([
+        const [s, l, bs, be, n, rf, sg, lg, hm, mc, op] = await Promise.all([
           fetchEnvelope<SummaryData>(`/api/options-live/v3/summary?symbol=${encoded}`),
           fetchEnvelope<LevelsData>(`/api/options-live/v3/levels?symbol=${encoded}`),
           fetchEnvelope<ByStrikeData>(`/api/options-live/v3/by-strike?symbol=${encoded}&strikes=${strikes}&expiryScope=${expiryScope}&metricFamily=${metricFamily.toLowerCase()}`),
@@ -441,6 +514,8 @@ export function V3EntryShell() {
           fetchEnvelope<SpotGammaData>(`/api/options-live/v3/spot-gamma?symbol=${encoded}&smooth=1`),
           fetchEnvelope<LargestData>(`/api/options-live/v3/largest?symbol=${encoded}&limit=${largestLimit}&sort=${largestSortMode}&expiryScope=${expiryScope}`),
           fetchEnvelope<HeatmapData>(`/api/options-live/v3/heatmap?symbol=${encoded}&strikes=${strikes}&market=${heatmapMarket}&mode=${heatmapMode}&metric=${heatmapMetric}&expiryMode=${heatmapExpiryMode}`),
+          fetchEnvelope<MacroData>(`/api/options-live/v3/macro?symbol=${encoded}`),
+          fetchEnvelope<OpsData>(`/api/options-live/v3/ops?symbol=${encoded}&limit=300`),
         ]);
 
         if (!alive) return;
@@ -453,6 +528,8 @@ export function V3EntryShell() {
         setSpotGamma(sg);
         setLargest(lg);
         setHeatmap(hm);
+        setMacro(mc);
+        setOps(op);
       } catch (error) {
         if (alive) {
           setLoadError(String(error));
@@ -594,8 +671,15 @@ export function V3EntryShell() {
       ...(spotGamma?.warnings ?? []),
       ...(largest?.warnings ?? []),
       ...(heatmap?.warnings ?? []),
+      ...(macro?.warnings ?? []),
+      ...(ops?.warnings ?? []),
     ];
-  }, [summary, levels, byStrike, byExpiry, narrative, recentFlow, spotGamma, largest, heatmap]);
+  }, [summary, levels, byStrike, byExpiry, narrative, recentFlow, spotGamma, largest, heatmap, macro, ops]);
+
+  useEffect(() => {
+    const list = ops?.data?.priorityList ?? [];
+    setOpsPriorityDraft(list.join(", "));
+  }, [ops?.data?.priorityList]);
 
   const coachLines = levels?.data?.notes?.coach ?? [];
   const modeTacticalLines = narrative?.data?.notes?.tactical ?? [];
@@ -633,6 +717,15 @@ export function V3EntryShell() {
   const narrativeDataSourceLabel = narrative?.data?.dataSourceLabel ?? null;
   const freshness = summary?.meta?.asOf ?? null;
   const activeStatus = useMemo(() => {
+    if (activeTab === "macro") return { meta: macro?.meta, warnings: macro?.warnings ?? [], error: macro?.error ?? null };
+    if (activeTab === "ops") return { meta: ops?.meta, warnings: ops?.warnings ?? [], error: ops?.error ?? null };
+    if (activeTab === "legacy-profile") {
+      return {
+        meta: byStrike?.meta ?? ops?.meta,
+        warnings: [...(byStrike?.warnings ?? []), ...(ops?.warnings ?? [])],
+        error: byStrike?.error ?? ops?.error ?? null,
+      };
+    }
     if (activeTab === "by-strike") return { meta: byStrike?.meta, warnings: byStrike?.warnings ?? [], error: byStrike?.error ?? null };
     if (activeTab === "by-expiry") return { meta: byExpiry?.meta, warnings: byExpiry?.warnings ?? [], error: byExpiry?.error ?? null };
     if (activeTab === "largest") return { meta: largest?.meta, warnings: largest?.warnings ?? [], error: largest?.error ?? null };
@@ -644,7 +737,7 @@ export function V3EntryShell() {
       warnings: [...(summary?.warnings ?? []), ...(narrative?.warnings ?? []), ...(levels?.warnings ?? [])],
       error: summary?.error ?? narrative?.error ?? levels?.error ?? null,
     };
-  }, [activeTab, byStrike, byExpiry, largest, levels, spotGamma, heatmap, recentFlow, summary, narrative]);
+  }, [activeTab, macro, ops, byStrike, byExpiry, largest, levels, spotGamma, heatmap, recentFlow, summary, narrative]);
 
   // ---------------------------------------------------------------------------
   // Tab pane renderers
@@ -972,6 +1065,202 @@ export function V3EntryShell() {
     );
   }
 
+  function renderLegacyProfile() {
+    if (!isLoading && byStrike?.error) {
+      return <ModuleEmptyBanner state="error" moduleName="Legacy Profile" message={byStrike.error} />;
+    }
+    return (
+      <LegacyProfileViewsPanel
+        rows={byStrike?.data?.rows ?? []}
+        spot={summary?.data?.spot ?? byStrike?.data?.spot ?? null}
+        snapshots={
+          (ops?.data?.snapshots ?? []).map((row) => ({
+            timestamp: row.timestamp,
+            totalGex: row.totalGex,
+            spotPrice: row.spotPrice,
+          }))
+        }
+        isLoading={isLoading}
+      />
+    );
+  }
+
+  async function runOpsAction(payload: { action: "update_priority"; priorityList: string[] } | { action: "refresh_ticker"; ticker?: string }) {
+    setOpsActionBusy(true);
+    setOpsActionMessage(null);
+    try {
+      const res = await fetch(`/api/options-live/v3/ops?symbol=${encodeURIComponent(symbol)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = (await res.json()) as V3Envelope<{ updated?: boolean; message?: string; priorityList?: string[] }>;
+
+      if (!res.ok || !json.success) {
+        setOpsActionMessage(json.error ?? "Failed to apply ops action");
+        return;
+      }
+
+      setOpsActionMessage(json.data?.message ?? "Ops action complete");
+      const refreshed = await fetchEnvelope<OpsData>(`/api/options-live/v3/ops?symbol=${encodeURIComponent(symbol)}&limit=300`);
+      setOps(refreshed);
+    } catch (error) {
+      setOpsActionMessage(String(error));
+    } finally {
+      setOpsActionBusy(false);
+    }
+  }
+
+  function renderOps() {
+    if (isLoading && !ops) return <ModuleEmptyBanner state="loading" moduleName="Ops" />;
+    if (!isLoading && ops?.error) return <ModuleEmptyBanner state="error" moduleName="Ops" message={ops.error} />;
+    if (!isLoading && !ops?.data) return <ModuleEmptyBanner state="empty" moduleName="Ops" message="No ops payload available" />;
+
+    const snapshotRows = [...(ops?.data?.snapshots ?? [])].slice(-20).reverse().map((row) => [
+      new Date(row.timestamp).toLocaleTimeString(),
+      fmtNum(row.totalGex, 0),
+      fmtNum(row.spotPrice, 2),
+      row.regimeLabel ?? row.gexRegime ?? "-",
+      fmtNum(row.gammaMagnet, 2),
+      fmtNum(row.pinStrike, 2),
+    ]);
+
+    return (
+      <div className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Priority Count" value={String(ops?.data?.priorityList?.length ?? 0)} />
+          <StatCard label="Snapshot Count" value={String(ops?.data?.snapshotSummary?.count ?? 0)} />
+          <StatCard
+            label="First Snapshot"
+            value={ops?.data?.snapshotSummary?.firstTs ? new Date(ops.data.snapshotSummary.firstTs).toLocaleTimeString() : "-"}
+          />
+          <StatCard
+            label="Last Snapshot"
+            value={ops?.data?.snapshotSummary?.lastTs ? new Date(ops.data.snapshotSummary.lastTs).toLocaleTimeString() : "-"}
+          />
+        </div>
+
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 space-y-3">
+          <div className="text-xs uppercase tracking-widest text-zinc-400">Priority Tickers</div>
+          <textarea
+            value={opsPriorityDraft}
+            onChange={(e) => setOpsPriorityDraft(e.target.value.toUpperCase())}
+            className="h-20 w-full rounded border border-zinc-700 bg-black p-2 text-xs font-mono text-zinc-100 focus:border-emerald-600 focus:outline-none"
+            placeholder="SPY, QQQ, IWM"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => runOpsAction({
+                action: "update_priority",
+                priorityList: opsPriorityDraft
+                  .split(/[\s,]+/)
+                  .map((item) => item.trim())
+                  .filter((item) => item.length > 0),
+              })}
+              disabled={opsActionBusy}
+              className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              Save Priority
+            </button>
+            <button
+              onClick={() => runOpsAction({ action: "refresh_ticker", ticker: symbol })}
+              disabled={opsActionBusy}
+              className="rounded bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 disabled:opacity-50"
+            >
+              Trigger Refresh ({symbol})
+            </button>
+            {opsActionBusy ? <span className="text-xs text-zinc-500">working…</span> : null}
+            {opsActionMessage ? <span className="text-xs text-zinc-400">{opsActionMessage}</span> : null}
+          </div>
+        </div>
+
+        <SimpleTable
+          title={`Intraday Snapshot History (${ops?.data?.date ?? "-"})`}
+          columns={["Time", "Total GEX", "Spot", "Regime", "Gamma Magnet", "Pin"]}
+          rows={snapshotRows}
+          emptyLabel="No snapshots for selected day"
+        />
+
+        {(ops?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="Ops" warnings={ops?.warnings ?? []} />}
+      </div>
+    );
+  }
+
+  function renderMacro() {
+    if (isLoading && !macro) return <ModuleEmptyBanner state="loading" moduleName="Macro" />;
+    if (!isLoading && macro?.error) return <ModuleEmptyBanner state="error" moduleName="Macro" message={macro.error} />;
+    if (!isLoading && !macro?.data) return <ModuleEmptyBanner state="empty" moduleName="Macro" message="No macro snapshot available yet" />;
+
+    const dominantRows = (macro?.data?.dominantNodes ?? []).map((row) => [
+      fmtNum(row.strike, 2),
+      row.type ?? "-",
+      row.label ?? "-",
+      fmtNum(row.oi, 0),
+      row.dominancePct != null ? `${fmtNum(row.dominancePct, 2)}%` : "-",
+    ]);
+
+    const anomalyRows = (macro?.data?.topAnomalies ?? []).map((row) => [
+      row.tier != null ? `T${row.tier}` : "-",
+      fmtNum(row.strike, 2),
+      row.type ?? "-",
+      row.dte ?? "-",
+      row.volOi != null ? `${fmtNum(row.volOi, 2)}x` : "-",
+      row.notional != null ? `$${fmtNum(row.notional, 0)}` : "-",
+    ]);
+
+    const tiers = new Map((macro?.data?.tierBuckets ?? []).map((row) => [row.tier, row]));
+    const t1 = tiers.get(1);
+    const t2 = tiers.get(2);
+    const t3 = tiers.get(3);
+    const t4 = tiers.get(4);
+
+    return (
+      <div className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Macro Spot" value={`$${fmtNum(macro?.data?.spotPrice)}`} />
+          <StatCard
+            label="Zero Gamma"
+            value={fmtNum(macro?.data?.levels?.zeroGamma)}
+            subValue={`Ticker ${macro?.data?.ticker ?? "-"}`}
+          />
+          <StatCard
+            label="Macro Call Wall"
+            value={fmtNum(macro?.data?.levels?.macroCallWall)}
+            tone="positive"
+          />
+          <StatCard
+            label="Macro Put Wall"
+            value={fmtNum(macro?.data?.levels?.macroPutWall)}
+            tone="negative"
+          />
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Tier 1 (Structural)" value={String(t1?.count ?? 0)} subValue={t1?.topNotional != null ? `$${fmtNum(t1.topNotional, 0)} top` : undefined} />
+          <StatCard label="Tier 2 (Standard)" value={String(t2?.count ?? 0)} subValue={t2?.topNotional != null ? `$${fmtNum(t2.topNotional, 0)} top` : undefined} />
+          <StatCard label="Tier 3 (Tactical)" value={String(t3?.count ?? 0)} subValue={t3?.topNotional != null ? `$${fmtNum(t3.topNotional, 0)} top` : undefined} />
+          <StatCard label="Tier 4 (LEAPS)" value={String(t4?.count ?? 0)} subValue={t4?.topNotional != null ? `$${fmtNum(t4.topNotional, 0)} top` : undefined} />
+        </div>
+
+        <SimpleTable
+          title="Dominant OI Nodes"
+          columns={["Strike", "Type", "Label", "Open Interest", "Dominance %"]}
+          rows={dominantRows}
+          emptyLabel="No dominant node rows returned"
+        />
+
+        <SimpleTable
+          title="Top Whale Anomalies"
+          columns={["Tier", "Strike", "Type", "DTE", "Vol/OI", "Notional"]}
+          rows={anomalyRows}
+          emptyLabel="No anomaly rows returned"
+        />
+
+        {(macro?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="Macro" warnings={macro?.warnings ?? []} />}
+      </div>
+    );
+  }
+
   function renderByExpiry() {
     if (!isLoading && byExpiry?.error) return <ModuleEmptyBanner state="error" moduleName="By-Expiry" message={byExpiry.error} />;
     if (!isLoading && !byExpiry?.data) return <ModuleEmptyBanner state="empty" moduleName="By-Expiry" />;
@@ -1198,6 +1487,9 @@ export function V3EntryShell() {
 
   const tabContent: Record<GexTabId, () => React.ReactNode> = {
     "daily-gex": renderDailyGex,
+    "macro": renderMacro,
+    "ops": renderOps,
+    "legacy-profile": renderLegacyProfile,
     "by-strike": renderByStrike,
     "by-expiry": renderByExpiry,
     "integrated": renderIntegrated,

@@ -369,6 +369,8 @@ type StrikeAggregateRow = {
   put_dex: number | null;
   call_charm: number | null;
   put_charm: number | null;
+  call_avg_iv: number | null;
+  put_avg_iv: number | null;
 };
 
 async function loadOptionSnapshot(symbol: string): Promise<OptionSnapshot | null> {
@@ -392,7 +394,12 @@ function buildStrikeAggregatesFromSnapshot(
   const spot = snapshot.spot ?? 0;
   const now = new Date();
 
-  type Acc = Omit<StrikeAggregateRow, "net_gex" | "cumulative_gex">;
+  type Acc = Omit<StrikeAggregateRow, "net_gex" | "cumulative_gex" | "call_avg_iv" | "put_avg_iv"> & {
+    call_iv_sum: number;
+    put_iv_sum: number;
+    call_iv_count: number;
+    put_iv_count: number;
+  };
   const acc = new Map<number, Acc>();
 
   function ensure(strike: number): Acc {
@@ -411,6 +418,10 @@ function buildStrikeAggregatesFromSnapshot(
         put_dex: 0,
         call_charm: 0,
         put_charm: 0,
+        call_iv_sum: 0,
+        put_iv_sum: 0,
+        call_iv_count: 0,
+        put_iv_count: 0,
       });
     }
     return acc.get(strike)!;
@@ -429,6 +440,7 @@ function buildStrikeAggregatesFromSnapshot(
       const gamma = contract.gamma ?? 0;
       const delta = contract.delta ?? 0;
       const theta = contract.theta ?? 0;
+      const iv = contract.iv;
       const mark = contract.mark ?? contract.last ?? 0;
       const gex = gamma * openInterest * spot * spot * 0.01;
       const dex = delta * openInterest * spot * 100;
@@ -442,6 +454,10 @@ function buildStrikeAggregatesFromSnapshot(
         row.call_premium += premium;
         row.call_dex = (row.call_dex ?? 0) + dex;
         row.call_charm = (row.call_charm ?? 0) + charm;
+        if (typeof iv === "number" && Number.isFinite(iv)) {
+          row.call_iv_sum += iv;
+          row.call_iv_count += 1;
+        }
       } else {
         row.put_gex += gex;
         row.put_oi += openInterest;
@@ -449,6 +465,10 @@ function buildStrikeAggregatesFromSnapshot(
         row.put_premium += premium;
         row.put_dex = (row.put_dex ?? 0) + dex;
         row.put_charm = (row.put_charm ?? 0) + charm;
+        if (typeof iv === "number" && Number.isFinite(iv)) {
+          row.put_iv_sum += iv;
+          row.put_iv_count += 1;
+        }
       }
     }
   }
@@ -466,6 +486,8 @@ function buildStrikeAggregatesFromSnapshot(
         ...row,
         net_gex: net,
         cumulative_gex: cumulative,
+        call_avg_iv: row.call_iv_count > 0 ? row.call_iv_sum / row.call_iv_count : null,
+        put_avg_iv: row.put_iv_count > 0 ? row.put_iv_sum / row.put_iv_count : null,
       };
     });
 }
@@ -821,7 +843,15 @@ export async function buildByStrike(
   }
 
   let rows = resolveProfileRows(profiles, symbol)
-    .map((row) => ({ ...row }))
+    .map((row) => {
+      const callAvgIv = toNum((row as Record<string, unknown>).call_avg_iv) ?? toNum((row as Record<string, unknown>).call_iv);
+      const putAvgIv = toNum((row as Record<string, unknown>).put_avg_iv) ?? toNum((row as Record<string, unknown>).put_iv);
+      return {
+        ...row,
+        call_avg_iv: callAvgIv,
+        put_avg_iv: putAvgIv,
+      };
+    })
     .sort((a, b) => Number(a.strike ?? 0) - Number(b.strike ?? 0));
 
   const ticker = resolveTickerEntry(state, symbol);
@@ -846,6 +876,8 @@ export async function buildByStrike(
         put_dex: row.put_dex !== null ? Math.round(row.put_dex) : null,
         call_charm: row.call_charm !== null ? Math.round(row.call_charm) : null,
         put_charm: row.put_charm !== null ? Math.round(row.put_charm) : null,
+        call_avg_iv: row.call_avg_iv,
+        put_avg_iv: row.put_avg_iv,
       }));
       spot = snapshotBundle.snapshot.spot ?? spot;
       warnings.push(`No gex_profiles rows found for ${symbol}; using ${snapshotBundle.source} strike aggregates.`);

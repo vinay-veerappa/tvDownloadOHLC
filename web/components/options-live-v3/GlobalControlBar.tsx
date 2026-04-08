@@ -6,6 +6,9 @@ export type GexTabId =
   | "daily-gex"
   | "by-strike"
   | "by-expiry"
+  | "macro"
+  | "ops"
+  | "legacy-profile"
   | "integrated"
   | "largest"
   | "spot-gamma"
@@ -19,6 +22,9 @@ const STRIKE_PRESETS = [5, 10, 15, 20, 30, 50] as const;
 
 const TABS: { id: GexTabId; label: string }[] = [
   { id: "daily-gex", label: "Daily GEX" },
+  { id: "macro", label: "Macro" },
+  { id: "ops", label: "Ops" },
+  { id: "legacy-profile", label: "Legacy Profile" },
   { id: "by-strike", label: "By Strike" },
   { id: "by-expiry", label: "By Expiry" },
   { id: "spot-gamma", label: "Spot Γ" },

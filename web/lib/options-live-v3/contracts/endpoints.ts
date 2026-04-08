@@ -4,6 +4,8 @@ export const V3_API_ENDPOINTS = [
   "/api/options-live/v3/by-expiry",
   "/api/options-live/v3/largest",
   "/api/options-live/v3/levels",
+  "/api/options-live/v3/macro",
+  "/api/options-live/v3/ops",
   "/api/options-live/v3/spot-gamma",
   "/api/options-live/v3/heatmap",
   "/api/options-live/v3/narrative",
