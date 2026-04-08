@@ -20,6 +20,7 @@ import { DataStatusStrip } from "@/components/options-live-v3/DataStatusStrip";
 import { ExplainabilityDrawer } from "@/components/options-live-v3/ExplainabilityDrawer";
 import { ModuleEmptyBanner } from "@/components/options-live-v3/ModuleEmptyBanner";
 import { AlertRulesPanel } from "@/components/options-live-v3/AlertRulesPanel";
+import { LlmNarrativeComparePanel } from "@/components/options-live-v3/LlmNarrativeComparePanel";
 
 type SummaryData = {
   runLabel: string | null;
@@ -898,6 +899,8 @@ export function V3EntryShell() {
             </div>
           )}
         </div>
+
+        <LlmNarrativeComparePanel symbol={symbol} expiryScope={expiryScope} />
 
         {(levels?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="Key Levels" warnings={levels?.warnings ?? []} />}
 

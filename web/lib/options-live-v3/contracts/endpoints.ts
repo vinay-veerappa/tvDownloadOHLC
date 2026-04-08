@@ -7,6 +7,7 @@ export const V3_API_ENDPOINTS = [
   "/api/options-live/v3/spot-gamma",
   "/api/options-live/v3/heatmap",
   "/api/options-live/v3/narrative",
+  "/api/options-live/v3/llm-compare",
   "/api/options-live/v3/recent-flow",
   "/api/options-live/v3/explain",
   "/api/options-live/v3/publish/preview",
