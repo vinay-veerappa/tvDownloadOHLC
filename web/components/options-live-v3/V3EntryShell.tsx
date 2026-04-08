@@ -661,6 +661,12 @@ export function V3EntryShell() {
       expectedMoveLower: lvlsRaw?.expectedMoveLower ?? derivedExpectedMove.expectedMoveLower,
       expectedMoveWidth: lvlsRaw?.expectedMoveWidth ?? derivedExpectedMove.expectedMoveWidth,
     };
+    const directionalBias = summary?.data?.gex?.directionalBias ?? "-";
+    const directionalBiasTone =
+      directionalBias.includes("BULL") ? "positive"
+      : directionalBias.includes("BEAR") ? "negative"
+      : "neutral";
+
     return (
       <div className="space-y-4">
         {/* KPI row */}
@@ -690,16 +696,6 @@ export function V3EntryShell() {
                 : undefined
             }
             tone={lvls?.expectedMoveWidth != null ? "neutral" : undefined}
-          />
-          <StatCard
-            label="Directional Bias"
-            value={summary?.data?.gex?.directionalBias ?? "-"}
-            tone={
-              (summary?.data?.gex?.directionalBias ?? "").includes("BULL") ? "positive"
-              : (summary?.data?.gex?.directionalBias ?? "").includes("BEAR") ? "negative"
-              : "neutral"
-            }
-            subValue={narrativeIntegrityTier ?? undefined}
           />
         </div>
 
@@ -733,10 +729,31 @@ export function V3EntryShell() {
                 setPinnedStrike(level);
               }}
             />
-            <AlertRulesPanel symbol={symbol} />
           </div>
 
           <div className="space-y-4">
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+              <p className="text-xs uppercase tracking-widest text-zinc-400">Directional Bias</p>
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                    directionalBiasTone === "positive"
+                      ? "border-emerald-700/60 bg-emerald-900/30 text-emerald-200"
+                      : directionalBiasTone === "negative"
+                        ? "border-rose-700/60 bg-rose-900/30 text-rose-200"
+                        : "border-zinc-700 bg-zinc-900 text-zinc-200"
+                  }`}
+                >
+                  {directionalBias}
+                </span>
+                {narrativeIntegrityTier && (
+                  <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${integrityTierClasses(narrativeIntegrityTier)}`}>
+                    {narrativeIntegrityTier}
+                  </span>
+                )}
+              </div>
+            </div>
+
             <SqueezeScreenerCard
               screener={
                 screener
@@ -768,56 +785,10 @@ export function V3EntryShell() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-zinc-200">Narrative Signals</h2>
-            <div className="flex items-center gap-1.5">
-              {narrativeIntegrityTier && (
-                <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${integrityTierClasses(narrativeIntegrityTier)}`}>
-                  {narrativeIntegrityTier}
-                </span>
-              )}
-              <span className="rounded border border-indigo-800 bg-indigo-950/50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-200">
-                Scope: {screener?.scope ?? expiryScope}
-              </span>
-            </div>
-          </div>
-          {isLoading ? (
-            <p className="text-sm animate-pulse text-zinc-500">Loading…</p>
-          ) : signals.length === 0 ? (
-            <p className="text-sm text-zinc-500">No signals yet.</p>
-          ) : (
-            <div className="space-y-2 text-sm">
-              {signals.map((signal, idx) => (
-                <div key={idx} className="rounded-lg border border-zinc-800 bg-black p-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium capitalize text-zinc-200">{signal.type}</span>
-                    <span className={`text-xs uppercase tracking-widest ${
-                      signal.severity === "STRONG" ? "text-rose-400"
-                      : signal.severity === "MODERATE" ? "text-amber-400"
-                      : "text-zinc-400"
-                    }`}>{signal.severity}</span>
-                  </div>
-                  <p className="mt-1 text-zinc-400">{signal.message}</p>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    Level: {fmtNum(signal.level)} | Dist: {fmtNum(signal.distancePct)}%
-                  </p>
-                  <button
-                    onClick={() => setExplainOpen(true)}
-                    className="mt-2 text-xs text-indigo-300 hover:text-indigo-200"
-                  >
-                    Why this score?
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
         {perspectiveRows.length > 0 && (
           <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-zinc-200">Multi-Timeframe Tactical View</h3>
+              <h3 className="text-sm font-semibold text-zinc-200">Multi-Timeframe Tactical View (Primary)</h3>
               {narrativeIntegrityTier && (
                 <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${integrityTierClasses(narrativeIntegrityTier)}`}>
                   {narrativeIntegrityTier}
@@ -863,7 +834,7 @@ export function V3EntryShell() {
 
         {tacticalUnifiedLines.length > 0 && (
           <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-            <h3 className="mb-2 text-sm font-semibold text-zinc-200">Tactical Guidance</h3>
+            <h3 className="mb-2 text-sm font-semibold text-zinc-200">Tactical Guidance (Execution)</h3>
             <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-300">
               {tacticalUnifiedLines.map((line, idx) => (
                 <li key={idx}>{line}</li>
@@ -871,6 +842,62 @@ export function V3EntryShell() {
             </ul>
           </div>
         )}
+
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-zinc-200">Alert Rules (Secondary)</h3>
+            <span className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400">
+              Lower Priority
+            </span>
+          </div>
+          <AlertRulesPanel symbol={symbol} />
+        </div>
+
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-zinc-200">Narrative Signals (Context)</h2>
+            <div className="flex items-center gap-1.5">
+              {narrativeIntegrityTier && (
+                <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${integrityTierClasses(narrativeIntegrityTier)}`}>
+                  {narrativeIntegrityTier}
+                </span>
+              )}
+              <span className="rounded border border-indigo-800 bg-indigo-950/50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-200">
+                Scope: {screener?.scope ?? expiryScope}
+              </span>
+            </div>
+          </div>
+          {isLoading ? (
+            <p className="text-sm animate-pulse text-zinc-500">Loading…</p>
+          ) : signals.length === 0 ? (
+            <p className="text-sm text-zinc-500">No signals yet.</p>
+          ) : (
+            <div className="space-y-2 text-sm">
+              {signals.map((signal, idx) => (
+                <div key={idx} className="rounded-lg border border-zinc-800 bg-black p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium capitalize text-zinc-200">{signal.type}</span>
+                    <span className={`text-xs uppercase tracking-widest ${
+                      signal.severity === "STRONG" ? "text-rose-400"
+                      : signal.severity === "MODERATE" ? "text-amber-400"
+                      : "text-zinc-400"
+                    }`}>{signal.severity}</span>
+                  </div>
+                  <p className="mt-1 text-zinc-400">{signal.message}</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Level: {fmtNum(signal.level)} | Dist: {fmtNum(signal.distancePct)}%
+                  </p>
+                  <button
+                    onClick={() => setExplainOpen(true)}
+                    className="mt-2 text-xs text-indigo-300 hover:text-indigo-200"
+                  >
+                    Why this score?
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {(levels?.warnings?.length ?? 0) > 0 && <ModuleEmptyBanner state="degraded" moduleName="Key Levels" warnings={levels?.warnings ?? []} />}
 
