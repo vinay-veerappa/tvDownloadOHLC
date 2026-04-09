@@ -120,7 +120,7 @@ export function buildWhereClause(filters: MacroFilterState): string {
   }
 
   if (filters.advanced.judasExcursionThreshold !== null && filters.advanced.judasExcursionThreshold > 0) {
-    conditions.push(`judas_excursion_ratio >= ${filters.advanced.judasExcursionThreshold}`);
+    conditions.push(`(judas_classification NOT IN ('bullish_judas', 'bearish_judas') OR judas_excursion_ratio >= ${filters.advanced.judasExcursionThreshold})`);
   }
 
   return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

@@ -3,12 +3,14 @@
 import * as React from 'react';
 import { useState, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Cell } from 'recharts';
 import { buildWhereClause, getDistributionStatsSql, getHistogramSql } from '../lib/queryBuilder';
 import { runQuery } from '@/lib/duckdb';
 import { MacroFilterState } from '../types';
-import { Activity } from 'lucide-react';
+import { Activity, Expand } from 'lucide-react';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 
 interface DistributionChartsProps {
   filters: MacroFilterState;
@@ -156,6 +158,8 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
   const [data, setData] = useState<{ bin_start: number; count: number }[]>([]);
   const [stats, setStats] = useState<StatsSummaryData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [trimOutliers, setTrimOutliers] = useState(true);
+  const [expanded, setExpanded] = useState(false);
 
   const fetchHistogram = useCallback(async () => {
     if (!dbReady) return;
@@ -191,21 +195,71 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
           ? `${selectedChart.value} IS NOT NULL AND ${selectedChart.extraCondition}`
           : `${selectedChart.value} IS NOT NULL`;
 
-        sql = getHistogramSql(selectedChart.value, whereClause, selectedChart.binWidth);
         const histogramWhere = whereClause
           ? `${whereClause} AND ${extraCondition}`
           : `WHERE ${extraCondition}`;
-        sql = `
-          SELECT 
-            ROUND(FLOOR(${selectedChart.value} / ${selectedChart.binWidth}) * ${selectedChart.binWidth}, 3) as bin_start,
-            CAST(COUNT(*) AS DOUBLE) as count
-          FROM macro_records
-          ${histogramWhere}
-          GROUP BY bin_start
-          ORDER BY bin_start
-        `;
+        if (trimOutliers) {
+          sql = `
+            WITH filtered AS (
+              SELECT ${selectedChart.value} AS metric
+              FROM macro_records
+              ${histogramWhere}
+            ), bounds AS (
+              SELECT
+                quantile_cont(metric, 0.01) AS lo,
+                quantile_cont(metric, 0.99) AS hi
+              FROM filtered
+            )
+            SELECT
+              ROUND(FLOOR(metric / ${selectedChart.binWidth}) * ${selectedChart.binWidth}, 3) AS bin_start,
+              CAST(COUNT(*) AS DOUBLE) AS count
+            FROM filtered, bounds
+            WHERE metric BETWEEN lo AND hi
+            GROUP BY bin_start
+            ORDER BY bin_start
+          `;
+        } else {
+          sql = getHistogramSql(selectedChart.value, whereClause, selectedChart.binWidth);
+          sql = `
+            SELECT 
+              ROUND(FLOOR(${selectedChart.value} / ${selectedChart.binWidth}) * ${selectedChart.binWidth}, 3) as bin_start,
+              CAST(COUNT(*) AS DOUBLE) as count
+            FROM macro_records
+            ${histogramWhere}
+            GROUP BY bin_start
+            ORDER BY bin_start
+          `;
+        }
 
-        const statsSql = getDistributionStatsSql(selectedChart.value, whereClause, selectedChart.extraCondition);
+        const statsSql = trimOutliers
+          ? `
+              WITH filtered AS (
+                SELECT ${selectedChart.value} AS metric
+                FROM macro_records
+                ${histogramWhere}
+              ), bounds AS (
+                SELECT
+                  quantile_cont(metric, 0.01) AS lo,
+                  quantile_cont(metric, 0.99) AS hi
+                FROM filtered
+              ), clipped AS (
+                SELECT metric
+                FROM filtered, bounds
+                WHERE metric BETWEEN lo AND hi
+              )
+              SELECT
+                COUNT(*) AS n,
+                AVG(metric) AS mean,
+                quantile_cont(metric, 0.25) AS p25,
+                quantile_cont(metric, 0.5) AS median,
+                quantile_cont(metric, 0.75) AS p75,
+                mode(metric) AS mode,
+                stddev_samp(metric) AS std_dev,
+                MIN(metric) AS min_val,
+                MAX(metric) AS max_val
+              FROM clipped
+            `
+          : getDistributionStatsSql(selectedChart.value, whereClause, selectedChart.extraCondition);
         const statsResult = await runQuery(statsSql);
         if (statsResult.length > 0) {
           const row = statsResult[0] as Record<string, unknown>;
@@ -233,42 +287,14 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
     } finally {
       setLoading(false);
     }
-  }, [filters, selectedChart, dbReady]);
+  }, [filters, selectedChart, dbReady, trimOutliers]);
 
   useEffect(() => {
     fetchHistogram();
   }, [fetchHistogram]);
 
-  return (
-    <Card className="bg-zinc-950 border-zinc-800 p-4 h-[400px] flex flex-col hover:border-zinc-700 transition-colors">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 bg-zinc-900 rounded-md text-amber-500">
-            <Activity className="h-4 w-4" />
-          </div>
-          <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-400">Distribution Analysis</h2>
-        </div>
-        
-        <Select 
-          value={selectedChart.value} 
-          onValueChange={(val) => {
-            const option = CHART_OPTIONS.find(o => o.value === val);
-            if (option) setSelectedChart(option);
-          }}
-        >
-          <SelectTrigger className="w-[240px] h-8 text-xs border-zinc-800 bg-zinc-900/50">
-            <SelectValue placeholder="Select Metric" />
-          </SelectTrigger>
-          <SelectContent className="bg-zinc-950 border-zinc-800">
-            {CHART_OPTIONS.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value} className="text-xs hover:bg-zinc-900">
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
+  const chartBody = (
+    <>
       <div className="flex-1 min-h-0 relative">
         {loading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-zinc-950/50 backdrop-blur-[1px]">
@@ -288,11 +314,11 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
                 stroke="#52525b" 
                 fontSize={10} 
                 tickFormatter={(val) => formatBinLabel(val, selectedChart)}
-                // angle={-45} textAnchor="end"
               />
               <YAxis 
                 stroke="#52525b" 
                 fontSize={10} 
+                domain={[0, (dataMax: number) => Math.max(1, Math.ceil(dataMax * 1.05))]}
                 tickFormatter={(val) => val >= 1000 ? `${(val/1000).toFixed(1)}k` : val}
               />
               <RechartsTooltip 
@@ -312,6 +338,79 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
         )}
       </div>
       {selectedChart.mode === 'hist' && <StatsSummary stats={stats} chart={selectedChart} />}
+    </>
+  );
+
+  return (
+    <>
+    <Card className="bg-zinc-950 border-zinc-800 p-4 h-[400px] flex flex-col hover:border-zinc-700 transition-colors">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 bg-zinc-900 rounded-md text-amber-500">
+            <Activity className="h-4 w-4" />
+          </div>
+          <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-400">Distribution Analysis</h2>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Select 
+            value={selectedChart.value} 
+            onValueChange={(val) => {
+              const option = CHART_OPTIONS.find(o => o.value === val);
+              if (option) setSelectedChart(option);
+            }}
+          >
+            <SelectTrigger className="w-[240px] h-8 text-xs border-zinc-800 bg-zinc-900/50">
+              <SelectValue placeholder="Select Metric" />
+            </SelectTrigger>
+            <SelectContent className="bg-zinc-950 border-zinc-800">
+              {CHART_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value} className="text-xs hover:bg-zinc-900">
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 w-8 p-0 border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800"
+            onClick={() => setExpanded(true)}
+            title="Expand chart"
+          >
+            <Expand className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      {selectedChart.mode === 'hist' && (
+        <div className="mb-3 flex items-center justify-end gap-2 text-[10px] uppercase tracking-widest text-zinc-500">
+          <label htmlFor="trim-outliers" className="cursor-pointer">Trim Outliers (P1-P99)</label>
+          <input
+            id="trim-outliers"
+            type="checkbox"
+            checked={trimOutliers}
+            onChange={(e) => setTrimOutliers(e.target.checked)}
+            className="h-3.5 w-3.5 cursor-pointer rounded border-zinc-700 bg-zinc-900 accent-amber-500"
+          />
+        </div>
+      )}
+
+      {chartBody}
     </Card>
+
+    <Dialog open={expanded} onOpenChange={setExpanded}>
+      <DialogContent className="w-[96vw] max-w-[1400px] h-[88vh] p-4 bg-zinc-950 border-zinc-800">
+        <DialogTitle className="text-xs font-bold uppercase tracking-widest text-zinc-400">
+          Distribution Analysis - Expanded View
+        </DialogTitle>
+        <div className="h-[calc(88vh-5.5rem)]">
+          <Card className="bg-zinc-950 border-zinc-800 p-4 h-full flex flex-col">
+            {chartBody}
+          </Card>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

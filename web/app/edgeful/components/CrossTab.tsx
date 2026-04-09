@@ -3,13 +3,15 @@
 import * as React from 'react';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { buildWhereClause, getCrossTabMetricSql } from '../lib/queryBuilder';
 import { runQuery } from '@/lib/duckdb';
 import { MacroFilterState } from '../types';
-import { Rows3 } from 'lucide-react';
+import { Expand, Rows3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatLabel } from '../lib/formatters';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 
 interface CrossTabProps {
   filters: MacroFilterState;
@@ -51,6 +53,7 @@ export function CrossTab({ filters, dbReady }: CrossTabProps) {
   const [metric, setMetric] = useState(METRICS[0].value);
   const [data, setData] = useState<{ row_val: string; col_val: string; value: number; n: number }[]>([]);
   const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const fetchCrossTab = useCallback(async () => {
     if (!dbReady || rowDim === colDim) return;
@@ -110,7 +113,62 @@ export function CrossTab({ filters, dbReady }: CrossTabProps) {
 
   const selectedMetric = METRICS.find(m => m.value === metric) ?? METRICS[0];
 
+  const matrixTable = (
+    <div className="flex-1 overflow-auto relative rounded border border-zinc-800">
+      {loading && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-zinc-950/50 backdrop-blur-[1px]">
+            <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+        </div>
+      )}
+      
+      <table className="w-full text-xs text-left border-collapse min-w-max">
+        <thead className="sticky top-0 bg-zinc-950 z-20 shadow-sm border-b border-zinc-800">
+          <tr>
+            <th className="p-2 font-bold text-zinc-500 uppercase tracking-widest bg-zinc-950/90 whitespace-nowrap">
+              {DIMENSIONS.find(d => d.value === rowDim)?.label} \ {DIMENSIONS.find(d => d.value === colDim)?.label}
+            </th>
+            {colLabels.map(c => (
+              <th key={c} className="p-2 font-medium text-zinc-300 text-center uppercase whitespace-nowrap">{formatLabel(c)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rowLabels.map(r => (
+            <tr key={r} className="border-b border-zinc-900/50 last:border-0 hover:bg-zinc-900/20 transition-colors">
+              <td className="p-2 font-medium text-amber-500/80 whitespace-nowrap bg-zinc-950/50">{formatLabel(r)}</td>
+              {colLabels.map(c => {
+                const cell = matrix[r][c] || { value: 0, n: 0 };
+                const intensity = maxN > 0 ? cell.n / maxN : 0;
+                const sampleClass = cell.n > 100 ? 'text-emerald-400' : cell.n >= 30 ? 'text-amber-400' : 'text-rose-400';
+                return (
+                  <td key={c} className="p-2 text-center text-zinc-300 relative">
+                    <div 
+                      className="absolute inset-1 bg-emerald-500 rounded-sm opacity-10 pointer-events-none" 
+                      style={{ opacity: intensity * 0.4 }}
+                    />
+                    <div className="relative z-10 leading-tight">
+                      <div className="font-medium">{selectedMetric.format(cell.value)}</div>
+                      <div className={cn('text-[10px]', sampleClass)}>N={cell.n.toLocaleString()}</div>
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+          {rowLabels.length === 0 && !loading && (
+            <tr>
+              <td colSpan={colLabels.length + 1} className="p-8 text-center text-zinc-600">
+                No data to cross-tabulate for the current filters.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+
   return (
+    <>
     <Card className="bg-zinc-950 border-zinc-800 p-4 h-[400px] flex flex-col hover:border-zinc-700 transition-colors">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
@@ -161,61 +219,34 @@ export function CrossTab({ filters, dbReady }: CrossTabProps) {
               ))}
             </SelectContent>
           </Select>
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 w-8 p-0 border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800"
+            onClick={() => setExpanded(true)}
+            title="Expand matrix"
+          >
+            <Expand className="h-3.5 w-3.5" />
+          </Button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto relative rounded border border-zinc-800">
-        {loading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-zinc-950/50 backdrop-blur-[1px]">
-             <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
-          </div>
-        )}
-        
-        <table className="w-full text-xs text-left border-collapse min-w-max">
-          <thead className="sticky top-0 bg-zinc-950 z-20 shadow-sm border-b border-zinc-800">
-            <tr>
-              <th className="p-2 font-bold text-zinc-500 uppercase tracking-widest bg-zinc-950/90 whitespace-nowrap">
-                {DIMENSIONS.find(d => d.value === rowDim)?.label} \ {DIMENSIONS.find(d => d.value === colDim)?.label}
-              </th>
-              {colLabels.map(c => (
-                <th key={c} className="p-2 font-medium text-zinc-300 text-center uppercase whitespace-nowrap">{formatLabel(c)}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rowLabels.map(r => (
-              <tr key={r} className="border-b border-zinc-900/50 last:border-0 hover:bg-zinc-900/20 transition-colors">
-                <td className="p-2 font-medium text-amber-500/80 whitespace-nowrap bg-zinc-950/50">{formatLabel(r)}</td>
-                {colLabels.map(c => {
-                  const cell = matrix[r][c] || { value: 0, n: 0 };
-                  const intensity = maxN > 0 ? cell.n / maxN : 0;
-                  const sampleClass = cell.n > 100 ? 'text-emerald-400' : cell.n >= 30 ? 'text-amber-400' : 'text-rose-400';
-                  return (
-                    <td key={c} className="p-2 text-center text-zinc-300 relative">
-                      {/* Background Heatmap indicator */}
-                      <div 
-                        className="absolute inset-1 bg-emerald-500 rounded-sm opacity-10 pointer-events-none" 
-                        style={{ opacity: intensity * 0.4 }}
-                      />
-                      <div className="relative z-10 leading-tight">
-                        <div className="font-medium">{selectedMetric.format(cell.value)}</div>
-                        <div className={cn('text-[10px]', sampleClass)}>N={cell.n.toLocaleString()}</div>
-                      </div>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-            {rowLabels.length === 0 && !loading && (
-              <tr>
-                <td colSpan={colLabels.length + 1} className="p-8 text-center text-zinc-600">
-                  No data to cross-tabulate for the current filters.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      {matrixTable}
     </Card>
+
+    <Dialog open={expanded} onOpenChange={setExpanded}>
+      <DialogContent className="w-[96vw] max-w-[1500px] h-[90vh] p-4 bg-zinc-950 border-zinc-800">
+        <DialogTitle className="text-xs font-bold uppercase tracking-widest text-zinc-400">
+          Conditional Matrix - Expanded View
+        </DialogTitle>
+        <div className="h-[calc(90vh-5.5rem)]">
+          <Card className="bg-zinc-950 border-zinc-800 p-4 h-full flex flex-col">
+            {matrixTable}
+          </Card>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

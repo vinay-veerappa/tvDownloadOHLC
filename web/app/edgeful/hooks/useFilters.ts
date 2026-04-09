@@ -72,7 +72,7 @@ export function useFilters() {
     
     const params = new URLSearchParams(searchParams.toString());
     const filterString = JSON.stringify(filters);
-    const newParamStr = filterString !== JSON.stringify(INITIAL_STATE) ? encodeURIComponent(filterString) : null;
+    const newParamStr = filterString !== JSON.stringify(INITIAL_STATE) ? filterString : null;
     const currentParam = searchParams.get('state');
 
     // Prevent deep loop by checking if state actually needs to be updated

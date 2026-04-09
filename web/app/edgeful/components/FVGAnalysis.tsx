@@ -11,6 +11,8 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveCont
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Expand } from 'lucide-react';
 
 interface FVGAnalysisProps {
   filters: MacroFilterState;
@@ -102,6 +104,7 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
   const [chartType, setChartType] = useState<FvgChartOption>('hold_by_phase');
   const [chartData, setChartData] = useState<Array<{ label: string; value: number; count?: number }>>([]);
   const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const fetchFvgData = useCallback(async () => {
     if (!dbReady) return;
@@ -228,6 +231,64 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
     return null;
   }
 
+  const chartBody = (
+    <div className="flex-1 relative">
+      {loading && (
+       <div className="absolute inset-0 z-10 flex items-center justify-center bg-zinc-950/50 backdrop-blur-[1px]">
+          <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+       </div>
+      )}
+      {chartData.length === 0 && !loading ? (
+      <div className="h-full flex items-center justify-center text-zinc-600 text-xs">
+        No FVG data matches current filters.
+      </div>
+      ) : (
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={140}>
+          <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <XAxis dataKey="label" stroke="#52525b" fontSize={10} tickFormatter={(val) => String(val).replace(/_/g, ' ')} />
+            <YAxis
+              stroke="#52525b"
+              fontSize={10}
+              domain={[0, (dataMax: number) => Math.max(1, Math.ceil(dataMax * 1.05))]}
+              tickFormatter={(val) => {
+                if (chartType === 'fill_depth' || chartType === 'test_time' || chartType === 'fvg_size') {
+                  return `${val}`;
+                }
+                return `${val}%`;
+              }}
+            />
+            <RechartsTooltip 
+              contentStyle={{ backgroundColor: '#09090b', borderColor: '#27272a', fontSize: '12px' }}
+              itemStyle={{ color: '#f4f4f5' }}
+              formatter={(value: number) => {
+                if (chartType === 'fill_depth') return [value.toLocaleString(), 'Count'];
+                if (chartType === 'test_time') return [value.toLocaleString(), 'Count'];
+                if (chartType === 'fvg_size') return [value.toLocaleString(), 'Count'];
+                return [value.toFixed(1) + '%', 'Hold Rate'];
+              }}
+              labelFormatter={(label) => String(label).replace(/_/g, ' ')}
+              cursor={{ fill: '#27272a', opacity: 0.4 }}
+            />
+            <Bar
+              dataKey="value"
+              name="Value"
+              fill={chartType === 'hold_by_phase' || chartType === 'hold_by_tag' ? '#10b981' : '#f59e0b'}
+              radius={[2, 2, 0, 0]}
+            >
+              {chartData.map((entry, index) => (
+                <Cell
+                  key={'cell-' + index}
+                  fill={chartType === 'hold_by_phase' || chartType === 'hold_by_tag' ? '#10b981' : '#f59e0b'}
+                  className="opacity-80 hover:opacity-100 transition-opacity"
+                />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-6">
       <Card className="bg-zinc-950 border-zinc-800 p-4 space-y-4">
@@ -309,75 +370,45 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
             </div>
             <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-400">FVG Distribution</h2>
           </div>
-          <Select value={chartType} onValueChange={(v) => setChartType(v as FvgChartOption)}>
-            <SelectTrigger className="w-[220px] h-8 text-xs border-zinc-800 bg-zinc-900/50">
-              <SelectValue placeholder="Select FVG View" />
-            </SelectTrigger>
-            <SelectContent className="bg-zinc-950 border-zinc-800">
-              {FVG_CHART_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value} className="text-xs hover:bg-zinc-900">
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-2">
+            <Select value={chartType} onValueChange={(v) => setChartType(v as FvgChartOption)}>
+              <SelectTrigger className="w-[220px] h-8 text-xs border-zinc-800 bg-zinc-900/50">
+                <SelectValue placeholder="Select FVG View" />
+              </SelectTrigger>
+              <SelectContent className="bg-zinc-950 border-zinc-800">
+                {FVG_CHART_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value} className="text-xs hover:bg-zinc-900">
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-8 p-0 border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800"
+              onClick={() => setExpanded(true)}
+              title="Expand chart"
+            >
+              <Expand className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
-        
-        <div className="flex-1 relative">
-           {loading && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-zinc-950/50 backdrop-blur-[1px]">
-               <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
-            </div>
-          )}
-          {chartData.length === 0 && !loading ? (
-           <div className="h-full flex items-center justify-center text-zinc-600 text-xs">
-             No FVG data matches current filters.
-           </div>
-          ) : (
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={140}>
-              <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <XAxis dataKey="label" stroke="#52525b" fontSize={10} tickFormatter={(val) => String(val).replace(/_/g, ' ')} />
-                <YAxis
-                  stroke="#52525b"
-                  fontSize={10}
-                  tickFormatter={(val) => {
-                    if (chartType === 'fill_depth' || chartType === 'test_time' || chartType === 'fvg_size') {
-                      return `${val}`;
-                    }
-                    return `${val}%`;
-                  }}
-                />
-                <RechartsTooltip 
-                  contentStyle={{ backgroundColor: '#09090b', borderColor: '#27272a', fontSize: '12px' }}
-                  itemStyle={{ color: '#f4f4f5' }}
-                  formatter={(value: number) => {
-                    if (chartType === 'fill_depth') return [value.toLocaleString(), 'Count'];
-                    if (chartType === 'test_time') return [value.toLocaleString(), 'Count'];
-                    if (chartType === 'fvg_size') return [value.toLocaleString(), 'Count'];
-                    return [value.toFixed(1) + '%', 'Hold Rate'];
-                  }}
-                  labelFormatter={(label) => String(label).replace(/_/g, ' ')}
-                  cursor={{ fill: '#27272a', opacity: 0.4 }}
-                />
-                <Bar
-                  dataKey="value"
-                  name="Value"
-                  fill={chartType === 'hold_by_phase' || chartType === 'hold_by_tag' ? '#10b981' : '#f59e0b'}
-                  radius={[2, 2, 0, 0]}
-                >
-                  {chartData.map((entry, index) => (
-                    <Cell
-                      key={'cell-' + index}
-                      fill={chartType === 'hold_by_phase' || chartType === 'hold_by_tag' ? '#10b981' : '#f59e0b'}
-                      className="opacity-80 hover:opacity-100 transition-opacity"
-                    />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+        {chartBody}
       </Card>
+
+      <Dialog open={expanded} onOpenChange={setExpanded}>
+        <DialogContent className="w-[96vw] max-w-[1400px] h-[88vh] p-4 bg-zinc-950 border-zinc-800">
+          <DialogTitle className="text-xs font-bold uppercase tracking-widest text-zinc-400">
+            FVG Distribution - Expanded View
+          </DialogTitle>
+          <div className="h-[calc(88vh-5.5rem)]">
+            <Card className="bg-zinc-950 border-zinc-800 p-4 h-full flex flex-col">
+              {chartBody}
+            </Card>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
