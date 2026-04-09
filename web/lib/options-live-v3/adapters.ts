@@ -852,7 +852,7 @@ export async function buildByStrike(
         put_avg_iv: putAvgIv,
       };
     })
-    .sort((a, b) => Number(a.strike ?? 0) - Number(b.strike ?? 0));
+    .sort((a, b) => Number((a as Record<string, unknown>).strike ?? 0) - Number((b as Record<string, unknown>).strike ?? 0));
 
   const ticker = resolveTickerEntry(state, symbol);
   let spot = toNum(ticker?.spot);
@@ -892,7 +892,7 @@ export async function buildByStrike(
     let nearestDist = Number.POSITIVE_INFINITY;
 
     for (let i = 0; i < rows.length; i += 1) {
-      const strike = Number(rows[i].strike ?? 0);
+      const strike = Number((rows[i] as Record<string, unknown>).strike ?? 0);
       const dist = Math.abs(strike - spot);
       if (dist < nearestDist) {
         nearestDist = dist;

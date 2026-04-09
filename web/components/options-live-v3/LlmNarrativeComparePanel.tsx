@@ -103,7 +103,7 @@ export function LlmNarrativeComparePanel({ symbol, expiryScope }: Props) {
                   </span>
                   <span className="text-sm font-medium text-zinc-100">{card.model}</span>
                 </div>
-                {typeof card.latencyMs === "number" && (
+                {('latencyMs' in card) && typeof card.latencyMs === "number" && (
                   <span className="text-[11px] text-zinc-500">{(card.latencyMs / 1000).toFixed(1)}s</span>
                 )}
               </div>

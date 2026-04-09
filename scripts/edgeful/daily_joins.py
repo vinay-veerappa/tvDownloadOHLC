@@ -21,7 +21,7 @@ def join_daily_data(macro_df: pd.DataFrame, instrument: str) -> pd.DataFrame:
     csv_path = ICT_RESEARCH_DIR / f"trading_days_enhanced_{inst_short}.csv"
     
     if csv_path.exists():
-        daily_csv = pd.read_csv(csv_path)
+        daily_csv = pd.read_csv(csv_path, low_memory=False)
         daily_csv['trading_date'] = pd.to_datetime(daily_csv['date']).astype('datetime64[ns]')
         
         # Select key columns to avoid naming collisions and clutter

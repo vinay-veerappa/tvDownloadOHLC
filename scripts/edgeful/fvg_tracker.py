@@ -88,6 +88,6 @@ def track_fvg_outcomes(fvg_df: pd.DataFrame, bars_1m: pd.DataFrame, macro_df: pd
     res_df = fvg_df.merge(outcomes, on='fvg_id', how='left')
     
     # Held = tested but not failed
-    res_df['held'] = res_df['was_tested'] & ~res_df['failed'].fillna(True)
+    res_df['held'] = res_df['was_tested'] & ~res_df['failed'].infer_objects(copy=False).fillna(True)
     
     return res_df

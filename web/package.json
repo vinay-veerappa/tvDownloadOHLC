@@ -12,6 +12,7 @@
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
   },
   "dependencies": {
+    "@duckdb/duckdb-wasm": "^1.33.1-dev44.0",
     "@hookform/resolvers": "^5.2.2",
     "@prisma/client": "^5.17.0",
     "@radix-ui/react-alert-dialog": "^1.1.15",
@@ -50,7 +51,7 @@
     "recharts": "^3.5.1",
     "sonner": "^2.0.7",
     "swr": "^2.3.7",
-    "tailwind-merge": "^3.4.0",
+    "tailwind-merge": "^3.5.0",
     "yahoo-finance2": "^3.10.2",
     "zod": "^4.1.13"
   },
