@@ -22,7 +22,7 @@ PRISMA_DB_PATH = Path(r"C:\Users\vinay\tvDownloadOHLC\web\prisma\dev.db")
 # Parameters (Phase 4)
 # ==========================================
 PIVOT_LENGTH = 13
-NEUTRAL_THRESHOLD = 0.1  # 0.1% threshold for close vs open equality
+#NEUTRAL_THRESHOLD = 0.1  # 0.1% threshold for close vs open equality
 VOL_AVG_LOOKBACK = 20      # Rolling average for volume_vs_avg
 
 # ==========================================

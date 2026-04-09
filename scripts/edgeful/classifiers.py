@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
-from .config import NEUTRAL_THRESHOLD
+"""from .config import NEUTRAL_THRESHOLD
+"""
 
 def classify_judas_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -13,17 +14,19 @@ def classify_judas_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     
     has_excursion_above = macro_high > macro_open
     has_excursion_below = macro_low < macro_open
-    close_above = macro_close > macro_open
+    close_above = macro_close >= macro_open
     close_below = macro_close < macro_open
     
+    """
     is_neutral = (macro_close - macro_open).abs() / macro_open * 100 < NEUTRAL_THRESHOLD
+    """    
+    classification = pd.Series("trend_up", index=df.index)
+
     
-    classification = pd.Series("neutral", index=df.index)
-    
-    bull_judas = close_below & has_excursion_above & ~is_neutral
-    bear_judas = close_above & has_excursion_below & ~is_neutral
-    trend_up = close_above & ~has_excursion_below & ~is_neutral
-    trend_down = close_below & ~has_excursion_above & ~is_neutral
+    bull_judas = close_below & has_excursion_above 
+    bear_judas = close_above & has_excursion_below 
+    trend_up = close_above & ~has_excursion_below 
+    trend_down = close_below & ~has_excursion_above 
     
     classification = np.where(bull_judas, "bullish_judas", classification)
     classification = np.where(bear_judas, "bearish_judas", classification)
