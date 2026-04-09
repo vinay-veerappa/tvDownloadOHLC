@@ -10,18 +10,10 @@ import { MacroFilterState, MacroRecord } from '../types';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, LayoutList, Download } from 'lucide-react';
 import { getSummarySql } from '../lib/queryBuilder';
+import { formatLabel } from '../lib/formatters';
+import { cn } from '@/lib/utils';
 
-const formatLabel = (str: string) => {
-  if (!str) return '--';
-  const instruments = ['ES1', 'NQ1', 'YM1', 'RTY1', 'CL1', 'GC1'];
-  const upper = str.toUpperCase();
-  if (instruments.includes(upper)) return upper;
 
-  return str.split('_').map(word => {
-    if (['vix', 'rth', 'am', 'pm'].includes(word.toLowerCase())) return word.toUpperCase();
-    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-  }).join(' ');
-}
 
 interface DrillDownTableProps {
   filters: MacroFilterState;
@@ -197,19 +189,19 @@ export function DrillDownTable({ filters, dbReady }: DrillDownTableProps) {
                 Date <SortIcon col="trading_date" />
               </TableHead>
               <TableHead className="cursor-pointer group select-none whitespace-nowrap bg-zinc-950/90 text-[10px] uppercase font-bold tracking-widest text-zinc-500" onClick={() => toggleSort('instrument')}>
-                Inst <SortIcon col="instrument" />
+                Instrument <SortIcon col="instrument" />
               </TableHead>
-              <TableHead className="cursor-pointer group select-none whitespace-nowrap bg-zinc-950/90 text-[10px] uppercase font-bold tracking-widest text-zinc-500" onClick={() => toggleSort('ict_alias')}>
-                Macro Window <SortIcon col="ict_alias" />
+              <TableHead className="cursor-pointer group select-none whitespace-nowrap bg-zinc-950/90 text-[10px] uppercase font-bold tracking-widest text-zinc-500" onClick={() => toggleSort('macro_name_raw')}>
+                Macro Window <SortIcon col="macro_name_raw" />
               </TableHead>
               <TableHead className="cursor-pointer group select-none whitespace-nowrap bg-zinc-950/90 text-[10px] uppercase font-bold tracking-widest text-zinc-500" onClick={() => toggleSort('judas_classification')}>
                 Judas Class <SortIcon col="judas_classification" />
               </TableHead>
               <TableHead className="text-right cursor-pointer group select-none whitespace-nowrap bg-zinc-950/90 text-[10px] uppercase font-bold tracking-widest text-zinc-500" onClick={() => toggleSort('post_macro_continuation_pct')}>
-                Contin % <SortIcon col="post_macro_continuation_pct" />
+                Continuation % <SortIcon col="post_macro_continuation_pct" />
               </TableHead>
               <TableHead className="text-right cursor-pointer group select-none whitespace-nowrap bg-zinc-950/90 text-[10px] uppercase font-bold tracking-widest text-zinc-500" onClick={() => toggleSort('post_macro_reversion_pct')}>
-                Revers % <SortIcon col="post_macro_reversion_pct" />
+                Reversion % <SortIcon col="post_macro_reversion_pct" />
               </TableHead>
               <TableHead className="text-right cursor-pointer group select-none whitespace-nowrap bg-zinc-950/90 text-[10px] uppercase font-bold tracking-widest text-zinc-500" onClick={() => toggleSort('macro_range_pct')}>
                 Range % <SortIcon col="macro_range_pct" />
@@ -230,7 +222,7 @@ export function DrillDownTable({ filters, dbReady }: DrillDownTableProps) {
                     {row.trading_date ? new Date(Number(row.trading_date)).toISOString().split('T')[0] : '--'}
                   </TableCell>
                   <TableCell className="py-2 text-[11px] font-bold text-amber-500/90">{formatLabel(row.instrument)}</TableCell>
-                  <TableCell className="py-2 text-[11px] text-zinc-400 font-medium">{formatLabel(row.ict_alias)}</TableCell>
+                  <TableCell className="py-2 text-[11px] text-zinc-400 font-medium">{formatLabel(row.ict_alias || row.macro_name_raw)}</TableCell>
                   <TableCell className="py-2 text-[11px] text-zinc-400">
                     <span className={
                       row.judas_classification === 'bullish_judas' ? 'text-emerald-500/80 bg-emerald-500/10 px-1.5 py-0.5 rounded' : 

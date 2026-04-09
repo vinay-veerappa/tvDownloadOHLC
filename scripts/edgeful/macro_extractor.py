@@ -220,12 +220,12 @@ def extract_macros_for_instrument(
     macro_df['high_offset_m'] = (
         (macro_df['high_time_last'] - macro_df['macro_start'])
         .dt.total_seconds() / 60
-    ).fillna(0).round().astype(int)
+    ).round()
 
     macro_df['low_offset_m'] = (
         (macro_df['low_time_last'] - macro_df['macro_start'])
         .dt.total_seconds() / 60
-    ).fillna(0).round().astype(int)
+    ).round()
 
     # Cross-midnight fix: if offset is negative, add 24 hours worth of minutes
     macro_df['high_offset_m'] = macro_df['high_offset_m'].where(
@@ -292,6 +292,34 @@ def extract_macros_for_instrument(
         np.where(
             is_bear_judas, macro_df['low_offset_m'] < macro_df['high_offset_m'],
             None
+        )
+    )
+
+    # Judas inflection timing and real move extreme timing are explicit fields
+    # so downstream charts can separate fake-move timing from displacement timing.
+    macro_df['judas_inflection_m'] = np.where(
+        is_bull_judas,
+        macro_df['high_offset_m'],
+        np.where(is_bear_judas, macro_df['low_offset_m'], np.nan),
+    )
+    macro_df['real_move_extreme_m'] = np.where(
+        is_bull_judas,
+        macro_df['low_offset_m'],
+        np.where(is_bear_judas, macro_df['high_offset_m'], np.nan),
+    )
+
+    # Judas excursion ratio: % of macro range that the Judas fake move represented
+    # Used to filter noise (1-tick wicks) from real setups (10+ tick moves)
+    macro_range = macro_df['high'] - macro_df['low']
+    safe_range = macro_range.replace(0, np.nan)
+    
+    macro_df['judas_excursion_ratio'] = np.where(
+        is_bull_judas,
+        (macro_df['high'] - macro_df['open']) / safe_range * 100,
+        np.where(
+            is_bear_judas,
+            (macro_df['open'] - macro_df['low']) / safe_range * 100,
+            np.nan
         )
     )
 
@@ -365,7 +393,7 @@ def extract_macros_for_instrument(
         'open', 'high', 'low', 'close', 'macro_mid', 'volume',
 
         # Timing
-        'high_offset_m', 'low_offset_m', 'extreme_spread',
+        'high_offset_m', 'low_offset_m', 'judas_inflection_m', 'real_move_extreme_m', 'extreme_spread',
 
         # Percentage fields (% of macro_open)
         'macro_range_pct', 'excursion_above_pct', 'excursion_below_pct',
@@ -380,7 +408,7 @@ def extract_macros_for_instrument(
         # Judas classification
         'judas_classification', 'judas_extreme',
         'judas_magnitude_pct', 'real_move_magnitude_pct', 'judas_to_real_ratio',
-        'judas_first',
+        'judas_first', 'judas_excursion_ratio',
 
         # Volume
         'judas_phase_volume', 'real_move_phase_volume', 'volume_ratio',

@@ -119,6 +119,10 @@ export function buildWhereClause(filters: MacroFilterState): string {
     conditions.push(`((excursion_above_pct BETWEEN ${min} AND ${max}) OR (excursion_below_pct BETWEEN ${min} AND ${max}))`);
   }
 
+  if (isActiveRange(filters.advanced.judasExcursionRange, 0, 100)) {
+    conditions.push(`judas_excursion_ratio BETWEEN ${filters.advanced.judasExcursionRange[0]} AND ${filters.advanced.judasExcursionRange[1]}`);
+  }
+
   return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 }
 
@@ -155,6 +159,48 @@ export function getHistogramSql(column: string, whereClause: string, binWidth: n
     ${finalWhere}
     GROUP BY bin_start
     ORDER BY bin_start
+  `;
+}
+
+/**
+ * Generates SQL for summary statistics of a numeric distribution.
+ */
+export function getDistributionStatsSql(column: string, whereClause: string, extraCondition?: string): string {
+  const conditions = [`${column} IS NOT NULL`];
+  if (extraCondition) {
+    conditions.push(extraCondition);
+  }
+
+  const mergedCondition = conditions.join(' AND ');
+  const finalWhere = whereClause ? `${whereClause} AND ${mergedCondition}` : `WHERE ${mergedCondition}`;
+
+  return `
+    WITH filtered AS (
+      SELECT ${column} AS val
+      FROM macro_records
+      ${finalWhere}
+    ),
+    mode_calc AS (
+      SELECT val AS mode_val
+      FROM (
+        SELECT val, COUNT(*) AS c
+        FROM filtered
+        GROUP BY val
+        ORDER BY c DESC, val ASC
+        LIMIT 1
+      ) m
+    )
+    SELECT
+      CAST(COUNT(*) AS DOUBLE) AS n,
+      CAST(AVG(val) AS DOUBLE) AS mean,
+      CAST(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY val) AS DOUBLE) AS p25,
+      CAST(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY val) AS DOUBLE) AS median,
+      CAST(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY val) AS DOUBLE) AS p75,
+      CAST((SELECT mode_val FROM mode_calc) AS DOUBLE) AS mode,
+      CAST(STDDEV(val) AS DOUBLE) AS std_dev,
+      CAST(MIN(val) AS DOUBLE) AS min_val,
+      CAST(MAX(val) AS DOUBLE) AS max_val
+    FROM filtered
   `;
 }
 

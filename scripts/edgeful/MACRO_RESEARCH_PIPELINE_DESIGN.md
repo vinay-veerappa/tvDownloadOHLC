@@ -130,10 +130,9 @@ For each trading day × each macro window × each instrument:
 - Macro high never goes above macro open (no wick above)
 - Macro close is below macro open
 
-**Neutral:**
-- Macro close equals macro open (within `NEUTRAL_THRESHOLD` percentage)
+There is no neutral category. Every macro is directionally classified.
 
-**Key design decision:** The Judas side is determined by the **outcome** (where the macro closes relative to the open), not by the sequence of moves. If price dips 2 ticks below the open, rallies 15 ticks above, then crashes 10 ticks below — the rally above is the Judas, confirmed by the close below the open.
+**Key design decision:** The Judas side is determined by the **outcome** (where the macro closes relative to the open), not by the sequence of moves. If price dips 2 ticks below the open, rallies 15 ticks above, then crashes 10 ticks below, the rally above is the Judas because the macro closes below the open.
 
 **Edge case — price never crosses the open on the Judas side:** In a bullish Judas, the macro high must be above the open. In the case where all bars traded below the open and close is below the open, this is `trend_down`, not a Judas.
 
@@ -478,9 +477,13 @@ These are **developing** values computed from bars prior to macro start. Null wh
 - `open_quartile`, `close_quartile` — 1–4 within macro range
 
 **Judas Classification**
-- `classification` — bullish_judas / bearish_judas / trend_up / trend_down / neutral
+- `classification` — bullish_judas / bearish_judas / trend_up / trend_down
 - `judas_extreme` — price level
 - `judas_magnitude_pct`, `real_move_magnitude_pct`, `judas_to_real_ratio`
+
+**Inflection Timing Fields**
+- `judas_inflection_m` — minute of the Judas-side extreme (bullish_judas -> high_offset_m, bearish_judas -> low_offset_m)
+- `real_move_extreme_m` — minute of the real-move extreme (bullish_judas -> low_offset_m, bearish_judas -> high_offset_m)
 
 **Indicator Classification**
 - `indicator_class` — Accum / Expansion / Manip
@@ -779,13 +782,10 @@ The most common case is that macro_high > macro_open AND macro_low < macro_open 
 def classify_judas(macro_open, macro_high, macro_low, macro_close):
     has_excursion_above = macro_high > macro_open
     has_excursion_below = macro_low < macro_open
-    close_above = macro_close > macro_open
+    close_above = macro_close >= macro_open
     close_below = macro_close < macro_open
-    is_neutral = abs(macro_close - macro_open) / macro_open * 100 < NEUTRAL_THRESHOLD
-    
-    if is_neutral:
-        return "neutral"
-    elif close_below and has_excursion_above:
+
+    if close_below and has_excursion_above:
         return "bullish_judas"    # Fake up, real down
     elif close_above and has_excursion_below:
         return "bearish_judas"    # Fake down, real up
@@ -793,8 +793,7 @@ def classify_judas(macro_open, macro_high, macro_low, macro_close):
         return "trend_up"         # No fake, just went up
     elif close_below and not has_excursion_above:
         return "trend_down"       # No fake, just went down
-    else:
-        return "neutral"
+    return "trend_up"             # Exact flat edge case (open==high==low==close)
 ```
 
 Do NOT add logic requiring the Judas side to have "more" excursion than the real side. A 2-tick wick above the open with a close 15 ticks below is still a bullish Judas.
@@ -928,12 +927,12 @@ elif classification in ("bearish_judas",):
     # Judas extreme is the low, real move extreme is the high
     judas_first = macro_low_bar < macro_high_bar
 else:
-    judas_first = None  # Not applicable for trend_up/trend_down/neutral
+    judas_first = None  # Not applicable for trend_up/trend_down
 ```
 
 **15. `judas_to_real_ratio` — Division by Zero**
 
-If `real_move_magnitude_pct` is zero (neutral case), the ratio is undefined. Set to `None`/`NaN`:
+If `real_move_magnitude_pct` is zero, the ratio is undefined. Set to `None`/`NaN`:
 
 ```python
 if real_move_magnitude_pct > 0:
@@ -1076,7 +1075,7 @@ else:
     phase = 'real_move_phase'
 ```
 
-For trend_up/trend_down/neutral classifications, all FVGs are tagged as `real_move_phase` since there's no Judas inflection.
+For trend_up/trend_down classifications, all FVGs are tagged as `real_move_phase` since there's no Judas inflection.
 
 **9. `is_first_presented` Tag**
 
@@ -1219,7 +1218,7 @@ Both `continuation_pct` and `reversion_pct` should be positive values representi
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | PIVOT_LENGTH | 13 | Lookback/lookforward for pivot detection |
-| NEUTRAL_THRESHOLD | 0.001 | % threshold for macro close ≈ open |
+| EXCLUDED_STANDARD_MACRO_START_HOURS | {17} | Excludes invalid 17:50 standard macro |
 | STANDARD_MACRO_DURATION | 20 min | XX:50 to XX+1:10 |
 | HYDRA_MACRO_DURATION | 20 min | XX:20 to XX:40 |
 | LOOKFORWARD_STANDARD | Until next standard macro start | ~40 min post-macro |

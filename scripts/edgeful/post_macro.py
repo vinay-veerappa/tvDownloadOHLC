@@ -150,7 +150,7 @@ def compute_post_macro_outcomes(macro_df: pd.DataFrame, bars_1m: pd.DataFrame) -
     
     res_df['real_direction'] = np.where(
         res_df['judas_classification'].isin(['bullish_judas', 'trend_down']), 'down',
-        np.where(res_df['judas_classification'].isin(['bearish_judas', 'trend_up']), 'up', None)
+        'up'
     )
     
     macro_open = res_df['open']

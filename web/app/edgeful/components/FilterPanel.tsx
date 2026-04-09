@@ -12,25 +12,9 @@ import { ChevronDown, Filter, RotateCcw, X } from 'lucide-react';
 import { MacroFilterState } from '../types';
 import { cn } from '@/lib/utils';
 import { Slider } from '@/components/ui/slider';
+import { formatLabel, getICTSessionValues } from '../lib/formatters';
 
-const formatLabel = (str: string) => {
-  if (!str) return '';
-  const instruments = ['ES1', 'NQ1', 'YM1', 'RTY1', 'CL1', 'GC1'];
-  const upper = str.toUpperCase();
-  if (instruments.includes(upper)) return upper;
-  
-  // Handle common abbreviations or already clean labels
-  if (['VIX', 'RTH', 'AM', 'PM'].includes(upper)) return upper;
-
-  return str.split('_').map(word => {
-    if (['vix', 'rth', 'am', 'pm'].includes(word.toLowerCase())) return word.toUpperCase();
-    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-  }).join(' ');
-}
-
-const ICT_ALIASES = [
-  'London_1', 'London_2', 'NY_AM_1', 'NY_AM_2', 'NY_Lunch', 'NY_PM', 'NY_Close', 'Asia_1', 'Asia_2', 'Asia_3'
-];
+const ICT_ALIASES = getICTSessionValues();
 
 interface MultiSelectProps {
   label: string;
@@ -208,7 +192,7 @@ export function FilterPanel({ filters, updateFilter, updateDateRange, updateAdva
             />
             <MultiSelect 
               label="Judas" 
-              options={['bullish_judas', 'bearish_judas', 'trend_up', 'trend_down', 'neutral']} 
+              options={['bullish_judas', 'bearish_judas', 'trend_up', 'trend_down']} 
               selected={filters.judasClass}
               onChange={(v) => updateFilter('judasClass', v)}
             />
@@ -385,6 +369,20 @@ export function FilterPanel({ filters, updateFilter, updateDateRange, updateAdva
                     step={0.01}
                     value={[filters.advanced.excursionRange?.[0] ?? 0, filters.advanced.excursionRange?.[1] ?? 4]}
                     onValueChange={(v) => updateAdvanced('excursionRange', v)}
+                    className="py-1"
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
+                    <span>Judas Excursion Ratio %</span>
+                    <span className="text-amber-500">{(filters.advanced.judasExcursionRange?.[0] ?? 0).toFixed(1)}% - {(filters.advanced.judasExcursionRange?.[1] ?? 100).toFixed(1)}%</span>
+                  </div>
+                  <Slider
+                    max={100}
+                    step={0.5}
+                    value={[filters.advanced.judasExcursionRange?.[0] ?? 0, filters.advanced.judasExcursionRange?.[1] ?? 100]}
+                    onValueChange={(v) => updateAdvanced('judasExcursionRange', v)}
                     className="py-1"
                   />
                 </div>

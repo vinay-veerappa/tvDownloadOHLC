@@ -26,6 +26,7 @@ export interface MacroFilterState {
     magnitudeRange: [number, number] | null;
     excursionRange: [number, number] | null;
     judasFirst: boolean | null;
+    judasExcursionRange: [number, number] | null;
   };
 }
 

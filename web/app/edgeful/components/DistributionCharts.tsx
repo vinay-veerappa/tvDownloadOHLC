@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Cell } from 'recharts';
-import { buildWhereClause, getHistogramSql } from '../lib/queryBuilder';
+import { buildWhereClause, getDistributionStatsSql, getHistogramSql } from '../lib/queryBuilder';
 import { runQuery } from '@/lib/duckdb';
 import { MacroFilterState } from '../types';
 import { Activity } from 'lucide-react';
@@ -15,23 +15,146 @@ interface DistributionChartsProps {
   dbReady: boolean;
 }
 
+type ChartMode = 'hist' | 'bar';
+type ValueFormat = 'minutes' | 'percent' | 'ratio' | 'plain';
+
+interface ChartOption {
+  value: string;
+  label: string;
+  binWidth: number;
+  mode: ChartMode;
+  format: ValueFormat;
+  extraCondition?: string;
+}
+
+interface StatsSummaryData {
+  n: number;
+  mean: number;
+  p25: number;
+  median: number;
+  p75: number;
+  mode: number;
+  std_dev: number;
+  min_val: number;
+  max_val: number;
+}
+
 const CHART_OPTIONS = [
-  { value: 'inflection_timing_m', label: 'Inflection Timing (Minutes)', binWidth: 1, mode: 'hist' as const },
-  { value: 'post_macro_continuation_pct', label: 'Post-Macro Continuation %', binWidth: 0.05 },
-  { value: 'post_macro_reversion_pct', label: 'Post-Macro Reversion %', binWidth: 0.05 },
-  { value: 'judas_magnitude_pct', label: 'Judas Magnitude %', binWidth: 0.02 },
-  { value: 'real_move_magnitude_pct', label: 'Real Move Magnitude %', binWidth: 0.05 },
-  { value: 'judas_to_real_ratio', label: 'Judas to Real Ratio', binWidth: 0.25 },
-  { value: 'macro_range_pct', label: 'Overall Macro Range %', binWidth: 0.05 },
-  { value: 'post_macro_mfe_pct', label: 'Max Favorable Excursion %', binWidth: 0.05 },
-  { value: 'post_macro_mae_pct', label: 'Max Adverse Excursion %', binWidth: 0.05 },
-  { value: 'classification_by_hour', label: 'Judas Rate by Macro Window', binWidth: 0, mode: 'bar' as const },
-  { value: 'continuation_by_day', label: 'Avg Continuation by Day', binWidth: 0, mode: 'bar' as const },
-];
+  {
+    value: 'judas_inflection_m',
+    label: 'Judas Inflection Timing (Minutes)',
+    binWidth: 1,
+    mode: 'hist',
+    format: 'minutes',
+    extraCondition: "judas_classification IN ('bullish_judas', 'bearish_judas')",
+  },
+  {
+    value: 'real_move_extreme_m',
+    label: 'Real Move Extreme Timing (Minutes)',
+    binWidth: 1,
+    mode: 'hist',
+    format: 'minutes',
+    extraCondition: "judas_classification IN ('bullish_judas', 'bearish_judas')",
+  },
+  {
+    value: 'extreme_spread',
+    label: 'Extreme Spread (Minutes)',
+    binWidth: 1,
+    mode: 'hist',
+    format: 'minutes',
+  },
+  { value: 'post_macro_continuation_pct', label: 'Post-Macro Continuation %', binWidth: 0.05, mode: 'hist', format: 'percent' },
+  { value: 'post_macro_reversion_pct', label: 'Post-Macro Reversion %', binWidth: 0.05, mode: 'hist', format: 'percent' },
+  { value: 'judas_magnitude_pct', label: 'Judas Magnitude %', binWidth: 0.02, mode: 'hist', format: 'percent' },
+  { value: 'real_move_magnitude_pct', label: 'Real Move Magnitude %', binWidth: 0.05, mode: 'hist', format: 'percent' },
+  { value: 'judas_to_real_ratio', label: 'Judas to Real Ratio', binWidth: 0.25, mode: 'hist', format: 'ratio' },
+  { value: 'macro_range_pct', label: 'Overall Macro Range %', binWidth: 0.05, mode: 'hist', format: 'percent' },
+  { value: 'post_macro_mfe_pct', label: 'Max Favorable Excursion %', binWidth: 0.05, mode: 'hist', format: 'percent' },
+  { value: 'post_macro_mae_pct', label: 'Max Adverse Excursion %', binWidth: 0.05, mode: 'hist', format: 'percent' },
+  { value: 'classification_by_hour', label: 'Judas Rate by Macro Window', binWidth: 0, mode: 'bar', format: 'percent' },
+  { value: 'continuation_by_day', label: 'Avg Continuation by Day', binWidth: 0, mode: 'bar', format: 'percent' },
+] as const satisfies readonly ChartOption[];
+
+function formatValue(v: number, format: ValueFormat): string {
+  if (!Number.isFinite(v)) return '--';
+  if (format === 'minutes') return `${v.toFixed(1)}m`;
+  if (format === 'percent') return `${v.toFixed(2)}%`;
+  if (format === 'ratio') return v.toFixed(2);
+  return v.toFixed(2);
+}
+
+function formatBinLabel(v: string | number, chart: ChartOption): string {
+  if (chart.mode === 'bar') return String(v);
+  const numeric = Number(v);
+  if (!Number.isFinite(numeric)) return String(v);
+  if (chart.format === 'minutes') return `${numeric}m`;
+  if (chart.format === 'percent') return `${numeric}%`;
+  return `${numeric}`;
+}
+
+function sampleColor(n: number): string {
+  if (n > 100) return 'text-emerald-400';
+  if (n >= 30) return 'text-amber-400';
+  return 'text-red-400';
+}
+
+function StatsSummary({ stats, chart }: { stats: StatsSummaryData | null; chart: ChartOption }) {
+  if (!stats || !Number.isFinite(stats.n) || stats.n <= 0) return null;
+
+  const iqr = stats.p75 - stats.p25;
+
+  return (
+    <div className="mt-4 rounded-md border border-zinc-800 bg-zinc-900/30 p-3">
+      <div className="grid grid-cols-2 gap-2 text-[11px] md:grid-cols-5">
+        <div>
+          <div className="text-zinc-500">N</div>
+          <div className={`font-semibold ${sampleColor(stats.n)}`}>{stats.n.toLocaleString()}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">Median</div>
+          <div className="font-semibold text-zinc-200">{formatValue(stats.median, chart.format)}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">Mode</div>
+          <div className="font-semibold text-zinc-200">{formatValue(stats.mode, chart.format)}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">Mean</div>
+          <div className="font-semibold text-zinc-200">{formatValue(stats.mean, chart.format)}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">Std Dev</div>
+          <div className="font-semibold text-zinc-200">{formatValue(stats.std_dev, chart.format)}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">Min</div>
+          <div className="font-semibold text-zinc-200">{formatValue(stats.min_val, chart.format)}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">P25</div>
+          <div className="font-semibold text-zinc-200">{formatValue(stats.p25, chart.format)}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">P75</div>
+          <div className="font-semibold text-zinc-200">{formatValue(stats.p75, chart.format)}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">IQR</div>
+          <div className="font-semibold text-zinc-200">{formatValue(iqr, chart.format)}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">Max</div>
+          <div className="font-semibold text-zinc-200">{formatValue(stats.max_val, chart.format)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function DistributionCharts({ filters, dbReady }: DistributionChartsProps) {
   const [selectedChart, setSelectedChart] = useState(CHART_OPTIONS[0]);
   const [data, setData] = useState<{ bin_start: number; count: number }[]>([]);
+  const [stats, setStats] = useState<StatsSummaryData | null>(null);
   const [loading, setLoading] = useState(false);
 
   const fetchHistogram = useCallback(async () => {
@@ -42,6 +165,7 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
       let sql = '';
 
       if (selectedChart.value === 'classification_by_hour') {
+        setStats(null);
         sql = `
           SELECT
             ict_alias as bin_start,
@@ -52,6 +176,7 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
           ORDER BY ict_alias
         `;
       } else if (selectedChart.value === 'continuation_by_day') {
+        setStats(null);
         sql = `
           SELECT
             day_of_week as bin_start,
@@ -61,31 +186,43 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
           GROUP BY day_of_week, day_of_week_int
           ORDER BY day_of_week_int
         `;
-      } else if (selectedChart.value === 'inflection_timing_m') {
-        const finalWhere = whereClause
-          ? `${whereClause} AND high_offset_m IS NOT NULL AND low_offset_m IS NOT NULL`
-          : `WHERE high_offset_m IS NOT NULL AND low_offset_m IS NOT NULL`;
-        sql = `
-          SELECT
-            CAST(FLOOR((CASE WHEN judas_classification = 'bullish_judas' THEN low_offset_m ELSE high_offset_m END) / 1) * 1 AS DOUBLE) as bin_start,
-            CAST(COUNT(*) AS DOUBLE) as count
-          FROM macro_records
-          ${finalWhere}
-          GROUP BY bin_start
-          ORDER BY bin_start
-        `;
       } else {
-        const extraCondition = `${selectedChart.value} IS NOT NULL`;
-        const finalWhere = whereClause ? `${whereClause} AND ${extraCondition}` : `WHERE ${extraCondition}`;
+        const extraCondition = selectedChart.extraCondition
+          ? `${selectedChart.value} IS NOT NULL AND ${selectedChart.extraCondition}`
+          : `${selectedChart.value} IS NOT NULL`;
+
+        sql = getHistogramSql(selectedChart.value, whereClause, selectedChart.binWidth);
+        const histogramWhere = whereClause
+          ? `${whereClause} AND ${extraCondition}`
+          : `WHERE ${extraCondition}`;
         sql = `
           SELECT 
             ROUND(FLOOR(${selectedChart.value} / ${selectedChart.binWidth}) * ${selectedChart.binWidth}, 3) as bin_start,
             CAST(COUNT(*) AS DOUBLE) as count
           FROM macro_records
-          ${finalWhere}
+          ${histogramWhere}
           GROUP BY bin_start
           ORDER BY bin_start
         `;
+
+        const statsSql = getDistributionStatsSql(selectedChart.value, whereClause, selectedChart.extraCondition);
+        const statsResult = await runQuery(statsSql);
+        if (statsResult.length > 0) {
+          const row = statsResult[0] as Record<string, unknown>;
+          setStats({
+            n: Number(row.n ?? 0),
+            mean: Number(row.mean ?? 0),
+            p25: Number(row.p25 ?? 0),
+            median: Number(row.median ?? 0),
+            p75: Number(row.p75 ?? 0),
+            mode: Number(row.mode ?? 0),
+            std_dev: Number(row.std_dev ?? 0),
+            min_val: Number(row.min_val ?? 0),
+            max_val: Number(row.max_val ?? 0),
+          });
+        } else {
+          setStats(null);
+        }
       }
 
       const result = await runQuery(sql);
@@ -150,15 +287,7 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
                 dataKey="bin_start" 
                 stroke="#52525b" 
                 fontSize={10} 
-                tickFormatter={(val) => {
-                  if (selectedChart.value === 'classification_by_hour' || selectedChart.value === 'continuation_by_day') {
-                    return String(val);
-                  }
-                  if (selectedChart.value === 'inflection_timing_m') {
-                    return `${val}m`;
-                  }
-                  return `${val}%`;
-                }}
+                tickFormatter={(val) => formatBinLabel(val, selectedChart)}
                 // angle={-45} textAnchor="end"
               />
               <YAxis 
@@ -170,7 +299,7 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
                 contentStyle={{ backgroundColor: '#09090b', borderColor: '#27272a', fontSize: '12px' }}
                 itemStyle={{ color: '#f4f4f5' }}
                 formatter={(value: number) => [value.toLocaleString(), 'Count']}
-                labelFormatter={(label) => `Bin: ${label}%`}
+                labelFormatter={(label) => `Bin: ${formatBinLabel(label, selectedChart)}`}
                 cursor={{ fill: '#27272a', opacity: 0.4 }}
               />
               <Bar dataKey="count" name="Count" fill="#f59e0b" radius={[2, 2, 0, 0]}>
@@ -182,6 +311,7 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
           </ResponsiveContainer>
         )}
       </div>
+      {selectedChart.mode === 'hist' && <StatsSummary stats={stats} chart={selectedChart} />}
     </Card>
   );
 }

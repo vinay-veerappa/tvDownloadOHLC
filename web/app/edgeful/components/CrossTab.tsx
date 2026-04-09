@@ -9,18 +9,7 @@ import { runQuery } from '@/lib/duckdb';
 import { MacroFilterState } from '../types';
 import { Rows3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-const formatLabel = (str: string) => {
-  if (!str) return '--';
-  const instruments = ['ES1', 'NQ1', 'YM1', 'RTY1', 'CL1', 'GC1'];
-  const upper = str.toUpperCase();
-  if (instruments.includes(upper)) return upper;
-
-  return str.split('_').map(word => {
-    if (['vix', 'rth', 'am', 'pm'].includes(word.toLowerCase())) return word.toUpperCase();
-    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-  }).join(' ');
-}
+import { formatLabel } from '../lib/formatters';
 
 interface CrossTabProps {
   filters: MacroFilterState;

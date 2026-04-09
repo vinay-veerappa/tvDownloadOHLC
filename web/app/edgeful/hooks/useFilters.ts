@@ -30,6 +30,7 @@ const INITIAL_STATE: MacroFilterState = {
     judasFirst: null,
     magnitudeRange: null,
     excursionRange: null,
+    judasExcursionRange: null,
   },
 };
 
@@ -44,7 +45,8 @@ export function useFilters() {
     try {
       const stateParam = searchParams.get('state');
       if (stateParam) {
-        const urlState = JSON.parse(decodeURIComponent(stateParam));
+        // searchParams.get() already URL-decodes, don't decode again
+        const urlState = JSON.parse(stateParam);
         // Deep merge URL state with INITIAL_STATE to ensure all keys exist
         return {
           ...INITIAL_STATE,

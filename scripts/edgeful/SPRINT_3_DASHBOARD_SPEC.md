@@ -90,7 +90,7 @@ Each filter is a multi-select dropdown or toggle group. All filters combine with
 |--------|------|---------|---------------|
 | Instrument | Multi-select | ES, NQ, YM, RTY, CL, GC | `instrument` |
 | Macro Window | Multi-select | All 24 standard + 3 Hydra. Group by: ICT Named / All Hours / Hydra | `macro_name_raw`, `ict_alias` |
-| Judas Classification | Multi-select | bullish_judas, bearish_judas, trend_up, trend_down, neutral | `judas_classification` |
+| Judas Classification | Multi-select | bullish_judas, bearish_judas, trend_up, trend_down | `judas_classification` |
 | Indicator Classification | Multi-select | Accum, Expansion, Manip | `indicator_label` |
 | VIX Regime | Multi-select | low, medium, high, extreme | `vix_regime` |
 | Day of Week | Multi-select | Monday through Friday | `day_of_week` |
@@ -121,6 +121,28 @@ Each filter is a multi-select dropdown or toggle group. All filters combine with
 - Debounce filter changes by 200ms to avoid rapid re-queries during multi-select
 - URL query params sync with filter state for shareable links
 - "Reset All" button clears all filters
+
+### Distribution Chart Updates (Implemented)
+
+The timing distribution previously labeled "Inflection Timing" has been split into separate timing views:
+
+- `Judas Inflection Timing (Minutes)` using `judas_inflection_m`
+- `Real Move Extreme Timing (Minutes)` using `real_move_extreme_m`
+- `Extreme Spread (Minutes)` using `extreme_spread`
+
+For `judas_inflection_m` and `real_move_extreme_m`, apply an automatic Judas-only subset (`bullish_judas` / `bearish_judas`) so timing is not mixed with trend-only rows.
+
+### Distribution Statistics Summary (Implemented)
+
+All histogram-style distribution charts should render a shared summary panel with:
+
+- `N`, `Mean`, `Median`, `Mode`, `Std Dev`, `P25`, `P75`, `IQR`, `Min`, `Max`
+
+Sample-size color coding:
+
+- `N > 100`: green
+- `30 <= N <= 100`: yellow
+- `N < 30`: red
 
 ---
 

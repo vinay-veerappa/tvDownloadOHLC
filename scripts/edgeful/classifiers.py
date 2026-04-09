@@ -1,11 +1,10 @@
 import pandas as pd
 import numpy as np
-"""from .config import NEUTRAL_THRESHOLD
-"""
 
 def classify_judas_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     """
-    ICT Judas swings are defined by their relationship to the macro OPEN.
+    ICT Judas classification based on macro open as reference.
+    No neutral category: every macro is classified directionally.
     """
     macro_open = df['open']
     macro_high = df['high']
@@ -17,9 +16,7 @@ def classify_judas_vectorized(df: pd.DataFrame) -> pd.DataFrame:
     close_above = macro_close >= macro_open
     close_below = macro_close < macro_open
     
-    """
-    is_neutral = (macro_close - macro_open).abs() / macro_open * 100 < NEUTRAL_THRESHOLD
-    """    
+    # Default classification handles exact open==high==low==close edge case.
     classification = pd.Series("trend_up", index=df.index)
 
     
