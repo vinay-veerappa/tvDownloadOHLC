@@ -179,6 +179,31 @@ export function getCrossTabSql(rowCol: string, colCol: string, whereClause: stri
 }
 
 /**
+ * Generates SQL for a metric-aware Cross-Tabulation (Probability Matrix)
+ */
+export function getCrossTabMetricSql(
+  rowCol: string,
+  colCol: string,
+  metricExpr: string,
+  whereClause: string
+): string {
+  const extraCondition = `${rowCol} IS NOT NULL AND ${colCol} IS NOT NULL`;
+  const finalWhere = whereClause ? `${whereClause} AND ${extraCondition}` : `WHERE ${extraCondition}`;
+
+  return `
+    SELECT 
+      ${rowCol} as row_val,
+      ${colCol} as col_val,
+      CAST(${metricExpr} AS DOUBLE) as value,
+      CAST(COUNT(*) AS DOUBLE) as n
+    FROM macro_records
+    ${finalWhere}
+    GROUP BY ${rowCol}, ${colCol}
+    ORDER BY ${rowCol}, ${colCol}
+  `;
+}
+
+/**
  * Generates SQL for Paginated Data Drill-Down
  */
 export function getRecordsSql(whereClause: string, offset: number, limit: number, sortColumn: string = 'trading_date', sortDirection: 'asc' | 'desc' = 'desc'): string {

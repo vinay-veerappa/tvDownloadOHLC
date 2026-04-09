@@ -6,17 +6,101 @@ import { Card } from '@/components/ui/card';
 import { runQuery } from '@/lib/duckdb';
 import { MacroFilterState } from '../types';
 import { buildWhereClause } from '../lib/queryBuilder';
-import { Activity, Beaker } from 'lucide-react';
+import { Beaker } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Cell } from 'recharts';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 
 interface FVGAnalysisProps {
   filters: MacroFilterState;
   dbReady: boolean;
 }
 
+type FvgChartOption = 'fill_depth' | 'test_time' | 'fvg_size' | 'hold_by_phase' | 'hold_by_tag';
+
+interface FvgFilterState {
+  fvgType: string[];
+  phase: string[];
+  isFirstPresented: boolean | null;
+  isSilverBullet: boolean | null;
+  wasTested: boolean | null;
+  held: boolean | null;
+  failed: boolean | null;
+}
+
+const INITIAL_FVG_FILTERS: FvgFilterState = {
+  fvgType: [],
+  phase: [],
+  isFirstPresented: null,
+  isSilverBullet: null,
+  wasTested: null,
+  held: null,
+  failed: null,
+};
+
+const FVG_CHART_OPTIONS: Array<{ value: FvgChartOption; label: string }> = [
+  { value: 'fill_depth', label: 'Fill Depth Distribution' },
+  { value: 'test_time', label: 'Test Time Distribution' },
+  { value: 'fvg_size', label: 'FVG Size Distribution' },
+  { value: 'hold_by_phase', label: 'Hold Rate by Phase' },
+  { value: 'hold_by_tag', label: 'Hold Rate by Tag' },
+];
+
+function buildFvgWhereClause(filters: FvgFilterState): string {
+  const conditions: string[] = [];
+
+  if (filters.fvgType.length > 0) {
+    conditions.push(`f.fvg_type IN (${filters.fvgType.map(v => `'${v}'`).join(',')})`);
+  }
+  if (filters.phase.length > 0) {
+    conditions.push(`f.phase IN (${filters.phase.map(v => `'${v}'`).join(',')})`);
+  }
+  if (filters.isFirstPresented !== null) {
+    conditions.push(`f.is_first_presented = ${filters.isFirstPresented}`);
+  }
+  if (filters.isSilverBullet !== null) {
+    conditions.push(`f.is_silver_bullet = ${filters.isSilverBullet}`);
+  }
+  if (filters.wasTested !== null) {
+    conditions.push(`f.was_tested = ${filters.wasTested}`);
+  }
+  if (filters.held !== null) {
+    conditions.push(`f.held = ${filters.held}`);
+  }
+  if (filters.failed !== null) {
+    conditions.push(`f.failed = ${filters.failed}`);
+  }
+
+  return conditions.length > 0 ? ` AND ${conditions.join(' AND ')}` : '';
+}
+
+function ToggleTriState({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: boolean | null;
+  onChange: (v: boolean | null) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">{label}</span>
+      <div className="flex items-center border border-zinc-800 rounded-md overflow-hidden">
+        <Button type="button" variant="ghost" size="sm" className={`h-6 px-2 text-[10px] ${value === true ? 'bg-emerald-600/30 text-emerald-300' : 'text-zinc-500'}`} onClick={() => onChange(true)}>Yes</Button>
+        <Button type="button" variant="ghost" size="sm" className={`h-6 px-2 text-[10px] ${value === false ? 'bg-rose-600/30 text-rose-300' : 'text-zinc-500'}`} onClick={() => onChange(false)}>No</Button>
+        <Button type="button" variant="ghost" size="sm" className={`h-6 px-2 text-[10px] ${value === null ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-500'}`} onClick={() => onChange(null)}>Any</Button>
+      </div>
+    </div>
+  );
+}
+
 export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
   const [metrics, setMetrics] = useState<any>(null);
-  const [distributionMsg, setDistributionMsg] = useState<{ phase: string, rate: number }[]>([]);
+  const [fvgFilters, setFvgFilters] = useState<FvgFilterState>(INITIAL_FVG_FILTERS);
+  const [chartType, setChartType] = useState<FvgChartOption>('hold_by_phase');
+  const [chartData, setChartData] = useState<Array<{ label: string; value: number; count?: number }>>([]);
   const [loading, setLoading] = useState(false);
 
   const fetchFvgData = useCallback(async () => {
@@ -25,6 +109,7 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
     
     try {
       const macrosWhere = buildWhereClause(filters);
+      const fvgWhere = buildFvgWhereClause(fvgFilters);
       // FVG Query joined to macro matching current filters
       const joinFilters = macrosWhere ? macrosWhere.replace('WHERE ', 'AND ') : '';
       
@@ -38,19 +123,75 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
           CAST(AVG(test_time_m) AS DOUBLE) as avg_test_time
         FROM fvg_detail f
         JOIN macro_records m ON f.macro_id = m.macro_id
-        WHERE 1=1 ${joinFilters}
+        WHERE 1=1 ${joinFilters}${fvgWhere}
       `;
 
-      const distSql = `
-        SELECT 
-          phase,
-          CAST(COUNT(CASE WHEN held THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN was_tested THEN 1 END), 0) AS DOUBLE) as hold_rate
-        FROM fvg_detail f
-        JOIN macro_records m ON f.macro_id = m.macro_id
-        WHERE 1=1 ${joinFilters}
-          AND phase IS NOT NULL AND phase != ''
-        GROUP BY phase
-      `;
+      let distSql = '';
+      if (chartType === 'fill_depth') {
+        distSql = `
+          SELECT
+            CAST(FLOOR(f.fill_depth_pct / 5) * 5 AS DOUBLE) as label,
+            CAST(COUNT(*) AS DOUBLE) as value,
+            CAST(COUNT(*) AS DOUBLE) as count
+          FROM fvg_detail f
+          JOIN macro_records m ON f.macro_id = m.macro_id
+          WHERE 1=1 ${joinFilters}${fvgWhere}
+            AND f.fill_depth_pct IS NOT NULL
+          GROUP BY label
+          ORDER BY label
+        `;
+      } else if (chartType === 'test_time') {
+        distSql = `
+          SELECT
+            CAST(FLOOR(f.test_time_m / 5) * 5 AS DOUBLE) as label,
+            CAST(COUNT(*) AS DOUBLE) as value,
+            CAST(COUNT(*) AS DOUBLE) as count
+          FROM fvg_detail f
+          JOIN macro_records m ON f.macro_id = m.macro_id
+          WHERE 1=1 ${joinFilters}${fvgWhere}
+            AND f.test_time_m IS NOT NULL
+          GROUP BY label
+          ORDER BY label
+        `;
+      } else if (chartType === 'fvg_size') {
+        distSql = `
+          SELECT
+            CAST(ROUND(FLOOR(f.fvg_size_pct / 0.05) * 0.05, 3) AS DOUBLE) as label,
+            CAST(COUNT(*) AS DOUBLE) as value,
+            CAST(COUNT(*) AS DOUBLE) as count
+          FROM fvg_detail f
+          JOIN macro_records m ON f.macro_id = m.macro_id
+          WHERE 1=1 ${joinFilters}${fvgWhere}
+            AND f.fvg_size_pct IS NOT NULL
+          GROUP BY label
+          ORDER BY label
+        `;
+      } else if (chartType === 'hold_by_phase') {
+        distSql = `
+          SELECT 
+            f.phase as label,
+            CAST(COUNT(CASE WHEN f.held THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN f.was_tested THEN 1 END), 0) AS DOUBLE) as value,
+            CAST(COUNT(*) AS DOUBLE) as count
+          FROM fvg_detail f
+          JOIN macro_records m ON f.macro_id = m.macro_id
+          WHERE 1=1 ${joinFilters}${fvgWhere}
+            AND f.phase IS NOT NULL AND f.phase != ''
+          GROUP BY f.phase
+          ORDER BY f.phase
+        `;
+      } else {
+        distSql = `
+          SELECT 
+            CASE WHEN f.is_first_presented THEN 'first_presented' ELSE 'other_tags' END as label,
+            CAST(COUNT(CASE WHEN f.held THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN f.was_tested THEN 1 END), 0) AS DOUBLE) as value,
+            CAST(COUNT(*) AS DOUBLE) as count
+          FROM fvg_detail f
+          JOIN macro_records m ON f.macro_id = m.macro_id
+          WHERE 1=1 ${joinFilters}${fvgWhere}
+          GROUP BY label
+          ORDER BY label
+        `;
+      }
 
       const [metricsResult, distResult] = await Promise.all([
         runQuery(metricsSql),
@@ -65,9 +206,10 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
       }
       
       if (distResult) {
-        setDistributionMsg(distResult.map(d => ({
-          phase: String(d.phase),
-          rate: Number(d.hold_rate || 0)
+        setChartData(distResult.map(d => ({
+          label: String(d.label),
+          value: Number(d.value || 0),
+          count: Number(d.count || 0),
         })));
       }
       
@@ -76,7 +218,7 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
     } finally {
       setLoading(false);
     }
-  }, [filters, dbReady]);
+  }, [filters, fvgFilters, chartType, dbReady]);
 
   useEffect(() => {
     fetchFvgData();
@@ -88,6 +230,67 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
 
   return (
     <div className="space-y-6">
+      <Card className="bg-zinc-950 border-zinc-800 p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">FVG-Specific Filters</h3>
+          <Button variant="outline" size="sm" className="h-7 border-zinc-800 text-[10px]" onClick={() => setFvgFilters(INITIAL_FVG_FILTERS)}>
+            Reset FVG Filters
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">FVG Type</div>
+            <div className="flex gap-2">
+              {['bullish', 'bearish'].map(type => {
+                const active = fvgFilters.fvgType.includes(type);
+                return (
+                  <Badge
+                    key={type}
+                    className={`cursor-pointer ${active ? 'bg-amber-500 text-zinc-950' : 'bg-zinc-900 text-zinc-300 hover:bg-zinc-800'}`}
+                    onClick={() => setFvgFilters(prev => ({
+                      ...prev,
+                      fvgType: active ? prev.fvgType.filter(v => v !== type) : [...prev.fvgType, type],
+                    }))}
+                  >
+                    {type}
+                  </Badge>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1">Phase</div>
+            <div className="flex flex-wrap gap-2">
+              {['judas_phase', 'transition', 'real_move_phase'].map(phase => {
+                const active = fvgFilters.phase.includes(phase);
+                return (
+                  <Badge
+                    key={phase}
+                    className={`cursor-pointer ${active ? 'bg-amber-500 text-zinc-950' : 'bg-zinc-900 text-zinc-300 hover:bg-zinc-800'}`}
+                    onClick={() => setFvgFilters(prev => ({
+                      ...prev,
+                      phase: active ? prev.phase.filter(v => v !== phase) : [...prev.phase, phase],
+                    }))}
+                  >
+                    {phase.replace(/_/g, ' ')}
+                  </Badge>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <ToggleTriState label="First Presented" value={fvgFilters.isFirstPresented} onChange={(v) => setFvgFilters(prev => ({ ...prev, isFirstPresented: v }))} />
+            <ToggleTriState label="Silver Bullet" value={fvgFilters.isSilverBullet} onChange={(v) => setFvgFilters(prev => ({ ...prev, isSilverBullet: v }))} />
+            <ToggleTriState label="Was Tested" value={fvgFilters.wasTested} onChange={(v) => setFvgFilters(prev => ({ ...prev, wasTested: v }))} />
+            <ToggleTriState label="Held" value={fvgFilters.held} onChange={(v) => setFvgFilters(prev => ({ ...prev, held: v }))} />
+            <ToggleTriState label="Failed" value={fvgFilters.failed} onChange={(v) => setFvgFilters(prev => ({ ...prev, failed: v }))} />
+          </div>
+        </div>
+      </Card>
+
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {/* Metric Cards */}
         <MetricCard title="Total FVGs" value={metrics?.total_fvgs?.toLocaleString() || '-'} />
@@ -99,11 +302,25 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
       </div>
       
       <Card className="bg-zinc-950 border-zinc-800 p-4 h-[300px] flex flex-col hover:border-zinc-700 transition-colors">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="p-1.5 bg-zinc-900 rounded-md text-amber-500">
-            <Beaker className="h-4 w-4" />
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-zinc-900 rounded-md text-amber-500">
+              <Beaker className="h-4 w-4" />
+            </div>
+            <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-400">FVG Distribution</h2>
           </div>
-          <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-400">Hold Rate By Phase</h2>
+          <Select value={chartType} onValueChange={(v) => setChartType(v as FvgChartOption)}>
+            <SelectTrigger className="w-[220px] h-8 text-xs border-zinc-800 bg-zinc-900/50">
+              <SelectValue placeholder="Select FVG View" />
+            </SelectTrigger>
+            <SelectContent className="bg-zinc-950 border-zinc-800">
+              {FVG_CHART_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value} className="text-xs hover:bg-zinc-900">
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         
         <div className="flex-1 relative">
@@ -112,25 +329,48 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
                <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
             </div>
           )}
-          {distributionMsg.length === 0 && !loading ? (
+          {chartData.length === 0 && !loading ? (
            <div className="h-full flex items-center justify-center text-zinc-600 text-xs">
              No FVG data matches current filters.
            </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={140}>
-              <BarChart data={distributionMsg} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <XAxis dataKey="phase" stroke="#52525b" fontSize={10} tickFormatter={(val) => String(val).replace(/_/g, ' ')} />
-                <YAxis stroke="#52525b" fontSize={10} tickFormatter={(val) => val + '%'} />
+              <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <XAxis dataKey="label" stroke="#52525b" fontSize={10} tickFormatter={(val) => String(val).replace(/_/g, ' ')} />
+                <YAxis
+                  stroke="#52525b"
+                  fontSize={10}
+                  tickFormatter={(val) => {
+                    if (chartType === 'fill_depth' || chartType === 'test_time' || chartType === 'fvg_size') {
+                      return `${val}`;
+                    }
+                    return `${val}%`;
+                  }}
+                />
                 <RechartsTooltip 
                   contentStyle={{ backgroundColor: '#09090b', borderColor: '#27272a', fontSize: '12px' }}
                   itemStyle={{ color: '#f4f4f5' }}
-                  formatter={(value: number) => [value.toFixed(1) + '%', 'Hold Rate']}
+                  formatter={(value: number) => {
+                    if (chartType === 'fill_depth') return [value.toLocaleString(), 'Count'];
+                    if (chartType === 'test_time') return [value.toLocaleString(), 'Count'];
+                    if (chartType === 'fvg_size') return [value.toLocaleString(), 'Count'];
+                    return [value.toFixed(1) + '%', 'Hold Rate'];
+                  }}
                   labelFormatter={(label) => String(label).replace(/_/g, ' ')}
                   cursor={{ fill: '#27272a', opacity: 0.4 }}
                 />
-                <Bar dataKey="rate" name="Hold Rate" fill="#10b981" radius={[2, 2, 0, 0]}>
-                  {distributionMsg.map((entry, index) => (
-                    <Cell key={"cell-" + index} fill="#10b981" className="opacity-80 hover:opacity-100 transition-opacity" />
+                <Bar
+                  dataKey="value"
+                  name="Value"
+                  fill={chartType === 'hold_by_phase' || chartType === 'hold_by_tag' ? '#10b981' : '#f59e0b'}
+                  radius={[2, 2, 0, 0]}
+                >
+                  {chartData.map((entry, index) => (
+                    <Cell
+                      key={'cell-' + index}
+                      fill={chartType === 'hold_by_phase' || chartType === 'hold_by_tag' ? '#10b981' : '#f59e0b'}
+                      className="opacity-80 hover:opacity-100 transition-opacity"
+                    />
                   ))}
                 </Bar>
               </BarChart>

@@ -163,6 +163,8 @@ interface FilterPanelProps {
 }
 
 export function FilterPanel({ filters, updateFilter, updateDateRange, updateAdvanced, resetFilters }: FilterPanelProps) {
+  const [showAdvanced, setShowAdvanced] = React.useState(false);
+
   return (
     <Card className="flex flex-col h-full bg-zinc-950 border-zinc-800 rounded-none border-y-0 border-l-0">
       <div className="p-4 flex items-center justify-between border-b border-zinc-900">
@@ -255,153 +257,169 @@ export function FilterPanel({ filters, updateFilter, updateDateRange, updateAdva
 
           <Separator className="bg-zinc-900" />
 
-          {/* Section: Institutional Anchors */}
-          <div className="space-y-3">
-            <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Institutional Anchors</h3>
-            
-            <MultiSelect 
-              label="vs Midnight" 
-              options={['above', 'below']} 
-              selected={filters.advanced.openVsMidnight}
-              onChange={(v) => updateAdvanced('openVsMidnight', v)}
-            />
-            
-            <MultiSelect 
-              label="vs Daily Open" 
-              options={['above', 'below']} 
-              selected={filters.advanced.openVsDailyOpen}
-              onChange={(v) => updateAdvanced('openVsDailyOpen', v)}
-            />
-
-            <MultiSelect 
-              label="vs RTH Range" 
-              options={['above', 'below']} 
-              selected={filters.advanced.openVsRthBar}
-              onChange={(v) => updateAdvanced('openVsRthBar', v)}
-            />
+          <div className="flex items-center justify-between">
+            <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Advanced Filters</h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[10px] text-zinc-500 hover:text-zinc-200"
+              onClick={() => setShowAdvanced(prev => !prev)}
+            >
+              {showAdvanced ? 'Hide' : 'Show'}
+            </Button>
           </div>
 
-          <Separator className="bg-zinc-900" />
+          {showAdvanced && (
+            <>
+              {/* Section: Institutional Anchors */}
+              <div className="space-y-3">
+                <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Institutional Anchors</h3>
+                
+                <MultiSelect 
+                  label="vs Midnight" 
+                  options={['above', 'below']} 
+                  selected={filters.advanced.openVsMidnight}
+                  onChange={(v) => updateAdvanced('openVsMidnight', v)}
+                />
+                
+                <MultiSelect 
+                  label="vs Daily Open" 
+                  options={['above', 'below']} 
+                  selected={filters.advanced.openVsDailyOpen}
+                  onChange={(v) => updateAdvanced('openVsDailyOpen', v)}
+                />
 
-          <div className="space-y-4">
-            <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter px-1">Secondary Filters</h3>
-            
-            <MultiToggle 
-              label="Has FVG"
-              value={filters.advanced.hasFVG}
-              onChange={(v) => updateAdvanced('hasFVG', v)}
-            />
-
-            <MultiToggle 
-              label="Is Complete"
-              value={filters.advanced.isComplete}
-              onChange={(v) => updateAdvanced('isComplete', v)}
-            />
-
-            <MultiToggle 
-              label="News Within 60m"
-              value={filters.advanced.newsWithin60m}
-              onChange={(v) => updateAdvanced('newsWithin60m', v)}
-            />
-
-            <MultiToggle 
-              label="Is OpEx Week"
-              value={filters.advanced.isOpExWeek}
-              onChange={(v) => updateAdvanced('isOpExWeek', v)}
-            />
-
-            <MultiToggle 
-              label="Same Direction as Prior"
-              value={filters.advanced.sameDirectionAsPrior}
-              onChange={(v) => updateAdvanced('sameDirectionAsPrior', v)}
-            />
-
-            <MultiToggle 
-              label="Judas First"
-              value={filters.advanced.judasFirst}
-              onChange={(v) => updateAdvanced('judasFirst', v)}
-            />
-
-            <Separator className="bg-zinc-900 mx-1" />
-
-            <MultiSelect 
-              label="Real Direction" 
-              options={['up', 'down']} 
-              selected={filters.advanced.realDirection}
-              onChange={(v) => updateAdvanced('realDirection', v)}
-            />
-
-            <MultiSelect 
-              label="Prior Direction" 
-              options={['up', 'down']} 
-              selected={filters.advanced.priorMacroDirection}
-              onChange={(v) => updateAdvanced('priorMacroDirection', v)}
-            />
-          </div>
-
-          <Separator className="bg-zinc-900" />
-
-          {/* Section: Magnitude & Volatility */}
-          <div className="space-y-4 px-1 pb-4">
-            <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Magnitude & Volatility</h3>
-            
-            <div className="space-y-3">
-              <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
-                <span>Judas Magnitude</span>
-                <span className="text-amber-500">{(filters.advanced.magnitudeRange?.[0] ?? 0).toFixed(2)}% - {(filters.advanced.magnitudeRange?.[1] ?? 4).toFixed(2)}%</span>
+                <MultiSelect 
+                  label="vs RTH Range" 
+                  options={['above', 'below', 'inside']} 
+                  selected={filters.advanced.openVsRthBar}
+                  onChange={(v) => updateAdvanced('openVsRthBar', v)}
+                />
               </div>
-              <Slider
-                max={4.0}
-                step={0.01}
-                value={[filters.advanced.magnitudeRange?.[0] ?? 0, filters.advanced.magnitudeRange?.[1] ?? 4]}
-                onValueChange={(v) => updateAdvanced('magnitudeRange', v)}
-                className="py-1"
-              />
-            </div>
 
-            <div className="space-y-3">
-              <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
-                <span>Excursion Reach</span>
-                <span className="text-amber-500">{(filters.advanced.excursionRange?.[0] ?? 0).toFixed(2)}% - {(filters.advanced.excursionRange?.[1] ?? 4).toFixed(2)}%</span>
-              </div>
-              <Slider
-                max={4.0}
-                step={0.01}
-                value={[filters.advanced.excursionRange?.[0] ?? 0, filters.advanced.excursionRange?.[1] ?? 4]}
-                onValueChange={(v) => updateAdvanced('excursionRange', v)}
-                className="py-1"
-              />
-            </div>
+              <Separator className="bg-zinc-900" />
 
-            <div className="space-y-3">
-              <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
-                <span>Macro Range Pct</span>
-                <span className="text-amber-500">{(filters.advanced.macroRangePercentile?.[0] ?? 0).toFixed(2)}% - {(filters.advanced.macroRangePercentile?.[1] ?? 4).toFixed(2)}%</span>
-              </div>
-              <Slider
-                max={4.0}
-                step={0.01}
-                value={[filters.advanced.macroRangePercentile?.[0] ?? 0, filters.advanced.macroRangePercentile?.[1] ?? 4]}
-                onValueChange={(v) => updateAdvanced('macroRangePercentile', v)}
-                className="py-1"
-              />
-            </div>
+              <div className="space-y-4">
+                <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter px-1">Secondary Filters</h3>
+                
+                <MultiToggle 
+                  label="Has FVG"
+                  value={filters.advanced.hasFVG}
+                  onChange={(v) => updateAdvanced('hasFVG', v)}
+                />
 
-            <div className="space-y-3">
-              <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
-                <span>Streak Range</span>
-                <span className="text-amber-500">{filters.advanced.macroStreak?.[0] ?? 1} - {filters.advanced.macroStreak?.[1] ?? 10}</span>
+                <MultiToggle 
+                  label="Is Complete"
+                  value={filters.advanced.isComplete}
+                  onChange={(v) => updateAdvanced('isComplete', v)}
+                />
+
+                <MultiToggle 
+                  label="News Within 60m"
+                  value={filters.advanced.newsWithin60m}
+                  onChange={(v) => updateAdvanced('newsWithin60m', v)}
+                />
+
+                <MultiToggle 
+                  label="Is OpEx Week"
+                  value={filters.advanced.isOpExWeek}
+                  onChange={(v) => updateAdvanced('isOpExWeek', v)}
+                />
+
+                <MultiToggle 
+                  label="Same Direction as Prior"
+                  value={filters.advanced.sameDirectionAsPrior}
+                  onChange={(v) => updateAdvanced('sameDirectionAsPrior', v)}
+                />
+
+                <MultiToggle 
+                  label="Judas First"
+                  value={filters.advanced.judasFirst}
+                  onChange={(v) => updateAdvanced('judasFirst', v)}
+                />
+
+                <Separator className="bg-zinc-900 mx-1" />
+
+                <MultiSelect 
+                  label="Real Direction" 
+                  options={['up', 'down']} 
+                  selected={filters.advanced.realDirection}
+                  onChange={(v) => updateAdvanced('realDirection', v)}
+                />
+
+                <MultiSelect 
+                  label="Prior Direction" 
+                  options={['up', 'down']} 
+                  selected={filters.advanced.priorMacroDirection}
+                  onChange={(v) => updateAdvanced('priorMacroDirection', v)}
+                />
               </div>
-              <Slider
-                min={1}
-                max={10}
-                step={1}
-                value={[filters.advanced.macroStreak?.[0] ?? 1, filters.advanced.macroStreak?.[1] ?? 10]}
-                onValueChange={(v) => updateAdvanced('macroStreak', v)}
-                className="py-1"
-              />
-            </div>
-          </div>
+
+              <Separator className="bg-zinc-900" />
+
+              {/* Section: Magnitude & Volatility */}
+              <div className="space-y-4 px-1 pb-4">
+                <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Magnitude & Volatility</h3>
+                
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
+                    <span>Judas Magnitude</span>
+                    <span className="text-amber-500">{(filters.advanced.magnitudeRange?.[0] ?? 0).toFixed(2)}% - {(filters.advanced.magnitudeRange?.[1] ?? 4).toFixed(2)}%</span>
+                  </div>
+                  <Slider
+                    max={4.0}
+                    step={0.01}
+                    value={[filters.advanced.magnitudeRange?.[0] ?? 0, filters.advanced.magnitudeRange?.[1] ?? 4]}
+                    onValueChange={(v) => updateAdvanced('magnitudeRange', v)}
+                    className="py-1"
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
+                    <span>Excursion Reach</span>
+                    <span className="text-amber-500">{(filters.advanced.excursionRange?.[0] ?? 0).toFixed(2)}% - {(filters.advanced.excursionRange?.[1] ?? 4).toFixed(2)}%</span>
+                  </div>
+                  <Slider
+                    max={4.0}
+                    step={0.01}
+                    value={[filters.advanced.excursionRange?.[0] ?? 0, filters.advanced.excursionRange?.[1] ?? 4]}
+                    onValueChange={(v) => updateAdvanced('excursionRange', v)}
+                    className="py-1"
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
+                    <span>Macro Range Pct</span>
+                    <span className="text-amber-500">{(filters.advanced.macroRangePercentile?.[0] ?? 0).toFixed(2)}% - {(filters.advanced.macroRangePercentile?.[1] ?? 4).toFixed(2)}%</span>
+                  </div>
+                  <Slider
+                    max={4.0}
+                    step={0.01}
+                    value={[filters.advanced.macroRangePercentile?.[0] ?? 0, filters.advanced.macroRangePercentile?.[1] ?? 4]}
+                    onValueChange={(v) => updateAdvanced('macroRangePercentile', v)}
+                    className="py-1"
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
+                    <span>Streak Range</span>
+                    <span className="text-amber-500">{filters.advanced.macroStreak?.[0] ?? 1} - {filters.advanced.macroStreak?.[1] ?? 10}</span>
+                  </div>
+                  <Slider
+                    min={1}
+                    max={10}
+                    step={1}
+                    value={[filters.advanced.macroStreak?.[0] ?? 1, filters.advanced.macroStreak?.[1] ?? 10]}
+                    onValueChange={(v) => updateAdvanced('macroStreak', v)}
+                    className="py-1"
+                  />
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </ScrollArea>
 

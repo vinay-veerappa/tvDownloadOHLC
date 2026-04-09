@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { buildWhereClause, getCrossTabSql } from '../lib/queryBuilder';
+import { buildWhereClause, getCrossTabMetricSql } from '../lib/queryBuilder';
 import { runQuery } from '@/lib/duckdb';
 import { MacroFilterState } from '../types';
 import { Rows3 } from 'lucide-react';
@@ -36,10 +36,31 @@ const DIMENSIONS = [
   { value: 'real_direction', label: 'Real Move Direction' },
 ];
 
+const METRICS = [
+  { value: 'count', label: 'Sample Size (Count)', expr: 'COUNT(*)', format: (v: number) => v.toLocaleString() },
+  { value: 'avg_continuation', label: 'Avg Continuation %', expr: 'AVG(post_macro_continuation_pct)', format: (v: number) => `${v.toFixed(2)}%` },
+  { value: 'avg_reversion', label: 'Avg Reversion %', expr: 'AVG(post_macro_reversion_pct)', format: (v: number) => `${v.toFixed(2)}%` },
+  { value: 'avg_mfe', label: 'Avg MFE %', expr: 'AVG(post_macro_mfe_pct)', format: (v: number) => `${v.toFixed(2)}%` },
+  { value: 'avg_mae', label: 'Avg MAE %', expr: 'AVG(post_macro_mae_pct)', format: (v: number) => `${v.toFixed(2)}%` },
+  {
+    value: 'continuation_win_rate',
+    label: 'Continuation Win Rate %',
+    expr: 'COUNT(CASE WHEN post_macro_continuation_pct > post_macro_reversion_pct THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0)',
+    format: (v: number) => `${v.toFixed(1)}%`,
+  },
+  {
+    value: 'judas_rate',
+    label: 'Judas Rate %',
+    expr: "COUNT(CASE WHEN judas_classification IN ('bullish_judas', 'bearish_judas') THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0)",
+    format: (v: number) => `${v.toFixed(1)}%`,
+  },
+];
+
 export function CrossTab({ filters, dbReady }: CrossTabProps) {
   const [rowDim, setRowDim] = useState(DIMENSIONS[0].value);
   const [colDim, setColDim] = useState(DIMENSIONS[1].value);
-  const [data, setData] = useState<{ row_val: string; col_val: string; count: number }[]>([]);
+  const [metric, setMetric] = useState(METRICS[0].value);
+  const [data, setData] = useState<{ row_val: string; col_val: string; value: number; n: number }[]>([]);
   const [loading, setLoading] = useState(false);
 
   const fetchCrossTab = useCallback(async () => {
@@ -47,22 +68,28 @@ export function CrossTab({ filters, dbReady }: CrossTabProps) {
     setLoading(true);
     try {
       const whereClause = buildWhereClause(filters);
-      const sql = getCrossTabSql(rowDim, colDim, whereClause);
+      const selectedMetric = METRICS.find(m => m.value === metric) ?? METRICS[0];
+      const sql = getCrossTabMetricSql(rowDim, colDim, selectedMetric.expr, whereClause);
       const result = await runQuery(sql);
-      setData(result);
+      setData(result.map(r => ({
+        row_val: String(r.row_val),
+        col_val: String(r.col_val),
+        value: Number(r.value ?? 0),
+        n: Number(r.n ?? 0),
+      })));
     } catch (err) {
       console.error('Error fetching CrossTab:', err);
     } finally {
       setLoading(false);
     }
-  }, [filters, rowDim, colDim, dbReady]);
+  }, [filters, rowDim, colDim, metric, dbReady]);
 
   useEffect(() => {
     fetchCrossTab();
   }, [fetchCrossTab]);
 
   // Transform flat SQL results into a 2D matrix
-  const { matrix, rowLabels, colLabels, maxCount } = useMemo(() => {
+  const { matrix, rowLabels, colLabels, maxN } = useMemo(() => {
     const rSet = new Set<string>();
     const cSet = new Set<string>();
     let maximum = 0;
@@ -70,20 +97,29 @@ export function CrossTab({ filters, dbReady }: CrossTabProps) {
     data.forEach(d => {
       rSet.add(d.row_val);
       cSet.add(d.col_val);
-      const countNum = Number(d.count);
-      if (countNum > maximum) maximum = countNum;
+      const nNum = Number(d.n);
+      if (nNum > maximum) maximum = nNum;
     });
 
     const rows = Array.from(rSet).sort();
     const cols = Array.from(cSet).sort();
 
-    const mat: Record<string, Record<string, number>> = {};
-    rows.forEach(r => { mat[r] = {}; cols.forEach(c => mat[r][c] = 0); });
+    const mat: Record<string, Record<string, { value: number; n: number }>> = {};
+    rows.forEach(r => {
+      mat[r] = {};
+      cols.forEach(c => {
+        mat[r][c] = { value: 0, n: 0 };
+      });
+    });
 
-    data.forEach(d => { mat[d.row_val][d.col_val] = d.count; });
+    data.forEach(d => {
+      mat[d.row_val][d.col_val] = { value: d.value, n: d.n };
+    });
 
-    return { matrix: mat, rowLabels: rows, colLabels: cols, maxCount: maximum };
+    return { matrix: mat, rowLabels: rows, colLabels: cols, maxN: maximum };
   }, [data]);
+
+  const selectedMetric = METRICS.find(m => m.value === metric) ?? METRICS[0];
 
   return (
     <Card className="bg-zinc-950 border-zinc-800 p-4 h-[400px] flex flex-col hover:border-zinc-700 transition-colors">
@@ -123,6 +159,19 @@ export function CrossTab({ filters, dbReady }: CrossTabProps) {
               ))}
             </SelectContent>
           </Select>
+
+          <Select value={metric} onValueChange={setMetric}>
+            <SelectTrigger className="w-[210px] h-8 text-xs border-zinc-800 bg-zinc-900/50">
+              <SelectValue placeholder="Value Metric" />
+            </SelectTrigger>
+            <SelectContent className="bg-zinc-950 border-zinc-800">
+              {METRICS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value} className="text-xs hover:bg-zinc-900">
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -149,8 +198,9 @@ export function CrossTab({ filters, dbReady }: CrossTabProps) {
               <tr key={r} className="border-b border-zinc-900/50 last:border-0 hover:bg-zinc-900/20 transition-colors">
                 <td className="p-2 font-medium text-amber-500/80 whitespace-nowrap bg-zinc-950/50">{formatLabel(r)}</td>
                 {colLabels.map(c => {
-                  const val = Number(matrix[r][c] || 0);
-                  const intensity = maxCount > 0 ? val / maxCount : 0;
+                  const cell = matrix[r][c] || { value: 0, n: 0 };
+                  const intensity = maxN > 0 ? cell.n / maxN : 0;
+                  const sampleClass = cell.n > 100 ? 'text-emerald-400' : cell.n >= 30 ? 'text-amber-400' : 'text-rose-400';
                   return (
                     <td key={c} className="p-2 text-center text-zinc-300 relative">
                       {/* Background Heatmap indicator */}
@@ -158,7 +208,10 @@ export function CrossTab({ filters, dbReady }: CrossTabProps) {
                         className="absolute inset-1 bg-emerald-500 rounded-sm opacity-10 pointer-events-none" 
                         style={{ opacity: intensity * 0.4 }}
                       />
-                      <span className="relative z-10">{val.toLocaleString()}</span>
+                      <div className="relative z-10 leading-tight">
+                        <div className="font-medium">{selectedMetric.format(cell.value)}</div>
+                        <div className={cn('text-[10px]', sampleClass)}>N={cell.n.toLocaleString()}</div>
+                      </div>
                     </td>
                   );
                 })}

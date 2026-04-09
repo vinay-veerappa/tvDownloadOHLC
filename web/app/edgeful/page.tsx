@@ -11,17 +11,27 @@ import { DistributionCharts } from './components/DistributionCharts';
 import { CrossTab } from './components/CrossTab';
 import { DrillDownTable } from './components/DrillDownTable';
 import { FVGAnalysis } from './components/FVGAnalysis';
-import { LayoutDashboard, Database, Clock, RefreshCcw, Activity } from 'lucide-react';
+import { LayoutDashboard, RefreshCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { QueryStatus } from './components/QueryStatus';
 
 import { Suspense } from 'react';
 
 function DashboardContent() {
   const { filters, updateFilter, updateDateRange, updateAdvanced, resetFilters } = useFilters();
+  const [debouncedFilters, setDebouncedFilters] = useState(filters);
   const [dbStatus, setDbStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [metrics, setMetrics] = useState<SummaryMetrics | null>(null);
   const [loadingMetrics, setLoadingMetrics] = useState(false);
+  const [lastDataUpdate, setLastDataUpdate] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedFilters(filters);
+    }, 200);
+    return () => clearTimeout(timeout);
+  }, [filters]);
 
   // Initialize Data Engine
   useEffect(() => {
@@ -31,6 +41,16 @@ function DashboardContent() {
         const version = Date.now();
         await loadParquet('macro_records.parquet', `/api/data/macro_records.parquet?v=${version}`);
         await loadParquet('fvg_detail.parquet', `/api/data/fvg_detail.parquet?v=${version}`);
+
+        // Pull a lightweight range response to get fresh file metadata headers.
+        const metaResponse = await fetch(`/api/data/macro_records.parquet?v=${version}`, {
+          headers: { Range: 'bytes=0-0' },
+        });
+        const lastModified = metaResponse.headers.get('last-modified');
+        if (lastModified) {
+          setLastDataUpdate(lastModified);
+        }
+
         setDbStatus('ready');
       } catch (err) {
         console.error('Failed to initialize DuckDB:', err);
@@ -47,7 +67,7 @@ function DashboardContent() {
     setLoadingMetrics(true);
     const start = performance.now();
     try {
-      const whereClause = buildWhereClause(filters);
+      const whereClause = buildWhereClause(debouncedFilters);
       const sql = getSummarySql(whereClause);
       const result = await runQuery(sql);
       
@@ -62,11 +82,11 @@ function DashboardContent() {
         console.warn('Query returned empty result.');
       }
     } catch (err) {
-      console.error('Query failed:', err, 'SQL:', getSummarySql(buildWhereClause(filters)));
+      console.error('Query failed:', err, 'SQL:', getSummarySql(buildWhereClause(debouncedFilters)));
     } finally {
       setLoadingMetrics(false);
     }
-  }, [dbStatus, filters]);
+  }, [dbStatus, debouncedFilters]);
 
   useEffect(() => {
     fetchMetrics();
@@ -105,18 +125,12 @@ function DashboardContent() {
           </div>
 
           <div className="flex items-center gap-4">
-            {metrics && (
-              <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-                <div className="flex items-center gap-1.5">
-                  <Clock className="h-3 w-3" />
-                  <span>{metrics.query_time_ms.toFixed(0)}ms</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Database className="h-3 w-3" />
-                  <span>{metrics?.total ? `${Number(metrics.total).toLocaleString()} Records` : 'Loading...'}</span>
-                </div>
-              </div>
-            )}
+            <QueryStatus
+              dbStatus={dbStatus}
+              queryTimeMs={metrics?.query_time_ms}
+              totalRecords={metrics?.total}
+              lastDataUpdate={lastDataUpdate}
+            />
             <Button 
               variant="outline" 
               size="sm" 
@@ -148,16 +162,16 @@ function DashboardContent() {
             <TabsContent value="macro" className="space-y-8 mt-0 outline-none">
               {/* Phase 4: Charts */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <DistributionCharts filters={filters} dbReady={dbStatus === 'ready'} />
-                <CrossTab filters={filters} dbReady={dbStatus === 'ready'} />
+                <DistributionCharts filters={debouncedFilters} dbReady={dbStatus === 'ready'} />
+                <CrossTab filters={debouncedFilters} dbReady={dbStatus === 'ready'} />
               </div>
 
               {/* Drill-Down */}
-              <DrillDownTable filters={filters} dbReady={dbStatus === 'ready'} />
+              <DrillDownTable filters={debouncedFilters} dbReady={dbStatus === 'ready'} />
             </TabsContent>
             
             <TabsContent value="fvg" className="mt-0 outline-none">
-              <FVGAnalysis filters={filters} dbReady={dbStatus === 'ready'} />
+              <FVGAnalysis filters={debouncedFilters} dbReady={dbStatus === 'ready'} />
             </TabsContent>
           </Tabs>
         </main>
@@ -165,7 +179,7 @@ function DashboardContent() {
         {/* Footer info line */}
         <footer className="h-8 border-t border-zinc-900 bg-black flex items-center px-6 justify-between text-[9px] text-zinc-600 uppercase tracking-widest font-bold">
           <span>Sprint 3: Edgeful Dashboard MVP</span>
-          <span>Data Range: Jan 2018 — Dec 2024</span>
+          <span>Last Data Update: {lastDataUpdate ? new Date(lastDataUpdate).toLocaleString() : 'Unknown'}</span>
         </footer>
       </div>
     </div>

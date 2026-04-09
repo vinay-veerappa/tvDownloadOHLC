@@ -16,12 +16,17 @@ interface DistributionChartsProps {
 }
 
 const CHART_OPTIONS = [
+  { value: 'inflection_timing_m', label: 'Inflection Timing (Minutes)', binWidth: 1, mode: 'hist' as const },
   { value: 'post_macro_continuation_pct', label: 'Post-Macro Continuation %', binWidth: 0.05 },
   { value: 'post_macro_reversion_pct', label: 'Post-Macro Reversion %', binWidth: 0.05 },
   { value: 'judas_magnitude_pct', label: 'Judas Magnitude %', binWidth: 0.02 },
   { value: 'real_move_magnitude_pct', label: 'Real Move Magnitude %', binWidth: 0.05 },
+  { value: 'judas_to_real_ratio', label: 'Judas to Real Ratio', binWidth: 0.25 },
   { value: 'macro_range_pct', label: 'Overall Macro Range %', binWidth: 0.05 },
   { value: 'post_macro_mfe_pct', label: 'Max Favorable Excursion %', binWidth: 0.05 },
+  { value: 'post_macro_mae_pct', label: 'Max Adverse Excursion %', binWidth: 0.05 },
+  { value: 'classification_by_hour', label: 'Judas Rate by Macro Window', binWidth: 0, mode: 'bar' as const },
+  { value: 'continuation_by_day', label: 'Avg Continuation by Day', binWidth: 0, mode: 'bar' as const },
 ];
 
 export function DistributionCharts({ filters, dbReady }: DistributionChartsProps) {
@@ -34,18 +39,55 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
     setLoading(true);
     try {
       const whereClause = buildWhereClause(filters);
-      const extraCondition = `${selectedChart.value} IS NOT NULL`;
-      const finalWhere = whereClause ? `${whereClause} AND ${extraCondition}` : `WHERE ${extraCondition}`;
-      // Ensure we format the bin_start to 2 decimals for display
-      const sql = `
-        SELECT 
-          ROUND(FLOOR(${selectedChart.value} / ${selectedChart.binWidth}) * ${selectedChart.binWidth}, 3) as bin_start,
-          COUNT(*) as count
-        FROM macro_records
-        ${finalWhere}
-        GROUP BY bin_start
-        ORDER BY bin_start
-      `;
+      let sql = '';
+
+      if (selectedChart.value === 'classification_by_hour') {
+        sql = `
+          SELECT
+            ict_alias as bin_start,
+            CAST(COUNT(CASE WHEN judas_classification IN ('bullish_judas', 'bearish_judas') THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS DOUBLE) as count
+          FROM macro_records
+          ${whereClause}
+          GROUP BY ict_alias
+          ORDER BY ict_alias
+        `;
+      } else if (selectedChart.value === 'continuation_by_day') {
+        sql = `
+          SELECT
+            day_of_week as bin_start,
+            CAST(AVG(post_macro_continuation_pct) AS DOUBLE) as count
+          FROM macro_records
+          ${whereClause}
+          GROUP BY day_of_week, day_of_week_int
+          ORDER BY day_of_week_int
+        `;
+      } else if (selectedChart.value === 'inflection_timing_m') {
+        const finalWhere = whereClause
+          ? `${whereClause} AND high_offset_m IS NOT NULL AND low_offset_m IS NOT NULL`
+          : `WHERE high_offset_m IS NOT NULL AND low_offset_m IS NOT NULL`;
+        sql = `
+          SELECT
+            CAST(FLOOR((CASE WHEN judas_classification = 'bullish_judas' THEN low_offset_m ELSE high_offset_m END) / 1) * 1 AS DOUBLE) as bin_start,
+            CAST(COUNT(*) AS DOUBLE) as count
+          FROM macro_records
+          ${finalWhere}
+          GROUP BY bin_start
+          ORDER BY bin_start
+        `;
+      } else {
+        const extraCondition = `${selectedChart.value} IS NOT NULL`;
+        const finalWhere = whereClause ? `${whereClause} AND ${extraCondition}` : `WHERE ${extraCondition}`;
+        sql = `
+          SELECT 
+            ROUND(FLOOR(${selectedChart.value} / ${selectedChart.binWidth}) * ${selectedChart.binWidth}, 3) as bin_start,
+            CAST(COUNT(*) AS DOUBLE) as count
+          FROM macro_records
+          ${finalWhere}
+          GROUP BY bin_start
+          ORDER BY bin_start
+        `;
+      }
+
       const result = await runQuery(sql);
       // Ensure bigints are cast to regular Numbers for charting
       setData(result.map(r => ({ ...r, count: Number(r.count) })));
@@ -108,7 +150,15 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
                 dataKey="bin_start" 
                 stroke="#52525b" 
                 fontSize={10} 
-                tickFormatter={(val) => `${val}%`}
+                tickFormatter={(val) => {
+                  if (selectedChart.value === 'classification_by_hour' || selectedChart.value === 'continuation_by_day') {
+                    return String(val);
+                  }
+                  if (selectedChart.value === 'inflection_timing_m') {
+                    return `${val}m`;
+                  }
+                  return `${val}%`;
+                }}
                 // angle={-45} textAnchor="end"
               />
               <YAxis 
