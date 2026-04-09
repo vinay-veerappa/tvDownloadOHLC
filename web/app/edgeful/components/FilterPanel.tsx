@@ -373,17 +373,17 @@ export function FilterPanel({ filters, updateFilter, updateDateRange, updateAdva
                   />
                 </div>
 
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
-                    <span>Judas Excursion Ratio %</span>
-                    <span className="text-amber-500">{(filters.advanced.judasExcursionRange?.[0] ?? 0).toFixed(1)}% - {(filters.advanced.judasExcursionRange?.[1] ?? 100).toFixed(1)}%</span>
-                  </div>
-                  <Slider
-                    max={100}
-                    step={0.5}
-                    value={[filters.advanced.judasExcursionRange?.[0] ?? 0, filters.advanced.judasExcursionRange?.[1] ?? 100]}
-                    onValueChange={(v) => updateAdvanced('judasExcursionRange', v)}
-                    className="py-1"
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase font-bold text-zinc-500">Judas Excursion Threshold %</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value={filters.advanced.judasExcursionThreshold ?? ''}
+                    onChange={(e) => updateAdvanced('judasExcursionThreshold', e.target.value ? parseFloat(e.target.value) : null)}
+                    placeholder="e.g., 5 or 15 (leave empty for no filter)"
+                    className="w-full px-2 py-1 text-sm bg-zinc-900 border border-zinc-700 rounded text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500"
                   />
                 </div>
 

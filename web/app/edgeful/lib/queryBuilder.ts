@@ -119,8 +119,8 @@ export function buildWhereClause(filters: MacroFilterState): string {
     conditions.push(`((excursion_above_pct BETWEEN ${min} AND ${max}) OR (excursion_below_pct BETWEEN ${min} AND ${max}))`);
   }
 
-  if (isActiveRange(filters.advanced.judasExcursionRange, 0, 100)) {
-    conditions.push(`judas_excursion_ratio BETWEEN ${filters.advanced.judasExcursionRange[0]} AND ${filters.advanced.judasExcursionRange[1]}`);
+  if (filters.advanced.judasExcursionThreshold !== null && filters.advanced.judasExcursionThreshold > 0) {
+    conditions.push(`judas_excursion_ratio >= ${filters.advanced.judasExcursionThreshold}`);
   }
 
   return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

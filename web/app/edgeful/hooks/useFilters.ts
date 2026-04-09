@@ -30,7 +30,7 @@ const INITIAL_STATE: MacroFilterState = {
     judasFirst: null,
     magnitudeRange: null,
     excursionRange: null,
-    judasExcursionRange: null,
+    judasExcursionThreshold: null,
   },
 };
 
