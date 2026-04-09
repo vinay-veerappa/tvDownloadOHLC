@@ -47,7 +47,7 @@ class MagnetEnricher:
             self._hod_lod_cache[instrument] = data
         return data
 
-    def enrich(self, macro_df: pd.DataFrame, instrument: str):
+    def enrich(self, macro_df: pd.DataFrame, bars_in: pd.DataFrame = None, instrument: str = None):
         """
         Main enrichment logic for Sprint 2.
         - Adds HOD/LOD metrics (PDH, PDL)
@@ -58,24 +58,23 @@ class MagnetEnricher:
             return macro_df
             
         df = macro_df.copy()
-        instrument_clean = instrument.replace("1", "") # ES1 -> ES
+        inst = instrument if instrument else (df['instrument'].iloc[0] if 'instrument' in df.columns else None)
+        if not inst: return df
         
         # 1. HOD/LOD (Previous Day High/Low)
-        hod_lod_data = self.load_hod_lod_levels(instrument)
+        hod_lod_data = self.load_hod_lod_levels(inst)
         if hod_lod_data:
-            sorted_dates = sorted(hod_lod_data.keys())
+            # Vectorized Lookup: Map to trading_date
+            levels_df = pd.DataFrame.from_dict(hod_lod_data, orient='index').reset_index()
+            levels_df = levels_df.rename(columns={'index': 'trading_date'})
+            levels_df['trading_date'] = pd.to_datetime(levels_df['trading_date']).astype('datetime64[ns]')
             
-            def get_pdh_pdl(row):
-                curr_date = str(row['trading_date'])[:10]
-                # Find last date before current
-                prior_dates = [d for d in sorted_dates if d < curr_date]
-                if not prior_dates:
-                    return None, None
-                pd_data = hod_lod_data[prior_dates[-1]]
-                return pd_data.get('daily_high'), pd_data.get('daily_low')
-
-            levels = df.apply(get_pdh_pdl, axis=1)
-            df['pdh'], df['pdl'] = zip(*levels)
+            # We need the PREVIOUS day's levels
+            levels_df = levels_df.sort_values('trading_date')
+            levels_df['pdh'] = levels_df['daily_high'].shift(1)
+            levels_df['pdl'] = levels_df['daily_low'].shift(1)
+            
+            df = df.merge(levels_df[['trading_date', 'pdh', 'pdl']], on='trading_date', how='left')
             
             # Distances
             df['dist_to_pdh_pct'] = (df['pdh'] - df['open']) / df['open'] * 100
@@ -97,21 +96,47 @@ class MagnetEnricher:
             
             if all_gaps:
                 gap_df = pd.DataFrame(all_gaps)
+                gap_df['date'] = pd.to_datetime(gap_df['date']).astype('datetime64[ns]')
                 
-                def get_nearest_gap(row):
-                    curr_date = str(row['trading_date'])[:10]
-                    # Only consider gaps formed BEFORE current session
-                    valid_gaps = gap_df[gap_df['date'] < curr_date]
-                    if valid_gaps.empty:
-                        return None, None
+                # Vectorized Proximity: 
+                # For each macro, we need the nearest gap formed BEFORE the trading_date.
+                # Since gap_df is small (hundreds), we can use a clever broadcast.
+                macro_dates = df['trading_date'].unique()
+                
+                # Precompute nearest gap for each unique date
+                date_to_gap = {}
+                for d in macro_dates:
+                    valid_gaps = gap_df[gap_df['date'] < d]
+                    if not valid_gaps.empty:
+                        # We need to find nearest to SOME price. Since 'open' varies, 
+                        # we'll do the final distance calc per row, but we've narrowed the gap pool.
+                        date_to_gap[d] = valid_gaps
+                
+                # Final Vectorized Calc
+                # To keep it O(N), we'll use the fact that gap_df is small.
+                # If gap_df was large, we'd use a KD-Tree or BallTree.
+                # For ~200 gaps, a broadcasted subtraction is fine.
+                def fast_gap_lookup(group):
+                    d = group.name
+                    valid = date_to_gap.get(d)
+                    if valid is None:
+                        group['nearest_gap_price'] = np.nan
+                        group['nearest_gap_type'] = None
+                        return group
+                        
+                    # Prices as 1D arrays
+                    macro_opens = group['open'].values[:, np.newaxis]
+                    gap_prices = valid['price'].values
                     
-                    # Distance to each gap
-                    dists = (valid_gaps['price'] - row['open']).abs()
-                    idx = dists.idxmin()
-                    return valid_gaps.loc[idx, 'price'], valid_gaps.loc[idx, 'type']
-                
-                gap_res = df.apply(get_nearest_gap, axis=1)
-                df['nearest_gap_price'], df['nearest_gap_type'] = zip(*gap_res)
+                    # Distances (MacroRows x GapRows)
+                    dists = np.abs(macro_opens - gap_prices)
+                    nearest_idx = np.argmin(dists, axis=1)
+                    
+                    group['nearest_gap_price'] = gap_prices[nearest_idx]
+                    group['nearest_gap_type'] = valid['type'].values[nearest_idx]
+                    return group
+
+                df = df.groupby('trading_date', group_keys=False).apply(fast_gap_lookup)
                 df['dist_to_gap_pct'] = (df['nearest_gap_price'] - df['open']) / df['open'] * 100
 
         # 3. Structural Distances (Pivots)

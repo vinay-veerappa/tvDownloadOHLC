@@ -3,7 +3,7 @@ import { buildLevels, buildNarrative, buildSummary } from "@/lib/options-live-v3
 import { ok, readStringParam, readSymbol, serverError } from "@/lib/options-live-v3/http";
 
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
-const DEFAULT_MODEL_PREFERENCE = ["gemma4:latest", "qwen3:latest", "mistral:latest", "llama3.2:latest"];
+const DEFAULT_MODEL_PREFERENCE = ["gemma4:26b", "qwen3:latest", "mistral:latest", "llama3.2:latest"];
 
 type CompareCard = {
   model: string;
@@ -62,7 +62,7 @@ function buildPrompt(input: {
     screener: input.narrative.screener,
     signals: input.narrative.signals,
     perspectives: input.narrative.perspectives ?? [],
-    coachNotes: input.narrative.notes?.coach ?? input.levels.notes.coach,
+   // coachNotes: input.narrative.notes?.coach ?? input.levels.notes.coach,
     tacticalNotes: input.narrative.notes?.tactical ?? input.levels.notes.tactical,
   };
 
@@ -70,12 +70,12 @@ function buildPrompt(input: {
     "You are an intraday options-flow trading assistant for the tvDownloadOHLC options-live-v3 dashboard.",
     "Use the provided market context only. Do not invent data.",
     "Prioritize day-trading usefulness over explanation.",
-    "Return exactly 4 bullet points:",
+    "Return as bullet points:",
     "1. Bias and regime in plain trader language",
     "2. Key levels and what matters first intraday",
     "3. Which timeframe lens matters most right now (Scalper, Intraday, or Swing) and why",
     "4. Tactical guidance with invalidation or caution",
-    "Keep the whole answer under 130 words. No intro, no disclaimer, no markdown headings.",
+    "Keep the whole answer under 200 words. No intro, no disclaimer, no markdown headings.",
     "",
     JSON.stringify(context, null, 2),
   ].join("\n");
@@ -105,7 +105,7 @@ async function runOllamaCompare(model: string, prompt: string): Promise<CompareC
           {
             role: "system",
             content:
-              "You are a concise institutional trading assistant. Be concrete, level-aware, and execution-focused.",
+              "You are a concise institutional trading coach. Be concrete, level-aware, and execution-focused.",
           },
           { role: "user", content: prompt },
         ],

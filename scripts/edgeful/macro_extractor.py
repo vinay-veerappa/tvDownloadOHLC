@@ -26,6 +26,7 @@ def extract_macros_for_instrument(
     instrument: str,
     start_date: str = None,
     end_date: str = None,
+    bars_in: pd.DataFrame = None,
 ) -> pd.DataFrame:
     """
     Full Sprint 1 extraction for a single instrument.
@@ -41,7 +42,7 @@ def extract_macros_for_instrument(
     # ──────────────────────────────────────────────────────────────
     # 1. Load bars
     # ──────────────────────────────────────────────────────────────
-    df_1m = load_bars_duckdb(instrument, start_date, end_date)
+    df_1m = bars_in if bars_in is not None else load_bars_duckdb(instrument, start_date, end_date)
     if df_1m.empty:
         return pd.DataFrame()
 

@@ -15,6 +15,9 @@ ICT_RESEARCH_DIR = Path(r"C:\Users\vinay\tvDownloadOHLC\docs\research\ict\data")
 MACRO_RECORDS_PATH = DERIVED_DATA_DIR / "macro_records.parquet"
 FVG_DETAIL_PATH = DERIVED_DATA_DIR / "fvg_detail.parquet"
 
+# Databases
+PRISMA_DB_PATH = Path(r"C:\Users\vinay\tvDownloadOHLC\web\prisma\dev.db")
+
 # ==========================================
 # Parameters (Phase 4)
 # ==========================================
