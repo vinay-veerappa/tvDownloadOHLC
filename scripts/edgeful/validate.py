@@ -15,7 +15,7 @@ def validate_output():
     print(df['instrument'].value_counts())
     
     print("\nRecords per Macro (Top 10):")
-    print(df['macro_name'].value_counts().head(10))
+    print(df['macro_name_raw'].value_counts().head(10))
     
     print("\nJudas Classification Distribution:")
     print(df['judas_classification'].value_counts())
@@ -37,6 +37,17 @@ def validate_output():
         print(f"\n!! Warning: Found {len(bad_boundaries)} records where low > high.")
     else:
         print("Check: High/Low boundaries consistent. OK.")
+        
+    # Check Calendar Columns
+    cal_cols = ['is_monthly_opex', 'is_triple_witching', 'is_opex_week', 'is_opex_minus_1']
+    missing_cal = [c for c in cal_cols if c not in df.columns]
+    if missing_cal:
+        print(f"\n!! Error: Missing calendar columns: {missing_cal}")
+    else:
+        print("\nCheck: Calendar columns present. OK.")
+        for col in cal_cols:
+            true_count = df[col].sum()
+            print(f"  - {col}: {true_count} occurrences")
         
     print("\nValidation Complete.")
 

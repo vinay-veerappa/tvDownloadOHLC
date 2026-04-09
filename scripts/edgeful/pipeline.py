@@ -14,6 +14,7 @@ from .fvg_detector import detect_fvgs
 from .fvg_tracker import track_fvg_outcomes
 from .post_macro import compute_post_macro_outcomes
 from .sequencer import compute_sequences
+from .calendar_generator import generate_calendar
 
 def main():
     parser = argparse.ArgumentParser(description="Macro Research Pipeline - Sprint 2 (Full Context)")
@@ -72,6 +73,16 @@ def main():
             print(f"  -> Computing post-macro outcomes and sequences...")
             df_inst = compute_post_macro_outcomes(df_inst, bars_1m)
             df_inst = compute_sequences(df_inst)
+            
+            # 4.5 Calendar Enrichment (OpEx Week, triple_witching, etc.)
+            print(f"  -> Adding calendar context (OpEx)...")
+            # Set a broad range for calendar to ensure coverage
+            cal_start = args.start or "2006-01-01"
+            cal_end = args.end or "2026-12-31"
+            calendar_df = generate_calendar(cal_start, cal_end)
+            
+            # Ensure dtypes match for join (generated calendar uses datetime64[ns])
+            df_inst = df_inst.merge(calendar_df, on='trading_date', how='left')
 
             # 5. FVG Detection & Tracking
             print(f"  -> Detecting and tracking FVGs...")
