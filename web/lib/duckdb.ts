@@ -38,10 +38,13 @@ export async function initDuckDB() {
 export async function loadParquet(name: string, url: string) {
   const { db, conn } = await initDuckDB();
   
-  console.log(`--- Loading Parquet: ${name} from ${url} ---`);
+  // Convert relative URL to absolute URL to ensure DuckDB worker finds the file
+  const absoluteUrl = new URL(url, window.location.origin).href;
+  
+  console.log(`--- Loading Parquet: ${name} from ${absoluteUrl} ---`);
   
   // Register remote parquet file via HTTP
-  await db.registerFileURL(name, url, duckdb.DuckDBDataProtocol.HTTP, false);
+  await db.registerFileURL(name, absoluteUrl, duckdb.DuckDBDataProtocol.HTTP, false);
   
   // Create view for easy querying
   const tableName = name.replace('.parquet', '').replace(/-/g, '_');
@@ -54,5 +57,25 @@ export async function loadParquet(name: string, url: string) {
 export async function runQuery(sql: string) {
   const { conn } = await initDuckDB();
   const result = await conn.query(sql);
-  return result.toArray().map((row: any) => row.toJSON());
+  
+  // Safely serialize Apache Arrow rows, handling BigInts and complex types
+  const rows = result.toArray();
+  return rows.map((row: any) => {
+    try {
+      const obj = row.toJSON();
+      // Arrow toJSON doesn't stringify BigInt properly for React sometimes, manually walk it:
+      const safeObj: any = {};
+      for (const key in obj) {
+        if (typeof obj[key] === 'bigint') {
+          safeObj[key] = Number(obj[key]); // Or string if preferred
+        } else {
+          safeObj[key] = obj[key];
+        }
+      }
+      return safeObj;
+    } catch (e) {
+      console.warn('Failed to serialize row:', e);
+      return {};
+    }
+  });
 }

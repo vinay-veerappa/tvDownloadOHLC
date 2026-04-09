@@ -50,14 +50,18 @@ function DashboardContent() {
       const sql = getSummarySql(whereClause);
       const result = await runQuery(sql);
       
+      console.log('Query Result:', result);
+      
       if (result.length > 0) {
         setMetrics({
           ...result[0],
           query_time_ms: performance.now() - start
         });
+      } else {
+        console.warn('Query returned empty result.');
       }
     } catch (err) {
-      console.error('Query failed:', err);
+      console.error('Query failed:', err, 'SQL:', getSummarySql(buildWhereClause(filters)));
     } finally {
       setLoadingMetrics(false);
     }

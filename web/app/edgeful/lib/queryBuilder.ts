@@ -86,12 +86,12 @@ export function buildWhereClause(filters: MacroFilterState): string {
 export function getSummarySql(whereClause: string): string {
   return `
     SELECT 
-      COUNT(*) as total,
-      COUNT(CASE WHEN judas_classification IN ('bullish_judas', 'bearish_judas') THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) as judas_rate,
-      AVG(post_macro_continuation_pct) as avg_continuation,
-      AVG(post_macro_reversion_pct) as avg_reversion,
-      COUNT(CASE WHEN post_macro_continuation_pct > post_macro_reversion_pct THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) as continuation_win_rate,
-      AVG(post_macro_mfe_pct) as avg_mfe
+      CAST(COUNT(*) AS DOUBLE) as total,
+      CAST(COUNT(CASE WHEN judas_classification IN ('bullish_judas', 'bearish_judas') THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS DOUBLE) as judas_rate,
+      CAST(AVG(post_macro_continuation_pct) AS DOUBLE) as avg_continuation,
+      CAST(AVG(post_macro_reversion_pct) AS DOUBLE) as avg_reversion,
+      CAST(COUNT(CASE WHEN post_macro_continuation_pct > post_macro_reversion_pct THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS DOUBLE) as continuation_win_rate,
+      CAST(AVG(post_macro_mfe_pct) AS DOUBLE) as avg_mfe
     FROM macro_records
     ${whereClause}
   `;
@@ -106,8 +106,8 @@ export function getHistogramSql(column: string, whereClause: string, binWidth: n
 
   return `
     SELECT 
-      FLOOR(${column} / ${binWidth}) * ${binWidth} as bin_start,
-      COUNT(*) as count
+      CAST(FLOOR(${column} / ${binWidth}) * ${binWidth} AS DOUBLE) as bin_start,
+      CAST(COUNT(*) AS DOUBLE) as count
     FROM macro_records
     ${finalWhere}
     GROUP BY bin_start
@@ -127,7 +127,7 @@ export function getCrossTabSql(rowCol: string, colCol: string, whereClause: stri
     SELECT 
       ${rowCol} as row_val,
       ${colCol} as col_val,
-      COUNT(*) as count
+      CAST(COUNT(*) AS DOUBLE) as count
     FROM macro_records
     ${finalWhere}
     GROUP BY ${rowCol}, ${colCol}

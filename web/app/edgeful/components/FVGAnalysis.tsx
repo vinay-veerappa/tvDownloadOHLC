@@ -30,12 +30,12 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
       
       const metricsSql = `
         SELECT 
-          COUNT(*) as total_fvgs,
-          COUNT(CASE WHEN was_tested THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) as test_rate,
-          COUNT(CASE WHEN held THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN was_tested THEN 1 END), 0) as hold_rate,
-          COUNT(CASE WHEN failed THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN was_tested THEN 1 END), 0) as fail_rate,
-          AVG(fill_depth_pct) as avg_fill_depth,
-          AVG(test_time_m) as avg_test_time
+          CAST(COUNT(*) AS DOUBLE) as total_fvgs,
+          CAST(COUNT(CASE WHEN was_tested THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS DOUBLE) as test_rate,
+          CAST(COUNT(CASE WHEN held THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN was_tested THEN 1 END), 0) AS DOUBLE) as hold_rate,
+          CAST(COUNT(CASE WHEN failed THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN was_tested THEN 1 END), 0) AS DOUBLE) as fail_rate,
+          CAST(AVG(fill_depth_pct) AS DOUBLE) as avg_fill_depth,
+          CAST(AVG(test_time_m) AS DOUBLE) as avg_test_time
         FROM fvg_detail f
         JOIN macro_records m ON f.macro_id = m.macro_id
         WHERE 1=1 ${joinFilters}
@@ -44,7 +44,7 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
       const distSql = `
         SELECT 
           phase,
-          COUNT(CASE WHEN held THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN was_tested THEN 1 END), 0) as hold_rate
+          CAST(COUNT(CASE WHEN held THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN was_tested THEN 1 END), 0) AS DOUBLE) as hold_rate
         FROM fvg_detail f
         JOIN macro_records m ON f.macro_id = m.macro_id
         WHERE 1=1 ${joinFilters}

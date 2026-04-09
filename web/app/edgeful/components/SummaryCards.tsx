@@ -54,28 +54,28 @@ export function SummaryCards({ metrics, loading }: { metrics: SummaryMetrics | n
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
       <MetricCard 
         title="Institutional Sample" 
-        value={metrics?.total.toLocaleString() ?? '0'} 
+        value={metrics?.total?.toLocaleString() ?? '0'} 
         icon={<Users className="h-4 w-4" />}
         n={metrics?.total ?? 0}
         loading={loading}
       />
       <MetricCard 
         title="Judas Rate" 
-        value={`${metrics?.judas_rate.toFixed(1) ?? '0'}%`} 
+        value={`${metrics?.judas_rate?.toFixed(1) ?? '0'}%`} 
         icon={<TrendingUp className="h-4 w-4" />}
         n={metrics?.total ?? 0}
         loading={loading}
       />
       <MetricCard 
         title="Continuation Win Rate" 
-        value={`${metrics?.continuation_win_rate.toFixed(1) ?? '0'}%`} 
+        value={`${metrics?.continuation_win_rate?.toFixed(1) ?? '0'}%`} 
         icon={<Target className="h-4 w-4" />}
         n={metrics?.total ?? 0}
         loading={loading}
       />
       <MetricCard 
         title="Avg Continuation" 
-        value={`${metrics?.avg_continuation.toFixed(3) ?? '0'}%`} 
+        value={`${metrics?.avg_continuation?.toFixed(3) ?? '0'}%`} 
         icon={<Activity className="h-4 w-4" />}
         n={metrics?.total ?? 0}
         loading={loading}
