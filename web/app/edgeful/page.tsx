@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { FilterPanel } from './components/FilterPanel';
 import { SummaryCards } from './components/SummaryCards';
 import { useFilters } from './hooks/useFilters';
-import { initDuckDB, loadParquet, runQuery } from '@/lib/duckdb';
+import { initDuckDB, loadParquet, resetDuckDB, runQuery } from '@/lib/duckdb';
 import { buildWhereClause, getSummarySql } from './lib/queryBuilder';
 import { SummaryMetrics } from './types';
 import { DistributionCharts } from './components/DistributionCharts';
@@ -26,6 +26,29 @@ function DashboardContent() {
   const [loadingMetrics, setLoadingMetrics] = useState(false);
   const [lastDataUpdate, setLastDataUpdate] = useState<string | null>(null);
 
+  const loadDataEngine = useCallback(async () => {
+    setDbStatus('loading');
+    try {
+      await initDuckDB();
+      const version = Date.now();
+      await loadParquet('macro_records.parquet', `/api/data/macro_records.parquet?v=${version}`);
+      await loadParquet('fvg_detail.parquet', `/api/data/fvg_detail.parquet?v=${version}`);
+
+      const metaResponse = await fetch(`/api/data/macro_records.parquet?v=${version}`, {
+        headers: { Range: 'bytes=0-0' },
+      });
+      const lastModified = metaResponse.headers.get('last-modified');
+      if (lastModified) {
+        setLastDataUpdate(lastModified);
+      }
+
+      setDbStatus('ready');
+    } catch (err) {
+      console.error('Failed to initialize DuckDB:', err);
+      setDbStatus('error');
+    }
+  }, []);
+
   useEffect(() => {
     const timeout = setTimeout(() => {
       setDebouncedFilters(filters);
@@ -35,30 +58,14 @@ function DashboardContent() {
 
   // Initialize Data Engine
   useEffect(() => {
-    async function setup() {
-      try {
-        await initDuckDB();
-        const version = Date.now();
-        await loadParquet('macro_records.parquet', `/api/data/macro_records.parquet?v=${version}`);
-        await loadParquet('fvg_detail.parquet', `/api/data/fvg_detail.parquet?v=${version}`);
+    loadDataEngine();
+  }, [loadDataEngine]);
 
-        // Pull a lightweight range response to get fresh file metadata headers.
-        const metaResponse = await fetch(`/api/data/macro_records.parquet?v=${version}`, {
-          headers: { Range: 'bytes=0-0' },
-        });
-        const lastModified = metaResponse.headers.get('last-modified');
-        if (lastModified) {
-          setLastDataUpdate(lastModified);
-        }
-
-        setDbStatus('ready');
-      } catch (err) {
-        console.error('Failed to initialize DuckDB:', err);
-        setDbStatus('error');
-      }
-    }
-    setup();
-  }, []);
+  const refreshData = useCallback(async () => {
+    setMetrics(null);
+    await resetDuckDB();
+    await loadDataEngine();
+  }, [loadDataEngine]);
 
   // Update Metrics on Filter Change
   const fetchMetrics = useCallback(async () => {
@@ -135,10 +142,11 @@ function DashboardContent() {
               variant="outline" 
               size="sm" 
               className="h-8 border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800 text-xs gap-2"
-              onClick={fetchMetrics}
+              onClick={refreshData}
+              disabled={dbStatus === 'loading' || loadingMetrics}
             >
-              <RefreshCcw className={`h-3 w-3 ${loadingMetrics ? 'animate-spin' : ''}`} />
-              Refresh
+              <RefreshCcw className={`h-3 w-3 ${dbStatus === 'loading' ? 'animate-spin' : ''}`} />
+              Refresh Data
             </Button>
           </div>
         </header>

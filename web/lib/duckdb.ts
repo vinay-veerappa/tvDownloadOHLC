@@ -9,6 +9,7 @@ import * as duckdb from '@duckdb/duckdb-wasm';
 
 let db: duckdb.AsyncDuckDB | null = null;
 let conn: duckdb.AsyncDuckDBConnection | null = null;
+let worker: Worker | null = null;
 let initializationPromise: Promise<{ db: duckdb.AsyncDuckDB; conn: duckdb.AsyncDuckDBConnection }> | null = null;
 
 export async function initDuckDB() {
@@ -32,7 +33,8 @@ export async function initDuckDB() {
 
     const bundle = await duckdb.selectBundle(BUNDLES);
     const logger = new duckdb.ConsoleLogger();
-    db = new duckdb.AsyncDuckDB(logger, new Worker(bundle.mainWorker!));
+    worker = new Worker(bundle.mainWorker!);
+    db = new duckdb.AsyncDuckDB(logger, worker);
     await db.instantiate(bundle.mainModule);
     conn = await db.connect();
 
@@ -69,6 +71,37 @@ export async function loadParquet(name: string, url: string) {
 
   loadingPromises.set(name, p);
   return p;
+}
+
+export async function resetDuckDB() {
+  loadingPromises.clear();
+
+  try {
+    if (conn) {
+      await conn.close();
+    }
+  } catch (error) {
+    console.warn('Failed to close DuckDB connection cleanly:', error);
+  }
+
+  try {
+    if (db) {
+      await db.terminate();
+    }
+  } catch (error) {
+    console.warn('Failed to terminate DuckDB cleanly:', error);
+  }
+
+  try {
+    worker?.terminate();
+  } catch (error) {
+    console.warn('Failed to terminate DuckDB worker cleanly:', error);
+  }
+
+  db = null;
+  conn = null;
+  worker = null;
+  initializationPromise = null;
 }
 
 export async function runQuery(sql: string) {
