@@ -1,4 +1,5 @@
 import pandas as pd
+pd.set_option('future.no_silent_downcasting', True)
 import numpy as np
 import duckdb
 
@@ -88,6 +89,6 @@ def track_fvg_outcomes(fvg_df: pd.DataFrame, bars_1m: pd.DataFrame, macro_df: pd
     res_df = fvg_df.merge(outcomes, on='fvg_id', how='left')
     
     # Held = tested but not failed
-    res_df['held'] = res_df['was_tested'] & ~res_df['failed'].infer_objects(copy=False).fillna(True)
+    res_df['held'] = (res_df['was_tested'] == True) & (res_df['failed'] == False)
     
     return res_df

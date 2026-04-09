@@ -19,8 +19,8 @@ export async function initDuckDB() {
 
     // Use local assets from /public/duckdb to avoid cross-origin Worker security restrictions
     const MANIFEST = {
-      mainModule: '/duckdb/duckdb-eh.wasm',
-      mainWorker: '/duckdb/duckdb-browser-eh.worker.js',
+      mainModule: '/duckdb/duckdb-mvp.wasm',
+      mainWorker: '/duckdb/duckdb-browser-mvp.worker.js',
     } as duckdb.DuckDBBundle;
 
     const logger = new duckdb.ConsoleLogger();
@@ -35,23 +35,32 @@ export async function initDuckDB() {
   return initializationPromise;
 }
 
+const loadingPromises = new Map<string, Promise<string>>();
+
 export async function loadParquet(name: string, url: string) {
-  const { db, conn } = await initDuckDB();
-  
-  // Convert relative URL to absolute URL to ensure DuckDB worker finds the file
-  const absoluteUrl = new URL(url, window.location.origin).href;
-  
-  console.log(`--- Loading Parquet: ${name} from ${absoluteUrl} ---`);
-  
-  // Register remote parquet file via HTTP
-  await db.registerFileURL(name, absoluteUrl, duckdb.DuckDBDataProtocol.HTTP, false);
-  
-  // Create view for easy querying
-  const tableName = name.replace('.parquet', '').replace(/-/g, '_');
-  await conn.query(`CREATE VIEW IF NOT EXISTS ${tableName} AS SELECT * FROM '${name}'`);
-  
-  console.log(`--- Table Registered: ${tableName} ---`);
-  return tableName;
+  if (loadingPromises.has(name)) return loadingPromises.get(name)!;
+
+  const p = (async () => {
+    const { db, conn } = await initDuckDB();
+    
+    // Convert relative URL to absolute URL to ensure DuckDB worker finds the file
+    const absoluteUrl = new URL(url, window.location.origin).href;
+    
+    console.log(`--- Loading Parquet: ${name} from ${absoluteUrl} ---`);
+    
+    // Register remote parquet file via HTTP
+    await db.registerFileURL(name, absoluteUrl, duckdb.DuckDBDataProtocol.HTTP, false);
+    
+    // Create view for easy querying
+    const tableName = name.replace('.parquet', '').replace(/-/g, '_');
+    await conn.query(`CREATE VIEW IF NOT EXISTS ${tableName} AS SELECT * FROM '${name}'`);
+    
+    console.log(`--- Table Registered: ${tableName} ---`);
+    return tableName;
+  })();
+
+  loadingPromises.set(name, p);
+  return p;
 }
 
 export async function runQuery(sql: string) {

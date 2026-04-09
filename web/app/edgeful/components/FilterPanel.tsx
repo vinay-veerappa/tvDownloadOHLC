@@ -5,6 +5,21 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
+
+const formatLabel = (str: string) => {
+  if (!str) return '';
+  const instruments = ['ES1', 'NQ1', 'YM1', 'RTY1', 'CL1', 'GC1'];
+  const upper = str.toUpperCase();
+  if (instruments.includes(upper)) return upper;
+  
+  // Handle common abbreviations or already clean labels
+  if (['VIX', 'RTH', 'AM', 'PM'].includes(upper)) return upper;
+
+  return str.split('_').map(word => {
+    if (['vix', 'rth', 'am', 'pm'].includes(word.toLowerCase())) return word.toUpperCase();
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  }).join(' ');
+}
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -37,7 +52,7 @@ const MultiSelect = ({ label, options, selected, onChange, className }: MultiSel
             <span className="text-zinc-500">{label}:</span>
             <span className="truncate">
               {selected.length === 0 ? 'All' : 
-               selected.length === 1 ? selected[0] : 
+               selected.length === 1 ? formatLabel(selected[0]) : 
                `${selected.length} selected`}
             </span>
           </div>
@@ -62,8 +77,8 @@ const MultiSelect = ({ label, options, selected, onChange, className }: MultiSel
                   checked={selected.includes(option)}
                   className="border-zinc-700 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
                 />
-                <span className="text-xs font-medium text-zinc-300 pointer-events-none lowercase">
-                  {option}
+                <span className="text-xs font-medium text-zinc-300 pointer-events-none">
+                  {formatLabel(option)}
                 </span>
               </div>
             ))}

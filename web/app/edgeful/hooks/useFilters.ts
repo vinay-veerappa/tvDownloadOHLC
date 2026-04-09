@@ -53,14 +53,20 @@ export function useFilters() {
     
     const params = new URLSearchParams(searchParams.toString());
     const filterString = JSON.stringify(filters);
-    
-    // Only update if it's not the initial state to keep URL clean
-    if (filterString !== JSON.stringify(INITIAL_STATE)) {
-      params.set('state', encodeURIComponent(filterString));
+    const newParamStr = filterString !== JSON.stringify(INITIAL_STATE) ? encodeURIComponent(filterString) : null;
+    const currentParam = searchParams.get('state');
+
+    // Prevent deep loop by checking if state actually needs to be updated
+    if (newParamStr !== null) {
+      params.set('state', newParamStr);
     } else {
       params.delete('state');
     }
-    
+
+    if (currentParam === newParamStr || (!currentParam && !newParamStr)) {
+      return; // Already synced
+    }
+
     const newUrl = `${pathname}${params.toString() ? `?${params.toString()}` : ''}`;
     // Using replace to avoid filling history stack
     router.replace(newUrl, { scroll: false });

@@ -28,8 +28,9 @@ function DashboardContent() {
     async function setup() {
       try {
         await initDuckDB();
-        await loadParquet('macro_records.parquet', '/api/data/macro_records.parquet');
-        await loadParquet('fvg_detail.parquet', '/api/data/fvg_detail.parquet');
+        const version = Date.now();
+        await loadParquet('macro_records.parquet', `/api/data/macro_records.parquet?v=${version}`);
+        await loadParquet('fvg_detail.parquet', `/api/data/fvg_detail.parquet?v=${version}`);
         setDbStatus('ready');
       } catch (err) {
         console.error('Failed to initialize DuckDB:', err);
@@ -111,7 +112,7 @@ function DashboardContent() {
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Database className="h-3 w-3" />
-                  <span>290K Records</span>
+                  <span>{metrics?.total ? `${Number(metrics.total).toLocaleString()} Records` : 'Loading...'}</span>
                 </div>
               </div>
             )}

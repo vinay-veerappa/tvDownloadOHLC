@@ -11,6 +11,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ChevronDown, ChevronUp, ChevronLeft, ChevronRight, LayoutList, Download } from 'lucide-react';
 import { getSummarySql } from '../lib/queryBuilder';
 
+const formatLabel = (str: string) => {
+  if (!str) return '--';
+  const instruments = ['ES1', 'NQ1', 'YM1', 'RTY1', 'CL1', 'GC1'];
+  const upper = str.toUpperCase();
+  if (instruments.includes(upper)) return upper;
+
+  return str.split('_').map(word => {
+    if (['vix', 'rth', 'am', 'pm'].includes(word.toLowerCase())) return word.toUpperCase();
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  }).join(' ');
+}
+
 interface DrillDownTableProps {
   filters: MacroFilterState;
   dbReady: boolean;
@@ -214,20 +226,28 @@ export function DrillDownTable({ filters, dbReady }: DrillDownTableProps) {
             ) : (
               data.map((row) => (
                 <TableRow key={row.macro_id} className="border-b border-zinc-900/50 last:border-0 hover:bg-zinc-900/20 transition-colors py-1">
-                  <TableCell className="py-2 text-[11px] font-medium text-zinc-300">{row.trading_date}</TableCell>
-                  <TableCell className="py-2 text-[11px] font-bold text-amber-500/90">{row.instrument}</TableCell>
-                  <TableCell className="py-2 text-[11px] text-zinc-400">{row.ict_alias}</TableCell>
+                  <TableCell className="py-2 text-[11px] font-medium text-zinc-300">
+                    {row.trading_date ? new Date(Number(row.trading_date)).toISOString().split('T')[0] : '--'}
+                  </TableCell>
+                  <TableCell className="py-2 text-[11px] font-bold text-amber-500/90">{formatLabel(row.instrument)}</TableCell>
+                  <TableCell className="py-2 text-[11px] text-zinc-400 font-medium">{formatLabel(row.ict_alias)}</TableCell>
                   <TableCell className="py-2 text-[11px] text-zinc-400">
                     <span className={
                       row.judas_classification === 'bullish_judas' ? 'text-emerald-500/80 bg-emerald-500/10 px-1.5 py-0.5 rounded' : 
                       row.judas_classification === 'bearish_judas' ? 'text-rose-500/80 bg-rose-500/10 px-1.5 py-0.5 rounded' : ''
                     }>
-                      {row.judas_classification}
+                      {formatLabel(row.judas_classification)}
                     </span>
                   </TableCell>
-                  <TableCell className="py-2 text-[11px] text-right font-medium text-emerald-500/90">{row.post_macro_continuation_pct ? row.post_macro_continuation_pct.toFixed(2) : '--'}</TableCell>
-                  <TableCell className="py-2 text-[11px] text-right font-medium text-rose-500/90">{row.post_macro_reversion_pct ? row.post_macro_reversion_pct.toFixed(2) : '--'}</TableCell>
-                  <TableCell className="py-2 text-[11px] text-right text-zinc-400">{row.macro_range_pct ? row.macro_range_pct.toFixed(2) : '--'}</TableCell>
+                  <TableCell className="py-2 text-[11px] text-right font-medium text-emerald-500/90">
+                    {row.post_macro_continuation_pct != null ? Number(row.post_macro_continuation_pct).toFixed(2) : '--'}
+                  </TableCell>
+                  <TableCell className="py-2 text-[11px] text-right font-medium text-rose-500/90">
+                    {row.post_macro_reversion_pct != null ? Number(row.post_macro_reversion_pct).toFixed(2) : '--'}
+                  </TableCell>
+                  <TableCell className="py-2 text-[11px] text-right text-zinc-400">
+                    {row.macro_range_pct != null ? Number(row.macro_range_pct).toFixed(2) : '--'}
+                  </TableCell>
                 </TableRow>
               ))
             )}

@@ -49,11 +49,13 @@ def extract_macros_for_instrument(
     # ──────────────────────────────────────────────────────────────
     # 2. Multi-scale pivots (5, 13, 21) on full 1m series
     # ──────────────────────────────────────────────────────────────
+    print(f"  [{instrument}] Extractor: Calculating multi-scale pivots...")
     df_1m = calculate_pivots_multi(df_1m, lengths=[5, 13, 21])
 
     # ──────────────────────────────────────────────────────────────
     # 3. DuckDB: Macro window aggregation
     # ──────────────────────────────────────────────────────────────
+    print(f"  [{instrument}] Extractor: Connecting to DuckDB...")
     con = duckdb.connect(database=':memory:')
     con.execute("SET TimeZone='US/Eastern'")
 
@@ -65,37 +67,41 @@ def extract_macros_for_instrument(
     )
 
     # Strip timezone for DuckDB registration (values are already ET)
+    print(f"  [{instrument}] Extractor: Registering DataFrames with DuckDB...")
     df_reg = df_1m.reset_index().copy()
     df_reg['dt_et'] = df_reg['dt_et'].dt.tz_localize(None)
     con.register('bars', df_reg)
     con.register('macro_definitions', macros_df)
 
     # Materialize bar_assignments into a TEMP TABLE so it persists across execute() calls
+    print(f"  [{instrument}] Extractor: Creating temp table bar_assignments...")
     con.execute("""
         CREATE TEMP TABLE bar_assignments AS 
         SELECT
             b.*,
             m.name AS macro_name_raw,
-            CASE
-                -- Same hour: e.g., Hydra 8:20–8:40
-                WHEN m.start_h = m.end_h THEN
-                    (b.hour_et = m.start_h
-                     AND b.minute_et >= m.start_m
-                     AND b.minute_et < m.end_m)
-                -- Adjacent hour (standard case): e.g., 9:50–10:10
-                WHEN m.end_h = (m.start_h + 1) % 24 THEN
-                    ((b.hour_et = m.start_h AND b.minute_et >= m.start_m)
-                     OR (b.hour_et = m.end_h AND b.minute_et < m.end_m))
-                -- Cross-midnight spanning >1 hour (shouldn't occur with 20-min windows, but defensive)
-                ELSE FALSE
-            END AS is_in_macro
+            TRUE AS is_in_macro
         FROM bars b
-        CROSS JOIN macro_definitions m
+        JOIN macro_definitions m
+        ON CASE
+            -- Same hour: e.g., Hydra 8:20–8:40
+            WHEN m.start_h = m.end_h THEN
+                (b.hour_et = m.start_h
+                 AND b.minute_et >= m.start_m
+                 AND b.minute_et < m.end_m)
+            -- Adjacent hour (standard case): e.g., 9:50–10:10
+            WHEN m.end_h = (m.start_h + 1) % 24 THEN
+                ((b.hour_et = m.start_h AND b.minute_et >= m.start_m)
+                 OR (b.hour_et = m.end_h AND b.minute_et < m.end_m))
+            -- Cross-midnight spanning >1 hour (shouldn't occur with 20-min windows, but defensive)
+            ELSE FALSE
+        END
     """)
 
     # Main aggregation query
     # Uses integer hour/minute comparison (not string) for correctness
     # Handles three cases: same-hour (Hydra), adjacent-hour (standard), cross-midnight
+    print(f"  [{instrument}] Extractor: Running main aggregation query...")
     agg_query = """
     WITH active_macros AS (
         SELECT * FROM bar_assignments WHERE is_in_macro = TRUE
@@ -182,6 +188,7 @@ def extract_macros_for_instrument(
     # ──────────────────────────────────────────────────────────────
     # 4. DuckDB: Refine extreme timing (LAST occurrence per design spec)
     # ──────────────────────────────────────────────────────────────
+    print(f"  [{instrument}] Extractor: Refining extreme timing...")
     con.register('macro_summary', macro_df)
 
     refine_query = """

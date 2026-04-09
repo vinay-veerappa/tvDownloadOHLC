@@ -154,6 +154,13 @@ export function AppSidebar() {
             badge: "New",
         },
         {
+            label: "Edgeful Dashboard",
+            icon: LayoutDashboard,
+            href: "/edgeful",
+            active: pathname === "/edgeful",
+            badge: "New",
+        },
+        {
             label: "Reference",
             icon: Library,
             href: "/profiler/reference",

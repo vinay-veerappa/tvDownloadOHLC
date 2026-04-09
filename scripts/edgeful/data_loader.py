@@ -37,8 +37,10 @@ def load_bars_duckdb(instrument: str, start_date=None, end_date=None) -> pd.Data
     """
     path = get_1m_path(instrument)
     if not path.exists():
+        print(f"  [{instrument}] DataLoader: Path does not exist: {path}")
         return pd.DataFrame()
 
+    print(f"  [{instrument}] DataLoader: Loading from {path}...")
     con = duckdb.connect(database=':memory:')
     con.execute("SET TimeZone='US/Eastern'")
     

@@ -10,6 +10,18 @@ import { MacroFilterState } from '../types';
 import { Rows3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+const formatLabel = (str: string) => {
+  if (!str) return '--';
+  const instruments = ['ES1', 'NQ1', 'YM1', 'RTY1', 'CL1', 'GC1'];
+  const upper = str.toUpperCase();
+  if (instruments.includes(upper)) return upper;
+
+  return str.split('_').map(word => {
+    if (['vix', 'rth', 'am', 'pm'].includes(word.toLowerCase())) return word.toUpperCase();
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  }).join(' ');
+}
+
 interface CrossTabProps {
   filters: MacroFilterState;
   dbReady: boolean;
@@ -128,14 +140,14 @@ export function CrossTab({ filters, dbReady }: CrossTabProps) {
                 {DIMENSIONS.find(d => d.value === rowDim)?.label} \ {DIMENSIONS.find(d => d.value === colDim)?.label}
               </th>
               {colLabels.map(c => (
-                <th key={c} className="p-2 font-medium text-zinc-300 text-center uppercase whitespace-nowrap">{c}</th>
+                <th key={c} className="p-2 font-medium text-zinc-300 text-center uppercase whitespace-nowrap">{formatLabel(c)}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {rowLabels.map(r => (
               <tr key={r} className="border-b border-zinc-900/50 last:border-0 hover:bg-zinc-900/20 transition-colors">
-                <td className="p-2 font-medium text-amber-500/80 whitespace-nowrap bg-zinc-950/50">{r}</td>
+                <td className="p-2 font-medium text-amber-500/80 whitespace-nowrap bg-zinc-950/50">{formatLabel(r)}</td>
                 {colLabels.map(c => {
                   const val = Number(matrix[r][c] || 0);
                   const intensity = maxCount > 0 ? val / maxCount : 0;
