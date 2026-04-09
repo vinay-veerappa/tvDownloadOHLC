@@ -39,14 +39,17 @@ A quantitative research framework for studying ICT macro window behavior across 
 
 ## Macro Window Definitions
 
-### Standard Macros (24 windows, every hour boundary)
+### Standard Macros (hour-boundary windows, excluding 17:50)
 
-Generated programmatically: every `XX:50` to `XX+1:10` ET, producing 24 windows covering the full 24-hour futures session.
+Generated programmatically: every `XX:50` to `XX+1:10` ET, excluding the invalid `17:50-18:10` window.
 
 ```python
+EXCLUDED_STANDARD_MACRO_START_HOURS = {17}
+
 STANDARD_MACROS = [
     (f"Macro_{h:02d}50", h, 50, (h+1) % 24, 10)
     for h in range(24)
+    if h not in EXCLUDED_STANDARD_MACRO_START_HOURS
 ]
 ```
 

@@ -1,6 +1,7 @@
 import pandas as pd
 import argparse
 from pathlib import Path
+import json
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'utils')))
@@ -8,6 +9,43 @@ import data_utils
 import shutil
 import numpy as np
 from datetime import timedelta
+
+DEFAULT_SOURCE_TIMEZONE = "America/Los_Angeles"
+
+
+def ensure_utc_naive_index(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize any datetime index to UTC-naive for parquet contract consistency."""
+    if df.empty:
+        return df
+
+    idx = pd.to_datetime(df.index)
+    if getattr(idx, 'tz', None) is None:
+        df.index = idx
+    else:
+        df.index = idx.tz_convert('UTC').tz_localize(None)
+    return df
+
+
+def load_infile_import_config(csv_path: str) -> dict:
+    """
+    Load optional sidecar config for a specific input file.
+    Expected file: <input_file>.import.json
+    """
+    config_path = Path(f"{csv_path}.import.json")
+    if not config_path.exists():
+        return {}
+
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+        if not isinstance(cfg, dict):
+            print(f"  Warning: sidecar config must be a JSON object. Ignoring: {config_path}")
+            return {}
+        print(f"  Using sidecar import config: {config_path}")
+        return cfg
+    except Exception as e:
+        print(f"  Warning: failed to parse sidecar config {config_path}: {e}")
+        return {}
 
 def parse_interval(interval_str):
     if not interval_str: return timedelta(minutes=1)
@@ -23,13 +61,18 @@ def parse_interval(interval_str):
     elif unit == 'w': return timedelta(weeks=value)
     return timedelta(minutes=value)
 
-def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_open=True, timezone="America/Los_Angeles"):
+def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_open=True, timezone=None):
     print(f"Importing {csv_path} for {ticker} ({interval})...")
+
+    sidecar_cfg = load_infile_import_config(csv_path)
+    effective_timezone = sidecar_cfg.get('timezone', timezone or DEFAULT_SOURCE_TIMEZONE)
+    if 'shift_to_open' in sidecar_cfg:
+        shift_to_open = bool(sidecar_cfg.get('shift_to_open'))
     
     # 0. Parse Interval for Shift
     bar_duration = parse_interval(interval)
     print(f"  Bar Duration: {bar_duration} (Shift to Open: {shift_to_open})")
-    print(f"  Source Timezone: {timezone}")
+    print(f"  Source Timezone: {effective_timezone}")
 
     # 1. Detect Delimiter & Headers
     try:
@@ -102,19 +145,27 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
     # 2. Handle Timezone & Shift
     # A. Timezone Conversion (User Local -> America/New_York)
     if df.index.tz is None:
-        print(f"  Converting from Local Time ({timezone}) to UTC (Naive)...")
+        print(f"  Converting from Local Time ({effective_timezone}) to UTC (Naive)...")
         # 1. Localize to Input TZ
-        df.index = df.index.tz_localize(timezone, ambiguous='infer')
+        df.index = df.index.tz_localize(
+            effective_timezone,
+            ambiguous='infer',
+            nonexistent='shift_forward',
+        )
         # 2. Convert to UTC
         df.index = df.index.tz_convert('UTC')
         # 3. Make Naive (Strip TZ info, keep UTC time)
         df.index = df.index.tz_localize(None)
+    else:
+        # If source was already tz-aware, normalize to UTC-naive contract.
+        df.index = df.index.tz_convert('UTC').tz_localize(None)
 
     # B. Shift Close-Time to Open-Time
     if shift_to_open:
         print(f"  Shifting timestamps BACK by {bar_duration} (Close Time -> Open Time)")
         df.index = df.index - bar_duration
 
+    df = ensure_utc_naive_index(df)
     df = df[['open', 'high', 'low', 'close', 'volume']]
     
     # 3. Align Prices (Back-Adjustment Fix)
@@ -124,6 +175,7 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
     if align and target_path.exists():
         print("  Checking for Price Alignment...")
         df_old = pd.read_parquet(target_path)
+        df_old = ensure_utc_naive_index(df_old)
         
         # Find overlap
         common_idx = df.index.intersection(df_old.index)
@@ -155,22 +207,8 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
         print(f"  Merging with existing {target_file}...")
         data_utils.create_backup(str(target_path))
         df_old = pd.read_parquet(target_path)
-        
-        # Align Timezones safely
-        tz_new = df.index.tz
-        tz_old = df_old.index.tz
-        
-        if tz_new != tz_old:
-            print(f"  Adjusting Timezone: New({tz_new}) -> Old({tz_old})")
-            if tz_new is None:
-                # New is Naive, Old is Aware. Assume New is UTC-Naive.
-                df.index = df.index.tz_localize('UTC').tz_convert(tz_old)
-            elif tz_old is None:
-                 # New is Aware, Old is Naive. Convert New to UTC and strip.
-                 df.index = df.index.tz_convert('UTC').tz_localize(None)
-            else:
-                 # Both Aware
-                 df.index = df.index.tz_convert(tz_old)
+        df_old = ensure_utc_naive_index(df_old)
+        df = ensure_utc_naive_index(df)
 
         # Merge: df (History) + df_old (Recent)
         # We want to PRESERVE df_old values where they exist (Trusted Source)
@@ -186,12 +224,14 @@ def import_ninjatrader_data(csv_path, ticker, interval, align=False, shift_to_op
         # If we concat [df_old, df], first is df_old. So Yahoo wins. Good.
         df_combined = df_combined[~df_combined.index.duplicated(keep='first')]
         df_combined.sort_index(inplace=True)
+        df_combined = ensure_utc_naive_index(df_combined)
         
         print(f"  Merged Total: {len(df_combined)} rows")
         data_utils.safe_save_parquet(df_combined, str(target_path))
         print(f"✅ Imported to {target_file}")
     else:
         print(f"  Creating new file {target_file}...")
+        df = ensure_utc_naive_index(df)
         data_utils.safe_save_parquet(df, str(target_path))
         print(f"✅ Created {target_file}")
 
@@ -202,7 +242,7 @@ if __name__ == "__main__":
     parser.add_argument("interval", help="Interval")
     parser.add_argument("--align", action="store_true", help="Auto-align prices")
     parser.add_argument("--no-shift", action="store_true", help="Disable Close->Open time shift")
-    parser.add_argument("--timezone", default="America/Los_Angeles", help="Source timezone (default: America/Los_Angeles)")
+    parser.add_argument("--timezone", default=None, help="Source timezone override (default comes from sidecar or America/Los_Angeles)")
     args = parser.parse_args()
     
     import_ninjatrader_data(args.file, args.ticker, args.interval, align=args.align, shift_to_open=not args.no_shift, timezone=args.timezone)

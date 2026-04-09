@@ -31,9 +31,12 @@ VOL_AVG_LOOKBACK = 20      # Rolling average for volume_vs_avg
 
 # Standard Macros: 20-minute windows every hour boundary (XX:50 to XX+1:10)
 # Returns list of (name, start_h, start_m, end_h, end_m)
+EXCLUDED_STANDARD_MACRO_START_HOURS = {17}
+
 STANDARD_MACROS = [
     (f"Macro_{h:02d}50", h, 50, (h + 1) % 24, 10)
     for h in range(24)
+    if h not in EXCLUDED_STANDARD_MACRO_START_HOURS
 ]
 
 # ICT Alias Mapping
