@@ -23,6 +23,21 @@ import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeProvider as ChartThemeProvider } from "@/context/theme-context";
 
+if (typeof window === "undefined") {
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    const message = args
+      .filter((arg): arg is string => typeof arg === "string")
+      .join(" ");
+
+    if (message.includes("The width(-1) and height(-1) of chart should be greater than 0")) {
+      return;
+    }
+
+    originalWarn(...args);
+  };
+}
+
 // ...
 
 export default function RootLayout({

@@ -5,6 +5,13 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { ChevronDown, Filter, RotateCcw, X } from 'lucide-react';
+import { MacroFilterState } from '../types';
+import { cn } from '@/lib/utils';
+import { Slider } from '@/components/ui/slider';
 
 const formatLabel = (str: string) => {
   if (!str) return '';
@@ -20,12 +27,10 @@ const formatLabel = (str: string) => {
     return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
   }).join(' ');
 }
-import { Checkbox } from '@/components/ui/checkbox';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { ChevronDown, Filter, RotateCcw, X } from 'lucide-react';
-import { MacroFilterState } from '../types';
-import { cn } from '@/lib/utils';
+
+const ICT_ALIASES = [
+  'London_1', 'London_2', 'NY_AM_1', 'NY_AM_2', 'NY_Lunch', 'NY_PM', 'NY_Close', 'Asia_1', 'Asia_2', 'Asia_3'
+];
 
 interface MultiSelectProps {
   label: string;
@@ -35,7 +40,9 @@ interface MultiSelectProps {
   className?: string;
 }
 
-const MultiSelect = ({ label, options, selected, onChange, className }: MultiSelectProps) => {
+const MultiSelect = ({ label, options, selected = [], onChange, className }: MultiSelectProps) => {
+  const safeSelected = Array.isArray(selected) ? selected : [];
+
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -44,16 +51,16 @@ const MultiSelect = ({ label, options, selected, onChange, className }: MultiSel
           size="sm" 
           className={cn(
             "h-8 w-full justify-between text-xs font-normal border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800 hover:text-zinc-100",
-            selected.length > 0 && "border-amber-500/50 text-amber-500 bg-amber-500/5",
+            safeSelected.length > 0 && "border-amber-500/50 text-amber-500 bg-amber-500/5",
             className
           )}
         >
           <div className="flex items-center gap-2 truncate">
             <span className="text-zinc-500">{label}:</span>
             <span className="truncate">
-              {selected.length === 0 ? 'All' : 
-               selected.length === 1 ? formatLabel(selected[0]) : 
-               `${selected.length} selected`}
+              {safeSelected.length === 0 ? 'All' : 
+               safeSelected.length === 1 ? formatLabel(safeSelected[0]) : 
+               `${safeSelected.length} selected`}
             </span>
           </div>
           <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />
@@ -67,14 +74,14 @@ const MultiSelect = ({ label, options, selected, onChange, className }: MultiSel
                 key={option}
                 className="flex items-center space-x-2 rounded-sm px-2 py-1.5 hover:bg-zinc-900 cursor-pointer"
                 onClick={() => {
-                  const newSelected = selected.includes(option)
-                    ? selected.filter((s) => s !== option)
-                    : [...selected, option];
+                  const newSelected = safeSelected.includes(option)
+                    ? safeSelected.filter((s) => s !== option)
+                    : [...safeSelected, option];
                   onChange(newSelected);
                 }}
               >
                 <Checkbox
-                  checked={selected.includes(option)}
+                  checked={safeSelected.includes(option)}
                   className="border-zinc-700 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
                 />
                 <span className="text-xs font-medium text-zinc-300 pointer-events-none">
@@ -84,7 +91,7 @@ const MultiSelect = ({ label, options, selected, onChange, className }: MultiSel
             ))}
           </div>
         </ScrollArea>
-        {selected.length > 0 && (
+        {safeSelected.length > 0 && (
           <div className="p-2 border-t border-zinc-900 bg-zinc-950/50">
             <Button 
               variant="ghost" 
@@ -101,14 +108,61 @@ const MultiSelect = ({ label, options, selected, onChange, className }: MultiSel
   );
 };
 
+interface MultiToggleProps {
+  label: string;
+  value: boolean | null;
+  onChange: (value: boolean | null) => void;
+  className?: string;
+}
+
+const MultiToggle = ({ label, value, onChange, className }: MultiToggleProps) => {
+  return (
+    <div className={cn("flex flex-col gap-1.5 px-1", className)}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-zinc-400">{label}</span>
+        <div className="flex bg-zinc-900 rounded-md p-0.5 border border-zinc-800">
+          <button
+            onClick={() => onChange(true)}
+            className={cn(
+              "px-2 py-0.5 rounded-sm text-[10px] uppercase font-bold transition-all",
+              value === true ? "bg-amber-500 text-zinc-950" : "text-zinc-500 hover:text-zinc-300"
+            )}
+          >
+            Yes
+          </button>
+          <button
+            onClick={() => onChange(false)}
+            className={cn(
+              "px-2 py-0.5 rounded-sm text-[10px] uppercase font-bold transition-all",
+              value === false ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
+            )}
+          >
+            No
+          </button>
+          <button
+            onClick={() => onChange(null)}
+            className={cn(
+              "px-2 py-0.5 rounded-sm text-[10px] uppercase font-bold transition-all",
+              value === null ? "bg-zinc-950 text-amber-500/50" : "text-zinc-500 hover:text-zinc-300"
+            )}
+          >
+            Any
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 interface FilterPanelProps {
   filters: MacroFilterState;
   updateFilter: (key: keyof Omit<MacroFilterState, 'dateRange' | 'advanced'>, values: string[]) => void;
+  updateDateRange: (start: string | null, end: string | null) => void;
   updateAdvanced: (key: keyof MacroFilterState['advanced'], value: any) => void;
   resetFilters: () => void;
 }
 
-export function FilterPanel({ filters, updateFilter, updateAdvanced, resetFilters }: FilterPanelProps) {
+export function FilterPanel({ filters, updateFilter, updateDateRange, updateAdvanced, resetFilters }: FilterPanelProps) {
   return (
     <Card className="flex flex-col h-full bg-zinc-950 border-zinc-800 rounded-none border-y-0 border-l-0">
       <div className="p-4 flex items-center justify-between border-b border-zinc-900">
@@ -139,6 +193,18 @@ export function FilterPanel({ filters, updateFilter, updateAdvanced, resetFilter
               onChange={(v) => updateFilter('instruments', v)}
             />
             <MultiSelect 
+              label="Macro Window" 
+              options={[
+                'Macro_0050', 'Macro_0150', 'Macro_0250', 'Macro_0350', 'Macro_0450', 'Macro_0550',
+                'Macro_0650', 'Macro_0750', 'Macro_0850', 'Macro_0950', 'Macro_1050', 'Macro_1150',
+                'Macro_1250', 'Macro_1350', 'Macro_1450', 'Macro_1550', 'Macro_1650', 'Macro_1750',
+                'Macro_1850', 'Macro_1950', 'Macro_2050', 'Macro_2150', 'Macro_2250', 'Macro_2350',
+                'Hydra_1', 'Hydra_2', 'Hydra_3'
+              ]} 
+              selected={filters.macroWindows}
+              onChange={(v) => updateFilter('macroWindows', v)}
+            />
+            <MultiSelect 
               label="Judas" 
               options={['bullish_judas', 'bearish_judas', 'trend_up', 'trend_down', 'neutral']} 
               selected={filters.judasClass}
@@ -151,22 +217,45 @@ export function FilterPanel({ filters, updateFilter, updateAdvanced, resetFilter
               onChange={(v) => updateFilter('indicatorClass', v)}
             />
             <MultiSelect 
-              label="VIX" 
+              label="VIX Regime" 
               options={['low', 'medium', 'high', 'extreme']} 
               selected={filters.vixRegimes}
               onChange={(v) => updateFilter('vixRegimes', v)}
             />
             <MultiSelect 
-              label="Day" 
+              label="Day of Week" 
               options={['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']} 
               selected={filters.daysOfWeek}
               onChange={(v) => updateFilter('daysOfWeek', v)}
             />
+            <MultiSelect 
+              label="ICT Session" 
+              options={ICT_ALIASES} 
+              selected={filters.ictAliases}
+              onChange={(v) => updateFilter('ictAliases', v)}
+            />
+            <div className="space-y-2 px-1">
+              <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Date Range</h3>
+              <div className="grid grid-cols-2 gap-2">
+                <input 
+                  type="date" 
+                  className="bg-zinc-900 border border-zinc-800 text-[10px] p-1 rounded text-zinc-300" 
+                  value={filters.dateRange.start || ''}
+                  onChange={(e) => updateDateRange(e.target.value || null, filters.dateRange.end)}
+                />
+                <input 
+                  type="date" 
+                  className="bg-zinc-900 border border-zinc-800 text-[10px] p-1 rounded text-zinc-300" 
+                  value={filters.dateRange.end || ''}
+                  onChange={(e) => updateDateRange(filters.dateRange.start, e.target.value || null)}
+                />
+              </div>
+            </div>
           </div>
 
           <Separator className="bg-zinc-900" />
 
-          {/* Section: Advanced Institutional */}
+          {/* Section: Institutional Anchors */}
           <div className="space-y-3">
             <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Institutional Anchors</h3>
             
@@ -185,8 +274,8 @@ export function FilterPanel({ filters, updateFilter, updateAdvanced, resetFilter
             />
 
             <MultiSelect 
-              label="vs RTH Open" 
-              options={['above', 'below', 'inside']} 
+              label="vs RTH Range" 
+              options={['above', 'below']} 
               selected={filters.advanced.openVsRthBar}
               onChange={(v) => updateAdvanced('openVsRthBar', v)}
             />
@@ -194,34 +283,122 @@ export function FilterPanel({ filters, updateFilter, updateAdvanced, resetFilter
 
           <Separator className="bg-zinc-900" />
 
-          {/* Section: Logic Toggles */}
-          <div className="space-y-3">
-            <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Trade Logic</h3>
+          <div className="space-y-4">
+            <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter px-1">Secondary Filters</h3>
             
-            <div className="flex items-center justify-between py-1 px-1">
-              <span className="text-xs text-zinc-400">Has FVG</span>
-              <Checkbox 
-                checked={filters.advanced.hasFVG === true}
-                onCheckedChange={(checked) => updateAdvanced('hasFVG', checked === 'indeterminate' ? null : checked)}
-                className="border-zinc-800"
-              />
-            </div>
+            <MultiToggle 
+              label="Has FVG"
+              value={filters.advanced.hasFVG}
+              onChange={(v) => updateAdvanced('hasFVG', v)}
+            />
+
+            <MultiToggle 
+              label="Is Complete"
+              value={filters.advanced.isComplete}
+              onChange={(v) => updateAdvanced('isComplete', v)}
+            />
+
+            <MultiToggle 
+              label="News Within 60m"
+              value={filters.advanced.newsWithin60m}
+              onChange={(v) => updateAdvanced('newsWithin60m', v)}
+            />
+
+            <MultiToggle 
+              label="Is OpEx Week"
+              value={filters.advanced.isOpExWeek}
+              onChange={(v) => updateAdvanced('isOpExWeek', v)}
+            />
+
+            <MultiToggle 
+              label="Same Direction as Prior"
+              value={filters.advanced.sameDirectionAsPrior}
+              onChange={(v) => updateAdvanced('sameDirectionAsPrior', v)}
+            />
+
+            <MultiToggle 
+              label="Judas First"
+              value={filters.advanced.judasFirst}
+              onChange={(v) => updateAdvanced('judasFirst', v)}
+            />
+
+            <Separator className="bg-zinc-900 mx-1" />
+
+            <MultiSelect 
+              label="Real Direction" 
+              options={['up', 'down']} 
+              selected={filters.advanced.realDirection}
+              onChange={(v) => updateAdvanced('realDirection', v)}
+            />
+
+            <MultiSelect 
+              label="Prior Direction" 
+              options={['up', 'down']} 
+              selected={filters.advanced.priorMacroDirection}
+              onChange={(v) => updateAdvanced('priorMacroDirection', v)}
+            />
+          </div>
+
+          <Separator className="bg-zinc-900" />
+
+          {/* Section: Magnitude & Volatility */}
+          <div className="space-y-4 px-1 pb-4">
+            <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Magnitude & Volatility</h3>
             
-            <div className="flex items-center justify-between py-1 px-1">
-              <span className="text-xs text-zinc-400">Judas First</span>
-              <Checkbox 
-                checked={filters.advanced.judasFirst === true}
-                onCheckedChange={(checked) => updateAdvanced('judasFirst', checked === 'indeterminate' ? null : checked)}
-                className="border-zinc-800"
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
+                <span>Judas Magnitude</span>
+                <span className="text-amber-500">{(filters.advanced.magnitudeRange?.[0] ?? 0).toFixed(2)}% - {(filters.advanced.magnitudeRange?.[1] ?? 4).toFixed(2)}%</span>
+              </div>
+              <Slider
+                max={4.0}
+                step={0.01}
+                value={[filters.advanced.magnitudeRange?.[0] ?? 0, filters.advanced.magnitudeRange?.[1] ?? 4]}
+                onValueChange={(v) => updateAdvanced('magnitudeRange', v)}
+                className="py-1"
               />
             </div>
 
-            <div className="flex items-center justify-between py-1 px-1">
-              <span className="text-xs text-zinc-400">News (+/-60m)</span>
-              <Checkbox 
-                checked={filters.advanced.newsWithin60m === true}
-                onCheckedChange={(checked) => updateAdvanced('newsWithin60m', checked === 'indeterminate' ? null : checked)}
-                className="border-zinc-800"
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
+                <span>Excursion Reach</span>
+                <span className="text-amber-500">{(filters.advanced.excursionRange?.[0] ?? 0).toFixed(2)}% - {(filters.advanced.excursionRange?.[1] ?? 4).toFixed(2)}%</span>
+              </div>
+              <Slider
+                max={4.0}
+                step={0.01}
+                value={[filters.advanced.excursionRange?.[0] ?? 0, filters.advanced.excursionRange?.[1] ?? 4]}
+                onValueChange={(v) => updateAdvanced('excursionRange', v)}
+                className="py-1"
+              />
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
+                <span>Macro Range Pct</span>
+                <span className="text-amber-500">{(filters.advanced.macroRangePercentile?.[0] ?? 0).toFixed(2)}% - {(filters.advanced.macroRangePercentile?.[1] ?? 4).toFixed(2)}%</span>
+              </div>
+              <Slider
+                max={4.0}
+                step={0.01}
+                value={[filters.advanced.macroRangePercentile?.[0] ?? 0, filters.advanced.macroRangePercentile?.[1] ?? 4]}
+                onValueChange={(v) => updateAdvanced('macroRangePercentile', v)}
+                className="py-1"
+              />
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-[10px] uppercase font-bold text-zinc-500">
+                <span>Streak Range</span>
+                <span className="text-amber-500">{filters.advanced.macroStreak?.[0] ?? 1} - {filters.advanced.macroStreak?.[1] ?? 10}</span>
+              </div>
+              <Slider
+                min={1}
+                max={10}
+                step={1}
+                value={[filters.advanced.macroStreak?.[0] ?? 1, filters.advanced.macroStreak?.[1] ?? 10]}
+                onValueChange={(v) => updateAdvanced('macroStreak', v)}
+                className="py-1"
               />
             </div>
           </div>

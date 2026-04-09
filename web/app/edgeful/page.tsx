@@ -18,7 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Suspense } from 'react';
 
 function DashboardContent() {
-  const { filters, updateFilter, updateAdvanced, resetFilters } = useFilters();
+  const { filters, updateFilter, updateDateRange, updateAdvanced, resetFilters } = useFilters();
   const [dbStatus, setDbStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [metrics, setMetrics] = useState<SummaryMetrics | null>(null);
   const [loadingMetrics, setLoadingMetrics] = useState(false);
@@ -79,6 +79,7 @@ function DashboardContent() {
         <FilterPanel 
           filters={filters} 
           updateFilter={updateFilter} 
+          updateDateRange={updateDateRange}
           updateAdvanced={updateAdvanced} 
           resetFilters={resetFilters} 
         />

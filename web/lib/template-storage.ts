@@ -19,12 +19,18 @@ export interface DrawingTemplate {
 const STORAGE_KEY = 'drawing-templates';
 const DEFAULTS_KEY = 'drawing-template-defaults';
 
+const hasBrowserStorage = (): boolean => {
+    return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+};
+
 class TemplateStorage {
     private templates: Map<string, DrawingTemplate> = new Map();
     private defaults: Map<string, string> = new Map(); // toolType -> templateId
 
     constructor() {
-        this.load();
+        if (hasBrowserStorage()) {
+            this.load();
+        }
     }
 
     // ===== CRUD Operations =====
@@ -100,6 +106,9 @@ class TemplateStorage {
     // ===== Persistence =====
 
     private load(): void {
+        if (!hasBrowserStorage()) {
+            return;
+        }
         try {
             // Load templates
             const stored = localStorage.getItem(STORAGE_KEY);
@@ -120,6 +129,9 @@ class TemplateStorage {
     }
 
     private persist(): void {
+        if (!hasBrowserStorage()) {
+            return;
+        }
         try {
             const templates = Array.from(this.templates.values());
             localStorage.setItem(STORAGE_KEY, JSON.stringify(templates));
@@ -129,6 +141,9 @@ class TemplateStorage {
     }
 
     private persistDefaults(): void {
+        if (!hasBrowserStorage()) {
+            return;
+        }
         try {
             const defaults = Object.fromEntries(this.defaults.entries());
             localStorage.setItem(DEFAULTS_KEY, JSON.stringify(defaults));

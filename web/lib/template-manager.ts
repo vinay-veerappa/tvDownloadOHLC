@@ -13,6 +13,10 @@ export interface DrawingTemplate {
 const STORAGE_KEY = 'drawing_templates';
 const DEFAULT_KEY = 'drawing_defaults';
 
+const hasBrowserStorage = (): boolean => {
+    return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+};
+
 export class TemplateManager {
     /**
      * Get all templates for a specific drawing type
@@ -31,6 +35,9 @@ export class TemplateManager {
      * Get all templates (all drawing types)
      */
     static getAllTemplates(): DrawingTemplate[] {
+        if (!hasBrowserStorage()) {
+            return [];
+        }
         try {
             const data = localStorage.getItem(STORAGE_KEY);
             return data ? JSON.parse(data) : [];
@@ -44,6 +51,9 @@ export class TemplateManager {
      * Save a new template
      */
     static saveTemplate(name: string, drawingType: string, options: Record<string, any>): boolean {
+        if (!hasBrowserStorage()) {
+            return false;
+        }
         try {
             const templates = this.getAllTemplates();
 
@@ -79,6 +89,9 @@ export class TemplateManager {
      * Delete a template
      */
     static deleteTemplate(drawingType: string, name: string): boolean {
+        if (!hasBrowserStorage()) {
+            return false;
+        }
         try {
             const templates = this.getAllTemplates();
             const filtered = templates.filter(
@@ -104,6 +117,9 @@ export class TemplateManager {
      * Save default options for a drawing type
      */
     static saveDefault(drawingType: string, options: Record<string, any>): boolean {
+        if (!hasBrowserStorage()) {
+            return false;
+        }
         try {
             const defaults = this.getAllDefaults();
             defaults[drawingType] = options;
@@ -119,6 +135,9 @@ export class TemplateManager {
      * Get default options for a drawing type
      */
     static getDefault(drawingType: string): Record<string, any> | null {
+        if (!hasBrowserStorage()) {
+            return null;
+        }
         try {
             const defaults = this.getAllDefaults();
             return defaults[drawingType] || null;
@@ -132,6 +151,9 @@ export class TemplateManager {
      * Get all defaults
      */
     static getAllDefaults(): Record<string, Record<string, any>> {
+        if (!hasBrowserStorage()) {
+            return {};
+        }
         try {
             const data = localStorage.getItem(DEFAULT_KEY);
             return data ? JSON.parse(data) : {};
@@ -145,6 +167,9 @@ export class TemplateManager {
      * Clear all templates (for testing/reset)
      */
     static clearAll(): void {
+        if (!hasBrowserStorage()) {
+            return;
+        }
         localStorage.removeItem(STORAGE_KEY);
         localStorage.removeItem(DEFAULT_KEY);
     }

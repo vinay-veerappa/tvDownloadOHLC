@@ -313,7 +313,7 @@ export default function OptionsLivePage() {
                                        </div>
                                     ) : (
                                        <div className="h-[550px] w-full relative">
-                                          <ResponsiveContainer width="100%" height="100%">
+                                          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={120}>
                                              {profileOption === 'nodes' ? (
                                                 <BarChart data={zoomedProfile} layout="vertical" margin={{ left: 30, right: 30 }} barGap={0}>
                                                    <XAxis type="number" hide />
@@ -367,7 +367,7 @@ export default function OptionsLivePage() {
                               {mainTab === 'cumulative' && (
                                  <div className="w-full flex-1 flex flex-col">
                                     <div className="h-[550px] w-full">
-                                       <ResponsiveContainer width="100%" height="100%">
+                                       <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={120}>
                                           <AreaChart data={cumulativeGex}>
                                              <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
                                              <XAxis dataKey="strike" stroke="#ffffff10" fontSize={11} tickFormatter={(v) => Math.round(v).toLocaleString()} />
@@ -384,7 +384,7 @@ export default function OptionsLivePage() {
                               {mainTab === 'dex' && (
                                  <div className="w-full flex-1 flex flex-col">
                                     <div className="h-[550px] w-full">
-                                       <ResponsiveContainer width="100%" height="100%">
+                                       <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={120}>
                                           <ComposedChart data={dexProfile} layout="vertical" margin={{ left: 30, right: 40 }}>
                                              <XAxis type="number" hide />
                                              <YAxis dataKey="strike" type="category" width={75} tick={{ fill: '#a1a1aa', fontSize: 12, fontWeight: 900 }} axisLine={false} />
@@ -401,7 +401,7 @@ export default function OptionsLivePage() {
                               {mainTab === 'skew' && (
                                  <div className="w-full flex-1 flex flex-col">
                                     <div className="h-[550px] w-full">
-                                       <ResponsiveContainer width="100%" height="100%">
+                                       <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={120}>
                                           <ComposedChart data={skewProfile}>
                                              <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
                                              <XAxis dataKey="strike" stroke="#ffffff10" fontSize={10} tickFormatter={(v) => Math.round(v).toLocaleString()} />
@@ -425,7 +425,7 @@ export default function OptionsLivePage() {
                                              <span className="text-xs font-black uppercase tracking-widest text-center">Trend intelligence unavailable.</span>
                                           </div>
                                        ) : (
-                                          <ResponsiveContainer width="100%" height="100%">
+                                          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={120}>
                                              <AreaChart data={historicalTrend}>
                                                 <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
                                                 <XAxis 
@@ -500,7 +500,7 @@ export default function OptionsLivePage() {
                                  <div className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">3% ATM Focus</div>
                               </div>
                               <div className="h-64 w-full">
-                                 <ResponsiveContainer width="100%" height="100%">
+                                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={120}>
                                     <BarChart data={volSummary.near}>
                                        <XAxis dataKey="strike" fontSize={9} tick={{ fill: '#52525b', fontWeight: 900 }} tickFormatter={(v) => Math.round(v).toLocaleString()} />
                                        <Bar dataKey="call_vol" fill="#10b981" opacity={0.6} />

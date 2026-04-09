@@ -17,15 +17,23 @@ export async function initDuckDB() {
   initializationPromise = (async () => {
     if (db && conn) return { db, conn };
 
-    // Use local assets from /public/duckdb to avoid cross-origin Worker security restrictions
-    const MANIFEST = {
-      mainModule: '/duckdb/duckdb-mvp.wasm',
-      mainWorker: '/duckdb/duckdb-browser-mvp.worker.js',
-    } as duckdb.DuckDBBundle;
+    // Dynamically select the best bundle (MVP or EH) for the browser environment
+    // to prevent errors like "_setThrew is not defined" on modern browsers.
+    const BUNDLES: duckdb.DuckDBBundles = {
+      mvp: {
+        mainModule: '/duckdb/duckdb-mvp.wasm',
+        mainWorker: '/duckdb/duckdb-browser-mvp.worker.js',
+      },
+      eh: {
+        mainModule: '/duckdb/duckdb-eh.wasm',
+        mainWorker: '/duckdb/duckdb-browser-eh.worker.js',
+      },
+    };
 
+    const bundle = await duckdb.selectBundle(BUNDLES);
     const logger = new duckdb.ConsoleLogger();
-    db = new duckdb.AsyncDuckDB(logger, new Worker(MANIFEST.mainWorker!));
-    await db.instantiate(MANIFEST.mainModule);
+    db = new duckdb.AsyncDuckDB(logger, new Worker(bundle.mainWorker!));
+    await db.instantiate(bundle.mainModule);
     conn = await db.connect();
 
     console.log('--- DuckDB-WASM Initialized ---');

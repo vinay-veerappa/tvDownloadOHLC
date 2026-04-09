@@ -5,6 +5,7 @@ import { MacroFilterState } from '../types';
 const INITIAL_STATE: MacroFilterState = {
   instruments: [],
   macroWindows: [],
+  ictAliases: [],
   judasClass: [],
   indicatorClass: [],
   vixRegimes: [],
@@ -18,10 +19,17 @@ const INITIAL_STATE: MacroFilterState = {
     hasFVG: null,
     isComplete: null,
     newsWithin60m: null,
+    isOpExWeek: null,
     openVsMidnight: [],
     openVsDailyOpen: [],
     openVsRthBar: [],
+    priorMacroDirection: [],
+    sameDirectionAsPrior: null,
+    macroStreak: null,
+    macroRangePercentile: null,
     judasFirst: null,
+    magnitudeRange: null,
+    excursionRange: null,
   },
 };
 
@@ -36,7 +44,16 @@ export function useFilters() {
     try {
       const stateParam = searchParams.get('state');
       if (stateParam) {
-        return JSON.parse(decodeURIComponent(stateParam)) as MacroFilterState;
+        const urlState = JSON.parse(decodeURIComponent(stateParam));
+        // Deep merge URL state with INITIAL_STATE to ensure all keys exist
+        return {
+          ...INITIAL_STATE,
+          ...urlState,
+          advanced: {
+            ...INITIAL_STATE.advanced,
+            ...(urlState.advanced || {})
+          }
+        } as MacroFilterState;
       }
     } catch (e) {
       console.error('Failed to parse filters from URL:', e);

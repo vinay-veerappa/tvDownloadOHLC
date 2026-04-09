@@ -102,7 +102,7 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
              No data matches the current filters.
            </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={140}>
             <BarChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
               <XAxis 
                 dataKey="bin_start" 

@@ -117,7 +117,7 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
              No FVG data matches current filters.
            </div>
           ) : (
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={140}>
               <BarChart data={distributionMsg} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <XAxis dataKey="phase" stroke="#52525b" fontSize={10} tickFormatter={(val) => String(val).replace(/_/g, ' ')} />
                 <YAxis stroke="#52525b" fontSize={10} tickFormatter={(val) => val + '%'} />

@@ -1,6 +1,7 @@
 export interface MacroFilterState {
   instruments: string[];
   macroWindows: string[];
+  ictAliases: string[];
   judasClass: string[];
   indicatorClass: string[];
   vixRegimes: string[];
@@ -14,9 +15,16 @@ export interface MacroFilterState {
     hasFVG: boolean | null;
     isComplete: boolean | null;
     newsWithin60m: boolean | null;
+    isOpExWeek: boolean | null;
     openVsMidnight: string[];
     openVsDailyOpen: string[];
     openVsRthBar: string[];
+    priorMacroDirection: string[];
+    sameDirectionAsPrior: boolean | null;
+    macroStreak: [number, number] | null;
+    macroRangePercentile: [number, number] | null;
+    magnitudeRange: [number, number] | null;
+    excursionRange: [number, number] | null;
     judasFirst: boolean | null;
   };
 }
@@ -27,7 +35,9 @@ export interface SummaryMetrics {
   avg_continuation: number;
   avg_reversion: number;
   continuation_win_rate: number;
+  reversion_rate: number;
   avg_mfe: number;
+  avg_mae: number;
   query_time_ms: number;
 }
 

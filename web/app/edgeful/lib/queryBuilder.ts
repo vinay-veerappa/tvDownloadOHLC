@@ -5,6 +5,10 @@ import { MacroFilterState } from '../types';
  * Maps the React filter state to optimized DuckDB SQL conditions.
  */
 
+function isActiveRange(range: [number, number] | null, min: number, max: number): range is [number, number] {
+  return !!range && (range[0] > min || range[1] < max);
+}
+
 export function buildWhereClause(filters: MacroFilterState): string {
   const conditions: string[] = [];
 
@@ -35,6 +39,10 @@ export function buildWhereClause(filters: MacroFilterState): string {
     conditions.push(`day_of_week IN (${filters.daysOfWeek.map(d => `'${d}'`).join(',')})`);
   }
 
+  if (filters.ictAliases.length > 0) {
+    conditions.push(`ict_alias IN (${filters.ictAliases.map(a => `'${a}'`).join(',')})`);
+  }
+
   // 2. Date Range
   if (filters.dateRange.start) {
     conditions.push(`trading_date >= '${filters.dateRange.start}'`);
@@ -51,18 +59,21 @@ export function buildWhereClause(filters: MacroFilterState): string {
   if (filters.advanced.hasFVG !== null) {
     conditions.push(`has_fvg = ${filters.advanced.hasFVG}`);
   }
-  
+
   if (filters.advanced.isComplete !== null) {
     conditions.push(`is_complete = ${filters.advanced.isComplete}`);
   }
   
-  if (filters.advanced.newsWithin60m !== null) {
-    conditions.push(`news_within_60m = ${filters.advanced.newsWithin60m}`);
+  if (filters.advanced.newsWithin60m === true) {
+    conditions.push(`news_within_60m = true`);
+  } else if (filters.advanced.newsWithin60m === false) {
+    conditions.push(`news_within_60m = false`);
   }
 
   // Institutional Anchors (Simple absolute price comparison)
   if (filters.advanced.openVsMidnight.length > 0) {
-    conditions.push(`open_vs_midnight IN (${filters.advanced.openVsMidnight.map(v => `'${v}'`).join(',')})`);
+    const values = filters.advanced.openVsMidnight.map(v => `'${v}'`).join(',');
+    conditions.push(`open_vs_midnight IN (${values})`);
   }
   
   if (filters.advanced.openVsDailyOpen.length > 0) {
@@ -77,6 +88,37 @@ export function buildWhereClause(filters: MacroFilterState): string {
     conditions.push(`judas_first = ${filters.advanced.judasFirst}`);
   }
 
+  if (filters.advanced.isOpExWeek !== null) {
+    conditions.push(`is_opex_week = ${filters.advanced.isOpExWeek}`);
+  }
+
+  if (filters.advanced.priorMacroDirection.length > 0) {
+    const values = filters.advanced.priorMacroDirection.map(d => `'${d}'`).join(',');
+    conditions.push(`prior_macro_real_direction IN (${values})`);
+  }
+
+  if (filters.advanced.sameDirectionAsPrior !== null) {
+    conditions.push(`same_direction_as_prior = ${filters.advanced.sameDirectionAsPrior}`);
+  }
+
+  if (isActiveRange(filters.advanced.macroStreak, 1, 10)) {
+    conditions.push(`macro_streak BETWEEN ${filters.advanced.macroStreak[0]} AND ${filters.advanced.macroStreak[1]}`);
+  }
+
+  if (isActiveRange(filters.advanced.macroRangePercentile, 0, 4)) {
+    conditions.push(`macro_range_pct BETWEEN ${filters.advanced.macroRangePercentile[0]} AND ${filters.advanced.macroRangePercentile[1]}`);
+  }
+
+  // Multi-Range Filtering (PERCENTAGES)
+  if (isActiveRange(filters.advanced.magnitudeRange, 0, 4)) {
+    conditions.push(`judas_magnitude_pct BETWEEN ${filters.advanced.magnitudeRange[0]} AND ${filters.advanced.magnitudeRange[1]}`);
+  }
+
+  if (isActiveRange(filters.advanced.excursionRange, 0, 4)) {
+    const [min, max] = filters.advanced.excursionRange;
+    conditions.push(`((excursion_above_pct BETWEEN ${min} AND ${max}) OR (excursion_below_pct BETWEEN ${min} AND ${max}))`);
+  }
+
   return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 }
 
@@ -89,9 +131,10 @@ export function getSummarySql(whereClause: string): string {
       CAST(COUNT(*) AS DOUBLE) as total,
       CAST(COUNT(CASE WHEN judas_classification IN ('bullish_judas', 'bearish_judas') THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS DOUBLE) as judas_rate,
       CAST(AVG(post_macro_continuation_pct) AS DOUBLE) as avg_continuation,
-      CAST(AVG(post_macro_reversion_pct) AS DOUBLE) as avg_reversion,
       CAST(COUNT(CASE WHEN post_macro_continuation_pct > post_macro_reversion_pct THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS DOUBLE) as continuation_win_rate,
-      CAST(AVG(post_macro_mfe_pct) AS DOUBLE) as avg_mfe
+      CAST(COUNT(CASE WHEN post_macro_reversion_pct > post_macro_continuation_pct THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS DOUBLE) as reversion_rate,
+      CAST(AVG(post_macro_mfe_pct) AS DOUBLE) as avg_mfe,
+      CAST(AVG(post_macro_mae_pct) AS DOUBLE) as avg_mae
     FROM macro_records
     ${whereClause}
   `;
@@ -158,7 +201,8 @@ export function getRecordsSql(whereClause: string, offset: number, limit: number
       post_macro_continuation_pct,
       post_macro_reversion_pct,
       fvg_count,
-      has_fvg
+      has_fvg,
+      is_opex_week
     FROM macro_records
     ${whereClause}
     ORDER BY ${cleanSortColumn} ${cleanSortDirection}

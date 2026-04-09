@@ -51,7 +51,7 @@ export function SummaryCards({ metrics, loading }: { metrics: SummaryMetrics | n
   if (!metrics && !loading) return null;
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
       <MetricCard 
         title="Institutional Sample" 
         value={metrics?.total?.toLocaleString() ?? '0'} 
@@ -67,16 +67,30 @@ export function SummaryCards({ metrics, loading }: { metrics: SummaryMetrics | n
         loading={loading}
       />
       <MetricCard 
-        title="Continuation Win Rate" 
+        title="Continuation Rate" 
         value={`${metrics?.continuation_win_rate?.toFixed(1) ?? '0'}%`} 
         icon={<Target className="h-4 w-4" />}
         n={metrics?.total ?? 0}
         loading={loading}
       />
       <MetricCard 
-        title="Avg Continuation" 
-        value={`${metrics?.avg_continuation?.toFixed(3) ?? '0'}%`} 
-        icon={<Activity className="h-4 w-4" />}
+        title="Reversion Rate" 
+        value={`${metrics?.reversion_rate?.toFixed(1) ?? '0'}%`} 
+        icon={<TrendingUp className="h-4 w-4" rotate={180} />}
+        n={metrics?.total ?? 0}
+        loading={loading}
+      />
+      <MetricCard 
+        title="Avg MFE" 
+        value={`${metrics?.avg_mfe?.toFixed(3) ?? '0'}%`} 
+        icon={<ArrowUpRight className="h-4 w-4" />}
+        n={metrics?.total ?? 0}
+        loading={loading}
+      />
+      <MetricCard 
+        title="Avg MAE" 
+        value={`${metrics?.avg_mae?.toFixed(3) ?? '0'}%`} 
+        icon={<ArrowDownRight className="h-4 w-4" />}
         n={metrics?.total ?? 0}
         loading={loading}
       />
