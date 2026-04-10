@@ -86,7 +86,7 @@ export default function ResearchDashboard() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Link
           href="/research/ranges"
           className="group rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 via-transparent to-transparent p-5 transition hover:border-cyan-400/40 hover:bg-cyan-500/10"
@@ -122,6 +122,25 @@ export default function ResearchDashboard() {
               </p>
             </div>
             <ChevronRight className="h-5 w-5 text-emerald-300 transition group-hover:translate-x-1" />
+          </div>
+        </Link>
+
+        <Link
+          href="/research/reference-levels"
+          className="group rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-500/10 via-transparent to-transparent p-5 transition hover:border-amber-400/40 hover:bg-amber-500/10"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.24em] text-amber-300">
+                <BarChart3 className="h-3.5 w-3.5" />
+                New Dashboard
+              </div>
+              <h2 className="text-xl font-bold text-white">Reference Levels</h2>
+              <p className="max-w-md text-sm text-muted-foreground">
+                Explore midnight-open retraces, PDH and PDL continuation, outside-day reversals, and weekly reference interaction.
+              </p>
+            </div>
+            <ChevronRight className="h-5 w-5 text-amber-300 transition group-hover:translate-x-1" />
           </div>
         </Link>
 

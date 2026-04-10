@@ -1005,11 +1005,11 @@ behavior and should be analyzed separately.
 
 **Goal:** Complete the report library.
 
-- [ ] `gap_records.parquet` — gap fill, spike, partial fills
-- [ ] `reference_levels.parquet` — MOP, PDH/PDL, weekly
-- [ ] `occ_records.parquet` — opening candle continuation
-- [ ] `streak_records.parquet` — green/red streaks
-- [ ] Dashboard: Reference Levels page
+- [x] `gap_records.parquet` — gap fill, spike, partial fills
+- [x] `reference_levels.parquet` — MOP, PDH/PDL, weekly
+- [x] `occ_records.parquet` — opening candle continuation
+- [x] `streak_records.parquet` — green/red streaks
+- [x] Dashboard: Reference Levels page
 - [ ] Dashboard: Range Comparison page (OR_5 vs OR_15 vs IB_60)
 - [ ] Dashboard: Mean Reversion analytics panel
 
