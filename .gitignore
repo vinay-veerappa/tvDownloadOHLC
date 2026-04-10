@@ -18,6 +18,8 @@ old_data/
 debug_files/
 *.csv
 *.parquet
+# Explicitly exclude generated Phase 1 daily_context parquet files (regenerated locally)
+data/derived/daily_context_*.parquet
 **/data/*.parquet
 !web/components/data/
 !docs/data/

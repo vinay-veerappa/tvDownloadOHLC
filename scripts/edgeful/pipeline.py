@@ -15,6 +15,8 @@ from .fvg_tracker import track_fvg_outcomes
 from .post_macro import compute_post_macro_outcomes
 from .sequencer import compute_sequences
 from .calendar_generator import generate_calendar
+from .lib.context_join import join_daily_context
+from .lib.range_core import add_extension_columns, add_macro_pd_fields
 
 def main():
     parser = argparse.ArgumentParser(description="Macro Research Pipeline - Sprint 2 (Full Context)")
@@ -83,6 +85,16 @@ def main():
             
             # Ensure dtypes match for join (generated calendar uses datetime64[ns])
             df_inst = df_inst.merge(calendar_df, on='trading_date', how='left')
+
+            # 4.6 Phase 2 — daily_context join + macro-level enrichment
+            print(f"  -> Joining daily context (gap, ATR, session outcome, streaks)...")
+            df_inst = join_daily_context(df_inst, inst)
+
+            print(f"  -> Adding extension levels and PD interaction fields...")
+            if {"post_h", "post_l", "high", "low"}.issubset(df_inst.columns):
+                df_inst = add_extension_columns(df_inst)
+            if {"high", "low", "pdh", "pdl"}.issubset(df_inst.columns):
+                df_inst = add_macro_pd_fields(df_inst)
 
             # 5. FVG Detection & Tracking
             print(f"  -> Detecting and tracking FVGs...")
