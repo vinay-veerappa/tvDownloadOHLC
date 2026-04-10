@@ -47,6 +47,18 @@ from scripts.ranges.range_definitions  import RangeDefinition, RANGE_PRESETS
 
 logger = logging.getLogger(__name__)
 
+_RANGE_CONTEXT_COLS = [
+    "trading_date",
+    "vix_regime",
+    "gap_direction",
+    "gap_size_bucket",
+    "is_event_day",
+    "is_opex_week",
+    "session_direction",
+    "open_vs_pd_range",
+    "both_pd_broken",
+]
+
 # ── instruments ────────────────────────────────────────────────────────────
 DEFAULT_SYMBOLS = ["ES1", "NQ1", "YM1", "RTY1", "CL1", "GC1"]
 
@@ -108,6 +120,30 @@ def _range_width_percentiles(
     )
 
     return df
+
+
+def _join_range_daily_context(df_ranges: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Join daily_context_{symbol}.parquet fields onto range records by trading_date."""
+    if df_ranges.empty:
+        return df_ranges
+
+    ctx_path = _DERIVED_DIR / f"daily_context_{symbol}.parquet"
+    if not ctx_path.exists():
+        logger.warning("  [%s] daily context not found at %s (skipping join)", symbol, ctx_path)
+        return df_ranges
+
+    ctx = pd.read_parquet(ctx_path)
+    cols = [c for c in _RANGE_CONTEXT_COLS if c in ctx.columns]
+    if "trading_date" not in cols:
+        return df_ranges
+
+    ctx = ctx[cols].copy()
+    ctx["trading_date"] = pd.to_datetime(ctx["trading_date"]).dt.strftime("%Y-%m-%d")
+
+    out = df_ranges.copy()
+    out["trading_date"] = pd.to_datetime(out["trading_date"]).dt.strftime("%Y-%m-%d")
+    out = out.merge(ctx, on="trading_date", how="left")
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -283,7 +319,9 @@ def compute_ranges_for_symbol(
     if not all_records:
         return pd.DataFrame()
 
-    return pd.DataFrame(all_records)
+    out = pd.DataFrame(all_records)
+    out = _join_range_daily_context(out, symbol)
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════

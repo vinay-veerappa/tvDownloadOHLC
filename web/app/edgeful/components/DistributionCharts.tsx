@@ -44,7 +44,7 @@ interface StatsSummaryData {
   max_val: number;
 }
 
-const CHART_OPTIONS = [
+const CHART_OPTIONS: ChartOption[] = [
   {
     value: 'judas_inflection_m',
     label: 'Judas Inflection Timing (Minutes)',
@@ -83,7 +83,7 @@ const CHART_OPTIONS = [
   { value: 'mid_retest_time_m', label: 'Mid Retest Time (Minutes)', binWidth: 1, mode: 'hist', format: 'minutes', extraCondition: 'post_macro_retested_mid = true' },
   { value: 'classification_by_hour', label: 'Judas Rate by Macro Window', binWidth: 0, mode: 'bar', format: 'percent' },
   { value: 'continuation_by_day', label: 'Avg Continuation by Day', binWidth: 0, mode: 'bar', format: 'percent' },
-] as const satisfies readonly ChartOption[];
+];
 
 function formatValue(v: number, format: ValueFormat): string {
   if (!Number.isFinite(v)) return '--';

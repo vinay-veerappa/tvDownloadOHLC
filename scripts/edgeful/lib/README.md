@@ -142,6 +142,11 @@ ctx_df.to_parquet("data/derived/daily_context_NQ1.parquet", index=False)
 - `pdh_broken`, `pdl_broken`, `both_pd_broken` (bool)
 - `pdh_break_time_minutes`, `pdl_break_time_minutes` (int)
 
+#### Opening Candle Continuation
+- `first_hour_open`, `first_hour_close`
+- `first_hour_direction` (GREEN/RED)
+- `first_hour_continued` (bool)
+
 #### Streaks
 - `streak_direction` (GREEN/RED), `streak_length` (int)
 

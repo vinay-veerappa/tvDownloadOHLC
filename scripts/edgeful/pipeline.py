@@ -90,6 +90,15 @@ def main():
             print(f"  -> Joining daily context (gap, ATR, session outcome, streaks)...")
             df_inst = join_daily_context(df_inst, inst)
 
+            # Opening-candle continuation overlay field (macro-level).
+            if {"first_hour_direction", "real_direction"}.issubset(df_inst.columns):
+                df_inst["macro_aligned_with_first_hour"] = (
+                    ((df_inst["first_hour_direction"] == "GREEN") & (df_inst["real_direction"] == "up"))
+                    | ((df_inst["first_hour_direction"] == "RED") & (df_inst["real_direction"] == "down"))
+                )
+            else:
+                df_inst["macro_aligned_with_first_hour"] = False
+
             print(f"  -> Adding extension levels and PD interaction fields...")
             if {"post_h", "post_l", "high", "low"}.issubset(df_inst.columns):
                 df_inst = add_extension_columns(df_inst)

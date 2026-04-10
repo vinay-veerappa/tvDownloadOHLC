@@ -24,6 +24,8 @@ const TRI_STATE_ADVANCED_KEYS = [
   'isEventDay',
 ] as const satisfies ReadonlyArray<keyof MacroFilterState['advanced']>;
 
+const TRI_STATE_ADVANCED_KEY_SET: ReadonlySet<keyof MacroFilterState['advanced']> = new Set(TRI_STATE_ADVANCED_KEYS);
+
 const INITIAL_STATE: MacroFilterState = {
   instruments: [],
   macroWindows: [],
@@ -152,7 +154,7 @@ export function useFilters() {
       ...prev,
       advanced: {
         ...prev.advanced,
-        [key]: TRI_STATE_ADVANCED_KEYS.includes(key)
+        [key]: TRI_STATE_ADVANCED_KEY_SET.has(key)
           ? (value === true || value === false ? value : null)
           : value,
       }

@@ -98,6 +98,19 @@ type EquityRow = {
   day_r: number;
 };
 
+type BothSidesOutcomeRow = {
+  final_direction: string;
+  count: number;
+  failed_rate: number;
+  aligned_close_rate: number;
+  ext_1x_hit_rate: number;
+};
+
+type BothSidesSummary = {
+  count: number;
+  share_of_sample: number;
+};
+
 const DEFAULT_FILTERS: FilterState = {
   symbol: 'ALL',
   rangeName: 'ALL',
@@ -293,6 +306,50 @@ function getEquitySql(tradeWhere: string) {
   `;
 }
 
+function getBothSidesOutcomeSql(rangeWhere: string) {
+  return `
+    WITH rr AS (
+      SELECT *
+      FROM range_records
+      ${rangeWhere}
+    ),
+    both_sides AS (
+      SELECT *
+      FROM rr
+      WHERE broke_high_first AND broke_low_first
+    )
+    SELECT
+      COALESCE(final_direction, 'NONE') AS final_direction,
+      CAST(COUNT(*) AS DOUBLE) AS count,
+      CAST(AVG(CASE WHEN first_bo_failed THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS failed_rate,
+      CAST(AVG(CASE WHEN first_bo_direction IN ('UP', 'DOWN') AND first_bo_direction = final_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS aligned_close_rate,
+      CAST(AVG(
+        CASE
+          WHEN final_direction = 'UP' THEN CASE WHEN ext_up_100_hit THEN 1.0 ELSE 0.0 END
+          WHEN final_direction = 'DOWN' THEN CASE WHEN ext_dn_100_hit THEN 1.0 ELSE 0.0 END
+          ELSE 0.0
+        END
+      ) * 100 AS DOUBLE) AS ext_1x_hit_rate
+    FROM both_sides
+    GROUP BY COALESCE(final_direction, 'NONE')
+    ORDER BY count DESC, final_direction ASC
+  `;
+}
+
+function getBothSidesSummarySql(rangeWhere: string) {
+  return `
+    WITH rr AS (
+      SELECT *
+      FROM range_records
+      ${rangeWhere}
+    )
+    SELECT
+      CAST(SUM(CASE WHEN broke_high_first AND broke_low_first THEN 1 ELSE 0 END) AS DOUBLE) AS count,
+      CAST(AVG(CASE WHEN broke_high_first AND broke_low_first THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS share_of_sample
+    FROM rr
+  `;
+}
+
 function formatPct(value: number | null | undefined, digits = 1) {
   if (value == null || Number.isNaN(value)) return '--';
   return `${value.toFixed(digits)}%`;
@@ -369,6 +426,8 @@ export default function RangeAnalyticsPage() {
   const [extensionStats, setExtensionStats] = useState<ExtensionRow[]>([]);
   const [strategyRows, setStrategyRows] = useState<StrategyRow[]>([]);
   const [equityCurve, setEquityCurve] = useState<EquityRow[]>([]);
+  const [bothSidesRows, setBothSidesRows] = useState<BothSidesOutcomeRow[]>([]);
+  const [bothSidesSummary, setBothSidesSummary] = useState<BothSidesSummary | null>(null);
 
   const loadEngine = useCallback(async () => {
     setDbStatus('loading');
@@ -425,7 +484,7 @@ export default function RangeAnalyticsPage() {
       const tradeWhere = buildTradeWhere(deferredFilters);
       const tradeWhereNoStrategy = buildTradeWhere(deferredFilters, undefined, false);
 
-      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows] = await Promise.all([
+      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows] = await Promise.all([
         runQuery(getOverviewSql(rangeWhere, tradeWhere)),
         runQuery(getWidthDistributionSql(rangeWhere)),
         runQuery(getDirectionSql(rangeWhere, 'first_bo_direction')),
@@ -433,6 +492,8 @@ export default function RangeAnalyticsPage() {
         runQuery(getExtensionSql(rangeWhere)),
         runQuery(getStrategyTableSql(tradeWhereNoStrategy)),
         runQuery(getEquitySql(tradeWhere)),
+        runQuery(getBothSidesOutcomeSql(rangeWhere)),
+        runQuery(getBothSidesSummarySql(rangeWhere)),
       ]);
 
       setOverview((overviewRows[0] as OverviewMetrics) ?? null);
@@ -442,6 +503,8 @@ export default function RangeAnalyticsPage() {
       setExtensionStats(extensionRows as ExtensionRow[]);
       setStrategyRows(strategyTableRows as StrategyRow[]);
       setEquityCurve(equityRows as EquityRow[]);
+      setBothSidesRows(bothSidesOutcomeRows as BothSidesOutcomeRow[]);
+      setBothSidesSummary((bothSidesSummaryRows[0] as BothSidesSummary) ?? null);
       setQueryTimeMs(performance.now() - startedAt);
     } catch (error) {
       console.error('Failed to query range analytics dashboard:', error);
@@ -745,6 +808,70 @@ export default function RangeAnalyticsPage() {
                   icon={<Activity className="h-3.5 w-3.5" />}
                 />
               </div>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="border-zinc-900 bg-black/30 p-5">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">Both-Sides Sweep</div>
+              <h2 className="mt-1 text-lg font-semibold">When both boundaries are taken, what happens next?</h2>
+            </div>
+            <div className="text-right text-xs text-zinc-500">
+              <div className="uppercase tracking-[0.18em]">Incidence</div>
+              <div className="mt-1 text-sm text-cyan-300">
+                {bothSidesSummary ? `${Math.round(bothSidesSummary.count).toLocaleString()} (${formatPct(bothSidesSummary.share_of_sample)})` : '--'}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+            <div className="h-72 rounded-xl border border-zinc-900 bg-zinc-950/60 p-3">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={bothSidesRows}>
+                  <CartesianGrid vertical={false} stroke="#18181b" />
+                  <XAxis dataKey="final_direction" tick={{ fill: '#a1a1aa', fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#71717a', fontSize: 12 }} axisLine={false} tickLine={false} domain={[0, 100]} />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(255,255,255,0.02)' }}
+                    contentStyle={{ background: '#09090b', border: '1px solid #27272a', borderRadius: 12 }}
+                    formatter={(v: number, key: string) => {
+                      if (key === 'failed_rate') return [formatPct(v), 'Failed breakout'];
+                      if (key === 'aligned_close_rate') return [formatPct(v), 'Close aligns with first break'];
+                      if (key === 'ext_1x_hit_rate') return [formatPct(v), '1.0x extension hit'];
+                      return [Math.round(v).toLocaleString(), 'Count'];
+                    }}
+                  />
+                  <Bar dataKey="failed_rate" name="failed_rate" fill="#fb7185" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="ext_1x_hit_rate" name="ext_1x_hit_rate" fill="#38bdf8" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="overflow-hidden rounded-xl border border-zinc-900">
+              <table className="min-w-full divide-y divide-zinc-900 text-sm">
+                <thead className="bg-zinc-950/80 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Final Dir</th>
+                    <th className="px-4 py-3 text-right">N</th>
+                    <th className="px-4 py-3 text-right">Failed %</th>
+                    <th className="px-4 py-3 text-right">Align Close %</th>
+                    <th className="px-4 py-3 text-right">1.0x Hit %</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-900 bg-black/20">
+                  {bothSidesRows.map((row) => (
+                    <tr key={`both-${row.final_direction}`}>
+                      <td className="px-4 py-3 font-medium text-zinc-200">{row.final_direction}</td>
+                      <td className="px-4 py-3 text-right text-zinc-300">{Math.round(row.count).toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right text-rose-300">{formatPct(row.failed_rate)}</td>
+                      <td className="px-4 py-3 text-right text-emerald-300">{formatPct(row.aligned_close_rate)}</td>
+                      <td className="px-4 py-3 text-right text-cyan-300">{formatPct(row.ext_1x_hit_rate)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </Card>

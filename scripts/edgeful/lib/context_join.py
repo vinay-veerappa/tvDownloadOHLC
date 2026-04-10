@@ -9,6 +9,7 @@ Fields added (only those not already present in macro_records):
     gap_direction, gap_size_bucket, gap_filled, gap_fill_time_minutes,
     atr_14d, session_range, atr_usage_pct, atr_respected,
     open_vs_pd_range, is_inside_day, is_outside_day,
+    first_hour_open, first_hour_close, first_hour_direction, first_hour_continued,
     session_close, session_direction,
     pdh_broken, pdl_broken, both_pd_broken,
     pdh_break_time_minutes, pdl_break_time_minutes,
@@ -54,6 +55,11 @@ _CONTEXT_COLS = [
     "open_vs_midnight",
     "is_inside_day",
     "is_outside_day",
+    # Opening candle continuation
+    "first_hour_open",
+    "first_hour_close",
+    "first_hour_direction",
+    "first_hour_continued",
     # Session outcome
     "session_close",
     "session_direction",

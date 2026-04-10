@@ -15,6 +15,7 @@ import { UniversalFilterBar } from './components/UniversalFilterBar';
 import { ExtensionProbabilityPanel } from './components/ExtensionProbabilityPanel';
 import { RollingProbabilityPanel } from './components/RollingProbabilityPanel';
 import { PDLevelInteractionPanel } from './components/PDLevelInteractionPanel';
+import { OpeningCandleContinuationPanel } from './components/OpeningCandleContinuationPanel';
 import { LayoutDashboard, RefreshCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -185,7 +186,10 @@ function DashboardContent() {
                 <RollingProbabilityPanel filters={debouncedFilters} dbReady={dbStatus === 'ready'} />
               </div>
 
-              <PDLevelInteractionPanel filters={debouncedFilters} dbReady={dbStatus === 'ready'} />
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <PDLevelInteractionPanel filters={debouncedFilters} dbReady={dbStatus === 'ready'} />
+                <OpeningCandleContinuationPanel filters={debouncedFilters} dbReady={dbStatus === 'ready'} />
+              </div>
 
               {/* Phase 4: Charts */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

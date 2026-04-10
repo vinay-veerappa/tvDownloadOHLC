@@ -973,33 +973,33 @@ behavior and should be analyzed separately.
 
 **Goal:** Enhance existing macro pipeline with shared context.
 
-- [ ] Join `macro_records` to `daily_context` on `(symbol, trading_date)`
-- [ ] Add extension level computation via `lib/range_core.compute_extensions()`
-- [ ] Add PD level interaction fields
-- [ ] Add OCC overlay field
-- [ ] Update macro dashboard: universal filter bar, extension panel, rolling lookback
-- [ ] Validate: compare macro stats with vs without DOW/VIX filters
+- [x] Join `macro_records` to `daily_context` on `(symbol, trading_date)`
+- [x] Add extension level computation via `lib/range_core.compute_extensions()`
+- [x] Add PD level interaction fields
+- [x] Add OCC overlay field
+- [x] Update macro dashboard: universal filter bar, extension panel, rolling lookback
+- [x] Validate: compare macro stats with vs without DOW/VIX filters
 
 ### Phase 3: Range Pipeline Core (1-2 sessions)
 
 **Goal:** Build OR/IB computation.
 
-- [ ] `lib/range_core.py` — generic range H/L/Mid, extensions, MR metrics
-- [ ] `scripts/ranges/compute_ranges.py` — generates `range_records.parquet`
-- [ ] Implement for OR_5, OR_15, OR_30, IB_60
-- [ ] Join to `daily_context`
-- [ ] Validate: spot-check 10 random days
+- [x] `lib/range_core.py` — generic range H/L/Mid, extensions, MR metrics
+- [x] `scripts/ranges/compute_ranges.py` — generates `range_records.parquet`
+- [x] Implement for OR_5, OR_15, OR_30, IB_60
+- [x] Join to `daily_context`
+- [x] Validate: spot-check 10 random days
 
 ### Phase 4: Strategy Simulation + Dashboard MVP (2-3 sessions)
 
 **Goal:** Strategy simulation and first interactive dashboards.
 
-- [ ] `lib/trade_simulator.py` — generic entry/exit simulation
-- [ ] Generate `range_trades.parquet` for MR_TO_MID, BO_1X, BO_PULLBACK_1X
-- [ ] Dashboard: Range Profile panel (width distributions, bias)
-- [ ] Dashboard: Extension Probability panel (hit rates, conditional)
-- [ ] Dashboard: Strategy Simulator panel (win rate, R:R, equity curve)
-- [ ] Dashboard: Gap Analysis page (from `gap_records.parquet`)
+- [x] `lib/trade_simulator.py` — generic entry/exit simulation
+- [x] Generate `range_trades.parquet` for MR_TO_MID, BO_1X, BO_PULLBACK_1X
+- [x] Dashboard: Range Profile panel (width distributions, bias)
+- [x] Dashboard: Extension Probability panel (hit rates, conditional)
+- [x] Dashboard: Strategy Simulator panel (win rate, R:R, equity curve)
+- [x] Dashboard: Gap Analysis page (from `gap_records.parquet`)
 
 ### Phase 5: Daily Context Reports + Full Dashboard (2-3 sessions)
 

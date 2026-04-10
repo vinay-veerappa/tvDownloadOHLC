@@ -101,6 +101,12 @@ class DailyContext:
     open_vs_midnight: str               # "ABOVE", "BELOW"
     is_inside_day: bool                 # Today's developing range inside PD range
     is_outside_day: bool                # Opened outside PD range
+
+    # ── Opening Candle Continuation (OCC) ──────────────────────
+    first_hour_open: Optional[float]    # 09:30 open
+    first_hour_close: Optional[float]   # 10:29 close (first 60m RTH window)
+    first_hour_direction: Optional[str] # "GREEN" or "RED"
+    first_hour_continued: bool          # Session direction matched first-hour direction
     
     # ── Session Outcome (filled at end of day) ──────────────────
     session_close: Optional[float]      # Close at 16:00 (or NaT if intraday)
@@ -277,21 +283,39 @@ class DailyContextBuilder:
         daily["is_outside_day"] = daily["open_vs_pd_range"] != "INSIDE"
         daily["is_inside_day"] = has_pd & (daily["session_high"] <= daily["pdh"]) & (daily["session_low"] >= daily["pdl"])
 
+        # Opening candle continuation context from first 60m of RTH.
+        rth_idx = rth.reset_index().rename(columns={"index": "datetime"})
+        rth_open = rth_idx.groupby("trading_date", as_index=True)["datetime"].min().rename("rth_open_ts")
+        rth_idx = rth_idx.merge(rth_open, on="trading_date", how="left")
+        minutes_from_open = (rth_idx["datetime"] - rth_idx["rth_open_ts"]).dt.total_seconds() / 60.0
+        first_hour = rth_idx[(minutes_from_open >= 0) & (minutes_from_open < 60)].copy()
+        first_hour_daily = first_hour.groupby("trading_date", sort=True).agg(
+            first_hour_open=("open", "first"),
+            first_hour_close=("close", "last"),
+        )
+        daily = daily.join(first_hour_daily, how="left")
+        daily["first_hour_direction"] = np.where(
+            daily["first_hour_open"].notna() & daily["first_hour_close"].notna(),
+            np.where(daily["first_hour_close"] >= daily["first_hour_open"], "GREEN", "RED"),
+            None,
+        )
+
         # 5) Prior-day break outcomes
         daily["pdh_broken"] = has_pd & (daily["session_high"] > daily["pdh"])
         daily["pdl_broken"] = has_pd & (daily["session_low"] < daily["pdl"])
         daily["both_pd_broken"] = daily["pdh_broken"] & daily["pdl_broken"]
 
         daily["session_direction"] = np.where(daily["session_close"] >= daily["session_open"], "GREEN", "RED")
+        daily["first_hour_continued"] = (
+            daily["first_hour_direction"].notna() &
+            (daily["first_hour_direction"] == daily["session_direction"])
+        )
         direction_change = daily["session_direction"].ne(daily["session_direction"].shift(1))
         streak_groups = direction_change.cumsum()
         daily["streak_length"] = daily.groupby(streak_groups).cumcount() + 1
         daily["streak_direction"] = daily["session_direction"]
 
         # 6) Intraday timing metrics (gap fill, PD breaks)
-        rth_idx = rth.reset_index().rename(columns={"index": "datetime"})
-        rth_open = rth_idx.groupby("trading_date", as_index=True)["datetime"].min().rename("rth_open_ts")
-        rth_idx = rth_idx.merge(rth_open, on="trading_date", how="left")
         rth_enriched = rth_idx.merge(
             daily[["pdc", "pdh", "pdl", "gap_direction"]],
             left_on="trading_date",
@@ -406,6 +430,7 @@ class DailyContextBuilder:
             "pdh", "pdl", "pdc", "pd_mid", "pd_range",
             "gap_size_points", "gap_size_pct",
             "overnight_high", "overnight_low", "midnight_open",
+            "first_hour_open", "first_hour_close",
         ]
         for col in numeric_zero_defaults:
             out[col] = out[col].fillna(0.0)
@@ -419,7 +444,7 @@ class DailyContextBuilder:
         # Ensure booleans are proper bool dtype
         bool_cols = [
             "atr_respected", "gap_filled", "is_inside_day", "is_outside_day",
-            "pdh_broken", "pdl_broken", "both_pd_broken", "is_event_day", "is_opex_week",
+            "first_hour_continued", "pdh_broken", "pdl_broken", "both_pd_broken", "is_event_day", "is_opex_week",
         ]
         for col in bool_cols:
             out[col] = out[col].fillna(False).astype(bool)
