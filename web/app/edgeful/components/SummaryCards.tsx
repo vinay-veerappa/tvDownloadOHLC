@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Card } from '@/components/ui/card';
-import { ArrowUpRight, ArrowDownRight, Users, Target, Activity, TrendingUp } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Users, Target, Activity, TrendingUp, RefreshCw, Clock } from 'lucide-react';
 import { SummaryMetrics } from '../types';
 import { cn } from '@/lib/utils';
 
@@ -51,49 +51,101 @@ export function SummaryCards({ metrics, loading }: { metrics: SummaryMetrics | n
   if (!metrics && !loading) return null;
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
-      <MetricCard 
-        title="Institutional Sample" 
-        value={metrics?.total?.toLocaleString() ?? '0'} 
-        icon={<Users className="h-4 w-4" />}
-        n={metrics?.total ?? 0}
-        loading={loading}
-      />
-      <MetricCard 
-        title="Judas Rate" 
-        value={`${metrics?.judas_rate?.toFixed(1) ?? '0'}%`} 
-        icon={<TrendingUp className="h-4 w-4" />}
-        n={metrics?.total ?? 0}
-        loading={loading}
-      />
-      <MetricCard 
-        title="Continuation Rate" 
-        value={`${metrics?.continuation_win_rate?.toFixed(1) ?? '0'}%`} 
-        icon={<Target className="h-4 w-4" />}
-        n={metrics?.total ?? 0}
-        loading={loading}
-      />
-      <MetricCard 
-        title="Reversion Rate" 
-        value={`${metrics?.reversion_rate?.toFixed(1) ?? '0'}%`} 
-        icon={<TrendingUp className="h-4 w-4" rotate={180} />}
-        n={metrics?.total ?? 0}
-        loading={loading}
-      />
-      <MetricCard 
-        title="Avg MFE" 
-        value={`${metrics?.avg_mfe?.toFixed(3) ?? '0'}%`} 
-        icon={<ArrowUpRight className="h-4 w-4" />}
-        n={metrics?.total ?? 0}
-        loading={loading}
-      />
-      <MetricCard 
-        title="Avg MAE" 
-        value={`${metrics?.avg_mae?.toFixed(3) ?? '0'}%`} 
-        icon={<ArrowDownRight className="h-4 w-4" />}
-        n={metrics?.total ?? 0}
-        loading={loading}
-      />
+    <div className="space-y-4">
+      {/* Row 1: Core metrics */}
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <MetricCard 
+          title="Institutional Sample" 
+          value={metrics?.total?.toLocaleString() ?? '0'} 
+          icon={<Users className="h-4 w-4" />}
+          n={metrics?.total ?? 0}
+          loading={loading}
+        />
+        <MetricCard 
+          title="Judas Rate" 
+          value={`${metrics?.judas_rate?.toFixed(1) ?? '0'}%`} 
+          icon={<TrendingUp className="h-4 w-4" />}
+          n={metrics?.total ?? 0}
+          loading={loading}
+        />
+        <MetricCard 
+          title="Continuation Rate" 
+          value={`${metrics?.continuation_win_rate?.toFixed(1) ?? '0'}%`} 
+          icon={<Target className="h-4 w-4" />}
+          n={metrics?.total ?? 0}
+          loading={loading}
+        />
+        <MetricCard 
+          title="Reversion Rate" 
+          value={`${metrics?.reversion_rate?.toFixed(1) ?? '0'}%`} 
+          icon={<TrendingUp className="h-4 w-4" rotate={180} />}
+          n={metrics?.total ?? 0}
+          loading={loading}
+        />
+        <MetricCard 
+          title="Avg MFE" 
+          value={`${metrics?.avg_mfe?.toFixed(3) ?? '0'}%`} 
+          icon={<ArrowUpRight className="h-4 w-4" />}
+          n={metrics?.total ?? 0}
+          loading={loading}
+        />
+        <MetricCard 
+          title="Avg MAE" 
+          value={`${metrics?.avg_mae?.toFixed(3) ?? '0'}%`} 
+          icon={<ArrowDownRight className="h-4 w-4" />}
+          n={metrics?.total ?? 0}
+          loading={loading}
+        />
+      </div>
+
+      {/* Row 2: Strategy 2 — Mid Retest Performance */}
+      <div>
+        <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest mb-2 px-1">Strategy 2 — Mid Retest Performance</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <MetricCard
+            title="Mid Retest Rate"
+            value={`${metrics?.mid_retest_rate?.toFixed(1) ?? '--'}%`}
+            icon={<RefreshCw className="h-4 w-4" />}
+            n={metrics?.total ?? 0}
+            loading={loading}
+          />
+          <MetricCard
+            title="Mid Entry Win Rate"
+            value={`${metrics?.mid_entry_win_rate?.toFixed(1) ?? '--'}%`}
+            icon={<Target className="h-4 w-4" />}
+            n={metrics?.total ?? 0}
+            loading={loading}
+          />
+          <MetricCard
+            title="Avg Mid MFE"
+            value={metrics?.avg_mid_mfe != null ? `${metrics.avg_mid_mfe.toFixed(3)}%` : '--'}
+            icon={<ArrowUpRight className="h-4 w-4" />}
+            n={metrics?.total ?? 0}
+            loading={loading}
+          />
+          <MetricCard
+            title="Avg Mid MAE"
+            value={metrics?.avg_mid_mae != null ? `${metrics.avg_mid_mae.toFixed(3)}%` : '--'}
+            icon={<ArrowDownRight className="h-4 w-4" />}
+            n={metrics?.total ?? 0}
+            loading={loading}
+          />
+          <MetricCard
+            title="Avg Mid R:R"
+            value={metrics?.avg_mid_rr != null ? metrics.avg_mid_rr.toFixed(2) : '--'}
+            icon={<Activity className="h-4 w-4" />}
+            n={metrics?.total ?? 0}
+            loading={loading}
+          />
+          <MetricCard
+            title="Avg Time to Retest"
+            value={metrics?.avg_retest_time_m != null ? `${metrics.avg_retest_time_m.toFixed(1)}m` : '--'}
+            icon={<Clock className="h-4 w-4" />}
+            n={metrics?.total ?? 0}
+            loading={loading}
+          />
+        </div>
+      </div>
     </div>
   );
 }

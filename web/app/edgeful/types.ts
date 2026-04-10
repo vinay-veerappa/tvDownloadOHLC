@@ -27,6 +27,8 @@ export interface MacroFilterState {
     excursionRange: [number, number] | null;
     judasFirst: boolean | null;
     judasExcursionThreshold: number | null;
+    midRetested: boolean | null;
+    midRetestWin: boolean | null;
   };
 }
 
@@ -40,6 +42,13 @@ export interface SummaryMetrics {
   avg_mfe: number;
   avg_mae: number;
   query_time_ms: number;
+  // Strategy 2 — Mid Retest Performance
+  mid_retest_rate: number;
+  mid_entry_win_rate: number;
+  avg_mid_mfe: number;
+  avg_mid_mae: number;
+  avg_mid_rr: number;
+  avg_retest_time_m: number;
 }
 
 export interface MacroRecord {

@@ -322,6 +322,18 @@ export function FilterPanel({ filters, updateFilter, updateDateRange, updateAdva
                   onChange={(v) => updateAdvanced('judasFirst', v)}
                 />
 
+                <MultiToggle 
+                  label="Mid Retested"
+                  value={filters.advanced.midRetested}
+                  onChange={(v) => updateAdvanced('midRetested', v)}
+                />
+
+                <MultiToggle 
+                  label="Mid Retest Win"
+                  value={filters.advanced.midRetestWin}
+                  onChange={(v) => updateAdvanced('midRetestWin', v)}
+                />
+
                 <Separator className="bg-zinc-900 mx-1" />
 
                 <MultiSelect 

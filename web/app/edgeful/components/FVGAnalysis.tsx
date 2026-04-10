@@ -111,7 +111,7 @@ export function FVGAnalysis({ filters, dbReady }: FVGAnalysisProps) {
     setLoading(true);
     
     try {
-      const macrosWhere = buildWhereClause(filters);
+      const macrosWhere = buildWhereClause(filters, 'm');
       const fvgWhere = buildFvgWhereClause(fvgFilters);
       // FVG Query joined to macro matching current filters
       const joinFilters = macrosWhere ? macrosWhere.replace('WHERE ', 'AND ') : '';

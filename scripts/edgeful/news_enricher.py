@@ -4,6 +4,9 @@ import sqlite3
 import os
 from .config import PRISMA_DB_PATH
 
+
+EVENT_TIMEZONE = 'America/New_York'
+
 def enrich_news(macro_df: pd.DataFrame, prisma_db_path: str = None) -> pd.DataFrame:
     """
     Enriches macro records with economic news context from the Prisma database.
@@ -31,9 +34,14 @@ def enrich_news(macro_df: pd.DataFrame, prisma_db_path: str = None) -> pd.DataFr
         events_df = pd.read_sql_query(query, conn)
         conn.close()
         
-        events_df['datetime'] = pd.to_datetime(events_df['datetime'], unit='ms').astype('datetime64[ns]')
-        # Standardize to naive for comparison (match pipeline)
-        events_df['event_dt'] = events_df['datetime'].dt.tz_localize(None).astype('datetime64[ns]')
+        events_df['datetime'] = pd.to_datetime(events_df['datetime'], unit='ms', utc=True)
+        # Convert event timestamps into Eastern wall-clock time to match macro_start.
+        events_df['event_dt'] = (
+            events_df['datetime']
+            .dt.tz_convert(EVENT_TIMEZONE)
+            .dt.tz_localize(None)
+            .astype('datetime64[ns]')
+        )
     except Exception as e:
         print(f"!! News Enrichment Error (Prisma): {e}")
         return macro_df
@@ -47,6 +55,18 @@ def enrich_news(macro_df: pd.DataFrame, prisma_db_path: str = None) -> pd.DataFr
     
     # Sort for merge_asof
     res_df['macro_start_temp'] = res_df['macro_start'].dt.tz_localize(None).astype('datetime64[ns]')
+
+    macro_min = res_df['macro_start_temp'].min()
+    macro_max = res_df['macro_start_temp'].max()
+    event_min = events_df['event_dt'].min()
+    event_max = events_df['event_dt'].max()
+
+    if event_max < macro_min or event_min > macro_max:
+        print(
+            "!! News Enrichment Warning: EconomicEvent coverage does not overlap macro dataset "
+            f"(events {event_min} -> {event_max}, macros {macro_min} -> {macro_max})."
+        )
+
     res_df = res_df.sort_values('macro_start_temp')
     events_df = events_df.sort_values('event_dt')
     

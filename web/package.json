@@ -6,7 +6,9 @@
     "dev": "next dev --webpack --port 3000",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "sync:economic-events": "tsx prisma/seed-economic-events.ts",
+    "check:economic-events-coverage": "tsx scripts/check-economic-events-coverage.ts"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"

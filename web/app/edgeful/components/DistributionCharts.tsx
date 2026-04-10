@@ -32,9 +32,12 @@ interface ChartOption {
 interface StatsSummaryData {
   n: number;
   mean: number;
+  p10: number;
   p25: number;
   median: number;
   p75: number;
+  p90: number;
+  p95: number;
   mode: number;
   std_dev: number;
   min_val: number;
@@ -73,6 +76,11 @@ const CHART_OPTIONS = [
   { value: 'macro_range_pct', label: 'Overall Macro Range %', binWidth: 0.05, mode: 'hist', format: 'percent' },
   { value: 'post_macro_mfe_pct', label: 'Max Favorable Excursion %', binWidth: 0.05, mode: 'hist', format: 'percent' },
   { value: 'post_macro_mae_pct', label: 'Max Adverse Excursion %', binWidth: 0.05, mode: 'hist', format: 'percent' },
+  { value: 'mid_retest_mfe_pct', label: 'Mid Retest MFE %', binWidth: 0.05, mode: 'hist', format: 'percent', extraCondition: 'post_macro_retested_mid = true' },
+  { value: 'mid_retest_mae_pct', label: 'Mid Retest MAE %', binWidth: 0.05, mode: 'hist', format: 'percent', extraCondition: 'post_macro_retested_mid = true' },
+  { value: 'mid_retest_net_pct', label: 'Mid Retest Net P&L %', binWidth: 0.05, mode: 'hist', format: 'percent', extraCondition: 'post_macro_retested_mid = true' },
+  { value: 'mid_retest_rr', label: 'Mid Retest R:R', binWidth: 0.25, mode: 'hist', format: 'ratio', extraCondition: 'post_macro_retested_mid = true' },
+  { value: 'mid_retest_time_m', label: 'Mid Retest Time (Minutes)', binWidth: 1, mode: 'hist', format: 'minutes', extraCondition: 'post_macro_retested_mid = true' },
   { value: 'classification_by_hour', label: 'Judas Rate by Macro Window', binWidth: 0, mode: 'bar', format: 'percent' },
   { value: 'continuation_by_day', label: 'Avg Continuation by Day', binWidth: 0, mode: 'bar', format: 'percent' },
 ] as const satisfies readonly ChartOption[];
@@ -107,7 +115,7 @@ function StatsSummary({ stats, chart }: { stats: StatsSummaryData | null; chart:
 
   return (
     <div className="mt-4 rounded-md border border-zinc-800 bg-zinc-900/30 p-3">
-      <div className="grid grid-cols-2 gap-2 text-[11px] md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 text-[11px] md:grid-cols-4 xl:grid-cols-7">
         <div>
           <div className="text-zinc-500">N</div>
           <div className={`font-semibold ${sampleColor(stats.n)}`}>{stats.n.toLocaleString()}</div>
@@ -133,12 +141,24 @@ function StatsSummary({ stats, chart }: { stats: StatsSummaryData | null; chart:
           <div className="font-semibold text-zinc-200">{formatValue(stats.min_val, chart.format)}</div>
         </div>
         <div>
+          <div className="text-zinc-500">P10</div>
+          <div className="font-semibold text-zinc-200">{formatValue(stats.p10, chart.format)}</div>
+        </div>
+        <div>
           <div className="text-zinc-500">P25</div>
           <div className="font-semibold text-zinc-200">{formatValue(stats.p25, chart.format)}</div>
         </div>
         <div>
           <div className="text-zinc-500">P75</div>
           <div className="font-semibold text-zinc-200">{formatValue(stats.p75, chart.format)}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">P90</div>
+          <div className="font-semibold text-zinc-200">{formatValue(stats.p90, chart.format)}</div>
+        </div>
+        <div>
+          <div className="text-zinc-500">P95</div>
+          <div className="font-semibold text-zinc-200">{formatValue(stats.p95, chart.format)}</div>
         </div>
         <div>
           <div className="text-zinc-500">IQR</div>
@@ -250,9 +270,12 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
               SELECT
                 COUNT(*) AS n,
                 AVG(metric) AS mean,
+                quantile_cont(metric, 0.10) AS p10,
                 quantile_cont(metric, 0.25) AS p25,
                 quantile_cont(metric, 0.5) AS median,
                 quantile_cont(metric, 0.75) AS p75,
+                quantile_cont(metric, 0.90) AS p90,
+                quantile_cont(metric, 0.95) AS p95,
                 mode(metric) AS mode,
                 stddev_samp(metric) AS std_dev,
                 MIN(metric) AS min_val,
@@ -266,9 +289,12 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
           setStats({
             n: Number(row.n ?? 0),
             mean: Number(row.mean ?? 0),
+            p10: Number(row.p10 ?? 0),
             p25: Number(row.p25 ?? 0),
             median: Number(row.median ?? 0),
             p75: Number(row.p75 ?? 0),
+            p90: Number(row.p90 ?? 0),
+            p95: Number(row.p95 ?? 0),
             mode: Number(row.mode ?? 0),
             std_dev: Number(row.std_dev ?? 0),
             min_val: Number(row.min_val ?? 0),

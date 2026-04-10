@@ -85,10 +85,101 @@ def track_fvg_outcomes(fvg_df: pd.DataFrame, bars_1m: pd.DataFrame, macro_df: pd
         GROUP BY fvg_id
     """)
 
+    # Post-test extremes: bars from first test bar to lookforward end, per FVG
+    con.execute("""
+        CREATE TEMP TABLE fvg_post_test AS
+        WITH test_bar_times AS (
+            SELECT
+                fvg_id,
+                fvg_type,
+                fvg_high,
+                fvg_low,
+                MIN(CASE
+                    WHEN (fvg_type = 'bullish' AND bar_l <= fvg_high)
+                      OR (fvg_type = 'bearish' AND bar_h >= fvg_low)
+                    THEN bar_time
+                END) as test_bar_time
+            FROM fvg_lookforward
+            GROUP BY fvg_id, fvg_type, fvg_high, fvg_low
+        ),
+        post_retest_bars AS (
+            SELECT
+                t.fvg_id,
+                t.fvg_type,
+                l.bar_h,
+                l.bar_l,
+                l.bar_c,
+                l.bar_time,
+                ROW_NUMBER() OVER (PARTITION BY t.fvg_id ORDER BY l.bar_time DESC) as rn
+            FROM test_bar_times t
+            JOIN fvg_lookforward l ON t.fvg_id = l.fvg_id
+                                  AND l.bar_time >= t.test_bar_time
+            WHERE t.test_bar_time IS NOT NULL
+        )
+        SELECT
+            fvg_id,
+            MAX(bar_h)                           as post_test_high,
+            MIN(bar_l)                           as post_test_low,
+            MAX(CASE WHEN rn = 1 THEN bar_c END) as post_test_close
+        FROM post_retest_bars
+        GROUP BY fvg_id
+    """)
+
     outcomes = con.execute("SELECT * FROM fvg_outcomes").df()
+    post_test = con.execute("SELECT * FROM fvg_post_test").df()
     res_df = fvg_df.merge(outcomes, on='fvg_id', how='left')
+    res_df = res_df.merge(post_test, on='fvg_id', how='left')
     
     # Held = tested but not failed
     res_df['held'] = (res_df['was_tested'] == True) & (res_df['failed'] == False)
-    
+
+    # FVG entry MFE/MAE from fvg_mid (consequent encroachment = 50% of gap)
+    # NULL for untested FVGs (post_test columns are NaN via left join)
+    fvg_mid = res_df['fvg_mid']
+    denom = res_df['macro_open_lvl']
+
+    res_df['fvg_entry_mfe_pct'] = np.where(
+        res_df['fvg_type'] == 'bullish',
+        (res_df['post_test_high'] - fvg_mid) / denom * 100,
+        np.where(
+            res_df['fvg_type'] == 'bearish',
+            (fvg_mid - res_df['post_test_low']) / denom * 100,
+            np.nan,
+        ),
+    )
+    res_df['fvg_entry_mfe_pct'] = res_df['fvg_entry_mfe_pct'].clip(lower=0)
+
+    res_df['fvg_entry_mae_pct'] = np.where(
+        res_df['fvg_type'] == 'bullish',
+        (fvg_mid - res_df['post_test_low']) / denom * 100,
+        np.where(
+            res_df['fvg_type'] == 'bearish',
+            (res_df['post_test_high'] - fvg_mid) / denom * 100,
+            np.nan,
+        ),
+    )
+    res_df['fvg_entry_mae_pct'] = res_df['fvg_entry_mae_pct'].clip(lower=0)
+
+    res_df['fvg_entry_net_pct'] = np.where(
+        res_df['fvg_type'] == 'bullish',
+        (res_df['post_test_close'] - fvg_mid) / denom * 100,
+        np.where(
+            res_df['fvg_type'] == 'bearish',
+            (fvg_mid - res_df['post_test_close']) / denom * 100,
+            np.nan,
+        ),
+    )
+
+    res_df['fvg_entry_win'] = np.where(
+        pd.notna(res_df['fvg_entry_net_pct']),
+        res_df['fvg_entry_net_pct'] > 0,
+        np.nan,
+    )
+
+    res_df['fvg_entry_rr'] = np.where(
+        res_df['fvg_entry_mae_pct'] > 0,
+        (res_df['fvg_entry_mfe_pct'] / res_df['fvg_entry_mae_pct']).round(2),
+        np.nan,
+    )
+
     return res_df

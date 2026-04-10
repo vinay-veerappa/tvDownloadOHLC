@@ -9,7 +9,23 @@ function isActiveRange(range: [number, number] | null, min: number, max: number)
   return !!range && (range[0] > min || range[1] < max);
 }
 
-export function buildWhereClause(filters: MacroFilterState): string {
+function isBooleanFilter(value: boolean | null | undefined): value is boolean {
+  return value === true || value === false;
+}
+
+// Columns that live exclusively in macro_records (used to qualify in JOIN contexts)
+const MACRO_ONLY_COLS = [
+  'instrument', 'macro_name_raw', 'ict_alias', 'judas_classification',
+  'indicator_label', 'vix_regime', 'day_of_week', 'trading_date',
+  'real_direction', 'has_fvg', 'is_complete', 'news_within_60m',
+  'open_vs_midnight', 'open_vs_daily_open', 'macro_open_vs_rth_bar',
+  'judas_first', 'is_opex_week', 'prior_macro_real_direction',
+  'same_direction_as_prior', 'macro_streak', 'macro_range_pct',
+  'judas_magnitude_pct', 'excursion_above_pct', 'excursion_below_pct',
+  'judas_excursion_ratio', 'post_macro_retested_mid', 'mid_retest_win',
+];
+
+export function buildWhereClause(filters: MacroFilterState, tableAlias?: string): string {
   const conditions: string[] = [];
 
   // 1. Primary Filters
@@ -56,11 +72,11 @@ export function buildWhereClause(filters: MacroFilterState): string {
     conditions.push(`real_direction IN (${filters.advanced.realDirection.map(d => `'${d}'`).join(',')})`);
   }
   
-  if (filters.advanced.hasFVG !== null) {
+  if (isBooleanFilter(filters.advanced.hasFVG)) {
     conditions.push(`has_fvg = ${filters.advanced.hasFVG}`);
   }
 
-  if (filters.advanced.isComplete !== null) {
+  if (isBooleanFilter(filters.advanced.isComplete)) {
     conditions.push(`is_complete = ${filters.advanced.isComplete}`);
   }
   
@@ -84,11 +100,11 @@ export function buildWhereClause(filters: MacroFilterState): string {
     conditions.push(`macro_open_vs_rth_bar IN (${filters.advanced.openVsRthBar.map(v => `'${v}'`).join(',')})`);
   }
 
-  if (filters.advanced.judasFirst !== null) {
+  if (isBooleanFilter(filters.advanced.judasFirst)) {
     conditions.push(`judas_first = ${filters.advanced.judasFirst}`);
   }
 
-  if (filters.advanced.isOpExWeek !== null) {
+  if (isBooleanFilter(filters.advanced.isOpExWeek)) {
     conditions.push(`is_opex_week = ${filters.advanced.isOpExWeek}`);
   }
 
@@ -97,7 +113,7 @@ export function buildWhereClause(filters: MacroFilterState): string {
     conditions.push(`prior_macro_real_direction IN (${values})`);
   }
 
-  if (filters.advanced.sameDirectionAsPrior !== null) {
+  if (isBooleanFilter(filters.advanced.sameDirectionAsPrior)) {
     conditions.push(`same_direction_as_prior = ${filters.advanced.sameDirectionAsPrior}`);
   }
 
@@ -123,7 +139,28 @@ export function buildWhereClause(filters: MacroFilterState): string {
     conditions.push(`(judas_classification NOT IN ('bullish_judas', 'bearish_judas') OR judas_excursion_ratio >= ${filters.advanced.judasExcursionThreshold})`);
   }
 
-  return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  if (isBooleanFilter(filters.advanced.midRetested)) {
+    conditions.push(`post_macro_retested_mid = ${filters.advanced.midRetested}`);
+  }
+
+  if (isBooleanFilter(filters.advanced.midRetestWin)) {
+    if (filters.advanced.midRetestWin) {
+      conditions.push(`mid_retest_win = true`);
+    } else {
+      conditions.push(`(mid_retest_win = false OR mid_retest_win IS NULL)`);
+    }
+  }
+
+  if (conditions.length === 0) return '';
+
+  let joined = conditions.join(' AND ');
+  if (tableAlias) {
+    for (const col of MACRO_ONLY_COLS) {
+      joined = joined.replace(new RegExp(`\\b${col}\\b`, 'g'), `${tableAlias}.${col}`);
+    }
+  }
+
+  return `WHERE ${joined}`;
 }
 
 /**
@@ -138,7 +175,13 @@ export function getSummarySql(whereClause: string): string {
       CAST(COUNT(CASE WHEN post_macro_continuation_pct > post_macro_reversion_pct THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS DOUBLE) as continuation_win_rate,
       CAST(COUNT(CASE WHEN post_macro_reversion_pct > post_macro_continuation_pct THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS DOUBLE) as reversion_rate,
       CAST(AVG(post_macro_mfe_pct) AS DOUBLE) as avg_mfe,
-      CAST(AVG(post_macro_mae_pct) AS DOUBLE) as avg_mae
+      CAST(AVG(post_macro_mae_pct) AS DOUBLE) as avg_mae,
+      CAST(COUNT(CASE WHEN post_macro_retested_mid THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS DOUBLE) as mid_retest_rate,
+      CAST(AVG(CASE WHEN post_macro_retested_mid THEN CASE WHEN mid_retest_win THEN 1.0 ELSE 0.0 END END) * 100.0 AS DOUBLE) as mid_entry_win_rate,
+      CAST(AVG(CASE WHEN post_macro_retested_mid THEN mid_retest_mfe_pct END) AS DOUBLE) as avg_mid_mfe,
+      CAST(AVG(CASE WHEN post_macro_retested_mid THEN mid_retest_mae_pct END) AS DOUBLE) as avg_mid_mae,
+      CAST(AVG(CASE WHEN post_macro_retested_mid THEN mid_retest_rr END) AS DOUBLE) as avg_mid_rr,
+      CAST(AVG(CASE WHEN post_macro_retested_mid THEN mid_retest_time_m END) AS DOUBLE) as avg_retest_time_m
     FROM macro_records
     ${whereClause}
   `;
@@ -193,9 +236,12 @@ export function getDistributionStatsSql(column: string, whereClause: string, ext
     SELECT
       CAST(COUNT(*) AS DOUBLE) AS n,
       CAST(AVG(val) AS DOUBLE) AS mean,
+      CAST(PERCENTILE_CONT(0.10) WITHIN GROUP (ORDER BY val) AS DOUBLE) AS p10,
       CAST(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY val) AS DOUBLE) AS p25,
       CAST(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY val) AS DOUBLE) AS median,
       CAST(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY val) AS DOUBLE) AS p75,
+      CAST(PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY val) AS DOUBLE) AS p90,
+      CAST(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY val) AS DOUBLE) AS p95,
       CAST((SELECT mode_val FROM mode_calc) AS DOUBLE) AS mode,
       CAST(STDDEV(val) AS DOUBLE) AS std_dev,
       CAST(MIN(val) AS DOUBLE) AS min_val,

@@ -2,6 +2,17 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { MacroFilterState } from '../types';
 
+const TRI_STATE_ADVANCED_KEYS = [
+  'hasFVG',
+  'isComplete',
+  'newsWithin60m',
+  'isOpExWeek',
+  'sameDirectionAsPrior',
+  'judasFirst',
+  'midRetested',
+  'midRetestWin',
+] as const satisfies ReadonlyArray<keyof MacroFilterState['advanced']>;
+
 const INITIAL_STATE: MacroFilterState = {
   instruments: [],
   macroWindows: [],
@@ -31,8 +42,35 @@ const INITIAL_STATE: MacroFilterState = {
     magnitudeRange: null,
     excursionRange: null,
     judasExcursionThreshold: null,
+    midRetested: null,
+    midRetestWin: null,
   },
 };
+
+function normalizeFilters(rawState: unknown): MacroFilterState {
+  const candidate = (rawState && typeof rawState === 'object' ? rawState : {}) as Partial<MacroFilterState>;
+  const advancedCandidate = (candidate.advanced && typeof candidate.advanced === 'object'
+    ? candidate.advanced
+    : {}) as Partial<MacroFilterState['advanced']>;
+
+  const normalized: MacroFilterState = {
+    ...INITIAL_STATE,
+    ...candidate,
+    advanced: {
+      ...INITIAL_STATE.advanced,
+      ...advancedCandidate,
+    },
+  };
+
+  for (const key of TRI_STATE_ADVANCED_KEYS) {
+    const value = normalized.advanced[key];
+    if (value !== true && value !== false) {
+      normalized.advanced[key] = null;
+    }
+  }
+
+  return normalized;
+}
 
 export function useFilters() {
   const router = useRouter();
@@ -47,15 +85,7 @@ export function useFilters() {
       if (stateParam) {
         // searchParams.get() already URL-decodes, don't decode again
         const urlState = JSON.parse(stateParam);
-        // Deep merge URL state with INITIAL_STATE to ensure all keys exist
-        return {
-          ...INITIAL_STATE,
-          ...urlState,
-          advanced: {
-            ...INITIAL_STATE.advanced,
-            ...(urlState.advanced || {})
-          }
-        } as MacroFilterState;
+        return normalizeFilters(urlState);
       }
     } catch (e) {
       console.error('Failed to parse filters from URL:', e);
@@ -102,7 +132,12 @@ export function useFilters() {
   const updateAdvanced = useCallback((key: keyof MacroFilterState['advanced'], value: any) => {
     setFilters(prev => ({
       ...prev,
-      advanced: { ...prev.advanced, [key]: value }
+      advanced: {
+        ...prev.advanced,
+        [key]: TRI_STATE_ADVANCED_KEYS.includes(key)
+          ? (value === true || value === false ? value : null)
+          : value,
+      }
     }));
   }, []);
 

@@ -130,14 +130,43 @@ def compute_post_macro_outcomes(macro_df: pd.DataFrame, bars_1m: pd.DataFrame) -
         GROUP BY macro_id
     """)
 
+    # 6. Post-Retest Price Extremes (FROM MID RETEST BAR to LOOKFORWARD END)
+    con.execute("""
+        CREATE TEMP TABLE mid_retest_outcomes AS
+        WITH retest_bars AS (
+            SELECT
+                r.macro_id,
+                b.high as bar_h,
+                b.low  as bar_l,
+                b.close as bar_c,
+                b.bar_time,
+                ROW_NUMBER() OVER (PARTITION BY r.macro_id ORDER BY b.bar_time DESC) as rn
+            FROM mid_retests r
+            JOIN macros m ON r.macro_id = m.macro_id
+            JOIN bars b   ON b.bar_time >= r.first_mid_retest_time
+                         AND b.bar_time <= m.lookforward_end
+            WHERE r.post_macro_retested_mid = TRUE
+        )
+        SELECT
+            macro_id,
+            MAX(bar_h)                       as post_retest_high,
+            MIN(bar_l)                       as post_retest_low,
+            MAX(CASE WHEN rn = 1 THEN bar_c END) as post_retest_close,
+            COUNT(*)                         as post_retest_bars
+        FROM retest_bars
+        GROUP BY macro_id
+    """)
+
     outcomes = con.execute("SELECT * FROM post_outcomes").df()
     macro_bounds = con.execute("SELECT * FROM macro_level_bounds").df()
     retests = con.execute("SELECT * FROM mid_retests").df()
+    retest_outcomes = con.execute("SELECT * FROM mid_retest_outcomes").df()
     
     # Merge outcomes AND the lookforward boundaries back to res_df
     res_df = macro_df.merge(outcomes, on='macro_id', how='left')
     res_df = res_df.merge(macro_bounds, on='macro_id', how='left')
     res_df = res_df.merge(retests, on='macro_id', how='left')
+    res_df = res_df.merge(retest_outcomes, on='macro_id', how='left')
     res_df = res_df.merge(
         temp_macros[['macro_id', 'lookforward_end', 'post_macro_duration_m']], 
         on='macro_id', 
@@ -185,6 +214,60 @@ def compute_post_macro_outcomes(macro_df: pd.DataFrame, bars_1m: pd.DataFrame) -
     # 5. Position Relative to Macro Mid (Range-based per Design Spec)
     res_df['macro_mid'] = (res_df['high'] + res_df['low']) / 2
     res_df['close_vs_macro_mid_pct'] = (res_df['close'] - res_df['low']) / (res_df['high'] - res_df['low'] + 1e-9) * 100
+
+    # 5b. Mid Retest Entry Analytics (Strategy 2 MFE/MAE from macro_mid entry)
+    macro_mid = res_df['macro_mid']
+    macro_open = res_df['open']
+    mask_retested = res_df['post_macro_retested_mid'] == True
+
+    # MFE: favorable move in real_direction from macro_mid entry
+    res_df['mid_retest_mfe_pct'] = np.where(
+        mask_retested & (res_df['real_direction'] == 'down'),
+        (macro_mid - res_df['post_retest_low']) / macro_open * 100,
+        np.where(
+            mask_retested & (res_df['real_direction'] == 'up'),
+            (res_df['post_retest_high'] - macro_mid) / macro_open * 100,
+            np.nan,
+        ),
+    )
+    res_df['mid_retest_mfe_pct'] = res_df['mid_retest_mfe_pct'].clip(lower=0)
+
+    # MAE: adverse move against real_direction from macro_mid entry
+    res_df['mid_retest_mae_pct'] = np.where(
+        mask_retested & (res_df['real_direction'] == 'down'),
+        (res_df['post_retest_high'] - macro_mid) / macro_open * 100,
+        np.where(
+            mask_retested & (res_df['real_direction'] == 'up'),
+            (macro_mid - res_df['post_retest_low']) / macro_open * 100,
+            np.nan,
+        ),
+    )
+    res_df['mid_retest_mae_pct'] = res_df['mid_retest_mae_pct'].clip(lower=0)
+
+    # Net P&L: signed, positive = profitable
+    res_df['mid_retest_net_pct'] = np.where(
+        mask_retested & (res_df['real_direction'] == 'down'),
+        (macro_mid - res_df['post_retest_close']) / macro_open * 100,
+        np.where(
+            mask_retested & (res_df['real_direction'] == 'up'),
+            (res_df['post_retest_close'] - macro_mid) / macro_open * 100,
+            np.nan,
+        ),
+    )
+
+    # Win boolean (NaN for non-retested rows)
+    res_df['mid_retest_win'] = np.where(
+        pd.notna(res_df['mid_retest_net_pct']),
+        res_df['mid_retest_net_pct'] > 0,
+        np.nan,
+    )
+
+    # R:R ratio
+    res_df['mid_retest_rr'] = np.where(
+        res_df['mid_retest_mae_pct'] > 0,
+        (res_df['mid_retest_mfe_pct'] / res_df['mid_retest_mae_pct']).round(2),
+        np.nan,
+    )
 
     # 6. Final Retest Analysis
     # Data is already naive ET from DuckDB (we registered it as such). 
