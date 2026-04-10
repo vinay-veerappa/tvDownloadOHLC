@@ -120,6 +120,8 @@ class VectorizedBacktester(BaseBacktester):
         all_mae = []
         all_mfe = []
         all_exit_closes = []
+        all_mfe_wick = []
+        all_mfe_close = []
 
         ticker = risk_params.get('ticker', 'NQ1')
 
@@ -159,12 +161,22 @@ class VectorizedBacktester(BaseBacktester):
 
             c_is_sl = sl_hits[np.arange(len(c_indices)), c_hit_bars]
 
+            # By-performance measurement: wick vs close excursion
+            if c_is_long.flatten()[0] if len(c_is_long) > 0 else True:
+                c_mfe_wick = ((np.max(c_highs, axis=1) - c_entries.flatten()) / c_entries.flatten()) * 100
+                c_mfe_close = ((np.max(c_closes, axis=1) - c_entries.flatten()) / c_entries.flatten()) * 100
+            else:
+                c_mfe_wick = ((c_entries.flatten() - np.min(c_lows, axis=1)) / c_entries.flatten()) * 100
+                c_mfe_close = ((c_entries.flatten() - np.min(c_closes, axis=1)) / c_entries.flatten()) * 100
+
             all_hit_occurred.append(c_hit_occurred)
             all_hit_bars.append(c_hit_bars)
             all_is_sl.append(c_is_sl)
             all_mae.append(c_mae)
             all_mfe.append(c_mfe)
             all_exit_closes.append(c_closes[np.arange(len(c_indices)), MAX_SEARCH - 1])
+            all_mfe_wick.append(c_mfe_wick)
+            all_mfe_close.append(c_mfe_close)
 
         if not all_hit_occurred:
             return self._null_metrics(data)
@@ -176,6 +188,8 @@ class VectorizedBacktester(BaseBacktester):
         mae_vec = np.concatenate(all_mae)
         mfe_vec = np.concatenate(all_mfe)
         exit_closes = np.concatenate(all_exit_closes)
+        mfe_wick_vec = np.concatenate(all_mfe_wick)
+        mfe_close_vec = np.concatenate(all_mfe_close)
 
         # 4. Returns Synthesis
         entry_prices = signals['entry_price'].values
@@ -195,6 +209,21 @@ class VectorizedBacktester(BaseBacktester):
         equity_returns.loc[exit_times] += trade_returns
         cum_returns = (1 + equity_returns).cumprod()
 
+        trades_detailed = pd.DataFrame({
+            'pnl_pct': trade_returns * 100,
+            'mae_pct': mae_vec,
+            'mfe_pct': mfe_vec,
+            'mfe_wick_pct': mfe_wick_vec,
+            'mfe_close_pct': mfe_close_vec,
+            'exit_time': exit_times
+        }, index=signals.index)
+
+        rolling_perf = self._calculate_rolling_performance(trades_detailed, windows_days=(30, 90))
+        perf_by_measurement = {
+            'wick': float(np.nanmean(mfe_wick_vec)) if len(mfe_wick_vec) else 0.0,
+            'close': float(np.nanmean(mfe_close_vec)) if len(mfe_close_vec) else 0.0,
+        }
+
         return {
             'total_return_%': (cum_returns.iloc[-1] - 1) * 100,
             'sharpe_ratio': self._calculate_sharpe(equity_returns),
@@ -204,12 +233,9 @@ class VectorizedBacktester(BaseBacktester):
             'num_trades': n_sigs,
             'equity_curve': cum_returns,
             'trade_returns_pct': pd.Series(trade_returns, index=signals.index),
-            'trades_detailed': pd.DataFrame({
-                'pnl_pct': trade_returns * 100,
-                'mae_pct': mae_vec,
-                'mfe_pct': mfe_vec,
-                'exit_time': exit_times
-            }, index=signals.index)
+            'trades_detailed': trades_detailed,
+            'rolling_performance': rolling_perf,
+            'performance_by_measurement': perf_by_measurement,
         }
 
     def _null_metrics(self, data: pd.DataFrame) -> Dict[str, Any]:
@@ -217,7 +243,12 @@ class VectorizedBacktester(BaseBacktester):
             'total_return_%': 0.0, 'sharpe_ratio': 0.0, 'max_drawdown_%': 0.0,
             'num_trades': 0, 'equity_curve': pd.Series(1.0, index=data.index),
             'trade_returns_pct': pd.Series([], dtype=float),
-            'trades_detailed': pd.DataFrame()
+            'trades_detailed': pd.DataFrame(),
+            'rolling_performance': {
+                '30d': {'win_rate_%': 0.0, 'avg_r_multiple': 0.0, 'sharpe_ratio': 0.0, 'max_drawdown_%': 0.0, 'num_trades': 0},
+                '90d': {'win_rate_%': 0.0, 'avg_r_multiple': 0.0, 'sharpe_ratio': 0.0, 'max_drawdown_%': 0.0, 'num_trades': 0},
+            },
+            'performance_by_measurement': {'wick': 0.0, 'close': 0.0},
         }
 
     def _calculate_sharpe(self, returns: pd.Series, periods: int = 252 * 6.5 * 60) -> float:
@@ -228,3 +259,62 @@ class VectorizedBacktester(BaseBacktester):
         rolling_max = cum_returns.cummax()
         drawdown = (cum_returns - rolling_max) / rolling_max
         return drawdown.min()
+
+    def _calculate_rolling_performance(self, trades_detailed: pd.DataFrame, windows_days: tuple[int, int] = (30, 90)) -> Dict[str, Dict[str, float]]:
+        """Compute rolling window performance stats over recent N days."""
+        out: Dict[str, Dict[str, float]] = {}
+
+        if trades_detailed is None or trades_detailed.empty or 'exit_time' not in trades_detailed.columns:
+            for w in windows_days:
+                out[f'{w}d'] = {
+                    'win_rate_%': 0.0,
+                    'avg_r_multiple': 0.0,
+                    'sharpe_ratio': 0.0,
+                    'max_drawdown_%': 0.0,
+                    'num_trades': 0,
+                }
+            return out
+
+        td = trades_detailed.copy()
+        td['exit_time'] = pd.to_datetime(td['exit_time'])
+        td = td.sort_values('exit_time')
+        last_ts = td['exit_time'].max()
+
+        for w in windows_days:
+            cutoff = last_ts - pd.Timedelta(days=w)
+            sub = td[td['exit_time'] >= cutoff].copy()
+
+            if sub.empty:
+                out[f'{w}d'] = {
+                    'win_rate_%': 0.0,
+                    'avg_r_multiple': 0.0,
+                    'sharpe_ratio': 0.0,
+                    'max_drawdown_%': 0.0,
+                    'num_trades': 0,
+                }
+                continue
+
+            pnl_frac = pd.to_numeric(sub['pnl_pct'], errors='coerce').fillna(0.0) / 100.0
+            wins = pnl_frac[pnl_frac > 0]
+            losses = pnl_frac[pnl_frac < 0]
+            avg_loss = abs(float(losses.mean())) if len(losses) > 0 else np.nan
+            avg_r = float(wins.mean() / avg_loss) if (len(wins) > 0 and avg_loss and not np.isnan(avg_loss)) else 0.0
+
+            if pnl_frac.std() and not np.isnan(float(pnl_frac.std())) and float(pnl_frac.std()) > 0:
+                sharpe = float(np.sqrt(252) * pnl_frac.mean() / pnl_frac.std())
+            else:
+                sharpe = 0.0
+
+            equity = (1.0 + pnl_frac).cumprod()
+            roll_max = equity.cummax()
+            mdd = float(((equity - roll_max) / roll_max).min()) * 100.0
+
+            out[f'{w}d'] = {
+                'win_rate_%': float((pnl_frac > 0).mean() * 100.0),
+                'avg_r_multiple': avg_r,
+                'sharpe_ratio': sharpe,
+                'max_drawdown_%': mdd,
+                'num_trades': int(len(sub)),
+            }
+
+        return out

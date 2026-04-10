@@ -70,6 +70,7 @@ type TrendRow = {
 const SYMBOLS = ['NQ1', 'ES1', 'YM1', 'RTY1', 'CL1', 'GC1'];
 const DOW_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const PARQUET_FILE = 'daily_confluence_records.parquet';
+const TABLE_NAME = 'daily_confluence_records';
 
 const BIAS_COLORS: Record<string, string> = {
   BULLISH: 'bg-emerald-100 text-emerald-800 border border-emerald-300',
@@ -247,9 +248,10 @@ export default function ScreenerPage() {
     try {
       await initDuckDB();
       setStatusMsg('Loading confluence parquet…');
-      await loadParquet(PARQUET_FILE, 'records');
+      const version = Date.now();
+      await loadParquet(PARQUET_FILE, `/api/data/${PARQUET_FILE}?v=${version}`);
       const rows = await runQuery(
-        `SELECT MAX(trading_date)::VARCHAR AS max_date FROM records`
+        `SELECT MAX(trading_date)::VARCHAR AS max_date FROM ${TABLE_NAME}`
       );
       const md = rows[0]?.max_date ?? '';
       setMaxDate(md);
@@ -288,7 +290,7 @@ export default function ScreenerPage() {
         streak_reversal_probability::DOUBLE AS streak_reversal_probability,
         total_vote, continuation_confluence_count, reversal_confluence_count,
         dominant_bias, confidence
-      FROM records
+      FROM ${TABLE_NAME}
       WHERE trading_date = ${quote(selectedDate)} ${biasWhere}
       ORDER BY ABS(total_vote) DESC, symbol
     `).then(setCards).catch(console.error);
@@ -299,7 +301,7 @@ export default function ScreenerPage() {
     if (status !== 'ready') return;
     const lookback = parseInt(trendLookback, 10);
     const lookbackWhere = !Number.isNaN(lookback)
-      ? `AND trading_date >= (SELECT MAX(trading_date) - INTERVAL '${lookback}' DAY FROM records)`
+      ? `AND trading_date >= (SELECT MAX(trading_date) - INTERVAL '${lookback}' DAY FROM ${TABLE_NAME})`
       : '';
 
     runQuery(`
@@ -311,7 +313,7 @@ export default function ScreenerPage() {
         mop_retrace_probability::DOUBLE AS mop_retrace_probability,
         streak_reversal_probability::DOUBLE AS streak_reversal_probability,
         dominant_bias
-      FROM records
+      FROM ${TABLE_NAME}
       WHERE symbol = ${quote(trendSymbol)} ${lookbackWhere}
       ORDER BY trading_date
     `).then(setTrendData).catch(console.error);

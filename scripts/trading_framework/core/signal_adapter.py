@@ -2,6 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 from pathlib import Path
+import logging
 
 # VIX buckets for regimes
 VIX_REGIMES = [
@@ -17,6 +18,8 @@ VVIX_REGIMES = [
     (110, 140, "Elevated"),
     (140, 500, "High")
 ]
+
+logger = logging.getLogger(__name__)
 
 def _get_regime(val, buckets):
     if pd.isna(val): return "Unknown"
@@ -59,6 +62,44 @@ def _load_vix_context() -> pd.DataFrame:
     return vix_df[cols].sort_index()
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _load_daily_context(symbol: str) -> pd.DataFrame:
+    """Load daily_context_{symbol}.parquet with event/day metadata for signal enrichment."""
+    path = _repo_root() / "data" / "derived" / f"daily_context_{symbol}.parquet"
+    if not path.exists():
+        return pd.DataFrame()
+
+    cols = ["trading_date", "day_of_week", "event_type"]
+    df = pd.read_parquet(path)
+    keep = [c for c in cols if c in df.columns]
+    if not keep:
+        return pd.DataFrame()
+
+    out = df[keep].copy()
+    out["trading_date"] = pd.to_datetime(out["trading_date"]).dt.date
+    return out.drop_duplicates(subset=["trading_date"]).sort_values("trading_date")
+
+
+def _load_range_first_boundary() -> pd.DataFrame:
+    """Load per-day range first-break context from range_records.parquet."""
+    path = _repo_root() / "data" / "derived" / "range_records.parquet"
+    if not path.exists():
+        return pd.DataFrame()
+
+    need = ["symbol", "trading_date", "range_name", "first_boundary_broken"]
+    df = pd.read_parquet(path)
+    keep = [c for c in need if c in df.columns]
+    if len(keep) < 4:
+        return pd.DataFrame()
+
+    out = df[need].copy()
+    out["trading_date"] = pd.to_datetime(out["trading_date"]).dt.date
+    return out.sort_values(["symbol", "trading_date", "range_name"])
+
+
 def enrich_signals(
     signals: pd.DataFrame,
     df: pd.DataFrame,
@@ -91,6 +132,9 @@ def enrich_signals(
         "context_session_block": session_block_col,
         "context_vwap_distance": vwap_distance_col,
         "context_chop_vwap_flag": chop_vwap_flag_col,
+        "context_day_of_week": "day_of_week",
+        "context_event_type": "event_type",
+        "context_first_boundary_broken": "first_boundary_broken",
         "context_vix_regime": "vix_regime",
         "context_vix_level": "vix_daily",
         "context_vvix_regime": "vvix_regime",
@@ -111,6 +155,8 @@ def enrich_signals(
 
     # Convert indexes to a common format for merge_asof
     enriched = enriched.sort_values("signal_time")
+    enriched["trading_date"] = pd.to_datetime(enriched["signal_time"]).dt.tz_localize(None).dt.date
+    enriched["context_day_of_week"] = pd.to_datetime(enriched["signal_time"]).dt.weekday
     
     # Inverting the mapping since tech_df needs original column names from df
     # src_col: chop_score, new_col: context_chop_score
@@ -135,6 +181,48 @@ def enrich_signals(
         )
     else:
         logger.warning(f"No technical context columns ({list(context_cols.values())}) found in df. Using available: {df.columns.tolist()[:5]}...")
+
+    # 1b. Enrich from daily_context_{symbol} (event_type + canonical day_of_week)
+    daily_ctx = _load_daily_context(symbol)
+    if not daily_ctx.empty:
+        enriched = enriched.merge(daily_ctx, on="trading_date", how="left", suffixes=("", "_daily"))
+        if "day_of_week" in enriched.columns:
+            enriched["context_day_of_week"] = pd.to_numeric(
+                enriched["day_of_week"], errors="coerce"
+            ).fillna(enriched["context_day_of_week"])
+            enriched = enriched.drop(columns=["day_of_week"])
+        if "event_type" in enriched.columns:
+            enriched["context_event_type"] = enriched["event_type"]
+            enriched = enriched.drop(columns=["event_type"])
+
+    # 1c. Enrich ORB/IB signals with first_boundary_broken from range_records
+    is_orb_ib = ("ORB" in strategy_name.upper()) or ("IB" in strategy_name.upper())
+    if is_orb_ib:
+        range_ctx = _load_range_first_boundary()
+        if not range_ctx.empty:
+            if "range_name" in enriched.columns:
+                enriched = enriched.merge(
+                    range_ctx,
+                    on=["symbol", "trading_date", "range_name"],
+                    how="left",
+                )
+            else:
+                inferred_range = "IB_60" if "IB" in strategy_name.upper() else "OR_15"
+                tmp = enriched.copy()
+                tmp["range_name"] = inferred_range
+                tmp = tmp.merge(
+                    range_ctx,
+                    on=["symbol", "trading_date", "range_name"],
+                    how="left",
+                )
+                enriched = tmp.drop(columns=["range_name"])
+
+            if "first_boundary_broken" in enriched.columns:
+                enriched["context_first_boundary_broken"] = enriched["first_boundary_broken"].fillna("NONE")
+                enriched = enriched.drop(columns=["first_boundary_broken"])
+
+    if "context_first_boundary_broken" not in enriched.columns:
+        enriched["context_first_boundary_broken"] = "NONE"
 
     # 2. Enrich from VIX daily context
     if not vix_context.empty:
@@ -171,6 +259,9 @@ def enrich_signals(
             "session_block": row.get("context_session_block", np.nan),
             "vwap_distance": row.get("context_vwap_distance", np.nan),
             "chop_vwap_flag": row.get("context_chop_vwap_flag", np.nan),
+            "day_of_week": row.get("context_day_of_week", np.nan),
+            "event_type": row.get("context_event_type", None),
+            "first_boundary_broken": row.get("context_first_boundary_broken", "NONE"),
             "vix_regime": row.get("context_vix_regime", None),
             "vix_level": row.get("context_vix_level", None),
             "vvix_regime": row.get("context_vvix_regime", None),

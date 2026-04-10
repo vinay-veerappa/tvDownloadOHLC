@@ -1025,11 +1025,11 @@ behavior and should be analyzed separately.
 
 **Can run in parallel with Phases 3-5.**
 
-- [ ] Add `day_of_week` to signal enrichment adapter
-- [ ] Add rolling performance window analysis
-- [ ] Add "by performance" (wick vs close) measurement
-- [ ] Add `first_boundary_broken` to ORB/IB signal context
-- [ ] Add `event_type` granularity to signal adapter
+- [x] Add `day_of_week` to signal enrichment adapter
+- [x] Add rolling performance window analysis
+- [x] Add "by performance" (wick vs close) measurement
+- [x] Add `first_boundary_broken` to ORB/IB signal context
+- [x] Add `event_type` granularity to signal adapter
 
 ---
 
