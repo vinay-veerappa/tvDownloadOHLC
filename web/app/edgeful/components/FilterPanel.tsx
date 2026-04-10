@@ -16,6 +16,16 @@ import { formatLabel, getICTSessionValues } from '../lib/formatters';
 
 const ICT_ALIASES = getICTSessionValues();
 
+type MultiSelectFilterKey =
+  | 'instruments'
+  | 'macroWindows'
+  | 'ictAliases'
+  | 'judasClass'
+  | 'indicatorClass'
+  | 'vixRegimes'
+  | 'daysOfWeek'
+  | 'gapDirections';
+
 interface MultiSelectProps {
   label: string;
   options: string[];
@@ -140,13 +150,14 @@ const MultiToggle = ({ label, value, onChange, className }: MultiToggleProps) =>
 
 interface FilterPanelProps {
   filters: MacroFilterState;
-  updateFilter: (key: keyof Omit<MacroFilterState, 'dateRange' | 'advanced'>, values: string[]) => void;
+  updateFilter: (key: MultiSelectFilterKey, values: string[]) => void;
   updateDateRange: (start: string | null, end: string | null) => void;
+  updateLookback: (days: number | null) => void;
   updateAdvanced: (key: keyof MacroFilterState['advanced'], value: any) => void;
   resetFilters: () => void;
 }
 
-export function FilterPanel({ filters, updateFilter, updateDateRange, updateAdvanced, resetFilters }: FilterPanelProps) {
+export function FilterPanel({ filters, updateFilter, updateDateRange, updateLookback, updateAdvanced, resetFilters }: FilterPanelProps) {
   const [showAdvanced, setShowAdvanced] = React.useState(false);
 
   return (
@@ -172,6 +183,23 @@ export function FilterPanel({ filters, updateFilter, updateDateRange, updateAdva
           {/* Section: Primary */}
           <div className="space-y-3">
             <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Core Dimensions</h3>
+            <div className="space-y-2 px-1">
+              <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Lookback</h3>
+              <select
+                className="w-full bg-zinc-900 border border-zinc-800 text-[10px] p-1.5 rounded text-zinc-300"
+                value={filters.lookbackDays ?? 'ALL'}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  updateLookback(value === 'ALL' ? null : Number(value));
+                }}
+              >
+                <option value="ALL">All History</option>
+                <option value="30">Last 30 Days</option>
+                <option value="90">Last 90 Days</option>
+                <option value="180">Last 180 Days</option>
+                <option value="365">Last 1 Year</option>
+              </select>
+            </div>
             <MultiSelect 
               label="Asset" 
               options={['ES1', 'NQ1', 'YM1', 'RTY1', 'CL1', 'GC1']} 

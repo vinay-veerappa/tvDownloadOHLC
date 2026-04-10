@@ -6,6 +6,8 @@ export interface MacroFilterState {
   indicatorClass: string[];
   vixRegimes: string[];
   daysOfWeek: string[];
+  gapDirections: string[];
+  lookbackDays: number | null;
   dateRange: {
     start: string | null;
     end: string | null;
@@ -29,6 +31,7 @@ export interface MacroFilterState {
     judasExcursionThreshold: number | null;
     midRetested: boolean | null;
     midRetestWin: boolean | null;
+    isEventDay: boolean | null;
   };
 }
 

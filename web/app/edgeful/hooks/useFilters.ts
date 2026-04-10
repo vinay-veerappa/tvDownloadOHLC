@@ -2,6 +2,16 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { MacroFilterState } from '../types';
 
+type MultiSelectFilterKey =
+  | 'instruments'
+  | 'macroWindows'
+  | 'ictAliases'
+  | 'judasClass'
+  | 'indicatorClass'
+  | 'vixRegimes'
+  | 'daysOfWeek'
+  | 'gapDirections';
+
 const TRI_STATE_ADVANCED_KEYS = [
   'hasFVG',
   'isComplete',
@@ -11,6 +21,7 @@ const TRI_STATE_ADVANCED_KEYS = [
   'judasFirst',
   'midRetested',
   'midRetestWin',
+  'isEventDay',
 ] as const satisfies ReadonlyArray<keyof MacroFilterState['advanced']>;
 
 const INITIAL_STATE: MacroFilterState = {
@@ -21,6 +32,8 @@ const INITIAL_STATE: MacroFilterState = {
   indicatorClass: [],
   vixRegimes: [],
   daysOfWeek: [],
+  gapDirections: [],
+  lookbackDays: null,
   dateRange: {
     start: null,
     end: null,
@@ -44,6 +57,7 @@ const INITIAL_STATE: MacroFilterState = {
     judasExcursionThreshold: null,
     midRetested: null,
     midRetestWin: null,
+    isEventDay: null,
   },
 };
 
@@ -121,12 +135,16 @@ export function useFilters() {
     router.replace(newUrl, { scroll: false });
   }, [filters, pathname, router, searchParams]);
 
-  const updateFilter = useCallback((key: keyof Omit<MacroFilterState, 'dateRange' | 'advanced'>, values: string[]) => {
+  const updateFilter = useCallback((key: MultiSelectFilterKey, values: string[]) => {
     setFilters(prev => ({ ...prev, [key]: values }));
   }, []);
 
   const updateDateRange = useCallback((start: string | null, end: string | null) => {
     setFilters(prev => ({ ...prev, dateRange: { start, end } }));
+  }, []);
+
+  const updateLookback = useCallback((days: number | null) => {
+    setFilters(prev => ({ ...prev, lookbackDays: days }));
   }, []);
 
   const updateAdvanced = useCallback((key: keyof MacroFilterState['advanced'], value: any) => {
@@ -149,6 +167,7 @@ export function useFilters() {
     filters,
     updateFilter,
     updateDateRange,
+    updateLookback,
     updateAdvanced,
     resetFilters,
   };

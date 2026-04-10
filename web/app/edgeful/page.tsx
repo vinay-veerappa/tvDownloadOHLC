@@ -11,6 +11,9 @@ import { DistributionCharts } from './components/DistributionCharts';
 import { CrossTab } from './components/CrossTab';
 import { DrillDownTable } from './components/DrillDownTable';
 import { FVGAnalysis } from './components/FVGAnalysis';
+import { UniversalFilterBar } from './components/UniversalFilterBar';
+import { ExtensionProbabilityPanel } from './components/ExtensionProbabilityPanel';
+import { RollingProbabilityPanel } from './components/RollingProbabilityPanel';
 import { LayoutDashboard, RefreshCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -19,7 +22,7 @@ import { QueryStatus } from './components/QueryStatus';
 import { Suspense } from 'react';
 
 function DashboardContent() {
-  const { filters, updateFilter, updateDateRange, updateAdvanced, resetFilters } = useFilters();
+  const { filters, updateFilter, updateDateRange, updateLookback, updateAdvanced, resetFilters } = useFilters();
   const [debouncedFilters, setDebouncedFilters] = useState(filters);
   const [dbStatus, setDbStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [metrics, setMetrics] = useState<SummaryMetrics | null>(null);
@@ -107,6 +110,7 @@ function DashboardContent() {
           filters={filters} 
           updateFilter={updateFilter} 
           updateDateRange={updateDateRange}
+          updateLookback={updateLookback}
           updateAdvanced={updateAdvanced} 
           resetFilters={resetFilters} 
         />
@@ -153,6 +157,13 @@ function DashboardContent() {
 
         {/* Dynamic Content */}
         <main className="flex-1 overflow-y-auto p-6 space-y-8 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] bg-repeat">
+          <UniversalFilterBar
+            filters={filters}
+            updateFilter={updateFilter}
+            updateLookback={updateLookback}
+            updateAdvanced={updateAdvanced}
+          />
+
           {/* Top Metrics Row */}
           <SummaryCards metrics={metrics} loading={loadingMetrics || dbStatus === 'loading'} />
 
@@ -168,6 +179,11 @@ function DashboardContent() {
             </TabsList>
             
             <TabsContent value="macro" className="space-y-8 mt-0 outline-none">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <ExtensionProbabilityPanel filters={debouncedFilters} dbReady={dbStatus === 'ready'} />
+                <RollingProbabilityPanel filters={debouncedFilters} dbReady={dbStatus === 'ready'} />
+              </div>
+
               {/* Phase 4: Charts */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <DistributionCharts filters={debouncedFilters} dbReady={dbStatus === 'ready'} />

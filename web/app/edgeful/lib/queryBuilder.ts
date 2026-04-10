@@ -17,6 +17,7 @@ function isBooleanFilter(value: boolean | null | undefined): value is boolean {
 const MACRO_ONLY_COLS = [
   'instrument', 'macro_name_raw', 'ict_alias', 'judas_classification',
   'indicator_label', 'vix_regime', 'day_of_week', 'trading_date',
+  'gap_direction', 'is_event_day',
   'real_direction', 'has_fvg', 'is_complete', 'news_within_60m',
   'open_vs_midnight', 'open_vs_daily_open', 'macro_open_vs_rth_bar',
   'judas_first', 'is_opex_week', 'prior_macro_real_direction',
@@ -55,8 +56,20 @@ export function buildWhereClause(filters: MacroFilterState, tableAlias?: string)
     conditions.push(`day_of_week IN (${filters.daysOfWeek.map(d => `'${d}'`).join(',')})`);
   }
 
+  if (filters.gapDirections.length > 0) {
+    conditions.push(`gap_direction IN (${filters.gapDirections.map(g => `'${g}'`).join(',')})`);
+  }
+
   if (filters.ictAliases.length > 0) {
     conditions.push(`ict_alias IN (${filters.ictAliases.map(a => `'${a}'`).join(',')})`);
+  }
+
+  if (filters.lookbackDays && filters.lookbackDays > 0) {
+    conditions.push(
+      `CAST(trading_date AS DATE) >= (` +
+      `SELECT CAST(MAX(trading_date) AS DATE) - INTERVAL '${filters.lookbackDays} DAY' FROM macro_records` +
+      `)`
+    );
   }
 
   // 2. Date Range
@@ -149,6 +162,10 @@ export function buildWhereClause(filters: MacroFilterState, tableAlias?: string)
     } else {
       conditions.push(`(mid_retest_win = false OR mid_retest_win IS NULL)`);
     }
+  }
+
+  if (isBooleanFilter(filters.advanced.isEventDay)) {
+    conditions.push(`is_event_day = ${filters.advanced.isEventDay}`);
   }
 
   if (conditions.length === 0) return '';
