@@ -1010,8 +1010,8 @@ behavior and should be analyzed separately.
 - [x] `occ_records.parquet` — opening candle continuation
 - [x] `streak_records.parquet` — green/red streaks
 - [x] Dashboard: Reference Levels page
-- [ ] Dashboard: Range Comparison page (OR_5 vs OR_15 vs IB_60)
-- [ ] Dashboard: Mean Reversion analytics panel
+- [x] Dashboard: Range Comparison page (OR_5 vs OR_15 vs IB_60)
+- [x] Dashboard: Mean Reversion analytics panel
 
 ### Phase 6: Additional Ranges + Cross-Report (future)
 

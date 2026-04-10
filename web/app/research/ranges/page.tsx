@@ -111,6 +111,24 @@ type BothSidesSummary = {
   share_of_sample: number;
 };
 
+type MeanReversionSummary = {
+  sample_count: number;
+  mid_retest_rate: number;
+  opposite_retest_rate: number;
+  avg_mid_retest_time: number | null;
+  failed_breakout_rate: number;
+  mr_win_rate: number | null;
+  mr_avg_r: number | null;
+};
+
+type MeanReversionRow = {
+  direction: string;
+  count: number;
+  mid_retest_rate: number;
+  opposite_retest_rate: number;
+  avg_mid_retest_time: number | null;
+};
+
 const DEFAULT_FILTERS: FilterState = {
   symbol: 'ALL',
   rangeName: 'ALL',
@@ -350,6 +368,70 @@ function getBothSidesSummarySql(rangeWhere: string) {
   `;
 }
 
+function getMeanReversionSummarySql(rangeWhere: string, tradeWhereWithoutStrategy: string) {
+  return `
+    WITH rr AS (
+      SELECT *
+      FROM range_records
+      ${rangeWhere}
+      ${rangeWhere ? 'AND' : 'WHERE'} first_bo_direction IN ('UP', 'DOWN')
+    ),
+    mr_trades AS (
+      SELECT *
+      FROM range_trades
+      ${tradeWhereWithoutStrategy}
+      ${tradeWhereWithoutStrategy ? 'AND' : 'WHERE'} strategy_name = 'MR_TO_MID'
+    )
+    SELECT
+      CAST(COUNT(*) AS DOUBLE) AS sample_count,
+      CAST(AVG(
+        CASE
+          WHEN first_bo_direction = 'UP' THEN CASE WHEN retest_mid_after_high_break THEN 1.0 ELSE 0.0 END
+          WHEN first_bo_direction = 'DOWN' THEN CASE WHEN retest_mid_after_low_break THEN 1.0 ELSE 0.0 END
+          ELSE NULL
+        END
+      ) * 100 AS DOUBLE) AS mid_retest_rate,
+      CAST(AVG(
+        CASE
+          WHEN first_bo_direction = 'UP' THEN CASE WHEN retest_opposite_after_high_break THEN 1.0 ELSE 0.0 END
+          WHEN first_bo_direction = 'DOWN' THEN CASE WHEN retest_opposite_after_low_break THEN 1.0 ELSE 0.0 END
+          ELSE NULL
+        END
+      ) * 100 AS DOUBLE) AS opposite_retest_rate,
+      CAST(AVG(
+        CASE
+          WHEN first_bo_direction = 'UP' THEN retest_mid_after_high_break_time_min
+          WHEN first_bo_direction = 'DOWN' THEN retest_mid_after_low_break_time_min
+          ELSE NULL
+        END
+      ) AS DOUBLE) AS avg_mid_retest_time,
+      CAST(AVG(CASE WHEN first_bo_failed THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS failed_breakout_rate,
+      CAST((SELECT AVG(CASE WHEN entry_triggered THEN CASE WHEN pnl_r_multiple > 0 THEN 1.0 ELSE 0.0 END END) * 100 FROM mr_trades) AS DOUBLE) AS mr_win_rate,
+      CAST((SELECT AVG(CASE WHEN entry_triggered THEN pnl_r_multiple END) FROM mr_trades) AS DOUBLE) AS mr_avg_r
+    FROM rr
+  `;
+}
+
+function getMeanReversionDirectionSql(rangeWhere: string) {
+  return `
+    WITH rr AS (
+      SELECT *
+      FROM range_records
+      ${rangeWhere}
+      ${rangeWhere ? 'AND' : 'WHERE'} first_bo_direction IN ('UP', 'DOWN')
+    )
+    SELECT
+      first_bo_direction AS direction,
+      CAST(COUNT(*) AS DOUBLE) AS count,
+      CAST(AVG(CASE WHEN first_bo_direction = 'UP' THEN CASE WHEN retest_mid_after_high_break THEN 1.0 ELSE 0.0 END ELSE CASE WHEN retest_mid_after_low_break THEN 1.0 ELSE 0.0 END END) * 100 AS DOUBLE) AS mid_retest_rate,
+      CAST(AVG(CASE WHEN first_bo_direction = 'UP' THEN CASE WHEN retest_opposite_after_high_break THEN 1.0 ELSE 0.0 END ELSE CASE WHEN retest_opposite_after_low_break THEN 1.0 ELSE 0.0 END END) * 100 AS DOUBLE) AS opposite_retest_rate,
+      CAST(AVG(CASE WHEN first_bo_direction = 'UP' THEN retest_mid_after_high_break_time_min ELSE retest_mid_after_low_break_time_min END) AS DOUBLE) AS avg_mid_retest_time
+    FROM rr
+    GROUP BY first_bo_direction
+    ORDER BY CASE first_bo_direction WHEN 'UP' THEN 1 WHEN 'DOWN' THEN 2 ELSE 3 END
+  `;
+}
+
 function formatPct(value: number | null | undefined, digits = 1) {
   if (value == null || Number.isNaN(value)) return '--';
   return `${value.toFixed(digits)}%`;
@@ -428,6 +510,8 @@ export default function RangeAnalyticsPage() {
   const [equityCurve, setEquityCurve] = useState<EquityRow[]>([]);
   const [bothSidesRows, setBothSidesRows] = useState<BothSidesOutcomeRow[]>([]);
   const [bothSidesSummary, setBothSidesSummary] = useState<BothSidesSummary | null>(null);
+  const [meanReversionSummary, setMeanReversionSummary] = useState<MeanReversionSummary | null>(null);
+  const [meanReversionRows, setMeanReversionRows] = useState<MeanReversionRow[]>([]);
 
   const loadEngine = useCallback(async () => {
     setDbStatus('loading');
@@ -484,7 +568,7 @@ export default function RangeAnalyticsPage() {
       const tradeWhere = buildTradeWhere(deferredFilters);
       const tradeWhereNoStrategy = buildTradeWhere(deferredFilters, undefined, false);
 
-      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows] = await Promise.all([
+      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows, meanReversionSummaryRows, meanReversionDirectionRows] = await Promise.all([
         runQuery(getOverviewSql(rangeWhere, tradeWhere)),
         runQuery(getWidthDistributionSql(rangeWhere)),
         runQuery(getDirectionSql(rangeWhere, 'first_bo_direction')),
@@ -494,6 +578,8 @@ export default function RangeAnalyticsPage() {
         runQuery(getEquitySql(tradeWhere)),
         runQuery(getBothSidesOutcomeSql(rangeWhere)),
         runQuery(getBothSidesSummarySql(rangeWhere)),
+        runQuery(getMeanReversionSummarySql(rangeWhere, tradeWhereNoStrategy)),
+        runQuery(getMeanReversionDirectionSql(rangeWhere)),
       ]);
 
       setOverview((overviewRows[0] as OverviewMetrics) ?? null);
@@ -505,6 +591,8 @@ export default function RangeAnalyticsPage() {
       setEquityCurve(equityRows as EquityRow[]);
       setBothSidesRows(bothSidesOutcomeRows as BothSidesOutcomeRow[]);
       setBothSidesSummary((bothSidesSummaryRows[0] as BothSidesSummary) ?? null);
+      setMeanReversionSummary((meanReversionSummaryRows[0] as MeanReversionSummary) ?? null);
+      setMeanReversionRows(meanReversionDirectionRows as MeanReversionRow[]);
       setQueryTimeMs(performance.now() - startedAt);
     } catch (error) {
       console.error('Failed to query range analytics dashboard:', error);
@@ -521,6 +609,8 @@ export default function RangeAnalyticsPage() {
     setOverview(null);
     setStrategyRows([]);
     setEquityCurve([]);
+    setMeanReversionSummary(null);
+    setMeanReversionRows([]);
     await resetDuckDB();
     await loadEngine();
   }, [loadEngine]);
@@ -567,16 +657,24 @@ export default function RangeAnalyticsPage() {
               totalRecords={overview?.total_ranges}
               lastDataUpdate={lastDataUpdate}
             />
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-zinc-800 bg-zinc-950 text-zinc-100 hover:bg-zinc-900"
-              disabled={dbStatus === 'loading' || loading}
-              onClick={refreshData}
-            >
-              <RefreshCcw className={`mr-2 h-4 w-4 ${dbStatus === 'loading' ? 'animate-spin' : ''}`} />
-              Refresh Parquet
-            </Button>
+            <div className="flex gap-2">
+              <Link
+                href="/research/range-comparison"
+                className="inline-flex items-center rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 transition hover:bg-zinc-900"
+              >
+                Compare Ranges
+              </Link>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-zinc-800 bg-zinc-950 text-zinc-100 hover:bg-zinc-900"
+                disabled={dbStatus === 'loading' || loading}
+                onClick={refreshData}
+              >
+                <RefreshCcw className={`mr-2 h-4 w-4 ${dbStatus === 'loading' ? 'animate-spin' : ''}`} />
+                Refresh Parquet
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -720,6 +818,95 @@ export default function RangeAnalyticsPage() {
             </div>
           </Card>
         </div>
+
+        <Card className="border-zinc-900 bg-black/30 p-5">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">Mean Reversion</div>
+              <h2 className="mt-1 text-lg font-semibold">Midpoint and opposite-side retests after the first break</h2>
+            </div>
+            <div className="text-right text-xs text-zinc-500">
+              <div className="uppercase tracking-[0.18em]">MR_TO_MID</div>
+              <div className="mt-1 text-sm text-fuchsia-300">
+                {meanReversionSummary ? `${formatPct(meanReversionSummary.mr_win_rate)} · avg R ${formatNumber(meanReversionSummary.mr_avg_r)}` : '--'}
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              label="Mid Retest Rate"
+              value={meanReversionSummary ? formatPct(meanReversionSummary.mid_retest_rate) : '--'}
+              accent="text-cyan-300"
+              sublabel={meanReversionSummary ? `${Math.round(meanReversionSummary.sample_count).toLocaleString()} breakout samples` : undefined}
+            />
+            <StatCard
+              label="Opposite Boundary Test"
+              value={meanReversionSummary ? formatPct(meanReversionSummary.opposite_retest_rate) : '--'}
+              accent="text-amber-300"
+              sublabel={meanReversionSummary ? `${formatPct(meanReversionSummary.failed_breakout_rate)} failed breakout rate` : undefined}
+            />
+            <StatCard
+              label="Avg Mid Retest Time"
+              value={meanReversionSummary && meanReversionSummary.avg_mid_retest_time != null ? `${meanReversionSummary.avg_mid_retest_time.toFixed(1)}m` : '--'}
+              accent="text-emerald-300"
+            />
+            <StatCard
+              label="MR_TO_MID Win Rate"
+              value={meanReversionSummary ? formatPct(meanReversionSummary.mr_win_rate) : '--'}
+              accent="text-fuchsia-300"
+              sublabel={meanReversionSummary ? `Avg R ${formatNumber(meanReversionSummary.mr_avg_r)}` : undefined}
+            />
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+            <div className="h-72 rounded-xl border border-zinc-900 bg-zinc-950/60 p-3">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={meanReversionRows}>
+                  <CartesianGrid vertical={false} stroke="#18181b" />
+                  <XAxis dataKey="direction" tick={{ fill: '#a1a1aa', fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#71717a', fontSize: 12 }} axisLine={false} tickLine={false} domain={[0, 100]} />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(255,255,255,0.02)' }}
+                    contentStyle={{ background: '#09090b', border: '1px solid #27272a', borderRadius: 12 }}
+                    formatter={(v: number, key: string) => {
+                      if (key === 'mid_retest_rate') return [formatPct(v), 'Mid retest'];
+                      if (key === 'opposite_retest_rate') return [formatPct(v), 'Opposite-side test'];
+                      return [Math.round(v).toLocaleString(), 'Count'];
+                    }}
+                  />
+                  <Bar dataKey="mid_retest_rate" name="mid_retest_rate" fill="#22d3ee" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="opposite_retest_rate" name="opposite_retest_rate" fill="#f59e0b" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="overflow-hidden rounded-xl border border-zinc-900">
+              <table className="min-w-full divide-y divide-zinc-900 text-sm">
+                <thead className="bg-zinc-950/80 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Break Dir</th>
+                    <th className="px-4 py-3 text-right">N</th>
+                    <th className="px-4 py-3 text-right">Mid Retest %</th>
+                    <th className="px-4 py-3 text-right">Opposite %</th>
+                    <th className="px-4 py-3 text-right">Avg Mid Time</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-900 bg-black/20">
+                  {meanReversionRows.map((row) => (
+                    <tr key={`mr-${row.direction}`}>
+                      <td className="px-4 py-3 font-medium text-zinc-200">{row.direction}</td>
+                      <td className="px-4 py-3 text-right text-zinc-300">{Math.round(row.count).toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right text-cyan-300">{formatPct(row.mid_retest_rate)}</td>
+                      <td className="px-4 py-3 text-right text-amber-300">{formatPct(row.opposite_retest_rate)}</td>
+                      <td className="px-4 py-3 text-right text-emerald-300">{row.avg_mid_retest_time != null ? `${row.avg_mid_retest_time.toFixed(1)}m` : '--'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </Card>
 
         <Card className="border-zinc-900 bg-black/30 p-5">
           <div className="mb-5 flex items-center justify-between">
