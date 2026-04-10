@@ -1017,8 +1017,8 @@ behavior and should be analyzed separately.
 
 - [x] Add LUNCH, ASIA, OVERNIGHT, SILVER_BULLET, POWER_HOUR presets
 - [x] Market Session Breakout analysis (London → NY)
-- [ ] `DailyConfluenceRecord` computation
-- [ ] "What's in Play" screener dashboard
+- [x] `DailyConfluenceRecord` computation
+- [x] "What's in Play" screener dashboard
 - [ ] GEX overlay on range boundaries (cross-system with options pipeline)
 
 ### Phase 7: Backtest Framework Integration (parallel)
