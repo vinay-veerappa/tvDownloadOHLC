@@ -527,107 +527,79 @@ class ProfilerService:
         """
         filters = filters or {}
         broken_filters = broken_filters or {}
-        
-        # Group sessions by date for intersection logic
-        date_sessions: Dict[str, Dict[str, Dict]] = {}
+
+        session_rows = []
         for s in sessions:
             date = s.get('date')
             sess_name = s.get('session')
-            if date and sess_name:
-                if date not in date_sessions:
-                    date_sessions[date] = {}
-                date_sessions[date][sess_name] = s
-        
-        # Add "Prev" context for each date to support transition matrix filters (e.g. yesterday's NY feeding today's Asia)
-        sorted_dates = sorted(date_sessions.keys())
-        for i in range(1, len(sorted_dates)):
-            curr_date = sorted_dates[i]
-            prev_date = sorted_dates[i-1]
-            
-            # Map previous NY1/NY2 into current day's context for filtering
-            if 'NY1' in date_sessions[prev_date]:
-                date_sessions[curr_date]['Prev NY1'] = date_sessions[prev_date]['NY1']
-            if 'NY2' in date_sessions[prev_date]:
-                date_sessions[curr_date]['Prev NY2'] = date_sessions[prev_date]['NY2']
-            if 'Asia' in date_sessions[prev_date]:
-                date_sessions[curr_date]['Prev Asia'] = date_sessions[prev_date]['Asia']
-            
-            # Contextual "Broken" flags
-            # (Note: Logic already exists to pull .get('broken') from these Dict objects)
-        
-        # Apply filters - find intersection of all conditions
-        matched_dates = []
-        
-        for date, sessions_by_name in date_sessions.items():
-            # Check if this date satisfies ALL filters
-            matches_all = True
-            
-            # Check status filters
-            for session_name, required_status in filters.items():
-                if required_status and required_status != 'Any':
-                    sess = sessions_by_name.get(session_name)
-                    if not sess:
-                        matches_all = False
-                        break
-                    
-                    actual_status = sess.get('status', '')
-                    # If filter is just "Long" or "Short", treat as prefix match (matches "Short True" and "Short False")
-                    if required_status in ['Long', 'Short']:
-                        if not actual_status.startswith(required_status):
-                            matches_all = False
-                            break
-                    elif required_status in ['True', 'False']:
-                        if not actual_status.endswith(required_status):
-                            matches_all = False
-                            break
-                    else:
-                        # Exact match for full status (e.g. "Short True")
-                        if actual_status != required_status:
-                            matches_all = False
-                            break
-            
-            if not matches_all:
+            if not date or not sess_name:
                 continue
-            
-            # Check broken filters
-            for session_name, required_broken in broken_filters.items():
-                if required_broken and required_broken != 'Any':
-                    sess = sessions_by_name.get(session_name)
-                    if not sess:
-                        matches_all = False
-                        break
-                    
-                    is_broken = sess.get('broken', False)
-                    # "Broken" or "Yes" -> must be broken
-                    if required_broken in ['Broken', 'Yes'] and not is_broken:
-                        matches_all = False
-                        break
-                    # "Not Broken" or "No" -> must NOT be broken
-                    elif required_broken in ['Not Broken', 'No'] and is_broken:
-                        matches_all = False
-                        break
-            
-            if not matches_all:
+            session_rows.append({
+                'date': date,
+                'session': sess_name,
+                'status': s.get('status', ''),
+                'broken': bool(s.get('broken', False)),
+            })
+
+        if not session_rows:
+            return []
+
+        session_df = pd.DataFrame(session_rows)
+        session_df = session_df.sort_values(['date', 'session'])
+
+        status_pivot = session_df.pivot_table(index='date', columns='session', values='status', aggfunc='last')
+        broken_pivot = session_df.pivot_table(index='date', columns='session', values='broken', aggfunc='last')
+
+        # Add previous-session context as shifted columns for transition filters.
+        for base_session in ['NY1', 'NY2', 'Asia']:
+            if base_session in status_pivot.columns:
+                status_pivot[f'Prev {base_session}'] = status_pivot[base_session].shift(1)
+            if base_session in broken_pivot.columns:
+                broken_pivot[f'Prev {base_session}'] = broken_pivot[base_session].shift(1)
+
+        status_pivot = status_pivot.sort_index()
+        broken_pivot = broken_pivot.reindex(status_pivot.index).fillna(False).astype(bool)
+        mask = pd.Series(True, index=status_pivot.index)
+
+        # Status filters
+        for session_name, required_status in filters.items():
+            if not required_status or required_status == 'Any':
                 continue
-            
-            # Check intra-session state (current status of target session)
-            if intra_state and intra_state != 'Any':
-                target_sess = sessions_by_name.get(target_session)
-                if target_sess:
-                    status = target_sess.get('status', '')
-                    # If intra_state is just "Long", match any Long status
-                    if intra_state in ['Long', 'Short']:
-                        if not status.startswith(intra_state):
-                            matches_all = False
-                    else:
-                        # Exact match (e.g. "Long False") or partial match for "Broken"
-                        if intra_state not in status:
-                            matches_all = False
-            
-            if matches_all:
-                matched_dates.append(date)
-        
-        return sorted(matched_dates)
+            if session_name not in status_pivot.columns:
+                return []
+
+            status_series = status_pivot[session_name].fillna('')
+            if required_status in ['Long', 'Short']:
+                mask &= status_series.str.startswith(required_status)
+            elif required_status in ['True', 'False']:
+                mask &= status_series.str.endswith(required_status)
+            else:
+                mask &= status_series.eq(required_status)
+
+        # Broken filters
+        for session_name, required_broken in broken_filters.items():
+            if not required_broken or required_broken == 'Any':
+                continue
+            if session_name not in broken_pivot.columns:
+                return []
+
+            is_broken = broken_pivot[session_name]
+            if required_broken in ['Broken', 'Yes']:
+                mask &= is_broken
+            elif required_broken in ['Not Broken', 'No']:
+                mask &= ~is_broken
+
+        # Intra-session state filter
+        if intra_state and intra_state != 'Any':
+            if target_session not in status_pivot.columns:
+                return []
+            target_status = status_pivot[target_session].fillna('')
+            if intra_state in ['Long', 'Short']:
+                mask &= target_status.str.startswith(intra_state)
+            else:
+                mask &= target_status.str.contains(intra_state, regex=False)
+
+        return status_pivot.index[mask].tolist()
 
     @staticmethod
     def get_filtered_stats(
@@ -939,95 +911,75 @@ class ProfilerService:
                 'Daily':  {'start': 18*60, 'end': 41*60}  # 18:00 - 17:00 (next day)
             }
             
-            optimized_data = {}
-            
+            # Flatten all touch events into records; collect untouched levels separately.
+            # OPTIMIZED: vectorized session-range check replaces O(dates*levels*touches*sessions) scan.
+            touch_records: list = []
+            untouched_map: dict = {}
+
             for date_key, day_levels in raw_data.items():
-                optimized_day = {}
                 for level_name, level_data in day_levels.items():
                     if not isinstance(level_data, dict):
                         continue
-                        
-                    touch_times = level_data.get('touch_times', [])
-                    touched = level_data.get('touched', False)
-                    
+                    touched      = level_data.get('touched', False)
+                    level_val    = level_data.get('level')
+                    touch_times  = level_data.get('touch_times', [])
+
                     if not touched or not touch_times:
-                        optimized_day[level_name] = {
-                            'level': level_data.get('level'),
-                            'touched': False,
-                            'hits': {}
+                        untouched_map.setdefault(date_key, {})[level_name] = {
+                            'level': level_val, 'touched': False, 'hits': {}
                         }
                         continue
-                        
-                    # Calculate first hit for each session
-                    hits = {}
-                    parsed_times = []
+
                     for t in touch_times:
                         try:
                             h, m = map(int, t.split(':'))
-                            # Convert to minutes from midnight (0-1440)
-                            # But sessions can cross midnight (Asia starts 18:00, ends 02:00 next day)
-                            # We need to normalize. 
-                            # Our data aligns 18:00 as start of day?
-                            # Raw touch_times are HH:MM string.
-                            # If touch is 19:00, it's min 1140.
-                            # If touch is 01:00, it's min 60.
-                            # If session is Asia (18:00-02:00), we treat 18:00-23:59 as 1080-1439, and 00:00-02:00 as 1440-1560?
-                            # daily-levels.tsx logic:
-                            # if range.end < range.start (crossing midnight), endMins += 24*60.
-                            # then loop m from start to end.
-                            # const normM = m % 1440.
-                            # So it checks if time matches.
-                            
-                            mins = h * 60 + m
-                            parsed_times.append(mins)
-                        except:
-                            continue
-                            
-                    parsed_times.sort() # Ensure sorted
-                    
-                    for sess_name, rng in SESSION_RANGES.items():
-                        start = rng['start']
-                        end = rng['end']
-                        
-                        # Find first time in range
-                        first_hit = None
-                        for mins in parsed_times:
-                            # Handle midnight crossing logic
-                            # Impact: A time 'mins' (0-1439) is in [start, end]?
-                            # If end > 1440 (e.g. 26*60 = 1560 for 02:00), we need to check:
-                            # 1. mins (0-1439)
-                            # 2. mins + 1440 (if mins < start, maybe it belongs to next day part?)
-                            # Wait, raw touches are just time of day.
-                            # If session is 18:00-02:00.
-                            # Touches: 19:00 (1140), 01:00 (60).
-                            # 1140 is in [1080, 1560]? Yes.
-                            # 60 is in [1080, 1560]? No.
-                            # But 60 + 1440 = 1500 IS in [1080, 1560].
-                            # So we check: m or m+1440.
-                            
-                            m_targets = [mins]
-                            if mins < start and (mins + 1440) <= end:
-                                m_targets.append(mins + 1440)
-                            
-                            found = False
-                            for m in m_targets:
-                                if start <= m < end:
-                                    first_hit = f"{int(mins/60):02d}:{mins%60:02d}"
-                                    found = True
-                                    break
-                            if found:
-                                break
-                        
-                        if first_hit:
-                            hits[sess_name] = first_hit
+                            touch_records.append({
+                                'date': date_key, 'level_name': level_name,
+                                'level_val': level_val, 'mins': h * 60 + m, 'time_str': t
+                            })
+                        except Exception:
+                            pass
 
-                    optimized_day[level_name] = {
-                        'level': level_data.get('level'),
+            # Seed output with untouched levels
+            optimized_data: dict = {d: dict(lvls) for d, lvls in untouched_map.items()}
+
+            if touch_records:
+                df_t = pd.DataFrame(touch_records).sort_values('mins')
+                # Level metadata: canonical level_val per (date, level_name)
+                meta = df_t.groupby(['date', 'level_name'])['level_val'].first()
+
+                # Vectorized first-hit per (date, level, session).
+                # Session ranges store minutes relative to a 41-hour trading day window
+                # (18:00 prev day = 1080 → 17:00 = 2460). Raw touch mins are 0-1439;
+                # touches after-midnight are matched via mins+1440.
+                session_hits: dict = {}  # (date_key, level_name) -> {sess_name: time_str}
+                for sess_name, rng in SESSION_RANGES.items():
+                    start, end = rng['start'], rng['end']
+                    direct  = (df_t['mins'] >= start) & (df_t['mins'] < end)
+                    wrapped = ((df_t['mins'] + 1440) >= start) & ((df_t['mins'] + 1440) < end)
+                    in_rng  = df_t[direct | wrapped]
+                    if in_rng.empty:
+                        continue
+                    # .sort_values('mins') already applied; .first() yields earliest touch
+                    first_hits = in_rng.groupby(['date', 'level_name'])['time_str'].first()
+                    for (date_k, level_n), time_val in first_hits.items():
+                        session_hits.setdefault((date_k, level_n), {})[sess_name] = time_val
+
+                # Build output for touched levels (with ≥1 session hit)
+                for (date_k, level_n), hits in session_hits.items():
+                    optimized_data.setdefault(date_k, {})[level_n] = {
+                        'level': meta.get((date_k, level_n)),
                         'touched': True,
-                        'hits': hits
+                        'hits': hits,
                     }
-                    
-                optimized_data[date_key] = optimized_day
+                # Touched levels that matched no session range
+                all_touched = set(zip(df_t['date'], df_t['level_name']))
+                for date_k, level_n in all_touched - set(session_hits.keys()):
+                    optimized_data.setdefault(date_k, {})[level_n] = {
+                        'level': meta.get((date_k, level_n)),
+                        'touched': True,
+                        'hits': {},
+                    }
 
             ProfilerService._level_touches_cache[ticker] = optimized_data
             return optimized_data

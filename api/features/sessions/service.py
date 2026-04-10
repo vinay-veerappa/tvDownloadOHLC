@@ -256,20 +256,25 @@ class SessionService:
         try:
            res_12h = df.resample('12h', offset='6h').agg({'high':'max', 'low':'min'})
            res_12h['mid'] = (res_12h['high'] + res_12h['low']) / 2
-           shifted_12h = res_12h.shift(1) 
-           
-           for ts, row in shifted_12h.iterrows():
-               if pd.isna(row['high']): continue
-               end_ts = ts + pd.Timedelta(hours=12)
-               results.append({
-                   "date": ts.strftime('%Y-%m-%d'),
-                   "session": "P12", 
-                   "start_time": ts.isoformat(),
-                   "end_time": end_ts.isoformat(),
-                   "high": safe_float(row['high']),
-                   "low": safe_float(row['low']),
-                   "mid": safe_float(row['mid'])
-               })
+           shifted_12h = res_12h.shift(1).dropna(subset=['high', 'low'])
+
+           if not shifted_12h.empty:
+               p12_df = shifted_12h.reset_index().rename(columns={'index': 'start_ts'})
+               p12_df['end_ts'] = p12_df['start_ts'] + pd.Timedelta(hours=12)
+
+               # Use vectorized timestamp formatting to avoid row-by-row processing.
+               p12_df['date'] = p12_df['start_ts'].dt.strftime('%Y-%m-%d')
+               p12_df['session'] = 'P12'
+               p12_df['start_time'] = p12_df['start_ts'].dt.strftime('%Y-%m-%dT%H:%M:%S')
+               p12_df['end_time'] = p12_df['end_ts'].dt.strftime('%Y-%m-%dT%H:%M:%S')
+               p12_df['high'] = p12_df['high'].astype(float)
+               p12_df['low'] = p12_df['low'].astype(float)
+               p12_df['mid'] = p12_df['mid'].astype(float)
+
+               results.extend(
+                   p12_df[['date', 'session', 'start_time', 'end_time', 'high', 'low', 'mid']]
+                   .to_dict('records')
+               )
         except Exception as e:
             print(f"Error calculating 12H sessions: {e}")
 
