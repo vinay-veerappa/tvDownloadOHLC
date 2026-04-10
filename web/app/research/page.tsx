@@ -21,7 +21,8 @@ import {
   LayoutDashboard,
   Waves,
   SplitSquareVertical,
-  GitCompareArrows
+  GitCompareArrows,
+  Clock3
 } from 'lucide-react';
 
 interface ResearchRun {
@@ -87,7 +88,7 @@ export default function ResearchDashboard() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         <Link
           href="/research/ranges"
           className="group rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 via-transparent to-transparent p-5 transition hover:border-cyan-400/40 hover:bg-cyan-500/10"
@@ -161,6 +162,25 @@ export default function ResearchDashboard() {
               </p>
             </div>
             <ChevronRight className="h-5 w-5 text-amber-300 transition group-hover:translate-x-1" />
+          </div>
+        </Link>
+
+        <Link
+          href="/research/session-breakouts"
+          className="group rounded-2xl border border-indigo-500/20 bg-gradient-to-br from-indigo-500/10 via-transparent to-transparent p-5 transition hover:border-indigo-400/40 hover:bg-indigo-500/10"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/20 bg-indigo-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.24em] text-indigo-300">
+                <Clock3 className="h-3.5 w-3.5" />
+                New Dashboard
+              </div>
+              <h2 className="text-xl font-bold text-white">Session Breakouts</h2>
+              <p className="max-w-md text-sm text-muted-foreground">
+                Analyze London-to-NY break behavior, first-break continuation odds, reversal risk, and NY close location.
+              </p>
+            </div>
+            <ChevronRight className="h-5 w-5 text-indigo-300 transition group-hover:translate-x-1" />
           </div>
         </Link>
 
