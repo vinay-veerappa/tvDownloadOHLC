@@ -3,6 +3,8 @@ FastAPI Indicator Service
 Provides technical indicator calculations using pandas-ta
 """
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -60,9 +62,16 @@ app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"]) #
 @app.on_event("startup")
 async def startup_event():
     """Run pre-warming logic on startup."""
+    prewarm_enabled = os.getenv("PROFILER_PREWARM_ENABLED", "1") == "1"
+    if not prewarm_enabled:
+        print("Profiler pre-warm disabled (PROFILER_PREWARM_ENABLED=0)")
+        return
+
     print("Pre-warming cache...")
     from api.features.profiler.service import ProfilerService
-    # Warm up for default ticker NQ1
+
+    # Warm up for default ticker NQ1. Session scope is controlled by
+    # PROFILER_PREWARM_SESSIONS (default in service is NY1 only).
     ProfilerService.prewarm_cache("NQ1")
 
 

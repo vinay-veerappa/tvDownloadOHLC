@@ -17,7 +17,9 @@ import {
   TrendingUp, 
   Activity,
   History,
-  Target
+  Target,
+  LayoutDashboard,
+  Waves
 } from 'lucide-react';
 
 interface ResearchRun {
@@ -81,6 +83,46 @@ export default function ResearchDashboard() {
             <span className="text-sm font-medium">{strategies.length} Strategies</span>
           </div>
         </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Link
+          href="/research/ranges"
+          className="group rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 via-transparent to-transparent p-5 transition hover:border-cyan-400/40 hover:bg-cyan-500/10"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
+                <LayoutDashboard className="h-3.5 w-3.5" />
+                New Dashboard
+              </div>
+              <h2 className="text-xl font-bold text-white">Range Analytics</h2>
+              <p className="max-w-md text-sm text-muted-foreground">
+                Explore OR and IB range structure, extension hit rates, and strategy outcomes directly from the new parquet pipeline.
+              </p>
+            </div>
+            <ChevronRight className="h-5 w-5 text-cyan-300 transition group-hover:translate-x-1" />
+          </div>
+        </Link>
+
+        <Link
+          href="/edgeful"
+          className="group rounded-2xl border border-primary/10 bg-gradient-to-br from-primary/10 via-transparent to-transparent p-5 transition hover:border-primary/30 hover:bg-primary/10"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.24em] text-primary">
+                <Waves className="h-3.5 w-3.5" />
+                Existing Surface
+              </div>
+              <h2 className="text-xl font-bold text-white">Macro Analytics</h2>
+              <p className="max-w-md text-sm text-muted-foreground">
+                The macro dashboard remains the dedicated surface for Judas, continuation, and FVG research.
+              </p>
+            </div>
+            <ChevronRight className="h-5 w-5 text-primary transition group-hover:translate-x-1" />
+          </div>
+        </Link>
       </div>
 
       {/* Strategies Grid */}

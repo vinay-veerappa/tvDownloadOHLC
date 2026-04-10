@@ -63,7 +63,7 @@ def et_parts(iso_utc: str) -> tuple[str, str, datetime]:
     return dt_et.strftime("%Y-%m-%d"), dt_et.strftime("%H:%M ET"), dt_et
 
 
-def fetch_all_occurrences(start_date: str, end_date: str, limit: int, window_days: int) -> tuple[list[dict], dict[int, EventMeta]]:
+def collect_us_rows(start_date: str, end_date: str, limit: int, window_days: int) -> tuple[list[list[str]], int]:
     session = requests.Session()
     session.get(CALENDAR_URL, headers={"User-Agent": USER_AGENT}, timeout=30)
 
@@ -80,9 +80,10 @@ def fetch_all_occurrences(start_date: str, end_date: str, limit: int, window_day
         "Origin": "https://www.investing.com",
     }
 
-    all_occ: list[dict] = []
     event_map: dict[int, EventMeta] = {}
     seen_occurrence_ids: set[int] = set()
+    seen_rows: set[tuple[str, str, str]] = set()
+    rows: list[list[str]] = []
 
     start_dt = datetime.fromisoformat(start_date)
     end_dt = datetime.fromisoformat(end_date)
@@ -133,7 +134,8 @@ def fetch_all_occurrences(start_date: str, end_date: str, limit: int, window_day
             )
 
         window_occ = payload.get("occurrences", [])
-        added = 0
+        added_occurrence_ids = 0
+        added_rows = 0
         for occ in window_occ:
             oid = occ.get("occurrence_id")
             if not isinstance(oid, int):
@@ -141,65 +143,57 @@ def fetch_all_occurrences(start_date: str, end_date: str, limit: int, window_day
             if oid in seen_occurrence_ids:
                 continue
             seen_occurrence_ids.add(oid)
-            all_occ.append(occ)
-            added += 1
+            added_occurrence_ids += 1
 
-        print(f"  window occurrences: {len(window_occ)}; added unique: {added}; total unique: {len(all_occ)}")
+            eid = occ.get("event_id")
+            if not isinstance(eid, int):
+                continue
+
+            meta = event_map.get(eid)
+            if not meta or meta.country_id != US_COUNTRY_ID:
+                continue
+
+            occ_time = occ.get("occurrence_time")
+            if not isinstance(occ_time, str):
+                continue
+
+            date_str, time_et, dt_et = et_parts(occ_time)
+            row_key = (date_str, meta.name, time_et)
+            if row_key in seen_rows:
+                continue
+            seen_rows.add(row_key)
+
+            month_num = dt_et.month
+            rows.append(
+                [
+                    date_str,
+                    meta.name,
+                    meta.category,
+                    meta.importance,
+                    "Unknown",
+                    time_et,
+                    str(dt_et.year),
+                    str(((month_num - 1) // 3) + 1),
+                    str(month_num),
+                    dt_et.strftime("%B"),
+                    dt_et.strftime("%A"),
+                    "source=investing-occurrences-api",
+                ]
+            )
+            added_rows += 1
+
+        print(
+            "  window occurrences: "
+            f"{len(window_occ)}; "
+            f"added unique occurrence_ids: {added_occurrence_ids}; "
+            f"added US rows: {added_rows}; "
+            f"total US rows: {len(rows)}"
+        )
 
         window_start = window_end + timedelta(milliseconds=1)
 
-    return all_occ, event_map
-
-
-def build_rows(occurrences: list[dict], event_map: dict[int, EventMeta]) -> list[list[str]]:
-    rows: list[list[str]] = []
-    seen: set[tuple[str, str, str]] = set()
-
-    for occ in occurrences:
-        eid = occ.get("event_id")
-        if not isinstance(eid, int):
-            continue
-
-        meta = event_map.get(eid)
-        if not meta or meta.country_id != US_COUNTRY_ID:
-            continue
-
-        occ_time = occ.get("occurrence_time")
-        if not isinstance(occ_time, str):
-            continue
-
-        date_str, time_et, dt_et = et_parts(occ_time)
-
-        key = (date_str, meta.name, time_et)
-        if key in seen:
-            continue
-        seen.add(key)
-
-        year = str(dt_et.year)
-        month_num = dt_et.month
-        quarter = str(((month_num - 1) // 3) + 1)
-        month_name = dt_et.strftime("%B")
-        day_name = dt_et.strftime("%A")
-
-        rows.append(
-            [
-                date_str,
-                meta.name,
-                meta.category,
-                meta.importance,
-                "Unknown",
-                time_et,
-                year,
-                quarter,
-                str(month_num),
-                month_name,
-                day_name,
-                "source=investing-occurrences-api",
-            ]
-        )
-
     rows.sort(key=lambda r: (r[0], r[5], r[1]))
-    return rows
+    return rows, len(seen_occurrence_ids)
 
 
 def write_csv(path: str, rows: list[list[str]]) -> None:
@@ -244,10 +238,9 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    occ, event_map = fetch_all_occurrences(args.start_date, args.end_date, args.limit, args.window_days)
-    rows = build_rows(occ, event_map)
+    rows, fetched_occurrence_ids = collect_us_rows(args.start_date, args.end_date, args.limit, args.window_days)
     write_csv(args.out, rows)
 
-    print(f"Fetched occurrences: {len(occ)}")
+    print(f"Fetched unique occurrence_ids: {fetched_occurrence_ids}")
     print(f"US rows written: {len(rows)}")
     print(f"Output: {args.out}")

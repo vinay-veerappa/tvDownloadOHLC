@@ -1,4 +1,6 @@
 
+import os
+from collections import OrderedDict
 
 import pandas as pd
 import numpy as np
@@ -17,13 +19,35 @@ from scripts.libs.nqstats.levels import (
 )
 
 class ProfilerService:
-    _cache = {}
-    _json_cache = {} # Cache the loaded JSON data too
-    _price_model_cache = {}
-    _level_touches_cache = {}
-    _daily_hod_lod_cache = {}
-    _filtered_stats_cache = {} # Cache for filtered stats results
-    _prediction_cache = {} # Cache for prediction datasets
+    _cache = OrderedDict()
+    _json_cache = OrderedDict()  # Cache the loaded JSON data too
+    _price_model_cache = OrderedDict()
+    _level_touches_cache = OrderedDict()
+    _daily_hod_lod_cache = OrderedDict()
+    _filtered_stats_cache = OrderedDict()  # Cache for filtered stats results
+    _prediction_cache = OrderedDict()  # Cache for prediction datasets
+
+    _MAX_DF_CACHE = int(os.getenv("PROFILER_MAX_DF_CACHE", "2"))
+    _MAX_JSON_CACHE = int(os.getenv("PROFILER_MAX_JSON_CACHE", "4"))
+    _MAX_FILTERED_STATS_CACHE = int(os.getenv("PROFILER_MAX_FILTERED_STATS_CACHE", "64"))
+    _MAX_PRICE_MODEL_CACHE = int(os.getenv("PROFILER_MAX_PRICE_MODEL_CACHE", "48"))
+    _MAX_LEVEL_TOUCHES_CACHE = int(os.getenv("PROFILER_MAX_LEVEL_TOUCHES_CACHE", "4"))
+    _MAX_DAILY_HOD_LOD_CACHE = int(os.getenv("PROFILER_MAX_DAILY_HOD_LOD_CACHE", "4"))
+    _MAX_PREDICTION_CACHE = int(os.getenv("PROFILER_MAX_PREDICTION_CACHE", "16"))
+
+    @staticmethod
+    def _cache_get(cache: OrderedDict, key):
+        value = cache.get(key)
+        if value is not None:
+            cache.move_to_end(key)
+        return value
+
+    @staticmethod
+    def _cache_set(cache: OrderedDict, key, value, max_items: int):
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > max_items:
+            cache.popitem(last=False)
 
     
     @staticmethod
@@ -49,17 +73,30 @@ class ProfilerService:
             ProfilerService._json_cache.pop(ticker, None)
             ProfilerService._level_touches_cache.pop(ticker, None)
             ProfilerService._daily_hod_lod_cache.pop(ticker, None)
+            ProfilerService._prediction_cache.pop(ticker, None)
             
             # Clear price model cache for this ticker key prefix
             keys = [k for k in ProfilerService._price_model_cache.keys() if k[0] == ticker]
             for k in keys:
                 ProfilerService._price_model_cache.pop(k, None)
+
+            # Clear filtered stats cache for this ticker key prefix
+            keys = [k for k in ProfilerService._filtered_stats_cache.keys() if k[0] == ticker]
+            for k in keys:
+                ProfilerService._filtered_stats_cache.pop(k, None)
+
+            # Clear prediction cache keys for this ticker
+            keys = [k for k in ProfilerService._prediction_cache.keys() if str(k).startswith(f"{ticker}_")]
+            for k in keys:
+                ProfilerService._prediction_cache.pop(k, None)
         else:
             ProfilerService._cache.clear()
             ProfilerService._json_cache.clear()
             ProfilerService._price_model_cache.clear()
             ProfilerService._level_touches_cache.clear()
             ProfilerService._daily_hod_lod_cache.clear()
+            ProfilerService._filtered_stats_cache.clear()
+            ProfilerService._prediction_cache.clear()
         return {"cleared": ticker or "all"}
 
 
@@ -80,13 +117,19 @@ class ProfilerService:
         # 1. Try Loading Pre-computed JSON (if not forced)
         if json_path.exists() and not force:
             # Check memory cache first
-            if ticker in ProfilerService._json_cache:
-                all_sessions = ProfilerService._json_cache[ticker]
+            cached_sessions = ProfilerService._cache_get(ProfilerService._json_cache, ticker)
+            if cached_sessions is not None:
+                all_sessions = cached_sessions
             else:
                 try:
                     with open(json_path, 'r') as f:
                         all_sessions = json.load(f)
-                    ProfilerService._json_cache[ticker] = all_sessions
+                    ProfilerService._cache_set(
+                        ProfilerService._json_cache,
+                        ticker,
+                        all_sessions,
+                        ProfilerService._MAX_JSON_CACHE,
+                    )
                 except Exception as e:
                     print(f"Error reading JSON: {e}")
                     all_sessions = None
@@ -623,8 +666,9 @@ class ProfilerService:
             intra_state
         )
         
-        if cache_key in ProfilerService._filtered_stats_cache:
-             return ProfilerService._filtered_stats_cache[cache_key]
+        cached_stats = ProfilerService._cache_get(ProfilerService._filtered_stats_cache, cache_key)
+        if cached_stats is not None:
+            return cached_stats
 
         # 1. Load all sessions
         # 1. Load all sessions
@@ -754,7 +798,12 @@ class ProfilerService:
             "broken_filters_applied": broken_filters or {}
         }
         
-        ProfilerService._filtered_stats_cache[cache_key] = result
+        ProfilerService._cache_set(
+            ProfilerService._filtered_stats_cache,
+            cache_key,
+            result,
+            ProfilerService._MAX_FILTERED_STATS_CACHE,
+        )
         return result
 
     @staticmethod
@@ -780,8 +829,9 @@ class ProfilerService:
             bucket_minutes
         )
         
-        if cache_key in ProfilerService._price_model_cache:
-            return ProfilerService._price_model_cache[cache_key]
+        cached_price_model = ProfilerService._cache_get(ProfilerService._price_model_cache, cache_key)
+        if cached_price_model is not None:
+            return cached_price_model
 
         # 1. Get filtered stats (which includes matched dates)
         stats = ProfilerService.get_filtered_stats(
@@ -851,7 +901,12 @@ class ProfilerService:
         )
         
         # Cache Result
-        ProfilerService._price_model_cache[cache_key] = result
+        ProfilerService._cache_set(
+            ProfilerService._price_model_cache,
+            cache_key,
+            result,
+            ProfilerService._MAX_PRICE_MODEL_CACHE,
+        )
         return result
 
     @staticmethod
@@ -863,8 +918,9 @@ class ProfilerService:
         ticker = ProfilerService._normalize_ticker(ticker)
         cache_key = f"{ticker}_unadjusted" if unadjusted else ticker
         
-        if cache_key in ProfilerService._daily_hod_lod_cache:
-            return ProfilerService._daily_hod_lod_cache[cache_key]
+        cached_hod_lod = ProfilerService._cache_get(ProfilerService._daily_hod_lod_cache, cache_key)
+        if cached_hod_lod is not None:
+            return cached_hod_lod
             
         filename = f"{ticker}_daily_hod_lod_unadjusted.json" if unadjusted else f"{ticker}_daily_hod_lod.json"
         json_path = DATA_DIR / filename
@@ -875,7 +931,12 @@ class ProfilerService:
         try:
             with open(json_path, 'r') as f:
                 data = json.load(f)
-            ProfilerService._daily_hod_lod_cache[cache_key] = data
+            ProfilerService._cache_set(
+                ProfilerService._daily_hod_lod_cache,
+                cache_key,
+                data,
+                ProfilerService._MAX_DAILY_HOD_LOD_CACHE,
+            )
             return data
         except Exception as e:
             return {"error": str(e)}
@@ -888,8 +949,9 @@ class ProfilerService:
         OPTIMIZED: Returns only the first hit per session to reduce payload size.
         """
         ticker = ProfilerService._normalize_ticker(ticker)
-        if ticker in ProfilerService._level_touches_cache:
-            return ProfilerService._level_touches_cache[ticker]
+        cached_level_touches = ProfilerService._cache_get(ProfilerService._level_touches_cache, ticker)
+        if cached_level_touches is not None:
+            return cached_level_touches
             
         json_path = DATA_DIR / f"{ticker}_level_touches.json"
         
@@ -981,13 +1043,18 @@ class ProfilerService:
                         'hits': {},
                     }
 
-            ProfilerService._level_touches_cache[ticker] = optimized_data
+            ProfilerService._cache_set(
+                ProfilerService._level_touches_cache,
+                ticker,
+                optimized_data,
+                ProfilerService._MAX_LEVEL_TOUCHES_CACHE,
+            )
             return optimized_data
         except Exception as e:
             return {"error": str(e)}
 
     @staticmethod
-    def prewarm_cache(ticker: str = "NQ1"):
+    def prewarm_cache(ticker: str = "NQ1", sessions: Optional[List[str]] = None):
         """
         Run heavy calculations on startup to populate cache.
         """
@@ -997,9 +1064,14 @@ class ProfilerService:
             ProfilerService.get_daily_hod_lod(ticker)
             ProfilerService.get_level_touches(ticker)
             
-            # 2. Run Heavy Price Model Calculation (All Sessions)
-            # This pre-computes "Daily", "Asia", "London", "NY1", "NY2" Default Views
-            for session_name in ["Daily", "Asia", "London", "NY1", "NY2"]:
+            # 2. Run Heavy Price Model Calculation (selected sessions only)
+            if sessions is None:
+                env_sessions = os.getenv("PROFILER_PREWARM_SESSIONS", "NY1")
+                selected_sessions = [s.strip() for s in env_sessions.split(",") if s.strip()]
+            else:
+                selected_sessions = sessions
+
+            for session_name in selected_sessions:
                 ProfilerService.get_filtered_price_model(
                     ticker=ticker,
                     target_session=session_name,
@@ -1025,8 +1097,9 @@ class ProfilerService:
         Unified method to load OHLCV data with perfect Unix -> EST alignment.
         """
         # Check Cache
-        if ticker in ProfilerService._cache:
-            return ProfilerService._cache[ticker]
+        cached_df = ProfilerService._cache_get(ProfilerService._cache, ticker)
+        if cached_df is not None:
+            return cached_df
             
         try:
             # Use robust loader to get synchronized Unix timestamps
@@ -1036,17 +1109,24 @@ class ProfilerService:
             if df is None or df.empty:
                 return None
             
-            # Convert Unix 'time' column to US/Eastern index
-            # This is the absolute source of truth for alignment.
-            df['dt_utc'] = pd.to_datetime(df['time'], unit='s', utc=True)
-            df = df.set_index('dt_utc').tz_convert('US/Eastern')
-            
-            # Defensive: Drop original 'time' (seconds) and replace with 'time' (HH:MM)
-            if 'time' in df.columns:
-                df = df.drop(columns=['time'])
-            df['time'] = df.index.strftime('%H:%M')
-            
-            ProfilerService._cache[ticker] = df
+            required = {"time", "high", "low"}
+            if not required.issubset(df.columns):
+                return None
+
+            # Keep only columns required for composite path generation.
+            # This avoids holding millions of unnecessary string/numeric fields in memory.
+            df = df[["time", "high", "low"]].copy()
+            idx = pd.to_datetime(df["time"].to_numpy(), unit='s', utc=True).tz_convert('US/Eastern')
+            df = df.drop(columns=["time"])
+            df.index = idx
+            df.index.name = "dt_utc"
+
+            ProfilerService._cache_set(
+                ProfilerService._cache,
+                ticker,
+                df,
+                ProfilerService._MAX_DF_CACHE,
+            )
             return df
         except Exception as e:
             print(f"[Profiling] Load error for {ticker}: {e}")
@@ -1057,8 +1137,9 @@ class ProfilerService:
         ticker = "NQ1"  # Currently hardcoded as we only generated NQ1 data
         cache_key = f"{ticker}_{target}"
         
-        if cache_key in ProfilerService._prediction_cache:
-            return ProfilerService._prediction_cache[cache_key]
+        cached_prediction = ProfilerService._cache_get(ProfilerService._prediction_cache, cache_key)
+        if cached_prediction is not None:
+            return cached_prediction
             
         from api.features.shared.data_loader import DATA_DIR
         filename = f"{ticker}_{target}_predictions.json"
@@ -1068,7 +1149,12 @@ class ProfilerService:
             if path.exists():
                 with open(path, 'r') as f:
                     data = json.load(f)
-                ProfilerService._prediction_cache[cache_key] = data
+                ProfilerService._cache_set(
+                    ProfilerService._prediction_cache,
+                    cache_key,
+                    data,
+                    ProfilerService._MAX_PREDICTION_CACHE,
+                )
                 return data
             return {}
         except Exception as e:
