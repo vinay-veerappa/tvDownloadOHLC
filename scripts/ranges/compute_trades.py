@@ -139,7 +139,11 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Compute range strategy trades")
     parser.add_argument("--symbols", type=str, default="NQ1,ES1,YM1,RTY1,CL1,GC1")
-    parser.add_argument("--ranges", type=str, default="OR_5,OR_15,OR_30,IB_60")
+    parser.add_argument(
+        "--ranges",
+        type=str,
+        default="OR_5,OR_15,OR_30,IB_60,IB_90,LUNCH,ASIA,OVERNIGHT,SILVER_BULLET_AM,SILVER_BULLET_PM,POWER_HOUR",
+    )
     parser.add_argument("--strategies", type=str, default="MR_TO_MID,BO_1X,BO_PULLBACK_1X")
     parser.add_argument("--start", type=str)
     parser.add_argument("--end", type=str)

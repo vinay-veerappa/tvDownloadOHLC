@@ -1015,7 +1015,7 @@ behavior and should be analyzed separately.
 
 ### Phase 6: Additional Ranges + Cross-Report (future)
 
-- [ ] Add LUNCH, ASIA, OVERNIGHT, SILVER_BULLET, POWER_HOUR presets
+- [x] Add LUNCH, ASIA, OVERNIGHT, SILVER_BULLET, POWER_HOUR presets
 - [ ] Market Session Breakout analysis (London → NY)
 - [ ] `DailyConfluenceRecord` computation
 - [ ] "What's in Play" screener dashboard

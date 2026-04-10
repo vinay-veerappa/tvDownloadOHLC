@@ -8,6 +8,7 @@ Usage
 -----
 python -m scripts.ranges.compute_ranges
 python -m scripts.ranges.compute_ranges --symbols NQ1,ES1 --ranges OR_5,IB_60
+python -m scripts.ranges.compute_ranges --ranges OR_5,OR_15,OR_30,IB_60,IB_90,LUNCH,ASIA,OVERNIGHT,SILVER_BULLET_AM,SILVER_BULLET_PM,POWER_HOUR
 python -m scripts.ranges.compute_ranges --start 2020-01-01 --append
 
 Schema
@@ -62,8 +63,20 @@ _RANGE_CONTEXT_COLS = [
 # ── instruments ────────────────────────────────────────────────────────────
 DEFAULT_SYMBOLS = ["ES1", "NQ1", "YM1", "RTY1", "CL1", "GC1"]
 
-# ── default ranges for initial run ────────────────────────────────────────
-DEFAULT_RANGES = ["OR_5", "OR_15", "OR_30", "IB_60", "IB_90"]
+# ── default ranges for Phase 6 baseline run ───────────────────────────────
+DEFAULT_RANGES = [
+    "OR_5",
+    "OR_15",
+    "OR_30",
+    "IB_60",
+    "IB_90",
+    "LUNCH",
+    "ASIA",
+    "OVERNIGHT",
+    "SILVER_BULLET_AM",
+    "SILVER_BULLET_PM",
+    "POWER_HOUR",
+]
 
 # ── RTH observe end (when no observe_until set) ────────────────────────────
 _RTH_CLOSE_MIN = 16 * 60    # 960 minutes since midnight

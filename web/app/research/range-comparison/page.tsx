@@ -110,7 +110,13 @@ function getComparisonSql(rangeWhere: string, tradeWhere: string) {
       WHEN 'OR_30' THEN 3
       WHEN 'IB_60' THEN 4
       WHEN 'IB_90' THEN 5
-      ELSE 6
+      WHEN 'LUNCH' THEN 6
+      WHEN 'ASIA' THEN 7
+      WHEN 'OVERNIGHT' THEN 8
+      WHEN 'SILVER_BULLET_AM' THEN 9
+      WHEN 'SILVER_BULLET_PM' THEN 10
+      WHEN 'POWER_HOUR' THEN 11
+      ELSE 12
     END
   `;
 }
