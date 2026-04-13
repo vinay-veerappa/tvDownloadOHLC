@@ -6,8 +6,8 @@ derived datasets and computing per-day conditional edge probabilities.
 
 For each (symbol, trading_date) the pipeline computes:
   - gap_fill_probability         — P(gap fills | DOW, vix_regime)
-  - or_breakout_probability      — P(OR-15 BO_1X winner | DOW, vix_regime)
-  - ib_single_break_probability  — P(IB-60 BO_1X winner | DOW, vix_regime)
+    - or_breakout_probability      — P(OR-15 BO_1X wins on day | DOW, vix_regime)
+    - ib_single_break_probability  — P(IB-60 BO_1X wins on day | DOW, vix_regime)
   - occ_continuation_probability — P(OCC continuation | DOW, vix_regime)
   - mop_retrace_probability      — P(MOP retrace | DOW, vix_regime)
   - pdh_pdl_break_probability    — P(PDH or PDL broken | DOW, vix_regime)
@@ -157,7 +157,8 @@ def _build_master(symbols: List[str]) -> pd.DataFrame:
         df.rename(columns={"ref_pdh_broken": "pdh_broken",
                             "ref_pdl_broken": "pdl_broken"}, inplace=True)
 
-    # 4. Range trades — OR-15 and IB-60 BO_1X outcomes
+    # 4. Range trades — OR-15 and IB-60 BO_1X day outcomes
+    # Count non-trigger days as non-wins so probability reflects day-level edge.
     rt = _read(_DERIVED / "range_trades.parquet",
                ["symbol", "range_name", "strategy_name", "trading_date",
                 "entry_triggered", "pnl_r_multiple"])
@@ -165,17 +166,22 @@ def _build_master(symbols: List[str]) -> pd.DataFrame:
         for rname, out_col in [("OR_15", "or_bo_winner"), ("IB_60", "ib_bo_winner")]:
             mask = (
                 (rt["range_name"] == rname) &
-                (rt["strategy_name"] == "BO_1X") &
-                rt["entry_triggered"].fillna(False).astype(bool)
+                (rt["strategy_name"] == "BO_1X")
             )
             sub = (
                 rt[mask]
-                .assign(**{out_col: rt.loc[mask, "pnl_r_multiple"] > 0})
+                .assign(**{
+                    out_col: (
+                        rt.loc[mask, "entry_triggered"].fillna(False).astype(bool)
+                        & (rt.loc[mask, "pnl_r_multiple"].fillna(0) > 0)
+                    )
+                })
                 .groupby(["symbol", "trading_date"])[out_col]
                 .first()
                 .reset_index()
             )
             df = df.merge(sub, on=["symbol", "trading_date"], how="left")
+            df[out_col] = pd.to_numeric(df[out_col], errors="coerce").fillna(0.0)
     else:
         df["or_bo_winner"] = np.nan
         df["ib_bo_winner"] = np.nan
@@ -185,8 +191,11 @@ def _build_master(symbols: List[str]) -> pd.DataFrame:
                 ["symbol", "trading_date", "candle_duration_minutes",
                  "continuation", "first_candle_direction"])
     if not occ.empty:
-        # Use 15-min opening candle (smallest available duration in occ_records)
-        best_dur = occ["candle_duration_minutes"].min()
+        # Prefer 15-min opening candle; fall back to smallest available duration.
+        if (occ["candle_duration_minutes"] == 15).any():
+            best_dur = 15
+        else:
+            best_dur = occ["candle_duration_minutes"].min()
         occ5 = (
             occ[occ["candle_duration_minutes"] == best_dur]
             [["symbol", "trading_date", "continuation", "first_candle_direction"]]
