@@ -256,6 +256,14 @@ type BoundaryPerformanceRow = {
   strategy_avg_r: number | null;
 };
 
+type ContextBreakdownRow = {
+  bucket: string;
+  sample_count: number;
+  continuation_pct: number | null;
+  ext_1x_hit_pct: number | null;
+  mr_retest_pct: number | null;
+};
+
 type LatestRangeRow = {
   trading_date: string;
   range_high: number;
@@ -1227,6 +1235,55 @@ function getBoundaryPerformanceByBoundarySql(rangeWhere: string, tradeWhereNoStr
   `;
 }
 
+/** Range WHERE using only primary filters (no context dimensions) — for breakdown queries. */
+function buildRangeWhereIgnoreContext(filters: FilterState, alias?: string) {
+  const prefix = alias ? `${alias}.` : '';
+  const conditions: string[] = [];
+  if (filters.symbol !== 'ALL') conditions.push(`${prefix}symbol = ${quote(filters.symbol)}`);
+  if (filters.rangeName !== 'ALL') conditions.push(`${prefix}range_name = ${quote(filters.rangeName)}`);
+  if (filters.breakoutDirection !== 'ALL') conditions.push(`${prefix}first_bo_direction = ${quote(filters.breakoutDirection)}`);
+  if (filters.startDate) conditions.push(`${prefix}trading_date >= ${quote(filters.startDate)}`);
+  if (filters.endDate) conditions.push(`${prefix}trading_date <= ${quote(filters.endDate)}`);
+  return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+}
+
+/**
+ * Context Breakdown — for a given dimension field from daily_context,
+ * show continuation_pct, ext_1x_hit_pct, and mid-retest rate per bucket.
+ * Does not apply context conditions so the full distribution is visible.
+ */
+function getContextBreakdownSql(rangeWhereBase: string, dimensionField: string) {
+  const where = rangeWhereBase
+    ? `${rangeWhereBase} AND rr.first_bo_direction IN ('UP', 'DOWN')`
+    : `WHERE rr.first_bo_direction IN ('UP', 'DOWN')`;
+  return `
+    SELECT
+      COALESCE(CAST(dc.${dimensionField} AS VARCHAR), 'UNKNOWN') AS bucket,
+      CAST(COUNT(*) AS DOUBLE) AS sample_count,
+      CAST(AVG(CASE WHEN rr.first_bo_direction = rr.final_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS continuation_pct,
+      CAST(AVG(
+        CASE
+          WHEN rr.first_bo_direction = 'UP' THEN CASE WHEN rr.ext_up_100_hit THEN 1.0 ELSE 0.0 END
+          WHEN rr.first_bo_direction = 'DOWN' THEN CASE WHEN rr.ext_dn_100_hit THEN 1.0 ELSE 0.0 END
+          ELSE NULL
+        END
+      ) * 100 AS DOUBLE) AS ext_1x_hit_pct,
+      CAST(AVG(
+        CASE
+          WHEN rr.broke_high_first THEN CASE WHEN rr.retest_mid_after_high_break THEN 1.0 ELSE 0.0 END
+          WHEN rr.broke_low_first THEN CASE WHEN rr.retest_mid_after_low_break THEN 1.0 ELSE 0.0 END
+          ELSE NULL
+        END
+      ) * 100 AS DOUBLE) AS mr_retest_pct
+    FROM range_records rr
+    LEFT JOIN daily_context dc ON dc.symbol = rr.symbol AND dc.trading_date = rr.trading_date
+    ${where}
+    GROUP BY 1
+    HAVING COUNT(*) >= 5
+    ORDER BY 2 DESC
+  `;
+}
+
 function formatPct(value: number | null | undefined, digits = 1) {
   if (value == null || Number.isNaN(value)) return '--';
   return `${value.toFixed(digits)}%`;
@@ -1339,6 +1396,10 @@ export default function RangeAnalyticsPage() {
   const [edgeStabilityRows, setEdgeStabilityRows] = useState<EdgeStabilityRow[]>([]);
   const [boundaryPerformanceSummary, setBoundaryPerformanceSummary] = useState<BoundaryPerformanceSummary | null>(null);
   const [boundaryPerformanceRows, setBoundaryPerformanceRows] = useState<BoundaryPerformanceRow[]>([]);
+  const [contextBreakdownVix, setContextBreakdownVix] = useState<ContextBreakdownRow[]>([]);
+  const [contextBreakdownGap, setContextBreakdownGap] = useState<ContextBreakdownRow[]>([]);
+  const [contextBreakdownDow, setContextBreakdownDow] = useState<ContextBreakdownRow[]>([]);
+  const [contextBreakdownOpenLoc, setContextBreakdownOpenLoc] = useState<ContextBreakdownRow[]>([]);
   const [latestRange, setLatestRange] = useState<LatestRangeRow | null>(null);
   const [gexMacro, setGexMacro] = useState<GexMacroData | null>(null);
   const [gexSymbolOverride, setGexSymbolOverride] = useState('NQ1');
@@ -1400,8 +1461,9 @@ export default function RangeAnalyticsPage() {
       const rangeWhere = buildRangeWhere(deferredFilters);
       const tradeWhere = buildTradeWhere(deferredFilters);
       const tradeWhereNoStrategy = buildTradeWhere(deferredFilters, undefined, false);
+      const rangeWhereBase = buildRangeWhereIgnoreContext(deferredFilters);
 
-      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows, bothSidesConditionLiftRows, meanReversionSummaryRows, meanReversionDirectionRows, executionSummaryRows, executionByStrategyRows, sessionExpectancyTableRows, sweepReclaimSummaryRows, sweepReclaimDirectionRows, breakoutAcceptanceSummaryRows, breakoutAcceptanceDirectionRows, volatilityExcursionRows, edgeStabilitySummaryRows, edgeStabilitySeriesRows, boundaryPerformanceSummaryRows, boundaryPerformanceByBoundaryRows, latestRangeRows] = await Promise.all([
+      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows, bothSidesConditionLiftRows, meanReversionSummaryRows, meanReversionDirectionRows, executionSummaryRows, executionByStrategyRows, sessionExpectancyTableRows, sweepReclaimSummaryRows, sweepReclaimDirectionRows, breakoutAcceptanceSummaryRows, breakoutAcceptanceDirectionRows, volatilityExcursionRows, edgeStabilitySummaryRows, edgeStabilitySeriesRows, boundaryPerformanceSummaryRows, boundaryPerformanceByBoundaryRows, latestRangeRows, ctxVixRows, ctxGapRows, ctxDowRows, ctxOpenLocRows] = await Promise.all([
         runQuery<OverviewMetrics>(getOverviewSql(rangeWhere, tradeWhere)),
         runQuery<WidthDistributionRow>(getWidthDistributionSql(rangeWhere)),
         runQuery<DirectionRow>(getDirectionSql(rangeWhere, 'first_bo_direction')),
@@ -1427,6 +1489,10 @@ export default function RangeAnalyticsPage() {
         runQuery<BoundaryPerformanceSummary>(getBoundaryPerformanceSummarySql(rangeWhere)),
         runQuery<BoundaryPerformanceRow>(getBoundaryPerformanceByBoundarySql(rangeWhere, tradeWhereNoStrategy)),
         runQuery<LatestRangeRow>(getLatestRangeSql(rangeWhere)),
+        runQuery<ContextBreakdownRow>(getContextBreakdownSql(rangeWhereBase, 'vix_regime')),
+        runQuery<ContextBreakdownRow>(getContextBreakdownSql(rangeWhereBase, 'gap_direction')),
+        runQuery<ContextBreakdownRow>(getContextBreakdownSql(rangeWhereBase, 'day_of_week')),
+        runQuery<ContextBreakdownRow>(getContextBreakdownSql(rangeWhereBase, 'open_vs_pd_range')),
       ]);
 
       setOverview((overviewRows[0] as OverviewMetrics) ?? null);
@@ -1453,6 +1519,10 @@ export default function RangeAnalyticsPage() {
       setEdgeStabilityRows(edgeStabilitySeriesRows);
       setBoundaryPerformanceSummary((boundaryPerformanceSummaryRows[0] as BoundaryPerformanceSummary) ?? null);
       setBoundaryPerformanceRows(boundaryPerformanceByBoundaryRows);
+      setContextBreakdownVix(ctxVixRows);
+      setContextBreakdownGap(ctxGapRows);
+      setContextBreakdownDow(ctxDowRows);
+      setContextBreakdownOpenLoc(ctxOpenLocRows);
       setLatestRange((latestRangeRows[0] as LatestRangeRow) ?? null);
       setQueryTimeMs(performance.now() - startedAt);
     } catch (error) {
@@ -2569,7 +2639,123 @@ export default function RangeAnalyticsPage() {
             </div>
           </Card>
         </div>
+
+        {/* Context Breakdown panel */}
+        <Card className="border-zinc-900 bg-black/30 p-5">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">Context Breakdown</div>
+              <h2 className="mt-1 text-lg font-semibold">Performance sliced by regime dimension</h2>
+              <p className="mt-1 text-xs text-zinc-400">
+                Breakout continuation, 1× extension hit rate, and mid-retest rate broken down by each universal context
+                dimension. Lift vs Baseline is relative to the current overall continuation rate.
+              </p>
+            </div>
+            <BarChart3 className="h-5 w-5 text-cyan-300" />
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <ContextBreakdownTable
+              label="VIX Regime"
+              rows={contextBreakdownVix}
+              baseline={overview?.aligned_close_rate ?? null}
+              formatBucket={(b) => b}
+            />
+            <ContextBreakdownTable
+              label="Gap Direction"
+              rows={contextBreakdownGap}
+              baseline={overview?.aligned_close_rate ?? null}
+              formatBucket={(b) => b}
+            />
+            <ContextBreakdownTable
+              label="Day of Week"
+              rows={contextBreakdownDow}
+              baseline={overview?.aligned_close_rate ?? null}
+              formatBucket={(b) => ({ '0': 'Mon', '1': 'Tue', '2': 'Wed', '3': 'Thu', '4': 'Fri' }[b] ?? b)}
+            />
+            <ContextBreakdownTable
+              label="Open Location"
+              rows={contextBreakdownOpenLoc}
+              baseline={overview?.aligned_close_rate ?? null}
+              formatBucket={(b) => b}
+            />
+          </div>
+        </Card>
       </div>
+    </div>
+  );
+}
+
+function ContextBreakdownTable({
+  label,
+  rows,
+  baseline,
+  formatBucket,
+}: {
+  label: string;
+  rows: ContextBreakdownRow[];
+  baseline: number | null;
+  formatBucket: (bucket: string) => string;
+}) {
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-xl border border-zinc-900 p-4">
+        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-zinc-400">{label}</div>
+        <div className="text-sm text-zinc-600">No data</div>
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-hidden rounded-xl border border-zinc-900">
+      <div className="bg-zinc-950/80 px-4 py-2 text-[10px] uppercase tracking-[0.2em] text-zinc-400">{label}</div>
+      <table className="min-w-full divide-y divide-zinc-900 text-sm">
+        <thead className="bg-zinc-950/60 text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+          <tr>
+            <th className="px-4 py-2 text-left">Bucket</th>
+            <th className="px-4 py-2 text-right">N</th>
+            <th className="px-4 py-2 text-right">Cont %</th>
+            <th className="px-4 py-2 text-right">1× Ext %</th>
+            <th className="px-4 py-2 text-right">MR %</th>
+            <th className="px-4 py-2 text-right">Lift vs Baseline</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-900 bg-black/20">
+          {rows.map((row) => {
+            const lift =
+              baseline != null && row.continuation_pct != null ? row.continuation_pct - baseline : null;
+            return (
+              <tr key={`ctx-${label}-${row.bucket}`}>
+                <td className="px-4 py-2 font-medium text-zinc-200">{formatBucket(row.bucket)}</td>
+                <td className="px-4 py-2 text-right text-zinc-300">
+                  {Math.round(row.sample_count).toLocaleString()}
+                </td>
+                <td className="px-4 py-2 text-right text-cyan-300">
+                  {row.continuation_pct != null ? `${row.continuation_pct.toFixed(1)}%` : '--'}
+                </td>
+                <td className="px-4 py-2 text-right text-amber-300">
+                  {row.ext_1x_hit_pct != null ? `${row.ext_1x_hit_pct.toFixed(1)}%` : '--'}
+                </td>
+                <td className="px-4 py-2 text-right text-fuchsia-300">
+                  {row.mr_retest_pct != null ? `${row.mr_retest_pct.toFixed(1)}%` : '--'}
+                </td>
+                <td
+                  className={`px-4 py-2 text-right font-medium ${
+                    lift == null
+                      ? 'text-zinc-500'
+                      : lift > 0
+                        ? 'text-emerald-300'
+                        : lift < 0
+                          ? 'text-rose-300'
+                          : 'text-zinc-400'
+                  }`}
+                >
+                  {lift != null ? `${lift >= 0 ? '+' : ''}${lift.toFixed(1)}%` : '--'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

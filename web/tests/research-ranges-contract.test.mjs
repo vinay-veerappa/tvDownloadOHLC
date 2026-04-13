@@ -95,3 +95,16 @@ test('ranges page includes universal context filter dimensions from daily_contex
   mustInclude('VIX Regime', 'Missing VIX Regime filter dropdown.');
   mustInclude('Open Location', 'Missing Open Location filter dropdown.');
 });
+
+test('ranges page includes context breakdown panel with per-dimension probability tables', () => {
+  mustInclude('type ContextBreakdownRow', 'Missing ContextBreakdownRow type.');
+  mustInclude('function getContextBreakdownSql', 'Missing getContextBreakdownSql SQL helper.');
+  mustInclude('function buildRangeWhereIgnoreContext', 'Missing buildRangeWhereIgnoreContext helper.');
+  mustInclude('Context Breakdown', 'Missing Context Breakdown panel label.');
+  mustInclude('Lift vs Baseline', 'Missing Lift vs Baseline column header in ContextBreakdownTable.');
+  mustInclude('function ContextBreakdownTable', 'Missing ContextBreakdownTable component.');
+  mustInclude("vix_regime')", 'Missing vix_regime breakdown query call.');
+  mustInclude("gap_direction')", 'Missing gap_direction breakdown query call.');
+  mustInclude("day_of_week')", 'Missing day_of_week breakdown query call.');
+  mustInclude("open_vs_pd_range')", 'Missing open_vs_pd_range breakdown query call.');
+});
