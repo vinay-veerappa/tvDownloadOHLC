@@ -1001,12 +1001,12 @@ and path-dependency context that headline win rate and R-multiple cannot capture
 
 **Goal:** Build the foundation everything else depends on.
 
-- [ ] `lib/data_loader.py` — parquet loading with caching
-- [ ] `lib/session_tagger.py` — session/DOW/trading_date tagging
-- [ ] `lib/context.py` — `DailyContext` computation
-- [ ] Generate `daily_context.parquet` for all symbols, all dates
-- [ ] `lib/filters.py` — `FilterDimension`, `UNIVERSAL_FILTERS`
-- [ ] Validate: spot-check 10 random days against TradingView
+- [x] `lib/data_loader.py` — parquet loading with caching
+- [x] `lib/session_tagger.py` — session/DOW/trading_date tagging
+- [x] `lib/context.py` — `DailyContext` computation
+- [x] Generate `daily_context.parquet` for all symbols, all dates
+- [x] `lib/filters.py` — `FilterDimension`, `UNIVERSAL_FILTERS`
+- [x] Validate: spot-check 10 random days against TradingView
 
 ### Phase 2: Macro Pipeline Retrofit (1 session)
 
