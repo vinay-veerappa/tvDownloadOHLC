@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:contracts": "node --test tests/*.test.mjs",
     "sync:economic-events": "tsx prisma/seed-economic-events.ts",
     "check:economic-events-coverage": "tsx scripts/check-economic-events-coverage.ts"
   },

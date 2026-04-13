@@ -140,6 +140,46 @@ type MeanReversionRow = {
   avg_mid_retest_time: number | null;
 };
 
+type ExecutionQualitySummary = {
+  sample_count: number;
+  winner_count: number;
+  loser_count: number;
+  loss_median_min: number | null;
+  loss_p90_min: number | null;
+  mae_before_mfe_winner_pct: number | null;
+};
+
+type ExecutionQualityRow = {
+  strategy_name: string;
+  sample_count: number;
+  loss_median_min: number | null;
+  loss_p90_min: number | null;
+  mae_before_mfe_winner_pct: number | null;
+};
+
+type SessionExpectancyRow = {
+  session_segment: string;
+  sample_count: number;
+  win_rate: number | null;
+  avg_r: number | null;
+  median_r: number | null;
+};
+
+type SweepReclaimSummary = {
+  sample_count: number;
+  reclaim_rate: number | null;
+  continuation_rate: number | null;
+  median_follow_through_pct: number | null;
+};
+
+type SweepReclaimRow = {
+  first_bo_direction: string;
+  sample_count: number;
+  reclaim_rate: number | null;
+  continuation_rate: number | null;
+  median_follow_through_pct: number | null;
+};
+
 type LatestRangeRow = {
   trading_date: string;
   range_high: number;
@@ -569,6 +609,163 @@ function getLatestRangeSql(rangeWhere: string) {
   `;
 }
 
+function getExecutionQualitySummarySql(tradeWhere: string) {
+  return `
+    WITH rt AS (
+      SELECT
+        *,
+        CAST(DATEDIFF('minute', entry_time, exit_time) AS DOUBLE) AS hold_minutes
+      FROM range_trades
+      ${tradeWhere}
+      ${tradeWhere ? 'AND' : 'WHERE'} entry_triggered
+        AND entry_time IS NOT NULL
+        AND exit_time IS NOT NULL
+    )
+    SELECT
+      CAST(COUNT(*) AS DOUBLE) AS sample_count,
+      CAST(SUM(CASE WHEN pnl_r_multiple > 0 THEN 1 ELSE 0 END) AS DOUBLE) AS winner_count,
+      CAST(SUM(CASE WHEN pnl_r_multiple <= 0 THEN 1 ELSE 0 END) AS DOUBLE) AS loser_count,
+      CAST(quantile_cont(CASE WHEN pnl_r_multiple <= 0 THEN hold_minutes END, 0.5) AS DOUBLE) AS loss_median_min,
+      CAST(quantile_cont(CASE WHEN pnl_r_multiple <= 0 THEN hold_minutes END, 0.9) AS DOUBLE) AS loss_p90_min,
+      CAST(
+        AVG(
+          CASE
+            WHEN pnl_r_multiple > 0 AND mae_time_minutes IS NOT NULL AND mfe_time_minutes IS NOT NULL
+              THEN CASE WHEN mae_time_minutes < mfe_time_minutes THEN 1.0 ELSE 0.0 END
+            ELSE NULL
+          END
+        ) * 100 AS DOUBLE
+      ) AS mae_before_mfe_winner_pct
+    FROM rt
+  `;
+}
+
+function getExecutionQualityByStrategySql(tradeWhereWithoutStrategy: string) {
+  return `
+    WITH rt AS (
+      SELECT
+        *,
+        CAST(DATEDIFF('minute', entry_time, exit_time) AS DOUBLE) AS hold_minutes
+      FROM range_trades
+      ${tradeWhereWithoutStrategy}
+      ${tradeWhereWithoutStrategy ? 'AND' : 'WHERE'} entry_triggered
+        AND entry_time IS NOT NULL
+        AND exit_time IS NOT NULL
+    )
+    SELECT
+      strategy_name,
+      CAST(COUNT(*) AS DOUBLE) AS sample_count,
+      CAST(quantile_cont(CASE WHEN pnl_r_multiple <= 0 THEN hold_minutes END, 0.5) AS DOUBLE) AS loss_median_min,
+      CAST(quantile_cont(CASE WHEN pnl_r_multiple <= 0 THEN hold_minutes END, 0.9) AS DOUBLE) AS loss_p90_min,
+      CAST(
+        AVG(
+          CASE
+            WHEN pnl_r_multiple > 0 AND mae_time_minutes IS NOT NULL AND mfe_time_minutes IS NOT NULL
+              THEN CASE WHEN mae_time_minutes < mfe_time_minutes THEN 1.0 ELSE 0.0 END
+            ELSE NULL
+          END
+        ) * 100 AS DOUBLE
+      ) AS mae_before_mfe_winner_pct
+    FROM rt
+    GROUP BY strategy_name
+    ORDER BY sample_count DESC, strategy_name ASC
+  `;
+}
+
+function getSessionExpectancySql(tradeWhere: string) {
+  return `
+    WITH rt AS (
+      SELECT
+        *,
+        CASE
+          WHEN entry_time IS NULL THEN 'UNKNOWN'
+          WHEN EXTRACT(hour FROM entry_time) * 60 + EXTRACT(minute FROM entry_time) < 690 THEN 'OPEN_DRIVE'
+          WHEN EXTRACT(hour FROM entry_time) * 60 + EXTRACT(minute FROM entry_time) < 810 THEN 'LATE_MORNING'
+          WHEN EXTRACT(hour FROM entry_time) * 60 + EXTRACT(minute FROM entry_time) < 870 THEN 'LUNCH'
+          WHEN EXTRACT(hour FROM entry_time) * 60 + EXTRACT(minute FROM entry_time) < 900 THEN 'PRE_POWER_HOUR'
+          WHEN EXTRACT(hour FROM entry_time) * 60 + EXTRACT(minute FROM entry_time) < 960 THEN 'POWER_HOUR'
+          ELSE 'OTHER'
+        END AS session_segment
+      FROM range_trades
+      ${tradeWhere}
+      ${tradeWhere ? 'AND' : 'WHERE'} entry_triggered
+        AND pnl_r_multiple IS NOT NULL
+    )
+    SELECT
+      session_segment,
+      CAST(COUNT(*) AS DOUBLE) AS sample_count,
+      CAST(AVG(CASE WHEN pnl_r_multiple > 0 THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS win_rate,
+      CAST(AVG(pnl_r_multiple) AS DOUBLE) AS avg_r,
+      CAST(quantile_cont(pnl_r_multiple, 0.5) AS DOUBLE) AS median_r
+    FROM rt
+    GROUP BY session_segment
+    ORDER BY CASE session_segment
+      WHEN 'OPEN_DRIVE' THEN 1
+      WHEN 'LATE_MORNING' THEN 2
+      WHEN 'LUNCH' THEN 3
+      WHEN 'PRE_POWER_HOUR' THEN 4
+      WHEN 'POWER_HOUR' THEN 5
+      WHEN 'OTHER' THEN 6
+      ELSE 7
+    END
+  `;
+}
+
+function getSweepReclaimSummarySql(rangeWhere: string) {
+  return `
+    WITH rr AS (
+      SELECT *
+      FROM range_records
+      ${rangeWhere}
+      ${rangeWhere ? 'AND' : 'WHERE'} first_bo_direction IN ('UP', 'DOWN')
+    )
+    SELECT
+      CAST(COUNT(*) AS DOUBLE) AS sample_count,
+      CAST(AVG(CASE WHEN first_bo_retested_boundary THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS reclaim_rate,
+      CAST(AVG(CASE WHEN final_direction = first_bo_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS continuation_rate,
+      CAST(
+        quantile_cont(
+          CASE
+            WHEN first_bo_direction = 'UP' THEN max_excursion_up_pct
+            WHEN first_bo_direction = 'DOWN' THEN max_excursion_dn_pct
+            ELSE NULL
+          END,
+          0.5
+        ) AS DOUBLE
+      ) AS median_follow_through_pct
+    FROM rr
+  `;
+}
+
+function getSweepReclaimDirectionSql(rangeWhere: string) {
+  return `
+    WITH rr AS (
+      SELECT *
+      FROM range_records
+      ${rangeWhere}
+      ${rangeWhere ? 'AND' : 'WHERE'} first_bo_direction IN ('UP', 'DOWN')
+    )
+    SELECT
+      first_bo_direction,
+      CAST(COUNT(*) AS DOUBLE) AS sample_count,
+      CAST(AVG(CASE WHEN first_bo_retested_boundary THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS reclaim_rate,
+      CAST(AVG(CASE WHEN final_direction = first_bo_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS continuation_rate,
+      CAST(
+        quantile_cont(
+          CASE
+            WHEN first_bo_direction = 'UP' THEN max_excursion_up_pct
+            WHEN first_bo_direction = 'DOWN' THEN max_excursion_dn_pct
+            ELSE NULL
+          END,
+          0.5
+        ) AS DOUBLE
+      ) AS median_follow_through_pct
+    FROM rr
+    GROUP BY first_bo_direction
+    ORDER BY CASE first_bo_direction WHEN 'UP' THEN 1 WHEN 'DOWN' THEN 2 ELSE 3 END
+  `;
+}
+
 function formatPct(value: number | null | undefined, digits = 1) {
   if (value == null || Number.isNaN(value)) return '--';
   return `${value.toFixed(digits)}%`;
@@ -669,6 +866,11 @@ export default function RangeAnalyticsPage() {
   const [bothSidesConditionRows, setBothSidesConditionRows] = useState<BothSidesConditionRow[]>([]);
   const [meanReversionSummary, setMeanReversionSummary] = useState<MeanReversionSummary | null>(null);
   const [meanReversionRows, setMeanReversionRows] = useState<MeanReversionRow[]>([]);
+  const [executionQualitySummary, setExecutionQualitySummary] = useState<ExecutionQualitySummary | null>(null);
+  const [executionQualityRows, setExecutionQualityRows] = useState<ExecutionQualityRow[]>([]);
+  const [sessionExpectancyRows, setSessionExpectancyRows] = useState<SessionExpectancyRow[]>([]);
+  const [sweepReclaimSummary, setSweepReclaimSummary] = useState<SweepReclaimSummary | null>(null);
+  const [sweepReclaimRows, setSweepReclaimRows] = useState<SweepReclaimRow[]>([]);
   const [latestRange, setLatestRange] = useState<LatestRangeRow | null>(null);
   const [gexMacro, setGexMacro] = useState<GexMacroData | null>(null);
   const [gexSymbolOverride, setGexSymbolOverride] = useState('NQ1');
@@ -730,7 +932,7 @@ export default function RangeAnalyticsPage() {
       const tradeWhere = buildTradeWhere(deferredFilters);
       const tradeWhereNoStrategy = buildTradeWhere(deferredFilters, undefined, false);
 
-      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows, bothSidesConditionLiftRows, meanReversionSummaryRows, meanReversionDirectionRows, latestRangeRows] = await Promise.all([
+      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows, bothSidesConditionLiftRows, meanReversionSummaryRows, meanReversionDirectionRows, executionSummaryRows, executionByStrategyRows, sessionExpectancyTableRows, sweepReclaimSummaryRows, sweepReclaimDirectionRows, latestRangeRows] = await Promise.all([
         runQuery<OverviewMetrics>(getOverviewSql(rangeWhere, tradeWhere)),
         runQuery<WidthDistributionRow>(getWidthDistributionSql(rangeWhere)),
         runQuery<DirectionRow>(getDirectionSql(rangeWhere, 'first_bo_direction')),
@@ -743,6 +945,11 @@ export default function RangeAnalyticsPage() {
         runQuery<BothSidesConditionRow>(getBothSidesConditionSql(rangeWhere)),
         runQuery<MeanReversionSummary>(getMeanReversionSummarySql(rangeWhere, tradeWhereNoStrategy)),
         runQuery<MeanReversionRow>(getMeanReversionDirectionSql(rangeWhere)),
+        runQuery<ExecutionQualitySummary>(getExecutionQualitySummarySql(tradeWhere)),
+        runQuery<ExecutionQualityRow>(getExecutionQualityByStrategySql(tradeWhereNoStrategy)),
+        runQuery<SessionExpectancyRow>(getSessionExpectancySql(tradeWhere)),
+        runQuery<SweepReclaimSummary>(getSweepReclaimSummarySql(rangeWhere)),
+        runQuery<SweepReclaimRow>(getSweepReclaimDirectionSql(rangeWhere)),
         runQuery<LatestRangeRow>(getLatestRangeSql(rangeWhere)),
       ]);
 
@@ -758,6 +965,11 @@ export default function RangeAnalyticsPage() {
       setBothSidesConditionRows(bothSidesConditionLiftRows);
       setMeanReversionSummary((meanReversionSummaryRows[0] as MeanReversionSummary) ?? null);
       setMeanReversionRows(meanReversionDirectionRows);
+      setExecutionQualitySummary((executionSummaryRows[0] as ExecutionQualitySummary) ?? null);
+      setExecutionQualityRows(executionByStrategyRows);
+      setSessionExpectancyRows(sessionExpectancyTableRows);
+      setSweepReclaimSummary((sweepReclaimSummaryRows[0] as SweepReclaimSummary) ?? null);
+      setSweepReclaimRows(sweepReclaimDirectionRows);
       setLatestRange((latestRangeRows[0] as LatestRangeRow) ?? null);
       setQueryTimeMs(performance.now() - startedAt);
     } catch (error) {
@@ -1230,6 +1442,33 @@ export default function RangeAnalyticsPage() {
             <Activity className="h-5 w-5 text-fuchsia-300" />
           </div>
 
+          <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              label="Median Minutes to Loss"
+              value={executionQualitySummary && executionQualitySummary.loss_median_min != null ? `${executionQualitySummary.loss_median_min.toFixed(1)}m` : '--'}
+              accent="text-rose-300"
+              sublabel={executionQualitySummary ? `${Math.round(executionQualitySummary.loser_count).toLocaleString()} losing trades` : undefined}
+            />
+            <StatCard
+              label="P90 Minutes to Loss"
+              value={executionQualitySummary && executionQualitySummary.loss_p90_min != null ? `${executionQualitySummary.loss_p90_min.toFixed(1)}m` : '--'}
+              accent="text-amber-300"
+              sublabel="Tail of slow-failing losers"
+            />
+            <StatCard
+              label="MAE Before MFE (Winners)"
+              value={executionQualitySummary ? formatPct(executionQualitySummary.mae_before_mfe_winner_pct) : '--'}
+              accent="text-cyan-300"
+              sublabel={executionQualitySummary ? `${Math.round(executionQualitySummary.winner_count).toLocaleString()} winning trades` : undefined}
+            />
+            <StatCard
+              label="Execution Sample"
+              value={executionQualitySummary ? Math.round(executionQualitySummary.sample_count).toLocaleString() : '--'}
+              accent="text-emerald-300"
+              sublabel="Entry-triggered trades with valid timestamps"
+            />
+          </div>
+
           <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
             <div className="overflow-hidden rounded-xl border border-zinc-900">
               <table className="min-w-full divide-y divide-zinc-900 text-sm">
@@ -1309,6 +1548,60 @@ export default function RangeAnalyticsPage() {
                 />
               </div>
             </div>
+          </div>
+
+          <div className="mt-6 overflow-hidden rounded-xl border border-zinc-900">
+            <table className="min-w-full divide-y divide-zinc-900 text-sm">
+              <thead className="bg-zinc-950/80 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                <tr>
+                  <th className="px-4 py-3 text-left">Strategy</th>
+                  <th className="px-4 py-3 text-right">N</th>
+                  <th className="px-4 py-3 text-right">Median Loss Min</th>
+                  <th className="px-4 py-3 text-right">P90 Loss Min</th>
+                  <th className="px-4 py-3 text-right">MAE→MFE Winner %</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-900 bg-black/20">
+                {executionQualityRows.map((row) => (
+                  <tr key={`exec-${row.strategy_name}`}>
+                    <td className="px-4 py-3 font-medium text-zinc-200">{row.strategy_name}</td>
+                    <td className="px-4 py-3 text-right text-zinc-300">{Math.round(row.sample_count).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right text-rose-300">{row.loss_median_min != null ? `${row.loss_median_min.toFixed(1)}m` : '--'}</td>
+                    <td className="px-4 py-3 text-right text-amber-300">{row.loss_p90_min != null ? `${row.loss_p90_min.toFixed(1)}m` : '--'}</td>
+                    <td className="px-4 py-3 text-right text-cyan-300">{formatPct(row.mae_before_mfe_winner_pct)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-6 overflow-hidden rounded-xl border border-zinc-900">
+            <table className="min-w-full divide-y divide-zinc-900 text-sm">
+              <thead className="bg-zinc-950/80 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                <tr>
+                  <th className="px-4 py-3 text-left">Entry Session Segment</th>
+                  <th className="px-4 py-3 text-right">N</th>
+                  <th className="px-4 py-3 text-right">Win %</th>
+                  <th className="px-4 py-3 text-right">Avg R</th>
+                  <th className="px-4 py-3 text-right">Median R</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-900 bg-black/20">
+                {sessionExpectancyRows.map((row) => (
+                  <tr key={`session-exp-${row.session_segment}`}>
+                    <td className="px-4 py-3 font-medium text-zinc-200">{row.session_segment}</td>
+                    <td className="px-4 py-3 text-right text-zinc-300">{Math.round(row.sample_count).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right text-cyan-300">{formatPct(row.win_rate)}</td>
+                    <td className={`px-4 py-3 text-right ${row.avg_r != null && row.avg_r >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      {formatNumber(row.avg_r)}
+                    </td>
+                    <td className={`px-4 py-3 text-right ${row.median_r != null && row.median_r >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      {formatNumber(row.median_r)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </Card>
 
@@ -1417,6 +1710,67 @@ export default function RangeAnalyticsPage() {
                     <td className={`px-4 py-3 text-right ${row.lift >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
                       {`${row.lift >= 0 ? '+' : ''}${row.lift.toFixed(1)}pp`}
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <Card className="border-zinc-900 bg-black/30 p-5">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">Sweep → Reclaim Efficiency</div>
+              <h2 className="mt-1 text-lg font-semibold">Boundary reclaim quality after first sweep</h2>
+            </div>
+            <ArrowRight className="h-5 w-5 text-cyan-300" />
+          </div>
+
+          <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              label="Sweep Sample"
+              value={sweepReclaimSummary ? Math.round(sweepReclaimSummary.sample_count).toLocaleString() : '--'}
+              accent="text-zinc-200"
+            />
+            <StatCard
+              label="Reclaim Rate"
+              value={sweepReclaimSummary ? formatPct(sweepReclaimSummary.reclaim_rate) : '--'}
+              accent="text-cyan-300"
+              sublabel="Retested broken boundary"
+            />
+            <StatCard
+              label="Continuation Rate"
+              value={sweepReclaimSummary ? formatPct(sweepReclaimSummary.continuation_rate) : '--'}
+              accent="text-emerald-300"
+              sublabel="Final direction matched first break"
+            />
+            <StatCard
+              label="Median Follow-Through"
+              value={sweepReclaimSummary && sweepReclaimSummary.median_follow_through_pct != null ? `${sweepReclaimSummary.median_follow_through_pct.toFixed(1)}%` : '--'}
+              accent="text-amber-300"
+              sublabel="Directional excursion (% of range width)"
+            />
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-zinc-900">
+            <table className="min-w-full divide-y divide-zinc-900 text-sm">
+              <thead className="bg-zinc-950/80 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                <tr>
+                  <th className="px-4 py-3 text-left">First Sweep Direction</th>
+                  <th className="px-4 py-3 text-right">N</th>
+                  <th className="px-4 py-3 text-right">Reclaim %</th>
+                  <th className="px-4 py-3 text-right">Continuation %</th>
+                  <th className="px-4 py-3 text-right">Median Follow-Through %</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-900 bg-black/20">
+                {sweepReclaimRows.map((row) => (
+                  <tr key={`sweep-reclaim-${row.first_bo_direction}`}>
+                    <td className="px-4 py-3 font-medium text-zinc-200">{row.first_bo_direction}</td>
+                    <td className="px-4 py-3 text-right text-zinc-300">{Math.round(row.sample_count).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right text-cyan-300">{formatPct(row.reclaim_rate)}</td>
+                    <td className="px-4 py-3 text-right text-emerald-300">{formatPct(row.continuation_rate)}</td>
+                    <td className="px-4 py-3 text-right text-amber-300">{row.median_follow_through_pct != null ? `${row.median_follow_through_pct.toFixed(1)}%` : '--'}</td>
                   </tr>
                 ))}
               </tbody>
