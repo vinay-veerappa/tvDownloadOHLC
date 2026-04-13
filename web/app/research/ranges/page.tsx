@@ -231,6 +231,25 @@ type EdgeStabilityRow = {
   drawdown_duration_days: number | null;
 };
 
+type BoundaryPerformanceSummary = {
+  sample_count: number;
+  avg_wick_excursion_pct: number | null;
+  median_wick_excursion_pct: number | null;
+  close_acceptance_rate: number | null;
+  failed_breakout_rate: number | null;
+};
+
+type BoundaryPerformanceRow = {
+  first_boundary_broken: string;
+  sample_count: number;
+  avg_wick_excursion_pct: number | null;
+  median_wick_excursion_pct: number | null;
+  close_acceptance_rate: number | null;
+  failed_breakout_rate: number | null;
+  strategy_win_rate: number | null;
+  strategy_avg_r: number | null;
+};
+
 type LatestRangeRow = {
   trading_date: string;
   range_high: number;
@@ -1078,6 +1097,100 @@ function getEdgeStabilitySeriesSql(tradeWhere: string) {
   `;
 }
 
+function getBoundaryPerformanceSummarySql(rangeWhere: string) {
+  return `
+    WITH rr AS (
+      SELECT *
+      FROM range_records
+      ${rangeWhere}
+      ${rangeWhere ? 'AND' : 'WHERE'} first_bo_direction IN ('UP', 'DOWN')
+    ),
+    scored AS (
+      SELECT
+        CASE
+          WHEN first_bo_direction = 'UP' THEN max_excursion_up_pct
+          WHEN first_bo_direction = 'DOWN' THEN max_excursion_dn_pct
+          ELSE NULL
+        END AS wick_excursion_pct,
+        CASE WHEN final_direction = first_bo_direction THEN 1.0 ELSE 0.0 END AS close_accepted,
+        CASE WHEN first_bo_failed THEN 1.0 ELSE 0.0 END AS failed_breakout
+      FROM rr
+    )
+    SELECT
+      CAST(COUNT(*) AS DOUBLE) AS sample_count,
+      CAST(AVG(wick_excursion_pct) AS DOUBLE) AS avg_wick_excursion_pct,
+      CAST(quantile_cont(wick_excursion_pct, 0.5) AS DOUBLE) AS median_wick_excursion_pct,
+      CAST(AVG(close_accepted) * 100 AS DOUBLE) AS close_acceptance_rate,
+      CAST(AVG(failed_breakout) * 100 AS DOUBLE) AS failed_breakout_rate
+    FROM scored
+  `;
+}
+
+function getBoundaryPerformanceByBoundarySql(rangeWhere: string, tradeWhereNoStrategy: string) {
+  return `
+    WITH rr AS (
+      SELECT *
+      FROM range_records
+      ${rangeWhere}
+      ${rangeWhere ? 'AND' : 'WHERE'} first_bo_direction IN ('UP', 'DOWN')
+    ),
+    agg AS (
+      SELECT
+        COALESCE(first_boundary_broken, 'NONE') AS first_boundary_broken,
+        CAST(COUNT(*) AS DOUBLE) AS sample_count,
+        CAST(
+          AVG(
+            CASE
+              WHEN first_bo_direction = 'UP' THEN max_excursion_up_pct
+              WHEN first_bo_direction = 'DOWN' THEN max_excursion_dn_pct
+              ELSE NULL
+            END
+          ) AS DOUBLE
+        ) AS avg_wick_excursion_pct,
+        CAST(
+          quantile_cont(
+            CASE
+              WHEN first_bo_direction = 'UP' THEN max_excursion_up_pct
+              WHEN first_bo_direction = 'DOWN' THEN max_excursion_dn_pct
+              ELSE NULL
+            END,
+            0.5
+          ) AS DOUBLE
+        ) AS median_wick_excursion_pct,
+        CAST(AVG(CASE WHEN final_direction = first_bo_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS close_acceptance_rate,
+        CAST(AVG(CASE WHEN first_bo_failed THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS failed_breakout_rate
+      FROM rr
+      GROUP BY COALESCE(first_boundary_broken, 'NONE')
+    ),
+    trade_agg AS (
+      SELECT
+        COALESCE(rr.first_boundary_broken, 'NONE') AS first_boundary_broken,
+        CAST(AVG(CASE WHEN rt.entry_triggered THEN CASE WHEN rt.pnl_r_multiple > 0 THEN 1.0 ELSE 0.0 END END) * 100 AS DOUBLE) AS strategy_win_rate,
+        CAST(AVG(CASE WHEN rt.entry_triggered THEN rt.pnl_r_multiple END) AS DOUBLE) AS strategy_avg_r
+      FROM range_trades rt
+      JOIN rr
+        ON rr.symbol = rt.symbol
+       AND rr.range_name = rt.range_name
+       AND rr.trading_date = rt.trading_date
+      ${tradeWhereNoStrategy}
+      GROUP BY COALESCE(rr.first_boundary_broken, 'NONE')
+    )
+    SELECT
+      a.first_boundary_broken,
+      a.sample_count,
+      a.avg_wick_excursion_pct,
+      a.median_wick_excursion_pct,
+      a.close_acceptance_rate,
+      a.failed_breakout_rate,
+      t.strategy_win_rate,
+      t.strategy_avg_r
+    FROM agg a
+    LEFT JOIN trade_agg t
+      ON t.first_boundary_broken = a.first_boundary_broken
+    ORDER BY CASE a.first_boundary_broken WHEN 'HIGH' THEN 1 WHEN 'LOW' THEN 2 ELSE 3 END
+  `;
+}
+
 function formatPct(value: number | null | undefined, digits = 1) {
   if (value == null || Number.isNaN(value)) return '--';
   return `${value.toFixed(digits)}%`;
@@ -1188,6 +1301,8 @@ export default function RangeAnalyticsPage() {
   const [volatilityExcursionSummary, setVolatilityExcursionSummary] = useState<VolatilityExcursionSummary | null>(null);
   const [edgeStabilitySummary, setEdgeStabilitySummary] = useState<EdgeStabilitySummary | null>(null);
   const [edgeStabilityRows, setEdgeStabilityRows] = useState<EdgeStabilityRow[]>([]);
+  const [boundaryPerformanceSummary, setBoundaryPerformanceSummary] = useState<BoundaryPerformanceSummary | null>(null);
+  const [boundaryPerformanceRows, setBoundaryPerformanceRows] = useState<BoundaryPerformanceRow[]>([]);
   const [latestRange, setLatestRange] = useState<LatestRangeRow | null>(null);
   const [gexMacro, setGexMacro] = useState<GexMacroData | null>(null);
   const [gexSymbolOverride, setGexSymbolOverride] = useState('NQ1');
@@ -1249,7 +1364,7 @@ export default function RangeAnalyticsPage() {
       const tradeWhere = buildTradeWhere(deferredFilters);
       const tradeWhereNoStrategy = buildTradeWhere(deferredFilters, undefined, false);
 
-      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows, bothSidesConditionLiftRows, meanReversionSummaryRows, meanReversionDirectionRows, executionSummaryRows, executionByStrategyRows, sessionExpectancyTableRows, sweepReclaimSummaryRows, sweepReclaimDirectionRows, breakoutAcceptanceSummaryRows, breakoutAcceptanceDirectionRows, volatilityExcursionRows, edgeStabilitySummaryRows, edgeStabilitySeriesRows, latestRangeRows] = await Promise.all([
+      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows, bothSidesConditionLiftRows, meanReversionSummaryRows, meanReversionDirectionRows, executionSummaryRows, executionByStrategyRows, sessionExpectancyTableRows, sweepReclaimSummaryRows, sweepReclaimDirectionRows, breakoutAcceptanceSummaryRows, breakoutAcceptanceDirectionRows, volatilityExcursionRows, edgeStabilitySummaryRows, edgeStabilitySeriesRows, boundaryPerformanceSummaryRows, boundaryPerformanceByBoundaryRows, latestRangeRows] = await Promise.all([
         runQuery<OverviewMetrics>(getOverviewSql(rangeWhere, tradeWhere)),
         runQuery<WidthDistributionRow>(getWidthDistributionSql(rangeWhere)),
         runQuery<DirectionRow>(getDirectionSql(rangeWhere, 'first_bo_direction')),
@@ -1272,6 +1387,8 @@ export default function RangeAnalyticsPage() {
         runQuery<VolatilityExcursionSummary>(getVolatilityExcursionSql(rangeWhere)),
         runQuery<EdgeStabilitySummary>(getEdgeStabilitySummarySql(tradeWhere)),
         runQuery<EdgeStabilityRow>(getEdgeStabilitySeriesSql(tradeWhere)),
+        runQuery<BoundaryPerformanceSummary>(getBoundaryPerformanceSummarySql(rangeWhere)),
+        runQuery<BoundaryPerformanceRow>(getBoundaryPerformanceByBoundarySql(rangeWhere, tradeWhereNoStrategy)),
         runQuery<LatestRangeRow>(getLatestRangeSql(rangeWhere)),
       ]);
 
@@ -1297,6 +1414,8 @@ export default function RangeAnalyticsPage() {
       setVolatilityExcursionSummary((volatilityExcursionRows[0] as VolatilityExcursionSummary) ?? null);
       setEdgeStabilitySummary((edgeStabilitySummaryRows[0] as EdgeStabilitySummary) ?? null);
       setEdgeStabilityRows(edgeStabilitySeriesRows);
+      setBoundaryPerformanceSummary((boundaryPerformanceSummaryRows[0] as BoundaryPerformanceSummary) ?? null);
+      setBoundaryPerformanceRows(boundaryPerformanceByBoundaryRows);
       setLatestRange((latestRangeRows[0] as LatestRangeRow) ?? null);
       setQueryTimeMs(performance.now() - startedAt);
     } catch (error) {
@@ -2170,6 +2289,74 @@ export default function RangeAnalyticsPage() {
                     <td className="px-4 py-3 text-right text-rose-300">{formatPct(row.fail_rate)}</td>
                     <td className="px-4 py-3 text-right text-emerald-300">{formatPct(row.continuation_rate)}</td>
                     <td className="px-4 py-3 text-right text-fuchsia-300">{row.median_pullback_pct != null ? `${row.median_pullback_pct.toFixed(1)}%` : '--'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <Card className="border-zinc-900 bg-black/30 p-5">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">By Performance</div>
+              <h2 className="mt-1 text-lg font-semibold">First-boundary context and breakout performance quality</h2>
+            </div>
+            <ArrowRight className="h-5 w-5 text-emerald-300" />
+          </div>
+
+          <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              label="Avg Wick Excursion"
+              value={boundaryPerformanceSummary && boundaryPerformanceSummary.avg_wick_excursion_pct != null ? `${boundaryPerformanceSummary.avg_wick_excursion_pct.toFixed(1)}%` : '--'}
+              accent="text-cyan-300"
+              sublabel="Directional wick extension (% of range width)"
+            />
+            <StatCard
+              label="Median Wick Excursion"
+              value={boundaryPerformanceSummary && boundaryPerformanceSummary.median_wick_excursion_pct != null ? `${boundaryPerformanceSummary.median_wick_excursion_pct.toFixed(1)}%` : '--'}
+              accent="text-amber-300"
+            />
+            <StatCard
+              label="Close Acceptance"
+              value={boundaryPerformanceSummary ? formatPct(boundaryPerformanceSummary.close_acceptance_rate) : '--'}
+              accent="text-emerald-300"
+              sublabel={boundaryPerformanceSummary ? `${Math.round(boundaryPerformanceSummary.sample_count).toLocaleString()} breakout rows` : undefined}
+            />
+            <StatCard
+              label="Failed Breakout"
+              value={boundaryPerformanceSummary ? formatPct(boundaryPerformanceSummary.failed_breakout_rate) : '--'}
+              accent="text-rose-300"
+            />
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-zinc-900">
+            <table className="min-w-full divide-y divide-zinc-900 text-sm">
+              <thead className="bg-zinc-950/80 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                <tr>
+                  <th className="px-4 py-3 text-left">First Boundary Broken</th>
+                  <th className="px-4 py-3 text-right">N</th>
+                  <th className="px-4 py-3 text-right">Avg Wick %</th>
+                  <th className="px-4 py-3 text-right">Median Wick %</th>
+                  <th className="px-4 py-3 text-right">Close Acceptance %</th>
+                  <th className="px-4 py-3 text-right">Failed %</th>
+                  <th className="px-4 py-3 text-right">Strategy Win %</th>
+                  <th className="px-4 py-3 text-right">Strategy Avg R</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-900 bg-black/20">
+                {boundaryPerformanceRows.map((row) => (
+                  <tr key={`boundary-perf-${row.first_boundary_broken}`}>
+                    <td className="px-4 py-3 font-medium text-zinc-200">{row.first_boundary_broken}</td>
+                    <td className="px-4 py-3 text-right text-zinc-300">{Math.round(row.sample_count).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right text-cyan-300">{row.avg_wick_excursion_pct != null ? `${row.avg_wick_excursion_pct.toFixed(1)}%` : '--'}</td>
+                    <td className="px-4 py-3 text-right text-amber-300">{row.median_wick_excursion_pct != null ? `${row.median_wick_excursion_pct.toFixed(1)}%` : '--'}</td>
+                    <td className="px-4 py-3 text-right text-emerald-300">{formatPct(row.close_acceptance_rate)}</td>
+                    <td className="px-4 py-3 text-right text-rose-300">{formatPct(row.failed_breakout_rate)}</td>
+                    <td className="px-4 py-3 text-right text-fuchsia-300">{formatPct(row.strategy_win_rate)}</td>
+                    <td className={`px-4 py-3 text-right ${row.strategy_avg_r != null && row.strategy_avg_r >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      {formatNumber(row.strategy_avg_r)}
+                    </td>
                   </tr>
                 ))}
               </tbody>

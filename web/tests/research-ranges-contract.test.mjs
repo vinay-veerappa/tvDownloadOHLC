@@ -74,3 +74,11 @@ test('ranges page includes edge stability diagnostics', () => {
   mustInclude('Ruin Proxy (10R/20d)', 'Missing edge stability ruin-proxy metric.');
   mustInclude('Max Drawdown', 'Missing max drawdown metric.');
 });
+
+test('ranges page includes first-boundary by-performance diagnostics', () => {
+  mustInclude('type BoundaryPerformanceSummary', 'Missing boundary performance summary type.');
+  mustInclude('function getBoundaryPerformanceSummarySql', 'Missing boundary performance summary SQL helper.');
+  mustInclude('function getBoundaryPerformanceByBoundarySql', 'Missing boundary performance by-boundary SQL helper.');
+  mustInclude('By Performance', 'Missing by-performance panel title.');
+  mustInclude('First Boundary Broken', 'Missing first-boundary-broken context table.');
+});
