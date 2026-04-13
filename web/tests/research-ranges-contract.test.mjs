@@ -48,3 +48,24 @@ test('ranges page includes sweep-reclaim efficiency decomposition', () => {
   mustInclude('Sweep → Reclaim Efficiency', 'Missing sweep-reclaim panel.');
   mustInclude('Median Follow-Through', 'Missing sweep-reclaim median follow-through metric.');
 });
+
+test('ranges page includes breakout acceptance quality diagnostics', () => {
+  mustInclude('type BreakoutAcceptanceSummary', 'Missing breakout acceptance summary type.');
+  mustInclude('function getBreakoutAcceptanceSummarySql', 'Missing breakout acceptance SQL helper.');
+  mustInclude('Breakout Acceptance', 'Missing breakout acceptance panel.');
+  mustInclude('2-Bar Hold Rate', 'Missing 2-bar hold metric.');
+});
+
+test('ranges page includes volatility-normalized excursion diagnostics', () => {
+  mustInclude('type VolatilityExcursionSummary', 'Missing volatility excursion summary type.');
+  mustInclude('function getVolatilityExcursionSql', 'Missing volatility excursion SQL helper.');
+  mustInclude('Volatility-Normalized Excursion', 'Missing volatility-normalized excursion panel.');
+  mustInclude('Directional/Adverse Ratio', 'Missing directional/adverse ratio metric.');
+});
+
+test('ranges page includes edge stability diagnostics', () => {
+  mustInclude('type EdgeStabilitySummary', 'Missing edge stability summary type.');
+  mustInclude('function getEdgeStabilitySummarySql', 'Missing edge stability summary SQL helper.');
+  mustInclude('Edge Stability', 'Missing edge stability panel.');
+  mustInclude('Win-Rate Z-Score', 'Missing edge stability z-score metric.');
+});

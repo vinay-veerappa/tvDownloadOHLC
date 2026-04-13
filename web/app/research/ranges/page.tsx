@@ -180,6 +180,46 @@ type SweepReclaimRow = {
   median_follow_through_pct: number | null;
 };
 
+type BreakoutAcceptanceSummary = {
+  sample_count: number;
+  hold_2bar_rate: number | null;
+  retest_rate: number | null;
+  fail_rate: number | null;
+  continuation_rate: number | null;
+};
+
+type BreakoutAcceptanceRow = {
+  first_bo_direction: string;
+  sample_count: number;
+  hold_2bar_rate: number | null;
+  retest_rate: number | null;
+  fail_rate: number | null;
+  continuation_rate: number | null;
+};
+
+type VolatilityExcursionSummary = {
+  sample_count: number;
+  avg_directional_excursion_pct: number | null;
+  avg_adverse_excursion_pct: number | null;
+  excursion_efficiency_pct: number | null;
+  directional_to_adverse_ratio: number | null;
+};
+
+type EdgeStabilitySummary = {
+  trading_date: string;
+  rolling_win_30: number | null;
+  rolling_win_90: number | null;
+  rolling_avg_r_30: number | null;
+  win_rate_zscore_30: number | null;
+};
+
+type EdgeStabilityRow = {
+  trading_date: string;
+  rolling_win_30: number | null;
+  rolling_win_90: number | null;
+  rolling_avg_r_30: number | null;
+};
+
 type LatestRangeRow = {
   trading_date: string;
   range_high: number;
@@ -766,6 +806,150 @@ function getSweepReclaimDirectionSql(rangeWhere: string) {
   `;
 }
 
+function getBreakoutAcceptanceSummarySql(rangeWhere: string) {
+  return `
+    WITH rr AS (
+      SELECT *
+      FROM range_records
+      ${rangeWhere}
+      ${rangeWhere ? 'AND' : 'WHERE'} first_bo_direction IN ('UP', 'DOWN')
+    )
+    SELECT
+      CAST(COUNT(*) AS DOUBLE) AS sample_count,
+      CAST(AVG(CASE WHEN first_bo_held THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS hold_2bar_rate,
+      CAST(AVG(CASE WHEN first_bo_retested_boundary THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS retest_rate,
+      CAST(AVG(CASE WHEN first_bo_failed THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS fail_rate,
+      CAST(AVG(CASE WHEN final_direction = first_bo_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS continuation_rate
+    FROM rr
+  `;
+}
+
+function getBreakoutAcceptanceDirectionSql(rangeWhere: string) {
+  return `
+    WITH rr AS (
+      SELECT *
+      FROM range_records
+      ${rangeWhere}
+      ${rangeWhere ? 'AND' : 'WHERE'} first_bo_direction IN ('UP', 'DOWN')
+    )
+    SELECT
+      first_bo_direction,
+      CAST(COUNT(*) AS DOUBLE) AS sample_count,
+      CAST(AVG(CASE WHEN first_bo_held THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS hold_2bar_rate,
+      CAST(AVG(CASE WHEN first_bo_retested_boundary THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS retest_rate,
+      CAST(AVG(CASE WHEN first_bo_failed THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS fail_rate,
+      CAST(AVG(CASE WHEN final_direction = first_bo_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS continuation_rate
+    FROM rr
+    GROUP BY first_bo_direction
+    ORDER BY CASE first_bo_direction WHEN 'UP' THEN 1 WHEN 'DOWN' THEN 2 ELSE 3 END
+  `;
+}
+
+function getVolatilityExcursionSql(rangeWhere: string) {
+  return `
+    WITH rr AS (
+      SELECT *
+      FROM range_records
+      ${rangeWhere}
+      ${rangeWhere ? 'AND' : 'WHERE'} first_bo_direction IN ('UP', 'DOWN')
+    ),
+    scored AS (
+      SELECT
+        CASE
+          WHEN first_bo_direction = 'UP' THEN max_excursion_up_pct
+          WHEN first_bo_direction = 'DOWN' THEN max_excursion_dn_pct
+          ELSE NULL
+        END AS directional_excursion_pct,
+        CASE
+          WHEN first_bo_direction = 'UP' THEN max_excursion_dn_pct
+          WHEN first_bo_direction = 'DOWN' THEN max_excursion_up_pct
+          ELSE NULL
+        END AS adverse_excursion_pct
+      FROM rr
+    )
+    SELECT
+      CAST(COUNT(*) AS DOUBLE) AS sample_count,
+      CAST(AVG(directional_excursion_pct) AS DOUBLE) AS avg_directional_excursion_pct,
+      CAST(AVG(adverse_excursion_pct) AS DOUBLE) AS avg_adverse_excursion_pct,
+      CAST(AVG(directional_excursion_pct) - AVG(adverse_excursion_pct) AS DOUBLE) AS excursion_efficiency_pct,
+      CAST(AVG(directional_excursion_pct) / NULLIF(AVG(adverse_excursion_pct), 0) AS DOUBLE) AS directional_to_adverse_ratio
+    FROM scored
+  `;
+}
+
+function getEdgeStabilitySummarySql(tradeWhere: string) {
+  return `
+    WITH rt AS (
+      SELECT *
+      FROM range_trades
+      ${tradeWhere}
+      ${tradeWhere ? 'AND' : 'WHERE'} entry_triggered
+        AND pnl_r_multiple IS NOT NULL
+    ),
+    daily AS (
+      SELECT
+        trading_date,
+        CAST(AVG(CASE WHEN pnl_r_multiple > 0 THEN 1.0 ELSE 0.0 END) AS DOUBLE) AS day_win_rate,
+        CAST(AVG(pnl_r_multiple) AS DOUBLE) AS day_avg_r
+      FROM rt
+      GROUP BY trading_date
+    ),
+    rolling AS (
+      SELECT
+        trading_date,
+        CAST(AVG(day_win_rate) OVER (ORDER BY trading_date ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) * 100 AS DOUBLE) AS rolling_win_30,
+        CAST(AVG(day_win_rate) OVER (ORDER BY trading_date ROWS BETWEEN 89 PRECEDING AND CURRENT ROW) * 100 AS DOUBLE) AS rolling_win_90,
+        CAST(AVG(day_avg_r) OVER (ORDER BY trading_date ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS DOUBLE) AS rolling_avg_r_30,
+        day_win_rate
+      FROM daily
+    ),
+    baseline AS (
+      SELECT
+        AVG(day_win_rate) AS baseline_win,
+        STDDEV_SAMP(day_win_rate) AS baseline_win_std
+      FROM daily
+    )
+    SELECT
+      r.trading_date,
+      r.rolling_win_30,
+      r.rolling_win_90,
+      r.rolling_avg_r_30,
+      CAST((r.day_win_rate - b.baseline_win) / NULLIF(b.baseline_win_std, 0) AS DOUBLE) AS win_rate_zscore_30
+    FROM rolling r
+    CROSS JOIN baseline b
+    ORDER BY r.trading_date DESC
+    LIMIT 1
+  `;
+}
+
+function getEdgeStabilitySeriesSql(tradeWhere: string) {
+  return `
+    WITH rt AS (
+      SELECT *
+      FROM range_trades
+      ${tradeWhere}
+      ${tradeWhere ? 'AND' : 'WHERE'} entry_triggered
+        AND pnl_r_multiple IS NOT NULL
+    ),
+    daily AS (
+      SELECT
+        trading_date,
+        CAST(AVG(CASE WHEN pnl_r_multiple > 0 THEN 1.0 ELSE 0.0 END) AS DOUBLE) AS day_win_rate,
+        CAST(AVG(pnl_r_multiple) AS DOUBLE) AS day_avg_r
+      FROM rt
+      GROUP BY trading_date
+    )
+    SELECT
+      trading_date,
+      CAST(AVG(day_win_rate) OVER (ORDER BY trading_date ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) * 100 AS DOUBLE) AS rolling_win_30,
+      CAST(AVG(day_win_rate) OVER (ORDER BY trading_date ROWS BETWEEN 89 PRECEDING AND CURRENT ROW) * 100 AS DOUBLE) AS rolling_win_90,
+      CAST(AVG(day_avg_r) OVER (ORDER BY trading_date ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS DOUBLE) AS rolling_avg_r_30
+    FROM daily
+    ORDER BY trading_date DESC
+    LIMIT 20
+  `;
+}
+
 function formatPct(value: number | null | undefined, digits = 1) {
   if (value == null || Number.isNaN(value)) return '--';
   return `${value.toFixed(digits)}%`;
@@ -871,6 +1055,11 @@ export default function RangeAnalyticsPage() {
   const [sessionExpectancyRows, setSessionExpectancyRows] = useState<SessionExpectancyRow[]>([]);
   const [sweepReclaimSummary, setSweepReclaimSummary] = useState<SweepReclaimSummary | null>(null);
   const [sweepReclaimRows, setSweepReclaimRows] = useState<SweepReclaimRow[]>([]);
+  const [breakoutAcceptanceSummary, setBreakoutAcceptanceSummary] = useState<BreakoutAcceptanceSummary | null>(null);
+  const [breakoutAcceptanceRows, setBreakoutAcceptanceRows] = useState<BreakoutAcceptanceRow[]>([]);
+  const [volatilityExcursionSummary, setVolatilityExcursionSummary] = useState<VolatilityExcursionSummary | null>(null);
+  const [edgeStabilitySummary, setEdgeStabilitySummary] = useState<EdgeStabilitySummary | null>(null);
+  const [edgeStabilityRows, setEdgeStabilityRows] = useState<EdgeStabilityRow[]>([]);
   const [latestRange, setLatestRange] = useState<LatestRangeRow | null>(null);
   const [gexMacro, setGexMacro] = useState<GexMacroData | null>(null);
   const [gexSymbolOverride, setGexSymbolOverride] = useState('NQ1');
@@ -932,7 +1121,7 @@ export default function RangeAnalyticsPage() {
       const tradeWhere = buildTradeWhere(deferredFilters);
       const tradeWhereNoStrategy = buildTradeWhere(deferredFilters, undefined, false);
 
-      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows, bothSidesConditionLiftRows, meanReversionSummaryRows, meanReversionDirectionRows, executionSummaryRows, executionByStrategyRows, sessionExpectancyTableRows, sweepReclaimSummaryRows, sweepReclaimDirectionRows, latestRangeRows] = await Promise.all([
+      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows, bothSidesConditionLiftRows, meanReversionSummaryRows, meanReversionDirectionRows, executionSummaryRows, executionByStrategyRows, sessionExpectancyTableRows, sweepReclaimSummaryRows, sweepReclaimDirectionRows, breakoutAcceptanceSummaryRows, breakoutAcceptanceDirectionRows, volatilityExcursionRows, edgeStabilitySummaryRows, edgeStabilitySeriesRows, latestRangeRows] = await Promise.all([
         runQuery<OverviewMetrics>(getOverviewSql(rangeWhere, tradeWhere)),
         runQuery<WidthDistributionRow>(getWidthDistributionSql(rangeWhere)),
         runQuery<DirectionRow>(getDirectionSql(rangeWhere, 'first_bo_direction')),
@@ -950,6 +1139,11 @@ export default function RangeAnalyticsPage() {
         runQuery<SessionExpectancyRow>(getSessionExpectancySql(tradeWhere)),
         runQuery<SweepReclaimSummary>(getSweepReclaimSummarySql(rangeWhere)),
         runQuery<SweepReclaimRow>(getSweepReclaimDirectionSql(rangeWhere)),
+        runQuery<BreakoutAcceptanceSummary>(getBreakoutAcceptanceSummarySql(rangeWhere)),
+        runQuery<BreakoutAcceptanceRow>(getBreakoutAcceptanceDirectionSql(rangeWhere)),
+        runQuery<VolatilityExcursionSummary>(getVolatilityExcursionSql(rangeWhere)),
+        runQuery<EdgeStabilitySummary>(getEdgeStabilitySummarySql(tradeWhere)),
+        runQuery<EdgeStabilityRow>(getEdgeStabilitySeriesSql(tradeWhere)),
         runQuery<LatestRangeRow>(getLatestRangeSql(rangeWhere)),
       ]);
 
@@ -970,6 +1164,11 @@ export default function RangeAnalyticsPage() {
       setSessionExpectancyRows(sessionExpectancyTableRows);
       setSweepReclaimSummary((sweepReclaimSummaryRows[0] as SweepReclaimSummary) ?? null);
       setSweepReclaimRows(sweepReclaimDirectionRows);
+      setBreakoutAcceptanceSummary((breakoutAcceptanceSummaryRows[0] as BreakoutAcceptanceSummary) ?? null);
+      setBreakoutAcceptanceRows(breakoutAcceptanceDirectionRows);
+      setVolatilityExcursionSummary((volatilityExcursionRows[0] as VolatilityExcursionSummary) ?? null);
+      setEdgeStabilitySummary((edgeStabilitySummaryRows[0] as EdgeStabilitySummary) ?? null);
+      setEdgeStabilityRows(edgeStabilitySeriesRows);
       setLatestRange((latestRangeRows[0] as LatestRangeRow) ?? null);
       setQueryTimeMs(performance.now() - startedAt);
     } catch (error) {
@@ -1777,6 +1976,169 @@ export default function RangeAnalyticsPage() {
             </table>
           </div>
         </Card>
+
+        <Card className="border-zinc-900 bg-black/30 p-5">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">Breakout Acceptance</div>
+              <h2 className="mt-1 text-lg font-semibold">Hold quality after boundary break</h2>
+            </div>
+            <Target className="h-5 w-5 text-amber-300" />
+          </div>
+
+          <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              label="2-Bar Hold Rate"
+              value={breakoutAcceptanceSummary ? formatPct(breakoutAcceptanceSummary.hold_2bar_rate) : '--'}
+              accent="text-cyan-300"
+              sublabel={breakoutAcceptanceSummary ? `${Math.round(breakoutAcceptanceSummary.sample_count).toLocaleString()} breakout rows` : undefined}
+            />
+            <StatCard
+              label="Retest Rate"
+              value={breakoutAcceptanceSummary ? formatPct(breakoutAcceptanceSummary.retest_rate) : '--'}
+              accent="text-amber-300"
+              sublabel="Broken boundary revisited"
+            />
+            <StatCard
+              label="Failure Rate"
+              value={breakoutAcceptanceSummary ? formatPct(breakoutAcceptanceSummary.fail_rate) : '--'}
+              accent="text-rose-300"
+              sublabel="Break failed back inside"
+            />
+            <StatCard
+              label="Continuation Rate"
+              value={breakoutAcceptanceSummary ? formatPct(breakoutAcceptanceSummary.continuation_rate) : '--'}
+              accent="text-emerald-300"
+              sublabel="Close aligned with first break"
+            />
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-zinc-900">
+            <table className="min-w-full divide-y divide-zinc-900 text-sm">
+              <thead className="bg-zinc-950/80 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                <tr>
+                  <th className="px-4 py-3 text-left">Break Direction</th>
+                  <th className="px-4 py-3 text-right">N</th>
+                  <th className="px-4 py-3 text-right">2-Bar Hold %</th>
+                  <th className="px-4 py-3 text-right">Retest %</th>
+                  <th className="px-4 py-3 text-right">Failure %</th>
+                  <th className="px-4 py-3 text-right">Continuation %</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-900 bg-black/20">
+                {breakoutAcceptanceRows.map((row) => (
+                  <tr key={`accept-${row.first_bo_direction}`}>
+                    <td className="px-4 py-3 font-medium text-zinc-200">{row.first_bo_direction}</td>
+                    <td className="px-4 py-3 text-right text-zinc-300">{Math.round(row.sample_count).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right text-cyan-300">{formatPct(row.hold_2bar_rate)}</td>
+                    <td className="px-4 py-3 text-right text-amber-300">{formatPct(row.retest_rate)}</td>
+                    <td className="px-4 py-3 text-right text-rose-300">{formatPct(row.fail_rate)}</td>
+                    <td className="px-4 py-3 text-right text-emerald-300">{formatPct(row.continuation_rate)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <div className="grid gap-6 xl:grid-cols-2">
+          <Card className="border-zinc-900 bg-black/30 p-5">
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">Volatility-Normalized Excursion</div>
+                <h2 className="mt-1 text-lg font-semibold">Directional vs adverse excursion efficiency</h2>
+              </div>
+              <BarChart3 className="h-5 w-5 text-cyan-300" />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <StatCard
+                label="Avg Directional Excursion"
+                value={volatilityExcursionSummary && volatilityExcursionSummary.avg_directional_excursion_pct != null ? `${volatilityExcursionSummary.avg_directional_excursion_pct.toFixed(1)}%` : '--'}
+                accent="text-emerald-300"
+                sublabel="% of range width"
+              />
+              <StatCard
+                label="Avg Adverse Excursion"
+                value={volatilityExcursionSummary && volatilityExcursionSummary.avg_adverse_excursion_pct != null ? `${volatilityExcursionSummary.avg_adverse_excursion_pct.toFixed(1)}%` : '--'}
+                accent="text-rose-300"
+                sublabel="% of range width"
+              />
+              <StatCard
+                label="Excursion Efficiency"
+                value={volatilityExcursionSummary && volatilityExcursionSummary.excursion_efficiency_pct != null ? `${volatilityExcursionSummary.excursion_efficiency_pct.toFixed(1)}%` : '--'}
+                accent="text-cyan-300"
+                sublabel="Directional minus adverse"
+              />
+              <StatCard
+                label="Directional/Adverse Ratio"
+                value={volatilityExcursionSummary ? formatNumber(volatilityExcursionSummary.directional_to_adverse_ratio) : '--'}
+                accent="text-amber-300"
+                sublabel={volatilityExcursionSummary ? `${Math.round(volatilityExcursionSummary.sample_count).toLocaleString()} rows` : undefined}
+              />
+            </div>
+          </Card>
+
+          <Card className="border-zinc-900 bg-black/30 p-5">
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">Edge Stability</div>
+                <h2 className="mt-1 text-lg font-semibold">Rolling performance health checks</h2>
+              </div>
+              <TrendingUp className="h-5 w-5 text-fuchsia-300" />
+            </div>
+
+            <div className="mb-5 grid gap-4 md:grid-cols-2">
+              <StatCard
+                label="Rolling Win 30"
+                value={edgeStabilitySummary ? formatPct(edgeStabilitySummary.rolling_win_30) : '--'}
+                accent="text-cyan-300"
+                sublabel={edgeStabilitySummary ? `As of ${edgeStabilitySummary.trading_date}` : undefined}
+              />
+              <StatCard
+                label="Rolling Win 90"
+                value={edgeStabilitySummary ? formatPct(edgeStabilitySummary.rolling_win_90) : '--'}
+                accent="text-emerald-300"
+              />
+              <StatCard
+                label="Rolling Avg R 30"
+                value={edgeStabilitySummary ? formatNumber(edgeStabilitySummary.rolling_avg_r_30) : '--'}
+                accent="text-amber-300"
+              />
+              <StatCard
+                label="Win-Rate Z-Score"
+                value={edgeStabilitySummary ? formatNumber(edgeStabilitySummary.win_rate_zscore_30) : '--'}
+                accent="text-fuchsia-300"
+                sublabel="Daily win-rate standard deviations from baseline"
+              />
+            </div>
+
+            <div className="overflow-hidden rounded-xl border border-zinc-900">
+              <table className="min-w-full divide-y divide-zinc-900 text-sm">
+                <thead className="bg-zinc-950/80 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Date</th>
+                    <th className="px-4 py-3 text-right">Win30 %</th>
+                    <th className="px-4 py-3 text-right">Win90 %</th>
+                    <th className="px-4 py-3 text-right">AvgR30</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-900 bg-black/20">
+                  {edgeStabilityRows.slice(0, 10).map((row) => (
+                    <tr key={`edge-${row.trading_date}`}>
+                      <td className="px-4 py-3 font-medium text-zinc-200">{row.trading_date}</td>
+                      <td className="px-4 py-3 text-right text-cyan-300">{formatPct(row.rolling_win_30)}</td>
+                      <td className="px-4 py-3 text-right text-emerald-300">{formatPct(row.rolling_win_90)}</td>
+                      <td className={`px-4 py-3 text-right ${row.rolling_avg_r_30 != null && row.rolling_avg_r_30 >= 0 ? 'text-amber-300' : 'text-rose-300'}`}>
+                        {formatNumber(row.rolling_avg_r_30)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
       </div>
     </div>
   );
