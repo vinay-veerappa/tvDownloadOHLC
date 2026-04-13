@@ -459,7 +459,7 @@ export default function ScreenerPage() {
           <span>
             <span className="inline-block w-3 h-2 rounded bg-red-300 mr-1" />&lt;52% (no edge)
           </span>
-          <span className="ml-auto">Confidence: MEDIUM = 2 of 5 signals aligned · HIGH = 3+</span>
+          <span className="ml-auto">Confidence: MEDIUM = |net vote| of 2 · HIGH = |net vote| of 3+ (6-signal model)</span>
         </div>
       </Card>
 

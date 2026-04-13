@@ -396,9 +396,10 @@ def compute_confluence(df: pd.DataFrame) -> pd.DataFrame:
     df.loc[df["total_vote"] >= 2,  "dominant_bias"] = "BULLISH"
     df.loc[df["total_vote"] <= -2, "dominant_bias"] = "BEARISH"
 
-    # confidence from max directional count (6 votes total)
-    max_count = df[["continuation_confluence_count", "reversal_confluence_count"]].max(axis=1)
-    conditions = [max_count >= 3, max_count == 2, max_count <= 1]
+    # confidence from net vote magnitude (6 votes total)
+    # This prevents contradictory labels like NEUTRAL + HIGH.
+    vote_abs = df["total_vote"].abs()
+    conditions = [vote_abs >= 3, vote_abs == 2, vote_abs <= 1]
     df["confidence"] = np.select(conditions, ["HIGH", "MEDIUM", "LOW"], default="LOW")
 
     # ── Clean up internal columns ─────────────────────────────────────────────
