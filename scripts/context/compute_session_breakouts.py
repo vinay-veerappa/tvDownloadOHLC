@@ -42,7 +42,10 @@ def _load_context(symbol: str) -> pd.DataFrame:
 
     df["trading_date"] = pd.to_datetime(df["trading_date"]).dt.date
     df["symbol"] = symbol
-    return df.sort_values("trading_date").reset_index(drop=True)
+    df = df.sort_values("trading_date")
+    # Keep the latest row per trading day to prevent ambiguous lookups downstream.
+    df = df.drop_duplicates(subset=["trading_date"], keep="last")
+    return df.reset_index(drop=True)
 
 
 def _get_first_break(ny_bars: pd.DataFrame, london_high: float, london_low: float) -> tuple[str, float | None]:
@@ -95,7 +98,13 @@ def _build_symbol_records(symbol: str, ctx: pd.DataFrame, tagged: pd.DataFrame) 
     for col in keep_cols:
         if col not in ctx.columns:
             ctx[col] = None
-    base_ctx = ctx[keep_cols].copy().set_index("trading_date")
+    base_ctx = (
+        ctx[keep_cols]
+        .copy()
+        .sort_values("trading_date")
+        .drop_duplicates(subset=["trading_date"], keep="last")
+        .set_index("trading_date")
+    )
 
     rows: list[dict] = []
     for td, day in tagged.groupby("trading_date"):

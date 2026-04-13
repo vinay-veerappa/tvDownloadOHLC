@@ -35,7 +35,10 @@ def _load_context(symbol: str) -> pd.DataFrame:
 
     df["trading_date"] = pd.to_datetime(df["trading_date"]).dt.date
     df["symbol"] = symbol
-    return df.sort_values("trading_date").reset_index(drop=True)
+    df = df.sort_values("trading_date")
+    # Enforce unique day rows so streak transitions are computed once per day.
+    df = df.drop_duplicates(subset=["trading_date"], keep="last")
+    return df.reset_index(drop=True)
 
 
 def _build_streak_records(ctx: pd.DataFrame) -> pd.DataFrame:

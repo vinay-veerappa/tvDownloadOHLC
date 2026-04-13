@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -31,6 +32,7 @@ from scripts.context.compute_daily_confluence import (
     _pdh_pdl_vote,
     _streak_vote,
     _mop_vote,
+    _build_master,
     compute_confluence,
     MIN_SAMPLE,
     BIAS_THRESHOLD,
@@ -239,6 +241,46 @@ class TestBuildSymbolRecords(unittest.TestCase):
         result  = _build_symbol_records("NQ1", ctx, tagged)
         self.assertTrue(result.empty)
 
+    def test_duplicate_ctx_rows_same_day_keep_last(self) -> None:
+        td = datetime.date(2024, 1, 2)
+        ctx = pd.DataFrame(
+            [
+                {
+                    "symbol": "NQ1",
+                    "trading_date": td,
+                    "day_of_week": 0,
+                    "is_event_day": False,
+                    "event_type": None,
+                    "event_types": None,
+                    "is_opex_week": False,
+                    "session_direction": "UP",
+                    "vix_regime": "LOW",
+                },
+                {
+                    "symbol": "NQ1",
+                    "trading_date": td,
+                    "day_of_week": 2,
+                    "is_event_day": True,
+                    "event_type": "CPI",
+                    "event_types": "CPI",
+                    "is_opex_week": True,
+                    "session_direction": "DOWN",
+                    "vix_regime": "HIGH",
+                },
+            ]
+        )
+        tagged = self._make_tagged(td)
+
+        result = _build_symbol_records("NQ1", ctx, tagged)
+
+        self.assertEqual(len(result), 1)
+        row = result.iloc[0]
+        self.assertEqual(int(row["day_of_week"]), 2)
+        self.assertEqual(row["event_type"], "CPI")
+        self.assertTrue(bool(row["is_event_day"]))
+        self.assertTrue(bool(row["is_opex_week"]))
+        self.assertEqual(row["vix_regime"], "HIGH")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Confluence vote helpers
@@ -338,16 +380,16 @@ class TestStreakVote(unittest.TestCase):
 
 
 class TestMOPVote(unittest.TestCase):
-    def test_up_session_retrace_votes_bearish(self) -> None:
-        row = _row(mop_retrace_probability=0.65, session_direction="UP")
+    def test_open_above_midnight_retrace_votes_bearish(self) -> None:
+        row = _row(mop_retrace_probability=0.65, open_vs_midnight="ABOVE")
         self.assertEqual(_mop_vote(row), -1)
 
-    def test_down_session_retrace_votes_bullish(self) -> None:
-        row = _row(mop_retrace_probability=0.65, session_direction="DOWN")
+    def test_open_below_midnight_retrace_votes_bullish(self) -> None:
+        row = _row(mop_retrace_probability=0.65, open_vs_midnight="BELOW")
         self.assertEqual(_mop_vote(row), 1)
 
-    def test_flat_session_returns_zero(self) -> None:
-        row = _row(mop_retrace_probability=0.65, session_direction="FLAT")
+    def test_missing_open_vs_midnight_returns_zero(self) -> None:
+        row = _row(mop_retrace_probability=0.65, session_direction="UP")
         self.assertEqual(_mop_vote(row), 0)
 
     def test_exactly_at_threshold_returns_zero(self) -> None:
@@ -560,6 +602,74 @@ class TestComputeConfluenceIntegration(unittest.TestCase):
                         pd.isna(first[col]),
                         f"Symbol bleed detected: {sym} first row {col} is not NaN",
                     )
+
+
+class TestBuildMasterOCCSelection(unittest.TestCase):
+    def test_occ_prefers_15min_per_symbol_day_with_local_fallback(self) -> None:
+        context = pd.DataFrame(
+            {
+                "symbol": ["NQ1", "NQ1", "ES1"],
+                "trading_date": [
+                    datetime.date(2024, 1, 2),
+                    datetime.date(2024, 1, 3),
+                    datetime.date(2024, 1, 2),
+                ],
+                "day_of_week": [1, 2, 1],
+                "vix_regime": ["LOW", "LOW", "LOW"],
+            }
+        )
+
+        occ = pd.DataFrame(
+            {
+                "symbol": ["NQ1", "NQ1", "NQ1", "ES1", "ES1"],
+                "trading_date": [
+                    datetime.date(2024, 1, 2),
+                    datetime.date(2024, 1, 2),
+                    datetime.date(2024, 1, 3),
+                    datetime.date(2024, 1, 2),
+                    datetime.date(2024, 1, 2),
+                ],
+                "candle_duration_minutes": [5, 15, 5, 5, 30],
+                "continuation": [0.0, 1.0, 1.0, 1.0, 0.0],
+                "first_candle_direction": ["DOWN", "UP", "DOWN", "UP", "DOWN"],
+            }
+        )
+
+        empty = pd.DataFrame()
+
+        def fake_read(path, cols=None):
+            name = path.name
+            if name == "occ_records.parquet":
+                return occ.copy()
+            if name == "gap_records.parquet":
+                return empty
+            if name == "reference_levels.parquet":
+                return empty
+            if name == "range_trades.parquet":
+                return empty
+            if name == "streak_records.parquet":
+                return empty
+            return empty
+
+        with patch("scripts.context.compute_daily_confluence._load_context", return_value=context):
+            with patch("scripts.context.compute_daily_confluence._read", side_effect=fake_read):
+                result = _build_master(["NQ1", "ES1"])
+
+        # NQ1 2024-01-02 should use 15m record, not 5m record.
+        row_nq_15 = result[
+            (result["symbol"] == "NQ1")
+            & (result["trading_date"] == datetime.date(2024, 1, 2))
+        ].iloc[0]
+        self.assertEqual(row_nq_15["occ_first_direction"], "UP")
+        self.assertEqual(float(row_nq_15["occ_continuation"]), 1.0)
+
+        # NQ1 2024-01-03 has no 15m record, so fallback to available 5m.
+        row_nq_fb = result[
+            (result["symbol"] == "NQ1")
+            & (result["trading_date"] == datetime.date(2024, 1, 3))
+        ].iloc[0]
+        self.assertEqual(row_nq_fb["occ_first_direction"], "DOWN")
+        self.assertEqual(float(row_nq_fb["occ_continuation"]), 1.0)
 
 
 if __name__ == "__main__":

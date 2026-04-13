@@ -41,7 +41,10 @@ def _load_context(symbol: str) -> pd.DataFrame:
 
     df["trading_date"] = pd.to_datetime(df["trading_date"]).dt.date
     df["symbol"] = symbol
-    return df.sort_values("trading_date").reset_index(drop=True)
+    df = df.sort_values("trading_date")
+    # Deduplicate day-level context rows to preserve one output row per trading day.
+    df = df.drop_duplicates(subset=["trading_date"], keep="last")
+    return df.reset_index(drop=True)
 
 
 def _first_touch_minutes(rth: pd.DataFrame, levels: pd.DataFrame, level_col: str) -> pd.Series:

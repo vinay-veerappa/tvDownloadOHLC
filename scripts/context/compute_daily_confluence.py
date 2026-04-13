@@ -191,13 +191,17 @@ def _build_master(symbols: List[str]) -> pd.DataFrame:
                 ["symbol", "trading_date", "candle_duration_minutes",
                  "continuation", "first_candle_direction"])
     if not occ.empty:
-        # Prefer 15-min opening candle; fall back to smallest available duration.
-        if (occ["candle_duration_minutes"] == 15).any():
-            best_dur = 15
-        else:
-            best_dur = occ["candle_duration_minutes"].min()
+        # Prefer 15-min opening candle per symbol/day; otherwise fall back to
+        # the smallest available duration for that same symbol/day.
+        occ_ranked = occ.copy()
+        occ_ranked["_pref_15"] = (occ_ranked["candle_duration_minutes"] == 15).astype(int)
+        occ_ranked = occ_ranked.sort_values(
+            ["symbol", "trading_date", "_pref_15", "candle_duration_minutes"],
+            ascending=[True, True, False, True],
+        )
         occ5 = (
-            occ[occ["candle_duration_minutes"] == best_dur]
+            occ_ranked
+            .drop_duplicates(subset=["symbol", "trading_date"], keep="first")
             [["symbol", "trading_date", "continuation", "first_candle_direction"]]
             .copy()
             .rename(columns={"continuation": "occ_continuation",
