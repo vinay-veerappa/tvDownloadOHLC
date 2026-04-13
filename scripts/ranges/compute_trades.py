@@ -103,10 +103,22 @@ def compute_trades(
             date_key = str(row["trading_date"])
             day_bars = day_groups.get(date_key)
             if day_bars is None or day_bars.empty:
+                row_dict = row.to_dict()
+                for sname in strategies:
+                    sdef = STRATEGY_PRESETS.get(sname)
+                    if sdef is None:
+                        continue
+                    all_rows.append(no_entry_record(row_dict, sdef))
                 continue
 
             post_bars, range_end_ts = _get_post_bars_for_trade(day_bars, str(row["range_name"]))
             if range_end_ts is None:
+                row_dict = row.to_dict()
+                for sname in strategies:
+                    sdef = STRATEGY_PRESETS.get(sname)
+                    if sdef is None:
+                        continue
+                    all_rows.append(no_entry_record(row_dict, sdef))
                 continue
 
             row_dict = row.to_dict()

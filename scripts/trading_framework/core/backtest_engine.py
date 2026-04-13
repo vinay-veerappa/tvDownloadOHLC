@@ -130,6 +130,7 @@ class VectorizedBacktester(BaseBacktester):
             c_targets = signals['target1_price'].values[i : i + CHUNK_SIZE, None].astype(np.float32)
             c_stops = signals['stop_price'].values[i : i + CHUNK_SIZE, None].astype(np.float32)
             c_is_long = (signals['direction'] == 'long').values[i : i + CHUNK_SIZE, None]
+            c_is_long_flat = c_is_long.flatten()
             c_entries = signals['entry_price'].values[i : i + CHUNK_SIZE, None].astype(np.float32)
 
             offsets = np.arange(MAX_SEARCH)
@@ -147,27 +148,37 @@ class VectorizedBacktester(BaseBacktester):
             c_hit_bars = np.where(c_hit_occurred, np.argmax(any_hit, axis=1), MAX_SEARCH - 1)
             
             mask = offsets[None, :] <= c_hit_bars[:, None]
-            
-            if c_is_long.flatten()[0] if len(c_is_long) > 0 else True: 
-                 c_max_adv = np.min(np.where(mask, c_lows, 1e9), axis=1)
-                 c_max_fav = np.max(np.where(mask, c_highs, -1e9), axis=1)
-                 c_mae = ((c_max_adv - c_entries.flatten()) / c_entries.flatten()) * 100
-                 c_mfe = ((c_max_fav - c_entries.flatten()) / c_entries.flatten()) * 100
-            else:
-                 c_max_adv = np.max(np.where(mask, c_highs, -1e9), axis=1)
-                 c_max_fav = np.min(np.where(mask, c_lows, 1e9), axis=1)
-                 c_mae = ((c_entries.flatten() - c_max_adv) / c_entries.flatten()) * 100
-                 c_mfe = ((c_entries.flatten() - c_max_fav) / c_entries.flatten()) * 100
+
+            c_max_adv_long = np.min(np.where(mask, c_lows, 1e9), axis=1)
+            c_max_adv_short = np.max(np.where(mask, c_highs, -1e9), axis=1)
+            c_max_fav_long = np.max(np.where(mask, c_highs, -1e9), axis=1)
+            c_max_fav_short = np.min(np.where(mask, c_lows, 1e9), axis=1)
+
+            c_entries_flat = c_entries.flatten()
+            c_max_adv = np.where(c_is_long_flat, c_max_adv_long, c_max_adv_short)
+            c_max_fav = np.where(c_is_long_flat, c_max_fav_long, c_max_fav_short)
+
+            c_mae = np.where(
+                c_is_long_flat,
+                ((c_max_adv - c_entries_flat) / c_entries_flat) * 100,
+                ((c_entries_flat - c_max_adv) / c_entries_flat) * 100,
+            )
+            c_mfe = np.where(
+                c_is_long_flat,
+                ((c_max_fav - c_entries_flat) / c_entries_flat) * 100,
+                ((c_entries_flat - c_max_fav) / c_entries_flat) * 100,
+            )
 
             c_is_sl = sl_hits[np.arange(len(c_indices)), c_hit_bars]
 
             # By-performance measurement: wick vs close excursion
-            if c_is_long.flatten()[0] if len(c_is_long) > 0 else True:
-                c_mfe_wick = ((np.max(c_highs, axis=1) - c_entries.flatten()) / c_entries.flatten()) * 100
-                c_mfe_close = ((np.max(c_closes, axis=1) - c_entries.flatten()) / c_entries.flatten()) * 100
-            else:
-                c_mfe_wick = ((c_entries.flatten() - np.min(c_lows, axis=1)) / c_entries.flatten()) * 100
-                c_mfe_close = ((c_entries.flatten() - np.min(c_closes, axis=1)) / c_entries.flatten()) * 100
+            c_mfe_wick_long = ((np.max(c_highs, axis=1) - c_entries_flat) / c_entries_flat) * 100
+            c_mfe_wick_short = ((c_entries_flat - np.min(c_lows, axis=1)) / c_entries_flat) * 100
+            c_mfe_close_long = ((np.max(c_closes, axis=1) - c_entries_flat) / c_entries_flat) * 100
+            c_mfe_close_short = ((c_entries_flat - np.min(c_closes, axis=1)) / c_entries_flat) * 100
+
+            c_mfe_wick = np.where(c_is_long_flat, c_mfe_wick_long, c_mfe_wick_short)
+            c_mfe_close = np.where(c_is_long_flat, c_mfe_close_long, c_mfe_close_short)
 
             all_hit_occurred.append(c_hit_occurred)
             all_hit_bars.append(c_hit_bars)
@@ -204,7 +215,8 @@ class VectorizedBacktester(BaseBacktester):
         trade_returns -= self.slippage_pct 
 
         # 5. Equity Curve Mapping
-        exit_times = data.index[entry_indices + hit_bars]
+        exit_pos = np.clip(entry_indices + hit_bars, 0, n_bars - 1)
+        exit_times = data.index[exit_pos]
         equity_returns = pd.Series(0.0, index=data.index)
         equity_returns.loc[exit_times] += trade_returns
         cum_returns = (1 + equity_returns).cumprod()

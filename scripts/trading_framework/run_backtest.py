@@ -4,6 +4,7 @@ Institutional Research Suite: Unified CLI Entry Point
 import os
 import sys
 import argparse
+import re
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -16,17 +17,86 @@ if PROJECT_ROOT not in sys.path:
 
 from scripts.trading_framework.config.config_loader import load_config
 from scripts.libs.data.loader import DataLoader
-from scripts.trading_framework.strategies.registry import get_strategy_class
+from scripts.trading_framework.strategies.registry import get_strategy
 from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from scripts.trading_framework.core.mfe_mae import compute_mfe_mae
 from scripts.trading_framework.reporting.tearsheet import generate_tearsheet
-from scripts.trading_framework.reporting.mfe_mae_report import generate_mfe_mae_report
+from scripts.trading_framework.reporting.mfe_mae_report import (
+    generate_mfe_mae_summary,
+    plot_mfe_mae_analysis,
+)
 from scripts.trading_framework.reporting.chop_filter_report import generate_chop_report
-from scripts.trading_framework.ml.prop_eval_mc import compute_prop_eval_stats
+from scripts.trading_framework.ml.prop_eval_mc import run_prop_mc_simulation
 from scripts.trading_framework.ml.optimizer import OptunaOptimizer
 from scripts.trading_framework.ml.walk_forward import PurgedKFold
 import optuna
-def run_optimization(args, config, df, strategy_class):
+
+
+def _extract_horizons(mfe_mae_df: pd.DataFrame, configured_horizons) -> list[int]:
+    if configured_horizons:
+        return list(configured_horizons)
+
+    inferred = []
+    for col in mfe_mae_df.columns:
+        match = re.fullmatch(r"mfe_(\d+)", str(col))
+        if match:
+            inferred.append(int(match.group(1)))
+    return sorted(set(inferred))
+
+
+def compute_prop_eval_stats(trade_returns_pct: pd.Series, _mc_config=None) -> Dict[str, Any]:
+    """Backward-compatible alias used by legacy tests/callers."""
+    return run_prop_mc_simulation(trade_returns_pct)
+
+
+def generate_mfe_mae_report(
+    mfe_mae_df: pd.DataFrame,
+    mfe_mae_config,
+    ticker: str,
+    output_dir: str = "scripts/trading_framework/reporting/outputs",
+) -> None:
+    """Backward-compatible report writer for MFE/MAE analysis."""
+    if mfe_mae_df is None or mfe_mae_df.empty:
+        return
+
+    os.makedirs(output_dir, exist_ok=True)
+    configured_horizons = getattr(mfe_mae_config, "forward_horizons_minutes", None)
+    horizons = _extract_horizons(mfe_mae_df, configured_horizons)
+    if not horizons:
+        return
+
+    summary = generate_mfe_mae_summary(mfe_mae_df, horizons)
+    summary_path = os.path.join(output_dir, f"mfe_mae_summary_{ticker}.md")
+    with open(summary_path, "w", encoding="utf-8") as f:
+        f.write(summary)
+
+    for horizon in horizons:
+        if f"mfe_{horizon}" in mfe_mae_df.columns and f"mae_{horizon}" in mfe_mae_df.columns:
+            plot_mfe_mae_analysis(mfe_mae_df, horizon, output_dir)
+
+
+def _compute_mfe_mae_compat(signals: pd.DataFrame, df: pd.DataFrame, mfe_mae_config):
+    """Support both legacy and current compute_mfe_mae call signatures."""
+    try:
+        return compute_mfe_mae(signals, df, mfe_mae_config)
+    except TypeError:
+        horizons = getattr(mfe_mae_config, "forward_horizons_minutes", [5, 15, 30, 60, 120])
+        work_df = df.copy()
+
+        if "signal" not in work_df.columns:
+            work_df["signal"] = 0
+
+        if isinstance(signals, pd.DataFrame) and {"signal_time", "direction"}.issubset(signals.columns):
+            for _, row in signals.iterrows():
+                ts = row.get("signal_time")
+                if ts in work_df.index:
+                    direction = str(row.get("direction", "")).lower()
+                    work_df.at[ts, "signal"] = 1 if direction == "long" else -1 if direction == "short" else 0
+
+        return compute_mfe_mae(work_df, "signal", horizons)
+
+
+def run_optimization(args, config, df):
     """
     Runs a robust Optuna study with PurgedKFold cross-validation.
     """
@@ -50,7 +120,7 @@ def run_optimization(args, config, df, strategy_class):
             fold_train = df.iloc[train_idx]
             fold_test = df.iloc[test_idx]
             
-            strategy = strategy_class()
+            strategy = get_strategy(args.strategy, args.ticker)
             signals = strategy.generate_signals(fold_train, params)
             
             engine = VectorizedBacktester()
@@ -90,13 +160,11 @@ def run_research_pipeline(args):
     df = loader.load_enriched(args.ticker)
     
     # 3. Strategy Discovery & Signal Generation
-    strategy_class = get_strategy_class(args.strategy)
-    
     best_params = {}
     if args.optimize:
-        best_params = run_optimization(args, config, df, strategy_class)
+        best_params = run_optimization(args, config, df)
     
-    strategy = strategy_class()
+    strategy = get_strategy(args.strategy, args.ticker)
     
     # 4. Final Parameter Run
     print("📡 Generating signals...")
@@ -110,7 +178,7 @@ def run_research_pipeline(args):
     
     # 5. Advanced Research Analysis (MFE/MAE)
     print("🔬 Computing MFE/MAE excursions...")
-    mfe_mae_signals = compute_mfe_mae(signals, df, config.mfe_mae)
+    mfe_mae_signals = _compute_mfe_mae_compat(signals, df, config.mfe_mae)
     
     # 6. ML / Prop Evaluation
     print("🧪 Computing Prop Firm evaluation (Monte Carlo)...")
@@ -124,7 +192,7 @@ def run_research_pipeline(args):
     class MockResult:
         def __init__(self, res, pm_stats, config):
             self.combined_equity_curve = res['equity_curve']
-            self.combined_trades = res['trades']
+            self.combined_trades = res.get('trades_detailed', pd.DataFrame())
             self.prop_eval_passed = pm_stats['pass_rate'] > 0.8  # Threshold from config
             self.days_to_pass = None
             self.account_summary = {
