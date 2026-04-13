@@ -54,6 +54,7 @@ test('ranges page includes breakout acceptance quality diagnostics', () => {
   mustInclude('function getBreakoutAcceptanceSummarySql', 'Missing breakout acceptance SQL helper.');
   mustInclude('Breakout Acceptance', 'Missing breakout acceptance panel.');
   mustInclude('2-Bar Hold Rate', 'Missing 2-bar hold metric.');
+  mustInclude('Median Pullback Depth', 'Missing breakout pullback-depth metric.');
 });
 
 test('ranges page includes volatility-normalized excursion diagnostics', () => {
@@ -61,6 +62,8 @@ test('ranges page includes volatility-normalized excursion diagnostics', () => {
   mustInclude('function getVolatilityExcursionSql', 'Missing volatility excursion SQL helper.');
   mustInclude('Volatility-Normalized Excursion', 'Missing volatility-normalized excursion panel.');
   mustInclude('Directional/Adverse Ratio', 'Missing directional/adverse ratio metric.');
+  mustInclude('Directional Sigma Units', 'Missing directional sigma-normalized metric.');
+  mustInclude('Adverse Sigma Units', 'Missing adverse sigma-normalized metric.');
 });
 
 test('ranges page includes edge stability diagnostics', () => {
@@ -68,4 +71,6 @@ test('ranges page includes edge stability diagnostics', () => {
   mustInclude('function getEdgeStabilitySummarySql', 'Missing edge stability summary SQL helper.');
   mustInclude('Edge Stability', 'Missing edge stability panel.');
   mustInclude('Win-Rate Z-Score', 'Missing edge stability z-score metric.');
+  mustInclude('Ruin Proxy (10R/20d)', 'Missing edge stability ruin-proxy metric.');
+  mustInclude('Max Drawdown', 'Missing max drawdown metric.');
 });

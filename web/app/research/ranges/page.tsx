@@ -186,6 +186,7 @@ type BreakoutAcceptanceSummary = {
   retest_rate: number | null;
   fail_rate: number | null;
   continuation_rate: number | null;
+  median_pullback_pct: number | null;
 };
 
 type BreakoutAcceptanceRow = {
@@ -195,6 +196,7 @@ type BreakoutAcceptanceRow = {
   retest_rate: number | null;
   fail_rate: number | null;
   continuation_rate: number | null;
+  median_pullback_pct: number | null;
 };
 
 type VolatilityExcursionSummary = {
@@ -203,6 +205,8 @@ type VolatilityExcursionSummary = {
   avg_adverse_excursion_pct: number | null;
   excursion_efficiency_pct: number | null;
   directional_to_adverse_ratio: number | null;
+  directional_sigma_units: number | null;
+  adverse_sigma_units: number | null;
 };
 
 type EdgeStabilitySummary = {
@@ -211,6 +215,11 @@ type EdgeStabilitySummary = {
   rolling_win_90: number | null;
   rolling_avg_r_30: number | null;
   win_rate_zscore_30: number | null;
+  max_drawdown_r: number | null;
+  current_drawdown_r: number | null;
+  max_drawdown_duration_days: number | null;
+  current_drawdown_duration_days: number | null;
+  ruin_prob_10r_pct: number | null;
 };
 
 type EdgeStabilityRow = {
@@ -218,6 +227,8 @@ type EdgeStabilityRow = {
   rolling_win_30: number | null;
   rolling_win_90: number | null;
   rolling_avg_r_30: number | null;
+  drawdown_r: number | null;
+  drawdown_duration_days: number | null;
 };
 
 type LatestRangeRow = {
@@ -819,7 +830,17 @@ function getBreakoutAcceptanceSummarySql(rangeWhere: string) {
       CAST(AVG(CASE WHEN first_bo_held THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS hold_2bar_rate,
       CAST(AVG(CASE WHEN first_bo_retested_boundary THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS retest_rate,
       CAST(AVG(CASE WHEN first_bo_failed THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS fail_rate,
-      CAST(AVG(CASE WHEN final_direction = first_bo_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS continuation_rate
+      CAST(AVG(CASE WHEN final_direction = first_bo_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS continuation_rate,
+      CAST(
+        quantile_cont(
+          CASE
+            WHEN first_bo_direction = 'UP' THEN max_excursion_dn_pct
+            WHEN first_bo_direction = 'DOWN' THEN max_excursion_up_pct
+            ELSE NULL
+          END,
+          0.5
+        ) AS DOUBLE
+      ) AS median_pullback_pct
     FROM rr
   `;
 }
@@ -838,7 +859,17 @@ function getBreakoutAcceptanceDirectionSql(rangeWhere: string) {
       CAST(AVG(CASE WHEN first_bo_held THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS hold_2bar_rate,
       CAST(AVG(CASE WHEN first_bo_retested_boundary THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS retest_rate,
       CAST(AVG(CASE WHEN first_bo_failed THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS fail_rate,
-      CAST(AVG(CASE WHEN final_direction = first_bo_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS continuation_rate
+      CAST(AVG(CASE WHEN final_direction = first_bo_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS continuation_rate,
+      CAST(
+        quantile_cont(
+          CASE
+            WHEN first_bo_direction = 'UP' THEN max_excursion_dn_pct
+            WHEN first_bo_direction = 'DOWN' THEN max_excursion_up_pct
+            ELSE NULL
+          END,
+          0.5
+        ) AS DOUBLE
+      ) AS median_pullback_pct
     FROM rr
     GROUP BY first_bo_direction
     ORDER BY CASE first_bo_direction WHEN 'UP' THEN 1 WHEN 'DOWN' THEN 2 ELSE 3 END
@@ -872,7 +903,9 @@ function getVolatilityExcursionSql(rangeWhere: string) {
       CAST(AVG(directional_excursion_pct) AS DOUBLE) AS avg_directional_excursion_pct,
       CAST(AVG(adverse_excursion_pct) AS DOUBLE) AS avg_adverse_excursion_pct,
       CAST(AVG(directional_excursion_pct) - AVG(adverse_excursion_pct) AS DOUBLE) AS excursion_efficiency_pct,
-      CAST(AVG(directional_excursion_pct) / NULLIF(AVG(adverse_excursion_pct), 0) AS DOUBLE) AS directional_to_adverse_ratio
+      CAST(AVG(directional_excursion_pct) / NULLIF(AVG(adverse_excursion_pct), 0) AS DOUBLE) AS directional_to_adverse_ratio,
+      CAST(AVG(directional_excursion_pct) / NULLIF(STDDEV_SAMP(directional_excursion_pct), 0) AS DOUBLE) AS directional_sigma_units,
+      CAST(AVG(adverse_excursion_pct) / NULLIF(STDDEV_SAMP(adverse_excursion_pct), 0) AS DOUBLE) AS adverse_sigma_units
     FROM scored
   `;
 }
@@ -894,29 +927,90 @@ function getEdgeStabilitySummarySql(tradeWhere: string) {
       FROM rt
       GROUP BY trading_date
     ),
+    equity AS (
+      SELECT
+        trading_date,
+        day_win_rate,
+        day_avg_r,
+        CAST(SUM(day_avg_r) OVER (ORDER BY trading_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS DOUBLE) AS equity_r
+      FROM daily
+    ),
+    peaks AS (
+      SELECT
+        trading_date,
+        day_win_rate,
+        day_avg_r,
+        equity_r,
+        CAST(MAX(equity_r) OVER (ORDER BY trading_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS DOUBLE) AS peak_equity_r,
+        CASE
+          WHEN equity_r = MAX(equity_r) OVER (ORDER BY trading_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+            THEN ROW_NUMBER() OVER (ORDER BY trading_date)
+          ELSE NULL
+        END AS peak_marker,
+        CAST(AVG(day_avg_r) OVER (ORDER BY trading_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) * 20.0 AS DOUBLE) AS rolling_20d_r
+      FROM equity
+    ),
+    drawdown AS (
+      SELECT
+        trading_date,
+        day_win_rate,
+        day_avg_r,
+        peak_equity_r,
+        CAST(peak_equity_r - equity_r AS DOUBLE) AS drawdown_r,
+        ROW_NUMBER() OVER (ORDER BY trading_date) AS row_num,
+        COALESCE(MAX(peak_marker) OVER (ORDER BY trading_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 0) AS last_peak_row,
+        rolling_20d_r
+      FROM peaks
+    ),
+    stability AS (
+      SELECT
+        trading_date,
+        day_win_rate,
+        day_avg_r,
+        drawdown_r,
+        CAST(row_num - last_peak_row AS DOUBLE) AS drawdown_duration_days,
+        rolling_20d_r
+      FROM drawdown
+    ),
     rolling AS (
       SELECT
         trading_date,
         CAST(AVG(day_win_rate) OVER (ORDER BY trading_date ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) * 100 AS DOUBLE) AS rolling_win_30,
         CAST(AVG(day_win_rate) OVER (ORDER BY trading_date ROWS BETWEEN 89 PRECEDING AND CURRENT ROW) * 100 AS DOUBLE) AS rolling_win_90,
         CAST(AVG(day_avg_r) OVER (ORDER BY trading_date ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS DOUBLE) AS rolling_avg_r_30,
-        day_win_rate
-      FROM daily
+        day_win_rate,
+        drawdown_r,
+        drawdown_duration_days,
+        rolling_20d_r
+      FROM stability
     ),
     baseline AS (
       SELECT
         AVG(day_win_rate) AS baseline_win,
         STDDEV_SAMP(day_win_rate) AS baseline_win_std
-      FROM daily
+      FROM stability
+    ),
+    drawdown_stats AS (
+      SELECT
+        CAST(MAX(drawdown_r) AS DOUBLE) AS max_drawdown_r,
+        CAST(MAX(drawdown_duration_days) AS DOUBLE) AS max_drawdown_duration_days,
+        CAST(AVG(CASE WHEN rolling_20d_r <= -10.0 THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS ruin_prob_10r_pct
+      FROM rolling
     )
     SELECT
       r.trading_date,
       r.rolling_win_30,
       r.rolling_win_90,
       r.rolling_avg_r_30,
-      CAST((r.day_win_rate - b.baseline_win) / NULLIF(b.baseline_win_std, 0) AS DOUBLE) AS win_rate_zscore_30
+      CAST((r.day_win_rate - b.baseline_win) / NULLIF(b.baseline_win_std, 0) AS DOUBLE) AS win_rate_zscore_30,
+      ds.max_drawdown_r,
+      r.drawdown_r AS current_drawdown_r,
+      ds.max_drawdown_duration_days,
+      r.drawdown_duration_days AS current_drawdown_duration_days,
+      ds.ruin_prob_10r_pct
     FROM rolling r
     CROSS JOIN baseline b
+    CROSS JOIN drawdown_stats ds
     ORDER BY r.trading_date DESC
     LIMIT 1
   `;
@@ -938,13 +1032,47 @@ function getEdgeStabilitySeriesSql(tradeWhere: string) {
         CAST(AVG(pnl_r_multiple) AS DOUBLE) AS day_avg_r
       FROM rt
       GROUP BY trading_date
+    ),
+    equity AS (
+      SELECT
+        trading_date,
+        day_win_rate,
+        day_avg_r,
+        CAST(SUM(day_avg_r) OVER (ORDER BY trading_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS DOUBLE) AS equity_r
+      FROM daily
+    ),
+    peaks AS (
+      SELECT
+        trading_date,
+        day_win_rate,
+        day_avg_r,
+        equity_r,
+        CAST(MAX(equity_r) OVER (ORDER BY trading_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS DOUBLE) AS peak_equity_r,
+        CASE
+          WHEN equity_r = MAX(equity_r) OVER (ORDER BY trading_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+            THEN ROW_NUMBER() OVER (ORDER BY trading_date)
+          ELSE NULL
+        END AS peak_marker
+      FROM equity
+    ),
+    drawdown AS (
+      SELECT
+        trading_date,
+        day_win_rate,
+        day_avg_r,
+        CAST(peak_equity_r - equity_r AS DOUBLE) AS drawdown_r,
+        ROW_NUMBER() OVER (ORDER BY trading_date) AS row_num,
+        COALESCE(MAX(peak_marker) OVER (ORDER BY trading_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 0) AS last_peak_row
+      FROM peaks
     )
     SELECT
       trading_date,
       CAST(AVG(day_win_rate) OVER (ORDER BY trading_date ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) * 100 AS DOUBLE) AS rolling_win_30,
       CAST(AVG(day_win_rate) OVER (ORDER BY trading_date ROWS BETWEEN 89 PRECEDING AND CURRENT ROW) * 100 AS DOUBLE) AS rolling_win_90,
-      CAST(AVG(day_avg_r) OVER (ORDER BY trading_date ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS DOUBLE) AS rolling_avg_r_30
-    FROM daily
+      CAST(AVG(day_avg_r) OVER (ORDER BY trading_date ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS DOUBLE) AS rolling_avg_r_30,
+      drawdown_r,
+      CAST(row_num - last_peak_row AS DOUBLE) AS drawdown_duration_days
+    FROM drawdown
     ORDER BY trading_date DESC
     LIMIT 20
   `;
@@ -2011,6 +2139,12 @@ export default function RangeAnalyticsPage() {
               accent="text-emerald-300"
               sublabel="Close aligned with first break"
             />
+            <StatCard
+              label="Median Pullback Depth"
+              value={breakoutAcceptanceSummary && breakoutAcceptanceSummary.median_pullback_pct != null ? `${breakoutAcceptanceSummary.median_pullback_pct.toFixed(1)}%` : '--'}
+              accent="text-fuchsia-300"
+              sublabel="Adverse move after the first break"
+            />
           </div>
 
           <div className="overflow-hidden rounded-xl border border-zinc-900">
@@ -2023,6 +2157,7 @@ export default function RangeAnalyticsPage() {
                   <th className="px-4 py-3 text-right">Retest %</th>
                   <th className="px-4 py-3 text-right">Failure %</th>
                   <th className="px-4 py-3 text-right">Continuation %</th>
+                  <th className="px-4 py-3 text-right">Median Pullback %</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-900 bg-black/20">
@@ -2034,6 +2169,7 @@ export default function RangeAnalyticsPage() {
                     <td className="px-4 py-3 text-right text-amber-300">{formatPct(row.retest_rate)}</td>
                     <td className="px-4 py-3 text-right text-rose-300">{formatPct(row.fail_rate)}</td>
                     <td className="px-4 py-3 text-right text-emerald-300">{formatPct(row.continuation_rate)}</td>
+                    <td className="px-4 py-3 text-right text-fuchsia-300">{row.median_pullback_pct != null ? `${row.median_pullback_pct.toFixed(1)}%` : '--'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2076,6 +2212,18 @@ export default function RangeAnalyticsPage() {
                 accent="text-amber-300"
                 sublabel={volatilityExcursionSummary ? `${Math.round(volatilityExcursionSummary.sample_count).toLocaleString()} rows` : undefined}
               />
+              <StatCard
+                label="Directional Sigma Units"
+                value={volatilityExcursionSummary ? formatNumber(volatilityExcursionSummary.directional_sigma_units) : '--'}
+                accent="text-fuchsia-300"
+                sublabel="Mean directional excursion in realized sigma units"
+              />
+              <StatCard
+                label="Adverse Sigma Units"
+                value={volatilityExcursionSummary ? formatNumber(volatilityExcursionSummary.adverse_sigma_units) : '--'}
+                accent="text-zinc-300"
+                sublabel="Mean adverse excursion in realized sigma units"
+              />
             </div>
           </Card>
 
@@ -2111,6 +2259,24 @@ export default function RangeAnalyticsPage() {
                 accent="text-fuchsia-300"
                 sublabel="Daily win-rate standard deviations from baseline"
               />
+              <StatCard
+                label="Max Drawdown"
+                value={edgeStabilitySummary && edgeStabilitySummary.max_drawdown_r != null ? `${edgeStabilitySummary.max_drawdown_r.toFixed(2)}R` : '--'}
+                accent="text-rose-300"
+                sublabel={edgeStabilitySummary && edgeStabilitySummary.max_drawdown_duration_days != null ? `Worst duration ${edgeStabilitySummary.max_drawdown_duration_days.toFixed(0)}d` : undefined}
+              />
+              <StatCard
+                label="Current Drawdown"
+                value={edgeStabilitySummary && edgeStabilitySummary.current_drawdown_r != null ? `${edgeStabilitySummary.current_drawdown_r.toFixed(2)}R` : '--'}
+                accent="text-amber-300"
+                sublabel={edgeStabilitySummary && edgeStabilitySummary.current_drawdown_duration_days != null ? `${edgeStabilitySummary.current_drawdown_duration_days.toFixed(0)}d underwater` : undefined}
+              />
+              <StatCard
+                label="Ruin Proxy (10R/20d)"
+                value={edgeStabilitySummary ? formatPct(edgeStabilitySummary.ruin_prob_10r_pct) : '--'}
+                accent="text-cyan-300"
+                sublabel="Pct of rolling 20-day windows <= -10R"
+              />
             </div>
 
             <div className="overflow-hidden rounded-xl border border-zinc-900">
@@ -2121,6 +2287,8 @@ export default function RangeAnalyticsPage() {
                     <th className="px-4 py-3 text-right">Win30 %</th>
                     <th className="px-4 py-3 text-right">Win90 %</th>
                     <th className="px-4 py-3 text-right">AvgR30</th>
+                    <th className="px-4 py-3 text-right">Drawdown R</th>
+                    <th className="px-4 py-3 text-right">DD Days</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-900 bg-black/20">
@@ -2132,6 +2300,8 @@ export default function RangeAnalyticsPage() {
                       <td className={`px-4 py-3 text-right ${row.rolling_avg_r_30 != null && row.rolling_avg_r_30 >= 0 ? 'text-amber-300' : 'text-rose-300'}`}>
                         {formatNumber(row.rolling_avg_r_30)}
                       </td>
+                      <td className="px-4 py-3 text-right text-rose-300">{row.drawdown_r != null ? row.drawdown_r.toFixed(2) : '--'}</td>
+                      <td className="px-4 py-3 text-right text-zinc-300">{row.drawdown_duration_days != null ? row.drawdown_duration_days.toFixed(0) : '--'}</td>
                     </tr>
                   ))}
                 </tbody>
