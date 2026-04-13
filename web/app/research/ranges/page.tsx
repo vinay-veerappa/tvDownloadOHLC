@@ -11,6 +11,7 @@ import {
 import Link from 'next/link';
 import {
   Activity,
+  ArrowLeft,
   ArrowRight,
   BarChart3,
   Database,
@@ -541,15 +542,15 @@ export default function RangeAnalyticsPage() {
 
     const fetchOptions = async () => {
       const [symbols, ranges, strategies] = await Promise.all([
-        runQuery(`SELECT DISTINCT symbol FROM range_records ORDER BY symbol`),
-        runQuery(`SELECT DISTINCT range_name FROM range_records ORDER BY range_name`),
-        runQuery(`SELECT DISTINCT strategy_name FROM range_trades ORDER BY strategy_name`),
+        runQuery<{ symbol: string }>(`SELECT DISTINCT symbol FROM range_records ORDER BY symbol`),
+        runQuery<{ range_name: string }>(`SELECT DISTINCT range_name FROM range_records ORDER BY range_name`),
+        runQuery<{ strategy_name: string }>(`SELECT DISTINCT strategy_name FROM range_trades ORDER BY strategy_name`),
       ]);
 
       setOptions({
-        symbols: ['ALL', ...symbols.map((row: { symbol: string }) => row.symbol)],
-        ranges: ['ALL', ...ranges.map((row: { range_name: string }) => row.range_name)],
-        strategies: ['ALL', ...strategies.map((row: { strategy_name: string }) => row.strategy_name)],
+        symbols: ['ALL', ...symbols.map((row) => row.symbol)],
+        ranges: ['ALL', ...ranges.map((row) => row.range_name)],
+        strategies: ['ALL', ...strategies.map((row) => row.strategy_name)],
       });
     };
 
@@ -569,30 +570,30 @@ export default function RangeAnalyticsPage() {
       const tradeWhereNoStrategy = buildTradeWhere(deferredFilters, undefined, false);
 
       const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows, meanReversionSummaryRows, meanReversionDirectionRows] = await Promise.all([
-        runQuery(getOverviewSql(rangeWhere, tradeWhere)),
-        runQuery(getWidthDistributionSql(rangeWhere)),
-        runQuery(getDirectionSql(rangeWhere, 'first_bo_direction')),
-        runQuery(getDirectionSql(rangeWhere, 'final_direction')),
-        runQuery(getExtensionSql(rangeWhere)),
-        runQuery(getStrategyTableSql(tradeWhereNoStrategy)),
-        runQuery(getEquitySql(tradeWhere)),
-        runQuery(getBothSidesOutcomeSql(rangeWhere)),
-        runQuery(getBothSidesSummarySql(rangeWhere)),
-        runQuery(getMeanReversionSummarySql(rangeWhere, tradeWhereNoStrategy)),
-        runQuery(getMeanReversionDirectionSql(rangeWhere)),
+        runQuery<OverviewMetrics>(getOverviewSql(rangeWhere, tradeWhere)),
+        runQuery<WidthDistributionRow>(getWidthDistributionSql(rangeWhere)),
+        runQuery<DirectionRow>(getDirectionSql(rangeWhere, 'first_bo_direction')),
+        runQuery<DirectionRow>(getDirectionSql(rangeWhere, 'final_direction')),
+        runQuery<ExtensionRow>(getExtensionSql(rangeWhere)),
+        runQuery<StrategyRow>(getStrategyTableSql(tradeWhereNoStrategy)),
+        runQuery<EquityRow>(getEquitySql(tradeWhere)),
+        runQuery<BothSidesOutcomeRow>(getBothSidesOutcomeSql(rangeWhere)),
+        runQuery<BothSidesSummary>(getBothSidesSummarySql(rangeWhere)),
+        runQuery<MeanReversionSummary>(getMeanReversionSummarySql(rangeWhere, tradeWhereNoStrategy)),
+        runQuery<MeanReversionRow>(getMeanReversionDirectionSql(rangeWhere)),
       ]);
 
       setOverview((overviewRows[0] as OverviewMetrics) ?? null);
-      setWidthDistribution(widthRows as WidthDistributionRow[]);
-      setBreakoutDistribution(breakoutRows as DirectionRow[]);
-      setFinalDistribution(finalRows as DirectionRow[]);
-      setExtensionStats(extensionRows as ExtensionRow[]);
-      setStrategyRows(strategyTableRows as StrategyRow[]);
-      setEquityCurve(equityRows as EquityRow[]);
-      setBothSidesRows(bothSidesOutcomeRows as BothSidesOutcomeRow[]);
+      setWidthDistribution(widthRows);
+      setBreakoutDistribution(breakoutRows);
+      setFinalDistribution(finalRows);
+      setExtensionStats(extensionRows);
+      setStrategyRows(strategyTableRows);
+      setEquityCurve(equityRows);
+      setBothSidesRows(bothSidesOutcomeRows);
       setBothSidesSummary((bothSidesSummaryRows[0] as BothSidesSummary) ?? null);
       setMeanReversionSummary((meanReversionSummaryRows[0] as MeanReversionSummary) ?? null);
-      setMeanReversionRows(meanReversionDirectionRows as MeanReversionRow[]);
+      setMeanReversionRows(meanReversionDirectionRows);
       setQueryTimeMs(performance.now() - startedAt);
     } catch (error) {
       console.error('Failed to query range analytics dashboard:', error);
@@ -633,8 +634,8 @@ export default function RangeAnalyticsPage() {
               href="/research"
               className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-zinc-500 transition hover:text-cyan-300"
             >
-              <ArrowRight className="h-3.5 w-3.5 rotate-180" />
-              Research Hub
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Back to Research Hub
             </Link>
             <div className="flex items-center gap-3">
               <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-3 text-cyan-300">

@@ -116,8 +116,8 @@ def _build_symbol_records(symbol: str, ctx: pd.DataFrame, tagged: pd.DataFrame) 
         ny_close = float(ny.iloc[-1]["close"])
 
         first_dir, first_min = _get_first_break(ny, london_high, london_low)
-        broke_up = bool(ny_high > london_high)
-        broke_down = bool(ny_low < london_low)
+        broke_up = bool(ny_high >= london_high)
+        broke_down = bool(ny_low <= london_low)
         both_sides = broke_up and broke_down
 
         continuation = (

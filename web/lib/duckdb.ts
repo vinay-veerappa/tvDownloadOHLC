@@ -1,4 +1,8 @@
-import * as duckdb from '@duckdb/duckdb-wasm';
+import type {
+  AsyncDuckDB,
+  AsyncDuckDBConnection,
+  DuckDBBundles,
+} from '@duckdb/duckdb-wasm';
 
 /**
  * DuckDB-WASM Manager
@@ -7,20 +11,39 @@ import * as duckdb from '@duckdb/duckdb-wasm';
  * simplified API for loading parquet files and executing queries.
  */
 
-let db: duckdb.AsyncDuckDB | null = null;
-let conn: duckdb.AsyncDuckDBConnection | null = null;
+type DuckDbBrowserModule = typeof import('@duckdb/duckdb-wasm/dist/duckdb-browser.mjs');
+
+let duckdbModule: DuckDbBrowserModule | null = null;
+let db: AsyncDuckDB | null = null;
+let conn: AsyncDuckDBConnection | null = null;
 let worker: Worker | null = null;
-let initializationPromise: Promise<{ db: duckdb.AsyncDuckDB; conn: duckdb.AsyncDuckDBConnection }> | null = null;
+let initializationPromise: Promise<{ db: AsyncDuckDB; conn: AsyncDuckDBConnection }> | null = null;
+
+export type DuckDbRow = Record<string, unknown>;
+
+async function getDuckDbModule(): Promise<DuckDbBrowserModule> {
+  if (duckdbModule) return duckdbModule;
+  if (typeof window === 'undefined') {
+    throw new Error('DuckDB-WASM is browser-only and cannot initialize during server render.');
+  }
+  duckdbModule = await import('@duckdb/duckdb-wasm/dist/duckdb-browser.mjs');
+  return duckdbModule;
+}
 
 export async function initDuckDB() {
   if (initializationPromise) return initializationPromise;
 
   initializationPromise = (async () => {
     if (db && conn) return { db, conn };
+    const duckdb = await getDuckDbModule();
+
+    if (typeof Worker === 'undefined') {
+      throw new Error('Web Worker API is unavailable in this environment.');
+    }
 
     // Dynamically select the best bundle (MVP or EH) for the browser environment
     // to prevent errors like "_setThrew is not defined" on modern browsers.
-    const BUNDLES: duckdb.DuckDBBundles = {
+    const BUNDLES: DuckDBBundles = {
       mvp: {
         mainModule: '/duckdb/duckdb-mvp.wasm',
         mainWorker: '/duckdb/duckdb-browser-mvp.worker.js',
@@ -52,6 +75,7 @@ export async function loadParquet(name: string, url: string) {
 
   const p = (async () => {
     const { db, conn } = await initDuckDB();
+    const duckdb = await getDuckDbModule();
     
     // Convert relative URL to absolute URL to ensure DuckDB worker finds the file
     const absoluteUrl = new URL(url, window.location.origin).href;
@@ -101,20 +125,21 @@ export async function resetDuckDB() {
   db = null;
   conn = null;
   worker = null;
+  duckdbModule = null;
   initializationPromise = null;
 }
 
-export async function runQuery(sql: string) {
+export async function runQuery<T extends object = DuckDbRow>(sql: string): Promise<T[]> {
   const { conn } = await initDuckDB();
   const result = await conn.query(sql);
   
   // Safely serialize Apache Arrow rows, handling BigInts and complex types
   const rows = result.toArray();
-  return rows.map((row: any) => {
+  return rows.map((row: any): T => {
     try {
-      const obj = row.toJSON();
+      const obj = row.toJSON() as Record<string, unknown>;
       // Arrow toJSON doesn't stringify BigInt properly for React sometimes, manually walk it:
-      const safeObj: any = {};
+      const safeObj: DuckDbRow = {};
       for (const key in obj) {
         if (typeof obj[key] === 'bigint') {
           safeObj[key] = Number(obj[key]); // Or string if preferred
@@ -122,10 +147,10 @@ export async function runQuery(sql: string) {
           safeObj[key] = obj[key];
         }
       }
-      return safeObj;
+      return safeObj as T;
     } catch (e) {
       console.warn('Failed to serialize row:', e);
-      return {};
+      throw new Error(`DuckDB row serialization failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   });
 }

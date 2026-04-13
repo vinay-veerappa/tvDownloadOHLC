@@ -2,7 +2,7 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, GitCompareArrows, RefreshCcw, TrendingUp } from 'lucide-react';
+import { ArrowLeft, ArrowRight, GitCompareArrows, RefreshCcw, TrendingUp } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { Button } from '@/components/ui/button';
@@ -87,24 +87,40 @@ function getComparisonSql(rangeWhere: string, tradeWhere: string) {
       SELECT *
       FROM range_trades rt
       ${tradeWhere}
+    ),
+    rr_agg AS (
+      SELECT
+        rr.range_name,
+        CAST(COUNT(*) AS DOUBLE) AS total_ranges,
+        CAST(AVG(rr.range_width_pct) AS DOUBLE) AS avg_width_pct,
+        CAST(AVG(CASE WHEN rr.first_bo_direction IN ('UP', 'DOWN') AND rr.first_bo_direction = rr.final_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS aligned_close_rate,
+        CAST(AVG(CASE WHEN rr.first_bo_failed THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS failed_breakout_rate,
+        CAST(AVG(CASE WHEN rr.first_bo_direction = 'UP' THEN CASE WHEN rr.ext_up_100_hit THEN 1.0 ELSE 0.0 END WHEN rr.first_bo_direction = 'DOWN' THEN CASE WHEN rr.ext_dn_100_hit THEN 1.0 ELSE 0.0 END ELSE NULL END) * 100 AS DOUBLE) AS ext_1x_hit_rate,
+        CAST(AVG(CASE WHEN rr.first_bo_direction = 'UP' THEN CASE WHEN rr.retest_mid_after_high_break THEN 1.0 ELSE 0.0 END WHEN rr.first_bo_direction = 'DOWN' THEN CASE WHEN rr.retest_mid_after_low_break THEN 1.0 ELSE 0.0 END ELSE NULL END) * 100 AS DOUBLE) AS mr_mid_retest_rate
+      FROM rr
+      GROUP BY rr.range_name
+    ),
+    rt_agg AS (
+      SELECT
+        rt.range_name,
+        CAST(AVG(CASE WHEN rt.entry_triggered THEN CASE WHEN rt.pnl_r_multiple > 0 THEN 1.0 ELSE 0.0 END END) * 100 AS DOUBLE) AS strategy_win_rate,
+        CAST(AVG(CASE WHEN rt.entry_triggered THEN rt.pnl_r_multiple END) AS DOUBLE) AS strategy_avg_r
+      FROM rt
+      GROUP BY rt.range_name
     )
     SELECT
-      rr.range_name,
-      CAST(COUNT(*) AS DOUBLE) AS total_ranges,
-      CAST(AVG(rr.range_width_pct) AS DOUBLE) AS avg_width_pct,
-      CAST(AVG(CASE WHEN rr.first_bo_direction IN ('UP', 'DOWN') AND rr.first_bo_direction = rr.final_direction THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS aligned_close_rate,
-      CAST(AVG(CASE WHEN rr.first_bo_failed THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS failed_breakout_rate,
-      CAST(AVG(CASE WHEN rr.first_bo_direction = 'UP' THEN CASE WHEN rr.ext_up_100_hit THEN 1.0 ELSE 0.0 END WHEN rr.first_bo_direction = 'DOWN' THEN CASE WHEN rr.ext_dn_100_hit THEN 1.0 ELSE 0.0 END ELSE NULL END) * 100 AS DOUBLE) AS ext_1x_hit_rate,
-      CAST(AVG(CASE WHEN rr.first_bo_direction = 'UP' THEN CASE WHEN rr.retest_mid_after_high_break THEN 1.0 ELSE 0.0 END WHEN rr.first_bo_direction = 'DOWN' THEN CASE WHEN rr.retest_mid_after_low_break THEN 1.0 ELSE 0.0 END ELSE NULL END) * 100 AS DOUBLE) AS mr_mid_retest_rate,
-      CAST(AVG(CASE WHEN rt.entry_triggered THEN CASE WHEN rt.pnl_r_multiple > 0 THEN 1.0 ELSE 0.0 END END) * 100 AS DOUBLE) AS strategy_win_rate,
-      CAST(AVG(CASE WHEN rt.entry_triggered THEN rt.pnl_r_multiple END) AS DOUBLE) AS strategy_avg_r
-    FROM rr
-    LEFT JOIN rt
-      ON rt.symbol = rr.symbol
-     AND rt.range_name = rr.range_name
-     AND rt.trading_date = rr.trading_date
-    GROUP BY rr.range_name
-    ORDER BY CASE rr.range_name
+      rr_agg.range_name,
+      rr_agg.total_ranges,
+      rr_agg.avg_width_pct,
+      rr_agg.aligned_close_rate,
+      rr_agg.failed_breakout_rate,
+      rr_agg.ext_1x_hit_rate,
+      rr_agg.mr_mid_retest_rate,
+      rt_agg.strategy_win_rate,
+      rt_agg.strategy_avg_r
+    FROM rr_agg
+    LEFT JOIN rt_agg ON rt_agg.range_name = rr_agg.range_name
+    ORDER BY CASE rr_agg.range_name
       WHEN 'OR_5' THEN 1
       WHEN 'OR_15' THEN 2
       WHEN 'OR_30' THEN 3
@@ -198,12 +214,12 @@ export default function RangeComparisonPage() {
     if (dbStatus !== 'ready') return;
     const loadOptions = async () => {
       const [symbols, strategies] = await Promise.all([
-        runQuery('SELECT DISTINCT symbol FROM range_records ORDER BY symbol'),
-        runQuery('SELECT DISTINCT strategy_name FROM range_trades ORDER BY strategy_name'),
+        runQuery<{ symbol: string }>('SELECT DISTINCT symbol FROM range_records ORDER BY symbol'),
+        runQuery<{ strategy_name: string }>('SELECT DISTINCT strategy_name FROM range_trades ORDER BY strategy_name'),
       ]);
       setOptions({
-        symbols: ['ALL', ...symbols.map((row: { symbol: string }) => row.symbol)],
-        strategies: ['ALL', ...strategies.map((row: { strategy_name: string }) => row.strategy_name)],
+        symbols: ['ALL', ...symbols.map((row) => row.symbol)],
+        strategies: ['ALL', ...strategies.map((row) => row.strategy_name)],
       });
     };
     loadOptions().catch((error) => {
@@ -218,8 +234,8 @@ export default function RangeComparisonPage() {
     try {
       const rangeWhere = buildRangeWhere(deferredFilters, 'rr');
       const tradeWhere = buildTradeWhere(deferredFilters, 'rt');
-      const result = await runQuery(getComparisonSql(rangeWhere, tradeWhere));
-      setRows(result as ComparisonRow[]);
+      const result = await runQuery<ComparisonRow>(getComparisonSql(rangeWhere, tradeWhere));
+      setRows(result);
       setQueryTimeMs(performance.now() - startedAt);
     } catch (error) {
       console.error('Failed to query range comparison page:', error);
@@ -248,8 +264,8 @@ export default function RangeComparisonPage() {
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-4">
             <Link href="/research" className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-zinc-500 transition hover:text-sky-300">
-              <ArrowRight className="h-3.5 w-3.5 rotate-180" />
-              Research Hub
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Back to Research Hub
             </Link>
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.3em] text-sky-200">

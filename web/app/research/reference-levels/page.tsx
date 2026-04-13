@@ -2,7 +2,7 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, BarChart3, RefreshCcw, Route, TimerReset, TrendingUp } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BarChart3, RefreshCcw, Route, TimerReset, TrendingUp } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { Card } from '@/components/ui/card';
@@ -162,8 +162,8 @@ export default function ReferenceLevelsPage() {
   useEffect(() => {
     if (dbStatus !== 'ready') return;
     const loadOptions = async () => {
-      const rows = await runQuery('SELECT DISTINCT symbol FROM reference_levels ORDER BY symbol');
-      setSymbols(['ALL', ...rows.map((r: { symbol: string }) => r.symbol)]);
+      const rows = await runQuery<{ symbol: string }>('SELECT DISTINCT symbol FROM reference_levels ORDER BY symbol');
+      setSymbols(['ALL', ...rows.map((r) => r.symbol)]);
     };
     loadOptions().catch((error) => {
       console.error('Failed to load reference-level filters:', error);
@@ -178,7 +178,7 @@ export default function ReferenceLevelsPage() {
     try {
       const where = buildWhere(deferredFilters);
       const [overviewRows, scenarioDistRows, weeklyDistRows, timingDistRows] = await Promise.all([
-        runQuery(`
+        runQuery<Overview>(`
           SELECT
             CAST(COUNT(*) AS DOUBLE) AS total_rows,
             CAST(AVG(CASE WHEN mop_retrace THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS mop_retrace_rate,
@@ -190,7 +190,7 @@ export default function ReferenceLevelsPage() {
           FROM reference_levels
           ${where}
         `),
-        runQuery(`
+        runQuery<DistRow>(`
           SELECT
             CASE
               WHEN is_outside_day THEN 'Outside Day'
@@ -205,7 +205,7 @@ export default function ReferenceLevelsPage() {
           GROUP BY 1
           ORDER BY count DESC
         `),
-        runQuery(`
+        runQuery<DistRow>(`
           SELECT 'Weekly Open Retrace' AS label,
                  CAST(COUNT(*) AS DOUBLE) AS count,
                  CAST(AVG(CASE WHEN weekly_open_retrace THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS metric_a,
@@ -227,7 +227,7 @@ export default function ReferenceLevelsPage() {
           FROM reference_levels
           ${where}
         `),
-        runQuery(`
+        runQuery<TimingRow>(`
           SELECT 'MOP Retrace' AS label, CAST(AVG(CASE WHEN mop_retrace THEN mop_retrace_time_minutes END) AS DOUBLE) AS avg_minutes
           FROM reference_levels ${where}
           UNION ALL
@@ -240,9 +240,9 @@ export default function ReferenceLevelsPage() {
       ]);
 
       setOverview((overviewRows[0] as Overview) ?? null);
-      setScenarioRows(scenarioDistRows as DistRow[]);
-      setWeeklyRows(weeklyDistRows as DistRow[]);
-      setTimingRows(timingDistRows as TimingRow[]);
+      setScenarioRows(scenarioDistRows);
+      setWeeklyRows(weeklyDistRows);
+      setTimingRows(timingDistRows);
       setQueryTimeMs(performance.now() - started);
     } catch (error) {
       console.error('Failed to query reference-level dashboard:', error);
@@ -270,6 +270,10 @@ export default function ReferenceLevelsPage() {
       <div className="rounded-3xl border border-amber-500/20 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.18),_transparent_42%),linear-gradient(135deg,rgba(24,24,27,0.96),rgba(9,9,11,0.98))] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-4">
+            <Link href="/research" className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-zinc-500 transition hover:text-amber-300">
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Back to Research Hub
+            </Link>
             <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.3em] text-amber-200">
               <Route className="h-3.5 w-3.5" />
               Phase 5 Dashboard
@@ -287,10 +291,6 @@ export default function ReferenceLevelsPage() {
               <RefreshCcw className="mr-2 h-4 w-4" />
               Reload Data
             </Button>
-            <Link href="/research" className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950/80 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:border-zinc-700 hover:bg-zinc-900">
-              Research Hub
-              <ArrowRight className="h-4 w-4" />
-            </Link>
           </div>
         </div>
 

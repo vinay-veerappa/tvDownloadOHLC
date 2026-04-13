@@ -189,8 +189,8 @@ def compute_reference_levels(symbols: List[str], start: str | None = None, end: 
 
         bars = loader.load_1m(symbol)
         if bars.empty:
-            logger.warning("1m bars missing for %s; reference timing fields may be incomplete", symbol)
-            rth = pd.DataFrame(columns=["trading_date", "minutes_into_session", "high", "low"])
+            logger.warning("1m bars missing for %s; skipping reference-level rows to avoid false negatives", symbol)
+            continue
         else:
             tagged = tag_session(bars)
             rth = tagged[tagged["is_rth"]].copy()

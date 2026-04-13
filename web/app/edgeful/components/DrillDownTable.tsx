@@ -55,8 +55,8 @@ export function DrillDownTable({ filters, dbReady }: DrillDownTableProps) {
       const whereClause = buildWhereClause(filters);
       const offset = page * PAGE_SIZE;
       const sql = getRecordsSql(whereClause, offset, PAGE_SIZE, sortCol, sortDir);
-      const result = await runQuery(sql);
-      setData(result as MacroRecord[]);
+      const result = await runQuery<MacroRecord>(sql);
+      setData(result);
     } catch (err) {
       console.error('Error fetching records:', err);
     } finally {
@@ -77,7 +77,7 @@ export function DrillDownTable({ filters, dbReady }: DrillDownTableProps) {
       const keys = Object.keys(result[0]);
       const csvContent = [
         keys.join(','),
-        ...result.map((row: Record<string, any>) => keys.map(k => {
+        ...result.map((row: Record<string, unknown>) => keys.map(k => {
           const val = row[k];
           if (val === null || val === undefined) return '';
           if (typeof val === 'string') return `"${val.replace(/"/g, '""')}"`;

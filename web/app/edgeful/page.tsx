@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { FilterPanel } from './components/FilterPanel';
 import { SummaryCards } from './components/SummaryCards';
 import { useFilters } from './hooks/useFilters';
@@ -16,12 +17,14 @@ import { ExtensionProbabilityPanel } from './components/ExtensionProbabilityPane
 import { RollingProbabilityPanel } from './components/RollingProbabilityPanel';
 import { PDLevelInteractionPanel } from './components/PDLevelInteractionPanel';
 import { OpeningCandleContinuationPanel } from './components/OpeningCandleContinuationPanel';
-import { LayoutDashboard, RefreshCcw } from 'lucide-react';
+import { ArrowLeft, LayoutDashboard, RefreshCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { QueryStatus } from './components/QueryStatus';
 
 import { Suspense } from 'react';
+
+type SummaryQueryRow = Omit<SummaryMetrics, 'query_time_ms'>;
 
 function DashboardContent() {
   const { filters, updateFilter, updateDateRange, updateLookback, updateAdvanced, resetFilters } = useFilters();
@@ -81,7 +84,7 @@ function DashboardContent() {
     try {
       const whereClause = buildWhereClause(debouncedFilters);
       const sql = getSummarySql(whereClause);
-      const result = await runQuery(sql);
+      const result = await runQuery<SummaryQueryRow>(sql);
       
       console.log('Query Result:', result);
       
@@ -127,6 +130,10 @@ function DashboardContent() {
               <LayoutDashboard className="h-4 w-4 text-amber-500" />
             </div>
             <div>
+              <Link href="/research" className="inline-flex items-center gap-1 text-[10px] text-zinc-400 hover:text-zinc-200 uppercase tracking-widest">
+                <ArrowLeft className="h-3 w-3" />
+                Back to Research Hub
+              </Link>
               <h1 className="text-sm font-bold tracking-tight">Macro Research Dashboard</h1>
               <div className="flex items-center gap-2 mt-0.5">
                 <span className={`w-1.5 h-1.5 rounded-full ${dbStatus === 'ready' ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-700'}`} />

@@ -2,7 +2,7 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Clock3, RefreshCcw, TrendingUp } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Clock3, RefreshCcw, TrendingUp } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { Card } from '@/components/ui/card';
@@ -144,8 +144,8 @@ export default function SessionBreakoutsPage() {
 
   useEffect(() => {
     if (dbStatus !== 'ready') return;
-    runQuery('SELECT DISTINCT symbol FROM session_breakout_records ORDER BY symbol')
-      .then((rows) => setSymbols(['ALL', ...rows.map((r: { symbol: string }) => r.symbol)]))
+    runQuery<{ symbol: string }>('SELECT DISTINCT symbol FROM session_breakout_records ORDER BY symbol')
+      .then((rows) => setSymbols(['ALL', ...rows.map((r) => r.symbol)]))
       .catch((error) => console.error('Failed to load symbols for breakout dashboard:', error));
   }, [dbStatus]);
 
@@ -157,7 +157,7 @@ export default function SessionBreakoutsPage() {
     try {
       const where = buildWhere(deferredFilters);
       const [overviewRows, directionRows, closeLocationRows] = await Promise.all([
-        runQuery(`
+        runQuery<Overview>(`
           SELECT
             CAST(COUNT(*) AS DOUBLE) AS total_rows,
             CAST(AVG(CASE WHEN london_high_broken_in_ny OR london_low_broken_in_ny THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS london_break_rate,
@@ -168,7 +168,7 @@ export default function SessionBreakoutsPage() {
           FROM session_breakout_records
           ${where}
         `),
-        runQuery(`
+        runQuery<DistRow>(`
           SELECT
             first_break_direction AS label,
             CAST(COUNT(*) AS DOUBLE) AS n,
@@ -179,7 +179,7 @@ export default function SessionBreakoutsPage() {
           GROUP BY first_break_direction
           ORDER BY CASE first_break_direction WHEN 'UP' THEN 1 WHEN 'DOWN' THEN 2 WHEN 'NONE' THEN 3 ELSE 4 END
         `),
-        runQuery(`
+        runQuery<{ label: string; n: number }>(`
           SELECT
             ny_close_location_vs_london AS label,
             CAST(COUNT(*) AS DOUBLE) AS n
@@ -191,8 +191,8 @@ export default function SessionBreakoutsPage() {
       ]);
 
       setOverview((overviewRows[0] as Overview) ?? null);
-      setDistRows(directionRows as DistRow[]);
-      setCloseRows(closeLocationRows as { label: string; n: number }[]);
+      setDistRows(directionRows);
+      setCloseRows(closeLocationRows);
       setQueryTimeMs(performance.now() - started);
     } catch (error) {
       console.error('Failed to query session breakout dashboard:', error);
@@ -221,8 +221,8 @@ export default function SessionBreakoutsPage() {
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-4">
             <Link href="/research" className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-zinc-500 transition hover:text-indigo-300">
-              <ArrowRight className="h-3.5 w-3.5 rotate-180" />
-              Research Hub
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Back to Research Hub
             </Link>
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/20 bg-indigo-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.3em] text-indigo-200">

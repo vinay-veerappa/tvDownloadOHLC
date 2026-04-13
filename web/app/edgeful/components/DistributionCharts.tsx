@@ -44,6 +44,11 @@ interface StatsSummaryData {
   max_val: number;
 }
 
+interface HistogramRow {
+  bin_start: number;
+  count: number;
+}
+
 const CHART_OPTIONS: ChartOption[] = [
   {
     value: 'judas_inflection_m',
@@ -175,7 +180,7 @@ function StatsSummary({ stats, chart }: { stats: StatsSummaryData | null; chart:
 
 export function DistributionCharts({ filters, dbReady }: DistributionChartsProps) {
   const [selectedChart, setSelectedChart] = useState(CHART_OPTIONS[0]);
-  const [data, setData] = useState<{ bin_start: number; count: number }[]>([]);
+  const [data, setData] = useState<HistogramRow[]>([]);
   const [stats, setStats] = useState<StatsSummaryData | null>(null);
   const [loading, setLoading] = useState(false);
   const [trimOutliers, setTrimOutliers] = useState(true);
@@ -305,9 +310,12 @@ export function DistributionCharts({ filters, dbReady }: DistributionChartsProps
         }
       }
 
-      const result = await runQuery(sql);
+      const result = await runQuery<HistogramRow>(sql);
       // Ensure bigints are cast to regular Numbers for charting
-      setData(result.map(r => ({ ...r, count: Number(r.count) })));
+      setData(result.map((r) => ({
+        bin_start: Number(r.bin_start),
+        count: Number(r.count),
+      })));
     } catch (err) {
       console.error('Error fetching histogram:', err);
     } finally {

@@ -17,8 +17,9 @@ All probabilities are strictly causal (expanding window, shift(1) before mean),
 falling back to unconditional symbol-level rates when N < MIN_SAMPLE.
 
 Bias voting:
-  Each of 5 signals votes +1 (bullish/continuation) or -1 (bearish/reversal)
-  based on both the probability and today's directional context.
+    Each forward-looking signal votes +1 (bullish/continuation) or -1
+    (bearish/reversal) using only context available before (or very early in)
+    the session.
   Totals produce dominant_bias (BULLISH/BEARISH/NEUTRAL) and
   confidence (LOW/MEDIUM/HIGH).
 
@@ -224,6 +225,39 @@ def _safe(row: pd.Series, col: str, default=np.nan):
     return default if pd.isna(v) else v
 
 
+def _direction_sign(value: str | None) -> int:
+    """Map mixed direction labels to +1/-1/0."""
+    if not value:
+        return 0
+    v = str(value).upper()
+    if v in {"UP", "GREEN", "ABOVE", "ABOVE_PDH"}:
+        return 1
+    if v in {"DOWN", "RED", "BELOW", "BELOW_PDL"}:
+        return -1
+    return 0
+
+
+def _context_direction_sign(row: pd.Series) -> int:
+    """Best-available directional context known pre-session."""
+    gap_dir = _safe(row, "gap_direction", None)
+    sign = _direction_sign(gap_dir)
+    if sign != 0:
+        return sign
+
+    open_vs_pd = _safe(row, "open_vs_pd_range", None)
+    sign = _direction_sign(open_vs_pd)
+    if sign != 0:
+        return sign
+
+    open_vs_midnight = _safe(row, "open_vs_midnight", None)
+    sign = _direction_sign(open_vs_midnight)
+    if sign != 0:
+        return sign
+
+    streak_dir = _safe(row, "streak_direction", None)
+    return _direction_sign(streak_dir)
+
+
 def _gap_vote(row: pd.Series) -> int:
     """Gap fills are mean-reversion signals — direction depends on gap side."""
     prob = _safe(row, "gap_fill_probability")
@@ -243,7 +277,23 @@ def _occ_vote(row: pd.Series) -> int:
     cdir = _safe(row, "occ_first_direction", None)
     if pd.isna(prob) or not cdir or prob <= BIAS_THRESHOLD:
         return 0
-    return 1 if cdir == "UP" else -1 if cdir == "DOWN" else 0
+    return _direction_sign(cdir)
+
+
+def _or_vote(row: pd.Series) -> int:
+    """High OR breakout probability follows contextual direction."""
+    prob = _safe(row, "or_breakout_probability")
+    if pd.isna(prob) or prob <= BIAS_THRESHOLD:
+        return 0
+    return _context_direction_sign(row)
+
+
+def _ib_vote(row: pd.Series) -> int:
+    """High IB single-break probability follows contextual direction."""
+    prob = _safe(row, "ib_single_break_probability")
+    if pd.isna(prob) or prob <= BIAS_THRESHOLD:
+        return 0
+    return _context_direction_sign(row)
 
 
 def _pdh_pdl_vote(row: pd.Series) -> int:
@@ -269,17 +319,17 @@ def _streak_vote(row: pd.Series) -> int:
     sdir = _safe(row, "streak_direction", None)
     if pd.isna(prob) or not sdir or prob <= BIAS_THRESHOLD:
         return 0
-    return -1 if sdir == "UP" else 1 if sdir == "DOWN" else 0
+    return -_direction_sign(sdir)
 
 
 def _mop_vote(row: pd.Series) -> int:
     """High MOP retrace probability — mean-reversion signal."""
     prob = _safe(row, "mop_retrace_probability")
-    sdir = _safe(row, "session_direction", None)
-    if pd.isna(prob) or not sdir or prob <= BIAS_THRESHOLD:
+    open_vs_midnight = _safe(row, "open_vs_midnight", None)
+    if pd.isna(prob) or not open_vs_midnight or prob <= BIAS_THRESHOLD:
         return 0
-    # If the day looks like an up-day but MOP retrace is likely → bearish lean
-    return -1 if sdir == "UP" else 1 if sdir == "DOWN" else 0
+    # Mean reversion: opening above midnight leans bearish retrace, below leans bullish retrace.
+    return -_direction_sign(open_vs_midnight)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -318,8 +368,9 @@ def compute_confluence(df: pd.DataFrame) -> pd.DataFrame:
     # ── Directional bias votes ────────────────────────────────────────────────
     vote_fns = {
         "v_gap":      _gap_vote,
+        "v_or":       _or_vote,
+        "v_ib":       _ib_vote,
         "v_occ":      _occ_vote,
-        "v_pdh_pdl":  _pdh_pdl_vote,
         "v_streak":   _streak_vote,
         "v_mop":      _mop_vote,
     }
@@ -336,7 +387,7 @@ def compute_confluence(df: pd.DataFrame) -> pd.DataFrame:
     df.loc[df["total_vote"] >= 2,  "dominant_bias"] = "BULLISH"
     df.loc[df["total_vote"] <= -2, "dominant_bias"] = "BEARISH"
 
-    # confidence from max of directional counts (5 votes total, practical ceiling ~3)
+    # confidence from max directional count (6 votes total)
     max_count = df[["continuation_confluence_count", "reversal_confluence_count"]].max(axis=1)
     conditions = [max_count >= 3, max_count == 2, max_count <= 1]
     df["confidence"] = np.select(conditions, ["HIGH", "MEDIUM", "LOW"], default="LOW")

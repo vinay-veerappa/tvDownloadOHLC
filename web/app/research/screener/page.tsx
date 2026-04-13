@@ -63,6 +63,10 @@ type TrendRow = {
   dominant_bias: string;
 };
 
+type MaxDateRow = {
+  max_date: string | null;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,22 +77,22 @@ const PARQUET_FILE = 'daily_confluence_records.parquet';
 const TABLE_NAME = 'daily_confluence_records';
 
 const BIAS_COLORS: Record<string, string> = {
-  BULLISH: 'bg-emerald-100 text-emerald-800 border border-emerald-300',
-  BEARISH: 'bg-red-100 text-red-800 border border-red-300',
-  NEUTRAL: 'bg-gray-100 text-gray-600 border border-gray-300',
+  BULLISH: 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30',
+  BEARISH: 'bg-rose-500/15 text-rose-300 border border-rose-500/30',
+  NEUTRAL: 'bg-zinc-500/15 text-zinc-300 border border-zinc-500/30',
 };
 
 const CONFIDENCE_COLORS: Record<string, string> = {
-  HIGH:   'bg-violet-100 text-violet-800',
-  MEDIUM: 'bg-amber-100 text-amber-700',
-  LOW:    'bg-slate-100 text-slate-500',
+  HIGH:   'bg-violet-500/15 text-violet-300 border border-violet-500/30',
+  MEDIUM: 'bg-amber-500/15 text-amber-300 border border-amber-500/30',
+  LOW:    'bg-slate-500/15 text-slate-300 border border-slate-500/30',
 };
 
 const VIX_COLORS: Record<string, string> = {
-  LOW:     'text-emerald-600',
-  NORMAL:  'text-blue-600',
-  HIGH:    'text-orange-600',
-  EXTREME: 'text-red-600',
+  LOW:     'text-emerald-300',
+  NORMAL:  'text-sky-300',
+  HIGH:    'text-amber-300',
+  EXTREME: 'text-rose-300',
 };
 
 const TREND_COLORS = {
@@ -133,23 +137,23 @@ function ProbBar({
 
   return (
     <div className="flex items-center gap-2 text-sm">
-      <span className="w-32 text-gray-500 shrink-0 text-xs">{label}</span>
-      <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+      <span className="w-32 text-zinc-300 shrink-0 text-xs font-medium">{label}</span>
+      <div className="flex-1 h-2.5 bg-zinc-800 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full ${barColor} transition-all`}
           style={{ width: pctVal != null ? `${Math.min(pctVal, 100)}%` : '0%' }}
         />
       </div>
-      <span className="w-12 text-right text-xs font-mono text-gray-700">{pct(value)}</span>
-      {context && <span className="text-xs text-gray-400 italic">{context}</span>}
+      <span className="w-12 text-right text-xs font-mono text-zinc-100">{pct(value)}</span>
+      {context && <span className="text-xs text-zinc-400 italic">{context}</span>}
     </div>
   );
 }
 
 function BiasIcon({ bias }: { bias: string }) {
-  if (bias === 'BULLISH') return <TrendingUp className="w-4 h-4 text-emerald-600" />;
-  if (bias === 'BEARISH') return <TrendingDown className="w-4 h-4 text-red-500" />;
-  return <Minus className="w-4 h-4 text-gray-400" />;
+  if (bias === 'BULLISH') return <TrendingUp className="w-4 h-4 text-emerald-300" />;
+  if (bias === 'BEARISH') return <TrendingDown className="w-4 h-4 text-rose-300" />;
+  return <Minus className="w-4 h-4 text-zinc-400" />;
 }
 
 function SymbolCardView({ card }: { card: SymbolCard }) {
@@ -172,10 +176,10 @@ function SymbolCardView({ card }: { card: SymbolCard }) {
     : undefined;
 
   return (
-    <Card className="p-4 flex flex-col gap-3">
+    <Card className="p-4 flex flex-col gap-3 border-zinc-900 bg-black/30 backdrop-blur-sm">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <span className="text-lg font-bold text-gray-900">{card.symbol}</span>
+        <span className="text-lg font-bold text-zinc-100">{card.symbol}</span>
         <div className="flex items-center gap-1.5">
           <BiasIcon bias={card.dominant_bias} />
           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${biasClass}`}>
@@ -188,11 +192,11 @@ function SymbolCardView({ card }: { card: SymbolCard }) {
       </div>
 
       {/* Context */}
-      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-400">
         <span>{dowName}</span>
         <span className={`font-medium ${vixClass}`}>{card.vix_regime}</span>
         {card.is_event_day && (
-          <span className="text-orange-600 font-medium">
+          <span className="text-amber-300 font-semibold">
             EVENT{card.event_type ? ` (${card.event_type})` : ''}
           </span>
         )}
@@ -211,14 +215,14 @@ function SymbolCardView({ card }: { card: SymbolCard }) {
       </div>
 
       {/* Vote summary */}
-      <div className="flex gap-3 text-xs pt-1 border-t border-gray-100">
-        <span className="text-emerald-600 font-medium">
+      <div className="flex gap-3 text-xs pt-1 border-t border-zinc-800">
+        <span className="text-emerald-300 font-semibold">
           ↑ {card.continuation_confluence_count} continuation
         </span>
-        <span className="text-red-500 font-medium">
+        <span className="text-rose-300 font-semibold">
           ↓ {card.reversal_confluence_count} reversal
         </span>
-        <span className="text-gray-400 ml-auto">net {card.total_vote > 0 ? '+' : ''}{card.total_vote}</span>
+        <span className="text-zinc-300 ml-auto font-medium">net {card.total_vote > 0 ? '+' : ''}{card.total_vote}</span>
       </div>
     </Card>
   );
@@ -250,7 +254,7 @@ export default function ScreenerPage() {
       setStatusMsg('Loading confluence parquet…');
       const version = Date.now();
       await loadParquet(PARQUET_FILE, `/api/data/${PARQUET_FILE}?v=${version}`);
-      const rows = await runQuery(
+      const rows = await runQuery<MaxDateRow>(
         `SELECT MAX(trading_date)::VARCHAR AS max_date FROM ${TABLE_NAME}`
       );
       const md = rows[0]?.max_date ?? '';
@@ -272,7 +276,7 @@ export default function ScreenerPage() {
     if (status !== 'ready' || !selectedDate) return;
     const biasWhere = biasFilter !== 'ALL' ? `AND dominant_bias = ${quote(biasFilter)}` : '';
 
-    runQuery(`
+    runQuery<SymbolCard>(`
       SELECT
         symbol, trading_date::VARCHAR AS trading_date,
         day_of_week, vix_regime,
@@ -304,7 +308,7 @@ export default function ScreenerPage() {
       ? `AND trading_date >= (SELECT MAX(trading_date) - INTERVAL '${lookback}' DAY FROM ${TABLE_NAME})`
       : '';
 
-    runQuery(`
+    runQuery<TrendRow>(`
       SELECT
         trading_date::VARCHAR AS trading_date,
         gap_fill_probability::DOUBLE AS gap_fill_probability,
@@ -347,44 +351,44 @@ export default function ScreenerPage() {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-8">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(139,92,246,0.14),_transparent_34%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.12),_transparent_28%),#050816] p-6 max-w-7xl mx-auto space-y-8 text-zinc-100">
       {/* Page header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
-            <Link href="/research" className="hover:text-gray-700 flex items-center gap-1">
+          <div className="flex items-center gap-2 text-sm text-zinc-500 mb-1">
+            <Link href="/research" className="hover:text-violet-300 flex items-center gap-1">
               <ArrowLeft className="w-4 h-4" /> Research
             </Link>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <BarChart2 className="w-6 h-6 text-indigo-500" />
+          <h1 className="text-2xl font-bold text-zinc-100 flex items-center gap-2">
+            <BarChart2 className="w-6 h-6 text-violet-300" />
             What&apos;s in Play
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-zinc-400 mt-1">
             Daily edge-signal confluence — probability-weighted setup screener
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={handleReset} className="flex items-center gap-1">
+        <Button variant="outline" size="sm" onClick={handleReset} className="flex items-center gap-1 border-zinc-700 bg-zinc-950/70 text-zinc-100 hover:bg-zinc-900">
           <RefreshCcw className="w-4 h-4" /> Reload
         </Button>
       </div>
 
       {/* Filter bar */}
-      <div className="flex flex-wrap gap-4 items-end bg-gray-50 rounded-lg p-4 border border-gray-200">
+      <div className="flex flex-wrap gap-4 items-end bg-black/30 rounded-lg p-4 border border-zinc-900 backdrop-blur-sm">
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-600">Date</label>
+          <label className="text-xs font-medium text-zinc-400">Date</label>
           <input
             type="date"
-            className="border rounded px-2 py-1 text-sm"
+            className="h-9 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100"
             value={selectedDate}
             max={maxDate}
             onChange={(e) => setSelectedDate(e.target.value || maxDate)}
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-600">Bias filter</label>
+          <label className="text-xs font-medium text-zinc-400">Bias filter</label>
           <select
-            className="border rounded px-2 py-1 text-sm"
+            className="h-9 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100"
             value={biasFilter}
             onChange={(e) => setBiasFilter(e.target.value)}
           >
@@ -393,7 +397,7 @@ export default function ScreenerPage() {
             ))}
           </select>
         </div>
-        <div className="ml-auto text-xs text-gray-500 self-end">
+        <div className="ml-auto text-xs text-zinc-400 self-end">
           {selectedDate && (
             <span>
               Showing {filteredCards.length} symbol{filteredCards.length !== 1 ? 's' : ''} ·{' '}
@@ -405,7 +409,7 @@ export default function ScreenerPage() {
 
       {/* Symbol cards */}
       {filteredCards.length === 0 ? (
-        <Card className="p-8 text-center text-gray-400">
+        <Card className="p-8 text-center text-zinc-400 border-zinc-900 bg-black/30">
           No data for {selectedDate}. Try a different date.
         </Card>
       ) : (
@@ -417,35 +421,35 @@ export default function ScreenerPage() {
       )}
 
       {/* Legend */}
-      <Card className="p-4">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">Signal Interpretation Guide</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs text-gray-600">
-          <div className="bg-gray-50 rounded p-2">
-            <span className="font-medium text-gray-800">Gap Fill</span>
+      <Card className="p-4 border-zinc-900 bg-black/30 backdrop-blur-sm">
+        <h3 className="text-sm font-semibold text-zinc-100 mb-3">Signal Interpretation Guide</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs text-zinc-300">
+          <div className="bg-zinc-900/60 rounded p-2 border border-zinc-800">
+            <span className="font-medium text-zinc-100">Gap Fill</span>
             <p className="mt-1">Historical P(gap fills | DOW, VIX regime). &gt;55% = edge. Gap-up fill → bearish; gap-down fill → bullish.</p>
           </div>
-          <div className="bg-gray-50 rounded p-2">
-            <span className="font-medium text-gray-800">OR-15 Breakout</span>
+          <div className="bg-zinc-900/60 rounded p-2 border border-zinc-800">
+            <span className="font-medium text-zinc-100">OR-15 Breakout</span>
             <p className="mt-1">Historical OR-15 BO_1X win rate | DOW + VIX. Green bar = historically productive breakout environment.</p>
           </div>
-          <div className="bg-gray-50 rounded p-2">
-            <span className="font-medium text-gray-800">OCC Continuation</span>
+          <div className="bg-zinc-900/60 rounded p-2 border border-zinc-800">
+            <span className="font-medium text-zinc-100">OCC Continuation</span>
             <p className="mt-1">Opening candle (15-min) continuation rate. High + bullish candle → continuation long edge.</p>
           </div>
-          <div className="bg-gray-50 rounded p-2">
-            <span className="font-medium text-gray-800">MOP Retrace</span>
+          <div className="bg-zinc-900/60 rounded p-2 border border-zinc-800">
+            <span className="font-medium text-zinc-100">MOP Retrace</span>
             <p className="mt-1">P(price returns to Midnight Open) by end of session. Mean-reversion signal.</p>
           </div>
-          <div className="bg-gray-50 rounded p-2">
-            <span className="font-medium text-gray-800">Streak Reversal</span>
+          <div className="bg-zinc-900/60 rounded p-2 border border-zinc-800">
+            <span className="font-medium text-zinc-100">Streak Reversal</span>
             <p className="mt-1">P(streak ends today | streak direction + length). High = fade the trend.</p>
           </div>
-          <div className="bg-gray-50 rounded p-2">
-            <span className="font-medium text-gray-800">PD Level Break</span>
+          <div className="bg-zinc-900/60 rounded p-2 border border-zinc-800">
+            <span className="font-medium text-zinc-100">PD Level Break</span>
             <p className="mt-1">P(PDH or PDL broken today | DOW, VIX). Context for expansion vs compression days.</p>
           </div>
         </div>
-        <div className="mt-3 pt-3 border-t border-gray-200 flex flex-wrap gap-4 text-xs text-gray-500">
+        <div className="mt-3 pt-3 border-t border-zinc-800 flex flex-wrap gap-4 text-xs text-zinc-300">
           <span>
             <span className="inline-block w-3 h-2 rounded bg-emerald-400 mr-1" />≥60% (edge)
           </span>
@@ -460,14 +464,14 @@ export default function ScreenerPage() {
       </Card>
 
       {/* Probability trend */}
-      <Card className="p-4">
+      <Card className="p-4 border-zinc-900 bg-black/30 backdrop-blur-sm">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-          <h2 className="text-base font-semibold text-gray-800">Probability Trend</h2>
+          <h2 className="text-base font-semibold text-zinc-100">Probability Trend</h2>
           <div className="flex gap-3 items-end flex-wrap">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-600">Symbol</label>
+              <label className="text-xs font-medium text-zinc-400">Symbol</label>
               <select
-                className="border rounded px-2 py-1 text-sm"
+                className="h-9 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100"
                 value={trendSymbol}
                 onChange={(e) => setTrendSymbol(e.target.value)}
               >
@@ -475,9 +479,9 @@ export default function ScreenerPage() {
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-600">Lookback (days)</label>
+              <label className="text-xs font-medium text-zinc-400">Lookback (days)</label>
               <select
-                className="border rounded px-2 py-1 text-sm"
+                className="h-9 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100"
                 value={trendLookback}
                 onChange={(e) => setTrendLookback(e.target.value)}
               >
@@ -491,26 +495,28 @@ export default function ScreenerPage() {
         </div>
 
         {trendData.length === 0 ? (
-          <div className="h-48 flex items-center justify-center text-gray-400 text-sm">
+          <div className="h-48 flex items-center justify-center text-zinc-400 text-sm">
             No trend data
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={trendData} margin={{ top: 4, right: 16, bottom: 4, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
               <XAxis
                 dataKey="trading_date"
-                tick={{ fontSize: 11 }}
+                tick={{ fontSize: 11, fill: '#a1a1aa' }}
                 tickFormatter={(v: string) => v.slice(0, 7)}
                 interval="preserveStartEnd"
               />
               <YAxis
                 domain={[0.3, 0.9]}
                 tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`}
-                tick={{ fontSize: 11 }}
+                tick={{ fontSize: 11, fill: '#a1a1aa' }}
                 width={40}
               />
               <Tooltip
+                contentStyle={{ backgroundColor: '#09090b', borderColor: '#27272a', color: '#f4f4f5' }}
+                labelStyle={{ color: '#d4d4d8' }}
                 formatter={(v: number, name: string) => [
                   `${(v * 100).toFixed(1)}%`,
                   name.replace(/_/g, ' ').replace('probability', '').trim(),
@@ -518,6 +524,7 @@ export default function ScreenerPage() {
                 labelFormatter={(l: string) => `Date: ${l}`}
               />
               <Legend
+                wrapperStyle={{ color: '#d4d4d8' }}
                 formatter={(v: string) =>
                   v.replace(/_/g, ' ').replace('probability', '').trim()
                 }
@@ -536,7 +543,7 @@ export default function ScreenerPage() {
             </LineChart>
           </ResponsiveContainer>
         )}
-        <p className="text-xs text-gray-400 mt-2">
+        <p className="text-xs text-zinc-400 mt-2">
           Rolling expanding conditional probabilities (causal — no look-ahead). Each line reflects
           P(signal event | day-of-week, VIX regime) using all history prior to that date.
         </p>

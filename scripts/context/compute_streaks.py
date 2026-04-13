@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 from typing import List
 
+import numpy as np
 import pandas as pd
 
 _REPO_ROOT = Path(__file__).parent.parent.parent
@@ -44,8 +45,13 @@ def _build_streak_records(ctx: pd.DataFrame) -> pd.DataFrame:
             ctx[col] = None
 
     out = ctx[required].copy()
-    out["next_day_continuation"] = out["session_direction"].eq(out["session_direction"].shift(-1))
-    out["next_day_continuation"] = out["next_day_continuation"].fillna(False).astype(bool)
+    next_direction = out["session_direction"].shift(-1)
+    out["next_day_continuation"] = np.where(
+        next_direction.isna(),
+        pd.NA,
+        out["session_direction"].eq(next_direction),
+    )
+    out["next_day_continuation"] = out["next_day_continuation"].astype("boolean")
     return out.sort_values(["symbol", "trading_date"]).reset_index(drop=True)
 
 

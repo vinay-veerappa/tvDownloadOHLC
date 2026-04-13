@@ -2,7 +2,7 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Clock3, LayoutDashboard, RefreshCcw, SplitSquareVertical, TrendingUp } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Clock3, LayoutDashboard, RefreshCcw, SplitSquareVertical, TrendingUp } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { Card } from '@/components/ui/card';
@@ -179,11 +179,11 @@ export default function GapAnalyticsPage() {
 
     const loadOptions = async () => {
       const [symbolRows, bucketRowsResult] = await Promise.all([
-        runQuery('SELECT DISTINCT symbol FROM gap_records ORDER BY symbol'),
-        runQuery('SELECT DISTINCT gap_size_bucket FROM gap_records ORDER BY gap_size_bucket'),
+        runQuery<{ symbol: string }>('SELECT DISTINCT symbol FROM gap_records ORDER BY symbol'),
+        runQuery<{ gap_size_bucket: string }>('SELECT DISTINCT gap_size_bucket FROM gap_records ORDER BY gap_size_bucket'),
       ]);
-      setSymbols(['ALL', ...symbolRows.map((r: { symbol: string }) => r.symbol)]);
-      setBuckets(['ALL', ...bucketRowsResult.map((r: { gap_size_bucket: string }) => r.gap_size_bucket)]);
+      setSymbols(['ALL', ...symbolRows.map((r) => r.symbol)]);
+      setBuckets(['ALL', ...bucketRowsResult.map((r) => r.gap_size_bucket)]);
     };
 
     loadOptions().catch((error) => {
@@ -203,7 +203,7 @@ export default function GapAnalyticsPage() {
         : 'WHERE gap_valid = true';
 
       const [overviewRows, directionDistRows, bucketDistRows, weekdayDistRows, rollingDistRows] = await Promise.all([
-        runQuery(`
+        runQuery<Overview>(`
           SELECT
             CAST(COUNT(*) AS DOUBLE) AS total_rows,
             CAST(SUM(CASE WHEN gap_valid THEN 1 ELSE 0 END) AS DOUBLE) AS valid_gap_rows,
@@ -214,7 +214,7 @@ export default function GapAnalyticsPage() {
           FROM gap_records
           ${where}
         `),
-        runQuery(`
+        runQuery<DistRow>(`
           SELECT
             gap_direction AS label,
             CAST(COUNT(*) AS DOUBLE) AS count,
@@ -224,7 +224,7 @@ export default function GapAnalyticsPage() {
           GROUP BY gap_direction
           ORDER BY count DESC
         `),
-        runQuery(`
+        runQuery<DistRow>(`
           SELECT
             gap_size_bucket AS label,
             CAST(COUNT(*) AS DOUBLE) AS count,
@@ -234,7 +234,7 @@ export default function GapAnalyticsPage() {
           GROUP BY gap_size_bucket
           ORDER BY CASE gap_size_bucket WHEN 'NONE' THEN 1 WHEN 'SMALL' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END
         `),
-        runQuery(`
+        runQuery<WeekdayRow>(`
           SELECT
             day_of_week,
             CAST(COUNT(*) AS DOUBLE) AS n,
@@ -245,7 +245,7 @@ export default function GapAnalyticsPage() {
           GROUP BY day_of_week
           ORDER BY day_of_week
         `),
-        runQuery(`
+        runQuery<RollingRow>(`
           WITH daily AS (
             SELECT
               trading_date,
@@ -263,10 +263,10 @@ export default function GapAnalyticsPage() {
       ]);
 
       setOverview((overviewRows[0] as Overview) ?? null);
-      setDirectionRows(directionDistRows as DistRow[]);
-      setBucketRows(bucketDistRows as DistRow[]);
-      setWeekdayRows(weekdayDistRows as WeekdayRow[]);
-      setRollingRows(rollingDistRows as RollingRow[]);
+      setDirectionRows(directionDistRows);
+      setBucketRows(bucketDistRows);
+      setWeekdayRows(weekdayDistRows);
+      setRollingRows(rollingDistRows);
       setQueryTimeMs(performance.now() - started);
     } catch (error) {
       console.error('Failed to query gap dashboard:', error);
@@ -292,8 +292,8 @@ export default function GapAnalyticsPage() {
         <div className="flex flex-col gap-5 border-b border-zinc-900 pb-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-3">
             <Link href="/research" className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-zinc-500 transition hover:text-cyan-300">
-              <ArrowRight className="h-3.5 w-3.5 rotate-180" />
-              Research Hub
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Back to Research Hub
             </Link>
             <div className="flex items-center gap-3">
               <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-3 text-cyan-300">
