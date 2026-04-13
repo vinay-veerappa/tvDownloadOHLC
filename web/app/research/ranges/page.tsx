@@ -112,6 +112,16 @@ type BothSidesSummary = {
   share_of_sample: number;
 };
 
+type BothSidesConditionRow = {
+  dimension: string;
+  bucket: string;
+  sample_count: number;
+  sweep_count: number;
+  sweep_prob: number;
+  baseline_prob: number;
+  lift: number;
+};
+
 type MeanReversionSummary = {
   sample_count: number;
   mid_retest_rate: number;
@@ -128,6 +138,26 @@ type MeanReversionRow = {
   mid_retest_rate: number;
   opposite_retest_rate: number;
   avg_mid_retest_time: number | null;
+};
+
+type LatestRangeRow = {
+  trading_date: string;
+  range_high: number;
+  range_low: number;
+  range_mid: number;
+  range_width: number;
+};
+
+type GexMacroData = {
+  ticker: string;
+  tradingDate: string;
+  timestamp: string;
+  spotPrice: number | null;
+  levels: {
+    zeroGamma: number | null;
+    macroCallWall: number | null;
+    macroPutWall: number | null;
+  };
 };
 
 const DEFAULT_FILTERS: FilterState = {
@@ -369,6 +399,97 @@ function getBothSidesSummarySql(rangeWhere: string) {
   `;
 }
 
+function getBothSidesConditionSql(rangeWhere: string) {
+  return `
+    WITH rr AS (
+      SELECT *
+      FROM range_records
+      ${rangeWhere}
+    ),
+    base AS (
+      SELECT
+        CAST(AVG(CASE WHEN broke_high_first AND broke_low_first THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS baseline_prob
+      FROM rr
+    ),
+    by_dow AS (
+      SELECT
+        'Day Of Week' AS dimension,
+        CASE day_of_week
+          WHEN 0 THEN 'Mon'
+          WHEN 1 THEN 'Tue'
+          WHEN 2 THEN 'Wed'
+          WHEN 3 THEN 'Thu'
+          WHEN 4 THEN 'Fri'
+          ELSE 'Unknown'
+        END AS bucket,
+        CAST(COUNT(*) AS DOUBLE) AS sample_count,
+        CAST(SUM(CASE WHEN broke_high_first AND broke_low_first THEN 1 ELSE 0 END) AS DOUBLE) AS sweep_count,
+        CAST(AVG(CASE WHEN broke_high_first AND broke_low_first THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS sweep_prob
+      FROM rr
+      GROUP BY 1, 2
+    ),
+    by_width AS (
+      SELECT
+        'Range Width' AS dimension,
+        COALESCE(range_width_category, 'UNCLASSIFIED') AS bucket,
+        CAST(COUNT(*) AS DOUBLE) AS sample_count,
+        CAST(SUM(CASE WHEN broke_high_first AND broke_low_first THEN 1 ELSE 0 END) AS DOUBLE) AS sweep_count,
+        CAST(AVG(CASE WHEN broke_high_first AND broke_low_first THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS sweep_prob
+      FROM rr
+      GROUP BY 1, 2
+    ),
+    by_vix AS (
+      SELECT
+        'VIX Regime' AS dimension,
+        COALESCE(vix_regime, 'UNKNOWN') AS bucket,
+        CAST(COUNT(*) AS DOUBLE) AS sample_count,
+        CAST(SUM(CASE WHEN broke_high_first AND broke_low_first THEN 1 ELSE 0 END) AS DOUBLE) AS sweep_count,
+        CAST(AVG(CASE WHEN broke_high_first AND broke_low_first THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS sweep_prob
+      FROM rr
+      GROUP BY 1, 2
+    ),
+    by_gap AS (
+      SELECT
+        'Gap Direction' AS dimension,
+        COALESCE(gap_direction, 'UNKNOWN') AS bucket,
+        CAST(COUNT(*) AS DOUBLE) AS sample_count,
+        CAST(SUM(CASE WHEN broke_high_first AND broke_low_first THEN 1 ELSE 0 END) AS DOUBLE) AS sweep_count,
+        CAST(AVG(CASE WHEN broke_high_first AND broke_low_first THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS sweep_prob
+      FROM rr
+      GROUP BY 1, 2
+    ),
+    by_open_loc AS (
+      SELECT
+        'Open vs PD' AS dimension,
+        COALESCE(open_vs_pd_range, 'UNKNOWN') AS bucket,
+        CAST(COUNT(*) AS DOUBLE) AS sample_count,
+        CAST(SUM(CASE WHEN broke_high_first AND broke_low_first THEN 1 ELSE 0 END) AS DOUBLE) AS sweep_count,
+        CAST(AVG(CASE WHEN broke_high_first AND broke_low_first THEN 1.0 ELSE 0.0 END) * 100 AS DOUBLE) AS sweep_prob
+      FROM rr
+      GROUP BY 1, 2
+    ),
+    combined AS (
+      SELECT * FROM by_dow
+      UNION ALL SELECT * FROM by_width
+      UNION ALL SELECT * FROM by_vix
+      UNION ALL SELECT * FROM by_gap
+      UNION ALL SELECT * FROM by_open_loc
+    )
+    SELECT
+      c.dimension,
+      c.bucket,
+      c.sample_count,
+      c.sweep_count,
+      c.sweep_prob,
+      b.baseline_prob,
+      CAST(c.sweep_prob - b.baseline_prob AS DOUBLE) AS lift
+    FROM combined c
+    CROSS JOIN base b
+    WHERE c.sample_count >= 30
+    ORDER BY lift DESC, c.sample_count DESC, c.dimension ASC, c.bucket ASC
+  `;
+}
+
 function getMeanReversionSummarySql(rangeWhere: string, tradeWhereWithoutStrategy: string) {
   return `
     WITH rr AS (
@@ -433,6 +554,21 @@ function getMeanReversionDirectionSql(rangeWhere: string) {
   `;
 }
 
+function getLatestRangeSql(rangeWhere: string) {
+  return `
+    SELECT
+      trading_date,
+      CAST(range_high AS DOUBLE) AS range_high,
+      CAST(range_low AS DOUBLE) AS range_low,
+      CAST(range_mid AS DOUBLE) AS range_mid,
+      CAST(range_width AS DOUBLE) AS range_width
+    FROM range_records
+    ${rangeWhere}
+    ORDER BY trading_date DESC
+    LIMIT 1
+  `;
+}
+
 function formatPct(value: number | null | undefined, digits = 1) {
   if (value == null || Number.isNaN(value)) return '--';
   return `${value.toFixed(digits)}%`;
@@ -441,6 +577,25 @@ function formatPct(value: number | null | undefined, digits = 1) {
 function formatNumber(value: number | null | undefined, digits = 2) {
   if (value == null || Number.isNaN(value)) return '--';
   return value.toFixed(digits);
+}
+
+function describeLevelOverlap(level: number | null, latestRange: LatestRangeRow | null) {
+  if (level == null || latestRange == null || latestRange.range_width <= 0) {
+    return { location: '--', widthUnits: '--' };
+  }
+
+  const { range_low: low, range_high: high, range_width: width } = latestRange;
+  if (level >= low && level <= high) {
+    return { location: 'Inside range', widthUnits: '0.00x' };
+  }
+
+  if (level > high) {
+    const units = (level - high) / width;
+    return { location: 'Above range', widthUnits: `${units.toFixed(2)}x` };
+  }
+
+  const units = (low - level) / width;
+  return { location: 'Below range', widthUnits: `${units.toFixed(2)}x` };
 }
 
 function StatCard({
@@ -511,8 +666,14 @@ export default function RangeAnalyticsPage() {
   const [equityCurve, setEquityCurve] = useState<EquityRow[]>([]);
   const [bothSidesRows, setBothSidesRows] = useState<BothSidesOutcomeRow[]>([]);
   const [bothSidesSummary, setBothSidesSummary] = useState<BothSidesSummary | null>(null);
+  const [bothSidesConditionRows, setBothSidesConditionRows] = useState<BothSidesConditionRow[]>([]);
   const [meanReversionSummary, setMeanReversionSummary] = useState<MeanReversionSummary | null>(null);
   const [meanReversionRows, setMeanReversionRows] = useState<MeanReversionRow[]>([]);
+  const [latestRange, setLatestRange] = useState<LatestRangeRow | null>(null);
+  const [gexMacro, setGexMacro] = useState<GexMacroData | null>(null);
+  const [gexSymbolOverride, setGexSymbolOverride] = useState('NQ1');
+
+  const [gexLoading, setGexLoading] = useState(false);
 
   const loadEngine = useCallback(async () => {
     setDbStatus('loading');
@@ -569,7 +730,7 @@ export default function RangeAnalyticsPage() {
       const tradeWhere = buildTradeWhere(deferredFilters);
       const tradeWhereNoStrategy = buildTradeWhere(deferredFilters, undefined, false);
 
-      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows, meanReversionSummaryRows, meanReversionDirectionRows] = await Promise.all([
+      const [overviewRows, widthRows, breakoutRows, finalRows, extensionRows, strategyTableRows, equityRows, bothSidesOutcomeRows, bothSidesSummaryRows, bothSidesConditionLiftRows, meanReversionSummaryRows, meanReversionDirectionRows, latestRangeRows] = await Promise.all([
         runQuery<OverviewMetrics>(getOverviewSql(rangeWhere, tradeWhere)),
         runQuery<WidthDistributionRow>(getWidthDistributionSql(rangeWhere)),
         runQuery<DirectionRow>(getDirectionSql(rangeWhere, 'first_bo_direction')),
@@ -579,8 +740,10 @@ export default function RangeAnalyticsPage() {
         runQuery<EquityRow>(getEquitySql(tradeWhere)),
         runQuery<BothSidesOutcomeRow>(getBothSidesOutcomeSql(rangeWhere)),
         runQuery<BothSidesSummary>(getBothSidesSummarySql(rangeWhere)),
+        runQuery<BothSidesConditionRow>(getBothSidesConditionSql(rangeWhere)),
         runQuery<MeanReversionSummary>(getMeanReversionSummarySql(rangeWhere, tradeWhereNoStrategy)),
         runQuery<MeanReversionRow>(getMeanReversionDirectionSql(rangeWhere)),
+        runQuery<LatestRangeRow>(getLatestRangeSql(rangeWhere)),
       ]);
 
       setOverview((overviewRows[0] as OverviewMetrics) ?? null);
@@ -592,8 +755,10 @@ export default function RangeAnalyticsPage() {
       setEquityCurve(equityRows);
       setBothSidesRows(bothSidesOutcomeRows);
       setBothSidesSummary((bothSidesSummaryRows[0] as BothSidesSummary) ?? null);
+      setBothSidesConditionRows(bothSidesConditionLiftRows);
       setMeanReversionSummary((meanReversionSummaryRows[0] as MeanReversionSummary) ?? null);
       setMeanReversionRows(meanReversionDirectionRows);
+      setLatestRange((latestRangeRows[0] as LatestRangeRow) ?? null);
       setQueryTimeMs(performance.now() - startedAt);
     } catch (error) {
       console.error('Failed to query range analytics dashboard:', error);
@@ -624,6 +789,75 @@ export default function RangeAnalyticsPage() {
   const focusStrategyMetrics = useMemo(() => {
     return strategyRows.find((row) => row.strategy_name === focusStrategy) ?? strategyRows[0] ?? null;
   }, [focusStrategy, strategyRows]);
+
+  const sweepLiftPositive = useMemo(
+    () => bothSidesConditionRows.filter((row) => row.lift > 0),
+    [bothSidesConditionRows],
+  );
+
+  const topSweepLift = useMemo(
+    () => sweepLiftPositive[0] ?? null,
+    [sweepLiftPositive],
+  );
+
+  useEffect(() => {
+    const candidates = options.symbols.filter((symbol) => symbol !== 'ALL');
+    if (candidates.length === 0) return;
+    if (candidates.includes(gexSymbolOverride)) return;
+    if (candidates.includes('NQ1')) {
+      setGexSymbolOverride('NQ1');
+      return;
+    }
+    setGexSymbolOverride(candidates[0]);
+  }, [options.symbols, gexSymbolOverride]);
+
+  const gexSymbol = useMemo(() => {
+    if (deferredFilters.symbol !== 'ALL') return deferredFilters.symbol;
+    return gexSymbolOverride;
+  }, [deferredFilters.symbol, gexSymbolOverride]);
+
+  useEffect(() => {
+    if (!gexSymbol) return;
+
+    const loadGexMacro = async () => {
+      setGexLoading(true);
+      try {
+        const res = await fetch(`/api/options-live/v3/macro?symbol=${encodeURIComponent(gexSymbol)}`, {
+          cache: 'no-store',
+        });
+        const payload = await res.json();
+        if (payload?.success && payload?.data) {
+          setGexMacro(payload.data as GexMacroData);
+        } else {
+          setGexMacro(null);
+        }
+      } catch (error) {
+        console.error('Failed to load GEX macro overlay:', error);
+        setGexMacro(null);
+      } finally {
+        setGexLoading(false);
+      }
+    };
+
+    loadGexMacro().catch((error) => {
+      console.error('Failed to trigger GEX macro fetch:', error);
+    });
+  }, [gexSymbol]);
+
+  const zeroGammaOverlap = useMemo(
+    () => describeLevelOverlap(gexMacro?.levels?.zeroGamma ?? null, latestRange),
+    [gexMacro, latestRange],
+  );
+
+  const callWallOverlap = useMemo(
+    () => describeLevelOverlap(gexMacro?.levels?.macroCallWall ?? null, latestRange),
+    [gexMacro, latestRange],
+  );
+
+  const putWallOverlap = useMemo(
+    () => describeLevelOverlap(gexMacro?.levels?.macroPutWall ?? null, latestRange),
+    [gexMacro, latestRange],
+  );
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.12),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(245,158,11,0.12),_transparent_28%),#050816] text-zinc-100">
@@ -752,6 +986,84 @@ export default function RangeAnalyticsPage() {
             sublabel={focusStrategyMetrics ? `${focusStrategyMetrics.strategy_name} · avg R ${formatNumber(focusStrategyMetrics.avg_r)}` : 'No strategy rows'}
           />
         </div>
+
+        <Card className="border-zinc-900 bg-black/30 p-5">
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">GEX Overlap</div>
+              <h2 className="mt-1 text-lg font-semibold">Dealer levels vs latest filtered range</h2>
+            </div>
+            {deferredFilters.symbol === 'ALL' ? (
+              <div className="min-w-[180px]">
+                <FilterSelect
+                  label="GEX Symbol"
+                  value={gexSymbolOverride}
+                  options={options.symbols.filter((symbol) => symbol !== 'ALL')}
+                  onChange={(value) => setGexSymbolOverride(value)}
+                />
+              </div>
+            ) : (
+              <div className="text-right text-xs text-zinc-500">
+                <div className="uppercase tracking-[0.18em]">Symbol</div>
+                <div className="mt-1 text-sm text-cyan-300">{gexSymbol}</div>
+              </div>
+            )}
+          </div>
+
+          <div className="mb-5 grid gap-4 md:grid-cols-3">
+            <StatCard
+              label="Latest Range Date"
+              value={latestRange?.trading_date ?? '--'}
+              accent="text-zinc-200"
+              sublabel={latestRange ? `H ${formatNumber(latestRange.range_high)} / L ${formatNumber(latestRange.range_low)}` : 'No filtered range rows'}
+            />
+            <StatCard
+              label="Spot vs Mid"
+              value={gexMacro?.spotPrice != null && latestRange ? `${formatNumber(gexMacro.spotPrice)} vs ${formatNumber(latestRange.range_mid)}` : '--'}
+              accent="text-amber-300"
+              sublabel={gexLoading ? 'Loading dealer snapshot...' : (gexMacro ? `Ticker ${gexMacro.ticker}` : 'No dealer snapshot available')}
+            />
+            <StatCard
+              label="Range Width"
+              value={latestRange ? `${formatNumber(latestRange.range_width, 2)} pts` : '--'}
+              accent="text-emerald-300"
+              sublabel="Used to normalize wall distance"
+            />
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-zinc-900">
+            <table className="min-w-full divide-y divide-zinc-900 text-sm">
+              <thead className="bg-zinc-950/80 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                <tr>
+                  <th className="px-4 py-3 text-left">Dealer Level</th>
+                  <th className="px-4 py-3 text-right">Price</th>
+                  <th className="px-4 py-3 text-right">Location vs Range</th>
+                  <th className="px-4 py-3 text-right">Distance (range widths)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-900 bg-black/20">
+                <tr>
+                  <td className="px-4 py-3 font-medium text-zinc-200">Zero Gamma</td>
+                  <td className="px-4 py-3 text-right text-zinc-300">{formatNumber(gexMacro?.levels?.zeroGamma ?? null)}</td>
+                  <td className="px-4 py-3 text-right text-cyan-300">{zeroGammaOverlap.location}</td>
+                  <td className="px-4 py-3 text-right text-zinc-300">{zeroGammaOverlap.widthUnits}</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-medium text-zinc-200">Macro Call Wall</td>
+                  <td className="px-4 py-3 text-right text-zinc-300">{formatNumber(gexMacro?.levels?.macroCallWall ?? null)}</td>
+                  <td className="px-4 py-3 text-right text-emerald-300">{callWallOverlap.location}</td>
+                  <td className="px-4 py-3 text-right text-zinc-300">{callWallOverlap.widthUnits}</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-medium text-zinc-200">Macro Put Wall</td>
+                  <td className="px-4 py-3 text-right text-zinc-300">{formatNumber(gexMacro?.levels?.macroPutWall ?? null)}</td>
+                  <td className="px-4 py-3 text-right text-rose-300">{putWallOverlap.location}</td>
+                  <td className="px-4 py-3 text-right text-zinc-300">{putWallOverlap.widthUnits}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </Card>
 
         <div className="grid gap-6 xl:grid-cols-[1.2fr_1fr]">
           <Card className="border-zinc-900 bg-black/30 p-5">
@@ -1014,6 +1326,27 @@ export default function RangeAnalyticsPage() {
             </div>
           </div>
 
+          <div className="mb-6 grid gap-4 md:grid-cols-3">
+            <StatCard
+              label="Sweep Probability"
+              value={bothSidesSummary ? formatPct(bothSidesSummary.share_of_sample) : '--'}
+              accent="text-cyan-300"
+              sublabel={bothSidesSummary ? `${Math.round(bothSidesSummary.count).toLocaleString()} sweep days` : undefined}
+            />
+            <StatCard
+              label="Top Lift Condition"
+              value={topSweepLift ? `${topSweepLift.dimension}: ${topSweepLift.bucket}` : '--'}
+              accent="text-amber-300"
+              sublabel={topSweepLift ? `${formatPct(topSweepLift.sweep_prob)} (${topSweepLift.lift >= 0 ? '+' : ''}${topSweepLift.lift.toFixed(1)}pp vs base)` : 'Need >=30 sample rows'}
+            />
+            <StatCard
+              label="Top Condition Sample"
+              value={topSweepLift ? Math.round(topSweepLift.sample_count).toLocaleString() : '--'}
+              accent="text-emerald-300"
+              sublabel={topSweepLift ? `Sweeps: ${Math.round(topSweepLift.sweep_count).toLocaleString()}` : undefined}
+            />
+          </div>
+
           <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
             <div className="h-72 rounded-xl border border-zinc-900 bg-zinc-950/60 p-3">
               <ResponsiveContainer width="100%" height="100%">
@@ -1061,6 +1394,33 @@ export default function RangeAnalyticsPage() {
                 </tbody>
               </table>
             </div>
+          </div>
+
+          <div className="mt-6 overflow-hidden rounded-xl border border-zinc-900">
+            <table className="min-w-full divide-y divide-zinc-900 text-sm">
+              <thead className="bg-zinc-950/80 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                <tr>
+                  <th className="px-4 py-3 text-left">Condition</th>
+                  <th className="px-4 py-3 text-left">Bucket</th>
+                  <th className="px-4 py-3 text-right">N</th>
+                  <th className="px-4 py-3 text-right">Sweep %</th>
+                  <th className="px-4 py-3 text-right">Lift vs Base</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-900 bg-black/20">
+                {bothSidesConditionRows.slice(0, 12).map((row) => (
+                  <tr key={`${row.dimension}-${row.bucket}`}>
+                    <td className="px-4 py-3 font-medium text-zinc-200">{row.dimension}</td>
+                    <td className="px-4 py-3 text-zinc-300">{row.bucket}</td>
+                    <td className="px-4 py-3 text-right text-zinc-300">{Math.round(row.sample_count).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right text-cyan-300">{formatPct(row.sweep_prob)}</td>
+                    <td className={`px-4 py-3 text-right ${row.lift >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      {`${row.lift >= 0 ? '+' : ''}${row.lift.toFixed(1)}pp`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </Card>
       </div>

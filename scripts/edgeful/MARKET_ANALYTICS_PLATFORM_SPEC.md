@@ -905,10 +905,12 @@ probability curves, DOW × strategy win rate, etc.
 | Macro Analytics | `/research/macros/edgeful` | Module 1 (enhanced) | EXISTS — enhance |
 | Range Analytics | `/research/ranges` | Module 2 | Phase 4 |
 | Gap Analysis | `/research/gaps` | Module 3 | Phase 4 |
-| Reference Levels | `/research/levels` | Module 3 | Phase 5 |
-| Strategy Simulator | `/research/strategies` | Module 4 | Phase 4 |
-| Range Comparison | `/research/compare` | Module 2 | Phase 5 |
+| Reference Levels | `/research/reference-levels` | Module 3 | Phase 5 |
+| Strategy Simulator | Embedded in `/research/ranges` | Module 4 | Phase 4 |
+| Range Comparison | `/research/range-comparison` | Module 2 | Phase 5 |
 | Screener | `/research/screener` | Module 5 | Phase 6 |
+
+Note: The strategy simulator ships as a first-class panel on the Range Analytics page, sharing the same filter context and parquet engine as the range profile and extension analytics.
 
 ### 9.3 Macro Dashboard Enhancement Specifics
 
@@ -953,6 +955,43 @@ actionable findings.
 Ensure signal adapter enriches with `event_type` ("FOMC", "CPI", "NFP", "OPEX")
 not just `is_event_day` boolean. FOMC and CPI days produce structurally different
 behavior and should be analyzed separately.
+
+### 10.6 Trader-Priority Statistics Still Missing
+
+From a discretionary futures day-trader perspective, these metrics add execution quality
+and path-dependency context that headline win rate and R-multiple cannot capture.
+
+1. Time-to-failure profile by setup
+    - Median and P90 minutes from entry to stop-out.
+    - Why it matters: identifies whether losers fail immediately (bad location) or decay later (bad management).
+
+2. MAE-before-MFE sequencing
+    - Percentage of winners that trade through adverse excursion first.
+    - Why it matters: informs whether a setup requires heat tolerance or tighter invalidation.
+
+3. Session-segment expectancy decomposition
+    - Expectancy split by NY open drive, lunch, and power-hour windows.
+    - Why it matters: same setup often has opposite profile across intraday liquidity regimes.
+
+4. Sweep-then-reclaim efficiency
+    - For PDH/PDL and range-boundary sweeps: reclaim rate, continuation rate, and median follow-through distance.
+    - Why it matters: separates true stop-runs from genuine break acceptance.
+
+5. Acceptance quality after breakout
+    - Hold quality metrics: closes beyond boundary for 1/2/3 bars, pullback depth, and continuation odds.
+    - Why it matters: reduces false-break entries by requiring structural acceptance.
+
+6. Volatility-normalized excursion score
+    - Post-entry MFE and MAE normalized by ATR and by realized intraday sigma.
+    - Why it matters: makes regime-to-regime comparison robust when raw points are misleading.
+
+7. Dealer-level interaction stats (GEX overlap)
+    - Distance at open from price to gamma magnet and walls, first-touch side, and hold/reject behavior.
+    - Why it matters: converts options structure into testable intraday range behavior.
+
+8. Edge stability diagnostics
+    - Rolling hit-rate z-score, drawdown-duration, and probability-of-ruin under fixed fractional risk.
+    - Why it matters: flags edge decay before PnL damage compounds.
 
 ---
 
@@ -1019,7 +1058,7 @@ behavior and should be analyzed separately.
 - [x] Market Session Breakout analysis (London → NY)
 - [x] `DailyConfluenceRecord` computation
 - [x] "What's in Play" screener dashboard
-- [ ] GEX overlay on range boundaries (cross-system with options pipeline)
+- [x] GEX overlay on range boundaries (cross-system with options pipeline)
 
 ### Phase 7: Backtest Framework Integration (parallel)
 
