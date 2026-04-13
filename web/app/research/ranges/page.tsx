@@ -47,6 +47,12 @@ type FilterState = {
   breakoutDirection: string;
   startDate: string;
   endDate: string;
+  // Universal context dimensions (joined from daily_context)
+  vixRegime: string;      // 'ALL' | 'LOW' | 'NORMAL' | 'HIGH' | 'EXTREME'
+  gapDirection: string;   // 'ALL' | 'UP' | 'DOWN' | 'NONE'
+  dayOfWeek: string;      // 'ALL' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri'
+  openVsPdRange: string;  // 'ALL' | 'ABOVE_PDH' | 'INSIDE' | 'BELOW_PDL'
+  isEventDay: string;     // 'ALL' | 'Yes' | 'No'
 };
 
 type FilterOptions = {
@@ -277,6 +283,15 @@ const DEFAULT_FILTERS: FilterState = {
   breakoutDirection: 'ALL',
   startDate: '',
   endDate: '',
+  vixRegime: 'ALL',
+  gapDirection: 'ALL',
+  dayOfWeek: 'ALL',
+  openVsPdRange: 'ALL',
+  isEventDay: 'ALL',
+};
+
+const DOW_TO_INT: Record<string, number> = {
+  Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4,
 };
 
 const WIDTH_CATEGORY_COLORS: Record<string, string> = {
@@ -287,6 +302,25 @@ const WIDTH_CATEGORY_COLORS: Record<string, string> = {
 
 function quote(value: string) {
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+/** Build EXISTS subquery conditions for daily_context dimensions. */
+function buildContextConditions(filters: FilterState, prefix: string): string[] {
+  const cc: string[] = [];
+  if (filters.vixRegime !== 'ALL') cc.push(`dc.vix_regime = ${quote(filters.vixRegime)}`);
+  if (filters.gapDirection !== 'ALL') cc.push(`dc.gap_direction = ${quote(filters.gapDirection)}`);
+  if (filters.dayOfWeek !== 'ALL') {
+    const dow = DOW_TO_INT[filters.dayOfWeek];
+    if (dow !== undefined) cc.push(`dc.day_of_week = ${dow}`);
+  }
+  if (filters.openVsPdRange !== 'ALL') cc.push(`dc.open_vs_pd_range = ${quote(filters.openVsPdRange)}`);
+  if (filters.isEventDay !== 'ALL') {
+    cc.push(`dc.is_event_day = ${filters.isEventDay === 'Yes' ? 'TRUE' : 'FALSE'}`);
+  }
+  if (cc.length === 0) return [];
+  return [
+    `EXISTS (SELECT 1 FROM daily_context dc WHERE dc.symbol = ${prefix}symbol AND dc.trading_date = ${prefix}trading_date AND ${cc.join(' AND ')})`,
+  ];
 }
 
 function buildRangeWhere(filters: FilterState, alias?: string) {
@@ -308,6 +342,7 @@ function buildRangeWhere(filters: FilterState, alias?: string) {
   if (filters.endDate) {
     conditions.push(`${prefix}trading_date <= ${quote(filters.endDate)}`);
   }
+  conditions.push(...buildContextConditions(filters, prefix));
 
   return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 }
@@ -331,6 +366,7 @@ function buildTradeWhere(filters: FilterState, alias?: string, includeStrategy =
   if (filters.endDate) {
     conditions.push(`${prefix}trading_date <= ${quote(filters.endDate)}`);
   }
+  conditions.push(...buildContextConditions(filters, prefix));
 
   return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 }
@@ -1316,6 +1352,7 @@ export default function RangeAnalyticsPage() {
       const version = Date.now();
       await loadParquet('range_records.parquet', `/api/data/range_records.parquet?v=${version}`);
       await loadParquet('range_trades.parquet', `/api/data/range_trades.parquet?v=${version}`);
+      await loadParquet('daily_context.parquet', `/api/data/daily_context.parquet?v=${version}`);
 
       const metaResponse = await fetch(`/api/data/range_records.parquet?v=${version}`, {
         headers: { Range: 'bytes=0-0' },
@@ -1615,6 +1652,42 @@ export default function RangeAnalyticsPage() {
                 className="h-10 rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm tracking-normal text-zinc-100 outline-none transition focus:border-cyan-400"
               />
             </label>
+          </div>
+          {/* Universal context dimensions — joined from daily_context.parquet */}
+          <div className="mt-3 border-t border-zinc-800 pt-3">
+            <div className="mb-2 text-xs uppercase tracking-[0.22em] text-zinc-500">Context Filters</div>
+            <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+              <FilterSelect
+                label="VIX Regime"
+                value={filters.vixRegime}
+                options={['ALL', 'LOW', 'NORMAL', 'HIGH', 'EXTREME']}
+                onChange={(value) => startTransition(() => setFilters((current) => ({ ...current, vixRegime: value })))}
+              />
+              <FilterSelect
+                label="Gap Direction"
+                value={filters.gapDirection}
+                options={['ALL', 'UP', 'DOWN', 'NONE']}
+                onChange={(value) => startTransition(() => setFilters((current) => ({ ...current, gapDirection: value })))}
+              />
+              <FilterSelect
+                label="Day of Week"
+                value={filters.dayOfWeek}
+                options={['ALL', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri']}
+                onChange={(value) => startTransition(() => setFilters((current) => ({ ...current, dayOfWeek: value })))}
+              />
+              <FilterSelect
+                label="Open Location"
+                value={filters.openVsPdRange}
+                options={['ALL', 'ABOVE_PDH', 'INSIDE', 'BELOW_PDL']}
+                onChange={(value) => startTransition(() => setFilters((current) => ({ ...current, openVsPdRange: value })))}
+              />
+              <FilterSelect
+                label="Event Day"
+                value={filters.isEventDay}
+                options={['ALL', 'Yes', 'No']}
+                onChange={(value) => startTransition(() => setFilters((current) => ({ ...current, isEventDay: value })))}
+              />
+            </div>
           </div>
         </Card>
 

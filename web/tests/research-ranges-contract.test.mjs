@@ -82,3 +82,16 @@ test('ranges page includes first-boundary by-performance diagnostics', () => {
   mustInclude('By Performance', 'Missing by-performance panel title.');
   mustInclude('First Boundary Broken', 'Missing first-boundary-broken context table.');
 });
+
+test('ranges page includes universal context filter dimensions from daily_context', () => {
+  mustInclude('vixRegime: string', 'Missing vixRegime in FilterState.');
+  mustInclude('gapDirection: string', 'Missing gapDirection in FilterState.');
+  mustInclude('dayOfWeek: string', 'Missing dayOfWeek in FilterState.');
+  mustInclude('openVsPdRange: string', 'Missing openVsPdRange in FilterState.');
+  mustInclude('isEventDay: string', 'Missing isEventDay in FilterState.');
+  mustInclude('function buildContextConditions', 'Missing buildContextConditions helper.');
+  mustInclude("daily_context.parquet", 'Missing daily_context.parquet load in loadEngine.');
+  mustInclude('Context Filters', 'Missing Context Filters section label in UI.');
+  mustInclude('VIX Regime', 'Missing VIX Regime filter dropdown.');
+  mustInclude('Open Location', 'Missing Open Location filter dropdown.');
+});
