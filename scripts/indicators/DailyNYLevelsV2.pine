@@ -9,11 +9,28 @@ indicator("Daily NY Levels v4.1", overlay=true, max_bars_back=5000, max_lines_co
 // ════════════════════════════════════════════════════════════════════════════
 
 grp_session = "Session & Range"
+
+range_inline1 = "range_inline1"
+range_inline2 = "range_inline2"
+range_inline3 = "range_inline3"
+
+
+i_1800Break = input.bool(false, "1800 Break",inline = range_inline1, group=grp_session )
+i_0300Break = input.bool(false, "0300 Break","",inline = range_inline1, group=grp_session )
+i_0300Transfer = input.bool(false, "0300 Transfer","1800-18:15 range BO  til 0300\n0300-0305 range BO by 0830\n0300 Teranfer in the direction of 1800",inline = range_inline1, group=grp_session )
+i_MagicHour = input.bool(false, "Magic Hour",inline = range_inline2, group=grp_session )
+i_MarketOpen = input.bool(false, "Market Open",inline = range_inline2, group=grp_session )
+i_Q1Break = input.bool(false, "Q1 Break","0300-0700 BO by 8:30\n0930-0935 Market Open BO by 1200\n0600-0830 BO by 1200",inline = range_inline2, group=grp_session )
+i_1100Break = input.bool(false, "1100 BO",inline = range_inline3, group=grp_session )
+i_1200Break = input.bool(false, "1200 BO",inline = range_inline3, group=grp_session )
+i_1400Break = input.bool(false, "1400 Break","1100-1115 BO by 12:30\n0830-1200 Market Open BO by 1600\n1400-1415 BO by 1600",inline = range_inline3, group=grp_session )
+
 i_rangeStart   = input.string("0930", "Range Start (HHMM)", tooltip="Start of the Opening Range window", group=grp_session)
 i_rangeEnd     = input.string("0931", "Range End (HHMM)", tooltip="End of the Opening Range window. All bars between start and end define the OR high/low.", group=grp_session)
 i_cutoff       = input.string("1200", "Cutoff (HHMM)", tooltip="Stop tracking MFE and commit data at this time.", group=grp_session)
 i_timezone     = input.string("America/New_York", "Timezone", options=["America/New_York", "America/Chicago", "America/Los_Angeles", "America/Denver", "US/Eastern", "US/Central", "UTC"], group=grp_session)
-// NOTE: Bull/Bear reference is always OR High/Low — no input needed.
+i_custom  = input.bool(false, "Use custom Range","Use a custom session range", group=grp_session )
+
 
 grp_style = "Style"
 i_bullColor    = input.color(color.green, "Bullish Color", group=grp_style)
@@ -36,6 +53,8 @@ i_histWidthScale = input.int(50, "Histogram Width Scale", minval=1, maxval=500, 
 i_mfeLabelSize   = input.string("tiny", "Label Size", options=["auto", "tiny", "small", "normal", "large", "huge"], group=grp_mfe)
 i_mfeDataLblSize = input.string("small", "Data Count Label Size", options=["auto", "tiny", "small", "normal", "large", "huge"], group=grp_mfe)
 i_levelDisplay   = input.string("Both", "Level Display Mode", options=["Both", "Bull Only", "Bear Only"], group=grp_mfe)
+i_histTranspMin  = input.int(55, "Histogram Min Transparency", minval=0, maxval=100, tooltip="Transparency for the densest band (lower = more opaque)", group=grp_mfe)
+i_histTranspMax  = input.int(70, "Histogram Max Transparency", minval=0, maxval=100, tooltip="Transparency for the lightest band (higher = more transparent)", group=grp_mfe)
 
 grp_time = "Hit Time Distribution"
 i_showTimeDist   = input.bool(true, "Show Time Distribution", group=grp_time)
@@ -45,8 +64,8 @@ i_showTimeAvg    = input.bool(true, "Show AVG Line", group=grp_time)
 i_showTimeMed    = input.bool(true, "Show Median Line", group=grp_time)
 i_timeAvgColor   = input.color(color.yellow, "AVG Line Color", group=grp_time)
 i_timeMedColor   = input.color(color.aqua, "Median Line Color", group=grp_time)
-i_timeBullColor  = input.color(color.new(color.green, 50), "Time Bull Color", group=grp_time)
-i_timeBearColor  = input.color(color.new(color.red, 50), "Time Bear Color", group=grp_time)
+i_timeBullColor  = input.color(color.new(color.green, 80), "Histogram  Bull Color", group=grp_time)
+i_timeBearColor  = input.color(color.new(color.red, 80), "Histogram Bear Color", group=grp_time)
 i_timeLabelSize  = input.string("tiny", "Label Size", options=["auto", "tiny", "small", "normal", "large", "huge"], group=grp_time)
 
 grp_sep = "Day Separators"
@@ -154,11 +173,9 @@ f_tf_display() =>
 f_mins_of_day(int t) =>
     hour(t, i_timezone) * 60 + minute(t, i_timezone)
 
-// Parse "HHMM" string to minutes since midnight
 f_parse_hhmm(string hhmm) =>
     int(str.tonumber(str.substring(hhmm, 0, 2))) * 60 + int(str.tonumber(str.substring(hhmm, 2, 4)))
 
-// Check if minute-of-day falls within a range (handles cross-midnight)
 f_in_range(int mins, int range_start, int range_end) =>
     if range_end > range_start
         mins >= range_start and mins < range_end
@@ -167,7 +184,6 @@ f_in_range(int mins, int range_start, int range_end) =>
     else
         false
 
-// Duration in minutes (handles cross-midnight)
 f_duration(int range_start, int range_end) =>
     if range_end > range_start
         range_end - range_start
@@ -176,17 +192,26 @@ f_duration(int range_start, int range_end) =>
     else
         0
 
-// Minutes since a start time (handles cross-midnight)
 f_mins_since(int mins, int start) =>
     if mins >= start
         mins - start
     else
         (1440 - start) + mins
 
-// Precompute time boundaries
-int RANGE_START = f_parse_hhmm(i_rangeStart)
-int RANGE_END   = f_parse_hhmm(i_rangeEnd)
-int CUTOFF      = f_parse_hhmm(i_cutoff)
+
+var string rangeStart = na
+var string rangeEnd = na
+var string rangeCutoff = na
+
+
+if (i_custom)
+    rangeStart :=  i_rangeStart
+    rangeEnd := i_rangeEnd
+    rangeCutoff := i_cutoff
+
+int RANGE_START = f_parse_hhmm(rangeStart)
+int RANGE_END   = f_parse_hhmm(rangeEnd)
+int CUTOFF      = f_parse_hhmm(rangeCutoff)
 int DATA_DURATION = f_duration(RANGE_START, CUTOFF)
 
 f_clear_boxes(array<box> arr) =>
@@ -226,17 +251,14 @@ int bar_mins = f_mins_of_day(time)
 bool in_or_range     = f_in_range(bar_mins, RANGE_START, RANGE_END)
 bool in_data_session = f_in_range(bar_mins, RANGE_END, CUTOFF)
 
-// New "day" = OR range starts
 var bool prev_in_or = false
 bool is_new_day = in_or_range and not prev_in_or
 prev_in_or := in_or_range
 
-// Calendar day change for separators
 int nyDOW      = dayofweek(time, "America/New_York")
 int nyDOW_prev = dayofweek(time[1], "America/New_York")
 bool newDay    = nyDOW != nyDOW_prev and bar_index > 0
 
-// MTF data — includes close for accurate OR Close reference
 [ltf_high_arr, ltf_low_arr, ltf_close_arr, ltf_time_arr] = request.security_lower_tf(syminfo.tickerid, "1", [high, low, close, time])
 
 
@@ -252,7 +274,6 @@ var bool  or_building  = false
 var int   or_start_bar = na
 var box   or_box       = na
 
-// Forward declarations
 var float bull_ref = na
 var float bear_ref = na
 var bool  ref_set  = false
@@ -270,7 +291,6 @@ var array<int>   peak_time_bear_history = array.new_int(0)
 var array<float> pivot_bull_history     = array.new_float(0)
 var array<float> pivot_bear_history     = array.new_float(0)
 
-// CRITICAL: Before resetting, commit previous session if uncommitted
 if is_new_day and not is_committed and ref_set and not na(bull_ref)
     if daily_max_bull_mfe > 0 or daily_max_bear_mfe > 0
         array.push(mfe_bull_history, daily_max_bull_mfe)
@@ -344,7 +364,7 @@ if or_building and not or_complete
         if bar_end_mins >= RANGE_END or (RANGE_END > RANGE_START and bar_end_mins < RANGE_START)
             or_complete := true
     if or_complete and i_showDebug
-        label.new(bar_index, or_high, "OR DONE\nH:" + str.tostring(or_high, "#.##") + "\nL:" + str.tostring(or_low, "#.##"), color=color.new(color.blue, 50), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+        label.new(bar_index, or_high, "OR DONE\nH:" + str.tostring(or_high, "#.##") + "\nL:" + str.tostring(or_low, "#.##"), color=color.new(color.blue, 50), textcolor=color.fuchsia, style=label.style_label_down, size=size.tiny)
 
 if not na(or_high) and not na(or_start_bar)
     if na(or_box) and or_building
@@ -358,7 +378,6 @@ if not na(or_high) and not na(or_start_bar)
 // ════════════════════════════════════════════════════════════════════════════
 // MODULE 5: REFERENCE LEVELS
 // ════════════════════════════════════════════════════════════════════════════
-// Always uses OR High/Low as bull/bear reference.
 
 if is_new_day
     bull_ref := na
@@ -370,7 +389,7 @@ if or_complete and not ref_set and not na(or_high)
     bear_ref := or_low
     ref_set := true
     if i_showDebug
-        label.new(bar_index, close, "REF\nBull: " + str.tostring(bull_ref, "#.##") + "\nBear: " + str.tostring(bear_ref, "#.##"), color=color.new(color.blue, 50), textcolor=color.white, style=label.style_label_right, size=size.tiny)
+        label.new(bar_index, close, "REF\nBull: " + str.tostring(bull_ref, "#.##") + "\nBear: " + str.tostring(bear_ref, "#.##"), color=color.new(color.blue, 50), textcolor=color.fuchsia, style=label.style_label_right, size=size.normal)
 
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -451,9 +470,6 @@ prev_in_data := effective_in_data
 // ════════════════════════════════════════════════════════════════════════════
 // MODULE 8: DAY SEPARATORS
 // ════════════════════════════════════════════════════════════════════════════
-// FIX: Use extend.none — extend.both was incorrectly drawing horizontal lines
-// across the entire chart. A day separator should only be a vertical line,
-// which in Pine Script is drawn using xloc.bar_index with a price range.
 
 if i_showSep and newDay
     line.new(bar_index, high * 2.0, bar_index, low * 0.5, xloc=xloc.bar_index, color=i_sepColor, style=f_line_style(i_sepStyleStr), width=i_sepWidth, extend=extend.both)
@@ -482,7 +498,6 @@ plotchar(i_showDayLabel and i_showSep and bar_index == labelTargetBar and labelD
 // ════════════════════════════════════════════════════════════════════════════
 // MODULE 9: INFO BOX
 // ════════════════════════════════════════════════════════════════════════════
-// FIX: Removed debug rows (d1/d2/d3) from the info box. Clean display only.
 
 var table infoTable = table.new(f_table_pos(i_infoPos), 1, 4, bgcolor=i_infoBg, border_color=i_infoBorderClr, border_width=1, frame_color=i_infoBorderClr, frame_width=2)
 if barstate.islast
@@ -507,20 +522,21 @@ var box[]   mfe_hist_boxes  = array.new_box(0)
 var line[]  mfe_stat_lines  = array.new_line(0)
 var label[] mfe_stat_labels = array.new_label(0)
 
-if is_new_day
+bool show_bull = i_levelDisplay == "Both" or i_levelDisplay == "Bull Only"
+bool show_bear = i_levelDisplay == "Both" or i_levelDisplay == "Bear Only"
+
+var float mfe_hist_bottom_price = na
+
+if barstate.islast and i_showMFE and or_complete and not na(bull_ref) and not na(bear_ref) and not na(or_start_bar)
+    // CRITICAL: Clear old drawing objects BEFORE creating new ones.
+    // Without this, every barstate.islast repaint (tick, TF change, scroll)
+    // stacks new boxes on top of old ones, compounding opacity.
     f_clear_boxes(mfe_hist_boxes)
     f_clear_lines(mfe_stat_lines)
     f_clear_labels(mfe_stat_labels)
 
-bool show_bull = i_levelDisplay == "Both" or i_levelDisplay == "Bull Only"
-bool show_bear = i_levelDisplay == "Both" or i_levelDisplay == "Bear Only"
-
-// Track the MFE histogram vertical extent so the data table can be placed below it
-var float mfe_hist_bottom_price = na
-
-if barstate.islast and i_showMFE and or_complete and not na(bull_ref) and not na(bear_ref) and not na(or_start_bar)
     int anchor = or_start_bar
-    mfe_hist_bottom_price := na  // reset before redraw
+    mfe_hist_bottom_price := na
 
     array<float> bull_mfe_nz = f_build_filtered(mfe_bull_history)
     array<float> bear_mfe_nz = f_build_filtered(mfe_bear_history)
@@ -529,14 +545,17 @@ if barstate.islast and i_showMFE and or_complete and not na(bull_ref) and not na
     int num_all = array.size(mfe_bull_history)
     bool has_data = n_bull > 0 or n_bear > 0
 
+    // Compute max allowed width in bars so boxes never extend past the cutoff point
+    float bars_per_min_w = timeframe.isminutes ? 1.0 / float(timeframe.multiplier) : timeframe.isseconds ? 60.0 / float(timeframe.multiplier) : 1.0 / 1440.0
+    int max_width = math.max(1, int(float(DATA_DURATION) * bars_per_min_w))
+
     if has_data
-        array.push(mfe_stat_labels, label.new(anchor, or_low - (syminfo.mintick * i_offsetBelowMFE / 2), "Sessions: " + str.tostring(n_bull) + " Bull / " + str.tostring(n_bear) + " Bear", textcolor=color.new(color.white, 30), style=label.style_label_up, size=f_size(i_mfeDataLblSize), color=color.new(color.black, 100)))
+        array.push(mfe_stat_labels, label.new(anchor, or_low - (syminfo.mintick * i_offsetBelowMFE / 2), "Sessions: " + str.tostring(n_bull) + " Bull / " + str.tostring(n_bear) + " Bear", textcolor=color.new(color.fuchsia, 30), style=label.style_label_up, size=f_size(i_mfeDataLblSize), color=color.new(color.black, 100)))
 
         int num_bands = int((i_endPct - i_startPct) / i_pctStep)
         if num_bands < 1
             num_bands := 1
 
-        // Track lowest price drawn (bottom of bear histogram)
         float bear_hist_bottom = or_low
 
         // Bull bands
@@ -556,9 +575,11 @@ if barstate.islast and i_showMFE and or_complete and not na(bull_ref) and not na
                 for k = 0 to num_all - 1
                     if array.get(mfe_bull_history, k) >= mfe_lo
                         days_hit += 1
-                int w = math.max(1, int(float(days_hit) / float(num_all) * float(i_histWidthScale)))
-                int transp = 30 + int(float(i) / float(num_bands) * 50.0)
-                array.push(mfe_hist_boxes, box.new(anchor, p_top, anchor + w, p_bot, border_color=color.new(i_bullColor, transp + 20), bgcolor=color.new(i_bullColor, transp)))
+                // Width capped at cutoff boundary so boxes never extend past it
+                int w = math.min(math.max(1, int(float(days_hit) / float(num_all) * float(i_histWidthScale))), max_width)
+                // Narrow gradient from user-defined min to max transparency
+                int transp = i_histTranspMin + int(float(i) / float(num_bands) * float(i_histTranspMax - i_histTranspMin))
+                array.push(mfe_hist_boxes, box.new(anchor, p_top, anchor + w, p_bot, border_color=color.new(i_bullColor, math.min(transp + 10, 100)), bgcolor=color.new(i_bullColor, transp)))
 
         // Bear bands
         if n_bear > 0 and show_bear
@@ -577,14 +598,14 @@ if barstate.islast and i_showMFE and or_complete and not na(bull_ref) and not na
                 for k = 0 to num_all - 1
                     if array.get(mfe_bear_history, k) >= mfe_lo
                         days_hit += 1
-                int w = math.max(1, int(float(days_hit) / float(num_all) * float(i_histWidthScale)))
-                int transp = 30 + int(float(i) / float(num_bands) * 50.0)
-                array.push(mfe_hist_boxes, box.new(anchor, p_top, anchor + w, p_bot, border_color=color.new(i_bearColor, transp + 20), bgcolor=color.new(i_bearColor, transp)))
-                // Track lowest price extent
+                // Width capped at cutoff boundary
+                int w = math.min(math.max(1, int(float(days_hit) / float(num_all) * float(i_histWidthScale))), max_width)
+                // Narrow gradient — same as bull
+                int transp = i_histTranspMin + int(float(i) / float(num_bands) * float(i_histTranspMax - i_histTranspMin))
+                array.push(mfe_hist_boxes, box.new(anchor, p_top, anchor + w, p_bot, border_color=color.new(i_bearColor, math.min(transp + 10, 100)), bgcolor=color.new(i_bearColor, transp)))
                 if p_bot < bear_hist_bottom
                     bear_hist_bottom := p_bot
 
-        // Store the lowest drawn price for positioning elements below the histogram
         mfe_hist_bottom_price := bear_hist_bottom
 
     // --- Statistical lines ---
@@ -610,7 +631,6 @@ if barstate.islast and i_showMFE and or_complete and not na(bull_ref) and not na
                 array.push(mfe_bear_filtered, sv)
         float avg_bull = cnt_bull > 0 ? sum_bull / float(cnt_bull) : na
         float avg_bear = cnt_bear > 0 ? sum_bear / float(cnt_bear) : na
-        // End lines at the cutoff bar: anchor + bars spanning OR-end → cutoff
         float bars_per_min = timeframe.isminutes ? 1.0 / float(timeframe.multiplier) : timeframe.isseconds ? 60.0 / float(timeframe.multiplier) : 1.0 / 1440.0
         int line_end = anchor + math.max(1, int(float(DATA_DURATION) * bars_per_min))
 
@@ -636,8 +656,6 @@ if barstate.islast and i_showMFE and or_complete and not na(bull_ref) and not na
                 array.push(mfe_stat_lines, line.new(anchor, p, line_end, p, color=i_medLineColor, style=line.style_dashed, width=1))
                 array.push(mfe_stat_labels, label.new(line_end + 5, p, str.tostring(med_bear, "#.##") + "% MED", color=color.new(color.black, 100), textcolor=i_medLineColor, style=label.style_label_left, size=f_size(i_mfeLabelSize)))
 
-        // FIX: Percentile labels placed to the LEFT of the histogram (at anchor - 5)
-        // so they don't overlap with the histogram boxes.
         if i_showPctLabels
             int num_levels = int((i_endPct - i_startPct) / i_pctStep) + 1
             for i = 0 to num_levels - 1
@@ -647,9 +665,7 @@ if barstate.islast and i_showMFE and or_complete and not na(bull_ref) and not na
                     if array.size(mfe_bull_filtered) > 0 and show_bull
                         float pv = array.percentile_linear_interpolation(mfe_bull_filtered, pct)
                         float pp = bull_ref * (1.0 + pv / 100.0)
-                        // Short tick line at the left edge of the histogram
                         array.push(mfe_stat_lines, line.new(anchor - 3, pp, anchor, pp, color=color.new(i_avgLineColor, transp), style=line.style_dotted))
-                        // Label to the left of the histogram anchor
                         array.push(mfe_stat_labels, label.new(anchor - 4, pp, str.tostring(pv, "#.##") + "% P" + str.tostring(pct), color=color.new(color.black, 100), textcolor=color.new(i_avgLineColor, transp), style=label.style_label_right, size=f_size(i_mfeLabelSize)))
                     if array.size(mfe_bear_filtered) > 0 and show_bear
                         float pv = array.percentile_linear_interpolation(mfe_bear_filtered, pct)
@@ -661,23 +677,19 @@ if barstate.islast and i_showMFE and or_complete and not na(bull_ref) and not na
 // ════════════════════════════════════════════════════════════════════════════
 // MODULE 11: TIME DISTRIBUTION HISTOGRAM
 // ════════════════════════════════════════════════════════════════════════════
-// FIX: Time histogram is placed below the MFE histogram using mfe_hist_bottom_price
-// as the reference, with i_offsetBelowMFE ticks of gap. No extra input needed.
 
 var box[]   time_hist_boxes  = array.new_box(0)
 var line[]  time_stat_lines  = array.new_line(0)
 var label[] time_stat_labels = array.new_label(0)
 
-if is_new_day
+if barstate.islast and or_complete and i_showTimeDist and not na(or_start_bar)
+    // CRITICAL: Clear old drawing objects before redrawing
     f_clear_boxes(time_hist_boxes)
     f_clear_lines(time_stat_lines)
     f_clear_labels(time_stat_labels)
 
-if barstate.islast and or_complete and i_showTimeDist and not na(or_start_bar)
     int t_anchor = or_start_bar
 
-    // Anchor the time histogram below the MFE histogram.
-    // If MFE hist bottom is known, use it; otherwise fall back to or_low.
     float base_y = na
     if not na(mfe_hist_bottom_price) and i_showMFE
         base_y := mfe_hist_bottom_price - (syminfo.mintick * i_offsetBelowMFE)
@@ -689,7 +701,7 @@ if barstate.islast and or_complete and i_showTimeDist and not na(or_start_bar)
     int min_box_width = math.max(1, int(float(i_timeBucketMins) * bars_per_min))
 
     int title_x = t_anchor + int(float(DATA_DURATION / 2) * bars_per_min)
-    array.push(time_stat_labels, label.new(title_x, base_y + syminfo.mintick * 80, "MFE Time Distribution", color=color.new(color.black, 100), textcolor=color.new(color.white, 50), style=label.style_label_down, size=f_size(i_timeLabelSize)))
+    array.push(time_stat_labels, label.new(title_x, base_y + syminfo.mintick * 80, "MFE Time Distribution", color=color.new(color.black, 100), textcolor=color.new(color.fuchsia, 50), style=label.style_label_down, size=f_size(i_timeLabelSize)))
 
     int max_time_count = 1
     int[] bull_counts = array.new_int(num_time_bins, 0)
@@ -825,10 +837,10 @@ f_render_section(table tbl, array<float> filtered_arr, array<float> full_arr, in
                         cur_streak := 0
                 table.cell(tbl, 0, row_offset, str.tostring(pct) + "th", text_color=mode_clr, text_size=tbl_sz)
                 table.cell(tbl, 1, row_offset, str.tostring(pct_val, "#.##") + "%", text_color=mode_clr, text_size=tbl_sz)
-                table.cell(tbl, 2, row_offset, str.tostring(days_hit), text_color=color.white, text_size=tbl_sz)
+                table.cell(tbl, 2, row_offset, str.tostring(days_hit), text_color=color.fuchsia, text_size=tbl_sz)
                 table.cell(tbl, 3, row_offset, prev_hit ? "✓" : "✗", text_color=prev_hit ? color.green : color.red, text_size=tbl_sz)
-                table.cell(tbl, 4, row_offset, str.tostring(streak) + "d", text_color=streak > 0 ? color.yellow : color.white, text_size=tbl_sz)
-                table.cell(tbl, 5, row_offset, str.tostring(max_streak) + "d", text_color=color.white, text_size=tbl_sz)
+                table.cell(tbl, 4, row_offset, str.tostring(streak) + "d", text_color=streak > 0 ? color.yellow : color.fuchsia, text_size=tbl_sz)
+                table.cell(tbl, 5, row_offset, str.tostring(max_streak) + "d", text_color=color.fuchsia, text_size=tbl_sz)
                 row_offset += 1
     row_offset
 
