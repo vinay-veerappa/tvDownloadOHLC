@@ -38,8 +38,8 @@
 │      stat lines, tables, day separators, info box        │
 └──────────────┬──────────────┬──────────────┬────────────┘
                │              │              │
-     ┌─────────▼──┐  ┌───────▼────┐  ┌──────▼─────┐
-     │ RangeSession│  │ DrawingLib  │  │ StatsLib   │
+    ┌─────────▼──┐  ┌───────▼─────────┐  ┌──────▼─────┐
+    │ RangeSession│  │ PineDrawingLib  │  │ StatsLib   │
      │ Lib.pine    │  │ .pine      │  │ .pine      │
      │             │  │            │  │            │
      │ • RangeSpec │  │ • clear_*  │  │ • f_size   │
@@ -133,12 +133,12 @@ type RangeState
     float   close_at_cutoff     // Last close of the data session (set at commit time)
     // --- Commit state ---
     bool    is_committed        // True once daily data has been pushed to history
-    // --- Drawing handles ---
-    box     or_box              // The OR box for this range today
     // --- Pivot tracking ---
     array<float> daily_pivot_bulls
     array<float> daily_pivot_bears
 ```
+
+> **Platform boundary:** `RangeState` intentionally contains only platform-agnostic fields (prices, flags, counters, arrays of primitives). Drawing object handles are stored in Pine-only drawing state types.
 
 ### 3.3 `ExcursionHistory` — Accumulated History Per Range
 
@@ -202,17 +202,19 @@ type ExcursionHistory
 > | P25–P50 reversal | `percentile(fakeout_reversal_bull, 25..50)` | Normal counter-move target after fake |
 > | P90 reversal | `percentile(fakeout_reversal_bull, 90)` | Max reversal / danger zone for fading the fake |
 
-### 3.4 `DrawingState` — Ephemeral Drawing Object Pools
+### 3.4 `PineDrawingState` — Pine-Only Ephemeral Drawing Object Pools
 
 Managed per render cycle. Cleared and rebuilt on `barstate.islast`.
 
 ```pine
-// In DrawingLib (or inline)
-type DrawingState
+// In PineDrawingLib (or inline)
+type PineDrawingState
     array<box>   boxes
     array<line>  lines
     array<label> labels
 ```
+
+> **Platform-specific note:** This type is intentionally Pine-specific and is not part of the cross-platform core model for NinjaScript.
 
 ---
 
@@ -224,8 +226,10 @@ type DrawingState
 - `f_duration()`, `f_mins_since()` manual arithmetic
 
 ### 4.2 Target Approach (V5)
-- **Hybrid**: Use Pine `time()` with session strings for clean in-session detection, retain minutes-of-day math for MFE/MAE time tracking (minutes-since-OR).
-- **Rationale**: `time()` handles DST and cross-midnight natively; but peak-time tracking needs relative minute offsets which session strings don't expose directly.
+- **Dual-path hybrid**:
+    - Pine path: use `time()` with session strings for clean in-session detection.
+    - Cross-platform path: use minutes-of-day helper logic for equivalent behavior in NinjaScript.
+- **Rationale**: Pine `time()` handles DST and cross-midnight natively, while the minute-based helper provides an implementation-neutral algorithm contract.
 
 ### 4.3 Session String Format
 
@@ -255,7 +259,16 @@ bool in_data = not na(time(timeframe.period, spec.session_data, spec.tz))
 bool is_new_session = in_or and not in_or[1]
 ```
 
-**Benefit**: Eliminates manual cross-midnight edge cases. Pine handles DST transitions internally.
+**Cross-platform equivalent helper**
+
+```pine
+// Minutes-of-day fallback for non-Pine implementations (or parity checks)
+// If session does not cross midnight: start <= t < end
+// If session crosses midnight: t >= start OR t < end
+bool in_or_mins = f_in_session_minutes(bar_mins, spec.or_start_min, spec.or_end_min, spec.or_end_min < spec.or_start_min)
+```
+
+**Benefit**: Pine implementation stays simple (`time()`), while core session logic remains portable to NinjaScript.
 
 ### 4.5 What We Keep as Minutes-of-Day
 
@@ -294,8 +307,11 @@ export f_resolve_preset(string preset, string custom_start, string custom_end,
 
 // ── Session Helpers ──
 export f_build_session_string(int start_min, int end_min, string days) => string
-export f_in_session(string session_str, string tz) => bool
-export f_is_new_session(string session_str, string tz) => bool
+// Pine-native path
+export f_in_session_pine(string session_str, string tz) => bool
+export f_is_new_session_pine(string session_str, string tz) => bool
+// Cross-platform parity path (portable algorithm contract)
+export f_in_session_minutes(int bar_mins, int start_min, int end_min, bool crosses_midnight) => bool
 export f_parse_hhmm(string hhmm) => int
 export f_mins_of_day(int t, string tz) => int
 export f_mins_since(int current_min, int start_min) => int
@@ -306,29 +322,31 @@ export f_new_range_state(RangeSpec spec) => RangeState
 export f_reset_daily(RangeState state) => void
 ```
 
-### 5.2 `DrawingLib.pine`
+### 5.2 `PineDrawingLib.pine`
 
-**Purpose:** Drawing object pool management, OR box rendering, histogram bands, stat lines/labels, day separators.
+**Purpose:** Pine-only drawing object pool management, OR box rendering, histogram bands, stat lines/labels, day separators.
+
+> **Platform boundary:** This library is Pine-specific by design and is not reused in NinjaScript. NinjaTrader will have its own rendering implementation.
 
 ```pine
 //@version=6
-library("DrawingLib")
+library("PineDrawingLib")
 
-export type DrawingState
+export type PineDrawingState
     // ... (see Section 3.4)
 
 // ── Pool Management ──
-export f_new_drawing_state() => DrawingState
-export f_clear_all(DrawingState ds) => void
+export f_new_drawing_state() => PineDrawingState
+export f_clear_all(PineDrawingState ds) => void
 
 // ── Rendering Primitives ──
-export f_draw_or_box(DrawingState ds, int start_bar, float hi, float lo, 
+export f_draw_or_box(PineDrawingState ds, int start_bar, float hi, float lo, 
                      int end_bar, color clr, string style, int width) => box
-export f_draw_hist_band(DrawingState ds, int anchor, float p_top, float p_bot, 
+export f_draw_hist_band(PineDrawingState ds, int anchor, float p_top, float p_bot, 
                         int width, color clr, int transp) => box
-export f_draw_stat_line(DrawingState ds, int x1, float y, int x2, 
+export f_draw_stat_line(PineDrawingState ds, int x1, float y, int x2, 
                         color clr, string style, int width) => line
-export f_draw_stat_label(DrawingState ds, int x, float y, string txt, 
+export f_draw_stat_label(PineDrawingState ds, int x, float y, string txt, 
                          color txt_clr, string lbl_style, string sz) => label
 export f_draw_day_separator(int bar_idx, float price_hi, float price_lo, 
                             color clr, string style, int width) => line
@@ -619,7 +637,7 @@ The table auto-focuses on whichever sub-range is **currently inside its OR or da
 
 ```
 MODULE 1: Imports & Inputs
-    - import RangeSessionLib, DrawingLib, StatsLib
+    - import RangeSessionLib, PineDrawingLib, StatsLib
     - Dropdown: "Overnight / 0300 Transfer" | "Pre-Market / Q1" | "Intraday Breakouts" | "Custom"
     - Custom HHMM inputs (conditional on dropdown = "Custom")
     - Style, MFE, Time Dist, Separator, Info, Debug, Data Table inputs (same as V4.1)
@@ -679,16 +697,16 @@ When a compound preset has 3 sub-ranges active simultaneously:
 | V4.1 Location | V5 Location | Change |
 |----------------|-------------|--------|
 | MODULE 1: Inputs (booleans) | MODULE 1: Single dropdown | Replace 9 booleans with 1 dropdown |
-| MODULE 2: Utility functions | `DrawingLib`, `StatsLib`, `RangeSessionLib` | Extract to libraries |
-| MODULE 3: Session detection | `RangeSessionLib.f_in_session()` + session strings | Replace manual minute math |
+| MODULE 2: Utility functions | `PineDrawingLib`, `StatsLib`, `RangeSessionLib` | Extract to libraries |
+| MODULE 3: Session detection | `RangeSessionLib.f_in_session_pine()` + session strings (or minute helper) | Replace manual minute math |
 | MODULE 4: Opening Range | MODULE 3: Session Engine Loop (per RangeSpec) | Generalize to N ranges |
 | MODULE 5: Reference levels | MODULE 3: Session Engine Loop (ref_set step) | Folded into engine |
 | MODULE 6: MFE tracking | MODULE 4: MFE Tracking Loop | Per-range iteration |
 | MODULE 7: Daily commit | MODULE 5: Daily Commit | Per-range commit |
-| MODULE 8: Day separators | MODULE 6: Rendering (unchanged logic) | DrawingLib helpers |
+| MODULE 8: Day separators | MODULE 6: Rendering (unchanged logic) | PineDrawingLib helpers |
 | MODULE 9: Info box | MODULE 6: Rendering (add range name) | Minor enhancement |
-| MODULE 10: MFE histogram | MODULE 6: Rendering (per range) | DrawingLib + StatsLib |
-| MODULE 11: Time distribution | MODULE 6: Rendering (per range) | DrawingLib |
+| MODULE 10: MFE histogram | MODULE 6: Rendering (per range) | PineDrawingLib + StatsLib |
+| MODULE 11: Time distribution | MODULE 6: Rendering (per range) | PineDrawingLib |
 | MODULE 12: Data table | MODULE 6: Rendering (per range, grouped rows) | StatsLib |
 | MODULE 13: Debug | MODULE 6: Rendering (enhanced with range name) | Unchanged logic |
 
@@ -721,7 +739,7 @@ The current script uses `request.security_lower_tf(syminfo.tickerid, "1", ...)` 
 
 ### Step 1: Create Library Stubs
 1. `lib/RangeSessionLib.pine` — UDT exports (`RangeSpec`, `RangeState`) + stub functions
-2. `lib/DrawingLib.pine` — `DrawingState` UDT + stub renderers
+2. `lib/PineDrawingLib.pine` — `PineDrawingState` UDT + stub renderers
 3. `lib/StatsLib.pine` — `ExcursionHistory` UDT + stub computations
 
 ### Step 2: Implement RangeSessionLib
@@ -730,7 +748,7 @@ The current script uses `request.security_lower_tf(syminfo.tickerid, "1", ...)` 
 3. `f_resolve_preset` — hardcoded preset catalog (all 8 sub-ranges + Custom)
 4. `f_new_range_state`, `f_reset_daily`
 
-### Step 3: Implement DrawingLib
+### Step 3: Implement PineDrawingLib
 1. `f_clear_all`, pool management
 2. `f_draw_or_box`, `f_draw_hist_band`, `f_draw_stat_line`, `f_draw_stat_label`
 3. `f_draw_day_separator`, `f_line_style`, `f_table_pos`, `f_text_size`

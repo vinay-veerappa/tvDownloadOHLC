@@ -175,7 +175,7 @@ Each preset is a named group of sub-ranges. A sub-range has: Opening Range windo
 | Normalization | Price percentage (per ADR-002) | Cross-ticker, cross-era comparability |
 | Timezone | America/New_York / ET (per ADR-001/004) | **All times stated in EST.** All session math in ET. |
 | Current script | Preserved as-is (`DailyNYLevelsV2.pine`) | New script in `daily-ny-levels/` subfolder |
-| Library architecture | 3 private Pine libraries: `RangeSessionLib`, `DrawingLib`, `StatsLib` | `StatsLib` absorbs excursion analytics; code locally first, publish to TradingView manually |
+| Library architecture | 3 private Pine libraries: `RangeSessionLib`, `PineDrawingLib`, `StatsLib` | `PineDrawingLib` is intentionally Pine-specific; `StatsLib` absorbs excursion analytics; code locally first, publish to TradingView manually |
 | Multi-range rendering | All compound preset sub-ranges render simultaneously | Each sub-range gets its own OR box, stat lines, and table rows |
 | Sub-range colors | Auto-generated hue offsets from global bull/bear colors per sub-range | Avoids proliferating per-range color inputs |
 | MAE — Absolute | `mae_bull_abs` from OR_low; `mae_bear_abs` from OR_high (same refs as MFE) | Symmetric worst-case adverse excursion |
@@ -189,7 +189,8 @@ Each preset is a named group of sub-ranges. A sub-range has: Opening Range windo
 | Cross-midnight date stamp | **Cutoff date** (e.g., Monday date for 18:00 Sun → 03:00 Mon session) | Conventional futures trade-date convention |
 | 0300 Transfer | 5-min OR (0300–0305). Direction = **bull if 1800 open > 0300 close**, bear if 1800 open < 0300 close. Skip day if 1800 data unavailable. | Continuation toward the overnight opening level |
 | 1800 Break session days | Pine days `1,2,3,4,5` (Sun–Thu evenings) | Captures Sunday 18:00 futures reopen |
-| Data table | Toggle dropdown (MFE View / MAE View / DOW View); auto-focuses on sub-range currently in its OR or data window | Clean single-table UX with view switching |
+| Data table | Toggle dropdown (MFE View / MAE View / DOW View / Fakeout View); auto-focuses on sub-range currently in its OR or data window | Clean single-table UX with view switching |
+| Session detection architecture | Dual-path: Pine session-string path + minutes-of-day parity path | Keeps Pine implementation simple while preserving a portable algorithm contract for NinjaScript |
 | Abbreviated sessions | Include all sessions; analyst excludes outliers manually | No auto-filtering |
 | Conditional probability | MFE View includes: given P(n) hit, % reaching P(n+1) | Complements raw hit rate |
 | DOW stats | Summary rows per DOW in DOW View (hit rate, avg MFE, EV win%) | In-table; no separate DOW histogram |
@@ -219,7 +220,7 @@ scripts/indicators/daily-ny-levels/
 ├── DailyNYLevelsAnalytics.pine       # Phase 2: MFE/MAE analytics
 ├── lib/
 │   ├── RangeSessionLib.pine          # Phase 1: Session/range UDTs & resolver
-│   ├── DrawingLib.pine               # Phase 1: Drawing helpers
+│   ├── PineDrawingLib.pine           # Phase 1: Pine-only drawing helpers
 │   └── StatsLib.pine                 # Phase 1: Statistical utilities
 └── ninja/
     ├── DailyNYLevels.cs              # Phase 3: NinjaScript indicator
@@ -230,6 +231,7 @@ scripts/indicators/daily-ny-levels/
 
 docs/indicators/DailyNYLevels/
 ├── PRD.md                            # This document
+├── CORE_ENGINE_SPEC.md               # Platform-agnostic algorithm contracts + pseudocode
 ├── PHASE1_DESIGN.md                  # Phase 1 detailed design
 ├── PHASE2_DESIGN.md                  # (created before Phase 2 work)
 ├── PHASE3_DESIGN.md                  # (created before Phase 3 work)
@@ -249,4 +251,46 @@ When picking up work on any phase:
 
 ---
 
-**Last Updated:** 2026-04-17 (Phase 1 design decisions finalized)
+## 9. Extensibility Checklist
+
+| Scenario | Phase 1 Support | Effort | Notes |
+|----------|------------------|--------|-------|
+| Add new range preset/sub-range | ✅ Yes | Low | Add new `RangeSpec` rows in preset resolver; no core model changes |
+| Add new derived stat (e.g., custom conditional metric) | ✅ Yes | Medium | Add to `StatsLib` and optionally extend `ExcursionHistory` |
+| Add new table view | ✅ Yes | Medium | Add new rendering branch and columns in table module |
+| Add new Pine visual overlays | ✅ Yes | Medium | Add in `PineDrawingLib`; no cross-platform assumptions |
+| Port session/range logic to NinjaScript | ✅ Yes | Medium | Use minute-based session helper contract from `CORE_ENGINE_SPEC.md` |
+| Reuse Pine drawing code in NinjaScript | ❌ No | N/A | `PineDrawingLib` is intentionally Pine-specific |
+| Multi-timezone mixed operation in one indicator instance | ⚪ Deferred | High | Phase 1 assumes EST/ET normalization for all active ranges |
+
+---
+
+## 10. Strategy Automation Readiness (Phase 4)
+
+Phase 1 design is sufficient as a data and signal foundation for strategy automation.
+
+| Capability Needed by Strategy | Present in Phase 1 Design | Notes |
+|-------------------------------|----------------------------|-------|
+| OR boundaries and cutoff windows | ✅ | `RangeSpec` + `RangeState` provide deterministic session framing |
+| Real-time excursion tracking (MFE/MAE) | ✅ | Includes absolute + pullback MAE |
+| Confirmation/target levels | ✅ | Named percentile framework (P20/P50/P75/P90) |
+| Move-failure/fakeout context | ✅ | Fakeout flags + reversal depth distributions |
+| EV win and risk-quality metrics | ✅ | EV flags + R-multiple + efficiency inputs |
+| DOW and continuation context | ✅ | Available for regime filtering in strategy rules |
+
+**Note:** Phase 1 does not define executable entry/exit rules; that remains explicit Phase 4 strategy design scope.
+
+---
+
+## 11. Platform-Specific Notes
+
+1. `PineDrawingLib` is Pine-only by design. NinjaScript will implement independent drawing/rendering adapters.
+2. Session handling uses a dual-path model:
+    - Pine-native path: session strings + `time()`
+    - Portable path: minutes-of-day helper logic (used for NinjaScript parity)
+3. All business logic timestamps are interpreted in EST/ET context before calculations.
+4. `CORE_ENGINE_SPEC.md` is the single source of truth for cross-platform algorithm behavior; platform files are implementation adapters.
+
+---
+
+**Last Updated:** 2026-04-17 (Phase 1 architecture refinement: platform boundaries + extensibility/readiness added)
