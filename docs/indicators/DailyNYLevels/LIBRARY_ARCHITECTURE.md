@@ -93,6 +93,50 @@ Indicators only talk to Layer E (semantic renderers). Rare exception: the generi
 
 The format-string interpreter and `f_resolve_color` / `f_display_profile_scale` helpers in Layer B are exposed as utilities and occasionally called directly by indicators that need to pre-compute values (e.g., building table cell text). These crossings are fine — they don't bypass lifecycle, they just pre-compute.
 
+### 2.3 Phase 1 contract — Label registry API (v3 draft)
+
+Phase 1 extraction starts by making label behavior explicit and reusable in `PineDrawingCore` before any semantic-renderer expansion. This section is the implementation contract for that extraction.
+
+#### 2.3.1 Core data model
+
+| Type | Fields | Notes |
+|------|--------|-------|
+| `LabelRuntimeData` | `keys[]`, `values[]` | Runtime slot map for `{slot}` and `{if:slot}` format rendering. |
+| `LabelEntry` | `tag`, `instance_key`, `template_name`, `x`, `y`, `price_y`, `base_text`, `label_format`, `tooltip_format`, `label_mode`, `label_style`, `label_font`, `collision_strategy`, `collision_priority`, `merge_group`, `state`, `runtime_data` | One requested label before collision resolution. |
+| `ResolvedLabelEntry` | `tag`, `final_x`, `final_y`, `final_text`, `final_tooltip`, `final_style`, `drawn`, `suppressed_reason`, `merged_children[]` | One post-resolution label emitted to primitives. |
+| `LabelRegistryState` | `entries[]`, `resolved[]`, `is_flushed`, `profile`, `theme`, `symbol`, `mintick` | Per-render-cycle transient registry state. |
+
+#### 2.3.2 Core API
+
+| Function | Inputs | Output | Contract |
+|----------|--------|--------|----------|
+| `f_label_registry_begin(profile, theme, symbol, mintick)` | Display/profile context | `LabelRegistryState` | Initializes empty registry for current cycle. |
+| `f_register_label(registry, entry)` | `LabelRegistryState`, `LabelEntry` | `void` | Appends raw entry; no draw side effects. |
+| `f_resolve_label_text(format, base_text, runtime_data)` | Format string + runtime slots | `string` | Expands `{slot}` and `{if:slot}` clauses. |
+| `f_resolve_label_collisions(registry)` | `LabelRegistryState` | `void` | Applies merge/stagger/hide/off by `collision_strategy` + `collision_priority`. |
+| `f_flush_labels(registry)` | `LabelRegistryState` | `ResolvedLabelEntry[]` | Finalizes draw list; idempotent within cycle. |
+| `f_label_registry_reset(registry)` | `LabelRegistryState` | `void` | Clears transient arrays at end of cycle. |
+
+#### 2.3.3 Collision and proximity rules
+
+- Vertical proximity threshold is symbol-aware via `f_merge_threshold_for_symbol(symbol, mintick)`.
+- Resolution order is stable and deterministic:
+    1. Higher `collision_priority` first
+    2. Higher-emphasis state first (`active > finalized > historical > inactive > debug`)
+    3. Earlier registration order as tie-breaker
+- Strategy behavior:
+    - `merge`: combine sibling labels into one text payload; suppress children
+    - `stagger`: preserve labels and distribute into offset columns
+    - `hide`: suppress lower-priority overlaps
+    - `off`: render raw positions with no collision pass
+
+#### 2.3.4 Integration boundaries for Phase 1
+
+- Indicator code should only push labels (`f_register_label`) and consume flush output.
+- Indicator code must not execute local merge/collision logic once extraction is complete.
+- Canonical-template enforcement remains soft guidance in Phase 1: the registry must not reject entries based on template policy.
+- Default behavior must remain parity-equivalent with current Daily NY Levels output.
+
 ---
 
 ## 3. Library split plan

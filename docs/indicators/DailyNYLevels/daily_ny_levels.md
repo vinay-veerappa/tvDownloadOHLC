@@ -289,6 +289,33 @@ max_labels_count = 50
 
 These will be resolved during migration and incorporated into v7.
 
+### 7.5 Phase 1 label-engine parity matrix (v6 -> v3)
+
+Phase 1 target is ownership extraction, not feature change. The following matrix defines parity expectations between current indicator behavior and the new `PineDrawingCore` label registry.
+
+| Current behavior in v6 | Registry contract field(s) | Expected parity outcome |
+|------------------------|----------------------------|-------------------------|
+| Right-edge labels are pushed after line geometry decisions | `LabelEntry.x`, `LabelEntry.y`, `LabelEntry.price_y`, `f_register_label()` | Labels stay anchored to the same price and time columns. |
+| Near-price labels merge when within symbol-aware threshold | `collision_strategy=merge`, `merge_group`, `f_merge_threshold_for_symbol()` | Same sibling merge behavior for tightly-clustered levels. |
+| Tactical labels outrank nearby context/stat labels | `collision_priority`, `state` ordering in `f_resolve_label_collisions()` | Tactical labels remain visible when overlap occurs. |
+| Dense layouts use stagger columns to avoid unreadable overlap | `collision_strategy=stagger`, profile-scaled `column_step_bars` | Same columnized layout behavior under overlap. |
+| Hidden/suppressed labels are not drawn but source lines remain | `ResolvedLabelEntry.drawn=false`, `suppressed_reason` | Suppression remains label-only unless caller explicitly suppresses line. |
+| Label text is built from shared template semantics + runtime values | `base_text`, `label_format`, `runtime_data`, `f_resolve_label_text()` | Produced text matches current content and conditional slot logic. |
+| Historical labels carry day-age context suffix | `state=historical_Nd`, lifecycle-aware label post-processing | `[-Nd]` suffix semantics remain unchanged. |
+| Label mode can be Label/Tooltip/Both/None per binding | `label_mode`, `tooltip_format` | Existing visibility behavior preserved per binding defaults. |
+
+### 7.6 Phase 1 acceptance checklist
+
+Before removing any indicator-local collision logic, all checks below must pass.
+
+- [ ] No new diagnostics in migrated files.
+- [ ] Session/stat/thesis/target right-edge labels appear at identical anchor prices on the same bar snapshot.
+- [ ] Merge cases (median/average siblings and close-proximity tactical/stat overlaps) produce identical visible text outcomes.
+- [ ] Stagger cases produce deterministic column ordering across reruns.
+- [ ] Historical labels preserve `[-1d]` suffix and retention behavior.
+- [ ] `label_mode` behavior (Label, Tooltip, Both, None) remains unchanged for existing bindings.
+- [ ] No direct label collision/merge helper remains in indicator code path after extraction.
+
 ---
 
 ## 8. Revision history
