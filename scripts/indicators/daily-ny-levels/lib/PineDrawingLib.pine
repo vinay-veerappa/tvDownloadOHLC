@@ -1,0 +1,94 @@
+//@version=6
+library("PineDrawingLib")
+
+export type PineDrawingState
+    array<box> boxes
+    array<line> lines
+    array<label> labels
+
+export f_new_drawing_state() =>
+    PineDrawingState.new(array.new_box(0), array.new_line(0), array.new_label(0))
+
+f_clear_boxes(array<box> arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            box.delete(array.get(arr, i))
+    array.clear(arr)
+
+f_clear_lines(array<line> arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            line.delete(array.get(arr, i))
+    array.clear(arr)
+
+f_clear_labels(array<label> arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            label.delete(array.get(arr, i))
+    array.clear(arr)
+
+export f_clear_all(PineDrawingState ds) =>
+    f_clear_boxes(ds.boxes)
+    f_clear_lines(ds.lines)
+    f_clear_labels(ds.labels)
+
+export f_line_style(string s) =>
+    switch s
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+export f_display_size(string s) =>
+    switch s
+        "auto" => size.auto
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+        "huge" => size.huge
+        => size.normal
+
+export f_text_size(string s) =>
+    switch s
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        "Huge" => size.huge
+        => size.normal
+
+export f_table_pos(string s) =>
+    switch s
+        "Top Left" => position.top_left
+        "Top Center" => position.top_center
+        "Top Right" => position.top_right
+        "Middle Left" => position.middle_left
+        "Middle Center" => position.middle_center
+        "Middle Right" => position.middle_right
+        "Bottom Left" => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        => position.bottom_right
+
+export f_draw_or_box(PineDrawingState ds, int start_bar, float hi, float lo, int end_bar, color clr, string style, int width) =>
+    box b = box.new(start_bar, hi, end_bar, lo, border_color=clr, bgcolor=color.new(clr, 85), border_style=f_line_style(style), border_width=width)
+    array.push(ds.boxes, b)
+    b
+
+export f_draw_hist_band(PineDrawingState ds, int anchor, float p_top, float p_bot, int width_bars, color clr, int transp) =>
+    box b = box.new(anchor, p_top, anchor + width_bars, p_bot, border_color=color.new(clr, math.min(transp + 10, 100)), bgcolor=color.new(clr, transp))
+    array.push(ds.boxes, b)
+    b
+
+export f_draw_stat_line(PineDrawingState ds, int x1, float y, int x2, color clr, string style, int width) =>
+    line ln = line.new(x1, y, x2, y, color=clr, style=f_line_style(style), width=width)
+    array.push(ds.lines, ln)
+    ln
+
+export f_draw_stat_label(PineDrawingState ds, int x, float y, string txt, color txt_clr, string lbl_style, string sz) =>
+    label_style = lbl_style == "right" ? label.style_label_right : lbl_style == "up" ? label.style_label_up : label.style_label_left
+    label lb = label.new(x, y, txt, color=color.new(color.black, 100), textcolor=txt_clr, style=label_style, size=f_display_size(sz))
+    array.push(ds.labels, lb)
+    lb
+
+export f_draw_day_separator(int bar_idx, float price_hi, float price_lo, color clr, string style, int width) =>
+    line.new(bar_idx, price_hi, bar_idx, price_lo, xloc=xloc.bar_index, color=clr, style=f_line_style(style), width=width, extend=extend.both)

@@ -1,0 +1,609 @@
+// This Pine Script source code is subject to the terms of the Mozilla Public License 2.0
+// © antigravity / Vinay
+
+//@version=6
+indicator("Daily NY Levels v5 (Phase 1)", overlay=true, max_bars_back=5000, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// ============================================================================
+// Daily NY Levels v5 - Phase 1 Implementation
+// Author: vveerappa | Version: 1
+// ============================================================================
+// CRITICAL: These import IDs assume the three libraries are published to TradingView
+// under your account (vveerappa) with version 1. Before publishing this indicator,
+// ensure all three libraries are published first:
+//   - vveerappa/RangeSessionLib/1
+//   - vveerappa/PineDrawingLib/1  
+//   - vveerappa/StatsLib/1
+// If libraries have different versions, update the /1 suffixes below.
+// ============================================================================
+import vveerappa/RangeSessionLib/4 as RSL
+import vveerappa/PineDrawingLib/1 as PDL
+import vveerappa/StatsLib/1 as STL
+
+// Inputs
+grp_session = "Session & Presets"
+i_preset = input.string("Market Open", "Preset", options=["1800 Break", "0300 Break", "0300 Transfer", "Q1 Break", "Market Open", "Magic Hour", "1100 BO", "Lunch Break", "1400 Break", "Custom"], group=grp_session)
+i_custom_start = input.string("0930", "Custom OR Start (HHMM)", group=grp_session)
+i_custom_end = input.string("0935", "Custom OR End (HHMM)", group=grp_session)
+i_custom_cutoff = input.string("1200", "Custom Cutoff (HHMM)", group=grp_session)
+i_timezone = input.string("America/New_York", "Timezone", options=["America/New_York", "America/Chicago", "America/Los_Angeles", "America/Denver", "US/Eastern", "US/Central", "UTC"], group=grp_session)
+i_ev_target_pct = input.float(0.30, "EV Target (%)", minval=0.01, step=0.01, group=grp_session)
+
+grp_style = "Style"
+i_bull_color = input.color(color.green, "Bull Color", group=grp_style)
+i_bear_color = input.color(color.red, "Bear Color", group=grp_style)
+i_box_style = input.string("Solid", "OR Box Style", options=["Solid", "Dashed", "Dotted"], group=grp_style)
+i_box_width = input.int(1, "OR Box Width", minval=1, maxval=5, group=grp_style)
+
+grp_lines = "Stat Lines"
+i_show_stat_lines = input.bool(true, "Show Stat Lines", group=grp_lines)
+i_show_histogram = input.bool(true, "Show Histogram Bands", group=grp_lines)
+i_hist_start_pct = input.int(20, "Histogram Start Percentile", minval=1, maxval=98, group=grp_lines)
+i_hist_end_pct = input.int(90, "Histogram End Percentile", minval=2, maxval=99, group=grp_lines)
+i_hist_pct_step = input.int(5, "Histogram Percentile Step", minval=1, maxval=25, group=grp_lines)
+i_show_hist_bin_labels = input.bool(true, "Show Histogram Bin Labels", group=grp_lines)
+i_pct_confirm = input.int(20, "Confirm Percentile", minval=1, maxval=99, group=grp_lines)
+i_pct_target1 = input.int(50, "Target1 Percentile", minval=1, maxval=99, group=grp_lines)
+i_pct_target2 = input.int(75, "Target2 Percentile", minval=1, maxval=99, group=grp_lines)
+i_pct_stretch = input.int(90, "Stretch Percentile", minval=1, maxval=99, group=grp_lines)
+i_right_extend_bars = input.int(20, "Line Right Extension", minval=1, maxval=200, group=grp_lines)
+i_stat_label_size = input.string("normal", "Stat Label Size", options=["tiny", "small", "normal", "large", "huge"], group=grp_lines)
+i_stat_label_color = input.color(color.white, "Stat Label Text Color", group=grp_lines)
+
+grp_table = "Data Table"
+i_show_table = input.bool(true, "Show Data Table", group=grp_table)
+i_table_view = input.string("MFE View", "Table View", options=["MFE View", "MAE View", "DOW View", "Fakeout View"], group=grp_table)
+i_table_pos = input.string("Bottom Right", "Table Position", options=["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group=grp_table)
+
+grp_debug = "Debug"
+i_show_debug = input.bool(false, "Show Debug Labels", group=grp_debug)
+
+// Resolved ranges + runtime state arrays
+var array<RSL.RangeSpec> specs = array.new<RSL.RangeSpec>(0)
+var array<RSL.RangeState> states = array.new<RSL.RangeState>(0)
+var array<STL.ExcursionHistory> histories = array.new<STL.ExcursionHistory>(0)
+var array<PDL.PineDrawingState> drawings = array.new<PDL.PineDrawingState>(0)
+var array<bool> prev_in_or = array.new_bool(0)
+var array<bool> prev_in_data = array.new_bool(0)
+
+f_init_runtime() =>
+    array.clear(specs)
+    array.clear(states)
+    array.clear(histories)
+    array.clear(drawings)
+    array.clear(prev_in_or)
+    array.clear(prev_in_data)
+
+    array<RSL.RangeSpec> resolved = RSL.f_resolve_preset(i_preset, i_custom_start, i_custom_end, i_custom_cutoff, i_timezone)
+    int n = array.size(resolved)
+    if n > 0
+        for i = 0 to n - 1
+            RSL.RangeSpec sp = array.get(resolved, i)
+            array.push(specs, sp)
+            array.push(states, RSL.f_new_range_state(sp))
+            array.push(histories, STL.f_new_excursion_history(sp.name))
+            array.push(drawings, PDL.f_new_drawing_state())
+            array.push(prev_in_or, false)
+            array.push(prev_in_data, false)
+
+if barstate.isfirst
+    f_init_runtime()
+
+// Lower timeframe cache once per bar.
+[ltf_high_arr, ltf_low_arr, ltf_close_arr, ltf_time_arr] = request.security_lower_tf(syminfo.tickerid, "1", [high, low, close, time])
+int ny_dow = dayofweek(time, i_timezone)
+
+f_or_color(int idx) =>
+    color base = idx % 2 == 0 ? i_bull_color : i_bear_color
+    color.new(base, math.min(15 + idx * 10, 75))
+
+f_fmt_stat_text(string name, string line_name, float pct_level, float pct_value) =>
+    name + " " + line_name + " P" + str.tostring(int(pct_level)) + " " + STL.f_pct_fmt(pct_value)
+
+f_fmt_avg_text(string name, string line_name, float pct_value) =>
+    name + " " + line_name + " " + STL.f_pct_fmt(pct_value)
+
+f_fmt_percentile_text(float pct_value) =>
+    str.tostring(int(math.round(pct_value))) + "th"
+
+f_track_range(int idx) =>
+    RSL.RangeSpec sp = array.get(specs, idx)
+    RSL.RangeState st = array.get(states, idx)
+    STL.ExcursionHistory hist = array.get(histories, idx)
+
+    bool in_or = RSL.f_in_session_pine(sp.session_or, sp.tz)
+    bool in_data = RSL.f_in_session_pine(sp.session_data, sp.tz)
+
+    bool was_in_or = array.get(prev_in_or, idx)
+    bool is_new_session = in_or and not was_in_or
+    array.set(prev_in_or, idx, in_or)
+
+    // Commit at next OR start if prior day was still uncommitted.
+    if is_new_session and not st.is_committed and st.ref_set and not na(st.bull_ref)
+        // Recompute exact pullback MAE using full intraday trace (before peak finalization cutoff)
+        // Use existing pullback MAE values from state (already tracked during the session)
+        float pb_bull = na(st.daily_mae_bull_pb) ? 0.0 : st.daily_mae_bull_pb
+        float pb_bear = na(st.daily_mae_bear_pb) ? 0.0 : st.daily_mae_bear_pb
+        // Apply transfer-direction gating if applicable
+        int direction = na
+        if sp.is_transfer
+            direction := (st.or_high > st.session_open) ? 1 : -1
+        STL.f_commit_daily(hist, st.daily_bull_mfe, st.daily_bear_mfe, st.daily_bull_peak_min, st.daily_bear_peak_min, st.daily_pivot_bulls, st.daily_pivot_bears, st.daily_mae_bull_abs, st.daily_mae_bear_abs, pb_bull, pb_bear, st.mid_hit_bull, st.mid_hit_bear, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.session_low_data, st.session_high_data, i_ev_target_pct)
+        st.is_committed := true
+
+    if is_new_session
+        RSL.f_reset_daily(st)
+
+    bool ltf_or_found = false
+    int ltf_count = array.size(ltf_time_arr)
+    if ltf_count > 0
+        for j = 0 to ltf_count - 1
+            int t = array.get(ltf_time_arr, j)
+            int m = RSL.f_mins_of_day(t, sp.tz)
+            bool in_or_m = RSL.f_in_session_minutes(m, sp.or_start_min, sp.or_end_min, sp.or_end_min < sp.or_start_min)
+            if in_or_m
+                float h = array.get(ltf_high_arr, j)
+                float l = array.get(ltf_low_arr, j)
+                float c = array.get(ltf_close_arr, j)
+                if not st.or_building
+                    st.or_high := h
+                    st.or_low := l
+                    st.or_last_close := c
+                    st.or_building := true
+                    st.or_start_bar := bar_index
+                else
+                    st.or_high := math.max(st.or_high, h)
+                    st.or_low := math.min(st.or_low, l)
+                    st.or_last_close := c
+                ltf_or_found := true
+
+    if in_or and not ltf_or_found
+        if not st.or_building
+            st.or_high := high
+            st.or_low := low
+            st.or_last_close := close
+            st.or_building := true
+            st.or_start_bar := bar_index
+        else
+            st.or_high := math.max(st.or_high, high)
+            st.or_low := math.min(st.or_low, low)
+            st.or_last_close := close
+
+    if st.or_building and not st.or_complete and not in_or and not ltf_or_found
+        st.or_complete := true
+
+    if st.or_complete and not st.ref_set and not na(st.or_high)
+        st.bull_ref := st.or_high
+        st.bear_ref := st.or_low
+        st.or_mid := (st.or_high + st.or_low) / 2.0
+        st.session_open := st.or_last_close  // Capture close for transfer-direction gating
+        st.ref_set := true
+
+    bool ltf_in_data = false
+    if st.ref_set and ltf_count > 0
+        for j = 0 to ltf_count - 1
+            int t = array.get(ltf_time_arr, j)
+            int m = RSL.f_mins_of_day(t, sp.tz)
+            bool in_data_m = RSL.f_in_session_minutes(m, sp.or_end_min, sp.cutoff_min, sp.cutoff_min < sp.or_end_min)
+            if in_data_m
+                ltf_in_data := true
+                float h = array.get(ltf_high_arr, j)
+                float l = array.get(ltf_low_arr, j)
+                float c = array.get(ltf_close_arr, j)
+                int mins_since_or = RSL.f_mins_since(m, sp.or_start_min)
+                [nb, ns, nbp, nsp] = STL.f_track_mfe(h, l, mins_since_or, st.bull_ref, st.bear_ref, st.daily_bull_mfe, st.daily_bear_mfe, st.daily_bull_peak_min, st.daily_bear_peak_min)
+                st.daily_bull_mfe := nb
+                st.daily_bear_mfe := ns
+                st.daily_bull_peak_min := nbp
+                st.daily_bear_peak_min := nsp
+                [mab, mas] = STL.f_track_mae_abs(h, l, st.or_low, st.or_high, st.daily_mae_bull_abs, st.daily_mae_bear_abs)
+                st.daily_mae_bull_abs := mab
+                st.daily_mae_bear_abs := mas
+                bool bull_peak_finalized = mins_since_or >= st.daily_bull_peak_min
+                bool bear_peak_finalized = mins_since_or >= st.daily_bear_peak_min
+                [mpb, mps] = STL.f_track_mae_pullback(h, l, st.or_high, st.or_low, bull_peak_finalized, bear_peak_finalized, st.daily_mae_bull_pb, st.daily_mae_bear_pb)
+                st.daily_mae_bull_pb := mpb
+                st.daily_mae_bear_pb := mps
+                // Capture intraday trace for later post-peak analysis
+                array.push(st.data_mins, mins_since_or)
+                array.push(st.data_highs, h)
+                array.push(st.data_lows, l)
+                [mhb, mhs] = STL.f_track_mid_hit(h, l, st.or_mid, st.mid_hit_bull, st.mid_hit_bear)
+                st.mid_hit_bull := mhb
+                st.mid_hit_bear := mhs
+                if h > st.bull_ref
+                    st.entry_triggered_bull := true
+                    array.push(st.daily_pivot_bulls, (h - st.bull_ref) / st.bull_ref * 100.0)
+                if l < st.bear_ref
+                    st.entry_triggered_bear := true
+                    array.push(st.daily_pivot_bears, (st.bear_ref - l) / st.bear_ref * 100.0)
+                st.session_low_data := na(st.session_low_data) ? l : math.min(st.session_low_data, l)
+                st.session_high_data := na(st.session_high_data) ? h : math.max(st.session_high_data, h)
+                st.close_at_cutoff := c
+
+    if st.ref_set and in_data and not ltf_in_data
+        int mins_since_or = RSL.f_mins_since(RSL.f_mins_of_day(time, sp.tz), sp.or_start_min)
+        [nb, ns, nbp, nsp] = STL.f_track_mfe(high, low, mins_since_or, st.bull_ref, st.bear_ref, st.daily_bull_mfe, st.daily_bear_mfe, st.daily_bull_peak_min, st.daily_bear_peak_min)
+        st.daily_bull_mfe := nb
+        st.daily_bear_mfe := ns
+        st.daily_bull_peak_min := nbp
+        st.daily_bear_peak_min := nsp
+        [mab, mas] = STL.f_track_mae_abs(high, low, st.or_low, st.or_high, st.daily_mae_bull_abs, st.daily_mae_bear_abs)
+        st.daily_mae_bull_abs := mab
+        st.daily_mae_bear_abs := mas
+        bool bull_peak_finalized = mins_since_or >= st.daily_bull_peak_min
+        bool bear_peak_finalized = mins_since_or >= st.daily_bear_peak_min
+        [mpb, mps] = STL.f_track_mae_pullback(high, low, st.or_high, st.or_low, bull_peak_finalized, bear_peak_finalized, st.daily_mae_bull_pb, st.daily_mae_bear_pb)
+        st.daily_mae_bull_pb := mpb
+        st.daily_mae_bear_pb := mps
+        // Capture intraday trace for later post-peak analysis
+        array.push(st.data_mins, mins_since_or)
+        array.push(st.data_highs, high)
+        array.push(st.data_lows, low)
+        [mhb, mhs] = STL.f_track_mid_hit(high, low, st.or_mid, st.mid_hit_bull, st.mid_hit_bear)
+        st.mid_hit_bull := mhb
+        st.mid_hit_bear := mhs
+        if high > st.bull_ref
+            st.entry_triggered_bull := true
+            array.push(st.daily_pivot_bulls, (high - st.bull_ref) / st.bull_ref * 100.0)
+        if low < st.bear_ref
+            st.entry_triggered_bear := true
+            array.push(st.daily_pivot_bears, (st.bear_ref - low) / st.bear_ref * 100.0)
+        st.session_low_data := na(st.session_low_data) ? low : math.min(st.session_low_data, low)
+        st.session_high_data := na(st.session_high_data) ? high : math.max(st.session_high_data, high)
+        st.close_at_cutoff := close
+
+    bool effective_in_data = in_data or ltf_in_data
+    bool was_in_data = array.get(prev_in_data, idx)
+    bool data_just_ended = was_in_data and not effective_in_data
+    array.set(prev_in_data, idx, effective_in_data)
+
+    if data_just_ended and not st.is_committed and st.ref_set
+        // Use existing pullback MAE values from state (already tracked during the session)
+        float pb_bull = na(st.daily_mae_bull_pb) ? 0.0 : st.daily_mae_bull_pb
+        float pb_bear = na(st.daily_mae_bear_pb) ? 0.0 : st.daily_mae_bear_pb
+        // Apply transfer-direction gating if applicable
+        int direction = na
+        if sp.is_transfer
+            direction := (st.or_high > st.session_open) ? 1 : -1
+        STL.f_commit_daily(hist, st.daily_bull_mfe, st.daily_bear_mfe, st.daily_bull_peak_min, st.daily_bear_peak_min, st.daily_pivot_bulls, st.daily_pivot_bears, st.daily_mae_bull_abs, st.daily_mae_bear_abs, pb_bull, pb_bear, st.mid_hit_bull, st.mid_hit_bear, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.session_low_data, st.session_high_data, i_ev_target_pct)
+        st.is_committed := true
+
+    if i_show_debug and is_new_session
+        label.new(bar_index, high, "NEW: " + sp.name, style=label.style_label_down, textcolor=color.white, color=color.new(color.blue, 50), size=size.tiny)
+
+    array.set(states, idx, st)
+    array.set(histories, idx, hist)
+
+if array.size(specs) > 0
+    for i = 0 to array.size(specs) - 1
+        f_track_range(i)
+
+f_render_range(int idx) =>
+    RSL.RangeSpec sp = array.get(specs, idx)
+    RSL.RangeState st = array.get(states, idx)
+    STL.ExcursionHistory hist = array.get(histories, idx)
+    PDL.PineDrawingState ds = array.get(drawings, idx)
+
+    PDL.f_clear_all(ds)
+
+    int tf_min = timeframe.isintraday ? timeframe.multiplier : 1
+    int total_mins_to_cutoff = RSL.f_duration(sp.or_start_min, sp.cutoff_min)
+    int bars_to_cutoff = int(math.max(1.0, math.ceil(float(total_mins_to_cutoff) / float(tf_min))))
+    int cutoff_bar = st.or_start_bar + bars_to_cutoff
+    cutoff_bar := math.min(cutoff_bar, bar_index)
+
+    if st.or_building and not na(st.or_start_bar)
+        PDL.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, bar_index, f_or_color(idx), i_box_style, i_box_width)
+    else if st.or_complete and not na(st.or_start_bar)
+        PDL.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, bar_index, f_or_color(idx), i_box_style, i_box_width)
+
+    if i_show_stat_lines and st.ref_set and not na(st.bull_ref)
+        array<float> bull_filtered = STL.f_build_filtered(hist.mfe_bull)
+        array<float> bear_filtered = STL.f_build_filtered(hist.mfe_bear)
+        int ln_end = cutoff_bar
+
+        if array.size(bull_filtered) > 0
+            float p_confirm_b = array.percentile_nearest_rank(bull_filtered, i_pct_confirm)
+            float p_t1_b = array.percentile_nearest_rank(bull_filtered, i_pct_target1)
+            float p_t2_b = array.percentile_nearest_rank(bull_filtered, i_pct_target2)
+            float p_stretch_b = array.percentile_nearest_rank(bull_filtered, i_pct_stretch)
+            float p_avg_b = array.avg(bull_filtered)
+            float y_confirm_b = st.bull_ref * (1.0 + p_confirm_b / 100.0)
+            float y_t1_b = st.bull_ref * (1.0 + p_t1_b / 100.0)
+            float y_t2_b = st.bull_ref * (1.0 + p_t2_b / 100.0)
+            float y_stretch_b = st.bull_ref * (1.0 + p_stretch_b / 100.0)
+            float y_avg_b = st.bull_ref * (1.0 + p_avg_b / 100.0)
+            PDL.f_draw_stat_line(ds, st.or_start_bar, y_confirm_b, ln_end, color.new(i_bull_color, 15), "Dotted", 1)
+            PDL.f_draw_stat_line(ds, st.or_start_bar, y_t1_b, ln_end, color.new(i_bull_color, 0), "Solid", 1)
+            PDL.f_draw_stat_line(ds, st.or_start_bar, y_t2_b, ln_end, color.new(i_bull_color, 25), "Dashed", 1)
+            PDL.f_draw_stat_line(ds, st.or_start_bar, y_stretch_b, ln_end, color.new(color.orange, 0), "Dotted", 1)
+            PDL.f_draw_stat_line(ds, st.or_start_bar, y_avg_b, ln_end, color.new(color.aqua, 0), "Dashed", 1)
+            PDL.f_draw_stat_label(ds, ln_end + 1, y_confirm_b, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_b), i_stat_label_color, "left", i_stat_label_size)
+            PDL.f_draw_stat_label(ds, ln_end + 1, y_t1_b, f_fmt_stat_text(sp.name, "Target1", i_pct_target1, p_t1_b), i_stat_label_color, "left", i_stat_label_size)
+            PDL.f_draw_stat_label(ds, ln_end + 1, y_t2_b, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_b), i_stat_label_color, "left", i_stat_label_size)
+            PDL.f_draw_stat_label(ds, ln_end + 1, y_stretch_b, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_b), i_stat_label_color, "left", i_stat_label_size)
+            PDL.f_draw_stat_label(ds, ln_end + 1, y_avg_b, f_fmt_avg_text(sp.name, "Avg", p_avg_b), i_stat_label_color, "left", i_stat_label_size)
+
+        if array.size(bear_filtered) > 0
+            float p_confirm_s = array.percentile_nearest_rank(bear_filtered, i_pct_confirm)
+            float p_t1_s = array.percentile_nearest_rank(bear_filtered, i_pct_target1)
+            float p_t2_s = array.percentile_nearest_rank(bear_filtered, i_pct_target2)
+            float p_stretch_s = array.percentile_nearest_rank(bear_filtered, i_pct_stretch)
+            float p_avg_s = array.avg(bear_filtered)
+            float y_confirm_s = st.bear_ref * (1.0 - p_confirm_s / 100.0)
+            float y_t1_s = st.bear_ref * (1.0 - p_t1_s / 100.0)
+            float y_t2_s = st.bear_ref * (1.0 - p_t2_s / 100.0)
+            float y_stretch_s = st.bear_ref * (1.0 - p_stretch_s / 100.0)
+            float y_avg_s = st.bear_ref * (1.0 - p_avg_s / 100.0)
+            PDL.f_draw_stat_line(ds, st.or_start_bar, y_confirm_s, ln_end, color.new(i_bear_color, 15), "Dotted", 1)
+            PDL.f_draw_stat_line(ds, st.or_start_bar, y_t1_s, ln_end, color.new(i_bear_color, 0), "Solid", 1)
+            PDL.f_draw_stat_line(ds, st.or_start_bar, y_t2_s, ln_end, color.new(i_bear_color, 25), "Dashed", 1)
+            PDL.f_draw_stat_line(ds, st.or_start_bar, y_stretch_s, ln_end, color.new(color.orange, 0), "Dotted", 1)
+            PDL.f_draw_stat_line(ds, st.or_start_bar, y_avg_s, ln_end, color.new(color.aqua, 0), "Dashed", 1)
+            PDL.f_draw_stat_label(ds, ln_end + 1, y_confirm_s, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_s), i_stat_label_color, "left", i_stat_label_size)
+            PDL.f_draw_stat_label(ds, ln_end + 1, y_t1_s, f_fmt_stat_text(sp.name, "Target1", i_pct_target1, p_t1_s), i_stat_label_color, "left", i_stat_label_size)
+            PDL.f_draw_stat_label(ds, ln_end + 1, y_t2_s, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_s), i_stat_label_color, "left", i_stat_label_size)
+            PDL.f_draw_stat_label(ds, ln_end + 1, y_stretch_s, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_s), i_stat_label_color, "left", i_stat_label_size)
+            PDL.f_draw_stat_label(ds, ln_end + 1, y_avg_s, f_fmt_avg_text(sp.name, "Avg", p_avg_s), i_stat_label_color, "left", i_stat_label_size)
+
+        int n_mid = math.min(array.size(hist.mid_hit_bull), array.size(hist.mid_hit_bear))
+        int mid_hits = 0
+        if n_mid > 0
+            for k = 0 to n_mid - 1
+                mid_hits += array.get(hist.mid_hit_bull, k) ? 1 : 0
+                mid_hits += array.get(hist.mid_hit_bear, k) ? 1 : 0
+        float mid_hit_pct = n_mid == 0 ? na : (float(mid_hits) / float(2 * n_mid)) * 100.0
+        PDL.f_draw_stat_line(ds, st.or_start_bar, st.or_mid, ln_end, color.new(color.gray, 20), "Dashed", 1)
+        PDL.f_draw_stat_label(ds, ln_end + 1, st.or_mid, sp.name + " Mid " + STL.f_pct_fmt(mid_hit_pct), i_stat_label_color, "left", i_stat_label_size)
+
+    // Render MFE histogram as a profile-like bell curve.
+    // Y uses percentile bands from the selected percentile window.
+    // X width uses local density so the middle bands can expand and tails contract.
+    if i_show_histogram and st.ref_set and not na(st.bull_ref)
+        array<float> bull_filtered = STL.f_build_filtered(hist.mfe_bull)
+        array<float> bear_filtered = STL.f_build_filtered(hist.mfe_bear)
+
+        int max_profile_width = math.max(6, cutoff_bar - st.or_start_bar)
+        int hist_pct_start = math.min(i_hist_start_pct, i_hist_end_pct - 1)
+        int hist_pct_end = math.max(i_hist_end_pct, hist_pct_start + 1)
+        int hist_pct_step = math.max(1, i_hist_pct_step)
+        int hist_bin_count = int(math.ceil(float(hist_pct_end - hist_pct_start) / float(hist_pct_step)))
+
+        // BULL HISTOGRAM
+        if array.size(bull_filtered) > 0
+            array<float> bull_val_los = array.new_float(0)
+            array<float> bull_val_his = array.new_float(0)
+            array<float> bull_densities = array.new_float(0)
+            array<float> bull_pct_los = array.new_float(0)
+            array<float> bull_pct_his = array.new_float(0)
+
+            for b = 0 to hist_bin_count - 1
+                float p_lo = hist_pct_start + float(hist_pct_step * b)
+                float p_hi = math.min(hist_pct_end, p_lo + hist_pct_step)
+                float v_lo = array.percentile_nearest_rank(bull_filtered, p_lo)
+                float v_hi = array.percentile_nearest_rank(bull_filtered, p_hi)
+                float band_span = math.max(v_hi - v_lo, 0.0001)
+                int count = 0
+                for s = 0 to array.size(bull_filtered) - 1
+                    float val = array.get(bull_filtered, s)
+                    if val >= v_lo and (b == hist_bin_count - 1 ? val <= v_hi : val < v_hi)
+                        count += 1
+                array.push(bull_val_los, v_lo)
+                array.push(bull_val_his, v_hi)
+                array.push(bull_densities, float(count) / band_span)
+                array.push(bull_pct_los, p_lo)
+                array.push(bull_pct_his, p_hi)
+
+            // Cap tail bins below P20 to the density of the first bin at or above P20
+            float bull_p20_density = na
+            for b = 0 to hist_bin_count - 1
+                if array.get(bull_pct_los, b) >= 20.0 and na(bull_p20_density)
+                    bull_p20_density := array.get(bull_densities, b)
+            if not na(bull_p20_density)
+                for b = 0 to hist_bin_count - 1
+                    if array.get(bull_pct_los, b) < 20.0
+                        array.set(bull_densities, b, math.min(array.get(bull_densities, b), bull_p20_density))
+
+            float max_density = 0.0
+            for b = 0 to hist_bin_count - 1
+                max_density := math.max(max_density, array.get(bull_densities, b))
+
+            for b = 0 to hist_bin_count - 1
+                float v_lo = array.get(bull_val_los, b)
+                float v_hi = array.get(bull_val_his, b)
+                float density = array.get(bull_densities, b)
+                float p_lo = array.get(bull_pct_los, b)
+                float p_hi = array.get(bull_pct_his, b)
+                float width_normalized = max_density > 0 ? density / max_density : 0.0
+                int box_width = math.max(2, int(math.round(width_normalized * float(max_profile_width))))
+
+                if v_hi >= v_lo
+                    float y_low = st.bull_ref * (1.0 + v_lo / 100.0)
+                    float y_high = st.bull_ref * (1.0 + v_hi / 100.0)
+                    PDL.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, i_bull_color, 58)
+                    if i_show_hist_bin_labels
+                        float y_mid = (y_high + y_low) / 2.0
+                        PDL.f_draw_stat_label(ds, st.or_start_bar - 1, y_mid, f_fmt_percentile_text(p_lo), i_stat_label_color, "right", i_stat_label_size)
+
+                    if i_show_debug
+                        float y_mid = (y_high + y_low) / 2.0
+                        label.new(bar_index, y_mid, "B P" + str.tostring(p_lo, "#.0") + "-P" + str.tostring(p_hi, "#.0") + " v=" + str.tostring(v_lo, "#.##") + "-" + str.tostring(v_hi, "#.##"),
+                                 style=label.style_label_center, textcolor=color.white, size=size.tiny)
+
+        // BEAR HISTOGRAM
+        if array.size(bear_filtered) > 0
+            array<float> bear_val_los = array.new_float(0)
+            array<float> bear_val_his = array.new_float(0)
+            array<float> bear_densities = array.new_float(0)
+            array<float> bear_pct_los = array.new_float(0)
+            array<float> bear_pct_his = array.new_float(0)
+
+            for b = 0 to hist_bin_count - 1
+                float p_lo = hist_pct_start + float(hist_pct_step * b)
+                float p_hi = math.min(hist_pct_end, p_lo + hist_pct_step)
+                float v_lo = array.percentile_nearest_rank(bear_filtered, p_lo)
+                float v_hi = array.percentile_nearest_rank(bear_filtered, p_hi)
+                float band_span = math.max(v_hi - v_lo, 0.0001)
+                int count = 0
+                for s = 0 to array.size(bear_filtered) - 1
+                    float val = array.get(bear_filtered, s)
+                    if val >= v_lo and (b == hist_bin_count - 1 ? val <= v_hi : val < v_hi)
+                        count += 1
+                array.push(bear_val_los, v_lo)
+                array.push(bear_val_his, v_hi)
+                array.push(bear_densities, float(count) / band_span)
+                array.push(bear_pct_los, p_lo)
+                array.push(bear_pct_his, p_hi)
+
+            // Cap tail bins below P20 to the density of the first bin at or above P20
+            float bear_p20_density = na
+            for b = 0 to hist_bin_count - 1
+                if array.get(bear_pct_los, b) >= 20.0 and na(bear_p20_density)
+                    bear_p20_density := array.get(bear_densities, b)
+            if not na(bear_p20_density)
+                for b = 0 to hist_bin_count - 1
+                    if array.get(bear_pct_los, b) < 20.0
+                        array.set(bear_densities, b, math.min(array.get(bear_densities, b), bear_p20_density))
+
+            float max_density = 0.0
+            for b = 0 to hist_bin_count - 1
+                max_density := math.max(max_density, array.get(bear_densities, b))
+
+            for b = 0 to hist_bin_count - 1
+                float v_lo = array.get(bear_val_los, b)
+                float v_hi = array.get(bear_val_his, b)
+                float density = array.get(bear_densities, b)
+                float p_lo = array.get(bear_pct_los, b)
+                float p_hi = array.get(bear_pct_his, b)
+                float width_normalized = max_density > 0 ? density / max_density : 0.0
+                int box_width = math.max(2, int(math.round(width_normalized * float(max_profile_width))))
+
+                if v_hi >= v_lo
+                    float y_high = st.bear_ref * (1.0 - v_lo / 100.0)
+                    float y_low = st.bear_ref * (1.0 - v_hi / 100.0)
+                    PDL.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, i_bear_color, 58)
+                    if i_show_hist_bin_labels
+                        float y_mid = (y_high + y_low) / 2.0
+                        PDL.f_draw_stat_label(ds, st.or_start_bar - 1, y_mid, f_fmt_percentile_text(p_lo), i_stat_label_color, "right", i_stat_label_size)
+
+                    if i_show_debug
+                        float y_mid = (y_high + y_low) / 2.0
+                        label.new(bar_index, y_mid, "S P" + str.tostring(p_lo, "#.0") + "-P" + str.tostring(p_hi, "#.0") + " v=" + str.tostring(v_lo, "#.##") + "-" + str.tostring(v_hi, "#.##"),
+                                 style=label.style_label_center, textcolor=color.white, size=size.tiny)
+
+if barstate.islast and array.size(specs) > 0
+    for i = 0 to array.size(specs) - 1
+        f_render_range(i)
+
+// Focus range for table: live first, else last range.
+f_focus_idx() =>
+    int focus = array.size(specs) > 0 ? array.size(specs) - 1 : 0
+    if array.size(specs) > 0
+        for i = 0 to array.size(specs) - 1
+            RSL.RangeSpec sp = array.get(specs, i)
+            RSL.RangeState st = array.get(states, i)
+            bool in_or = RSL.f_in_session_pine(sp.session_or, sp.tz)
+            bool in_data = RSL.f_in_session_pine(sp.session_data, sp.tz)
+            if in_or or in_data or st.or_building
+                focus := i
+                break
+    focus
+
+var table data_table = table.new(PDL.f_table_pos(i_table_pos), 6, 9, bgcolor=color.new(color.black, 85), border_color=color.new(color.gray, 70), border_width=1)
+
+f_table_clear() =>
+    for r = 0 to 8
+        for c = 0 to 5
+            table.cell(data_table, c, r, "")
+
+if barstate.islast and i_show_table and array.size(specs) > 0
+    f_table_clear()
+    int idx = f_focus_idx()
+    RSL.RangeSpec sp = array.get(specs, idx)
+    STL.ExcursionHistory hist = array.get(histories, idx)
+
+    table.cell(data_table, 0, 0, sp.name + " - " + i_table_view, text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 70))
+    table.cell(data_table, 1, 0, "Count", text_color=color.white, text_size=size.small)
+    table.cell(data_table, 2, 0, "P50", text_color=color.white, text_size=size.small)
+    table.cell(data_table, 3, 0, "P75", text_color=color.white, text_size=size.small)
+    table.cell(data_table, 4, 0, "P90", text_color=color.white, text_size=size.small)
+    table.cell(data_table, 5, 0, "Rate", text_color=color.white, text_size=size.small)
+
+    if i_table_view == "MFE View"
+        array<float> bull = STL.f_build_filtered(hist.mfe_bull)
+        array<float> bear = STL.f_build_filtered(hist.mfe_bear)
+        float b50 = array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 50) : na
+        float b75 = array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 75) : na
+        float b90 = array.size(bull) > 0 ? array.percentile_nearest_rank(bull, 90) : na
+        float s50 = array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 50) : na
+        float s75 = array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 75) : na
+        float s90 = array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 90) : na
+        table.cell(data_table, 0, 1, "Bull", text_color=i_bull_color)
+        table.cell(data_table, 1, 1, str.tostring(array.size(bull)))
+        table.cell(data_table, 2, 1, STL.f_pct_fmt(b50))
+        table.cell(data_table, 3, 1, STL.f_pct_fmt(b75))
+        table.cell(data_table, 4, 1, STL.f_pct_fmt(b90))
+        table.cell(data_table, 5, 1, "-")
+        table.cell(data_table, 0, 2, "Bear", text_color=i_bear_color)
+        table.cell(data_table, 1, 2, str.tostring(array.size(bear)))
+        table.cell(data_table, 2, 2, STL.f_pct_fmt(s50))
+        table.cell(data_table, 3, 2, STL.f_pct_fmt(s75))
+        table.cell(data_table, 4, 2, STL.f_pct_fmt(s90))
+        table.cell(data_table, 5, 2, "-")
+    else if i_table_view == "MAE View"
+        array<float> mab = STL.f_build_filtered(hist.mae_bull_abs)
+        array<float> mas = STL.f_build_filtered(hist.mae_bear_abs)
+        array<float> mpb = STL.f_build_filtered(hist.mae_bull_pb)
+        array<float> mps = STL.f_build_filtered(hist.mae_bear_pb)
+        float rb = array.size(hist.r_multiple_bull) > 0 ? array.avg(hist.r_multiple_bull) : na
+        float rs = array.size(hist.r_multiple_bear) > 0 ? array.avg(hist.r_multiple_bear) : na
+        table.cell(data_table, 0, 1, "Bull Abs/PB", text_color=i_bull_color)
+        table.cell(data_table, 1, 1, str.tostring(array.size(mab)))
+        table.cell(data_table, 2, 1, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 50) : na))
+        table.cell(data_table, 3, 1, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 75) : na))
+        table.cell(data_table, 4, 1, STL.f_pct_fmt(array.size(mpb) > 0 ? array.percentile_nearest_rank(mpb, 50) : na))
+        table.cell(data_table, 5, 1, na(rb) ? "n/a" : str.tostring(rb, "#.##"))
+        table.cell(data_table, 0, 2, "Bear Abs/PB", text_color=i_bear_color)
+        table.cell(data_table, 1, 2, str.tostring(array.size(mas)))
+        table.cell(data_table, 2, 2, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 50) : na))
+        table.cell(data_table, 3, 2, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 75) : na))
+        table.cell(data_table, 4, 2, STL.f_pct_fmt(array.size(mps) > 0 ? array.percentile_nearest_rank(mps, 50) : na))
+        table.cell(data_table, 5, 2, na(rs) ? "n/a" : str.tostring(rs, "#.##"))
+    else if i_table_view == "DOW View"
+        for d = 2 to 6
+            int row = d - 1
+            int cnt = 0
+            float sum_b = 0.0
+            float sum_s = 0.0
+            int n = math.min(array.size(hist.dow), math.min(array.size(hist.mfe_bull), array.size(hist.mfe_bear)))
+            if n > 0
+                for j = 0 to n - 1
+                    if array.get(hist.dow, j) == d
+                        cnt += 1
+                        sum_b += array.get(hist.mfe_bull, j)
+                        sum_s += array.get(hist.mfe_bear, j)
+            float avg_net = cnt == 0 ? na : (sum_b + sum_s) / float(2 * cnt)
+            table.cell(data_table, 0, row, STL.f_day_full(d), text_color=color.white)
+            table.cell(data_table, 1, row, str.tostring(cnt))
+            table.cell(data_table, 2, row, STL.f_pct_fmt(avg_net))
+    else
+        [b25, b50, b75, b90] = STL.f_fakeout_mfe_percentiles(hist.mfe_bull, hist.fakeout_bull)
+        [s25, s50, s75, s90] = STL.f_fakeout_mfe_percentiles(hist.mfe_bear, hist.fakeout_bear)
+        [rb25, rb50, rb75, rb90] = STL.f_fakeout_reversal_percentiles(hist.fakeout_reversal_bull, hist.fakeout_bull)
+        [rs25, rs50, rs75, rs90] = STL.f_fakeout_reversal_percentiles(hist.fakeout_reversal_bear, hist.fakeout_bear)
+        float dbr = STL.f_double_break_rate(hist.double_break, hist.entry_triggered_bull, hist.entry_triggered_bear)
+        table.cell(data_table, 0, 1, "Bull Fake", text_color=i_bull_color)
+        table.cell(data_table, 1, 1, STL.f_pct_fmt(b50))
+        table.cell(data_table, 2, 1, STL.f_pct_fmt(b75))
+        table.cell(data_table, 3, 1, STL.f_pct_fmt(rb50))
+        table.cell(data_table, 4, 1, STL.f_pct_fmt(rb90))
+        table.cell(data_table, 5, 1, STL.f_pct_fmt(dbr))
+        table.cell(data_table, 0, 2, "Bear Fake", text_color=i_bear_color)
+        table.cell(data_table, 1, 2, STL.f_pct_fmt(s50))
+        table.cell(data_table, 2, 2, STL.f_pct_fmt(s75))
+        table.cell(data_table, 3, 2, STL.f_pct_fmt(rs50))
+        table.cell(data_table, 4, 2, STL.f_pct_fmt(rs90))
+        table.cell(data_table, 5, 2, STL.f_pct_fmt(dbr))
+else if barstate.islast and not i_show_table
+    f_table_clear()

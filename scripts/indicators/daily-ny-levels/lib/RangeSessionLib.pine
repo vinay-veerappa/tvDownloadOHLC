@@ -1,0 +1,201 @@
+//@version=6
+library("RangeSessionLib")
+
+// Static range definition.
+export type RangeSpec
+    string name
+    string preset_group
+    int or_start_min
+    int or_end_min
+    int cutoff_min
+    string session_or
+    string session_data
+    string tz
+    bool is_transfer
+    float ev_target_pct
+    color bull_color
+    color bear_color
+    color box_color
+
+// Mutable state for one range on the current session day.
+export type RangeState
+    RangeSpec spec
+    float session_open
+    float or_high
+    float or_low
+    float or_last_close
+    bool or_building
+    bool or_complete
+    int or_start_bar
+    float bull_ref
+    float bear_ref
+    float or_mid
+    bool ref_set
+    float daily_bull_mfe
+    float daily_bear_mfe
+    int daily_bull_peak_min
+    int daily_bear_peak_min
+    float daily_mae_bull_abs
+    float daily_mae_bear_abs
+    float daily_mae_bull_pb
+    float daily_mae_bear_pb
+    float pb_tracker_bull
+    float pb_tracker_bear
+    bool mid_hit_bull
+    bool mid_hit_bear
+    bool entry_triggered_bull
+    bool entry_triggered_bear
+    float session_low_data
+    float session_high_data
+    float close_at_cutoff
+    bool is_committed
+    array<float> daily_pivot_bulls
+    array<float> daily_pivot_bears
+    array<int> data_mins
+    array<float> data_highs
+    array<float> data_lows
+
+export f_parse_hhmm(string hhmm) =>
+    int(str.tonumber(str.substring(hhmm, 0, 2))) * 60 + int(str.tonumber(str.substring(hhmm, 2, 4)))
+
+export f_hhmm_from_min(int mins) =>
+    int m = mins % 1440
+    int h = int(math.floor(m / 60))
+    int mm = m % 60
+    str.format("{0,number,00}{1,number,00}", h, mm)
+
+export f_build_session_string(int start_min, int end_min, string days) =>
+    f_hhmm_from_min(start_min) + "-" + f_hhmm_from_min(end_min) + ":" + days
+
+export f_mins_of_day(int t, string tz) =>
+    hour(t, tz) * 60 + minute(t, tz)
+
+export f_duration(int start_min, int end_min) =>
+    end_min > start_min ? end_min - start_min : end_min < start_min ? (1440 - start_min) + end_min : 0
+
+export f_mins_since(int current_min, int start_min) =>
+    current_min >= start_min ? current_min - start_min : (1440 - start_min) + current_min
+
+export f_in_session_minutes(int bar_mins, int start_min, int end_min, bool crosses_midnight) =>
+    crosses_midnight ? (bar_mins >= start_min or bar_mins < end_min) : (bar_mins >= start_min and bar_mins < end_min)
+
+export f_in_session_pine(string session_str, string tz) =>
+    not na(time(timeframe.period, session_str, tz))
+
+export f_is_new_session_pine(string session_str, string tz) =>
+    bool in_now = f_in_session_pine(session_str, tz)
+    in_now and not in_now[1]
+
+export f_new_range_state(RangeSpec spec) =>
+    RangeState.new(
+        spec,
+        na,
+        na,
+        na,
+        na,
+        false,
+        false,
+        na,
+        na,
+        na,
+        na,
+        false,
+        0.0,
+        0.0,
+        0,
+        0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        false,
+        false,
+        false,
+        false,
+        na,
+        na,
+        na,
+        false,
+        array.new_float(0),
+        array.new_float(0),
+        array.new_int(0),
+        array.new_float(0),
+        array.new_float(0)
+    )
+
+export f_reset_daily(RangeState state) =>
+    state.session_open := na
+    state.or_high := na
+    state.or_low := na
+    state.or_last_close := na
+    state.or_building := false
+    state.or_complete := false
+    state.or_start_bar := na
+    state.bull_ref := na
+    state.bear_ref := na
+    state.or_mid := na
+    state.ref_set := false
+    state.daily_bull_mfe := 0.0
+    state.daily_bear_mfe := 0.0
+    state.daily_bull_peak_min := 0
+    state.daily_bear_peak_min := 0
+    state.daily_mae_bull_abs := 0.0
+    state.daily_mae_bear_abs := 0.0
+    state.daily_mae_bull_pb := 0.0
+    state.daily_mae_bear_pb := 0.0
+    state.pb_tracker_bull := 0.0
+    state.pb_tracker_bear := 0.0
+    state.mid_hit_bull := false
+    state.mid_hit_bear := false
+    state.entry_triggered_bull := false
+    state.entry_triggered_bear := false
+    state.session_low_data := na
+    state.session_high_data := na
+    state.close_at_cutoff := na
+    state.is_committed := false
+    array.clear(state.daily_pivot_bulls)
+    array.clear(state.daily_pivot_bears)
+    array.clear(state.data_mins)
+    array.clear(state.data_highs)
+    array.clear(state.data_lows)
+
+f_make_spec(string name, string group, string or_start, string or_end, string cutoff, string days, string tz, bool is_transfer, float ev_target_pct) =>
+    int s = f_parse_hhmm(or_start)
+    int e = f_parse_hhmm(or_end)
+    int c = f_parse_hhmm(cutoff)
+    string or_sess = f_build_session_string(s, e, days)
+    string data_sess = f_build_session_string(e, c, days)
+    RangeSpec.new(name, group, s, e, c, or_sess, data_sess, tz, is_transfer, ev_target_pct, na, na, na)
+
+export f_resolve_preset(string preset, string custom_start, string custom_end, string custom_cutoff, string tz) =>
+    array<RangeSpec> specs = array.new<RangeSpec>()
+    
+    // Individual ranges
+    if preset == "1800 Break"
+        array.push(specs, f_make_spec("1800 Break", "Overnight", "1800", "1815", "0300", "12345", tz, false, 0.30))
+    else if preset == "0300 Break"
+        array.push(specs, f_make_spec("0300 Break", "Overnight", "0300", "0305", "0830", "23456", tz, false, 0.30))
+    else if preset == "0300 Transfer"
+        array.push(specs, f_make_spec("0300 Transfer", "Overnight", "0300", "0305", "0830", "23456", tz, true, 0.30))
+    else if preset == "Magic Hour"
+        array.push(specs, f_make_spec("Magic Hour", "Pre-Market", "0300", "0700", "0830", "23456", tz, false, 0.30))
+    else if preset == "Market Open"
+        array.push(specs, f_make_spec("Market Open", "Pre-Market", "0930", "0935", "1200", "23456", tz, false, 0.30))
+    else if preset == "Q1 Break"
+        array.push(specs, f_make_spec("Q1 Break", "Pre-Market", "0600", "0830", "1200", "23456", tz, false, 0.30))
+    else if preset == "1100 BO"
+        array.push(specs, f_make_spec("1100 BO", "Intraday", "1100", "1115", "1230", "23456", tz, false, 0.30))
+    else if preset == "Lunch Break"
+        array.push(specs, f_make_spec("Lunch Break", "Intraday", "0830", "1200", "1600", "23456", tz, false, 0.30))
+    else if preset == "1400 Break"
+        array.push(specs, f_make_spec("1400 Break", "Intraday", "1400", "1415", "1600", "23456", tz, false, 0.30))
+    else
+        int cs = f_parse_hhmm(custom_start)
+        int ce = f_parse_hhmm(custom_end)
+        int cc = f_parse_hhmm(custom_cutoff)
+        string cor = f_build_session_string(cs, ce, "1234567")
+        string cdata = f_build_session_string(ce, cc, "1234567")
+        array.push(specs, RangeSpec.new("Custom", "Custom", cs, ce, cc, cor, cdata, tz, false, 0.30, na, na, na))
+    specs

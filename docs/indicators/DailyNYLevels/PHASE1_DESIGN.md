@@ -1,8 +1,8 @@
 # Phase 1 — Modularize & Generalize: Detailed Design
 
-**Version:** 1.0  
+**Version:** 1.2  
 **Created:** 2026-04-17  
-**Status:** In Design  
+**Status:** Implemented — Phase 1 Complete  
 **Parent:** [PRD.md](PRD.md)  
 **Source:** `scripts/indicators/DailyNYLevelsV2.pine` (v4.1)  
 **Target:** `scripts/indicators/daily-ny-levels/DailyNYLevelsV5.pine` + libraries
@@ -241,11 +241,12 @@ Pine session format: `"HHMM-HHMM:DAYS"` where days = `1234567` (Sun=1, Sat=7).
 |-------|-----------|--------------|-------|
 | 1800 Break | `"1800-1815:12345"` | `"1815-0300:12345"` | Days 1-5 (Sun–Thu) for Sunday reopen. Cross-midnight data window. |
 | 0300 Break | `"0300-0305:23456"` | `"0305-0830:23456"` | |
-| Q1 Break | `"0300-0700:23456"` | `"0700-0830:23456"` | Wide 4-hour OR |
+| 0300 Transfer | `"0300-0305:23456"` | `"0305-0830:23456"` | Transfer mode — directional filter vs 1800 open |
+| Magic Hour | `"0300-0700:23456"` | `"0700-0830:23456"` | Wide 4-hour pre-market OR (formerly called Q1 Break) |
 | Market Open | `"0930-0935:23456"` | `"0935-1200:23456"` | |
-| Magic Hour | `"0600-0830:23456"` | `"0830-1200:23456"` | |
+| Q1 Break | `"0600-0830:23456"` | `"0830-1200:23456"` | European open / first quarter (formerly called Magic Hour) |
 | 1100 BO | `"1100-1115:23456"` | `"1115-1230:23456"` | |
-| Market Open Wide | `"0830-1200:23456"` | `"1200-1600:23456"` | 3.5-hour OR |
+| Lunch Break | `"0830-1200:23456"` | `"1200-1600:23456"` | AM session OR — whole pre-market run (formerly Market Open Wide) |
 | 1400 Break | `"1400-1415:23456"` | `"1415-1600:23456"` | |
 
 ### 4.4 Session Detection Pattern
@@ -842,4 +843,25 @@ All questions from the original design have been resolved through exhaustive Q&A
 
 ---
 
-**Last Updated:** 2026-04-17 (v2.0 — all Phase 1 design questions resolved; UDTs, library APIs, stat lines, data table views, implementation sequence fully updated)
+**Last Updated:** 2026-04-17 (v1.2 — all Phase 1 design questions resolved; UDTs, library APIs, stat lines, data table views, implementation sequence fully updated)
+
+---
+
+## Changelog
+
+### v1.2 — 2026-04-17 (Post-Implementation Fixes)
+
+**Preset catalog corrections (`RangeSessionLib.pine`):**
+- Renamed **Q1 Break** (0300–0700, 4-hr OR) → **Magic Hour** to better reflect the pre-NY-open window character.
+- Renamed **Magic Hour** (0600–0830, Euro open) → **Q1 Break** to reflect the first trading quarter session.
+- Renamed **Market Open Wide** (0830–1200 OR) → **Lunch Break** to reflect the AM session accumulation range.
+- Fixed branch key/name mismatch introduced during rename: `else if preset == "X"` conditions now consistently match the internal `spec.name` passed to `f_make_spec()`.
+
+**Preset dropdown (`DailyNYLevelsV5.pine`):**
+- Removed the 3 compound group presets ("Overnight / 0300 Transfer", "Pre-Market / Q1", "Intraday Breakouts") — individual ranges are more explicit and discoverable.
+- All 9 individual presets are now directly selectable; default is **Market Open**.
+- Updated option labels to match corrected names: "Market Open Wide" → "Lunch Break".
+
+**MFE histogram (`DailyNYLevelsV5.pine`):**
+- **Bell curve restored:** Reverted to density-based bar width (`count / band_span`) from a prior count-only approach. Density produces the bell-curve shape by rewarding bins where data points cluster tightly.
+- **Tail spike suppression:** Added P20 density cap — bins below the `hist_start_pct`=20 threshold are capped to the density of the first bin at or above P20. This prevents wide sparse tail bins (when `hist_start_pct` < 20) from stealing `max_density` and squashing the centre of the histogram. When `hist_start_pct` ≥ 20 the cap has no effect.

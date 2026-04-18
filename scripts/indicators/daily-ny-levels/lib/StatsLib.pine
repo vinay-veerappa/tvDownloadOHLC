@@ -1,0 +1,311 @@
+//@version=6
+library("StatsLib")
+
+export type ExcursionHistory
+    string range_name
+    array<float> mfe_bull
+    array<float> mfe_bear
+    array<int> peak_time_bull
+    array<int> peak_time_bear
+    array<float> pivot_bull
+    array<float> pivot_bear
+    array<float> mae_bull_abs
+    array<float> mae_bear_abs
+    array<float> mae_bull_pb
+    array<float> mae_bear_pb
+    array<bool> mid_hit_bull
+    array<bool> mid_hit_bear
+    array<float> or_range_pct
+    array<int> dow
+    array<float> r_multiple_bull
+    array<float> r_multiple_bear
+    array<int> direction_flag
+    array<bool> reversal_flag
+    array<bool> ev_win_bull
+    array<bool> ev_win_bear
+    array<bool> entry_triggered_bull
+    array<bool> entry_triggered_bear
+    array<bool> fakeout_bull
+    array<bool> fakeout_bear
+    array<bool> double_break
+    array<float> fakeout_reversal_bull
+    array<float> fakeout_reversal_bear
+
+export f_new_excursion_history(string name) =>
+    ExcursionHistory.new(
+        name,
+        array.new_float(0),
+        array.new_float(0),
+        array.new_int(0),
+        array.new_int(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_bool(0),
+        array.new_bool(0),
+        array.new_float(0),
+        array.new_int(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_int(0),
+        array.new_bool(0),
+        array.new_bool(0),
+        array.new_bool(0),
+        array.new_bool(0),
+        array.new_bool(0),
+        array.new_bool(0),
+        array.new_bool(0),
+        array.new_bool(0),
+        array.new_float(0),
+        array.new_float(0)
+    )
+
+export f_build_filtered(array<float> src) =>
+    array<float> out = array.new_float(0)
+    if array.size(src) > 0
+        for i = 0 to array.size(src) - 1
+            float v = array.get(src, i)
+            if not na(v) and v > 0
+                array.push(out, v)
+    out
+
+export f_track_mfe(float bar_h, float bar_l, int bar_mins_since_or, float bull_ref, float bear_ref, float prev_bull_mfe, float prev_bear_mfe, int prev_bull_peak, int prev_bear_peak) =>
+    float nb = prev_bull_mfe
+    float ns = prev_bear_mfe
+    int nbp = prev_bull_peak
+    int nsp = prev_bear_peak
+    if bar_h > bull_ref
+        float ext_b = (bar_h - bull_ref) / bull_ref * 100.0
+        if ext_b > nb
+            nb := ext_b
+            nbp := bar_mins_since_or
+    if bar_l < bear_ref
+        float ext_s = (bear_ref - bar_l) / bear_ref * 100.0
+        if ext_s > ns
+            ns := ext_s
+            nsp := bar_mins_since_or
+    [nb, ns, nbp, nsp]
+
+export f_track_mae_abs(float bar_h, float bar_l, float or_low, float or_high, float prev_bull_abs, float prev_bear_abs) =>
+    float bull_abs = math.max(0.0, (or_low - bar_l) / or_low * 100.0)
+    float bear_abs = math.max(0.0, (bar_h - or_high) / or_high * 100.0)
+    [math.max(prev_bull_abs, bull_abs), math.max(prev_bear_abs, bear_abs)]
+
+export f_track_mae_pullback(float bar_h, float bar_l, float or_high, float or_low, bool bull_peak_finalized, bool bear_peak_finalized, float prev_bull_pb, float prev_bear_pb) =>
+    float bull_pb = math.max(0.0, (or_high - bar_l) / or_high * 100.0)
+    float bear_pb = math.max(0.0, (bar_h - or_low) / or_low * 100.0)
+    float nb = bull_peak_finalized ? prev_bull_pb : math.max(prev_bull_pb, bull_pb)
+    float ns = bear_peak_finalized ? prev_bear_pb : math.max(prev_bear_pb, bear_pb)
+    [nb, ns]
+
+export f_track_mid_hit(float bar_h, float bar_l, float or_mid, bool prev_bull_hit, bool prev_bear_hit) =>
+    [prev_bull_hit or bar_h >= or_mid, prev_bear_hit or bar_l <= or_mid]
+
+export f_compute_ev_win(float mfe, float ev_target_pct) =>
+    mfe <= 0 ? false : mfe >= ev_target_pct
+
+export f_compute_r_multiple(float mfe, float mae_abs) =>
+    na(mae_abs) or mae_abs <= 0 ? na : mfe / mae_abs
+
+export f_compute_mfe_efficiency(float mfe, float mae_abs) =>
+    float den = mfe + mae_abs
+    den <= 0 ? na : mfe / den
+
+export f_classify_fakeout(bool trig_bull, bool trig_bear, float close_at_cutoff, float or_high, float or_low) =>
+    bool fb = trig_bull and close_at_cutoff <= or_high
+    bool fs = trig_bear and close_at_cutoff >= or_low
+    [fb, fs, trig_bull and trig_bear]
+
+export f_fakeout_reversal_depth(bool fakeout_bull, bool fakeout_bear, float session_low_data, float session_high_data, float or_high, float or_low) =>
+    float rb = fakeout_bull ? math.max(0.0, (or_high - session_low_data) / or_high * 100.0) : na
+    float rs = fakeout_bear ? math.max(0.0, (session_high_data - or_low) / or_low * 100.0) : na
+    [rb, rs]
+
+export f_conditional_prob(array<float> data, float lower_threshold, float upper_threshold) =>
+    int lower_hits = 0
+    int both_hits = 0
+    if array.size(data) > 0
+        for i = 0 to array.size(data) - 1
+            float v = array.get(data, i)
+            if v >= lower_threshold
+                lower_hits += 1
+                if v >= upper_threshold
+                    both_hits += 1
+    lower_hits == 0 ? na : (float(both_hits) / float(lower_hits)) * 100.0
+
+export f_count_at_or_above(array<float> arr, float threshold) =>
+    int c = 0
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            if array.get(arr, i) >= threshold
+                c += 1
+    c
+
+export f_compute_streak(array<float> arr, float threshold) =>
+    int streak = 0
+    if array.size(arr) > 0
+        for i = array.size(arr) - 1 to 0
+            if array.get(arr, i) >= threshold
+                streak += 1
+            else
+                break
+    streak
+
+export f_compute_max_streak(array<float> arr, float threshold) =>
+    int best = 0
+    int cur = 0
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            if array.get(arr, i) >= threshold
+                cur += 1
+                best := math.max(best, cur)
+            else
+                cur := 0
+    best
+
+export f_double_break_rate(array<bool> double_break, array<bool> trig_bull, array<bool> trig_bear) =>
+    int denom = 0
+    int num = 0
+    int n = math.min(array.size(double_break), math.min(array.size(trig_bull), array.size(trig_bear)))
+    if n > 0
+        for i = 0 to n - 1
+            bool t = array.get(trig_bull, i) or array.get(trig_bear, i)
+            if t
+                denom += 1
+                if array.get(double_break, i)
+                    num += 1
+    denom == 0 ? na : (float(num) / float(denom)) * 100.0
+
+export f_fakeout_mfe_percentiles(array<float> mfe_arr, array<bool> mask) =>
+    array<float> f = array.new_float(0)
+    int n = math.min(array.size(mfe_arr), array.size(mask))
+    if n > 0
+        for i = 0 to n - 1
+            bool m = array.get(mask, i)
+            float v = array.get(mfe_arr, i)
+            if m and not na(v)
+                array.push(f, v)
+    float p25 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 25) : na
+    float p50 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 50) : na
+    float p75 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 75) : na
+    float p90 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 90) : na
+    [p25, p50, p75, p90]
+
+export f_fakeout_reversal_percentiles(array<float> reversal_arr, array<bool> mask) =>
+    array<float> f = array.new_float(0)
+    int n = math.min(array.size(reversal_arr), array.size(mask))
+    if n > 0
+        for i = 0 to n - 1
+            bool m = array.get(mask, i)
+            float v = array.get(reversal_arr, i)
+            if m and not na(v)
+                array.push(f, v)
+    float p25 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 25) : na
+    float p50 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 50) : na
+    float p75 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 75) : na
+    float p90 = array.size(f) > 0 ? array.percentile_nearest_rank(f, 90) : na
+    [p25, p50, p75, p90]
+
+export f_compute_pullback_to_peak(array<int> data_mins, array<float> data_highs, array<float> data_lows, int bull_peak_min, int bear_peak_min, float or_high, float or_low) =>
+    float bull_pb = 0.0
+    float bear_pb = 0.0
+    int n = math.min(array.size(data_mins), math.min(array.size(data_highs), array.size(data_lows)))
+    if n > 0
+        for i = 0 to n - 1
+            int m = array.get(data_mins, i)
+            float h = array.get(data_highs, i)
+            float l = array.get(data_lows, i)
+            if m <= bull_peak_min
+                bull_pb := math.max(bull_pb, math.max(0.0, (or_high - l) / or_high * 100.0))
+            if m <= bear_peak_min
+                bear_pb := math.max(bear_pb, math.max(0.0, (h - or_low) / or_low * 100.0))
+    [bull_pb, bear_pb]
+
+export f_commit_daily(
+    ExcursionHistory hist,
+    float bull_mfe,
+    float bear_mfe,
+    int bull_peak,
+    int bear_peak,
+    array<float> day_pivot_bulls,
+    array<float> day_pivot_bears,
+    float mae_bull_abs,
+    float mae_bear_abs,
+    float mae_bull_pb,
+    float mae_bear_pb,
+    bool mid_hit_bull,
+    bool mid_hit_bear,
+    float or_high,
+    float or_low,
+    int dow,
+    bool trig_bull,
+    bool trig_bear,
+    float close_at_cutoff,
+    float session_low_data,
+    float session_high_data,
+    float ev_target_pct
+) =>
+    bool ev_bull = f_compute_ev_win(bull_mfe, ev_target_pct)
+    bool ev_bear = f_compute_ev_win(bear_mfe, ev_target_pct)
+    float r_bull = f_compute_r_multiple(bull_mfe, mae_bull_abs)
+    float r_bear = f_compute_r_multiple(bear_mfe, mae_bear_abs)
+    int dir = bull_mfe > bear_mfe ? 1 : bear_mfe > bull_mfe ? -1 : 0
+    array<float> bull_hist = f_build_filtered(hist.mfe_bull)
+    array<float> bear_hist = f_build_filtered(hist.mfe_bear)
+    float p50_bull = array.size(bull_hist) > 0 ? array.percentile_nearest_rank(bull_hist, 50) : na
+    float p50_bear = array.size(bear_hist) > 0 ? array.percentile_nearest_rank(bear_hist, 50) : na
+    bool bull_reversal = not na(p50_bull) and bull_mfe >= p50_bull and close_at_cutoff < or_low
+    bool bear_reversal = not na(p50_bear) and bear_mfe >= p50_bear and close_at_cutoff > or_high
+    [fb, fs, db] = f_classify_fakeout(trig_bull, trig_bear, close_at_cutoff, or_high, or_low)
+    [frb, frs] = f_fakeout_reversal_depth(fb, fs, session_low_data, session_high_data, or_high, or_low)
+
+    array.push(hist.mfe_bull, bull_mfe)
+    array.push(hist.mfe_bear, bear_mfe)
+    array.push(hist.peak_time_bull, bull_peak)
+    array.push(hist.peak_time_bear, bear_peak)
+
+    if array.size(day_pivot_bulls) > 0
+        for i = 0 to array.size(day_pivot_bulls) - 1
+            array.push(hist.pivot_bull, array.get(day_pivot_bulls, i))
+    if array.size(day_pivot_bears) > 0
+        for i = 0 to array.size(day_pivot_bears) - 1
+            array.push(hist.pivot_bear, array.get(day_pivot_bears, i))
+
+    array.push(hist.mae_bull_abs, mae_bull_abs)
+    array.push(hist.mae_bear_abs, mae_bear_abs)
+    array.push(hist.mae_bull_pb, mae_bull_pb)
+    array.push(hist.mae_bear_pb, mae_bear_pb)
+    array.push(hist.mid_hit_bull, mid_hit_bull)
+    array.push(hist.mid_hit_bear, mid_hit_bear)
+    array.push(hist.or_range_pct, math.max(0.0, (or_high - or_low) / or_low * 100.0))
+    array.push(hist.dow, dow)
+    array.push(hist.r_multiple_bull, r_bull)
+    array.push(hist.r_multiple_bear, r_bear)
+    array.push(hist.direction_flag, dir)
+    array.push(hist.reversal_flag, bull_reversal or bear_reversal)
+    array.push(hist.ev_win_bull, ev_bull)
+    array.push(hist.ev_win_bear, ev_bear)
+    array.push(hist.entry_triggered_bull, trig_bull)
+    array.push(hist.entry_triggered_bear, trig_bear)
+    array.push(hist.fakeout_bull, fb)
+    array.push(hist.fakeout_bear, fs)
+    array.push(hist.double_break, db)
+    array.push(hist.fakeout_reversal_bull, frb)
+    array.push(hist.fakeout_reversal_bear, frs)
+
+export f_day_full(int dow) =>
+    switch dow
+        1 => "SUN"
+        2 => "MON"
+        3 => "TUE"
+        4 => "WED"
+        5 => "THU"
+        6 => "FRI"
+        7 => "SAT"
+        => ""
+
+export f_pct_fmt(float v) =>
+    na(v) ? "n/a" : str.tostring(v, "#.##") + "%"

@@ -10,7 +10,7 @@ daily-ny-levels/
 ├── DailyNYLevelsAnalytics.pine       # Phase 2: MFE/MAE analytics
 ├── lib/
 │   ├── RangeSessionLib.pine          # Phase 1: Session/range UDTs & resolver
-│   ├── DrawingLib.pine               # Phase 1: Drawing helpers
+│   ├── PineDrawingLib.pine           # Phase 1: Pine-only drawing helpers
 │   └── StatsLib.pine                 # Phase 1: Statistical utilities
 └── ninja/
     ├── DailyNYLevels.cs              # Phase 3: NinjaScript indicator
