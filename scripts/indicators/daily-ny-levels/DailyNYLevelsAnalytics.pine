@@ -48,6 +48,7 @@ i_right_extend_bars = input.int(20, "Line Right Extension", minval=1, maxval=200
 i_box_style = input.string("Solid", "OR Box Style", options=["Solid", "Dashed", "Dotted"], group=grp_visual)
 i_box_width = input.int(1, "OR Box Width", minval=1, maxval=5, group=grp_visual)
 i_label_merge_threshold_ticks = input.int(20, "Label Merge Threshold (ticks)", minval=1, maxval=500, group=grp_visual)
+i_label_stagger_bars = input.int(8, "Label Stagger Step (bars)", minval=1, maxval=50, tooltip="Horizontal bar offset between staggered labels when phase-2 levels cluster near phase-1 stat lines.", group=grp_visual)
 
 // ── Context Colors ────────────────────────────────────────────────────
 // Colors for bilateral MFE stat lines, histogram, time distribution.
@@ -935,31 +936,31 @@ f_render_range(int idx) =>
             // Breakout activation level (close that breaks out of range)
             if not na(render_px)
                 float bo_label_y = render_px
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, bo_label_y, ln_end, color.new(breakout_activation_color, 0), "Dotted", i_line_width_primary, "Breakout Activation " + STL.f_pct_fmt(0), color.new(breakout_activation_color, inactive_alpha), phase2_label_x, "merge", 90, "phase2-levels")
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, bo_label_y, ln_end, color.new(breakout_activation_color, 0), "Dotted", i_line_width_primary, "Breakout Activation " + STL.f_pct_fmt(0), color.new(breakout_activation_color, inactive_alpha), phase2_label_x, "stagger", 90, "phase2-levels")
 
             // Pullback activation level (P25 MAE from breakout activation)
             float pb_px = array.get(phase2_pullback_price, idx)
             if not na(pb_px)
                 float pb_label_y = pb_px
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, pb_label_y, ln_end, color.new(pullback_activation_color, 0), "Dashed", i_line_width_primary, "Pullback Activation P25 MAE", color.new(pullback_activation_color, inactive_alpha), phase2_label_x, "merge", 85, "phase2-levels")
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, pb_label_y, ln_end, color.new(pullback_activation_color, 0), "Dashed", i_line_width_primary, "Pullback Activation P25 MAE", color.new(pullback_activation_color, inactive_alpha), phase2_label_x, "stagger", 85, "phase2-levels")
 
             // Core directional lines
             if not na(y_cash)
                 float y_cash_label = y_cash
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_cash_label, ln_end, color.new(bo_cashflow_color, inactive_alpha), "Dotted", i_line_width_secondary, "BO Cashflow P20 (MFE from BO) " + STL.f_pct_fmt(p20_bo), color.new(bo_cashflow_color, inactive_alpha), phase2_label_x, "merge", 80, "phase2-levels")
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_cash_label, ln_end, color.new(bo_cashflow_color, inactive_alpha), "Dotted", i_line_width_secondary, "BO Cashflow P20 (MFE from BO) " + STL.f_pct_fmt(p20_bo), color.new(bo_cashflow_color, inactive_alpha), phase2_label_x, "stagger", 80, "phase2-levels")
             if not na(y_confirm)
                 float y_confirm_label = y_confirm
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_confirm_label, ln_end, color.new(bo_confirm_color, inactive_alpha), "Dashed", i_line_width_primary, "BO Confirm P75 (Fake MFE) " + STL.f_pct_fmt(f75), color.new(bo_confirm_color, inactive_alpha), phase2_label_x, "merge", 75, "phase2-levels")
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_confirm_label, ln_end, color.new(bo_confirm_color, inactive_alpha), "Dashed", i_line_width_primary, "BO Confirm P75 (Fake MFE) " + STL.f_pct_fmt(f75), color.new(bo_confirm_color, inactive_alpha), phase2_label_x, "stagger", 75, "phase2-levels")
             if not na(y_pivot)
                 float y_pivot_label = y_pivot
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_pivot_label, ln_end, color.new(pivot_color, inactive_alpha), "Solid", i_line_width_primary, "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(f50), color.new(pivot_color, inactive_alpha), phase2_label_x, "merge", 70, "phase2-levels")
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_pivot_label, ln_end, color.new(pivot_color, inactive_alpha), "Solid", i_line_width_primary, "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(f50), color.new(pivot_color, inactive_alpha), phase2_label_x, "stagger", 70, "phase2-levels")
             if not na(y_rev90)
                 float y_rev90_label = y_rev90
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_rev90_label, ln_end, color.new(max_reversal_color, inactive_alpha), "Dotted", i_line_width_secondary, "Max Reversal P90 (Fake MAE) " + STL.f_pct_fmt(rev_p90), color.new(max_reversal_color, inactive_alpha), phase2_label_x, "merge", 65, "phase2-levels")
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_rev90_label, ln_end, color.new(max_reversal_color, inactive_alpha), "Dotted", i_line_width_secondary, "Max Reversal P90 (Fake MAE) " + STL.f_pct_fmt(rev_p90), color.new(max_reversal_color, inactive_alpha), phase2_label_x, "stagger", 65, "phase2-levels")
 
             // Shared PB/BO invalidation line — single merged label
             if not na(y_inv)
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_inv, ln_end, color.new(invalidation_line_color, inactive_alpha), "Solid", i_line_width_primary, "PB | BO Invalidation P80 (BO MAE) " + STL.f_pct_fmt(mae_p80), color.new(invalidation_line_color, inactive_alpha), phase2_label_x, "merge", 95, "phase2-levels")
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_inv, ln_end, color.new(invalidation_line_color, inactive_alpha), "Solid", i_line_width_primary, "PB | BO Invalidation P80 (BO MAE) " + STL.f_pct_fmt(mae_p80), color.new(invalidation_line_color, inactive_alpha), phase2_label_x, "stagger", 95, "phase2-levels")
 
             if i_show_debug and not pb_armed
                 PDL.f_draw_stat_label(ds, phase2_label_x, render_side == 1 ? st.or_high : st.or_low, "PB not armed", color.new(pb_not_armed_color, 20), "left", "tiny")
@@ -968,7 +969,7 @@ f_render_range(int idx) =>
     float merge_thr_manual = syminfo.mintick * float(i_label_merge_threshold_ticks)
     float merge_thr_auto = PDL.f_merge_threshold_for_symbol(syminfo.ticker, syminfo.mintick)
     float merge_thr = math.max(merge_thr_manual, merge_thr_auto)
-    PDL.f_label_registry_flush(ds, lbl_reg, merge_thr, i_label_size, 2)
+    PDL.f_label_registry_flush(ds, lbl_reg, merge_thr, i_label_size, i_label_stagger_bars)
 
 if barstate.islast and array.size(specs) > 0
     for i = 0 to array.size(specs) - 1
