@@ -24,9 +24,9 @@ export f_label_registry_clear(LabelRegistry lr) =>
     array.clear(lr.colors)
     array.clear(lr.xs)
 
-export f_label_registry_push(LabelRegistry lr, float y, string text, color clr, int x) =>
+export f_label_registry_push(LabelRegistry lr, float y, string text_value, color clr, int x) =>
     array.push(lr.ys, y)
-    array.push(lr.texts, text)
+    array.push(lr.texts, text_value)
     array.push(lr.colors, clr)
     array.push(lr.xs, x)
 
