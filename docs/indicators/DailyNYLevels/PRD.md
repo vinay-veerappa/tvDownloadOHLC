@@ -1,9 +1,10 @@
 # Daily NY Levels — Product Requirements Document (PRD)
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Created:** 2026-04-17  
+**Updated:** 2026-04-18  
 **Author:** Vinay  
-**Status:** Active — Phase 1 In Design  
+**Status:** Active — Phase 2 Levels Implemented (Chart Validation Pending)  
 **Source Script:** `scripts/indicators/DailyNYLevelsV2.pine` (v4.1)
 
 ---
@@ -29,7 +30,7 @@ Rebuild the Daily NY Levels indicator into a **modular, multi-platform toolkit**
 
 ## 3. Range Catalog
 
-The indicator supports **three compound presets** (each containing multiple sub-ranges) plus a **Custom** mode.
+The indicator supports **ten individual presets** plus a **Custom** mode. The three compound preset groups ("Overnight / 0300 Transfer", "Pre-Market / Q1", "Intraday Breakouts") were removed during Phase 1 implementation in favour of a flat single-dropdown with all 9 named presets individually selectable — more explicit and discoverable. The groupings below are retained as a logical catalogue reference.
 
 ### 3.1 Preset Definitions
 
@@ -47,16 +48,16 @@ Each preset is a named group of sub-ranges. A sub-range has: Opening Range windo
 
 | Sub-Range | OR Start | OR End | Cutoff | Description |
 |-----------|----------|--------|--------|-------------|
-| Q1 Break | 03:00 | 07:00 | 08:30 | Wide pre-market range breakout |
+| Magic Hour | 03:00 | 07:00 | 08:30 | Wide 4-hr pre-market range breakout (formerly "Q1 Break") |
 | Market Open | 09:30 | 09:35 | 12:00 | First 5-minute opening range breakout |
-| Magic Hour | 06:00 | 08:30 | 12:00 | Pre-open expansion range breakout |
+| Q1 Break | 06:00 | 08:30 | 12:00 | European open / first trading quarter breakout (formerly "Magic Hour") |
 
 #### Preset C — "Intraday Breakouts"
 
 | Sub-Range | OR Start | OR End | Cutoff | Description |
 |-----------|----------|--------|--------|-------------|
 | 1100 BO | 11:00 | 11:15 | 12:30 | Midday breakout |
-| Market Open Wide | 08:30 | 12:00 | 16:00 | Morning session full range breakout |
+| Lunch Break | 08:30 | 12:00 | 16:00 | AM session OR — full pre-market run (formerly "Market Open Wide") |
 | 1400 Break | 14:00 | 14:15 | 16:00 | Afternoon breakout |
 
 #### Custom
@@ -69,16 +70,17 @@ Each preset is a named group of sub-ranges. A sub-range has: Opening Range windo
 
 ### 3.2 Input UX
 
-- **Single dropdown** (`input.string`) to select a preset or "Custom".
+- **Single dropdown** (`input.string`) with 10 options: all 9 named presets + "Custom".
 - When "Custom" is selected, HHMM text inputs become active.
-- Each preset activates its sub-ranges simultaneously; MFE/MAE tracked independently per sub-range.
+- Compound groupings (Preset A/B/C above) are a logical reference only; the UI selects one preset at a time.
+- Each preset activates its sub-range(s); MFE/MAE tracked independently per sub-range.
 
 ---
 
 ## 4. Phase Plan
 
 ### Phase 1 — Modularize & Generalize (Pine Script)  
-**Status:** 🔵 In Design  
+**Status:** ✅ Complete — `DailyNYLevelsV5.pine` implemented and validated  
 **Design Doc:** [`PHASE1_DESIGN.md`](PHASE1_DESIGN.md)
 
 **Goal:** Rewrite the current indicator as a clean, modular Pine v6 script using UDTs, Pine sessions, and extracted libraries. No new analytics features — functional parity with V4.1 custom mode, plus the preset dropdown wired up.
@@ -100,23 +102,38 @@ Each preset is a named group of sub-ranges. A sub-range has: Opening Range windo
 ---
 
 ### Phase 2 — MFE/MAE Analytics Indicator (Pine Script)  
-**Status:** ⚪ Not Started — Requires Phase 1 completion  
-**Design Doc:** To be created before implementation
+**Status:** 🟡 Implemented (major scope complete) — final visual validation pending  
+**Design Doc:** [`PHASE2_DESIGN.md`](PHASE2_DESIGN.md)
 
-**Goal:** Build a standalone analytics indicator that imports the Phase 1 libraries and adds MAE tracking, joint MFE/MAE profiles, excursion efficiency ratios, and enhanced statistical tables.
+**Goal:** Build a standalone analytics indicator that imports the Phase 1 libraries and provides **direction-aware breakout context** while preserving bilateral MFE visibility.
 
-**Scope (to be refined):**
-- MAE distribution (mirror of MFE logic, tracking adverse excursion)
-- Joint MFE/MAE scatter or heatmap overlay
-- Excursion efficiency: `MFE / (MFE + MAE)` per session
-- R-multiple distribution (MFE / MAE ratio)
-- Enhanced data table with MAE columns
-- Potential: pivot/retracement depth analysis
+**Scope (locked):**
+- Keep MFE context visible on both sides (bull and bear) as baseline distribution context.
+- Activate **live directional bias using close-based logic only**:
+    - Bull bias: candle close above OR midpoint.
+    - Bear bias: candle close below OR midpoint.
+- Breakout side selection uses the **first candle close outside the OR** as the key event.
+- Add directional tactical lines (active side) with explicit formulas:
+    - **BO Cashflow** = P20 MFE from breakout.
+    - **BO Confirm** = P75 MFE of fakeouts.
+    - **Pivot** = P50 MFE of fakeouts.
+    - **Reversal Target Zone** = P20-P50 MAE of fakeouts.
+    - **Max Reversal** = P90 MAE of fakeouts.
+    - **PB Invalidation** = P80 MAE of breakout.
+    - **BO Invalidation** = P80 MAE of breakout.
+- Pullback activation starts at **P25 breakout MAE from breakout activation price** (breakout activation = first close outside OR).
+- Mid probability metric = historical hit-rate % for touching OR midpoint.
+- MAE histogram rendering remains **optional** (default OFF); Phase 2 default display is line/zone based.
+- Phase 2 tactical calculations are **historical-only** (no current-session MAE/MFE injection into percentile distributions).
+- Breakout and fake-move MAE/MFE families are now persisted historically in `StatsLib` for direct percentile usage.
+
+**Display rules (locked):**
+- PB Invalidation and BO Invalidation share one price level for now and are drawn as **one line with two labels**.
+- The two invalidation labels must be split and placed to avoid overlap.
+- All displayed lines/zones must expose **independent color inputs** for user configuration.
 
 **Open items:**
-- [ ] MAE reference: against OR levels only, or also against entry proxy (e.g., OR close)?
-- [ ] Visual layout: separate histogram below MFE, or overlaid?
-- [ ] Should this script share the same chart instance or be a separate pane?
+- [ ] Future refinement: probability model to improve side-selection beyond first-close-outside-OR when statistically justified.
 
 ---
 
@@ -181,15 +198,29 @@ Each preset is a named group of sub-ranges. A sub-range has: Opening Range windo
 | MAE — Absolute | `mae_bull_abs` from OR_low; `mae_bear_abs` from OR_high (same refs as MFE) | Symmetric worst-case adverse excursion |
 | MAE — Pullback | Bull: worst retrace **below OR_HIGH** before peak bull MFE. Bear: worst retrace **above OR_LOW** before peak bear MFE. | Measures heat taken on the breakout side before the move plays out |
 | Post-peak give-back | Not captured in Phase 1 or 2 | Pullback + absolute MAE is sufficient |
-| MAE histogram rendering | Deferred to Phase 2; data captured in Phase 1 | Phase 1 = data integrity, Phase 2 = analytics rendering |
+| MAE histogram rendering | Optional in Phase 2 (default OFF) | Preserve chart clarity; tactical levels are line/zone-first |
+| MFE histogram visual layout | **Overlaid on the price chart (same pane)** — anchored at each range's `or_start_bar`, boxes extend rightward. Bull side above `bull_ref`; bear side below `bear_ref`. No separate pane. Resolved in Phase 1. | Keeps distribution visible alongside live price action; avoids pane management overhead |
+| MFE histogram binning | Percentile-based bins: default P20→P90, step 5 pct pts (14 bins). Density = `count / band_span` (normalised for bin width). Width scaled to `density / max_density * max_profile_width`. Tail cap at P20 density prevents sparse tail bins from squashing the centre. Full spec in `PHASE1_DESIGN.md` §6.6. | Density-based width gives a true distribution shape; tail cap prevents visual distortion from extreme-movement sessions |
 | Win / EV target | Per-range `ev_target_pct` input (default 0.3%); win = MFE ≥ ev_target; zero-MFE days **excluded** from win rate | Expected-value threshold aligns with risk management |
-| Named percentile levels | 4 levels: **Confirm (P20)**, **Target1 (P50)**, **Target2 (P75)**, **Stretch (P90)** — all UI-configurable | Used for BO confirmation, targets, and invalidation |
-| Pullback invalidation | **P80 of pullback MAE distribution** → BO invalidated | Statistically-grounded invalidation level |
+| Live bias activation | **Close-based only**: close above OR mid = bull, close below OR mid = bear | Prevents wick-based false activation; aligns with Phase 2 directional framing |
+| Breakout side keying | **First candle close outside OR** selects breakout side | Deterministic trigger; extensible later if probability model improves |
+| BO Cashflow | **P20 MFE from breakout** | Early continuation threshold |
+| BO Confirm | **P75 MFE of fakeouts** | Breakout confirmation beyond typical fakeout range |
+| Pivot | **P50 MFE of fakeouts** | Central fakeout excursion reference |
+| Reversal target zone | **P20-P50 MAE of fakeouts** | Expected reversal destination band |
+| Max reversal | **P90 MAE of fakeouts** | Adverse reversal extreme threshold |
+| Pullback activation | **P25 breakout MAE from breakout activation price** (first close outside OR) | Activation uses historical breakout MAE drawdown profile |
+| Pullback invalidation | **P80 MAE of breakout** | Breakout heat tolerance threshold |
+| BO invalidation | **P80 MAE of breakout** (same line for now) | Shared invalidation definition pending later divergence |
+| Invalidation line rendering | Single line with dual labels: "PB Invalidation" + "BO Invalidation" | Avoid duplicate line clutter while preserving both semantic tags |
+| Mid probability | OR-mid hit-rate % | Context metric for midpoint interaction propensity |
+| Line/zone styling | All lines/zones have configurable color inputs | Required for workflow-specific visual tuning |
+| Predictive purity | Historical-only percentiles for Phase 2 tactical lines | Prevents forward contamination from current session |
 | Live stat lines (Phase 1) | Draw from today's OR anchor forward: **P20 "BO Cashflow"**, **Median**, **Avg**, **P90 "Max MFE"** + **Range Mid** (dashed, with hit% label) | Real-time reference during session |
 | Cross-midnight date stamp | **Cutoff date** (e.g., Monday date for 18:00 Sun → 03:00 Mon session) | Conventional futures trade-date convention |
 | 0300 Transfer | 5-min OR (0300–0305). Direction = **bull if 1800 open > 0300 close**, bear if 1800 open < 0300 close. Skip day if 1800 data unavailable. | Continuation toward the overnight opening level |
 | 1800 Break session days | Pine days `1,2,3,4,5` (Sun–Thu evenings) | Captures Sunday 18:00 futures reopen |
-| Data table | Toggle dropdown (MFE View / MAE View / DOW View / Fakeout View); auto-focuses on sub-range currently in its OR or data window | Clean single-table UX with view switching |
+| Data table | Toggle dropdown (MFE View / MAE View / DOW View / Fakeout View); auto-focuses on sub-range currently in its OR or data window. **Phase 1 implemented:** table is created as a local variable inside `i_show_table` guard (fully hidden when toggled off); dimensions are dynamic per view (DOW: 3×6, others: 6×3). Full column spec (Price, Hit%, Cond%, Streak, R-Multiple) is Phase 2 work. | Clean single-table UX with view switching |
 | Session detection architecture | Dual-path: Pine session-string path + minutes-of-day parity path | Keeps Pine implementation simple while preserving a portable algorithm contract for NinjaScript |
 | Abbreviated sessions | Include all sessions; analyst excludes outliers manually | No auto-filtering |
 | Conditional probability | MFE View includes: given P(n) hit, % reaching P(n+1) | Complements raw hit rate |
@@ -209,6 +240,8 @@ Each preset is a named group of sub-ranges. A sub-range has: Opening Range windo
 | O-5 | Pine library publishing approach | 1 | ✅ Resolved: code locally, publish manually |
 | O-6 | 0300 Transfer directional logic | 1 | ✅ Resolved: bull if 1800 open > 0300 close |
 | O-7 | Data retention cap for NinjaTrader | 3 | ⚪ Before Phase 3 |
+| O-8 | Breakout side probability refinement beyond first-close-outside-OR | 2 | ⚪ Future enhancement |
+| O-9 | TradingView chart-level visual regression pass for all Phase 2 lines/zones | 2 | 🟡 Pending |
 
 ---
 
@@ -221,7 +254,7 @@ scripts/indicators/daily-ny-levels/
 ├── lib/
 │   ├── RangeSessionLib.pine          # Phase 1: Session/range UDTs & resolver
 │   ├── PineDrawingLib.pine           # Phase 1: Pine-only drawing helpers
-│   └── StatsLib.pine                 # Phase 1: Statistical utilities
+│   └── StatsLib.pine                 # Phase 2: Extended historical breakout/fake MAE/MFE persistence
 └── ninja/
     ├── DailyNYLevels.cs              # Phase 3: NinjaScript indicator
     ├── DailyNYLevelsStrategy.cs      # Phase 4: NinjaScript strategy
@@ -233,7 +266,7 @@ docs/indicators/DailyNYLevels/
 ├── PRD.md                            # This document
 ├── CORE_ENGINE_SPEC.md               # Platform-agnostic algorithm contracts + pseudocode
 ├── PHASE1_DESIGN.md                  # Phase 1 detailed design
-├── PHASE2_DESIGN.md                  # (created before Phase 2 work)
+├── PHASE2_DESIGN.md                  # Phase 2 detailed design + implementation status
 ├── PHASE3_DESIGN.md                  # (created before Phase 3 work)
 └── PHASE4_DESIGN.md                  # (created before Phase 4 work)
 ```
@@ -293,4 +326,4 @@ Phase 1 design is sufficient as a data and signal foundation for strategy automa
 
 ---
 
-**Last Updated:** 2026-04-17 (Phase 1 architecture refinement: platform boundaries + extensibility/readiness added)
+**Last Updated:** 2026-04-18 (Phase 2 documentation updated: historical-only tactical sourcing, breakout/fake persistence, and validation status)
