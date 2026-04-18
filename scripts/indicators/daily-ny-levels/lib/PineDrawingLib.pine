@@ -6,8 +6,29 @@ export type PineDrawingState
     array<line> lines
     array<label> labels
 
+export type LabelRegistry
+    array<float> ys
+    array<string> texts
+    array<color> colors
+    array<int> xs
+
 export f_new_drawing_state() =>
     PineDrawingState.new(array.new_box(0), array.new_line(0), array.new_label(0))
+
+export f_new_label_registry() =>
+    LabelRegistry.new(array.new_float(0), array.new_string(0), array.new_color(0), array.new_int(0))
+
+export f_label_registry_clear(LabelRegistry lr) =>
+    array.clear(lr.ys)
+    array.clear(lr.texts)
+    array.clear(lr.colors)
+    array.clear(lr.xs)
+
+export f_label_registry_push(LabelRegistry lr, float y, string text, color clr, int x) =>
+    array.push(lr.ys, y)
+    array.push(lr.texts, text)
+    array.push(lr.colors, clr)
+    array.push(lr.xs, x)
 
 f_clear_boxes(array<box> arr) =>
     if array.size(arr) > 0
@@ -89,6 +110,23 @@ export f_draw_stat_label(PineDrawingState ds, int x, float y, string txt, color 
     label lb = label.new(x, y, txt, color=color.new(color.black, 100), textcolor=txt_clr, style=label_style, size=f_display_size(sz))
     array.push(ds.labels, lb)
     lb
+
+export f_label_registry_draw_merged(PineDrawingState ds, LabelRegistry lr, float merge_thr, string label_size) =>
+    int n_labels = math.min(array.size(lr.ys), math.min(array.size(lr.texts), math.min(array.size(lr.colors), array.size(lr.xs))))
+    if n_labels > 0
+        array<bool> used = array.new_bool(n_labels, false)
+        for k = 0 to n_labels - 1
+            if not array.get(used, k)
+                string combined = array.get(lr.texts, k)
+                color lbl_col = array.get(lr.colors, k)
+                float lbl_y = array.get(lr.ys, k)
+                int lbl_x = array.get(lr.xs, k)
+                if k < n_labels - 1
+                    for m = k + 1 to n_labels - 1
+                        if not array.get(used, m) and math.abs(array.get(lr.ys, m) - lbl_y) < merge_thr and array.get(lr.xs, m) == lbl_x
+                            combined := combined + " | " + array.get(lr.texts, m)
+                            array.set(used, m, true)
+                f_draw_stat_label(ds, lbl_x, lbl_y, combined, lbl_col, "left", label_size)
 
 // Draw a vertical time histogram bar (x spans a time bin, y height encodes count)
 export f_draw_time_bar(PineDrawingState ds, int x_left, int x_right, float y_top, float y_bot, color clr) =>
