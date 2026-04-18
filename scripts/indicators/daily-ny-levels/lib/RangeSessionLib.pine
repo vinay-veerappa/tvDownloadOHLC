@@ -39,6 +39,10 @@ export type RangeState
     float daily_mae_bear_abs
     float daily_mae_bull_pb
     float daily_mae_bear_pb
+    float daily_bo_mfe_bull
+    float daily_bo_mfe_bear
+    float daily_bo_mae_bull
+    float daily_bo_mae_bear
     float pb_tracker_bull
     float pb_tracker_bear
     bool mid_hit_bull
@@ -110,6 +114,10 @@ export f_new_range_state(RangeSpec spec) =>
         0.0,
         0.0,
         0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
         false,
         false,
         false,
@@ -145,6 +153,10 @@ export f_reset_daily(RangeState state) =>
     state.daily_mae_bear_abs := 0.0
     state.daily_mae_bull_pb := 0.0
     state.daily_mae_bear_pb := 0.0
+    state.daily_bo_mfe_bull := 0.0
+    state.daily_bo_mfe_bear := 0.0
+    state.daily_bo_mae_bull := 0.0
+    state.daily_bo_mae_bear := 0.0
     state.pb_tracker_bull := 0.0
     state.pb_tracker_bear := 0.0
     state.mid_hit_bull := false

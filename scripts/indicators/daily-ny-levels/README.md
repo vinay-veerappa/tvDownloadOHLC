@@ -23,3 +23,14 @@ daily-ny-levels/
 ## Docs
 
 Design documents live in `docs/indicators/DailyNYLevels/`.
+
+## TradingView Publication Workflow
+
+Libraries must be published **in dependency order** before `DailyNYLevelsV5` can be used on TradingView (imported library IDs must resolve):
+
+1. `RangeSessionLib` — no dependencies
+2. `PineDrawingLib` — no dependencies
+3. `StatsLib` — no dependencies
+4. `DailyNYLevelsV5` — depends on all three above
+
+After publishing all libraries, open `DailyNYLevelsV5.pine` in the TradingView editor and verify the import block resolves. Then add to a 1m/5m/15m/60m chart and confirm: OR box renders, stat lines appear, histogram visible when `i_show_histogram = true`.

@@ -5,6 +5,8 @@ export type ExcursionHistory
     string range_name
     array<float> mfe_bull
     array<float> mfe_bear
+    array<float> bo_mfe_bull
+    array<float> bo_mfe_bear
     array<int> peak_time_bull
     array<int> peak_time_bear
     array<float> pivot_bull
@@ -13,6 +15,8 @@ export type ExcursionHistory
     array<float> mae_bear_abs
     array<float> mae_bull_pb
     array<float> mae_bear_pb
+    array<float> bo_mae_bull
+    array<float> bo_mae_bear
     array<bool> mid_hit_bull
     array<bool> mid_hit_bear
     array<float> or_range_pct
@@ -28,6 +32,10 @@ export type ExcursionHistory
     array<bool> fakeout_bull
     array<bool> fakeout_bear
     array<bool> double_break
+    array<float> fake_mfe_bull
+    array<float> fake_mfe_bear
+    array<float> fake_mae_bull
+    array<float> fake_mae_bear
     array<float> fakeout_reversal_bull
     array<float> fakeout_reversal_bear
 
@@ -36,21 +44,25 @@ export f_new_excursion_history(string name) =>
         name,
         array.new_float(0),
         array.new_float(0),
-        array.new_int(0),
-        array.new_int(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_bool(0),
-        array.new_bool(0),
-        array.new_float(0),
-        array.new_int(0),
         array.new_float(0),
         array.new_float(0),
         array.new_int(0),
+        array.new_int(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_bool(0),
+        array.new_bool(0),
+        array.new_float(0),
+        array.new_int(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_int(0),
         array.new_bool(0),
         array.new_bool(0),
         array.new_bool(0),
@@ -59,6 +71,10 @@ export f_new_excursion_history(string name) =>
         array.new_bool(0),
         array.new_bool(0),
         array.new_bool(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_float(0),
+        array.new_float(0),
         array.new_float(0),
         array.new_float(0)
     )
@@ -228,6 +244,8 @@ export f_commit_daily(
     ExcursionHistory hist,
     float bull_mfe,
     float bear_mfe,
+    float bo_mfe_bull,
+    float bo_mfe_bear,
     int bull_peak,
     int bear_peak,
     array<float> day_pivot_bulls,
@@ -236,6 +254,8 @@ export f_commit_daily(
     float mae_bear_abs,
     float mae_bull_pb,
     float mae_bear_pb,
+    float bo_mae_bull,
+    float bo_mae_bear,
     bool mid_hit_bull,
     bool mid_hit_bear,
     float or_high,
@@ -261,9 +281,15 @@ export f_commit_daily(
     bool bear_reversal = not na(p50_bear) and bear_mfe >= p50_bear and close_at_cutoff > or_high
     [fb, fs, db] = f_classify_fakeout(trig_bull, trig_bear, close_at_cutoff, or_high, or_low)
     [frb, frs] = f_fakeout_reversal_depth(fb, fs, session_low_data, session_high_data, or_high, or_low)
+    float fake_mfe_b = fb ? bo_mfe_bull : na
+    float fake_mfe_s = fs ? bo_mfe_bear : na
+    float fake_mae_b = fb ? frb : na
+    float fake_mae_s = fs ? frs : na
 
     array.push(hist.mfe_bull, bull_mfe)
     array.push(hist.mfe_bear, bear_mfe)
+    array.push(hist.bo_mfe_bull, bo_mfe_bull)
+    array.push(hist.bo_mfe_bear, bo_mfe_bear)
     array.push(hist.peak_time_bull, bull_peak)
     array.push(hist.peak_time_bear, bear_peak)
 
@@ -278,6 +304,8 @@ export f_commit_daily(
     array.push(hist.mae_bear_abs, mae_bear_abs)
     array.push(hist.mae_bull_pb, mae_bull_pb)
     array.push(hist.mae_bear_pb, mae_bear_pb)
+    array.push(hist.bo_mae_bull, bo_mae_bull)
+    array.push(hist.bo_mae_bear, bo_mae_bear)
     array.push(hist.mid_hit_bull, mid_hit_bull)
     array.push(hist.mid_hit_bear, mid_hit_bear)
     array.push(hist.or_range_pct, math.max(0.0, (or_high - or_low) / or_low * 100.0))
@@ -293,6 +321,10 @@ export f_commit_daily(
     array.push(hist.fakeout_bull, fb)
     array.push(hist.fakeout_bear, fs)
     array.push(hist.double_break, db)
+    array.push(hist.fake_mfe_bull, fake_mfe_b)
+    array.push(hist.fake_mfe_bear, fake_mfe_s)
+    array.push(hist.fake_mae_bull, fake_mae_b)
+    array.push(hist.fake_mae_bear, fake_mae_s)
     array.push(hist.fakeout_reversal_bull, frb)
     array.push(hist.fakeout_reversal_bear, frs)
 
