@@ -176,6 +176,9 @@ Rendering rule:
 Definition:
 - Hit-rate percentage for OR midpoint interaction.
 
+Rendering rule:
+- Mid probability is displayed inline inside the existing midpoint context stat label, not as a separate Phase 2 tactical label.
+
 Computation:
 - Combined midpoint hit rate from historical arrays:
   - hits = sum(`mid_hit_bull`) + sum(`mid_hit_bear`)
@@ -217,7 +220,7 @@ Rules:
 - One shared right-edge label column.
 - One shared label size token: `i_label_size`.
 - One shared label text color token: `i_label_text_color`.
-- One shared directional offset token: `i_label_offset_ticks`.
+- One shared right-edge label gap token: `i_label_gap_bars`.
 - One shared merge threshold token: `i_label_merge_threshold_ticks`.
 
 Merge behavior:
@@ -292,7 +295,7 @@ Visual System (see [VISUAL_SYSTEM.md](VISUAL_SYSTEM.md) §5).
 - `i_line_width_secondary` — shared, `grp_visual`
 - `i_zone_transparency` — shared, `grp_visual`
 - `i_label_size` — shared (replaces former `i_label_size_phase2`), `grp_visual`
-- `i_label_offset_ticks` — shared (replaces former `i_label_offset_ticks_phase2`), `grp_visual`
+- `i_label_gap_bars` — shared right-edge label spacing control, `grp_visual`
 - `i_label_merge_threshold_ticks` — shared, `grp_visual`
 
 ---

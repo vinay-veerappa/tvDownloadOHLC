@@ -42,7 +42,6 @@ i_label_size = input.string("small", "Label Size", options=["tiny", "small", "no
 i_label_text_color = input.color(color.white, "Label Text Color", group=grp_visual)
 i_line_width_primary = input.int(2, "Primary Line Width", minval=1, maxval=5, group=grp_visual)
 i_line_width_secondary = input.int(1, "Secondary Line Width", minval=1, maxval=5, group=grp_visual)
-i_label_offset_ticks = input.int(24, "Label Offset (ticks)", minval=0, maxval=500, group=grp_visual)
 i_label_gap_bars = input.int(8, "Label Gap From Line End (bars)", minval=0, maxval=100, group=grp_visual)
 i_zone_transparency = input.int(75, "Zone Transparency", minval=0, maxval=100, group=grp_visual)
 i_right_extend_bars = input.int(20, "Line Right Extension", minval=1, maxval=200, group=grp_visual)
@@ -476,7 +475,6 @@ f_render_range(int idx) =>
     color breakout_activation_color = f_theme_color(i_color_breakout_activation, #C084FC, #7E22CE)
     color pullback_activation_color = f_theme_color(i_color_pullback_activation, #A3E635, #4D7C0F)
     color pb_not_armed_color = f_theme_color(i_color_mid_probability, #94A3B8, #6B7280)
-    float phase2_label_dy = syminfo.mintick * float(i_label_offset_ticks)
 
     // ── Overlap suppression: pre-compute tactical Y levels ──
     array<float> tac_ys = array.new_float(0)
@@ -914,30 +912,20 @@ f_render_range(int idx) =>
             float p20_bo = array.size(bo_mfe_hist) > 0 ? array.percentile_nearest_rank(bo_mfe_hist, 20) : na
 
             // Fakeout-filtered MFE percentiles
-            float f25 = na
             float f50 = na
             float f75 = na
-            float f90 = na
             if render_side == 1
                 array<float> fake_mfe_hist = STL.f_build_filtered(hist.fake_mfe_bull)
-                bf25 = array.size(fake_mfe_hist) > 0 ? array.percentile_nearest_rank(fake_mfe_hist, 25) : na
                 bf50 = array.size(fake_mfe_hist) > 0 ? array.percentile_nearest_rank(fake_mfe_hist, 50) : na
                 bf75 = array.size(fake_mfe_hist) > 0 ? array.percentile_nearest_rank(fake_mfe_hist, 75) : na
-                bf90 = array.size(fake_mfe_hist) > 0 ? array.percentile_nearest_rank(fake_mfe_hist, 90) : na
-                f25 := bf25
                 f50 := bf50
                 f75 := bf75
-                f90 := bf90
             else
                 array<float> fake_mfe_hist = STL.f_build_filtered(hist.fake_mfe_bear)
-                sf25 = array.size(fake_mfe_hist) > 0 ? array.percentile_nearest_rank(fake_mfe_hist, 25) : na
                 sf50 = array.size(fake_mfe_hist) > 0 ? array.percentile_nearest_rank(fake_mfe_hist, 50) : na
                 sf75 = array.size(fake_mfe_hist) > 0 ? array.percentile_nearest_rank(fake_mfe_hist, 75) : na
-                sf90 = array.size(fake_mfe_hist) > 0 ? array.percentile_nearest_rank(fake_mfe_hist, 90) : na
-                f25 := sf25
                 f50 := sf50
                 f75 := sf75
-                f90 := sf90
 
             // Fakeout reversal depth percentiles (MAE of fakes)
             array<float> rev_f = render_side == 1 ? STL.f_build_filtered(hist.fake_mae_bull) : STL.f_build_filtered(hist.fake_mae_bear)
@@ -991,7 +979,6 @@ f_render_range(int idx) =>
             if not na(render_px)
                 float bo_label_y = render_px
                 PDL.f_draw_stat_line(ds, st.or_start_bar, render_px, ln_end, color.new(breakout_activation_color, 0), "Dotted", i_line_width_primary)
-                string bo_tooltip = render_side == 1 ? "Bull Breakout Activation: first close above OR high" : "Bear Breakout Activation: first close below OR low"
                 array.push(lbl_ys, bo_label_y)
                 array.push(lbl_texts, "Breakout Activation " + STL.f_pct_fmt(0))
                 array.push(lbl_colors, color.new(breakout_activation_color, inactive_alpha))
@@ -1002,7 +989,6 @@ f_render_range(int idx) =>
             if not na(pb_px)
                 float pb_label_y = pb_px
                 PDL.f_draw_stat_line(ds, st.or_start_bar, pb_px, ln_end, color.new(pullback_activation_color, 0), "Dashed", i_line_width_primary)
-                string pb_tooltip = render_side == 1 ? "Bull Pullback Activation: P25 MAE below breakout activation" : "Bear Pullback Activation: P25 MAE above breakout activation"
                 array.push(lbl_ys, pb_label_y)
                 array.push(lbl_texts, "Pullback Activation P25 MAE")
                 array.push(lbl_colors, color.new(pullback_activation_color, inactive_alpha))
