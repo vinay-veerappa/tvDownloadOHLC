@@ -1,8 +1,8 @@
 # Daily NY Levels — Product Requirements Document (PRD)
 
-**Version:** 1.1  
+**Version:** 1.3  
 **Created:** 2026-04-17  
-**Updated:** 2026-04-18  
+**Updated:** 2026-04-19  
 **Author:** Vinay  
 **Status:** Active — Phase 2 Levels Implemented (Chart Validation Pending)  
 **Source Script:** `scripts/indicators/DailyNYLevelsV2.pine` (v4.1)
@@ -128,8 +128,8 @@ Each preset is a named group of sub-ranges. A sub-range has: Opening Range windo
 - Breakout and fake-move MAE/MFE families are now persisted historically in `StatsLib` for direct percentile usage.
 
 **Display rules (locked):**
-- PB Invalidation and BO Invalidation share one price level for now and are drawn as **one line with two labels**.
-- The two invalidation labels must be split and placed to avoid overlap.
+- PB Invalidation and BO Invalidation share one price level for now and are drawn as **one line with one shared merged label**.
+- Stat and tactical labels are part of the **same label system**: same size token, same text color token, same offset token, same merge threshold, same right-edge label column.
 - All displayed lines/zones must expose **independent color inputs** for user configuration.
 
 **Open items:**
@@ -212,9 +212,11 @@ Each preset is a named group of sub-ranges. A sub-range has: Opening Range windo
 | Pullback activation | **P25 breakout MAE from breakout activation price** (first close outside OR) | Activation uses historical breakout MAE drawdown profile |
 | Pullback invalidation | **P80 MAE of breakout** | Breakout heat tolerance threshold |
 | BO invalidation | **P80 MAE of breakout** (same line for now) | Shared invalidation definition pending later divergence |
-| Invalidation line rendering | Single line with dual labels: "PB Invalidation" + "BO Invalidation" | Avoid duplicate line clutter while preserving both semantic tags |
+| Invalidation line rendering | Single line with one merged label: "PB | BO Invalidation" | Avoid duplicate line clutter while keeping both semantic tags |
 | Mid probability | OR-mid hit-rate % | Context metric for midpoint interaction propensity |
 | Line/zone styling | All lines/zones have configurable color inputs | Required for workflow-specific visual tuning |
+| Theme system | Global mode selector: `Custom`, `Dark`, `Light` with token-level palette resolution. See [VISUAL_SYSTEM.md](VISUAL_SYSTEM.md) for shared design tokens | Keeps visuals readable across chart backgrounds without forcing manual recolor each time |
+| Theme coverage | Theme tokens apply to stat lines/labels, histograms, time distribution, phase-2 tactical lines/zones, data table, and debug labels. All modules share a single `i_label_size`, `i_label_text_color`, `i_line_width_primary/secondary`, `i_label_offset_ticks`, and `i_label_merge_threshold_ticks` from the Visual System | Ensures color and geometry behavior is consistent across all rendered modules |
 | Predictive purity | Historical-only percentiles for Phase 2 tactical lines | Prevents forward contamination from current session |
 | Live stat lines (Phase 1) | Draw from today's OR anchor forward: **P20 "BO Cashflow"**, **Median**, **Avg**, **P90 "Max MFE"** + **Range Mid** (dashed, with hit% label) | Real-time reference during session |
 | Cross-midnight date stamp | **Cutoff date** (e.g., Monday date for 18:00 Sun → 03:00 Mon session) | Conventional futures trade-date convention |

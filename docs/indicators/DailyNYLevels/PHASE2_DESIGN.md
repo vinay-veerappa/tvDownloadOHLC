@@ -1,10 +1,11 @@
 # Phase 2 - Directional Breakout Analytics: Detailed Design
 
-**Version:** 1.1  
+**Version:** 1.3  
 **Created:** 2026-04-17  
-**Updated:** 2026-04-18  
-**Status:** Implemented (core level set) - runtime visual validation pending  
+**Updated:** 2026-04-19  
+**Status:** Implemented (core level set + theme system) - runtime visual validation pending  
 **Parent:** [PRD.md](PRD.md)  
+**Visual System:** [VISUAL_SYSTEM.md](VISUAL_SYSTEM.md)  
 **Depends on:** Phase 1 data model and libraries (`RangeSessionLib`, `StatsLib`, `PineDrawingLib`)
 
 ---
@@ -31,8 +32,9 @@ This document locks formulas, activation rules, rendering behavior, and UI input
 - Directional bias engine (close-based only).
 - Breakout side selection based on first close outside OR.
 - Tactical line/zone rendering with locked formulas.
-- Shared invalidation line with two labels and overlap prevention.
+- Shared invalidation line with one merged label and unified label merging.
 - Per-line and per-zone color configurability.
+- Global theme mode (`Custom` / `Dark` / `Light`) for palette-level control across all rendered elements.
 - Mid probability percentage display.
 - Optional MAE histogram toggle (default OFF).
 - Historical-only percentile sourcing for Phase 2 tactical lines (no current-session MAE/MFE blending).
@@ -167,7 +169,7 @@ Definition:
 
 Rendering rule:
 - Draw one shared line at this level.
-- Render two labels: `PB Invalidation` and `BO Invalidation`.
+- Render one merged label: `PB | BO Invalidation`.
 
 ### 5.8 Mid Probability
 
@@ -203,21 +205,44 @@ Direction-dependent emphasis:
 5. BO Cashflow, BO Confirm, Pivot lines.
 6. Shared invalidation line.
 7. Mid probability label.
-8. Dual invalidation labels and remaining text labels.
+8. Shared merged labels for all remaining text labels.
 
 This order keeps tactical lines readable over context fills.
 
-### 6.3 Label Non-Overlap Rule (dual invalidation labels)
+### 6.3 Unified Label System
 
-For the shared invalidation line:
-- Place `PB Invalidation` at `(x_anchor + x_offset_left, y_line + y_offset_up)`
-- Place `BO Invalidation` at `(x_anchor + x_offset_right, y_line + y_offset_down)`
+All stat and tactical labels participate in one shared label registry.
 
-Minimum spacing constraints:
-- Horizontal separation >= `label_min_dx_bars`
-- Vertical separation >= `label_min_dy_ticks`
+Rules:
+- One shared right-edge label column.
+- One shared label size token: `i_label_size`.
+- One shared label text color token: `i_label_text_color`.
+- One shared directional offset token: `i_label_offset_ticks`.
+- One shared merge threshold token: `i_label_merge_threshold_ticks`.
 
-If overlap still detected (approximate bounding check), increment right label `x` by step until clear or max iterations reached.
+Merge behavior:
+- Labels within `i_label_merge_threshold_ticks × mintick` are merged into one pipe-delimited label.
+- Context stat lines near tactical levels are suppressed before label rendering, so the combined system stays readable without separate tactical/stat spacing controls.
+
+### 6.4 Theme Resolution Rules
+
+Phase 2 rendering uses a theme resolver model:
+- `Custom`: use user-selected color inputs directly.
+- `Dark`: use a dark-chart optimized palette fallback per visual token.
+- `Light`: use a light-chart optimized palette fallback per visual token.
+
+Resolver contract:
+- `f_theme_color(custom_color, dark_color, light_color)` selects the effective color per token.
+- Token resolution happens before rendering and is reused by all drawing modules (stat lines, histograms, time distribution, phase-2 tactical levels, table, debug labels).
+
+Scope of theme token application:
+- OR/bull/bear baseline colors.
+- Stat labels, median/avg/stretch/mid lines.
+- Time distribution bars/title/avg/median lines.
+- Breakout activation and pullback activation levels.
+- BO cashflow/confirm/pivot/reversal/invalidation labels and lines.
+- Data table background, border, header, and body text.
+- Debug labels.
 
 ---
 
@@ -239,18 +264,36 @@ Phase 2 must expose configurable colors per line/zone.
 - `i_color_reversal_zone`
 - `i_color_max_reversal`
 - `i_color_invalidation_line`
-- `i_color_invalidation_pb_label`
-- `i_color_invalidation_bo_label`
 - `i_color_mid_probability`
+- `i_color_breakout_activation`
+- `i_color_pullback_activation`
+- `i_stat_avg_color`
+- `i_stat_stretch_color`
+- `i_mid_line_color`
+- `i_time_title_color`
+- `i_table_bg_color`
+- `i_table_border_color`
+- `i_table_header_bg_color`
+- `i_table_header_text_color`
+- `i_table_body_text_color`
+- `i_debug_text_color`
+- `i_debug_bg_color`
 
-### 7.3 Required Style Inputs
+### 7.3 Required Theme Inputs
 
-- `i_line_width_primary`
-- `i_line_width_secondary`
-- `i_zone_transparency`
-- `i_label_size_phase2`
-- `i_label_min_dx_bars`
-- `i_label_min_dy_ticks`
+- `i_theme_mode` with options `Custom`, `Dark`, `Light`.
+
+### 7.4 Required Style Inputs (Visual System)
+
+All visual style tokens are now shared across Phase 1 and Phase 2 via the unified
+Visual System (see [VISUAL_SYSTEM.md](VISUAL_SYSTEM.md) §5).
+
+- `i_line_width_primary` — shared, `grp_visual`
+- `i_line_width_secondary` — shared, `grp_visual`
+- `i_zone_transparency` — shared, `grp_visual`
+- `i_label_size` — shared (replaces former `i_label_size_phase2`), `grp_visual`
+- `i_label_offset_ticks` — shared (replaces former `i_label_offset_ticks_phase2`), `grp_visual`
+- `i_label_merge_threshold_ticks` — shared, `grp_visual`
 
 ---
 
@@ -265,7 +308,7 @@ Per-bar pipeline after OR completion:
 5. Check pullback activation at P25 from breakout price.
 6. Build price levels/zones from locked formulas.
 7. Render lines/zones with configured colors and emphasis rules.
-8. Render shared invalidation line and split labels with overlap prevention.
+8. Render the unified label registry with merge-on-proximity.
 
 Data sourcing rule:
 - All percentile calculations in steps 4-6 must use historical persisted arrays only.
@@ -286,7 +329,7 @@ Data sourcing rule:
 1. Live bias activation is driven only by close vs OR midpoint.
 2. Breakout side is selected by first close outside OR and does not flip later in session.
 3. All tactical lines match locked formulas exactly.
-4. PB and BO invalidation share one line and render two non-overlapping labels.
+4. PB and BO invalidation share one line and render one merged shared label.
 5. Every line/zone has dedicated color input and responds at runtime.
 6. MAE histogram is optional and default OFF.
 7. Mid probability shows OR-mid hit-rate percentage.
@@ -300,7 +343,7 @@ Data sourcing rule:
 Implemented:
 - Breakout activation line and pullback activation line naming finalized.
 - Pullback activation uses P25 breakout MAE from breakout activation price.
-- Shared PB/BO invalidation line with dual labels and spacing controls.
+- Shared PB/BO invalidation line with one merged label in the unified label system.
 - Post-cutoff rendering extension for tactical lines/labels.
 - Historical persistence and consumption of breakout and fake MAE/MFE families.
 - Historical-only tactical percentile sourcing enforced.
