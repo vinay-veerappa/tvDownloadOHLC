@@ -563,7 +563,7 @@ Five additional reference levels per direction, derived from the **fakeout-filte
 
 **Distinction from `reversal_flag`:** `reversal_flag` requires MFE ≥ P50 first (a *real-looking* move that fails). Fakeout classification requires only that the OR boundary was breached and close returned inside — no minimum MFE threshold. These are complementary, not redundant.
 
-### 6.4 On-Chart Color Scheme
+### 6.5 On-Chart Color Scheme
 
 ```
 Bull stat lines:      Shaded variations of `input_bull_color`
@@ -575,9 +575,212 @@ P90 Stretch line:     Configurable (suggest amber/orange)
 
 ---
 
+### 6.6 MFE Histogram Rendering (Phase 1 As-Built)
+
+The MFE histogram is a density profile drawn **overlaid on the price chart**, anchored at each range's OR start bar (`or_start_bar`). There is no separate pane. Histogram boxes extend rightward from the OR anchor. Bull-side boxes appear above `bull_ref`; bear-side boxes appear below `bear_ref`.
+
+#### Inputs
+
+| Input | Default | Purpose |
+|-------|---------|---------|
+| `i_show_histogram` | `true` | Master toggle — enables/disables histogram |
+| `i_hist_start_pct` | `20` | Lower percentile bound of the display window |
+| `i_hist_end_pct` | `90` | Upper percentile bound of the display window |
+| `i_hist_pct_step` | `5` | Bin width in percentile points |
+| `i_show_hist_bin_labels` | `true` | Show `P20`, `P25` … label to the left of each bin |
+
+#### Bin Construction
+
+```pine
+hist_bin_count = math.ceil((i_hist_end_pct - i_hist_start_pct) / i_hist_pct_step)
+// Default: ceil((90 - 20) / 5) = 14 bins
+
+// For each bin b = 0 … hist_bin_count - 1:
+p_lo = i_hist_start_pct + (i_hist_pct_step * b)
+p_hi = math.min(i_hist_end_pct, p_lo + i_hist_pct_step)
+
+// Convert percentile positions to price values via the filtered history array:
+v_lo = array.percentile_nearest_rank(filtered, p_lo)
+v_hi = array.percentile_nearest_rank(filtered, p_hi)
+
+// Count data points inside [v_lo, v_hi)  — last bin uses inclusive upper bound:
+count = # of values: val >= v_lo AND (last_bin ? val <= v_hi : val < v_hi)
+
+// Local density (normalises for bin span so narrow bins don't dominate):
+band_span = math.max(v_hi - v_lo, 0.0001)   // floor to avoid /0
+density   = count / band_span
+```
+
+#### Tail Spike Suppression (P20 Density Cap)
+
+Bins below P20 (sparse tail bins) are capped to prevent them from dominating `max_density` and squashing the central distribution profile.
+
+```pine
+// Reference density: the first bin whose p_lo >= 20
+// Bull and bear sides are capped independently.
+if p_lo < 20
+    density = math.min(density, p20_reference_density)
+```
+
+This cap has **no effect** when `i_hist_start_pct >= 20` (the default), because no bins fall below the cap threshold.
+
+#### Width Normalization
+
+```pine
+// Histogram width scales with session length:
+max_profile_width = math.max(6, cutoff_bar - or_start_bar)
+
+// Normalize each bin's density to the max density across all bins:
+max_density   = math.max of all densities (after tail cap)
+width_normalized = density / max_density
+box_width        = math.max(2, math.round(width_normalized * max_profile_width))
+```
+
+#### Y Coordinate Placement
+
+```pine
+// Bull histogram — bins placed ABOVE bull_ref (OR high):
+y_high = bull_ref * (1.0 + v_hi / 100.0)
+y_low  = bull_ref * (1.0 + v_lo / 100.0)
+
+// Bear histogram — bins placed BELOW bear_ref (OR low):
+y_high = bear_ref * (1.0 - v_lo / 100.0)   // v_lo = less adverse → higher price
+y_low  = bear_ref * (1.0 - v_hi / 100.0)   // v_hi = more adverse → lower price
+```
+
+#### Box Anchoring
+
+```pine
+// Each box spans from OR start bar rightward by box_width bars:
+box_left  = or_start_bar
+box_right = or_start_bar + box_width
+```
+
+Each sub-range's histogram is independently anchored at its own `or_start_bar`, so compound presets each render their own histogram profile.
+
+#### Bin Labels
+
+When `i_show_hist_bin_labels = true`, a text label (`"P20"`, `"P25"`, …) is drawn via `PDL.f_draw_stat_label` at `x = or_start_bar - 1`, vertically centred on the bin midpoint. This places labels **to the left** of the histogram.
+
+#### Visual Layout Decision
+
+> **Decision (Phase 1):** The MFE histogram is overlaid on the price chart in the **same pane** as the OR box and stat lines. It is not in a separate sub-pane or below a separate indicator. Each range's histogram anchors at its own `or_start_bar` and grows rightward independently. This layout choice avoids pane management complexity and keeps the distribution visible alongside live price action.
+
+---
+
+### 6.7 Time Distribution Histogram (As-Built)
+
+The time distribution histogram answers: **when during the session was the MFE peak reached?** It renders a small bell-curve profile below the MFE histogram (or below the OR low when the MFE histogram is hidden), anchored at `or_start_bar`. The X-axis maps minutes-since-OR-start to bar offsets; the Y-axis encodes count of historical days.
+
+#### Inputs
+
+| Input | Default | Purpose |
+|-------|---------|--------|
+| `i_show_time_dist` | `true` | Master toggle |
+| `i_time_bucket_mins` | `5` (1–60) | Bin width in minutes |
+| `i_time_offset_ticks` | `200` | Gap below MFE histogram bottom (in ticks) |
+| `i_show_time_avg` | `true` | Draw vertical dashed AVG line per direction |
+| `i_show_time_med` | `true` | Draw vertical dashed Median line per direction |
+| `i_time_avg_color` | yellow | AVG line / label color |
+| `i_time_med_color` | aqua | Median line / label color |
+| `i_time_bull_color` | green α80 | Bull bar fill color |
+| `i_time_bear_color` | red α80 | Bear bar fill color |
+| `i_time_label_size` | `"tiny"` | Title + stat label size |
+
+#### Data Source
+
+`hist.peak_time_bull` / `hist.peak_time_bear` — `array<int>` in `ExcursionHistory`, each element is the minutes-since-OR-start at which the MFE peak was reached for a historical day. Populated by `STL.f_commit_daily`.
+
+Only days where the corresponding `hist.mfe_bull[j] > 0` / `hist.mfe_bear[j] > 0` are counted.
+
+#### Binning
+
+```pine
+time_data_dur = RSL.f_duration(sp.or_start_min, sp.cutoff_min)   // e.g. 150 mins
+bars_per_min  = 1.0 / float(tf_min)                              // 1.0 on 1-min chart
+num_bins      = math.ceil(float(time_data_dur) / float(i_time_bucket_mins))
+min_box_w     = math.max(1, int(float(i_time_bucket_mins) * bars_per_min))
+
+// For each bin bi = 0 … num_bins - 1:
+bin_s = bi * i_time_bucket_mins
+bin_e = bin_s + i_time_bucket_mins
+// Count days where peak_time[j] in [bin_s, bin_e) AND mfe[j] > 0
+```
+
+Bull and bear counts are tallied independently. `max_t_count` is the maximum count across all bins and both directions — used for height normalisation.
+
+#### Positioning
+
+```pine
+// base_y anchored below the P-end bear MFE histogram level:
+mfe_hist_bot = bear_ref * (1.0 - array.percentile_nearest_rank(bear_filtered, i_hist_end_pct) / 100.0)
+base_y = mfe_hist_bot - syminfo.mintick * i_time_offset_ticks
+// Fallback when MFE histogram is hidden:
+base_y = or_low - syminfo.mintick * i_time_offset_ticks
+
+prof_h = syminfo.mintick * i_time_offset_ticks * 0.4   // max bar height
+line_h = prof_h * 1.2                                  // stat line height (taller than bars)
+```
+
+#### Bar Drawing
+
+```pine
+// Bull bars grow UPWARD from base_y:
+box.new(x_l, base_y + h, x_r, base_y)   // h = count/max_count * prof_h
+
+// Bear bars grow DOWNWARD from base_y:
+box.new(x_l, base_y, x_r, base_y - h)
+
+// x_l = or_start_bar + int(bi * i_time_bucket_mins * bars_per_min)
+// x_r = x_l + min_box_w
+```
+
+All boxes are pushed to `ds.boxes` via `PDL.f_draw_time_bar` and cleared on the next `barstate.islast` repaint via `PDL.f_clear_all`.
+
+#### AVG and Median Stat Lines
+
+```pine
+// Filter to non-zero-mfe peak times only:
+bull_t_nz = [peak_time_bull[j] for j where mfe_bull[j] > 0]
+
+avg_t = array.avg(bull_t_nz)
+med_t = array.median(bull_t_nz)
+
+x_avg = or_start_bar + int(avg_t * bars_per_min)
+
+// Bull lines: base_y upward
+line.new(x_avg, base_y + line_h, x_avg, base_y)         // AVG — dashed
+line.new(x_med, base_y + line_h * 0.8, x_med, base_y)   // Median — dashed
+
+// Bear lines: base_y downward
+line.new(x_avg, base_y, x_avg, base_y - line_h)
+line.new(x_med, base_y, x_med, base_y - line_h * 0.8)
+```
+
+Lines are pushed to `ds.lines` via `PDL.f_draw_vline`. Labels (`"Bull AVG"`, `"Bull MED"`, `"Bear AVG"`, `"Bear MED"`) use `label.style_label_down` (bull) and `label.style_label_up` (bear).
+
+#### Title Label
+
+A single `"<range_name> Time Dist"` label is drawn at `or_start_bar + int(time_data_dur / 2 * bars_per_min)`, `y = base_y + mintick * 80`, style `label_down`, color fuchsia 50% transparent.
+
+#### PineDrawingLib Additions
+
+Two new exported helpers were added to `PineDrawingLib.pine` to support this module:
+
+| Function | Purpose |
+|---|---|
+| `PDL.f_draw_time_bar(ds, x_l, x_r, y_top, y_bot, clr)` | Draw one vertical histogram bar box |
+| `PDL.f_draw_vline(ds, x, y_top, y_bot, clr, style)` | Draw a vertical stat line |
+
+`f_draw_stat_label` was also extended to support `"down"` → `label.style_label_down`.
+
+---
+
 ## 7. Data Table Views
 
 The data table is rendered at `barstate.islast` only. The view is selected via a dropdown input in the indicator's settings panel.
+
+> **Phase 1 current state (as-built):** The table is created as a local variable inside `if barstate.islast and i_show_table` — it is completely absent from the chart when the toggle is off (no persistent `var table` background artifact). Dimensions are dynamic per view: DOW View = 3×6, all other views = 6×3. Each view renders a header row + 2 data rows (Bull/Bear for MFE/MAE/Fakeout; Mon–Fri for DOW). The full column specifications in Sections 7.2–7.5 below (Price, Hit%, Cond%, Streak, R-Multiple, EV Win%, Fake Rate, etc.) describe the **Phase 2 target** — they are not yet rendered in the Phase 1 data rows. Phase 2 will expand each view to the full spec.
 
 ### 7.1 View Toggle
 
@@ -843,13 +1046,25 @@ All questions from the original design have been resolved through exhaustive Q&A
 
 ---
 
-**Last Updated:** 2026-04-17 (v1.2 — all Phase 1 design questions resolved; UDTs, library APIs, stat lines, data table views, implementation sequence fully updated)
+**Last Updated:** 2026-04-17 (v1.2 — all Phase 1 design questions resolved; UDTs, library APIs, stat lines, data table views, implementation sequence fully updated)  
+**Last Updated:** 2026-04-xx (v1.3 — data table visibility + dynamic sizing fix documented; Phase 2 column delineation added to Section 7)
 
 ---
 
 ## Changelog
 
-### v1.2 — 2026-04-17 (Post-Implementation Fixes)
+### v1.3 — 2026-04-xx (Data Table Fixes)
+
+**Data table bug fixes (`DailyNYLevelsV5.pine`):**
+- **Visibility bug fixed:** Removed persistent `var table data_table` global. Table is now created as a local variable inside `if barstate.islast and i_show_table` — the table object does not exist (not just cleared) when the toggle is off. Previous `f_table_clear()` approach left the table background visible even when hidden.
+- **Dynamic sizing:** Table dimensions now computed per view before `table.new()`: DOW View = 3 columns × 6 rows (Day/Count/Avg MFE header + Mon–Fri); all other views = 6 columns × 3 rows (header + Bull + Bear/data rows).
+- **DOW View header corrected:** DOW View now gets correct 3-column header labels (Day / Count / Avg MFE) instead of inheriting the 6-column MFE/MAE header.
+- **Phase 2 delineation:** Section 7 updated to clarify that full column specs (Price, Hit%, Cond%, Streak, R-Multiple, EV Win%, Fake Rate) are Phase 2 work; Phase 1 renders simplified data rows.
+
+**Time distribution histogram (Phase 2 — implemented):**
+- `peak_time_bull` / `peak_time_bear` arrays in `ExcursionHistory` store minutes-since-OR of MFE peaks (captured in Phase 1).
+- Visual rendering implemented: bell-curve time histogram rendered below the MFE histogram price profile. See §6.7 for full spec.
+- New `PineDrawingLib` helpers added: `f_draw_time_bar`, `f_draw_vline`; `f_draw_stat_label` extended for `label_down` style.
 
 **Preset catalog corrections (`RangeSessionLib.pine`):**
 - Renamed **Q1 Break** (0300–0700, 4-hr OR) → **Magic Hour** to better reflect the pre-NY-open window character.

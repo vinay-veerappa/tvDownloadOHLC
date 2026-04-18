@@ -85,10 +85,22 @@ export f_draw_stat_line(PineDrawingState ds, int x1, float y, int x2, color clr,
     ln
 
 export f_draw_stat_label(PineDrawingState ds, int x, float y, string txt, color txt_clr, string lbl_style, string sz) =>
-    label_style = lbl_style == "right" ? label.style_label_right : lbl_style == "up" ? label.style_label_up : label.style_label_left
+    label_style = lbl_style == "right" ? label.style_label_right : lbl_style == "up" ? label.style_label_up : lbl_style == "down" ? label.style_label_down : label.style_label_left
     label lb = label.new(x, y, txt, color=color.new(color.black, 100), textcolor=txt_clr, style=label_style, size=f_display_size(sz))
     array.push(ds.labels, lb)
     lb
+
+// Draw a vertical time histogram bar (x spans a time bin, y height encodes count)
+export f_draw_time_bar(PineDrawingState ds, int x_left, int x_right, float y_top, float y_bot, color clr) =>
+    box b = box.new(x_left, y_top, x_right, y_bot, border_color=na, bgcolor=clr)
+    array.push(ds.boxes, b)
+    b
+
+// Draw a vertical line (used for avg/median markers in the time histogram)
+export f_draw_vline(PineDrawingState ds, int x, float y_top, float y_bot, color clr, string style) =>
+    line ln = line.new(x, y_top, x, y_bot, color=clr, style=f_line_style(style))
+    array.push(ds.lines, ln)
+    ln
 
 export f_draw_day_separator(int bar_idx, float price_hi, float price_lo, color clr, string style, int width) =>
     line.new(bar_idx, price_hi, bar_idx, price_lo, xloc=xloc.bar_index, color=clr, style=f_line_style(style), width=width, extend=extend.both)
