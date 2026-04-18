@@ -181,6 +181,10 @@ f_fmt_med_text(string name, float pct_value) =>
 f_fmt_percentile_text(float pct_value) =>
     str.tostring(int(math.round(pct_value))) + "th"
 
+f_draw_labeled_stat_line_meta(PDL.PineDrawingState ds, PDL.LabelRegistry lr, int x1, float y, int x2, color line_clr, string line_style, int line_width, string label_text, color label_clr, int label_x, string strategy, int priority, string merge_group) =>
+    PDL.f_draw_stat_line(ds, x1, y, x2, line_clr, line_style, line_width)
+    PDL.f_label_registry_push_ex(lr, y, label_text, label_clr, label_x, strategy, priority, merge_group, "left", "", "Label", "")
+
 // Shared rendering geometry so OR box, lines/labels, and histogram width stay in sync.
 f_render_geometry(RSL.RangeSpec sp, RSL.RangeState st, int tf_min) =>
     int total_mins_to_cutoff = RSL.f_duration(sp.or_start_min, sp.cutoff_min)
@@ -514,7 +518,7 @@ f_render_range(int idx) =>
                 array.push(tac_ys, _rs == 1 ? _rp * (1.0 - _mp80 / 100.0) : _rp * (1.0 + _mp80 / 100.0))
 
     // ── Label registry for merge-on-proximity ──
-    PDL.LabelRegistry lbl_reg = PDL.f_new_label_registry()
+    PDL.LabelRegistry lbl_reg = PDL.f_label_registry_begin()
 
     if st.or_building and not na(st.or_start_bar)
         PDL.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, cutoff_bar, f_or_color(idx), i_box_style, i_box_width)
@@ -547,17 +551,17 @@ f_render_range(int idx) =>
             float y_med_b_label = y_med_b
             // Stat lines suppressed where tactical lines overlap
             if not f_near_any(y_confirm_b, tac_ys, suppress_thr)
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_confirm_b_label, ln_end, color.new(bull_color, 15), "Dotted", i_line_width_secondary, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_b), stat_label_color, stat_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_confirm_b_label, ln_end, color.new(bull_color, 15), "Dotted", i_line_width_secondary, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_b), stat_label_color, stat_label_x, "merge", 40, "phase1-stats")
             if not f_near_any(y_t1_b, tac_ys, suppress_thr)
                 PDL.f_draw_stat_line(ds, st.or_start_bar, y_t1_b, ln_end, color.new(bull_color, 0), "Solid", i_line_width_secondary)
             if not f_near_any(y_t2_b, tac_ys, suppress_thr)
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_t2_b_label, ln_end, color.new(bull_color, 25), "Dashed", i_line_width_secondary, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_b), stat_label_color, stat_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t2_b_label, ln_end, color.new(bull_color, 25), "Dashed", i_line_width_secondary, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_b), stat_label_color, stat_label_x, "merge", 35, "phase1-stats")
             if not f_near_any(y_stretch_b, tac_ys, suppress_thr)
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_stretch_b_label, ln_end, color.new(stat_stretch_color, 0), "Dotted", i_line_width_secondary, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_b), stat_label_color, stat_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_stretch_b_label, ln_end, color.new(stat_stretch_color, 0), "Dotted", i_line_width_secondary, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_b), stat_label_color, stat_label_x, "merge", 30, "phase1-stats")
             if not f_near_any(y_avg_b, tac_ys, suppress_thr)
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_avg_b_label, ln_end, color.new(stat_avg_color, 0), "Dashed", i_line_width_secondary, f_fmt_avg_text(sp.name, "Avg", p_avg_b), stat_label_color, stat_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_avg_b_label, ln_end, color.new(stat_avg_color, 0), "Dashed", i_line_width_secondary, f_fmt_avg_text(sp.name, "Avg", p_avg_b), stat_label_color, stat_label_x, "merge", 25, "phase1-stats")
             if not f_near_any(y_med_b, tac_ys, suppress_thr)
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_med_b_label, ln_end, color.new(stat_median_color, 0), "Solid", i_line_width_primary, f_fmt_med_text(sp.name, p_med_b), stat_label_color, stat_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_med_b_label, ln_end, color.new(stat_median_color, 0), "Solid", i_line_width_primary, f_fmt_med_text(sp.name, p_med_b), stat_label_color, stat_label_x, "merge", 45, "phase1-stats")
 
         if array.size(bear_filtered) > 0
             float p_confirm_s = array.percentile_nearest_rank(bear_filtered, i_pct_confirm)
@@ -579,17 +583,17 @@ f_render_range(int idx) =>
             float y_med_s_label = y_med_s
             // Stat lines suppressed where tactical lines overlap
             if not f_near_any(y_confirm_s, tac_ys, suppress_thr)
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_confirm_s_label, ln_end, color.new(bear_color, 15), "Dotted", i_line_width_secondary, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_s), stat_label_color, stat_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_confirm_s_label, ln_end, color.new(bear_color, 15), "Dotted", i_line_width_secondary, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_s), stat_label_color, stat_label_x, "merge", 40, "phase1-stats")
             if not f_near_any(y_t1_s, tac_ys, suppress_thr)
                 PDL.f_draw_stat_line(ds, st.or_start_bar, y_t1_s, ln_end, color.new(bear_color, 0), "Solid", i_line_width_secondary)
             if not f_near_any(y_t2_s, tac_ys, suppress_thr)
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_t2_s_label, ln_end, color.new(bear_color, 25), "Dashed", i_line_width_secondary, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_s), stat_label_color, stat_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t2_s_label, ln_end, color.new(bear_color, 25), "Dashed", i_line_width_secondary, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_s), stat_label_color, stat_label_x, "merge", 35, "phase1-stats")
             if not f_near_any(y_stretch_s, tac_ys, suppress_thr)
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_stretch_s_label, ln_end, color.new(stat_stretch_color, 0), "Dotted", i_line_width_secondary, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_s), stat_label_color, stat_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_stretch_s_label, ln_end, color.new(stat_stretch_color, 0), "Dotted", i_line_width_secondary, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_s), stat_label_color, stat_label_x, "merge", 30, "phase1-stats")
             if not f_near_any(y_avg_s, tac_ys, suppress_thr)
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_avg_s_label, ln_end, color.new(stat_avg_color, 0), "Dashed", i_line_width_secondary, f_fmt_avg_text(sp.name, "Avg", p_avg_s), stat_label_color, stat_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_avg_s_label, ln_end, color.new(stat_avg_color, 0), "Dashed", i_line_width_secondary, f_fmt_avg_text(sp.name, "Avg", p_avg_s), stat_label_color, stat_label_x, "merge", 25, "phase1-stats")
             if not f_near_any(y_med_s, tac_ys, suppress_thr)
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_med_s_label, ln_end, color.new(stat_median_color, 0), "Solid", i_line_width_primary, f_fmt_med_text(sp.name, p_med_s), stat_label_color, stat_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_med_s_label, ln_end, color.new(stat_median_color, 0), "Solid", i_line_width_primary, f_fmt_med_text(sp.name, p_med_s), stat_label_color, stat_label_x, "merge", 45, "phase1-stats")
 
         int n_mid = math.min(array.size(hist.mid_hit_bull), array.size(hist.mid_hit_bear))
         int mid_hits = 0
@@ -599,7 +603,7 @@ f_render_range(int idx) =>
                 mid_hits += array.get(hist.mid_hit_bear, k) ? 1 : 0
         float mid_hit_pct = n_mid == 0 ? na : (float(mid_hits) / float(2 * n_mid)) * 100.0
         if not f_near_any(st.or_mid, tac_ys, suppress_thr)
-            PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, st.or_mid, ln_end, color.new(mid_line_color, 20), "Dashed", i_line_width_secondary, "Midpoint (" + STL.f_pct_fmt(mid_hit_pct) + ")", stat_label_color, stat_label_x)
+            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, st.or_mid, ln_end, color.new(mid_line_color, 20), "Dashed", i_line_width_secondary, "Midpoint (" + STL.f_pct_fmt(mid_hit_pct) + ")", stat_label_color, stat_label_x, "merge", 50, "phase1-stats")
 
     // Render MFE histogram as a profile-like bell curve.
     // Y uses percentile bands from the selected percentile window.
@@ -931,38 +935,40 @@ f_render_range(int idx) =>
             // Breakout activation level (close that breaks out of range)
             if not na(render_px)
                 float bo_label_y = render_px
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, bo_label_y, ln_end, color.new(breakout_activation_color, 0), "Dotted", i_line_width_primary, "Breakout Activation " + STL.f_pct_fmt(0), color.new(breakout_activation_color, inactive_alpha), phase2_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, bo_label_y, ln_end, color.new(breakout_activation_color, 0), "Dotted", i_line_width_primary, "Breakout Activation " + STL.f_pct_fmt(0), color.new(breakout_activation_color, inactive_alpha), phase2_label_x, "merge", 90, "phase2-levels")
 
             // Pullback activation level (P25 MAE from breakout activation)
             float pb_px = array.get(phase2_pullback_price, idx)
             if not na(pb_px)
                 float pb_label_y = pb_px
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, pb_label_y, ln_end, color.new(pullback_activation_color, 0), "Dashed", i_line_width_primary, "Pullback Activation P25 MAE", color.new(pullback_activation_color, inactive_alpha), phase2_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, pb_label_y, ln_end, color.new(pullback_activation_color, 0), "Dashed", i_line_width_primary, "Pullback Activation P25 MAE", color.new(pullback_activation_color, inactive_alpha), phase2_label_x, "merge", 85, "phase2-levels")
 
             // Core directional lines
             if not na(y_cash)
                 float y_cash_label = y_cash
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_cash_label, ln_end, color.new(bo_cashflow_color, inactive_alpha), "Dotted", i_line_width_secondary, "BO Cashflow P20 (MFE from BO) " + STL.f_pct_fmt(p20_bo), color.new(bo_cashflow_color, inactive_alpha), phase2_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_cash_label, ln_end, color.new(bo_cashflow_color, inactive_alpha), "Dotted", i_line_width_secondary, "BO Cashflow P20 (MFE from BO) " + STL.f_pct_fmt(p20_bo), color.new(bo_cashflow_color, inactive_alpha), phase2_label_x, "merge", 80, "phase2-levels")
             if not na(y_confirm)
                 float y_confirm_label = y_confirm
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_confirm_label, ln_end, color.new(bo_confirm_color, inactive_alpha), "Dashed", i_line_width_primary, "BO Confirm P75 (Fake MFE) " + STL.f_pct_fmt(f75), color.new(bo_confirm_color, inactive_alpha), phase2_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_confirm_label, ln_end, color.new(bo_confirm_color, inactive_alpha), "Dashed", i_line_width_primary, "BO Confirm P75 (Fake MFE) " + STL.f_pct_fmt(f75), color.new(bo_confirm_color, inactive_alpha), phase2_label_x, "merge", 75, "phase2-levels")
             if not na(y_pivot)
                 float y_pivot_label = y_pivot
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_pivot_label, ln_end, color.new(pivot_color, inactive_alpha), "Solid", i_line_width_primary, "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(f50), color.new(pivot_color, inactive_alpha), phase2_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_pivot_label, ln_end, color.new(pivot_color, inactive_alpha), "Solid", i_line_width_primary, "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(f50), color.new(pivot_color, inactive_alpha), phase2_label_x, "merge", 70, "phase2-levels")
             if not na(y_rev90)
                 float y_rev90_label = y_rev90
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_rev90_label, ln_end, color.new(max_reversal_color, inactive_alpha), "Dotted", i_line_width_secondary, "Max Reversal P90 (Fake MAE) " + STL.f_pct_fmt(rev_p90), color.new(max_reversal_color, inactive_alpha), phase2_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_rev90_label, ln_end, color.new(max_reversal_color, inactive_alpha), "Dotted", i_line_width_secondary, "Max Reversal P90 (Fake MAE) " + STL.f_pct_fmt(rev_p90), color.new(max_reversal_color, inactive_alpha), phase2_label_x, "merge", 65, "phase2-levels")
 
             // Shared PB/BO invalidation line — single merged label
             if not na(y_inv)
-                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_inv, ln_end, color.new(invalidation_line_color, inactive_alpha), "Solid", i_line_width_primary, "PB | BO Invalidation P80 (BO MAE) " + STL.f_pct_fmt(mae_p80), color.new(invalidation_line_color, inactive_alpha), phase2_label_x)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_inv, ln_end, color.new(invalidation_line_color, inactive_alpha), "Solid", i_line_width_primary, "PB | BO Invalidation P80 (BO MAE) " + STL.f_pct_fmt(mae_p80), color.new(invalidation_line_color, inactive_alpha), phase2_label_x, "merge", 95, "phase2-levels")
 
             if i_show_debug and not pb_armed
                 PDL.f_draw_stat_label(ds, phase2_label_x, render_side == 1 ? st.or_high : st.or_low, "PB not armed", color.new(pb_not_armed_color, 20), "left", "tiny")
 
     // ── Merge and draw label registry ──
-    float merge_thr = syminfo.mintick * float(i_label_merge_threshold_ticks)
-    PDL.f_label_registry_draw_merged(ds, lbl_reg, merge_thr, i_label_size)
+    float merge_thr_manual = syminfo.mintick * float(i_label_merge_threshold_ticks)
+    float merge_thr_auto = PDL.f_merge_threshold_for_symbol(syminfo.ticker, syminfo.mintick)
+    float merge_thr = math.max(merge_thr_manual, merge_thr_auto)
+    PDL.f_label_registry_flush(ds, lbl_reg, merge_thr, i_label_size, 2)
 
 if barstate.islast and array.size(specs) > 0
     for i = 0 to array.size(specs) - 1
