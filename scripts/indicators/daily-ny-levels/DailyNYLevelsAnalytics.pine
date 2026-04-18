@@ -43,6 +43,7 @@ i_label_text_color = input.color(color.white, "Label Text Color", group=grp_visu
 i_line_width_primary = input.int(2, "Primary Line Width", minval=1, maxval=5, group=grp_visual)
 i_line_width_secondary = input.int(1, "Secondary Line Width", minval=1, maxval=5, group=grp_visual)
 i_label_offset_ticks = input.int(24, "Label Offset (ticks)", minval=0, maxval=500, group=grp_visual)
+i_label_gap_bars = input.int(8, "Label Gap From Line End (bars)", minval=0, maxval=100, group=grp_visual)
 i_zone_transparency = input.int(75, "Zone Transparency", minval=0, maxval=100, group=grp_visual)
 i_right_extend_bars = input.int(20, "Line Right Extension", minval=1, maxval=200, group=grp_visual)
 i_box_style = input.string("Solid", "OR Box Style", options=["Solid", "Dashed", "Dotted"], group=grp_visual)
@@ -529,7 +530,7 @@ f_render_range(int idx) =>
         array<float> bull_filtered = STL.f_build_filtered(hist.mfe_bull)
         array<float> bear_filtered = STL.f_build_filtered(hist.mfe_bear)
         int ln_end = line_render_end
-        int stat_label_x = ln_end
+        int stat_label_x = ln_end + i_label_gap_bars
 
         if array.size(bull_filtered) > 0
             float p_confirm_b = array.percentile_nearest_rank(bull_filtered, i_pct_confirm)
@@ -544,11 +545,11 @@ f_render_range(int idx) =>
             float y_stretch_b = st.bull_ref * (1.0 + p_stretch_b / 100.0)
             float y_avg_b = st.bull_ref * (1.0 + p_avg_b / 100.0)
             float y_med_b = st.bull_ref * (1.0 + p_med_b / 100.0)
-            float y_confirm_b_label = y_confirm_b + phase2_label_dy
-            float y_t2_b_label = y_t2_b + phase2_label_dy
-            float y_stretch_b_label = y_stretch_b + phase2_label_dy
-            float y_avg_b_label = y_avg_b + phase2_label_dy
-            float y_med_b_label = y_med_b + phase2_label_dy
+            float y_confirm_b_label = y_confirm_b
+            float y_t2_b_label = y_t2_b
+            float y_stretch_b_label = y_stretch_b
+            float y_avg_b_label = y_avg_b
+            float y_med_b_label = y_med_b
             // Stat lines suppressed where tactical lines overlap
             if not f_near_any(y_confirm_b, tac_ys, suppress_thr)
                 PDL.f_draw_stat_line(ds, st.or_start_bar, y_confirm_b, ln_end, color.new(bull_color, 15), "Dotted", i_line_width_secondary)
@@ -596,11 +597,11 @@ f_render_range(int idx) =>
             float y_stretch_s = st.bear_ref * (1.0 - p_stretch_s / 100.0)
             float y_avg_s = st.bear_ref * (1.0 - p_avg_s / 100.0)
             float y_med_s = st.bear_ref * (1.0 - p_med_s / 100.0)
-            float y_confirm_s_label = y_confirm_s - phase2_label_dy
-            float y_t2_s_label = y_t2_s - phase2_label_dy
-            float y_stretch_s_label = y_stretch_s - phase2_label_dy
-            float y_avg_s_label = y_avg_s - phase2_label_dy
-            float y_med_s_label = y_med_s - phase2_label_dy
+            float y_confirm_s_label = y_confirm_s
+            float y_t2_s_label = y_t2_s
+            float y_stretch_s_label = y_stretch_s
+            float y_avg_s_label = y_avg_s
+            float y_med_s_label = y_med_s
             // Stat lines suppressed where tactical lines overlap
             if not f_near_any(y_confirm_s, tac_ys, suppress_thr)
                 PDL.f_draw_stat_line(ds, st.or_start_bar, y_confirm_s, ln_end, color.new(bear_color, 15), "Dotted", i_line_width_secondary)
@@ -644,7 +645,7 @@ f_render_range(int idx) =>
         float mid_hit_pct = n_mid == 0 ? na : (float(mid_hits) / float(2 * n_mid)) * 100.0
         if not f_near_any(st.or_mid, tac_ys, suppress_thr)
             PDL.f_draw_stat_line(ds, st.or_start_bar, st.or_mid, ln_end, color.new(mid_line_color, 20), "Dashed", i_line_width_secondary)
-            array.push(lbl_ys, st.or_mid + phase2_label_dy)
+            array.push(lbl_ys, st.or_mid)
             array.push(lbl_texts, "Midpoint (" + STL.f_pct_fmt(mid_hit_pct) + ")")
             array.push(lbl_colors, stat_label_color)
             array.push(lbl_xs, stat_label_x)
@@ -900,7 +901,7 @@ f_render_range(int idx) =>
         int live_bias = array.get(phase2_live_bias, idx)
         float bo_px = array.get(phase2_breakout_price, idx)
         bool pb_armed = array.get(phase2_pullback_armed, idx)
-        int phase2_label_x = ln_end
+        int phase2_label_x = ln_end + i_label_gap_bars
 
         int render_side = bo_side != 0 ? bo_side : live_bias
         float render_px = not na(bo_px) ? bo_px : (render_side == 1 ? st.or_high : render_side == -1 ? st.or_low : na)
@@ -978,16 +979,17 @@ f_render_range(int idx) =>
                 float z_top = math.max(y_rev20, y_rev50)
                 float z_bot = math.min(y_rev20, y_rev50)
                 int z_w = math.max(2, ln_end - st.or_start_bar)
-                float z_label_y = render_side == 1 ? z_top + phase2_label_dy : z_top - phase2_label_dy
+                float z_mid = (z_top + z_bot) / 2.0
+                int z_mid_x = st.or_start_bar + int(math.floor(z_w / 2.0))
+                int zone_line_alpha = math.min(i_zone_transparency + 10, 95)
+                int zone_text_alpha = math.min(int(math.round(float(i_zone_transparency) * 0.6)), 90)
                 PDL.f_draw_hist_band(ds, st.or_start_bar, z_top, z_bot, z_w, reversal_zone_color, i_zone_transparency)
-                array.push(lbl_ys, z_label_y)
-                array.push(lbl_texts, "Reversal Zone (P20-P50 Fake MAE)")
-                array.push(lbl_colors, color.new(reversal_zone_color, inactive_alpha))
-                array.push(lbl_xs, phase2_label_x)
+                PDL.f_draw_stat_line(ds, st.or_start_bar, z_mid, st.or_start_bar + z_w, color.new(reversal_zone_color, zone_line_alpha), "Dashed", i_line_width_secondary)
+                PDL.f_draw_stat_label(ds, z_mid_x, z_mid, "Reversal Zone (P20-P50 Fake MAE)", color.new(stat_label_color, zone_text_alpha), "center", i_label_size)
 
             // Breakout activation level (close that breaks out of range)
             if not na(render_px)
-                float bo_label_y = render_side == 1 ? render_px + phase2_label_dy : render_px - phase2_label_dy
+                float bo_label_y = render_px
                 PDL.f_draw_stat_line(ds, st.or_start_bar, render_px, ln_end, color.new(breakout_activation_color, 0), "Dotted", i_line_width_primary)
                 string bo_tooltip = render_side == 1 ? "Bull Breakout Activation: first close above OR high" : "Bear Breakout Activation: first close below OR low"
                 array.push(lbl_ys, bo_label_y)
@@ -998,7 +1000,7 @@ f_render_range(int idx) =>
             // Pullback activation level (P25 MAE from breakout activation)
             float pb_px = array.get(phase2_pullback_price, idx)
             if not na(pb_px)
-                float pb_label_y = render_side == 1 ? pb_px + phase2_label_dy : pb_px - phase2_label_dy
+                float pb_label_y = pb_px
                 PDL.f_draw_stat_line(ds, st.or_start_bar, pb_px, ln_end, color.new(pullback_activation_color, 0), "Dashed", i_line_width_primary)
                 string pb_tooltip = render_side == 1 ? "Bull Pullback Activation: P25 MAE below breakout activation" : "Bear Pullback Activation: P25 MAE above breakout activation"
                 array.push(lbl_ys, pb_label_y)
@@ -1008,28 +1010,28 @@ f_render_range(int idx) =>
 
             // Core directional lines
             if not na(y_cash)
-                float y_cash_label = render_side == 1 ? y_cash + phase2_label_dy : y_cash - phase2_label_dy
+                float y_cash_label = y_cash
                 PDL.f_draw_stat_line(ds, st.or_start_bar, y_cash, ln_end, color.new(bo_cashflow_color, inactive_alpha), "Dotted", i_line_width_secondary)
                 array.push(lbl_ys, y_cash_label)
                 array.push(lbl_texts, "BO Cashflow P20 (MFE from BO) " + STL.f_pct_fmt(p20_bo))
                 array.push(lbl_colors, color.new(bo_cashflow_color, inactive_alpha))
                 array.push(lbl_xs, phase2_label_x)
             if not na(y_confirm)
-                float y_confirm_label = render_side == 1 ? y_confirm + phase2_label_dy : y_confirm - phase2_label_dy
+                float y_confirm_label = y_confirm
                 PDL.f_draw_stat_line(ds, st.or_start_bar, y_confirm, ln_end, color.new(bo_confirm_color, inactive_alpha), "Dashed", i_line_width_primary)
                 array.push(lbl_ys, y_confirm_label)
                 array.push(lbl_texts, "BO Confirm P75 (Fake MFE) " + STL.f_pct_fmt(f75))
                 array.push(lbl_colors, color.new(bo_confirm_color, inactive_alpha))
                 array.push(lbl_xs, phase2_label_x)
             if not na(y_pivot)
-                float y_pivot_label = render_side == 1 ? y_pivot + phase2_label_dy : y_pivot - phase2_label_dy
+                float y_pivot_label = y_pivot
                 PDL.f_draw_stat_line(ds, st.or_start_bar, y_pivot, ln_end, color.new(pivot_color, inactive_alpha), "Solid", i_line_width_primary)
                 array.push(lbl_ys, y_pivot_label)
                 array.push(lbl_texts, "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(f50))
                 array.push(lbl_colors, color.new(pivot_color, inactive_alpha))
                 array.push(lbl_xs, phase2_label_x)
             if not na(y_rev90)
-                float y_rev90_label = render_side == 1 ? y_rev90 + phase2_label_dy : y_rev90 - phase2_label_dy
+                float y_rev90_label = y_rev90
                 PDL.f_draw_stat_line(ds, st.or_start_bar, y_rev90, ln_end, color.new(max_reversal_color, inactive_alpha), "Dotted", i_line_width_secondary)
                 array.push(lbl_ys, y_rev90_label)
                 array.push(lbl_texts, "Max Reversal P90 (Fake MAE) " + STL.f_pct_fmt(rev_p90))
@@ -1039,7 +1041,7 @@ f_render_range(int idx) =>
             // Shared PB/BO invalidation line — single merged label
             if not na(y_inv)
                 PDL.f_draw_stat_line(ds, st.or_start_bar, y_inv, ln_end, color.new(invalidation_line_color, inactive_alpha), "Solid", i_line_width_primary)
-                float y_inv_label = render_side == 1 ? y_inv + phase2_label_dy : y_inv - phase2_label_dy
+                float y_inv_label = y_inv
                 array.push(lbl_ys, y_inv_label)
                 array.push(lbl_texts, "PB | BO Invalidation P80 (BO MAE) " + STL.f_pct_fmt(mae_p80))
                 array.push(lbl_colors, color.new(invalidation_line_color, inactive_alpha))

@@ -83,8 +83,9 @@ These are the foundational colors from which all element-level colors derive.
 |-------|-----------|------|---------|-------|---------|
 | Primary Line Width | `i_line_width_primary` | int | `2` | 1–5 | Median stat lines, BO Confirm, Pivot, Invalidation line |
 | Secondary Line Width | `i_line_width_secondary` | int | `1` | 1–5 | Confirm/Target/Stretch stat lines, BO Cashflow, Max Reversal, Activation lines |
-| Label Offset (ticks) | `i_label_offset_ticks` | int | `24` | 0–500 | Vertical distance from line to label anchor (direction-aware: bull ↑, bear ↓). Applied to **all** stat and tactical line labels. |
-| Zone Transparency | `i_zone_transparency` | int | `75` | 0–100 | Reversal target zone fill, histogram band fills |
+| Label Offset (ticks) | `i_label_offset_ticks` | int | `24` | 0–500 | Internal vertical offset used for centered in-zone labels and other non-right-edge label placements. |
+| Label Gap From Line End (bars) | `i_label_gap_bars` | int | `8` | 0–100 | Horizontal gap between the end of a line and the start anchor of the right-edge label. Default is doubled from the old 4-bar separation convention. |
+| Zone Transparency | `i_zone_transparency` | int | `75` | 0–100 | Reversal target zone fill, zone midpoint line alpha, in-zone label alpha, histogram band fills |
 | Right Extend (bars) | `i_right_extend_bars` | int | `20` | 1–200 | How far stat/tactical lines extend past current bar |
 | Label Merge Threshold (ticks) | `i_label_merge_threshold_ticks` | int | `20` | 1–500 | Y proximity threshold for merging nearby labels into shared labels; also used as stat-line suppression threshold against tactical lines |
 
@@ -109,7 +110,7 @@ These control the **Phase 2 directional tactical overlay**.
 | BO Cashflow | `i_color_bo_cashflow` | `#00FF00` (green) | `#4ADE80` | `#16A34A` | P20 MFE from breakout line + label |
 | BO Confirm | `i_color_bo_confirm` | `#008080` (teal) | `#2DD4BF` | `#0D9488` | P75 fake MFE line + label |
 | Pivot | `i_color_pivot` | `#00FFFF` (aqua) | `#22D3EE` | `#0891B2` | P50 fake MFE line + label |
-| Reversal Zone | `i_color_reversal_zone` | `#FF8C00` (orange, 75) | `#F97316` | `#C2410C` | P20-P50 fake MAE zone fill + label |
+| Reversal Zone | `i_color_reversal_zone` | `#FF8C00` (orange, 75) | `#F97316` | `#C2410C` | P20-P50 fake MAE zone fill + midpoint line + centered in-zone label |
 | Max Reversal | `i_color_max_reversal` | `#FF8C00` (orange) | `#FB923C` | `#C2410C` | P90 fake MAE line + label |
 | Invalidation Line | `i_color_invalidation_line` | `#FF0000` (red) | `#F87171` | `#B3261E` | Shared PB/BO invalidation price line |
 | Mid Probability | `i_color_mid_probability` | `#808080` (gray) | `#94A3B8` | `#6B7280` | Mid probability label (PB not armed debug) |
@@ -142,7 +143,7 @@ All visual tokens are organized into six input groups with progressive disclosur
 | Group Name | Pine Constant | Contents | Purpose |
 |------------|--------------|----------|---------|
 | **Theme** | `grp_theme` | `i_theme_mode` | Mode selector — one dropdown |
-| **Visual System** | `grp_visual` | Palette (bull/bear), Typography (label size, label text color), Geometry (line widths, label offset, zone transparency, right extend, merge threshold) | Core shared tokens — the controls that affect everything |
+| **Visual System** | `grp_visual` | Palette (bull/bear), Typography (label size, label text color), Geometry (line widths, label offset, label gap, zone transparency, right extend, merge threshold) | Core shared tokens — the controls that affect everything |
 | **Context Colors** | `grp_ctx_colors` | Median, Average, Stretch, Midpoint, Time Dist Title | Colors for bilateral MFE context rendering |
 | **Tactical Colors** | `grp_tac_colors` | BO Cashflow, BO Confirm, Pivot, Reversal Zone, Max Reversal, Invalidation Line, Mid Probability, Breakout/Pullback Activation | Colors for Phase 2 directional overlay |
 | **Data Table** | `grp_table` | Table BG, border, header BG/text, body text, position, view, show toggle | Table-specific controls |
@@ -176,7 +177,7 @@ Every rendered element and the tokens that control it.
 | Median | `i_color_median` | Solid | `i_line_width_primary` |
 | Midpoint | `i_color_midpoint` (20% transparency) | Dashed | `i_line_width_secondary` |
 
-Labels for all context stat lines use the same shared label contract as tactical lines: `i_label_size`, `i_label_text_color`, `i_label_offset_ticks`, and the shared merge registry.
+Labels for all context stat lines use the same shared label contract as tactical lines: `i_label_size`, `i_label_text_color`, `i_label_gap_bars`, and the shared merge registry.
 
 **Overlap suppression:** When Phase 2 tactical levels are enabled, any context stat line whose Y price is within `i_label_merge_threshold_ticks × mintick` of a tactical line Y is suppressed (both line and label). Tactical lines always take visual priority.
 
@@ -210,8 +211,13 @@ Labels for all context stat lines use the same shared label contract as tactical
 | Max Reversal | `i_color_max_reversal` | Dotted | `i_line_width_secondary` |
 | Invalidation | `i_color_invalidation_line` | Solid | `i_line_width_primary` |
 | Reversal Zone fill | `i_color_reversal_zone` | — | — (uses `i_zone_transparency`) |
+| Reversal Zone midpoint line | `i_color_reversal_zone` | Dashed | `i_line_width_secondary` |
 
-Labels for all tactical lines use the same shared label contract: `i_label_size`, `i_label_text_color`, `i_label_offset_ticks`, and the shared merge registry. The PB/BO invalidation state is rendered as a single shared label ("PB | BO Invalidation ...").
+Labels for all tactical lines use the same shared label contract: `i_label_size`, `i_label_text_color`, `i_label_gap_bars`, and the shared merge registry. The PB/BO invalidation state is rendered as a single shared label ("PB | BO Invalidation ...").
+
+**Zone default:** Any rendered zone should, by default, include a horizontal midpoint line inside the zone and a centered label placed inside the zone body. The centered label is not part of the right-edge merge registry.
+
+**Zone text transparency:** In-zone text must account for `i_zone_transparency`. As zone fills become more transparent, in-zone text should also become more transparent by a derived alpha rather than staying fully opaque.
 
 **Shared label system:** All stat and tactical labels are collected into a label registry in the same right-edge label column. Before rendering, labels within `i_label_merge_threshold_ticks × mintick` are merged into a single shared label with pipe-delimited text (e.g., "Avg 0.32% | Median 0.30%").
 
@@ -236,9 +242,9 @@ Labels for all tactical lines use the same shared label contract: `i_label_size`
 
 ---
 
-## 7. Label Offset Model
+## 7. Label Geometry
 
-The label offset system controls the vertical distance between a price line and its associated text label.
+The label geometry system controls where labels sit relative to rendered elements.
 
 ### 7.1 Offset Calculation
 
@@ -246,16 +252,19 @@ The label offset system controls the vertical distance between a price line and 
 float label_dy = syminfo.mintick * float(i_label_offset_ticks)
 ```
 
-### 7.2 Direction-Aware Placement
+### 7.2 Right-Edge Line Labels
 
-- **Bull labels**: `y_label = y_line + label_dy` (label above line)
-- **Bear labels**: `y_label = y_line - label_dy` (label below line)
+- Right-edge labels should remain vertically centered on the line they describe: `y_label = y_line`
+- Horizontal separation from the line is controlled independently: `x_label = line_end_bar + i_label_gap_bars`
+- This keeps labels visually attached to their lines without the old above/below drift.
 
 ### 7.3 Scope
 
-The offset applies uniformly to all right-edge line labels across both systems:
+The right-edge line-label geometry applies uniformly across both systems:
 - Phase 1 context labels (Confirm, Target2, Stretch, Avg, Median, Midpoint)
 - Phase 2 tactical labels (BO Cashflow, BO Confirm, Pivot, Max Reversal, Breakout/Pullback Activation, Reversal Zone, Invalidation)
+
+Centered in-zone labels are exempt from the right-edge line-label model and should remain visually centered inside their zone. `i_label_offset_ticks` remains available for those centered/internal placements.
 
 ### 7.4 Overlap Suppression
 
