@@ -18,7 +18,7 @@ indicator("Daily NY Levels Analytics (Phase 2)", overlay=true, max_bars_back=500
 // If libraries have different versions, update the /1 suffixes below.
 // ============================================================================
 import vveerappa/RangeSessionLib/6 as RSL
-import vveerappa/PineDrawingLib/2 as PDL
+import vveerappa/PineDrawingLib/3 as PDL
 import vveerappa/StatsLib/2 as STL
 
 // Inputs
@@ -180,9 +180,6 @@ f_fmt_med_text(string name, float pct_value) =>
 
 f_fmt_percentile_text(float pct_value) =>
     str.tostring(int(math.round(pct_value))) + "th"
-
-f_push_label(PDL.LabelRegistry lr, float y, string txt, color clr, int x) =>
-    PDL.f_label_registry_push(lr, y, txt, clr, x)
 
 // Shared rendering geometry so OR box, lines/labels, and histogram width stay in sync.
 f_render_geometry(RSL.RangeSpec sp, RSL.RangeState st, int tf_min) =>
@@ -550,22 +547,17 @@ f_render_range(int idx) =>
             float y_med_b_label = y_med_b
             // Stat lines suppressed where tactical lines overlap
             if not f_near_any(y_confirm_b, tac_ys, suppress_thr)
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_confirm_b, ln_end, color.new(bull_color, 15), "Dotted", i_line_width_secondary)
-                f_push_label(lbl_reg, y_confirm_b_label, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_b), stat_label_color, stat_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_confirm_b_label, ln_end, color.new(bull_color, 15), "Dotted", i_line_width_secondary, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_b), stat_label_color, stat_label_x)
             if not f_near_any(y_t1_b, tac_ys, suppress_thr)
                 PDL.f_draw_stat_line(ds, st.or_start_bar, y_t1_b, ln_end, color.new(bull_color, 0), "Solid", i_line_width_secondary)
             if not f_near_any(y_t2_b, tac_ys, suppress_thr)
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_t2_b, ln_end, color.new(bull_color, 25), "Dashed", i_line_width_secondary)
-                f_push_label(lbl_reg, y_t2_b_label, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_b), stat_label_color, stat_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_t2_b_label, ln_end, color.new(bull_color, 25), "Dashed", i_line_width_secondary, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_b), stat_label_color, stat_label_x)
             if not f_near_any(y_stretch_b, tac_ys, suppress_thr)
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_stretch_b, ln_end, color.new(stat_stretch_color, 0), "Dotted", i_line_width_secondary)
-                f_push_label(lbl_reg, y_stretch_b_label, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_b), stat_label_color, stat_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_stretch_b_label, ln_end, color.new(stat_stretch_color, 0), "Dotted", i_line_width_secondary, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_b), stat_label_color, stat_label_x)
             if not f_near_any(y_avg_b, tac_ys, suppress_thr)
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_avg_b, ln_end, color.new(stat_avg_color, 0), "Dashed", i_line_width_secondary)
-                f_push_label(lbl_reg, y_avg_b_label, f_fmt_avg_text(sp.name, "Avg", p_avg_b), stat_label_color, stat_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_avg_b_label, ln_end, color.new(stat_avg_color, 0), "Dashed", i_line_width_secondary, f_fmt_avg_text(sp.name, "Avg", p_avg_b), stat_label_color, stat_label_x)
             if not f_near_any(y_med_b, tac_ys, suppress_thr)
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_med_b, ln_end, color.new(stat_median_color, 0), "Solid", i_line_width_primary)
-                f_push_label(lbl_reg, y_med_b_label, f_fmt_med_text(sp.name, p_med_b), stat_label_color, stat_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_med_b_label, ln_end, color.new(stat_median_color, 0), "Solid", i_line_width_primary, f_fmt_med_text(sp.name, p_med_b), stat_label_color, stat_label_x)
 
         if array.size(bear_filtered) > 0
             float p_confirm_s = array.percentile_nearest_rank(bear_filtered, i_pct_confirm)
@@ -587,22 +579,17 @@ f_render_range(int idx) =>
             float y_med_s_label = y_med_s
             // Stat lines suppressed where tactical lines overlap
             if not f_near_any(y_confirm_s, tac_ys, suppress_thr)
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_confirm_s, ln_end, color.new(bear_color, 15), "Dotted", i_line_width_secondary)
-                f_push_label(lbl_reg, y_confirm_s_label, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_s), stat_label_color, stat_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_confirm_s_label, ln_end, color.new(bear_color, 15), "Dotted", i_line_width_secondary, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_s), stat_label_color, stat_label_x)
             if not f_near_any(y_t1_s, tac_ys, suppress_thr)
                 PDL.f_draw_stat_line(ds, st.or_start_bar, y_t1_s, ln_end, color.new(bear_color, 0), "Solid", i_line_width_secondary)
             if not f_near_any(y_t2_s, tac_ys, suppress_thr)
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_t2_s, ln_end, color.new(bear_color, 25), "Dashed", i_line_width_secondary)
-                f_push_label(lbl_reg, y_t2_s_label, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_s), stat_label_color, stat_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_t2_s_label, ln_end, color.new(bear_color, 25), "Dashed", i_line_width_secondary, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_s), stat_label_color, stat_label_x)
             if not f_near_any(y_stretch_s, tac_ys, suppress_thr)
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_stretch_s, ln_end, color.new(stat_stretch_color, 0), "Dotted", i_line_width_secondary)
-                f_push_label(lbl_reg, y_stretch_s_label, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_s), stat_label_color, stat_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_stretch_s_label, ln_end, color.new(stat_stretch_color, 0), "Dotted", i_line_width_secondary, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_s), stat_label_color, stat_label_x)
             if not f_near_any(y_avg_s, tac_ys, suppress_thr)
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_avg_s, ln_end, color.new(stat_avg_color, 0), "Dashed", i_line_width_secondary)
-                f_push_label(lbl_reg, y_avg_s_label, f_fmt_avg_text(sp.name, "Avg", p_avg_s), stat_label_color, stat_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_avg_s_label, ln_end, color.new(stat_avg_color, 0), "Dashed", i_line_width_secondary, f_fmt_avg_text(sp.name, "Avg", p_avg_s), stat_label_color, stat_label_x)
             if not f_near_any(y_med_s, tac_ys, suppress_thr)
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_med_s, ln_end, color.new(stat_median_color, 0), "Solid", i_line_width_primary)
-                f_push_label(lbl_reg, y_med_s_label, f_fmt_med_text(sp.name, p_med_s), stat_label_color, stat_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_med_s_label, ln_end, color.new(stat_median_color, 0), "Solid", i_line_width_primary, f_fmt_med_text(sp.name, p_med_s), stat_label_color, stat_label_x)
 
         int n_mid = math.min(array.size(hist.mid_hit_bull), array.size(hist.mid_hit_bear))
         int mid_hits = 0
@@ -612,8 +599,7 @@ f_render_range(int idx) =>
                 mid_hits += array.get(hist.mid_hit_bear, k) ? 1 : 0
         float mid_hit_pct = n_mid == 0 ? na : (float(mid_hits) / float(2 * n_mid)) * 100.0
         if not f_near_any(st.or_mid, tac_ys, suppress_thr)
-            PDL.f_draw_stat_line(ds, st.or_start_bar, st.or_mid, ln_end, color.new(mid_line_color, 20), "Dashed", i_line_width_secondary)
-            f_push_label(lbl_reg, st.or_mid, "Midpoint (" + STL.f_pct_fmt(mid_hit_pct) + ")", stat_label_color, stat_label_x)
+            PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, st.or_mid, ln_end, color.new(mid_line_color, 20), "Dashed", i_line_width_secondary, "Midpoint (" + STL.f_pct_fmt(mid_hit_pct) + ")", stat_label_color, stat_label_x)
 
     // Render MFE histogram as a profile-like bell curve.
     // Y uses percentile bands from the selected percentile window.
@@ -945,39 +931,31 @@ f_render_range(int idx) =>
             // Breakout activation level (close that breaks out of range)
             if not na(render_px)
                 float bo_label_y = render_px
-                PDL.f_draw_stat_line(ds, st.or_start_bar, render_px, ln_end, color.new(breakout_activation_color, 0), "Dotted", i_line_width_primary)
-                f_push_label(lbl_reg, bo_label_y, "Breakout Activation " + STL.f_pct_fmt(0), color.new(breakout_activation_color, inactive_alpha), phase2_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, bo_label_y, ln_end, color.new(breakout_activation_color, 0), "Dotted", i_line_width_primary, "Breakout Activation " + STL.f_pct_fmt(0), color.new(breakout_activation_color, inactive_alpha), phase2_label_x)
 
             // Pullback activation level (P25 MAE from breakout activation)
             float pb_px = array.get(phase2_pullback_price, idx)
             if not na(pb_px)
                 float pb_label_y = pb_px
-                PDL.f_draw_stat_line(ds, st.or_start_bar, pb_px, ln_end, color.new(pullback_activation_color, 0), "Dashed", i_line_width_primary)
-                f_push_label(lbl_reg, pb_label_y, "Pullback Activation P25 MAE", color.new(pullback_activation_color, inactive_alpha), phase2_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, pb_label_y, ln_end, color.new(pullback_activation_color, 0), "Dashed", i_line_width_primary, "Pullback Activation P25 MAE", color.new(pullback_activation_color, inactive_alpha), phase2_label_x)
 
             // Core directional lines
             if not na(y_cash)
                 float y_cash_label = y_cash
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_cash, ln_end, color.new(bo_cashflow_color, inactive_alpha), "Dotted", i_line_width_secondary)
-                f_push_label(lbl_reg, y_cash_label, "BO Cashflow P20 (MFE from BO) " + STL.f_pct_fmt(p20_bo), color.new(bo_cashflow_color, inactive_alpha), phase2_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_cash_label, ln_end, color.new(bo_cashflow_color, inactive_alpha), "Dotted", i_line_width_secondary, "BO Cashflow P20 (MFE from BO) " + STL.f_pct_fmt(p20_bo), color.new(bo_cashflow_color, inactive_alpha), phase2_label_x)
             if not na(y_confirm)
                 float y_confirm_label = y_confirm
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_confirm, ln_end, color.new(bo_confirm_color, inactive_alpha), "Dashed", i_line_width_primary)
-                f_push_label(lbl_reg, y_confirm_label, "BO Confirm P75 (Fake MFE) " + STL.f_pct_fmt(f75), color.new(bo_confirm_color, inactive_alpha), phase2_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_confirm_label, ln_end, color.new(bo_confirm_color, inactive_alpha), "Dashed", i_line_width_primary, "BO Confirm P75 (Fake MFE) " + STL.f_pct_fmt(f75), color.new(bo_confirm_color, inactive_alpha), phase2_label_x)
             if not na(y_pivot)
                 float y_pivot_label = y_pivot
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_pivot, ln_end, color.new(pivot_color, inactive_alpha), "Solid", i_line_width_primary)
-                f_push_label(lbl_reg, y_pivot_label, "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(f50), color.new(pivot_color, inactive_alpha), phase2_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_pivot_label, ln_end, color.new(pivot_color, inactive_alpha), "Solid", i_line_width_primary, "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(f50), color.new(pivot_color, inactive_alpha), phase2_label_x)
             if not na(y_rev90)
                 float y_rev90_label = y_rev90
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_rev90, ln_end, color.new(max_reversal_color, inactive_alpha), "Dotted", i_line_width_secondary)
-                f_push_label(lbl_reg, y_rev90_label, "Max Reversal P90 (Fake MAE) " + STL.f_pct_fmt(rev_p90), color.new(max_reversal_color, inactive_alpha), phase2_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_rev90_label, ln_end, color.new(max_reversal_color, inactive_alpha), "Dotted", i_line_width_secondary, "Max Reversal P90 (Fake MAE) " + STL.f_pct_fmt(rev_p90), color.new(max_reversal_color, inactive_alpha), phase2_label_x)
 
             // Shared PB/BO invalidation line — single merged label
             if not na(y_inv)
-                PDL.f_draw_stat_line(ds, st.or_start_bar, y_inv, ln_end, color.new(invalidation_line_color, inactive_alpha), "Solid", i_line_width_primary)
-                float y_inv_label = y_inv
-                f_push_label(lbl_reg, y_inv_label, "PB | BO Invalidation P80 (BO MAE) " + STL.f_pct_fmt(mae_p80), color.new(invalidation_line_color, inactive_alpha), phase2_label_x)
+                PDL.f_draw_labeled_stat_line(ds, lbl_reg, st.or_start_bar, y_inv, ln_end, color.new(invalidation_line_color, inactive_alpha), "Solid", i_line_width_primary, "PB | BO Invalidation P80 (BO MAE) " + STL.f_pct_fmt(mae_p80), color.new(invalidation_line_color, inactive_alpha), phase2_label_x)
 
             if i_show_debug and not pb_armed
                 PDL.f_draw_stat_label(ds, phase2_label_x, render_side == 1 ? st.or_high : st.or_low, "PB not armed", color.new(pb_not_armed_color, 20), "left", "tiny")

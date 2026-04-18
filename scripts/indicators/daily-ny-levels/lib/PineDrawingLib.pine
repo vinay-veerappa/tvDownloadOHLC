@@ -111,6 +111,11 @@ export f_draw_stat_label(PineDrawingState ds, int x, float y, string txt, color 
     array.push(ds.labels, lb)
     lb
 
+// Semantic helper: draw a stat line and enqueue its right-edge label in the shared registry.
+export f_draw_labeled_stat_line(PineDrawingState ds, LabelRegistry lr, int x1, float y, int x2, color line_clr, string line_style, int line_width, string label_text, color label_clr, int label_x) =>
+    f_draw_stat_line(ds, x1, y, x2, line_clr, line_style, line_width)
+    f_label_registry_push(lr, y, label_text, label_clr, label_x)
+
 export f_label_registry_draw_merged(PineDrawingState ds, LabelRegistry lr, float merge_thr, string label_size) =>
     int n_labels = math.min(array.size(lr.ys), math.min(array.size(lr.texts), math.min(array.size(lr.colors), array.size(lr.xs))))
     if n_labels > 0
