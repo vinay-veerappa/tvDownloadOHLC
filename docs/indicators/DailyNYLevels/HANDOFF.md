@@ -46,14 +46,17 @@ VISUAL_SYSTEM.md (base layer)
 
 ---
 
-## 3. Current state (as of initial draft)
+## 3. Current state (as of 2026-04-18)
 
 ### 3.1 What exists
 
 - Full set of design documents (this folder)
-- One published Pine library: `vveerappa/PineDrawingLib/4` — thin and predates this architecture. Considered legacy.
-- Business-logic libraries published: `RangeSessionLib/6`, `StatsLib/2` — referenced for computation but outside the drawing system's scope.
-- Six reference Pine indicators (source shared during design) — not yet migrated to the new architecture:
+- Business-logic libraries published and active: `RangeSessionLib/6`, `StatsLib/2`
+- Rendering library published and active: `vveerappa/PineDrawingLib/4`
+- Core refactor phases for Daily NY Levels are implemented in code (Phase 1 modularization, Phase 2 directional overlay, Phase 3 label-registry extraction)
+- `DailyNYLevelsAnalytics.pine` uses library-backed label registry and semantic helpers for repeated stat-line + label flows
+- Manual chart parity validation remains pending for full Phase 3 sign-off (right-edge anchors, merge/suppress behavior, lifecycle drift checks)
+- Remaining reference Pine indicators still pending migration to the new architecture:
   - Daily NY Levels v6
   - MFE Tracker (Pine 4.1)
   - MacroDealerLevels
@@ -65,17 +68,17 @@ VISUAL_SYSTEM.md (base layer)
 
 ### 3.2 What doesn't exist yet
 
-- `PineDrawingCore v3` — not published
-- Any of the `PineDrawing{Family}` libraries — not published
+- `PineDrawingCore v3` and split `PineDrawing{Family}` libraries — not published
 - Any of the NT8 libraries — not started (zero existing NT8 code)
-- Migrated versions of any indicator — all indicators still use direct primitive calls
+- Fully template-catalog-driven v3 migration for any indicator (Daily NY Levels is partially migrated but still on the monolithic `PineDrawingLib` path)
 
 ### 3.3 Starting points for future work
 
 **If migrating the first indicator:**
-1. Publish `PineDrawingCore v3` first (it's a dependency of everything else)
-2. Then publish `PineDrawingHorizontalLevels v3` and `PineDrawingZones v3` and `PineDrawingTables v3`
-3. Then migrate Daily NY Levels to v7 following `INDICATORS/daily_ny_levels.md` bindings and `LIBRARY_ARCHITECTURE.md §8` migration steps
+1. Close Phase 3 runtime parity checklist in `PHASE3_VALIDATION.md` on live charts
+2. Publish `PineDrawingCore v3` first (dependency of everything else)
+3. Publish `PineDrawingHorizontalLevels v3`, `PineDrawingZones v3`, and `PineDrawingTables v3`
+4. Complete Daily NY Levels v7 migration using `INDICATORS/daily_ny_levels.md` bindings and `LIBRARY_ARCHITECTURE.md §8`
 
 **If starting NT8 work:**
 1. Re-read `LIBRARY_ARCHITECTURE.md §5` (NT8 namespace structure + known limitations)
@@ -194,4 +197,5 @@ Keep this document short enough that it can be read in 5 minutes. It's the quick
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2026-04-18 | Updated status to reflect implemented Phase 1/2/3 code work, active `PineDrawingLib/4` usage, and remaining manual parity + v3 split-library milestones. |
 | 1.0 | 2026-04-18 | Initial handoff. Covers locked decisions, current state, priority indicator profiles, known gaps, pointers to all documents. |

@@ -57,11 +57,12 @@ The result: Asia session highs look the same across every indicator. Invalidatio
 
 ---
 
-## Status (as of initial draft)
+## Status (as of 2026-04-18)
 
-- Design documents: **complete** (all 7 documents drafted)
-- Pine libraries (Core + family): **not yet published**
-- Indicator migrations: **not yet started** (Daily NY Levels is the first target)
+- Design documents: **complete**
+- Daily NY Levels implementation phases: **in progress with code landed** (Phase 1 + Phase 2 implemented, Phase 3 extraction implemented with manual parity checks pending)
+- Active Pine library path: **`PineDrawingLib/4` + `RangeSessionLib/6` + `StatsLib/2`**
+- Core/family v3 split libraries: **not yet published**
 - NT8 implementation: **design target only**, no code yet
 - Hit-tracking infrastructure: **out of scope** for this system, separate future module
 
@@ -85,4 +86,5 @@ When you want to:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2026-04-18 | Refreshed project status to reflect implemented Daily NY Levels phases and remaining parity + v3 split-library milestones. |
 | 1.0 | 2026-04-18 | Initial document set. Complete design coverage for the visual system, template catalog, library architecture, and per-indicator profiling workflow. |

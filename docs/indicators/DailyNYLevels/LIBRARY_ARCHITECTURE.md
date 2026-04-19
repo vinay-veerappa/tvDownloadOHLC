@@ -272,19 +272,20 @@ Indicators import this only when using these specialized templates.
 
 ---
 
-## 4. Current state (Pine v2)
+## 4. Current state (Pine transitional path)
 
-The currently-published `PineDrawingLib/2` is thin. It provides basic primitives and collision helpers but does not yet implement the full layered architecture. Migration is in progress.
+The currently active production path is `vveerappa/PineDrawingLib/4` together with `RangeSessionLib/6` and `StatsLib/2`. This remains a transitional monolithic drawing library (not the final Core + family split), but it now carries more extracted behavior than the original v2 baseline. Migration is in progress.
 
-### 4.1 What v2 has
+### 4.1 What the current monolithic path has
 
-Published on TradingView under `vveerappa/PineDrawingLib/2`:
+Published on TradingView under `vveerappa/PineDrawingLib/4` (incremental evolution of the prior v2 baseline):
 
 - Basic primitive wrappers with tag support
-- Partial collision helpers (`f_near_any`)
-- Some style constants
+- Collision helpers and label-registry push/merge APIs used by `DailyNYLevelsAnalytics.pine`
+- Semantic helper APIs for repeated stat-line + label flows
+- Some style constants and utilities
 
-### 4.2 What v2 does not have
+### 4.2 What the current monolithic path still does not have
 
 - No theme resolver (indicators handle theme themselves)
 - No display profile concept
@@ -294,7 +295,7 @@ Published on TradingView under `vveerappa/PineDrawingLib/2`:
 - No semantic renderers (indicators call primitives directly)
 - No split into family libraries
 
-### 4.3 Migration to v3
+### 4.3 Migration to v3 split libraries
 
 v3 is a breaking major version. It:
 
@@ -302,7 +303,7 @@ v3 is a breaking major version. It:
 - Introduces layered API
 - Follows the template catalog as the stable contract
 
-Old indicators continue to work against v2 until migrated. Migration is per-indicator, not atomic.
+Old indicators continue to work against the monolithic `PineDrawingLib` path until migrated. Migration is per-indicator, not atomic.
 
 ---
 
