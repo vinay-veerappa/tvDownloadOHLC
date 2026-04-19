@@ -1,20 +1,47 @@
 //@version=6
-library("PineDrawingComposites")
+library("PineDrawingComposites", overlay=true)
 
-// NOTE: This import path is the intended published dependency once Core is published.
-// Local workspace references cannot be imported directly by Pine libraries.
+// ============================================================================
+// PineDrawingComposites v1.0 — Composite visualization helpers
+// ============================================================================
+// Depends on: PineDrawingCore/1, PineDrawingZones/1, PineDrawingVerticalMarkers/1
+// Purpose: Higher-level composite renderers combining multiple families for
+//          histograms, time distributions, and advanced multi-component visuals
+// ============================================================================
+
 import vveerappa/PineDrawingCore/1 as Core
 import vveerappa/PineDrawingZones/1 as Zones
 import vveerappa/PineDrawingVerticalMarkers/1 as VMarks
 
-// Composite helper for one histogram bucket rendered as a filled band.
+/// Draw a single histogram bucket (histogram bar) using zone rendering.
+/// Convenience wrapper for volatility histograms and price distribution visualizations.
+/// Parameters:
+///   - ds: PineDrawingState to track the box
+///   - anchor: Left bar index
+///   - top_price, bottom_price: Price range for the bucket
+///   - width_bars: Bucket width in bars
+///   - clr: Fill color
+///   - transp: Transparency (0-100)
 export f_draw_histogram_bucket(Core.PineDrawingState ds, int anchor, float top_price, float bottom_price, int width_bars, color clr, int transp) =>
     Zones.f_draw_hist_band(ds, anchor, top_price, bottom_price, width_bars, clr, transp)
 
-// Composite helper for a time-distribution segment.
+/// Draw a time-distribution segment (horizontal time-volume rectangle).
+/// Composite wrapper for session-based activity/volume distribution.
+/// Parameters:
+///   - ds: PineDrawingState to track the box
+///   - x_left, x_right: Bar index range (time segment)
+///   - y_top, y_bottom: Price range
+///   - clr: Fill color
 export f_draw_time_distribution_segment(Core.PineDrawingState ds, int x_left, int x_right, float y_top, float y_bottom, color clr) =>
     Zones.f_draw_time_bar(ds, x_left, x_right, y_top, y_bottom, clr)
 
-// Composite helper for a vertical statistic marker inside a distribution.
+/// Draw a vertical statistic marker inside a distribution (vertical line segment).
+/// Used for marking mean, median, or peak within time/volume distributions.
+/// Parameters:
+///   - ds: PineDrawingState to track the line
+///   - x: Bar index
+///   - y_top, y_bottom: Price range
+///   - clr: Line color
+///   - style: "Solid", "Dashed", "Dotted"
 export f_draw_distribution_stat_marker(Core.PineDrawingState ds, int x, float y_top, float y_bottom, color clr, string style) =>
     VMarks.f_draw_vline(ds, x, y_top, y_bottom, clr, style)

@@ -56,6 +56,7 @@ VISUAL_SYSTEM.md (base layer)
 - Core refactor phases for Daily NY Levels are implemented in code (Phase 1 modularization, Phase 2 directional overlay, Phase 3 label-registry extraction)
 - `DailyNYLevelsAnalytics.pine` uses library-backed label registry and semantic helpers for repeated stat-line + label flows
 - Manual chart parity validation remains pending for full Phase 3 sign-off (right-edge anchors, merge/suppress behavior, lifecycle drift checks)
+- v3 split-library scaffolds are now present locally under `scripts/indicators/daily-ny-levels/lib/` (checkpoint commit `127fa368`), including Core + family draft files and import-migration checklists
 - Remaining reference Pine indicators still pending migration to the new architecture:
   - Daily NY Levels v6
   - MFE Tracker (Pine 4.1)
@@ -68,9 +69,9 @@ VISUAL_SYSTEM.md (base layer)
 
 ### 3.2 What doesn't exist yet
 
-- `PineDrawingCore v3` and split `PineDrawing{Family}` libraries — not published
+- `PineDrawingCore v3` and split `PineDrawing{Family}` libraries — not published yet (local draft scaffolds exist)
 - Any of the NT8 libraries — not started (zero existing NT8 code)
-- Fully template-catalog-driven v3 migration for any indicator (Daily NY Levels is partially migrated but still on the monolithic `PineDrawingLib` path)
+- Fully template-catalog-driven v3 migration for any indicator (Daily NY Levels is partially migrated and still executes on the monolithic `PineDrawingLib` path)
 
 ### 3.3 Starting points for future work
 
@@ -197,5 +198,6 @@ Keep this document short enough that it can be read in 5 minutes. It's the quick
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2 | 2026-04-18 | Added v3 split-library scaffold checkpoint status (`127fa368`) and clarified that split libraries exist locally but are not published yet. |
 | 1.1 | 2026-04-18 | Updated status to reflect implemented Phase 1/2/3 code work, active `PineDrawingLib/4` usage, and remaining manual parity + v3 split-library milestones. |
 | 1.0 | 2026-04-18 | Initial handoff. Covers locked decisions, current state, priority indicator profiles, known gaps, pointers to all documents. |

@@ -1,14 +1,34 @@
 //@version=6
-library("PineDrawingVerticalMarkers")
+library("PineDrawingVerticalMarkers", overlay=true)
 
-// NOTE: This import path is the intended published dependency once Core is published.
-// Local workspace references cannot be imported directly by Pine libraries.
+// ============================================================================
+// PineDrawingVerticalMarkers v1.0 — Vertical line semantic renderers
+// ============================================================================
+// Depends on: PineDrawingCore/1
+// Purpose: Semantic renderers for vertical reference lines (session separators,
+//          event markers, time-based anchors)
+// ============================================================================
+
 import vveerappa/PineDrawingCore/1 as Core
 
-// Vertical reference line semantic renderer.
+/// Draw a vertical reference line semantic wrapper.
+/// Used for session boundaries, time-of-day markers, and event anchors.
+/// Parameters:
+///   - ds: PineDrawingState to track the line
+///   - x: Bar index
+///   - y_top, y_bot: Price range
+///   - clr: Line color
+///   - style: "Solid", "Dashed", "Dotted"
 export f_draw_vline(Core.PineDrawingState ds, int x, float y_top, float y_bot, color clr, string style) =>
     Core.f_draw_vline(ds, x, y_top, y_bot, clr, style)
 
-// Day/session separator semantic renderer.
+/// Draw a day/session separator line (extends both directions, full vertical extent).
+/// Convenience wrapper for session boundary and day-break visualization.
+/// Parameters:
+///   - bar_idx: Bar index for the separator
+///   - price_hi, price_lo: Price range
+///   - clr: Line color
+///   - style: "Solid", "Dashed", "Dotted"
+///   - width: Line width (1-5)
 export f_draw_day_separator(int bar_idx, float price_hi, float price_lo, color clr, string style, int width) =>
     Core.f_draw_day_separator(bar_idx, price_hi, price_lo, clr, style, width)

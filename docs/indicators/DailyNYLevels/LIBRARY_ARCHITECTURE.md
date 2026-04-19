@@ -285,6 +285,12 @@ Published on TradingView under `vveerappa/PineDrawingLib/4` (incremental evoluti
 - Semantic helper APIs for repeated stat-line + label flows
 - Some style constants and utilities
 
+In-repo v3 scaffold checkpoint (not published yet):
+
+- Local draft `PineDrawingCore.pine`
+- Local draft family files: `PineDrawingHorizontalLevels.pine`, `PineDrawingZones.pine`, `PineDrawingTables.pine`, `PineDrawingVerticalMarkers.pine`, `PineDrawingMarkers.pine`, `PineDrawingComposites.pine`, `PineDrawingSpecialized.pine`
+- Local migration aids: `SPLIT_MIGRATION_MAP.md`, `ANALYTICS_IMPORT_MIGRATION_CHECKLIST.md`
+
 ### 4.2 What the current monolithic path still does not have
 
 - No theme resolver (indicators handle theme themselves)
@@ -293,7 +299,7 @@ Published on TradingView under `vveerappa/PineDrawingLib/4` (incremental evoluti
 - No label registry (indicators handle collision ad-hoc)
 - No format-string interpreter (labels built with string concatenation)
 - No semantic renderers (indicators call primitives directly)
-- No split into family libraries
+- No published split family libraries yet (split files currently exist only as local draft scaffolds)
 
 ### 4.3 Migration to v3 split libraries
 

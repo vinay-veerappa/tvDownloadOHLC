@@ -1,14 +1,44 @@
 //@version=6
-library("PineDrawingMarkers")
+library("PineDrawingMarkers", overlay=true)
 
-// NOTE: This import path is the intended published dependency once Core is published.
-// Local workspace references cannot be imported directly by Pine libraries.
+// ============================================================================
+// PineDrawingMarkers v1.0 — Text marker and registry-backed label helpers
+// ============================================================================
+// Depends on: PineDrawingCore/1
+// Purpose: Semantic renderers for text markers (annotations, annotations) and
+//          registry-backed marker enqueue for collision-free placement
+// ============================================================================
+
 import vveerappa/PineDrawingCore/1 as Core
 
-// Text marker renderer (label-based marker abstraction).
+/// Draw a text marker (label-based) semantic wrapper.
+/// Immediate rendering without collision resolution (use f_enqueue_text_marker
+/// with registry for collision-free placement).
+/// Parameters:
+///   - ds: PineDrawingState to track the label
+///   - x: Bar index
+///   - y: Price level
+///   - text_value: Marker text
+///   - text_color: Text color
+///   - style: Anchor style ("left", "right", "up", "down", "center")
+///   - size_token: Size ("Tiny", "Small", "Normal", "Large", "Huge")
 export f_draw_text_marker(Core.PineDrawingState ds, int x, float y, string text_value, color text_color, string style, string size_token) =>
     Core.f_draw_stat_label(ds, x, y, text_value, text_color, style, size_token)
 
-// Registry-backed marker enqueue helper.
+/// Enqueue a text marker into the label registry for collision-free placement.
+/// Supports merge strategies (merge, stagger, hide, off) for smart label positioning.
+/// Parameters:
+///   - lr: LabelRegistry for deferred rendering
+///   - y: Price level
+///   - text_value: Marker text
+///   - text_color: Text color
+///   - x: Bar index
+///   - strategy: "merge", "stagger", "hide", or "off"
+///   - priority: Render priority (higher first)
+///   - merge_group: Group constraint for merges (empty = unconstrained)
+///   - style: Anchor style ("left", "right", "up", "down", "center")
+///   - size_token: Size ("Tiny", "Small", "Normal", "Large", "Huge")
+///   - mode: "Label" (draw) or "None" (skip)
+///   - tooltip_value: Tooltip text (future support)
 export f_enqueue_text_marker(Core.LabelRegistry lr, float y, string text_value, color text_color, int x, string strategy, int priority, string merge_group, string style, string size_token, string mode, string tooltip_value) =>
     Core.f_label_registry_push_ex(lr, y, text_value, text_color, x, strategy, priority, merge_group, style, size_token, mode, tooltip_value)

@@ -1,15 +1,40 @@
 //@version=6
-library("PineDrawingHorizontalLevels")
+library("PineDrawingHorizontalLevels", overlay=true)
 
-// NOTE: This import path is the intended published dependency once Core is published.
-// Local workspace references cannot be imported directly by Pine libraries.
+// ============================================================================
+// PineDrawingHorizontalLevels v1.0 — Horizontal stat-line semantic renderers
+// ============================================================================
+// Depends on: PineDrawingCore/1
+// Purpose: Semantic renderers for horizontal price levels (support, resistance,
+//          daily highs/lows, opening ranges, etc.)
+// ============================================================================
+
 import vveerappa/PineDrawingCore/1 as Core
 
-// Generic horizontal stat line semantic renderer.
+/// Draw a horizontal stat line from x1 to x2 at price y.
+/// Parameters:
+///   - ds: PineDrawingState to track the line
+///   - x1, x2: Bar indices (left and right edges)
+///   - y: Price level
+///   - clr: Line color
+///   - style: "Solid", "Dashed", "Dotted"
+///   - width: Line width (1-5)
 export f_draw_stat_line(Core.PineDrawingState ds, int x1, float y, int x2, color clr, string style, int width) =>
     Core.f_draw_line(ds, x1, y, x2, y, clr, style, width)
 
-// Semantic helper: draw a stat line and enqueue its right-edge label in the shared registry.
+/// Draw a horizontal stat line and enqueue a label for registry-based collision resolution.
+/// Combines primitive rendering with label registration for clean label placement.
+/// Parameters:
+///   - ds: PineDrawingState
+///   - lr: LabelRegistry for label collision resolution
+///   - x1, x2: Bar indices for the line
+///   - y: Price level for both line and label
+///   - line_clr: Line color
+///   - line_style: "Solid", "Dashed", "Dotted"
+///   - line_width: Line width (1-5)
+///   - label_text: Label text (e.g., "Resistance")
+///   - label_clr: Label text color
+///   - label_x: Label bar index (usually x2 or x2 + offset)
 export f_draw_labeled_stat_line(Core.PineDrawingState ds, Core.LabelRegistry lr, int x1, float y, int x2, color line_clr, string line_style, int line_width, string label_text, color label_clr, int label_x) =>
     f_draw_stat_line(ds, x1, y, x2, line_clr, line_style, line_width)
     Core.f_label_registry_push(lr, y, label_text, label_clr, label_x)

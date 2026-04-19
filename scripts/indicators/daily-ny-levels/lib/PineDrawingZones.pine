@@ -1,18 +1,45 @@
 //@version=6
-library("PineDrawingZones")
+library("PineDrawingZones", overlay=true)
 
-// NOTE: This import path is the intended published dependency once Core is published.
-// Local workspace references cannot be imported directly by Pine libraries.
+// ============================================================================
+// PineDrawingZones v1.0 — Zone and band semantic renderers
+// ============================================================================
+// Depends on: PineDrawingCore/1
+// Purpose: Semantic renderers for zones (opening ranges, histogram bands,
+//          time-distribution rectangles)
+// ============================================================================
+
 import vveerappa/PineDrawingCore/1 as Core
 
-// Opening-range/session zone renderer.
+/// Draw an opening-range (OR) box semantic wrapper.
+/// Parameters:
+///   - ds: PineDrawingState to track the box
+///   - start_bar, end_bar: Bar index range
+///   - hi, lo: Price range
+///   - clr: Border/fill color
+///   - style: "Solid", "Dashed", "Dotted"
+///   - width: Border width (1-5)
 export f_draw_or_box(Core.PineDrawingState ds, int start_bar, float hi, float lo, int end_bar, color clr, string style, int width) =>
     Core.f_draw_or_box(ds, start_bar, hi, lo, end_bar, clr, style, width)
 
-// Generic vertical price band renderer used by histograms and reversal bands.
+/// Draw a histogram band (vertical price-range filled rectangle) semantic wrapper.
+/// Used for volatility histograms, reversal bands, and price distribution visualization.
+/// Parameters:
+///   - ds: PineDrawingState to track the box
+///   - anchor: Left bar index
+///   - p_top, p_bot: Price range
+///   - width_bars: Band width in bars
+///   - clr: Fill color
+///   - transp: Transparency (0-100)
 export f_draw_hist_band(Core.PineDrawingState ds, int anchor, float p_top, float p_bot, int width_bars, color clr, int transp) =>
     Core.f_draw_hist_band(ds, anchor, p_top, p_bot, width_bars, clr, transp)
 
-// Time-distribution bar renderer.
+/// Draw a time-distribution bar (horizontal filled rectangle) semantic wrapper.
+/// Used for session-time analysis and activity distribution visualization.
+/// Parameters:
+///   - ds: PineDrawingState to track the box
+///   - x_left, x_right: Bar index range
+///   - y_top, y_bot: Price range
+///   - clr: Fill color
 export f_draw_time_bar(Core.PineDrawingState ds, int x_left, int x_right, float y_top, float y_bot, color clr) =>
     Core.f_draw_time_bar(ds, x_left, x_right, y_top, y_bot, clr)

@@ -75,3 +75,12 @@ Phase 3 is considered complete when:
 
 - This phase validates behavior parity, not feature expansion.
 - Canonical-template enforcement remains soft guidance by design for this stage.
+
+## 5. Follow-on checkpoint (v3 split scaffolding)
+
+A post-validation refactor checkpoint introduced local v3 split-library scaffolds without changing runtime imports:
+
+- Commit: `127fa368`
+- Scope: added `PineDrawingCore` + family draft libraries and migration checklists under `scripts/indicators/daily-ny-levels/lib/`
+- Runtime impact: none (indicator still imports `vveerappa/PineDrawingLib/4` until split libraries are published)
+

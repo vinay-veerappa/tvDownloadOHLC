@@ -1,35 +1,51 @@
 //@version=6
-library("PineDrawingCore")
+library("PineDrawingCore", overlay=true)
 
-// Core drawing state shared by all family libraries.
+// ============================================================================
+// PineDrawingCore v1.0 — Foundation layer for drawing and label management
+// ============================================================================
+// Provides: Core types, lifecycle management, label registry with collision
+//           resolution, and primitive drawing wrappers.
+// Purpose: Shared foundation for all PineDrawing family libraries
+//          (HorizontalLevels, Zones, Tables, VerticalMarkers, Markers, etc.)
+// ============================================================================
+
+/// Core drawing state managing all chart objects (boxes, lines, labels).
+/// Supports lifecycle reset via f_clear_all() to clean up previous cycle.
 export type PineDrawingState
-    array<box> boxes
-    array<line> lines
-    array<label> labels
+    array<box> boxes      // Boxes: OR zones, histogram bands, time bars
+    array<line> lines     // Lines: stat lines, vlines, day separators
+    array<label> labels   // Labels: stat labels, markers, registered entries
 
-// Per-cycle label registry used by semantic renderers.
+/// Per-cycle label registry for collision-free label placement.
+/// Supports merge strategies: "merge" (combine overlaps), "stagger" (offset),
+/// "hide" (suppress overlaps), or "off" (always draw).
 export type LabelRegistry
-    array<float> ys
-    array<string> texts
-    array<color> colors
-    array<int> xs
-    array<string> strategies
-    array<int> priorities
-    array<string> merge_groups
-    array<string> label_styles
-    array<string> label_sizes
-    array<string> label_modes
-    array<string> tooltips
+    array<float> ys              // Y-coordinates (prices)
+    array<string> texts          // Label text content
+    array<color> colors          // Label text colors
+    array<int> xs                // X-coordinates (bar indices)
+    array<string> strategies     // Merge strategy per label
+    array<int> priorities        // Render priority (higher first)
+    array<string> merge_groups   // Group constraint for merges
+    array<string> label_styles   // "left", "right", "up", "down", "center"
+    array<string> label_sizes    // "Tiny", "Small", "Normal", "Large", "Huge"
+    array<string> label_modes    // "Label", "None" (display mode)
+    array<string> tooltips       // Tooltip text (future support)
 
+/// Allocate a new PineDrawingState with empty arrays.
 export f_new_drawing_state() =>
     PineDrawingState.new(array.new_box(0), array.new_line(0), array.new_label(0))
 
+/// Allocate a new LabelRegistry with empty arrays.
 export f_new_label_registry() =>
     LabelRegistry.new(array.new_float(0), array.new_string(0), array.new_color(0), array.new_int(0), array.new_string(0), array.new_int(0), array.new_string(0), array.new_string(0), array.new_string(0), array.new_string(0), array.new_string(0))
 
+/// Lifecycle: Create a new label registry (alias for f_new_label_registry()).
 export f_label_registry_begin() =>
     f_new_label_registry()
 
+/// Clear all entries from a label registry (retain object; reset arrays).
 export f_label_registry_clear(LabelRegistry lr) =>
     array.clear(lr.ys)
     array.clear(lr.texts)
@@ -43,9 +59,18 @@ export f_label_registry_clear(LabelRegistry lr) =>
     array.clear(lr.label_modes)
     array.clear(lr.tooltips)
 
+/// Lifecycle: Reset a label registry (alias for f_label_registry_clear()).
 export f_label_registry_reset(LabelRegistry lr) =>
     f_label_registry_clear(lr)
 
+/// Enqueue a label entry with full control over all attributes.
+/// Parameters:
+///   - strategy: "merge" (combine overlaps), "stagger" (offset), "hide" (suppress), "off" (always draw)
+///   - priority: Higher values render first (recommended: 0-100)
+///   - merge_group: Group constraint; empty = any, non-empty = match required
+///   - label_style: Anchor style ("left", "right", "up", "down", "center")
+///   - label_size: Size token ("Tiny", "Small", "Normal", "Large", "Huge")
+///   - label_mode: "Label" (draw) or "None" (skip)
 export f_label_registry_push_ex(LabelRegistry lr, float y, string text_value, color clr, int x, string strategy, int priority, string merge_group, string label_style, string label_size, string label_mode, string tooltip_value) =>
     array.push(lr.ys, y)
     array.push(lr.texts, text_value)
@@ -59,6 +84,7 @@ export f_label_registry_push_ex(LabelRegistry lr, float y, string text_value, co
     array.push(lr.label_modes, label_mode)
     array.push(lr.tooltips, tooltip_value)
 
+/// Enqueue a label entry with default settings (merge strategy, priority 0, left-aligned).
 export f_label_registry_push(LabelRegistry lr, float y, string text_value, color clr, int x) =>
     f_label_registry_push_ex(lr, y, text_value, clr, x, "merge", 0, "", "left", "", "Label", "")
 
@@ -96,7 +122,14 @@ f_apply_conditionals_for_key(string src, string key, string value) =>
         guard += 1
     out
 
-// Format helper supporting {slot} and {if:slot}...{endif} clauses.
+/// Format a template string by replacing {key} placeholders and {if:key}...{endif} blocks.
+/// - {key} is replaced with the corresponding value (empty string if not found).
+/// - {if:key}...{endif} blocks are retained if value is non-empty, otherwise removed.
+/// Parameters:
+///   - template: Template string with {key} and {if:key} tokens
+///   - keys: Array of key names
+///   - values: Array of replacement values (must match keys length)
+/// Returns: Formatted string with all substitutions applied
 export f_format_template(string template, array<string> keys, array<string> values) =>
     string out = template
     int n = math.min(array.size(keys), array.size(values))
@@ -111,7 +144,12 @@ export f_format_template(string template, array<string> keys, array<string> valu
             out := str.replace_all(out, "{" + k + "}", v)
     out
 
-// Symbol-aware label merge threshold helper.
+/// Compute symbol-aware label merge threshold (in price units).
+/// Micro contracts (NQ, RTY, M2K, CL, GC) have tighter thresholds.
+/// Parameters:
+///   - symbol: Trading symbol (NQ, RTY, ES, etc.)
+///   - mintick: Minimum tick size (from syminfo.mintick)
+/// Returns: Merge threshold in price units
 export f_merge_threshold_for_symbol(string symbol, float mintick) =>
     string s = str.upper(symbol)
     int ticks = str.contains(s, "NQ") ? 40 : str.contains(s, "RTY") ? 10 : str.contains(s, "M2K") ? 10 : str.contains(s, "CL") ? 10 : str.contains(s, "GC") ? 15 : 20
@@ -135,17 +173,26 @@ f_clear_labels(array<label> arr) =>
             label.delete(array.get(arr, i))
     array.clear(arr)
 
+/// Lifecycle: Delete all chart objects (boxes, lines, labels) and reset state.
 export f_clear_all(PineDrawingState ds) =>
     f_clear_boxes(ds.boxes)
     f_clear_lines(ds.lines)
     f_clear_labels(ds.labels)
 
+/// Resolve a string style token to Pine line.style constant.
+/// Parameters:
+///   - s: "Dashed", "Dotted", or (default) "Solid"
+/// Returns: line.style_* constant
 export f_line_style(string s) =>
     switch s
         "Dashed" => line.style_dashed
         "Dotted" => line.style_dotted
         => line.style_solid
 
+/// Resolve a string size token to Pine size constant (for display).
+/// Parameters:
+///   - s: "auto", "tiny", "small", "normal", "large", "huge"
+/// Returns: size.* constant
 export f_display_size(string s) =>
     switch s
         "auto" => size.auto
@@ -156,6 +203,10 @@ export f_display_size(string s) =>
         "huge" => size.huge
         => size.normal
 
+/// Resolve a string size token to Pine size constant (for text labels).
+/// Parameters:
+///   - s: "Tiny", "Small", "Normal", "Large", "Huge"
+/// Returns: size.* constant
 export f_text_size(string s) =>
     switch s
         "Tiny" => size.tiny
@@ -165,6 +216,11 @@ export f_text_size(string s) =>
         "Huge" => size.huge
         => size.normal
 
+/// Resolve a string position token to Pine position constant (for tables).
+/// Parameters:
+///   - s: "Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center",
+///        "Middle Right", "Bottom Left", "Bottom Center", (default) "Bottom Right"
+/// Returns: position.* constant
 export f_table_pos(string s) =>
     switch s
         "Top Left" => position.top_left
@@ -177,22 +233,60 @@ export f_table_pos(string s) =>
         "Bottom Center" => position.bottom_center
         => position.bottom_right
 
-// Primitive wrappers.
+// ============================================================================
+// Primitive drawing wrappers
+// ============================================================================
+
+/// Draw a horizontal line from (x1, y1) to (x2, y2) and track in state.
+/// Parameters:
+///   - ds: PineDrawingState to track the line
+///   - x1, y1: Start coordinates
+///   - x2, y2: End coordinates
+///   - clr: Line color
+///   - style: "Solid", "Dashed", "Dotted"
+///   - width: Line width (1-5)
+/// Returns: Newly created line object
 export f_draw_line(PineDrawingState ds, int x1, float y1, int x2, float y2, color clr, string style, int width) =>
     line ln = line.new(x1, y1, x2, y2, color=clr, style=f_line_style(style), width=width)
     array.push(ds.lines, ln)
     ln
 
+/// Draw an opening-range box (OR zone) and track in state.
+/// Parameters:
+///   - ds: PineDrawingState to track the box
+///   - start_bar, hi, lo, end_bar: Box boundaries (bar indices and prices)
+///   - clr: Border color
+///   - style: "Solid", "Dashed", "Dotted"
+///   - width: Border width (1-5)
+/// Returns: Newly created box object
 export f_draw_or_box(PineDrawingState ds, int start_bar, float hi, float lo, int end_bar, color clr, string style, int width) =>
     box b = box.new(start_bar, hi, end_bar, lo, border_color=clr, bgcolor=color.new(clr, 85), border_style=f_line_style(style), border_width=width)
     array.push(ds.boxes, b)
     b
 
+/// Draw a histogram band (vertical price range) and track in state.
+/// Parameters:
+///   - ds: PineDrawingState to track the box
+///   - anchor: Bar index (left edge)
+///   - p_top, p_bot: Price range
+///   - width_bars: Band width in bars
+///   - clr: Fill color
+///   - transp: Transparency (0-100, higher = more transparent)
+/// Returns: Newly created box object
 export f_draw_hist_band(PineDrawingState ds, int anchor, float p_top, float p_bot, int width_bars, color clr, int transp) =>
     box b = box.new(anchor, p_top, anchor + width_bars, p_bot, border_color=color.new(clr, math.min(transp + 10, 100)), bgcolor=color.new(clr, transp))
     array.push(ds.boxes, b)
     b
 
+/// Draw a statistic label and track in state.
+/// Parameters:
+///   - ds: PineDrawingState to track the label
+///   - x, y: Label position (bar index and price)
+///   - txt: Label text
+///   - txt_clr: Text color
+///   - lbl_style: Anchor style ("left", "right", "up", "down", "center")
+///   - sz: Size token ("Tiny", "Small", "Normal", "Large", "Huge")
+/// Returns: Newly created label object
 export f_draw_stat_label(PineDrawingState ds, int x, float y, string txt, color txt_clr, string lbl_style, string sz) =>
     label_style = lbl_style == "center" ? label.style_none : lbl_style == "right" ? label.style_label_right : lbl_style == "up" ? label.style_label_up : lbl_style == "down" ? label.style_label_down : label.style_label_left
     label lb = label.new(x, y, txt, color=color.new(color.black, 100), textcolor=txt_clr, style=label_style, size=f_display_size(sz))
@@ -230,6 +324,15 @@ f_draw_registry_entry(PineDrawingState ds, LabelRegistry lr, int idx, int x_over
         string size_final = str.length(size_token) > 0 ? size_token : default_label_size
         f_draw_stat_label(ds, x_override, y, text_override, c, style, size_final)
 
+/// Render all labels in the registry with collision resolution.
+/// Strategy-aware: "merge" combines overlaps, "stagger" offsets, "hide" suppresses,
+/// "off" always draws. Priority-based rendering (higher first).
+/// Parameters:
+///   - ds: PineDrawingState to render into
+///   - lr: LabelRegistry with enqueued entries
+///   - merge_thr: Merge threshold (price units)
+///   - default_label_size: Fallback label size ("Normal", "Small", etc.)
+///   - column_step_bars: Bar offset for staggered labels
 export f_label_registry_draw(PineDrawingState ds, LabelRegistry lr, float merge_thr, string default_label_size, int column_step_bars) =>
     int n = f_label_registry_size(lr)
     if n > 0
@@ -272,22 +375,47 @@ export f_label_registry_draw(PineDrawingState ds, LabelRegistry lr, float merge_
                         array.set(used, j, true)
                 f_draw_registry_entry(ds, lr, i, base_x, combined, default_label_size)
 
+/// Render all labels and clear the registry (single-call lifecycle).
 export f_label_registry_flush(PineDrawingState ds, LabelRegistry lr, float merge_thr, string default_label_size, int column_step_bars) =>
     f_label_registry_draw(ds, lr, merge_thr, default_label_size, column_step_bars)
     f_label_registry_clear(lr)
 
+/// Render all labels with default 2-bar stagger step (convenience wrapper).
 export f_label_registry_draw_merged(PineDrawingState ds, LabelRegistry lr, float merge_thr, string label_size) =>
     f_label_registry_draw(ds, lr, merge_thr, label_size, 2)
 
+/// Draw a time-distribution bar (horizontal filled rectangle) and track in state.
+/// Parameters:
+///   - ds: PineDrawingState to track the box
+///   - x_left, x_right: Bar index range
+///   - y_top, y_bot: Price range
+///   - clr: Fill color
+/// Returns: Newly created box object
 export f_draw_time_bar(PineDrawingState ds, int x_left, int x_right, float y_top, float y_bot, color clr) =>
     box b = box.new(x_left, y_top, x_right, y_bot, border_color=na, bgcolor=clr)
     array.push(ds.boxes, b)
     b
 
+/// Draw a vertical line and track in state.
+/// Parameters:
+///   - ds: PineDrawingState to track the line
+///   - x: Bar index
+///   - y_top, y_bot: Price range
+///   - clr: Line color
+///   - style: "Solid", "Dashed", "Dotted"
+/// Returns: Newly created line object
 export f_draw_vline(PineDrawingState ds, int x, float y_top, float y_bot, color clr, string style) =>
     line ln = line.new(x, y_top, x, y_bot, color=clr, style=f_line_style(style))
     array.push(ds.lines, ln)
     ln
 
+/// Draw a day/session separator line (extends both directions, bar_index-based).
+/// Parameters:
+///   - bar_idx: Bar index for the separator
+///   - price_hi, price_lo: Price range
+///   - clr: Line color
+///   - style: "Solid", "Dashed", "Dotted"
+///   - width: Line width (1-5)
+/// Returns: Newly created line object
 export f_draw_day_separator(int bar_idx, float price_hi, float price_lo, color clr, string style, int width) =>
     line.new(bar_idx, price_hi, bar_idx, price_lo, xloc=xloc.bar_index, color=clr, style=f_line_style(style), width=width, extend=extend.both)

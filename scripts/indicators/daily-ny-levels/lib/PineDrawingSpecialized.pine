@@ -1,12 +1,31 @@
 //@version=6
-library("PineDrawingSpecialized")
+library("PineDrawingSpecialized", overlay=true)
 
-// NOTE: This import path is the intended published dependency once Core is published.
-// Local workspace references cannot be imported directly by Pine libraries.
+// ============================================================================
+// PineDrawingSpecialized v1.0 — Specialized/experimental renderers
+// ============================================================================
+// Depends on: PineDrawingCore/1
+// Purpose: Placeholder for indicator-contributed specialized rendering templates
+//          (e.g., scored levels, confidence-weighted lines, advanced composites).
+//          Intentionally minimal until concrete specialized templates are promoted.
+// ============================================================================
+
 import vveerappa/PineDrawingCore/1 as Core
 
-// Specialized level renderer for experimental/indicator-contributed styles.
-// This intentionally stays minimal until a concrete specialized template is promoted.
+/// Draw a scored/confidence level (line + score label) for experimental indicators.
+/// Combines a horizontal stat line with a text label indicating score/confidence.
+/// This is a placeholder template; specialized indicators may enhance or fork.
+/// Parameters:
+///   - ds: PineDrawingState to track objects
+///   - x1, x2: Line bar indices (left and right edges)
+///   - y: Price level
+///   - clr: Line color
+///   - style: "Solid", "Dashed", "Dotted"
+///   - width: Line width (1-5)
+///   - score_text: Score/confidence label text (e.g., "75% Confidence")
+///   - label_x: Label bar index (usually x2 or beyond)
+///   - label_color: Label text color
+///   - label_size: Size token ("Tiny", "Small", "Normal", "Large", "Huge")
 export f_draw_scored_level(Core.PineDrawingState ds, int x1, float y, int x2, color clr, string style, int width, string score_text, int label_x, color label_color, string label_size) =>
     Core.f_draw_line(ds, x1, y, x2, y, clr, style, width)
     Core.f_draw_stat_label(ds, label_x, y, score_text, label_color, "left", label_size)
