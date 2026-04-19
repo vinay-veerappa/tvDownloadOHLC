@@ -1,0 +1,12 @@
+//@version=6
+library("PineDrawingSpecialized")
+
+// NOTE: This import path is the intended published dependency once Core is published.
+// Local workspace references cannot be imported directly by Pine libraries.
+import vveerappa/PineDrawingCore/1 as Core
+
+// Specialized level renderer for experimental/indicator-contributed styles.
+// This intentionally stays minimal until a concrete specialized template is promoted.
+export f_draw_scored_level(Core.PineDrawingState ds, int x1, float y, int x2, color clr, string style, int width, string score_text, int label_x, color label_color, string label_size) =>
+    Core.f_draw_line(ds, x1, y, x2, y, clr, style, width)
+    Core.f_draw_stat_label(ds, label_x, y, score_text, label_color, "left", label_size)

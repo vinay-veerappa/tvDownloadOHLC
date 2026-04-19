@@ -1,0 +1,14 @@
+//@version=6
+library("PineDrawingVerticalMarkers")
+
+// NOTE: This import path is the intended published dependency once Core is published.
+// Local workspace references cannot be imported directly by Pine libraries.
+import vveerappa/PineDrawingCore/1 as Core
+
+// Vertical reference line semantic renderer.
+export f_draw_vline(Core.PineDrawingState ds, int x, float y_top, float y_bot, color clr, string style) =>
+    Core.f_draw_vline(ds, x, y_top, y_bot, clr, style)
+
+// Day/session separator semantic renderer.
+export f_draw_day_separator(int bar_idx, float price_hi, float price_lo, color clr, string style, int width) =>
+    Core.f_draw_day_separator(bar_idx, price_hi, price_lo, clr, style, width)

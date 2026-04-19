@@ -1,0 +1,14 @@
+//@version=6
+library("PineDrawingMarkers")
+
+// NOTE: This import path is the intended published dependency once Core is published.
+// Local workspace references cannot be imported directly by Pine libraries.
+import vveerappa/PineDrawingCore/1 as Core
+
+// Text marker renderer (label-based marker abstraction).
+export f_draw_text_marker(Core.PineDrawingState ds, int x, float y, string text_value, color text_color, string style, string size_token) =>
+    Core.f_draw_stat_label(ds, x, y, text_value, text_color, style, size_token)
+
+// Registry-backed marker enqueue helper.
+export f_enqueue_text_marker(Core.LabelRegistry lr, float y, string text_value, color text_color, int x, string strategy, int priority, string merge_group, string style, string size_token, string mode, string tooltip_value) =>
+    Core.f_label_registry_push_ex(lr, y, text_value, text_color, x, strategy, priority, merge_group, style, size_token, mode, tooltip_value)

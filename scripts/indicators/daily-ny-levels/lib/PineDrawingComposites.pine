@@ -1,0 +1,20 @@
+//@version=6
+library("PineDrawingComposites")
+
+// NOTE: This import path is the intended published dependency once Core is published.
+// Local workspace references cannot be imported directly by Pine libraries.
+import vveerappa/PineDrawingCore/1 as Core
+import vveerappa/PineDrawingZones/1 as Zones
+import vveerappa/PineDrawingVerticalMarkers/1 as VMarks
+
+// Composite helper for one histogram bucket rendered as a filled band.
+export f_draw_histogram_bucket(Core.PineDrawingState ds, int anchor, float top_price, float bottom_price, int width_bars, color clr, int transp) =>
+    Zones.f_draw_hist_band(ds, anchor, top_price, bottom_price, width_bars, clr, transp)
+
+// Composite helper for a time-distribution segment.
+export f_draw_time_distribution_segment(Core.PineDrawingState ds, int x_left, int x_right, float y_top, float y_bottom, color clr) =>
+    Zones.f_draw_time_bar(ds, x_left, x_right, y_top, y_bottom, clr)
+
+// Composite helper for a vertical statistic marker inside a distribution.
+export f_draw_distribution_stat_marker(Core.PineDrawingState ds, int x, float y_top, float y_bottom, color clr, string style) =>
+    VMarks.f_draw_vline(ds, x, y_top, y_bottom, clr, style)

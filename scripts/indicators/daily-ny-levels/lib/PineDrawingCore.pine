@@ -1,0 +1,293 @@
+//@version=6
+library("PineDrawingCore")
+
+// Core drawing state shared by all family libraries.
+export type PineDrawingState
+    array<box> boxes
+    array<line> lines
+    array<label> labels
+
+// Per-cycle label registry used by semantic renderers.
+export type LabelRegistry
+    array<float> ys
+    array<string> texts
+    array<color> colors
+    array<int> xs
+    array<string> strategies
+    array<int> priorities
+    array<string> merge_groups
+    array<string> label_styles
+    array<string> label_sizes
+    array<string> label_modes
+    array<string> tooltips
+
+export f_new_drawing_state() =>
+    PineDrawingState.new(array.new_box(0), array.new_line(0), array.new_label(0))
+
+export f_new_label_registry() =>
+    LabelRegistry.new(array.new_float(0), array.new_string(0), array.new_color(0), array.new_int(0), array.new_string(0), array.new_int(0), array.new_string(0), array.new_string(0), array.new_string(0), array.new_string(0), array.new_string(0))
+
+export f_label_registry_begin() =>
+    f_new_label_registry()
+
+export f_label_registry_clear(LabelRegistry lr) =>
+    array.clear(lr.ys)
+    array.clear(lr.texts)
+    array.clear(lr.colors)
+    array.clear(lr.xs)
+    array.clear(lr.strategies)
+    array.clear(lr.priorities)
+    array.clear(lr.merge_groups)
+    array.clear(lr.label_styles)
+    array.clear(lr.label_sizes)
+    array.clear(lr.label_modes)
+    array.clear(lr.tooltips)
+
+export f_label_registry_reset(LabelRegistry lr) =>
+    f_label_registry_clear(lr)
+
+export f_label_registry_push_ex(LabelRegistry lr, float y, string text_value, color clr, int x, string strategy, int priority, string merge_group, string label_style, string label_size, string label_mode, string tooltip_value) =>
+    array.push(lr.ys, y)
+    array.push(lr.texts, text_value)
+    array.push(lr.colors, clr)
+    array.push(lr.xs, x)
+    array.push(lr.strategies, strategy)
+    array.push(lr.priorities, priority)
+    array.push(lr.merge_groups, merge_group)
+    array.push(lr.label_styles, label_style)
+    array.push(lr.label_sizes, label_size)
+    array.push(lr.label_modes, label_mode)
+    array.push(lr.tooltips, tooltip_value)
+
+export f_label_registry_push(LabelRegistry lr, float y, string text_value, color clr, int x) =>
+    f_label_registry_push_ex(lr, y, text_value, clr, x, "merge", 0, "", "left", "", "Label", "")
+
+f_label_registry_size(LabelRegistry lr) =>
+    int n = array.size(lr.ys)
+    n := math.min(n, array.size(lr.texts))
+    n := math.min(n, array.size(lr.colors))
+    n := math.min(n, array.size(lr.xs))
+    n := math.min(n, array.size(lr.strategies))
+    n := math.min(n, array.size(lr.priorities))
+    n := math.min(n, array.size(lr.merge_groups))
+    n := math.min(n, array.size(lr.label_styles))
+    n := math.min(n, array.size(lr.label_sizes))
+    n := math.min(n, array.size(lr.label_modes))
+    n := math.min(n, array.size(lr.tooltips))
+    n
+
+f_apply_conditionals_for_key(string src, string key, string value) =>
+    string out = src
+    string open_token = "{if:" + key + "}"
+    string close_token = "{endif}"
+    int guard = 0
+    while guard < 50 and str.contains(out, open_token) and str.contains(out, close_token)
+        int p_open = str.pos(out, open_token)
+        int p_close = str.pos(out, close_token)
+        if p_open == -1 or p_close == -1 or p_close < p_open
+            break
+        int content_start = p_open + str.length(open_token)
+        string inner = str.substring(out, content_start, p_close)
+        string replacement = str.length(value) > 0 ? inner : ""
+        string prefix = str.substring(out, 0, p_open)
+        int suffix_start = p_close + str.length(close_token)
+        string suffix = suffix_start < str.length(out) ? str.substring(out, suffix_start, str.length(out)) : ""
+        out := prefix + replacement + suffix
+        guard += 1
+    out
+
+// Format helper supporting {slot} and {if:slot}...{endif} clauses.
+export f_format_template(string template, array<string> keys, array<string> values) =>
+    string out = template
+    int n = math.min(array.size(keys), array.size(values))
+    if n > 0
+        for i = 0 to n - 1
+            string k = array.get(keys, i)
+            string v = array.get(values, i)
+            out := f_apply_conditionals_for_key(out, k, v)
+        for i = 0 to n - 1
+            string k = array.get(keys, i)
+            string v = array.get(values, i)
+            out := str.replace_all(out, "{" + k + "}", v)
+    out
+
+// Symbol-aware label merge threshold helper.
+export f_merge_threshold_for_symbol(string symbol, float mintick) =>
+    string s = str.upper(symbol)
+    int ticks = str.contains(s, "NQ") ? 40 : str.contains(s, "RTY") ? 10 : str.contains(s, "M2K") ? 10 : str.contains(s, "CL") ? 10 : str.contains(s, "GC") ? 15 : 20
+    float(ticks) * mintick
+
+f_clear_boxes(array<box> arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            box.delete(array.get(arr, i))
+    array.clear(arr)
+
+f_clear_lines(array<line> arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            line.delete(array.get(arr, i))
+    array.clear(arr)
+
+f_clear_labels(array<label> arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            label.delete(array.get(arr, i))
+    array.clear(arr)
+
+export f_clear_all(PineDrawingState ds) =>
+    f_clear_boxes(ds.boxes)
+    f_clear_lines(ds.lines)
+    f_clear_labels(ds.labels)
+
+export f_line_style(string s) =>
+    switch s
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+export f_display_size(string s) =>
+    switch s
+        "auto" => size.auto
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+        "huge" => size.huge
+        => size.normal
+
+export f_text_size(string s) =>
+    switch s
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        "Huge" => size.huge
+        => size.normal
+
+export f_table_pos(string s) =>
+    switch s
+        "Top Left" => position.top_left
+        "Top Center" => position.top_center
+        "Top Right" => position.top_right
+        "Middle Left" => position.middle_left
+        "Middle Center" => position.middle_center
+        "Middle Right" => position.middle_right
+        "Bottom Left" => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        => position.bottom_right
+
+// Primitive wrappers.
+export f_draw_line(PineDrawingState ds, int x1, float y1, int x2, float y2, color clr, string style, int width) =>
+    line ln = line.new(x1, y1, x2, y2, color=clr, style=f_line_style(style), width=width)
+    array.push(ds.lines, ln)
+    ln
+
+export f_draw_or_box(PineDrawingState ds, int start_bar, float hi, float lo, int end_bar, color clr, string style, int width) =>
+    box b = box.new(start_bar, hi, end_bar, lo, border_color=clr, bgcolor=color.new(clr, 85), border_style=f_line_style(style), border_width=width)
+    array.push(ds.boxes, b)
+    b
+
+export f_draw_hist_band(PineDrawingState ds, int anchor, float p_top, float p_bot, int width_bars, color clr, int transp) =>
+    box b = box.new(anchor, p_top, anchor + width_bars, p_bot, border_color=color.new(clr, math.min(transp + 10, 100)), bgcolor=color.new(clr, transp))
+    array.push(ds.boxes, b)
+    b
+
+export f_draw_stat_label(PineDrawingState ds, int x, float y, string txt, color txt_clr, string lbl_style, string sz) =>
+    label_style = lbl_style == "center" ? label.style_none : lbl_style == "right" ? label.style_label_right : lbl_style == "up" ? label.style_label_up : lbl_style == "down" ? label.style_label_down : label.style_label_left
+    label lb = label.new(x, y, txt, color=color.new(color.black, 100), textcolor=txt_clr, style=label_style, size=f_display_size(sz))
+    array.push(ds.labels, lb)
+    lb
+
+f_registry_overlap(LabelRegistry lr, int i, int j, float merge_thr) =>
+    math.abs(array.get(lr.ys, j) - array.get(lr.ys, i)) < merge_thr and array.get(lr.xs, j) == array.get(lr.xs, i)
+
+f_registry_can_merge(LabelRegistry lr, int i, int j) =>
+    string gi = array.get(lr.merge_groups, i)
+    string gj = array.get(lr.merge_groups, j)
+    str.length(gi) == 0 or str.length(gj) == 0 or gi == gj
+
+f_pick_next_priority_index(array<bool> used, array<int> priorities) =>
+    int best_idx = -1
+    int best_pri = -1000000
+    int n = math.min(array.size(used), array.size(priorities))
+    if n > 0
+        for i = 0 to n - 1
+            if not array.get(used, i)
+                int p = array.get(priorities, i)
+                if p > best_pri
+                    best_pri := p
+                    best_idx := i
+    best_idx
+
+f_draw_registry_entry(PineDrawingState ds, LabelRegistry lr, int idx, int x_override, string text_override, string default_label_size) =>
+    string mode = array.get(lr.label_modes, idx)
+    if mode != "None"
+        float y = array.get(lr.ys, idx)
+        color c = array.get(lr.colors, idx)
+        string style = array.get(lr.label_styles, idx)
+        string size_token = array.get(lr.label_sizes, idx)
+        string size_final = str.length(size_token) > 0 ? size_token : default_label_size
+        f_draw_stat_label(ds, x_override, y, text_override, c, style, size_final)
+
+export f_label_registry_draw(PineDrawingState ds, LabelRegistry lr, float merge_thr, string default_label_size, int column_step_bars) =>
+    int n = f_label_registry_size(lr)
+    if n > 0
+        array<bool> used = array.new_bool(n, false)
+        for _it = 0 to n - 1
+            int i = f_pick_next_priority_index(used, lr.priorities)
+            if i == -1
+                break
+            string strategy = array.get(lr.strategies, i)
+            int base_x = array.get(lr.xs, i)
+            if strategy == "off"
+                array.set(used, i, true)
+                f_draw_registry_entry(ds, lr, i, base_x, array.get(lr.texts, i), default_label_size)
+            else if strategy == "hide"
+                array.set(used, i, true)
+                for j = 0 to n - 1
+                    if not array.get(used, j) and f_registry_overlap(lr, i, j, merge_thr)
+                        array.set(used, j, true)
+                f_draw_registry_entry(ds, lr, i, base_x, array.get(lr.texts, i), default_label_size)
+            else if strategy == "stagger"
+                array<int> cluster = array.new_int(0)
+                array.push(cluster, i)
+                array.set(used, i, true)
+                for j = 0 to n - 1
+                    if not array.get(used, j) and f_registry_overlap(lr, i, j, merge_thr) and array.get(lr.strategies, j) != "off"
+                        array.push(cluster, j)
+                        array.set(used, j, true)
+                if array.size(cluster) > 0
+                    for cidx = 0 to array.size(cluster) - 1
+                        int ci = array.get(cluster, cidx)
+                        int x_shift = base_x + cidx * column_step_bars
+                        f_draw_registry_entry(ds, lr, ci, x_shift, array.get(lr.texts, ci), default_label_size)
+            else
+                // Default strategy is merge.
+                array.set(used, i, true)
+                string combined = array.get(lr.texts, i)
+                for j = 0 to n - 1
+                    if not array.get(used, j) and f_registry_overlap(lr, i, j, merge_thr) and array.get(lr.strategies, j) == "merge" and f_registry_can_merge(lr, i, j)
+                        combined := combined + " | " + array.get(lr.texts, j)
+                        array.set(used, j, true)
+                f_draw_registry_entry(ds, lr, i, base_x, combined, default_label_size)
+
+export f_label_registry_flush(PineDrawingState ds, LabelRegistry lr, float merge_thr, string default_label_size, int column_step_bars) =>
+    f_label_registry_draw(ds, lr, merge_thr, default_label_size, column_step_bars)
+    f_label_registry_clear(lr)
+
+export f_label_registry_draw_merged(PineDrawingState ds, LabelRegistry lr, float merge_thr, string label_size) =>
+    f_label_registry_draw(ds, lr, merge_thr, label_size, 2)
+
+export f_draw_time_bar(PineDrawingState ds, int x_left, int x_right, float y_top, float y_bot, color clr) =>
+    box b = box.new(x_left, y_top, x_right, y_bot, border_color=na, bgcolor=clr)
+    array.push(ds.boxes, b)
+    b
+
+export f_draw_vline(PineDrawingState ds, int x, float y_top, float y_bot, color clr, string style) =>
+    line ln = line.new(x, y_top, x, y_bot, color=clr, style=f_line_style(style))
+    array.push(ds.lines, ln)
+    ln
+
+export f_draw_day_separator(int bar_idx, float price_hi, float price_lo, color clr, string style, int width) =>
+    line.new(bar_idx, price_hi, bar_idx, price_lo, xloc=xloc.bar_index, color=clr, style=f_line_style(style), width=width, extend=extend.both)

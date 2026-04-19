@@ -1,0 +1,23 @@
+//@version=6
+library("PineDrawingTables")
+
+// NOTE: This import path is the intended published dependency once Core is published.
+// Local workspace references cannot be imported directly by Pine libraries.
+import vveerappa/PineDrawingCore/1 as Core
+
+// Table position resolver delegated to Core token mapping.
+export f_table_pos(string s) =>
+    Core.f_table_pos(s)
+
+// Render a standard header cell.
+export f_draw_header_cell(table t, int col, int row, string text_value, color bg, color text_color, string text_size) =>
+    table.cell(t, col, row, text_value, text_color=text_color, bgcolor=bg, text_size=Core.f_text_size(text_size))
+
+// Render a standard body/value cell.
+export f_draw_value_cell(table t, int col, int row, string text_value, color bg, color text_color, string text_size) =>
+    table.cell(t, col, row, text_value, text_color=text_color, bgcolor=bg, text_size=Core.f_text_size(text_size))
+
+// Render a key/value metric row where column 0 is label and column 1 is value.
+export f_draw_metric_row(table t, int row, string metric_name, string metric_value, color name_bg, color value_bg, color name_color, color value_color, string text_size) =>
+    f_draw_value_cell(t, 0, row, metric_name, name_bg, name_color, text_size)
+    f_draw_value_cell(t, 1, row, metric_value, value_bg, value_color, text_size)

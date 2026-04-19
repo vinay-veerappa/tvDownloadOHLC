@@ -1,0 +1,15 @@
+//@version=6
+library("PineDrawingHorizontalLevels")
+
+// NOTE: This import path is the intended published dependency once Core is published.
+// Local workspace references cannot be imported directly by Pine libraries.
+import vveerappa/PineDrawingCore/1 as Core
+
+// Generic horizontal stat line semantic renderer.
+export f_draw_stat_line(Core.PineDrawingState ds, int x1, float y, int x2, color clr, string style, int width) =>
+    Core.f_draw_line(ds, x1, y, x2, y, clr, style, width)
+
+// Semantic helper: draw a stat line and enqueue its right-edge label in the shared registry.
+export f_draw_labeled_stat_line(Core.PineDrawingState ds, Core.LabelRegistry lr, int x1, float y, int x2, color line_clr, string line_style, int line_width, string label_text, color label_clr, int label_x) =>
+    f_draw_stat_line(ds, x1, y, x2, line_clr, line_style, line_width)
+    Core.f_label_registry_push(lr, y, label_text, label_clr, label_x)
