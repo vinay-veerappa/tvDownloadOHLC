@@ -51,7 +51,7 @@ VISUAL_SYSTEM.md (base layer)
 ### 3.1 What exists
 
 - Full set of design documents (this folder)
-- One published Pine library: `vveerappa/PineDrawingLib/2` — thin and predates this architecture. Considered legacy.
+- One published Pine library: `vveerappa/PineDrawingLib/4` — thin and predates this architecture. Considered legacy.
 - Business-logic libraries published: `RangeSessionLib/6`, `StatsLib/2` — referenced for computation but outside the drawing system's scope.
 - Six reference Pine indicators (source shared during design) — not yet migrated to the new architecture:
   - Daily NY Levels v6

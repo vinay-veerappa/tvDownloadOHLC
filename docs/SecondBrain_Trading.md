@@ -182,7 +182,54 @@ This protocol is the absolute rule for all time-based calculations and data proc
 All analytical services (Profiler, NQStats) must use the `data_loader.py` fusion layer to merge `data/` (History) and `data/live/` (Recent) into a single contiguous timeline.
 
 ---
-**Last Updated**: 2026-03-29
+
+## 10. TradingView Direct Workflow Reference
+This section is the quick-reference runbook for direct TradingView UI work (Pine Editor, save/publish, and verification).
+
+### 10.0 Default Mode: Update Existing Script In Place
+This is the default behavior for routine workflow runs:
+1. Re-open and update the existing target script (library/indicator) in the right pane.
+2. Do not create a new script unless there is an explicit migration/fork request.
+3. Preserve script identity and history by publishing a new version on the same script.
+4. If a new script is unavoidable, capture the reason and link it to the parent script in notes.
+
+### 10.1 Script Context Switching (Right Pane Only)
+Use this when switching between indicator/library scripts in a live chart:
+1. Open Pine Editor panel.
+2. Use the script name/menu button in the RIGHT pane (not chart legend script labels).
+3. Select the target script context (for example `PineDrawingLib` vs `DailyNYLevelsAnalytics`).
+4. Confirm context by reading the source header (must match script type and title).
+
+### 10.2 Local Source -> TradingView Editor (No Save Mode)
+Use this for safe staging before committing changes:
+1. Load local source from repo (library or indicator file).
+2. Inject/replace active Pine Editor content.
+3. Do NOT save.
+4. Verify unsaved editor contents match local source (line count/header spot-check).
+
+### 10.3 Save + Publish New Version
+Use this after source replacement is validated:
+1. Save script in Pine Editor.
+2. Open publish flow from Pine Editor UI.
+3. Complete publish wizard and submit `Publish new version`.
+4. Treat click success as tentative until post-publish verification passes.
+
+### 10.4 Mandatory Verification Checklist
+Every direct publish run must end with evidence-based verification:
+1. Open script menu from right-pane name button.
+2. Open `Version history...`.
+3. Confirm a new latest timestamp entry exists.
+4. Capture a screenshot artifact for audit/tracing.
+
+### 10.5 Recovery Notes
+If the workflow appears stuck or inconsistent:
+1. Re-open Pine Editor panel to restore UI anchor.
+2. Re-open script menu from script name button and re-select target script.
+3. Re-run verification from Version history, not from transient UI toasts.
+4. If multiple tabs are open, verify active tab URL before retrying publish/verify.
+
+---
+**Last Updated**: 2026-04-18
 **Status**: Persistent Brain Knowledge (Synchronized with [ADR.md](file:///C:/Users/vinay/tvDownloadOHLC/docs/architecture/ADR.md))
 
 

@@ -6,6 +6,7 @@
 - `refactor(daily-ny-levels): extract label registry push/merge into PineDrawingLib` (`32fcd985`)
 - `fix(daily-ny-levels): rename reserved label registry parameter` (`e2a1ee85`)
 - `docs(daily-ny-levels): record phase2 label-registry implementation status` (`cab68964`)
+- `refactor(daily-ny-levels): add labeled stat-line semantic helper` (`8ba54d52`)
 
 ---
 
@@ -20,6 +21,8 @@
   - `PDL.f_label_registry_push(...)` via local helper `f_push_label(...)`.
 - Indicator now uses library merge+draw API:
   - `PDL.f_label_registry_draw_merged(...)`.
+- Indicator now uses semantic draw helper API:
+  - `PDL.f_draw_labeled_stat_line(...)` for repeated "draw stat line + enqueue right-edge label" flow.
 - Legacy local label arrays (`lbl_ys`, `lbl_texts`, `lbl_colors`, `lbl_xs`) are removed from active code path.
 - Overlap suppression (`f_near_any(...)` against tactical Y levels) remains active for stat-level suppression behavior.
 

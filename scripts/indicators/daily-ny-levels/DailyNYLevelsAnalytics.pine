@@ -10,15 +10,15 @@ indicator("Daily NY Levels Analytics (Phase 2)", overlay=true, max_bars_back=500
 // Author: vveerappa | Version: 1
 // ============================================================================
 // CRITICAL: These import IDs assume the three libraries are published to TradingView
-// under your account (vveerappa) with version 1. Before publishing this indicator,
-// ensure all three libraries are published first:
-//   - vveerappa/RangeSessionLib/1
-//   - vveerappa/PineDrawingLib/1  
-//   - vveerappa/StatsLib/1
-// If libraries have different versions, update the /1 suffixes below.
+// under your account (vveerappa) at the versions listed below. Before publishing
+// this indicator, ensure these exact library versions are available:
+//   - vveerappa/RangeSessionLib/6
+//   - vveerappa/PineDrawingLib/4
+//   - vveerappa/StatsLib/2
+// If libraries are bumped, update the import suffixes in this file first.
 // ============================================================================
 import vveerappa/RangeSessionLib/6 as RSL
-import vveerappa/PineDrawingLib/3 as PDL
+import vveerappa/PineDrawingLib/4 as PDL
 import vveerappa/StatsLib/2 as STL
 
 // Inputs
