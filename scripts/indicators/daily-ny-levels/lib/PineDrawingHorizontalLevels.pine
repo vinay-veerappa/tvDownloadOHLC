@@ -9,7 +9,7 @@ library("PineDrawingHorizontalLevels", overlay=true)
 //          daily highs/lows, opening ranges, etc.)
 // ============================================================================
 
-import vveerappa/PineDrawingCore/1 as Core
+import vveerappa/PineDrawingCore/2 as Core
 
 /// Draw a horizontal stat line from x1 to x2 at price y.
 /// Parameters:

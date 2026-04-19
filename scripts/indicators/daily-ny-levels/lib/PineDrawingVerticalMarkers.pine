@@ -9,7 +9,7 @@ library("PineDrawingVerticalMarkers", overlay=true)
 //          event markers, time-based anchors)
 // ============================================================================
 
-import vveerappa/PineDrawingCore/1 as Core
+import vveerappa/PineDrawingCore/2 as Core
 
 /// Draw a vertical reference line semantic wrapper.
 /// Used for session boundaries, time-of-day markers, and event anchors.

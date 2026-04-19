@@ -155,6 +155,85 @@ export f_merge_threshold_for_symbol(string symbol, float mintick) =>
     int ticks = str.contains(s, "NQ") ? 40 : str.contains(s, "RTY") ? 10 : str.contains(s, "M2K") ? 10 : str.contains(s, "CL") ? 10 : str.contains(s, "GC") ? 15 : 20
     float(ticks) * mintick
 
+/// Resolve a theme-aware color from custom/dark/light variants.
+/// Parameters:
+///   - theme_mode: "Custom", "Dark", or "Light"
+///   - custom_color: User-specified custom-theme color
+///   - dark_color: Palette color for dark theme
+///   - light_color: Palette color for light theme
+/// Returns: Concrete color for the active theme
+export f_resolve_color(string theme_mode, color custom_color, color dark_color, color light_color) =>
+    theme_mode == "Dark" ? dark_color : theme_mode == "Light" ? light_color : custom_color
+
+f_profile_size_rank(string size_token) =>
+    switch str.lower(size_token)
+        "tiny" => 0
+        "small" => 1
+        "normal" => 2
+        "large" => 3
+        "huge" => 4
+        => 2
+
+f_profile_rank_to_size(int rank) =>
+    switch rank
+        0 => "tiny"
+        1 => "small"
+        2 => "normal"
+        3 => "large"
+        4 => "huge"
+        => "normal"
+
+f_profile_size_delta(string profile) =>
+    switch profile
+        "Tiny" => -2
+        "Small" => -1
+        "Normal" => 0
+        "Large" => 1
+        "Huge" => 2
+        => 0
+
+/// Scale a label-size token under the active display profile.
+/// Parameters:
+///   - base_size: Base token (tiny/small/normal/large/huge)
+///   - profile: Display profile (Tiny/Small/Normal/Large/Huge)
+/// Returns: Scaled size token in lower-case form for label helpers
+export f_display_profile_label_size(string base_size, string profile) =>
+    int rank = f_profile_size_rank(base_size)
+    int shifted = math.max(0, math.min(4, rank + f_profile_size_delta(profile)))
+    f_profile_rank_to_size(shifted)
+
+/// Scale a table-text size token under the active display profile.
+/// Parameters:
+///   - base_size: Base token (tiny/small/normal/large/huge)
+///   - profile: Display profile (Tiny/Small/Normal/Large/Huge)
+/// Returns: Scaled size token in Title Case for table helpers
+export f_display_profile_table_size(string base_size, string profile) =>
+    switch f_display_profile_label_size(base_size, profile)
+        "tiny" => "Tiny"
+        "small" => "Small"
+        "normal" => "Normal"
+        "large" => "Large"
+        "huge" => "Huge"
+        => "Normal"
+
+/// Scale a line/border width under the active display profile.
+/// Parameters:
+///   - base_width: Baseline width
+///   - profile: Display profile (Tiny/Small/Normal/Large/Huge)
+/// Returns: Width adjusted for the active display profile
+export f_display_profile_width(int base_width, string profile) =>
+    float mult = profile == "Tiny" ? 0.75 : profile == "Small" ? 0.85 : profile == "Large" ? 1.25 : profile == "Huge" ? 1.5 : 1.0
+    math.max(1, int(math.round(float(base_width) * mult)))
+
+/// Adjust transparency under the active display profile.
+/// Parameters:
+///   - base_transparency: Baseline transparency (0-100)
+///   - profile: Display profile (Tiny/Small/Normal/Large/Huge)
+/// Returns: Profile-adjusted transparency clamped to 0-100
+export f_display_profile_transparency(int base_transparency, string profile) =>
+    int delta = profile == "Tiny" ? 5 : profile == "Small" ? 5 : profile == "Large" ? -5 : profile == "Huge" ? -10 : 0
+    math.max(0, math.min(100, base_transparency + delta))
+
 f_clear_boxes(array<box> arr) =>
     if array.size(arr) > 0
         for i = 0 to array.size(arr) - 1

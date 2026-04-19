@@ -9,7 +9,7 @@ library("PineDrawingComposites", overlay=true)
 //          histograms, time distributions, and advanced multi-component visuals
 // ============================================================================
 
-import vveerappa/PineDrawingCore/1 as Core
+import vveerappa/PineDrawingCore/2 as Core
 import vveerappa/PineDrawingZones/1 as Zones
 import vveerappa/PineDrawingVerticalMarkers/1 as VMarks
 

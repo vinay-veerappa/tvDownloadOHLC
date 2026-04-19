@@ -11,16 +11,25 @@ indicator("Daily NY Levels v5 (Phase 1)", overlay=true, max_bars_back=5000, max_
 // CRITICAL: These import IDs assume the three libraries are published to TradingView
 // under your account (vveerappa) with version 1. Before publishing this indicator,
 // ensure all three libraries are published first:
-//   - vveerappa/RangeSessionLib/1
-//   - vveerappa/PineDrawingLib/1  
-//   - vveerappa/StatsLib/1
+//   - vveerappa/RangeSessionLib/6
+//   - vveerappa/PineDrawingCore/1 (+ split family libs /1)
+//   - vveerappa/StatsLib/2
 // If libraries have different versions, update the /1 suffixes below.
 // ============================================================================
-import vveerappa/RangeSessionLib/5 as RSL
-import vveerappa/PineDrawingLib/2 as PDL
-import vveerappa/StatsLib/1 as STL
+import vveerappa/RangeSessionLib/6 as RSL
+import vveerappa/PineDrawingCore/2 as Core
+import vveerappa/PineDrawingHorizontalLevels/2 as HLevels
+import vveerappa/PineDrawingMarkers/2 as Markers
+import vveerappa/PineDrawingZones/2 as Zones
+import vveerappa/PineDrawingTables/2 as Tables
+import vveerappa/PineDrawingVerticalMarkers/2 as VMarks
+import vveerappa/StatsLib/2 as STL
 
 // Inputs
+grp_theme = "Theme"
+i_theme_mode = input.string("Custom", "Color Theme", options=["Custom", "Dark", "Light"], group=grp_theme)
+i_display_profile = input.string("Normal", "Display Profile", options=["Tiny", "Small", "Normal", "Large", "Huge"], group=grp_theme)
+
 grp_session = "Session & Presets"
 i_preset = input.string("Market Open", "Preset", options=["1800 Break", "0300 Break", "0300 Transfer", "Q1 Break", "Market Open", "Magic Hour", "1100 BO", "Lunch Break", "1400 Break", "Custom"], group=grp_session)
 i_custom_start = input.string("0930", "Custom OR Start (HHMM)", group=grp_session)
@@ -74,7 +83,7 @@ i_show_debug = input.bool(false, "Show Debug Labels", group=grp_debug)
 var array<RSL.RangeSpec> specs = array.new<RSL.RangeSpec>(0)
 var array<RSL.RangeState> states = array.new<RSL.RangeState>(0)
 var array<STL.ExcursionHistory> histories = array.new<STL.ExcursionHistory>(0)
-var array<PDL.PineDrawingState> drawings = array.new<PDL.PineDrawingState>(0)
+var array<Core.PineDrawingState> drawings = array.new<Core.PineDrawingState>(0)
 var array<bool> prev_in_or = array.new_bool(0)
 var array<bool> prev_in_data = array.new_bool(0)
 
@@ -94,7 +103,7 @@ f_init_runtime() =>
             array.push(specs, sp)
             array.push(states, RSL.f_new_range_state(sp))
             array.push(histories, STL.f_new_excursion_history(sp.name))
-            array.push(drawings, PDL.f_new_drawing_state())
+            array.push(drawings, Core.f_new_drawing_state())
             array.push(prev_in_or, false)
             array.push(prev_in_data, false)
 
@@ -105,8 +114,11 @@ if barstate.isfirst
 [ltf_high_arr, ltf_low_arr, ltf_close_arr, ltf_time_arr] = request.security_lower_tf(syminfo.tickerid, "1", [high, low, close, time])
 int ny_dow = dayofweek(time, i_timezone)
 
+
 f_or_color(int idx) =>
-    color base = idx % 2 == 0 ? i_bull_color : i_bear_color
+    color bull_base = Core.f_resolve_color(i_theme_mode, color.new(i_bull_color, 0), #38BD8A, #008060)
+    color bear_base = Core.f_resolve_color(i_theme_mode, color.new(i_bear_color, 0), #F87171, #B3261E)
+    color base = idx % 2 == 0 ? bull_base : bear_base
     color.new(base, math.min(15 + idx * 10, 75))
 
 f_fmt_stat_text(string name, string line_name, float pct_level, float pct_value) =>
@@ -117,6 +129,10 @@ f_fmt_avg_text(string name, string line_name, float pct_value) =>
 
 f_fmt_percentile_text(float pct_value) =>
     str.tostring(int(math.round(pct_value))) + "th"
+
+f_draw_labeled_stat_line_meta(Core.PineDrawingState ds, Core.LabelRegistry lr, int x1, float y, int x2, color line_clr, string line_style, int line_width, string label_text, color label_clr, int label_x, string strategy, int priority, string merge_group) =>
+    HLevels.f_draw_stat_line(ds, x1, y, x2, line_clr, line_style, line_width)
+    Core.f_label_registry_push_ex(lr, y, label_text, label_clr, label_x, strategy, priority, merge_group, "left", "", "Label", "")
 
 f_track_range(int idx) =>
     RSL.RangeSpec sp = array.get(specs, idx)
@@ -281,9 +297,6 @@ f_track_range(int idx) =>
         STL.f_commit_daily(hist, st.daily_bull_mfe, st.daily_bear_mfe, 0.0, 0.0, st.daily_bull_peak_min, st.daily_bear_peak_min, st.daily_pivot_bulls, st.daily_pivot_bears, st.daily_mae_bull_abs, st.daily_mae_bear_abs, pb_bull, pb_bear, 0.0, 0.0, st.mid_hit_bull, st.mid_hit_bear, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.session_low_data, st.session_high_data, i_ev_target_pct)
         st.is_committed := true
 
-    if i_show_debug and is_new_session
-        label.new(bar_index, high, "NEW: " + sp.name, style=label.style_label_down, textcolor=color.white, color=color.new(color.blue, 50), size=size.tiny)
-
     array.set(states, idx, st)
     array.set(histories, idx, hist)
 
@@ -295,25 +308,48 @@ f_render_range(int idx) =>
     RSL.RangeSpec sp = array.get(specs, idx)
     RSL.RangeState st = array.get(states, idx)
     STL.ExcursionHistory hist = array.get(histories, idx)
-    PDL.PineDrawingState ds = array.get(drawings, idx)
+    Core.PineDrawingState ds = array.get(drawings, idx)
 
-    PDL.f_clear_all(ds)
+    Core.f_clear_all(ds)
+
+    color bull_color = Core.f_resolve_color(i_theme_mode, color.new(i_bull_color, 0), #38BD8A, #008060)
+    color bear_color = Core.f_resolve_color(i_theme_mode, color.new(i_bear_color, 0), #F87171, #B3261E)
+    color stat_label_color = Core.f_resolve_color(i_theme_mode, color.new(i_stat_label_color, 0), #E2E8F0, #1F2937)
+    color stat_avg_color = Core.f_resolve_color(i_theme_mode, color.new(i_time_avg_color, 0), #FACC15, #CA8A04)
+    color stat_median_color = Core.f_resolve_color(i_theme_mode, color.new(i_time_med_color, 0), #22D3EE, #0891B2)
+    color stat_stretch_color = Core.f_resolve_color(i_theme_mode, color.orange, #FB923C, #C2410C)
+    color mid_line_color = Core.f_resolve_color(i_theme_mode, color.gray, #94A3B8, #6B7280)
+    color time_title_color = Core.f_resolve_color(i_theme_mode, color.fuchsia, #D946EF, #9333EA)
+    color time_bull_color = Core.f_resolve_color(i_theme_mode, color.new(i_time_bull_color, 0), color.new(#38BD8A, 80), color.new(#008060, 80))
+    color time_bear_color = Core.f_resolve_color(i_theme_mode, color.new(i_time_bear_color, 0), color.new(#F87171, 80), color.new(#B3261E, 80))
+    string stat_label_size = Core.f_display_profile_label_size(i_stat_label_size, i_display_profile)
+    string time_label_size = Core.f_display_profile_label_size(i_time_label_size, i_display_profile)
+    string debug_label_size = "tiny"
+    int secondary_width = Core.f_display_profile_width(1, i_display_profile)
+    int or_box_width = Core.f_display_profile_width(i_box_width, i_display_profile)
+    int hist_fill_transparency = Core.f_display_profile_transparency(58, i_display_profile)
+    Core.LabelRegistry lbl_reg = Core.f_label_registry_begin()
 
     int tf_min = timeframe.isintraday ? timeframe.multiplier : 1
     int total_mins_to_cutoff = RSL.f_duration(sp.or_start_min, sp.cutoff_min)
     int bars_to_cutoff = int(math.max(1.0, math.ceil(float(total_mins_to_cutoff) / float(tf_min))))
     int cutoff_bar = st.or_start_bar + bars_to_cutoff
     cutoff_bar := math.min(cutoff_bar, bar_index)
+    int line_render_end = cutoff_bar + i_right_extend_bars
 
     if st.or_building and not na(st.or_start_bar)
-        PDL.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, bar_index, f_or_color(idx), i_box_style, i_box_width)
+        Zones.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, bar_index, f_or_color(idx), i_box_style, or_box_width)
     else if st.or_complete and not na(st.or_start_bar)
-        PDL.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, bar_index, f_or_color(idx), i_box_style, i_box_width)
+        Zones.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, bar_index, f_or_color(idx), i_box_style, or_box_width)
+
+    if i_show_debug and st.or_building and not na(st.or_start_bar)
+        Markers.f_draw_text_marker(ds, bar_index, st.or_high, "NEW: " + sp.name, stat_label_color, "down", debug_label_size)
 
     if i_show_stat_lines and st.ref_set and not na(st.bull_ref)
         array<float> bull_filtered = STL.f_build_filtered(hist.mfe_bull)
         array<float> bear_filtered = STL.f_build_filtered(hist.mfe_bear)
-        int ln_end = cutoff_bar
+        int ln_end = line_render_end
+        int stat_label_x = ln_end + 2
 
         if array.size(bull_filtered) > 0
             float p_confirm_b = array.percentile_nearest_rank(bull_filtered, i_pct_confirm)
@@ -326,16 +362,11 @@ f_render_range(int idx) =>
             float y_t2_b = st.bull_ref * (1.0 + p_t2_b / 100.0)
             float y_stretch_b = st.bull_ref * (1.0 + p_stretch_b / 100.0)
             float y_avg_b = st.bull_ref * (1.0 + p_avg_b / 100.0)
-            PDL.f_draw_stat_line(ds, st.or_start_bar, y_confirm_b, ln_end, color.new(i_bull_color, 15), "Dotted", 1)
-            PDL.f_draw_stat_line(ds, st.or_start_bar, y_t1_b, ln_end, color.new(i_bull_color, 0), "Solid", 1)
-            PDL.f_draw_stat_line(ds, st.or_start_bar, y_t2_b, ln_end, color.new(i_bull_color, 25), "Dashed", 1)
-            PDL.f_draw_stat_line(ds, st.or_start_bar, y_stretch_b, ln_end, color.new(color.orange, 0), "Dotted", 1)
-            PDL.f_draw_stat_line(ds, st.or_start_bar, y_avg_b, ln_end, color.new(color.aqua, 0), "Dashed", 1)
-            PDL.f_draw_stat_label(ds, ln_end + 1, y_confirm_b, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_b), i_stat_label_color, "left", i_stat_label_size)
-            PDL.f_draw_stat_label(ds, ln_end + 1, y_t1_b, f_fmt_stat_text(sp.name, "Target1", i_pct_target1, p_t1_b), i_stat_label_color, "left", i_stat_label_size)
-            PDL.f_draw_stat_label(ds, ln_end + 1, y_t2_b, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_b), i_stat_label_color, "left", i_stat_label_size)
-            PDL.f_draw_stat_label(ds, ln_end + 1, y_stretch_b, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_b), i_stat_label_color, "left", i_stat_label_size)
-            PDL.f_draw_stat_label(ds, ln_end + 1, y_avg_b, f_fmt_avg_text(sp.name, "Avg", p_avg_b), i_stat_label_color, "left", i_stat_label_size)
+            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_confirm_b, ln_end, color.new(bull_color, 15), "Dotted", secondary_width, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_b), stat_label_color, stat_label_x, "stagger", 50, sp.name + "_bull")
+            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t1_b, ln_end, color.new(bull_color, 0), "Solid", secondary_width, f_fmt_stat_text(sp.name, "Target1", i_pct_target1, p_t1_b), stat_label_color, stat_label_x, "stagger", 45, sp.name + "_bull")
+            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t2_b, ln_end, color.new(bull_color, 25), "Dashed", secondary_width, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_b), stat_label_color, stat_label_x, "stagger", 40, sp.name + "_bull")
+            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_stretch_b, ln_end, color.new(stat_stretch_color, 0), "Dotted", secondary_width, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_b), stat_label_color, stat_label_x, "stagger", 35, sp.name + "_bull")
+            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_avg_b, ln_end, color.new(stat_avg_color, 0), "Dashed", secondary_width, f_fmt_avg_text(sp.name, "Avg", p_avg_b), stat_label_color, stat_label_x, "stagger", 30, sp.name + "_bull")
 
         if array.size(bear_filtered) > 0
             float p_confirm_s = array.percentile_nearest_rank(bear_filtered, i_pct_confirm)
@@ -348,16 +379,11 @@ f_render_range(int idx) =>
             float y_t2_s = st.bear_ref * (1.0 - p_t2_s / 100.0)
             float y_stretch_s = st.bear_ref * (1.0 - p_stretch_s / 100.0)
             float y_avg_s = st.bear_ref * (1.0 - p_avg_s / 100.0)
-            PDL.f_draw_stat_line(ds, st.or_start_bar, y_confirm_s, ln_end, color.new(i_bear_color, 15), "Dotted", 1)
-            PDL.f_draw_stat_line(ds, st.or_start_bar, y_t1_s, ln_end, color.new(i_bear_color, 0), "Solid", 1)
-            PDL.f_draw_stat_line(ds, st.or_start_bar, y_t2_s, ln_end, color.new(i_bear_color, 25), "Dashed", 1)
-            PDL.f_draw_stat_line(ds, st.or_start_bar, y_stretch_s, ln_end, color.new(color.orange, 0), "Dotted", 1)
-            PDL.f_draw_stat_line(ds, st.or_start_bar, y_avg_s, ln_end, color.new(color.aqua, 0), "Dashed", 1)
-            PDL.f_draw_stat_label(ds, ln_end + 1, y_confirm_s, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_s), i_stat_label_color, "left", i_stat_label_size)
-            PDL.f_draw_stat_label(ds, ln_end + 1, y_t1_s, f_fmt_stat_text(sp.name, "Target1", i_pct_target1, p_t1_s), i_stat_label_color, "left", i_stat_label_size)
-            PDL.f_draw_stat_label(ds, ln_end + 1, y_t2_s, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_s), i_stat_label_color, "left", i_stat_label_size)
-            PDL.f_draw_stat_label(ds, ln_end + 1, y_stretch_s, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_s), i_stat_label_color, "left", i_stat_label_size)
-            PDL.f_draw_stat_label(ds, ln_end + 1, y_avg_s, f_fmt_avg_text(sp.name, "Avg", p_avg_s), i_stat_label_color, "left", i_stat_label_size)
+            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_confirm_s, ln_end, color.new(bear_color, 15), "Dotted", secondary_width, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_s), stat_label_color, stat_label_x, "stagger", 50, sp.name + "_bear")
+            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t1_s, ln_end, color.new(bear_color, 0), "Solid", secondary_width, f_fmt_stat_text(sp.name, "Target1", i_pct_target1, p_t1_s), stat_label_color, stat_label_x, "stagger", 45, sp.name + "_bear")
+            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t2_s, ln_end, color.new(bear_color, 25), "Dashed", secondary_width, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_s), stat_label_color, stat_label_x, "stagger", 40, sp.name + "_bear")
+            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_stretch_s, ln_end, color.new(stat_stretch_color, 0), "Dotted", secondary_width, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_s), stat_label_color, stat_label_x, "stagger", 35, sp.name + "_bear")
+            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_avg_s, ln_end, color.new(stat_avg_color, 0), "Dashed", secondary_width, f_fmt_avg_text(sp.name, "Avg", p_avg_s), stat_label_color, stat_label_x, "stagger", 30, sp.name + "_bear")
 
         int n_mid = math.min(array.size(hist.mid_hit_bull), array.size(hist.mid_hit_bear))
         int mid_hits = 0
@@ -366,8 +392,7 @@ f_render_range(int idx) =>
                 mid_hits += array.get(hist.mid_hit_bull, k) ? 1 : 0
                 mid_hits += array.get(hist.mid_hit_bear, k) ? 1 : 0
         float mid_hit_pct = n_mid == 0 ? na : (float(mid_hits) / float(2 * n_mid)) * 100.0
-        PDL.f_draw_stat_line(ds, st.or_start_bar, st.or_mid, ln_end, color.new(color.gray, 20), "Dashed", 1)
-        PDL.f_draw_stat_label(ds, ln_end + 1, st.or_mid, sp.name + " Mid " + STL.f_pct_fmt(mid_hit_pct), i_stat_label_color, "left", i_stat_label_size)
+        f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, st.or_mid, ln_end, color.new(mid_line_color, 20), "Dashed", secondary_width, sp.name + " Mid " + STL.f_pct_fmt(mid_hit_pct), stat_label_color, stat_label_x, "stagger", 25, sp.name + "_mid")
 
     // Render MFE histogram as a profile-like bell curve.
     // Y uses percentile bands from the selected percentile window.
@@ -433,15 +458,14 @@ f_render_range(int idx) =>
                 if v_hi >= v_lo
                     float y_low = st.bull_ref * (1.0 + v_lo / 100.0)
                     float y_high = st.bull_ref * (1.0 + v_hi / 100.0)
-                    PDL.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, i_bull_color, 58)
+                    Zones.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, bull_color, hist_fill_transparency)
                     if i_show_hist_bin_labels
                         float y_mid = (y_high + y_low) / 2.0
-                        PDL.f_draw_stat_label(ds, st.or_start_bar - 1, y_mid, f_fmt_percentile_text(p_lo), i_stat_label_color, "right", i_stat_label_size)
+                        Core.f_draw_stat_label(ds, st.or_start_bar - 1, y_mid, f_fmt_percentile_text(p_lo), stat_label_color, "right", stat_label_size)
 
                     if i_show_debug
                         float y_mid = (y_high + y_low) / 2.0
-                        label.new(bar_index, y_mid, "B P" + str.tostring(p_lo, "#.0") + "-P" + str.tostring(p_hi, "#.0") + " v=" + str.tostring(v_lo, "#.##") + "-" + str.tostring(v_hi, "#.##"),
-                                 style=label.style_label_center, textcolor=color.white, size=size.tiny)
+                        Markers.f_draw_text_marker(ds, bar_index, y_mid, "B P" + str.tostring(p_lo, "#.0") + "-P" + str.tostring(p_hi, "#.0") + " v=" + str.tostring(v_lo, "#.##") + "-" + str.tostring(v_hi, "#.##"), stat_label_color, "center", debug_label_size)
 
         // BEAR HISTOGRAM
         if array.size(bear_filtered) > 0
@@ -494,15 +518,14 @@ f_render_range(int idx) =>
                 if v_hi >= v_lo
                     float y_high = st.bear_ref * (1.0 - v_lo / 100.0)
                     float y_low = st.bear_ref * (1.0 - v_hi / 100.0)
-                    PDL.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, i_bear_color, 58)
+                    Zones.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, bear_color, hist_fill_transparency)
                     if i_show_hist_bin_labels
                         float y_mid = (y_high + y_low) / 2.0
-                        PDL.f_draw_stat_label(ds, st.or_start_bar - 1, y_mid, f_fmt_percentile_text(p_lo), i_stat_label_color, "right", i_stat_label_size)
+                        Core.f_draw_stat_label(ds, st.or_start_bar - 1, y_mid, f_fmt_percentile_text(p_lo), stat_label_color, "right", stat_label_size)
 
                     if i_show_debug
                         float y_mid = (y_high + y_low) / 2.0
-                        label.new(bar_index, y_mid, "S P" + str.tostring(p_lo, "#.0") + "-P" + str.tostring(p_hi, "#.0") + " v=" + str.tostring(v_lo, "#.##") + "-" + str.tostring(v_hi, "#.##"),
-                                 style=label.style_label_center, textcolor=color.white, size=size.tiny)
+                        Markers.f_draw_text_marker(ds, bar_index, y_mid, "S P" + str.tostring(p_lo, "#.0") + "-P" + str.tostring(p_hi, "#.0") + " v=" + str.tostring(v_lo, "#.##") + "-" + str.tostring(v_hi, "#.##"), stat_label_color, "center", debug_label_size)
 
     // MODULE: TIME DISTRIBUTION HISTOGRAM
     // Renders when during the session (minutes since OR start) the MFE peak was reached.
@@ -554,7 +577,7 @@ f_render_range(int idx) =>
 
             // Title label — rendered at horizontal midpoint, slightly above the baseline
             int title_x = st.or_start_bar + int(float(time_data_dur / 2) * bars_per_min)
-            PDL.f_draw_stat_label(ds, title_x, base_y + syminfo.mintick * 80.0, sp.name + " Time Dist", color.new(color.fuchsia, 50), "down", i_time_label_size)
+            Core.f_draw_stat_label(ds, title_x, base_y + syminfo.mintick * 80.0, sp.name + " Time Dist", color.new(time_title_color, 50), "down", time_label_size) 
 
             // Histogram bars
             for bi = 0 to num_bins - 1
@@ -566,10 +589,10 @@ f_render_range(int idx) =>
                 int cs = array.get(bear_cnt, bi)
                 if cb > 0
                     float h = float(cb) / float(max_t_count) * prof_h
-                    PDL.f_draw_time_bar(ds, x_l, x_r, base_y + h, base_y, i_time_bull_color)
+                    Zones.f_draw_time_bar(ds, x_l, x_r, base_y + h, base_y, time_bull_color)
                 if cs > 0
                     float h = float(cs) / float(max_t_count) * prof_h
-                    PDL.f_draw_time_bar(ds, x_l, x_r, base_y, base_y - h, i_time_bear_color)
+                    Zones.f_draw_time_bar(ds, x_l, x_r, base_y, base_y - h, time_bear_color)
 
             // AVG and Median vertical stat lines — build non-zero-mfe time arrays first
             array<int> bull_t_nz = array.new_int(0)
@@ -589,11 +612,11 @@ f_render_range(int idx) =>
                 int x_avg = st.or_start_bar + int(avg_t * bars_per_min)
                 int x_med = st.or_start_bar + int(med_t * bars_per_min)
                 if i_show_time_avg
-                    PDL.f_draw_vline(ds, x_avg, base_y + line_h, base_y, i_time_avg_color, "Dashed")
-                    PDL.f_draw_stat_label(ds, x_avg, base_y + line_h, "Bull AVG", i_time_avg_color, "down", i_time_label_size)
+                    VMarks.f_draw_vline(ds, x_avg, base_y + line_h, base_y, stat_avg_color, "Dashed")
+                    Core.f_draw_stat_label(ds, x_avg, base_y + line_h, "Bull AVG", stat_avg_color, "down", time_label_size)
                 if i_show_time_med
-                    PDL.f_draw_vline(ds, x_med, base_y + line_h * 0.8, base_y, i_time_med_color, "Dashed")
-                    PDL.f_draw_stat_label(ds, x_med, base_y + line_h * 0.8, "Bull MED", i_time_med_color, "down", i_time_label_size)
+                    VMarks.f_draw_vline(ds, x_med, base_y + line_h * 0.8, base_y, stat_median_color, "Dashed")
+                    Core.f_draw_stat_label(ds, x_med, base_y + line_h * 0.8, "Bull MED", stat_median_color, "down", time_label_size)
 
             if array.size(bear_t_nz) > 0
                 float avg_t = array.avg(bear_t_nz)
@@ -601,11 +624,14 @@ f_render_range(int idx) =>
                 int x_avg = st.or_start_bar + int(avg_t * bars_per_min)
                 int x_med = st.or_start_bar + int(med_t * bars_per_min)
                 if i_show_time_avg
-                    PDL.f_draw_vline(ds, x_avg, base_y, base_y - line_h, i_time_avg_color, "Dashed")
-                    PDL.f_draw_stat_label(ds, x_avg, base_y - line_h, "Bear AVG", i_time_avg_color, "up", i_time_label_size)
+                    VMarks.f_draw_vline(ds, x_avg, base_y, base_y - line_h, stat_avg_color, "Dashed")
+                    Core.f_draw_stat_label(ds, x_avg, base_y - line_h, "Bear AVG", stat_avg_color, "up", time_label_size)
                 if i_show_time_med
-                    PDL.f_draw_vline(ds, x_med, base_y, base_y - line_h * 0.8, i_time_med_color, "Dashed")
-                    PDL.f_draw_stat_label(ds, x_med, base_y - line_h * 0.8, "Bear MED", i_time_med_color, "up", i_time_label_size)
+                    VMarks.f_draw_vline(ds, x_med, base_y, base_y - line_h * 0.8, stat_median_color, "Dashed")
+                    Core.f_draw_stat_label(ds, x_med, base_y - line_h * 0.8, "Bear MED", stat_median_color, "up", time_label_size)
+
+    float merge_thr = Core.f_merge_threshold_for_symbol(syminfo.ticker, syminfo.mintick)
+    Core.f_label_registry_flush(ds, lbl_reg, merge_thr, stat_label_size, 2)
 
 if barstate.islast and array.size(specs) > 0
     for i = 0 to array.size(specs) - 1
@@ -636,19 +662,28 @@ if barstate.islast and i_show_table and array.size(specs) > 0
     bool is_dow = i_table_view == "DOW View"
     int n_cols = is_dow ? 3 : 6
     int n_rows = is_dow ? 6 : 3
-    table t = table.new(PDL.f_table_pos(i_table_pos), n_cols, n_rows, bgcolor=color.new(color.black, 85), border_color=color.new(color.gray, 70), border_width=1)
+    color table_bg_color = Core.f_resolve_color(i_theme_mode, color.black, #0F172A, #F8FAFC)
+    color table_border_color = Core.f_resolve_color(i_theme_mode, color.gray, #334155, #94A3B8)
+    color table_header_bg_color = Core.f_resolve_color(i_theme_mode, color.blue, #1E3A8A, #BFDBFE)
+    color table_header_text_color = Core.f_resolve_color(i_theme_mode, color.white, #E2E8F0, #111827)
+    color table_body_text_color = Core.f_resolve_color(i_theme_mode, color.white, #E2E8F0, #1F2937)
+    color table_bull_color = Core.f_resolve_color(i_theme_mode, color.new(i_bull_color, 0), #38BD8A, #008060)
+    color table_bear_color = Core.f_resolve_color(i_theme_mode, color.new(i_bear_color, 0), #F87171, #B3261E)
+    color table_cell_bg = color.new(table_bg_color, 100)
+    string table_text_size = Core.f_display_profile_table_size("small", i_display_profile)
+    table t = Tables.f_new_table(i_table_pos, n_cols, n_rows, color.new(table_bg_color, 85), color.new(table_border_color, 70), 1)
 
     // Header row
-    table.cell(t, 0, 0, sp.name + " - " + i_table_view, text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 70))
+    Tables.f_draw_header_cell(t, 0, 0, sp.name + " - " + i_table_view, color.new(table_header_bg_color, 70), table_header_text_color, table_text_size)
     if is_dow
-        table.cell(t, 1, 0, "Count",   text_color=color.white, text_size=size.small)
-        table.cell(t, 2, 0, "Avg MFE", text_color=color.white, text_size=size.small)
+        Tables.f_draw_header_cell(t, 1, 0, "Count", table_cell_bg, table_header_text_color, table_text_size)
+        Tables.f_draw_header_cell(t, 2, 0, "Avg MFE", table_cell_bg, table_header_text_color, table_text_size)
     else
-        table.cell(t, 1, 0, "Count", text_color=color.white, text_size=size.small)
-        table.cell(t, 2, 0, "P50",   text_color=color.white, text_size=size.small)
-        table.cell(t, 3, 0, "P75",   text_color=color.white, text_size=size.small)
-        table.cell(t, 4, 0, "P90",   text_color=color.white, text_size=size.small)
-        table.cell(t, 5, 0, "Rate",  text_color=color.white, text_size=size.small)
+        Tables.f_draw_header_cell(t, 1, 0, "Count", table_cell_bg, table_header_text_color, table_text_size)
+        Tables.f_draw_header_cell(t, 2, 0, "P50", table_cell_bg, table_header_text_color, table_text_size)
+        Tables.f_draw_header_cell(t, 3, 0, "P75", table_cell_bg, table_header_text_color, table_text_size)
+        Tables.f_draw_header_cell(t, 4, 0, "P90", table_cell_bg, table_header_text_color, table_text_size)
+        Tables.f_draw_header_cell(t, 5, 0, "Rate", table_cell_bg, table_header_text_color, table_text_size)
 
     if i_table_view == "MFE View"
         array<float> bull = STL.f_build_filtered(hist.mfe_bull)
@@ -659,18 +694,18 @@ if barstate.islast and i_show_table and array.size(specs) > 0
         float s50 = array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 50) : na
         float s75 = array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 75) : na
         float s90 = array.size(bear) > 0 ? array.percentile_nearest_rank(bear, 90) : na
-        table.cell(t, 0, 1, "Bull", text_color=i_bull_color)
-        table.cell(t, 1, 1, str.tostring(array.size(bull)))
-        table.cell(t, 2, 1, STL.f_pct_fmt(b50))
-        table.cell(t, 3, 1, STL.f_pct_fmt(b75))
-        table.cell(t, 4, 1, STL.f_pct_fmt(b90))
-        table.cell(t, 5, 1, "-")
-        table.cell(t, 0, 2, "Bear", text_color=i_bear_color)
-        table.cell(t, 1, 2, str.tostring(array.size(bear)))
-        table.cell(t, 2, 2, STL.f_pct_fmt(s50))
-        table.cell(t, 3, 2, STL.f_pct_fmt(s75))
-        table.cell(t, 4, 2, STL.f_pct_fmt(s90))
-        table.cell(t, 5, 2, "-")
+        Tables.f_draw_value_cell(t, 0, 1, "Bull", table_cell_bg, table_bull_color, table_text_size)
+        Tables.f_draw_value_cell(t, 1, 1, str.tostring(array.size(bull)), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 2, 1, STL.f_pct_fmt(b50), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 3, 1, STL.f_pct_fmt(b75), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 4, 1, STL.f_pct_fmt(b90), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 5, 1, "-", table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 0, 2, "Bear", table_cell_bg, table_bear_color, table_text_size)
+        Tables.f_draw_value_cell(t, 1, 2, str.tostring(array.size(bear)), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 2, 2, STL.f_pct_fmt(s50), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 3, 2, STL.f_pct_fmt(s75), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 4, 2, STL.f_pct_fmt(s90), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 5, 2, "-", table_cell_bg, table_body_text_color, table_text_size)
     else if i_table_view == "MAE View"
         array<float> mab = STL.f_build_filtered(hist.mae_bull_abs)
         array<float> mas = STL.f_build_filtered(hist.mae_bear_abs)
@@ -678,18 +713,18 @@ if barstate.islast and i_show_table and array.size(specs) > 0
         array<float> mps = STL.f_build_filtered(hist.mae_bear_pb)
         float rb = array.size(hist.r_multiple_bull) > 0 ? array.avg(hist.r_multiple_bull) : na
         float rs = array.size(hist.r_multiple_bear) > 0 ? array.avg(hist.r_multiple_bear) : na
-        table.cell(t, 0, 1, "Bull Abs/PB", text_color=i_bull_color)
-        table.cell(t, 1, 1, str.tostring(array.size(mab)))
-        table.cell(t, 2, 1, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 50) : na))
-        table.cell(t, 3, 1, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 75) : na))
-        table.cell(t, 4, 1, STL.f_pct_fmt(array.size(mpb) > 0 ? array.percentile_nearest_rank(mpb, 50) : na))
-        table.cell(t, 5, 1, na(rb) ? "n/a" : str.tostring(rb, "#.##"))
-        table.cell(t, 0, 2, "Bear Abs/PB", text_color=i_bear_color)
-        table.cell(t, 1, 2, str.tostring(array.size(mas)))
-        table.cell(t, 2, 2, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 50) : na))
-        table.cell(t, 3, 2, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 75) : na))
-        table.cell(t, 4, 2, STL.f_pct_fmt(array.size(mps) > 0 ? array.percentile_nearest_rank(mps, 50) : na))
-        table.cell(t, 5, 2, na(rs) ? "n/a" : str.tostring(rs, "#.##"))
+        Tables.f_draw_value_cell(t, 0, 1, "Bull Abs/PB", table_cell_bg, table_bull_color, table_text_size)
+        Tables.f_draw_value_cell(t, 1, 1, str.tostring(array.size(mab)), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 2, 1, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 50) : na), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 3, 1, STL.f_pct_fmt(array.size(mab) > 0 ? array.percentile_nearest_rank(mab, 75) : na), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 4, 1, STL.f_pct_fmt(array.size(mpb) > 0 ? array.percentile_nearest_rank(mpb, 50) : na), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 5, 1, na(rb) ? "n/a" : str.tostring(rb, "#.##"), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 0, 2, "Bear Abs/PB", table_cell_bg, table_bear_color, table_text_size)
+        Tables.f_draw_value_cell(t, 1, 2, str.tostring(array.size(mas)), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 2, 2, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 50) : na), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 3, 2, STL.f_pct_fmt(array.size(mas) > 0 ? array.percentile_nearest_rank(mas, 75) : na), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 4, 2, STL.f_pct_fmt(array.size(mps) > 0 ? array.percentile_nearest_rank(mps, 50) : na), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 5, 2, na(rs) ? "n/a" : str.tostring(rs, "#.##"), table_cell_bg, table_body_text_color, table_text_size)
     else if i_table_view == "DOW View"
         for d = 2 to 6
             int row = d - 1
@@ -704,24 +739,24 @@ if barstate.islast and i_show_table and array.size(specs) > 0
                         sum_b += array.get(hist.mfe_bull, j)
                         sum_s += array.get(hist.mfe_bear, j)
             float avg_net = cnt == 0 ? na : (sum_b + sum_s) / float(2 * cnt)
-            table.cell(t, 0, row, STL.f_day_full(d), text_color=color.white)
-            table.cell(t, 1, row, str.tostring(cnt))
-            table.cell(t, 2, row, STL.f_pct_fmt(avg_net))
+            Tables.f_draw_value_cell(t, 0, row, STL.f_day_full(d), table_cell_bg, table_body_text_color, table_text_size)
+            Tables.f_draw_value_cell(t, 1, row, str.tostring(cnt), table_cell_bg, table_body_text_color, table_text_size)
+            Tables.f_draw_value_cell(t, 2, row, STL.f_pct_fmt(avg_net), table_cell_bg, table_body_text_color, table_text_size)
     else
         [b25, b50, b75, b90] = STL.f_fakeout_mfe_percentiles(hist.mfe_bull, hist.fakeout_bull)
         [s25, s50, s75, s90] = STL.f_fakeout_mfe_percentiles(hist.mfe_bear, hist.fakeout_bear)
         [rb25, rb50, rb75, rb90] = STL.f_fakeout_reversal_percentiles(hist.fakeout_reversal_bull, hist.fakeout_bull)
         [rs25, rs50, rs75, rs90] = STL.f_fakeout_reversal_percentiles(hist.fakeout_reversal_bear, hist.fakeout_bear)
         float dbr = STL.f_double_break_rate(hist.double_break, hist.entry_triggered_bull, hist.entry_triggered_bear)
-        table.cell(t, 0, 1, "Bull Fake", text_color=i_bull_color)
-        table.cell(t, 1, 1, STL.f_pct_fmt(b50))
-        table.cell(t, 2, 1, STL.f_pct_fmt(b75))
-        table.cell(t, 3, 1, STL.f_pct_fmt(rb50))
-        table.cell(t, 4, 1, STL.f_pct_fmt(rb90))
-        table.cell(t, 5, 1, STL.f_pct_fmt(dbr))
-        table.cell(t, 0, 2, "Bear Fake", text_color=i_bear_color)
-        table.cell(t, 1, 2, STL.f_pct_fmt(s50))
-        table.cell(t, 2, 2, STL.f_pct_fmt(s75))
-        table.cell(t, 3, 2, STL.f_pct_fmt(rs50))
-        table.cell(t, 4, 2, STL.f_pct_fmt(rs90))
-        table.cell(t, 5, 2, STL.f_pct_fmt(dbr))
+        Tables.f_draw_value_cell(t, 0, 1, "Bull Fake", table_cell_bg, table_bull_color, table_text_size)
+        Tables.f_draw_value_cell(t, 1, 1, STL.f_pct_fmt(b50), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 2, 1, STL.f_pct_fmt(b75), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 3, 1, STL.f_pct_fmt(rb50), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 4, 1, STL.f_pct_fmt(rb90), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 5, 1, STL.f_pct_fmt(dbr), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 0, 2, "Bear Fake", table_cell_bg, table_bear_color, table_text_size)
+        Tables.f_draw_value_cell(t, 1, 2, STL.f_pct_fmt(s50), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 2, 2, STL.f_pct_fmt(s75), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 3, 2, STL.f_pct_fmt(rs50), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 4, 2, STL.f_pct_fmt(rs90), table_cell_bg, table_body_text_color, table_text_size)
+        Tables.f_draw_value_cell(t, 5, 2, STL.f_pct_fmt(dbr), table_cell_bg, table_body_text_color, table_text_size)

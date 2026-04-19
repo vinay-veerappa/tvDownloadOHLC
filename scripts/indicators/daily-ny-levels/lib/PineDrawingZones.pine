@@ -9,7 +9,7 @@ library("PineDrawingZones", overlay=true)
 //          time-distribution rectangles)
 // ============================================================================
 
-import vveerappa/PineDrawingCore/1 as Core
+import vveerappa/PineDrawingCore/2 as Core
 
 /// Draw an opening-range (OR) box semantic wrapper.
 /// Parameters:

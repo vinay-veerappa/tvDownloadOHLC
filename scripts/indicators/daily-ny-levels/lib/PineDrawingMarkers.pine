@@ -9,7 +9,7 @@ library("PineDrawingMarkers", overlay=true)
 //          registry-backed marker enqueue for collision-free placement
 // ============================================================================
 
-import vveerappa/PineDrawingCore/1 as Core
+import vveerappa/PineDrawingCore/2 as Core
 
 /// Draw a text marker (label-based) semantic wrapper.
 /// Immediate rendering without collision resolution (use f_enqueue_text_marker

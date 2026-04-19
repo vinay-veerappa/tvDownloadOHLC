@@ -10,7 +10,7 @@ library("PineDrawingSpecialized", overlay=true)
 //          Intentionally minimal until concrete specialized templates are promoted.
 // ============================================================================
 
-import vveerappa/PineDrawingCore/1 as Core
+import vveerappa/PineDrawingCore/2 as Core
 
 /// Draw a scored/confidence level (line + score label) for experimental indicators.
 /// Combines a horizontal stat line with a text label indicating score/confidence.

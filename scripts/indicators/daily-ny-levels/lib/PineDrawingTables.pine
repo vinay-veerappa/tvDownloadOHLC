@@ -9,7 +9,7 @@ library("PineDrawingTables", overlay=true)
 //          values, metric rows)
 // ============================================================================
 
-import vveerappa/PineDrawingCore/1 as Core
+import vveerappa/PineDrawingCore/2 as Core
 
 /// Resolve a table position string token to Pine position constant.
 /// Delegates to Core token mapping ("Top Left", "Middle Center", etc.).
@@ -18,6 +18,16 @@ import vveerappa/PineDrawingCore/1 as Core
 /// Returns: position.* constant
 export f_table_pos(string s) =>
     Core.f_table_pos(s)
+
+/// Create a table with semantic position resolution and standard styling inputs.
+/// Parameters:
+///   - pos_token: Position string token
+///   - cols, rows: Table dimensions
+///   - bg: Background color
+///   - border_color: Border color
+///   - border_width: Border width
+export f_new_table(string pos_token, int cols, int rows, color bg, color border_color, int border_width) =>
+    table.new(f_table_pos(pos_token), cols, rows, bgcolor=bg, border_color=border_color, border_width=border_width)
 
 /// Render a standard header cell with specified styling.
 /// Parameters:
