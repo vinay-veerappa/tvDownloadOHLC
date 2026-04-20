@@ -745,7 +745,7 @@ f_render_range(int idx) =>
                     float y_high = st.bull_ref * (1.0 + v_hi / 100.0)
                     Zones.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, bull_color, 58)
                     if i_show_hist_bin_labels
-                        Core.f_draw_stat_label(ds, st.or_start_bar - 1, (y_high + y_low) / 2.0, f_fmt_percentile_text(p_lo), stat_label_color, "right", profile_label_size)
+                        Core.f_label_registry_push_ex(lbl_reg, (y_high + y_low) / 2.0, f_fmt_percentile_text(p_lo), stat_label_color, st.or_start_bar - 1, str.lower(i_label_strategy), 10, sp.name + "_hist_bin", "right", profile_label_size, "Label", "")
 
         // BEAR HISTOGRAM
         if array.size(bear_filtered) > 0
@@ -793,7 +793,7 @@ f_render_range(int idx) =>
                     float y_low = st.bear_ref * (1.0 - v_hi / 100.0)
                     Zones.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, bear_color, 58)
                     if i_show_hist_bin_labels
-                        Core.f_draw_stat_label(ds, st.or_start_bar - 1, (y_high + y_low) / 2.0, f_fmt_percentile_text(p_lo), stat_label_color, "right", profile_label_size)
+                        Core.f_label_registry_push_ex(lbl_reg, (y_high + y_low) / 2.0, f_fmt_percentile_text(p_lo), stat_label_color, st.or_start_bar - 1, str.lower(i_label_strategy), 10, sp.name + "_hist_bin", "right", profile_label_size, "Label", "")
 
     // ========================================================================
     // Time Distribution Histogram
@@ -841,7 +841,7 @@ f_render_range(int idx) =>
             float line_h = prof_h * 1.2
 
             int title_x = st.or_start_bar + int(float(time_data_dur / 2) * bars_per_min)
-            Core.f_draw_stat_label(ds, title_x, base_y + syminfo.mintick * 80.0, sp.name + " Time Dist", color.new(time_title_color, 50), "down", profile_label_size)
+            Core.f_label_registry_push_ex(lbl_reg, base_y + syminfo.mintick * 80.0, sp.name + " Time Dist", color.new(time_title_color, 50), title_x, "off", 100, "", "down", profile_label_size, "Label", "")
 
             for bi = 0 to num_bins - 1
                 int x_l = st.or_start_bar + int(float(bi * i_time_bucket_mins) * bars_per_min)
@@ -875,10 +875,10 @@ f_render_range(int idx) =>
                 int x_med = st.or_start_bar + int(med_t * bars_per_min)
                 if i_show_time_avg
                     Core.f_draw_vline(ds, x_avg, base_y + line_h, base_y, stat_avg_color, "Dashed", profile_line_width)
-                    Core.f_draw_stat_label(ds, x_avg, base_y + line_h, "Bull AVG", stat_avg_color, "down", profile_label_size)
+                    Core.f_label_registry_push_ex(lbl_reg, base_y + line_h, "Bull AVG", stat_avg_color, x_avg, str.lower(i_label_strategy), 40, sp.name + "_time_dist", "down", profile_label_size, "Label", "")
                 if i_show_time_med
                     Core.f_draw_vline(ds, x_med, base_y + line_h * 0.8, base_y, stat_median_color, "Dashed", profile_line_width)
-                    Core.f_draw_stat_label(ds, x_med, base_y + line_h * 0.8, "Bull MED", stat_median_color, "down", profile_label_size)
+                    Core.f_label_registry_push_ex(lbl_reg, base_y + line_h * 0.8, "Bull MED", stat_median_color, x_med, str.lower(i_label_strategy), 35, sp.name + "_time_dist", "down", profile_label_size, "Label", "")
 
             if array.size(bear_t_nz) > 0
                 float avg_t = array.avg(bear_t_nz)
@@ -887,10 +887,10 @@ f_render_range(int idx) =>
                 int x_med = st.or_start_bar + int(med_t * bars_per_min)
                 if i_show_time_avg
                     Core.f_draw_vline(ds, x_avg, base_y, base_y - line_h, stat_avg_color, "Dashed", profile_line_width)
-                    Core.f_draw_stat_label(ds, x_avg, base_y - line_h, "Bear AVG", stat_avg_color, "up", profile_label_size)
+                    Core.f_label_registry_push_ex(lbl_reg, base_y - line_h, "Bear AVG", stat_avg_color, x_avg, str.lower(i_label_strategy), 40, sp.name + "_time_dist", "up", profile_label_size, "Label", "")
                 if i_show_time_med
                     Core.f_draw_vline(ds, x_med, base_y, base_y - line_h * 0.8, stat_median_color, "Dashed", profile_line_width)
-                    Core.f_draw_stat_label(ds, x_med, base_y - line_h * 0.8, "Bear MED", stat_median_color, "up", profile_label_size)
+                    Core.f_label_registry_push_ex(lbl_reg, base_y - line_h * 0.8, "Bear MED", stat_median_color, x_med, str.lower(i_label_strategy), 35, sp.name + "_time_dist", "up", profile_label_size, "Label", "")
 
     // ========================================================================
     // Phase 2 Directional Overlay
@@ -965,8 +965,8 @@ f_render_range(int idx) =>
                 int zone_line_alpha = math.min(i_zone_transparency + 10, 95)
                 int zone_text_alpha = math.min(int(math.round(float(i_zone_transparency) * 0.6)), 90)
                 Zones.f_draw_hist_band(ds, st.or_start_bar, z_top, z_bot, z_w, reversal_zone_color, i_zone_transparency)
-                HLevels.f_draw_stat_line(ds, st.or_start_bar, z_mid, st.or_start_bar + z_w, color.new(reversal_zone_color, zone_line_alpha), "Dashed", i_line_width_secondary)
-                Core.f_draw_stat_label(ds, z_mid_x, z_mid, "Reversal Zone (P20-P50 Fake MAE)", color.new(stat_label_color, zone_text_alpha), "center", i_label_size)
+                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "C", st.or_start_bar, st.or_start_bar + z_w, z_mid, "", color.new(r_reversal_zone_color, zone_line_alpha), 55, sp.name + "_rev_zone_mid", 0)
+                Core.f_label_registry_push_ex(lbl_reg, z_mid, "Reversal Zone (P20-P50 Fake MAE)", color.new(stat_label_color, zone_text_alpha), z_mid_x, str.lower(i_label_strategy), 100, sp.name + "_rev_zone", "center", profile_label_size, "Label", "")
 
             // Phase 2 directional lines
             if not na(render_px)
