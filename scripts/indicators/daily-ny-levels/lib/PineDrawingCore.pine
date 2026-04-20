@@ -2,20 +2,44 @@
 library("PineDrawingCore", overlay=true)
 
 // ============================================================================
-// PineDrawingCore v1.0 — Foundation layer for drawing and label management
+// PineDrawingCore v3.0 — Foundation layer for drawing and label management
 // ============================================================================
-// Provides: Core types, lifecycle management, label registry with collision
-//           resolution, and primitive drawing wrappers.
+// Provides: Core types, theme palette, display profile, lifecycle management,
+//           label registry with collision resolution, tier resolvers,
+//           Unicode data-viz helpers, and primitive drawing wrappers (line,
+//           box, label, marker, linefill, polyline, vline).
 // Purpose: Shared foundation for all PineDrawing family libraries
-//          (HorizontalLevels, Zones, Tables, VerticalMarkers, Markers, etc.)
+//          (HorizontalLevels, Zones, Tables, VerticalMarkers, Markers,
+//          Composites, Specialized).
+//
+// Breaking changes vs v2.0:
+//   - PineDrawingState now includes linefills and polylines arrays.
+//     Existing constructor f_new_drawing_state() handles migration silently.
+//   - f_draw_day_separator() gained required `ds` parameter (state tracking).
+//     Family library forwarders must be updated accordingly.
+//   - f_theme_color() now halts on unknown tokens; use f_theme_color_safe()
+//     for user-provided token inputs that may not match.
 // ============================================================================
 
-/// Core drawing state managing all chart objects (boxes, lines, labels).
-/// Supports lifecycle reset via f_clear_all() to clean up previous cycle.
+/// Core drawing state managing all chart objects (boxes, lines, labels, linefills, polylines).
+/// Supports lifecycle reset via f_drawing_state_clear() to clean up previous cycle.
 export type PineDrawingState
-    array<box> boxes      // Boxes: OR zones, histogram bands, time bars
-    array<line> lines     // Lines: stat lines, vlines, day separators
-    array<label> labels   // Labels: stat labels, markers, registered entries
+    array<box> boxes              // Boxes: OR zones, histogram bands, time bars, FVG/OB
+    array<string> box_tags        // Tags for reconciliation
+    array<int> box_nbs            // Number of days back (nd)
+    array<line> lines             // Lines: stat lines, vlines, day separators, wicks
+    array<string> line_tags
+    array<int> line_nbs
+    array<label> labels           // Labels: stat labels, markers, registered entries
+    array<string> label_tags
+    array<int> label_nbs
+    array<linefill> linefills     // Linefills: banded level systems, EM fills
+    array<string> linefill_tags
+    array<int> linefill_nbs
+    array<polyline> polylines     // Polylines: price trajectories, forecast paths
+    array<string> polyline_tags
+    array<int> polyline_nbs
+
 
 /// Per-cycle label registry for collision-free label placement.
 /// Supports merge strategies: "merge" (combine overlaps), "stagger" (offset),
@@ -31,15 +55,29 @@ export type LabelRegistry
     array<string> label_styles   // "left", "right", "up", "down", "center"
     array<string> label_sizes    // "Tiny", "Small", "Normal", "Large", "Huge"
     array<string> label_modes    // "Label", "None" (display mode)
-    array<string> tooltips       // Tooltip text (future support)
+    array<string> tooltips       // Tooltip text
+    array<string> tags           // Tag for reconciliation
+    array<int> lookbacks         // n-days back (for [-nd] rendering)
 
-/// Allocate a new PineDrawingState with empty arrays.
+/// Allocate a new PineDrawingState with empty arrays for all tracked primitives.
 export f_new_drawing_state() =>
-    PineDrawingState.new(array.new_box(0), array.new_line(0), array.new_label(0))
+    PineDrawingState.new(
+         array.new_box(0), array.new_string(0), array.new_int(0),
+         array.new_line(0), array.new_string(0), array.new_int(0),
+         array.new_label(0), array.new_string(0), array.new_int(0),
+         array.new<linefill>(0), array.new_string(0), array.new_int(0),
+         array.new<polyline>(0), array.new_string(0), array.new_int(0)
+    )
 
 /// Allocate a new LabelRegistry with empty arrays.
 export f_new_label_registry() =>
-    LabelRegistry.new(array.new_float(0), array.new_string(0), array.new_color(0), array.new_int(0), array.new_string(0), array.new_int(0), array.new_string(0), array.new_string(0), array.new_string(0), array.new_string(0), array.new_string(0))
+    LabelRegistry.new(
+         array.new_float(0), array.new_string(0), array.new_color(0), 
+         array.new_int(0), array.new_string(0), array.new_int(0), 
+         array.new_string(0), array.new_string(0), array.new_string(0), 
+         array.new_string(0), array.new_string(0), array.new_string(0), 
+         array.new_int(0)
+    )
 
 /// Lifecycle: Create a new label registry (alias for f_new_label_registry()).
 export f_label_registry_begin() =>
@@ -58,6 +96,8 @@ export f_label_registry_clear(LabelRegistry lr) =>
     array.clear(lr.label_sizes)
     array.clear(lr.label_modes)
     array.clear(lr.tooltips)
+    array.clear(lr.tags)
+    array.clear(lr.lookbacks)
 
 /// Lifecycle: Reset a label registry (alias for f_label_registry_clear()).
 export f_label_registry_reset(LabelRegistry lr) =>
@@ -71,7 +111,9 @@ export f_label_registry_reset(LabelRegistry lr) =>
 ///   - label_style: Anchor style ("left", "right", "up", "down", "center")
 ///   - label_size: Size token ("Tiny", "Small", "Normal", "Large", "Huge")
 ///   - label_mode: "Label" (draw) or "None" (skip)
-export f_label_registry_push_ex(LabelRegistry lr, float y, string text_value, color clr, int x, string strategy, int priority, string merge_group, string label_style, string label_size, string label_mode, string tooltip_value) =>
+///   - lookback_val: Number of days back (nd)
+///   - tag_val: Optional lookup tag
+export f_label_registry_push_ex(LabelRegistry lr, float y, string text_value, color clr, int x, string strategy, int priority, string merge_group, string label_style, string label_size, string label_mode, string tooltip_value, int lookback_val = 0, string tag_val = "") =>
     array.push(lr.ys, y)
     array.push(lr.texts, text_value)
     array.push(lr.colors, clr)
@@ -83,87 +125,16 @@ export f_label_registry_push_ex(LabelRegistry lr, float y, string text_value, co
     array.push(lr.label_sizes, label_size)
     array.push(lr.label_modes, label_mode)
     array.push(lr.tooltips, tooltip_value)
+    array.push(lr.tags, tag_val)
+    array.push(lr.lookbacks, lookback_val)
 
 /// Enqueue a label entry with default settings (merge strategy, priority 0, left-aligned).
-export f_label_registry_push(LabelRegistry lr, float y, string text_value, color clr, int x) =>
-    f_label_registry_push_ex(lr, y, text_value, clr, x, "merge", 0, "", "left", "", "Label", "")
+export f_label_registry_push(LabelRegistry lr, float y, string text_value, color clr, int x, int lookback = 0, string tag = "") =>
+    f_label_registry_push_ex(lr, y, text_value, clr, x, "merge", 0, "", "left", "", "Label", "", lookback, tag)
 
-f_label_registry_size(LabelRegistry lr) =>
-    int n = array.size(lr.ys)
-    n := math.min(n, array.size(lr.texts))
-    n := math.min(n, array.size(lr.colors))
-    n := math.min(n, array.size(lr.xs))
-    n := math.min(n, array.size(lr.strategies))
-    n := math.min(n, array.size(lr.priorities))
-    n := math.min(n, array.size(lr.merge_groups))
-    n := math.min(n, array.size(lr.label_styles))
-    n := math.min(n, array.size(lr.label_sizes))
-    n := math.min(n, array.size(lr.label_modes))
-    n := math.min(n, array.size(lr.tooltips))
-    n
-
-f_apply_conditionals_for_key(string src, string key, string value) =>
-    string out = src
-    string open_token = "{if:" + key + "}"
-    string close_token = "{endif}"
-    int guard = 0
-    while guard < 50 and str.contains(out, open_token) and str.contains(out, close_token)
-        int p_open = str.pos(out, open_token)
-        int p_close = str.pos(out, close_token)
-        if p_open == -1 or p_close == -1 or p_close < p_open
-            break
-        int content_start = p_open + str.length(open_token)
-        string inner = str.substring(out, content_start, p_close)
-        string replacement = str.length(value) > 0 ? inner : ""
-        string prefix = str.substring(out, 0, p_open)
-        int suffix_start = p_close + str.length(close_token)
-        string suffix = suffix_start < str.length(out) ? str.substring(out, suffix_start, str.length(out)) : ""
-        out := prefix + replacement + suffix
-        guard += 1
-    out
-
-/// Format a template string by replacing {key} placeholders and {if:key}...{endif} blocks.
-/// - {key} is replaced with the corresponding value (empty string if not found).
-/// - {if:key}...{endif} blocks are retained if value is non-empty, otherwise removed.
-/// Parameters:
-///   - template: Template string with {key} and {if:key} tokens
-///   - keys: Array of key names
-///   - values: Array of replacement values (must match keys length)
-/// Returns: Formatted string with all substitutions applied
-export f_format_template(string template, array<string> keys, array<string> values) =>
-    string out = template
-    int n = math.min(array.size(keys), array.size(values))
-    if n > 0
-        for i = 0 to n - 1
-            string k = array.get(keys, i)
-            string v = array.get(values, i)
-            out := f_apply_conditionals_for_key(out, k, v)
-        for i = 0 to n - 1
-            string k = array.get(keys, i)
-            string v = array.get(values, i)
-            out := str.replace_all(out, "{" + k + "}", v)
-    out
-
-/// Compute symbol-aware label merge threshold (in price units).
-/// Micro contracts (NQ, RTY, M2K, CL, GC) have tighter thresholds.
-/// Parameters:
-///   - symbol: Trading symbol (NQ, RTY, ES, etc.)
-///   - mintick: Minimum tick size (from syminfo.mintick)
-/// Returns: Merge threshold in price units
-export f_merge_threshold_for_symbol(string symbol, float mintick) =>
-    string s = str.upper(symbol)
-    int ticks = str.contains(s, "NQ") ? 40 : str.contains(s, "RTY") ? 10 : str.contains(s, "M2K") ? 10 : str.contains(s, "CL") ? 10 : str.contains(s, "GC") ? 15 : 20
-    float(ticks) * mintick
-
-/// Resolve a theme-aware color from custom/dark/light variants.
-/// Parameters:
-///   - theme_mode: "Custom", "Dark", or "Light"
-///   - custom_color: User-specified custom-theme color
-///   - dark_color: Palette color for dark theme
-///   - light_color: Palette color for light theme
-/// Returns: Concrete color for the active theme
-export f_resolve_color(string theme_mode, color custom_color, color dark_color, color light_color) =>
-    theme_mode == "Dark" ? dark_color : theme_mode == "Light" ? light_color : custom_color
+// ============================================================================
+// Display Profile — Resolution-aware scaling (Spec §5)
+// ============================================================================
 
 f_profile_size_rank(string size_token) =>
     switch str.lower(size_token)
@@ -223,7 +194,7 @@ export f_display_profile_table_size(string base_size, string profile) =>
 /// Returns: Width adjusted for the active display profile
 export f_display_profile_width(int base_width, string profile) =>
     float mult = profile == "Tiny" ? 0.75 : profile == "Small" ? 0.85 : profile == "Large" ? 1.25 : profile == "Huge" ? 1.5 : 1.0
-    math.max(1, int(math.round(float(base_width) * mult)))
+    int(math.round(float(base_width) * mult))
 
 /// Adjust transparency under the active display profile.
 /// Parameters:
@@ -233,6 +204,422 @@ export f_display_profile_width(int base_width, string profile) =>
 export f_display_profile_transparency(int base_transparency, string profile) =>
     int delta = profile == "Tiny" ? 5 : profile == "Small" ? 5 : profile == "Large" ? -5 : profile == "Huge" ? -10 : 0
     math.max(0, math.min(100, base_transparency + delta))
+
+// ============================================================================
+// Historical Styling — Aging and lookback modifiers (Spec §6.1, §8.3)
+// ============================================================================
+
+/// Resolve the institutional historical suffix for n-days back.
+/// Example: f_nd_suffix(1) -> " [-1d]"
+export f_nd_suffix(int nd) =>
+    nd > 0 ? " [-" + str.tostring(nd) + "d]" : ""
+
+/// Resolve transparency delta for an element based on its historical age (nd).
+/// Per spec §6.1: 1d = +30, 2d+ = +45.
+export f_historical_transparency_delta(int nd) =>
+    nd == 0 ? 0 : nd == 1 ? 30 : 45
+
+/// Helper to apply historical transparency to a base transparency value.
+export f_historical_transparency(int base_transp, int nd, string profile) =>
+    int delta = f_historical_transparency_delta(nd)
+    f_display_profile_transparency(base_transp + delta, profile)
+
+f_apply_conditionals_for_key(string src, string key, string value) =>
+    string out = src
+    string open_token = "{if:" + key + "}"
+    string close_token = "{endif}"
+    int guard = 0
+    while guard < 50 and str.contains(out, open_token) and str.contains(out, close_token)
+        int p_open = str.pos(out, open_token)
+        int p_close = str.pos(out, close_token)
+        if p_open == -1 or p_close == -1 or p_close < p_open
+            break
+        int content_start = p_open + str.length(open_token)
+        string inner = str.substring(out, content_start, p_close)
+        string replacement = str.length(value) > 0 ? inner : ""
+        string prefix = str.substring(out, 0, p_open)
+        int suffix_start = p_close + str.length(close_token)
+        string suffix = suffix_start < str.length(out) ? str.substring(out, suffix_start, str.length(out)) : ""
+        out := prefix + replacement + suffix
+        guard += 1
+    out
+
+/// Format a template string by replacing {key} placeholders and {if:key}...{endif} blocks.
+/// - {key} is replaced with the corresponding value (empty string if not found).
+/// - {if:key}...{endif} blocks are retained if value is non-empty, otherwise removed.
+/// Parameters:
+///   - template: Template string with {key} and {if:key} tokens
+///   - keys: Array of key names
+///   - values: Array of replacement values (must match keys length)
+/// Returns: Formatted string with all substitutions applied
+export f_format_template(string template, array<string> keys, array<string> values) =>
+    string out = template
+    int n = math.min(array.size(keys), array.size(values))
+    if n > 0
+        for i = 0 to n - 1
+            string k = array.get(keys, i)
+            string v = array.get(values, i)
+            out := f_apply_conditionals_for_key(out, k, v)
+        for i = 0 to n - 1
+            string k = array.get(keys, i)
+            string v = array.get(values, i)
+            out := str.replace_all(out, "{" + k + "}", v)
+    out
+
+/// Enqueue a formatted label entry using templates for both label text and tooltip.
+/// Parameters:
+///   - lr: LabelRegistry to enqueue into
+///   - y, x: Position
+///   - clr: Text color
+///   - label_template: String for visible label text with {key} and {if:key} tokens
+///   - tooltip_template: String for tooltip text; empty = no tooltip
+///   - keys: Array of replacement keys
+///   - values: Array of replacement values (parallel to keys)
+///   - strategy: Collision strategy ("merge", "stagger", "hide", "off")
+///   - priority: Render priority (higher first)
+///   - merge_group: Group constraint ("" = any)
+///   - label_style: Anchor style ("left", "right", "up", "down", "center")
+///   - label_size: Size token ("", "Tiny", "Small", "Normal", "Large", "Huge")
+///   - label_mode: "Label", "Tooltip", "Both", "None"
+///   - lookback: N-days back (for [-Nd] suffix)
+///   - tag: Optional lookup tag
+export f_label_registry_push_formatted(LabelRegistry lr, float y, int x, color clr, string label_template, string tooltip_template, array<string> keys, array<string> values, string strategy = "merge", int priority = 0, string merge_group = "", string label_style = "left", string label_size = "", string label_mode = "Label", int lookback = 0, string tag = "") =>
+    string text_value = f_format_template(label_template, keys, values)
+    string tooltip_value = str.length(tooltip_template) > 0 ? f_format_template(tooltip_template, keys, values) : ""
+    f_label_registry_push_ex(lr, y, text_value, clr, x, strategy, priority, merge_group, label_style, label_size, label_mode, tooltip_value, lookback, tag)
+
+f_label_registry_size(LabelRegistry lr) =>
+    int n = array.size(lr.ys)
+    n := math.min(n, array.size(lr.texts))
+    n := math.min(n, array.size(lr.colors))
+    n := math.min(n, array.size(lr.xs))
+    n := math.min(n, array.size(lr.strategies))
+    n := math.min(n, array.size(lr.priorities))
+    n := math.min(n, array.size(lr.merge_groups))
+    n := math.min(n, array.size(lr.label_styles))
+    n := math.min(n, array.size(lr.label_sizes))
+    n := math.min(n, array.size(lr.label_modes))
+    n := math.min(n, array.size(lr.tooltips))
+    n := math.min(n, array.size(lr.tags))
+    n := math.min(n, array.size(lr.lookbacks))
+    n
+
+/// Compute symbol-aware label merge threshold (in price units).
+/// Micro contracts (NQ, RTY, M2K, CL, GC) have tighter thresholds.
+/// Parameters:
+///   - symbol: Trading symbol (NQ, RTY, ES, etc.)
+///   - mintick: Minimum tick size (from syminfo.mintick)
+/// Returns: Merge threshold in price units
+export f_merge_threshold_for_symbol(string symbol, float mintick) =>
+    string s = str.upper(symbol)
+    int ticks = str.contains(s, "NQ") ? 40 : str.contains(s, "RTY") ? 10 : str.contains(s, "M2K") ? 10 : str.contains(s, "CL") ? 10 : str.contains(s, "GC") ? 15 : 20
+    float(ticks) * mintick
+
+/// Resolve a theme-aware color from custom/dark/light variants.
+/// Parameters:
+///   - theme_mode: "Custom", "Dark", or "Light"
+///   - custom_color: User-specified custom-theme color
+///   - dark_color: Palette color for dark theme
+///   - light_color: Palette color for light theme
+/// Returns: Concrete color for the active theme
+export f_resolve_color(string theme_mode, color custom_color, color dark_color, color light_color) =>
+    theme_mode == "Dark" ? dark_color : theme_mode == "Light" ? light_color : custom_color
+
+/// Resolve a visual system color token to its concrete color.
+/// Parameters:
+///   - token: The string name of the color per the visual system.
+///   - theme_mode: "Dark" or "Light". Defaults to "Dark".
+/// Returns: The hex color for the token.
+export f_theme_color(string token, string theme_mode = "Dark") =>
+    color c_dark = color.gray
+    color c_light = color.gray
+    switch token
+        // Core Palette
+        "bull" =>
+            c_dark := color.rgb(56, 189, 138)
+            c_light := color.rgb(0, 128, 96)
+        "bear" =>
+            c_dark := color.rgb(248, 113, 113)
+            c_light := color.rgb(179, 38, 30)
+        "neutral" =>
+            c_dark := color.rgb(148, 163, 184)
+            c_light := color.rgb(107, 114, 128)
+        "positive" =>
+            c_dark := color.rgb(134, 239, 172)
+            c_light := color.rgb(22, 163, 74)
+        "negative" =>
+            c_dark := color.rgb(252, 165, 165)
+            c_light := color.rgb(185, 28, 28)
+        "caution" =>
+            c_dark := color.rgb(251, 146, 60)
+            c_light := color.rgb(194, 65, 12)
+        "confirm" =>
+            c_dark := color.rgb(45, 212, 191)
+            c_light := color.rgb(13, 148, 136)
+        "warning" =>
+            c_dark := color.rgb(249, 115, 22)
+            c_light := color.rgb(194, 65, 12)
+        "median" =>
+            c_dark := color.rgb(250, 204, 21)
+            c_light := color.rgb(202, 138, 4)
+        "average" =>
+            c_dark := color.rgb(34, 211, 238)
+            c_light := color.rgb(8, 145, 178)
+        "stretch" =>
+            c_dark := color.rgb(251, 146, 60)
+            c_light := color.rgb(194, 65, 12)
+        "pivot_color" =>
+            c_dark := color.rgb(96, 165, 250)
+            c_light := color.rgb(37, 99, 235)
+        "invalidation" =>
+            c_dark := color.rgb(248, 113, 113)
+            c_light := color.rgb(179, 38, 30)
+        "max_reversal" =>
+            c_dark := color.rgb(252, 165, 165)
+            c_light := color.rgb(220, 38, 38)
+        
+        // Semantic UI Palette
+        "bg_primary" =>
+            c_dark := color.rgb(15, 23, 42)
+            c_light := color.rgb(248, 250, 252)
+        "bg_secondary" =>
+            c_dark := color.rgb(30, 41, 59)
+            c_light := color.rgb(255, 255, 255)
+        "bg_tertiary" =>
+            c_dark := color.rgb(51, 65, 85)
+            c_light := color.rgb(226, 232, 240)
+        "bg_border" =>
+            c_dark := color.rgb(51, 65, 85)
+            c_light := color.rgb(148, 163, 184)
+        "text_primary" =>
+            c_dark := color.rgb(241, 245, 249)
+            c_light := color.rgb(15, 23, 42)
+        "text_secondary" =>
+            c_dark := color.rgb(203, 213, 225)
+            c_light := color.rgb(71, 85, 105)
+        "text_tertiary" =>
+            c_dark := color.rgb(148, 163, 184)
+            c_light := color.rgb(100, 116, 139)
+        "text_dim" =>
+            c_dark := color.rgb(148, 163, 184)
+            c_light := color.rgb(120, 113, 108)
+        "header_bg" =>
+            c_dark := color.rgb(30, 58, 138)
+            c_light := color.rgb(191, 219, 254)
+        "header_text" =>
+            c_dark := color.rgb(226, 232, 240)
+            c_light := color.rgb(17, 24, 39)
+        "validated_bg" =>
+            c_dark := color.rgb(22, 101, 52)
+            c_light := color.rgb(220, 252, 231)
+        "validated_text" =>
+            c_dark := color.rgb(220, 252, 231)
+            c_light := color.rgb(22, 101, 52)
+        "pending_bg" =>
+            c_dark := color.rgb(146, 64, 14)
+            c_light := color.rgb(254, 243, 199)
+        "pending_text" =>
+            c_dark := color.rgb(254, 243, 199)
+            c_light := color.rgb(146, 64, 14)
+        "skip_bg" =>
+            c_dark := color.rgb(127, 29, 29)
+            c_light := color.rgb(254, 226, 226)
+        "skip_text" =>
+            c_dark := color.rgb(254, 202, 202)
+            c_light := color.rgb(153, 27, 27)
+
+        // Session Palette
+        "asia" =>
+            c_dark := color.rgb(59, 130, 246)
+            c_light := color.rgb(29, 78, 216)
+        "london" =>
+            c_dark := color.rgb(239, 68, 68)
+            c_light := color.rgb(185, 28, 28)
+        "ny" =>
+            c_dark := color.rgb(16, 185, 129)
+            c_light := color.rgb(4, 120, 87)
+        "ny2" =>
+            c_dark := color.rgb(139, 92, 246)
+            c_light := color.rgb(109, 40, 217)
+        "p12" =>
+            c_dark := color.rgb(250, 204, 21)
+            c_light := color.rgb(202, 138, 4)
+        "prev_day" =>
+            c_dark := color.rgb(156, 163, 175)
+            c_light := color.rgb(107, 114, 128)
+        "settlement" =>
+            c_dark := color.rgb(251, 146, 60)
+            c_light := color.rgb(194, 65, 12)
+        "overnight" =>
+            c_dark := color.rgb(245, 158, 11)
+            c_light := color.rgb(217, 119, 6)
+        =>
+            runtime.error("Unknown theme color token: " + token)
+    
+    theme_mode == "Light" ? c_light : c_dark
+
+/// Safely resolve a theme-aware color or return a default if token is unknown.
+/// Parameters:
+///   - token: Color token name
+///   - theme_mode: "Dark" or "Light"
+///   - fallback: Color to return if token is not found
+/// Returns: Concrete color or fallback
+export f_theme_color_safe(string token, string theme_mode = "Dark", color fallback = color.gray) =>
+    color result = fallback
+    switch token
+        "bull"           => result := f_theme_color("bull", theme_mode)
+        "bear"           => result := f_theme_color("bear", theme_mode)
+        "neutral"        => result := f_theme_color("neutral", theme_mode)
+        "positive"       => result := f_theme_color("positive", theme_mode)
+        "negative"       => result := f_theme_color("negative", theme_mode)
+        "caution"        => result := f_theme_color("caution", theme_mode)
+        "confirm"        => result := f_theme_color("confirm", theme_mode)
+        "warning"        => result := f_theme_color("warning", theme_mode)
+        "median"         => result := f_theme_color("median", theme_mode)
+        "average"        => result := f_theme_color("average", theme_mode)
+        "stretch"        => result := f_theme_color("stretch", theme_mode)
+        "pivot_color"    => result := f_theme_color("pivot_color", theme_mode)
+        "invalidation"   => result := f_theme_color("invalidation", theme_mode)
+        "max_reversal"   => result := f_theme_color("max_reversal", theme_mode)
+        "bg_primary"     => result := f_theme_color("bg_primary", theme_mode)
+        "bg_secondary"   => result := f_theme_color("bg_secondary", theme_mode)
+        "bg_tertiary"    => result := f_theme_color("bg_tertiary", theme_mode)
+        "bg_border"      => result := f_theme_color("bg_border", theme_mode)
+        "text_primary"   => result := f_theme_color("text_primary", theme_mode)
+        "text_secondary" => result := f_theme_color("text_secondary", theme_mode)
+        "text_tertiary"  => result := f_theme_color("text_tertiary", theme_mode)
+        "text_dim"       => result := f_theme_color("text_dim", theme_mode)
+        "header_bg"      => result := f_theme_color("header_bg", theme_mode)
+        "header_text"    => result := f_theme_color("header_text", theme_mode)
+        "validated_bg"   => result := f_theme_color("validated_bg", theme_mode)
+        "validated_text" => result := f_theme_color("validated_text", theme_mode)
+        "pending_bg"     => result := f_theme_color("pending_bg", theme_mode)
+        "pending_text"   => result := f_theme_color("pending_text", theme_mode)
+        "skip_bg"        => result := f_theme_color("skip_bg", theme_mode)
+        "skip_text"      => result := f_theme_color("skip_text", theme_mode)
+        "asia"           => result := f_theme_color("asia", theme_mode)
+        "london"         => result := f_theme_color("london", theme_mode)
+        "ny"             => result := f_theme_color("ny", theme_mode)
+        "ny2"            => result := f_theme_color("ny2", theme_mode)
+        "p12"            => result := f_theme_color("p12", theme_mode)
+        "prev_day"       => result := f_theme_color("prev_day", theme_mode)
+        "settlement"     => result := f_theme_color("settlement", theme_mode)
+        "overnight"      => result := f_theme_color("overnight", theme_mode)
+    result
+
+
+// ============================================================================
+// Geometry Helpers — Consistent spacing and extension (Spec §4.3)
+// ============================================================================
+
+/// Default bars to extend horizontal lines past current candle.
+export f_geometry_right_extend_bars() => 20
+
+/// Default bars for gap between line end and right-edge label.
+export f_geometry_label_gap_bars() => 8
+
+/// Default bars for horizontal offset of staggered labels.
+export f_geometry_label_offset_bars() => 2
+
+/// Default bars for horizontal step between collision columns.
+export f_geometry_column_step_bars() => 2
+
+/// Default bars for short-line reference markers.
+export f_geometry_line_length_bars() => 6
+
+// ============================================================================
+// Tier Resolvers — Automated styling based on P/S/C priority tier
+// Spec: VISUAL_SYSTEM.md §4.1
+// ============================================================================
+
+/// Resolve default line width for a priority tier.
+/// Per spec: P=2, S=1, C=1.
+/// Parameters:
+///   - tier: "P" (Primary), "S" (Secondary), "C" (Context)
+/// Returns: Width in px (1 or 2)
+export f_tier_width(string tier) =>
+    tier == "P" ? 2 : 1
+
+/// Resolve default line style for a priority tier.
+/// Per spec: P=Solid, S=Dashed, C=Dotted.
+/// Templates may override per-variant (e.g., activation_trigger uses Dotted
+/// at P for breakout variant) — this helper returns the baseline only.
+/// Parameters:
+///   - tier: "P" (Primary), "S" (Secondary), "C" (Context)
+/// Returns: Style token ("Solid", "Dashed", "Dotted")
+export f_tier_style(string tier) =>
+    tier == "P" ? "Solid" : tier == "S" ? "Dashed" : "Dotted"
+
+/// Resolve default transparency delta for a priority tier.
+/// Per spec: P=0, S=15, C=30.
+/// Parameters:
+///   - tier: "P" (Primary), "S" (Secondary), "C" (Context)
+/// Returns: Transparency (0-100)
+export f_tier_transparency(string tier) =>
+    tier == "P" ? 0 : tier == "S" ? 15 : 30
+
+// ============================================================================
+// Unicode Data-Viz Helpers — Text-based charts and indicators
+// Spec: VISUAL_TEMPLATES.md §9.4
+// ============================================================================
+
+/// Render a horizontal bar of full blocks (█) proportional to cnt/max_cnt.
+/// Use for distribution-table cells where a count-proportional bar is wanted.
+/// Parameters:
+///   - cnt: Current count
+///   - max_cnt: Max count across the group (denominator)
+///   - max_width: Max bar width in characters (default 8)
+/// Returns: String of 0 to max_width █ characters
+export f_unicode_bar(float cnt, float max_cnt, int max_width = 8) =>
+    float ratio = max_cnt > 0 ? math.max(0.0, math.min(1.0, cnt / max_cnt)) : 0.0
+    int blocks = int(math.round(ratio * max_width))
+    string s = ""
+    if blocks > 0
+        for i = 1 to blocks
+            s += "█"
+    s
+
+/// Render a Unicode sparkline (▁▂▃▄▅▆▇█) for the given numeric array.
+/// Values are normalized to min/max of the array and mapped onto 8 vertical levels.
+/// Parameters:
+///   - values: Array of floats
+/// Returns: Sparkline string of length values.size()
+export f_unicode_sparkline(array<float> values) =>
+    string out = ""
+    int n = array.size(values)
+    if n > 0
+        float v_min = array.min(values)
+        float v_max = array.max(values)
+        float v_range = v_max - v_min
+        string chars = " ▂▃▄▅▆▇█"
+        for i = 0 to n - 1
+            float val = array.get(values, i)
+            int char_idx = v_range == 0 ? 0 : int(math.floor(7 * (val - v_min) / v_range))
+            char_idx := math.max(0, math.min(7, char_idx))
+            out := out + str.substring(chars, char_idx, char_idx + 1)
+    out
+
+/// Render a Unicode progress bar like [████░░░░] for a fraction 0..1.
+/// Use for progress/completion indicators where a fixed-width bracketed bar
+/// communicates the fraction done.
+/// Parameters:
+///   - fraction: 0..1 (clamped)
+///   - width: Total bar width in characters (default 8)
+/// Returns: Progress bar string including surrounding brackets
+export f_unicode_progress(float fraction, int width = 8) =>
+    float valid_frac = math.max(0.0, math.min(1.0, fraction))
+    int filled = int(math.round(valid_frac * width))
+    int empty_cells = math.max(0, width - filled)
+    string s = "["
+    if filled > 0
+        for i = 1 to filled
+            s += "█"
+    if empty_cells > 0
+        for i = 1 to empty_cells
+            s += "░"
+    s += "]"
+    s
+
 
 f_clear_boxes(array<box> arr) =>
     if array.size(arr) > 0
@@ -252,11 +639,62 @@ f_clear_labels(array<label> arr) =>
             label.delete(array.get(arr, i))
     array.clear(arr)
 
-/// Lifecycle: Delete all chart objects (boxes, lines, labels) and reset state.
-export f_clear_all(PineDrawingState ds) =>
+f_clear_linefills(array<linefill> arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            linefill.delete(array.get(arr, i))
+    array.clear(arr)
+
+f_clear_polylines(array<polyline> arr) =>
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            polyline.delete(array.get(arr, i))
+    array.clear(arr)
+
+/// Lifecycle: Delete all chart objects (boxes, lines, labels, linefills, polylines) and reset state.
+export f_drawing_state_clear(PineDrawingState ds) =>
     f_clear_boxes(ds.boxes)
+    array.clear(ds.box_tags)
+    array.clear(ds.box_nbs)
+    
     f_clear_lines(ds.lines)
+    array.clear(ds.line_tags)
+    array.clear(ds.line_nbs)
+    
     f_clear_labels(ds.labels)
+    array.clear(ds.label_tags)
+    array.clear(ds.label_nbs)
+    
+    f_clear_linefills(ds.linefills)
+    array.clear(ds.linefill_tags)
+    array.clear(ds.linefill_nbs)
+    
+    f_clear_polylines(ds.polylines)
+    array.clear(ds.polyline_tags)
+    array.clear(ds.polyline_nbs)
+
+/// @deprecated — use f_drawing_state_clear() instead. Kept for backwards compat.
+export f_clear_all(PineDrawingState ds) =>
+    f_drawing_state_clear(ds)
+
+/// Lifecycle: Increment the lookback (nd) of all tracked objects in state.
+/// Call this on session/day breaks to "age" the state.
+export f_drawing_state_age(PineDrawingState ds) =>
+    if array.size(ds.box_nbs) > 0
+        for i = 0 to array.size(ds.box_nbs) - 1
+            array.set(ds.box_nbs, i, array.get(ds.box_nbs, i) + 1)
+    if array.size(ds.line_nbs) > 0
+        for i = 0 to array.size(ds.line_nbs) - 1
+            array.set(ds.line_nbs, i, array.get(ds.line_nbs, i) + 1)
+    if array.size(ds.label_nbs) > 0
+        for i = 0 to array.size(ds.label_nbs) - 1
+            array.set(ds.label_nbs, i, array.get(ds.label_nbs, i) + 1)
+    if array.size(ds.linefill_nbs) > 0
+        for i = 0 to array.size(ds.linefill_nbs) - 1
+            array.set(ds.linefill_nbs, i, array.get(ds.linefill_nbs, i) + 1)
+    if array.size(ds.polyline_nbs) > 0
+        for i = 0 to array.size(ds.polyline_nbs) - 1
+            array.set(ds.polyline_nbs, i, array.get(ds.polyline_nbs, i) + 1)
 
 /// Resolve a string style token to Pine line.style constant.
 /// Parameters:
@@ -313,21 +751,146 @@ export f_table_pos(string s) =>
         => position.bottom_right
 
 // ============================================================================
-// Primitive drawing wrappers
+// 6. Reconciliation & State Search (Issue 17)
 // ============================================================================
 
-/// Draw a horizontal line from (x1, y1) to (x2, y2) and track in state.
+/// Find a tracked line by its tag.
+/// Returns: line object found or `na`.
+export f_find_line_by_tag(PineDrawingState ds, string tag) =>
+    line out = na
+    if str.length(tag) > 0 and array.size(ds.line_tags) > 0
+        for i = 0 to array.size(ds.line_tags) - 1
+            if array.get(ds.line_tags, i) == tag
+                out := array.get(ds.lines, i)
+                break
+    out
+
+/// Find a tracked box by its tag.
+export f_find_box_by_tag(PineDrawingState ds, string tag) =>
+    box out = na
+    if str.length(tag) > 0 and array.size(ds.box_tags) > 0
+        for i = 0 to array.size(ds.box_tags) - 1
+            if array.get(ds.box_tags, i) == tag
+                out := array.get(ds.boxes, i)
+                break
+    out
+
+/// Find a tracked label by its tag.
+export f_find_label_by_tag(PineDrawingState ds, string tag) =>
+    label out = na
+    if str.length(tag) > 0 and array.size(ds.label_tags) > 0
+        for i = 0 to array.size(ds.label_tags) - 1
+            if array.get(ds.label_tags, i) == tag
+                out := array.get(ds.labels, i)
+                break
+    out
+
+/// Find a tracked linefill by its tag.
+export f_find_linefill_by_tag(PineDrawingState ds, string tag) =>
+    linefill out = na
+    if str.length(tag) > 0 and array.size(ds.linefill_tags) > 0
+        for i = 0 to array.size(ds.linefill_tags) - 1
+            if array.get(ds.linefill_tags, i) == tag
+                out := array.get(ds.linefills, i)
+                break
+    out
+
+/// Find a tracked polyline by its tag.
+export f_find_polyline_by_tag(PineDrawingState ds, string tag) =>
+    polyline out = na
+    if str.length(tag) > 0 and array.size(ds.polyline_tags) > 0
+        for i = 0 to array.size(ds.polyline_tags) - 1
+            if array.get(ds.polyline_tags, i) == tag
+                out := array.get(ds.polylines, i)
+                break
+    out
+
+
+// ============================================================================
+// Mutation Helpers — In-place updates by tag (Issue 17)
+// ============================================================================
+
+/// Update a tracked line in place if found by tag.
+export f_update_line_by_tag(PineDrawingState ds, string tag, int x1, float y1, int x2, float y2, color clr, string style, int width) =>
+    line ln = f_find_line_by_tag(ds, tag)
+    if not na(ln)
+        line.set_xy1(ln, x1, y1)
+        line.set_xy2(ln, x2, y2)
+        line.set_color(ln, clr)
+        line.set_style(ln, f_line_style(style))
+        line.set_width(ln, width)
+    ln
+
+/// Update a tracked box in place if found by tag.
+export f_update_box_by_tag(PineDrawingState ds, string tag, int x1, float y1, int x2, float y2, color clr, string style, int width, color bg_clr) =>
+    box b = f_find_box_by_tag(ds, tag)
+    if not na(b)
+        box.set_lefttop(b, x1, y1)
+        box.set_rightbottom(b, x2, y2)
+        box.set_border_color(b, clr)
+        box.set_border_style(b, f_line_style(style))
+        box.set_border_width(b, width)
+        box.set_bgcolor(b, bg_clr)
+    b
+
+/// Update a tracked label in place if found by tag.
+export f_update_label_by_tag(PineDrawingState ds, string tag, int x, float y, string txt, color txt_clr, string sz, string tooltip_txt = "") =>
+    label lb = f_find_label_by_tag(ds, tag)
+    if not na(lb)
+        label.set_xy(lb, x, y)
+        label.set_text(lb, txt)
+        label.set_textcolor(lb, txt_clr)
+        label.set_size(lb, f_display_size(sz))
+        label.set_tooltip(lb, tooltip_txt)
+        // Style update is limited in Pine once created, but we can update other props
+    lb
+
+/// Update a tracked linefill in place if found by tag.
+export f_update_linefill_by_tag(PineDrawingState ds, string tag, color fill_clr) =>
+    linefill lf = f_find_linefill_by_tag(ds, tag)
+    if not na(lf)
+        linefill.set_color(lf, fill_clr)
+    lf
+
+/// Update a tracked polyline in place if found by tag.
+/// Note: polylines are immutable in Pine, so "update" means delete-and-replace at
+/// the same index. The ds.polylines slot is overwritten; tag and index are preserved.
+export f_update_polyline_by_tag(PineDrawingState ds, string tag, chart.point[] points, color clr, string style, int width, bool closed = false, int nb = 0) =>
+    int idx = -1
+    if str.length(tag) > 0 and array.size(ds.polyline_tags) > 0
+        for i = 0 to array.size(ds.polyline_tags) - 1
+            if array.get(ds.polyline_tags, i) == tag
+                idx := i
+                break
+    polyline result = na
+    if idx >= 0
+        polyline old_pl = array.get(ds.polylines, idx)
+        if not na(old_pl)
+            polyline.delete(old_pl)
+        result := polyline.new(points, curved=false, closed=closed, xloc=xloc.bar_index, line_color=clr, line_style=f_line_style(style), line_width=width)
+        array.set(ds.polylines, idx, result)
+        array.set(ds.polyline_nbs, idx, nb)
+    result
+
+// ============================================================================
+// Display Profile Resolvers
+// ============================================================================
+
+/// Draw a line and track in state.
 /// Parameters:
 ///   - ds: PineDrawingState to track the line
-///   - x1, y1: Start coordinates
-///   - x2, y2: End coordinates
+///   - x1, y1, x2, y2: Coordinates
 ///   - clr: Line color
 ///   - style: "Solid", "Dashed", "Dotted"
 ///   - width: Line width (1-5)
+///   - tag: Optional lookup tag
+///   - nb: Days back (nd)
 /// Returns: Newly created line object
-export f_draw_line(PineDrawingState ds, int x1, float y1, int x2, float y2, color clr, string style, int width) =>
+export f_draw_line(PineDrawingState ds, int x1, float y1, int x2, float y2, color clr, string style, int width, string tag = "", int nb = 0) =>
     line ln = line.new(x1, y1, x2, y2, color=clr, style=f_line_style(style), width=width)
     array.push(ds.lines, ln)
+    array.push(ds.line_tags, tag)
+    array.push(ds.line_nbs, nb)
     ln
 
 /// Draw an opening-range box (OR zone) and track in state.
@@ -338,9 +901,11 @@ export f_draw_line(PineDrawingState ds, int x1, float y1, int x2, float y2, colo
 ///   - style: "Solid", "Dashed", "Dotted"
 ///   - width: Border width (1-5)
 /// Returns: Newly created box object
-export f_draw_or_box(PineDrawingState ds, int start_bar, float hi, float lo, int end_bar, color clr, string style, int width) =>
+export f_draw_or_box(PineDrawingState ds, int start_bar, float hi, float lo, int end_bar, color clr, string style, int width, string tag = "", int nb = 0) =>
     box b = box.new(start_bar, hi, end_bar, lo, border_color=clr, bgcolor=color.new(clr, 85), border_style=f_line_style(style), border_width=width)
     array.push(ds.boxes, b)
+    array.push(ds.box_tags, tag)
+    array.push(ds.box_nbs, nb)
     b
 
 /// Draw a histogram band (vertical price range) and track in state.
@@ -352,24 +917,116 @@ export f_draw_or_box(PineDrawingState ds, int start_bar, float hi, float lo, int
 ///   - clr: Fill color
 ///   - transp: Transparency (0-100, higher = more transparent)
 /// Returns: Newly created box object
-export f_draw_hist_band(PineDrawingState ds, int anchor, float p_top, float p_bot, int width_bars, color clr, int transp) =>
+export f_draw_hist_band(PineDrawingState ds, int anchor, float p_top, float p_bot, int width_bars, color clr, int transp, string tag = "", int nb = 0) =>
     box b = box.new(anchor, p_top, anchor + width_bars, p_bot, border_color=color.new(clr, math.min(transp + 10, 100)), bgcolor=color.new(clr, transp))
     array.push(ds.boxes, b)
+    array.push(ds.box_tags, tag)
+    array.push(ds.box_nbs, nb)
     b
 
-/// Draw a statistic label and track in state.
+//// Draw a box and track in state.
+/// Parameters:
+///   - ds: PineDrawingState to track the box
+///   - x1, y1, x2, y2: Coordinates
+///   - clr: Border color
+///   - style: "Solid", "Dashed", "Dotted"
+///   - width: Border width
+///   - bg_clr: Fill color
+///   - tag: Optional lookup tag
+///   - nb: Days back (nd)
+/// Returns: Newly created box object
+export f_draw_box_ex(PineDrawingState ds, int x1, float y1, int x2, float y2, color clr, string style, int width, color bg_clr, string tag = "", int nb = 0) =>
+    box b = box.new(x1, y1, x2, y2, border_color=clr, bgcolor=bg_clr, border_style=f_line_style(style), border_width=width)
+    array.push(ds.boxes, b)
+    array.push(ds.box_tags, tag)
+    array.push(ds.box_nbs, nb)
+    b
+
+/// Draw a linefill between two lines and track in state.
+/// Parameters:
+///   - ds: PineDrawingState to track the linefill
+///   - ln1, ln2: Two line objects to fill between (must already exist)
+///   - fill_clr: Fill color (caller pre-applies transparency via color.new)
+/// Returns: Newly created linefill object
+export f_draw_linefill(PineDrawingState ds, line ln1, line ln2, color fill_clr, string tag = "", int nb = 0) =>
+    linefill lf = linefill.new(ln1, ln2, fill_clr)
+    array.push(ds.linefills, lf)
+    array.push(ds.linefill_tags, tag)
+    array.push(ds.linefill_nbs, nb)
+    lf
+
+
+/// Draw a polyline through an array of (x, y) points and track in state.
+/// Parameters:
+///   - ds: PineDrawingState to track the polyline
+///   - points: Array of chart.point objects (use chart.point.new or chart.point.from_index)
+///   - clr: Polyline color
+///   - style: "Solid", "Dashed", "Dotted"
+///   - width: Line width (1-5)
+///   - closed: If true, connect last point back to first
+/// Returns: Newly created polyline object
+export f_draw_polyline(PineDrawingState ds, chart.point[] points, color clr, string style, int width, bool closed = false, string tag = "", int nb = 0) =>
+    polyline pl = polyline.new(points, curved=false, closed=closed, xloc=xloc.bar_index, line_color=clr, line_style=f_line_style(style), line_width=width)
+    array.push(ds.polylines, pl)
+    array.push(ds.polyline_tags, tag)
+    array.push(ds.polyline_nbs, nb)
+    pl
+
+/// Draw a statistical label and track in state.
 /// Parameters:
 ///   - ds: PineDrawingState to track the label
-///   - x, y: Label position (bar index and price)
+///   - x, y: Position
 ///   - txt: Label text
 ///   - txt_clr: Text color
-///   - lbl_style: Anchor style ("left", "right", "up", "down", "center")
+///   - lbl_style: Anchor style — names the DIRECTION the label's arrow points:
+///                "left" (arrow points left, body to the right), "right" (arrow
+///                right, body to the left), "up", "down", "center" (no arrow).
+///                Convention matches Pine's label.style_label_* naming.
 ///   - sz: Size token ("Tiny", "Small", "Normal", "Large", "Huge")
+///   - tooltip_txt: Optional tooltip
+///   - tag: Optional lookup tag
+///   - nb: Days back (nd)
 /// Returns: Newly created label object
-export f_draw_stat_label(PineDrawingState ds, int x, float y, string txt, color txt_clr, string lbl_style, string sz) =>
-    label_style = lbl_style == "center" ? label.style_none : lbl_style == "right" ? label.style_label_right : lbl_style == "up" ? label.style_label_up : lbl_style == "down" ? label.style_label_down : label.style_label_left
-    label lb = label.new(x, y, txt, color=color.new(color.black, 100), textcolor=txt_clr, style=label_style, size=f_display_size(sz))
+export f_draw_stat_label(PineDrawingState ds, int x, float y, string txt, color txt_clr, string lbl_style, string sz, string tooltip_txt = "", string tag = "", int nb = 0) =>
+    label_style = lbl_style == "center" ? label.style_none : lbl_style == "right" ? label.style_label_right : lbl_style == "up" ? label.style_label_up : lbl_style == "down" ? label.style_label_down : label.style_label_left    
+    label lb = label.new(x, y, txt + f_nd_suffix(nb), color=color.new(color.black, 100), textcolor=txt_clr, style=label_style, size=f_display_size(sz), tooltip=tooltip_txt)
     array.push(ds.labels, lb)
+    array.push(ds.label_tags, tag)
+    array.push(ds.label_nbs, nb)
+    lb
+
+/// Resolve a string shape token to Pine label.style constant.
+/// Parameters:
+///   - s: "triangle_down", "triangle_up", "diamond", "xcross", "arrow_down", "arrow_up", "circle", "square", "dot"
+/// Returns: label.style_* constant
+export f_marker_style(string s) =>
+    switch s
+        "triangle_down" => label.style_triangledown
+        "triangle_up"   => label.style_triangleup
+        "diamond"       => label.style_diamond
+        "xcross"        => label.style_xcross
+        "arrow_down"    => label.style_arrowdown
+        "arrow_up"      => label.style_arrowup
+        "circle"        => label.style_circle
+        "square"        => label.style_square
+        "dot"           => label.style_circle
+        => label.style_circle
+
+/// Draw a point marker and track in state.
+/// Parameters:
+///   - ds: PineDrawingState to track the label
+///   - x, y: Position
+///   - txt: Marker text
+///   - txt_clr: Text color
+///   - shape_token: Shape ("triangle_down", "diamond", etc.)
+///   - sz: Size token ("Tiny", "Small", "Normal", "Large", "Huge")
+///   - tooltip_txt: Optional tooltip
+/// Returns: Newly created label object
+export f_draw_marker(PineDrawingState ds, int x, float y, string txt, color txt_clr, string shape_token, string sz, string tooltip_txt = "", string tag = "", int nb = 0) =>
+    label lb = label.new(x, y, txt + f_nd_suffix(nb), color=color.new(color.black, 100), textcolor=txt_clr, style=f_marker_style(shape_token), size=f_display_size(sz), tooltip=tooltip_txt)
+    array.push(ds.labels, lb)
+    array.push(ds.label_tags, tag)
+    array.push(ds.label_nbs, nb)
     lb
 
 f_registry_overlap(LabelRegistry lr, int i, int j, float merge_thr) =>
@@ -400,8 +1057,14 @@ f_draw_registry_entry(PineDrawingState ds, LabelRegistry lr, int idx, int x_over
         color c = array.get(lr.colors, idx)
         string style = array.get(lr.label_styles, idx)
         string size_token = array.get(lr.label_sizes, idx)
+        string tooltip = array.get(lr.tooltips, idx)
+        int nd = array.get(lr.lookbacks, idx)
+        
         string size_final = str.length(size_token) > 0 ? size_token : default_label_size
-        f_draw_stat_label(ds, x_override, y, text_override, c, style, size_final)
+        string text_final = text_override
+        string tag = array.get(lr.tags, idx)
+        
+        f_draw_stat_label(ds, x_override, y, text_final, c, style, size_final, tooltip, tag, nd)
 
 /// Render all labels in the registry with collision resolution.
 /// Strategy-aware: "merge" combines overlaps, "stagger" offsets, "hide" suppresses,
@@ -470,9 +1133,11 @@ export f_label_registry_draw_merged(PineDrawingState ds, LabelRegistry lr, float
 ///   - y_top, y_bot: Price range
 ///   - clr: Fill color
 /// Returns: Newly created box object
-export f_draw_time_bar(PineDrawingState ds, int x_left, int x_right, float y_top, float y_bot, color clr) =>
+export f_draw_time_bar(PineDrawingState ds, int x_left, int x_right, float y_top, float y_bot, color clr, string tag = "", int nb = 0) =>
     box b = box.new(x_left, y_top, x_right, y_bot, border_color=na, bgcolor=clr)
     array.push(ds.boxes, b)
+    array.push(ds.box_tags, tag)
+    array.push(ds.box_nbs, nb)
     b
 
 /// Draw a vertical line and track in state.
@@ -482,19 +1147,57 @@ export f_draw_time_bar(PineDrawingState ds, int x_left, int x_right, float y_top
 ///   - y_top, y_bot: Price range
 ///   - clr: Line color
 ///   - style: "Solid", "Dashed", "Dotted"
+///   - width: Line width (1-5)
 /// Returns: Newly created line object
-export f_draw_vline(PineDrawingState ds, int x, float y_top, float y_bot, color clr, string style) =>
-    line ln = line.new(x, y_top, x, y_bot, color=clr, style=f_line_style(style))
+export f_draw_vline(PineDrawingState ds, int x, float y_top, float y_bot, color clr, string style, int width = 1, string tag = "", int nb = 0) =>
+    line ln = line.new(x, y_top, x, y_bot, color=clr, style=f_line_style(style), width=width)
     array.push(ds.lines, ln)
+    array.push(ds.line_tags, tag)
+    array.push(ds.line_nbs, nb)
     ln
 
-/// Draw a day/session separator line (extends both directions, bar_index-based).
+/// Draw a day/session separator line (extends both directions, bar_index-based) and track in state.
 /// Parameters:
+///   - ds: PineDrawingState to track the line
 ///   - bar_idx: Bar index for the separator
 ///   - price_hi, price_lo: Price range
 ///   - clr: Line color
 ///   - style: "Solid", "Dashed", "Dotted"
 ///   - width: Line width (1-5)
 /// Returns: Newly created line object
-export f_draw_day_separator(int bar_idx, float price_hi, float price_lo, color clr, string style, int width) =>
-    line.new(bar_idx, price_hi, bar_idx, price_lo, xloc=xloc.bar_index, color=clr, style=f_line_style(style), width=width, extend=extend.both)
+export f_draw_day_separator(PineDrawingState ds, int bar_idx, float price_hi, float price_lo, color clr, string style, int width, string tag = "", int nb = 0) =>
+    line ln = line.new(bar_idx, price_hi, bar_idx, price_lo, xloc=xloc.bar_index, color=clr, style=f_line_style(style), width=width, extend=extend.both)
+    array.push(ds.lines, ln)
+    array.push(ds.line_tags, tag)
+    array.push(ds.line_nbs, nb)
+    ln
+
+// ============================================================================
+// Table Primitives — Dashboard and status surfaces (Spec §9.1)
+// ============================================================================
+
+/// Draw a table and track its basic properties.
+/// Parameters:
+///   - pos_token: "Top Left", "Top Right", etc.
+///   - cols, rows: Table dimensions
+///   - border_clr: Border color
+///   - border_width: Base border width (will be scaled by profile)
+///   - profile: Display profile
+/// Returns: Newly created table object
+export f_draw_table(string pos_token, int cols, int rows, color border_clr, int border_width, string profile) =>
+    int scaled_width = f_display_profile_width(border_width, profile)
+    table.new(f_table_pos(pos_token), cols, rows, border_color=border_clr, border_width=scaled_width)
+
+/// Set cell content in a table with profile-aware text sizing.
+/// Parameters:
+///   - t: Table object
+///   - col, row: Cell coordinates
+///   - txt: Cell text
+///   - txt_clr: Text color
+///   - sz_token: "Tiny", "Small", "Normal", "Large", "Huge"
+///   - bg_clr: Cell background color
+///   - profile: Display profile
+export f_table_cell(table t, int col, int row, string txt, color txt_clr, string sz_token, color bg_clr, string profile) =>
+    string scaled_sz = f_display_profile_table_size(sz_token, profile)
+    table.cell(t, col, row, txt, text_color=txt_clr, text_size=f_text_size(scaled_sz), bgcolor=bg_clr)
+

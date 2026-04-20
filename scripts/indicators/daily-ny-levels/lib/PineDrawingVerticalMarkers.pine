@@ -2,14 +2,14 @@
 library("PineDrawingVerticalMarkers", overlay=true)
 
 // ============================================================================
-// PineDrawingVerticalMarkers v1.0 — Vertical line semantic renderers
+// PineDrawingVerticalMarkers v4.0 — Vertical line semantic renderers
 // ============================================================================
-// Depends on: PineDrawingCore/1
+// Depends on: PineDrawingCore/3 (internally v4.0)
 // Purpose: Semantic renderers for vertical reference lines (session separators,
-//          event markers, time-based anchors)
+//          event markers, time-based anchors) per spec §7.
 // ============================================================================
 
-import vveerappa/PineDrawingCore/2 as Core
+import vveerappa/PineDrawingCore/3 as Core
 
 /// Draw a vertical reference line semantic wrapper.
 /// Used for session boundaries, time-of-day markers, and event anchors.
@@ -19,16 +19,147 @@ import vveerappa/PineDrawingCore/2 as Core
 ///   - y_top, y_bot: Price range
 ///   - clr: Line color
 ///   - style: "Solid", "Dashed", "Dotted"
-export f_draw_vline(Core.PineDrawingState ds, int x, float y_top, float y_bot, color clr, string style) =>
-    Core.f_draw_vline(ds, x, y_top, y_bot, clr, style)
+///   - width: Line width (default 1)
+///   - tag: Optional lookup tag for reconciliation
+///   - lookback: N-days back (for [-Nd] suffix)
+export f_draw_vline(Core.PineDrawingState ds, int x, float y_top, float y_bot, color clr, string style, int width = 1, string tag = "", int lookback = 0) =>
+    Core.f_draw_vline(ds, x, y_top, y_bot, clr, style, width, tag, lookback)
 
-/// Draw a day/session separator line (extends both directions, full vertical extent).
-/// Convenience wrapper for session boundary and day-break visualization.
+/// Draw a day/session separator line (extends both directions, bar_index-based).
+/// Convenience wrapper for session-boundary and day-break visualization.
 /// Parameters:
+///   - ds: PineDrawingState to track the line
 ///   - bar_idx: Bar index for the separator
-///   - price_hi, price_lo: Price range
+///   - price_hi, price_lo: Price range (used as line endpoints before extend.both applies)
 ///   - clr: Line color
 ///   - style: "Solid", "Dashed", "Dotted"
 ///   - width: Line width (1-5)
-export f_draw_day_separator(int bar_idx, float price_hi, float price_lo, color clr, string style, int width) =>
-    Core.f_draw_day_separator(bar_idx, price_hi, price_lo, clr, style, width)
+///   - tag: Optional lookup tag
+///   - lookback: N-days back (for [-Nd] suffix)
+/// Returns: Newly created line object
+export f_draw_day_separator(Core.PineDrawingState ds, int bar_idx, float price_hi, float price_lo, color clr, string style, int width, string tag = "", int lookback = 0) =>
+    Core.f_draw_day_separator(ds, bar_idx, price_hi, price_lo, clr, style, width, tag, lookback)
+
+// ============================================================================
+// 7. Canonical Vertical Marker Templates (Spec §7)
+// ============================================================================
+
+// --- 7.1 Session boundary ---------------------------------------------------
+
+/// Draw a session boundary vertical line with label.
+/// Parameters:
+///   - ds, theme_mode, profile, tier: standard
+///   - x: bar index of the boundary
+///   - y_hi, y_lo: price range for the vertical line
+///   - session_name: display name (e.g., "Asia", "NY AM")
+///   - session_token: palette token (e.g., "asia", "ny"). If empty, falls back
+///                    to lowercased session_name via f_theme_color_safe.
+///   - variant: "open" or "close"
+///   - time_str: optional time string for tooltip (e.g., "09:30 ET")
+///   - tag: optional lookup tag
+///   - lookback: N-days back
+export f_draw_session_boundary(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x, float y_hi, float y_lo, string session_name, string session_token = "", string variant = "open", string time_str = "", string tag = "", int lookback = 0) =>
+    int base_width = 1  // Spec §7.1: width=1 at all tiers
+    string style = tier == "P" ? "Dashed" : "Dotted"
+    // Spec §7.1 tier transparencies: P=30, S=50, C=70 (session-specific, not Core tier defaults)
+    int base_transp = tier == "P" ? 30 : tier == "S" ? 50 : 70
+    int transp = Core.f_display_profile_transparency(base_transp, profile)
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    // Resolve color via safe lookup (handles multi-word session names gracefully)
+    string token = str.length(session_token) > 0 ? session_token : str.lower(session_name)
+    color base_clr = Core.f_theme_color_safe(token, theme_mode, Core.f_theme_color("neutral", theme_mode))
+    color clr = color.new(base_clr, transp)
+    
+    Core.f_draw_vline(ds, x, y_hi, y_lo, clr, style, w, tag, lookback)
+    
+    // Label per spec §7.1: base_text = "{session_name} {variant_display}"
+    string v_disp = variant == "open" ? "Open" : "Close"
+    array<string> keys = array.from("session_name", "variant_display", "time_str", "base_text")
+    array<string> vals = array.from(session_name, v_disp, time_str, session_name + " " + v_disp)
+    string label_text = Core.f_format_template("{base_text}", keys, vals)
+    string tt = Core.f_format_template("{session_name} {variant_display}\n{if:time_str}Time: {time_str}{endif}", keys, vals)
+    
+    Core.f_draw_stat_label(ds, x, y_hi, label_text, base_clr, "down", Core.f_display_profile_label_size("small", profile), tt, tag, lookback)
+
+// --- 7.2 News / event marker ------------------------------------------------
+
+/// Draw a news/event marker vertical line with label.
+/// Parameters:
+///   - ds, theme_mode, profile, tier: standard
+///   - x: bar index
+///   - y_hi, y_lo: price range
+///   - event_name: display name (e.g., "FOMC", "NFP")
+///   - impact: "high_impact", "medium_impact", or "low_impact"
+///   - event_time: optional time string for tooltip
+///   - currency: optional currency for tooltip (e.g., "USD")
+///   - tag: optional lookup tag
+///   - lookback: N-days back
+export f_draw_news_event(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x, float y_hi, float y_lo, string event_name, string impact = "high_impact", string event_time = "", string currency = "", string tag = "", int lookback = 0) =>
+    // Spec §7.2 widths: P=2, S=1, C=1
+    int base_width = tier == "P" ? 2 : 1
+    // Spec §7.2 styles: P/S=solid, C=dotted
+    string style = tier == "C" ? "Dotted" : "Solid"
+    // Spec §7.2 transparencies: P=20, S=40, C=60
+    int base_transp = tier == "P" ? 20 : tier == "S" ? 40 : 60
+    int transp = Core.f_display_profile_transparency(base_transp, profile)
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    // Spec §7.2 color_binding.base_by_variant
+    string color_token = switch impact
+        "high_impact" => "warning"
+        "medium_impact" => "caution"
+        "low_impact" => "neutral"
+        => "neutral"
+    color base_clr = Core.f_theme_color(color_token, theme_mode)
+    color clr = color.new(base_clr, transp)
+    
+    Core.f_draw_vline(ds, x, y_hi, y_lo, clr, style, w, tag, lookback)
+    
+    // Impact level display for tooltip
+    string impact_display = switch impact
+        "high_impact" => "High"
+        "medium_impact" => "Medium"
+        "low_impact" => "Low"
+        => impact
+    
+    array<string> keys = array.from("event_name", "event_time", "currency", "impact_level", "base_text")
+    array<string> vals = array.from(event_name, event_time, currency, impact_display, event_name)
+    string label_text = Core.f_format_template("{base_text}", keys, vals)
+    string tt = Core.f_format_template("{event_name}\n{if:event_time}Time: {event_time}{endif}\n{if:currency}Currency: {currency}{endif}\n{if:impact_level}Impact: {impact_level}{endif}", keys, vals)
+    
+    Core.f_draw_stat_label(ds, x, y_hi, label_text, base_clr, "down", Core.f_display_profile_label_size("normal", profile), tt, tag, lookback)
+
+// --- 7.3 Macro window boundaries --------------------------------------------
+
+/// Draw a macro-window boundary vertical line (start or end) with arrow-glyph label.
+/// Parameters:
+///   - ds, theme_mode, profile, tier: standard
+///   - x: bar index
+///   - y_hi, y_lo: price range
+///   - macro_name: display name (e.g., "NY AM Macro")
+///   - variant: "start" (renders "{macro_name} ▶") or "end" (renders "◀ {macro_name}")
+///   - time_str: optional time for tooltip
+///   - tag: optional lookup tag
+///   - lookback: N-days back
+export f_draw_macro_window_boundary(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x, float y_hi, float y_lo, string macro_name, string variant = "start", string time_str = "", string tag = "", int lookback = 0) =>
+    int base_width = 1  // Spec §7.3: width=1 at all tiers
+    string style = "Dotted"
+    // Spec §7.3 transparencies: P=40, S=55, C=70
+    int base_transp = tier == "P" ? 40 : tier == "S" ? 55 : 70
+    int transp = Core.f_display_profile_transparency(base_transp, profile)
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    color base_clr = Core.f_theme_color("pivot_color", theme_mode)
+    color clr = color.new(base_clr, transp)
+    
+    Core.f_draw_vline(ds, x, y_hi, y_lo, clr, style, w, tag, lookback)
+    
+    // Spec §7.3: arrow glyph before or after macro_name by variant
+    string label_text = variant == "start" ? macro_name + " ▶" : "◀ " + macro_name
+    string variant_full = variant == "start" ? "Start" : "End"
+    array<string> keys = array.from("macro_name", "variant", "time_str")
+    array<string> vals = array.from(macro_name, variant_full, time_str)
+    string tt = Core.f_format_template("{macro_name} {variant}\n{if:time_str}Time: {time_str}{endif}", keys, vals)
+    
+    Core.f_draw_stat_label(ds, x, y_hi, label_text, base_clr, "down", Core.f_display_profile_label_size("small", profile), tt, tag, lookback)

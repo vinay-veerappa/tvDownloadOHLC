@@ -2,14 +2,15 @@
 library("PineDrawingZones", overlay=true)
 
 // ============================================================================
-// PineDrawingZones v1.0 — Zone and band semantic renderers
+// PineDrawingZones v4.0 — Zone and band semantic renderers
 // ============================================================================
-// Depends on: PineDrawingCore/1
-// Purpose: Semantic renderers for zones (opening ranges, histogram bands,
-//          time-distribution rectangles)
+// Depends on: PineDrawingCore/3 (internally v4.0)
+// Purpose: Provides theme-aware renderers for technical zones (FVGs, Order
+//          Blocks, session ranges, expected-move bands, macro windows, etc.)
+//          per spec §4.
 // ============================================================================
 
-import vveerappa/PineDrawingCore/2 as Core
+import vveerappa/PineDrawingCore/3 as Core
 
 /// Draw an opening-range (OR) box semantic wrapper.
 /// Parameters:
@@ -19,8 +20,10 @@ import vveerappa/PineDrawingCore/2 as Core
 ///   - clr: Border/fill color
 ///   - style: "Solid", "Dashed", "Dotted"
 ///   - width: Border width (1-5)
-export f_draw_or_box(Core.PineDrawingState ds, int start_bar, float hi, float lo, int end_bar, color clr, string style, int width) =>
-    Core.f_draw_or_box(ds, start_bar, hi, lo, end_bar, clr, style, width)
+///   - tag: Optional lookup tag for reconciliation
+///   - lookback: N-days back (for [-Nd] suffix)
+export f_draw_or_box(Core.PineDrawingState ds, int start_bar, float hi, float lo, int end_bar, color clr, string style, int width, string tag = "", int lookback = 0) =>
+    Core.f_draw_or_box(ds, start_bar, hi, lo, end_bar, clr, style, width, tag, lookback)
 
 /// Draw a histogram band (vertical price-range filled rectangle) semantic wrapper.
 /// Used for volatility histograms, reversal bands, and price distribution visualization.
@@ -31,8 +34,10 @@ export f_draw_or_box(Core.PineDrawingState ds, int start_bar, float hi, float lo
 ///   - width_bars: Band width in bars
 ///   - clr: Fill color
 ///   - transp: Transparency (0-100)
-export f_draw_hist_band(Core.PineDrawingState ds, int anchor, float p_top, float p_bot, int width_bars, color clr, int transp) =>
-    Core.f_draw_hist_band(ds, anchor, p_top, p_bot, width_bars, clr, transp)
+///   - tag: Optional lookup tag
+///   - lookback: N-days back
+export f_draw_hist_band(Core.PineDrawingState ds, int anchor, float p_top, float p_bot, int width_bars, color clr, int transp, string tag = "", int lookback = 0) =>
+    Core.f_draw_hist_band(ds, anchor, p_top, p_bot, width_bars, clr, transp, tag, lookback)
 
 /// Draw a time-distribution bar (horizontal filled rectangle) semantic wrapper.
 /// Used for session-time analysis and activity distribution visualization.
@@ -41,5 +46,253 @@ export f_draw_hist_band(Core.PineDrawingState ds, int anchor, float p_top, float
 ///   - x_left, x_right: Bar index range
 ///   - y_top, y_bot: Price range
 ///   - clr: Fill color
-export f_draw_time_bar(Core.PineDrawingState ds, int x_left, int x_right, float y_top, float y_bot, color clr) =>
-    Core.f_draw_time_bar(ds, x_left, x_right, y_top, y_bot, clr)
+///   - tag: Optional lookup tag
+///   - lookback: N-days back
+export f_draw_time_bar(Core.PineDrawingState ds, int x_left, int x_right, float y_top, float y_bot, color clr, string tag = "", int lookback = 0) =>
+    Core.f_draw_time_bar(ds, x_left, x_right, y_top, y_bot, clr, tag, lookback)
+
+// ============================================================================
+// 4. Canonical Zone Templates (Spec §4)
+// ============================================================================
+
+// --- 4.5 Fair Value Gap ------------------------------------------------------
+
+export f_draw_fvg(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y_hi, float y_lo, int x2, string direction = "bull", string bar_timestamp = "", string size_points = "", string unit = "", string tag = "", int lookback = 0) =>
+    int base_width = Core.f_tier_width(tier)
+    string b_style = Core.f_tier_style(tier)
+    // Spec §4.5 zone-specific transparencies (fills higher than border)
+    int f_transp = tier == "P" ? 85 : tier == "S" ? 90 : 94
+    int b_transp = tier == "P" ? 30 : tier == "S" ? 50 : 70
+    
+    color base_clr = Core.f_theme_color(direction == "bull" ? "bull" : "bear", theme_mode)
+    color f_clr = color.new(base_clr, Core.f_display_profile_transparency(f_transp, profile))
+    color b_clr = color.new(base_clr, Core.f_display_profile_transparency(b_transp, profile))
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    box b = Core.f_draw_box_ex(ds, x1, y_hi, x2, y_lo, b_clr, b_style, w, f_clr, tag, lookback)
+    
+    array<string> keys = array.from("direction", "bar_timestamp", "size_points", "unit")
+    array<string> vals = array.from(direction == "bull" ? "Bullish" : "Bearish", bar_timestamp, size_points, unit)
+    string tt = Core.f_format_template("Fair Value Gap ({direction})\n{if:bar_timestamp}Origin: {bar_timestamp}{endif}\n{if:size_points}Size: {size_points}{unit}{endif}", keys, vals)
+    Core.f_draw_marker(ds, x1, y_hi, "", base_clr, "dot", "tiny", tt, tag, lookback)
+// --- 4.6 Order Block ---------------------------------------------------------
+
+export f_draw_order_block(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y_hi, float y_lo, int x2, string direction = "bull", string strength = "", string bar_timestamp = "", string size_points = "", string unit = "", string tag = "", int lookback = 0) =>
+    int base_width = Core.f_tier_width(tier)
+    string b_style = Core.f_tier_style(tier)
+    // Spec §4.6 zone-specific transparencies
+    int f_transp = tier == "P" ? 80 : tier == "S" ? 88 : 92
+    int b_transp = tier == "P" ? 25 : tier == "S" ? 45 : 65
+    
+    color base_clr = Core.f_theme_color(direction == "bull" ? "bull" : "bear", theme_mode)
+    color f_clr = color.new(base_clr, Core.f_display_profile_transparency(f_transp, profile))
+    color b_clr = color.new(base_clr, Core.f_display_profile_transparency(b_transp, profile))
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    box b = Core.f_draw_box_ex(ds, x1, y_hi, x2, y_lo, b_clr, b_style, w, f_clr, tag, lookback)
+    
+    array<string> keys = array.from("direction", "bar_timestamp", "size_points", "unit", "strength")
+    array<string> vals = array.from(direction == "bull" ? "Bullish" : "Bearish", bar_timestamp, size_points, unit, strength)
+    string tt = Core.f_format_template("Order Block ({direction})\n{if:bar_timestamp}Origin: {bar_timestamp}{endif}\n{if:size_points}Size: {size_points}{unit}{endif}{if:strength}\nStrength: {strength}{endif}", keys, vals)
+    Core.f_draw_marker(ds, x1, y_hi, "", base_clr, "dot", "tiny", tt, tag, lookback)
+
+// --- 4.2 Session range box --------------------------------------------------
+
+export f_draw_session_range_box(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y_hi, float y_lo, int x2, string session_name, string session_token = "", string range_points = "", string unit = "", string tag = "", int lookback = 0) =>
+    int base_width = 1  // Spec §4.2: width=1 at all tiers
+    string b_style = tier == "P" ? "Solid" : tier == "S" ? "Dashed" : "Dotted"
+    // Spec §4.2 transparencies
+    int f_transp = tier == "P" ? 80 : tier == "S" ? 88 : 92
+    int b_transp = tier == "P" ? 30 : tier == "S" ? 50 : 65
+    
+    // Safe token lookup: explicit session_token preferred, fallback to lowercased name
+    string token = str.length(session_token) > 0 ? session_token : str.lower(session_name)
+    color base_clr = Core.f_theme_color_safe(token, theme_mode, Core.f_theme_color("neutral", theme_mode))
+    color f_clr = color.new(base_clr, Core.f_display_profile_transparency(f_transp, profile))
+    color b_clr = color.new(base_clr, Core.f_display_profile_transparency(b_transp, profile))
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    box b = Core.f_draw_box_ex(ds, x1, y_hi, x2, y_lo, b_clr, b_style, w, f_clr, tag, lookback)
+    
+    // Spec §4.2 label_format: "{session_name}{if:range_points} ({range_points}{unit}){endif}"
+    array<string> keys = array.from("session_name", "range_points", "unit")
+    array<string> vals = array.from(session_name, range_points, unit)
+    string label_text = Core.f_format_template("{session_name}{if:range_points} ({range_points}{unit}){endif}", keys, vals)
+    box.set_text(b, label_text)
+    box.set_text_color(b, base_clr)
+    box.set_text_halign(b, text.align_center)
+    box.set_text_valign(b, text.align_center)
+
+// --- 4.8 Macro window --------------------------------------------------------
+
+export f_draw_macro_window(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y_hi, float y_lo, int x2, string macro_name, string start_time = "", string end_time = "", string tag = "", int lookback = 0) =>
+    int base_width = 1
+    string b_style = "Dotted"
+    int f_transp = tier == "P" ? 88 : tier == "S" ? 92 : 95
+    int b_transp = tier == "P" ? 50 : tier == "S" ? 65 : 75
+    
+    color base_clr = Core.f_theme_color("pivot_color", theme_mode)
+    color f_clr = color.new(base_clr, Core.f_display_profile_transparency(f_transp, profile))
+    color b_clr = color.new(base_clr, Core.f_display_profile_transparency(b_transp, profile))
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    box b = Core.f_draw_box_ex(ds, x1, y_hi, x2, y_lo, b_clr, b_style, w, f_clr, tag, lookback)
+    
+    box.set_text(b, macro_name)
+    box.set_text_color(b, base_clr)
+    box.set_text_valign(b, text.align_top)
+    
+    array<string> keys = array.from("macro_name", "start_time", "end_time")
+    array<string> vals = array.from(macro_name, start_time, end_time)
+    string tt = Core.f_format_template("{macro_name}\n{if:start_time}Start: {start_time}{endif}\n{if:end_time}End: {end_time}{endif}", keys, vals)
+    Core.f_draw_marker(ds, x1, y_hi, "", base_clr, "dot", "tiny", tt, tag, lookback)
+
+// --- 4.9 Liquidity pool ------------------------------------------------------
+
+export f_draw_liquidity_pool(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y_hi, float y_lo, int x2, string variant = "buyside", string value_str = "", string unit = "", string tag = "", int lookback = 0) =>
+    int base_width = 1
+    string b_style = "Dotted"
+    int f_transp = tier == "P" ? 85 : tier == "S" ? 90 : 93
+    int b_transp = tier == "P" ? 45 : tier == "S" ? 60 : 72
+    
+    string token = switch variant
+        "buyside" => "bull"
+        "sellside" => "bear"
+        "equal_highs" => "pivot_color"
+        "equal_lows" => "pivot_color"
+        => "pivot_color"
+    color base_clr = Core.f_theme_color(token, theme_mode)
+    color f_clr = color.new(base_clr, Core.f_display_profile_transparency(f_transp, profile))
+    color b_clr = color.new(base_clr, Core.f_display_profile_transparency(b_transp, profile))
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    box b = Core.f_draw_box_ex(ds, x1, y_hi, x2, y_lo, b_clr, b_style, w, f_clr, tag, lookback)
+    
+    string v_disp = switch variant
+        "buyside" => "Buyside"
+        "sellside" => "Sellside"
+        "equal_highs" => "Equal Highs"
+        "equal_lows" => "Equal Lows"
+        => variant
+    
+    array<string> keys = array.from("variant_display", "value", "unit")
+    array<string> vals = array.from(v_disp, value_str, unit)
+    string tt = Core.f_format_template("Liquidity Pool ({variant_display}){if:value}\nLevel: {value}{unit}{endif}", keys, vals)
+    Core.f_draw_marker(ds, x1, y_hi, "", base_clr, "dot", "tiny", tt, tag, lookback)
+
+// ============================================================================
+// 4. Advanced Zone Templates
+// ============================================================================
+
+// --- 4.1 Expected move band --------------------------------------------------
+
+export f_draw_expected_move_band(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y_hi, float y_lo, int x2, string sigma = "1", string probability = "68", string tag = "", int lookback = 0) =>
+    int base_width = 1
+    string b_style = tier == "P" ? "Solid" : "Dotted"
+    int f_transp = tier == "P" ? 85 : 92
+    int b_transp = tier == "P" ? 40 : 70
+    
+    color base_clr = Core.f_theme_color("confirm", theme_mode)
+    color f_clr = color.new(base_clr, Core.f_display_profile_transparency(f_transp, profile))
+    color b_clr = color.new(base_clr, Core.f_display_profile_transparency(b_transp, profile))
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    box b = Core.f_draw_box_ex(ds, x1, y_hi, x2, y_lo, b_clr, b_style, w, f_clr, tag, lookback)
+    
+    array<string> keys = array.from("sigma", "probability")
+    array<string> vals = array.from(sigma, probability)
+    string tt = Core.f_format_template("Expected Move Band ({sigma}σ)\nProbability: {probability}%", keys, vals)
+    Core.f_draw_marker(ds, x1, y_hi, "", base_clr, "dot", "tiny", tt, tag, lookback)
+
+// --- 4.3 Reversal target zone ------------------------------------------------
+
+export f_draw_reversal_target_zone(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y_hi, float y_lo, int x2, string source_name = "", string percentile = "90", string tag = "", int lookback = 0) =>
+    int base_width = 1
+    string b_style = tier == "C" ? "Dotted" : "Dashed"
+    int f_transp = tier == "P" ? 85 : tier == "S" ? 90 : 93
+    int b_transp = tier == "P" ? 50 : tier == "S" ? 65 : 75
+    
+    color base_clr = Core.f_theme_color("max_reversal", theme_mode)
+    color f_clr = color.new(base_clr, Core.f_display_profile_transparency(f_transp, profile))
+    color b_clr = color.new(base_clr, Core.f_display_profile_transparency(b_transp, profile))
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    box b = Core.f_draw_box_ex(ds, x1, y_hi, x2, y_lo, b_clr, b_style, w, f_clr, tag, lookback)
+    
+    array<string> keys = array.from("source_name", "percentile")
+    array<string> vals = array.from(source_name, percentile)
+    string tt = Core.f_format_template("Reversal Target Zone\n{if:source_name}Source: {source_name}\n{endif}Percentile: P{percentile}", keys, vals)
+    Core.f_draw_marker(ds, x1, y_hi, "", base_clr, "dot", "tiny", tt, tag, lookback)
+
+// --- 4.4 Forecast zone -------------------------------------------------------
+
+export f_draw_forecast_zone(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y_hi, float y_lo, int x2, string variant = "mfe", string probability = "50", string tag = "", int lookback = 0) =>
+    int base_width = 1
+    string b_style = tier == "P" ? "Dashed" : "Dotted"
+    int mfe_base = variant == "mfe" ? 82 : 88
+    int f_transp = tier == "P" ? mfe_base : tier == "S" ? mfe_base + 5 : mfe_base + 10
+    
+    color base_clr = Core.f_theme_color(variant == "mfe" ? "bull" : "bear", theme_mode)
+    color f_clr = color.new(base_clr, Core.f_display_profile_transparency(f_transp, profile))
+    // Use fully-transparent border (cleaner than passing na)
+    color b_clr_hidden = color.new(base_clr, 100)
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    box b = Core.f_draw_box_ex(ds, x1, y_hi, x2, y_lo, b_clr_hidden, b_style, w, f_clr, tag, lookback)
+    
+    array<string> keys = array.from("variant", "probability")
+    array<string> vals = array.from(str.upper(variant), probability)
+    string tt = Core.f_format_template("Forecast Zone ({variant})\nProbability: {probability}%", keys, vals)
+    Core.f_draw_marker(ds, x1, y_hi, "", base_clr, "dot", "tiny", tt, tag, lookback)
+
+// --- 4.7 Value area ----------------------------------------------------------
+
+export f_draw_value_area(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y_hi, float y_lo, int x2, string source_name = "Session", string variant = "vah_val", string tag = "", int lookback = 0) =>
+    int base_width = 1  // spec: always render a visible border
+    int f_transp = tier == "P" ? 85 : 93
+    
+    color base_clr = Core.f_theme_color("pivot_color", theme_mode)
+    color f_clr = color.new(base_clr, Core.f_display_profile_transparency(f_transp, profile))
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    box b = Core.f_draw_box_ex(ds, x1, y_hi, x2, y_lo, base_clr, "Dotted", w, f_clr, tag, lookback)
+    
+    string variant_display = variant == "vah_val" ? "70%" : variant
+    array<string> keys = array.from("source_name", "variant_display")
+    array<string> vals = array.from(source_name, variant_display)
+    string tt = Core.f_format_template("{source_name} Value Area ({variant_display})", keys, vals)
+    Core.f_draw_marker(ds, x1, y_hi, "", base_clr, "dot", "tiny", tt, tag, lookback)
+
+// --- 4.7 Single print zone ---------------------------------------------------
+
+export f_draw_single_print_zone(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y_hi, float y_lo, int x2, string session_name = "", string tag = "", int lookback = 0) =>
+    int base_width = 1
+    string b_style = tier == "C" ? "Dotted" : "Dashed"
+    int f_transp = tier == "P" ? 88 : tier == "S" ? 92 : 95
+    
+    color base_clr = Core.f_theme_color("neutral", theme_mode)
+    color f_clr = color.new(base_clr, Core.f_display_profile_transparency(f_transp, profile))
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    box b = Core.f_draw_box_ex(ds, x1, y_hi, x2, y_lo, base_clr, b_style, w, f_clr, tag, lookback)
+    
+    array<string> keys = array.from("session_name")
+    array<string> vals = array.from(session_name)
+    string tt = Core.f_format_template("Single Print Zone{if:session_name} ({session_name}){endif}", keys, vals)
+    Core.f_draw_marker(ds, x1, y_hi, "", base_clr, "dot", "tiny", tt, tag, lookback)
+
+// --- 4.9 Reclaim band --------------------------------------------------------
+
+export f_draw_reclaim_band(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y_hi, float y_lo, int x2, string variant = "bull", string tag = "", int lookback = 0) =>
+    int base_width = 1
+    int f_transp = tier  == "P" ? 80 : 80
+    
+    color base_clr = Core.f_theme_color(variant == "bull" ? "bull" : "bear", theme_mode)
+    color f_clr = color.new(base_clr, Core.f_display_profile_transparency(f_transp, profile))
+    color b_clr_hidden = color.new(base_clr, 100)
+    int w = Core.f_display_profile_width(base_width, profile)
+    
+    box b = Core.f_draw_box_ex(ds, x1, y_hi, x2, y_lo, b_clr_hidden, "Solid", w, f_clr, tag, lookback)
+    string tt = "Reclaim Band (" + (variant == "bull" ? "Bullish" : "Bearish") + ")"
+    Core.f_draw_marker(ds, x1, y_hi, "", base_clr, "dot", "tiny", tt, tag, lookback)
+    

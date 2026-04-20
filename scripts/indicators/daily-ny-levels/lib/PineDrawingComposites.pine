@@ -9,9 +9,9 @@ library("PineDrawingComposites", overlay=true)
 //          histograms, time distributions, and advanced multi-component visuals
 // ============================================================================
 
-import vveerappa/PineDrawingCore/2 as Core
-import vveerappa/PineDrawingZones/1 as Zones
-import vveerappa/PineDrawingVerticalMarkers/1 as VMarks
+import vveerappa/PineDrawingCore/3 as Core
+import vveerappa/PineDrawingZones/3 as Zones
+import vveerappa/PineDrawingVerticalMarkers/3 as VMarks
 
 /// Draw a single histogram bucket (histogram bar) using zone rendering.
 /// Convenience wrapper for volatility histograms and price distribution visualizations.
@@ -45,3 +45,86 @@ export f_draw_time_distribution_segment(Core.PineDrawingState ds, int x_left, in
 ///   - style: "Solid", "Dashed", "Dotted"
 export f_draw_distribution_stat_marker(Core.PineDrawingState ds, int x, float y_top, float y_bottom, color clr, string style) =>
     VMarks.f_draw_vline(ds, x, y_top, y_bottom, clr, style)
+
+// ============================================================================
+// 8. Canonical Composite Templates
+// ============================================================================
+
+export f_draw_projected_candle(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x, float open, float high, float low, float close, string direction = "bull", int probability = 0) =>
+    int body_width_bars = 2 // half-width
+    color base_clr = Core.f_theme_color(direction == "bull" ? "bull" : "bear", theme_mode)
+    
+    int f_transp = tier == "P" ? 70 : tier == "S" ? 60 : 45
+    int b_transp = tier == "P" ? 100 : tier == "S" ? 85 : 70
+    color f_clr = color.new(base_clr, f_transp)
+    color b_clr = color.new(base_clr, b_transp)
+    
+    // Body
+    box.new(x - body_width_bars, open, x + body_width_bars, close, border_color=b_clr, bgcolor=f_clr)
+    
+    // Wicks
+    Core.f_draw_vline(ds, x, high, math.max(open, close), base_clr, "Solid")
+    Core.f_draw_vline(ds, x, low, math.min(open, close), base_clr, "Solid")
+    
+    // Label for probability
+    string arrow = direction == "bull" ? "▲" : "▼"
+    string label_text = arrow + " " + str.tostring(probability) + "%"
+    string tt = Core.f_format_template("Projected Candle\nDirection: {direction}\nProbability: {probability}%", array.from("direction", "probability"), array.from(direction, str.tostring(probability)))
+    Core.f_draw_stat_label(ds, x, high, label_text, base_clr, "down", Core.f_display_profile_label_size("normal", profile))
+
+export f_draw_prediction_box(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y_hi, float y_lo, int x2, string window_label = "", int confidence = 0, string unit = "") =>
+    int b_transp = tier == "P" ? 60 : tier == "S" ? 45 : 30
+    int f_transp = tier == "P" ? 85 : tier == "S" ? 90 : 93
+    string b_style = tier == "P" ? "Dashed" : "Dotted"
+    
+    color base_clr = Core.f_theme_color("confirm", theme_mode)
+    color b_clr = color.new(base_clr, b_transp)
+    color f_clr = color.new(base_clr, f_transp)
+    
+    box b = box.new(x1, y_hi, x2, y_lo, border_color=b_clr, bgcolor=f_clr, border_style=Core.f_line_style(b_style))
+    
+    string label_text = "Prediction " + window_label + " " + str.tostring(confidence) + "%"
+    box.set_text(b, label_text)
+    box.set_text_color(b, base_clr)
+    
+    string tt = Core.f_format_template("Prediction Box\nWindow: {window_label}\nUpper: {upper}{unit}\nLower: {lower}{unit}\nConfidence: {confidence}%", array.from("window_label", "upper", "lower", "unit", "confidence"), array.from(window_label, str.tostring(y_hi), str.tostring(y_lo), unit, str.tostring(confidence)))
+    box.set_tooltip(b, tt)
+
+export f_draw_price_model_trajectory(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, float y1, int x2, float y2, string direction = "neutral", string model_name = "") =>
+    color base_clr = Core.f_theme_color(direction == "bull" ? "bull" : direction == "bear" ? "bear" : "pivot_color", theme_mode)
+    int w = tier == "P" ? 2 : 1
+    string style = tier == "P" ? "Solid" : tier == "S" ? "Dashed" : "Dotted"
+    int transp = tier == "P" ? 0 : tier == "S" ? 20 : 40
+    
+    Core.f_draw_line(ds, x1, y1, x2, y2, color.new(base_clr, transp), style, w)
+    
+    string tt = Core.f_format_template("Price Model Trajectory\nModel: {model_name}\nTarget: {target}", array.from("model_name", "target"), array.from(model_name, str.tostring(y2)))
+    Core.f_draw_stat_label(ds, x2, y2, model_name, base_clr, "left", Core.f_display_profile_label_size("small", profile))
+
+export f_draw_time_histogram(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x_start, float y_base, array<float> counts, float max_count, string source_name = "", int total_n = 0) =>
+    color base_clr = Core.f_theme_color("pivot_color", theme_mode)
+    int transp = tier == "P" ? 20 : tier == "S" ? 35 : 55
+    color clr = color.new(base_clr, transp)
+    
+    if array.size(counts) > 0
+        for i = 0 to array.size(counts) - 1
+            float cnt = array.get(counts, i)
+            float h = cnt / max_count * 10.0 // arbitrary height factor for visualization
+            Zones.f_draw_time_bar(ds, x_start + i, x_start + i + 1, y_base + h, y_base, clr)
+    
+    string label_text = source_name + (total_n > 0 ? " (n=" + str.tostring(total_n) + ")" : "")
+    Core.f_draw_stat_label(ds, x_start, y_base, label_text, base_clr, "down", Core.f_display_profile_label_size("small", profile))
+
+export f_draw_distribution_histogram(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x_base, float y_start, float step, array<float> counts, float max_count, string source_name = "", int total_n = 0) =>
+    color base_clr = Core.f_theme_color("pivot_color", theme_mode)
+    int transp = tier == "P" ? 20 : tier == "S" ? 35 : 55
+    color clr = color.new(base_clr, transp)
+    
+    if array.size(counts) > 0
+        for i = 0 to array.size(counts) - 1
+            float cnt = array.get(counts, i)
+            int w = int(cnt / max_count * 20.0) // arbitrary width in bars
+            Zones.f_draw_hist_band(ds, x_base, y_start + (i + 1) * step, y_start + i * step, w, base_clr, transp)
+    
+    string label_text = source_name + (total_n > 0 ? " (n=" + str.tostring(total_n) + ")" : "")
+    Core.f_draw_stat_label(ds, x_base, y_start, label_text, base_clr, "right", Core.f_display_profile_label_size("small", profile))

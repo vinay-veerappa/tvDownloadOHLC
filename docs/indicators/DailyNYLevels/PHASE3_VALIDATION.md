@@ -82,5 +82,5 @@ A post-validation refactor checkpoint introduced local v3 split-library scaffold
 
 - Commit: `127fa368`
 - Scope: added `PineDrawingCore` + family draft libraries and migration checklists under `scripts/indicators/daily-ny-levels/lib/`
-- Runtime impact: none (indicator still imports `vveerappa/PineDrawingLib/4` until split libraries are published)
+- Runtime impact at checkpoint time: none (indicator remained on monolithic `vveerappa/PineDrawingLib/4` before split-library publication)
 

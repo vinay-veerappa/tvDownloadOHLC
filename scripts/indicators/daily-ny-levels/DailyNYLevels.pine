@@ -1,0 +1,136 @@
+//@version=6
+indicator("Daily NY Levels [Antigravity]", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+// ============================================================================
+// 1. Imports
+// ============================================================================
+import vveerappa/PineDrawingCore/3 as Core
+import vveerappa/PineDrawingHorizontalLevels/3 as HLevels
+import vveerappa/PineDrawingZones/3 as Zones
+import vveerappa/PineDrawingMarkers/3 as Markers
+import vveerappa/PineDrawingTables/3 as Tables
+import vveerappa/RangeSessionLib/6 as RL
+import vveerappa/StatsLib/2 as SL
+
+// ============================================================================
+// 2. User Inputs
+// ============================================================================
+
+// --- 2.1 Visual System ------------------------------------------------------
+GRP_VIS      = "Visual System"
+theme_mode   = input.string("Dark", "Color Theme", options=["Dark", "Light", "Custom"], group=GRP_VIS)
+profile      = input.string("Normal", "Display Profile", options=["Compact", "Normal", "Large"], group=GRP_VIS)
+
+// --- 2.2 Sessions -----------------------------------------------------------
+GRP_SESS     = "Session Settings"
+tz           = input.string("America/New_York", "Timezone", group=GRP_SESS)
+on_start     = input.string("1800", "Overnight Start", group=GRP_SESS)
+on_end       = input.string("0300", "Overnight End", group=GRP_SESS)
+mid_open_t   = input.string("0000", "Midnight Open Time", group=GRP_SESS)
+ny_open_t    = input.string("0830", "NY Open Time", group=GRP_SESS)
+rth_open_t   = input.string("0930", "RTH Open Time", group=GRP_SESS)
+
+// --- 2.3 Dashboard ----------------------------------------------------------
+GRP_DASH     = "Dashboard Settings"
+show_dash    = input.bool(true, "Show Bias Dashboard", group=GRP_DASH)
+dash_pos     = input.string("Top Right", "Position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=GRP_DASH)
+
+// ============================================================================
+// 3. Logic & Calculations
+// ============================================================================
+
+// --- 3.1 State Persistence --------------------------------------------------
+var Core.PineDrawingState ds = Core.f_new_drawing_state()
+var Core.LabelRegistry lr     = Core.f_new_label_registry()
+
+// Reset registries on new bar (one-time reset for drawing family)
+if barstate.islast
+    Core.f_drawing_state_clear(ds)
+    Core.f_label_registry_clear(lr)
+
+// --- 3.2 Time Helpers -------------------------------------------------------
+is_new_day = ta.change(time("D", "", tz)) != 0
+mins = hour(time, tz) * 60 + minute(time, tz)
+
+// --- 3.3 Fetch Levels -------------------------------------------------------
+// Simplification for the example: In production, use RangeSessionLib to track
+var float midnight_open = na
+var float ny_open       = na
+var float rth_open      = na
+
+if is_new_day
+    midnight_open := na
+    ny_open       := na
+    rth_open      := na
+    // Transition current state to historical
+    Core.f_drawing_state_age(ds)
+
+if mins == RL.f_parse_hhmm(mid_open_t)
+    midnight_open := open
+if mins == RL.f_parse_hhmm(ny_open_t)
+    ny_open := open
+if mins == RL.f_parse_hhmm(rth_open_t)
+    rth_open := open
+
+// Overnight Range Tracking
+var float on_high = na
+var float on_low  = na
+in_ovn = RL.f_in_session_minutes(mins, RL.f_parse_hhmm(on_start), RL.f_parse_hhmm(on_end), true)
+
+if is_new_day
+    on_high := na
+    on_low  := na
+
+if in_ovn
+    on_high := na(on_high) ? high : math.max(on_high, high)
+    on_low  := na(on_low) ? low : math.min(on_low, low)
+
+// ============================================================================
+// 4. Rendering
+// ============================================================================
+
+if barstate.islast
+    int x_left = bar_index - 50 // Start of day or fixed offset
+    int x_right = bar_index + 10 // Extension
+    
+    // 4.1 Horizontal Levels
+    if not na(midnight_open)
+        // Demonstrate Tag-based reconciliation: assign "MO_LEVEL" tag
+        HLevels.f_draw_session_open_level(ds, lr, theme_mode, profile, "P", x_left, x_right, midnight_open, "midnight", "Midnight Open")
+        // We could look it up and modify it:
+        line mo_ln = Core.f_find_line_by_tag(ds, "MO_LEVEL")
+        if not na(mo_ln)
+            line.set_color(mo_ln, close > midnight_open ? color.green : color.red)
+    
+    if not na(ny_open)
+        HLevels.f_draw_session_open_level(ds, lr, theme_mode, profile, "P", x_left, x_right, ny_open, "pre_market", "NY Open (8:30)")
+    
+    // Demonstrate Historical Suffix: Previous Day Close [-1d]
+    float pdc = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_on)
+    if not na(pdc)
+        Core.f_label_registry_push(lr, pdc, "Prev Close", color.gray, x_right, 1, "PDC")
+        Core.f_draw_line(ds, x_left, pdc, x_right, pdc, color.gray, "Dotted", 1, "PDC_LINE", 1)
+
+    if not na(rth_open)
+        HLevels.f_draw_session_open_level(ds, lr, theme_mode, profile, "P", x_left, x_right, rth_open, "rth", "RTH Open (9:30)")
+
+    // 4.2 Zones (Overnight Range)
+    if not na(on_high) and not na(on_low)
+        Zones.f_draw_session_range_box(ds, theme_mode, profile, "S", x_left, on_high, on_low, bar_index, "OVN", "Points")
+
+    // 4.3 Dashboard
+    if show_dash
+        table t = Tables.f_draw_bias_table(dash_pos, 2, 5, Core.f_theme_color("bg_border", theme_mode), 1)
+        Tables.f_draw_header_cell(t, 0, 0, "Metric", Core.f_theme_color("bg_secondary", theme_mode), Core.f_theme_color("text_primary", theme_mode), "Normal", 1)
+        Tables.f_draw_header_cell(t, 1, 0, "Value", Core.f_theme_color("bg_secondary", theme_mode), Core.f_theme_color("text_primary", theme_mode), "Normal", 1)
+        
+        Tables.f_draw_metric_row(t, 1, "Midnight", str.tostring(midnight_open, "#.##"), Core.f_theme_color("bg_primary", theme_mode), Core.f_theme_color("bg_primary", theme_mode), Core.f_theme_color("text_secondary", theme_mode), Core.f_theme_color("text_primary", theme_mode), "Small")
+        Tables.f_draw_metric_row(t, 2, "NY 8:30", str.tostring(ny_open, "#.##"), Core.f_theme_color("bg_primary", theme_mode), Core.f_theme_color("bg_primary", theme_mode), Core.f_theme_color("text_secondary", theme_mode), Core.f_theme_color("text_primary", theme_mode), "Small")
+        
+        // Finalize Label Resolution
+        Core.f_label_registry_draw_merged(ds, lr, syminfo.mintick * 20, "Small")
+
+// ============================================================================
+// 5. Tooltips & Metadata
+// ============================================================================
+// (Optional metadata for external analysis tools)

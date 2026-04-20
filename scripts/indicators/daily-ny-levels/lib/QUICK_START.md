@@ -214,7 +214,7 @@ Before executing Phase 2 (Indicator Cutover):
 ## 🚨 Rollback Plan (If Needed)
 
 If Phase 1 publication has critical issues:
-1. Revert indicator to monolithic `vveerappa/PineDrawingLib/4` import
+1. Revert indicator to monolithic `vveerappa/PineDrawingLib/5` import
 2. Unpublish problematic libraries via TradingView settings
 3. Fix locally and re-publish (version 2)
 4. Document root cause in PREPUBLICATION_CHECKLIST.md

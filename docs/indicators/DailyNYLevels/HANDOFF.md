@@ -46,17 +46,18 @@ VISUAL_SYSTEM.md (base layer)
 
 ---
 
-## 3. Current state (as of 2026-04-18)
+## 3. Current state (as of 2026-04-19)
 
 ### 3.1 What exists
 
 - Full set of design documents (this folder)
-- Business-logic libraries published and active: `RangeSessionLib/6`, `StatsLib/2`
-- Rendering library published and active: `vveerappa/PineDrawingLib/4`
+- Business-logic libraries published and active: `RangeSessionLib/6`, `StatsLib/3`
+- Rendering library published and active: `vveerappa/PineDrawingLib/5`
+- Split rendering libraries are now published (Core + family modules under `PineDrawing*`), including `PineDrawingCore/1` and `PineDrawingComposites/1`
 - Core refactor phases for Daily NY Levels are implemented in code (Phase 1 modularization, Phase 2 directional overlay, Phase 3 label-registry extraction)
 - `DailyNYLevelsAnalytics.pine` uses library-backed label registry and semantic helpers for repeated stat-line + label flows
 - Manual chart parity validation remains pending for full Phase 3 sign-off (right-edge anchors, merge/suppress behavior, lifecycle drift checks)
-- v3 split-library scaffolds are now present locally under `scripts/indicators/daily-ny-levels/lib/` (checkpoint commit `127fa368`), including Core + family draft files and import-migration checklists
+- v3 split-library scaffolds remain present locally under `scripts/indicators/daily-ny-levels/lib/` (checkpoint commit `127fa368`) as source-of-truth drafts and import-migration references
 - Remaining reference Pine indicators still pending migration to the new architecture:
   - Daily NY Levels v6
   - MFE Tracker (Pine 4.1)
@@ -69,17 +70,17 @@ VISUAL_SYSTEM.md (base layer)
 
 ### 3.2 What doesn't exist yet
 
-- `PineDrawingCore v3` and split `PineDrawing{Family}` libraries — not published yet (local draft scaffolds exist)
 - Any of the NT8 libraries — not started (zero existing NT8 code)
-- Fully template-catalog-driven v3 migration for any indicator (Daily NY Levels is partially migrated and still executes on the monolithic `PineDrawingLib` path)
+- Fully template-catalog-driven v3 migration for any indicator (Daily NY Levels is still partially migrated and remains on mixed/legacy rendering paths in active scripts)
 
 ### 3.3 Starting points for future work
 
 **If migrating the first indicator:**
 1. Close Phase 3 runtime parity checklist in `PHASE3_VALIDATION.md` on live charts
-2. Publish `PineDrawingCore v3` first (dependency of everything else)
-3. Publish `PineDrawingHorizontalLevels v3`, `PineDrawingZones v3`, and `PineDrawingTables v3`
+2. Pin/verify import versions across active indicators against currently published split libraries
+3. Migrate active indicator rendering calls to split family imports (Core + HorizontalLevels + Zones + Tables + others as needed)
 4. Complete Daily NY Levels v7 migration using `INDICATORS/daily_ny_levels.md` bindings and `LIBRARY_ARCHITECTURE.md §8`
+5. Re-run live chart parity + lifecycle validation before publication of migrated indicators
 
 **If starting NT8 work:**
 1. Re-read `LIBRARY_ARCHITECTURE.md §5` (NT8 namespace structure + known limitations)
@@ -198,6 +199,8 @@ Keep this document short enough that it can be read in 5 minutes. It's the quick
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4 | 2026-04-19 | Corrected active/published version pins in status (`StatsLib/3`, `PineDrawingLib/5`) and clarified split-library baseline (`PineDrawingCore/1`, `PineDrawingComposites/1`). |
+| 1.3 | 2026-04-19 | Updated baseline to reflect split PineDrawing library publication and shifted next steps from publishing to import-version pinning, migration, and parity validation. |
 | 1.2 | 2026-04-18 | Added v3 split-library scaffold checkpoint status (`127fa368`) and clarified that split libraries exist locally but are not published yet. |
 | 1.1 | 2026-04-18 | Updated status to reflect implemented Phase 1/2/3 code work, active `PineDrawingLib/4` usage, and remaining manual parity + v3 split-library milestones. |
 | 1.0 | 2026-04-18 | Initial handoff. Covers locked decisions, current state, priority indicator profiles, known gaps, pointers to all documents. |

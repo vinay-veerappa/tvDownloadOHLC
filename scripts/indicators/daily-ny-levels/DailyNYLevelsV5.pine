@@ -2,32 +2,51 @@
 // © antigravity / Vinay
 
 //@version=6
-indicator("Daily NY Levels v5 (Phase 1)", overlay=true, max_bars_back=5000, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+indicator("Daily NY Levels v7 (v3 Library Migration)", overlay=true, max_bars_back=5000, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
 
 // ============================================================================
-// Daily NY Levels v5 - Phase 1 Implementation
-// Author: vveerappa | Version: 1
+// Daily NY Levels v7 — Spec-aligned migration onto v3 family libraries
+// Author: vveerappa | Version: 7
 // ============================================================================
-// CRITICAL: These import IDs assume the three libraries are published to TradingView
-// under your account (vveerappa) with version 1. Before publishing this indicator,
-// ensure all three libraries are published first:
+// Migration notes (vs v5):
+//   - All family library imports updated to /3
+//   - Stat lines now use HLevels semantic renderers (f_draw_confirm_level,
+//     f_draw_stretch_level, f_draw_target_level_pN, etc.) instead of the
+//     hand-rolled f_draw_labeled_stat_line_meta
+//   - theme_mode propagated throughout (Dark/Light theme toggle now works)
+//   - Tier-driven styling: Confirm=C, Target/Avg=S, Stretch/Pivot=P
+//   - Session mid now uses HLevels.f_draw_priority_line with neutral color
+//     (session_mid_level expects a session-specific palette token; for a generic
+//     mid line, priority_line is the better fit)
+//   - Time-distribution vline calls updated to Core.f_draw_vline (signature fix)
+//   - Tables now propagate theme_mode to correctly theme-resolve every color
+//
+// Libraries required (publish order: Core first, then family libs, then this):
 //   - vveerappa/RangeSessionLib/6
-//   - vveerappa/PineDrawingCore/1 (+ split family libs /1)
+//   - vveerappa/PineDrawingCore/3
+//   - vveerappa/PineDrawingHorizontalLevels/3
+//   - vveerappa/PineDrawingMarkers/3
+//   - vveerappa/PineDrawingZones/3
+//   - vveerappa/PineDrawingTables/3
+//   - vveerappa/PineDrawingVerticalMarkers/3
 //   - vveerappa/StatsLib/2
-// If libraries have different versions, update the /1 suffixes below.
 // ============================================================================
+
 import vveerappa/RangeSessionLib/6 as RSL
-import vveerappa/PineDrawingCore/2 as Core
-import vveerappa/PineDrawingHorizontalLevels/2 as HLevels
-import vveerappa/PineDrawingMarkers/2 as Markers
-import vveerappa/PineDrawingZones/2 as Zones
-import vveerappa/PineDrawingTables/2 as Tables
-import vveerappa/PineDrawingVerticalMarkers/2 as VMarks
+import vveerappa/PineDrawingCore/3 as Core
+import vveerappa/PineDrawingHorizontalLevels/3 as HLevels
+import vveerappa/PineDrawingMarkers/3 as Markers
+import vveerappa/PineDrawingZones/3 as Zones
+import vveerappa/PineDrawingTables/4 as Tables
+import vveerappa/PineDrawingVerticalMarkers/3 as VMarks
 import vveerappa/StatsLib/2 as STL
 
+// ============================================================================
 // Inputs
+// ============================================================================
+
 grp_theme = "Theme"
-i_theme_mode = input.string("Custom", "Color Theme", options=["Custom", "Dark", "Light"], group=grp_theme)
+i_theme_mode = input.string("Dark", "Color Theme", options=["Custom", "Dark", "Light"], group=grp_theme)
 i_display_profile = input.string("Normal", "Display Profile", options=["Tiny", "Small", "Normal", "Large", "Huge"], group=grp_theme)
 
 grp_session = "Session & Presets"
@@ -38,9 +57,9 @@ i_custom_cutoff = input.string("1200", "Custom Cutoff (HHMM)", group=grp_session
 i_timezone = input.string("America/New_York", "Timezone", options=["America/New_York", "America/Chicago", "America/Los_Angeles", "America/Denver", "US/Eastern", "US/Central", "UTC"], group=grp_session)
 i_ev_target_pct = input.float(0.30, "EV Target (%)", minval=0.01, step=0.01, group=grp_session)
 
-grp_style = "Style"
-i_bull_color = input.color(color.green, "Bull Color", group=grp_style)
-i_bear_color = input.color(color.red, "Bear Color", group=grp_style)
+grp_style = "Style (Custom Theme)"
+i_bull_color = input.color(color.green, "Bull Color (Custom)", group=grp_style)
+i_bear_color = input.color(color.red, "Bear Color (Custom)", group=grp_style)
 i_box_style = input.string("Solid", "OR Box Style", options=["Solid", "Dashed", "Dotted"], group=grp_style)
 i_box_width = input.int(1, "OR Box Width", minval=1, maxval=5, group=grp_style)
 
@@ -55,9 +74,7 @@ i_pct_confirm = input.int(20, "Confirm Percentile", minval=1, maxval=99, group=g
 i_pct_target1 = input.int(50, "Target1 Percentile", minval=1, maxval=99, group=grp_lines)
 i_pct_target2 = input.int(75, "Target2 Percentile", minval=1, maxval=99, group=grp_lines)
 i_pct_stretch = input.int(90, "Stretch Percentile", minval=1, maxval=99, group=grp_lines)
-i_right_extend_bars = input.int(20, "Line Right Extension", minval=1, maxval=200, group=grp_lines)
-i_stat_label_size = input.string("normal", "Stat Label Size", options=["tiny", "small", "normal", "large", "huge"], group=grp_lines)
-i_stat_label_color = input.color(color.white, "Stat Label Text Color", group=grp_lines)
+i_right_extend_bars = input.int(5, "Line Right Extension", minval=1, maxval=200, group=grp_lines)
 
 grp_time = "Hit Time Distribution"
 i_show_time_dist    = input.bool(true,  "Show Time Distribution",     group=grp_time)
@@ -65,11 +82,8 @@ i_time_bucket_mins  = input.int(5,      "Time Bucket (minutes)",      minval=1, 
 i_time_offset_ticks = input.int(200,    "Offset Below MFE (ticks)",   group=grp_time)
 i_show_time_avg     = input.bool(true,  "Show AVG Line",              group=grp_time)
 i_show_time_med     = input.bool(true,  "Show Median Line",           group=grp_time)
-i_time_avg_color    = input.color(color.yellow,                       "AVG Line Color",    group=grp_time)
-i_time_med_color    = input.color(color.aqua,                         "Median Line Color", group=grp_time)
-i_time_bull_color   = input.color(color.new(color.green, 80),         "Bull Bar Color",    group=grp_time)
-i_time_bear_color   = input.color(color.new(color.red, 80),           "Bear Bar Color",    group=grp_time)
-i_time_label_size   = input.string("tiny", "Label Size", options=["tiny", "small", "normal", "large", "huge"], group=grp_time)
+i_time_bull_color   = input.color(color.new(color.green, 80),         "Bull Bar Color (Custom)", group=grp_time)
+i_time_bear_color   = input.color(color.new(color.red, 80),           "Bear Bar Color (Custom)", group=grp_time)
 
 grp_table = "Data Table"
 i_show_table = input.bool(true, "Show Data Table", group=grp_table)
@@ -79,7 +93,19 @@ i_table_pos = input.string("Bottom Right", "Table Position", options=["Top Left"
 grp_debug = "Debug"
 i_show_debug = input.bool(false, "Show Debug Labels", group=grp_debug)
 
-// Resolved ranges + runtime state arrays
+// ============================================================================
+// Theme resolution
+// ============================================================================
+// The family libraries expect theme_mode="Dark" or "Light". For "Custom",
+// fall back to Dark for semantic renderer lookups (they resolve palette tokens
+// from Core, and Custom colors are only used where the user's custom override
+// is specifically applied via color.new).
+string theme_mode_resolved = i_theme_mode == "Light" ? "Light" : "Dark"
+
+// ============================================================================
+// Runtime state
+// ============================================================================
+
 var array<RSL.RangeSpec> specs = array.new<RSL.RangeSpec>(0)
 var array<RSL.RangeState> states = array.new<RSL.RangeState>(0)
 var array<STL.ExcursionHistory> histories = array.new<STL.ExcursionHistory>(0)
@@ -121,18 +147,9 @@ f_or_color(int idx) =>
     color base = idx % 2 == 0 ? bull_base : bear_base
     color.new(base, math.min(15 + idx * 10, 75))
 
-f_fmt_stat_text(string name, string line_name, float pct_level, float pct_value) =>
-    name + " " + line_name + " P" + str.tostring(int(pct_level)) + " " + STL.f_pct_fmt(pct_value)
-
-f_fmt_avg_text(string name, string line_name, float pct_value) =>
-    name + " " + line_name + " " + STL.f_pct_fmt(pct_value)
-
-f_fmt_percentile_text(float pct_value) =>
-    str.tostring(int(math.round(pct_value))) + "th"
-
-f_draw_labeled_stat_line_meta(Core.PineDrawingState ds, Core.LabelRegistry lr, int x1, float y, int x2, color line_clr, string line_style, int line_width, string label_text, color label_clr, int label_x, string strategy, int priority, string merge_group) =>
-    HLevels.f_draw_stat_line(ds, x1, y, x2, line_clr, line_style, line_width)
-    Core.f_label_registry_push_ex(lr, y, label_text, label_clr, label_x, strategy, priority, merge_group, "left", "", "Label", "")
+// ============================================================================
+// Session tracking (unchanged from v5 — this is indicator-specific logic)
+// ============================================================================
 
 f_track_range(int idx) =>
     RSL.RangeSpec sp = array.get(specs, idx)
@@ -146,13 +163,9 @@ f_track_range(int idx) =>
     bool is_new_session = in_or and not was_in_or
     array.set(prev_in_or, idx, in_or)
 
-    // Commit at next OR start if prior day was still uncommitted.
     if is_new_session and not st.is_committed and st.ref_set and not na(st.bull_ref)
-        // Recompute exact pullback MAE using full intraday trace (before peak finalization cutoff)
-        // Use existing pullback MAE values from state (already tracked during the session)
         float pb_bull = na(st.daily_mae_bull_pb) ? 0.0 : st.daily_mae_bull_pb
         float pb_bear = na(st.daily_mae_bear_pb) ? 0.0 : st.daily_mae_bear_pb
-        // Apply transfer-direction gating if applicable
         int direction = na
         if sp.is_transfer
             direction := (st.or_high > st.session_open) ? 1 : -1
@@ -204,7 +217,7 @@ f_track_range(int idx) =>
         st.bull_ref := st.or_high
         st.bear_ref := st.or_low
         st.or_mid := (st.or_high + st.or_low) / 2.0
-        st.session_open := st.or_last_close  // Capture close for transfer-direction gating
+        st.session_open := st.or_last_close
         st.ref_set := true
 
     bool ltf_in_data = false
@@ -232,7 +245,6 @@ f_track_range(int idx) =>
                 [mpb, mps] = STL.f_track_mae_pullback(h, l, st.or_high, st.or_low, bull_peak_finalized, bear_peak_finalized, st.daily_mae_bull_pb, st.daily_mae_bear_pb)
                 st.daily_mae_bull_pb := mpb
                 st.daily_mae_bear_pb := mps
-                // Capture intraday trace for later post-peak analysis
                 array.push(st.data_mins, mins_since_or)
                 array.push(st.data_highs, h)
                 array.push(st.data_lows, l)
@@ -264,7 +276,6 @@ f_track_range(int idx) =>
         [mpb, mps] = STL.f_track_mae_pullback(high, low, st.or_high, st.or_low, bull_peak_finalized, bear_peak_finalized, st.daily_mae_bull_pb, st.daily_mae_bear_pb)
         st.daily_mae_bull_pb := mpb
         st.daily_mae_bear_pb := mps
-        // Capture intraday trace for later post-peak analysis
         array.push(st.data_mins, mins_since_or)
         array.push(st.data_highs, high)
         array.push(st.data_lows, low)
@@ -287,10 +298,8 @@ f_track_range(int idx) =>
     array.set(prev_in_data, idx, effective_in_data)
 
     if data_just_ended and not st.is_committed and st.ref_set
-        // Use existing pullback MAE values from state (already tracked during the session)
         float pb_bull = na(st.daily_mae_bull_pb) ? 0.0 : st.daily_mae_bull_pb
         float pb_bear = na(st.daily_mae_bear_pb) ? 0.0 : st.daily_mae_bear_pb
-        // Apply transfer-direction gating if applicable
         int direction = na
         if sp.is_transfer
             direction := (st.or_high > st.session_open) ? 1 : -1
@@ -304,6 +313,10 @@ if array.size(specs) > 0
     for i = 0 to array.size(specs) - 1
         f_track_range(i)
 
+// ============================================================================
+// Rendering
+// ============================================================================
+
 f_render_range(int idx) =>
     RSL.RangeSpec sp = array.get(specs, idx)
     RSL.RangeState st = array.get(states, idx)
@@ -312,20 +325,19 @@ f_render_range(int idx) =>
 
     Core.f_clear_all(ds)
 
+    // Custom-theme colors used for OR box and histogram fills (user-driven)
     color bull_color = Core.f_resolve_color(i_theme_mode, color.new(i_bull_color, 0), #38BD8A, #008060)
     color bear_color = Core.f_resolve_color(i_theme_mode, color.new(i_bear_color, 0), #F87171, #B3261E)
-    color stat_label_color = Core.f_resolve_color(i_theme_mode, color.new(i_stat_label_color, 0), #E2E8F0, #1F2937)
-    color stat_avg_color = Core.f_resolve_color(i_theme_mode, color.new(i_time_avg_color, 0), #FACC15, #CA8A04)
-    color stat_median_color = Core.f_resolve_color(i_theme_mode, color.new(i_time_med_color, 0), #22D3EE, #0891B2)
-    color stat_stretch_color = Core.f_resolve_color(i_theme_mode, color.orange, #FB923C, #C2410C)
-    color mid_line_color = Core.f_resolve_color(i_theme_mode, color.gray, #94A3B8, #6B7280)
-    color time_title_color = Core.f_resolve_color(i_theme_mode, color.fuchsia, #D946EF, #9333EA)
+    color stat_label_color = Core.f_theme_color("text_primary", theme_mode_resolved)
+    color time_title_color = Core.f_theme_color("caution", theme_mode_resolved)
     color time_bull_color = Core.f_resolve_color(i_theme_mode, color.new(i_time_bull_color, 0), color.new(#38BD8A, 80), color.new(#008060, 80))
     color time_bear_color = Core.f_resolve_color(i_theme_mode, color.new(i_time_bear_color, 0), color.new(#F87171, 80), color.new(#B3261E, 80))
-    string stat_label_size = Core.f_display_profile_label_size(i_stat_label_size, i_display_profile)
-    string time_label_size = Core.f_display_profile_label_size(i_time_label_size, i_display_profile)
-    string debug_label_size = "tiny"
-    int secondary_width = Core.f_display_profile_width(1, i_display_profile)
+    color stat_avg_color = Core.f_theme_color("average", theme_mode_resolved)
+    color stat_median_color = Core.f_theme_color("median", theme_mode_resolved)
+    
+    string time_label_size = Core.f_display_profile_label_size("tiny", i_display_profile)
+    string stat_label_size = Core.f_display_profile_label_size("normal", i_display_profile)
+    string debug_label_size = "normal"
     int or_box_width = Core.f_display_profile_width(i_box_width, i_display_profile)
     int hist_fill_transparency = Core.f_display_profile_transparency(58, i_display_profile)
     Core.LabelRegistry lbl_reg = Core.f_label_registry_begin()
@@ -337,20 +349,28 @@ f_render_range(int idx) =>
     cutoff_bar := math.min(cutoff_bar, bar_index)
     int line_render_end = cutoff_bar + i_right_extend_bars
 
+    // OR box (custom theme colors)
     if st.or_building and not na(st.or_start_bar)
-        Zones.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, bar_index, f_or_color(idx), i_box_style, or_box_width)
+        Zones.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, cutoff_bar, f_or_color(idx), i_box_style, or_box_width)
     else if st.or_complete and not na(st.or_start_bar)
-        Zones.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, bar_index, f_or_color(idx), i_box_style, or_box_width)
+        Zones.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, cutoff_bar, f_or_color(idx), i_box_style, or_box_width)
 
     if i_show_debug and st.or_building and not na(st.or_start_bar)
         Markers.f_draw_text_marker(ds, bar_index, st.or_high, "NEW: " + sp.name, stat_label_color, "down", debug_label_size)
 
+    // ========================================================================
+    // Stat lines — migrated to semantic renderers
+    // ========================================================================
     if i_show_stat_lines and st.ref_set and not na(st.bull_ref)
         array<float> bull_filtered = STL.f_build_filtered(hist.mfe_bull)
         array<float> bear_filtered = STL.f_build_filtered(hist.mfe_bear)
+        int ln_start = st.or_start_bar
         int ln_end = line_render_end
-        int stat_label_x = ln_end + 2
+        string bull_tag_base = sp.name + "_bull"
+        string bear_tag_base = sp.name + "_bear"
+        string unit_str = "%"
 
+        // BULL STAT LINES
         if array.size(bull_filtered) > 0
             float p_confirm_b = array.percentile_nearest_rank(bull_filtered, i_pct_confirm)
             float p_t1_b = array.percentile_nearest_rank(bull_filtered, i_pct_target1)
@@ -362,12 +382,23 @@ f_render_range(int idx) =>
             float y_t2_b = st.bull_ref * (1.0 + p_t2_b / 100.0)
             float y_stretch_b = st.bull_ref * (1.0 + p_stretch_b / 100.0)
             float y_avg_b = st.bull_ref * (1.0 + p_avg_b / 100.0)
-            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_confirm_b, ln_end, color.new(bull_color, 15), "Dotted", secondary_width, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_b), stat_label_color, stat_label_x, "stagger", 50, sp.name + "_bull")
-            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t1_b, ln_end, color.new(bull_color, 0), "Solid", secondary_width, f_fmt_stat_text(sp.name, "Target1", i_pct_target1, p_t1_b), stat_label_color, stat_label_x, "stagger", 45, sp.name + "_bull")
-            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t2_b, ln_end, color.new(bull_color, 25), "Dashed", secondary_width, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_b), stat_label_color, stat_label_x, "stagger", 40, sp.name + "_bull")
-            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_stretch_b, ln_end, color.new(stat_stretch_color, 0), "Dotted", secondary_width, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_b), stat_label_color, stat_label_x, "stagger", 35, sp.name + "_bull")
-            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_avg_b, ln_end, color.new(stat_avg_color, 0), "Dashed", secondary_width, f_fmt_avg_text(sp.name, "Avg", p_avg_b), stat_label_color, stat_label_x, "stagger", 30, sp.name + "_bull")
+            
+            // Confirm level — tier C, direction bull (renders in 'positive' color per §2.3)
+            HLevels.f_draw_confirm_level(ds, lbl_reg, theme_mode_resolved, i_display_profile, "C", ln_start, ln_end, y_confirm_b, "bull", str.tostring(int(i_pct_confirm)), STL.f_pct_fmt(p_confirm_b), unit_str, sp.name + " MFE", bull_tag_base + "_confirm", 0)
+            
+            // Target P50 — tier P (pivot_structural color), with qualifier for source name
+            HLevels.f_draw_target_level_p50(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", ln_start, ln_end, y_t1_b, sp.name + " Bull", "MFE", STL.f_pct_fmt(p_t1_b), unit_str, bull_tag_base + "_t1", 0)
+            
+            // Target P75 — tier S
+            HLevels.f_draw_target_level_p75(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", ln_start, ln_end, y_t2_b, sp.name + " Bull", "MFE", STL.f_pct_fmt(p_t2_b), unit_str, bull_tag_base + "_t2", 0)
+            
+            // Stretch — tier P, renders in 'stretch' color per spec §2.2
+            HLevels.f_draw_stretch_level(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", ln_start, ln_end, y_stretch_b, sp.name + " Bull", str.tostring(int(i_pct_stretch)), STL.f_pct_fmt(p_stretch_b), unit_str, bull_tag_base + "_stretch", 0)
+            
+            // Average — tier S, renders in 'average' color per spec §2.2
+            HLevels.f_draw_statistical_level_avg(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", ln_start, ln_end, y_avg_b, sp.name + " Bull MFE", STL.f_pct_fmt(p_avg_b), unit_str, bull_tag_base + "_avg", 0)
 
+        // BEAR STAT LINES
         if array.size(bear_filtered) > 0
             float p_confirm_s = array.percentile_nearest_rank(bear_filtered, i_pct_confirm)
             float p_t1_s = array.percentile_nearest_rank(bear_filtered, i_pct_target1)
@@ -379,12 +410,14 @@ f_render_range(int idx) =>
             float y_t2_s = st.bear_ref * (1.0 - p_t2_s / 100.0)
             float y_stretch_s = st.bear_ref * (1.0 - p_stretch_s / 100.0)
             float y_avg_s = st.bear_ref * (1.0 - p_avg_s / 100.0)
-            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_confirm_s, ln_end, color.new(bear_color, 15), "Dotted", secondary_width, f_fmt_stat_text(sp.name, "Confirm", i_pct_confirm, p_confirm_s), stat_label_color, stat_label_x, "stagger", 50, sp.name + "_bear")
-            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t1_s, ln_end, color.new(bear_color, 0), "Solid", secondary_width, f_fmt_stat_text(sp.name, "Target1", i_pct_target1, p_t1_s), stat_label_color, stat_label_x, "stagger", 45, sp.name + "_bear")
-            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t2_s, ln_end, color.new(bear_color, 25), "Dashed", secondary_width, f_fmt_stat_text(sp.name, "Target2", i_pct_target2, p_t2_s), stat_label_color, stat_label_x, "stagger", 40, sp.name + "_bear")
-            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_stretch_s, ln_end, color.new(stat_stretch_color, 0), "Dotted", secondary_width, f_fmt_stat_text(sp.name, "Stretch", i_pct_stretch, p_stretch_s), stat_label_color, stat_label_x, "stagger", 35, sp.name + "_bear")
-            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_avg_s, ln_end, color.new(stat_avg_color, 0), "Dashed", secondary_width, f_fmt_avg_text(sp.name, "Avg", p_avg_s), stat_label_color, stat_label_x, "stagger", 30, sp.name + "_bear")
+            
+            HLevels.f_draw_confirm_level(ds, lbl_reg, theme_mode_resolved, i_display_profile, "C", ln_start, ln_end, y_confirm_s, "bear", str.tostring(int(i_pct_confirm)), STL.f_pct_fmt(p_confirm_s), unit_str, sp.name + " MFE", bear_tag_base + "_confirm", 0)
+            HLevels.f_draw_target_level_p50(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", ln_start, ln_end, y_t1_s, sp.name + " Bear", "MFE", STL.f_pct_fmt(p_t1_s), unit_str, bear_tag_base + "_t1", 0)
+            HLevels.f_draw_target_level_p75(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", ln_start, ln_end, y_t2_s, sp.name + " Bear", "MFE", STL.f_pct_fmt(p_t2_s), unit_str, bear_tag_base + "_t2", 0)
+            HLevels.f_draw_stretch_level(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", ln_start, ln_end, y_stretch_s, sp.name + " Bear", str.tostring(int(i_pct_stretch)), STL.f_pct_fmt(p_stretch_s), unit_str, bear_tag_base + "_stretch", 0)
+            HLevels.f_draw_statistical_level_avg(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", ln_start, ln_end, y_avg_s, sp.name + " Bear MFE", STL.f_pct_fmt(p_avg_s), unit_str, bear_tag_base + "_avg", 0)
 
+        // Mid line (session mid) — renders with hit_rate data slot
         int n_mid = math.min(array.size(hist.mid_hit_bull), array.size(hist.mid_hit_bear))
         int mid_hits = 0
         if n_mid > 0
@@ -392,11 +425,15 @@ f_render_range(int idx) =>
                 mid_hits += array.get(hist.mid_hit_bull, k) ? 1 : 0
                 mid_hits += array.get(hist.mid_hit_bear, k) ? 1 : 0
         float mid_hit_pct = n_mid == 0 ? na : (float(mid_hits) / float(2 * n_mid)) * 100.0
-        f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, st.or_mid, ln_end, color.new(mid_line_color, 20), "Dashed", secondary_width, sp.name + " Mid " + STL.f_pct_fmt(mid_hit_pct), stat_label_color, stat_label_x, "stagger", 25, sp.name + "_mid")
+        string mid_hit_str = na(mid_hit_pct) ? "" : str.tostring(mid_hit_pct, "#.0")
+        
+        // Mid line uses priority_line with neutral color (session_mid_level expects a session_token)
+        string mid_label = sp.name + " Mid" + (na(mid_hit_pct) ? "" : " " + mid_hit_str + "%")
+        HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", ln_start, ln_end, st.or_mid, mid_label, Core.f_theme_color("neutral", theme_mode_resolved), 25, sp.name + "_mid", 0)
 
-    // Render MFE histogram as a profile-like bell curve.
-    // Y uses percentile bands from the selected percentile window.
-    // X width uses local density so the middle bands can expand and tails contract.
+    // ========================================================================
+    // MFE Histogram (indicator-specific; stays custom)
+    // ========================================================================
     if i_show_histogram and st.ref_set and not na(st.bull_ref)
         array<float> bull_filtered = STL.f_build_filtered(hist.mfe_bull)
         array<float> bear_filtered = STL.f_build_filtered(hist.mfe_bear)
@@ -432,7 +469,6 @@ f_render_range(int idx) =>
                 array.push(bull_pct_los, p_lo)
                 array.push(bull_pct_his, p_hi)
 
-            // Cap tail bins below P20 to the density of the first bin at or above P20
             float bull_p20_density = na
             for b = 0 to hist_bin_count - 1
                 if array.get(bull_pct_los, b) >= 20.0 and na(bull_p20_density)
@@ -461,8 +497,7 @@ f_render_range(int idx) =>
                     Zones.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, bull_color, hist_fill_transparency)
                     if i_show_hist_bin_labels
                         float y_mid = (y_high + y_low) / 2.0
-                        Core.f_draw_stat_label(ds, st.or_start_bar - 1, y_mid, f_fmt_percentile_text(p_lo), stat_label_color, "right", stat_label_size)
-
+                        Core.f_draw_stat_label(ds, st.or_start_bar - 1, y_mid, str.tostring(int(math.round(p_lo))) + "th", stat_label_color, "right", stat_label_size)
                     if i_show_debug
                         float y_mid = (y_high + y_low) / 2.0
                         Markers.f_draw_text_marker(ds, bar_index, y_mid, "B P" + str.tostring(p_lo, "#.0") + "-P" + str.tostring(p_hi, "#.0") + " v=" + str.tostring(v_lo, "#.##") + "-" + str.tostring(v_hi, "#.##"), stat_label_color, "center", debug_label_size)
@@ -492,7 +527,6 @@ f_render_range(int idx) =>
                 array.push(bear_pct_los, p_lo)
                 array.push(bear_pct_his, p_hi)
 
-            // Cap tail bins below P20 to the density of the first bin at or above P20
             float bear_p20_density = na
             for b = 0 to hist_bin_count - 1
                 if array.get(bear_pct_los, b) >= 20.0 and na(bear_p20_density)
@@ -521,16 +555,14 @@ f_render_range(int idx) =>
                     Zones.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, bear_color, hist_fill_transparency)
                     if i_show_hist_bin_labels
                         float y_mid = (y_high + y_low) / 2.0
-                        Core.f_draw_stat_label(ds, st.or_start_bar - 1, y_mid, f_fmt_percentile_text(p_lo), stat_label_color, "right", stat_label_size)
-
+                        Core.f_draw_stat_label(ds, st.or_start_bar - 1, y_mid, str.tostring(int(math.round(p_lo))) + "th", stat_label_color, "right", stat_label_size)
                     if i_show_debug
                         float y_mid = (y_high + y_low) / 2.0
                         Markers.f_draw_text_marker(ds, bar_index, y_mid, "S P" + str.tostring(p_lo, "#.0") + "-P" + str.tostring(p_hi, "#.0") + " v=" + str.tostring(v_lo, "#.##") + "-" + str.tostring(v_hi, "#.##"), stat_label_color, "center", debug_label_size)
 
-    // MODULE: TIME DISTRIBUTION HISTOGRAM
-    // Renders when during the session (minutes since OR start) the MFE peak was reached.
-    // Bull bars grow upward from base_y; bear bars grow downward. Vertical dashed lines
-    // mark the bull/bear AVG and Median peak times.
+    // ========================================================================
+    // Time Distribution Histogram (indicator-specific; stays custom)
+    // ========================================================================
     if i_show_time_dist and st.ref_set and st.or_complete and not na(st.or_start_bar)
         int time_data_dur = RSL.f_duration(sp.or_start_min, sp.cutoff_min)
         if time_data_dur > 0
@@ -538,7 +570,6 @@ f_render_range(int idx) =>
             int min_box_w = math.max(1, int(float(i_time_bucket_mins) * bars_per_min))
             int num_bins = math.ceil(float(time_data_dur) / float(i_time_bucket_mins))
 
-            // base_y: position below the bear MFE histogram when visible, else below OR low
             float mfe_hist_bot = na
             if i_show_histogram and not na(st.bear_ref)
                 array<float> bear_filt2 = STL.f_build_filtered(hist.mfe_bear)
@@ -547,7 +578,6 @@ f_render_range(int idx) =>
                     mfe_hist_bot := st.bear_ref * (1.0 - max_bear_mfe / 100.0)
             float base_y = not na(mfe_hist_bot) ? mfe_hist_bot - syminfo.mintick * float(i_time_offset_ticks) : st.or_low - syminfo.mintick * float(i_time_offset_ticks)
 
-            // Count days per bin — only include days where the respective MFE > 0
             int n_ptb = array.size(hist.peak_time_bull)
             int n_pts = array.size(hist.peak_time_bear)
             array<int> bull_cnt = array.new_int(num_bins, 0)
@@ -575,9 +605,8 @@ f_render_range(int idx) =>
             float prof_h = syminfo.mintick * float(i_time_offset_ticks) * 0.4
             float line_h = prof_h * 1.2
 
-            // Title label — rendered at horizontal midpoint, slightly above the baseline
             int title_x = st.or_start_bar + int(float(time_data_dur / 2) * bars_per_min)
-            Core.f_draw_stat_label(ds, title_x, base_y + syminfo.mintick * 80.0, sp.name + " Time Dist", color.new(time_title_color, 50), "down", time_label_size) 
+            Core.f_draw_stat_label(ds, title_x, base_y + syminfo.mintick * 80.0, sp.name + " Time Dist", color.new(time_title_color, 50), "down", time_label_size)
 
             // Histogram bars
             for bi = 0 to num_bins - 1
@@ -594,7 +623,7 @@ f_render_range(int idx) =>
                     float h = float(cs) / float(max_t_count) * prof_h
                     Zones.f_draw_time_bar(ds, x_l, x_r, base_y, base_y - h, time_bear_color)
 
-            // AVG and Median vertical stat lines — build non-zero-mfe time arrays first
+            // AVG and Median vertical stat lines via Core.f_draw_vline (width=1 default)
             array<int> bull_t_nz = array.new_int(0)
             array<int> bear_t_nz = array.new_int(0)
             if n_ptb > 0
@@ -612,10 +641,10 @@ f_render_range(int idx) =>
                 int x_avg = st.or_start_bar + int(avg_t * bars_per_min)
                 int x_med = st.or_start_bar + int(med_t * bars_per_min)
                 if i_show_time_avg
-                    VMarks.f_draw_vline(ds, x_avg, base_y + line_h, base_y, stat_avg_color, "Dashed")
+                    Core.f_draw_vline(ds, x_avg, base_y + line_h, base_y, stat_avg_color, "Dashed", 1)
                     Core.f_draw_stat_label(ds, x_avg, base_y + line_h, "Bull AVG", stat_avg_color, "down", time_label_size)
                 if i_show_time_med
-                    VMarks.f_draw_vline(ds, x_med, base_y + line_h * 0.8, base_y, stat_median_color, "Dashed")
+                    Core.f_draw_vline(ds, x_med, base_y + line_h * 0.8, base_y, stat_median_color, "Dashed", 1)
                     Core.f_draw_stat_label(ds, x_med, base_y + line_h * 0.8, "Bull MED", stat_median_color, "down", time_label_size)
 
             if array.size(bear_t_nz) > 0
@@ -624,10 +653,10 @@ f_render_range(int idx) =>
                 int x_avg = st.or_start_bar + int(avg_t * bars_per_min)
                 int x_med = st.or_start_bar + int(med_t * bars_per_min)
                 if i_show_time_avg
-                    VMarks.f_draw_vline(ds, x_avg, base_y, base_y - line_h, stat_avg_color, "Dashed")
+                    Core.f_draw_vline(ds, x_avg, base_y, base_y - line_h, stat_avg_color, "Dashed", 1)
                     Core.f_draw_stat_label(ds, x_avg, base_y - line_h, "Bear AVG", stat_avg_color, "up", time_label_size)
                 if i_show_time_med
-                    VMarks.f_draw_vline(ds, x_med, base_y, base_y - line_h * 0.8, stat_median_color, "Dashed")
+                    Core.f_draw_vline(ds, x_med, base_y, base_y - line_h * 0.8, stat_median_color, "Dashed", 1)
                     Core.f_draw_stat_label(ds, x_med, base_y - line_h * 0.8, "Bear MED", stat_median_color, "up", time_label_size)
 
     float merge_thr = Core.f_merge_threshold_for_symbol(syminfo.ticker, syminfo.mintick)
@@ -637,7 +666,10 @@ if barstate.islast and array.size(specs) > 0
     for i = 0 to array.size(specs) - 1
         f_render_range(i)
 
-// Focus range for table: live first, else last range.
+// ============================================================================
+// Table rendering
+// ============================================================================
+
 f_focus_idx() =>
     int focus = array.size(specs) > 0 ? array.size(specs) - 1 : 0
     if array.size(specs) > 0
@@ -656,22 +688,23 @@ if barstate.islast and i_show_table and array.size(specs) > 0
     RSL.RangeSpec sp = array.get(specs, idx)
     STL.ExcursionHistory hist = array.get(histories, idx)
 
-    // Create table sized exactly for the active view.
-    // DOW View: 3 cols (Day / Count / Avg MFE), 6 rows (header + Mon-Fri).
-    // All other views: 6 cols, 3 rows (header + Bull + Bear).
     bool is_dow = i_table_view == "DOW View"
     int n_cols = is_dow ? 3 : 6
     int n_rows = is_dow ? 6 : 3
-    color table_bg_color = Core.f_resolve_color(i_theme_mode, color.black, #0F172A, #F8FAFC)
-    color table_border_color = Core.f_resolve_color(i_theme_mode, color.gray, #334155, #94A3B8)
-    color table_header_bg_color = Core.f_resolve_color(i_theme_mode, color.blue, #1E3A8A, #BFDBFE)
-    color table_header_text_color = Core.f_resolve_color(i_theme_mode, color.white, #E2E8F0, #111827)
-    color table_body_text_color = Core.f_resolve_color(i_theme_mode, color.white, #E2E8F0, #1F2937)
-    color table_bull_color = Core.f_resolve_color(i_theme_mode, color.new(i_bull_color, 0), #38BD8A, #008060)
-    color table_bear_color = Core.f_resolve_color(i_theme_mode, color.new(i_bear_color, 0), #F87171, #B3261E)
-    color table_cell_bg = color.new(table_bg_color, 100)
+    
+    // Theme-aware table colors (theme_mode_resolved pulls from palette)
+    color table_border_color = Core.f_theme_color("bg_border", theme_mode_resolved)
+    color table_header_bg_color = Core.f_theme_color("header_bg", theme_mode_resolved)
+    color table_header_text_color = Core.f_theme_color("header_text", theme_mode_resolved)
+    color table_body_text_color = Core.f_theme_color("text_primary", theme_mode_resolved)
+    color table_body_bg = Core.f_theme_color("bg_secondary", theme_mode_resolved)
+    color table_bull_color = Core.f_theme_color("bull", theme_mode_resolved)
+    color table_bear_color = Core.f_theme_color("bear", theme_mode_resolved)
+    color table_cell_bg = color.new(table_body_bg, 85)
     string table_text_size = Core.f_display_profile_table_size("small", i_display_profile)
-    table t = Tables.f_new_table(i_table_pos, n_cols, n_rows, color.new(table_bg_color, 85), color.new(table_border_color, 70), 1)
+    
+    // Use Tables.f_draw_stats_table wrapper (§9.1) — spec-compliant stats table
+    table t = Tables.f_draw_stats_table(i_table_pos, n_cols, n_rows, color.new(table_border_color, 70), 1, theme_mode_resolved)
 
     // Header row
     Tables.f_draw_header_cell(t, 0, 0, sp.name + " - " + i_table_view, color.new(table_header_bg_color, 70), table_header_text_color, table_text_size)

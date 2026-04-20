@@ -19,12 +19,12 @@ All 8 split libraries are now complete, documented, and ready for publication to
 |---------|---------|--------|-------|--------------|--------------|
 | **PineDrawingCore** | 1.0 | ✅ Complete | ~750 | None | ✅ Full |
 
-**Exports**: 2 types + 13 core functions = 15 total
+**Exports**: 2 types + 18 core functions = 20 total
 - Types: `PineDrawingState`, `LabelRegistry`
 - Lifecycle: `f_new_drawing_state`, `f_new_label_registry`, `f_label_registry_begin`, `f_label_registry_clear`, `f_label_registry_reset`, `f_label_registry_push`, `f_label_registry_push_ex`, `f_label_registry_draw`, `f_label_registry_flush`, `f_label_registry_draw_merged`
 - Lifecycle: `f_clear_all`
 - Format: `f_format_template`, `f_merge_threshold_for_symbol`
-- Style: `f_line_style`, `f_display_size`, `f_text_size`, `f_table_pos`
+- Style: `f_resolve_color`, `f_display_profile_label_size`, `f_display_profile_table_size`, `f_display_profile_width`, `f_display_profile_transparency`, `f_line_style`, `f_display_size`, `f_text_size`, `f_table_pos`
 - Primitives: `f_draw_line`, `f_draw_or_box`, `f_draw_hist_band`, `f_draw_stat_label`, `f_draw_time_bar`, `f_draw_vline`, `f_draw_day_separator`
 
 ### Family Libraries (Tier 1)
@@ -150,7 +150,8 @@ After all 8 libraries published:
 1. **Tooltip support**: LabelRegistry has `tooltips` array but Pine v6 doesn't yet support label tooltips (prepared for future).
 2. **Advanced label modes**: Only "Label" and "None" modes are implemented; extensible for future modes.
 3. **Specialized template**: Intentionally minimal placeholder; actual specialized indicators will enhance/fork as needed.
-4. **Python NT8 porting**: Split architecture enables cross-platform porting but is not yet started.
+4. **Indicator adoption timing**: `PineDrawingCore` now exposes theme/display-profile resolver helpers, but current indicators can keep their local resolver wrappers until the new Core version is published and imported.
+5. **Python NT8 porting**: Split architecture enables cross-platform porting but is not yet started.
 
 ---
 

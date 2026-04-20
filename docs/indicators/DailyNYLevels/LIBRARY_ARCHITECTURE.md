@@ -1,7 +1,8 @@
 # Library Architecture
 
-**Version:** 3.0
+**Version:** 3.1
 **Scope:** Library structure, layering, split plan, and platform specifics for Pine v6 and NinjaScript.
+**Status:** Implemented & Standardized (Pine v3)
 **Parent:** `VISUAL_SYSTEM.md`, `VISUAL_TEMPLATES.md`
 
 ---
@@ -156,9 +157,10 @@ Contents:
 - Layer A: lifecycle manager, draw registry, tag convention, state tracking, cleanup routines, historical state transitions, retention policy enforcement
 - Layer B: style resolver (`f_resolve_color`, `f_display_profile_scale`, `f_merge_threshold_for_symbol`)
 - Layer C: primitives — `f_draw_line`, `f_draw_box`, `f_draw_label`, `f_draw_table_cell`, `f_draw_polyline`, `f_draw_linefill`, `f_draw_vline`
-- Layer D: label registry (`f_register_label`, `f_flush_labels`, `f_merge_labels`, `f_stagger_labels`), format-string interpreter
+- Layer D: label registry (`f_label_registry_push`, `f_label_registry_render`, `f_label_registry_render_merged`), format-string interpreter
+- Hand-optimized drawing: `f_draw_box_ex` (added for advanced zone rendering)
 - Helpers: `f_near_any`, `f_unicode_bar`, `f_unicode_sparkline`, `f_unicode_progress`
-- Utility types: `DrawInstance`, `LabelEntry`, `LifecycleState` enum, `DisplayProfile` enum, `Theme` enum
+- Utility types: `PineDrawingState`, `LabelEntry`, `LabelRegistry`, `DisplayProfile` enum, `Theme` enum
 
 ### 3.2 Family tier
 
@@ -272,34 +274,17 @@ Indicators import this only when using these specialized templates.
 
 ---
 
-## 4. Current state (Pine transitional path)
+### 4. Current state (Pine standardized path)
 
-The currently active production path is `vveerappa/PineDrawingLib/4` together with `RangeSessionLib/6` and `StatsLib/2`. This remains a transitional monolithic drawing library (not the final Core + family split), but it now carries more extracted behavior than the original v2 baseline. Migration is in progress.
+The system has transitioned from a monolithic transitional path to the finalized v3 split libraries.
 
-### 4.1 What the current monolithic path has
+- **`PineDrawingCore`**: Implemented. Handles state, themes, profiles, and label registries.
+- **`PineDrawingHorizontalLevels`**: Implemented. Modular semantic renderers for all line types with P/S/C tier logic.
+- **`PineDrawingZones`**: Implemented. Refined templates for FVGs, Order Blocks, and Session Ranges.
+- **`PineDrawingMarkers`**: Implemented. Registry-backed point markers.
+- **`PineDrawingTables`**: Implemented. Theme-aware dashboards and statistical tables.
 
-Published on TradingView under `vveerappa/PineDrawingLib/4` (incremental evolution of the prior v2 baseline):
-
-- Basic primitive wrappers with tag support
-- Collision helpers and label-registry push/merge APIs used by `DailyNYLevelsAnalytics.pine`
-- Semantic helper APIs for repeated stat-line + label flows
-- Some style constants and utilities
-
-In-repo v3 scaffold checkpoint (not published yet):
-
-- Local draft `PineDrawingCore.pine`
-- Local draft family files: `PineDrawingHorizontalLevels.pine`, `PineDrawingZones.pine`, `PineDrawingTables.pine`, `PineDrawingVerticalMarkers.pine`, `PineDrawingMarkers.pine`, `PineDrawingComposites.pine`, `PineDrawingSpecialized.pine`
-- Local migration aids: `SPLIT_MIGRATION_MAP.md`, `ANALYTICS_IMPORT_MIGRATION_CHECKLIST.md`
-
-### 4.2 What the current monolithic path still does not have
-
-- No theme resolver (indicators handle theme themselves)
-- No display profile concept
-- No lifecycle manager (indicators track and delete their own objects)
-- No label registry (indicators handle collision ad-hoc)
-- No format-string interpreter (labels built with string concatenation)
-- No semantic renderers (indicators call primitives directly)
-- No published split family libraries yet (split files currently exist only as local draft scaffolds)
+Published on TradingView under the `vveerappa` workspace. `DailyNYLevels.pine` serves as the reference implementation.
 
 ### 4.3 Migration to v3 split libraries
 

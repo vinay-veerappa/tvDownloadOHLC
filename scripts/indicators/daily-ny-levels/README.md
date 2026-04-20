@@ -1,36 +1,45 @@
-# Daily NY Levels V5 — Scripts
+# Daily NY Levels — Standardized PineDrawing Framework
 
-This folder contains the Pine Script and NinjaScript implementations of the Daily NY Levels indicator suite.
+This directory contains the production-grade implementation of the **Daily NY Levels** indicator and the associated **PineDrawing** library family. The system follows a unified visual system with theme-aware color resolution and display profiles.
 
-## Structure
+## Project Structure
 
 ```
 daily-ny-levels/
-├── DailyNYLevelsV5.pine              # Phase 1: Core indicator
-├── DailyNYLevelsAnalytics.pine       # Phase 2: MFE/MAE analytics
+├── DailyNYLevels.pine               # Main Production Indicator (Finalized)
+├── DailyNYLevelsAnalytics.pine      # Analytics & Statistical Verifier
 ├── lib/
-│   ├── RangeSessionLib.pine          # Phase 1: Session/range UDTs & resolver
-│   ├── PineDrawingLib.pine           # Phase 1: Pine-only drawing helpers
-│   └── StatsLib.pine                 # Phase 1: Statistical utilities
+│   ├── PineDrawingCore.pine         # Core: Style resolver & drawing primitives
+│   ├── PineDrawingHorizontalLevels.pine # Levels: Statistical & session lines
+│   ├── PineDrawingZones.pine        # Zones: FVGs, Order Blocks, Session Ranges
+│   ├── PineDrawingMarkers.pine      # Markers: Judas, Sweeps, Trade markers
+│   ├── PineDrawingTables.pine       # Tables: Bias Dashboards & Distribution tables
+│   ├── RangeSessionLib.pine         # Session/range UDTs & resolver logic
+│   └── StatsLib.pine                # Statistical utilities (MFE/MAE)
 └── ninja/
-    ├── DailyNYLevels.cs              # Phase 3: NinjaScript indicator
-    ├── DailyNYLevelsStrategy.cs      # Phase 4: NinjaScript strategy
-    └── Lib/
-        ├── RangeEngine.cs            # Phase 3: Range/session engine
-        └── ExcursionEngine.cs        # Phase 3: MFE/MAE engine
+    └── (NinjaScript implementations following same architecture)
 ```
 
-## Docs
+## Visual System Integration
 
-Design documents live in `docs/indicators/DailyNYLevels/`.
+All components are derived from the [Visual System Specification](file:///c:/Users/vinay/tvDownloadOHLC/docs/indicators/DailyNYLevels/VISUAL_SYSTEM.md):
+
+- **Themes**: Supports `Dark`, `Light`, and `Custom` color resolutions automatically.
+- **Profiles**: Supports `Compact`, `Normal`, and `Large` display scaling for different resolutions.
+- **Tiers**: Systematic rendering via **Primary (P)**, **Secondary (S)**, and **Context (C)** levels.
 
 ## TradingView Publication Workflow
 
-Libraries must be published **in dependency order** before `DailyNYLevelsV5` can be used on TradingView (imported library IDs must resolve):
+To ensure all imports resolve correctly, publish the libraries in the following dependency order:
 
-1. `RangeSessionLib` — no dependencies
-2. `PineDrawingLib` — no dependencies
-3. `StatsLib` — no dependencies
-4. `DailyNYLevelsV5` — depends on all three above
+1. **`PineDrawingCore`** (No dependencies)
+2. **`RangeSessionLib`**, **`StatsLib`** (No dependencies)
+3. **`PineDrawingHorizontalLevels`**, **`PineDrawingZones`**, **`PineDrawingMarkers`**, **`PineDrawingTables`** (Depend on `Core`)
+4. **`DailyNYLevels`** (Depends on the entire family)
 
-After publishing all libraries, open `DailyNYLevelsV5.pine` in the TradingView editor and verify the import block resolves. Then add to a 1m/5m/15m/60m chart and confirm: OR box renders, stat lines appear, histogram visible when `i_show_histogram = true`.
+## Testing & Verification
+
+1. Load `DailyNYLevels.pine` in the TradingView Pine Editor.
+2. Verify all labels render correctly on the right edge using the `LabelRegistry`.
+3. Toggle the **Display Profile** in inputs to verify size scaling.
+4. Switch between **Dark** and **Light** themes to verify color contrast stability.

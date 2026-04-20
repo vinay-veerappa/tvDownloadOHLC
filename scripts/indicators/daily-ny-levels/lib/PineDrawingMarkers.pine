@@ -2,14 +2,15 @@
 library("PineDrawingMarkers", overlay=true)
 
 // ============================================================================
-// PineDrawingMarkers v1.0 — Text marker and registry-backed label helpers
+// PineDrawingMarkers v4.0 — Price-action text & shape markers
 // ============================================================================
-// Depends on: PineDrawingCore/1
-// Purpose: Semantic renderers for text markers (annotations, annotations) and
-//          registry-backed marker enqueue for collision-free placement
+// Depends on: PineDrawingCore v3 (published as vveerappa/PineDrawingCore/3,
+//             internally labeled v4.0)
+// Purpose: Semantic renderers for point-in-time events (Liquidity sweeps,
+//          Judas extremes, Entry/Exit markers) using label-registry.
 // ============================================================================
 
-import vveerappa/PineDrawingCore/2 as Core
+import vveerappa/PineDrawingCore/3 as Core
 
 /// Draw a text marker (label-based) semantic wrapper.
 /// Immediate rendering without collision resolution (use f_enqueue_text_marker
@@ -22,8 +23,10 @@ import vveerappa/PineDrawingCore/2 as Core
 ///   - text_color: Text color
 ///   - style: Anchor style ("left", "right", "up", "down", "center")
 ///   - size_token: Size ("Tiny", "Small", "Normal", "Large", "Huge")
-export f_draw_text_marker(Core.PineDrawingState ds, int x, float y, string text_value, color text_color, string style, string size_token) =>
-    Core.f_draw_stat_label(ds, x, y, text_value, text_color, style, size_token)
+///   - tag: Optional lookup tag for reconciliation
+///   - lookback: N-days back (for [-Nd] suffix)
+export f_draw_text_marker(Core.PineDrawingState ds, int x, float y, string text_value, color text_color, string style, string size_token, string tag = "", int lookback = 0) =>
+    Core.f_draw_stat_label(ds, x, y, text_value, text_color, style, size_token, "", tag, lookback)
 
 /// Enqueue a text marker into the label registry for collision-free placement.
 /// Supports merge strategies (merge, stagger, hide, off) for smart label positioning.
@@ -38,7 +41,117 @@ export f_draw_text_marker(Core.PineDrawingState ds, int x, float y, string text_
 ///   - merge_group: Group constraint for merges (empty = unconstrained)
 ///   - style: Anchor style ("left", "right", "up", "down", "center")
 ///   - size_token: Size ("Tiny", "Small", "Normal", "Large", "Huge")
-///   - mode: "Label" (draw) or "None" (skip)
-///   - tooltip_value: Tooltip text (future support)
-export f_enqueue_text_marker(Core.LabelRegistry lr, float y, string text_value, color text_color, int x, string strategy, int priority, string merge_group, string style, string size_token, string mode, string tooltip_value) =>
-    Core.f_label_registry_push_ex(lr, y, text_value, text_color, x, strategy, priority, merge_group, style, size_token, mode, tooltip_value)
+///   - mode: "Label" (draw text), "Tooltip" (hover only), "Both", or "None"
+///   - tooltip_value: Tooltip text
+///   - tag: Optional lookup tag
+///   - lookback: N-days back (for [-Nd] suffix)
+export f_enqueue_text_marker(Core.LabelRegistry lr, float y, string text_value, color text_color, int x, string strategy, int priority, string merge_group, string style, string size_token, string mode, string tooltip_value, string tag = "", int lookback = 0) =>
+    Core.f_label_registry_push_ex(lr, y, text_value, text_color, x, strategy, priority, merge_group, style, size_token, mode, tooltip_value, lookback, tag)
+
+// ============================================================================
+// 6. Canonical Marker Templates (Spec VISUAL_TEMPLATES §6)
+// ============================================================================
+
+// --- 6.1 Judas / manipulation markers ---------------------------------------
+
+export f_draw_judas_extreme(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x, float y, string direction = "high", string macro_name = "", string excursion_ratio = "", string tag = "", int lookback = 0) =>
+    string sz = Core.f_display_profile_label_size(tier == "P" ? "normal" : "small", profile)
+    string shape = direction == "high" ? "triangle_down" : "triangle_up"
+    color c = Core.f_theme_color(direction == "high" ? "bear" : "bull", theme_mode)
+    int transp = Core.f_tier_transparency(tier)
+    color final_c = color.new(c, transp)
+    
+    array<string> keys = array.from("base_text", "direction", "macro_name", "excursion_ratio")
+    array<string> vals = array.from(direction == "high" ? "JH" : "JL", direction == "high" ? "High" : "Low", macro_name, excursion_ratio)
+    string label_text = Core.f_format_template("{base_text}{if:excursion_ratio} ({excursion_ratio}){endif}", keys, vals)
+    string tt = Core.f_format_template("Judas Extreme {direction}\n{if:macro_name}Macro: {macro_name}{endif}\n{if:excursion_ratio}Excursion Ratio: {excursion_ratio}{endif}", keys, vals)
+    
+    Core.f_draw_marker(ds, x, y, label_text, final_c, shape, sz, tt, tag, lookback)
+
+export f_draw_manipulation_pivot(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x, float y, string direction = "high", string macro_name = "", string pivot_value = "", string unit = "", string tag = "", int lookback = 0) =>
+    string sz = Core.f_display_profile_label_size(tier == "P" ? "small" : "tiny", profile)
+    color c = Core.f_theme_color("warning", theme_mode)
+    int transp = Core.f_tier_transparency(tier)
+    color final_c = color.new(c, transp)
+    
+    array<string> keys = array.from("direction", "macro_name", "pivot_value", "unit")
+    array<string> vals = array.from(direction == "high" ? "High" : "Low", macro_name, pivot_value, unit)
+    string tt = Core.f_format_template("Manipulation Pivot ({direction})\n{if:macro_name}Macro: {macro_name}{endif}\n{if:pivot_value}Level: {pivot_value}{unit}{endif}", keys, vals)
+    
+    Core.f_draw_marker(ds, x, y, "MP", final_c, "diamond", sz, tt, tag, lookback)
+
+// --- 6.2 Liquidity sweep ----------------------------------------------------
+
+export f_draw_liquidity_sweep(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x, float y, string direction = "buyside", string pool_name = "", string tag = "", int lookback = 0) =>
+    string sz = Core.f_display_profile_label_size(tier == "P" ? "normal" : "small", profile)
+    color c = Core.f_theme_color(direction == "buyside" ? "bear" : "bull", theme_mode)
+    int transp = Core.f_tier_transparency(tier)
+    color final_c = color.new(c, transp)
+    
+    array<string> keys = array.from("base_text", "direction", "pool_name")
+    array<string> vals = array.from("Sweep", direction, pool_name)
+    string label_text = Core.f_format_template("{base_text}{if:direction} ({direction}){endif}", keys, vals)
+    string tt = Core.f_format_template("Liquidity Sweep ({direction})\n{if:pool_name}Pool: {pool_name}{endif}", keys, vals)
+    
+    Core.f_draw_marker(ds, x, y, label_text, final_c, "xcross", sz, tt, tag, lookback)
+
+// --- 6.3 Trade markers ------------------------------------------------------
+
+// Shape conveys direction per ICT convention (arrow_up for long, arrow_down for short).
+// Spec §6.3 uses generic "arrow" + anchor; we use directional arrows which is more informative.
+export f_draw_entry(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x, float y, string direction = "long", string setup_name = "", string price_str = "", string unit = "", string size_str = "", string tag = "", int lookback = 0) =>
+    string sz = Core.f_display_profile_label_size(tier == "P" ? "normal" : "small", profile)
+    string shape = direction == "long" ? "arrow_up" : "arrow_down"
+    color c = Core.f_theme_color(direction == "long" ? "bull" : "bear", theme_mode)
+    int transp = Core.f_tier_transparency(tier)
+    color final_c = color.new(c, transp)
+    
+    array<string> keys = array.from("base_text", "direction", "price", "unit", "size", "setup_name")
+    array<string> vals = array.from("ENTRY", direction, price_str, unit, size_str, setup_name)
+    string label_text = Core.f_format_template("{base_text}{if:direction} {direction}{endif}{if:price} @ {price}{unit}{endif}", keys, vals)
+    string tt = Core.f_format_template("Entry ({direction})\n{if:setup_name}Setup: {setup_name}{endif}\n{if:price}Price: {price}{unit}{endif}\n{if:size}Size: {size}{endif}", keys, vals)
+    
+    Core.f_draw_marker(ds, x, y, label_text, final_c, shape, sz, tt, tag, lookback)
+
+export f_draw_exit_marker_profit(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x, float y, string price_str = "", string unit = "", string pnl_str = "", string pnl_r_str = "", string reason = "", string tag = "", int lookback = 0) =>
+    string sz = Core.f_display_profile_label_size(tier == "P" ? "normal" : "small", profile)
+    color c = Core.f_theme_color("bull", theme_mode)
+    int transp = Core.f_tier_transparency(tier)
+    color final_c = color.new(c, transp)
+    
+    array<string> keys = array.from("base_text", "price", "unit", "pnl", "pnl_r", "reason")
+    array<string> vals = array.from("TP", price_str, unit, pnl_str, pnl_r_str, reason)
+    string label_text = Core.f_format_template("{base_text}{if:pnl_r} {pnl_r}R{endif}", keys, vals)
+    string tt = Core.f_format_template("Take Profit\n{if:price}Exit: {price}{unit}{endif}\n{if:pnl}PnL: {pnl}{endif}\n{if:pnl_r}R-Multiple: {pnl_r}R{endif}\n{if:reason}Reason: {reason}{endif}", keys, vals)
+    
+    Core.f_draw_marker(ds, x, y, label_text, final_c, "circle", sz, tt, tag, lookback)
+
+export f_draw_exit_marker_loss(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x, float y, string price_str = "", string unit = "", string pnl_str = "", string pnl_r_str = "", string reason = "", string tag = "", int lookback = 0) =>
+    string sz = Core.f_display_profile_label_size(tier == "P" ? "normal" : "small", profile)
+    color c = Core.f_theme_color("bear", theme_mode)
+    int transp = Core.f_tier_transparency(tier)
+    color final_c = color.new(c, transp)
+    
+    array<string> keys = array.from("base_text", "price", "unit", "pnl", "pnl_r", "reason")
+    array<string> vals = array.from("SL", price_str, unit, pnl_str, pnl_r_str, reason)
+    string label_text = Core.f_format_template("{base_text}{if:pnl_r} {pnl_r}R{endif}", keys, vals)
+    string tt = Core.f_format_template("Stop Loss\n{if:price}Exit: {price}{unit}{endif}\n{if:pnl}PnL: {pnl}{endif}\n{if:pnl_r}R-Multiple: {pnl_r}R{endif}\n{if:reason}Reason: {reason}{endif}", keys, vals)
+    
+    Core.f_draw_marker(ds, x, y, label_text, final_c, "xcross", sz, tt, tag, lookback)
+
+// --- 6.4 FVG fill marker ----------------------------------------------------
+
+export f_draw_fvg_fill(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x, float y, string bar_timestamp_origin = "", string bar_timestamp_fill = "", string tag = "", int lookback = 0) =>
+    string sz = Core.f_display_profile_label_size(tier == "P" ? "small" : "tiny", profile)
+    color c = Core.f_theme_color("neutral", theme_mode)
+    // Spec §6.4: FVG fill uses custom transparency ladder (P=0, S=25, C=45)
+    // — more aggressive fade than standard tier_transparency because these are low-signal markers.
+    int transp = tier == "P" ? 0 : tier == "S" ? 25 : 45
+    color final_c = color.new(c, transp)
+    
+    array<string> keys = array.from("bar_timestamp_origin", "bar_timestamp_fill")
+    array<string> vals = array.from(bar_timestamp_origin, bar_timestamp_fill)
+    string tt = Core.f_format_template("FVG Filled\n{if:bar_timestamp_origin}Origin: {bar_timestamp_origin}{endif}\n{if:bar_timestamp_fill}Fill: {bar_timestamp_fill}{endif}", keys, vals)
+    
+    // label_mode == "Tooltip" per spec §6.4: empty visible text, tooltip on hover
+    Core.f_draw_marker(ds, x, y, "", final_c, "dot", sz, tt, tag, lookback)

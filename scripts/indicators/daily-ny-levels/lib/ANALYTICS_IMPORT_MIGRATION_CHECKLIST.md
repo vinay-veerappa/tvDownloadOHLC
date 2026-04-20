@@ -3,7 +3,7 @@
 Target file: `scripts/indicators/daily-ny-levels/DailyNYLevelsAnalytics.pine`
 
 Current import:
-- `import vveerappa/PineDrawingLib/4 as PDL`
+- `import vveerappa/PineDrawingLib/5 as PDL`
 
 Target split imports (after publication):
 - `import vveerappa/PineDrawingCore/<ver> as PDC`

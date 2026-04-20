@@ -41,7 +41,7 @@ This checklist documents all validation steps to be completed before publishing 
   - [ ] Lifecycle functions: `f_new_drawing_state`, `f_new_label_registry`, `f_label_registry_begin`, etc. ✓ in Core
   - [ ] Label registry functions: `f_label_registry_clear`, `f_label_registry_push`, `f_label_registry_push_ex`, etc. ✓ in Core
   - [ ] Format helpers: `f_format_template`, `f_merge_threshold_for_symbol` ✓ in Core
-  - [ ] Style resolvers: `f_line_style`, `f_display_size`, `f_text_size`, `f_table_pos` ✓ in Core
+  - [ ] Style resolvers: `f_resolve_color`, `f_display_profile_label_size`, `f_display_profile_table_size`, `f_display_profile_width`, `f_display_profile_transparency`, `f_line_style`, `f_display_size`, `f_text_size`, `f_table_pos` ✓ in Core
   - [ ] Primitive wrappers: `f_draw_line`, `f_draw_or_box`, `f_draw_hist_band`, `f_draw_stat_label`, `f_draw_time_bar`, `f_draw_vline`, `f_draw_day_separator` ✓ in Core
   - [ ] Registry drawing: `f_label_registry_draw`, `f_label_registry_flush`, `f_label_registry_draw_merged` ✓ in Core
   - [ ] Family-specific semantic wrappers ✓ in respective families
@@ -199,7 +199,7 @@ After cutover, run the full parity validation from PHASE3_VALIDATION.md:
 
 If any library publication fails or post-publication issues arise:
 
-1. Revert the indicator to monolithic `vveerappa/PineDrawingLib/4` import
+1. Revert the indicator to monolithic `vveerappa/PineDrawingLib/5` import
 2. Unpublish problematic libraries from TradingView (via library settings)
 3. Fix issues locally and re-publish
 4. Document root cause in this checklist

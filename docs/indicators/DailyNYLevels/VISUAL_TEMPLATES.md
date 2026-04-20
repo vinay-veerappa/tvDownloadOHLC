@@ -63,11 +63,15 @@ template_name:
 
 ### 1.2 Label format string syntax
 
+
 Format strings support static text, data slots, and conditional sections:
 
 - `{slot_name}` — substituted with the runtime value (empty string if not provided)
 - `{if:slot_name}...{endif}` — rendered only if the slot has a non-empty value
 - Literal curly braces: `{{` and `}}`
+
+**Note:**
+> As of 2026-04-19, all Pine Script v6 implementations use `{value_str}` instead of `{value}` for all value slots in label and tooltip format strings. This is a codebase-wide convention for compatibility and clarity. All template definitions and indicator profiles should use `{value_str}` in place of `{value}`.
 
 Examples:
 
@@ -77,6 +81,7 @@ Examples:
 "{base_text}{if:probability} {probability}%{endif}" → "London H 77.9%" or "London H"
 "{base_text}{if:streak} ({streak_arrow}{streak_count}){endif}"
   → "London H (↑3)" or "London H"
+"{base_text}{if:value_str} {value_str}{unit}{endif}" → "London H 4200.5" or "London H"
 ```
 
 ### 1.3 Historical label suffix
@@ -192,11 +197,11 @@ statistical_level_median:
     C: { width: 1, line_style: dotted, transparency: 30 }
   label_policy:
     base_text: "{source_name} Med"
-    data_slots: [source_name, value, unit]
-    label_format: "{base_text}{if:value} {value}{unit}{endif}"
+    data_slots: [source_name, value_str, unit]
+    label_format: "{base_text}{if:value_str} {value_str}{unit}{endif}"
     tooltip_format: |
       {source_name} Median
-      {if:value}Value: {value}{unit}{endif}
+      {if:value_str}Value: {value_str}{unit}{endif}
       {if:sample_n}Samples: {sample_n}{endif}
     label_font: monospace
     label_anchor: right
@@ -268,11 +273,11 @@ stretch_level:
     C: { width: 1, line_style: dotted, transparency: 40 }
   label_policy:
     base_text: "{source_name} Stretch"
-    data_slots: [source_name, percentile, value, unit]
-    label_format: "{base_text}{if:value} {value}{unit}{endif}"
+    data_slots: [source_name, percentile, value_str, unit]
+    label_format: "{base_text}{if:value_str} {value_str}{unit}{endif}"
     tooltip_format: |
       {source_name} Stretch (P{percentile})
-      {if:value}Value: {value}{unit}{endif}
+      {if:value_str}Value: {value_str}{unit}{endif}
     label_font: monospace
     label_anchor: right
     label_style: style_label_left
@@ -302,11 +307,11 @@ max_excursion_level:
     C: { width: 1, line_style: dotted, transparency: 40 }
   label_policy:
     base_text: "Max Reversal"
-    data_slots: [source_name, percentile, value, unit]
-    label_format: "{base_text}{if:percentile} P{percentile}{endif}{if:source_name} ({source_name}){endif}{if:value} {value}{unit}{endif}"
+    data_slots: [source_name, percentile, value_str, unit]
+    label_format: "{base_text}{if:percentile} P{percentile}{endif}{if:source_name} ({source_name}){endif}{if:value_str} {value_str}{unit}{endif}"
     tooltip_format: |
       Max Reversal (P{percentile} {source_name})
-      {if:value}Value: {value}{unit}{endif}
+      {if:value_str}Value: {value_str}{unit}{endif}
     label_font: monospace
     label_anchor: right
     label_style: style_label_left
@@ -342,13 +347,13 @@ invalidation_level:
     C: { width: 1, line_style: dashed, transparency: 30 }
   label_policy:
     base_text: "Invalidation"
-    data_slots: [source, percentile, value, unit, direction_hint]
-    label_format: "{base_text}{if:direction_hint} {direction_hint}{endif}{if:value} {value}{unit}{endif}"
+    data_slots: [source, percentile, value_str, unit, direction_hint]
+    label_format: "{base_text}{if:direction_hint} {direction_hint}{endif}{if:value_str} {value_str}{unit}{endif}"
     tooltip_format: |
       Thesis Invalidation
       {if:source}Source: {source}{endif}
       {if:percentile}Percentile: P{percentile}{endif}
-      {if:value}Level: {value}{unit}{endif}
+      {if:value_str}Level: {value_str}{unit}{endif}
     label_font: monospace
     label_anchor: right
     label_style: style_label_left
@@ -381,12 +386,12 @@ activation_trigger:
     pullback: { line_style: dashed }
   label_policy:
     base_text: "{variant_display} Activation"
-    data_slots: [variant_display, value, unit, basis]
-    label_format: "{base_text}{if:basis} {basis}{endif}{if:value} {value}{unit}{endif}"
+    data_slots: [variant_display, value_str, unit, basis]
+    label_format: "{base_text}{if:basis} {basis}{endif}{if:value_str} {value_str}{unit}{endif}"
     tooltip_format: |
       {variant_display} Activation Trigger
       {if:basis}Basis: {basis}{endif}
-      {if:value}Level: {value}{unit}{endif}
+      {if:value_str}Level: {value_str}{unit}{endif}
     label_font: monospace
     label_anchor: right
     label_style: style_label_left
@@ -423,13 +428,13 @@ confirm_level:
     C: { width: 1, line_style: dotted, transparency: 30 }
   label_policy:
     base_text: "Confirm"
-    data_slots: [source, percentile, value, unit]
-    label_format: "{base_text}{if:percentile} P{percentile}{endif}{if:value} {value}{unit}{endif}"
+    data_slots: [source, percentile, value_str, unit]
+    label_format: "{base_text}{if:percentile} P{percentile}{endif}{if:value_str} {value_str}{unit}{endif}"
     tooltip_format: |
       Confirmation Level
       {if:source}Source: {source}{endif}
       {if:percentile}Percentile: P{percentile}{endif}
-      {if:value}Level: {value}{unit}{endif}
+      {if:value_str}Level: {value_str}{unit}{endif}
     label_font: monospace
     label_anchor: right
     label_style: style_label_left
@@ -462,12 +467,12 @@ pivot_structural:
     C: { width: 1, line_style: dashed, transparency: 30 }
   label_policy:
     base_text: "Pivot"
-    data_slots: [label_suffix, value, unit, basis]
-    label_format: "{base_text}{if:label_suffix} {label_suffix}{endif}{if:basis} {basis}{endif}{if:value} {value}{unit}{endif}"
+    data_slots: [label_suffix, value_str, unit, basis]
+    label_format: "{base_text}{if:label_suffix} {label_suffix}{endif}{if:basis} {basis}{endif}{if:value_str} {value_str}{unit}{endif}"
     tooltip_format: |
       Structural Pivot
       {if:basis}Basis: {basis}{endif}
-      {if:value}Level: {value}{unit}{endif}
+      {if:value_str}Level: {value_str}{unit}{endif}
     label_font: monospace
     label_anchor: right
     label_style: style_label_left
@@ -503,12 +508,12 @@ target_level_p20:
     C: { width: 1, line_style: dotted, transparency: 40 }
   label_policy:
     base_text: "Target P20"
-    data_slots: [qualifier, value, unit, basis]
-    label_format: "{base_text}{if:qualifier} {qualifier}{endif}{if:value} {value}{unit}{endif}"
+    data_slots: [qualifier, value_str, unit, basis]
+    label_format: "{base_text}{if:qualifier} {qualifier}{endif}{if:value_str} {value_str}{unit}{endif}"
     tooltip_format: |
       P20 Target
       {if:basis}Basis: {basis}{endif}
-      {if:value}Level: {value}{unit}{endif}
+      {if:value_str}Level: {value_str}{unit}{endif}
     label_font: monospace
     label_anchor: right
     label_style: style_label_left
@@ -541,12 +546,12 @@ target_level_p50:
     C: { width: 1, line_style: dashed, transparency: 30 }
   label_policy:
     base_text: "Pivot P50"
-    data_slots: [qualifier, value, unit, basis]
-    label_format: "{base_text}{if:qualifier} ({qualifier}){endif}{if:value} {value}{unit}{endif}"
+    data_slots: [qualifier, value_str, unit, basis]
+    label_format: "{base_text}{if:qualifier} ({qualifier}){endif}{if:value_str} {value_str}{unit}{endif}"
     tooltip_format: |
       P50 Target / Pivot
       {if:basis}Basis: {basis}{endif}
-      {if:value}Level: {value}{unit}{endif}
+      {if:value_str}Level: {value_str}{unit}{endif}
     label_font: monospace
     label_anchor: right
     label_style: style_label_left
@@ -576,12 +581,12 @@ target_level_p75:
     C: { width: 1, line_style: dotted, transparency: 35 }
   label_policy:
     base_text: "Target P75"
-    data_slots: [qualifier, value, unit, basis]
-    label_format: "{base_text}{if:qualifier} {qualifier}{endif}{if:value} {value}{unit}{endif}"
+    data_slots: [qualifier, value_str, unit, basis]
+    label_format: "{base_text}{if:qualifier} {qualifier}{endif}{if:value_str} {value_str}{unit}{endif}"
     tooltip_format: |
       P75 Target
       {if:basis}Basis: {basis}{endif}
-      {if:value}Level: {value}{unit}{endif}
+      {if:value_str}Level: {value_str}{unit}{endif}
     label_font: monospace
     label_anchor: right
     label_style: style_label_left

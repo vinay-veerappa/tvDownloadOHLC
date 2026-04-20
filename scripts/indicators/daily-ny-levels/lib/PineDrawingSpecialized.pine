@@ -2,30 +2,99 @@
 library("PineDrawingSpecialized", overlay=true)
 
 // ============================================================================
-// PineDrawingSpecialized v1.0 — Specialized/experimental renderers
+// PineDrawingSpecialized v4.0 — Specialized/experimental renderers
 // ============================================================================
-// Depends on: PineDrawingCore/1
+// Depends on: PineDrawingCore/3 (internally v4.0)
 // Purpose: Placeholder for indicator-contributed specialized rendering templates
 //          (e.g., scored levels, confidence-weighted lines, advanced composites).
-//          Intentionally minimal until concrete specialized templates are promoted.
+//          Intentionally minimal until concrete specialized templates are
+//          promoted. When a template here is adopted by a second indicator,
+//          graduate it to canonical in the appropriate family library.
 // ============================================================================
 
-import vveerappa/PineDrawingCore/2 as Core
+import vveerappa/PineDrawingCore/3 as Core
 
-/// Draw a scored/confidence level (line + score label) for experimental indicators.
-/// Combines a horizontal stat line with a text label indicating score/confidence.
-/// This is a placeholder template; specialized indicators may enhance or fork.
+// ============================================================================
+// 10.2 Scored level family (W/A/I)
+// Spec: VISUAL_TEMPLATES.md §10.2
+// Originating indicator: MacroDealerLevels
+// ============================================================================
+
+/// Low-level scored-level renderer. Caller provides pre-resolved color/style/width.
+/// Use f_draw_scored_level_ex for theme-aware rendering.
 /// Parameters:
 ///   - ds: PineDrawingState to track objects
 ///   - x1, x2: Line bar indices (left and right edges)
 ///   - y: Price level
-///   - clr: Line color
+///   - clr: Line color (pre-resolved)
 ///   - style: "Solid", "Dashed", "Dotted"
-///   - width: Line width (1-5)
-///   - score_text: Score/confidence label text (e.g., "75% Confidence")
-///   - label_x: Label bar index (usually x2 or beyond)
+///   - width: Line width (1-5, pre-scaled for profile)
+///   - score_text: Pre-rendered label text (e.g., "W NKE Wall (78)")
+///   - label_x: Label bar index (usually x2 + offset)
 ///   - label_color: Label text color
 ///   - label_size: Size token ("Tiny", "Small", "Normal", "Large", "Huge")
-export f_draw_scored_level(Core.PineDrawingState ds, int x1, float y, int x2, color clr, string style, int width, string score_text, int label_x, color label_color, string label_size) =>
-    Core.f_draw_line(ds, x1, y, x2, y, clr, style, width)
-    Core.f_draw_stat_label(ds, label_x, y, score_text, label_color, "left", label_size)
+///   - tooltip_text: Optional tooltip
+///   - tag: Optional lookup tag for Core reconciliation
+///   - lookback: N-days back (for [-Nd] suffix)
+export f_draw_scored_level(Core.PineDrawingState ds, int x1, float y, int x2, color clr, string style, int width, string score_text, int label_x, color label_color, string label_size, string tooltip_text = "", string tag = "", int lookback = 0) =>
+    Core.f_draw_line(ds, x1, y, x2, y, clr, style, width, tag, lookback)
+    Core.f_draw_stat_label(ds, label_x, y, score_text, label_color, "left", label_size, tooltip_text, tag, lookback)
+
+/// Theme-aware scored-level renderer per spec §10.2.
+/// Resolves color, width, style, transparency from variant + tier + profile.
+/// Parameters:
+///   - ds: PineDrawingState
+///   - theme_mode: "Dark" or "Light"
+///   - profile: Display profile (Tiny/Small/Normal/Large/Huge)
+///   - tier: "P" (Primary), "S" (Secondary), "C" (Context)
+///   - x1, x2: Line bar indices
+///   - y: Price level
+///   - variant: "wall", "anchor", or "inflection"
+///   - level_name: Descriptive name (e.g., "NKE Gamma Wall")
+///   - score_str: Optional score 0-100 (e.g., "78")
+///   - rank_str: Optional sibling rank (e.g., "3")
+///   - tag: Optional lookup tag
+///   - lookback: N-days back (for [-Nd] suffix)
+export f_draw_scored_level_ex(Core.PineDrawingState ds, string theme_mode, string profile, string tier, int x1, int x2, float y, string variant = "wall", string level_name = "", string score_str = "", string rank_str = "", string tag = "", int lookback = 0) =>
+    // Variant → glyph and full name per spec §10.2
+    string variant_glyph = switch variant
+        "wall" => "W"
+        "anchor" => "A"
+        "inflection" => "I"
+        => "?"
+    string variant_full_name = switch variant
+        "wall" => "Wall"
+        "anchor" => "Anchor"
+        "inflection" => "Inflection"
+        => variant
+    
+    // Variant → base color binding (derived from MacroDealerLevels reference)
+    string color_token = switch variant
+        "wall" => "pivot_color"
+        "anchor" => "median"
+        "inflection" => "caution"
+        => "neutral"
+    color base_clr = Core.f_theme_color(color_token, theme_mode)
+    
+    // Tier-driven styling
+    int base_width = Core.f_tier_width(tier)
+    string style = Core.f_tier_style(tier)
+    int transp = Core.f_tier_transparency(tier)
+    color clr = color.new(base_clr, Core.f_display_profile_transparency(transp, profile))
+    int w = Core.f_display_profile_width(base_width, profile)
+    string sz = Core.f_display_profile_label_size(tier == "P" ? "normal" : "small", profile)
+    
+    // Label text and tooltip per spec §10.2 format
+    array<string> keys = array.from("variant_glyph", "variant_full_name", "level_name", "score", "rank", "base_text")
+    array<string> vals = array.from(variant_glyph, variant_full_name, level_name, score_str, rank_str, variant_glyph + " " + level_name)
+    string label_text = Core.f_format_template("{variant_glyph} {level_name}{if:score} ({score}){endif}", keys, vals)
+    string tt = Core.f_format_template("{variant_full_name}: {level_name}\n{if:score}Score: {score}{endif}\n{if:rank}Rank: #{rank}{endif}", keys, vals)
+    
+    f_draw_scored_level(ds, x1, y, x2, clr, style, w, label_text, x2 + Core.f_geometry_label_gap_bars(), base_clr, sz, tt, tag, lookback)
+
+// ============================================================================
+// Future: §10.1 gex_wall_scored (MacroDealerLevels-specific)
+// ============================================================================
+// Will be added when MacroDealerLevels indicator migrates to this family.
+// Per spec §10.1: specialized wall_level variant with MDL-specific scoring and
+// glyph prefixes (W/A/I), composite 0-100 score, and numeric rank marker.

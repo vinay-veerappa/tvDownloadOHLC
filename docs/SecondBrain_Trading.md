@@ -185,6 +185,9 @@ All analytical services (Profiler, NQStats) must use the `data_loader.py` fusion
 
 ## 10. TradingView Direct Workflow Reference
 This section is the quick-reference runbook for direct TradingView UI work (Pine Editor, save/publish, and verification).
+All MCP tool calls are via the `tradingview-mcp` bridge (CDP-based).
+
+---
 
 ### 10.0 Default Mode: Update Existing Script In Place
 This is the default behavior for routine workflow runs:
@@ -193,40 +196,361 @@ This is the default behavior for routine workflow runs:
 3. Preserve script identity and history by publishing a new version on the same script.
 4. If a new script is unavoidable, capture the reason and link it to the parent script in notes.
 
+---
+
+### 10.0.A UI Workflow Selector (No Ambiguity)
+Use this table first. Pick one row, then follow only the referenced sections.
+
+| User intent | Target exists in TradingView cloud? | Publish now? | UI workflow path |
+|---|---|---|---|
+| Create a new script/library | No | No | §10.A (identity gate) → §10.B steps 1-8, then stop before §10.3 |
+| Publish a new script/library | No | Yes | §10.A → §10.B (all steps) → §10.3 → §10.4 |
+| Update an existing script/library | Yes | No | §10.A → §10.1 (if needed) → §10.2, then stop before §10.3 |
+| Publish an existing script/library update | Yes | Yes | §10.A → §10.1 (if needed) → §10.2 → §10.3 → §10.4 |
+
+#### 10.0.A.1 UI-only Rules That Always Apply
+1. Never skip §10.A before inject/save/publish.
+2. If UI title is a default name (`MyLibrary`, `My script`, `My strategy`), you are in a new unsaved context, not an existing saved script context.
+3. `pine_save()` behavior depends on context:
+  - New unsaved context: Save Script dialog appears.
+  - Existing saved context: silent save under the current saved script name.
+4. "Create" and "Publish" are different checkpoints:
+  - Create/update means editor + save state prepared.
+  - Publish means TradingView publish flow completed and verified in Version history.
+
+---
+
+### 10.A MCP Editor Context Validation (MANDATORY GATE)
+**Run this before ANY inject (`pine_set_source`), save, or publish action.**
+There are TWO independent identities that must both be verified:
+
+| Identity | Where it lives | How to read it |
+|---|---|---|
+| **UI Saved Name** | `H2` inside `.tv-script-widget` — the name TradingView has saved to cloud | `ui_evaluate` DOM query (see §10.A.1) |
+| **Source Declaration Name** | First `indicator()`/`library()`/`strategy()` call in editor source | `pine_get_source` → parse line 4 |
+
+Both must match the **expected target** before proceeding. If either mismatches → STOP and switch context (§10.1).
+
+#### 10.A.1 MCP Tool Sequence — Read Both Identities
+
+**Step 1 — Ensure Pine Editor is open:**
+```
+mcp: ui_open_panel(panel="pine-editor", action="open")
+```
+
+**Step 2 — Read UI saved name from DOM:**
+```
+mcp: ui_evaluate(expression=
+  "(function() {
+    var widget = document.querySelector('.tv-script-widget');
+    if (!widget) return { error: 'Pine Editor not open or widget not found' };
+    var h2 = widget.querySelector('h2');
+    return h2 ? { ui_name: h2.textContent.trim() } : { error: 'H2 title not found in tv-script-widget' };
+  })()"
+)
+```
+→ Returns `{ ui_name: "MyScriptName" }` — this is the **cloud-saved identity**.
+
+**Step 3 — Read source declaration name:**
+```
+mcp: pine_get_source()
+```
+→ Parse the result: find the line matching `indicator(|library(|strategy(` and extract the quoted name.
+Example: `library("PineDrawingLib", overlay=true)` → declaration name = `PineDrawingLib`
+
+**Step 4 — Validate both against expected target:**
+- `ui_name` must equal expected script name (e.g. `"PineDrawingLib"`)
+- declaration name must equal expected script name
+- If **ui_name is `"MyLibrary"`, `"My script"`, or `"My strategy"`** → editor has a new unsaved script open; do NOT inject into it expecting it to overwrite an existing saved script
+
+#### 10.A.2 What Each Mismatch Means
+
+| Situation | Meaning | Action |
+|---|---|---|
+| `ui_name` = `"MyLibrary"` | A new/unsaved script is open | Use `pine_open(name=TARGET)` to switch to correct script first |
+| `ui_name` ≠ expected AND ≠ default | Wrong saved script is open | Use `pine_open(name=TARGET)` to switch |
+| `ui_name` matches but declaration name doesn't | Source was edited but not re-saved under the right name | Treat as dirty state — review source before injecting |
+| Both match expected | **Safe to proceed** | Continue to §10.2 or §10.B |
+
+---
+
 ### 10.1 Script Context Switching (Right Pane Only)
-Use this when switching between indicator/library scripts in a live chart:
-1. Open Pine Editor panel.
-2. Use the script name/menu button in the RIGHT pane (not chart legend script labels).
-3. Select the target script context (for example `PineDrawingLib` vs `DailyNYLevelsAnalytics`).
-4. Confirm context by reading the source header (must match script type and title).
+Use this when the wrong script is open (detected by §10.A validation):
+1. Call `pine_open(name="TARGET_SCRIPT_NAME")` — MCP fetches source from pine-facade API and injects it into Monaco.
+2. Re-run §10.A validation to confirm both identities now match.
+3. Do not use chart legend script labels to switch — that changes chart display, not the Pine Editor context.
 
-### 10.2 Local Source -> TradingView Editor (No Save Mode)
-Use this for safe staging before committing changes:
-1. Load local source from repo (library or indicator file).
-2. Inject/replace active Pine Editor content.
-3. Do NOT save.
-4. Verify unsaved editor contents match local source (line count/header spot-check).
+---
 
-### 10.3 Save + Publish New Version
-Use this after source replacement is validated:
-1. Save script in Pine Editor.
-2. Open publish flow from Pine Editor UI.
-3. Complete publish wizard and submit `Publish new version`.
-4. Treat click success as tentative until post-publish verification passes.
+### 10.B Workflow: Open a New Script (Library or Indicator)
+Use only when publishing a **brand-new** script that does not yet exist in TradingView cloud.
+
+1. **Run §10.A gate first** — confirm you are not accidentally overwriting an existing script.
+2. Call `pine_new(type="library"|"indicator"|"strategy")` — creates a blank template.
+3. Run §10.A Step 2 — confirm `ui_name` is now a default (`"MyLibrary"` / `"My script"` / `"My strategy"`).
+4. Call `pine_set_source(source=<full local source>)` — inject the real source.
+5. Call `pine_smart_compile()` — compile and verify zero errors.
+6. If errors → fix locally, repeat `pine_set_source` + `pine_smart_compile` until clean.
+7. Call `pine_save()` — triggers Ctrl+S; TradingView will show a **"Save Script" name dialog** for new scripts.
+   - The dialog pre-fills the name from the `library()`/`indicator()` declaration — verify it matches expected name.
+   - Click Save in dialog (MCP handles automatically if dialog appears).
+8. Re-run §10.A validation — `ui_name` must now equal the declared script name (no longer a default).
+9. Run `pine_list_scripts()` and locate the newest row for this script.
+10. **Hard Name-Normalization Gate (BLOCKING):**
+  - Required: `name == declared script name` AND `title == declared script name`.
+  - If either side mismatches, publish is forbidden.
+11. If gate fails, run recovery loop until it passes:
+  - Open script title menu in Pine Editor.
+  - Use Rename / Save As.
+  - Set script name exactly to declared name.
+  - Save.
+  - Re-run step 9 and step 10.
+12. Only after gate passes, proceed to §10.3 Publish.
+
+#### 10.B.1 Why This Gate Is Non-Negotiable
+TradingView can save a new script with a default alias (for example `MyLibrary`) while title reflects the intended name.
+If published in that state, later automation can target the wrong script identity.
+
+Therefore:
+- `title` proves content intent.
+- `name` proves stable script identity.
+- Both must match before publish.
+
+---
+
+### 10.2 Local Source → TradingView Editor (No Save Mode)
+Use this for safe staging before committing changes to an existing script:
+1. **Run §10.A gate** — confirm both identities match the target script.
+2. Call `pine_set_source(source=<local file content>)`.
+3. Call `pine_smart_compile()` — verify zero errors.
+4. Do NOT call `pine_save()` yet.
+5. Re-read first 5 lines via `pine_get_source()` to spot-check header matches local file.
+
+---
+
+### 10.3 Save + Publish New Version (Existing Script)
+Use after §10.2 source replacement is validated on an existing script:
+1. **Run §10.A gate** — both identities must match target before saving.
+2. Call `pine_save()`.
+3. Open publish flow from Pine Editor UI → `Publish new version`.
+4. Treat click success as tentative until §10.4 verification passes.
+
+If TradingView shows `Oops! There is nothing to update.`:
+- This is a valid no-op outcome (no effective source delta since last published version).
+- Do not retry publish in a loop.
+- Return to diff gate (§10.4.A / §10.4.B) and record as `No-op publish (already up-to-date)`.
+
+---
 
 ### 10.4 Mandatory Verification Checklist
-Every direct publish run must end with evidence-based verification:
-1. Open script menu from right-pane name button.
-2. Open `Version history...`.
-3. Confirm a new latest timestamp entry exists.
-4. Capture a screenshot artifact for audit/tracing.
+Every save or publish run must end with evidence-based verification:
+1. Re-run §10.A Step 2 — `ui_name` must still match target (confirm save didn't reset context).
+2. Open script menu → `Version history...` → confirm a new latest timestamp entry exists.
+3. Capture a screenshot artifact for audit/tracing (`capture_screenshot(region="full")`).
+
+### 10.4.A Pre-Publish Diff Gate (MANDATORY FOR EXISTING SCRIPTS/LIBRARIES)
+Before publishing an existing script/library, prove there is a real source delta.
+
+1. Open target in TradingView: `pine_open(name="TARGET")`.
+2. Read TradingView source: `pine_get_source()`.
+3. Compare against local file source (hash + line diff).
+4. Publish is allowed only if both are true:
+   - hash mismatch, and
+   - at least 1 line changed.
+
+If hashes are equal and diff line count is 0, STOP — no publish.
+
+Example PowerShell check:
+```powershell
+$a = "scripts\indicators\daily-ny-levels\lib\RangeSessionLib.pine"
+$b = "tmp\TARGET.tv.snapshot.pine"
+$ha = (Get-FileHash $a -Algorithm SHA256).Hash
+$hb = (Get-FileHash $b -Algorithm SHA256).Hash
+$diff = Compare-Object (Get-Content $a) (Get-Content $b) -SyncWindow 0
+[PSCustomObject]@{
+  LocalHash = $ha
+  TvHash = $hb
+  HashEqual = ($ha -eq $hb)
+  DiffLineCount = ($diff | Measure-Object).Count
+}
+```
+Decision rule:
+- `HashEqual=True` and `DiffLineCount=0` → no publish.
+- Otherwise → continue to §10.3 and §10.4.
+
+### 10.4.B Existing Library Workflow (Search → Verify → Publish/Discard)
+Use this exact order for every existing library update:
+
+1. Search published scripts first:
+  - Run `pine_list_scripts()`.
+  - Filter rows by library names relevant to this repo (`RangeSessionLib`, `PineDrawingLib`, `StatsLib`, etc.).
+2. Disambiguate when multiple matches exist:
+  - Open candidate with `pine_open(name="CANDIDATE")`.
+  - Run `pine_get_source()` and verify declaration line is exactly `library("EXPECTED_LIBRARY_NAME")`.
+  - If declaration mismatches, reopen next candidate.
+3. Verify editor context gate (§10.A) and dirty state gate (§10.D).
+4. Run pre-publish diff gate (§10.4.A): compare local file vs currently opened published source.
+5. Branch decision:
+  - If unchanged (`HashEqual=True` and `DiffLineCount=0`): discard branch.
+    - Do not call save.
+    - Do not call publish.
+    - Re-open the same target with `pine_open(name="TARGET")` to hard-reset editor context if needed.
+  - If changed: publish branch.
+    - `pine_set_source(local)` → `pine_smart_compile()` → `pine_save()` → Publish UI flow (§10.3) → verification (§10.4).
+
+Notes:
+- In TradingView, script `name` and `title` may not be unique and can diverge (for example a script named `MyLibrary` with title `RangeSessionLib`). Always trust the declaration line in source to confirm identity.
+- Never publish based only on `pine_open` return name when duplicate aliases exist.
+
+---
 
 ### 10.5 Recovery Notes
 If the workflow appears stuck or inconsistent:
-1. Re-open Pine Editor panel to restore UI anchor.
-2. Re-open script menu from script name button and re-select target script.
+1. Re-open Pine Editor panel: `ui_open_panel(panel="pine-editor", action="open")`.
+2. Re-run §10.A full validation to re-establish known state.
 3. Re-run verification from Version history, not from transient UI toasts.
 4. If multiple tabs are open, verify active tab URL before retrying publish/verify.
+5. If `ui_evaluate` returns `{ error: 'Pine Editor not open' }` → Pine Editor panel closed; repeat step 1.
+
+---
+
+### 10.C Dependency Chain & Publish Order
+**Rule: Always publish leaf libraries before dependents. Never publish an indicator before all libraries it imports are already published.**
+
+#### 10.C.1 This Repo's Library Dependency Graph
+
+```
+LEVEL 0 — No dependencies (publish first if changed):
+  PineDrawingCore
+  RangeSessionLib
+  StatsLib
+  PineDrawingLib          ← main drawing library used by indicators (no imports)
+
+LEVEL 1 — Import PineDrawingCore (publish after Core if Core changed):
+  PineDrawingHorizontalLevels
+  PineDrawingZones
+  PineDrawingVerticalMarkers
+  PineDrawingTables
+  PineDrawingMarkers
+  PineDrawingSpecialized
+
+LEVEL 2 — Import Level 1 libs (publish after Level 1 if those changed):
+  PineDrawingComposites    ← imports Core + Zones + VerticalMarkers
+
+LEVEL 3 — Indicators (publish last, after all their imported libs are published):
+  DailyNYLevelsV5          ← imports RangeSessionLib, PineDrawingLib, StatsLib
+  DailyNYLevelsAnalytics   ← imports RangeSessionLib, PineDrawingLib, StatsLib
+  MacroDealerLevels
+  DealerLevels
+  HTF_EMA_Analysis
+```
+
+#### 10.C.2 Workflow — Updating a Library That Has Dependents
+
+Example: updating `PineDrawingCore` to a new version.
+
+1. Update local `PineDrawingCore.pine` source.
+2. `pine_open(name="PineDrawingCore")` → §10.A validation → inject → compile → save → publish (§10.2 → §10.3).
+3. Note the **new published version number** (check via `pine_list_scripts` or Version history — it is N+1).
+4. For each Level 1 library that imports `PineDrawingCore` (see graph above):
+   - Update its local `.pine` file: change `import vveerappa/PineDrawingCore/OLD` → `import vveerappa/PineDrawingCore/NEW`.
+   - Repeat step 2 for that library.
+5. Repeat step 4 up the chain until all dependents are published.
+6. If any indicator script's local file imports an updated library, update the import version in the local `.pine` file before publishing the indicator.
+
+#### 10.C.3 Import Version Format
+```pine
+import vveerappa/LibraryName/VERSION as ALIAS
+```
+- `VERSION` is the integer version as published on TradingView. It does NOT auto-increment locally — you must update this number in the local `.pine` source manually after the library is published.
+- Mismatched version → compile error: `"Import 'vveerappa/LibraryName/X' version not found"`.
+- **Never increment the version in the local file before the library is actually published at that version.**
+
+---
+
+### 10.D Detecting Unsaved Changes in the Editor
+Before injecting or switching scripts, check if the current editor has unsaved changes to avoid silently discarding them.
+
+```
+mcp: ui_evaluate(expression=
+  "(function() {
+    var widget = document.querySelector('.tv-script-widget');
+    if (!widget) return { error: 'Pine Editor not open' };
+    var btn = widget.querySelector('[class*=\"saveButton\"]');
+    if (!btn) return { error: 'saveButton not found' };
+    var hasUnsaved = btn.className.indexOf('hidden') === -1;
+    return { unsaved_changes: hasUnsaved, button_state: hasUnsaved ? 'visible/dirty' : 'hidden/clean' };
+  })()"
+)
+```
+- `unsaved_changes: false` → editor is clean; safe to switch scripts or inject.
+- `unsaved_changes: true` → editor has unsaved changes; decide: save first (§10.3) or discard (§10.E) before proceeding.
+
+---
+
+### 10.E Reverting the Editor to Last Cloud-Saved State
+Use when you've injected source (via `pine_set_source`) but want to discard it without saving — to restore exactly what TradingView has saved in cloud.
+
+```
+mcp: pine_open(name="TARGET_SCRIPT_NAME")
+```
+- This re-fetches the last saved version from `pine-facade.tradingview.com` and replaces Monaco content.
+- **Destructive to in-editor edits** — any unsaved Monaco content is overwritten. Intentionally.
+- After calling `pine_open`, re-run §10.A validation to confirm the revert landed correctly.
+- Do NOT use `pine_new` to revert — that creates a blank template, not the last saved version.
+
+---
+
+### 10.F Chart State vs Editor State — They Are Independent
+This is a common source of confusion. The Pine Editor and the chart are two separate surfaces.
+
+| | Pine Editor | Chart |
+|---|---|---|
+| **Shows** | One script at a time (whatever was last opened/created) | All added indicators simultaneously |
+| **Version used** | Whatever is in Monaco (may be unsaved) | Cached at the time the indicator was added to chart |
+| **How to read it** | `pine_get_source()` or §10.A.1 | `chart_get_state()` → `indicators[]` list |
+| **How to update it** | `pine_set_source` + `pine_save` | Remove indicator from chart, re-add after publishing |
+
+#### 10.F.1 After Publishing a New Library Version — Chart Does Not Auto-Update
+TradingView caches library resolutions. An indicator on the chart that uses `PineDrawingLib/2` will NOT automatically pick up `PineDrawingLib/3` even after you publish version 3.
+
+To force an indicator on the chart to use the new library version:
+1. In the indicator's local `.pine` file, update the import version: `PineDrawingLib/2` → `PineDrawingLib/3`.
+2. Publish the indicator as a new version (following §10.C.2 → §10.3).
+3. On the chart: click the indicator's gear/settings → `Reset Settings` or remove and re-add.
+4. Verify with `chart_get_state()` that the indicator is showing the expected version.
+
+#### 10.F.2 Checking What Is Currently on the Chart
+```
+mcp: chart_get_state()
+```
+Returns `indicators[]` array with `{ name, entityId }` for each plotted indicator.
+Use `entityId` for any further per-indicator operations (e.g., `indicator_set_inputs`).
+The names here are the **plot titles**, not necessarily the saved script names.
+
+---
+
+### 10.G Reading Currently Published Versions
+To see what version of each script is currently published to TradingView cloud:
+```
+mcp: pine_list_scripts()
+```
+Returns an array — each entry has `{ name, title, version, modified, id }`.
+- `name` = the script identifier used in `pine_open(name=...)`.
+- `version` = current published version integer (same number used in `import .../VERSION`).
+- `modified` = Unix timestamp of last publish.
+
+Cross-reference `version` here against import lines in local `.pine` files to identify any version drift (local file imports an old version number after a library was republished).
+
+#### 10.G.1 Save Dialog Behavior — When Does the Name Prompt Appear?
+
+| Situation | `pine_save()` behavior |
+|---|---|
+| Existing saved script open | Silent Ctrl+S save — no dialog. Name stays the same. |
+| New unsaved script (created via `pine_new`) | Shows "Save Script" name dialog — pre-fills from `library()`/`indicator()` declaration. MCP handles dialog automatically. |
+| Script opened then source replaced | Silent save — saves under the existing script's name, NOT the new declaration name. |
+
+**Implication:** If you `pine_open("OldScript")` then inject source for `NewScript` via `pine_set_source`, calling `pine_save()` will save it under `"OldScript"` — not `"NewScript"`. Use §10.B (via `pine_new`) for genuinely new scripts.
 
 ---
 **Last Updated**: 2026-04-18
