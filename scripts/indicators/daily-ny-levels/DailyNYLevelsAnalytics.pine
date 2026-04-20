@@ -77,7 +77,7 @@ i_label_merge_threshold_ticks = input.int(20, "Label Merge Threshold (ticks)", m
 i_label_stagger_bars = input.int(8, "Label Stagger Step (bars)", minval=1, maxval=50, group=grp_visual)
 // "Stagger" fans overlapping labels into offset columns; "Merge" combines nearby
 // labels in the same group into a single pipe-delimited label (e.g. "Pivot | Confirm").
-i_label_strategy = input.string("Stagger", "Phase 2 Label Strategy", options=["Stagger", "Merge"], group=grp_visual)
+i_label_strategy = input.string("Merge", "Label Strategy", options=["Stagger", "Merge"], group=grp_visual)
 
 // ============================================================================
 // Inputs — Context Colors (Phase 1 stat lines, histograms, time dist)
@@ -124,6 +124,7 @@ i_show_time_avg = input.bool(true, "Show AVG Line", group=grp_features)
 i_show_time_med = input.bool(true, "Show Median Line", group=grp_features)
 i_show_phase2_levels = input.bool(true, "Show Phase 2 Levels", group=grp_features)
 i_emphasize_active_side = input.bool(true, "Emphasize Active Side", group=grp_features)
+i_historical_lookback = input.int(5, "Historical Lookback (Sessions)", minval=0, maxval=20, group=grp_features)
 
 // ============================================================================
 // Inputs — Data Table
@@ -209,6 +210,46 @@ var array<float> phase2_breakout_price = array.new_float(0)
 var array<bool> phase2_pullback_armed = array.new_bool(0)
 var array<float> phase2_pullback_price = array.new_float(0)
 
+// Step 8: Historical retention buffer
+// Structure: flat array of [spec0_d1, spec0_d2... spec0_dN, spec1_d1...]
+var array<RSL.RangeState> history_buffer = array.new<RSL.RangeState>(0)
+
+/// Deep clone a RangeState object including all internal arrays.
+f_clone_range_state(RSL.RangeState st) =>
+    RSL.RangeState hst = RSL.RangeState.new(
+         st.spec, st.session_open, st.or_high, st.or_low, st.or_last_close,
+         st.or_building, st.or_complete, st.or_start_bar, st.bull_ref, st.bear_ref,
+         st.or_mid, st.ref_set, st.daily_bull_mfe, st.daily_bear_mfe,
+         st.daily_bull_peak_min, st.daily_bear_peak_min,
+         st.daily_mae_bull_abs, st.daily_mae_bear_abs,
+         st.daily_mae_bull_pb, st.daily_mae_bear_pb,
+         st.daily_bo_mfe_bull, st.daily_bo_mfe_bear,
+         st.daily_bo_mae_bull, st.daily_bo_mae_bear,
+         st.pb_tracker_bull, st.pb_tracker_bear,
+         st.mid_hit_bull, st.mid_hit_bear,
+         st.entry_triggered_bull, st.entry_triggered_bear,
+         st.session_low_data, st.session_high_data,
+         st.close_at_cutoff, st.is_committed,
+         array.copy(st.daily_pivot_bulls),
+         array.copy(st.daily_pivot_bears),
+         array.copy(st.data_mins),
+         array.copy(st.data_highs),
+         array.copy(st.data_lows)
+     )
+    hst
+
+/// Push a deep clone of the current session state into the spec's history slot.
+f_push_history(int idx, RSL.RangeState st) =>
+    if i_historical_lookback > 0
+        int offset = idx * i_historical_lookback
+        // Shift older history slots back
+        if i_historical_lookback > 1
+            for i = 1 to i_historical_lookback - 1
+                int h_rev = i_historical_lookback - i
+                array.set(history_buffer, offset + h_rev, array.get(history_buffer, offset + h_rev - 1))
+        // Store current finalized session as lookback=1 (at slot offset+0)
+        array.set(history_buffer, offset, f_clone_range_state(st))
+
 f_init_runtime() =>
     array.clear(specs)
     array.clear(states)
@@ -238,6 +279,10 @@ f_init_runtime() =>
             array.push(phase2_breakout_price, na)
             array.push(phase2_pullback_armed, false)
             array.push(phase2_pullback_price, na)
+            // Initialize history slots for this spec
+            if i_historical_lookback > 0
+                for h = 1 to i_historical_lookback
+                    array.push(history_buffer, na)
 
 if barstate.isfirst
     f_init_runtime()
@@ -250,10 +295,13 @@ int ny_dow = dayofweek(time, i_timezone)
 // Formatting helpers
 // ============================================================================
 
-f_or_color(int idx) =>
+f_or_color(int idx, string state) =>
     // Consume module-level resolved base colors — do not re-resolve here.
     color base = idx % 2 == 0 ? r_bull_color : r_bear_color
-    color.new(base, math.min(15 + idx * 10, 75))
+    int alpha = math.min(15 + idx * 10, 75)
+    if state == "forming"
+        alpha := math.min(alpha + 20, 95)
+    color.new(base, alpha)
 
 f_fmt_stat_text(string name, string line_name, float pct_level, float pct_value) =>
     name + " " + line_name + " P" + str.tostring(int(pct_level)) + " " + STL.f_pct_fmt(pct_value)
@@ -321,6 +369,7 @@ f_track_range(int idx) =>
         st.is_committed := true
 
     if is_new_session
+        f_push_history(idx, st)
         RSL.f_reset_daily(st)
         array.set(phase2_live_bias, idx, 0)
         array.set(phase2_breakout_side, idx, 0)
@@ -529,25 +578,21 @@ if array.size(specs) > 0
 // Rendering
 // ============================================================================
 
-f_render_range(int idx) =>
-    RSL.RangeSpec sp = array.get(specs, idx)
-    RSL.RangeState st = array.get(states, idx)
-    STL.ExcursionHistory hist = array.get(histories, idx)
-    Core.PineDrawingState ds = array.get(drawings, idx)
-
-    Core.f_clear_all(ds)
-
+f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.ExcursionHistory hist, Core.PineDrawingState ds, Core.LabelRegistry lbl_reg, int lookback) =>
     int tf_min = timeframe.isintraday ? timeframe.multiplier : 1
     [bars_to_cutoff, cutoff_bar, line_render_end, max_profile_width] = f_render_geometry(sp, st, tf_min)
 
-    // Display Profile scaling for direct Core draw calls (histogram bins, time dist).
-    // f_display_profile_label_size(base, profile) shifts the base size by the profile delta.
-    // f_display_profile_width(base_width, profile) scales a line width by the profile multiplier.
+    // Suffix for all labels in this session instance
+    string lb_sfx = lookback > 0 ? " [-" + str.tostring(lookback) + "d]" : ""
+
+    // Lifecycle state for this render pass
+    string lc_state = st.or_building and not st.or_complete ? "forming" : st.or_complete ? "finalized" : "inactive"
+
+    // Display Profile scaling
     string profile_label_size = Core.f_display_profile_label_size(i_label_size, i_display_profile)
     int    profile_line_width = Core.f_display_profile_width(1, i_display_profile)
 
-    // Consumed from module-level palette (resolved once per bar, not per render call).
-    // r_bull_color, r_bear_color, r_stat_*, r_reversal_zone_color, etc. are all available.
+    // Palette consumers
     color bull_color              = r_bull_color
     color bear_color              = r_bear_color
     color stat_label_color        = r_stat_label_color
@@ -570,14 +615,14 @@ f_render_range(int idx) =>
     array<float> tac_ys = array.new_float(0)
     float suppress_thr = syminfo.mintick * float(i_label_merge_threshold_ticks)
     if i_show_phase2_levels and st.ref_set and not na(st.or_start_bar)
-        int _bo_side = array.get(phase2_breakout_side, idx)
-        int _live_bias = array.get(phase2_live_bias, idx)
-        float _bo_px = array.get(phase2_breakout_price, idx)
+        int _bo_side = lookback == 0 ? array.get(phase2_breakout_side, idx) : 0 // Historical side tracking not snapshotted yet, default to finalized
+        int _live_bias = lookback == 0 ? array.get(phase2_live_bias, idx) : 0
+        float _bo_px = lookback == 0 ? array.get(phase2_breakout_price, idx) : na
         int _rs = _bo_side != 0 ? _bo_side : _live_bias
         float _rp = not na(_bo_px) ? _bo_px : (_rs == 1 ? st.or_high : _rs == -1 ? st.or_low : na)
         if _rs != 0 and not na(_rp)
             array.push(tac_ys, _rp)
-            float _pb = array.get(phase2_pullback_price, idx)
+            float _pb = lookback == 0 ? array.get(phase2_pullback_price, idx) : na
             if not na(_pb)
                 array.push(tac_ys, _pb)
             array<float> _bm = _rs == 1 ? STL.f_build_filtered(hist.bo_mfe_bull) : STL.f_build_filtered(hist.bo_mfe_bear)
@@ -603,91 +648,138 @@ f_render_range(int idx) =>
                 float _mp80 = array.percentile_nearest_rank(_ms, 80)
                 array.push(tac_ys, _rs == 1 ? _rp * (1.0 - _mp80 / 100.0) : _rp * (1.0 + _mp80 / 100.0))
 
-    Core.LabelRegistry lbl_reg = Core.f_label_registry_begin()
-
     // OR box
     if st.or_building and not na(st.or_start_bar)
-        Zones.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, cutoff_bar, f_or_color(idx), i_box_style, i_box_width)
+        Zones.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, cutoff_bar, f_or_color(idx, lc_state), i_box_style, i_box_width)
     else if st.or_complete and not na(st.or_start_bar)
-        Zones.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, cutoff_bar, f_or_color(idx), i_box_style, i_box_width)
+        Zones.f_draw_or_box(ds, st.or_start_bar, st.or_high, st.or_low, cutoff_bar, f_or_color(idx, lc_state), i_box_style, i_box_width)
 
     // ========================================================================
-    // Phase 1 Stat Lines — semantic renderers for most, custom helper for Mid
+    // Unified Technical & Statistical Levels
     // ========================================================================
-    if i_show_stat_lines and st.ref_set and not na(st.bull_ref)
-        array<float> bull_filtered = STL.f_build_filtered(hist.mfe_bull)
-        array<float> bear_filtered = STL.f_build_filtered(hist.mfe_bear)
+    if st.ref_set and not na(st.bull_ref)
         int ln_end = line_render_end
-        int stat_label_x = ln_end + i_label_gap_bars
-        string bull_tag_base = sp.name + "_bull"
-        string bear_tag_base = sp.name + "_bear"
-        string unit_str = "%"
+        int label_x = ln_end + i_label_gap_bars
+        string m_group = "unified-levels"
+        int bo_side = array.get(phase2_breakout_side, idx)
+        int live_bias = array.get(phase2_live_bias, idx)
+        float bo_px = array.get(phase2_breakout_price, idx)
+        bool pb_armed = array.get(phase2_pullback_armed, idx)
+        int render_side = bo_side != 0 ? bo_side : live_bias
+        float render_px = not na(bo_px) ? bo_px : (render_side == 1 ? st.or_high : render_side == -1 ? st.or_low : na)
 
-        if array.size(bull_filtered) > 0
-            float p_confirm_b = array.percentile_nearest_rank(bull_filtered, i_pct_confirm)
-            float p_t1_b = array.percentile_nearest_rank(bull_filtered, i_pct_target1)
-            float p_t2_b = array.percentile_nearest_rank(bull_filtered, i_pct_target2)
-            float p_stretch_b = array.percentile_nearest_rank(bull_filtered, i_pct_stretch)
-            float p_avg_b = array.avg(bull_filtered)
-            float p_med_b = array.median(bull_filtered)
-            float y_confirm_b = st.bull_ref * (1.0 + p_confirm_b / 100.0)
-            float y_t1_b = st.bull_ref * (1.0 + p_t1_b / 100.0)
-            float y_t2_b = st.bull_ref * (1.0 + p_t2_b / 100.0)
-            float y_stretch_b = st.bull_ref * (1.0 + p_stretch_b / 100.0)
-            float y_avg_b = st.bull_ref * (1.0 + p_avg_b / 100.0)
-            float y_med_b = st.bull_ref * (1.0 + p_med_b / 100.0)
+        // 1. Core Percentile Calculations
+        array<float> mfe_b = STL.f_build_filtered(hist.mfe_bull)
+        array<float> mfe_s = STL.f_build_filtered(hist.mfe_bear)
+        array<float> fak_m_b = STL.f_build_filtered(hist.fake_mfe_bull)
+        array<float> fak_m_s = STL.f_build_filtered(hist.fake_mfe_bear)
+        array<float> fak_e_b = STL.f_build_filtered(hist.fake_mae_bull)
+        array<float> fak_e_s = STL.f_build_filtered(hist.fake_mae_bear)
+        array<float> bo_m_f = render_side == 1 ? STL.f_build_filtered(hist.bo_mfe_bull) : STL.f_build_filtered(hist.bo_mfe_bear)
+        array<float> bo_e_f = render_side == 1 ? STL.f_build_filtered(hist.bo_mae_bull) : STL.f_build_filtered(hist.bo_mae_bear)
 
-            if not f_near_any(y_confirm_b, tac_ys, suppress_thr)
-                HLevels.f_draw_confirm_level(ds, lbl_reg, theme_mode_resolved, i_display_profile, "C", st.or_start_bar, ln_end, y_confirm_b, "bull", str.tostring(int(i_pct_confirm)), STL.f_pct_fmt(p_confirm_b), unit_str, sp.name + " MFE", bull_tag_base + "_confirm", 0)
-            if not f_near_any(y_t1_b, tac_ys, suppress_thr)
-                HLevels.f_draw_target_level_p50(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", st.or_start_bar, ln_end, y_t1_b, sp.name + " Bull", "MFE", STL.f_pct_fmt(p_t1_b), unit_str, bull_tag_base + "_t1", 0)
-            if not f_near_any(y_t2_b, tac_ys, suppress_thr)
-                HLevels.f_draw_target_level_p75(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_t2_b, sp.name + " Bull", "MFE", STL.f_pct_fmt(p_t2_b), unit_str, bull_tag_base + "_t2", 0)
-            if not f_near_any(y_stretch_b, tac_ys, suppress_thr)
-                HLevels.f_draw_stretch_level(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", st.or_start_bar, ln_end, y_stretch_b, sp.name + " Bull", str.tostring(int(i_pct_stretch)), STL.f_pct_fmt(p_stretch_b), unit_str, bull_tag_base + "_stretch", 0)
-            if not f_near_any(y_avg_b, tac_ys, suppress_thr)
-                HLevels.f_draw_statistical_level_avg(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_avg_b, sp.name + " Bull MFE", STL.f_pct_fmt(p_avg_b), unit_str, bull_tag_base + "_avg", 0)
-            if not f_near_any(y_med_b, tac_ys, suppress_thr)
-                HLevels.f_draw_statistical_level_median(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", st.or_start_bar, ln_end, y_med_b, sp.name + " Bull MFE", STL.f_pct_fmt(p_med_b), unit_str, bull_tag_base + "_med", 0)
+        bool draw_bull = i_show_stat_lines and array.size(mfe_b) > 0
+        bool draw_bear = i_show_stat_lines and array.size(mfe_s) > 0
 
-        if array.size(bear_filtered) > 0
-            float p_confirm_s = array.percentile_nearest_rank(bear_filtered, i_pct_confirm)
-            float p_t1_s = array.percentile_nearest_rank(bear_filtered, i_pct_target1)
-            float p_t2_s = array.percentile_nearest_rank(bear_filtered, i_pct_target2)
-            float p_stretch_s = array.percentile_nearest_rank(bear_filtered, i_pct_stretch)
-            float p_avg_s = array.avg(bear_filtered)
-            float p_med_s = array.median(bear_filtered)
-            float y_confirm_s = st.bear_ref * (1.0 - p_confirm_s / 100.0)
-            float y_t1_s = st.bear_ref * (1.0 - p_t1_s / 100.0)
-            float y_t2_s = st.bear_ref * (1.0 - p_t2_s / 100.0)
-            float y_stretch_s = st.bear_ref * (1.0 - p_stretch_s / 100.0)
-            float y_avg_s = st.bear_ref * (1.0 - p_avg_s / 100.0)
-            float y_med_s = st.bear_ref * (1.0 - p_med_s / 100.0)
+        // 2. Statistical Levels (Confirm, Stretch, Target75) - Unfiltered Context
+        if draw_bull
+            float p_con = array.percentile_nearest_rank(mfe_b, i_pct_confirm)
+            float p_t75 = array.percentile_nearest_rank(mfe_b, i_pct_target2)
+            float p_str = array.percentile_nearest_rank(mfe_b, i_pct_stretch)
+            float y_con = st.bull_ref * (1.0 + p_con / 100.0)
+            float y_t75 = st.bull_ref * (1.0 + p_t75 / 100.0)
+            float y_str = st.bull_ref * (1.0 + p_str / 100.0)
+            if not f_near_any(y_con, tac_ys, suppress_thr)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_con, ln_end, color.new(r_bull_color, 40), "Dotted", i_line_width_secondary, "Confirm P" + str.tostring(int(i_pct_confirm)) + " " + STL.f_pct_fmt(p_con) + lb_sfx, color.new(r_bull_color, 0), label_x, str.lower(i_label_strategy), 40, m_group)
+            if not f_near_any(y_t75, tac_ys, suppress_thr)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t75, ln_end, color.new(r_bull_color, 40), "Dashed", i_line_width_secondary, "Target P" + str.tostring(int(i_pct_target2)) + " " + STL.f_pct_fmt(p_t75) + lb_sfx, color.new(r_bull_color, 0), label_x, str.lower(i_label_strategy), 45, m_group)
+            if not f_near_any(y_str, tac_ys, suppress_thr)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_str, ln_end, color.new(r_stat_stretch_color, 60), "Dotted", i_line_width_primary, "Stretch P" + str.tostring(int(i_pct_stretch)) + " " + STL.f_pct_fmt(p_str) + lb_sfx, color.new(r_stat_stretch_color, 0), label_x, str.lower(i_label_strategy), 50, m_group)
 
-            if not f_near_any(y_confirm_s, tac_ys, suppress_thr)
-                HLevels.f_draw_confirm_level(ds, lbl_reg, theme_mode_resolved, i_display_profile, "C", st.or_start_bar, ln_end, y_confirm_s, "bear", str.tostring(int(i_pct_confirm)), STL.f_pct_fmt(p_confirm_s), unit_str, sp.name + " MFE", bear_tag_base + "_confirm", 0)
-            if not f_near_any(y_t1_s, tac_ys, suppress_thr)
-                HLevels.f_draw_target_level_p50(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", st.or_start_bar, ln_end, y_t1_s, sp.name + " Bear", "MFE", STL.f_pct_fmt(p_t1_s), unit_str, bear_tag_base + "_t1", 0)
-            if not f_near_any(y_t2_s, tac_ys, suppress_thr)
-                HLevels.f_draw_target_level_p75(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_t2_s, sp.name + " Bear", "MFE", STL.f_pct_fmt(p_t2_s), unit_str, bear_tag_base + "_t2", 0)
-            if not f_near_any(y_stretch_s, tac_ys, suppress_thr)
-                HLevels.f_draw_stretch_level(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", st.or_start_bar, ln_end, y_stretch_s, sp.name + " Bear", str.tostring(int(i_pct_stretch)), STL.f_pct_fmt(p_stretch_s), unit_str, bear_tag_base + "_stretch", 0)
-            if not f_near_any(y_avg_s, tac_ys, suppress_thr)
-                HLevels.f_draw_statistical_level_avg(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_avg_s, sp.name + " Bear MFE", STL.f_pct_fmt(p_avg_s), unit_str, bear_tag_base + "_avg", 0)
-            if not f_near_any(y_med_s, tac_ys, suppress_thr)
-                HLevels.f_draw_statistical_level_median(ds, lbl_reg, theme_mode_resolved, i_display_profile, "P", st.or_start_bar, ln_end, y_med_s, sp.name + " Bear MFE", STL.f_pct_fmt(p_med_s), unit_str, bear_tag_base + "_med", 0)
+        if draw_bear
+            float p_con = array.percentile_nearest_rank(mfe_s, i_pct_confirm)
+            float p_t75 = array.percentile_nearest_rank(mfe_s, i_pct_target2)
+            float p_str = array.percentile_nearest_rank(mfe_s, i_pct_stretch)
+            float y_con = st.bear_ref * (1.0 - p_con / 100.0)
+            float y_t75 = st.bear_ref * (1.0 - p_t75 / 100.0)
+            float y_str = st.bear_ref * (1.0 - p_str / 100.0)
+            if not f_near_any(y_con, tac_ys, suppress_thr)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_con, ln_end, color.new(r_bear_color, 40), "Dotted", i_line_width_secondary, "Confirm P" + str.tostring(int(i_pct_confirm)) + " " + STL.f_pct_fmt(p_con) + lb_sfx, color.new(r_bear_color, 0), label_x, str.lower(i_label_strategy), 40, m_group)
+            if not f_near_any(y_t75, tac_ys, suppress_thr)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t75, ln_end, color.new(r_bear_color, 40), "Dashed", i_line_width_secondary, "Target P" + str.tostring(int(i_pct_target2)) + " " + STL.f_pct_fmt(p_t75) + lb_sfx, color.new(r_bear_color, 0), label_x, str.lower(i_label_strategy), 45, m_group)
+            if not f_near_any(y_str, tac_ys, suppress_thr)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_str, ln_end, color.new(r_stat_stretch_color, 60), "Dotted", i_line_width_primary, "Stretch P" + str.tostring(int(i_pct_stretch)) + " " + STL.f_pct_fmt(p_str) + lb_sfx, color.new(r_stat_stretch_color, 0), label_x, str.lower(i_label_strategy), 50, m_group)
 
-        // Mid line via priority_line
-        int n_mid = math.min(array.size(hist.mid_hit_bull), array.size(hist.mid_hit_bear))
-        int mid_hits = 0
-        if n_mid > 0
-            for k = 0 to n_mid - 1
-                mid_hits += array.get(hist.mid_hit_bull, k) ? 1 : 0
-                mid_hits += array.get(hist.mid_hit_bear, k) ? 1 : 0
-        float mid_hit_pct = n_mid == 0 ? na : (float(mid_hits) / float(2 * n_mid)) * 100.0
+        // 3. Tactical Directional Levels
+        if i_show_phase2_levels and render_side != 0 and not na(render_px)
+            int inactive_alpha = i_emphasize_active_side and live_bias != 0 and live_bias != render_side ? 65 : 0
+            
+            // Tactical Pivot (Conceptually overlaps with MFE P50)
+            float f_pivot = render_side == 1 ? (array.size(fak_m_b) > 0 ? array.percentile_nearest_rank(fak_m_b, 50) : na) : (array.size(fak_m_s) > 0 ? array.percentile_nearest_rank(fak_m_s, 50) : na)
+            float y_pivot = na(f_pivot) ? na : render_px * (render_side == 1 ? 1.0 + f_pivot / 100.0 : 1.0 - f_pivot / 100.0)
+            if not na(y_pivot)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_pivot, ln_end, color.new(r_pivot_color, inactive_alpha), "Solid", i_line_width_primary, "Pivot P50 (MFE Med) " + STL.f_pct_fmt(f_pivot) + lb_sfx, color.new(r_pivot_color, inactive_alpha), label_x, str.lower(i_label_strategy), 70, m_group)
+
+            // Breakout Activation
+            f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, render_px, ln_end, color.new(r_breakout_act_color, 0), "Dotted", i_line_width_primary, "Breakout Activation " + STL.f_pct_fmt(0) + lb_sfx, color.new(r_breakout_act_color, inactive_alpha), label_x, str.lower(i_label_strategy), 90, m_group)
+
+            // Pullback Activation
+            float pb_px = array.get(phase2_pullback_price, idx)
+            if not na(pb_px)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, pb_px, ln_end, color.new(r_pullback_act_color, 0), "Dashed", i_line_width_primary, "Pullback Activation P25 MAE" + lb_sfx, color.new(r_pullback_act_color, inactive_alpha), label_x, str.lower(i_label_strategy), 85, m_group)
+
+            // BO Cashflow (MFE P20)
+            float p20_bo = array.size(bo_m_f) > 0 ? array.percentile_nearest_rank(bo_m_f, 20) : na
+            float y_cash = na(p20_bo) ? na : render_px * (render_side == 1 ? 1.0 + p20_bo / 100.0 : 1.0 - p20_bo / 100.0)
+            if not na(y_cash)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_cash, ln_end, color.new(r_bo_cashflow_color, inactive_alpha), "Dotted", i_line_width_secondary, "BO Cashflow P20 (MFE) " + STL.f_pct_fmt(p20_bo) + lb_sfx, color.new(r_bo_cashflow_color, inactive_alpha), label_x, str.lower(i_label_strategy), 80, m_group)
+
+            // BO Confirm (Fake MFE P75)
+            float f75 = render_side == 1 ? (array.size(fak_m_b) > 0 ? array.percentile_nearest_rank(fak_m_b, 75) : na) : (array.size(fak_m_s) > 0 ? array.percentile_nearest_rank(fak_m_s, 75) : na)
+            float y_conf = na(f75) ? na : render_px * (render_side == 1 ? 1.0 + f75 / 100.0 : 1.0 - f75 / 100.0)
+            if not na(y_conf)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_conf, ln_end, color.new(r_bo_confirm_color, inactive_alpha), "Dashed", i_line_width_primary, "BO Confirm P75 " + STL.f_pct_fmt(f75) + lb_sfx, color.new(r_bo_confirm_color, inactive_alpha), label_x, str.lower(i_label_strategy), 75, m_group)
+            
+            // Reversal Zone
+            float rev_p20 = array.size(bo_e_f) > 0 ? array.percentile_nearest_rank(bo_e_f, 20) : (render_side == 1 ? (array.size(fak_e_b) > 0 ? array.percentile_nearest_rank(fak_e_b, 20) : na) : (array.size(fak_e_s) > 0 ? array.percentile_nearest_rank(fak_e_s, 20) : na))
+            float rev_p50 = array.size(bo_e_f) > 0 ? array.percentile_nearest_rank(bo_e_f, 50) : (render_side == 1 ? (array.size(fak_e_b) > 0 ? array.percentile_nearest_rank(fak_e_b, 50) : na) : (array.size(fak_e_s) > 0 ? array.percentile_nearest_rank(fak_e_s, 50) : na))
+            float y_rev20 = na(rev_p20) ? na : (render_side == 1 ? st.or_high * (1.0 - rev_p20 / 100.0) : st.or_low * (1.0 + rev_p20 / 100.0))
+            float y_rev50 = na(rev_p50) ? na : (render_side == 1 ? st.or_high * (1.0 - rev_p50 / 100.0) : st.or_low * (1.0 + rev_p50 / 100.0))
+            if not na(y_rev20) and not na(y_rev50)
+                float z_top = math.max(y_rev20, y_rev50)
+                float z_bot = math.min(y_rev20, y_rev50)
+                int z_w = math.max(2, ln_end - st.or_start_bar)
+                float z_mid = (z_top + z_bot) / 2.0
+                int z_mid_x = st.or_start_bar + int(math.floor(z_w / 2.0))
+                int zone_line_alpha = math.min(i_zone_transparency + 10, 95)
+                int zone_text_alpha = math.min(int(math.round(float(i_zone_transparency) * 0.6)), 90)
+                Zones.f_draw_hist_band(ds, st.or_start_bar, z_top, z_bot, z_w, r_reversal_zone_color, i_zone_transparency)
+                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "C", st.or_start_bar, st.or_start_bar + z_w, z_mid, "", color.new(r_reversal_zone_color, zone_line_alpha), 55, sp.name + "_rev_zone_mid:" + lc_state + lb_sfx, 0)
+                Core.f_label_registry_push_ex(lbl_reg, z_mid, "Reversal Zone (P20-P50 Fake MAE)" + lb_sfx, color.new(r_stat_label_color, zone_text_alpha), z_mid_x, str.lower(i_label_strategy), 100, m_group, "center", profile_label_size, "Label", "", 0, lc_state)
+
+            // Max Reversal (Fake MAE P90)
+            float rev_p90 = render_side == 1 ? (array.size(fak_e_b) > 0 ? array.percentile_nearest_rank(fak_e_b, 90) : na) : (array.size(fak_e_s) > 0 ? array.percentile_nearest_rank(fak_e_s, 90) : na)
+            float y_rev90 = na(rev_p90) ? na : (render_side == 1 ? st.or_high * (1.0 - rev_p90 / 100.0) : st.or_low * (1.0 + rev_p90 / 100.0))
+            if not na(y_rev90)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_rev90, ln_end, color.new(r_max_reversal_color, inactive_alpha), "Dotted", i_line_width_secondary, "Max Reversal P90 " + STL.f_pct_fmt(rev_p90) + lb_sfx, color.new(r_max_reversal_color, inactive_alpha), label_x, str.lower(i_label_strategy), 65, m_group)
+
+            // Invalidation (MAE P80)
+            float mae_p80 = array.size(bo_e_f) > 0 ? array.percentile_nearest_rank(bo_e_f, 80) : na
+            float y_inv = na(mae_p80) ? na : render_px * (render_side == 1 ? 1.0 - mae_p80 / 100.0 : 1.0 + mae_p80 / 100.0)
+            if not na(y_inv)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_inv, ln_end, color.new(r_invalidation_color, inactive_alpha), "Solid", i_line_width_primary, "Invalidation P80 " + STL.f_pct_fmt(mae_p80) + lb_sfx, color.new(r_invalidation_color, inactive_alpha), label_x, str.lower(i_label_strategy), 95, m_group)
+
+        // 4. Shared Midpoint Logic
+        int n_m = math.min(array.size(hist.mid_hit_bull), array.size(hist.mid_hit_bear))
+        int m_h = 0
+        if n_m > 0
+            for k = 0 to n_m - 1
+                m_h += array.get(hist.mid_hit_bull, k) ? 1 : 0
+                m_h += array.get(hist.mid_hit_bear, k) ? 1 : 0
+        float m_pct = n_m == 0 ? na : (float(m_h) / float(2 * n_m)) * 100.0
         if not f_near_any(st.or_mid, tac_ys, suppress_thr)
-            string mid_label = "Midpoint (" + STL.f_pct_fmt(mid_hit_pct) + ")"
-            HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, st.or_mid, mid_label, mid_line_color, 50, sp.name + "_mid", 0)
+            string m_lbl = "Midpoint (" + STL.f_pct_fmt(m_pct) + ")" + lb_sfx
+            HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, st.or_mid, m_lbl, r_mid_line_color, 50, sp.name + "_mid", 0)
 
     // ========================================================================
     // MFE Histogram (indicator-specific density-driven profile)
@@ -743,9 +835,9 @@ f_render_range(int idx) =>
                 if v_hi >= v_lo
                     float y_low = st.bull_ref * (1.0 + v_lo / 100.0)
                     float y_high = st.bull_ref * (1.0 + v_hi / 100.0)
-                    Zones.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, bull_color, 58)
+                    Zones.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, r_bull_color, 58)
                     if i_show_hist_bin_labels
-                        Core.f_label_registry_push_ex(lbl_reg, (y_high + y_low) / 2.0, f_fmt_percentile_text(p_lo), stat_label_color, st.or_start_bar - 1, str.lower(i_label_strategy), 10, sp.name + "_hist_bin", "right", profile_label_size, "Label", "")
+                        Core.f_label_registry_push_ex(lbl_reg, (y_high + y_low) / 2.0, f_fmt_percentile_text(p_lo), r_stat_label_color, st.or_start_bar - 1, str.lower(i_label_strategy), 10, sp.name + "_hist_bin", "right", profile_label_size, "Label", "", 0, lc_state)
 
         // BEAR HISTOGRAM
         if array.size(bear_filtered) > 0
@@ -793,7 +885,7 @@ f_render_range(int idx) =>
                     float y_low = st.bear_ref * (1.0 - v_hi / 100.0)
                     Zones.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, bear_color, 58)
                     if i_show_hist_bin_labels
-                        Core.f_label_registry_push_ex(lbl_reg, (y_high + y_low) / 2.0, f_fmt_percentile_text(p_lo), stat_label_color, st.or_start_bar - 1, str.lower(i_label_strategy), 10, sp.name + "_hist_bin", "right", profile_label_size, "Label", "")
+                        Core.f_label_registry_push_ex(lbl_reg, (y_high + y_low) / 2.0, f_fmt_percentile_text(p_lo), stat_label_color, st.or_start_bar - 1, str.lower(i_label_strategy), 10, sp.name + "_hist_bin", "right", profile_label_size, "Label", "", 0, lc_state)
 
     // ========================================================================
     // Time Distribution Histogram
@@ -841,7 +933,7 @@ f_render_range(int idx) =>
             float line_h = prof_h * 1.2
 
             int title_x = st.or_start_bar + int(float(time_data_dur / 2) * bars_per_min)
-            Core.f_label_registry_push_ex(lbl_reg, base_y + syminfo.mintick * 80.0, sp.name + " Time Dist", color.new(time_title_color, 50), title_x, "off", 100, "", "down", profile_label_size, "Label", "")
+            Core.f_label_registry_push_ex(lbl_reg, base_y + syminfo.mintick * 80.0, sp.name + " Time Dist" + lb_sfx, color.new(time_title_color, 50), title_x, "off", 100, "", "down", profile_label_size, "Label", "", 0, lc_state)
 
             for bi = 0 to num_bins - 1
                 int x_l = st.or_start_bar + int(float(bi * i_time_bucket_mins) * bars_per_min)
@@ -875,10 +967,10 @@ f_render_range(int idx) =>
                 int x_med = st.or_start_bar + int(med_t * bars_per_min)
                 if i_show_time_avg
                     Core.f_draw_vline(ds, x_avg, base_y + line_h, base_y, stat_avg_color, "Dashed", profile_line_width)
-                    Core.f_label_registry_push_ex(lbl_reg, base_y + line_h, "Bull AVG", stat_avg_color, x_avg, str.lower(i_label_strategy), 40, sp.name + "_time_dist", "down", profile_label_size, "Label", "")
+                    Core.f_label_registry_push_ex(lbl_reg, base_y + line_h, "Bull AVG" + lb_sfx, stat_avg_color, x_avg, str.lower(i_label_strategy), 40, sp.name + "_time_dist", "down", profile_label_size, "Label", "", 0, lc_state)
                 if i_show_time_med
                     Core.f_draw_vline(ds, x_med, base_y + line_h * 0.8, base_y, stat_median_color, "Dashed", profile_line_width)
-                    Core.f_label_registry_push_ex(lbl_reg, base_y + line_h * 0.8, "Bull MED", stat_median_color, x_med, str.lower(i_label_strategy), 35, sp.name + "_time_dist", "down", profile_label_size, "Label", "")
+                    Core.f_label_registry_push_ex(lbl_reg, base_y + line_h * 0.8, "Bull MED" + lb_sfx, stat_median_color, x_med, str.lower(i_label_strategy), 35, sp.name + "_time_dist", "down", profile_label_size, "Label", "", 0, lc_state)
 
             if array.size(bear_t_nz) > 0
                 float avg_t = array.avg(bear_t_nz)
@@ -887,108 +979,35 @@ f_render_range(int idx) =>
                 int x_med = st.or_start_bar + int(med_t * bars_per_min)
                 if i_show_time_avg
                     Core.f_draw_vline(ds, x_avg, base_y, base_y - line_h, stat_avg_color, "Dashed", profile_line_width)
-                    Core.f_label_registry_push_ex(lbl_reg, base_y - line_h, "Bear AVG", stat_avg_color, x_avg, str.lower(i_label_strategy), 40, sp.name + "_time_dist", "up", profile_label_size, "Label", "")
+                    Core.f_label_registry_push_ex(lbl_reg, base_y - line_h, "Bear AVG" + lb_sfx, stat_avg_color, x_avg, str.lower(i_label_strategy), 40, sp.name + "_time_dist", "up", profile_label_size, "Label", "", 0, lc_state)
                 if i_show_time_med
                     Core.f_draw_vline(ds, x_med, base_y, base_y - line_h * 0.8, stat_median_color, "Dashed", profile_line_width)
-                    Core.f_label_registry_push_ex(lbl_reg, base_y - line_h * 0.8, "Bear MED", stat_median_color, x_med, str.lower(i_label_strategy), 35, sp.name + "_time_dist", "up", profile_label_size, "Label", "")
+                    Core.f_label_registry_push_ex(lbl_reg, base_y - line_h * 0.8, "Bear MED" + lb_sfx, stat_median_color, x_med, str.lower(i_label_strategy), 35, sp.name + "_time_dist", "up", profile_label_size, "Label", "", 0, lc_state)
 
-    // ========================================================================
-    // Phase 2 Directional Overlay
-    // ========================================================================
-    if i_show_phase2_levels and st.ref_set and not na(st.or_start_bar)
-        int ln_end = line_render_end
-        int bo_side = array.get(phase2_breakout_side, idx)
-        int live_bias = array.get(phase2_live_bias, idx)
-        float bo_px = array.get(phase2_breakout_price, idx)
-        bool pb_armed = array.get(phase2_pullback_armed, idx)
-        int phase2_label_x = ln_end + i_label_gap_bars
+    // Label registry will be flushed by the caller (f_render_range) to ensure all session instances are staggered together
 
-        int render_side = bo_side != 0 ? bo_side : live_bias
-        float render_px = not na(bo_px) ? bo_px : (render_side == 1 ? st.or_high : render_side == -1 ? st.or_low : na)
+f_render_range(int idx) =>
+    RSL.RangeSpec sp = array.get(specs, idx)
+    RSL.RangeState st = array.get(states, idx)
+    STL.ExcursionHistory hist = array.get(histories, idx)
+    Core.PineDrawingState ds = array.get(drawings, idx)
 
-        if render_side != 0 and not na(render_px)
-            int inactive_alpha = i_emphasize_active_side and live_bias != 0 and live_bias != render_side ? 65 : 0
+    Core.f_clear_all(ds)
+    string profile_label_size = Core.f_display_profile_label_size(i_label_size, i_display_profile)
+    Core.LabelRegistry lbl_reg = Core.f_label_registry_begin()
 
-            array<float> bo_mfe_hist = render_side == 1 ? STL.f_build_filtered(hist.bo_mfe_bull) : STL.f_build_filtered(hist.bo_mfe_bear)
-            float p20_bo = array.size(bo_mfe_hist) > 0 ? array.percentile_nearest_rank(bo_mfe_hist, 20) : na
+    // Render historical sessions first (so current sits on top)
+    if i_historical_lookback > 0
+        int offset = idx * i_historical_lookback
+        for i = 0 to i_historical_lookback - 1
+            int h = i_historical_lookback - i
+            RSL.RangeState hst = array.get(history_buffer, offset + h - 1)
+            if not na(hst) and not na(hst.or_start_bar)
+                f_render_session_instance(idx, sp, hst, hist, ds, lbl_reg, h)
 
-            float f50 = na
-            float f75 = na
-            if render_side == 1
-                array<float> fake_mfe_hist = STL.f_build_filtered(hist.fake_mfe_bull)
-                f50 := array.size(fake_mfe_hist) > 0 ? array.percentile_nearest_rank(fake_mfe_hist, 50) : na
-                f75 := array.size(fake_mfe_hist) > 0 ? array.percentile_nearest_rank(fake_mfe_hist, 75) : na
-            else
-                array<float> fake_mfe_hist = STL.f_build_filtered(hist.fake_mfe_bear)
-                f50 := array.size(fake_mfe_hist) > 0 ? array.percentile_nearest_rank(fake_mfe_hist, 50) : na
-                f75 := array.size(fake_mfe_hist) > 0 ? array.percentile_nearest_rank(fake_mfe_hist, 75) : na
+    // Render current session
+    f_render_session_instance(idx, sp, st, hist, ds, lbl_reg, 0)
 
-            array<float> rev_f = render_side == 1 ? STL.f_build_filtered(hist.fake_mae_bull) : STL.f_build_filtered(hist.fake_mae_bear)
-            float rev_p20 = array.size(rev_f) > 0 ? array.percentile_nearest_rank(rev_f, 20) : na
-            float rev_p50 = array.size(rev_f) > 0 ? array.percentile_nearest_rank(rev_f, 50) : na
-            float rev_p90 = array.size(rev_f) > 0 ? array.percentile_nearest_rank(rev_f, 90) : na
-
-            array<float> mae_side = render_side == 1 ? STL.f_build_filtered(hist.bo_mae_bull) : STL.f_build_filtered(hist.bo_mae_bear)
-            float mae_p80 = array.size(mae_side) > 0 ? array.percentile_nearest_rank(mae_side, 80) : na
-
-            float y_cash = na
-            float y_confirm = na
-            float y_pivot = na
-            float y_rev20 = na
-            float y_rev50 = na
-            float y_rev90 = na
-            float y_inv = na
-            if render_side == 1
-                y_cash := na(p20_bo) ? na : render_px * (1.0 + p20_bo / 100.0)
-                y_confirm := na(f75) ? na : render_px * (1.0 + f75 / 100.0)
-                y_pivot := na(f50) ? na : render_px * (1.0 + f50 / 100.0)
-                y_rev20 := na(rev_p20) ? na : st.or_high * (1.0 - rev_p20 / 100.0)
-                y_rev50 := na(rev_p50) ? na : st.or_high * (1.0 - rev_p50 / 100.0)
-                y_rev90 := na(rev_p90) ? na : st.or_high * (1.0 - rev_p90 / 100.0)
-                y_inv := na(mae_p80) ? na : render_px * (1.0 - mae_p80 / 100.0)
-            else
-                y_cash := na(p20_bo) ? na : render_px * (1.0 - p20_bo / 100.0)
-                y_confirm := na(f75) ? na : render_px * (1.0 - f75 / 100.0)
-                y_pivot := na(f50) ? na : render_px * (1.0 - f50 / 100.0)
-                y_rev20 := na(rev_p20) ? na : st.or_low * (1.0 + rev_p20 / 100.0)
-                y_rev50 := na(rev_p50) ? na : st.or_low * (1.0 + rev_p50 / 100.0)
-                y_rev90 := na(rev_p90) ? na : st.or_low * (1.0 + rev_p90 / 100.0)
-                y_inv := na(mae_p80) ? na : render_px * (1.0 + mae_p80 / 100.0)
-
-            // Reversal target zone
-            if not na(y_rev20) and not na(y_rev50)
-                float z_top = math.max(y_rev20, y_rev50)
-                float z_bot = math.min(y_rev20, y_rev50)
-                int z_w = math.max(2, ln_end - st.or_start_bar)
-                float z_mid = (z_top + z_bot) / 2.0
-                int z_mid_x = st.or_start_bar + int(math.floor(z_w / 2.0))
-                int zone_line_alpha = math.min(i_zone_transparency + 10, 95)
-                int zone_text_alpha = math.min(int(math.round(float(i_zone_transparency) * 0.6)), 90)
-                Zones.f_draw_hist_band(ds, st.or_start_bar, z_top, z_bot, z_w, reversal_zone_color, i_zone_transparency)
-                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "C", st.or_start_bar, st.or_start_bar + z_w, z_mid, "", color.new(r_reversal_zone_color, zone_line_alpha), 55, sp.name + "_rev_zone_mid", 0)
-                Core.f_label_registry_push_ex(lbl_reg, z_mid, "Reversal Zone (P20-P50 Fake MAE)", color.new(stat_label_color, zone_text_alpha), z_mid_x, str.lower(i_label_strategy), 100, sp.name + "_rev_zone", "center", profile_label_size, "Label", "")
-
-            // Phase 2 directional lines
-            if not na(render_px)
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, render_px, ln_end, color.new(breakout_activation_color, 0), "Dotted", i_line_width_primary, "Breakout Activation " + STL.f_pct_fmt(0), color.new(breakout_activation_color, inactive_alpha), phase2_label_x, str.lower(i_label_strategy), 90, "phase2-levels")
-            float pb_px = array.get(phase2_pullback_price, idx)
-            if not na(pb_px)
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, pb_px, ln_end, color.new(pullback_activation_color, 0), "Dashed", i_line_width_primary, "Pullback Activation P25 MAE", color.new(pullback_activation_color, inactive_alpha), phase2_label_x, str.lower(i_label_strategy), 85, "phase2-levels")
-            if not na(y_cash)
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_cash, ln_end, color.new(bo_cashflow_color, inactive_alpha), "Dotted", i_line_width_secondary, "BO Cashflow P20 (MFE from BO) " + STL.f_pct_fmt(p20_bo), color.new(bo_cashflow_color, inactive_alpha), phase2_label_x, str.lower(i_label_strategy), 80, "phase2-levels")
-            if not na(y_confirm)
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_confirm, ln_end, color.new(bo_confirm_color, inactive_alpha), "Dashed", i_line_width_primary, "BO Confirm P75 (Fake MFE) " + STL.f_pct_fmt(f75), color.new(bo_confirm_color, inactive_alpha), phase2_label_x, str.lower(i_label_strategy), 75, "phase2-levels")
-            if not na(y_pivot)
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_pivot, ln_end, color.new(pivot_color, inactive_alpha), "Solid", i_line_width_primary, "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(f50), color.new(pivot_color, inactive_alpha), phase2_label_x, str.lower(i_label_strategy), 70, "phase2-levels")
-            if not na(y_rev90)
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_rev90, ln_end, color.new(max_reversal_color, inactive_alpha), "Dotted", i_line_width_secondary, "Max Reversal P90 (Fake MAE) " + STL.f_pct_fmt(rev_p90), color.new(max_reversal_color, inactive_alpha), phase2_label_x, str.lower(i_label_strategy), 65, "phase2-levels")
-            if not na(y_inv)
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_inv, ln_end, color.new(invalidation_line_color, inactive_alpha), "Solid", i_line_width_primary, "PB | BO Invalidation P80 (BO MAE) " + STL.f_pct_fmt(mae_p80), color.new(invalidation_line_color, inactive_alpha), phase2_label_x, str.lower(i_label_strategy), 95, "phase2-levels")
-
-            if i_show_debug and not pb_armed
-                Core.f_draw_stat_label(ds, phase2_label_x, render_side == 1 ? st.or_high : st.or_low, "PB not armed", color.new(pb_not_armed_color, 90), "left", "tiny")
-
-    // Flush label registry
     float merge_thr_manual = syminfo.mintick * float(i_label_merge_threshold_ticks)
     float merge_thr_auto = Core.f_merge_threshold_for_symbol(syminfo.ticker, syminfo.mintick)
     float merge_thr = math.max(merge_thr_manual, merge_thr_auto)
