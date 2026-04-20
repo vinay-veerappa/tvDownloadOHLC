@@ -1,5 +1,5 @@
 //@version=6
-library("StatsLib")
+library("StatsLib", overlay=true)
 
 export type ExcursionHistory
     string range_name
@@ -38,45 +38,29 @@ export type ExcursionHistory
     array<float> fake_mae_bear
     array<float> fakeout_reversal_bull
     array<float> fakeout_reversal_bear
+    array<int> sig_side        // Added in v4
+    array<int> sig_outcome     // Added in v4
 
 export f_new_excursion_history(string name) =>
     ExcursionHistory.new(
         name,
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_int(0),
-        array.new_int(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_bool(0),
-        array.new_bool(0),
+        array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
+        array.new_int(0), array.new_int(0),
+        array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
+        array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
+        array.new_bool(0), array.new_bool(0),
         array.new_float(0),
         array.new_int(0),
-        array.new_float(0),
-        array.new_float(0),
+        array.new_float(0), array.new_float(0),
         array.new_int(0),
         array.new_bool(0),
+        array.new_bool(0), array.new_bool(0),
+        array.new_bool(0), array.new_bool(0),
+        array.new_bool(0), array.new_bool(0),
         array.new_bool(0),
-        array.new_bool(0),
-        array.new_bool(0),
-        array.new_bool(0),
-        array.new_bool(0),
-        array.new_bool(0),
-        array.new_bool(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0),
-        array.new_float(0)
+        array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
+        array.new_float(0), array.new_float(0),
+        array.new_int(0), array.new_int(0)
     )
 
 export f_build_filtered(array<float> src) =>
@@ -266,7 +250,9 @@ export f_commit_daily(
     float close_at_cutoff,
     float session_low_data,
     float session_high_data,
-    float ev_target_pct
+    float ev_target_pct,
+    int sig_side = 0,
+    int sig_outcome = 0
 ) =>
     bool ev_bull = f_compute_ev_win(bull_mfe, ev_target_pct)
     bool ev_bear = f_compute_ev_win(bear_mfe, ev_target_pct)
@@ -327,6 +313,8 @@ export f_commit_daily(
     array.push(hist.fake_mae_bear, fake_mae_s)
     array.push(hist.fakeout_reversal_bull, frb)
     array.push(hist.fakeout_reversal_bear, frs)
+    array.push(hist.sig_side, sig_side)
+    array.push(hist.sig_outcome, sig_outcome)
 
 export f_day_full(int dow) =>
     switch dow

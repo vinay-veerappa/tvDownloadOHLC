@@ -1,5 +1,5 @@
 //@version=6
-library("RangeSessionLib")
+library("RangeSessionLib", overlay=true)
 
 // Static range definition.
 export type RangeSpec
@@ -53,6 +53,9 @@ export type RangeState
     float session_high_data
     float close_at_cutoff
     bool is_committed
+    int sig_side        // 0=None, 1=Bull, -1=Bear
+    int sig_outcome     // 0=Pending, 1=Full, -1=Failed
+    bool is_terminated  // True if outcome is locked for the day
     array<float> daily_pivot_bulls
     array<float> daily_pivot_bears
     array<int> data_mins
@@ -126,6 +129,9 @@ export f_new_range_state(RangeSpec spec) =>
         na,
         na,
         false,
+        0,
+        0,
+        false,
         array.new_float(0),
         array.new_float(0),
         array.new_int(0),
@@ -167,6 +173,9 @@ export f_reset_daily(RangeState state) =>
     state.session_high_data := na
     state.close_at_cutoff := na
     state.is_committed := false
+    state.sig_side := 0
+    state.sig_outcome := 0
+    state.is_terminated := false
     array.clear(state.daily_pivot_bulls)
     array.clear(state.daily_pivot_bears)
     array.clear(state.data_mins)
