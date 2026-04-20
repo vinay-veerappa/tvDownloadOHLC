@@ -71,6 +71,17 @@ export f_build_filtered(array<float> src) =>
             if not na(v) and v > 0
                 array.push(out, v)
     out
+    
+export f_build_filtered_by_outcome(array<float> src, array<int> side_hist, array<int> outcome_hist, int target_side, bool filter_wins) =>
+    array<float> out = array.new_float(0)
+    if array.size(src) > 0 and array.size(src) == array.size(side_hist) and array.size(src) == array.size(outcome_hist)
+        for i = 0 to array.size(src) - 1
+            float val = array.get(src, i)
+            if not na(val) and val > 0 and array.get(side_hist, i) == target_side
+                if not filter_wins or array.get(outcome_hist, i) == 1
+                    array.push(out, val)
+    out
+
 
 export f_track_mfe(float bar_h, float bar_l, int bar_mins_since_or, float bull_ref, float bear_ref, float prev_bull_mfe, float prev_bear_mfe, int prev_bull_peak, int prev_bear_peak) =>
     float nb = prev_bull_mfe

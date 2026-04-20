@@ -38,7 +38,7 @@ import vveerappa/PineDrawingMarkers/3 as Markers
 import vveerappa/PineDrawingZones/3 as Zones
 import vveerappa/PineDrawingTables/4 as Tables
 import vveerappa/PineDrawingVerticalMarkers/3 as VMarks
-import vveerappa/StatsLib/4 as STL
+import vveerappa/StatsLib/5 as STL
 
 // ============================================================================
 // Inputs — Theme
@@ -113,6 +113,9 @@ i_hist_start_pct = input.int(20, "Histogram Start Percentile", minval=1, maxval=
 i_hist_end_pct = input.int(90, "Histogram End Percentile", minval=2, maxval=99, group=grp_features)
 i_hist_pct_step = input.int(5, "Histogram Percentile Step", minval=1, maxval=25, group=grp_features)
 i_show_hist_bin_labels = input.bool(false, "Show Histogram Bin Labels", group=grp_features)
+i_show_bo_histogram = input.bool(true, "Show Breakout Histograms", group=grp_features)
+i_bo_hist_filter_wins = input.bool(false, "Filter BO Hist by Success", group=grp_features)
+i_bo_hist_offset_mult = input.float(1.25, "Breakout Hist Offset Multiplier", minval=0, step=0.1, group=grp_features)
 i_pct_confirm = input.int(20, "Confirm Percentile", minval=1, maxval=99, group=grp_features)
 i_pct_target1 = input.int(50, "Target1 Percentile", minval=1, maxval=99, group=grp_features)
 i_pct_target2 = input.int(75, "Target2 Percentile", minval=1, maxval=99, group=grp_features)
@@ -292,7 +295,7 @@ if barstate.isfirst
     f_init_runtime()
 
 // Lower timeframe cache once per bar.
-[ltf_high_arr, ltf_low_arr, ltf_close_arr, ltf_time_arr] = request.security_lower_tf(syminfo.tickerid, "1", [high, low, close, time])
+[ltf_open_arr, ltf_high_arr, ltf_low_arr, ltf_close_arr, ltf_time_arr] = request.security_lower_tf(syminfo.tickerid, "1", [open, high, low, close, time])
 int ny_dow = dayofweek(time, i_timezone)
 
 // ============================================================================
@@ -332,7 +335,6 @@ f_render_geometry(RSL.RangeSpec sp, RSL.RangeState st, int tf_min) =>
     int bars_to_cutoff = int(math.max(1.0, math.ceil(float(total_mins_to_cutoff) / float(tf_min))))
     int start_bar = na(st.or_start_bar) ? bar_index : st.or_start_bar
     int cutoff_bar = start_bar + bars_to_cutoff
-    cutoff_bar := math.min(cutoff_bar, bar_index)
     int render_end_bar = cutoff_bar
     int profile_width = math.max(10, bars_to_cutoff)
     [bars_to_cutoff, cutoff_bar, render_end_bar, profile_width]
@@ -397,6 +399,7 @@ f_track_range(int idx) =>
                     st.or_high := h
                     st.or_low := l
                     st.or_last_close := c
+                    st.session_open := array.get(ltf_open_arr, j)
                     st.or_building := true
                     st.or_start_bar := bar_index
                 else
@@ -410,6 +413,7 @@ f_track_range(int idx) =>
             st.or_high := high
             st.or_low := low
             st.or_last_close := close
+            st.session_open := open
             st.or_building := true
             st.or_start_bar := bar_index
         else
@@ -424,7 +428,6 @@ f_track_range(int idx) =>
         st.bull_ref := st.or_high
         st.bear_ref := st.or_low
         st.or_mid := (st.or_high + st.or_low) / 2.0
-        st.session_open := st.or_last_close
         st.ref_set := true
 
     bool ltf_in_data = false
@@ -547,8 +550,12 @@ f_track_range(int idx) =>
     latched_side := array.get(sig_side, idx)
     int latched_outcome = array.get(sig_outcome, idx)
     if latched_side != 0 and latched_outcome == 0
-        array<float> mfe_side = latched_side == 1 ? STL.f_build_filtered(hist.mfe_bull) : STL.f_build_filtered(hist.mfe_bear)
-        array<float> mae_bo_side = latched_side == 1 ? STL.f_build_filtered(hist.bo_mae_bull) : STL.f_build_filtered(hist.bo_mae_bear)
+        array<float> mfe_src = latched_side == 1 ? hist.mfe_bull : hist.mfe_bear
+        array<float> mae_bo_src = latched_side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear
+        
+        array<float> mfe_side = STL.f_build_filtered_by_outcome(mfe_src, hist.sig_side, hist.sig_outcome, latched_side, i_bo_hist_filter_wins)
+        array<float> mae_bo_side = STL.f_build_filtered_by_outcome(mae_bo_src, hist.sig_side, hist.sig_outcome, latched_side, i_bo_hist_filter_wins)
+        
         float target_p50 = array.size(mfe_side) > 0 ? array.percentile_nearest_rank(mfe_side, 50) : na
         float invalidation_p80 = array.size(mae_bo_side) > 0 ? array.percentile_nearest_rank(mae_bo_side, 80) : na
         float bo_price = array.get(sig_breakout_price, idx)
@@ -564,7 +571,8 @@ f_track_range(int idx) =>
     int bo_side_curr = array.get(sig_breakout_side, idx)
     float bo_px_curr = array.get(sig_breakout_price, idx)
     if st.ref_set and effective_in_data and bo_side_curr != 0 and not pb_armed and not na(bo_px_curr)
-        array<float> mae_side = bo_side_curr == 1 ? STL.f_build_filtered(hist.bo_mae_bull) : STL.f_build_filtered(hist.bo_mae_bear)
+        array<float> mae_bo_src = bo_side_curr == 1 ? hist.bo_mae_bull : hist.bo_mae_bear
+        array<float> mae_side = STL.f_build_filtered_by_outcome(mae_bo_src, hist.sig_side, hist.sig_outcome, bo_side_curr, i_bo_hist_filter_wins)
         if array.size(mae_side) > 0
             float p25_mae = array.percentile_nearest_rank(mae_side, 25)
             float act_px = bo_side_curr == 1 ? bo_px_curr * (1.0 - p25_mae / 100.0) : bo_px_curr * (1.0 + p25_mae / 100.0)
@@ -595,6 +603,69 @@ f_track_range(int idx) =>
 if array.size(specs) > 0
     for i = 0 to array.size(specs) - 1
         f_track_range(i)
+
+// ============================================================================
+// Rendering Helpers
+// ============================================================================
+
+f_render_dist_histogram_internal(Core.PineDrawingState ds, Core.LabelRegistry lbl_reg, float anchor_px, array<float> data_filtered, int direction, color base_color, int x1, int max_width, string lc_state, string profile_label_size, color stat_label_color, int hist_pct_start, int hist_pct_end, int hist_pct_step, bool show_labels, string label_strategy, string sp_name) =>
+    int hist_bin_count = int(math.ceil(float(hist_pct_end - hist_pct_start) / float(hist_pct_step)))
+    
+    if array.size(data_filtered) > 0
+        array<float> val_los = array.new_float(0)
+        array<float> val_his = array.new_float(0)
+        array<float> densities = array.new_float(0)
+        array<float> pct_los = array.new_float(0)
+        
+        for b = 0 to hist_bin_count - 1
+            float p_lo = hist_pct_start + float(hist_pct_step * b)
+            float p_hi = math.min(hist_pct_end, p_lo + hist_pct_step)
+            float v_lo = array.percentile_nearest_rank(data_filtered, p_lo)
+            float v_hi = array.percentile_nearest_rank(data_filtered, p_hi)
+            float band_span = math.max(v_hi - v_lo, 0.0001)
+            int count = 0
+            for s = 0 to array.size(data_filtered) - 1
+                float val = array.get(data_filtered, s)
+                if val >= v_lo and (b == hist_bin_count - 1 ? val <= v_hi : val < v_hi)
+                    count += 1
+            array.push(val_los, v_lo)
+            array.push(val_his, v_hi)
+            array.push(densities, float(count) / band_span)
+            array.push(pct_los, p_lo)
+            
+        // P20 Density Flattening (prevents thin long tails from becoming massive boxes)
+        float p20_density = na
+        for b = 0 to hist_bin_count - 1
+            if array.get(pct_los, b) >= 20.0 and na(p20_density)
+                p20_density := array.get(densities, b)
+        if not na(p20_density)
+            for b = 0 to hist_bin_count - 1
+                if array.get(pct_los, b) < 20.0
+                    array.set(densities, b, math.min(array.get(densities, b), p20_density))
+                    
+        float max_density = 0.0
+        for b = 0 to hist_bin_count - 1
+            max_density := math.max(max_density, array.get(densities, b))
+            
+        for b = 0 to hist_bin_count - 1
+            float v_lo = array.get(val_los, b)
+            float v_hi = array.get(val_his, b)
+            float density = array.get(densities, b)
+            float p_lo = array.get(pct_los, b)
+            float width_normalized = max_density > 0 ? density / max_density : 0.0
+            
+            // Apply slight shaping for Bear/Bear consistency if needed? 
+            // Previous code had sqrt for bear but not bull, let's normalize to standard linear or sqrt if preferred.
+            // Linear looks cleaner for comparisons.
+            int box_width = math.max(2, int(math.round(width_normalized * float(max_width))))
+            
+            if v_hi >= v_lo
+                float y1 = anchor_px * (1.0 + (float(direction) * v_lo / 100.0))
+                float y2 = anchor_px * (1.0 + (float(direction) * v_hi / 100.0))
+                Zones.f_draw_hist_band(ds, x1, y1, y2, box_width, base_color, 58)
+                if show_labels
+                    Core.f_label_registry_push_ex(lbl_reg, (y1 + y2) / 2.0, f_fmt_percentile_text(p_lo), stat_label_color, x1 - 1, label_strategy, 10, sp_name + "_hist_bin", "right", profile_label_size, "Label", "", 0, lc_state)
+
 
 // ============================================================================
 // Rendering
@@ -647,17 +718,22 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
             float _pb = lookback == 0 ? array.get(sig_pullback_price, idx) : na
             if not na(_pb)
                 array.push(tac_ys, _pb)
-            array<float> _bm = _rs == 1 ? STL.f_build_filtered(hist.bo_mfe_bull) : STL.f_build_filtered(hist.bo_mfe_bear)
+            array<float> _bm_src = _rs == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear
+            array<float> _bm = STL.f_build_filtered_by_outcome(_bm_src, hist.sig_side, hist.sig_outcome, _rs, i_bo_hist_filter_wins)
             if array.size(_bm) > 0
                 float _p20 = array.percentile_nearest_rank(_bm, 20)
                 array.push(tac_ys, _rs == 1 ? _rp * (1.0 + _p20 / 100.0) : _rp * (1.0 - _p20 / 100.0))
-            array<float> _fm = _rs == 1 ? STL.f_build_filtered(hist.fake_mfe_bull) : STL.f_build_filtered(hist.fake_mfe_bear)
+            
+            array<float> _fm_src = _rs == 1 ? hist.fake_mfe_bull : hist.fake_mfe_bear
+            array<float> _fm = STL.f_build_filtered_by_outcome(_fm_src, hist.sig_side, hist.sig_outcome, _rs, i_bo_hist_filter_wins)
             if array.size(_fm) > 0
                 float _f50 = array.percentile_nearest_rank(_fm, 50)
                 float _f75 = array.percentile_nearest_rank(_fm, 75)
                 array.push(tac_ys, _rs == 1 ? _rp * (1.0 + _f75 / 100.0) : _rp * (1.0 - _f75 / 100.0))
                 array.push(tac_ys, _rs == 1 ? _rp * (1.0 + _f50 / 100.0) : _rp * (1.0 - _f50 / 100.0))
-            array<float> _rf = _rs == 1 ? STL.f_build_filtered(hist.fake_mae_bull) : STL.f_build_filtered(hist.fake_mae_bear)
+            
+            array<float> _rf_src = _rs == 1 ? hist.fake_mae_bull : hist.fake_mae_bear
+            array<float> _rf = STL.f_build_filtered_by_outcome(_rf_src, hist.sig_side, hist.sig_outcome, _rs, i_bo_hist_filter_wins)
             if array.size(_rf) > 0
                 float _r20 = array.percentile_nearest_rank(_rf, 20)
                 float _r50 = array.percentile_nearest_rank(_rf, 50)
@@ -665,7 +741,9 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 array.push(tac_ys, _rs == 1 ? st.or_high * (1.0 - _r20 / 100.0) : st.or_low * (1.0 + _r20 / 100.0))
                 array.push(tac_ys, _rs == 1 ? st.or_high * (1.0 - _r50 / 100.0) : st.or_low * (1.0 + _r50 / 100.0))
                 array.push(tac_ys, _rs == 1 ? st.or_high * (1.0 - _r90 / 100.0) : st.or_low * (1.0 + _r90 / 100.0))
-            array<float> _ms = _rs == 1 ? STL.f_build_filtered(hist.bo_mae_bull) : STL.f_build_filtered(hist.bo_mae_bear)
+            
+            array<float> _bo_mae_src = _rs == 1 ? hist.bo_mae_bull : hist.bo_mae_bear
+            array<float> _ms = STL.f_build_filtered_by_outcome(_bo_mae_src, hist.sig_side, hist.sig_outcome, _rs, i_bo_hist_filter_wins)
             if array.size(_ms) > 0
                 float _mp80 = array.percentile_nearest_rank(_ms, 80)
                 array.push(tac_ys, _rs == 1 ? _rp * (1.0 - _mp80 / 100.0) : _rp * (1.0 + _mp80 / 100.0))
@@ -693,12 +771,21 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
         // 1. Core Percentile Calculations
         array<float> mfe_b = STL.f_build_filtered(hist.mfe_bull)
         array<float> mfe_s = STL.f_build_filtered(hist.mfe_bear)
-        array<float> fak_m_b = STL.f_build_filtered(hist.fake_mfe_bull)
-        array<float> fak_m_s = STL.f_build_filtered(hist.fake_mfe_bear)
-        array<float> fak_e_b = STL.f_build_filtered(hist.fake_mae_bull)
-        array<float> fak_e_s = STL.f_build_filtered(hist.fake_mae_bear)
-        array<float> bo_m_f = render_side == 1 ? STL.f_build_filtered(hist.bo_mfe_bull) : STL.f_build_filtered(hist.bo_mfe_bear)
-        array<float> bo_e_f = render_side == 1 ? STL.f_build_filtered(hist.bo_mae_bull) : STL.f_build_filtered(hist.bo_mae_bear)
+        
+        array<float> fak_m_b_src = hist.fake_mfe_bull
+        array<float> fak_m_s_src = hist.fake_mfe_bear
+        array<float> fak_m_b = STL.f_build_filtered_by_outcome(fak_m_b_src, hist.sig_side, hist.sig_outcome, 1, i_bo_hist_filter_wins)
+        array<float> fak_m_s = STL.f_build_filtered_by_outcome(fak_m_s_src, hist.sig_side, hist.sig_outcome, -1, i_bo_hist_filter_wins)
+        
+        array<float> fak_e_b_src = hist.fake_mae_bull
+        array<float> fak_e_s_src = hist.fake_mae_bear
+        array<float> fak_e_b = STL.f_build_filtered_by_outcome(fak_e_b_src, hist.sig_side, hist.sig_outcome, 1, i_bo_hist_filter_wins)
+        array<float> fak_e_s = STL.f_build_filtered_by_outcome(fak_e_s_src, hist.sig_side, hist.sig_outcome, -1, i_bo_hist_filter_wins)
+        
+        array<float> bo_m_f_src = render_side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear
+        array<float> bo_e_f_src = render_side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear
+        array<float> bo_m_f = STL.f_build_filtered_by_outcome(bo_m_f_src, hist.sig_side, hist.sig_outcome, render_side, i_bo_hist_filter_wins)
+        array<float> bo_e_f = STL.f_build_filtered_by_outcome(bo_e_f_src, hist.sig_side, hist.sig_outcome, render_side, i_bo_hist_filter_wins)
 
         bool draw_bull = i_show_stat_lines and array.size(mfe_b) > 0
         bool draw_bear = i_show_stat_lines and array.size(mfe_s) > 0
@@ -706,13 +793,23 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
         // 2. Statistical Levels (Confirm, Stretch, Target75) - Unfiltered Context
         if draw_bull
             float p_con = array.percentile_nearest_rank(mfe_b, i_pct_confirm)
+            float p_med = array.median(mfe_b)
+            float p_avg = array.avg(mfe_b)
             float p_t75 = array.percentile_nearest_rank(mfe_b, i_pct_target2)
             float p_str = array.percentile_nearest_rank(mfe_b, i_pct_stretch)
+            
             float y_con = st.bull_ref * (1.0 + p_con / 100.0)
+            float y_med = st.bull_ref * (1.0 + p_med / 100.0)
+            float y_avg = st.bull_ref * (1.0 + p_avg / 100.0)
             float y_t75 = st.bull_ref * (1.0 + p_t75 / 100.0)
             float y_str = st.bull_ref * (1.0 + p_str / 100.0)
+            
             if not f_near_any(y_con, tac_ys, suppress_thr)
                 f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_con, ln_end, color.new(r_bull_color, 40), "Dotted", i_line_width_secondary, "Confirm P" + str.tostring(int(i_pct_confirm)) + " " + STL.f_pct_fmt(p_con) + lb_sfx, color.new(r_bull_color, 0), label_x, str.lower(i_label_strategy), 40, m_group)
+            if not f_near_any(y_med, tac_ys, suppress_thr)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_med, ln_end, color.new(stat_median_color, 40), "Dashed", i_line_width_secondary, "Median P50 " + STL.f_pct_fmt(p_med) + lb_sfx, color.new(stat_median_color, 0), label_x, str.lower(i_label_strategy), 42, m_group)
+            if not f_near_any(y_avg, tac_ys, suppress_thr)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_avg, ln_end, color.new(stat_avg_color, 40), "Dotted", i_line_width_secondary, "Average (Mean) " + STL.f_pct_fmt(p_avg) + lb_sfx, color.new(stat_avg_color, 0), label_x, str.lower(i_label_strategy), 43, m_group)
             if not f_near_any(y_t75, tac_ys, suppress_thr)
                 f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t75, ln_end, color.new(r_bull_color, 40), "Dashed", i_line_width_secondary, "Target P" + str.tostring(int(i_pct_target2)) + " " + STL.f_pct_fmt(p_t75) + lb_sfx, color.new(r_bull_color, 0), label_x, str.lower(i_label_strategy), 45, m_group)
             if not f_near_any(y_str, tac_ys, suppress_thr)
@@ -720,13 +817,23 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
 
         if draw_bear
             float p_con = array.percentile_nearest_rank(mfe_s, i_pct_confirm)
+            float p_med = array.median(mfe_s)
+            float p_avg = array.avg(mfe_s)
             float p_t75 = array.percentile_nearest_rank(mfe_s, i_pct_target2)
             float p_str = array.percentile_nearest_rank(mfe_s, i_pct_stretch)
+            
             float y_con = st.bear_ref * (1.0 - p_con / 100.0)
+            float y_med = st.bear_ref * (1.0 - p_med / 100.0)
+            float y_avg = st.bear_ref * (1.0 - p_avg / 100.0)
             float y_t75 = st.bear_ref * (1.0 - p_t75 / 100.0)
             float y_str = st.bear_ref * (1.0 - p_str / 100.0)
+            
             if not f_near_any(y_con, tac_ys, suppress_thr)
                 f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_con, ln_end, color.new(r_bear_color, 40), "Dotted", i_line_width_secondary, "Confirm P" + str.tostring(int(i_pct_confirm)) + " " + STL.f_pct_fmt(p_con) + lb_sfx, color.new(r_bear_color, 0), label_x, str.lower(i_label_strategy), 40, m_group)
+            if not f_near_any(y_med, tac_ys, suppress_thr)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_med, ln_end, color.new(stat_median_color, 40), "Dashed", i_line_width_secondary, "Median P50 " + STL.f_pct_fmt(p_med) + lb_sfx, color.new(stat_median_color, 0), label_x, str.lower(i_label_strategy), 42, m_group)
+            if not f_near_any(y_avg, tac_ys, suppress_thr)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_avg, ln_end, color.new(stat_avg_color, 40), "Dotted", i_line_width_secondary, "Average (Mean) " + STL.f_pct_fmt(p_avg) + lb_sfx, color.new(stat_avg_color, 0), label_x, str.lower(i_label_strategy), 43, m_group)
             if not f_near_any(y_t75, tac_ys, suppress_thr)
                 f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_t75, ln_end, color.new(r_bear_color, 40), "Dashed", i_line_width_secondary, "Target P" + str.tostring(int(i_pct_target2)) + " " + STL.f_pct_fmt(p_t75) + lb_sfx, color.new(r_bear_color, 0), label_x, str.lower(i_label_strategy), 45, m_group)
             if not f_near_any(y_str, tac_ys, suppress_thr)
@@ -807,112 +914,35 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
     // MFE Histogram (indicator-specific density-driven profile)
     // ========================================================================
     if i_show_histogram and st.ref_set and not na(st.bull_ref)
+        int render_side = array.get(sig_breakout_side, idx) != 0 ? array.get(sig_breakout_side, idx) : array.get(sig_side, idx)
+        float render_px = not na(array.get(sig_breakout_price, idx)) ? array.get(sig_breakout_price, idx) : (render_side == 1 ? st.or_high : render_side == -1 ? st.or_low : na)
+        
         array<float> bull_filtered = STL.f_build_filtered(hist.mfe_bull)
         array<float> bear_filtered = STL.f_build_filtered(hist.mfe_bear)
-
-        int hist_pct_start = math.min(i_hist_start_pct, i_hist_end_pct - 1)
-        int hist_pct_end = math.max(i_hist_end_pct, hist_pct_start + 1)
-        int hist_pct_step = math.max(1, i_hist_pct_step)
-        int hist_bin_count = int(math.ceil(float(hist_pct_end - hist_pct_start) / float(hist_pct_step)))
-
-        // BULL HISTOGRAM
-        if array.size(bull_filtered) > 0
-            array<float> bull_val_los = array.new_float(0)
-            array<float> bull_val_his = array.new_float(0)
-            array<float> bull_densities = array.new_float(0)
-            array<float> bull_pct_los = array.new_float(0)
-            for b = 0 to hist_bin_count - 1
-                float p_lo = hist_pct_start + float(hist_pct_step * b)
-                float p_hi = math.min(hist_pct_end, p_lo + hist_pct_step)
-                float v_lo = array.percentile_nearest_rank(bull_filtered, p_lo)
-                float v_hi = array.percentile_nearest_rank(bull_filtered, p_hi)
-                float band_span = math.max(v_hi - v_lo, 0.0001)
-                int count = 0
-                for s = 0 to array.size(bull_filtered) - 1
-                    float val = array.get(bull_filtered, s)
-                    if val >= v_lo and (b == hist_bin_count - 1 ? val <= v_hi : val < v_hi)
-                        count += 1
-                array.push(bull_val_los, v_lo)
-                array.push(bull_val_his, v_hi)
-                array.push(bull_densities, float(count) / band_span)
-                array.push(bull_pct_los, p_lo)
-            float bull_p20_density = na
-            for b = 0 to hist_bin_count - 1
-                if array.get(bull_pct_los, b) >= 20.0 and na(bull_p20_density)
-                    bull_p20_density := array.get(bull_densities, b)
-            if not na(bull_p20_density)
-                for b = 0 to hist_bin_count - 1
-                    if array.get(bull_pct_los, b) < 20.0
-                        array.set(bull_densities, b, math.min(array.get(bull_densities, b), bull_p20_density))
-            float max_density = 0.0
-            for b = 0 to hist_bin_count - 1
-                max_density := math.max(max_density, array.get(bull_densities, b))
-            for b = 0 to hist_bin_count - 1
-                float v_lo = array.get(bull_val_los, b)
-                float v_hi = array.get(bull_val_his, b)
-                float density = array.get(bull_densities, b)
-                float p_lo = array.get(bull_pct_los, b)
-                float width_normalized = max_density > 0 ? density / max_density : 0.0
-                int box_width = math.max(2, int(math.round(width_normalized * float(max_profile_width))))
-                if v_hi >= v_lo
-                    float y_low = st.bull_ref * (1.0 + v_lo / 100.0)
-                    float y_high = st.bull_ref * (1.0 + v_hi / 100.0)
-                    Zones.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, r_bull_color, 58)
-                    if i_show_hist_bin_labels
-                        Core.f_label_registry_push_ex(lbl_reg, (y_high + y_low) / 2.0, f_fmt_percentile_text(p_lo), r_stat_label_color, st.or_start_bar - 1, str.lower(i_label_strategy), 10, sp.name + "_hist_bin", "right", profile_label_size, "Label", "", 0, lc_state)
-
-        // BEAR HISTOGRAM
-        if array.size(bear_filtered) > 0
-            array<float> bear_val_los = array.new_float(0)
-            array<float> bear_val_his = array.new_float(0)
-            array<float> bear_densities = array.new_float(0)
-            array<float> bear_pct_los = array.new_float(0)
-            for b = 0 to hist_bin_count - 1
-                float p_lo = hist_pct_start + float(hist_pct_step * b)
-                float p_hi = math.min(hist_pct_end, p_lo + hist_pct_step)
-                float v_lo = array.percentile_nearest_rank(bear_filtered, p_lo)
-                float v_hi = array.percentile_nearest_rank(bear_filtered, p_hi)
-                float band_span = math.max(v_hi - v_lo, 0.0001)
-                int count = 0
-                for s = 0 to array.size(bear_filtered) - 1
-                    float val = array.get(bear_filtered, s)
-                    if val >= v_lo and (b == hist_bin_count - 1 ? val <= v_hi : val < v_hi)
-                        count += 1
-                array.push(bear_val_los, v_lo)
-                array.push(bear_val_his, v_hi)
-                array.push(bear_densities, float(count) / band_span)
-                array.push(bear_pct_los, p_lo)
-            float bear_p20_density = na
-            for b = 0 to hist_bin_count - 1
-                if array.get(bear_pct_los, b) >= 20.0 and na(bear_p20_density)
-                    bear_p20_density := array.get(bear_densities, b)
-            if not na(bear_p20_density)
-                for b = 0 to hist_bin_count - 1
-                    if array.get(bear_pct_los, b) < 20.0
-                        array.set(bear_densities, b, math.min(array.get(bear_densities, b), bear_p20_density))
-            float max_density = 0.0
-            for b = 0 to hist_bin_count - 1
-                max_density := math.max(max_density, array.get(bear_densities, b))
-            for b = 0 to hist_bin_count - 1
-                float v_lo = array.get(bear_val_los, b)
-                float v_hi = array.get(bear_val_his, b)
-                float density = array.get(bear_densities, b)
-                float p_lo = array.get(bear_pct_los, b)
-                float width_normalized = max_density > 0 ? density / max_density : 0.0
-                float width_shaped = math.sqrt(width_normalized)
-                int min_width = math.max(3, int(math.round(float(max_profile_width) * 0.10)))
-                int box_width = math.max(min_width, int(math.round(width_shaped * float(max_profile_width))))
-                if v_hi >= v_lo
-                    float y_high = st.bear_ref * (1.0 - v_lo / 100.0)
-                    float y_low = st.bear_ref * (1.0 - v_hi / 100.0)
-                    Zones.f_draw_hist_band(ds, st.or_start_bar, y_high, y_low, box_width, bear_color, 58)
-                    if i_show_hist_bin_labels
-                        Core.f_label_registry_push_ex(lbl_reg, (y_high + y_low) / 2.0, f_fmt_percentile_text(p_lo), stat_label_color, st.or_start_bar - 1, str.lower(i_label_strategy), 10, sp.name + "_hist_bin", "right", profile_label_size, "Label", "", 0, lc_state)
+        
+        // 1. Standard OR MFE Histograms
+        f_render_dist_histogram_internal(ds, lbl_reg, st.bull_ref, bull_filtered, 1, r_bull_color, st.or_start_bar, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name)
+        f_render_dist_histogram_internal(ds, lbl_reg, st.bear_ref, bear_filtered, -1, bear_color, st.or_start_bar, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name)
+        
+        // 2. Breakout Histograms (if active)
+        if i_show_bo_histogram and i_show_phase2_levels and render_side != 0 and not na(render_px)
+            int bo_x1 = st.or_start_bar + int(math.round(float(max_profile_width) * i_bo_hist_offset_mult))
+            
+            // Breakout Favorable (MFE)
+            array<float> bo_mfe_src = render_side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear
+            array<float> bo_mfe_filtered = STL.f_build_filtered_by_outcome(bo_mfe_src, hist.sig_side, hist.sig_outcome, render_side, i_bo_hist_filter_wins)
+            f_render_dist_histogram_internal(ds, lbl_reg, render_px, bo_mfe_filtered, render_side, render_side == 1 ? r_bull_color : r_bear_color, bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, false, str.lower(i_label_strategy), sp.name + "_bo_mfe")
+            
+            // Breakout Adverse (MAE)
+            array<float> bo_mae_src = render_side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear
+            array<float> bo_mae_filtered = STL.f_build_filtered_by_outcome(bo_mae_src, hist.sig_side, hist.sig_outcome, render_side, i_bo_hist_filter_wins)
+            color bo_mae_color = color.new(render_side == 1 ? r_bull_color : r_bear_color, 75) // Faded side color for MAE
+            f_render_dist_histogram_internal(ds, lbl_reg, render_px, bo_mae_filtered, -render_side, bo_mae_color, bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, false, str.lower(i_label_strategy), sp.name + "_bo_mae")
 
     // ========================================================================
     // Time Distribution Histogram
     // ========================================================================
-    if i_show_time_dist and st.ref_set and st.or_complete and not na(st.or_start_bar)
+    if i_show_time_dist and st.ref_set and not na(st.or_start_bar)
         int time_data_dur = RSL.f_duration(sp.or_start_min, sp.cutoff_min)
         if time_data_dur > 0
             float bars_per_min = 1.0 / float(tf_min)
