@@ -60,7 +60,7 @@ The result: Asia session highs look the same across every indicator. Invalidatio
 ## Status (as of 2026-04-19)
 
 - Design documents: **complete**
-- Daily NY Levels implementation phases: **in progress with code landed** (Phase 1 + Phase 2 implemented, Phase 3 extraction implemented with manual parity checks pending)
+- Daily NY Levels implementation: **Unified Architecture Complete** (Phase 1 & 2 logic merged; shared library rendering fully implemented)
 - Active Pine library path: **`PineDrawingLib/5` + `RangeSessionLib/6` + `StatsLib/3`**
 - Core/family split libraries: **published** (`PineDrawingCore/1`, `PineDrawingComposites/1`, family modules)
 - NT8 implementation: **design target only**, no code yet
@@ -86,6 +86,7 @@ When you want to:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3 | 2026-04-20 | Unified Architecture: Consolidated historical phase design documents into archive/history/ and updated primary specs to reflect 'Unified Rendering Flow'. |
 | 1.2 | 2026-04-19 | Updated status to current published library versions and marked split libraries as published. |
 | 1.1 | 2026-04-18 | Refreshed project status to reflect implemented Daily NY Levels phases and remaining parity + v3 split-library milestones. |
 | 1.0 | 2026-04-18 | Initial document set. Complete design coverage for the visual system, template catalog, library architecture, and per-indicator profiling workflow. |

@@ -154,9 +154,8 @@ A secondary condition determining if a session's range remains valid support/res
 
 ### 7.2 Synchronization Protocol
 Before performing any statistical analysis (NQStats/Profiler), verify data parity:
-1.  **Check Live Gap**: Last timestamp in `live_storage` must be within 15 minutes of current time during active sessions (18:00 - 17:00 ET).
-2.  **Verify Spoke Status**: Ensure `stream_chart.py` is running and the Hub is connected.
-3.  **Bridge Gaps**: If the gap exceeds 3 days, the 3-day bootstrap in `stream_chart.py` will leave a hole. Manual sync or increasing bootstrap period is required.
+1.  **Verify Data Continuity**: Ensure `stream_chart.py` is running and the Hub is connected.
+2.  **Bridge Gaps**: If the gap exceeds 3 days, the 3-day bootstrap in `stream_chart.py` will leave a hole. Manual sync or increasing bootstrap period is required.
 
 ## 8. Timezone Protocol
 This protocol is the absolute rule for all time-based calculations and data processing.

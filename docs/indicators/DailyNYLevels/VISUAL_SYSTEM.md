@@ -1,6 +1,6 @@
 # Visual System
 
-**Version:** 3.1
+**Version:** 4.0
 **Scope:** Base visual layer for chart indicators and strategies (Pine Script v6 + NinjaScript).
 **Out of scope:** Next.js dashboard and web surfaces (separate paradigm).
 **Parent for:** `VISUAL_TEMPLATES.md`, `LIBRARY_ARCHITECTURE.md`, `INDICATORS/*.md`, `STRATEGIES/*.md`.
@@ -363,9 +363,9 @@ Every indicator follows this canonical sequence per render cycle:
    still tracks tags for selective clearing.
 ```
 
-### 7.1 Current implementation status (Daily NY Levels)
+### 7.1 Current implementation status (Unified)
 
-The Phase 2 extraction path now uses a library-owned label registry flow in Pine:
+The indicator now uses a library-owned unified label registry flow in Pine:
 
 - Indicator code registers labels through `f_label_registry_push(...)` in `PineDrawingLib`.
 - Label merge-on-proximity and final draw emission are handled by `f_label_registry_draw_merged(...)` in the library.
@@ -561,4 +561,5 @@ Documented exceptions require justification in the indicator profile's Overrides
 | 1.0 | 2026-04-18 | Initial spec (Daily NY Levels focused) |
 | 2.0 | 2026-04-18 | Multi-indicator, cross-platform rendering architecture |
 | 3.0 | 2026-04-18 | Full rewrite. Base-layer only. Adds three-tier palette, display profile, four-state lifecycle, library splits, contrast validation. Template catalog moved to VISUAL_TEMPLATES.md. |
-| 3.1 | 2026-04-18 | Added implementation note for Phase 2 label-registry extraction in Pine (`f_label_registry_push`, `f_label_registry_draw_merged`) and clarified current ownership in render pipeline. |
+| 3.1 | 2026-04-18 | Phase 2 label-registry extraction in Pine (`f_label_registry_push`, `f_label_registry_draw_merged`). |
+| 4.0 | 2026-04-20 | Unified Architecture: Removed "Phase" nomenclature. Unified Phase 1 & Phase 2 into a singular viewpoint with shared drawing ownership. |

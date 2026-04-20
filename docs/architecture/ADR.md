@@ -239,6 +239,7 @@ Disconnected sources of truth (Second Brain, ADRs, MCP) create confusion.
 1. **Source of Truth Definitions**:
     - **Architectural Hub**: `docs/architecture/ADR.md` (Software, environment, process).
     - **Trading Hub**: `docs/SecondBrain_Trading.md` (Market logic, stats, bias).
+    - **Visual System**: `docs/indicators/DailyNYLevels/VISUAL_SYSTEM.md` (Palette, templates, geometry).
 2. **Mandatory Synchronization**: Every agent session MUST begin by synchronizing with this hierarchy via the `sync-trading-brain` skill and the root `README.md` protocol.
 3. **MCP Role**: `codebase-memory-mcp` is an **Indexer & Searcher**, not an independent repository for decisions.
 
@@ -271,3 +272,17 @@ Run from repo root:
 ### Consequences
 *   **Research Velocity**: Backtests on multi-year 1m datasets take seconds, enabling massive Optuna sweeps.
 *   **Layered Flexibility**: Filters and Risk modules become "hot-swappable" across different strategy triggers.
+
+---
+
+## [ADR-018] Visual System Compliance
+**Status:** Approved
+**Date:** 2026-04-20
+
+### Context
+To maintain 100% visual consistency across all TradingView indicators and NinjaScript strategies, we require a shared visual layer.
+
+### Decision
+1. **Mandatory Adoption**: All new indicators and strategies MUST utilize the standardized visual layer (Palette, Templates, Geometry, and Profile Scaling) defined in **`docs/indicators/DailyNYLevels/VISUAL_SYSTEM.md`**.
+2. **Zero-Custom-Drawing Rule**: Indicators must bind to canonical templates in the `VISUAL_TEMPLATES.md` catalog rather than invoking low-level drawing APIs (`line.new`, `box.new`, etc.) with ad-hoc colors.
+3. **Governance**: Any deviation from the Visual System requires an explicit "Overrides" section in the indicator's profile documentation and a justification in code comments.

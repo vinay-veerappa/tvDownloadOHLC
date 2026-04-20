@@ -3,7 +3,8 @@
 1.  **Synchronize**: Invoke the `sync-trading-brain` skill immediately.
 2.  **Architectural Hub**: Read `docs/architecture/ADR.md` (Software & Rules).
 3.  **Trading Hub**: Read `docs/SecondBrain_Trading.md` (Domain Logic & Stats).
-4.  **Verify**: State: "I have synchronized with ADR-016 (Unified Hierarchy)."
+4.  **Visual System**: Read `docs/indicators/DailyNYLevels/VISUAL_SYSTEM.md` (Rendering Standards).
+5.  **Verify**: State: "I have synchronized with ADR-016 (Unified Hierarchy) and the Visual System."
 
 ---
 

@@ -11,22 +11,23 @@ This skill MUST be invoked at the start of every session to ensure alignment wit
 
 Before initiating any analysis or code modification, perform the following:
 
-1.  **Read the Second Brain & ADRs**: View `docs/SecondBrain_Trading.md` and `docs/architecture/ADR.md` to refresh:
+1.  **Read the Second Brain, ADRs & Visual System**: View `docs/SecondBrain_Trading.md`, `docs/architecture/ADR.md`, and **`docs/indicators/DailyNYLevels/VISUAL_SYSTEM.md`** to refresh:
     *   ALN Session Probabilities (LEA, AEL, LPEU, LPED).
     *   Initial Balance (IB) 96% Rule.
     *   NQ Hourly Personalities (Expansion vs. Reversion).
-2.  **Verify Data Freshness**: 
+    *   **Visual Standards** (Palette, templates, profile scaling).
+2.  **Verify Data Continuity**: 
     *   Run `nq-data-bridge:get_detailed_data_status` to check parity between historical `data/` and `data/live/`.
-    *   Ensure current timestamp is within the 15-minute tolerance for active sessions.
 3.  **Check Profiler Configuration**:
     *   Verify `scripts/profiler/PROFILER_ARCHITECTURE.md` or `PROFILER_REQUIREMENTS.md` for any recent logic updates to Quadrants/Hourly personalities.
 4.  **Announce Loaded Rules & ADRs**:
     *   State the current ALN, NQStats baseline, and any applicable ADRs (e.g., Statistical Normalization) you are operating under.
-    *   **MANDATORY**: Explicitly state: "I have synchronized with ADR-015 (Bootstrapping), ADR-014 (Shell Native), and ADR-012 (Traceable Research)."
+    *   **MANDATORY**: Explicitly state: "I have synchronized with ADR-016 (Unified Hierarchy) and the Visual System."
 
 ## Logic Guardrails
 
 *   **Rule Integrity**: Never propose trading logic changes that conflict with `docs/SecondBrain_Trading.md` without explicit user confirmation of a "Regime Shift."
+*   **Visual Consistency**: All new indicators MUST adhere strictly to the Palette and Templates defined in `docs/indicators/DailyNYLevels/VISUAL_SYSTEM.md`. Overrides must be justified.
 *   **Timezone Consistency**: Always use **ET (New York)** for session calculations and **UTC** for data storage.
 *   **Data Fusion & Precision**: Ensure all analysis scripts utilize the fusion layer (`data_loader.py`) and adhere to the **Statistical Normalization Standard (ADR-002)** for [MAE/MFE/Returns %].
 
