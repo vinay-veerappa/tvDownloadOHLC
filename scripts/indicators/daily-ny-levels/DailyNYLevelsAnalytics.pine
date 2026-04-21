@@ -41,13 +41,6 @@ import vveerappa/PineDrawingVerticalMarkers/3 as VMarks
 import vveerappa/StatsLib/5 as STL
 
 // ============================================================================
-// Inputs — Theme
-// ============================================================================
-grp_theme = "Theme"
-i_theme_mode = input.string("Custom", "Color Theme", options=["Custom", "Dark", "Light"], group=grp_theme)
-i_display_profile = input.string("Normal", "Display Profile", options=["Tiny", "Small", "Normal", "Large", "Huge"], group=grp_theme)
-
-// ============================================================================
 // Inputs — Session
 // ============================================================================
 grp_session = "Session & Presets"
@@ -57,6 +50,39 @@ i_custom_end = input.string("0935", "Custom OR End (HHMM)", group=grp_session)
 i_custom_cutoff = input.string("1200", "Custom Cutoff (HHMM)", group=grp_session)
 i_timezone = input.string("America/New_York", "Timezone", options=["America/New_York", "America/Chicago", "America/Los_Angeles", "America/Denver", "US/Eastern", "US/Central", "UTC"], group=grp_session)
 i_ev_target_pct = input.float(0.30, "EV Target (%)", minval=0.01, step=0.01, group=grp_session)
+
+// ============================================================================
+// Inputs — Features
+// ============================================================================
+grp_features = "Features"
+i_show_stat_lines = input.bool(true, "Show Stat Lines", group=grp_features)
+i_show_histogram = input.bool(true, "Show Histogram Bands", group=grp_features)
+i_hist_start_pct = input.int(20, "Histogram Start Percentile", minval=1, maxval=98, group=grp_features)
+i_hist_end_pct = input.int(90, "Histogram End Percentile", minval=2, maxval=99, group=grp_features)
+i_hist_pct_step = input.int(5, "Histogram Percentile Step", minval=1, maxval=25, group=grp_features)
+i_show_hist_bin_labels = input.bool(false, "Show Histogram Bin Labels", group=grp_features)
+i_show_bo_histogram = input.bool(false, "Show Breakout Histograms", group=grp_features)
+//i_bo_hist_filter_wins = input.bool(false, "Filter BO Hist by Success", group=grp_features)
+i_bo_hist_offset_mult = input.float(1.25, "Breakout Hist Offset Multiplier", minval=0, step=0.1, group=grp_features)
+i_pct_confirm = input.int(20, "Confirm Percentile", minval=1, maxval=99, group=grp_features)
+i_pct_target1 = input.int(50, "Target1 Percentile", minval=1, maxval=99, group=grp_features)
+i_pct_target2 = input.int(75, "Target2 Percentile", minval=1, maxval=99, group=grp_features)
+i_pct_stretch = input.int(90, "Stretch Percentile", minval=1, maxval=99, group=grp_features)
+i_show_time_dist = input.bool(true, "Show Time Distribution", group=grp_features)
+i_time_bucket_mins = input.int(5, "Time Bucket (minutes)", minval=1, maxval=60, group=grp_features)
+i_time_offset_ticks = input.int(200, "Offset Below MFE (ticks)", group=grp_features)
+i_show_time_avg = input.bool(true, "Show AVG Line", group=grp_features)
+i_show_time_med = input.bool(true, "Show Median Line", group=grp_features)
+//i_show_phase2_levels = input.bool(true, "Show Phase 2 Levels", group=grp_features)
+i_emphasize_active_side = input.bool(true, "Emphasize Active Side", group=grp_features)
+i_historical_lookback = input.int(5, "Historical Lookback (Sessions)", minval=0, maxval=20, group=grp_features)
+
+// ============================================================================
+// Inputs — Theme
+// ============================================================================
+grp_theme = "Theme"
+i_theme_mode = input.string("Custom", "Color Theme", options=["Custom", "Dark", "Light"], group=grp_theme)
+i_display_profile = input.string("Normal", "Display Profile", options=["Tiny", "Small", "Normal", "Large", "Huge"], group=grp_theme)
 
 // ============================================================================
 // Inputs — Visual System
@@ -102,32 +128,7 @@ i_color_invalidation_line = input.color(#F87171, "Invalidation Line Color", grou
 i_color_mid_probability = input.color(#94A3B8, "Mid Probability Color", group=grp_tac_colors)
 i_color_breakout_activation = input.color(#C084FC, "Breakout Activation Color", group=grp_tac_colors)
 i_color_pullback_activation = input.color(#A3E635, "Pullback Activation Color", group=grp_tac_colors)
-
-// ============================================================================
-// Inputs — Features
-// ============================================================================
-grp_features = "Features"
-i_show_stat_lines = input.bool(true, "Show Stat Lines", group=grp_features)
-i_show_histogram = input.bool(true, "Show Histogram Bands", group=grp_features)
-i_hist_start_pct = input.int(20, "Histogram Start Percentile", minval=1, maxval=98, group=grp_features)
-i_hist_end_pct = input.int(90, "Histogram End Percentile", minval=2, maxval=99, group=grp_features)
-i_hist_pct_step = input.int(5, "Histogram Percentile Step", minval=1, maxval=25, group=grp_features)
-i_show_hist_bin_labels = input.bool(false, "Show Histogram Bin Labels", group=grp_features)
-i_show_bo_histogram = input.bool(true, "Show Breakout Histograms", group=grp_features)
-i_bo_hist_filter_wins = input.bool(false, "Filter BO Hist by Success", group=grp_features)
-i_bo_hist_offset_mult = input.float(1.25, "Breakout Hist Offset Multiplier", minval=0, step=0.1, group=grp_features)
-i_pct_confirm = input.int(20, "Confirm Percentile", minval=1, maxval=99, group=grp_features)
-i_pct_target1 = input.int(50, "Target1 Percentile", minval=1, maxval=99, group=grp_features)
-i_pct_target2 = input.int(75, "Target2 Percentile", minval=1, maxval=99, group=grp_features)
-i_pct_stretch = input.int(90, "Stretch Percentile", minval=1, maxval=99, group=grp_features)
-i_show_time_dist = input.bool(true, "Show Time Distribution", group=grp_features)
-i_time_bucket_mins = input.int(5, "Time Bucket (minutes)", minval=1, maxval=60, group=grp_features)
-i_time_offset_ticks = input.int(200, "Offset Below MFE (ticks)", group=grp_features)
-i_show_time_avg = input.bool(true, "Show AVG Line", group=grp_features)
-i_show_time_med = input.bool(true, "Show Median Line", group=grp_features)
-i_show_phase2_levels = input.bool(true, "Show Phase 2 Levels", group=grp_features)
-i_emphasize_active_side = input.bool(true, "Emphasize Active Side", group=grp_features)
-i_historical_lookback = input.int(5, "Historical Lookback (Sessions)", minval=0, maxval=20, group=grp_features)
+  
 
 // ============================================================================
 // Inputs — Data Table
@@ -553,8 +554,8 @@ f_track_range(int idx) =>
         array<float> mfe_src = latched_side == 1 ? hist.mfe_bull : hist.mfe_bear
         array<float> mae_bo_src = latched_side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear
         
-        array<float> mfe_side = STL.f_build_filtered_by_outcome(mfe_src, hist.sig_side, hist.sig_outcome, latched_side, i_bo_hist_filter_wins)
-        array<float> mae_bo_side = STL.f_build_filtered_by_outcome(mae_bo_src, hist.sig_side, hist.sig_outcome, latched_side, i_bo_hist_filter_wins)
+        array<float> mfe_side = STL.f_build_filtered_by_outcome(mfe_src, hist.sig_side, hist.sig_outcome, latched_side, false)
+        array<float> mae_bo_side = STL.f_build_filtered_by_outcome(mae_bo_src, hist.sig_side, hist.sig_outcome, latched_side, false)
         
         float target_p50 = array.size(mfe_side) > 0 ? array.percentile_nearest_rank(mfe_side, 50) : na
         float invalidation_p80 = array.size(mae_bo_side) > 0 ? array.percentile_nearest_rank(mae_bo_side, 80) : na
@@ -572,7 +573,7 @@ f_track_range(int idx) =>
     float bo_px_curr = array.get(sig_breakout_price, idx)
     if st.ref_set and effective_in_data and bo_side_curr != 0 and not pb_armed and not na(bo_px_curr)
         array<float> mae_bo_src = bo_side_curr == 1 ? hist.bo_mae_bull : hist.bo_mae_bear
-        array<float> mae_side = STL.f_build_filtered_by_outcome(mae_bo_src, hist.sig_side, hist.sig_outcome, bo_side_curr, i_bo_hist_filter_wins)
+        array<float> mae_side = STL.f_build_filtered_by_outcome(mae_bo_src, hist.sig_side, hist.sig_outcome, bo_side_curr, true)
         if array.size(mae_side) > 0
             float p25_mae = array.percentile_nearest_rank(mae_side, 25)
             float act_px = bo_side_curr == 1 ? bo_px_curr * (1.0 - p25_mae / 100.0) : bo_px_curr * (1.0 + p25_mae / 100.0)
@@ -595,7 +596,7 @@ f_track_range(int idx) =>
         st.is_committed := true
 
     if i_show_debug and is_new_session
-        Markers.f_draw_text_marker(array.get(drawings, idx), bar_index, high, "NEW: " + sp.name, debug_text_color_resolved, "down", "tiny")
+        Markers.f_draw_text_marker(array.get(drawings, idx), bar_index, high, "NEW: " + sp.name, debug_text_color_resolved, "down", "Normal")
 
     array.set(states, idx, st)
     array.set(histories, idx, hist)
@@ -707,7 +708,7 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
     // Overlap suppression: pre-compute tactical Y levels
     array<float> tac_ys = array.new_float(0)
     float suppress_thr = syminfo.mintick * float(i_label_merge_threshold_ticks)
-    if i_show_phase2_levels and st.ref_set and not na(st.or_start_bar)
+    if st.ref_set and not na(st.or_start_bar)
         int _bo_side = lookback == 0 ? array.get(sig_breakout_side, idx) : 0 // Historical side tracking not snapshotted yet, default to finalized
         int _live_bias = lookback == 0 ? array.get(sig_side, idx) : 0
         float _bo_px = lookback == 0 ? array.get(sig_breakout_price, idx) : na
@@ -719,13 +720,17 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
             if not na(_pb)
                 array.push(tac_ys, _pb)
             array<float> _bm_src = _rs == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear
-            array<float> _bm = STL.f_build_filtered_by_outcome(_bm_src, hist.sig_side, hist.sig_outcome, _rs, i_bo_hist_filter_wins)
+            array<float> _bm = STL.f_build_filtered_by_outcome(_bm_src, hist.sig_side, hist.sig_outcome, _rs, false)
             if array.size(_bm) > 0
                 float _p20 = array.percentile_nearest_rank(_bm, 20)
+                float _p50 = array.percentile_nearest_rank(_bm, 50)
+                float _p75 = array.percentile_nearest_rank(_bm, 75)
                 array.push(tac_ys, _rs == 1 ? _rp * (1.0 + _p20 / 100.0) : _rp * (1.0 - _p20 / 100.0))
+                array.push(tac_ys, _rs == 1 ? _rp * (1.0 + _p50 / 100.0) : _rp * (1.0 - _p50 / 100.0))
+                array.push(tac_ys, _rs == 1 ? _rp * (1.0 + _p75 / 100.0) : _rp * (1.0 - _p75 / 100.0))
             
             array<float> _fm_src = _rs == 1 ? hist.fake_mfe_bull : hist.fake_mfe_bear
-            array<float> _fm = STL.f_build_filtered_by_outcome(_fm_src, hist.sig_side, hist.sig_outcome, _rs, i_bo_hist_filter_wins)
+            array<float> _fm = STL.f_build_filtered_by_outcome(_fm_src, hist.sig_side, hist.sig_outcome, _rs, false)
             if array.size(_fm) > 0
                 float _f50 = array.percentile_nearest_rank(_fm, 50)
                 float _f75 = array.percentile_nearest_rank(_fm, 75)
@@ -733,7 +738,7 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 array.push(tac_ys, _rs == 1 ? _rp * (1.0 + _f50 / 100.0) : _rp * (1.0 - _f50 / 100.0))
             
             array<float> _rf_src = _rs == 1 ? hist.fake_mae_bull : hist.fake_mae_bear
-            array<float> _rf = STL.f_build_filtered_by_outcome(_rf_src, hist.sig_side, hist.sig_outcome, _rs, i_bo_hist_filter_wins)
+            array<float> _rf = STL.f_build_filtered_by_outcome(_rf_src, hist.sig_side, hist.sig_outcome, _rs, false)
             if array.size(_rf) > 0
                 float _r20 = array.percentile_nearest_rank(_rf, 20)
                 float _r50 = array.percentile_nearest_rank(_rf, 50)
@@ -743,7 +748,7 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 array.push(tac_ys, _rs == 1 ? st.or_high * (1.0 - _r90 / 100.0) : st.or_low * (1.0 + _r90 / 100.0))
             
             array<float> _bo_mae_src = _rs == 1 ? hist.bo_mae_bull : hist.bo_mae_bear
-            array<float> _ms = STL.f_build_filtered_by_outcome(_bo_mae_src, hist.sig_side, hist.sig_outcome, _rs, i_bo_hist_filter_wins)
+            array<float> _ms = STL.f_build_filtered_by_outcome(_bo_mae_src, hist.sig_side, hist.sig_outcome, _rs, false)
             if array.size(_ms) > 0
                 float _mp80 = array.percentile_nearest_rank(_ms, 80)
                 array.push(tac_ys, _rs == 1 ? _rp * (1.0 - _mp80 / 100.0) : _rp * (1.0 + _mp80 / 100.0))
@@ -774,18 +779,18 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
         
         array<float> fak_m_b_src = hist.fake_mfe_bull
         array<float> fak_m_s_src = hist.fake_mfe_bear
-        array<float> fak_m_b = STL.f_build_filtered_by_outcome(fak_m_b_src, hist.sig_side, hist.sig_outcome, 1, i_bo_hist_filter_wins)
-        array<float> fak_m_s = STL.f_build_filtered_by_outcome(fak_m_s_src, hist.sig_side, hist.sig_outcome, -1, i_bo_hist_filter_wins)
+        array<float> fak_m_b = STL.f_build_filtered_by_outcome(fak_m_b_src, hist.sig_side, hist.sig_outcome, 1, false)
+        array<float> fak_m_s = STL.f_build_filtered_by_outcome(fak_m_s_src, hist.sig_side, hist.sig_outcome, -1, false)
         
         array<float> fak_e_b_src = hist.fake_mae_bull
         array<float> fak_e_s_src = hist.fake_mae_bear
-        array<float> fak_e_b = STL.f_build_filtered_by_outcome(fak_e_b_src, hist.sig_side, hist.sig_outcome, 1, i_bo_hist_filter_wins)
-        array<float> fak_e_s = STL.f_build_filtered_by_outcome(fak_e_s_src, hist.sig_side, hist.sig_outcome, -1, i_bo_hist_filter_wins)
+        array<float> fak_e_b = STL.f_build_filtered_by_outcome(fak_e_b_src, hist.sig_side, hist.sig_outcome, 1, false)
+        array<float> fak_e_s = STL.f_build_filtered_by_outcome(fak_e_s_src, hist.sig_side, hist.sig_outcome, -1, false)
         
         array<float> bo_m_f_src = render_side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear
         array<float> bo_e_f_src = render_side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear
-        array<float> bo_m_f = STL.f_build_filtered_by_outcome(bo_m_f_src, hist.sig_side, hist.sig_outcome, render_side, i_bo_hist_filter_wins)
-        array<float> bo_e_f = STL.f_build_filtered_by_outcome(bo_e_f_src, hist.sig_side, hist.sig_outcome, render_side, i_bo_hist_filter_wins)
+        array<float> bo_m_f = STL.f_build_filtered_by_outcome(bo_m_f_src, hist.sig_side, hist.sig_outcome, render_side, false)
+        array<float> bo_e_f = STL.f_build_filtered_by_outcome(bo_e_f_src, hist.sig_side, hist.sig_outcome, render_side, true)
 
         bool draw_bull = i_show_stat_lines and array.size(mfe_b) > 0
         bool draw_bear = i_show_stat_lines and array.size(mfe_s) > 0
@@ -840,7 +845,7 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
                 f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_str, ln_end, color.new(r_stat_stretch_color, 60), "Dotted", i_line_width_primary, "Stretch P" + str.tostring(int(i_pct_stretch)) + " " + STL.f_pct_fmt(p_str) + lb_sfx, color.new(r_stat_stretch_color, 0), label_x, str.lower(i_label_strategy), 50, m_group)
 
         // 3. Tactical Directional Levels
-        if i_show_phase2_levels and render_side != 0 and not na(render_px)
+        if  render_side != 0 and not na(render_px)
             int inactive_alpha = i_emphasize_active_side and live_bias != 0 and live_bias != render_side ? 65 : 0
             
             // Tactical Pivot (Conceptually overlaps with MFE P50)
@@ -857,10 +862,22 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
             if not na(pb_px)
                 f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, pb_px, ln_end, color.new(r_pullback_act_color, 0), "Dashed", i_line_width_primary, "Pullback Activation P25 MAE" + lb_sfx, color.new(r_pullback_act_color, inactive_alpha), label_x, str.lower(i_label_strategy), 85, m_group)
 
+            // Target BO P50 (Median MFE)
+            float p50_bo = array.size(bo_m_f) > 0 ? array.percentile_nearest_rank(bo_m_f, 50) : na
+            float y_target50 = na(p50_bo) ? na : render_px * (render_side == 1 ? 1.0 + p50_bo / 100.0 : 1.0 - p50_bo / 100.0)
+            if not na(y_target50) and not f_near_any(y_target50, tac_ys, suppress_thr)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_target50, ln_end, color.new(stat_median_color, inactive_alpha), "Solid", i_line_width_primary, "Target BO P50 (Median) " + STL.f_pct_fmt(p50_bo) + lb_sfx, color.new(stat_median_color, inactive_alpha), label_x, str.lower(i_label_strategy), 78, m_group)
+
+            // Target BO P75 (AMx MFE)
+            float p75_bo = array.size(bo_m_f) > 0 ? array.percentile_nearest_rank(bo_m_f, 75) : na
+            float y_target75 = na(p75_bo) ? na : render_px * (render_side == 1 ? 1.0 + p75_bo / 100.0 : 1.0 - p75_bo / 100.0)
+            if not na(y_target75) and not f_near_any(y_target75, tac_ys, suppress_thr)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_target75, ln_end, color.new(stat_avg_color, inactive_alpha), "Dashed", i_line_width_primary, "Target BO P75 (AMx) " + STL.f_pct_fmt(p75_bo) + lb_sfx, color.new(stat_avg_color, inactive_alpha), label_x, str.lower(i_label_strategy), 72, m_group)
+
             // BO Cashflow (MFE P20)
-            float p20_bo = array.size(bo_m_f) > 0 ? array.percentile_nearest_rank(bo_m_f, 20) : na
+            float p20_bo = array.size(bo_m_f) > 0 ? array.percentile_nearest_rank(bo_m_f, 20) : na  
             float y_cash = na(p20_bo) ? na : render_px * (render_side == 1 ? 1.0 + p20_bo / 100.0 : 1.0 - p20_bo / 100.0)
-            if not na(y_cash)
+            if not na(y_cash) and not f_near_any(y_cash, tac_ys, suppress_thr)
                 f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_cash, ln_end, color.new(r_bo_cashflow_color, inactive_alpha), "Dotted", i_line_width_secondary, "BO Cashflow P20 (MFE) " + STL.f_pct_fmt(p20_bo) + lb_sfx, color.new(r_bo_cashflow_color, inactive_alpha), label_x, str.lower(i_label_strategy), 80, m_group)
 
             // BO Confirm (Fake MFE P75)
@@ -869,9 +886,10 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
             if not na(y_conf)
                 f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_conf, ln_end, color.new(r_bo_confirm_color, inactive_alpha), "Dashed", i_line_width_primary, "BO Confirm P75 " + STL.f_pct_fmt(f75) + lb_sfx, color.new(r_bo_confirm_color, inactive_alpha), label_x, str.lower(i_label_strategy), 75, m_group)
             
-            // Reversal Zone
-            float rev_p20 = array.size(bo_e_f) > 0 ? array.percentile_nearest_rank(bo_e_f, 20) : (render_side == 1 ? (array.size(fak_e_b) > 0 ? array.percentile_nearest_rank(fak_e_b, 20) : na) : (array.size(fak_e_s) > 0 ? array.percentile_nearest_rank(fak_e_s, 20) : na))
-            float rev_p50 = array.size(bo_e_f) > 0 ? array.percentile_nearest_rank(bo_e_f, 50) : (render_side == 1 ? (array.size(fak_e_b) > 0 ? array.percentile_nearest_rank(fak_e_b, 50) : na) : (array.size(fak_e_s) > 0 ? array.percentile_nearest_rank(fak_e_s, 50) : na))
+            // Reversal Zone// changed P20 -> P25 
+            float rev_p20 = (render_side == 1 ? (array.size(fak_e_b) > 0 ? array.percentile_nearest_rank(fak_e_b, 25) : na) : (array.size(fak_e_s) > 0 ? array.percentile_nearest_rank(fak_e_s, 25) : na))
+            float rev_p50 = (render_side == 1 ? (array.size(fak_e_b) > 0 ? array.percentile_nearest_rank(fak_e_b, 50) : na) : (array.size(fak_e_s) > 0 ? array.percentile_nearest_rank(fak_e_s, 50) : na))
+            
             float y_rev20 = na(rev_p20) ? na : (render_side == 1 ? st.or_high * (1.0 - rev_p20 / 100.0) : st.or_low * (1.0 + rev_p20 / 100.0))
             float y_rev50 = na(rev_p50) ? na : (render_side == 1 ? st.or_high * (1.0 - rev_p50 / 100.0) : st.or_low * (1.0 + rev_p50 / 100.0))
             if not na(y_rev20) and not na(y_rev50)
@@ -896,7 +914,7 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
             float mae_p80 = array.size(bo_e_f) > 0 ? array.percentile_nearest_rank(bo_e_f, 80) : na
             float y_inv = na(mae_p80) ? na : render_px * (render_side == 1 ? 1.0 - mae_p80 / 100.0 : 1.0 + mae_p80 / 100.0)
             if not na(y_inv)
-                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_inv, ln_end, color.new(r_invalidation_color, inactive_alpha), "Solid", i_line_width_primary, "Invalidation P80 " + STL.f_pct_fmt(mae_p80) + lb_sfx, color.new(r_invalidation_color, inactive_alpha), label_x, str.lower(i_label_strategy), 95, m_group)
+                f_draw_labeled_stat_line_meta(ds, lbl_reg, st.or_start_bar, y_inv, ln_end, color.new(r_invalidation_color, inactive_alpha), "Solid", i_line_width_primary, "PB | BO Invalidation P80 " + STL.f_pct_fmt(mae_p80) + lb_sfx, color.new(r_invalidation_color, inactive_alpha), label_x, str.lower(i_label_strategy), 95, m_group)
 
         // 4. Shared Midpoint Logic
         int n_m = math.min(array.size(hist.mid_hit_bull), array.size(hist.mid_hit_bear))
@@ -925,19 +943,19 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
         f_render_dist_histogram_internal(ds, lbl_reg, st.bear_ref, bear_filtered, -1, bear_color, st.or_start_bar, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name)
         
         // 2. Breakout Histograms (if active)
-        if i_show_bo_histogram and i_show_phase2_levels and render_side != 0 and not na(render_px)
+        if i_show_bo_histogram and render_side != 0 and not na(render_px)
             int bo_x1 = st.or_start_bar + int(math.round(float(max_profile_width) * i_bo_hist_offset_mult))
             
             // Breakout Favorable (MFE)
             array<float> bo_mfe_src = render_side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear
-            array<float> bo_mfe_filtered = STL.f_build_filtered_by_outcome(bo_mfe_src, hist.sig_side, hist.sig_outcome, render_side, i_bo_hist_filter_wins)
-            f_render_dist_histogram_internal(ds, lbl_reg, render_px, bo_mfe_filtered, render_side, render_side == 1 ? r_bull_color : r_bear_color, bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, false, str.lower(i_label_strategy), sp.name + "_bo_mfe")
+            array<float> bo_mfe_filtered = STL.f_build_filtered_by_outcome(bo_mfe_src, hist.sig_side, hist.sig_outcome, render_side, false)
+            f_render_dist_histogram_internal(ds, lbl_reg, render_px, bo_mfe_filtered, render_side, render_side == 1 ? r_bull_color : r_bear_color, bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name + "_bo_mfe")
             
             // Breakout Adverse (MAE)
             array<float> bo_mae_src = render_side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear
-            array<float> bo_mae_filtered = STL.f_build_filtered_by_outcome(bo_mae_src, hist.sig_side, hist.sig_outcome, render_side, i_bo_hist_filter_wins)
+            array<float> bo_mae_filtered = STL.f_build_filtered_by_outcome(bo_mae_src, hist.sig_side, hist.sig_outcome, render_side, true)
             color bo_mae_color = color.new(render_side == 1 ? r_bull_color : r_bear_color, 75) // Faded side color for MAE
-            f_render_dist_histogram_internal(ds, lbl_reg, render_px, bo_mae_filtered, -render_side, bo_mae_color, bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, false, str.lower(i_label_strategy), sp.name + "_bo_mae")
+            f_render_dist_histogram_internal(ds, lbl_reg, render_px, bo_mae_filtered, -render_side, bo_mae_color, bo_x1, max_profile_width, lc_state, profile_label_size, stat_label_color, i_hist_start_pct, i_hist_end_pct, i_hist_pct_step, i_show_hist_bin_labels, str.lower(i_label_strategy), sp.name + "_bo_mae")
 
     // ========================================================================
     // Time Distribution Histogram
@@ -1177,8 +1195,8 @@ f_draw_summary_table(int idx, string pos, color bg, color border, color header_b
     float r20_dn = STL.f_rolling_win_rate(sig_bear_win_bools, 20)
     float r20_ag = STL.f_rolling_win_rate(sig_ag_win_bools, 20)
 
-    // Table size: header(1) + SUMMARY(9) + LIVE(7) + STREAKS_UP(6) + STREAKS_DN(6) + STREAKS_AGG(6) + FRONTRUN(6) + AFTER(7) + ROLLING(4) = 52 rows max
-    int n_rows = 55
+    // Table size: header(1) + SUMMARY(12) + LIVE(7) + STREAKS_UP(6) + STREAKS_DN(6) + STREAKS_AGG(6) + FRONTRUN(6) + AFTER(7) + ROLLING(4) = ~60 rows
+    int n_rows = 70
     int n_cols = 3
     table t = Tables.f_new_table(pos, n_cols, n_rows, color.new(bg, 90), color.new(border, 75), 1)
     color cell_bg = color.new(bg, 85)
@@ -1207,7 +1225,12 @@ f_draw_summary_table(int idx, string pos, color bg, color border, color header_b
     r += 1
     f_summary_split_row(t, r, "› p20 MFE %", STL.f_pct_fmt(array.size(hist.bo_mfe_bull) > 0 ? array.percentile_nearest_rank(hist.bo_mfe_bull, 20) : na), STL.f_pct_fmt(array.size(hist.bo_mfe_bear) > 0 ? array.percentile_nearest_rank(hist.bo_mfe_bear, 20) : na), cell_bg, body_txt, bull_clr, bull_clr, body_sz)
     r += 1
-    f_summary_split_row(t, r, "› p50 MAE %", STL.f_pct_fmt(array.size(hist.bo_mae_bull) > 0 ? array.percentile_nearest_rank(hist.bo_mae_bull, 50) : na), STL.f_pct_fmt(array.size(hist.bo_mae_bear) > 0 ? array.percentile_nearest_rank(hist.bo_mae_bear, 50) : na), cell_bg, body_txt, body_txt, body_txt, body_sz)
+    f_summary_split_row(t, r, "› p50 MFE %", STL.f_pct_fmt(array.size(hist.bo_mfe_bull) > 0 ? array.percentile_nearest_rank(hist.bo_mfe_bull, 50) : na), STL.f_pct_fmt(array.size(hist.bo_mfe_bear) > 0 ? array.percentile_nearest_rank(hist.bo_mfe_bear, 50) : na), cell_bg, body_txt, bull_clr, bull_clr, body_sz)
+    r += 1
+    f_summary_split_row(t, r, "› p75 MFE %", STL.f_pct_fmt(array.size(hist.bo_mfe_bull) > 0 ? array.percentile_nearest_rank(hist.bo_mfe_bull, 75) : na), STL.f_pct_fmt(array.size(hist.bo_mfe_bear) > 0 ? array.percentile_nearest_rank(hist.bo_mfe_bear, 75) : na), cell_bg, body_txt, bull_clr, bull_clr, body_sz)
+    r += 1
+    r += 1
+    f_summary_split_row(t, r, "› p50 MAE %", STL.f_pct_fmt(array.size(hist.mae_bull_abs) > 0 ? array.percentile_nearest_rank(hist.mae_bull_abs, 50) : na), STL.f_pct_fmt(array.size(hist.mae_bear_abs) > 0 ? array.percentile_nearest_rank(hist.mae_bear_abs, 50) : na), cell_bg, body_txt, body_txt, body_txt, body_sz)
     r += 1
     f_summary_aggregate_row(t, r, "› N (sessions)", str.tostring(n_total_signals), cell_bg, body_txt, body_txt, body_sz)
     r += 1
@@ -1234,7 +1257,7 @@ f_draw_summary_table(int idx, string pos, color bg, color border, color header_b
     r += 1
     float entry_px = array.get(sig_breakout_price, idx)
     string entry_txt = na(entry_px) ? "---" : str.tostring(entry_px, format.mintick)
-    f_summary_aggregate_row(t, r, "› Breakout PX", entry_txt, cell_bg, body_txt, body_txt, body_sz)
+    f_summary_aggregate_row(t, r, "› BO Price", entry_txt, cell_bg, body_txt, body_txt, body_sz)
     r += 1
 
     // ====== STREAKS — UP ======
