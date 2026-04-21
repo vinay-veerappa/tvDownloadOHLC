@@ -59,6 +59,9 @@ export type RangeState
     int sig_breakout_side
     float sig_breakout_px
     float sig_pullback_px
+    bool sig_pullback_armed
+    bool prev_in_or     // New
+    bool prev_in_data   // New
     array<float> daily_pivot_bulls
     array<float> daily_pivot_bears
     array<int> data_mins
@@ -138,6 +141,9 @@ export f_new_range_state(RangeSpec spec) =>
         0,
         na,
         na,
+        false,
+        false, // prev_in_or
+        false, // prev_in_data
         array.new_float(0),
         array.new_float(0),
         array.new_int(0),
@@ -175,6 +181,7 @@ export f_reset_daily(RangeState state) =>
     state.mid_hit_bear := false
     state.entry_triggered_bull := false
     state.entry_triggered_bear := false
+    state.sig_pullback_armed := false
     state.session_low_data := na
     state.session_high_data := na
     state.close_at_cutoff := na
@@ -182,6 +189,11 @@ export f_reset_daily(RangeState state) =>
     state.sig_side := 0
     state.sig_outcome := 0
     state.is_terminated := false
+    state.sig_breakout_side := 0
+    state.sig_breakout_px := na
+    state.sig_pullback_px := na
+    state.prev_in_or := false
+    state.prev_in_data := false
     array.clear(state.daily_pivot_bulls)
     array.clear(state.daily_pivot_bears)
     array.clear(state.data_mins)
