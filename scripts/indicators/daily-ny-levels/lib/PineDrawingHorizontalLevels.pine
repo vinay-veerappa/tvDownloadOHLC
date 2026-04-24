@@ -56,31 +56,35 @@ export f_draw_session_open_level(Core.PineDrawingState ds, Core.LabelRegistry lr
     int w = Core.f_display_profile_width(base_width, profile)
     f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, session_name, base_clr, x2 + Core.f_geometry_label_gap_bars(), "merge", 50, tag, lookback)
 
-export f_draw_statistical_level_median(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string source_name, string value_str = "", string unit_str = "", string tag = "", int lookback = 0) =>
+export f_draw_statistical_level_median(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string source_name, string value_str = "", string unit_str = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     int base_width = Core.f_tier_width(tier)
     string style = Core.f_tier_style(tier)
     int transp = Core.f_tier_transparency(tier)
     color base_clr = Core.f_theme_color("median", theme_mode)
     color clr = color.new(base_clr, Core.f_display_profile_transparency(transp, profile))
     int w = Core.f_display_profile_width(base_width, profile)
-    array<string> keys = array.from("source_name", "value", "unit", "base_text")
-    array<string> vals = array.from(source_name, value_str, unit_str, source_name + " Med")
-    string label_text = Core.f_format_template("{base_text}{if:value} {value}{unit}{endif}", keys, vals)
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), "merge", 20, tag, lookback)
+    
+    string label_text = source_name + " Med"
+    if str.length(value_str) > 0
+        label_text += " " + value_str + unit_str
+    
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 20, tag, lookback)
 
-export f_draw_statistical_level_avg(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string source_name, string value_str = "", string unit_str = "", string tag = "", int lookback = 0) =>
+export f_draw_statistical_level_avg(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string source_name, string value_str = "", string unit_str = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     int base_width = Core.f_tier_width(tier)
     string style = Core.f_tier_style(tier)
     int transp = Core.f_tier_transparency(tier)
     color base_clr = Core.f_theme_color("average", theme_mode)
     color clr = color.new(base_clr, Core.f_display_profile_transparency(transp, profile))
     int w = Core.f_display_profile_width(base_width, profile)
-    array<string> keys = array.from("source_name", "value", "unit", "base_text")
-    array<string> vals = array.from(source_name, value_str, unit_str, source_name + " Avg")
-    string label_text = Core.f_format_template("{base_text}{if:value} {value}{unit}{endif}", keys, vals)
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), "merge", 20, tag, lookback)
+    
+    string label_text = source_name + " Avg"
+    if str.length(value_str) > 0
+        label_text += " " + value_str + unit_str
+        
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 20, tag, lookback)
 
-export f_draw_statistical_level_pN(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string source_name, string percentile_str, string value_str = "", string unit_str = "", string direction = "neutral", string tag = "", int lookback = 0) =>
+export f_draw_statistical_level_pN(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string source_name, string percentile_str, string value_str = "", string unit_str = "", string direction = "neutral", string tag = "", int lookback = 0, string strategy = "merge") =>
     int base_width = Core.f_tier_width(tier)
     string style = Core.f_tier_style(tier)
     int transp = Core.f_tier_transparency(tier)
@@ -88,12 +92,14 @@ export f_draw_statistical_level_pN(Core.PineDrawingState ds, Core.LabelRegistry 
     color base_clr = Core.f_theme_color(base_token, theme_mode)
     color clr = color.new(base_clr, Core.f_display_profile_transparency(transp, profile))
     int w = Core.f_display_profile_width(base_width, profile)
-    array<string> keys = array.from("source_name", "percentile", "value", "unit", "base_text")
-    array<string> vals = array.from(source_name, percentile_str, value_str, unit_str, source_name + " P" + percentile_str)
-    string label_text = Core.f_format_template("{base_text}{if:value} {value}{unit}{endif}", keys, vals)
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), "stagger", 20, tag, lookback)
+    
+    string label_text = source_name + " P" + percentile_str
+    if str.length(value_str) > 0
+        label_text += " " + value_str + unit_str
+        
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 20, tag, lookback)
 
-export f_draw_stretch_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string source_name, string percentile_str = "90", string value_str = "", string unit_str = "", string tag = "", int lookback = 0) =>
+export f_draw_stretch_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string source_name, string percentile_str = "90", string value_str = "", string unit_str = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     int width = 1
     string style = "Dotted"
     int transp = tier == "S" ? 20 : tier == "C" ? 40 : 0
@@ -101,13 +107,15 @@ export f_draw_stretch_level(Core.PineDrawingState ds, Core.LabelRegistry lr, str
     color clr = color.new(base_clr, Core.f_display_profile_transparency(transp, profile))
     int w = Core.f_display_profile_width(width, profile)
     
-    array<string> keys = array.from("source_name", "percentile", "value", "unit", "base_text")
-    array<string> vals = array.from(source_name, percentile_str, value_str, unit_str, source_name + " Stretch")
-    string label_text = Core.f_format_template("{base_text}{if:value} {value}{unit}{endif}", keys, vals)
+    string label_text = source_name + " Stretch"
+    if str.length(percentile_str) > 0 and percentile_str != "90"
+        label_text += " P" + percentile_str
+    if str.length(value_str) > 0
+        label_text += " " + value_str + unit_str
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), "stagger", 25, tag, lookback)
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 25, tag, lookback)
 
-export f_draw_max_excursion_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string source_name = "", string percentile_str = "90", string value_str = "", string unit_str = "", string tag = "", int lookback = 0) =>
+export f_draw_max_excursion_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string source_name = "", string percentile_str = "90", string value_str = "", string unit_str = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     int width = 1
     string style = "Dotted"
     int transp = tier == "S" ? 20 : tier == "C" ? 40 : 0
@@ -115,17 +123,21 @@ export f_draw_max_excursion_level(Core.PineDrawingState ds, Core.LabelRegistry l
     color clr = color.new(base_clr, Core.f_display_profile_transparency(transp, profile))
     int w = Core.f_display_profile_width(width, profile)
     
-    array<string> keys = array.from("source_name", "percentile", "value", "unit", "base_text")
-    array<string> vals = array.from(source_name, percentile_str, value_str, unit_str, "Max Reversal")
-    string label_text = Core.f_format_template("{base_text}{if:percentile} P{percentile}{endif}{if:source_name} ({source_name}){endif}{if:value} {value}{unit}{endif}", keys, vals)
+    string label_text = "Max Reversal"
+    if str.length(percentile_str) > 0
+        label_text += " P" + percentile_str
+    if str.length(source_name) > 0
+        label_text += " (" + source_name + ")"
+    if str.length(value_str) > 0
+        label_text += " " + value_str + unit_str
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), "stagger", 45, tag, lookback)
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 45, tag, lookback)
 
 // ============================================================================
 // 2.3 Thesis-defining Lines
 // ============================================================================
 
-export f_draw_invalidation_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string direction_hint = "", string value_str = "", string unit_str = "", string source = "", string tag = "", int lookback = 0) =>
+export f_draw_invalidation_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string direction_hint = "", string value_str = "", string unit_str = "", string source = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     int width = tier == "P" ? 2 : 1
     string style = tier == "P" ? "Solid" : tier == "S" ? "Dashed" : "Dotted"
     int transp = tier == "S" ? 15 : tier == "C" ? 40 : 0
@@ -133,11 +145,15 @@ export f_draw_invalidation_level(Core.PineDrawingState ds, Core.LabelRegistry lr
     color clr = color.new(base_clr, Core.f_display_profile_transparency(transp, profile))
     int w = Core.f_display_profile_width(width, profile)
     
-    array<string> keys = array.from("source", "value", "unit", "direction_hint", "base_text")
-    array<string> vals = array.from(source, value_str, unit_str, direction_hint, "Invalidation")
-    string label_text = Core.f_format_template("{base_text}{if:direction_hint} {direction_hint}{endif}{if:value} {value}{unit}{endif}", keys, vals)
+    string label_text = "Invalidation"
+    if str.length(direction_hint) > 0
+        label_text += " " + direction_hint
+    if str.length(source) > 0
+        label_text += " (" + source + ")"
+    if str.length(value_str) > 0
+        label_text += " " + value_str + unit_str
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), "merge", 50, tag, lookback)
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 50, tag, lookback)
 
 export f_draw_activation_trigger(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string variant = "breakout", string direction = "bull", string basis = "", string value_str = "", string unit_str = "", string tag = "", int lookback = 0) =>
     string style = variant == "breakout" ? "Dotted" : "Dashed"
@@ -154,27 +170,39 @@ export f_draw_activation_trigger(Core.PineDrawingState ds, Core.LabelRegistry lr
     int w = Core.f_display_profile_width(width, profile)
     
     string v_display = variant == "breakout" ? "Breakout" : "Pullback"
-    array<string> keys = array.from("variant_display", "value", "unit", "basis", "base_text")
-    array<string> vals = array.from(v_display, value_str, unit_str, basis, v_display + " Activation")
-    string label_text = Core.f_format_template("{base_text}{if:basis} {basis}{endif}{if:value} {value}{unit}{endif}", keys, vals)
+    string dir_arrow = direction == "bull" ? "↑" : "↓"
+    string label_text = v_display + " (" + dir_arrow + ") Activation"
+    if str.length(basis) > 0
+        label_text += " " + basis
+    if str.length(value_str) > 0
+        label_text += " " + value_str + unit_str
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + 2, "stagger", 45, tag, lookback)
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + 2, "merge", 45, tag, lookback)
 
 export f_draw_confirm_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string direction = "bull", string percentile_str = "", string value_str = "", string unit_str = "", string source = "", string tag = "", int lookback = 0) =>
     int width = 1
     string style = "Dotted"
     int transp = tier == "S" ? 15 : tier == "C" ? 30 : 0
-    color base_clr = Core.f_theme_color("confirm", theme_mode)
+    
+    // Fix: Utilize 'direction' for color selection to avoid CE10237
+    string color_token = direction == "bull" ? "confirm" : direction == "bear" ? "invalidation" : "neutral"
+    color base_clr = Core.f_theme_color(color_token, theme_mode)
     color clr = color.new(base_clr, Core.f_display_profile_transparency(transp, profile))
     int w = Core.f_display_profile_width(width, profile)
     
-    array<string> keys = array.from("source", "percentile", "value", "unit", "base_text")
-    array<string> vals = array.from(source, percentile_str, value_str, unit_str, "Confirm")
-    string label_text = Core.f_format_template("{base_text}{if:percentile} P{percentile}{endif}{if:value} {value}{unit}{endif}", keys, vals)
+    // Resolve glyphs for template
+    string dir_glyph = direction == "bull" ? "▲" : direction == "bear" ? "▼" : ""
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), "stagger", 30, tag, lookback)
+    // Fix: Utilize all arguments in a template-based label construction
+    array<string> keys = array.from("direction", "percentile", "value", "unit", "source", "dir_glyph", "base_text")
+    array<string> vals = array.from(direction, percentile_str, value_str, unit_str, source, dir_glyph, "Confirm")
+    
+    string label_text = Core.f_format_template("{if:dir_glyph}{dir_glyph} {endif}{base_text}{if:source} ({source}){endif}{if:percentile} P{percentile}{endif}{if:value} {value}{unit}{endif}", keys, vals)
+    string tooltip = Core.f_format_template("Confirmation Level: {direction} thesis at {value}{unit} ({source} P{percentile})", keys, vals)
+    
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), "merge", 30, tag, lookback, tooltip)
 
-export f_draw_pivot_structural(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string label_suffix = "", string basis = "", string value_str = "", string unit_str = "", string tag = "", int lookback = 0) =>
+export f_draw_pivot_structural(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string label_suffix = "", string basis = "", string value_str = "", string unit_str = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     int width = tier == "P" ? 2 : 1
     string style = tier == "C" ? "Dashed" : "Solid"
     int transp = tier == "S" ? 15 : tier == "C" ? 30 : 0
@@ -186,13 +214,13 @@ export f_draw_pivot_structural(Core.PineDrawingState ds, Core.LabelRegistry lr, 
     array<string> vals = array.from(label_suffix, value_str, unit_str, basis, "Pivot")
     string label_text = Core.f_format_template("{base_text}{if:label_suffix} {label_suffix}{endif}{if:basis} {basis}{endif}{if:value} {value}{unit}{endif}", keys, vals)
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), "merge", 35, tag, lookback)
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 35, tag, lookback)
 
 // ============================================================================
 // 2.4 Target Levels
 // ============================================================================
 
-export f_draw_target_level_p20(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string direction = "bull", string qualifier = "", string basis = "", string value_str = "", string unit = "", string tag = "", int lookback = 0) =>
+export f_draw_target_level_p20(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string direction = "bull", string qualifier = "", string basis = "", string value_str = "", string unit = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     int width = 1
     string style = "Dotted"
     int transp = tier == "S" ? 20 : tier == "C" ? 40 : 0
@@ -202,11 +230,11 @@ export f_draw_target_level_p20(Core.PineDrawingState ds, Core.LabelRegistry lr, 
     
     array<string> keys = array.from("qualifier", "value", "unit", "basis", "base_text")
     array<string> vals = array.from(qualifier, value_str, unit, basis, "Target P20")
-    string label_text = Core.f_format_template("{base_text}{if:qualifier} {qualifier}{endif}{if:value} {value}{unit}{endif}", keys, vals)
+    string label_text = Core.f_format_template("{base_text}{if:basis} {basis}{endif}{if:qualifier} {qualifier}{endif}{if:value} {value}{unit}{endif}", keys, vals)
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), "stagger", 40, tag, lookback)
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 40, tag, lookback)
 
-export f_draw_target_level_p50(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string qualifier = "", string basis = "", string value_str = "", string unit = "", string tag = "", int lookback = 0) =>
+export f_draw_target_level_p50(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string qualifier = "", string basis = "", string value_str = "", string unit = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     int width = tier == "P" ? 2 : 1
     string style = tier == "C" ? "Dashed" : "Solid"
     int transp = tier == "S" ? 15 : tier == "C" ? 30 : 0
@@ -216,11 +244,11 @@ export f_draw_target_level_p50(Core.PineDrawingState ds, Core.LabelRegistry lr, 
     
     array<string> keys = array.from("qualifier", "value", "unit", "basis", "base_text")
     array<string> vals = array.from(qualifier, value_str, unit, basis, "Pivot P50")
-    string label_text = Core.f_format_template("{base_text}{if:qualifier} ({qualifier}){endif}{if:value} {value}{unit}{endif}", keys, vals)
+    string label_text = Core.f_format_template("{base_text}{if:basis} {basis}{endif}{if:qualifier} ({qualifier}){endif}{if:value} {value}{unit}{endif}", keys, vals)
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + 2, "stagger", 40, tag, lookback)
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + 2, strategy, 40, tag, lookback)
 
-export f_draw_target_level_p75(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string qualifier = "", string basis = "", string value_str = "", string unit = "", string tag = "", int lookback = 0) =>
+export f_draw_target_level_p75(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string qualifier = "", string basis = "", string value_str = "", string unit = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     int width = tier == "P" ? 2 : 1
     string style = tier == "S" ? "Dashed" : tier == "C" ? "Dotted" : "Dashed"
     int transp = tier == "S" ? 20 : tier == "C" ? 35 : 0
@@ -230,66 +258,66 @@ export f_draw_target_level_p75(Core.PineDrawingState ds, Core.LabelRegistry lr, 
     
     array<string> keys = array.from("qualifier", "value", "unit", "basis", "base_text")
     array<string> vals = array.from(qualifier, value_str, unit, basis, "Target P75")
-    string label_text = Core.f_format_template("{base_text}{if:qualifier} {qualifier}{endif}{if:value} {value}{unit}{endif}", keys, vals)
+    string label_text = Core.f_format_template("{base_text}{if:basis} {basis}{endif}{if:qualifier} {qualifier}{endif}{if:value} {value}{unit}{endif}", keys, vals)
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + 2, "stagger", 40, tag, lookback)
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + 2, strategy, 40, tag, lookback)
 
 
 // ============================================================================
 // 2.5 Session Levels
 // ============================================================================
 
-export f_draw_session_high_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string session_token, string session_name, string probability = "", string streak_arrow = "", string streak_count = "", string hit_rate = "", string tag = "", int lookback = 0) =>
-    f_draw_labeled_stat_line(
-        ds, lr, x1, y, x2,
-        color.new(
-            Core.f_theme_color_safe(str.length(session_token) > 0 ? session_token : str.lower(session_name), theme_mode, Core.f_theme_color("neutral", theme_mode)),
-            Core.f_display_profile_transparency(Core.f_tier_transparency(tier), profile)
-        ),
-        Core.f_tier_style(tier),
-        Core.f_display_profile_width(Core.f_tier_width(tier), profile),
-        session_name,
-        Core.f_theme_color_safe(str.length(session_token) > 0 ? session_token : str.lower(session_name), theme_mode, Core.f_theme_color("neutral", theme_mode)),
-        x2 + Core.f_geometry_label_gap_bars(),
-        "stagger", 30, tag, lookback
-    )
+export f_draw_session_high_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string session_token, string session_name, string probability = "", string streak_arrow = "", string streak_count = "", string hit_rate = "", string tag = "", int lookback = 0, string strategy = "merge") =>
+    // Fix: Utilize all arguments in a template-based label and tooltip construction to avoid CE10237
+    array<string> keys = array.from("session_name", "probability", "streak_arrow", "streak_count", "hit_rate")
+    array<string> vals = array.from(session_name, probability, streak_arrow, streak_count, hit_rate)
+    
+    string label_text = Core.f_format_template("{session_name}{if:probability} {probability}{endif}{if:streak_count} {streak_arrow}{streak_count}{endif}{if:hit_rate} ({hit_rate}){endif}", keys, vals)
+    string tooltip = Core.f_format_template("{session_name} High: Prob {probability}, Streak {streak_arrow}{streak_count}, Hit Rate {hit_rate}", keys, vals)
+    
+    string token = str.length(session_token) > 0 ? session_token : str.lower(session_name)
+    color base_clr = Core.f_theme_color_safe(token, theme_mode, Core.f_theme_color("neutral", theme_mode))
+    color clr = color.new(base_clr, Core.f_display_profile_transparency(Core.f_tier_transparency(tier), profile))
+    int w = Core.f_display_profile_width(Core.f_tier_width(tier), profile)
+    
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, Core.f_tier_style(tier), w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 30, tag, lookback, tooltip)
 
-export f_draw_session_low_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string session_token, string session_name, string probability = "", string streak_arrow = "", string streak_count = "", string hit_rate = "", string tag = "", int lookback = 0) =>
-    f_draw_labeled_stat_line(
-        ds, lr, x1, y, x2,
-        color.new(
-            Core.f_theme_color_safe(str.length(session_token) > 0 ? session_token : str.lower(session_name), theme_mode, Core.f_theme_color("neutral", theme_mode)),
-            Core.f_display_profile_transparency(Core.f_tier_transparency(tier), profile)
-        ),
-        Core.f_tier_style(tier),
-        Core.f_display_profile_width(Core.f_tier_width(tier), profile),
-        session_name,
-        Core.f_theme_color_safe(str.length(session_token) > 0 ? session_token : str.lower(session_name), theme_mode, Core.f_theme_color("neutral", theme_mode)),
-        x2 + Core.f_geometry_label_gap_bars(),
-        "stagger", 30, tag, lookback
-    )
+export f_draw_session_low_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string session_token, string session_name, string probability = "", string streak_arrow = "", string streak_count = "", string hit_rate = "", string tag = "", int lookback = 0, string strategy = "merge") =>
+    // Fix: Utilize all arguments in a template-based label and tooltip construction to avoid CE10237
+    array<string> keys = array.from("session_name", "probability", "streak_arrow", "streak_count", "hit_rate")
+    array<string> vals = array.from(session_name, probability, streak_arrow, streak_count, hit_rate)
 
-export f_draw_session_mid_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string session_token, string session_name, string probability = "", string streak_arrow = "", string streak_count = "", string hit_rate = "", string tag = "", int lookback = 0) =>
-    f_draw_labeled_stat_line(
-        ds, lr, x1, y, x2,
-        color.new(
-            Core.f_theme_color_safe(str.length(session_token) > 0 ? session_token : str.lower(session_name), theme_mode, Core.f_theme_color("neutral", theme_mode)),
-            Core.f_display_profile_transparency(tier == "P" ? 20 : tier == "S" ? 30 : 50, profile)
-        ),
-        "Dotted",
-        Core.f_display_profile_width(1, profile),
-        session_name,
-        Core.f_theme_color_safe(str.length(session_token) > 0 ? session_token : str.lower(session_name), theme_mode, Core.f_theme_color("neutral", theme_mode)),
-        x2 + Core.f_geometry_label_gap_bars(),
-        "stagger", 30, tag, lookback
-    )
+    string label_text = Core.f_format_template("{session_name}{if:probability} {probability}{endif}{if:streak_count} {streak_arrow}{streak_count}{endif}{if:hit_rate} ({hit_rate}){endif}", keys, vals)
+    string tooltip = Core.f_format_template("{session_name} Low: Prob {probability}, Streak {streak_arrow}{streak_count}, Hit Rate {hit_rate}", keys, vals)
+
+    string token = str.length(session_token) > 0 ? session_token : str.lower(session_name)
+    color base_clr = Core.f_theme_color_safe(token, theme_mode, Core.f_theme_color("neutral", theme_mode))
+    color clr = color.new(base_clr, Core.f_display_profile_transparency(Core.f_tier_transparency(tier), profile))
+    int w = Core.f_display_profile_width(Core.f_tier_width(tier), profile)
+
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, Core.f_tier_style(tier), w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 30, tag, lookback, tooltip)
+
+export f_draw_session_mid_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string session_token, string session_name, string probability = "", string streak_arrow = "", string streak_count = "", string hit_rate = "", string tag = "", int lookback = 0, string strategy = "merge") =>
+    // Fix: Utilize all arguments in a template-based label and tooltip construction to avoid CE10237
+    array<string> keys = array.from("session_name", "probability", "streak_arrow", "streak_count", "hit_rate")
+    array<string> vals = array.from(session_name, probability, streak_arrow, streak_count, hit_rate)
+
+    string label_text = Core.f_format_template("{session_name} Mid{if:probability} {probability}{endif}{if:streak_count} {streak_arrow}{streak_count}{endif}{if:hit_rate} ({hit_rate}){endif}", keys, vals)
+    string tooltip = Core.f_format_template("{session_name} Mid: Prob {probability}, Streak {streak_arrow}{streak_count}, Hit Rate {hit_rate}", keys, vals)
+    
+    string token = str.length(session_token) > 0 ? session_token : str.lower(session_name)
+    color base_clr = Core.f_theme_color_safe(token, theme_mode, Core.f_theme_color("neutral", theme_mode))
+    color clr = color.new(base_clr, Core.f_display_profile_transparency(tier == "P" ? 20 : tier == "S" ? 30 : 50, profile))
+    int w = Core.f_display_profile_width(1, profile)
+    
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, "Dotted", w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 30, tag, lookback, tooltip)
 
 
 // ============================================================================
 // 2.6 Previous-period Levels
 // ============================================================================
 
-export f_draw_previous_period_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string variant = "day", string period_abbrev = "PD", string level_abbrev = "H", string hit_rate = "", string streak_arrow = "", string streak_count = "", string value_str = "", string unit_str = "", string tag = "", int lookback = 0) =>
+export f_draw_previous_period_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string period_abbrev = "PD", string level_abbrev = "H", string hit_rate = "", string streak_arrow = "", string streak_count = "", string value_str = "", string unit_str = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     int width = 1
     string style = tier == "S" ? "Dashed" : tier == "C" ? "Dotted" : "Solid"
     int transp = tier == "S" ? 15 : tier == "C" ? 30 : 0
@@ -300,11 +328,11 @@ export f_draw_previous_period_level(Core.PineDrawingState ds, Core.LabelRegistry
     
     array<string> keys = array.from("period_abbrev", "level_abbrev", "hit_rate", "streak_arrow", "streak_count", "value", "unit", "base_text")
     array<string> vals = array.from(period_abbrev, level_abbrev, hit_rate, streak_arrow, streak_count, value_str, unit_str, period_abbrev + level_abbrev)
-    string label_text = Core.f_format_template("{base_text}{if:hit_rate} {hit_rate}%{endif}{if:streak_count} ({streak_arrow}{streak_count}){endif}", keys, vals)
+    string label_text = Core.f_format_template("{base_text}{if:hit_rate} {hit_rate}%{endif}{if:streak_count} ({streak_arrow}{streak_count}){endif}{if:value} {value}{unit}{endif}", keys, vals)
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), "stagger", 20, tag, lookback)
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 20, tag, lookback)
 
-export f_draw_settlement_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string hit_rate = "", string streak_arrow = "", string streak_count = "", string value_str = "", string unit_str = "", string tag = "", int lookback = 0) =>
+export f_draw_settlement_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string hit_rate = "", string streak_arrow = "", string streak_count = "", string value_str = "", string unit_str = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     int width = 1
     string style = tier == "S" ? "Dashed" : tier == "C" ? "Dotted" : "Solid"
     int transp = tier == "S" ? 15 : tier == "C" ? 30 : 0
@@ -315,16 +343,16 @@ export f_draw_settlement_level(Core.PineDrawingState ds, Core.LabelRegistry lr, 
     
     array<string> keys = array.from("hit_rate", "streak_arrow", "streak_count", "value", "unit", "base_text")
     array<string> vals = array.from(hit_rate, streak_arrow, streak_count, value_str, unit_str, "Settle")
-    string label_text = Core.f_format_template("{base_text}{if:hit_rate} {hit_rate}%{endif}{if:streak_count} ({streak_arrow}{streak_count}){endif}", keys, vals)
+    string label_text = Core.f_format_template("{base_text}{if:hit_rate} {hit_rate}%{endif}{if:streak_count} ({streak_arrow}{streak_count}){endif}{if:value} {value}{unit}{endif}", keys, vals)
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), "stagger", 25, tag, lookback)
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, base_clr, x2 + Core.f_geometry_label_gap_bars(), strategy, 25, tag, lookback)
 
 // ============================================================================
 // 2.1 Generic Priority Lines
 // ============================================================================
 
 /// Draw a generic priority line (P, S, or C tier).
-export f_draw_priority_line(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string label_text, color base_clr = na, int priority = 10, string tag = "", int lookback = 0) =>
+export f_draw_priority_line(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string label_text, color base_clr = na, int priority = 10, string tag = "", int lookback = 0, string strategy = "merge") =>
     int width = tier == "P" ? 2 : 1
     string style = tier == "C" ? "Dotted" : tier == "S" ? "Dashed" : "Solid"
     int transp = tier == "S" ? 15 : tier == "C" ? 30 : 0
@@ -332,17 +360,17 @@ export f_draw_priority_line(Core.PineDrawingState ds, Core.LabelRegistry lr, str
     color clr = color.new(c, Core.f_display_profile_transparency(transp, profile))
     int w = Core.f_display_profile_width(width, profile)
     
-    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, c, x2 + Core.f_geometry_label_gap_bars(), "merge", priority, tag, lookback)
+    f_draw_labeled_stat_line(ds, lr, x1, y, x2, clr, style, w, label_text, c, x2 + Core.f_geometry_label_gap_bars(), strategy, priority, tag, lookback)
 
 // ============================================================================
 // 2.7 Anchored and Reference Levels
 // ============================================================================
 
 /// Draw a generic reference level (§2.7).
-export f_draw_reference_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string label_text, string variant = "neutral", string tag = "", int lookback = 0) =>
+export f_draw_reference_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string label_text, string variant = "neutral", string tag = "", int lookback = 0, string strategy = "merge") =>
     // Use the variant as a palette token for color
     color ref_base_clr = Core.f_theme_color(variant, theme_mode)
-    f_draw_priority_line(ds, lr, theme_mode, profile, tier, x1, x2, y, label_text, ref_base_clr, 5, tag, lookback)
+    f_draw_priority_line(ds, lr, theme_mode, profile, tier, x1, x2, y, label_text, ref_base_clr, 5, tag, lookback, strategy)
 
 // ============================================================================
 // 3. Options and Gamma Levels
@@ -352,7 +380,7 @@ export f_draw_reference_level(Core.PineDrawingState ds, Core.LabelRegistry lr, s
 // --- 3.2 Key Walls and Magnets ----------------------------------------------
 
 /// Draw a wall level (key options wall, macro, sweep, etc.).
-export f_draw_wall_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string variant = "standard", string direction = "call", string wall_label = "", string glyph_prefix = "", string value_str = "", string unit = "", string tag = "", int lookback = 0) =>
+export f_draw_wall_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string variant = "standard", string direction = "call", string wall_label = "", string glyph_prefix = "", string value_str = "", string unit = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     f_draw_labeled_stat_line(
         ds, lr, x1, y, x2,
         color.new(
@@ -372,8 +400,8 @@ export f_draw_wall_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string
         Core.f_display_profile_width(Core.f_tier_width(tier), profile),
         Core.f_format_template(
             "{if:glyph_prefix}{glyph_prefix} {endif}{wall_label}{if:value_str} ({value_str}{unit}){endif}",
-            array.from("wall_label", "glyph_prefix", "value_str", "unit", "base_text"),
-            array.from(str.length(wall_label) > 0 ? wall_label : (direction == "call" ? "Call Wall" : "Put Wall"), glyph_prefix, value_str, unit, "Wall")
+            array.from("wall_label", "glyph_prefix", "value_str", "unit"),
+            array.from(str.length(wall_label) > 0 ? wall_label : (direction == "call" ? "Call Wall" : "Put Wall"), glyph_prefix, value_str, unit)
         ),
         Core.f_theme_color(
             variant == "whale" ? (direction == "call" ? "pivot_color" : "warning") :
@@ -386,21 +414,17 @@ export f_draw_wall_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string
             theme_mode
         ),
         x2 + Core.f_geometry_label_gap_bars(),
-        "stagger", 35, tag, lookback
+        strategy, 35, tag, lookback
     )
 
 /// Draw a magnet level (gamma magnet, pin strike, max pain, hedge wall).
-export f_draw_magnet_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string variant = "gamma_magnet", string value_str = "", string unit = "", string tag = "", int lookback = 0) =>
+export f_draw_magnet_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string variant = "gamma_magnet", string value_str = "", string unit = "", string tag = "", int lookback = 0, string strategy = "merge") =>
     f_draw_priority_line(
         ds, lr, theme_mode, profile, tier, x1, x2, y,
         Core.f_format_template(
             "{base_text}{if:value_str} ({value_str}{unit}){endif}",
-            array.from("variant_display", "value_str", "unit", "base_text"),
+            array.from("value_str", "unit", "base_text"),
             array.from(
-                variant == "gamma_magnet" ? "Gamma Magnet" :
-                variant == "pin_strike" ? "Pin Strike" :
-                variant == "max_pain" ? "Max Pain" :
-                variant == "hedge_wall" ? "Hedge Wall" : "Magnet",
                 value_str, unit,
                 variant == "gamma_magnet" ? "Gamma Magnet" :
                 variant == "pin_strike" ? "Pin Strike" :
@@ -415,7 +439,7 @@ export f_draw_magnet_level(Core.PineDrawingState ds, Core.LabelRegistry lr, stri
             variant == "hedge_wall" ? "caution" : "pivot_color",
             theme_mode
         ),
-        38, tag, lookback
+        38, tag, lookback, strategy
     )
 /// Draw the Zero Gamma level (gamma flip boundary).
 export f_draw_zero_gamma_level(Core.PineDrawingState ds, Core.LabelRegistry lr, string theme_mode, string profile, string tier, int x1, int x2, float y, string value_str = "", string unit = "", string tag = "", int lookback = 0) =>

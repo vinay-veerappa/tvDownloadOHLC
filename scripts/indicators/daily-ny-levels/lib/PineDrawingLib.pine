@@ -243,7 +243,7 @@ f_draw_registry_entry(PineDrawingState ds, LabelRegistry lr, int idx, int x_over
         string size_final = str.length(size_token) > 0 ? size_token : default_label_size
         f_draw_stat_label(ds, x_override, y, text_override, c, style, size_final)
 
-export f_label_registry_draw(PineDrawingState ds, LabelRegistry lr, float merge_thr, string default_label_size, int column_step_bars) =>
+export f_label_registry_draw(PineDrawingState ds, LabelRegistry lr, float merge_thr, string default_label_size) =>
     int n = f_label_registry_size(lr)
     if n > 0
         array<bool> used = array.new_bool(n, false)
@@ -262,36 +262,23 @@ export f_label_registry_draw(PineDrawingState ds, LabelRegistry lr, float merge_
                     if not array.get(used, j) and f_registry_overlap(lr, i, j, merge_thr)
                         array.set(used, j, true)
                 f_draw_registry_entry(ds, lr, i, base_x, array.get(lr.texts, i), default_label_size)
-            else if strategy == "stagger"
-                array<int> cluster = array.new_int(0)
-                array.push(cluster, i)
-                array.set(used, i, true)
-                for j = 0 to n - 1
-                    if not array.get(used, j) and f_registry_overlap(lr, i, j, merge_thr) and array.get(lr.strategies, j) != "off"
-                        array.push(cluster, j)
-                        array.set(used, j, true)
-                if array.size(cluster) > 0
-                    for cidx = 0 to array.size(cluster) - 1
-                        int ci = array.get(cluster, cidx)
-                        int x_shift = base_x + cidx * column_step_bars
-                        f_draw_registry_entry(ds, lr, ci, x_shift, array.get(lr.texts, ci), default_label_size)
             else
-                // Default strategy is merge.
+                // Default strategy is merge (including legacy 'stagger' calls).
                 array.set(used, i, true)
                 string combined = array.get(lr.texts, i)
                 for j = 0 to n - 1
-                    if not array.get(used, j) and f_registry_overlap(lr, i, j, merge_thr) and array.get(lr.strategies, j) == "merge" and f_registry_can_merge(lr, i, j)
+                    if not array.get(used, j) and f_registry_overlap(lr, i, j, merge_thr) and (array.get(lr.strategies, j) == "merge" or array.get(lr.strategies, j) == "stagger") and f_registry_can_merge(lr, i, j)
                         combined := combined + " | " + array.get(lr.texts, j)
                         array.set(used, j, true)
                 f_draw_registry_entry(ds, lr, i, base_x, combined, default_label_size)
 
 // Draw and clear registry in one call.
-export f_label_registry_flush(PineDrawingState ds, LabelRegistry lr, float merge_thr, string default_label_size, int column_step_bars) =>
-    f_label_registry_draw(ds, lr, merge_thr, default_label_size, column_step_bars)
+export f_label_registry_flush(PineDrawingState ds, LabelRegistry lr, float merge_thr, string default_label_size) =>
+    f_label_registry_draw(ds, lr, merge_thr, default_label_size)
     f_label_registry_clear(lr)
 
 export f_label_registry_draw_merged(PineDrawingState ds, LabelRegistry lr, float merge_thr, string label_size) =>
-    f_label_registry_draw(ds, lr, merge_thr, label_size, 2)
+    f_label_registry_draw(ds, lr, merge_thr, label_size)
 
 // Draw a vertical time histogram bar (x spans a time bin, y height encodes count)
 export f_draw_time_bar(PineDrawingState ds, int x_left, int x_right, float y_top, float y_bot, color clr) =>

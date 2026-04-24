@@ -240,9 +240,11 @@ f_track_range(int idx) =>
                 [mab, mas] = STL.f_track_mae_abs(h, l, st.or_low, st.or_high, st.daily_mae_bull_abs, st.daily_mae_bear_abs)
                 st.daily_mae_bull_abs := mab
                 st.daily_mae_bear_abs := mas
-                bool bull_peak_finalized = mins_since_or >= st.daily_bull_peak_min
-                bool bear_peak_finalized = mins_since_or >= st.daily_bear_peak_min
-                [mpb, mps] = STL.f_track_mae_pullback(h, l, st.or_high, st.or_low, bull_peak_finalized, bear_peak_finalized, st.daily_mae_bull_pb, st.daily_mae_bear_pb)
+                float b_peak_px = st.bull_ref * (1.0 + st.daily_bull_mfe / 100.0)
+                float s_peak_px = st.bear_ref * (1.0 - st.daily_bear_mfe / 100.0)
+                bool is_peak_hit_bull = mins_since_or == st.daily_bull_peak_min
+                bool is_peak_hit_bear = mins_since_or == st.daily_bear_peak_min
+                [mpb, mps] = STL.f_track_mae_pullback(h, l, st.or_high, st.or_low, st.entry_triggered_bull, st.entry_triggered_bear, is_peak_hit_bull, is_peak_hit_bear, b_peak_px, s_peak_px, st.daily_mae_bull_pb, st.daily_mae_bear_pb)
                 st.daily_mae_bull_pb := mpb
                 st.daily_mae_bear_pb := mps
                 array.push(st.data_mins, mins_since_or)
@@ -271,9 +273,11 @@ f_track_range(int idx) =>
         [mab, mas] = STL.f_track_mae_abs(high, low, st.or_low, st.or_high, st.daily_mae_bull_abs, st.daily_mae_bear_abs)
         st.daily_mae_bull_abs := mab
         st.daily_mae_bear_abs := mas
-        bool bull_peak_finalized = mins_since_or >= st.daily_bull_peak_min
-        bool bear_peak_finalized = mins_since_or >= st.daily_bear_peak_min
-        [mpb, mps] = STL.f_track_mae_pullback(high, low, st.or_high, st.or_low, bull_peak_finalized, bear_peak_finalized, st.daily_mae_bull_pb, st.daily_mae_bear_pb)
+        float b_peak_px = st.bull_ref * (1.0 + st.daily_bull_mfe / 100.0)
+        float s_peak_px = st.bear_ref * (1.0 - st.daily_bear_mfe / 100.0)
+        bool is_peak_hit_bull = mins_since_or == st.daily_bull_peak_min
+        bool is_peak_hit_bear = mins_since_or == st.daily_bear_peak_min
+        [mpb, mps] = STL.f_track_mae_pullback(high, low, st.or_high, st.or_low, st.entry_triggered_bull, st.entry_triggered_bear, is_peak_hit_bull, is_peak_hit_bear, b_peak_px, s_peak_px, st.daily_mae_bull_pb, st.daily_mae_bear_pb)
         st.daily_mae_bull_pb := mpb
         st.daily_mae_bear_pb := mps
         array.push(st.data_mins, mins_since_or)
