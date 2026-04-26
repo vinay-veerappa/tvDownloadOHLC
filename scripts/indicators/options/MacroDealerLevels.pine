@@ -560,8 +560,48 @@ var string TZ = "America/New_York"
 f_sessionKey() => dayofmonth(time, TZ) + month(time, TZ) * 31 + year(time, TZ) * 400
 isNewSession = ta.change(f_sessionKey()) != 0
 var int sessionStartBar = 0
-if barstate.isfirst or isNewSession
+if barstate.isfirst 
     sessionStartBar := bar_index
+
+
+// { logic
+bool is_recent = time >= (timenow - (86400000 * 2)) // Keeping 4 days to allow for long weekends
+
+// Define the underlying equity ticker based on your futures contract
+var string equity_ref = str.contains(syminfo.ticker, "NQ")  ? "QQQ" : 
+                         str.contains(syminfo.ticker, "ES")  ? "SPY" : 
+                         str.contains(syminfo.ticker, "YM")  ? "DIA" : 
+                         str.contains(syminfo.ticker, "RTY") ? "IWM" : 
+                         str.contains(syminfo.ticker, "SPX") ? "AMEX:SPY" : syminfo.ticker
+
+f_getContractCost(_sym) => 
+    request.security((_sym), "1D" , close, ignore_invalid_symbol=true,lookahead = barmerge.lookahead_off)
+
+
+// Request the exact RTH session states from the underlying equity index
+[eq_open, eq_close] = request.security(equity_ref, timeframe.period, [session.isfirstbar_regular, session.islastbar_regular], gaps = barmerge.gaps_on)
+
+var bool can_calculate = false
+var int last_open_time = 0
+var int last_close_time = 0
+
+// Trigger Open logic matching the exact equity open
+if is_recent and eq_open and time != last_open_time
+    last_open_time := time
+    can_calculate  := true
+    //useClose       := false
+    sessionStartBar := bar_index
+    label.new(bar_index, high, "Open", color=color.green, textcolor=color.white, style=label.style_label_down)
+
+// Trigger Close logic matching the exact equity close
+if is_recent and eq_close and time != last_close_time
+    last_close_time := time
+    //can_calculate   := true
+    //useClose        := true
+    sessionStartBar := bar_index
+    label.new(bar_index, high, "Close", color=color.green, textcolor=color.white, style=label.style_label_down)
+
+
 
 var array<line> allLines = array.new_line()
 var array<label> allLabels = array.new_label()
@@ -576,18 +616,37 @@ var string matchMacro = ""
 var string rawScored = ""
 var string matchScored = ""
 
+// ── Global Parsed Data Caches ──
+var array<float> cached_dPrices = array.new_float()
+var array<string> cached_dTitles = array.new_string()
+
+var array<float> cached_mPrices = array.new_float()
+var array<string> cached_mTitles = array.new_string()
+
+var array<float> cached_sPrices = array.new_float()
+var array<string> cached_sFilters = array.new_string()
+var array<string> cached_sSigs = array.new_string()
+var array<string> cached_sLabels = array.new_string()
+
+
 if barstate.isfirst
     [rD, mD] = f_findMatchingLine(i_pastedDealer)
     rawDealer := rD
     matchDealer := mD
+    if matchDealer != "" and i_showDealer
+        f_parseLevels(rawDealer, cached_dPrices, cached_dTitles)
     
     [rM, mM] = f_findMatchingLine(i_pastedMacro)
     rawMacro := rM
     matchMacro := mM
+    if matchMacro != "" and i_showMacro
+        f_parseLevels(rawMacro, cached_mPrices, cached_mTitles)
 
     [rS, mS] = f_findMatchingLine(i_pastedScored)
     rawScored := rS
     matchScored := mS
+    if matchScored != "" and i_showScored
+        f_parseScoredLevels(rawScored, cached_sPrices, cached_sFilters, cached_sSigs, cached_sLabels)
 
 // Redraw / Calculation State
 var float st_ZG = na, var float st_MAG = na, var float st_PIN = na
@@ -605,12 +664,12 @@ f_clearAll() =>
     array.clear(labelCols)
     array.clear(colLastPrices)
 
-needsUpdate = barstate.isfirst or isNewSession
 
 
 var s_flt = ""
 var s_sig = ""
-if needsUpdate
+if can_calculate
+    can_calculate := false
     f_clearAll()
     st_ZG := na, st_MAG := na, st_PIN := na
     st_CW := na, st_PW := na, st_EU := na, st_EL := na
@@ -623,7 +682,8 @@ if needsUpdate
     var line line_emDn = na
     var line line_gcUp = na
     var line line_gcDn = na
-    
+    var bool etfConversion = false    
+
     // Arrays to process both sources
     srcRaw = array.new_string()
     srcShow = array.new_bool()
@@ -639,10 +699,9 @@ if needsUpdate
             if not array.get(srcShow, sIdx)
                 continue
                 
-            pPrices = array.new_float()
-            pTitles = array.new_string()
-            f_parseLevels(array.get(srcRaw, sIdx), pPrices, pTitles)
-
+            pPrices = (array.get(srcRaw, sIdx) == rawDealer ) ? cached_dPrices : cached_mPrices 
+            pTitles = (array.get(srcRaw, sIdx) == rawDealer ) ? cached_dTitles : cached_mTitles
+            
             // ── Futures Anchor Scaling ──
             sC = f_canonicalSymbol(array.get(srcRaw, sIdx) == rawDealer ? matchDealer : matchMacro)
             pC = f_canonicalSymbol(f_primarySymbol())
@@ -651,17 +710,20 @@ if needsUpdate
             sFut = f_isOvernightFutures(sC)
             cFut = f_isOvernightFutures(pC)
 
-            if cFut and sF == cF and not sFut
+            if cFut and sF == cF and not sFut and not etfConversion
                 // We are on a futures ticker but data is from Spot/ETF
                 anc = sC == "ES" or sC == "SPX" or sC == "SPY" ? "ES" : sC == "NQ" or sC == "NDX" or sC == "QQQ" ? "NQ" : sC == "YM" or sC == "DJI" or sC == "DIA" ? "YM" : sC == "RTY" or sC == "RUT" or sC == "IWM" ? "RTY" : ""
                 if anc != ""
                     if array.size(pPrices) > 0
                         sR = array.get(pPrices, 0)
                         if math.abs(sR) > syminfo.mintick
-                            fs = close / sR
+                            fs = f_getContractCost(syminfo.main_tickerid) / f_getContractCost(sC)
+                            //fs1 = close / sR
+                            log.info("Contract fraction {0} -> {1} -- {2} -> {3} " + sC, fs, f_getContractCost(sC) , f_getContractCost(syminfo.main_tickerid), array.get(pPrices, 0))
                             if math.abs(fs - 1.0) > 0.001 
                                 for k = 0 to array.size(pPrices) - 1
                                     array.set(pPrices, k, array.get(pPrices, k) * fs)
+                                    etfConversion := true
             
             if array.size(pPrices) > 0
                 // Temporary arrays for aggregated levels
@@ -792,10 +854,29 @@ if needsUpdate
         sSigs    = array.new_string()
         sLabels  = array.new_string()
         f_parseScoredLevels(rawScored, sPrices, sFilters, sSigs, sLabels)
+
     
         if array.size(sPrices) > 0
             // Optional: apply same futures anchor scaling as dealer levels
             // (copy the scaling block from the existing dealer/macro processing)
+            // ── Apply Futures Anchor Scaling for Scored Levels ──
+            sC = f_canonicalSymbol(matchScored)
+            pC = f_canonicalSymbol(f_primarySymbol())
+            sF = f_symbolFamilyKey(sC)
+            cF = f_symbolFamilyKey(pC)
+            sFut = f_isOvernightFutures(sC)
+            cFut = f_isOvernightFutures(pC)
+
+            if cFut and sF == cF and not sFut
+                // We are on a futures ticker but data is from Spot/ETF
+                anc = sC == "ES" or sC == "SPX" or sC == "SPY" ? "ES" : sC == "NQ" or sC == "NDX" or sC == "QQQ" ? "NQ" : sC == "YM" or sC == "DJI" or sC == "DIA" ? "YM" : sC == "RTY" or sC == "RUT" or sC == "IWM" ? "RTY" : ""
+                if anc != ""
+                    sR = array.get(sPrices, 0)
+                    if math.abs(sR) > syminfo.mintick
+                        fs = close / sR
+                        if math.abs(fs - 1.0) > 0.001 
+                            for k = 0 to array.size(sPrices) - 1
+                                array.set(sPrices, k, array.get(sPrices, k) * fs)
             
             for i = 0 to array.size(sPrices) - 1
                 s_lv  = array.get(sPrices, i)

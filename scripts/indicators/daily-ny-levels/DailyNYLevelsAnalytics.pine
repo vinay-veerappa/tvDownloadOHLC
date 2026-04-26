@@ -146,7 +146,7 @@ i_table_body_text_color = input.color(color.white, "Table Body Text Color", grou
 // Inputs — Debug
 // ============================================================================
 grp_debug = "Debug"
-i_show_debug = input.bool(false, "Show Debug Labels", group=grp_debug)
+i_show_debug = input.bool(true, "Show Debug Labels", group=grp_debug)
 i_debug_text_color = input.color(color.white, "Debug Text Color", group=grp_debug)
 i_debug_bg_color = input.color(color.blue, "Debug Background Color", group=grp_debug)
 
@@ -217,7 +217,7 @@ f_init_runtime() =>
 
     array<RSL.RangeSpec> resolved = RSL.f_resolve_preset(i_preset, i_custom_start, i_custom_end, i_custom_cutoff, i_timezone)
     int n = array.size(resolved)
-    log.info("RUNTIME INIT - Preset: {0} | Resolved {1} specs", i_preset, n)
+    // log.info("RUNTIME INIT - Preset: {0} | Resolved {1} specs", i_preset, n)
     if n > 0
         for i = 0 to n - 1
             RSL.RangeSpec sp = array.get(resolved, i)
@@ -225,7 +225,7 @@ f_init_runtime() =>
             array.push(states, RSL.f_new_range_state(sp))
             array.push(histories, STL.f_new_excursion_history(sp.name))
             array.push(drawings, Core.f_new_drawing_state())
-            log.info("  -> Added spec: {0} | Start: {1}, End: {2}, Cutoff: {3}", sp.name, sp.or_start_min, sp.or_end_min, sp.cutoff_min)
+            // log.info("  -> Added spec: {0} | Start: {1}, End: {2}, Cutoff: {3}", sp.name, sp.or_start_min, sp.or_end_min, sp.cutoff_min)
 
 if barstate.isfirst
     f_init_runtime()
@@ -253,6 +253,14 @@ f_fmt_avg_text(string name, string line_name, float pct_value) =>
 
 f_fmt_med_text(string name, float pct_value) =>
     name + " Med " + STL.f_pct_fmt(pct_value)
+
+// Emphasis logic helper for side-aware styling
+f_get_side_styles(int side, int active_side, bool enabled, color base_clr) =>
+    bool is_active = active_side == 0 or side == active_side
+    color res_clr = enabled and not is_active ? color.new(base_clr, math.min(color.t(base_clr) + 40, 95)) : base_clr
+    int res_width = enabled and not is_active ? 1 : 2
+    [res_clr, res_width]
+
 
 f_fmt_percentile_text(float pct_value) =>
     str.tostring(int(math.round(pct_value))) + "th"
@@ -300,25 +308,25 @@ f_process_price_update(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
       prev_bull_pb=st.daily_mae_bull_pb, 
       prev_bear_pb=st.daily_mae_bear_pb
     )
-    log.info("MAE/MFE UPDATE - {0} | M: {1} | MFE B: {2}, S: {3} | Abs B: {4}, S: {5} | PB B: {6}, S: {7}", sp.name, mins, nb, ns, mab, mas, mpb, mps)
+    // log.info("MAE/MFE UPDATE - {0} | M: {1} | MFE B: {2}, S: {3} | Abs B: {4}, S: {5} | PB B: {6}, S: {7}", sp.name, mins, nb, ns, mab, mas, mpb, mps)
     st.daily_mae_bull_pb := mpb
     st.daily_mae_bear_pb := mps
     
     // Detailed excursion logs
-    if not na(nb) and nb > 0
-        log.info("EXCURSION - MFE DAILY {0}: {1}", sp.name, nb)
-    if not na(ns) and ns > 0
-        log.info("EXCURSION - MFE DAILY {0}: {1}", sp.name, ns)
-    if not na(mab) and mab > 0
-        log.info("EXCURSION - MAE ABS {0}: {1}", sp.name, mab)
-    if not na(mas) and mas > 0
-        log.info("EXCURSION - MAE ABS {0}: {1}", sp.name, mas)
+//    if not na(nb) and nb > 0
+//        log.info("EXCURSION - MFE DAILY {0}: {1}", sp.name, nb)
+//    if not na(ns) and ns > 0
+//        log.info("EXCURSION - MFE DAILY {0}: {1}", sp.name, ns)
+//    if not na(mab) and mab > 0
+//        log.info("EXCURSION - MAE ABS {0}: {1}", sp.name, mab)
+//    if not na(mas) and mas > 0
+//        log.info("EXCURSION - MAE ABS {0}: {1}", sp.name, mas)
     
-    log.info("PRICE UPDATE - {0} | H: {1}, L: {2} | MFE B: {3}, S: {4} | MAE B: {5}, S: {6} | PB B: {7}, S: {8}", sp.name, h, l, st.daily_bull_mfe, st.daily_bear_mfe, st.daily_mae_bull_abs, st.daily_mae_bear_abs, st.daily_mae_bull_pb, st.daily_mae_bear_pb)
+    // log.info("PRICE UPDATE - {0} | H: {1}, L: {2} | MFE B: {3}, S: {4} | MAE B: {5}, S: {6} | PB B: {7}, S: {8}", sp.name, h, l, st.daily_bull_mfe, st.daily_bear_mfe, st.daily_mae_bull_abs, st.daily_mae_bear_abs, st.daily_mae_bull_pb, st.daily_mae_bear_pb)
     
     // Diagnostic log for refs
-    if na(st.bull_ref) or na(st.bear_ref)
-        log.warning("REFS NOT SET - {0} | bull_ref: {1}, bear_ref: {2}", sp.name, st.bull_ref, st.bear_ref)
+    // if na(st.bull_ref) or na(st.bear_ref)
+    // log.warning("REFS NOT SET - {0} | bull_ref: {1}, bear_ref: {2}", sp.name, st.bull_ref, st.bear_ref)
 
     if st.sig_breakout_side != 0 and st.sig_outcome == 0
         float base_stats = st.sig_breakout_side == 1 ? st.or_high : st.or_low
@@ -333,7 +341,7 @@ f_process_price_update(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
             if h > base_stats
                 st.daily_bo_mae_bear := math.max(nz(st.daily_bo_mae_bear, 0.0), (h - base_stats) / base_stats * 100.0)
         
-        log.info("BO TRACKING - {0} | Side: {1} | BO MFE: {2}, BO MAE: {3} | Base: {4} | H: {5}, L: {6}", sp.name, st.sig_breakout_side, st.sig_breakout_side == 1 ? st.daily_bo_mfe_bull : st.daily_bo_mfe_bear, st.sig_breakout_side == 1 ? st.daily_bo_mae_bull : st.daily_bo_mae_bear, base_stats, h, l)
+        // log.info("BO TRACKING - {0} | Side: {1} | BO MFE: {2}, BO MAE: {3} | Base: {4} | H: {5}, L: {6}", sp.name, st.sig_breakout_side, st.sig_breakout_side == 1 ? st.daily_bo_mfe_bull : st.daily_bo_mfe_bear, st.sig_breakout_side == 1 ? st.daily_bo_mae_bull : st.daily_bo_mae_bear, base_stats, h, l)
 
     array.push(st.data_mins, mins)
     array.push(st.data_highs, h)
@@ -362,7 +370,7 @@ f_filter_tactical(array<float> bo_data, array<float> session_data, array<int> si
     if array.size(out_data) < 20
         out_data := STL.f_build_filtered_by_outcome(session_data, sig_sides, sig_outcomes, side, target_outcome)
         used_fallback := true
-    log.info("FILTER TACTICAL - {0} | Side: {1}, TargetOutcome: {2} | Result Size: {3} | Fallback: {4}", "tactical", side, target_outcome, array.size(out_data), used_fallback)
+    // log.info("FILTER TACTICAL - {0} | Side: {1}, TargetOutcome: {2} | Result Size: {3} | Fallback: {4}", "tactical", side, target_outcome, array.size(out_data), used_fallback)
     out_data
 
 f_get_pct_fallback(array<float> arr, float pct, float def = 0.0) =>
@@ -396,8 +404,8 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
             array<float> fak_mfe_win = f_filter_tactical(side == 1 ? hist.fake_mfe_bull : hist.fake_mfe_bear, side == 1 ? hist.mfe_bull : hist.mfe_bear, hist.sig_side, hist.sig_outcome, side, 2)
             array<float> fak_mae_rev = f_filter_tactical(side == 1 ? hist.fake_mae_bull : hist.fake_mae_bear, side == 1 ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side, 2)
             
-            log.info("SIGNAL TRIGGERED - {0} | Side: {1} | Close: {2} | Ref B: {3}, S: {4} | Histories: MFE B {5}, S {6}", sp.name, side, c, st.or_high, st.or_low, array.size(hist.mfe_bull), array.size(hist.mfe_bear))
-            log.info("FILTERED - {0} | BO MFE N: {1}, BO MAE N: {2}, FAK MFE N: {3}, FAK MAE N: {4}", sp.name, array.size(bo_mfe_all), array.size(bo_mae_all), array.size(fak_mfe_win), array.size(fak_mae_rev))
+            // log.info("SIGNAL TRIGGERED - {0} | Side: {1} | Close: {2} | Ref B: {3}, S: {4} | Histories: MFE B {5}, S {6}", sp.name, side, c, st.or_high, st.or_low, array.size(hist.mfe_bull), array.size(hist.mfe_bear))
+            // log.info("FILTERED - {0} | BO MFE N: {1}, BO MAE N: {2}, FAK MFE N: {3}, FAK MAE N: {4}", sp.name, array.size(bo_mfe_all), array.size(bo_mae_all), array.size(fak_mfe_win), array.size(fak_mae_rev))
             
             // 4. Compute Latched Percentiles (fallback to 0.0 to prevent NaN)
             st.sig_p50_bo   := f_get_pct_fallback(bo_mfe_all, 50)
@@ -405,7 +413,7 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
             st.sig_p75_fake := f_get_pct_fallback(fak_mfe_win, 75)
             st.sig_p50_fake := f_get_pct_fallback(fak_mfe_win, 50)
             
-            log.info("SIGNAL PERCENTILES - {0} | P50 BO: {1}, P20 BO: {2} | P75 FAK: {3}, P50 FAK: {4}", sp.name, st.sig_p50_bo, st.sig_p20_bo, st.sig_p75_fake, st.sig_p50_fake)
+            // log.info("SIGNAL PERCENTILES - {0} | P50 BO: {1}, P20 BO: {2} | P75 FAK: {3}, P50 FAK: {4}", sp.name, st.sig_p50_bo, st.sig_p20_bo, st.sig_p75_fake, st.sig_p50_fake)
             
             float p80_mae = f_get_pct_fallback(bo_mae_all, 80)
             float p25_mae = f_get_pct_fallback(bo_mae_all, 25)
@@ -427,8 +435,9 @@ f_process_signal_logic(RSL.RangeState st, STL.ExcursionHistory hist, RSL.RangeSp
             float y_rev50 = side == 1 ? st.or_high * (1.0 - st.sig_rev_p50 / 100.0) : st.or_low * (1.0 + st.sig_rev_p50 / 100.0)
             st.sig_rev_zone_px := (y_rev25 + y_rev50) / 2.0
             
-            log.info("SIGNAL LATCHED - {0} | Side: {1} | BO P50: {2}, P20: {3} | FAK P50: {4}, P75: {5} | MAE P80: {6}, P25: {7} | Prices: Tgt {8}, Inv {9}, PB {10}, Piv {11}", 
-              sp.name, side, st.sig_p50_bo, st.sig_p20_bo, st.sig_p50_fake, st.sig_p75_fake, p80_mae, p25_mae, st.sig_target_px, st.sig_invalid_px, st.sig_pullback_px, st.sig_pivot_px)
+            // log.info("SIGNAL LATCHED - {0} | Side: {1} | BO P50: {2}, P20: {3} | FAK P50: {4}, P75: {5} | MAE P80: {6}, P25: {7} | Prices: Tgt {8}, Inv {9}, PB {10}, Piv {11}", sp.name, side, st.sig_p50_bo, st.sig_p20_bo, st.sig_p50_fake, st.sig_p75_fake, p80_mae, p25_mae, st.sig_target_px, st.sig_invalid_px, st.sig_pullback_px, st.sig_pivot_px)
+            if i_show_debug
+                label.new(bar_index, high, "LATCH: BO=" + str.tostring(st.sig_breakout_px) + " S=" + str.tostring(st.sig_side), color=color.blue, textcolor=color.white, style=label.style_label_down)
     
     // Evaluation logic (using latched values)
     if st.sig_side != 0 and st.sig_outcome == 0
@@ -447,8 +456,8 @@ f_track_range(int idx) =>
     bool in_data = RSL.f_in_session_pine(sp.session_data, sp.tz)
     bool is_new_session = in_or and not st.prev_in_or
     
-    if is_new_session
-        log.info("SESSION DETECTED - {0} | Time: {1} | PrevInOR: {2}, InOR: {3}", sp.name, time, st.prev_in_or, in_or)
+    // if is_new_session
+    // log.info("SESSION DETECTED - {0} | Time: {1} | PrevInOR: {2}, InOR: {3}", sp.name, time, st.prev_in_or, in_or)
 
     // 1. Daily Commitment (End of previous session logic)
     // Refactored to ensure we commit even if the session ended exactly at the last bar of history
@@ -464,13 +473,13 @@ f_track_range(int idx) =>
         float pb_bull = (na(st.daily_mae_bull_pb) or (not st.entry_triggered_bull)) ? na : st.daily_mae_bull_pb
         float pb_bear = (na(st.daily_mae_bear_pb) or (not st.entry_triggered_bear)) ? na : st.daily_mae_bear_pb
 
-        log.info("COMMITTING - {0} | MFE B: {1}, S: {2} | BO MFE B: {3}, S: {4} | MAE B: {5}, S: {6} | PB B: {7}, S: {8} | Side: {9}, Outcome: {10}", sp.name, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, st.sig_side, st.sig_outcome)
+        // log.info("COMMITTING - {0} | MFE B: {1}, S: {2} | BO MFE B: {3}, S: {4} | MAE B: {5}, S: {6} | PB B: {7}, S: {8} | Side: {9}, Outcome: {10}", sp.name, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, st.sig_side, st.sig_outcome)
         
         // Log individual excursions for debugging "lesser data"
-        if not na(bo_mfe_b_comm) or not na(bo_mfe_s_comm)
-            log.info("EXCURSION - BO MFE COMMITTED {0}: B {1}, S {2}", sp.name, bo_mfe_b_comm, bo_mfe_s_comm)
-        if not na(bo_mae_b_comm) or not na(bo_mae_s_comm)
-            log.info("EXCURSION - BO MAE COMMITTED {0}: B {1}, S {2}", sp.name, bo_mae_b_comm, bo_mae_s_comm)
+        // if not na(bo_mfe_b_comm) or not na(bo_mfe_s_comm)
+        //     log.info("EXCURSION - BO MFE COMMITTED {0}: B {1}, S {2}", sp.name, bo_mfe_b_comm, bo_mfe_s_comm)
+        // if not na(bo_mae_b_comm) or not na(bo_mae_s_comm)
+        //     log.info("EXCURSION - BO MAE COMMITTED {0}: B {1}, S {2}", sp.name, bo_mae_b_comm, bo_mae_s_comm)
         
         STL.f_commit_daily(hist, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, st.daily_bull_peak_min, st.daily_bear_peak_min, st.daily_pivot_bulls, st.daily_pivot_bears, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, bo_mae_b_comm, bo_mae_s_comm, st.mid_hit_bull, st.mid_hit_bear, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.session_low_data, st.session_high_data, i_ev_target_pct, st.sig_side, st.sig_outcome)
         st.is_committed := true
@@ -499,6 +508,8 @@ f_track_range(int idx) =>
                     st.session_open := o, st.or_high := h, st.or_low := l, st.or_last_close := c, st.or_building := true, st.or_start_bar := bar_index
                 else
                     st.or_high := math.max(st.or_high, h), st.or_low := math.min(st.or_low, l), st.or_last_close := c
+                // Ensure refs are available during building for live rendering
+                st.bull_ref := st.or_high, st.bear_ref := st.or_low, st.or_mid := (st.or_high + st.or_low) / 2.0
                 or_processed := true
             
             // Immediate transition from OR to Data
@@ -506,7 +517,7 @@ f_track_range(int idx) =>
                 st.or_complete := true
                 st.bull_ref := st.or_high, st.bear_ref := st.or_low, st.or_mid := (st.or_high + st.or_low) / 2.0, st.ref_set := true
                 st.or_building := false
-                log.info("LIFECYCLE - {0} | OR Complete (LTF) at min {1} | High: {2}, Low: {3}", sp.name, m, st.or_high, st.or_low)
+            // log.info("LIFECYCLE - {0} | OR Complete (LTF) at min {1} | High: {2}, Low: {3}", sp.name, m, st.or_high, st.or_low)
 
             // Data Tracking
             // if st.ref_set and is_in_data_mins
@@ -521,13 +532,15 @@ f_track_range(int idx) =>
             st.session_open := open, st.or_high := high, st.or_low := low, st.or_last_close := close, st.or_building := true, st.or_start_bar := bar_index
         else
             st.or_high := math.max(st.or_high, high), st.or_low := math.min(st.or_low, low), st.or_last_close := close
+        // Ensure refs are available during building for live rendering
+        st.bull_ref := st.or_high, st.bear_ref := st.or_low, st.or_mid := (st.or_high + st.or_low) / 2.0
         or_processed := true
 
     if not in_or and st.or_building and not or_processed
         st.or_complete := true
         st.bull_ref := st.or_high, st.bear_ref := st.or_low, st.or_mid := (st.or_high + st.or_low) / 2.0, st.ref_set := true
         st.or_building := false
-        log.info("LIFECYCLE - {0} | OR Complete (Main) | High: {1}, Low: {2}", sp.name, st.or_high, st.or_low)
+    // log.info("LIFECYCLE - {0} | OR Complete (Main) | High: {1}, Low: {2}", sp.name, st.or_high, st.or_low)
 
     if in_data and not data_processed and st.ref_set
         int mins_s = RSL.f_mins_since(RSL.f_mins_of_day(time, sp.tz), sp.or_start_min)
@@ -558,7 +571,7 @@ f_track_range(int idx) =>
         float pb_bull = (na(st.daily_mae_bull_pb) or (not st.entry_triggered_bull)) ? na : st.daily_mae_bull_pb
         float pb_bear = (na(st.daily_mae_bear_pb) or (not st.entry_triggered_bear)) ? na : st.daily_mae_bear_pb
 
-        log.info("END SESSION COMMIT - {0} | MFE B/S: {1}/{2} | BO MFE B/S: {3}/{4} | MAE B/S: {5}/{6} | PB B/S: {7}/{8} | Side: {9}, Outcome: {10}", sp.name, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, st.sig_side, st.sig_outcome)
+        // log.info("END SESSION COMMIT - {0} | MFE B/S: {1}/{2} | BO MFE B/S: {3}/{4} | MAE B/S: {5}/{6} | PB B/S: {7}/{8} | Side: {9}, Outcome: {10}", sp.name, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, st.sig_side, st.sig_outcome)
         STL.f_commit_daily(hist, mfe_b_comm, mfe_s_comm, bo_mfe_b_comm, bo_mfe_s_comm, st.daily_bull_peak_min, st.daily_bear_peak_min, st.daily_pivot_bulls, st.daily_pivot_bears, mae_abs_b_comm, mae_abs_s_comm, pb_bull, pb_bear, bo_mae_b_comm, bo_mae_s_comm, st.mid_hit_bull, st.mid_hit_bear, st.or_high, st.or_low, ny_dow, st.entry_triggered_bull, st.entry_triggered_bear, st.close_at_cutoff, st.session_low_data, st.session_high_data, i_ev_target_pct, st.sig_side, st.sig_outcome)
         st.is_committed := true
 
@@ -647,6 +660,8 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
     // Lifecycle state for this render pass
     string lc_state = st.or_building and not st.or_complete ? "forming" : st.or_complete ? "finalized" : "inactive"
 
+    // log.info("SESSION RENDER [{0}] {1}: State={2}, StartBar={3}, RefSet={4}, BullRef={5}, BearRef={6}, ORHigh={7}, ORLow={8}", idx, sp.name, lc_state, st.or_start_bar, st.ref_set, st.bull_ref, st.bear_ref, st.or_high, st.or_low)
+
     // Display Profile scaling
     string profile_label_size = Core.f_display_profile_label_size(i_label_size, i_display_profile)
     int    profile_line_width = Core.f_display_profile_width(1, i_display_profile)
@@ -674,7 +689,9 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
     
     // Resolve side and anchor for this specific instance (works for live and historical)
     int render_side = st.sig_breakout_side != 0 ? st.sig_breakout_side : st.sig_side
+    
     float render_px = not na(st.sig_breakout_px) ? st.sig_breakout_px : (render_side == 1 ? st.or_high : render_side == -1 ? st.or_low : na)
+
     
     // OR box
     if st.or_building and not na(st.or_start_bar)
@@ -689,7 +706,10 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
     array<float> mfe_b = STL.f_build_filtered(hist.mfe_bull)
     array<float> mfe_s = STL.f_build_filtered(hist.mfe_bear)
 
-    if st.ref_set and not na(st.bull_ref)
+    // Rendering Gate: Allow rendering during OR building or once refs are set
+    if (st.ref_set or st.or_building) and not na(st.bull_ref)
+        if i_show_debug
+            log.info("RENDERING BLOCK REACHED [{0}] {1}: ref_set={2}, bull_ref={3}", idx, sp.name, st.ref_set, st.bull_ref)
         int ln_end = line_render_end
         int label_x = ln_end + i_label_gap_bars
         string m_group = "unified-levels-" + str.tostring(idx)
@@ -705,68 +725,127 @@ f_render_session_instance(int idx, RSL.RangeSpec sp, RSL.RangeState st, STL.Excu
         float p50_fake_s = array.size(hist.fake_mfe_bear) > 0 ? array.percentile_nearest_rank(STL.f_build_filtered(hist.fake_mfe_bear), 50) : na
 
         // side_arr: Using array.from for v6 compatibility
-        int[] side_arr = array.from(1, -1)
-        for side in side_arr
+        for i = 0 to 1
+            int side = i == 0 ? 1 : -1
             bool should_draw = side == 1 ? draw_bull : draw_bear
             array<float> src_data = side == 1 ? mfe_b : mfe_s
             float ref_px = side == 1 ? st.bull_ref : st.bear_ref
             float p_piv  = side == 1 ? p50_fake_b : p50_fake_s
             string side_group = m_group + (side == 1 ? "_b" : "_s")
             
-            if should_draw and array.size(src_data) > 0
-                float p_med = array.median(src_data)
-                float p_avg = array.avg(src_data)
-                float p_str = array.percentile_nearest_rank(src_data, i_pct_stretch)
-                
-                float y_med = ref_px * (1.0 + (side * p_med / 100.0))
-                float y_avg = ref_px * (1.0 + (side * p_avg / 100.0))
-                float y_str = ref_px * (1.0 + (side * p_str / 100.0))
-                
-                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_med, "Median P50 " + STL.f_pct_fmt(p_med) + lb_sfx, stat_median_color, 42, side_group, 0, strat)
-                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_avg, "AVG " + STL.f_pct_fmt(p_avg) + lb_sfx, stat_avg_color, 43, side_group, 0, strat)
-                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_str, "Stretch P" + str.tostring(int(i_pct_stretch)) + " " + STL.f_pct_fmt(p_str) + lb_sfx, r_stat_stretch_color, 50, side_group, 0, strat)
-                
+            if should_draw
+                // Resolved emphasis styles for this side
+                [c_med, w_med] = f_get_side_styles(side, render_side, i_emphasize_active_side, stat_median_color)
+                [c_avg, w_avg] = f_get_side_styles(side, render_side, i_emphasize_active_side, stat_avg_color)
+                [c_str, w_str] = f_get_side_styles(side, render_side, i_emphasize_active_side, r_stat_stretch_color)
+                [c_piv, w_piv] = f_get_side_styles(side, render_side, i_emphasize_active_side, r_pivot_color)
+
+                if array.size(src_data) > 0
+                    float p_med = array.median(src_data)
+                    float p_avg = array.avg(src_data)
+                    float p_str = array.percentile_nearest_rank(src_data, i_pct_stretch)
+                    
+                    float y_med = ref_px * (1.0 + (side * p_med / 100.0))
+                    float y_avg = ref_px * (1.0 + (side * p_avg / 100.0))
+                    float y_str = ref_px * (1.0 + (side * p_str / 100.0))
+                    
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_med, "Median P50 " + STL.f_pct_fmt(p_med) + lb_sfx, c_med, 42, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_avg, "AVG " + STL.f_pct_fmt(p_avg) + lb_sfx, c_avg, 43, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_str, "Stretch P" + str.tostring(int(i_pct_stretch)) + " " + STL.f_pct_fmt(p_str) + lb_sfx, c_str, 50, side_group, 0, strat)
+                    
                 if not na(p_piv)
                     float y_piv = ref_px * (1.0 + (side * p_piv / 100.0))
-                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_piv, "Hist Pivot P50 " + STL.f_pct_fmt(p_piv) + lb_sfx, r_pivot_color, 45, side_group, 0, strat)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_piv, "Hist Pivot P50 " + STL.f_pct_fmt(p_piv) + lb_sfx, c_piv, 45, side_group, 0, strat)
 
-        // 3. Tactical Directional Levels (Optimized Block)
-        if render_side != 0 and not na(render_px)
-            int i_alpha = i_emphasize_active_side and st.sig_side != 0 and st.sig_side != render_side ? 65 : 0
+        // 3. Tactical Directional Levels (Respect side strategy)
+        bool draw_tac_bull = i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and (render_side == 1 or render_side == 0)) or (i_stat_side_strategy == "Primary Only" and idx == 0)
+        bool draw_tac_bear = i_stat_side_strategy == "Both" or (i_stat_side_strategy == "Active Only" and (render_side == -1 or render_side == 0)) or (i_stat_side_strategy == "Primary Only" and idx == 0)
+
+        for i = 0 to 1
+            int side = i == 0 ? 1 : -1
+            bool should_draw_tac = side == 1 ? draw_tac_bull : draw_tac_bear
             
-            // Core tactical lines: Activation, Invalidation, Pullback
-            HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, render_px, "Breakout Activation " + STL.f_pct_fmt(0) + lb_sfx, r_breakout_act_color, 90, m_group, 0, strat)
+            if i_show_debug
+                log.info("DEBUG BO ACT [" + str.tostring(idx) + "] " + sp.name + " Side=" + str.tostring(side) + ": should_draw=" + (should_draw_tac ? "true" : "false") + ", render_side=" + str.tostring(render_side))
+            
+            if not should_draw_tac
+                continue
 
-            if not na(st.sig_pullback_px)
-                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, st.sig_pullback_px, "Pullback Activation P25 MAE" + lb_sfx, r_pullback_act_color, 85, m_group, 0, strat)
+            bool is_active_side = (side == render_side)
+            string side_label = render_side == 0 ? (side == 1 ? "Bull " : "Bear ") : ""
+            string side_group = m_group + (side == 1 ? "_b" : "_s")
+            
+            // Reference price for this side's breakout (use latched px if active, else OR boundary)
+            float t_render_px = is_active_side and not na(st.sig_breakout_px) ? st.sig_breakout_px : (side == 1 ? st.or_high : st.or_low)
+            
+            if i_show_debug
+                log.info("TACTICAL LOOP [" + str.tostring(idx) + "] " + sp.name + " Side=" + str.tostring(side) + ": is_active=" + (is_active_side ? "true" : "false") + ", t_render_px=" + str.tostring(t_render_px))
+            
+            if not na(t_render_px)
+                // Resolve stats: use latched values if active, else calculate potential from history
+                float p50_bo   = is_active_side ? st.sig_p50_bo : f_get_pct_fallback(f_filter_tactical(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, side == 1 ? hist.mfe_bull : hist.mfe_bear, hist.sig_side, hist.sig_outcome, side, 0), 50)
+                float p20_bo   = is_active_side ? st.sig_p20_bo : f_get_pct_fallback(f_filter_tactical(side == 1 ? hist.bo_mfe_bull : hist.bo_mfe_bear, side == 1 ? hist.mfe_bull : hist.mfe_bear, hist.sig_side, hist.sig_outcome, side, 0), 20)
+                float p50_fake = is_active_side ? st.sig_p50_fake : f_get_pct_fallback(f_filter_tactical(side == 1 ? hist.fake_mfe_bull : hist.fake_mfe_bear, side == 1 ? hist.mfe_bull : hist.mfe_bear, hist.sig_side, hist.sig_outcome, side, 2), 50)
+                float p75_fake = is_active_side ? st.sig_p75_fake : f_get_pct_fallback(f_filter_tactical(side == 1 ? hist.fake_mfe_bull : hist.fake_mfe_bear, side == 1 ? hist.mfe_bull : hist.mfe_bear, hist.sig_side, hist.sig_outcome, side, 2), 75)
+                
+                // MAE stats (Invalidation/Pullback)
+                float p80_mae = f_get_pct_fallback(f_filter_tactical(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, side == 1 ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side, 0), 80)
+                float p25_mae = f_get_pct_fallback(f_filter_tactical(side == 1 ? hist.bo_mae_bull : hist.bo_mae_bear, side == 1 ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side, 0), 25)
 
-            if not na(st.sig_invalid_px)
-                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, st.sig_invalid_px, "PB | BO Invalidation P80" + lb_sfx, r_invalidation_color, 95, m_group, 0, strat)
+                // Derived prices
+                float target_px   = is_active_side and not na(st.sig_target_px) ? st.sig_target_px : t_render_px * (side == 1 ? 1.0 + p50_bo / 100.0 : 1.0 - p50_bo / 100.0)
+                float pivot_px    = is_active_side and not na(st.sig_pivot_px) ? st.sig_pivot_px : t_render_px * (side == 1 ? 1.0 + p50_fake / 100.0 : 1.0 - p50_fake / 100.0)
+                float invalid_px  = is_active_side and not na(st.sig_invalid_px) ? st.sig_invalid_px : (side == 1 ? st.or_high : st.or_low) * (side == 1 ? 1.0 - p80_mae / 100.0 : 1.0 + p80_mae / 100.0)
+                float pullback_px = is_active_side and not na(st.sig_pullback_px) ? st.sig_pullback_px : (side == 1 ? st.or_high : st.or_low) * (side == 1 ? 1.0 - p25_mae / 100.0 : 1.0 + p25_mae / 100.0)
+                
+                float rev_p25 = is_active_side ? st.sig_rev_p25 : f_get_pct_fallback(f_filter_tactical(side == 1 ? hist.fake_mae_bull : hist.fake_mae_bear, side == 1 ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side, 2), 25)
+                float rev_p50 = is_active_side ? st.sig_rev_p50 : f_get_pct_fallback(f_filter_tactical(side == 1 ? hist.fake_mae_bull : hist.fake_mae_bear, side == 1 ? hist.mae_bull_abs : hist.mae_bear_abs, hist.sig_side, hist.sig_outcome, side, 2), 50)
 
-            // Targets & Cashflow
-            if not na(st.sig_target_px)
-                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, st.sig_target_px, "Target BO P50 (Median) " + STL.f_pct_fmt(st.sig_p50_bo) + lb_sfx, stat_median_color, 78, m_group, 0, strat)
+                // Resolved emphasis styles for tactical side
+                [c_bo_act, w_bo_act] = f_get_side_styles(side, render_side, i_emphasize_active_side, breakout_activation_color)
+                [c_pb_act, w_pb_act] = f_get_side_styles(side, render_side, i_emphasize_active_side, pullback_activation_color)
+                [c_inv, w_inv]       = f_get_side_styles(side, render_side, i_emphasize_active_side, invalidation_line_color)
+                [c_tgt, w_tgt]       = f_get_side_styles(side, render_side, i_emphasize_active_side, stat_median_color)
+                [c_cash, w_cash]     = f_get_side_styles(side, render_side, i_emphasize_active_side, bo_cashflow_color)
+                [c_conf, w_conf]     = f_get_side_styles(side, render_side, i_emphasize_active_side, bo_confirm_color)
+                [c_tpiv, w_tpiv]     = f_get_side_styles(side, render_side, i_emphasize_active_side, pivot_color)
 
-            float y_cash = render_px * (render_side == 1 ? 1.0 + st.sig_p20_bo / 100.0 : 1.0 - st.sig_p20_bo / 100.0)
-            if not na(y_cash)
-                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_cash, "BO Cashflow P20 (MFE) " + STL.f_pct_fmt(st.sig_p20_bo) + lb_sfx, r_bo_cashflow_color, 80, m_group, 0, strat)
+                // Core tactical lines: Activation, Invalidation, Pullback
+                if i_show_debug
+                    log.info("  -> DRAWING BO ACT: bar=" + str.tostring(st.or_start_bar) + ", price=" + str.tostring(t_render_px) + ", side=" + str.tostring(side))
+                
+                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, t_render_px, side_label + "Breakout Activation " + lb_sfx, c_bo_act, 90, side_group, 0, strat)
 
-            float y_conf = render_px * (render_side == 1 ? 1.0 + st.sig_p75_fake / 100.0 : 1.0 - st.sig_p75_fake / 100.0)
-            if not na(y_conf)
-                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_conf, "BO Confirm P75 " + STL.f_pct_fmt(st.sig_p75_fake) + lb_sfx, r_bo_confirm_color, 75, m_group, 0, strat)
+                if not na(pullback_px)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, pullback_px, side_label + "Pullback Act P25 MAE" + lb_sfx, c_pb_act, 85, side_group, 0, strat)
 
-            // Pivot (P50 of Fakes MFE)
-            if not na(st.sig_pivot_px)
-                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, st.sig_pivot_px, "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(st.sig_p50_fake) + lb_sfx, r_pivot_color, 70, m_group, 0, strat)
+                if not na(invalid_px)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, invalid_px, side_label + "PB | BO Invalidation P80" + lb_sfx, c_inv, 95, side_group, 0, strat)
 
-            // Reversal Zone
-            if not na(st.sig_rev_p25) and not na(st.sig_rev_p50)
-                float y_rev25 = render_side == 1 ? st.or_high * (1.0 - st.sig_rev_p25 / 100.0) : st.or_low * (1.0 + st.sig_rev_p25 / 100.0)
-                float y_rev50 = render_side == 1 ? st.or_high * (1.0 - st.sig_rev_p50 / 100.0) : st.or_low * (1.0 + st.sig_rev_p50 / 100.0)
-                float z_top = math.max(y_rev25, y_rev50), z_bot = math.min(y_rev25, y_rev50)
-                int z_w = math.max(2, ln_end - st.or_start_bar)
-                Zones.f_draw_hist_band(ds, st.or_start_bar, z_top, z_bot, z_w, r_reversal_zone_color, i_zone_transparency)
-                HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "C", st.or_start_bar, st.or_start_bar + z_w, (z_top + z_bot) / 2.0, "Reversal Zone (" + STL.f_pct_fmt(st.sig_rev_p25) + "-" + STL.f_pct_fmt(st.sig_rev_p50) + " Fake MAE)" + lb_sfx, color.new(r_stat_label_color, math.min(int(math.round(float(i_zone_transparency) * 0.6)), 90)), 55, m_group, 0, strat)
+                // Targets & Cashflow
+                if not na(target_px)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, target_px, side_label + "Target BO P50 (Median) " + STL.f_pct_fmt(p50_bo) + lb_sfx, c_tgt, 78, side_group, 0, strat)
+
+                float y_cash = t_render_px * (side == 1 ? 1.0 + p20_bo / 100.0 : 1.0 - p20_bo / 100.0)
+                if not na(y_cash)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_cash, side_label + "BO Cashflow P20 (MFE) " + STL.f_pct_fmt(p20_bo) + lb_sfx, c_cash, 80, side_group, 0, strat)
+
+                float y_conf = t_render_px * (side == 1 ? 1.0 + p75_fake / 100.0 : 1.0 - p75_fake / 100.0)
+                if not na(y_conf)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, y_conf, side_label + "BO Confirm P75 " + STL.f_pct_fmt(p75_fake) + lb_sfx, c_conf, 75, side_group, 0, strat)
+
+                // Pivot (P50 of Fakes MFE)
+                if not na(pivot_px)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "S", st.or_start_bar, ln_end, pivot_px, side_label + "Pivot P50 (Fake MFE) " + STL.f_pct_fmt(p50_fake) + lb_sfx, c_tpiv, 70, side_group, 0, strat)
+
+                // Reversal Zone
+                if not na(rev_p25) and not na(rev_p50)
+                    float y_rev25 = side == 1 ? st.or_high * (1.0 - rev_p25 / 100.0) : st.or_low * (1.0 + rev_p25 / 100.0)
+                    float y_rev50 = side == 1 ? st.or_high * (1.0 - rev_p50 / 100.0) : st.or_low * (1.0 + rev_p50 / 100.0)
+                    float z_top = math.max(y_rev25, y_rev50), z_bot = math.min(y_rev25, y_rev50)
+                    int z_w = math.max(2, ln_end - st.or_start_bar)
+                    Zones.f_draw_hist_band(ds, st.or_start_bar, z_top, z_bot, z_w, r_reversal_zone_color, i_zone_transparency)
+                    HLevels.f_draw_priority_line(ds, lbl_reg, theme_mode_resolved, i_display_profile, "C", st.or_start_bar, st.or_start_bar + z_w, (z_top + z_bot) / 2.0, side_label + "Reversal Zone (" + STL.f_pct_fmt(rev_p25) + "-" + STL.f_pct_fmt(rev_p50) + " Fake MAE)" + lb_sfx, color.new(r_stat_label_color, math.min(int(math.round(float(i_zone_transparency) * 0.6)), 90)), 55, side_group, 0, strat)
 
         // 4. Shared Midpoint Logic
         int n_m = math.min(array.size(hist.mid_hit_bull), array.size(hist.mid_hit_bear)), m_h = 0
@@ -898,7 +977,7 @@ if barstate.islast and array.size(specs) > 0
     for i = 0 to array.size(specs) - 1
         RSL.RangeSpec sp = array.get(specs, i)
         STL.ExcursionHistory hist = array.get(histories, i)
-        log.info("FINAL SUMMARY - {0} | MFE Bull/Bear: {1}/{2} | Sig Side/Outcome: {3}/{4}", sp.name, array.size(hist.mfe_bull), array.size(hist.mfe_bear), array.size(hist.sig_side), array.size(hist.sig_outcome))
+    // log.info("FINAL SUMMARY - {0} | MFE Bull/Bear: {1}/{2} | Sig Side/Outcome: {3}/{4}", sp.name, array.size(hist.mfe_bull), array.size(hist.mfe_bear), array.size(hist.sig_side), array.size(hist.sig_outcome))
 
 // ============================================================================
 // Tables
@@ -979,7 +1058,7 @@ f_draw_summary_table(int idx, string pos, color bg, color border, color header_b
             if s != 0 and o != 0
                 array.push(sig_ag_win_bools, o == 1)
                 
-    log.info("TABLE STATS - {0} | Total Hist: {1} | Bull Trig/Win: {2}/{3} | Bear Trig/Win: {4}/{5} | Aggr Count: {6}", sp.name, sig_n, sig_bull_trig, sig_bull_wins, sig_bear_trig, sig_bear_wins, array.size(sig_ag_win_bools))
+    // log.info("TABLE STATS - {0} | Total Hist: {1} | Bull Trig/Win: {2}/{3} | Bear Trig/Win: {4}/{5} | Aggr Count: {6}", sp.name, sig_n, sig_bull_trig, sig_bull_wins, sig_bear_trig, sig_bear_wins, array.size(sig_ag_win_bools))
 
     float bull_rate = sig_bull_trig > 0 ? (float(sig_bull_wins) / float(sig_bull_trig)) * 100.0 : na
     float bear_rate = sig_bear_trig > 0 ? (float(sig_bear_wins) / float(sig_bear_trig)) * 100.0 : na
