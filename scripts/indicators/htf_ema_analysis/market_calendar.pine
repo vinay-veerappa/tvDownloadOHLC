@@ -1,0 +1,349 @@
+// =============================================================================
+// MarketCalendar — Pine Script v6 library
+// =============================================================================
+// Identifies major U.S. market event days for use in strategies and indicators.
+//
+// EVENT TYPES
+// -----------
+//   NFP                — BLS Employment Situation (rule + 21 historical exceptions)
+//   OPEX (monthly)     — 3rd Friday of every month (with Good Friday/Juneteenth shifts)
+//   Triple Witching    — 3rd Friday of Mar/Jun/Sep/Dec (same shift logic)
+//   Initial Claims     — Every Thursday at 8:30 ET (with federal-holiday shifts)
+//   Benchmark events   — Major BLS revisions (e.g., 2024-08 -818k preliminary)
+//
+//   For CPI / PPI / FOMC: see the bottom of this file for a request.economic-based
+//   approach that requires zero hardcoded dates. Better suited to weekly-check
+//   indicators than precise intraday detection.
+//
+// COVERAGE: 2005-01 through 2026-12 (NFP), perpetual (rule-based events)
+// =============================================================================
+
+//@version=6
+library("MarketCalendar", overlay=false)
+
+
+// ===========================================================================
+// SHARED HELPERS
+// ===========================================================================
+
+// Build a midnight-ET timestamp for a given calendar date.
+// Used as a "day key" for set-membership comparisons.
+f_day_key(_y, _m, _d) =>
+    timestamp("America/New_York", _y, _m, _d, 0, 0)
+
+
+// Day key for the current bar.
+f_today_key() =>
+    last_ms = time_close - 1
+    y = year(last_ms, "America/New_York")
+    m = month(last_ms, "America/New_York")
+    d = dayofmonth(last_ms, "America/New_York")
+    f_day_key(y, m, d)
+
+// Compute the BLS rule's predicted NFP release date for reference month (_ref_y, _ref_m).
+// Rule: third Friday after the Saturday that ends the reference week (week containing the 12th).
+// Anchored at noon ET to insulate against DST when adding day offsets.
+f_bls_predicted(_ref_y, _ref_m) =>
+    ref_12th_noon = timestamp("America/New_York", _ref_y, _ref_m, 12, 12, 0)
+    ref_12th_dow  = dayofweek(ref_12th_noon, "America/New_York")
+    days_to_sat   = (7 - ref_12th_dow) % 7
+    pred_estimate = ref_12th_noon + (days_to_sat + 20) * 86400000
+    pred_y = year(pred_estimate, "America/New_York")
+    pred_m = month(pred_estimate, "America/New_York")
+    pred_d = dayofmonth(pred_estimate, "America/New_York")
+    f_day_key(pred_y, pred_m, pred_d)
+
+
+// ===========================================================================
+// NFP — BLS Employment Situation
+// ===========================================================================
+
+// Skip dates: rule predicts NFP, but actual release shifted elsewhere.
+var array<int> nfp_skip = array.from(
+   // Year-end push (rule lands Jan 1/2/3 → actual is following Friday)
+   f_day_key(2009,  1,  2),
+   f_day_key(2010,  1,  1),
+   f_day_key(2014,  1,  3),
+   f_day_key(2015,  1,  2),
+   f_day_key(2016,  1,  1),
+   f_day_key(2020,  1,  3),
+   f_day_key(2021,  1,  1),
+   f_day_key(2025,  1,  3),
+   f_day_key(2026,  1,  2),
+   // Independence Day conflicts (rule lands Fri Jul 3/4 → actual Thu)
+   f_day_key(2008,  7,  4),
+   f_day_key(2009,  7,  3),
+   f_day_key(2014,  7,  4),
+   f_day_key(2015,  7,  3),
+   f_day_key(2020,  7,  3),
+   f_day_key(2025,  7,  4),
+   f_day_key(2026,  7,  3),
+   // Government shutdowns
+   f_day_key(2013, 10,  4),
+   f_day_key(2013, 11,  1),
+   f_day_key(2025, 11,  7),
+   f_day_key(2025, 12,  5),
+   f_day_key(2026,  2,  6)
+ )
+
+// Add dates: NFP released on these days, rule did NOT predict them.
+var array<int> nfp_add = array.from(
+   // Year-end push
+   f_day_key(2009,  1,  9), f_day_key(2010,  1,  8), f_day_key(2014,  1, 10),
+   f_day_key(2015,  1,  9), f_day_key(2016,  1,  8), f_day_key(2020,  1, 10),
+   f_day_key(2021,  1,  8), f_day_key(2025,  1, 10), f_day_key(2026,  1,  9),
+   // Independence Day (Thursday)
+   f_day_key(2008,  7,  3), f_day_key(2009,  7,  2), f_day_key(2014,  7,  3),
+   f_day_key(2015,  7,  2), f_day_key(2020,  7,  2), f_day_key(2025,  7,  3),
+   f_day_key(2026,  7,  2),
+   // Shutdowns
+   f_day_key(2013, 10, 22), f_day_key(2013, 11,  8), f_day_key(2025, 11, 20),
+   f_day_key(2025, 12, 16), f_day_key(2026,  2, 11)
+ )
+
+// Returns true on a bar that falls on an NFP release day (any timeframe).
+export is_nfp_day() =>
+    last_ms = time_close - 1
+    bar_y = year(last_ms, "America/New_York")
+    bar_m = month(last_ms, "America/New_York")
+    bar_d = dayofmonth(last_ms, "America/New_York")
+    today_key = f_day_key(bar_y, bar_m, bar_d)
+
+    ref_y = bar_m == 1 ? bar_y - 1 : bar_y
+    ref_m = bar_m == 1 ? 12 : bar_m - 1
+
+    rule_pred = f_bls_predicted(ref_y, ref_m)
+    in_skip   = array.includes(nfp_skip, today_key)
+    in_add    = array.includes(nfp_add,  today_key)
+    (today_key == rule_pred and not in_skip) or in_add
+
+// ===========================================================================
+// OPEX — Monthly Options Expiration (and Triple Witching)
+// ===========================================================================
+//
+// RULE: 3rd Friday of every month, unless that Friday is a market holiday
+//       (typically Good Friday or Juneteenth) — then OPEX shifts to Thursday.
+//
+// HISTORICAL EXCEPTIONS (2005-2026):
+//   Good Friday on 3rd Friday: 2008, 2014, 2019, 2022, 2025 (April mostly)
+//   Juneteenth on 3rd Friday:  2026 (June 19 = Friday)
+// ===========================================================================
+
+// Skip dates: 3rd Friday is a market holiday → OPEX moves to Thursday.
+var array<int> opex_skip = array.from(
+   f_day_key(2008,  3, 21),  // Good Friday
+   f_day_key(2014,  4, 18),  // Good Friday
+   f_day_key(2019,  4, 19),  // Good Friday
+   f_day_key(2022,  4, 15),  // Good Friday
+   f_day_key(2025,  4, 18),  // Good Friday
+   f_day_key(2026,  6, 19)   // Juneteenth on 3rd Friday
+ )
+
+// Add dates: Thursdays where OPEX actually settled (one day before the holiday Friday).
+var array<int> opex_add = array.from(
+   f_day_key(2008,  3, 20),
+   f_day_key(2014,  4, 17),
+   f_day_key(2019,  4, 18),
+   f_day_key(2022,  4, 14),
+   f_day_key(2025,  4, 17),
+   f_day_key(2026,  6, 18)
+ )
+
+// Returns true on a monthly OPEX day (3rd Friday or its adjusted equivalent).
+export is_opex_day() =>
+    last_ms = time_close - 1
+    bar_y = year(last_ms, "America/New_York")
+    bar_m = month(last_ms, "America/New_York")
+    bar_d = dayofmonth(last_ms, "America/New_York")
+    bar_dow = dayofweek(last_ms, "America/New_York")
+    
+    is_third_fri = bar_dow == dayofweek.friday and bar_d >= 15 and bar_d <= 21
+    today_key    = f_day_key(bar_y, bar_m, bar_d)
+    in_skip      = array.includes(opex_skip, today_key)
+    in_add       = array.includes(opex_add,  today_key)
+    (is_third_fri and not in_skip) or in_add
+
+// Returns true on Triple/Quadruple Witching (3rd Fri of Mar/Jun/Sep/Dec).
+// Same holiday-shift logic as monthly OPEX.
+export is_triple_witching() =>
+    quarterly_month = month == 3 or month == 6 or month == 9 or month == 12
+    quarterly_month and is_opex_day()
+
+
+// ===========================================================================
+// INITIAL JOBLESS CLAIMS — DOL UI Weekly Claims Report
+// ===========================================================================
+//
+// RULE: Every Thursday at 8:30 ET. Federal-holiday Thursdays cause a shift —
+// typically to Wednesday before (Thanksgiving) or another nearby business day.
+//
+// Thanksgiving is the most reliable Thursday-on-holiday case (always 4th Thursday
+// of November). Other federal holidays can land on Thursday roughly once per
+// 7 years each: New Year's Day, Independence Day, Juneteenth, Christmas,
+// Veterans Day.
+// ===========================================================================
+
+// Skip dates: Thursday is a federal holiday (DOL releases on different day).
+var array<int> claims_skip = array.from(
+   // Thanksgiving (every year — 4th Thursday of Nov, market closed)
+   f_day_key(2005, 11, 24), f_day_key(2006, 11, 23), f_day_key(2007, 11, 22),
+   f_day_key(2008, 11, 27), f_day_key(2009, 11, 26), f_day_key(2010, 11, 25),
+   f_day_key(2011, 11, 24), f_day_key(2012, 11, 22), f_day_key(2013, 11, 28),
+   f_day_key(2014, 11, 27), f_day_key(2015, 11, 26), f_day_key(2016, 11, 24),
+   f_day_key(2017, 11, 23), f_day_key(2018, 11, 22), f_day_key(2019, 11, 28),
+   f_day_key(2020, 11, 26), f_day_key(2021, 11, 25), f_day_key(2022, 11, 24),
+   f_day_key(2023, 11, 23), f_day_key(2024, 11, 28), f_day_key(2025, 11, 27),
+   f_day_key(2026, 11, 26),
+   // Other Thursday federal holidays in this window
+   f_day_key(2009,  1,  1),  // New Year's Day
+   f_day_key(2015,  1,  1),  // New Year's Day
+   f_day_key(2013,  7,  4),  // Independence Day
+   f_day_key(2019,  7,  4),  // Independence Day
+   f_day_key(2024,  7,  4),  // Independence Day
+   f_day_key(2025,  6, 19),  // Juneteenth (first Thursday Juneteenth as fed holiday)
+   f_day_key(2008, 12, 25),  // Christmas
+   f_day_key(2014, 12, 25),  // Christmas
+   f_day_key(2020, 12, 24),  // Christmas Eve markets close (Dec 25 Fri)
+   f_day_key(2025, 12, 25)   // Christmas
+ )
+
+// Add dates: Claims actually released on a non-Thursday.
+// DOL practice: usually shift to the day before (Wed) for Thanksgiving;
+// for other holidays, may shift to Friday after.
+var array<int> claims_add = array.from(
+   // Thanksgiving → Wednesday before (DOL standard)
+   f_day_key(2005, 11, 23), f_day_key(2006, 11, 22), f_day_key(2007, 11, 21),
+   f_day_key(2008, 11, 26), f_day_key(2009, 11, 25), f_day_key(2010, 11, 24),
+   f_day_key(2011, 11, 23), f_day_key(2012, 11, 21), f_day_key(2013, 11, 27),
+   f_day_key(2014, 11, 26), f_day_key(2015, 11, 25), f_day_key(2016, 11, 23),
+   f_day_key(2017, 11, 22), f_day_key(2018, 11, 21), f_day_key(2019, 11, 27),
+   f_day_key(2020, 11, 25), f_day_key(2021, 11, 24), f_day_key(2022, 11, 23),
+   f_day_key(2023, 11, 22), f_day_key(2024, 11, 27), f_day_key(2025, 11, 26),
+   f_day_key(2026, 11, 25),
+   // New Year's / Independence / Juneteenth / Christmas Thursday shifts (usually to Friday)
+   f_day_key(2009,  1,  2), f_day_key(2015,  1,  2),
+   f_day_key(2013,  7,  5), f_day_key(2019,  7,  5), f_day_key(2024,  7,  5),
+   f_day_key(2025,  6, 20),
+   f_day_key(2008, 12, 24), f_day_key(2014, 12, 24),
+   f_day_key(2020, 12, 23), f_day_key(2025, 12, 24)
+ )
+
+// Returns true on an Initial Claims release day.
+export is_claims_day() =>
+    last_ms = time_close - 1
+    bar_y = year(last_ms, "America/New_York")
+    bar_m = month(last_ms, "America/New_York")
+    bar_d = dayofmonth(last_ms, "America/New_York")
+    bar_dow = dayofweek(last_ms, "America/New_York")
+    
+    is_thursday = bar_dow == dayofweek.thursday
+    today_key   = f_day_key(bar_y, bar_m, bar_d)
+    in_skip     = array.includes(claims_skip, today_key)
+    in_add      = array.includes(claims_add,  today_key)
+    (is_thursday and not in_skip) or in_add
+    
+// ===========================================================================
+// BENCHMARK / REVISION EVENTS (optional)
+// ===========================================================================
+// Major BLS revision announcements that aren't NFP releases but move markets
+// comparably. Add new entries as they're announced.
+// ===========================================================================
+var array<int> benchmark_dates = array.from(
+   f_day_key(2024,  8, 21)   // Preliminary benchmark: -818k jobs
+ )
+
+export is_benchmark_day() =>
+    array.includes(benchmark_dates, f_today_key())
+
+
+// ===========================================================================
+// COMPOSITE / LABEL HELPERS
+// ===========================================================================
+
+// Returns true if today is any major event day tracked by this library.
+export is_major_event() =>
+    is_nfp_day() or is_opex_day() or is_claims_day() or is_benchmark_day()
+
+
+// Returns a string label for the active event, or "" if none.
+// Note: returns the highest-priority single label even if multiple events
+// coincide (rare but possible — e.g., NFP could in theory land on a Friday
+// that's also OPEX week, though they don't overlap in practice).
+export active_event_name() =>
+    is_nfp_day()        ? "NFP"  :
+     is_benchmark_day() ? "BMRK" :
+     is_triple_witching() ? "TW"  :
+     is_opex_day()      ? "OPEX" :
+     is_claims_day()    ? "ICSA" :
+     ""
+
+
+// =============================================================================
+// MINIMAL DEMO (delete or comment out before publishing as a library)
+// =============================================================================
+plot(is_nfp_day()         ? 1 : 0, "NFP",   color=color.red,    style=plot.style_columns)
+plot(is_opex_day()        ? 1 : 0, "OPEX",  color=color.purple, style=plot.style_columns)
+plot(is_triple_witching() ? 1 : 0, "TW",    color=color.fuchsia,style=plot.style_columns)
+plot(is_claims_day()      ? 1 : 0, "ICSA",  color=color.blue,   style=plot.style_columns)
+plot(is_benchmark_day()   ? 1 : 0, "BMRK",  color=color.orange, style=plot.style_columns)
+
+bgcolor(is_nfp_day()         ? color.new(color.red, 85)     : na, title="NFP highlight")
+bgcolor(is_triple_witching() ? color.new(color.fuchsia, 85) : na, title="TW highlight")
+bgcolor(is_opex_day() and not is_triple_witching() ? color.new(color.purple, 90) : na, title="OPEX highlight")
+
+
+// =============================================================================
+// APPENDIX: CPI / PPI / FOMC via request.economic — copy into your own indicator
+// =============================================================================
+//
+// Pine v6 can detect CPI, PPI, and Initial Claims releases by watching for value
+// changes in the underlying FRED series. This is zero-maintenance — the Federal
+// Reserve handles updates automatically. Best used in daily-or-higher
+// timeframes; great fit for a weekly check indicator.
+//
+// EXAMPLE — copy this into a separate indicator script:
+//
+//     //@version=6
+//     indicator("Macro Event Heatmap", overlay=true)
+//
+//     // Pull current values of the underlying economic series.
+//     // ta.change() fires when the series gets a new reading = release day.
+//     cpi    = request.economic("US", "CPIAUCSL")  // CPI All Urban, SA
+//     ppi    = request.economic("US", "PPIACO")    // PPI All Commodities
+//     claims = request.economic("US", "ICSA")      // Initial Claims, SA
+//     payems = request.economic("US", "PAYEMS")    // Total Nonfarm Payrolls
+//
+//     cpi_release    = ta.change(cpi)    != 0
+//     ppi_release    = ta.change(ppi)    != 0
+//     claims_release = ta.change(claims) != 0
+//     nfp_release    = ta.change(payems) != 0
+//
+//     bgcolor(cpi_release    ? color.new(color.yellow, 80) : na, title="CPI")
+//     bgcolor(ppi_release    ? color.new(color.aqua,   80) : na, title="PPI")
+//     bgcolor(claims_release ? color.new(color.blue,   90) : na, title="Claims")
+//     bgcolor(nfp_release    ? color.new(color.red,    80) : na, title="NFP")
+//
+// LIMITATIONS
+// -----------
+//   * Only fires when the VALUE changes. Unchanged FOMC rate decisions won't
+//     trigger via DFEDTARU. For FOMC you still need a hardcoded date list
+//     (8 dates per year, manageable).
+//
+//   * Daily-bar resolution. The "release day" detection is approximate to ±1
+//     trading day depending on TradingView's data feed refresh timing.
+//     Adequate for weekly indicators and backtesting; not for intraday timing.
+//
+//   * Series IDs are FRED-style. A few useful ones:
+//       CPIAUCSL — CPI All Urban Consumers (SA)
+//       PPIACO   — PPI All Commodities
+//       ICSA     — Initial Claims (SA)
+//       PAYEMS   — Total Nonfarm Payrolls (NFP headline)
+//       UNRATE   — Unemployment Rate
+//       GDP      — GDP, Quarterly
+//       INDPRO   — Industrial Production
+//
+//   * For NFP specifically, you have a CHOICE: the ta.change(PAYEMS) approach
+//     OR the precise hardcoded is_nfp_day() above. The hardcoded version is
+//     intraday-precise and historically verified; the PAYEMS approach is
+//     zero-maintenance but daily-precision-only.
+// =============================================================================

@@ -1,0 +1,570 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © vveerappa
+
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © HitmanICT
+
+//@version=6
+indicator(title = 'HR', overlay = true, max_lines_count = 200)
+
+ticker = syminfo.ticker
+
+timezone = 'America/Chicago'
+gapTime = '1600-0400'
+gap2Time = '0930-0945,1000-1100'
+
+hideGap = input.bool(true, 'Hide Gaps 0400-1600')
+hideGap2 = input.bool(true, 'Hide Intra Gaps Berween Macros')
+
+
+// InSession() returns 'true' when the current bar happens inside
+// the specified session, corrected for the given time zone (optional).
+// Returns 'false' when the bar doesn't happen in that time period,
+// or when the chart's time frame is 1 day or higher. 
+InSession(sessionTime, sessionTimeZone = syminfo.timezone, exact = false) =>
+    if exact
+        not na(time('1', sessionTime, sessionTimeZone))
+    else
+        not na(time(timeframe.period, sessionTime, sessionTimeZone))
+
+
+duringGap = InSession(gapTime, timezone)
+duringGap2 = InSession(gap2Time, timezone)
+
+// plotcandle(open, high, low, close, title='Hidden bar color', color=duringGap and hideGap ? color.new(#131722, 0) : na, wickcolor = duringGap and hideGap ? color.new(#131722, 0) : na, bordercolor=duringGap and hideGap ? color.new(#131722,0) : na, display = display.all)
+plotcandle(open, high, low, close, title = 'Hidden bar color', color = duringGap and hideGap ? chart.bg_color : na, wickcolor = duringGap and hideGap ? chart.bg_color : na, bordercolor = duringGap and hideGap ? chart.bg_color : na, display = display.all)
+plotcandle(open, high, low, close, title = 'Hidden bar color', color = duringGap2 and hideGap2 ? chart.bg_color : na, wickcolor = duringGap2 and hideGap2 ? chart.bg_color : na, bordercolor = duringGap2 and hideGap2 ? chart.bg_color : na, display = display.all)
+// Overnight session
+
+// STEP 1:
+// Define custom session trading times with inputs
+// ONsessionTime = input.session("0400-0815", title="Session time")
+showONSession = input.bool(true, 'ONS', group = 'Overnight Session')
+
+ONsessionTime = '0400-0815'
+ONsessionZone = timezone
+
+// Other inputs for the boxes' visual appearance
+ONSessionBorderSize = input.int(1, title = 'ONS Border Size', minval = 0, group = 'Overnight Session')
+ONSessionBgColor = input.color(color.new(#868686, 100), title = 'Overnight Session Background Color', group = 'Overnight Session')
+ONSessionBorderColor = input.color(color.rgb(0, 0, 0), title = 'ONS Border', group = 'Overnight Session')
+ONSessionAvgLineColor = input.color(color.rgb(0, 0, 0), title = 'ONS EQ', group = 'Overnight Session')
+// Create variables
+var ONsessionHighPrice = 0.0
+var ONsessionLowPrice = 0.0
+var ONsessionOpenPrice = 0.0
+var ONSessionAvgPrice = 0.0
+var ONSessionPipCount = 0.0
+var box ONsessionBox = na
+var line ONSessionAvgLine = na
+var label ONSessionAvgLabel = na
+var label ONSessionLabel = na
+// var table testtable = na 
+
+// STEP 2:
+// See if the session is currently active and just started
+inONSession = InSession(ONsessionTime, ONsessionZone) and timeframe.isintraday
+ONsessionStart = inONSession and not inONSession[1]
+
+// STEP 3:
+// When a new session starts, set the session high and low to the data
+// of the bar in the session.
+if ONsessionStart
+    ONsessionHighPrice := high
+    ONsessionLowPrice := low
+    ONsessionOpenPrice := open
+    ONSessionAvgPrice := (ONsessionHighPrice + ONsessionLowPrice) / 2
+    ONSessionPipCount := math.abs((ONsessionHighPrice - ONsessionLowPrice) / syminfo.mintick)
+    ONSessionPipCount
+
+// Else, during the session, track the highest high and lowest low
+else if inONSession
+    ONsessionHighPrice := math.max(ONsessionHighPrice, high)
+    ONsessionLowPrice := math.min(ONsessionLowPrice, low)
+    ONSessionAvgPrice := (ONsessionHighPrice + ONsessionLowPrice) / 2
+    ONSessionPipCount := math.abs((ONsessionHighPrice - ONsessionLowPrice) / 10 / syminfo.mintick)
+    ONSessionPipCount
+    //ONSessionPipCount for Indicies
+    //ONSessionPipCount  := math.abs(((ONsessionHighPrice - ONsessionLowPrice) / 4) / syminfo.mintick)
+
+// STEP 4:
+// When a session begins, make a new box for that session
+if ONsessionStart and showONSession
+    ONsessionBox := box.new(left = bar_index, top = na, right = na, bottom = na, border_style = line.style_dashed, border_width = ONSessionBorderSize)
+    // ONSessionAvgLine := line.new(bar_index, ONSessionAvgPrice, bar_index + 1, ONSessionAvgPrice, color = color.navy, width = 3)
+    tsStart = timestamp(timezone, year(time), month(time), dayofmonth(time), 04, 00)
+    tsEnd = timestamp(timezone, year(time), month(time), dayofmonth(time), 16, 00)
+    ONSessionAvgLine := line.new(tsStart, ONSessionAvgPrice, tsEnd, ONSessionAvgPrice, color = ONSessionAvgLineColor, width = 2, xloc = xloc.bar_time, style = line.style_dotted)
+    ONSessionAvgLabel := label.new(tsEnd - 3000000, ONSessionAvgPrice * 0.99998, 'ONS EQ', xloc = xloc.bar_time, style = label.style_none, textcolor = ONSessionAvgLineColor, size = size.small, textalign = text.align_left)
+    ONSessionLabel := label.new(tsStart + 1000000, ONsessionHighPrice, str.tostring(ONSessionPipCount) + ' pts', xloc = xloc.bar_time, style = label.style_none, textcolor = ONSessionBorderColor, size = size.small, textalign = text.align_right)
+    ONSessionLabel
+    // line.set_color()
+    // testtable := table.new(position.bottom_right,1,1)
+    // table.cell(testtable, 1,1, "aaa")
+
+
+
+// STEP 5:
+// During the session, update that session's existing box
+if inONSession and showONSession
+    box.set_top(ONsessionBox, ONsessionHighPrice)
+    box.set_bottom(ONsessionBox, ONsessionLowPrice)
+
+    box.set_right(ONsessionBox, bar_index + 1)
+
+    line.set_y1(ONSessionAvgLine, ONSessionAvgPrice)
+    line.set_y2(ONSessionAvgLine, ONSessionAvgPrice)
+    label.set_y(ONSessionAvgLabel, ONSessionAvgPrice)
+    label.set_y(ONSessionLabel, ONsessionHighPrice)
+
+    label.set_text(ONSessionLabel, str.tostring(ONSessionPipCount) + ' pts')
+    label.set_y(ONSessionLabel, ONsessionHighPrice)
+    // line.set_xy1(ONSessionAvgLine, bar_index + 1, ONSessionAvgPrice)
+    // line.set_y2(ONSessionAvgLine, ONSessionAvgPrice)
+    // l = label.new(bar_index, close, str.tostring(ONSessionAvgPrice))
+
+    // See if bar closed higher than session open. When it did, make
+    // box green (and use red otherwise).
+    box.set_bgcolor(ONsessionBox, ONSessionBgColor)
+    box.set_border_color(ONsessionBox, ONSessionBorderColor)
+    // if close > ONsessionOpenPrice
+    //     box.set_bgcolor(ONsessionBox, upBoxColor)
+    //     box.set_border_color(ONsessionBox, upBorderColor)
+    // else
+    //     box.set_bgcolor(ONsessionBox, downBoxColor)
+    //     box.set_border_color(ONsessionBox, downBorderColor)
+    // avgPrice = math.abs(ONsessionHighPrice - ONsessionLowPrice) / 2
+
+
+// ONLiqHunt
+
+ONLiqHuntTime = '0815-0930'
+showONLiqHuntTime = input.bool(true, 'Liquidity Hunt', group = 'Overnight Session')
+
+
+ONLiqHuntBorderSize = input.int(1, title = 'Liquidity Hunt Border Size', minval = 0, group = 'Overnight Session')
+ONLiqHuntBgColor = input.color(color.new(#415781, 100), title = 'Liquidity Hunt Background Color', group = 'Overnight Session')
+ONLiqHuntBorderColor = input.color(color.rgb(0, 0, 0), title = 'Liquidity Hunt Border Color', group = 'Overnight Session')
+
+// Create variables
+var ONLiqHuntHighPrice = 0.0
+var ONLiqHuntLowPrice = 0.0
+var ONLiqHuntOpenPrice = 0.0
+var box ONLiqHuntBox = na
+// var label ONLiqLabel = na
+
+inONLiqHunt = InSession(ONLiqHuntTime, timezone) and timeframe.isintraday
+ONLiqHuntStart = inONLiqHunt and not inONLiqHunt[1]
+
+// When a new session starts, set the session high and low to the data
+// of the bar in the session.
+if ONLiqHuntStart
+    ONLiqHuntHighPrice := high
+    ONLiqHuntLowPrice := low
+    ONLiqHuntOpenPrice := open
+    ONLiqHuntOpenPrice
+    // Else, during the session, track the highest high and lowest low
+else if inONLiqHunt
+    ONLiqHuntHighPrice := math.max(ONLiqHuntHighPrice, high)
+    ONLiqHuntLowPrice := math.min(ONLiqHuntLowPrice, low)
+    ONLiqHuntLowPrice
+
+// When a session begins, make a new box for that session
+if ONLiqHuntStart and showONLiqHuntTime
+    ONLiqHuntBox := box.new(left = bar_index, top = na, right = na, bottom = na, border_style = line.style_dashed, border_width = ONLiqHuntBorderSize)
+    tsStart = timestamp(timezone, year(time), month(time), dayofmonth(time), 08, 15)
+    tsStart
+    // ONLiqLabel    := label.new(tsStart+300000, ONLiqHuntHighPrice, "Liquidity Hunt", xloc = xloc.bar_time, style = label.style_none, textcolor = ONLiqHuntBorderColor, size = size.small, textalign = text.align_right)
+
+// During the session, update that session's existing box
+if inONLiqHunt and showONLiqHuntTime
+    box.set_top(ONLiqHuntBox, ONLiqHuntHighPrice)
+    box.set_bottom(ONLiqHuntBox, ONLiqHuntLowPrice)
+
+    box.set_right(ONLiqHuntBox, bar_index + 1)
+
+    box.set_bgcolor(ONLiqHuntBox, ONLiqHuntBgColor)
+    box.set_border_color(ONLiqHuntBox, ONLiqHuntBorderColor)
+    // label.set_y(ONLiqLabel,ONLiqHuntHighPrice)
+
+
+// offset time
+
+// STEP 1:
+// Define custom session trading times with inputs
+showOffsetTime = input.bool(true, 'Offset', group = 'Overnight Session')
+
+OffsetTime = '0945-1000'
+
+// Other inputs for the boxes' visual appearance
+OffsetBorderSize = input.int(1, title = 'Offset Border Size', minval = 0, group = 'Overnight Session')
+OffsetBgColor = input.color(color.new(#a94df5, 100), title = 'Offset Background Color', group = 'Overnight Session')
+OffsetBorderColor = input.color(#000000, title = 'Offset Border Color', group = 'Overnight Session')
+
+// Create variables
+var OffsetHighPrice = 0.0
+var OffsetLowPrice = 0.0
+var OffsetOpenPrice = 0.0
+var box OffsetBox = na
+
+// STEP 2:
+// See if the session is currently active and just started
+inOffset = InSession(OffsetTime, timezone) and timeframe.isintraday
+OffsetStart = inOffset and not inOffset[1]
+
+// STEP 3:
+// When a new session starts, set the session high and low to the data
+// of the bar in the session.
+if OffsetStart
+    OffsetHighPrice := high
+    OffsetLowPrice := low
+    OffsetOpenPrice := open
+    OffsetOpenPrice
+    // Else, during the session, track the highest high and lowest low
+else if inOffset
+    OffsetHighPrice := math.max(OffsetHighPrice, high)
+    OffsetLowPrice := math.min(OffsetLowPrice, low)
+    OffsetLowPrice
+
+// STEP 4:
+// When a session begins, make a new box for that session
+if OffsetStart and showOffsetTime
+    OffsetBox := box.new(left = bar_index, top = na, right = na, bottom = na, border_style = line.style_dashed, border_width = OffsetBorderSize)
+    OffsetBox
+
+// STEP 5:
+// During the session, update that session's existing box
+if inOffset and showOffsetTime
+    box.set_top(OffsetBox, OffsetHighPrice)
+    box.set_bottom(OffsetBox, OffsetLowPrice)
+
+    box.set_right(OffsetBox, bar_index + 1)
+
+    box.set_bgcolor(OffsetBox, OffsetBgColor)
+    box.set_border_color(OffsetBox, OffsetBorderColor)
+
+// rebalance
+
+RebalanceTime = '1100-1330'
+showRebalanceTime = input.bool(true, 'Rebalancing (FVG)', group = 'Overnight Session')
+
+
+RebalanceBorderSize = input.int(1, title = 'Rebalance Border Size', minval = 0, group = 'Overnight Session')
+RebalanceBgColor = input.color(color.new(#4aa56d, 100), title = 'Rebalance Background Color', group = 'Overnight Session')
+RebalanceBorderColor = input.color(color.rgb(0, 0, 0), title = 'Rebalance Border Color', group = 'Overnight Session')
+
+// Create variables
+var RebalanceHighPrice = 0.0
+var RebalanceLowPrice = 0.0
+var RebalanceOpenPrice = 0.0
+var box RebalanceBox = na
+
+inRebalance = InSession(RebalanceTime, timezone) and timeframe.isintraday
+RebalanceStart = inRebalance and not inRebalance[1]
+
+// When a new session starts, set the session high and low to the data
+// of the bar in the session.
+if RebalanceStart
+    RebalanceHighPrice := high
+    RebalanceLowPrice := low
+    RebalanceOpenPrice := open
+    RebalanceOpenPrice
+    // Else, during the session, track the highest high and lowest low
+else if inRebalance
+    RebalanceHighPrice := math.max(RebalanceHighPrice, high)
+    RebalanceLowPrice := math.min(RebalanceLowPrice, low)
+    RebalanceLowPrice
+
+// When a session begins, make a new box for that session
+if RebalanceStart and showRebalanceTime
+    RebalanceBox := box.new(left = bar_index, top = na, right = na, bottom = na, border_style = line.style_dashed, border_width = RebalanceBorderSize)
+    RebalanceBox
+
+// During the session, update that session's existing box
+if inRebalance and showRebalanceTime
+    box.set_top(RebalanceBox, RebalanceHighPrice)
+    box.set_bottom(RebalanceBox, RebalanceLowPrice)
+
+    box.set_right(RebalanceBox, bar_index + 1)
+
+    box.set_bgcolor(RebalanceBox, RebalanceBgColor)
+    box.set_border_color(RebalanceBox, RebalanceBorderColor)
+
+// lunch time
+
+LunchTime = '1245-1345'
+showLunchTime = input.bool(true, 'Lunch Time', group = 'Overnight Session')
+
+
+LunchBorderSize = input.int(1, title = 'Lunch Border Size', minval = 0, group = 'Overnight Session')
+LunchBgColor = input.color(color.new(#4b7bff, 100), title = 'Lunch Background Color', group = 'Overnight Session')
+LunchBorderColor = input.color(color.rgb(0, 0, 0), title = 'Lunch Border Color', group = 'Overnight Session')
+
+// Create variables
+var LunchHighPrice = 0.0
+var LunchLowPrice = 0.0
+var LunchOpenPrice = 0.0
+var box LunchBox = na
+
+inLunch = InSession(LunchTime, timezone) and timeframe.isintraday
+LunchStart = inLunch and not inLunch[1]
+
+// When a new session starts, set the session high and low to the data
+// of the bar in the session.
+if LunchStart
+    LunchHighPrice := high
+    LunchLowPrice := low
+    LunchOpenPrice := open
+    LunchOpenPrice
+    // Else, during the session, track the highest high and lowest low
+else if inLunch
+    LunchHighPrice := math.max(LunchHighPrice, high)
+    LunchLowPrice := math.min(LunchLowPrice, low)
+    LunchLowPrice
+
+// When a session begins, make a new box for that session
+if LunchStart and showLunchTime
+    LunchBox := box.new(left = bar_index, top = na, right = na, bottom = na, border_style = line.style_dashed, border_width = LunchBorderSize)
+    LunchBox
+
+// During the session, update that session's existing box
+if inLunch and showLunchTime
+    box.set_top(LunchBox, LunchHighPrice)
+    box.set_bottom(LunchBox, LunchLowPrice)
+
+    box.set_right(LunchBox, bar_index + 1)
+
+    box.set_bgcolor(LunchBox, LunchBgColor)
+    box.set_border_color(LunchBox, LunchBorderColor)
+
+// settlement time
+
+SettleTime = '1345-1515'
+showSettleTime = input.bool(true, 'Settlement Check', group = 'Overnight Session')
+
+
+SettleBorderSize = input.int(1, title = 'Settlement Border Size', minval = 0, group = 'Overnight Session')
+SettleBgColor = input.color(color.new(#a8bd33, 100), title = 'Settlement Background Color', group = 'Overnight Session')
+SettleBorderColor = input.color(color.rgb(0, 0, 0), title = 'Settlement Border Color', group = 'Overnight Session')
+
+// Create variables
+var SettleHighPrice = 0.0
+var SettleLowPrice = 0.0
+var SettleOpenPrice = 0.0
+var box SettleBox = na
+
+inSettle = InSession(SettleTime, timezone) and timeframe.isintraday
+SettleStart = inSettle and not inSettle[1]
+
+// When a new session starts, set the session high and low to the data
+// of the bar in the session.
+if SettleStart
+    SettleHighPrice := high
+    SettleLowPrice := low
+    SettleOpenPrice := open
+    SettleOpenPrice
+    // Else, during the session, track the highest high and lowest low
+else if inSettle
+    SettleHighPrice := math.max(SettleHighPrice, high)
+    SettleLowPrice := math.min(SettleLowPrice, low)
+    SettleLowPrice
+
+// When a session begins, make a new box for that session
+if SettleStart and showSettleTime
+    SettleBox := box.new(left = bar_index, top = na, right = na, bottom = na, border_style = line.style_dashed, border_width = SettleBorderSize)
+    SettleBox
+
+// During the session, update that session's existing box
+if inSettle and showSettleTime
+    box.set_top(SettleBox, SettleHighPrice)
+    box.set_bottom(SettleBox, SettleLowPrice)
+
+    box.set_right(SettleBox, bar_index + 1)
+
+    box.set_bgcolor(SettleBox, SettleBgColor)
+    box.set_border_color(SettleBox, SettleBorderColor)
+
+// mini ONS time
+
+MonsTime = '0400-0645'
+showMonsTime = input.bool(true, 'Mini ONS', group = 'Overnight Session')
+
+
+MonsBorderSize = input.int(1, title = 'Mini ONS Border Size', minval = 0, group = 'Overnight Session')
+MonsBgColor = input.color(color.new(#b86b6b, 100), title = 'Mini ONS Background Color', group = 'Overnight Session')
+MonsBorderColor = input.color(color.rgb(0, 0, 0), title = 'Mini ONS Border Color', group = 'Overnight Session')
+
+// Create variables
+var MonsHighPrice = 0.0
+var MonsLowPrice = 0.0
+var MonsOpenPrice = 0.0
+var box MonsBox = na
+
+inMons = InSession(MonsTime, timezone) and timeframe.isintraday
+MonsStart = inMons and not inMons[1]
+
+// When a new session starts, set the session high and low to the data
+// of the bar in the session.
+if MonsStart
+    MonsHighPrice := high
+    MonsLowPrice := low
+    MonsOpenPrice := open
+    MonsOpenPrice
+    // Else, during the session, track the highest high and lowest low
+else if inMons
+    MonsHighPrice := math.max(MonsHighPrice, high)
+    MonsLowPrice := math.min(MonsLowPrice, low)
+    MonsLowPrice
+
+// When a session begins, make a new box for that session
+if MonsStart and showMonsTime
+    MonsBox := box.new(left = bar_index, top = na, right = na, bottom = na, border_style = line.style_dashed, border_width = MonsBorderSize)
+    MonsBox
+
+// During the session, update that session's existing box
+if inMons and showMonsTime
+    box.set_top(MonsBox, MonsHighPrice)
+    box.set_bottom(MonsBox, MonsLowPrice)
+
+    box.set_right(MonsBox, bar_index + 1)
+
+    box.set_bgcolor(MonsBox, MonsBgColor)
+    box.set_border_color(MonsBox, MonsBorderColor)
+
+// Open Price 4pm
+
+var dayinms = 86400000
+
+var tsEnd = 0
+
+
+show4pmPrice = input.bool(false, 'Show 4pm price', group = 'Opening Price')
+fourPMPriceColor = input.color(#00ced1, '4pm price color', group = 'Opening Price')
+if show4pmPrice
+    fourPM2fourPM = '1600-1530'
+
+    var fourPM2fourPMOpeningPrice = 0.0
+    // var fourPM2fourPMtime = 0
+    // var box fourPM2fourPMBox = na
+    var line fourPM2fourPMLine = na
+
+    infourPM2fourPM = InSession(fourPM2fourPM, timezone) and timeframe.isintraday
+    fourPM2fourPMStart = infourPM2fourPM and not infourPM2fourPM[1]
+
+// tsStart = timestamp(timezone, year(time),month(time),dayofmonth(time),16,00)
+// tsSince = timestamp(timezone, year(time),month(time),dayofmonth(time - 1 * dayinms),00,00)
+
+    if fourPM2fourPMStart
+        fourPM2fourPMOpeningPrice := open
+        // fourPM2fourPMtime := time
+        tsStart = timestamp(timezone, year(time), month(time), dayofmonth(time), 16, 00)
+        if dayofweek(time, timezone) == dayofweek.friday
+            tsEnd := timestamp(timezone, year(time), month(time), dayofmonth(time + 3 * dayinms), 16, 00)
+            tsEnd
+        else
+            tsEnd := timestamp(timezone, year(time), month(time), dayofmonth(time + dayinms), 16, 00)
+            tsEnd
+        fourPM2fourPMLine := line.new(tsStart, fourPM2fourPMOpeningPrice, tsEnd, fourPM2fourPMOpeningPrice, xloc = xloc.bar_time)
+        line.set_color(fourPM2fourPMLine, fourPMPriceColor)
+        label.new(tsEnd - 3000000, fourPM2fourPMOpeningPrice * 0.99998, '4pm', xloc = xloc.bar_time, style = label.style_none, textcolor = fourPMPriceColor, size = size.small, textalign = text.align_left)
+
+// Open Price 4 am
+
+show4amPrice = input.bool(false, 'Show 4am price', group = 'Opening Price')
+fourAMPriceColor = input.color(#2962ff, '4am price color', group = 'Opening Price')
+
+if show4amPrice
+    fourAM2fourPM = '0400-1600'
+
+    var fourAM2fourPMOpeningPrice = 0.0
+    var box fourAM2fourPMBox = na
+    var line fourAM2fourPMLine = na
+
+    infourAM2fourPM = InSession(fourAM2fourPM, timezone) and timeframe.isintraday
+    fourAM2fourPMStart = infourAM2fourPM and not infourAM2fourPM[1]
+
+    tsStart = timestamp(timezone, year(time), month(time), dayofmonth(time), 04, 00)
+
+    if fourAM2fourPMStart
+        fourAM2fourPMOpeningPrice := open
+        tsStart := timestamp(timezone, year(time), month(time), dayofmonth(time), 04, 00)
+        tsEnd := timestamp(timezone, year(time), month(time), dayofmonth(time), 16, 00)
+        fourAM2fourPMLine := line.new(tsStart, fourAM2fourPMOpeningPrice, tsEnd, fourAM2fourPMOpeningPrice, xloc = xloc.bar_time)
+        line.set_color(fourAM2fourPMLine, fourAMPriceColor)
+        label.new(tsEnd - 3000000, fourAM2fourPMOpeningPrice * 0.99998, '4am', xloc = xloc.bar_time, style = label.style_none, textcolor = fourAMPriceColor, size = size.small, textalign = text.align_left)
+
+open1 = request.security_lower_tf(syminfo.tickerid, '1', open)
+time1 = request.security_lower_tf(syminfo.tickerid, '1', minute(time))
+
+// Open Price 815
+
+show815amPrice = input.bool(false, 'Show 8h15 am price', group = 'Opening Price')
+eight15AMPriceColor = input.color(#2962ff, '8h15am price color', group = 'Opening Price')
+
+if show815amPrice
+    eight15AM2930 = '0815-0930'
+
+    var eight15AM2930OpeningPrice = 0.0
+    var box eight15AM2930Box = na
+    var line eight15AM2930Line = na
+
+    ineight15AM2930 = InSession(eight15AM2930, timezone) and timeframe.isintraday
+    eight15AM2930Start = ineight15AM2930 and not ineight15AM2930[1]
+
+
+    var lastopentime = 0
+    var array<float> lastOpen1 = na
+    var array<int> lastTime1 = na
+
+    isInBefore = 0
+
+    if eight15AM2930Start
+        if array.size(lastOpen1) > 0
+            for i = 0 to array.size(lastOpen1) - 1 by 1
+                if array.get(lastTime1, i) == 15
+                    eight15AM2930OpeningPrice := array.get(lastOpen1, i)
+                    isInBefore := 1
+                    isInBefore
+        if array.size(open1) > 0 and isInBefore == 0
+            for i = 0 to array.size(open1) - 1 by 1
+                if array.get(time1, i) == 15
+                    eight15AM2930OpeningPrice := array.get(open1, i)
+                    eight15AM2930OpeningPrice
+
+
+    if lastopentime < time
+        lastopentime := time
+        lastOpen1 := open1
+        lastTime1 := time1
+        lastTime1
+
+    if eight15AM2930Start
+        tsStart = timestamp(timezone, year(lastopentime), month(lastopentime), dayofmonth(lastopentime), 08, 15)
+        tsEnd := timestamp(timezone, year(time), month(time), dayofmonth(time), 16, 00)
+        eight15AM2930Line := line.new(tsStart, eight15AM2930OpeningPrice, tsEnd, eight15AM2930OpeningPrice, xloc = xloc.bar_time)
+
+        line.set_color(eight15AM2930Line, eight15AMPriceColor)
+        label.new(tsEnd - 3000000, eight15AM2930OpeningPrice * 0.99998, '8h15am', xloc = xloc.bar_time, style = label.style_none, textcolor = eight15AMPriceColor, size = size.small, textalign = text.align_left)
+
+f_strMid(_str, _from, _to) =>
+    array<string> _chars = str.split(_str, '')
+    int _len = array.size(_chars)
+    int _beg = math.min(_len - 1, math.max(0, _from))
+    int _end = math.min(_len, math.max(0, _to + 1))
+    array<string> _substr = array.new_string(0)
+    if _beg <= _end
+        _substr := array.slice(_chars, _beg, _end)
+        _substr
+    string _return = array.join(_substr, '')
+    _return
+
+f_strLeft(_str, _n) =>
+    array<string> _chars = str.split(_str, '')
+    int _len = array.size(_chars)
+    int _end = math.min(_len, math.max(0, _n))
+    array<string> _substr = array.new_string(0)
+    if _end <= _len
+        _substr := array.slice(_chars, 0, _end)
+        _substr
+    string _return = array.join(_substr, '')
+    _return
