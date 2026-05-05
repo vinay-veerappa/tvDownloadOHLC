@@ -468,7 +468,7 @@ def load_config(path: str = \"scripts/trading_framework/config/sessions.yaml\") 
 
 ## 4. LIBRARY: Data Layer
 
-**Module: `scripts/libs/data/loader.py`**
+**Module: `scripts/libs_py/data/loader.py`**
 
 **Purpose:** Load parquet files, merge price + internals, compute derived series.
 Reusable by any strategy.
@@ -535,7 +535,7 @@ class DataLoader:
         self._cache = {}
 ```
 
-**Module: `scripts/libs/data/session_tagger.py`**
+**Module: `scripts/libs_py/data/session_tagger.py`**
 
 ```python
 """
@@ -572,7 +572,7 @@ def tag_sessions(df: pd.DataFrame, sessions: "SessionConfig") -> pd.DataFrame:
     """
 ```
 
-**Module: `scripts/libs/data/resampler.py`**
+**Module: `scripts/libs_py/data/resampler.py`**
 
 ```python
 """
@@ -619,7 +619,7 @@ def add_resampled_columns(df_1m: pd.DataFrame, freq: str, prefix: str) -> pd.Dat
 All feature modules follow the same pattern: take a DataFrame, add columns, return it.
 Features are computed lazily — only when requested by a strategy or analysis.
 
-**Module: `scripts/libs/features/registry.py`**
+**Module: `scripts/libs_py/features/registry.py`**
 
 ```python
 """
@@ -654,20 +654,20 @@ class FeatureRegistry:
             Return df with all requested features as columns.
 
     Feature names and their modules:
-        "vwap", "vwap_distance", "vwap_slope", "vwap_cross_count" → scripts/libs/features/vwap.py
-        "bb_upper", "bb_lower", "bb_mid", "bb_pct_b", "bb_bandwidth" → scripts/libs/features/bollinger.py
-        "kc_upper", "kc_lower", "kc_mid" → scripts/libs/features/keltner.py
-        "ema_9", "ema_20", "ema_50", "ema_200" → scripts/libs/features/ema.py
-        "atr_14", "atr_5m_14" → scripts/libs/features/atr.py
-        "ib_high", "ib_low", "ib_mid", "ib_width", "ib_width_pctile" → scripts/libs/features/initial_balance.py
+        "vwap", "vwap_distance", "vwap_slope", "vwap_cross_count" → scripts/libs_py/features/vwap.py
+        "bb_upper", "bb_lower", "bb_mid", "bb_pct_b", "bb_bandwidth" → scripts/libs_py/features/bollinger.py
+        "kc_upper", "kc_lower", "kc_mid" → scripts/libs_py/features/keltner.py
+        "ema_9", "ema_20", "ema_50", "ema_200" → scripts/libs_py/features/ema.py
+        "atr_14", "atr_5m_14" → scripts/libs_py/features/atr.py
+        "ib_high", "ib_low", "ib_mid", "ib_width", "ib_width_pctile" → scripts/libs_py/features/initial_balance.py
         "vold", "tick_persistence", "tick_zero_cross", "vold_slope",
-            "trin_avg", "chop_score" → scripts/libs/features/internals.py, scripts/libs/features/chop.py
-        "fast_move_detected", "single_print_level" → scripts/libs/features/auction.py
-        "level_state" → scripts/libs/features/acceptance_rejection.py
+            "trin_avg", "chop_score" → scripts/libs_py/features/internals.py, scripts/libs_py/features/chop.py
+        "fast_move_detected", "single_print_level" → scripts/libs_py/features/auction.py
+        "level_state" → scripts/libs_py/features/acceptance_rejection.py
     """
 ```
 
-**Module: `scripts/libs/features/vwap.py`**
+**Module: `scripts/libs_py/features/vwap.py`**
 
 ```python
 """
@@ -701,7 +701,7 @@ def compute_vwap(df: pd.DataFrame, config: "AppConfig") -> pd.DataFrame:
     """
 ```
 
-**Module: `scripts/libs/features/initial_balance.py`**
+**Module: `scripts/libs_py/features/initial_balance.py`**
 
 ```python
 """
@@ -736,7 +736,7 @@ def compute_initial_balance(df: pd.DataFrame, config: "AppConfig") -> pd.DataFra
     """
 ```
 
-**Module: `scripts/libs/features/internals.py`**
+**Module: `scripts/libs_py/features/internals.py`**
 
 ```python
 """
@@ -769,7 +769,7 @@ def compute_internals_features(df: pd.DataFrame, config: "AppConfig") -> pd.Data
     """
 ```
 
-**Module: `scripts/libs/features/chop.py`**
+**Module: `scripts/libs_py/features/chop.py`**
 
 ```python
 """
@@ -802,7 +802,7 @@ def compute_chop_score(df: pd.DataFrame, config: "AppConfig") -> pd.DataFrame:
     """
 ```
 
-**Module: `scripts/libs/features/bollinger.py`**
+**Module: `scripts/libs_py/features/bollinger.py`**
 
 ```python
 """
@@ -830,7 +830,7 @@ def compute_bollinger(df: pd.DataFrame, config: "AppConfig",
     """
 ```
 
-**Module: `scripts/libs/features/keltner.py`**
+**Module: `scripts/libs_py/features/keltner.py`**
 
 ```python
 """
@@ -852,7 +852,7 @@ def compute_keltner(df: pd.DataFrame, config: "AppConfig",
     """
 ```
 
-**Module: `scripts/libs/features/ema.py`**
+**Module: `scripts/libs_py/features/ema.py`**
 
 ```python
 """
@@ -876,7 +876,7 @@ def compute_emas(df: pd.DataFrame, config: "AppConfig",
     """
 ```
 
-**Module: `scripts/libs/features/atr.py`**
+**Module: `scripts/libs_py/features/atr.py`**
 
 ```python
 """
@@ -897,7 +897,7 @@ def compute_atr(df: pd.DataFrame, config: "AppConfig",
     """
 ```
 
-**Module: `scripts/libs/features/auction.py`**
+**Module: `scripts/libs_py/features/auction.py`**
 
 ```python
 """
@@ -925,7 +925,7 @@ def compute_auction_features(df: pd.DataFrame, config: "AppConfig") -> pd.DataFr
     """
 ```
 
-**Module: `scripts/libs/features/acceptance_rejection.py`**
+**Module: `scripts/libs_py/features/acceptance_rejection.py`**
 
 ```python
 """
@@ -1006,7 +1006,7 @@ def classify_level_series(
 
 This is the most critical library. Three levels, fully modular, reusable by any strategy.
 
-**Module: `scripts/libs/risk/risk_config.py`**
+**Module: `scripts/libs_py/risk/risk_config.py`**
 
 ```python
 """
@@ -1098,7 +1098,7 @@ class AccountState:
     daily_pnls: list = field(default_factory=list)
 ```
 
-**Module: `scripts/libs/risk/trade_policies.py`**
+**Module: `scripts/libs_py/risk/trade_policies.py`**
 
 ```python
 """
@@ -1255,7 +1255,7 @@ def get_policy(name: str, params: dict) -> TradePolicy:
     """
 ```
 
-**Module: `scripts/libs/risk/session_manager.py`**
+**Module: `scripts/libs_py/risk/session_manager.py`**
 
 ```python
 """
@@ -1326,7 +1326,7 @@ class SessionRiskManager:
     """
 ```
 
-**Module: `scripts/libs/risk/account_manager.py`**
+**Module: `scripts/libs_py/risk/account_manager.py`**
 
 ```python
 """
@@ -1622,7 +1622,7 @@ class PortfolioSimulator:
 
 ## 8. LIBRARY: Regime Detection
 
-**Module: `scripts/libs/regime/base.py`**
+**Module: `scripts/libs_py/regime/base.py`**
 
 ```python
 """
@@ -1672,7 +1672,7 @@ class RegimeModel(ABC):
     def set_params(self, params: dict) -> "RegimeModel": ...
 ```
 
-Implementations in `scripts/libs/regime/threshold.py`, `hmm.py`, `clustering.py`, `ensemble.py`
+Implementations in `scripts/libs_py/regime/threshold.py`, `hmm.py`, `clustering.py`, `ensemble.py`
 follow the same interface. See the v2 framework plan document for detailed specifications
 of each model (HMM state-to-label mapping, clustering approach, ensemble voting).
 
@@ -2316,7 +2316,7 @@ class MeanReversionStrategy(StrategyBase):
 
 ## 17. UTILITY: Acceptance/Rejection Classifier
 
-Already specified in Section 5 under `scripts/libs/features/acceptance_rejection.py`.
+Already specified in Section 5 under `scripts/libs_py/features/acceptance_rejection.py`.
 
 This is a LIBRARY utility — not a strategy. Any strategy can import and use it:
 
@@ -2333,7 +2333,7 @@ if state == LevelState.SHARP_REJECT:
 
 ## 18. UTILITY: Chop Detection Composite
 
-Already specified in Section 5 under `scripts/libs/features/chop.py` and `scripts/libs/features/internals.py`.
+Already specified in Section 5 under `scripts/libs_py/features/chop.py` and `scripts/libs_py/features/internals.py`.
 
 This is a LIBRARY utility. Strategies reference `chop_score` and `chop_vwap_flag`
 columns that are pre-computed on the enriched DataFrame.
@@ -2524,18 +2524,18 @@ pytest>=7.4
 ## Implementation Order
 
 1. `scripts/trading_framework/config/config_loader.py` + `config/default.yaml`
-2. `scripts/libs/data/loader.py` + `session_tagger.py` + `resampler.py`
-3. `scripts/libs/features/atr.py` (dependency for many other features)
-4. `scripts/libs/features/vwap.py`
-5. `scripts/libs/features/initial_balance.py`
-6. `scripts/libs/features/internals.py` + `scripts/libs/features/chop.py`
-7. `scripts/libs/features/bollinger.py` + `scripts/libs/features/keltner.py` + `scripts/libs/features/ema.py`
-8. `scripts/libs/features/auction.py` + `scripts/libs/features/acceptance_rejection.py`
-9. `scripts/libs/features/registry.py`
-10. `scripts/libs/risk/risk_config.py` (dataclasses)
-11. `scripts/libs/risk/trade_policies.py` (all policies)
-12. `scripts/libs/risk/session_manager.py`
-13. `scripts/libs/risk/account_manager.py`
+2. `scripts/libs_py/data/loader.py` + `session_tagger.py` + `resampler.py`
+3. `scripts/libs_py/features/atr.py` (dependency for many other features)
+4. `scripts/libs_py/features/vwap.py`
+5. `scripts/libs_py/features/initial_balance.py`
+6. `scripts/libs_py/features/internals.py` + `scripts/libs_py/features/chop.py`
+7. `scripts/libs_py/features/bollinger.py` + `scripts/libs_py/features/keltner.py` + `scripts/libs_py/features/ema.py`
+8. `scripts/libs_py/features/auction.py` + `scripts/libs_py/features/acceptance_rejection.py`
+9. `scripts/libs_py/features/registry.py`
+10. `scripts/libs_py/risk/risk_config.py` (dataclasses)
+11. `scripts/libs_py/risk/trade_policies.py` (all policies)
+12. `scripts/libs_py/risk/session_manager.py`
+13. `scripts/libs_py/risk/account_manager.py`
 14. `scripts/trading_framework/core/execution.py`
 15. `scripts/trading_framework/core/mfe_mae.py`
 16. `scripts/trading_framework/core/engine.py`
@@ -2549,5 +2549,5 @@ pytest>=7.4
 24. `scripts/trading_framework/ml/prop_eval_mc.py`
 25. `scripts/trading_framework/ml/optimizer.py`
 26. `scripts/run_portfolio_sim.py` + `scripts/run_optimization.py`
-27. `scripts/libs/regime/` (all regime models)
+27. `scripts/libs_py/regime/` (all regime models)
 28. Tests throughout

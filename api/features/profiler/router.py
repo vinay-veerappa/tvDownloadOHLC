@@ -1,7 +1,7 @@
 
 from fastapi import APIRouter, HTTPException, Query, Body
 from .service import ProfilerService
-from scripts.libs.nqstats.engine import NQStatsEngine
+from scripts.libs_py.nqstats.engine import NQStatsEngine
 from api.features.shared.data_loader import load_parquet
 import pandas as pd
 import json

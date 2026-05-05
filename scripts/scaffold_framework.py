@@ -1,14 +1,14 @@
 import os
 
 scaffold_structure = {
-    "scripts/libs/risk": [
+    "scripts/libs_py/risk": [
         "__init__.py",
         "trade_policies.py",
         "session_manager.py",
         "account_manager.py",
         "risk_config.py"
     ],
-    "scripts/libs/features": [
+    "scripts/libs_py/features": [
         "vwap.py",
         "initial_balance.py",
         "bollinger.py",

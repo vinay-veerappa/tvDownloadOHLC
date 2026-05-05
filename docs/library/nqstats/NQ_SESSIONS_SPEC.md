@@ -27,5 +27,5 @@ The relationship between Asia and London sessions determines the primary bias.
 
 ## 4. Implementation Reference
 This specification is implemented in the following library modules:
-- Logic: `scripts/libs/nqstats/sessions.py`
-- Classifiers: `scripts/libs/nqstats/classifiers.py`
+- Logic: `scripts/libs_py/nqstats/sessions.py`
+- Classifiers: `scripts/libs_py/nqstats/classifiers.py`

@@ -11,7 +11,7 @@ from api.features.sessions.service import SessionService
 import time
 from pathlib import Path
 from api.features.shared.data_loader import DATA_DIR
-from scripts.libs.nqstats.levels import (
+from scripts.libs_py.nqstats.levels import (
     calculate_daily_levels, 
     calculate_session_opens, 
     calculate_p12_levels, 

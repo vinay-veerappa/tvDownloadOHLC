@@ -14,10 +14,10 @@ NQStats are a suite of statistical models that provide institutional bias and hi
 
 ## 3. Implementation Layer
 The engineering implementation for these models resides in:
-- `scripts/libs/nqstats/`: The core analytics library.
-- `scripts/libs/nqstats/sessions.py`: Range and session logic.
-- `scripts/libs/nqstats/classifiers.py`: Pattern and bias logic.
-- `scripts/libs/nqstats/engine.py`: Integrated analyzer.
+- `scripts/libs_py/nqstats/`: The core analytics library.
+- `scripts/libs_py/nqstats/sessions.py`: Range and session logic.
+- `scripts/libs_py/nqstats/classifiers.py`: Pattern and bias logic.
+- `scripts/libs_py/nqstats/engine.py`: Integrated analyzer.
 
 ## 4. Operational Commands
 To fetch the most current status for NQ1 or ES1, use:

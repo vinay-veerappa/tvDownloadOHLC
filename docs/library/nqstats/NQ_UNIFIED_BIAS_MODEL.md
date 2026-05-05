@@ -29,5 +29,5 @@ Relationship between session closes and the Prior Close (P12, 16:00 ET).
 - **S**: Close < P12
 
 ## 4. Implementation Reference
-- Logic: `scripts/libs/nqstats/classifiers.py`
-- Orchestration: `scripts/libs/nqstats/engine.py`
+- Logic: `scripts/libs_py/nqstats/classifiers.py`
+- Orchestration: `scripts/libs_py/nqstats/engine.py`

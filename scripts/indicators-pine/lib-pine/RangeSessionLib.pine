@@ -55,6 +55,7 @@ export type RangeState
     bool is_committed
     int sig_side        // 0=None, 1=Bull, -1=Bear
     int sig_outcome     // 0=Pending, 1=Full, -1=Failed
+    bool sig_reversed   // [NEW] true if losing breakout closed back inside/beyond OR
     bool is_terminated  // True if outcome is locked for the day
     int sig_breakout_side
     float sig_breakout_px
@@ -148,6 +149,7 @@ export f_new_range_state(RangeSpec spec) =>
         0,
         0,
         false,
+        false,
         0,
         na,
         na,
@@ -208,6 +210,7 @@ export f_reset_daily(RangeState state) =>
     state.is_committed := false
     state.sig_side := 0
     state.sig_outcome := 0
+    state.sig_reversed := false
     state.is_terminated := false
     state.sig_breakout_side := 0
     state.sig_breakout_px := na

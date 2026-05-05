@@ -28,4 +28,4 @@ This module defines the critical intraday timing windows for NQ futures, integra
 
 ## 6. Implementation Reference
 - No current automated logic for 10:00 AM Reversion (Pending implementation).
-- Noon Curve: `scripts/libs/nqstats/classifiers.py`
+- Noon Curve: `scripts/libs_py/nqstats/classifiers.py`

@@ -6,14 +6,14 @@ with open(filepath, "r", encoding="utf-8") as f:
     text = f.read()
 
 replacements = [
-    (r"lib/data", r"scripts/libs/data"),
-    (r"lib\.data", r"scripts.libs.data"),
-    (r"lib/features", r"scripts/libs/features"),
-    (r"lib\.features", r"scripts.libs.features"),
-    (r"lib/regime", r"scripts/libs/regime"),
-    (r"lib\.regime", r"scripts.libs.regime"),
-    (r"lib/risk", r"scripts/libs/risk"),
-    (r"lib\.risk", r"scripts.libs.risk"),
+    (r"lib/data", r"scripts/libs_py/data"),
+    (r"lib\.data", r"scripts.libs_py.data"),
+    (r"lib/features", r"scripts/libs_py/features"),
+    (r"lib\.features", r"scripts.libs_py.features"),
+    (r"lib/regime", r"scripts/libs_py/regime"),
+    (r"lib\.regime", r"scripts.libs_py.regime"),
+    (r"lib/risk", r"scripts/libs_py/risk"),
+    (r"lib\.risk", r"scripts.libs_py.risk"),
     (r"lib/reporting", r"scripts/trading_framework/reporting"),
     (r"lib\.reporting", r"scripts.trading_framework.reporting"),
     (r"lib/ml", r"scripts/trading_framework/ml"),

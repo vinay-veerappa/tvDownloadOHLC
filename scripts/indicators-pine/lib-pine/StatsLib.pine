@@ -7,6 +7,10 @@ export type ExcursionHistory
     array<float> mfe_bear
     array<float> bo_mfe_bull
     array<float> bo_mfe_bear
+    array<float> bo_mfe_bull_win
+    array<float> bo_mfe_bear_win
+    array<float> bo_mae_bull_loss
+    array<float> bo_mae_bear_loss
     array<int> peak_time_bull
     array<int> peak_time_bear
     array<float> pivot_bull
@@ -44,6 +48,7 @@ export type ExcursionHistory
 export f_new_excursion_history(string name) =>
     ExcursionHistory.new(
         name,
+        array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
         array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
         array.new_int(0), array.new_int(0),
         array.new_float(0), array.new_float(0), array.new_float(0), array.new_float(0),
@@ -93,8 +98,8 @@ export f_build_filtered_by_outcome(array<float> src, array<int> side_hist, array
     
     if n == 0
         log.warning("STL FILTER - Empty arrays! src: {0}, side: {1}, out: {2}", array.size(src), array.size(side_hist), array.size(outcome_hist))
-    else
-        log.info("STL FILTER - TargetSide: {0}, TargetOutcome: {1} | Scanned: {2}, Matches: {3}", target_side, target_outcome, n, match_count)
+    //else
+        //log.info("STL FILTER - TargetSide: {0}, TargetOutcome: {1} | Scanned: {2}, Matches: {3}", target_side, target_outcome, n, match_count)
     out
 
 
@@ -113,10 +118,10 @@ export f_track_mfe(float bar_h, float bar_l, int bar_mins_since_or, float bull_r
         if na(ns) or ext_s > ns
             ns := ext_s
             nsp := bar_mins_since_or
-    if not na(nb) and nb != prev_bull_mfe
-        log.info("STL MFE BULL UPDATE - Ref: {0}, H: {1}, New: {2}, Peak: {3}", bull_ref, bar_h, nb, nbp)
-    if not na(ns) and ns != prev_bear_mfe
-        log.info("STL MFE BEAR UPDATE - Ref: {0}, L: {1}, New: {2}, Peak: {3}", bear_ref, bar_l, ns, nsp)
+    //if not na(nb) and nb != prev_bull_mfe
+        //log.info("STL MFE BULL UPDATE - Ref: {0}, H: {1}, New: {2}, Peak: {3}", bull_ref, bar_h, nb, nbp)
+    //if not na(ns) and ns != prev_bear_mfe
+        //log.info("STL MFE BEAR UPDATE - Ref: {0}, L: {1}, New: {2}, Peak: {3}", bear_ref, bar_l, ns, nsp)
     [nb, ns, nbp, nsp]
 
 export f_track_mae_abs(float bar_h, float bar_l, float or_high, float or_low, float prev_bull_abs, float prev_bear_abs) =>
@@ -128,10 +133,10 @@ export f_track_mae_abs(float bar_h, float bar_l, float or_high, float or_low, fl
     float nb = (bull_ae > 0) ? (na(prev_bull_abs) ? bull_ae : math.max(prev_bull_abs, bull_ae)) : prev_bull_abs
     float ns = (bear_ae > 0) ? (na(prev_bear_abs) ? bear_ae : math.max(prev_bear_abs, bear_ae)) : prev_bear_abs
     
-    if not na(nb) and nb != prev_bull_abs
-        log.info("STL MAE ABS BULL UPDATE - Ref: {0}, L: {1}, New: {2}", or_high, bar_l, nb)
-    if not na(ns) and ns != prev_bear_abs
-        log.info("STL MAE ABS BEAR UPDATE - Ref: {0}, H: {1}, New: {2}", or_low, bar_h, ns)
+    //if not na(nb) and nb != prev_bull_abs
+        //log.info("STL MAE ABS BULL UPDATE - Ref: {0}, L: {1}, New: {2}", or_high, bar_l, nb)
+    //if not na(ns) and ns != prev_bear_abs
+        //log.info("STL MAE ABS BEAR UPDATE - Ref: {0}, H: {1}, New: {2}", or_low, bar_h, ns)
     [nb, ns]
 
 export f_track_mae_pullback(float bar_h, float bar_l, float or_high, float or_low, bool entry_triggered_bull, bool entry_triggered_bear, bool is_bull_peak, bool is_bear_peak, float bull_peak_price, float bear_peak_price, float prev_bull_pb, float prev_bear_pb) =>
@@ -149,16 +154,16 @@ export f_track_mae_pullback(float bar_h, float bar_l, float or_high, float or_lo
         if not is_bull_peak and not na(bull_pb) and bull_pb > 0
             nb := na(prev_bull_pb) ? bull_pb : math.max(prev_bull_pb, bull_pb)
         
-        if not na(nb)
-            log.info("STL TRACK PB BULL - PeakPx: {0}, L: {1}, PB: {2}, Prev: {3}, New: {4}, Peak: {5}", bull_peak_price, bar_l, bull_pb, prev_bull_pb, nb, is_bull_peak)
+       // if not na(nb)
+            //log.info("STL TRACK PB BULL - PeakPx: {0}, L: {1}, PB: {2}, Prev: {3}, New: {4}, Peak: {5}", bull_peak_price, bar_l, bull_pb, prev_bull_pb, nb, is_bull_peak)
 
     // Pullback for Bear direction: Measured from Peak Low up to current Bar High
     if entry_triggered_bear
         if not is_bear_peak and not na(bear_pb) and bear_pb > 0
             ns := na(prev_bear_pb) ? bear_pb : math.max(prev_bear_pb, bear_pb)
 
-        if not na(ns)
-            log.info("STL TRACK PB BEAR - PeakPx: {0}, H: {1}, PB: {2}, Prev: {3}, New: {4}, Peak: {5}", bear_peak_price, bar_h, bear_pb, prev_bear_pb, ns, is_bear_peak)
+        //if not na(ns)
+            //log.info("STL TRACK PB BEAR - PeakPx: {0}, H: {1}, PB: {2}, Prev: {3}, New: {4}, Peak: {5}", bear_peak_price, bar_h, bear_pb, prev_bear_pb, ns, is_bear_peak)
 
     [nb, ns]
 
@@ -299,7 +304,8 @@ export f_commit_daily(
     float session_high_data,
     float ev_target_pct,
     int sig_side = 0,
-    int sig_outcome = 0
+    int sig_outcome = 0,
+    bool sig_reversed = false
 ) =>
     bool ev_bull = f_compute_ev_win(bull_mfe, ev_target_pct)
     bool ev_bear = f_compute_ev_win(bear_mfe, ev_target_pct)
@@ -315,22 +321,30 @@ export f_commit_daily(
     [fb, fs, db] = f_classify_fakeout(trig_bull, trig_bear, close_at_cutoff, or_high, or_low)
     
     // Use sig_outcome == 2 for population masking to ensure consistency with signal path
-    bool fb_sig = sig_side == 1 and sig_outcome == 2
-    bool fs_sig = sig_side == -1 and sig_outcome == 2
+    bool fb_sig = sig_side == 1 and sig_outcome == -1 and sig_reversed
+    bool fs_sig = sig_side == -1 and sig_outcome == -1 and sig_reversed
 
     [frb, frs] = f_fakeout_reversal_depth(fb_sig, fs_sig, session_low_data, session_high_data, or_high, or_low)
-    float fake_mfe_b = fb_sig ? bo_mfe_bull : na
-    float fake_mfe_s = fs_sig ? bo_mfe_bear : na
+    float fake_mfe_b = fb_sig ? bull_mfe : na
+    float fake_mfe_s = fs_sig ? bear_mfe : na
     float fake_mae_b = fb_sig ? frb : na
     float fake_mae_s = fs_sig ? frs : na
 
-    log.info("STL COMMIT START - Range: {0} | MFE B/S: {1}/{2} | BO MFE B/S: {3}/{4} | MAE Abs B/S: {5}/{6} | PB B/S: {7}/{8} | Side: {9}, Outcome: {10}", hist.range_name, bull_mfe, bear_mfe, bo_mfe_bull, bo_mfe_bear, mae_bull_abs, mae_bear_abs, mae_bull_pb, mae_bear_pb, sig_side, sig_outcome)
-    log.info("STL SIZES BEFORE - MFE: {0}, BO MFE: {1}, MAE: {2}, PB: {3}, Fake MFE: {4}, Side: {5}, Outcome: {6}", array.size(hist.mfe_bull), array.size(hist.bo_mfe_bull), array.size(hist.mae_bull_abs), array.size(hist.mae_bull_pb), array.size(hist.fake_mfe_bull), array.size(hist.sig_side), array.size(hist.sig_outcome))
+    //log.info("STL COMMIT START - Range: {0} | MFE B/S: {1}/{2} | BO MFE B/S: {3}/{4} | MAE Abs B/S: {5}/{6} | PB B/S: {7}/{8} | Side: {9}, Outcome: {10}", hist.range_name, bull_mfe, bear_mfe, bo_mfe_bull, bo_mfe_bear, mae_bull_abs, mae_bear_abs, mae_bull_pb, mae_bear_pb, sig_side, sig_outcome)
+    //log.info("STL SIZES BEFORE - MFE: {0}, BO MFE: {1}, MAE: {2}, PB: {3}, Fake MFE: {4}, Side: {5}, Outcome: {6}", array.size(hist.mfe_bull), array.size(hist.bo_mfe_bull), array.size(hist.mae_bull_abs), array.size(hist.mae_bull_pb), array.size(hist.fake_mfe_bull), array.size(hist.sig_side), array.size(hist.sig_outcome))
     
     array.push(hist.mfe_bull, bull_mfe)
     array.push(hist.mfe_bear, bear_mfe)
     array.push(hist.bo_mfe_bull, bo_mfe_bull)
     array.push(hist.bo_mfe_bear, bo_mfe_bear)
+    // Stratify BO arrays by outcome — wins typically resolve early so MFE is
+    // truncated; losses run to cutoff so MAE has more time. Mixing them
+    // produces biased percentiles.
+    array.push(hist.bo_mfe_bull_win,  sig_side == 1  and sig_outcome == 1  ? bo_mfe_bull : na)
+    array.push(hist.bo_mfe_bear_win,  sig_side == -1 and sig_outcome == 1  ? bo_mfe_bear : na)
+    array.push(hist.bo_mae_bull_loss, sig_side == 1  and sig_outcome == -1 ? bo_mae_bull : na)
+    array.push(hist.bo_mae_bear_loss, sig_side == -1 and sig_outcome == -1 ? bo_mae_bear : na)
+    
     array.push(hist.peak_time_bull, bull_peak)
     array.push(hist.peak_time_bear, bear_peak)
 

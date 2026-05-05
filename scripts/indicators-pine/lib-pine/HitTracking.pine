@@ -1,0 +1,524 @@
+// © vveerappa
+//@version=6
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HitTracking v1.0
+// 
+// Register-and-forget hit-rate tracking for trading indicators.
+// 
+// See HitTracking_v1_SPEC.md for the full specification.
+// 
+// Quick API:
+//   var tracker = HT.f_new()
+//   HT.f_register(tracker, "PDH", "asia", HT.KIND_LEVEL_WICK)
+//   HT.f_arm(tracker, "asia")                   -- on session start
+//   HT.f_update_target(tracker, "PDH", "asia", pd_h)
+//   HT.f_tick(tracker)                          -- every bar
+//   HT.f_disarm(tracker, "asia", regime_tag)    -- on session end
+//   stats = HT.f_query(tracker, "PDH", "asia", window = 60)
+// ═══════════════════════════════════════════════════════════════════════════
+
+library("HitTracking", overlay = true)
+
+import vveerappa/StatsLib/3 as Stats
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Hit kind discriminators (exported for caller use)
+export const int KIND_LEVEL_WICK     = 0
+export const int KIND_LEVEL_BODY     = 1
+export const int KIND_LEVEL_CROSS_UP = 2
+export const int KIND_LEVEL_CROSS_DN = 3
+export const int KIND_THRESH_GTE     = 4
+export const int KIND_THRESH_LTE     = 5
+
+// Sample sentinels (internal)
+const int SAMPLE_HIT          = 1
+const int SAMPLE_MISS         = 0
+const int SAMPLE_UNAVAILABLE  = -1
+
+// Default registration parameters (exported for caller convenience)
+export const int DEFAULT_MAX_DAYS         = 500
+export const int DEFAULT_READY_THRESHOLD  = 2
+export const int DEFAULT_BUCKET_MS        = 300000   // 5 minutes
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Output of every f_query call. See spec §3.1.
+export type HitStats
+    bool   ready
+    int    sample_n
+    float  rate_pct
+    int    current_streak
+    bool   current_streak_is_hit
+    int    max_hit_streak
+    int    max_miss_streak
+    float  avg_hit_streak
+    float  avg_miss_streak
+    float  time_to_hit_median_ms
+    float  time_to_hit_mean_ms
+    float  time_to_hit_mode_bucket_ms
+    bool   today_hit
+    int    today_time_to_hit_ms
+
+// One per distinct session_key.
+export type SessionStorage
+    string         session_key
+    array<string>  instance_keys
+    array<int>     hit_kinds
+    array<int>     bucket_ms_values
+    array<int>     ready_thresholds
+    int            max_days_cap
+    
+    // Live session state
+    bool           sess_armed
+    int            sess_arm_time_ms
+    int            sess_arm_dow
+    
+    // Per-instance live state (parallel to instance_keys)
+    array<bool>    live_hit
+    array<int>     live_hit_times_ms
+    array<float>   live_targets
+    array<float>   live_prev_targets
+    array<bool>    live_target_seen
+    
+    // History — rows = instances within this session, cols = flushed days
+    matrix<int>    samples_mat
+    matrix<int>    time_to_hit_mat
+    
+    // Per-day metadata, one entry per flushed column
+    array<int>     dow_history
+    array<string>  tag_history
+
+// Top-level state held by the calling indicator.
+export type HitTracker
+    array<SessionStorage> sessions
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSTRUCTOR
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Create a new tracker. Caller holds this in a `var` and passes it to all calls.
+export f_new() =>
+    HitTracker.new(array.new<SessionStorage>(0))
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INTERNAL HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Find session by key; -1 if not present.
+f_session_idx(HitTracker tracker, string session_key) =>
+    int found = -1
+    int n = array.size(tracker.sessions)
+    if n > 0
+        for i = 0 to n - 1
+            SessionStorage s = array.get(tracker.sessions, i)
+            if s.session_key == session_key
+                found := i
+                break
+    found
+
+// Get session by key, creating an empty one if missing. Returns the index.
+f_ensure_session(HitTracker tracker, string session_key) =>
+    int idx = f_session_idx(tracker, session_key)
+    if idx == -1
+        SessionStorage s = SessionStorage.new(
+             session_key,
+             array.new_string(0),
+             array.new_int(0),
+             array.new_int(0),
+             array.new_int(0),
+             DEFAULT_MAX_DAYS,
+             false,
+             0,
+             0,
+             array.new_bool(0),
+             array.new_int(0),
+             array.new_float(0),
+             array.new_float(0),
+             array.new_bool(0),
+             matrix.new<int>(0, 0),
+             matrix.new<int>(0, 0),
+             array.new_int(0),
+             array.new_string(0)
+         )
+        array.push(tracker.sessions, s)
+        idx := array.size(tracker.sessions) - 1
+    idx
+
+// Find instance by key within a session; -1 if not present.
+f_instance_idx(SessionStorage sess, string instance_key) =>
+    int found = -1
+    int n = array.size(sess.instance_keys)
+    if n > 0
+        for i = 0 to n - 1
+            if array.get(sess.instance_keys, i) == instance_key
+                found := i
+                break
+    found
+
+// Evaluate a hit predicate against the current bar.
+// Returns true if predicate fires; false if not or if target is na.
+f_eval_predicate(int kind, float target, float prev_target,
+                 float h, float l, float o, float c, float c_prev) =>
+    bool result = false
+    if not na(target)
+        if kind == KIND_LEVEL_WICK
+            result := l <= target and target <= h
+        else if kind == KIND_LEVEL_BODY
+            result := math.min(o, c) <= target and target <= math.max(o, c)
+        else if kind == KIND_LEVEL_CROSS_UP
+            // Need prior bar's close and prior target to detect cross
+            if not na(prev_target) and not na(c_prev)
+                result := c > target and c_prev <= prev_target
+        else if kind == KIND_LEVEL_CROSS_DN
+            if not na(prev_target) and not na(c_prev)
+                result := c < target and c_prev >= prev_target
+        else if kind == KIND_THRESH_GTE
+            result := h >= target
+        else if kind == KIND_THRESH_LTE
+            result := l <= target
+    result
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REGISTRATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Register an instance under a session_key. Idempotent: re-registering an
+// existing (instance_key, session_key) is a no-op (parameters NOT updated;
+// keep registration consistent across runs — see spec §10).
+//
+// If registered after history has accumulated, the new instance gets a row
+// of unavailable padding equal to current column count.
+export f_register(HitTracker tracker, string instance_key, string session_key,
+                  int kind,
+                  int max_days = 500, int ready_threshold = 2, int bucket_ms = 300000) =>
+    int sess_idx = f_ensure_session(tracker, session_key)
+    SessionStorage sess = array.get(tracker.sessions, sess_idx)
+    int inst_idx = f_instance_idx(sess, instance_key)
+    if inst_idx == -1
+        // Append new instance
+        array.push(sess.instance_keys, instance_key)
+        array.push(sess.hit_kinds, kind)
+        array.push(sess.ready_thresholds, ready_threshold)
+        array.push(sess.bucket_ms_values, bucket_ms)
+        array.push(sess.live_hit, false)
+        array.push(sess.live_hit_times_ms, 0)
+        array.push(sess.live_targets, na)
+        array.push(sess.live_prev_targets, na)
+        array.push(sess.live_target_seen, false)
+        
+        // Update session cap
+        sess.max_days_cap := math.max(sess.max_days_cap, max_days)
+        
+        // Add a row to the history matrices
+        int ncols = matrix.columns(sess.samples_mat)
+        if ncols == 0
+            // Matrix has no columns yet — add an empty row
+            matrix.add_row(sess.samples_mat, matrix.rows(sess.samples_mat), array.new_int(0))
+            matrix.add_row(sess.time_to_hit_mat, matrix.rows(sess.time_to_hit_mat), array.new_int(0))
+        else
+            // Pad with unavailable for prior days
+            array<int> padded_samples = array.new_int(ncols, SAMPLE_UNAVAILABLE)
+            array<int> padded_times   = array.new_int(ncols, -1)
+            matrix.add_row(sess.samples_mat, matrix.rows(sess.samples_mat), padded_samples)
+            matrix.add_row(sess.time_to_hit_mat, matrix.rows(sess.time_to_hit_mat), padded_times)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LIFECYCLE
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Arm a session. All registered instances under this session_key become
+// active for tracking. Captures the arm timestamp and DOW.
+//
+// No-op if the session is already armed (idempotent within a day).
+export f_arm(HitTracker tracker, string session_key) =>
+    int sess_idx = f_session_idx(tracker, session_key)
+    if sess_idx >= 0
+        SessionStorage sess = array.get(tracker.sessions, sess_idx)
+        if not sess.sess_armed
+            sess.sess_armed       := true
+            sess.sess_arm_time_ms := time
+            sess.sess_arm_dow     := dayofweek
+            // Reset per-instance live state
+            int n = array.size(sess.instance_keys)
+            if n > 0
+                for i = 0 to n - 1
+                    array.set(sess.live_hit, i, false)
+                    array.set(sess.live_hit_times_ms, i, 0)
+                    array.set(sess.live_targets, i, na)
+                    array.set(sess.live_prev_targets, i, na)
+                    array.set(sess.live_target_seen, i, false)
+
+// Update the current target value for an instance. Pass `na` whenever the
+// level does not yet exist (e.g., P12 high before 06:00). The library uses
+// `na`-vs-non-`na` to derive availability automatically — see spec §5.
+//
+// No-op if the instance or session is not registered.
+export f_update_target(HitTracker tracker, string instance_key, string session_key, float target_value) =>
+    int sess_idx = f_session_idx(tracker, session_key)
+    if sess_idx >= 0
+        SessionStorage sess = array.get(tracker.sessions, sess_idx)
+        int inst_idx = f_instance_idx(sess, instance_key)
+        if inst_idx >= 0
+            array.set(sess.live_prev_targets, inst_idx, array.get(sess.live_targets, inst_idx))
+            array.set(sess.live_targets, inst_idx, target_value)
+            if sess.sess_armed and not na(target_value)
+                array.set(sess.live_target_seen, inst_idx, true)
+
+// Evaluate predicates for all currently-armed instances. Records the first
+// hit per instance per session. Subsequent fires within the same session
+// are ignored (first-hit-only semantics — see spec §9).
+//
+// Call once per bar, after all f_update_target calls.
+export f_tick(HitTracker tracker) =>
+    int n_sess = array.size(tracker.sessions)
+    if n_sess > 0
+        for s = 0 to n_sess - 1
+            SessionStorage sess = array.get(tracker.sessions, s)
+            if sess.sess_armed
+                int n_inst = array.size(sess.instance_keys)
+                if n_inst > 0
+                    for i = 0 to n_inst - 1
+                        if not array.get(sess.live_hit, i)
+                            int   kind        = array.get(sess.hit_kinds, i)
+                            float tgt         = array.get(sess.live_targets, i)
+                            float prev_tgt    = array.get(sess.live_prev_targets, i)
+                            bool  fired = f_eval_predicate(
+                                 kind, tgt, prev_tgt,
+                                 high, low, open, close, close[1])
+                            if fired
+                                array.set(sess.live_hit, i, true)
+                                array.set(sess.live_hit_times_ms, i, time)
+
+// Disarm a session and flush a sample column for every registered instance.
+// `tag` is recorded in the day's metadata and can be used at query time
+// to filter (e.g., regime label, trade outcome). Defaults to "".
+//
+// Trims oldest columns when the matrix exceeds the session-level cap.
+// No-op if the session is not currently armed.
+export f_disarm(HitTracker tracker, string session_key, string tag = "") =>
+    int sess_idx = f_session_idx(tracker, session_key)
+    if sess_idx >= 0
+        SessionStorage sess = array.get(tracker.sessions, sess_idx)
+        if sess.sess_armed
+            int n = array.size(sess.instance_keys)
+            if n > 0
+                // Build one column for samples and one for time-to-hit
+                array<int> sample_col = array.new_int(n, SAMPLE_UNAVAILABLE)
+                array<int> time_col   = array.new_int(n, -1)
+                for i = 0 to n - 1
+                    if array.get(sess.live_target_seen, i)
+                        if array.get(sess.live_hit, i)
+                            array.set(sample_col, i, SAMPLE_HIT)
+                            int offset_ms = array.get(sess.live_hit_times_ms, i) - sess.sess_arm_time_ms
+                            array.set(time_col, i, offset_ms)
+                        else
+                            array.set(sample_col, i, SAMPLE_MISS)
+                            array.set(time_col, i, -1)
+                
+                // Append the column to both history matrices
+                int new_col_idx = matrix.columns(sess.samples_mat)
+                matrix.add_col(sess.samples_mat, new_col_idx, sample_col)
+                matrix.add_col(sess.time_to_hit_mat, new_col_idx, time_col)
+                
+                // Per-day metadata
+                array.push(sess.dow_history, sess.sess_arm_dow)
+                array.push(sess.tag_history, tag)
+                
+                // Trim to cap
+                while matrix.columns(sess.samples_mat) > sess.max_days_cap
+                    matrix.remove_col(sess.samples_mat, 0)
+                    matrix.remove_col(sess.time_to_hit_mat, 0)
+                    array.shift(sess.dow_history)
+                    array.shift(sess.tag_history)
+            
+            // Reset live state
+            sess.sess_armed       := false
+            sess.sess_arm_time_ms := 0
+            sess.sess_arm_dow     := 0
+            int n2 = array.size(sess.instance_keys)
+            if n2 > 0
+                for i = 0 to n2 - 1
+                    array.set(sess.live_hit, i, false)
+                    array.set(sess.live_hit_times_ms, i, 0)
+                    array.set(sess.live_targets, i, na)
+                    array.set(sess.live_prev_targets, i, na)
+                    array.set(sess.live_target_seen, i, false)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// QUERY
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Build an empty/default HitStats result.
+f_empty_stats() =>
+    HitStats.new(
+         false, 0, na,
+         0, false, 0, 0, 0.0, 0.0,
+         na, na, na,
+         na, -1)
+
+// Internal: collect hit-time floats from the filtered, in-window slice for
+// time-stat computation. Returns just the offsets where the sample is HIT.
+f_collect_hit_times(array<int> chrono_hits_int, array<int> chrono_times) =>
+    array<float> out = array.new_float(0)
+    int n = array.size(chrono_hits_int)
+    if n > 0
+        for i = 0 to n - 1
+            if array.get(chrono_hits_int, i) == 1
+                int t = array.get(chrono_times, i)
+                if t >= 0
+                    array.push(out, float(t))
+    out
+
+// Internal: median of a sorted float array.
+f_median_sorted(array<float> sorted) =>
+    int n = array.size(sorted)
+    float result = na
+    if n > 0
+        if n % 2 == 1
+            result := array.get(sorted, n / 2)
+        else
+            result := 0.5 * (array.get(sorted, n / 2 - 1) + array.get(sorted, n / 2))
+    result
+
+// Internal: mode bucket from hit-time floats. Returns lower edge of the
+// most-populated bucket. NA if empty.
+f_mode_bucket(array<float> times_ms, int bucket_ms) =>
+    float result = na
+    int n = array.size(times_ms)
+    if n > 0 and bucket_ms > 0
+        array<int> bucket_ids = array.new_int(0)
+        array<int> bucket_cnt = array.new_int(0)
+        for i = 0 to n - 1
+            int b = int(array.get(times_ms, i)) / bucket_ms
+            int existing = array.indexof(bucket_ids, b)
+            if existing == -1
+                array.push(bucket_ids, b)
+                array.push(bucket_cnt, 1)
+            else
+                array.set(bucket_cnt, existing, array.get(bucket_cnt, existing) + 1)
+        int best_idx = 0
+        int best_cnt = 0
+        int bn = array.size(bucket_cnt)
+        if bn > 0
+            for i = 0 to bn - 1
+                int c = array.get(bucket_cnt, i)
+                if c > best_cnt
+                    best_cnt := c
+                    best_idx := i
+            result := float(array.get(bucket_ids, best_idx) * bucket_ms)
+    result
+
+// Query stats for an instance/session combination.
+//
+// Filtering is AND-conditioned: a column matches if it satisfies all of
+// (dow filter, tag filter) and is not unavailable.
+//
+// Window walks history backwards collecting matching, available samples
+// until `window` are gathered or history is exhausted. window = 0 = unbounded.
+//
+// `include_today` appends the current live state as one extra sample if the
+// session is armed. Affects rate, streaks, time stats, and sample_n.
+export f_query(HitTracker tracker, string instance_key, string session_key,
+               int window = 0, int dow = 0, string tag = "", bool include_today = false) =>
+    HitStats result = f_empty_stats()
+    int sess_idx = f_session_idx(tracker, session_key)
+    if sess_idx >= 0
+        SessionStorage sess = array.get(tracker.sessions, sess_idx)
+        int inst_idx = f_instance_idx(sess, instance_key)
+        if inst_idx >= 0
+            // Pull row from history
+            array<int> raw_samples = matrix.row(sess.samples_mat, inst_idx)
+            array<int> raw_times   = matrix.row(sess.time_to_hit_mat, inst_idx)
+            int total_cols = array.size(raw_samples)
+            
+            // Walk backwards, apply filters, collect up to `window` matches
+            array<int> rev_samples = array.new_int(0)
+            array<int> rev_times   = array.new_int(0)
+            int target_count = window > 0 ? window : 1000000
+            int collected = 0
+            
+            if total_cols > 0
+                for c = total_cols - 1 to 0
+                    int s = array.get(raw_samples, c)
+                    if s != SAMPLE_UNAVAILABLE
+                        int    col_dow = array.get(sess.dow_history, c)
+                        string col_tag = array.get(sess.tag_history, c)
+                        bool dow_ok = dow == 0 or col_dow == dow
+                        bool tag_ok = tag == "" or col_tag == tag
+                        if dow_ok and tag_ok
+                            array.push(rev_samples, s)
+                            array.push(rev_times, array.get(raw_times, c))
+                            collected += 1
+                            if collected >= target_count
+                                break
+            
+            // Reverse to chronological order (StatsLib expects chronological)
+            array<int> chrono_samples = array.new_int(0)
+            array<int> chrono_times   = array.new_int(0)
+            int rn = array.size(rev_samples)
+            if rn > 0
+                for i = rn - 1 to 0
+                    array.push(chrono_samples, array.get(rev_samples, i))
+                    array.push(chrono_times, array.get(rev_times, i))
+            
+            // Optionally append today's live state to the slice
+            if include_today and sess.sess_armed and array.get(sess.live_target_seen, inst_idx)
+                bool today_h = array.get(sess.live_hit, inst_idx)
+                array.push(chrono_samples, today_h ? SAMPLE_HIT : SAMPLE_MISS)
+                int t_off = -1
+                if today_h
+                    t_off := array.get(sess.live_hit_times_ms, inst_idx) - sess.sess_arm_time_ms
+                array.push(chrono_times, t_off)
+            
+            // Compute stats over the slice
+            int sn = array.size(chrono_samples)
+            result.sample_n := sn
+            int ready_thresh = array.get(sess.ready_thresholds, inst_idx)
+            result.ready := sn >= ready_thresh
+            
+            if sn > 0
+                array<bool> chrono_bools = array.new_bool(0)
+                int hit_count = 0
+                for i = 0 to sn - 1
+                    bool b = array.get(chrono_samples, i) == SAMPLE_HIT
+                    array.push(chrono_bools, b)
+                    if b
+                        hit_count += 1
+                
+                result.rate_pct := 100.0 * hit_count / sn
+                
+                // Streaks via StatsLib
+                [cs, cw, bw, wf, aw, af] = Stats.f_streak_stats(chrono_bools)
+                result.current_streak        := cs
+                result.current_streak_is_hit := cw
+                result.max_hit_streak        := bw
+                result.max_miss_streak       := wf
+                result.avg_hit_streak        := aw
+                result.avg_miss_streak       := af
+                
+                // Time-of-hit stats over hit days only
+                array<float> hit_times = f_collect_hit_times(chrono_samples, chrono_times)
+                int hn = array.size(hit_times)
+                if hn > 0
+                    array.sort(hit_times)
+                    result.time_to_hit_median_ms := f_median_sorted(hit_times)
+                    float sum = 0.0
+                    for i = 0 to hn - 1
+                        sum += array.get(hit_times, i)
+                    result.time_to_hit_mean_ms := sum / hn
+                    int bucket = array.get(sess.bucket_ms_values, inst_idx)
+                    result.time_to_hit_mode_bucket_ms := f_mode_bucket(hit_times, bucket)
+            
+            // Today slots — independent of include_today flag
+            if sess.sess_armed and array.get(sess.live_target_seen, inst_idx)
+                bool today_h = array.get(sess.live_hit, inst_idx)
+                result.today_hit := today_h
+                if today_h
+                    result.today_time_to_hit_ms := array.get(sess.live_hit_times_ms, inst_idx) - sess.sess_arm_time_ms
+    result
