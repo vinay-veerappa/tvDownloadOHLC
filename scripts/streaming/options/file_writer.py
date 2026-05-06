@@ -245,7 +245,7 @@ def _to_cash_entries(levels: DealerLevels) -> list[dict[str, Any]]:
 def _detailed_block(tl: TranslatedLevels) -> list[str]:
     tag = futures_tag(tl.futures_symbol)
     block = [
-        f"── {tl.cash_ticker} → {tag} {'─' * 40}",
+        f"── {tl.cash_ticker} -> {tag} {'─' * 40}",
         f"  Regime             : {tl.gex_regime} GEX — {tl.regime_label} ({tl.directional_bias})  (total GEX = {tl.total_gex:,.0f})",
         f"  Cash Spot          : {tl.cash_spot:,.2f}",
         f"  {tag} Futures       : {tl.futures_price:,.2f}  "
@@ -801,7 +801,7 @@ def write_quant_json(
     path.parent.mkdir(parents=True, exist_ok=True)
     json_data = json.dumps(existing, indent=2)
     path.write_text(json_data, encoding="utf-8")
-    log.info("Quant JSON updated for %s → %s", ticker, path)
+    log.info("Quant JSON updated for %s -> %s", ticker, path)
 
     if versioned:
         ts = datetime.now().strftime("%Y%m%d_%H%M")
@@ -931,5 +931,5 @@ def write_scored_levels_txt(
         _upsert_ticker_line(s_path, ticker, final_string)
         log.info("Snapshot scored levels TXT written -> %s", s_path)
 
-    log.info("Scored levels TXT appended for %s → %s (%d levels)", ticker, path, len(tokens))
+    log.info("Scored levels TXT appended for %s -> %s (%d levels)", ticker, path, len(tokens))
  

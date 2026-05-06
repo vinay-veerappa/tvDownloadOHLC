@@ -39,10 +39,10 @@ def _hub_request(method: str, params: dict) -> dict:
         if isinstance(result, dict) and "status" in result:
             if result.get("status") != "success":
                 raise RuntimeError(f"Hub proxy error: {result.get('message')}")
-            return result.get("data", {})
+            return result.get("data") or {}
         
         # Otherwise, assume it's direct data from the Schwab API
-        return result
+        return result or {}
     except Exception as e:
         log.error(f"Failed to reach Hub proxy: {e}")
         raise RuntimeError(f"Hub proxy unreachable: {e}")
@@ -259,6 +259,9 @@ def fetch_futures_quote(symbol: str) -> FuturesQuote:
     """
     Fetch the latest price for a futures ticker via the Hub's resolve/quotes path.
     """
+    if not symbol:
+        return FuturesQuote(symbol=None, price=None, open_price=None)
+
     try:
         res = _hub_request("resolve", {"symbols": [symbol]})
         # _hub_request already returns either the direct dict or result.get("data")

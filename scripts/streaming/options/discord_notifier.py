@@ -6,7 +6,7 @@ via webhook.  All Discord-specific logic lives in this module.
 
 Public API
 ----------
-send_discord_update(translated_levels, run_label, webhook_url) → None
+send_discord_update(translated_levels, run_label, webhook_url) -> None
 """
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ def _build_embed(levels: HasLevels, run_label: str, scored: ScoredLevels | None 
     is_tl = hasattr(levels, "futures_symbol") and hasattr(levels, "cash_ticker")
     if is_tl:
         tag = futures_tag(getattr(levels, "futures_symbol"))
-        title = f"{getattr(levels, 'cash_ticker')} → {tag} Dealer Levels"
+        title = f"{getattr(levels, 'cash_ticker')} -> {tag} Dealer Levels"
         cash_sym = getattr(levels, "cash_ticker")
         spot = getattr(levels, "cash_spot")
     else:

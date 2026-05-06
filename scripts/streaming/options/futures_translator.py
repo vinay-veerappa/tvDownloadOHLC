@@ -114,8 +114,8 @@ def translate_to_futures(
     ratio = anchor_ratio if anchor_ratio is not None else (futures.price / levels.spot if levels.spot else 1.0)
 
     # Use multiplicative scaling when cash source and futures trade at different
-    # scales (e.g. QQQ ~600 → NQ ~24400, ratio ~41).  Additive basis is correct
-    # only when they trade at the same scale (e.g. SPX ~6632 → ES ~6636, ratio ~1).
+    # scales (e.g. QQQ ~600 -> NQ ~24400, ratio ~41).  Additive basis is correct
+    # only when they trade at the same scale (e.g. SPX ~6632 -> ES ~6636, ratio ~1).
     #
     # Threshold: if the ratio deviates from 1.0 by more than 2%, use multiplicative.
     use_scale = abs(ratio - 1.0) > 0.02
@@ -221,4 +221,4 @@ def translate_to_futures(
             for em in levels.expected_moves
         ],
         strike_gex=levels.strike_gex,
-    )
+    )

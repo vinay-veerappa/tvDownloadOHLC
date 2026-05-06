@@ -649,7 +649,7 @@ def fetch_options_for_date(ticker, date, exposure_metric="Open Interest", delta_
 
         # Step 2: Components to combine
         # Calculate bucket size from the base chain's actual strike spacing
-        # (e.g. SPX → typically $5, SPY → $1). Avoids hardcoding.
+        # (e.g. SPX -> typically $5, SPY -> $1). Avoids hardcoding.
         base_all_strikes = []
         if not base_calls_raw.empty: base_all_strikes.extend(base_calls_raw['strike'].tolist())
         if not base_puts_raw.empty: base_all_strikes.extend(base_puts_raw['strike'].tolist())

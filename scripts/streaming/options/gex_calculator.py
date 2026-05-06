@@ -105,8 +105,8 @@ def _delta_adjusted_gex(calls: list, puts: list, spot: float) -> float:
 def _net_speed_exposure(calls: list, puts: list, spot: float) -> float:
     """Portfolio-level net speed exposure.
     Speed tells you how fast gamma (and thus dealer hedging) will change as spot moves.
-    Large positive speed → gamma ramps quickly on rallies (accelerating dealer buying).
-    Large negative speed → gamma ramps on declines (selling pressure accelerates).
+    Large positive speed -> gamma ramps quickly on rallies (accelerating dealer buying).
+    Large negative speed -> gamma ramps on declines (selling pressure accelerates).
     """
     tz_et = ZoneInfo("America/New_York")
     now_et = datetime.now(tz_et)
@@ -240,7 +240,7 @@ class DealerLevels:
     directional_bias: str               # BEARISH, BULLISH, or NEUTRAL
     call_gamma_total: float             # Aggregate call-side gamma (for regime decomposition)
     put_gamma_total: float              # Aggregate put-side gamma
-    net_vanna_exposure: float           # Signed net vanna: negative → IV↓ = bearish pressure
+    net_vanna_exposure: float           # Signed net vanna: negative -> IV↓ = bearish pressure
 
     # ── Enhanced analytics (from ezoptionsschwab integration) ─────────────
     call_volume_centroid: float | None  # Volume-weighted avg call strike (VWAP-of-strikes)
@@ -706,9 +706,9 @@ def _find_max_pain(calls: list[OptionContract], puts: list[OptionContract]) -> f
 def _find_gamma_cliffs(strikes: list[StrikeGEX], spot: float) -> tuple[float | None, float | None]:
     """
     Gamma cliff up  = strike zone ABOVE spot where net GEX increases most
-                      steeply (positive slope → resistance building).
+                      steeply (positive slope -> resistance building).
     Gamma cliff down = strike zone BELOW spot where net GEX decreases most
-                       steeply (negative slope → support eroding).
+                       steeply (negative slope -> support eroding).
     """
     if len(strikes) < 2:
         return None, None
@@ -942,8 +942,8 @@ def _pin_strike_and_odds(strikes: list[StrikeGEX]) -> tuple[float | None, float]
     Pin strike = strike with the highest combined gamma concentration.
     Pin odds  = what fraction of total gamma sits at the pin strike.
 
-    High pin odds (> 0.25) → strong pinning effect, expect convergence.
-    Low pin odds  (< 0.10) → gamma is diffuse, pinning is weak.
+    High pin odds (> 0.25) -> strong pinning effect, expect convergence.
+    Low pin odds  (< 0.10) -> gamma is diffuse, pinning is weak.
     """
     if not strikes:
         return None, 0.0
@@ -1018,9 +1018,9 @@ def _classify_regime(
     if total_gamma > 0:
         put_ratio = put_gamma_total / total_gamma
         if put_ratio > 0.60:
-            bias_score -= 1   # puts dominate → bearish
+            bias_score -= 1   # puts dominate -> bearish
         elif put_ratio < 0.40:
-            bias_score += 1   # calls dominate → bullish
+            bias_score += 1   # calls dominate -> bullish
 
     # 3. Net vanna: negative = IV drop is bearish
     if net_vanna < 0:
@@ -1049,8 +1049,8 @@ def _net_vanna_exposure(
     for puts, vanna is typically negative OTM.  We approximate vanna as
     vega × delta (a common proxy when true vanna isn't in the feed).
 
-    Positive net vanna → IV drop is bullish (dealers buy as IV falls).
-    Negative net vanna → IV drop is bearish (dealers sell as IV falls).
+    Positive net vanna -> IV drop is bullish (dealers buy as IV falls).
+    Negative net vanna -> IV drop is bearish (dealers sell as IV falls).
     """
     call_vanna = sum(
         c.open_interest * c.vega * c.delta * CONTRACT_MULTIPLIER
@@ -1261,8 +1261,8 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
     using pure multiplicative scaling: ``new_value = value × (target_spot / source_spot)``.
 
     This is correct for cross-product rescaling where the ratio between the two
-    instruments is roughly constant (e.g. DJX → YM at ~100×, QQQ → NDX at ~41×,
-    or SPY → SPX at ~10×).
+    instruments is roughly constant (e.g. DJX -> YM at ~100×, QQQ -> NDX at ~41×,
+    or SPY -> SPX at ~10×).
     """
     if levels.spot <= 0 or target_spot <= 0:
         raise ValueError("Proxy and target spots must be positive for rescaling.")
@@ -1332,7 +1332,7 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         call_gamma_total=levels.call_gamma_total,
         put_gamma_total=levels.put_gamma_total,
         net_vanna_exposure=levels.net_vanna_exposure,
-        # ── Enhanced analytics: centroids are price levels → scale; rest pass through ──
+        # ── Enhanced analytics: centroids are price levels -> scale; rest pass through ──
         call_volume_centroid=_scale(levels.call_volume_centroid),
         put_volume_centroid=_scale(levels.put_volume_centroid),
         total_gex_delta_adj=levels.total_gex_delta_adj,

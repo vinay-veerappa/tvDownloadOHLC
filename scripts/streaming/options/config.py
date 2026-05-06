@@ -21,7 +21,7 @@ _env_root = os.environ.get("DEALER_LEVELS_ROOT")
 if _env_root:
     REPO_ROOT: Path = Path(_env_root).resolve()
 else:
-    # Default: three levels up  (options/ → streaming/ → scripts/ → root)
+    # Default: three levels up  (options/ -> streaming/ -> scripts/ -> root)
     REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # ---------------------------------------------------------------------------
@@ -328,8 +328,8 @@ MIN_NONZERO_OI_CONTRACTS: int = 25
 WEIGHT_MODE: str = "OI"
 
 # ---------------------------------------------------------------------------
-# True  → use ATM straddle (call ask + put ask)
-# False → use IV formula: spot × ATM_IV × √(DTE/365)
+# True  -> use ATM straddle (call ask + put ask)
+# False -> use IV formula: spot × ATM_IV × √(DTE/365)
 USE_STRADDLE_EM: bool = False
 
 # Optional scalar applied to the straddle price (0.85 = "85% rule").

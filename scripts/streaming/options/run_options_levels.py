@@ -6,7 +6,7 @@ Main entry point for the automated Dealer Levels pipeline.
 This script orchestrates:
   1. Authenticated Schwab API data fetch (options chains + futures quotes)
   2. GEX / Expected-Move / Wall calculations for SPX and NDX
-  3. Cash-to-futures basis translation (SPX→ES, NDX→NQ)
+  3. Cash-to-futures basis translation (SPX->ES, NDX->NQ)
   4. Discord webhook notification
   5. JSON + TXT file output for Pine Script ingestion
 
@@ -187,7 +187,7 @@ def run_pipeline(
     snapshot_suffix: str | None = None,
 ) -> None:
     """
-    Execute one complete fetch → calculate → output cycle.
+    Execute one complete fetch -> calculate -> output cycle.
 
     Parameters
     ----------

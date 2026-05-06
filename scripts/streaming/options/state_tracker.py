@@ -6,9 +6,9 @@ and pin migrations can be detected and alerted on.
 
 Public API
 ----------
-load_previous_state(path)       → PipelineState | None
-save_current_state(state, path) → None
-detect_changes(previous, current) → list[StateChange]
+load_previous_state(path)       -> PipelineState | None
+save_current_state(state, path) -> None
+detect_changes(previous, current) -> list[StateChange]
 """
 from __future__ import annotations
 
@@ -216,7 +216,7 @@ def detect_changes(
                 change_type="GEX_FLIP",
                 severity="HIGH",
                 message=(
-                    f"⚠️ GEX FLIPPED {prev.gex_regime} → {curr.gex_regime} for {ticker}. "
+                    f"⚠️ GEX FLIPPED {prev.gex_regime} -> {curr.gex_regime} for {ticker}. "
                     f"GEX went from {prev.total_gex:,.0f} to {curr.total_gex:,.0f}. "
                     f"{'Stop mean reverting — trend-follow now.' if curr.gex_regime == 'NEGATIVE' else 'Shift to mean-revert mode — fade moves to the walls.'}"
                 ),
@@ -235,7 +235,7 @@ def detect_changes(
                 change_type="REGIME_CHANGE",
                 severity="HIGH",
                 message=(
-                    f"⚠️ REGIME CHANGE for {ticker}: {prev.regime_label} → {curr.regime_label}. "
+                    f"⚠️ REGIME CHANGE for {ticker}: {prev.regime_label} -> {curr.regime_label}. "
                     f"Adjust your trading approach — the character of the day has shifted."
                 ),
                 details={
@@ -255,7 +255,7 @@ def detect_changes(
                     severity="MEDIUM",
                     message=(
                         f"📊 GEX {direction} by {gex_pct_change:.0%} for {ticker} "
-                        f"({prev.total_gex:,.0f} → {curr.total_gex:,.0f}). "
+                        f"({prev.total_gex:,.0f} -> {curr.total_gex:,.0f}). "
                         f"Regime is still {curr.gex_regime} but conviction {'increased' if direction == 'strengthened' else 'decreased'}."
                     ),
                     details={
@@ -276,7 +276,7 @@ def detect_changes(
                     severity="MEDIUM",
                     message=(
                         f"📌 Pin strike shifted {shift:+.2f} for {ticker} "
-                        f"({prev.pin_strike:.2f} → {curr.pin_strike:.2f}). "
+                        f"({prev.pin_strike:.2f} -> {curr.pin_strike:.2f}). "
                         f"Gravity has moved — update your targets."
                     ),
                     details={
@@ -297,7 +297,7 @@ def detect_changes(
                     severity="MEDIUM",
                     message=(
                         f"📊 IV {direction} by {iv_pct_change:.1%} for {ticker} "
-                        f"({prev.atm_iv*100:.1f}% → {curr.atm_iv*100:.1f}%). "
+                        f"({prev.atm_iv*100:.1f}% -> {curr.atm_iv*100:.1f}%). "
                         f"{'Dealers now selling vol — expect compression.' if direction == 'spiked' else 'Vol compression underwhelms — watch for range expansion.'}"
                     ),
                     details={
@@ -318,7 +318,7 @@ def detect_changes(
                     severity="LOW",
                     message=(
                         f"🧲 Gamma magnet drifted {shift:+.2f} for {ticker} "
-                        f"({prev.gamma_magnet:.2f} → {curr.gamma_magnet:.2f})."
+                        f"({prev.gamma_magnet:.2f} -> {curr.gamma_magnet:.2f})."
                     ),
                     details={
                         "prev_magnet": prev.gamma_magnet,
