@@ -16,7 +16,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from scripts.trading_framework.config.config_loader import load_config
-from scripts.libs.data.loader import DataLoader
+from scripts.libs_py.data.loader import DataLoader
 from scripts.trading_framework.strategies.registry import get_strategy
 from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from scripts.trading_framework.core.mfe_mae import compute_mfe_mae

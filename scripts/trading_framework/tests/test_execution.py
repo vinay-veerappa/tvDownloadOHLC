@@ -1,5 +1,5 @@
 import pytest
-from scripts.libs.risk.risk_config import TradeDirection
+from scripts.libs_py.risk.risk_config import TradeDirection
 from scripts.trading_framework.core.execution import apply_slippage, compute_commission, compute_pnl
 
 def test_slippage_long_entry():

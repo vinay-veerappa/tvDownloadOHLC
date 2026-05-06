@@ -362,6 +362,7 @@ MACRO_LEVELS_TXT: Path = DATA_DIR / "macro_levels.txt"
 MACRO_QUANT_JSON: Path = DATA_DIR / "macro_quant.json"
 SCORED_LEVELS_TXT: Path = DATA_DIR / "scored_levels.txt"
 SCORED_MACRO_LEVELS_TXT: Path = DATA_DIR / "scored_macro_levels.txt"
+BASIS_ANCHORS_JSON: Path = DATA_DIR / "basis_anchors.json"
 
 # ---------------------------------------------------------------------------
 # Next.js UI API Integration
@@ -428,5 +429,5 @@ OPTION_CHAIN_WIDE_WINDOW: int = 10
 # HH:MM times (24-hour clock, Eastern) at which the pipeline runs on trading days.
 # NOTE: duplicates are silently ignored by run_options_levels.py, but keep
 # this list clean to avoid confusion.
-SCHEDULE_TIMES: list[str] = ["08:30", "09:30", "10:00", "11:00", "12:00", "13:00", "15:00"]
+SCHEDULE_TIMES: list[str] = ["08:30", "09:30", "10:00", "11:00", "12:00", "13:00", "15:00", "16:00", "16:15"]
 SCHEDULER_MISFIRE_GRACE_TIME: int = 300

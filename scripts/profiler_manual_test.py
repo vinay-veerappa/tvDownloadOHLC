@@ -21,8 +21,8 @@ from datetime import datetime
 from tabulate import tabulate
 
 # Core Library Imports
-from libs.nqstats.engine import NQStatsEngine
-from libs.nqstats.profiler import ProfilerAnalyzer
+from scripts.libs_py.nqstats.engine import NQStatsEngine
+from scripts.libs_py.nqstats.profiler import ProfilerAnalyzer
 
 # Silence Pandas warnings globally
 pd.set_option('future.no_silent_downcasting', True)

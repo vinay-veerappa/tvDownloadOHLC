@@ -149,7 +149,7 @@ def get_live_context(ticker: str = "NQ1") -> Dict:
 
     # 5. Run NQStatsEngine
     try:
-        from scripts.libs.nqstats.engine import NQStatsEngine
+        from scripts.libs_py.nqstats.engine import NQStatsEngine
         engine = NQStatsEngine(df, ticker=ticker)
         engine.process()
         latest = engine.get_latest_status()

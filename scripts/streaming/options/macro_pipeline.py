@@ -236,7 +236,7 @@ def fetch_macro_data(ticker: str, force_refresh: bool = False, resolved_sym: str
         cache_file.write_text(json.dumps(_serialize_chain(chain), cls=DateEncoder, indent=2))
     return chain
 
-def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
+def run_macro_pipeline(tickers: list[str], force_refresh: bool = False, versioned: bool = False) -> None:
     """
     Main entry point for the Weekly Macro HTF Module.
     Runs everything from data fetch to UI push.
@@ -295,8 +295,8 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
 
                 output_tag = f"{ticker}[D]" if ticker.startswith('/') else ticker
                 log.info("Saving primary results for %s as %s", ticker, output_tag)
-                write_macro_levels(output_tag, macro_levels, anomalies, dominant_nodes)
-                write_quant_json(output_tag, float(chain.spot_price), macro_levels, anomalies, dominant_nodes)
+                write_macro_levels(output_tag, macro_levels, anomalies, dominant_nodes, versioned=versioned)
+                write_quant_json(output_tag, float(chain.spot_price), macro_levels, anomalies, dominant_nodes, versioned=versioned)
                 write_macro_snapshot(output_tag, float(chain.spot_price), macro_levels, anomalies, dominant_nodes)
 
                 # 3c. Compute ScoredLevels (Three-Filter Architecture)
@@ -404,8 +404,8 @@ def run_macro_pipeline(tickers: list[str], force_refresh: bool = False) -> None:
                                 for w in f_a.get(bucket, []): 
                                     w["strike"] = round(w["strike"] + anchor_basis, 2)
 
-                        write_macro_levels(target_tag, f_l, f_a, f_n)
-                        write_quant_json(target_tag, fut.price, f_l, f_a, f_n)
+                        write_macro_levels(target_tag, f_l, f_a, f_n, versioned=versioned)
+                        write_quant_json(target_tag, fut.price, f_l, f_a, f_n, versioned=versioned)
                         write_macro_snapshot(target_tag, fut.price, f_l, f_a, f_n)
 
             log.info("Macro HTF Pipeline completed for %s", ticker)

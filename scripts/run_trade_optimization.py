@@ -32,9 +32,9 @@ from typing import List, Tuple, Dict, Any, Optional
 # Framework Imports
 from scripts.trading_framework.config.config_loader import AppConfig, load_config
 from scripts.trading_framework.core.mfe_mae import MfeMaeResult
-from scripts.libs.data.loader import DataLoader
-from scripts.libs.features.feature_registry import FeatureRegistry
-from scripts.libs.risk.trade_policies import get_policy, TradePolicy
+from scripts.libs_py.data.loader import DataLoader
+from scripts.libs_py.features.feature_registry import FeatureRegistry
+from scripts.libs_py.risk.trade_policies import get_policy, TradePolicy
 from scripts.trading_framework.reporting.reporter import QuantReporter
 from scripts.trading_framework.reporting.risk_profiler import RiskProfiler
 from scripts.trading_framework.reporting.optimization_summary import OptimizationReporter

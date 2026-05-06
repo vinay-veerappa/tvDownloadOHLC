@@ -12,7 +12,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 sys.path.append(ROOT_DIR)
 
 from scripts.utils.fused_data_loader import load_fused_data
-from scripts.libs.nqstats.engine import NQStatsEngine
+from scripts.libs_py.nqstats.engine import NQStatsEngine
 
 def main():
     import argparse

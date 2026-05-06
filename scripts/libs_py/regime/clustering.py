@@ -1,6 +1,6 @@
 import pandas as pd
 from sklearn.mixture import GaussianMixture
-from scripts.libs.regime.base import RegimeModel
+from scripts.libs_py.regime.base import RegimeModel
 
 class GMMRegimeModel(RegimeModel):
     """

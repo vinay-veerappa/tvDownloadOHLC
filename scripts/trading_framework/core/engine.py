@@ -7,8 +7,8 @@ from dataclasses import dataclass
 import pandas as pd
 import numpy as np
 
-from scripts.libs.risk.risk_config import Signal, TradeRecord, TradeStatus, TradeDirection
-from scripts.libs.risk.trade_policies import get_policy, PolicyAction
+from scripts.libs_py.risk.risk_config import Signal, TradeRecord, TradeStatus, TradeDirection
+from scripts.libs_py.risk.trade_policies import get_policy, PolicyAction
 from scripts.trading_framework.core.execution import apply_slippage, compute_commission, compute_pnl
 
 

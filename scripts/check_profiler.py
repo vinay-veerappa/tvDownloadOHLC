@@ -1,13 +1,13 @@
 import sys
 import os
-# Add root to sys.path for scripts.libs imports
+# Add root to sys.path for scripts.libs_py imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pandas as pd
 from datetime import time
 import json
 from collections import defaultdict
-from scripts.libs.nqstats.engine import NQStatsEngine
+from scripts.libs_py.nqstats.engine import NQStatsEngine
 
 DATA_DIR = r"c:\Users\vinay\tvDownloadOHLC\data\live"
 

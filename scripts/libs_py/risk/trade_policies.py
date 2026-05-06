@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
-from scripts.libs.risk.risk_config import TradeRecord, TradeDirection
+from scripts.libs_py.risk.risk_config import TradeRecord, TradeDirection
 
 
 class PolicyAction(Enum):

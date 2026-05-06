@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from scripts.libs.profiler import (
+from scripts.libs_py.profiler import (
     ProfilerData, ProfilerFilter, ProfilerStats, ProfilerReport,
     get_live_context, get_current_trading_date, get_current_session,
 )

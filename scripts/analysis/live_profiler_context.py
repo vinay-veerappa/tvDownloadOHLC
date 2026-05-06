@@ -13,7 +13,7 @@ if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
 
 from scripts.utils.fused_data_loader import load_fused_data
-from scripts.libs.nqstats.engine import NQStatsEngine
+from scripts.libs_py.nqstats.engine import NQStatsEngine
 
 def get_current_session_info(now_et):
     """Determine target session and relevant preceding sessions based on current ET time."""

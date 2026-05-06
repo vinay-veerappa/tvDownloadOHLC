@@ -13,7 +13,7 @@ if BASE_DIR not in sys.path:
 from api.features.indicators.service import calculate_indicators, get_available_indicators
 from api.features.shared.data_loader import load_parquet, get_available_data
 from api.features.candle_science.service import CandleScienceService
-from scripts.libs.profiler import ProfilerData, ProfilerFilter, ProfilerStats, get_live_context
+from scripts.libs_py.profiler import ProfilerData, ProfilerFilter, ProfilerStats, get_live_context
 
 # Paths
 DATA_DIR = os.path.join(BASE_DIR, "data")

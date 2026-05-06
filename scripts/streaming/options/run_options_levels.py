@@ -73,7 +73,8 @@ from .config import (
     INTRADAY_VIEW,
     get_ticker_profile,
     SCORED_LEVELS_TXT,
-    SCORED_MACRO_LEVELS_TXT
+    SCORED_MACRO_LEVELS_TXT,
+    BASIS_ANCHORS_JSON
 )
 from .discord_notifier import send_discord_update, send_regime_change_alert
 from .file_writer import write_levels, _is_rth, write_scored_levels_txt
@@ -136,6 +137,43 @@ def _chain_has_actionable_oi(chain) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Basis Anchors Persistence
+# ---------------------------------------------------------------------------
+
+def load_basis_anchors() -> dict[str, dict]:
+    """Load daily basis anchors from disk."""
+    if not BASIS_ANCHORS_JSON.exists():
+        return {}
+    try:
+        with open(BASIS_ANCHORS_JSON, "r") as f:
+            data = json.load(f)
+            # Validate it's for today
+            today = datetime.now(ZoneInfo(SCHEDULE_TIMEZONE)).strftime("%Y-%m-%d")
+            if data.get("date") != today:
+                log.info("Basis anchor file is from a previous day (%s). Resetting.", data.get("date"))
+                return {}
+            return data.get("anchors", {})
+    except Exception as e:
+        log.error("Failed to load basis anchors: %s", e)
+        return {}
+
+
+def save_basis_anchors(anchors: dict[str, dict]) -> None:
+    """Save daily basis anchors to disk."""
+    try:
+        today = datetime.now(ZoneInfo(SCHEDULE_TIMEZONE)).strftime("%Y-%m-%d")
+        data = {
+            "date": today,
+            "anchors": anchors
+        }
+        with open(BASIS_ANCHORS_JSON, "w") as f:
+            json.dump(data, f, indent=4)
+        log.info("Saved %d basis anchors to %s", len(anchors), BASIS_ANCHORS_JSON.name)
+    except Exception as e:
+        log.error("Failed to save basis anchors: %s", e)
+
+
+# ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
 
@@ -144,6 +182,9 @@ def run_pipeline(
     run_label: str = "",
     enable_discord: bool = ENABLE_DISCORD_UPDATES,
     full_discord: bool = False,
+    versioned: bool = False,
+    reset_anchors: bool = False,
+    snapshot_suffix: str | None = None,
 ) -> None:
     """
     Execute one complete fetch → calculate → output cycle.
@@ -177,7 +218,9 @@ def run_pipeline(
     scored_intraday_by_ticker: dict[str, ScoredLevels] = {}
     scored_macro_by_ticker: dict[str, ScoredLevels] = {}
 
-    SCORED_LEVELS_TXT.write_text("")  
+    # --- Load existing anchors ----------------------------------------------
+    all_anchors = load_basis_anchors()
+    new_anchors_captured = False
 
 
     # --- Process each ticker --------------------------------------------------
@@ -218,6 +261,46 @@ def run_pipeline(
 
             # 2. Fetch front-month futures quote
             fut = fetch_futures_quote(futures_sym)
+
+            # 2b. Establish or load basis anchor
+            # Logic: 
+            # 1. Use existing anchor if available and not resetting
+            # 2. Capture new anchor if resetting (09:30 pulse) or missing
+            # 3. Use 'Open Price Hack' as fail-safe capture source
+            ticker_anchor = all_anchors.get(ticker)
+            
+            if USE_OPENING_BASIS and futures_sym and fut and fut.price is not None:
+                if not reset_anchors and ticker_anchor:
+                    anchor_basis = ticker_anchor.get("basis")
+                    anchor_ratio = ticker_anchor.get("ratio")
+                    log.info("Using Persistent Basis for %s: %.2f (Ratio: %.4f)", 
+                             ticker, anchor_basis, anchor_ratio)
+                else:
+                    # Attempt to capture new anchor
+                    # Prefer open prices (Open Price Hack)
+                    spot_open = full_chain.spot_open
+                    fut_open = fut.open_price
+                    
+                    if spot_open and fut_open:
+                        anchor_basis = fut_open - spot_open
+                        anchor_ratio = fut_open / spot_open if spot_open else 1.0
+                        log.info("Captured NEW Opening Basis for %s: %.2f (Ratio: %.4f) [Source: Open Prices]", 
+                                 ticker, anchor_basis, anchor_ratio)
+                        all_anchors[ticker] = {"basis": anchor_basis, "ratio": anchor_ratio}
+                        new_anchors_captured = True
+                    elif ticker_anchor:
+                        # Fallback to existing if open prices missing
+                        anchor_basis = ticker_anchor.get("basis")
+                        anchor_ratio = ticker_anchor.get("ratio")
+                        log.warning("Could not capture new open prices for %s. Retaining existing anchor.", ticker)
+                    else:
+                        # Final fallback: use current prices as the anchor if no open price yet
+                        anchor_basis = fut.price - full_chain.spot_price
+                        anchor_ratio = fut.price / full_chain.spot_price if full_chain.spot_price else 1.0
+                        log.info("Captured NEW Basis for %s: %.2f (Ratio: %.4f) [Source: Current Prices]", 
+                                 ticker, anchor_basis, anchor_ratio)
+                        all_anchors[ticker] = {"basis": anchor_basis, "ratio": anchor_ratio}
+                        new_anchors_captured = True
 
             # 3. Create Intraday Subset for tactical wall detection
             # Filter the full chain to just the near-term (<= 14 DTE) window
@@ -272,8 +355,8 @@ def run_pipeline(
             scored_macro = score_levels(levels_macro, chain, ticker, profile, MACRO_VIEW)
             scored_macro_by_ticker[ticker] = scored_macro
 
-            write_scored_levels_txt(ticker, scored_intraday)
-            write_scored_levels_txt(ticker, scored_macro, path=SCORED_MACRO_LEVELS_TXT)
+            write_scored_levels_txt(ticker, scored_intraday, versioned=versioned, snapshot_suffix=snapshot_suffix)
+            write_scored_levels_txt(ticker, scored_macro, path=SCORED_MACRO_LEVELS_TXT, versioned=versioned, snapshot_suffix=snapshot_suffix)
 
             # 7. Write per-ticker snapshot to DB
             if _is_rth():
@@ -287,8 +370,8 @@ def run_pipeline(
                 # so cash_levels_by_ticker is already populated and can be used.
             else:
                 # 6. Translate levels into futures price space
-                tl_intraday = translate_to_futures(levels_intraday, fut)
-                tl_macro = translate_to_futures(levels_macro, fut)
+                tl_intraday = translate_to_futures(levels_intraday, fut, anchor_basis=anchor_basis, anchor_ratio=anchor_ratio)
+                tl_macro = translate_to_futures(levels_macro, fut, anchor_basis=anchor_basis, anchor_ratio=anchor_ratio)
                 
                 translated_levels.append(tl_intraday)
                 translated_macro_levels.append(tl_macro)
@@ -311,6 +394,10 @@ def run_pipeline(
             )
             continue
 
+    # --- Save anchors if updated --------------------------------------------
+    if new_anchors_captured:
+        save_basis_anchors(all_anchors)
+
     if not translated_levels and not cash_levels_by_ticker:
         log.error("No levels were computed — all outputs skipped.")
         return
@@ -326,6 +413,8 @@ def run_pipeline(
             cash_levels=list(cash_levels_by_ticker.values()),
             scored_levels=list(scored_intraday_by_ticker.values()),
             json_path=DAILY_LEVELS_JSON, # Legacy
+            versioned=versioned,
+            snapshot_suffix=snapshot_suffix,
         )
         write_levels(
             translated_levels,
@@ -333,6 +422,8 @@ def run_pipeline(
             cash_levels=list(cash_levels_by_ticker.values()),
             scored_levels=list(scored_intraday_by_ticker.values()),
             json_path=INTRADAY_LEVELS_JSON, # Explicit
+            versioned=versioned,
+            snapshot_suffix=snapshot_suffix,
         )
         
         # 2. Macro View (Macro paths)
@@ -343,6 +434,8 @@ def run_pipeline(
             scored_levels=list(scored_macro_by_ticker.values()),
             json_path=MACRO_LEVELS_JSON,
             txt_path=DATA_DIR / "macro_levels.txt",
+            versioned=versioned,
+            snapshot_suffix=snapshot_suffix,
         )
     except Exception as exc:
         log.error("File write failed: %s", exc)
@@ -435,9 +528,16 @@ def run_loop(enable_discord: bool = False) -> None:
         log.critical("Cannot create Schwab client: %s", exc)
         return
 
+    # --- Pulse Scheduling ---
+    # We want to force a FULL versioned run at exactly these times.
+    # We now pull these from config.SCHEDULE_TIMES
+    snapshot_targets = SCHEDULE_TIMES # ["08:30", "09:30", "10:00", ...]
+    last_pulse_date: dict[str, str] = {} # "08:30" -> "2026-05-06"
+
     while True:
         ny_now = datetime.now(ZoneInfo(SCHEDULE_TIMEZONE))
         now = time.time() # Current timestamp for interval checks
+        today_str = ny_now.strftime("%Y-%m-%d")
         
         # Futures Market Weekend Timing: Friday 17:00 ET to Sunday 18:00 ET
         is_weekend_closed = (
@@ -469,6 +569,20 @@ def run_loop(enable_discord: bool = False) -> None:
         tier1_tickers = list(set(TIER1_TICKERS_DEFAULT + dynamic_priority))
         tier2_tickers = [t for t in ACTIVE_TICKERS if t not in tier1_tickers]
 
+        is_pulse_cycle = False
+        pulse_suffix = None
+        current_time_str = ny_now.strftime("%H:%M") # "08:30"
+        for s_time in snapshot_targets:
+            # If we are AT or PAST a snapshot time today, and haven't run it yet
+            if current_time_str >= s_time and last_pulse_date.get(s_time) != today_str:
+                # On weekdays, trigger the pulse
+                if ny_now.weekday() < 5:
+                    is_pulse_cycle = True
+                    pulse_suffix = s_time.replace(":", "") # "0830"
+                    last_pulse_date[s_time] = today_str
+                    log.info("SCHEDULED PULSE DETECTED: %s snapshot triggered.", s_time)
+                    break
+
         # Check for manual trigger file (e.g., from UI 'Refresh' button)
         manual_trigger_file = REPO_ROOT / MANUAL_TRIGGER_FILENAME
         manual_tickers = []
@@ -483,26 +597,45 @@ def run_loop(enable_discord: bool = False) -> None:
 
         # Decide what is due
         due_tier1 = tier1_tickers if (now - tier1_last_run) >= t1_interval else []
-        due_tier2 = [t for t in tier2_tickers if (now - tier2_last_run.get(t, 0)) >= t2_interval]
-
-        # Tickers to process this cycle: Tier 1 (if due) + Due Tier 2 + Manual Tickers
-        active_this_cycle = list(set(due_tier1 + due_tier2 + manual_tickers))
+        
+        # Restriction logic:
+        # 1. Pulse Cycle -> ALL TICKERS (Full snapshot)
+        # 2. Manual Trigger -> TIER 1 + Manual Tickers
+        # 3. Normal Loop -> TIER 1 Only (if due)
+        if is_pulse_cycle:
+            active_this_cycle = ACTIVE_TICKERS
+            is_versioned = True
+        elif manual_tickers:
+            active_this_cycle = list(set(due_tier1 + manual_tickers))
+            is_versioned = False
+        else:
+            active_this_cycle = due_tier1
+            is_versioned = False
 
         if active_this_cycle:
             run_label = ny_now.strftime("%Y-%m-%d %H:%M ET")
-            log.info("Cycle start — processing %d tickers: %s", len(active_this_cycle), ", ".join(active_this_cycle))
+            log.info("Cycle start — processing %d tickers: %s (Pulse=%s, Versioned=%s)", 
+                     len(active_this_cycle), ", ".join(active_this_cycle), is_pulse_cycle, is_versioned)
 
             # Temporarily restrict ACTIVE_TICKERS to our cycle subset
             import scripts.streaming.options.config as _cfg
             original = _cfg.ACTIVE_TICKERS
             _cfg.ACTIVE_TICKERS = active_this_cycle
+
             try:
-                run_pipeline(run_label=run_label, enable_discord=enable_discord)
+                # During the 09:30 pulse, we force an anchor reset
+                should_reset_anchors = (is_pulse_cycle and pulse_suffix == "0930")
+                
+                run_pipeline(
+                    run_label=run_label, 
+                    enable_discord=enable_discord, 
+                    versioned=is_versioned,
+                    reset_anchors=should_reset_anchors,
+                    snapshot_suffix=pulse_suffix
+                )
                 # Successful run! Update timestamps
-                if due_tier1:
+                if due_tier1 or is_pulse_cycle:
                     tier1_last_run = now
-                for t in due_tier2:
-                    tier2_last_run[t] = now
             except Exception as exc:
                 log.error("Pipeline cycle failed: %s", exc)
             finally:
@@ -562,9 +695,13 @@ def run_scheduled(enable_discord: bool = ENABLE_DISCORD_UPDATES) -> None:
         hour, minute = map(int, time_str.split(":"))
         label = f"{time_str} ET"
 
-        def _job(lbl: str = label) -> None:
+        def _job(lbl: str = label, t_str: str = time_str) -> None:
             if _is_trading_day():
-                run_pipeline(lbl, enable_discord=enable_discord)
+                is_pulse = t_str in ("09:30", "16:00")
+                # Reset anchors only at 09:30 open
+                do_reset = (t_str == "09:30")
+                suffix = t_str.replace(":", "")
+                run_pipeline(lbl, enable_discord=enable_discord, versioned=is_pulse, reset_anchors=do_reset, snapshot_suffix=suffix)
             else:
                 log.info("Non-trading day — skipping %s run.", lbl)
 
@@ -650,6 +787,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Force refresh data (ignore cache) in macro mode.",
     )
+    parser.add_argument(
+        "--versioned",
+        action="store_true",
+        help="Write timestamped versioned file snapshots.",
+    )
     return parser
 
 
@@ -677,7 +819,7 @@ def main() -> None:
         # If no tickers provided for macro, use ACTIVE_TICKERS or a subset?
         # Usually macro is run on index family. Let's use provided tickers or ACTIVE_TICKERS.
         macro_tickers = tickers if tickers else ACTIVE_TICKERS
-        run_macro_pipeline(macro_tickers, force_refresh=args.force)
+        run_macro_pipeline(macro_tickers, force_refresh=args.force, versioned=args.versioned)
     elif args.schedule:
         run_scheduled(enable_discord=enable_discord)
     elif args.loop:
@@ -688,6 +830,7 @@ def main() -> None:
             run_label=args.label,
             enable_discord=enable_discord,
             full_discord=args.full_discord,
+            versioned=args.versioned,
         )
 
 

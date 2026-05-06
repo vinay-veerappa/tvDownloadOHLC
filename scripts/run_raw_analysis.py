@@ -5,8 +5,8 @@ import importlib
 import os
 import pickle
 
-from scripts.libs.data.loader import DataLoader
-from scripts.libs.features.feature_registry import FeatureRegistry
+from scripts.libs_py.data.loader import DataLoader
+from scripts.libs_py.features.feature_registry import FeatureRegistry
 from scripts.trading_framework.config.config_loader import load_config
 from scripts.trading_framework.core.mfe_mae import compute_mfe_mae_rich, summarize_mfe_mae_rich
 from scripts.trading_framework.core.signal_adapter import enrich_signals, split_approved_vetoed

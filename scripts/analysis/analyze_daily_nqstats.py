@@ -114,7 +114,7 @@ def main():
         return
 
     # 3. Get Engine Status
-    from scripts.libs.nqstats.engine import NQStatsEngine
+    from scripts.libs_py.nqstats.engine import NQStatsEngine
     
     engine = NQStatsEngine(df, ticker=args.ticker)
     # Filter for target date

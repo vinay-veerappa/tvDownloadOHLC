@@ -2,7 +2,7 @@
 Profiler Library - Direct JSON access and filtering for the Institutional Daily Profiler.
 
 Usage:
-    from scripts.libs.profiler import ProfilerData, ProfilerFilter, ProfilerStats, ProfilerReport
+    from scripts.libs_py.profiler import ProfilerData, ProfilerFilter, ProfilerStats, ProfilerReport
 
     data = ProfilerData.load("NQ1")
     context = data.get_trading_day_context(date)   # prev sessions for filters

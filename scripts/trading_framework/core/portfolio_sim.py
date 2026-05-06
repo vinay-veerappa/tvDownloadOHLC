@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from typing import Optional
 import pandas as pd
 
-from scripts.libs.risk.risk_config import Signal, TradeRecord, TradeStatus
-from scripts.libs.risk.session_manager import SessionRiskManager
-from scripts.libs.risk.account_manager import AccountRiskManager
+from scripts.libs_py.risk.risk_config import Signal, TradeRecord, TradeStatus
+from scripts.libs_py.risk.session_manager import SessionRiskManager
+from scripts.libs_py.risk.account_manager import AccountRiskManager
 from scripts.trading_framework.core.engine import BacktestEngine, BacktestResult
 from scripts.trading_framework.core.execution import apply_slippage
 
@@ -88,8 +88,8 @@ class PortfolioSimulator:
             current_contracts = default_contracts
             
             from scripts.trading_framework.core.execution import compute_commission, compute_pnl
-            from scripts.libs.risk.trade_policies import PolicyAction
-            from scripts.libs.risk.risk_config import TradeDirection
+            from scripts.libs_py.risk.trade_policies import PolicyAction
+            from scripts.libs_py.risk.risk_config import TradeDirection
             
             max_bars = len(df_1m)
             step_count = 0

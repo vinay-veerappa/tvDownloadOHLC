@@ -152,7 +152,7 @@ class ProfilerData:
         if df is None or df.empty:
             raise ValueError(f"No data available for {ticker}")
 
-        from scripts.libs.nqstats.engine import NQStatsEngine
+        from scripts.libs_py.nqstats.engine import NQStatsEngine
         import pandas as pd
         # Fast Loading: Use 5-day buffer if 'days' is small
         # Note: NQStatsEngine needs context for p12 and shift. 

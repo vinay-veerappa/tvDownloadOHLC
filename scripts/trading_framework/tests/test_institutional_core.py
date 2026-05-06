@@ -10,8 +10,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from scripts.libs.data.loader import DataLoader
-from scripts.libs.regime.ensemble import EnsembleRegimeModel
+from scripts.libs_py.data.loader import DataLoader
+from scripts.libs_py.regime.ensemble import EnsembleRegimeModel
 from scripts.trading_framework.ml.walk_forward import PurgedKFold
 from scripts.trading_framework.config.config_loader import SessionConfig, AppConfig, load_config
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
-from .config import CONTRACT_MULTIPLIER, EM_STRADDLE_SCALAR, MIN_OI_THRESHOLD, USE_STRADDLE_EM
+from .config import CONTRACT_MULTIPLIER, MIN_OI_THRESHOLD
 from .options_fetcher import OptionChainData, OptionContract
 
 log = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ def _net_speed_exposure(calls: list, puts: list, spot: float) -> float:
             t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
             iv = max(c.iv, 0.01)
             speed = _analytical_speed(spot, c.strike, t, iv, r_rf, q_div)
-            total += speed * c.open_interest * CONTRACT_MULTIPLIER * spot * 0.01
+            total += speed * c.open_interest * CONTRACT_MULTIPLIER * spot * spot * 0.01
         except Exception:
             pass
     for p in puts:
@@ -127,7 +127,7 @@ def _net_speed_exposure(calls: list, puts: list, spot: float) -> float:
             t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
             iv = max(p.iv, 0.01)
             speed = _analytical_speed(spot, p.strike, t, iv, r_rf, q_div)
-            total -= speed * p.open_interest * CONTRACT_MULTIPLIER * spot * 0.01
+            total -= speed * p.open_interest * CONTRACT_MULTIPLIER * spot * spot * 0.01
         except Exception:
             pass
     return round(total, 2)
@@ -149,6 +149,7 @@ class StrikeGEX:
     # ── Per-strike Greek exposures (same methodology as ezoptionsschwab.py) ──
     call_dex: float = 0.0       # Delta exposure: delta × OI × 100 × S
     put_dex: float = 0.0
+    net_dex: float = 0.0       # Net Delta exposure (Call Dex + Put Dex)
     call_vex: float = 0.0       # Vanna exposure: vanna × OI × 100 × S × 0.01
     put_vex: float = 0.0
     call_charm: float = 0.0     # Charm exposure: charm × OI × 100 × S / 365
@@ -169,6 +170,8 @@ class ExpectedMove:
     em_upper: float
     em_lower: float
     straddle: float
+    straddle_85_upper: float = 0.0
+    straddle_85_lower: float = 0.0
 
 
 
@@ -349,19 +352,31 @@ def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], s
         # Charm
         charm = _analytical_charm(flag, spot, K, t, iv, r, q)
 
-        # Speed
+        # Speed: d(gamma)/dS
         speed = _analytical_speed(spot, K, t, iv, r, q)
 
-        # Mid price for premium (OptionContract.mark = (bid+ask)/2 from options_fetcher.py)
-        mid = getattr(c, 'mark', 0.0) or 0.0
-        premium = mid * weight * contract_size
-
-        # Notional exposures (matching ezoptionsschwab.py exactly)
-        dex   = delta  * weight * contract_size * spot            # DEX = delta × weight × 100 × S
-        vex   = vanna  * weight * contract_size * spot   * 0.01   # VEX similar to GEX scaling
-        charm_exp = charm * weight * contract_size * spot / 365.0  # Charm/day
-        speed_exp = speed * weight * contract_size * spot * spot * 0.01  # Speed × S²
-        vomma_exp = vomma * weight * contract_size * 0.01           # Vomma
+        # ── Institutional Exposure Formulas (from ezoptionsschwab.py) ────────
+        # All exposures are in Notional ($) terms per $1 move in underlying.
+        # spot_multiplier = spot (since we calculate in notional)
+        
+        # DEX: Delta Exposure = Delta * Weight * 100 * Spot
+        dex = delta * weight * contract_size * spot
+        
+        # VEX: Vanna Exposure = Vanna * Weight * 100 * Spot * 0.01
+        vex = vanna * weight * contract_size * spot * 0.01
+        
+        # Charm Exposure = Charm * Weight * 100 * Spot / 365
+        charm_exp = charm * weight * contract_size * spot / 365.0
+        
+        # Speed Exposure = Speed * Weight * 100 * Spot * Spot * 0.01
+        # (This captures the rate of change of GEX)
+        speed_exp = speed * weight * contract_size * spot * spot * 0.01
+        
+        # Vomma Exposure = Vomma * Weight * 100 * 0.01
+        vomma_exp = vomma * weight * contract_size * 0.01
+        
+        # Premium = Mid * Weight * 100
+        premium = c.mark * weight * contract_size
 
         return {
             "dex": round(dex, 2),
@@ -369,7 +384,7 @@ def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], s
             "charm": round(charm_exp, 2),
             "speed": round(speed_exp, 2),
             "vomma": round(vomma_exp, 2),
-            "premium": round(premium, 2),
+            "premium": round(premium, 2)
         }
 
     call_map = _best_contract_per_strike(calls)
@@ -382,6 +397,8 @@ def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], s
         put = put_map.get(strike)
         call_wt = _weight(call) if call else 0
         put_wt = _weight(put) if put else 0
+        
+        # GEX calculation (standard Gamma * OI * 100 * Spot)
         call_gex = abs(call.gamma) * call_wt * CONTRACT_MULTIPLIER * spot if call else 0.0
         put_gex  = abs(put.gamma)  * put_wt  * CONTRACT_MULTIPLIER * spot if put  else 0.0
 
@@ -403,6 +420,7 @@ def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], s
                 # Per-strike exposures
                 call_dex=c_exp["dex"],
                 put_dex=p_exp["dex"],
+                net_dex=c_exp["dex"] + p_exp["dex"], # Net Delta exposure
                 call_vex=c_exp["vex"],
                 put_vex=p_exp["vex"],
                 call_charm=c_exp["charm"],
@@ -499,42 +517,74 @@ def _find_front_dte_contracts(calls: list[OptionContract], puts: list[OptionCont
 
 
 def _find_gamma_flip_zone(strikes: list[StrikeGEX], spot: float, min_oi: int) -> tuple[float | None, float | None, float | None]:
+    """
+    Find the strike where cumulative GEX crosses zero (Gamma Flip).
+    Also returns the nearest significant significant strikes above and below.
+    """
     if not strikes:
         return None, None, None
 
     def significant(row: StrikeGEX) -> bool:
         return (row.call_oi + row.put_oi) >= min_oi
 
-    # Collect ALL cumulative-GEX zero-crossings, then pick the one nearest spot.
+    # Collect ALL cumulative-GEX zero-crossings
     crossings: list[int] = []
     for idx in range(1, len(strikes)):
-        if strikes[idx - 1].cumulative_gex * strikes[idx].cumulative_gex < 0:
+        prev_gex = strikes[idx - 1].cumulative_gex
+        curr_gex = strikes[idx].cumulative_gex
+        
+        # Detect exact hits on zero
+        if prev_gex == 0:
+            crossings.append(idx - 1)
+            continue
+            
+        # Detect sign changes
+        if (prev_gex < 0 and curr_gex > 0) or (prev_gex > 0 and curr_gex < 0):
             crossings.append(idx)
 
-    crossing: int | None = None
+    # ── Zero Gamma Interpolation ──
+    # Instead of just picking a strike, we interpolate where it exactly crosses 0
+    zero_gamma: float | None = None
+    crossing_idx: int | None = None
+    
     if crossings:
-        # Pick the crossing whose midpoint is closest to spot.
-        crossing = min(
-            crossings,
-            key=lambda i: abs((strikes[i - 1].strike + strikes[i].strike) / 2.0 - spot),
-        )
-
-    if crossing is not None:
-        lower = next((strikes[i].strike for i in range(crossing - 1, -1, -1) if significant(strikes[i])), None)
-        upper = next((strikes[i].strike for i in range(crossing, len(strikes)) if significant(strikes[i])), None)
+        # Pick the crossing strike closest to spot.
+        crossing_idx = min(crossings, key=lambda i: abs(strikes[i].strike - spot))
+        
+        # Interpolate between crossing_idx-1 and crossing_idx
+        idx = crossing_idx
+        if idx > 0:
+            s1, g1 = strikes[idx-1].strike, strikes[idx-1].cumulative_gex
+            s2, g2 = strikes[idx].strike, strikes[idx].cumulative_gex
+            if abs(g2 - g1) > 1e-9:
+                zero_gamma = s1 - g1 * (s2 - s1) / (g2 - g1)
+            else:
+                zero_gamma = strikes[idx].strike
+        else:
+            zero_gamma = strikes[idx].strike
     else:
-        # No crossing found — bracket spot with nearest significant strikes.
+        # Edge case: No crossing found. Try to find the minimum absolute cumulative GEX.
+        closest_row = min(strikes, key=lambda row: abs(row.cumulative_gex))
+        zero_gamma = closest_row.strike
+
+    # ── Flip Brackets ──
+    if crossing_idx is not None:
+        lower = next((strikes[i].strike for i in range(crossing_idx - 1, -1, -1) if significant(strikes[i])), None)
+        upper = next((strikes[i].strike for i in range(crossing_idx, len(strikes)) if significant(strikes[i])), None)
+    else:
+        # Bracket spot with nearest significant strikes.
         below = [row for row in strikes if row.strike <= spot and significant(row)]
         above = [row for row in strikes if row.strike >= spot and significant(row)]
         lower = below[-1].strike if below else None
         upper = above[0].strike if above else None
 
     if lower is None and upper is None:
-        return None, None, None
+        return zero_gamma, None, None
+        
     lower = lower if lower is not None else upper
     upper = upper if upper is not None else lower
-    mid = round((float(lower) + float(upper)) / 2.0, 2)
-    return float(lower), float(upper), mid
+    
+    return float(lower), float(upper), round(zero_gamma, 2) if zero_gamma else None
 
 
 def _find_hedge_wall(strikes: list[StrikeGEX], spot: float) -> float | None:
@@ -567,40 +617,29 @@ def _expected_move(
 ) -> tuple[float, float]:
     
     straddle = _atm_straddle_cost(calls, puts, spot)
-    atm = _atm_contract(calls, spot)
+    atm_call = _atm_contract(calls, spot)
+    atm_put = _atm_contract(puts, spot)
     
-    if not calls or atm is None or atm.iv <= 0:
+    if not calls or not puts or atm_call is None or atm_put is None or atm_call.iv <= 0 or atm_put.iv <= 0:
         return straddle * EM_STRADDLE_SCALAR if USE_STRADDLE_EM else 0.0, straddle
+
+    blended_iv = (atm_call.iv + atm_put.iv) / 2.0
 
     tz = ZoneInfo("America/New_York")
     now = datetime.now(tz)
-    exp_dt = datetime.combine(atm.expiry, time(16, 0), tzinfo=tz)
+    exp_dt = datetime.combine(atm_call.expiry, time(16, 0), tzinfo=tz)
     
     minutes_remaining = (exp_dt - now).total_seconds() / 60.0
     
-    # Calculate values safely. 
-    # If we are after hours but looking at a FUTURE expiry, minutes_remaining will be positive.
-    # If it's today's expiry and it's after 4pm, we fallback.
-    
     if minutes_remaining <= 0:
-        log.info(f"Contract {atm.expiry} expired (minutes: {minutes_remaining:.1f}). Falling back.")
-        return straddle * EM_STRADDLE_SCALAR if USE_STRADDLE_EM else 0.0, straddle
+        return 0.0, straddle
 
     fractional_dte = minutes_remaining / (24.0 * 60.0)
     years_to_expiry = fractional_dte / 365.0
-    tos_expected_move = spot * atm.iv * math.sqrt(years_to_expiry)
     
-    # Print the verification
-    log.info(
-        "\n==================================================\n"
-        "TOS EXPECTED MOVE VERIFICATION\n"
-        f"Spot Price:        ${spot:.2f}\n"
-        f"Expiry Date:       {atm.expiry}\n"
-        f"ATM Vol (IV):      {atm.iv:.4f} ({atm.iv*100:.2f}%)\n"
-        f"Minutes Remaining: {minutes_remaining:.2f}\n"
-        f"Calculated TOS EM: ±${tos_expected_move:.2f}\n"
-        "=================================================="
-    )
+    # ThinkOrSwim Expected Move Formula: Spot * IV * sqrt(DTE/365)
+    # Using ATM Blended Volatility as the closest proxy to Series Volatility
+    tos_expected_move = spot * blended_iv * math.sqrt(years_to_expiry)
     
     return tos_expected_move, straddle
 
@@ -636,20 +675,12 @@ def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
             em_value=round(move, 2),
             em_upper=round(spot + move, 2),
             em_lower=round(spot - move, 2),
-            straddle=round(straddle, 2)
+            straddle=round(straddle, 2),
+            straddle_85_upper=round(spot + straddle * 0.85, 2),
+            straddle_85_lower=round(spot - straddle * 0.85, 2)
         ))
     return ems
 
-def _expected_move_old(calls: list[OptionContract], puts: list[OptionContract], spot: float) -> tuple[float, float]:
-    straddle = _atm_straddle_cost(calls, puts, spot)
-    if USE_STRADDLE_EM:
-        return straddle * EM_STRADDLE_SCALAR, straddle
-
-    atm = _atm_contract(calls, spot)
-    if atm is None or atm.iv <= 0:
-        return 0.0, straddle
-    iv_move = spot * atm.iv * math.sqrt(max(atm.dte, 1) / 365.0)
-    return iv_move, straddle
 
 
 def _find_max_pain(calls: list[OptionContract], puts: list[OptionContract]) -> float | None:

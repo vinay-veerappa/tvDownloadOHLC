@@ -15,8 +15,8 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 sys.path.append(ROOT_DIR)
 
 from scripts.utils.fused_data_loader import load_fused_data
-from scripts.libs.nqstats.engine import NQStatsEngine
-from scripts.libs.nqstats.profiler import get_daily_profiler_data, filter_profiler_stats, get_followthrough_matrix
+from scripts.libs_py.nqstats.engine import NQStatsEngine
+from scripts.libs_py.nqstats.profiler import get_daily_profiler_data, filter_profiler_stats, get_followthrough_matrix
 
 def main():
     parser = argparse.ArgumentParser(description="Institutional Daily Profiler Analysis")

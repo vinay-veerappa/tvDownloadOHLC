@@ -181,7 +181,7 @@ class ProfilerService:
 
         # 2. Fallback to Calculation (Modular Library)
         try:
-            from scripts.libs.profiler import ProfilerData
+            from scripts.libs_py.profiler import ProfilerData
             data = ProfilerData.from_parquet(ticker, days=days)
             
             elapsed = time.time() - start_time

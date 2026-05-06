@@ -1,7 +1,7 @@
 """
 Execution model: slippage and commission.
 """
-from scripts.libs.risk.risk_config import TradeDirection
+from scripts.libs_py.risk.risk_config import TradeDirection
 
 def apply_slippage(price: float, direction: TradeDirection,
                    tick_size: float, slippage_ticks: int, is_entry: bool = True) -> float:

@@ -1,6 +1,6 @@
 import pandas as pd
 from hmmlearn import hmm
-from scripts.libs.regime.base import RegimeModel
+from scripts.libs_py.regime.base import RegimeModel
 
 class HMMRegimeModel(RegimeModel):
     """

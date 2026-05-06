@@ -3,7 +3,7 @@ Account-level risk manager. Tracks equity across sessions.
 """
 from enum import Enum
 import pandas as pd
-from scripts.libs.risk.risk_config import AccountState
+from scripts.libs_py.risk.risk_config import AccountState
 
 
 class AccountRiskManager:

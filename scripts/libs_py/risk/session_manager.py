@@ -9,7 +9,7 @@ import pandas as pd
 from datetime import timedelta
 import logging
 
-from scripts.libs.risk.risk_config import Signal, TradeRecord, SessionState
+from scripts.libs_py.risk.risk_config import Signal, TradeRecord, SessionState
 
 
 class SessionRiskManager:

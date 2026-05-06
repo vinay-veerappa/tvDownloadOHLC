@@ -35,6 +35,40 @@ from .config import SCORED_LEVELS_TXT
 from .level_scorer import ScoredLevels, MechanicalWall, StructuralAnchor, InflectionPoint
 
 log = logging.getLogger(__name__)
+ 
+ 
+def _upsert_ticker_line(path: Path, ticker: str, new_line: str) -> None:
+    """
+    Replaces or appends a line for a specific ticker in a TXT file.
+    Ensures that partial pipeline runs (e.g. Tier-1 only) don't wipe 
+    out existing data for other tickers.
+    """
+    lines: list[str] = []
+    if path.exists():
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except Exception as e:
+            log.warning("Failed to read %s for upsert: %s", path.name, e)
+    
+    new_lines: list[str] = []
+    found = False
+    ticker_prefix = f"{ticker}:"
+    
+    for line in lines:
+        if line.strip().startswith(ticker_prefix):
+            new_lines.append(new_line)
+            found = True
+        else:
+            new_lines.append(line)
+    
+    if not found:
+        new_lines.append(new_line)
+    
+    # Clean up empty lines and write back
+    final_content = "\n".join(l for l in new_lines if l.strip()) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(final_content, encoding="utf-8")
+ 
 
 def _get_strength(tl):
     if isinstance(tl, MechanicalWall):
@@ -277,6 +311,8 @@ def write_levels(
     scored_levels: list[ScoredLevels] | None = None,
     json_path: Path = DAILY_LEVELS_JSON,
     txt_path: Path = DAILY_LEVELS_TXT,
+    versioned: bool = False,
+    snapshot_suffix: str | None = None,
 ) -> None:
     if not run_label:
         run_label = datetime.now().strftime("%Y-%m-%d %H:%M ET")
@@ -458,8 +494,20 @@ def write_levels(
     }
 
     json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    json_data = json.dumps(doc, indent=2)
+    json_path.write_text(json_data, encoding="utf-8")
     log.info("JSON written -> %s  (%d levels)", json_path, len(all_entries))
+
+    if versioned:
+        ts = datetime.now().strftime("%Y%m%d_%H%M")
+        v_json_path = json_path.with_name(f"{json_path.stem}_{ts}{json_path.suffix}")
+        v_json_path.write_text(json_data, encoding="utf-8")
+        log.info("Versioned JSON written -> %s", v_json_path)
+
+    if snapshot_suffix:
+        s_json_path = json_path.with_name(f"{json_path.stem}_{snapshot_suffix}{json_path.suffix}")
+        s_json_path.write_text(json_data, encoding="utf-8")
+        log.info("Snapshot JSON written -> %s (overwrites daily)", s_json_path)
 
     # ── GEX Profiles JSON output ───────────────────────────────────────────
     profiles_doc = {
@@ -492,6 +540,7 @@ def write_levels(
             # Per-strike Greek exposures (notional, matching ezoptionsschwab.py methodology)
             "call_dex": sg.call_dex,
             "put_dex": sg.put_dex,
+            "net_dex": sg.net_dex,
             "call_vex": sg.call_vex,
             "put_vex": sg.put_vex,
             "call_charm": sg.call_charm,
@@ -537,8 +586,20 @@ def write_levels(
             ]
 
     GEX_PROFILES_JSON.parent.mkdir(parents=True, exist_ok=True)
-    GEX_PROFILES_JSON.write_text(json.dumps(profiles_doc, indent=2), encoding="utf-8")
+    profiles_data = json.dumps(profiles_doc, indent=2)
+    GEX_PROFILES_JSON.write_text(profiles_data, encoding="utf-8")
     log.info("GEX Profiles written -> %s", GEX_PROFILES_JSON)
+
+    if versioned:
+        ts = datetime.now().strftime("%Y%m%d_%H%M")
+        v_profiles_path = GEX_PROFILES_JSON.with_name(f"{GEX_PROFILES_JSON.stem}_{ts}{GEX_PROFILES_JSON.suffix}")
+        v_profiles_path.write_text(profiles_data, encoding="utf-8")
+        log.info("Versioned GEX Profiles written -> %s", v_profiles_path)
+
+    if snapshot_suffix:
+        s_profiles_path = GEX_PROFILES_JSON.with_name(f"{GEX_PROFILES_JSON.stem}_{snapshot_suffix}{GEX_PROFILES_JSON.suffix}")
+        s_profiles_path.write_text(profiles_data, encoding="utf-8")
+        log.info("Snapshot GEX Profiles written -> %s", s_profiles_path)
 
     # ── Live Trend JSON Append (RTH only) ────────────────────────────────────
     # We only write trend data during Regular Trading Hours to avoid polluting
@@ -619,8 +680,20 @@ def write_levels(
         lines.extend(_detailed_block(tl))
 
     txt_path.parent.mkdir(parents=True, exist_ok=True)
-    txt_path.write_text("\n".join(lines), encoding="utf-8")
+    txt_data = "\n".join(lines)
+    txt_path.write_text(txt_data, encoding="utf-8")
     log.info("TXT written  -> %s", txt_path)
+
+    if versioned:
+        ts = datetime.now().strftime("%Y%m%d_%H%M")
+        v_txt_path = txt_path.with_name(f"{txt_path.stem}_{ts}{txt_path.suffix}")
+        v_txt_path.write_text(txt_data, encoding="utf-8")
+        log.info("Versioned TXT written -> %s", v_txt_path)
+
+    if snapshot_suffix:
+        s_txt_path = txt_path.with_name(f"{txt_path.stem}_{snapshot_suffix}{txt_path.suffix}")
+        s_txt_path.write_text(txt_data, encoding="utf-8")
+        log.info("Snapshot TXT written -> %s", s_txt_path)
 
 
 def write_macro_levels(
@@ -628,7 +701,8 @@ def write_macro_levels(
     levels: dict[str, float | None], 
     anomalies: dict[str, list[dict[str, Any]]],
     dominant_nodes: list[dict[str, Any]] = None,
-    path: Path = MACRO_LEVELS_TXT
+    path: Path = MACRO_LEVELS_TXT,
+    versioned: bool = False
 ) -> None:
     """
     Pillar 5: Strict text output for Pine Script.
@@ -679,11 +753,15 @@ def write_macro_levels(
     # Ensure directory exists
     path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Use append mode ('a') so we don't overwrite previous tickers in the pipeline loop
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(final_string + "\n")
+    # Use robust upsert to prevent data loss for other tickers in partial runs
+    _upsert_ticker_line(path, ticker, final_string)
+
+    if versioned:
+        ts = datetime.now().strftime("%Y%m%d_%H%M")
+        v_path = path.with_name(f"{path.stem}_{ts}{path.suffix}")
+        _upsert_ticker_line(v_path, ticker, final_string)
         
-    log.info("Macro Levels appended to %s", path)
+    log.info("Macro Levels written to %s (versioned=%s)", path, versioned)
 
 
 def write_quant_json(
@@ -692,7 +770,8 @@ def write_quant_json(
     levels: dict[str, float | None],
     anomalies: dict[str, list[dict[str, Any]]],
     dominant_nodes: list[dict[str, Any]],
-    path: Path = MACRO_QUANT_JSON
+    path: Path = MACRO_QUANT_JSON,
+    versioned: bool = False
 ) -> None:
     """
     Pillar 6: High-signal Quant JSON output.
@@ -720,14 +799,31 @@ def write_quant_json(
     existing[ticker] = quant_payload
     
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    json_data = json.dumps(existing, indent=2)
+    path.write_text(json_data, encoding="utf-8")
     log.info("Quant JSON updated for %s → %s", ticker, path)
+
+    if versioned:
+        ts = datetime.now().strftime("%Y%m%d_%H%M")
+        v_path = path.with_name(f"{path.stem}_{ts}{path.suffix}")
+        # Note: if multiple tickers call this with versioned=True in one run, 
+        # we'd want to read the versioned file first. 
+        # But for simplicity, if it's the same run, the versioned file name should be identical.
+        v_existing = {}
+        if v_path.exists():
+            try: v_existing = json.loads(v_path.read_text(encoding="utf-8"))
+            except: pass
+        v_existing[ticker] = quant_payload
+        v_path.write_text(json.dumps(v_existing, indent=2), encoding="utf-8")
+        log.info("Versioned Quant JSON updated -> %s", v_path)
  
  
 def write_scored_levels_txt(
     ticker: str,
     scored: Any,  # ScoredLevels
     path: Path | None = None,
+    versioned: bool = False,
+    snapshot_suffix: str | None = None,
 ) -> None:
     """
     Export ScoredLevels as Pine Script-compatible TXT.
@@ -821,9 +917,19 @@ def write_scored_levels_txt(
  
     final_string = ", ".join(tokens)
  
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(final_string + "\n")
+    # Use robust upsert to prevent data loss for other tickers in partial runs
+    _upsert_ticker_line(path, ticker, final_string)
  
+    if versioned:
+        ts = datetime.now().strftime("%Y%m%d_%H%M")
+        v_path = path.with_name(f"{path.stem}_{ts}{path.suffix}")
+        _upsert_ticker_line(v_path, ticker, final_string)
+        log.info("Versioned scored levels TXT written -> %s", v_path)
+
+    if snapshot_suffix:
+        s_path = path.with_name(f"{path.stem}_{snapshot_suffix}{path.suffix}")
+        _upsert_ticker_line(s_path, ticker, final_string)
+        log.info("Snapshot scored levels TXT written -> %s", s_path)
+
     log.info("Scored levels TXT appended for %s → %s (%d levels)", ticker, path, len(tokens))
  

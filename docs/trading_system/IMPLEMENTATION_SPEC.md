@@ -478,7 +478,7 @@ Reusable by any strategy.
 Data loading and merging.
 
 Usage:
-    from scripts.libs.data.loader import DataLoader
+    from scripts.libs_py.data.loader import DataLoader
     loader = DataLoader(config)
     df = loader.load_enriched("MES")  # Returns 1-min DataFrame with all features
 """
@@ -542,7 +542,7 @@ class DataLoader:
 Tag each bar with session labels.
 
 Usage:
-    from scripts.libs.data.session_tagger import tag_sessions
+    from scripts.libs_py.data.session_tagger import tag_sessions
     df = tag_sessions(df, config.sessions)
 """
 
@@ -579,7 +579,7 @@ def tag_sessions(df: pd.DataFrame, sessions: "SessionConfig") -> pd.DataFrame:
 Resample 1-minute bars to higher timeframes.
 
 Usage:
-    from scripts.libs.data.resampler import resample_ohlcv
+    from scripts.libs_py.data.resampler import resample_ohlcv
     df_5m = resample_ohlcv(df, "5min")
 """
 
@@ -627,7 +627,7 @@ Central feature registry. Strategies request features by name,
 and the registry ensures they are computed exactly once.
 
 Usage:
-    from scripts.libs.features.registry import FeatureRegistry
+    from scripts.libs_py.features.registry import FeatureRegistry
     registry = FeatureRegistry(config)
     df = registry.ensure_features(df, ["vwap", "vwap_distance", "bb_pct_b",
                                         "ib_high", "ib_low", "chop_score"])
@@ -935,7 +935,7 @@ This is NOT a feature that runs on the full DataFrame. Instead, it's a function
 called by strategies when they want to evaluate a specific price level.
 
 Usage:
-    from scripts.libs.features.acceptance_rejection import classify_level_interaction
+    from scripts.libs_py.features.acceptance_rejection import classify_level_interaction
     state = classify_level_interaction(df, level=5400.0, lookback_bars=10)
 """
 from enum import Enum
@@ -1109,7 +1109,7 @@ The backtest engine calls policy.manage() on each bar while a trade is open.
 The policy decides: do nothing, take partial, move stop, exit fully.
 
 Usage:
-    from scripts.libs.risk.trade_policies import get_policy
+    from scripts.libs_py.risk.trade_policies import get_policy
     policy = get_policy("cover_the_queen", config.trade_risk_policies["cover_the_queen"])
     action = policy.manage(trade, current_bar, bars_since_entry)
 """
@@ -1266,7 +1266,7 @@ It only sees: "a trade request with X risk dollars" and approves/denies
 based on the current session state.
 
 Usage:
-    from scripts.libs.risk.session_manager import SessionRiskManager
+    from scripts.libs_py.risk.session_manager import SessionRiskManager
     mgr = SessionRiskManager(config.session_risk, config.sessions)
     approved = mgr.request_entry(signal)  # True/False
     mgr.record_trade_result(trade_record)
@@ -1333,7 +1333,7 @@ class SessionRiskManager:
 Account-level risk manager. Tracks equity across sessions.
 
 Usage:
-    from scripts.libs.risk.account_manager import AccountRiskManager
+    from scripts.libs_py.risk.account_manager import AccountRiskManager
     acct = AccountRiskManager(config.account_risk)
     acct.on_session_close(daily_pnl)
     can_trade = acct.can_trade_today()
@@ -1995,7 +1995,7 @@ VWAP Reclaim/Rejection signal generator.
 Implements the abstract strategy interface.
 """
 from scripts.strategies.base import StrategyBase
-from scripts.libs.risk.risk_config import Signal, TradeDirection
+from scripts.libs_py.risk.risk_config import Signal, TradeDirection
 
 
 class VWAPReclaimStrategy(StrategyBase):
@@ -2321,7 +2321,7 @@ Already specified in Section 5 under `scripts/libs_py/features/acceptance_reject
 This is a LIBRARY utility — not a strategy. Any strategy can import and use it:
 
 ```python
-from scripts.libs.features.acceptance_rejection import classify_level_interaction, LevelState
+from scripts.libs_py.features.acceptance_rejection import classify_level_interaction, LevelState
 
 # In a strategy's signal logic:
 state = classify_level_interaction(df.iloc[i-10:i], level=ib_high, lookback_bars=10)
@@ -2349,7 +2349,7 @@ columns that are pre-computed on the enriched DataFrame.
 Abstract base class for all strategies.
 """
 from abc import ABC, abstractmethod
-from scripts.libs.risk.risk_config import Signal
+from scripts.libs_py.risk.risk_config import Signal
 from scripts.trading_framework.config.config_loader import AppConfig
 import pandas as pd
 

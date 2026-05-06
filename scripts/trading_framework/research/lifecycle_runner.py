@@ -15,7 +15,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(script_dir, "../../../"))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from scripts.libs.data.loader import DataLoader
+from scripts.libs_py.data.loader import DataLoader
 from scripts.trading_framework.config.config_loader import load_config
 from scripts.trading_framework.core.backtest_engine import VectorizedBacktester
 from scripts.trading_framework.strategies.registry import get_strategy

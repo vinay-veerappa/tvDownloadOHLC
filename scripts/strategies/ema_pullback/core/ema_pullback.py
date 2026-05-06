@@ -50,7 +50,7 @@ class EMAPullbackStrategy:
             # Optimization: only compute for points near potential signals
             potential_mask = long_mask | short_mask
             if potential_mask.any():
-                from scripts.libs.indicators.market_regime import compute_chop_score
+                from scripts.libs_py.indicators.market_regime import compute_chop_score
                 
                 # Chop score looks back 14 bars by default
                 results = compute_chop_score(df, lookback=14)

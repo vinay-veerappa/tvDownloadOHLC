@@ -176,6 +176,9 @@ def copy_ready_line(tag: str, levels: Any) -> str:
         prefix = f"{em.expiry} ({em.dte}d) "
         parts.append(f"{fmt_copy(em.em_upper)}:{prefix}Upper EM")
         parts.append(f"{fmt_copy(em.em_lower)}:{prefix}Lower EM")
+        if hasattr(em, 'straddle_85_upper') and em.straddle_85_upper > 0:
+            parts.append(f"{fmt_copy(em.straddle_85_upper)}:{prefix}Upper 85% Straddle")
+            parts.append(f"{fmt_copy(em.straddle_85_lower)}:{prefix}Lower 85% Straddle")
 
     return f"{tag}: " + ", ".join(parts)
 

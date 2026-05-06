@@ -1,5 +1,5 @@
 import pandas as pd
-from scripts.libs.regime.base import RegimeModel
+from scripts.libs_py.regime.base import RegimeModel
 
 class ThresholdRegimeModel(RegimeModel):
     """

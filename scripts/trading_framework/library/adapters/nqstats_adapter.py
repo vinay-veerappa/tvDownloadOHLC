@@ -7,7 +7,7 @@ import os
 # Ensure legacy path is available
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
 
-from scripts.libs.nqstats.engine import NQStatsEngine
+from scripts.libs_py.nqstats.engine import NQStatsEngine
 
 class NQStatsAdapter:
     """

@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from scripts.libs.risk.risk_config import Signal, TradeDirection, TradeStatus
+from scripts.libs_py.risk.risk_config import Signal, TradeDirection, TradeStatus
 from scripts.trading_framework.core.engine import BacktestEngine
 from scripts.trading_framework.config.config_loader import AppConfig
 

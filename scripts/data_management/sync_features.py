@@ -9,9 +9,9 @@ from datetime import datetime
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
 from scripts.utils.fused_data_loader import DERIVED_DIR, REGIME_DIR, TICKER_MAP
-from scripts.libs.data.loader import FrameworkLoader
+from scripts.libs_py.data.loader import FrameworkLoader
 from scripts.trading_framework.library.adapters.nqstats_adapter import NQStatsAdapter
-from scripts.libs.regime.regime_models import HMMRegimeModel, GMMRegimeModel, ThresholdRegimeModel
+from scripts.libs_py.regime.regime_models import HMMRegimeModel, GMMRegimeModel, ThresholdRegimeModel
 
 def sync_features(ticker: str = "NQ1", force: bool = False):
     """

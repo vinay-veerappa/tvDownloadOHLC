@@ -6,7 +6,7 @@ group is computed exactly once per DataFrame and dispatches independent
 groups in parallel via ThreadPoolExecutor (ADR-009 rule 6).
 
 Usage:
-    from scripts.libs.features.feature_registry import FeatureRegistry
+    from scripts.libs_py.features.feature_registry import FeatureRegistry
     from scripts.trading_framework.config.config_loader import load_config
 
     config = load_config()
@@ -358,34 +358,34 @@ class FeatureRegistry:
 
         try:
             if group == "atr":
-                from scripts.libs.features.atr import compute_atr
+                from scripts.libs_py.features.atr import compute_atr
                 return compute_atr
             if group == "vwap":
-                from scripts.libs.features.vwap import compute_vwap
+                from scripts.libs_py.features.vwap import compute_vwap
                 return compute_vwap
             if group == "ib":
-                from scripts.libs.features.initial_balance import compute_initial_balance
+                from scripts.libs_py.features.initial_balance import compute_initial_balance
                 return compute_initial_balance
             if group == "internals":
-                from scripts.libs.features.internals import compute_internals_features
+                from scripts.libs_py.features.internals import compute_internals_features
                 return compute_internals_features
             if group == "chop":
-                from scripts.libs.features.chop import compute_chop_score
+                from scripts.libs_py.features.chop import compute_chop_score
                 return compute_chop_score
             if group == "ema":
-                from scripts.libs.features.ema import compute_ema
+                from scripts.libs_py.features.ema import compute_ema
                 return compute_ema
             if group == "bollinger":
-                from scripts.libs.features.bollinger import compute_bollinger_bands
+                from scripts.libs_py.features.bollinger import compute_bollinger_bands
                 return compute_bollinger_bands
             if group == "keltner":
-                from scripts.libs.features.keltner import compute_keltner_channels
+                from scripts.libs_py.features.keltner import compute_keltner_channels
                 return compute_keltner_channels
             if group == "acceptance":
-                from scripts.libs.features.acceptance_rejection import compute_acceptance_rejection
+                from scripts.libs_py.features.acceptance_rejection import compute_acceptance_rejection
                 return compute_acceptance_rejection
             if group == "auction":
-                from scripts.libs.features.auction import compute_auction_features
+                from scripts.libs_py.features.auction import compute_auction_features
                 return compute_auction_features
         except ImportError as e:
             logger.warning("Import failed for group '%s': %s", group, e)

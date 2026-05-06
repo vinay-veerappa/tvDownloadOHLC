@@ -6,9 +6,9 @@ import time
 import pandas as pd
 import logging
 from scripts.trading_framework.config.config_loader import load_config
-from scripts.libs.data.loader import DataLoader
-from scripts.libs.data.session_tagger import tag_sessions
-from scripts.libs.features.feature_registry import FeatureRegistry
+from scripts.libs_py.data.loader import DataLoader
+from scripts.libs_py.data.session_tagger import tag_sessions
+from scripts.libs_py.features.feature_registry import FeatureRegistry
 from scripts.trading_framework.core.mfe_mae import compute_mfe_mae
 
 # Setup logging

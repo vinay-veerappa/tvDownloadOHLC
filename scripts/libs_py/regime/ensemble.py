@@ -1,9 +1,9 @@
 import pandas as pd
 from typing import List
-from scripts.libs.regime.base import RegimeModel
-from scripts.libs.regime.threshold import ThresholdRegimeModel
-from scripts.libs.regime.hmm import HMMRegimeModel
-from scripts.libs.regime.clustering import GMMRegimeModel
+from scripts.libs_py.regime.base import RegimeModel
+from scripts.libs_py.regime.threshold import ThresholdRegimeModel
+from scripts.libs_py.regime.hmm import HMMRegimeModel
+from scripts.libs_py.regime.clustering import GMMRegimeModel
 
 class EnsembleRegimeModel(RegimeModel):
     """

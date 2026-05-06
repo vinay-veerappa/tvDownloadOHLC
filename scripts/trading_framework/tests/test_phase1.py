@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 import pandas as pd
 import numpy as np
-from scripts.libs.risk.session_manager import SessionRiskManager
+from scripts.libs_py.risk.session_manager import SessionRiskManager
 from scripts.trading_framework.config.config_loader import load_config, RiskMode
 
 @pytest.fixture
