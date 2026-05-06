@@ -175,19 +175,21 @@ function buildCandidates(symbol: string): string[] {
     // Futures roots may resolve to cash proxies.
     ES: ["/ES", "ES", "SPX", "SPY"],
     MES: ["/MES", "MES", "/ES", "ES", "SPX", "SPY"],
-    // Cash/ETF/index symbols must stay in their own price space.
-    SPX: ["SPX", "SPY"],
-    SPY: ["SPY", "SPX"],
+    // Cash/ETF/index symbols can now resolve to futures.
+    SPX: ["SPX", "SPY", "/ES", "ES"],
+    SPY: ["SPY", "SPX", "/ES", "ES"],
     NQ: ["/NQ", "NQ", "QQQ", "NDX"],
     MNQ: ["/MNQ", "MNQ", "/NQ", "NQ", "QQQ", "NDX"],
-    NDX: ["NDX", "QQQ"],
-    QQQ: ["QQQ", "NDX"],
+    NDX: ["NDX", "QQQ", "/NQ", "NQ"],
+    QQQ: ["QQQ", "NDX", "/NQ", "NQ"],
     RTY: ["/RTY", "RTY", "IWM"],
     M2K: ["/M2K", "M2K", "/RTY", "RTY", "IWM"],
-    IWM: ["IWM", "RUT"],
+    IWM: ["IWM", "RUT", "/RTY", "RTY"],
+    RUT: ["RUT", "IWM", "/RTY", "RTY"],
     YM: ["/YM", "YM", "DIA"],
     MYM: ["/MYM", "MYM", "/YM", "YM", "DIA"],
-    DIA: ["DIA", "DJI"],
+    DIA: ["DIA", "DJI", "/YM", "YM"],
+    DJI: ["DJI", "DIA", "/YM", "YM"],
   };
 
   const aliases = aliasMap[noSlash] ?? [noSlash, withSlash];

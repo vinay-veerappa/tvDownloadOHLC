@@ -5,6 +5,7 @@ import {
   loadGexProfiles,
   loadPipelineState,
   normalizeSymbolRoot,
+  buildCandidates,
 } from "@/lib/options-live-v3/data";
 import prisma from "@/lib/prisma";
 import { DEFAULT_WATCHLIST } from "@/lib/watchlist-constants";
@@ -42,7 +43,7 @@ let inMemoryCatalog: Map<string, LookupCandidate> | null = null;
 let lastLocalRefreshMs = 0;
 const remoteQueryCooldown = new Map<string, number>();
 
-function normalizeLookupSymbol(raw: string): string {
+function normalizeLookupKey(raw: string): string {
   return normalizeSymbolRoot(raw).replace(/[^A-Z0-9]/g, "").toUpperCase();
 }
 
@@ -53,20 +54,27 @@ function upsert(
   details?: { name?: string; exchange?: string; type?: string }
 ): void {
   if (!raw) return;
-  const symbol = normalizeLookupSymbol(raw);
-  if (!symbol) return;
+  const key = normalizeLookupKey(raw);
+  if (!key) return;
 
-  const existing = map.get(symbol);
+  const existing = map.get(key);
   if (existing) {
     existing.sources.add(source);
+    // Prefer the slashed version for display (e.g., /ES over ES)
+    if (raw.startsWith("/") && !existing.symbol.startsWith("/")) {
+      existing.symbol = raw.toUpperCase();
+    }
     if (!existing.name && details?.name) existing.name = details.name;
     if (!existing.exchange && details?.exchange) existing.exchange = details.exchange;
     if (!existing.type && details?.type) existing.type = details.type;
     return;
   }
 
-  map.set(symbol, {
-    symbol,
+  // Use the raw symbol if it has a slash, otherwise use the key
+  const displaySymbol = raw.startsWith("/") ? ("/" + key) : key;
+
+  map.set(key, {
+    symbol: displaySymbol,
     sources: new Set([source]),
     name: details?.name,
     exchange: details?.exchange,
@@ -101,14 +109,42 @@ const FALLBACK_SYMBOLS = [
   "YM",
   "GC",
   "CL",
+  "/ES",
+  "/NQ",
+  "/RTY",
+  "/YM",
+  "/GC",
+  "/CL",
 ];
 
 function score(symbol: string, query: string): number {
   if (!query) return 1;
-  if (symbol === query) return 500;
-  if (symbol.startsWith(query)) return 250 - (symbol.length - query.length);
-  const idx = symbol.indexOf(query);
+  const s = symbol.toUpperCase();
+  const q = query.toUpperCase();
+
+  const sClean = s.replace(/^\//, "");
+  const qClean = q.replace(/^\//, "");
+
+  // 1. Exact match (ignoring slash)
+  if (sClean === qClean) return 500;
+
+  // 2. Starts with (ignoring slash)
+  if (sClean.startsWith(qClean)) return 250 - (sClean.length - qClean.length);
+
+  // 3. Handle contract symbols in query (e.g., ESU24 matching ES root)
+  const qRoot = qClean.match(/^([A-Z]{1,8})\d+!?$/)?.[1];
+  if (qRoot && sClean === qRoot) return 400;
+
+  // 4. Translation / Alias match (e.g., query "SPY" matching symbol "/ES")
+  const sRoot = normalizeSymbolRoot(symbol);
+  const qActualRoot = qRoot || qClean;
+  const relatives = buildCandidates(qActualRoot).map(r => normalizeSymbolRoot(r));
+  if (relatives.includes(sRoot)) return 200;
+
+  // 5. Substring match
+  const idx = sClean.indexOf(qClean);
   if (idx >= 0) return 120 - idx;
+
   return 0;
 }
 
@@ -263,7 +299,8 @@ async function maybeEnrichFromRemote(candidates: Map<string, LookupCandidate>, q
 }
 
 export async function GET(req: NextRequest) {
-  const q = (req.nextUrl.searchParams.get("q") ?? "").trim().toUpperCase();
+  const rawQ = (req.nextUrl.searchParams.get("q") ?? "").trim().toUpperCase();
+  const q = rawQ; 
   const limitRaw = Number.parseInt(req.nextUrl.searchParams.get("limit") ?? "12", 10);
   const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(30, limitRaw)) : 12;
 
