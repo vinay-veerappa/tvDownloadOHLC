@@ -69,6 +69,7 @@ from .config import (
     LOOP_BEAT_SECONDS,
     SCHEDULER_MISFIRE_GRACE_TIME,
     MACRO_DTE_TARGETS,
+    PIPELINE_DTE_TARGETS,
     MACRO_VIEW,
     INTRADAY_VIEW,
     get_ticker_profile,
@@ -231,8 +232,8 @@ def run_pipeline(
         log.info("--- Processing: %s %s ---", ticker, mapping_str)
 
         try:
-            # 1. Fetch macro-scale option chain (covers 0DTE to 365DTE targets)
-            full_chain = fetch_option_chain_data(client, ticker, MACRO_DTE_TARGETS)
+            # 1. Fetch macro-scale option chain (covers near-term density + macro targets)
+            full_chain = fetch_option_chain_data(client, ticker, PIPELINE_DTE_TARGETS)
             chain = full_chain
             target_cash_spot = full_chain.spot_price
             source_ticker = ticker
@@ -253,7 +254,7 @@ def run_pipeline(
                         ticker,
                         fallback,
                     )
-                    chain = fetch_option_chain_data(client, fallback, MACRO_DTE_TARGETS)
+                    chain = fetch_option_chain_data(client, fallback, PIPELINE_DTE_TARGETS)
                     source_ticker = fallback
                 else:
                     log.error("No fallback available for %s — skipping.", ticker)

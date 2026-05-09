@@ -657,18 +657,50 @@ def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
     
     tz = ZoneInfo("America/New_York")
     now_ny = datetime.now(tz)
+
+    # ── DEBUG: log every expiry the chain has so we can diagnose coverage ──
+    all_expiries = sorted(by_expiry.keys())
+    log.info(
+        "[EM-DEBUG] %s | spot=%.2f | %d unique expiries in chain: %s",
+        chain.ticker,
+        spot,
+        len(all_expiries),
+        ", ".join(str(e) for e in all_expiries),
+    )
     
     for expiry, (calls, puts) in sorted(by_expiry.items()):
-        if not calls or not puts:
-            continue
-            
-        move, straddle = _expected_move(calls, puts, spot)
-        if move <= 0:
-            continue
-            
-        # DTE calculation (calendar days)
         dte = (expiry - now_ny.date()).days
-        
+
+        if not calls or not puts:
+            log.info(
+                "[EM-DEBUG] %s | %s (DTE=%d) — SKIP: calls=%d puts=%d",
+                chain.ticker, expiry, dte, len(calls), len(puts),
+            )
+            continue
+
+        # Get ATM call/put for diagnostics before calling _expected_move
+        atm_call = min(calls, key=lambda c: abs(c.strike - spot)) if calls else None
+        atm_put  = min(puts,  key=lambda p: abs(p.strike - spot)) if puts  else None
+        atm_call_iv = atm_call.iv if atm_call else 0.0
+        atm_put_iv  = atm_put.iv  if atm_put  else 0.0
+        blended_iv  = (atm_call_iv + atm_put_iv) / 2.0 if (atm_call_iv > 0 and atm_put_iv > 0) else 0.0
+
+        move, straddle = _expected_move(calls, puts, spot)
+
+        if move <= 0:
+            log.info(
+                "[EM-DEBUG] %s | %s (DTE=%d) — SKIP: move=0 | ATM call_iv=%.4f put_iv=%.4f blended=%.4f straddle=%.2f",
+                chain.ticker, expiry, dte,
+                atm_call_iv, atm_put_iv, blended_iv, straddle,
+            )
+            continue
+
+        log.info(
+            "[EM-DEBUG] %s | %s (DTE=%d) — OK: ±%.2f | ATM blended_iv=%.4f (%.2f%%) straddle=%.2f",
+            chain.ticker, expiry, dte,
+            move, blended_iv, blended_iv * 100, straddle,
+        )
+            
         ems.append(ExpectedMove(
             expiry=expiry.isoformat(),
             dte=max(0, dte),
@@ -679,6 +711,13 @@ def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
             straddle_85_upper=round(spot + straddle * 0.85, 2),
             straddle_85_lower=round(spot - straddle * 0.85, 2)
         ))
+
+    log.info(
+        "[EM-DEBUG] %s | %d EMs emitted: %s",
+        chain.ticker,
+        len(ems),
+        ", ".join(f"{e.expiry}(±{e.em_value})" for e in ems),
+    )
     return ems
 
 

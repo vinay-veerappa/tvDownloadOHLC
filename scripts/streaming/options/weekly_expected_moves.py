@@ -10,7 +10,8 @@ from scripts.streaming.options.config import (
     TOKEN_PATH,
     ACTIVE_TICKERS,
     INDEX_TO_FUTURES,
-    EXPECTED_MOVE_TXT
+    EXPECTED_MOVE_TXT,
+    NY_SESSION_ROLLOVER_TIME
 )
 from scripts.streaming.options.options_fetcher import (
     create_client, 
@@ -57,7 +58,7 @@ def calculate_exact_atm_em(cash_spot: float, exp_date: date, strikes_dict: dict)
 
 def fetch_weekly_expected_moves():
     client = create_client(SECRETS_PATH, TOKEN_PATH)
-    logical_today = _today_ny()
+    logical_today = _today_ny(rollover_time=NY_SESSION_ROLLOVER_TIME)
     
     days_to_friday = (4 - logical_today.weekday()) % 7
     target_friday = logical_today + timedelta(days=days_to_friday)

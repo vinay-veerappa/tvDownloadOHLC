@@ -778,9 +778,12 @@ if can_calculate
                     if u == "LOWER EM"  
                         st_EL := lv
 
+                    // VxV  --- calculation is wrong.  we need to use the correct close or open values to position this
+
+
                     // --- Smart Proximity & Merging ---
                     isTactical = str.contains(f_norm(ti), "0DTE") or str.contains(f_norm(ti), "LOCAL") or str.contains(f_norm(ti), "DEX") or str.contains(f_norm(ti), "CLIFF")
-                    pctDistance = (math.abs(lv - close) / close) * 100.0
+                    pctDistance = (math.abs(lv - close) / close) * 100.0   
                     passedProx = (i_proxFilter == 0.0) or (not isTactical) or (pctDistance <= i_proxFilter)
                     
                     // Make sure to pass BOTH arguments to f_showLevel
@@ -873,7 +876,7 @@ if can_calculate
                 if anc != ""
                     sR = array.get(sPrices, 0)
                     if math.abs(sR) > syminfo.mintick
-                        fs = close / sR
+                        fs = f_getContractCost(syminfo.main_tickerid) / f_getContractCost(sC)
                         if math.abs(fs - 1.0) > 0.001 
                             for k = 0 to array.size(sPrices) - 1
                                 array.set(sPrices, k, array.get(sPrices, k) * fs)

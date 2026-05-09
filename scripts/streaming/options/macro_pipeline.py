@@ -33,6 +33,7 @@ from scripts.streaming.options.options_fetcher import (
 from scripts.streaming.options.config import (
     DATA_DIR,
     MACRO_DTE_TARGETS,
+    PIPELINE_DTE_TARGETS,
     MACRO_LEVELS_TXT,
     INDEX_TO_FUTURES,
     USE_OPENING_BASIS,
@@ -221,7 +222,7 @@ def fetch_macro_data(ticker: str, force_refresh: bool = False, resolved_sym: str
             chain = fetch_futures_option_chain_data(ticker, MACRO_DTE_TARGETS)
         else:
             client = create_client()
-            chain = fetch_option_chain_data(client, fetch_sym, MACRO_DTE_TARGETS)
+            chain = fetch_option_chain_data(client, fetch_sym, PIPELINE_DTE_TARGETS)
         
         # Save to cache
         cache_file.write_text(json.dumps(_serialize_chain(chain), cls=DateEncoder, indent=2))

@@ -308,6 +308,10 @@ DTE_TARGETS: list[int] = list(range(14))
 # Multi-expiry targets for Macro HTF (Weekly/Monthly)
 MACRO_DTE_TARGETS: list[int] = [0, 7, 30, 45, 60, 90, 120, 150, 180, 270, 365]
 
+# Combined targets for the data fetching pipeline to ensure a dense near-term term structure
+# while still capturing long-term macro levels.
+PIPELINE_DTE_TARGETS: list[int] = sorted(list(set(DTE_TARGETS + MACRO_DTE_TARGETS)))
+
 # ---------------------------------------------------------------------------
 # GEX / wall detection
 # ---------------------------------------------------------------------------
