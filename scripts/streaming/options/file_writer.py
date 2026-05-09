@@ -1128,6 +1128,75 @@ def _format_scored_token(strike: float, filt: str, sig: str, label: str) -> str:
     return f"{strike:.2f}:{filt}|{sig}|{label}"
 
 
+def _extract_meta_tokens_from_copy_line(ticker: str, levels: Any) -> list[str]:
+    """Extract 0:META_* tokens from copy_ready_line output for unified payloads."""
+    try:
+        copy_line = copy_ready_line(ticker, levels)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        log.debug("Failed to derive META tokens for %s: %s", ticker, exc)
+        return []
+
+    _, sep, payload = copy_line.partition(": ")
+    if not sep:
+        return []
+
+    tokens = [chunk.strip() for chunk in payload.split(",") if chunk.strip()]
+    return [token for token in tokens if ":META_" in token]
+
+
+def _legacy_level_to_unified_token(token: str) -> str | None:
+    strike_str, sep, label = token.partition(":")
+    if not sep:
+        return None
+
+    try:
+        strike = round(float(strike_str.strip()), 2)
+    except ValueError:
+        return None
+
+    norm = label.strip().upper()
+    mapping: dict[str, tuple[str, str, str]] = {
+        "LOCAL CALL NODE": ("W", "S", "LOC C"),
+        "LOCAL PUT NODE": ("W", "S", "LOC P"),
+        "0DTE CALL WALL": ("W", "S", "0D CW"),
+        "0DTE PUT WALL": ("W", "S", "0D PW"),
+        "DEX CALL NODE": ("W", "S", "DEX C"),
+        "DEX PUT NODE": ("W", "S", "DEX P"),
+        "HEDGE WALL": ("W", "S", "HW"),
+        "MAX PAIN": ("A", "S", "MAX"),
+        "GAMMA MAGNET": ("I", "C", "MAGNET"),
+        "PIN STRIKE": ("A", "S", "PIN"),
+    }
+    mapped = mapping.get(norm)
+    if mapped is None:
+        return None
+    filt, sig, compact_label = mapped
+    return _format_scored_token(strike, filt, sig, compact_label)
+
+
+def _extract_structural_tokens_from_copy_line(ticker: str, levels: Any) -> list[str]:
+    """Promote dashboard-critical legacy levels into unified tokens for one-paste mode."""
+    try:
+        copy_line = copy_ready_line(ticker, levels)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        log.debug("Failed to derive structural tokens for %s: %s", ticker, exc)
+        return []
+
+    _, sep, payload = copy_line.partition(": ")
+    if not sep:
+        return []
+
+    tokens = [chunk.strip() for chunk in payload.split(",") if chunk.strip()]
+    structural_tokens: list[str] = []
+    for token in tokens:
+        if ":META_" in token:
+            continue
+        mapped = _legacy_level_to_unified_token(token)
+        if mapped is not None:
+            structural_tokens.append(mapped)
+    return structural_tokens
+
+
 def _compose_unified_tokens_for_ticker(
     ticker: str,
     scored: Any,
@@ -1135,6 +1204,7 @@ def _compose_unified_tokens_for_ticker(
     max_visible_dte_days: int,
     near_duplicate_tolerance: float,
     macro_scored: Any | None = None,
+    metadata_levels: Any | None = None,
     macro_spot: float | None = None,
     enable_macro_extensions: bool = ENABLE_UNIFIED_MACRO_EXTENSIONS,
     show_far_macro: bool = SHOW_FAR_MACRO_LEVELS,
@@ -1186,6 +1256,18 @@ def _compose_unified_tokens_for_ticker(
             owner_strikes.add(strike)
             merged_tokens.append(_format_scored_token(strike, filt, sig, label))
 
+    structural_source = metadata_levels if metadata_levels is not None else scored
+    seen_tokens = set(merged_tokens)
+    for token in _extract_structural_tokens_from_copy_line(ticker, structural_source):
+        if token in seen_tokens:
+            continue
+        merged_tokens.append(token)
+        seen_tokens.add(token)
+
+    # Carry tactical/dashboard metadata so Pine can load full briefing from unified text.
+    meta_source = metadata_levels if metadata_levels is not None else scored
+    merged_tokens.extend(_extract_meta_tokens_from_copy_line(ticker, meta_source))
+
     return merged_tokens
 
 
@@ -1196,6 +1278,7 @@ def write_unified_levels_txt(
     snapshot_suffix: str | None = None,
     max_visible_dte_days: int = MAX_VISIBLE_DTE_DAYS,
     macro_scored_levels: list[Any] | None = None,
+    metadata_levels_by_ticker: dict[str, Any] | None = None,
     macro_spot_by_ticker: dict[str, float] | None = None,
     enable_macro_extensions: bool = ENABLE_UNIFIED_MACRO_EXTENSIONS,
     show_far_macro: bool = SHOW_FAR_MACRO_LEVELS,
@@ -1212,6 +1295,7 @@ def write_unified_levels_txt(
             max_visible_dte_days=max_visible_dte_days,
             near_duplicate_tolerance=tolerance,
             macro_scored=macro_lookup.get(ticker),
+            metadata_levels=metadata_levels_by_ticker.get(ticker) if metadata_levels_by_ticker else None,
             macro_spot=(macro_spot_by_ticker or {}).get(ticker),
             enable_macro_extensions=enable_macro_extensions,
             show_far_macro=show_far_macro,
@@ -1289,6 +1373,7 @@ def write_unified_levels_json(
     snapshot_suffix: str | None = None,
     max_visible_dte_days: int = MAX_VISIBLE_DTE_DAYS,
     macro_scored_levels: list[Any] | None = None,
+    metadata_levels_by_ticker: dict[str, Any] | None = None,
     macro_spot_by_ticker: dict[str, float] | None = None,
     enable_macro_extensions: bool = ENABLE_UNIFIED_MACRO_EXTENSIONS,
     show_far_macro: bool = SHOW_FAR_MACRO_LEVELS,
@@ -1305,6 +1390,7 @@ def write_unified_levels_json(
             max_visible_dte_days=max_visible_dte_days,
             near_duplicate_tolerance=tolerance,
             macro_scored=macro_lookup.get(ticker),
+            metadata_levels=metadata_levels_by_ticker.get(ticker) if metadata_levels_by_ticker else None,
             macro_spot=(macro_spot_by_ticker or {}).get(ticker),
             enable_macro_extensions=enable_macro_extensions,
             show_far_macro=show_far_macro,

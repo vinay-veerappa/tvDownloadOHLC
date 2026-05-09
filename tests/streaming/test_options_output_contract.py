@@ -250,6 +250,62 @@ def test_write_scored_levels_keeps_flip_cliff_context_inflections(tmp_path: Path
     assert "MAGNET" not in text
 
 
+def test_write_unified_levels_txt_includes_structural_tokens_from_metadata(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        file_writer,
+        "copy_ready_line",
+        lambda ticker, levels: (
+            f"{ticker}: "
+            "100.00:Upper EM, "
+            "99.00:Gamma Magnet, "
+            "98.00:Pin Strike, "
+            "97.00:DEX Put Node, "
+            "96.00:DEX Call Node, "
+            "95.00:Local Put Node, "
+            "94.00:Local Call Node, "
+            "93.00:0DTE Put Wall, "
+            "92.00:0DTE Call Wall, "
+            "91.00:Max Pain, "
+            "90.00:Hedge Wall, "
+            "0:META_NOTE_Test"
+        ),
+    )
+
+    scored = SimpleNamespace(
+        ticker="SPX",
+        tagged_levels=[
+            MechanicalWall(
+                strike=110.0,
+                label="Wall",
+                significance="PRIMARY",
+                side="CALL",
+                field_name="call_wall",
+                pct_of_book=0.2,
+            ),
+        ],
+        expected_moves=[],
+    )
+
+    out = tmp_path / "unified_structural.txt"
+    file_writer.write_unified_levels_txt(
+        [scored],
+        path=out,
+        metadata_levels_by_ticker={"SPX": SimpleNamespace()},
+    )
+    text = out.read_text(encoding="utf-8")
+
+    assert "99.00:I|C|MAGNET" in text
+    assert "98.00:A|S|PIN" in text
+    assert "97.00:W|S|DEX P" in text
+    assert "96.00:W|S|DEX C" in text
+    assert "95.00:W|S|LOC P" in text
+    assert "94.00:W|S|LOC C" in text
+    assert "93.00:W|S|0D PW" in text
+    assert "92.00:W|S|0D CW" in text
+    assert "91.00:A|S|MAX" in text
+    assert "90.00:W|S|HW" in text
+
+
 def test_write_scored_levels_keeps_flip_cliff_even_when_near_duplicates(tmp_path: Path) -> None:
     scored = SimpleNamespace(
         tagged_levels=[
@@ -449,6 +505,95 @@ def test_write_unified_levels_txt_writes_stable_lines(tmp_path: Path) -> None:
         file_writer._compose_unified_tokens_for_ticker = original
 
     assert text.splitlines() == ["QQQ:100.00:A|P|U", "SPY:100.00:A|P|U"]
+
+
+def test_write_unified_levels_txt_includes_meta_tokens(tmp_path: Path) -> None:
+    scored = SimpleNamespace(
+        ticker="SPY",
+        tagged_levels=[
+            MechanicalWall(
+                strike=100.0,
+                label="Wall",
+                significance="PRIMARY",
+                side="CALL",
+                field_name="call_wall",
+                pct_of_book=0.2,
+            )
+        ],
+        expected_moves=[],
+    )
+
+    metadata = SimpleNamespace(
+        ticker="SPY",
+        em_value=5.0,
+        em_upper=105.0,
+        em_lower=95.0,
+        call_wall=101.0,
+        put_wall=99.0,
+        local_call_node=101.5,
+        local_put_node=98.5,
+        call_wall_0dte=102.0,
+        put_wall_0dte=98.0,
+        dex_call_node=103.0,
+        dex_put_node=97.0,
+        gamma_flip_upper=101.2,
+        gamma_flip_lower=98.8,
+        gamma_cliff_up=104.0,
+        gamma_cliff_down=96.0,
+        zero_gamma=100.0,
+        max_pain=100.5,
+        hedge_wall=97.5,
+        total_gex=10_000.0,
+        gex_regime="POSITIVE",
+        secondary_call_wall=102.5,
+        secondary_put_wall=97.5,
+        vol_trigger_upper_05=102.0,
+        vol_trigger_lower_05=98.0,
+        vol_trigger_upper_10=103.0,
+        vol_trigger_lower_10=97.0,
+        vol_trigger_upper_15=104.0,
+        vol_trigger_lower_15=96.0,
+        vanna_call_node=101.0,
+        vanna_put_node=99.0,
+        charm_call_node=8.0,
+        charm_put_node=2.0,
+        volume_imbalance_call_node=101.0,
+        volume_imbalance_put_node=99.0,
+        liquidity_vacuum_lower=95.0,
+        liquidity_vacuum_upper=105.0,
+        skew_pivot_put_25d=98.0,
+        skew_pivot_call_25d=102.0,
+        gamma_magnet=100.2,
+        pin_strike=100.1,
+        pin_odds=0.6,
+        wall_separation=2.0,
+        regime_label="BATTLE_ZONE",
+        directional_bias="NEUTRAL",
+        call_gamma_total=6_000.0,
+        put_gamma_total=4_000.0,
+        net_vanna_exposure=2.0,
+        net_speed_exposure=11.0,
+        total_gex_delta_adj=3_000.0,
+        call_gex_0dte=2_000.0,
+        put_gex_0dte=1_000.0,
+        atm_iv=0.15,
+        iv_change=0.01,
+        volatility_skew_premium=0.03,
+        spot=100.0,
+        futures_price=100.0,
+    )
+
+    out = tmp_path / "unified_with_meta.txt"
+    file_writer.write_unified_levels_txt(
+        [scored],
+        path=out,
+        metadata_levels_by_ticker={"SPY": metadata},
+    )
+    line = out.read_text(encoding="utf-8").strip()
+
+    assert "META_REGIME_" in line
+    assert "META_NOTE_" in line
+    assert "META_S_TRIG_" in line
 
 
 def test_write_unified_levels_json_matches_unified_txt_lines(tmp_path: Path) -> None:

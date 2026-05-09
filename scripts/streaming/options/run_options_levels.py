@@ -458,6 +458,7 @@ def run_pipeline(
                 versioned=versioned,
                 snapshot_suffix=snapshot_suffix,
                 macro_scored_levels=list(scored_macro_by_ticker.values()),
+                metadata_levels_by_ticker=cash_levels_by_ticker,
                 macro_spot_by_ticker={k: v.spot for k, v in macro_levels_by_ticker.items()},
             )
             write_unified_levels_json(
@@ -466,6 +467,7 @@ def run_pipeline(
                 versioned=versioned,
                 snapshot_suffix=snapshot_suffix,
                 macro_scored_levels=list(scored_macro_by_ticker.values()),
+                metadata_levels_by_ticker=cash_levels_by_ticker,
                 macro_spot_by_ticker={k: v.spot for k, v in macro_levels_by_ticker.items()},
             )
 
