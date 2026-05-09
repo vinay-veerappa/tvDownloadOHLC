@@ -260,7 +260,7 @@ def _build_coaches_note_payloads(
             tag = getattr(levels, "ticker")
             
         note = build_coaches_note(tag, levels)
-        content = f"**🏋️ Coach's Briefing — {tag}  |  {run_label}**\n\n{note}"
+        content = f"**🏋️ Coach's Briefing — {tag}  |  {run_label}**\n\n" + "\n".join(note)
 
         if len(content) > _DISCORD_MAX_CONTENT:
             content = content[:_DISCORD_MAX_CONTENT - 20] + "\n\n*(truncated)*"

@@ -103,6 +103,8 @@ i_dashBgOpacity     = input.int(95, "Bg Opacity", minval = 0, maxval = 100, grou
 
 var string GRP_VIS = "Level Filters"
 i_showEM            = input.bool(true, "Show EM Levels", group = GRP_VIS)
+i_showStraddleEM    = input.bool(true, "Show Straddle EM Levels", group = GRP_VIS)
+
 i_maxEMDte          = input.int(7, "Max EM DTE", minval = 0, maxval = 15, group = GRP_VIS, tooltip = "0 = show all")
 i_showCall          = input.bool(true, "Show Call Levels", group = GRP_VIS)
 i_showPut           = input.bool(true, "Show Put Levels", group = GRP_VIS)
@@ -286,6 +288,10 @@ var float st_TotalGEX = 0.0
 var float st_IV = 0.0
 var float st_IVChg = 0.0
 var float st_Skew = 0.0
+var float st_Stability = 0.0
+var float st_Integrity = 0.0
+var float st_VolExpUp = na
+var float st_VolExpDn = na
 
 
 
@@ -308,45 +314,9 @@ f_parseLevels(string lineText, array<float> prices, array<string> titles) =>
                     px := str.trim(array.get(parts, 0))
                     ti := str.trim(array.get(parts, 1))
             
-            // Metadata Check
+            // Skip Metadata in levels arrays
             if str.startswith(ti, "META_")
-                if str.startswith(ti, "META_REGIME_")
-                    st_Regime := str.replace(ti, "META_REGIME_", "")
-                else if str.startswith(ti, "META_BIAS_")
-                    st_Bias := str.replace(ti, "META_BIAS_", "")
-                else if str.startswith(ti, "META_NOTE_")
-                    st_Note := str.replace(ti, "META_NOTE_", "")
-                else if str.startswith(ti, "META_S_TRIG_")
-                    st_ShortTrig := str.tonumber(str.replace(ti, "META_S_TRIG_", ""))
-                else if str.startswith(ti, "META_L_TRIG_")
-                    st_LongTrig := str.tonumber(str.replace(ti, "META_L_TRIG_", ""))
-                else if str.startswith(ti, "META_S_TGT_")
-                    st_ShortTgt := str.tonumber(str.replace(ti, "META_S_TGT_", ""))
-                else if str.startswith(ti, "META_L_TGT_")
-                    st_LongTgt := str.tonumber(str.replace(ti, "META_L_TGT_", ""))
-                else if str.startswith(ti, "META_S_INV_")
-                    st_ShortInv := str.tonumber(str.replace(ti, "META_S_INV_", ""))
-                else if str.startswith(ti, "META_L_INV_")
-                    st_LongInv := str.tonumber(str.replace(ti, "META_L_INV_", ""))
-                else if str.startswith(ti, "META_VANNA_")
-                    st_Vanna := str.tonumber(str.replace(ti, "META_VANNA_", ""))
-                else if str.startswith(ti, "META_SPEED_")
-                    st_Speed := str.tonumber(str.replace(ti, "META_SPEED_", ""))
-                else if str.startswith(ti, "META_CHARM_")
-                    st_Charm := str.tonumber(str.replace(ti, "META_CHARM_", ""))
-                else if str.startswith(ti, "META_GEX_DA_")
-                    st_GEX_DA := str.tonumber(str.replace(ti, "META_GEX_DA_", ""))
-                else if str.startswith(ti, "META_GEX_TOTAL_")
-                    st_TotalGEX := str.tonumber(str.replace(ti, "META_GEX_TOTAL_", ""))
-                else if str.startswith(ti, "META_IV_")
-                    st_IV := str.tonumber(str.replace(ti, "META_IV_", ""))
-                else if str.startswith(ti, "META_IVCHG_")
-                    st_IVChg := str.tonumber(str.replace(ti, "META_IVCHG_", ""))
-                else if str.startswith(ti, "META_SKEW_")
-                    st_Skew := str.tonumber(str.replace(ti, "META_SKEW_", ""))
                 continue
-
-
 
             lv = math.round_to_mintick(str.tonumber(px))
             if not na(lv) and str.length(ti) > 0
@@ -491,14 +461,20 @@ f_compactTitle(string title) =>
         res := "MAG"
     else if u == "PIN STRIKE"
         res := "PIN"
+    else if str.contains(u, "UPPER 85% STRADDLE")
+        res :=  "EM+ 85%"
+    else if str.contains(u, "LOWER 85% STRADDLE")
+        res := "EM- 85%"
+    //log.info("Found "+ u)
     res
+    
 
 f_showLevel(string title, float price) =>
     u = f_norm(title)
-    bool show = true
+    bool show = true   //i_showStraddleEM
     
     // 1. Basic Type Filtering
-    if str.contains(u, "EM")
+    if str.contains(u, "EM") 
         show := i_showEM
         if show and i_maxEMDte > 0 and str.contains(u, "(") and str.contains(u, "D)")
             openParen = str.pos(u, "(")
@@ -508,6 +484,16 @@ f_showLevel(string title, float price) =>
                 dte = str.tonumber(dteStr)
                 if not na(dte) and dte > i_maxEMDte
                     show := false
+    else if str.contains(u, "STRADDLE") 
+        show := i_showStraddleEM
+        if show and i_maxEMDte > 0 and str.contains(u, "(") and str.contains(u, "D)")
+            openParen = str.pos(u, "(")
+            closeD = str.pos(u, "D)")
+            if not na(openParen) and not na(closeD) and closeD > openParen + 1
+                dteStr = str.substring(u, openParen + 1, closeD)
+                dte = str.tonumber(dteStr)
+                if not na(dte) and dte > i_maxEMDte
+                    show := false        
     else if u == "GAMMA MAGNET"
         show := i_showMagnet
     else if u == "PIN STRIKE"
@@ -709,6 +695,65 @@ if barstate.isfirst
     if matchScored != "" and i_showScored
         f_parseScoredLevels(rawScored, cached_sPrices, cached_sFilters, cached_sSigs, cached_sLabels)
 
+    // --- Metadata Parsing (Main Scope) ---
+    if matchDealer != ""
+        tokens = str.split(rawDealer, ",")
+        if array.size(tokens) > 0
+            for i = 0 to array.size(tokens) - 1
+                token = str.trim(array.get(tokens, i))
+                parts = str.split(token, ":")
+                string ti = ""
+                if i == 0
+                    if array.size(parts) >= 3
+                        ti := str.trim(array.get(parts, 2))
+                else
+                    if array.size(parts) >= 2
+                        ti := str.trim(array.get(parts, 1))
+                
+                if str.startswith(ti, "META_")
+                    if str.startswith(ti, "META_REGIME_")
+                        st_Regime := str.replace(ti, "META_REGIME_", "")
+                    else if str.startswith(ti, "META_BIAS_")
+                        st_Bias := str.replace(ti, "META_BIAS_", "")
+                    else if str.startswith(ti, "META_NOTE_")
+                        st_Note := str.replace(ti, "META_NOTE_", "")
+                    else if str.startswith(ti, "META_S_TRIG_")
+                        st_ShortTrig := str.tonumber(str.replace(ti, "META_S_TRIG_", ""))
+                    else if str.startswith(ti, "META_L_TRIG_")
+                        st_LongTrig := str.tonumber(str.replace(ti, "META_L_TRIG_", ""))
+                    else if str.startswith(ti, "META_S_TGT_")
+                        st_ShortTgt := str.tonumber(str.replace(ti, "META_S_TGT_", ""))
+                    else if str.startswith(ti, "META_L_TGT_")
+                        st_LongTgt := str.tonumber(str.replace(ti, "META_L_TGT_", ""))
+                    else if str.startswith(ti, "META_S_INV_")
+                        st_ShortInv := str.tonumber(str.replace(ti, "META_S_INV_", ""))
+                    else if str.startswith(ti, "META_L_INV_")
+                        st_LongInv := str.tonumber(str.replace(ti, "META_L_INV_", ""))
+                    else if str.startswith(ti, "META_VANNA_")
+                        st_Vanna := str.tonumber(str.replace(ti, "META_VANNA_", ""))
+                    else if str.startswith(ti, "META_SPEED_")
+                        st_Speed := str.tonumber(str.replace(ti, "META_SPEED_", ""))
+                    else if str.startswith(ti, "META_CHARM_")
+                        st_Charm := str.tonumber(str.replace(ti, "META_CHARM_", ""))
+                    else if str.startswith(ti, "META_GEX_DA_")
+                        st_GEX_DA := str.tonumber(str.replace(ti, "META_GEX_DA_", ""))
+                    else if str.startswith(ti, "META_GEX_TOTAL_")
+                        st_TotalGEX := str.tonumber(str.replace(ti, "META_GEX_TOTAL_", ""))
+                    else if str.startswith(ti, "META_IV_")
+                        st_IV := str.tonumber(str.replace(ti, "META_IV_", ""))
+                    else if str.startswith(ti, "META_IVCHG_")
+                        st_IVChg := str.tonumber(str.replace(ti, "META_IVCHG_", ""))
+                    else if str.startswith(ti, "META_SKEW_")
+                        st_Skew := str.tonumber(str.replace(ti, "META_SKEW_", ""))
+                    else if str.startswith(ti, "META_STABILITY_")
+                        st_Stability := str.tonumber(str.replace(ti, "META_STABILITY_", ""))
+                    else if str.startswith(ti, "META_INTEGRITY_")
+                        st_Integrity := str.tonumber(str.replace(ti, "META_INTEGRITY_", ""))
+                    else if str.startswith(ti, "META_VOL_EXPANSION_UP_")
+                        st_VolExpUp := str.tonumber(str.replace(ti, "META_VOL_EXPANSION_UP_", ""))
+                    else if str.startswith(ti, "META_VOL_EXPANSION_DN_")
+                        st_VolExpDn := str.tonumber(str.replace(ti, "META_VOL_EXPANSION_DN_", ""))
+
 // Redraw / Calculation State
 var float st_ZG = na, var float st_MAG = na, var float st_PIN = na
 var float st_CW = na, var float st_PW = na, var float st_EU = na, var float st_EL = na
@@ -716,6 +761,15 @@ var float st_GFU = na, var float st_GFL = na, var float st_GCU = na, var float s
 var float st_CW0 = na, var float st_PW0 = na, var float st_MP = na, var float st_HW = na
 var float st_LCN = na, var float st_LPN = na, var float st_DCN = na, var float st_DPN = na
 var string st_Asset = ""
+var float st_ANCHOR = na
+var string st_ANCHOR_LABEL = ""
+
+// Global line vars for EM and Gamma Flip fills (must be global to be used outside if blocks)
+var line line_emUp = na
+var line line_emDn = na
+var line line_gcUp = na
+var line line_gcDn = na
+var bool etfConversion = false
 
 f_clearAll() =>
     while array.size(allLines) > 0
@@ -732,20 +786,21 @@ var s_sig = ""
 if can_calculate
     can_calculate := false
     f_clearAll()
-    st_ZG := na, st_MAG := na, st_PIN := na
+    st_ZG := na, st_MAG := na, st_PIN := na, st_ANCHOR := na
+    st_ANCHOR_LABEL := ""
     st_CW := na, st_PW := na, st_EU := na, st_EL := na
     st_GFU := na, st_GFL := na, st_GCU := na, st_GCD := na
     st_CW0 := na, st_PW0 := na, st_MP := na, st_HW := na
     st_LCN := na, st_LPN := na, st_DCN := na, st_DPN := na
     st_ShortTrig := na, st_LongTrig := na, st_ShortInv := na, st_LongInv := na
     st_ShortTgt := na, st_LongTgt := na
+    st_VolExpUp := na, st_VolExpDn := na
     st_Asset := matchDealer != "" ? matchDealer : matchMacro
-    
-    var line line_emUp = na
-    var line line_emDn = na
-    var line line_gcUp = na
-    var line line_gcDn = na
-    var bool etfConversion = false    
+    line_emUp := na
+    line_emDn := na
+    line_gcUp := na
+    line_gcDn := na
+    etfConversion := false
 
     // Arrays to process both sources
     srcRaw = array.new_string()
@@ -761,9 +816,14 @@ if can_calculate
         for sIdx = 0 to array.size(srcRaw) - 1
             if not array.get(srcShow, sIdx)
                 continue
-                
-            pPrices = (array.get(srcRaw, sIdx) == rawDealer ) ? cached_dPrices : cached_mPrices 
-            pTitles = (array.get(srcRaw, sIdx) == rawDealer ) ? cached_dTitles : cached_mTitles
+            
+            // Get cached data
+            cachePrices = (array.get(srcRaw, sIdx) == rawDealer ) ? cached_dPrices : cached_mPrices 
+            cacheTitles = (array.get(srcRaw, sIdx) == rawDealer ) ? cached_dTitles : cached_mTitles
+            
+            // ── Create local copies for this bar's processing ──
+            pPrices = array.copy(cachePrices)
+            pTitles = array.copy(cacheTitles)
             
             // ── Futures Anchor Scaling ──
             sC = f_canonicalSymbol(array.get(srcRaw, sIdx) == rawDealer ? matchDealer : matchMacro)
@@ -773,7 +833,7 @@ if can_calculate
             sFut = f_isOvernightFutures(sC)
             cFut = f_isOvernightFutures(pC)
 
-            if cFut and sF == cF and not sFut and not etfConversion
+            if cFut and sF == cF and not sFut
                 // We are on a futures ticker but data is from Spot/ETF
                 anc = sC == "ES" or sC == "SPX" or sC == "SPY" ? "ES" : sC == "NQ" or sC == "NDX" or sC == "QQQ" ? "NQ" : sC == "YM" or sC == "DJI" or sC == "DIA" ? "YM" : sC == "RTY" or sC == "RUT" or sC == "IWM" ? "RTY" : ""
                 if anc != ""
@@ -781,12 +841,10 @@ if can_calculate
                         sR = array.get(pPrices, 0)
                         if math.abs(sR) > syminfo.mintick
                             fs = f_getContractCost(syminfo.main_tickerid) / f_getContractCost(sC)
-                            //fs1 = close / sR
-                            log.info("Contract fraction {0} -> {1} -- {2} -> {3} " + sC, fs, f_getContractCost(sC) , f_getContractCost(syminfo.main_tickerid), array.get(pPrices, 0))
                             if math.abs(fs - 1.0) > 0.001 
                                 for k = 0 to array.size(pPrices) - 1
                                     array.set(pPrices, k, array.get(pPrices, k) * fs)
-                                    etfConversion := true
+                                etfConversion := true
             
             if array.size(pPrices) > 0
                 // Temporary arrays for aggregated levels
@@ -897,7 +955,6 @@ if can_calculate
                         // Capture EM lines for fills (from the merged output)
                         if str.contains(a_ti, "GF U") or str.contains(a_ti, "Gamma Flip Upper")
                             line_gcUp := ln
-                            log.info("Got line object for gamma fill")
                         if str.contains(a_ti, "GF L") or str.contains(a_ti, "Flip Lower")
                             line_gcDn := ln
 
@@ -920,8 +977,6 @@ if can_calculate
 
     
         if array.size(sPrices) > 0
-            // Optional: apply same futures anchor scaling as dealer levels
-            // (copy the scaling block from the existing dealer/macro processing)
             // ── Apply Futures Anchor Scaling for Scored Levels ──
             sC = f_canonicalSymbol(matchScored)
             pC = f_canonicalSymbol(f_primarySymbol())
@@ -971,31 +1026,36 @@ if can_calculate
                         array.push(labelCols, lc)
 
             // ── Dashboard Tracking for Scored Levels ──
-            // Override dashboard state variables with scored data if present.
-            // This lets the dashboard show scored-derived values when available.
             for i = 0 to array.size(sPrices) - 1
                 s_flt := array.get(sFilters, i)
                 s_sig := array.get(sSigs, i)
-                s_lbl = str.upper(array.get(sLabels, i))
+                s_lbl = array.get(sLabels, i)
                 s_lv  = array.get(sPrices, i)
+                u_lbl = str.upper(s_lbl)
                 
                 // Walls → override CW/PW
-                if s_flt == "W" and s_sig == "P"
-                    if str.contains(s_lbl, "CW") and not str.contains(s_lbl, "0D")
+                if s_flt == "W"
+                    if str.contains(u_lbl, "CW") and not str.contains(u_lbl, "0D")
                         st_CW := s_lv
-                    if str.contains(s_lbl, "PW") or str.contains(s_lbl, "HW")
+                    if str.contains(u_lbl, "PW") or str.contains(u_lbl, "HW")
                         st_PW := s_lv
                         st_HW := s_lv
-                // Anchors → no direct dashboard mapping yet, but track best anchor
-                // Inflections → override ZG
-                if s_flt == "I" and str.contains(s_lbl, "ZERO")
-                    st_ZG := s_lv
-                if s_flt == "I" and str.contains(s_lbl, "MAGNET")
-                    st_MAG := s_lv
-                if s_flt == "I" and str.contains(s_lbl, "CLIFF UP")
-                    st_GCU := s_lv
-                if s_flt == "I" and str.contains(s_lbl, "CLIFF DN")
-                    st_GCD := s_lv
+                
+                // Anchors → track st_ANCHOR
+                if s_flt == "A" and na(st_ANCHOR)
+                    st_ANCHOR := s_lv
+                    st_ANCHOR_LABEL := s_lbl
+                
+                // Inflections → override ZG/MAG
+                if s_flt == "I"
+                    if str.contains(u_lbl, "ZERO")
+                        st_ZG := s_lv
+                    if str.contains(u_lbl, "MAGNET")
+                        st_MAG := s_lv
+                    if str.contains(u_lbl, "CLIFF UP")
+                        st_GCU := s_lv
+                    if str.contains(u_lbl, "CLIFF DN")
+                        st_GCD := s_lv
 
 
     
@@ -1024,11 +1084,9 @@ if barstate.islast
 // ═══════════════════════════════════════════════════════════════════════
 
 var table dash = na
-var float st_ANCHOR = na
-var string st_ANCHOR_LABEL = ""
 
 if barstate.isfirst
-    dash := table.new(f_pos(i_dashPos), 2, 22, bgcolor=color.new(#131722, 100 - i_dashBgOpacity), border_width=0)
+    dash := table.new(f_pos(i_dashPos), 2, 30, bgcolor=color.new(#131722, 100 - i_dashBgOpacity), border_width=0)
 
 
 if barstate.islast and i_showDash
@@ -1065,7 +1123,7 @@ if barstate.islast and i_showDash
     row = 0
     // Row  0: Header
     table.cell(dash, 0, row, primary + " | " + modeText, text_color = color.white, text_size = tSz)
-    table.cell(dash, 1, row, "Loaded: " + resolved, text_color = str.length(st_Asset) > 0 ? color.lime : color.red, text_size = tSz)
+    table.cell(dash, 1, row, "Loaded: " + resolved + (etfConversion ? " (Scaled)" : ""), text_color = str.length(st_Asset) > 0 ? color.lime : color.red, text_size = tSz)
     // Row  1: Regime + Direction
     row := row+1
     table.cell(dash, 0, row, "REGIME", text_color = color.gray, text_size = tSz)
@@ -1081,10 +1139,15 @@ if barstate.islast and i_showDash
     table.cell(dash, 1, row, f_num(st_PIN), text_color = i_colPinStrike, text_size = tSz)
     // Row  4: Separation + EM + GEX
     row := row+1
-    table.cell(dash, 0, row, "SEP|EM±|GEX(Σ|Δ)", text_color = color.gray, text_size = tSz)
-    gexClr = (math.abs(st_TotalGEX) > 0 and math.abs(st_GEX_DA / st_TotalGEX) < 0.6) ? color.yellow : color.white
-    gexPrefix = (gexClr == color.yellow) ? "🕳️ " : ""
-    table.cell(dash, 1, row, f_num(wSep) + " | " + f_num(emV) + " | " + gexPrefix + f_num(st_TotalGEX) + " | " + f_num(st_GEX_DA), text_color = gexClr, text_size = tSz)
+    table.cell(dash, 0, row, "SEP | EM± | GEX Σ", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, row, f_num(wSep) + " | " + f_num(emV) + " | " + f_num(st_TotalGEX), text_color = color.white, text_size = tSz)
+
+    // Row 4.1: Integrity & Stability (New)
+    row := row+1
+    integClr = st_Integrity < 0.6 ? color.yellow : color.white
+    stabClr  = st_Stability > 0.6 ? color.orange : color.white
+    table.cell(dash, 0, row, "INTEGRITY | STAB", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, row, (st_Integrity < 0.6 ? "🕳️ " : "🧱 ") + str.tostring(st_Integrity * 100, "0") + "% | " + (st_Stability > 0.6 ? "⚠️ " : "✅ ") + str.tostring(st_Stability * 100, "0") + "%", text_color = color.white, text_size = tSz)
 
     // Row  5: ZG
     row := row+1
@@ -1094,6 +1157,11 @@ if barstate.islast and i_showDash
     row := row+1
     table.cell(dash, 0, row, "CLIFFS", text_color = color.gray, text_size = tSz)
     table.cell(dash, 1, row, "↓" + f_num(st_GCD) + " | ↑" + f_num(st_GCU), text_color = color.teal, text_size = tSz)
+
+    // Row 6.1: Vol Expansion Triggers (New)
+    row := row+1
+    table.cell(dash, 0, row, "VOL EXPANSION", text_color = color.gray, text_size = tSz)
+    table.cell(dash, 1, row, "↓" + f_num(st_VolExpDn) + " | ↑" + f_num(st_VolExpUp), text_color = color.new(#FF00FF, 0), text_size = tSz)
 
     //if s_flt == "A" and s_sig == "P" and na(st_ANCHOR)
     //    st_ANCHOR := s_lv
@@ -1131,6 +1199,11 @@ if barstate.islast and i_showDash
     table.cell(dash, 1, row, ivIcon + " " + str.tostring(st_IV * 100, "#.#") + "% (" + str.tostring(st_IVChg * 100, "+#.#") + "%) | " + skewIcon + " " + str.tostring(st_Skew * 100, "+#.#") + "%", text_color = color.white, text_size = tSz)
 
 
+    // --- DEX Highlight Logic (Targeting) ---
+    prox_thr = emV2 * 0.1 // 10% of EM as proximity
+    isNearDCN = not na(st_DCN) and math.abs(close - st_DCN) < prox_thr
+    isNearDPN = not na(st_DPN) and math.abs(close - st_DPN) < prox_thr
+    
     // Row  7: Separator
     row := row+1
     table.cell(dash, 0, row, "", text_size = size.tiny)
@@ -1140,9 +1213,9 @@ if barstate.islast and i_showDash
     table.cell(dash, 0, row, "PLAN", text_color = color.white, text_size = tSz)
     dexInfo = ""
     if not na(st_DPN) or not na(st_DCN)
-        dexInfo := "DEX " + f_num(st_DPN) + "/" + f_num(st_DCN)
+        dexInfo := (isNearDPN ? "🎯 " : "") + "DEX " + f_num(st_DPN) + " / " + (isNearDCN ? "🎯 " : "") + f_num(st_DCN)
     row := row+1
-    table.cell(dash, 1, row, dexInfo, text_color = color.white, text_size = tSz)
+    table.cell(dash, 1, row, dexInfo, text_color = (isNearDCN or isNearDPN) ? color.yellow : color.white, text_size = tSz)
     // Row  9: Short
     row := row+1
     sZ = ""
@@ -1174,10 +1247,25 @@ if barstate.islast and i_showDash
     table.cell(dash, 0, row, "EM", text_color = color.aqua, text_size = tSz)
     table.cell(dash, 1, row, f_num(st_EL) + " ↔ " + f_num(st_EU), text_color = color.aqua, text_size = tSz)
     
-    // Row 14: Coach's Note
+    // Row 14: Coach's Note (with wrapping)
     row := row+1
     table.cell(dash, 0, row, "NOTE", text_color = color.orange, text_size = tSz)
-    table.cell(dash, 1, row, st_Note, text_color = color.white, text_size = tSz, text_halign = text.align_left)
+    if str.length(st_Note) > 60
+        // Find a space to split near 60 chars — scan substring window for a space
+        splitIdx = 60
+        window = str.substring(st_Note, 60, math.min(81, str.length(st_Note)))
+        spacePos = str.pos(window, " ")
+        if not na(spacePos)
+            splitIdx := 60 + spacePos
+        
+        note1 = str.substring(st_Note, 0, splitIdx)
+        note2 = str.substring(st_Note, splitIdx)
+        table.cell(dash, 1, row, note1, text_color = color.white, text_size = tSz, text_halign = text.align_left)
+        row := row + 1
+        table.cell(dash, 0, row, "", text_size = tSz)
+        table.cell(dash, 1, row, note2, text_color = color.white, text_size = tSz, text_halign = text.align_left)
+    else
+        table.cell(dash, 1, row, st_Note, text_color = color.white, text_size = tSz, text_halign = text.align_left)
 
 if barstate.islast and not i_showDash and not na(dash)
     table.clear(dash, 0, 0, 1, 16)

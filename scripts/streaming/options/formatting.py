@@ -379,6 +379,7 @@ def copy_ready_line(tag: str, levels: Any) -> str:
     parts.append(f"0:META_CHARM_{charm:.2f}")
     
     total_gex = getattr(levels, "total_gex", 0.0)
+    gex_da = getattr(levels, "total_gex_delta_adj", 0.0) or 0.0
     parts.append(f"0:META_GEX_DA_{gex_da:.2f}")
     parts.append(f"0:META_GEX_TOTAL_{total_gex:.2f}")
 
@@ -396,6 +397,12 @@ def copy_ready_line(tag: str, levels: Any) -> str:
     parts.append(f"0:META_IV_{atm_iv:.4f}")
     parts.append(f"0:META_IVCHG_{iv_chg:.4f}")
     parts.append(f"0:META_SKEW_{skew:.4f}")
+
+    # Vol Triggers (Vol Expansion Boundaries)
+    vol_up_05 = getattr(levels, "vol_trigger_upper_05", None)
+    vol_dn_05 = getattr(levels, "vol_trigger_lower_05", None)
+    if vol_up_05: parts.append(f"0:META_VOL_EXPANSION_UP_{vol_up_05:.2f}")
+    if vol_dn_05: parts.append(f"0:META_VOL_EXPANSION_DN_{vol_dn_05:.2f}")
 
 
 
@@ -418,9 +425,15 @@ def copy_ready_line(tag: str, levels: Any) -> str:
 
 
 def build_pine_note(levels: HasLevels) -> str:
-    \"\"\"Generate a high-signal tactical summary for the Pine Script dashboard.\"\"\"
+    """Generate a high-signal tactical summary for the Pine Script dashboard."""
     regime = levels.regime_label
     bias = levels.directional_bias
+    iv_chg = levels.iv_change
+    skew = levels.volatility_skew_premium or 0.0
+    ref_price = getattr(levels, "spot", None) or getattr(levels, "futures_price", None)
+    
+    # Market Mood Emoji
+    mood = "🛡️" if regime == "PINNED" else "🚀" if regime == "TRENDING" else "🔄" if regime == "BATTLE_ZONE" else "⚡" if regime == "COILED" else "⚪"
     
     # Core strategy per regime
     strategies = {
@@ -435,36 +448,45 @@ def build_pine_note(levels: HasLevels) -> str:
     # Add Greek/Institutional modifiers
     mods = []
     
-    # Vanna impact
+    # Vanna impact (Squeeze vs Expansion)
     vanna = levels.net_vanna_exposure
     if abs(vanna) > 1.5:
-        mods.append("🌊 Vanna Squeeze" if vanna > 0 else "💨 Vanna Drag")
+        if vanna > 0:
+            mods.append("🌊 Vanna Squeeze" if iv_chg < 0 else "📈 Vanna Support")
+        else:
+            mods.append("💨 Vanna Drag" if iv_chg < 0 else "📉 Vanna Expansion")
     
-    # Charm impact (passive rehedging)
+    # Charm impact (Afternoon Drift)
     charm_net = (levels.charm_call_node - levels.charm_put_node) if (levels.charm_call_node and levels.charm_put_node) else 0
     if abs(charm_net) > 5.0: 
-         mods.append("⏳ Charm Decay" if charm_net > 0 else "⚡ Charm Accel")
+         mods.append("⏳ Afternoon Drift" if charm_net > 0 else "⚡ Afternoon Weight")
 
-    # Speed / Volatility sensitivity
+    # Speed / Volatility sensitivity (Hedging Velocity)
     speed = getattr(levels, "net_speed_exposure", 0.0) or 0.0
     if abs(speed) > 10.0:
-        mods.append("🏎️ High Hedging Velocity")
+        mods.append("🏎️ Hedging Velocity High")
 
-    # GEX DA Awareness (Porous structure check)
+    # GEX DA Awareness (Structural Integrity)
     gex_da = getattr(levels, "total_gex_delta_adj", 0.0) or 0.0
     total_gex = getattr(levels, "total_gex", 0.0)
     da_ratio = abs(gex_da / total_gex) if total_gex != 0 else 1.0
     
     if da_ratio < 0.6:
-        mods.append("🕳️ Porous")
+        mods.append("🕳️ Porous Structure")
     elif da_ratio > 0.9:
-        mods.append("🧱 Solid")
+        mods.append("🧱 Solid Integrity")
+
+    # Liquidity Vacuum (Gap Risk)
+    gf_up = levels.gamma_flip_upper
+    gf_dn = levels.gamma_flip_lower
+    wall_c = levels.call_wall
+    wall_p = levels.put_wall
+    if ref_price and gf_up and wall_c and gf_up < ref_price < wall_c:
+        mods.append("🕳️ Gap Risk Up")
+    if ref_price and gf_dn and wall_p and wall_p < ref_price < gf_dn:
+        mods.append("🕳️ Gap Risk Dn")
 
     # IV/Skew modifiers
-    atm_iv = getattr(levels, "atm_iv", 0.0) or 0.0
-    iv_chg = getattr(levels, "iv_change", 0.0)
-    skew = getattr(levels, "volatility_skew_premium", 0.0) or 0.0
-
     if iv_chg > 0.02: mods.append("📈 Vol Expansion")
     elif iv_chg < -0.02: mods.append("📉 Vol Crush")
     
@@ -473,27 +495,16 @@ def build_pine_note(levels: HasLevels) -> str:
 
     # Stability (0DTE concentration)
     gex_0dte = (getattr(levels, "call_gex_0dte", 0.0) or 0.0) + (getattr(levels, "put_gex_0dte", 0.0) or 0.0)
-    if total_gex != 0 and (abs(gex_0dte) / abs(total_gex)) > 0.6:
-        mods.append("⚠️ 0DTE Trap")
+    if total_gex != 0 and (abs(gex_0dte) / abs(total_gex)) > 0.5:
+        mods.append("⚠️ Gamma Trap Sensitive (0DTE)")
 
     if levels.pin_odds > 0.15:
         mods.append(f"🎯 Pin {levels.pin_odds:.0%}")
     
     # Proximity Check (Dynamic based on Spot)
-    ref_price = getattr(levels, "spot", None) or getattr(levels, "futures_price", None)
-    if ref_price:
-        walls = [levels.call_wall, levels.put_wall, levels.call_wall_0dte, levels.put_wall_0dte]
-        near_wall = any(abs(w - ref_price) / ref_price < 0.0015 for w in walls if w)
-        if near_wall:
-            mods.append("🛑 Wall Nearby")
-
     mod_str = f" | {' '.join(mods)}" if mods else ""
-    return f"[{bias}] {base}{mod_str}"
+    return f"{mood} [{bias}] {base}{mod_str}"
 
-
-# ---------------------------------------------------------------------------
-# Coach's Note — plain-English game plan
-# ---------------------------------------------------------------------------
 
 def build_coaches_note(tag: str, levels: HasLevels) -> list[str]:
     """
@@ -508,136 +519,134 @@ def build_coaches_note(tag: str, levels: HasLevels) -> list[str]:
     
     # Institutional Regime Descriptions
     regime_desc = {
-        "PINNED": "Mean-Reversion Profile. Dealers are net long gamma, providing thick liquidity and dampening volatility. Expect price to seek the 🧲 Gamma Magnet. Volatility is suppressed.",
-        "TRENDING": "Expansion Profile. Negative GEX acceleration is active. Dealers are forced to chase price (Gamma Trap), fueling directional momentum. Avoid fading extremes.",
-        "COILED": "Compression Profile. Energy is building inside a tight structural corridor. Expect a high-velocity volatility breakout. Stay flat until a definitive level is accepted.",
-        "BATTLE_ZONE": "Two-Way Auction. Large institutional walls are active at the extremes. Expect sharp reversals and 'ping-pong' rotation between walls. Trade for range, not trend.",
-        "NEUTRAL": "Transition Profile. Market structure is resetting. Monitor the primary walls for early directional conviction. Reduced sizing recommended."
+        "PINNED": "The market is in a structural Mean-Reversion Profile. Dealers are net long gamma, acting as a volatility buffer. Expect price to be tethered to the 🧲 Gamma Magnet with suppressed realized volatility.",
+        "TRENDING": "Expansion Profile active. Negative GEX acceleration is fueling a 'Gamma Trap' where dealers must chase price, amplifying directional momentum. Avoid fading walls; join the expansion.",
+        "COILED": "Structural Compression Profile. Energy is building within a tight corridor. Expect a high-velocity breakout once a primary level is breached. Stay flat until acceptance is confirmed.",
+        "BATTLE_ZONE": "Rotation Profile. Large institutional walls are active at the extremes. Expect sharp 'ping-pong' reversals and high-volatility rotations. Trade the range, not the trend.",
+        "NEUTRAL": "Transition Profile. Market structure is resetting post-expiry or post-macro event. Monitor the primary walls for early conviction. Reduced sizing recommended."
     }
     
     thesis = (
-        f"The {tag} options landscape is in a {levels.regime_label} regime ({levels.gex_regime} GEX) "
-        f"with a {bias} bias. {regime_desc.get(levels.regime_label, '')}"
+        f"**INSTITUTIONAL REGIME:** The {tag} landscape is currently in a **{levels.regime_label}** regime "
+        f"({levels.gex_regime} GEX) with a **{bias}** bias. {regime_desc.get(levels.regime_label, '')}"
     )
 
     parts: list[str] = [thesis]
 
-    # 2. Execution Directives
+    # 2. THE PIVOT
+    # Priority: Gamma Flip (Tactical) > Zero Gamma (Structural) > Max Pain (Gravitational)
+    pivots_of_interest = []
+    if levels.gamma_flip_lower: pivots_of_interest.append(("Gamma Flip (Dn)", levels.gamma_flip_lower, 0))
+    if levels.gamma_flip_upper: pivots_of_interest.append(("Gamma Flip (Up)", levels.gamma_flip_upper, 0))
+    if levels.zero_gamma: pivots_of_interest.append(("Zero Gamma", levels.zero_gamma, 1))
+    if levels.max_pain: pivots_of_interest.append(("Max Pain", levels.max_pain, 2))
     
-    # Directive: The Pivot
-    pivot = levels.zero_gamma if levels.zero_gamma else (levels.gamma_flip_lower if levels.gamma_flip_lower else levels.max_pain)
-    if pivot is not None:
+    if ref_price and pivots_of_interest:
+        # Sort by proximity to ref_price
+        pivots_of_interest.sort(key=lambda x: abs(x[1] - ref_price))
+        best_name, best_price, _ = pivots_of_interest[0]
+        
         parts.append(
-            f"**THE PIVOT:** {f(pivot)} is today's primary line-in-the-sand. "
-            f"Holding above = Buyers in structural control, targeting overhead DEX nodes. "
-            f"Slipping below = Sellers in control, seeking GC↓ liquidity and hedge walls."
+            f"**THE PIVOT:** {best_name} at {f(best_price)} is the primary tactical 'line-in-the-sand'. "
+            f"Trading { 'above' if ref_price > best_price else 'below' } this node with proximity to {f(ref_price)} "
+            f"defines the immediate intraday conviction. Support here targets overhead liquidity."
         )
+    elif pivots_of_interest:
+        best_name, best_price, _ = sorted(pivots_of_interest, key=lambda x: x[2])[0]
+        parts.append(f"**THE PIVOT:** {best_name} at {f(best_price)} is the primary structural level.")
 
-    # Directive: Tactical Delta (Regime Specific)
+    # 3. TACTICAL DELTA (Execution Plan)
     if levels.regime_label == "PINNED":
         parts.append(
-            "**TACTICAL DELTA:** Favor mean-reversion. Buy at Put Wall/EM Lower, Short at Call Wall/EM Upper. "
-            "Primary profit target is the Gamma Magnet. Tighten stops on approach to walls."
+            "**TACTICAL DELTA:** Prioritize mean-reversion. Fade extensions at Put Wall/EM Lower and Call Wall/EM Upper. "
+            "Primary profit target is the Gamma Magnet. Expect 'sticky' price action at strikes."
         )
     elif levels.regime_label == "TRENDING":
         parts.append(
-            "**TACTICAL DELTA:** Join the trend. Negative gamma increases velocity. Do not fade the walls. "
-            "Wait for a 5-min candle to accept outside the 0DTE wall, then enter on the first retest. Target 2.0σ EM."
+            "**TACTICAL DELTA:** Do not fade the walls. Negative gamma increases velocity; join the trend on 5-min acceptance "
+            "outside the 0DTE walls. Target the 2.0σ Expected Move."
         )
     elif levels.regime_label == "COILED":
         parts.append(
-            f"**TACTICAL DELTA:** Stay flat until the break. If price clears {f(pivot)} with volume, "
-            "join the expansion. Avoid mid-range entries inside the flip zone as noise remains high."
+            f"**TACTICAL DELTA:** Stay patient. If price clears {f(pivot)} with volume, join the breakout. "
+            "Avoid 'chopping' in the mid-range as dealers rebalance their books."
         )
     elif levels.regime_label == "BATTLE_ZONE":
         parts.append(
-            "**TACTICAL DELTA:** Trade the extremes. These are wide rotations. Ensure stops are outside the ATR. "
-            "Target the Gamma Magnet as Target 1 and the opposite wall as Target 2."
+            "**TACTICAL DELTA:** Institutional extremes are in play. Short at Call Wall, Long at Put Wall. "
+            "Take profit aggressively at the Gamma Magnet (Target 1) and the opposite wall (Target 2)."
         )
     else:
-        parts.append("**TACTICAL DELTA:** Reassess at the 10:30am ET liquidity window to confirm regime resolution before deploying risk.")
+        parts.append("**TACTICAL DELTA:** Monitor the 10:30am ET liquidity window to confirm the day's primary rotation before deploying risk.")
 
-    # Directive: GEX Delta-Adjusted (Structure Quality / Porousness)
-    gex_da = getattr(levels, "total_gex_delta_adj", 0.0) or 0.0
-    total_gex = getattr(levels, "total_gex", 0.0)
-    if total_gex != 0:
-        da_ratio = abs(gex_da / total_gex)
-        if da_ratio < 0.6:
-            parts.append(f"**STRUCTURE ALERT:** High delta-imbalance (DA Ratio: {da_ratio:.2f}). The gamma walls are 'porous'. Price is likely to 'slip' through levels rather than bounce cleanly.")
-        elif da_ratio > 0.9:
-             parts.append(f"**STRUCTURE ALERT:** High structural integrity (DA Ratio: {da_ratio:.2f}). Levels are robust and likely to hold on first tests.")
-
-    # Directive: Stability Audit (0DTE Concentration)
-    gex_0dte = (getattr(levels, "call_gex_0dte", 0.0) or 0.0) + (getattr(levels, "put_gex_0dte", 0.0) or 0.0)
-    if total_gex != 0:
-        stability = abs(gex_0dte) / abs(total_gex)
-        if stability > 0.6:
-            parts.append(f"**STABILITY ALERT:** High 0DTE Concentration ({stability:.0%}). The 'Tail is wagging the dog'. Structure is fragile; expect sudden, violent hedging rotations as strikes are challenged.")
-
-    # Directive: Vanna Flow
+    # 4. GREEK FLOW & INVENTORY
+    g_mods = []
+    
+    # Vanna
     vanna = levels.net_vanna_exposure
     if abs(vanna) > 1.0:
-        v_direction = "Bullish Tailwind" if vanna > 0 else "Bearish Headwind"
-        v_logic = (
-            "Dealers will be forced to buy as IV drops (Vanna Squeeze), providing upward drift." if vanna > 0 
-            else "Dealers will be forced to sell as IV drops, amplifying downside pressure. Retests of resistance may be sold aggressively."
-        )
-        parts.append(f"**VANNA FLOW:** {v_direction}. {v_logic}")
-
-    # Directive: Charm Flow (Time Decay)
+        v_dir = "Bullish Tailwind" if vanna > 0 else "Bearish Headwind"
+        # Deeper insight: Vanna is the change in Delta for a change in Vol.
+        v_desc = "Dealers buying as IV drops (Vanna-positive)" if vanna > 0 else "Dealers selling as IV drops (Vanna-negative)"
+        g_mods.append(f"Vanna ({v_dir}): {v_desc}. This creates a feedback loop that { 'supports dips' if vanna > 0 else 'accelerates slides' }.")
+        
+    # Charm
     charm_net = (levels.charm_call_node - levels.charm_put_node) if (levels.charm_call_node and levels.charm_put_node) else 0
     if abs(charm_net) > 3.0:
-        c_direction = "Positive Charm" if charm_net > 0 else "Negative Charm"
-        c_logic = (
-            "Passive delta buying as time passes (decay). Expect drift toward the upside into the afternoon." if charm_net > 0
-            else "Passive delta selling as time passes. Expect afternoon selling pressure or 'heavy' price action."
-        )
-        parts.append(f"**CHARM FLOW:** {c_direction}. {c_logic}")
+        c_dir = "Passive Buying" if charm_net > 0 else "Passive Selling"
+        # Deeper insight: Charm is the change in Delta over time (Theta for Delta).
+        g_mods.append(f"Charm ({c_dir}): Passive dealer flow from time-decay. This creates { 'afternoon upside drift' if charm_net > 0 else 'afternoon weight' } as we approach expiry.")
 
-    # Directive: Speed Awareness (Gamma Sensitivity)
-    speed = getattr(levels, "net_speed_exposure", None)
-    if speed is not None and abs(speed) > 10.0:
-        parts.append(f"**SPEED ALERT:** Extreme Gamma Sensitivity ({speed:+.1f}). Price movements will trigger rapid dealer rehedging. Expect 'jumpy' price action near major strikes.")
+    # Speed
+    speed = getattr(levels, "net_speed_exposure", 0.0) or 0.0
+    if abs(speed) > 10.0:
+        g_mods.append(f"High Hedging Velocity (Speed: {speed:+.1f}). Price will be 'jumpy' and gamma-sensitive near primary strikes.")
 
-    # Directive: Liquidity Vacuums
-    v_low = levels.liquidity_vacuum_lower
-    v_high = levels.liquidity_vacuum_upper
-    if ref_price:
-        if v_low and abs(v_low - ref_price) / ref_price < 0.003:
-            parts.append(f"**LIQUIDITY GAP:** Price is near a downside vacuum at {f(v_low)}. If support breaks, expect a rapid acceleration into this zone.")
-        if v_high and abs(v_high - ref_price) / ref_price < 0.003:
-            parts.append(f"**LIQUIDITY GAP:** Price is near an upside vacuum at {f(v_high)}. If resistance clears, expect a 'vacuum rally' toward the next node.")
+    if g_mods:
+        parts.append("**DEALER INVENTORY:** " + " | ".join(g_mods))
 
-    # Directive: Gravity
-    if levels.gamma_magnet is not None:
-        parts.append(
-            f"**GRAVITY:** Price is likely to be drawn toward the {f(levels.gamma_magnet)} Magnet. "
-            "This strike marks the center of the dealer's book; expect stalls, rotations, or 'pinning' behavior here."
-        )
-
-    # Directive: IV & Skew Dynamics
+    # 5. VOLATILITY & SKEW (The Tape)
     atm_iv = getattr(levels, "atm_iv", 0.0) or 0.0
     iv_chg = getattr(levels, "iv_change", 0.0)
     skew = getattr(levels, "volatility_skew_premium", 0.0) or 0.0
     
     if atm_iv > 0:
-        vol_state = "Expanding" if iv_chg > 0.01 else "Contracting" if iv_chg < -0.01 else "Stable"
-        skew_state = "Bullish (Call Favor)" if skew < -0.05 else "Bearish (Put Favor)" if skew > 0.05 else "Neutral"
-        parts.append(
-            f"**VOLATILITY DASH:** IV is {atm_iv:.1%} ({vol_state}). Skew is {skew_state} ({skew:+.1%}). "
-            f"{'Rising IV suggests expansion/hedging velocity increase.' if iv_chg > 0.01 else 'Falling IV favors dealer mean-reversion and pinning.'}"
-        )
+        vol_st = "EXPANDING" if iv_chg > 0.01 else "CONTRACTING" if iv_chg < -0.01 else "STABLE"
+        skew_st = "BULLISH (Call Favor)" if skew < -0.05 else "BEARISH (Put Favor)" if skew > 0.05 else "NEUTRAL"
+        
+        # Deeper insight on Skew
+        skew_logic = "Institutional demand for calls is distorting the surface; path of least resistance is up." if skew < -0.05 else \
+                     "High demand for put protection; any break below the pivot could see sharp acceleration." if skew > 0.05 else \
+                     "Volatility surface is balanced."
+        
+        iv_msg = "Rising IV increases hedging velocity and breakout risk." if iv_chg > 0.01 else "Contracting IV favors pinning and dealer liquidity provision."
+        parts.append(f"**VOLATILITY DASH:** IV is {atm_iv:.1%} ({vol_st}). Skew is {skew_st} ({skew:+.1%}). {skew_logic} {iv_msg}")
 
-    # Directive: The Risk Envelope
+    # 6. STRUCTURAL INTEGRITY
+    gex_da = getattr(levels, "total_gex_delta_adj", 0.0) or 0.0
+    total_gex = getattr(levels, "total_gex", 0.0)
+    gex_0dte = (getattr(levels, "call_gex_0dte", 0.0) or 0.0) + (getattr(levels, "put_gex_0dte", 0.0) or 0.0)
+    
+    s_mods = []
+    if total_gex != 0:
+        da_ratio = abs(gex_da / total_gex)
+        if da_ratio < 0.6: 
+            s_mods.append(f"🕳️ Porous Walls (DA: {da_ratio:.2f}) - Dealer support is thin; expect levels to be 'leaky'.")
+        elif da_ratio > 0.9: 
+            s_mods.append(f"🧱 Solid Structure (DA: {da_ratio:.2f}) - Institutional positioning is robust; walls should hold on first test.")
+        
+        stability = abs(gex_0dte) / abs(total_gex)
+        if stability > 0.6: 
+            s_mods.append(f"⚠️ Fragile (0DTE Conc: {stability:.0%}) - Position is dominated by today's expiry; expect volatility as positions roll/expire.")
+
+    if s_mods:
+        parts.append("**STRUCTURE ALERTS:** " + " | ".join(s_mods))
+
+    # 7. RISK ENVELOPE
     parts.append(
-        f"**RISK ENVELOPE:** ±1.0σ Expected Move is {f(levels.em_lower)} ↔ {f(levels.em_upper)}. "
-        f"Vol Triggers: {f(levels.vol_trigger_upper_05)} (Upper) | {f(levels.vol_trigger_lower_05)} (Lower). "
-        "Acceptance outside these triggers signals a regime shift."
-    )
-
-    return parts
-.vol_trigger_lower_05)} (Lower). "
-        "Breaching these levels signals a volatility expansion event."
+        f"**RISK ENVELOPE:** ±1.0σ EM: {f(levels.em_lower)} ↔ {f(levels.em_upper)}. "
+        f"Vol Triggers: {f(levels.vol_trigger_upper_05)} (Up) | {f(levels.vol_trigger_lower_05)} (Down). "
+        "Acceptance outside these triggers signals a structural regime shift and potential for gamma-ramping."
     )
 
     return parts
