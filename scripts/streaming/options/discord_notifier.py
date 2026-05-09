@@ -211,6 +211,16 @@ def _build_embed(levels: HasLevels, run_label: str, scored: ScoredLevels | None 
              "inline": True},
         ])
 
+    front_em = None
+    ems = getattr(levels, "expected_moves", None) or []
+    if ems:
+        ems_sorted = sorted(
+            [em for em in ems if getattr(em, "dte", None) is not None],
+            key=lambda em: em.dte,
+        )
+        if ems_sorted:
+            front_em = ems_sorted[0]
+
     fields.extend([
         # ── Spacer ───────────────────────────────────────────────
         {"name": "\u200b", "value": "\u200b", "inline": False},
@@ -227,8 +237,10 @@ def _build_embed(levels: HasLevels, run_label: str, scored: ScoredLevels | None 
         # ── Spacer ───────────────────────────────────────────────
         {"name": "\u200b", "value": "\u200b", "inline": False},
         # ── Expected move ────────────────────────────────────────
-        {"name": f"🔼 EM Upper ({tag})",     "value": fmt(levels.em_upper),    "inline": True},
-        {"name": f"🔽 EM Lower ({tag})",     "value": fmt(levels.em_lower),    "inline": True},
+        {"name": f"🔼 EM HI ({tag})",        "value": fmt(front_em.em_upper if front_em else levels.em_upper), "inline": True},
+        {"name": f"🔽 EM LO ({tag})",        "value": fmt(front_em.em_lower if front_em else levels.em_lower), "inline": True},
+        {"name": f"🔼 EM85 HI ({tag})",      "value": fmt(front_em.straddle_85_upper if front_em and getattr(front_em, 'straddle_85_upper', 0) else None), "inline": True},
+        {"name": f"🔽 EM85 LO ({tag})",      "value": fmt(front_em.straddle_85_lower if front_em and getattr(front_em, 'straddle_85_lower', 0) else None), "inline": True},
         {"name": "EMA straddle value" if is_tl else "Straddle (Cash)",
          "value": fmt(levels.atm_straddle), "inline": True},
         # ── Compact execution plan ──────────────────────────────

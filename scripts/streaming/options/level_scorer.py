@@ -63,6 +63,7 @@ class ScoredLevels:
     calendar: CalendarContext = field(default_factory=CalendarContext)
     bias: str = "NEUTRAL"
     regime: str = "TRANSITION"
+    expected_moves: list[Any] = field(default_factory=list)
     
     @property
     def resistance_walls(self) -> list[MechanicalWall]:
@@ -557,5 +558,6 @@ def score_levels(
         tagged_levels=all_levels,
         calendar=cal,
         bias=levels.directional_bias,
-        regime=levels.gex_regime
+        regime=levels.gex_regime,
+        expected_moves=getattr(levels, "expected_moves", []),
     )

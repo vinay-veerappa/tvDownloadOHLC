@@ -938,6 +938,33 @@ def _build_scored_tokens(
     emitted_strikes: list[float] = []
     tokens: list[str] = []
 
+    # Day-trader priority: explicit front EM and EM85 markers always lead output.
+    ems = sorted(
+        [em for em in getattr(scored, "expected_moves", []) if getattr(em, "dte", None) is not None],
+        key=lambda em: em.dte,
+    )
+    if ems:
+        front_em = ems[0]
+        front_dte = f" {front_em.dte}d" if getattr(front_em, "dte", None) is not None else ""
+
+        em_priority_tokens: list[tuple[float, str]] = [
+            (round(float(front_em.em_upper), 2), f"E|P|EM HI{front_dte}"),
+            (round(float(front_em.em_lower), 2), f"E|P|EM LO{front_dte}"),
+        ]
+
+        if hasattr(front_em, "straddle_85_upper") and front_em.straddle_85_upper > 0:
+            em_priority_tokens.extend(
+                [
+                    (round(float(front_em.straddle_85_upper), 2), f"E|P|EM85 HI{front_dte}"),
+                    (round(float(front_em.straddle_85_lower), 2), f"E|P|EM85 LO{front_dte}"),
+                ]
+            )
+
+        for strike, meta in em_priority_tokens:
+            # Always emit front EM/EM85 explicitly, even when clustered.
+            tokens.append(f"{strike:.2f}:{meta}")
+            emitted_strikes.append(strike)
+
     for tl in scored.tagged_levels:
         if tl.significance == "CONTEXT":
             continue
