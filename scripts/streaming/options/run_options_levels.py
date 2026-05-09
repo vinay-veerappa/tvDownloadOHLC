@@ -329,10 +329,24 @@ def run_pipeline(
             # Construct a virtual intraday chain
             intraday_chain = replace(chain, contracts=intraday_calls + intraday_puts)
 
+            profile = get_ticker_profile(ticker)
+
             # 4. Calculate Dealer Levels for both timeframes
             log.info("Calculating [%s] and [MACRO] levels structure...", ticker)
-            levels_intraday = calculate_dealer_levels(intraday_chain, source_ticker)
-            levels_macro = calculate_dealer_levels(chain, source_ticker)
+            levels_intraday = calculate_dealer_levels(
+                intraday_chain,
+                source_ticker,
+                min_oi_floor=profile.min_oi_floor,
+                wall_scope="FRONT_WEEK_WEIGHTED",
+                wall_dte_range=INTRADAY_VIEW.dte_range,
+            )
+            levels_macro = calculate_dealer_levels(
+                chain,
+                source_ticker,
+                min_oi_floor=profile.min_oi_floor,
+                wall_scope="ALL_EXPIRIES_WEIGHTED",
+                wall_dte_range=MACRO_VIEW.dte_range,
+            )
 
             # 3b. If fallback source differs from target ticker, rescale levels
             # back into target cash index space before futures translation.
@@ -357,7 +371,6 @@ def run_pipeline(
             macro_levels_by_ticker[ticker] = levels_macro
 
             # 5. Compute ScoredLevels for both views
-            profile = get_ticker_profile(ticker)
             
             # Intraday Scoring (filters to ±6% spot, Primary/Secondary/Context)
             scored_intraday = score_levels(levels_intraday, intraday_chain, ticker, profile, INTRADAY_VIEW)

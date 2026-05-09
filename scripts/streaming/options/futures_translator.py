@@ -84,7 +84,21 @@ class TranslatedLevels:
     call_gamma_total: float
     put_gamma_total: float
     net_vanna_exposure: float
+    wall_scope: str
+    wall_dte_min: int
+    wall_dte_max: int
+    concentration_score: float
+    call_wall_oi: int
+    put_wall_oi: int
+    pin_strike_oi: int
     net_speed_exposure: float
+    hedge_flow_up_10: float
+    hedge_flow_up_25: float
+    hedge_flow_up_50: float
+    hedge_flow_dn_10: float
+    hedge_flow_dn_25: float
+    hedge_flow_dn_50: float
+    hourly_flow_curve: list[dict[str, float | str]]
     total_gex_delta_adj: float | None
     call_volume_centroid: float | None
     put_volume_centroid: float | None
@@ -200,7 +214,21 @@ def translate_to_futures(
         call_gamma_total=levels.call_gamma_total,
         put_gamma_total=levels.put_gamma_total,
         net_vanna_exposure=levels.net_vanna_exposure,
+        wall_scope=levels.wall_scope,
+        wall_dte_min=levels.wall_dte_min,
+        wall_dte_max=levels.wall_dte_max,
+        concentration_score=levels.concentration_score,
+        call_wall_oi=levels.call_wall_oi,
+        put_wall_oi=levels.put_wall_oi,
+        pin_strike_oi=levels.pin_strike_oi,
         net_speed_exposure=levels.net_speed_exposure,
+        hedge_flow_up_10=levels.hedge_flow_up_10,
+        hedge_flow_up_25=levels.hedge_flow_up_25,
+        hedge_flow_up_50=levels.hedge_flow_up_50,
+        hedge_flow_dn_10=levels.hedge_flow_dn_10,
+        hedge_flow_dn_25=levels.hedge_flow_dn_25,
+        hedge_flow_dn_50=levels.hedge_flow_dn_50,
+        hourly_flow_curve=levels.hourly_flow_curve,
         total_gex_delta_adj=levels.total_gex_delta_adj,
         call_volume_centroid=_shift(levels.call_volume_centroid),
         put_volume_centroid=_shift(levels.put_volume_centroid),

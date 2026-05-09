@@ -313,6 +313,22 @@ var float st_IVChg = 0.0
 var float st_Skew = 0.0
 var float st_Stability = 0.0
 var float st_Integrity = 0.0
+var string st_WallScope = "UNSPECIFIED"
+var float st_HFlowUp10 = 0.0
+var float st_HFlowDn10 = 0.0
+var float st_HFlowUp25 = 0.0
+var float st_HFlowDn25 = 0.0
+var float st_HFlowUp50 = 0.0
+var float st_HFlowDn50 = 0.0
+var float st_OICallWall = 0.0
+var float st_OIPutWall = 0.0
+var float st_OIPin = 0.0
+var string st_OIVelCWStatus = "N/A"
+var string st_OIVelPWStatus = "N/A"
+var string st_OIVelPINStatus = "N/A"
+var float st_OIVelCWRate = 0.0
+var float st_OIVelPWRate = 0.0
+var float st_OIVelPINRate = 0.0
 var float st_VolExpUp = na
 var float st_VolExpDn = na
 
@@ -805,6 +821,40 @@ if barstate.isfirst
                             st_Stability := str.tonumber(str.replace(ti, "META_STABILITY_", ""))
                         else if str.startswith(ti, "META_INTEGRITY_")
                             st_Integrity := str.tonumber(str.replace(ti, "META_INTEGRITY_", ""))
+                        else if str.startswith(ti, "META_CONCENTRATION_")
+                            st_Integrity := str.tonumber(str.replace(ti, "META_CONCENTRATION_", ""))
+                        else if str.startswith(ti, "META_WALL_SCOPE_")
+                            st_WallScope := str.replace(ti, "META_WALL_SCOPE_", "")
+                        else if str.startswith(ti, "META_HFLOW_UP10_")
+                            st_HFlowUp10 := str.tonumber(str.replace(ti, "META_HFLOW_UP10_", ""))
+                        else if str.startswith(ti, "META_HFLOW_DN10_")
+                            st_HFlowDn10 := str.tonumber(str.replace(ti, "META_HFLOW_DN10_", ""))
+                        else if str.startswith(ti, "META_HFLOW_UP25_")
+                            st_HFlowUp25 := str.tonumber(str.replace(ti, "META_HFLOW_UP25_", ""))
+                        else if str.startswith(ti, "META_HFLOW_DN25_")
+                            st_HFlowDn25 := str.tonumber(str.replace(ti, "META_HFLOW_DN25_", ""))
+                        else if str.startswith(ti, "META_HFLOW_UP50_")
+                            st_HFlowUp50 := str.tonumber(str.replace(ti, "META_HFLOW_UP50_", ""))
+                        else if str.startswith(ti, "META_HFLOW_DN50_")
+                            st_HFlowDn50 := str.tonumber(str.replace(ti, "META_HFLOW_DN50_", ""))
+                        else if str.startswith(ti, "META_OI_CALLWALL_")
+                            st_OICallWall := str.tonumber(str.replace(ti, "META_OI_CALLWALL_", ""))
+                        else if str.startswith(ti, "META_OI_PUTWALL_")
+                            st_OIPutWall := str.tonumber(str.replace(ti, "META_OI_PUTWALL_", ""))
+                        else if str.startswith(ti, "META_OI_PIN_")
+                            st_OIPin := str.tonumber(str.replace(ti, "META_OI_PIN_", ""))
+                        else if str.startswith(ti, "META_OI_VEL_CW_STATUS_")
+                            st_OIVelCWStatus := str.replace(ti, "META_OI_VEL_CW_STATUS_", "")
+                        else if str.startswith(ti, "META_OI_VEL_PW_STATUS_")
+                            st_OIVelPWStatus := str.replace(ti, "META_OI_VEL_PW_STATUS_", "")
+                        else if str.startswith(ti, "META_OI_VEL_PIN_STATUS_")
+                            st_OIVelPINStatus := str.replace(ti, "META_OI_VEL_PIN_STATUS_", "")
+                        else if str.startswith(ti, "META_OI_VEL_CW_RATE_")
+                            st_OIVelCWRate := str.tonumber(str.replace(ti, "META_OI_VEL_CW_RATE_", ""))
+                        else if str.startswith(ti, "META_OI_VEL_PW_RATE_")
+                            st_OIVelPWRate := str.tonumber(str.replace(ti, "META_OI_VEL_PW_RATE_", ""))
+                        else if str.startswith(ti, "META_OI_VEL_PIN_RATE_")
+                            st_OIVelPINRate := str.tonumber(str.replace(ti, "META_OI_VEL_PIN_RATE_", ""))
                         else if str.startswith(ti, "META_VOL_EXPANSION_UP_")
                             st_VolExpUp := str.tonumber(str.replace(ti, "META_VOL_EXPANSION_UP_", ""))
                         else if str.startswith(ti, "META_VOL_EXPANSION_DN_")
@@ -1186,12 +1236,12 @@ if barstate.islast
 var table dash = na
 
 if barstate.isfirst
-    dash := table.new(f_pos(i_dashPos), 2, 30, bgcolor=color.new(#131722, 100 - i_dashBgOpacity), border_width=0)
+    dash := table.new(f_pos(i_dashPos), 2, 36, bgcolor=color.new(#131722, 100 - i_dashBgOpacity), border_width=0)
 
 
 if barstate.islast and i_showDash
     tSz = f_labelSize(i_dashSize)
-    table.clear(dash, 0, 0, 1, 29)
+    table.clear(dash, 0, 0, 1, 35)
     
     // ── Derived metrics ──
     emV = not na(st_EU) and not na(st_EL) ? (st_EU - st_EL) / 2.0 : na
@@ -1293,12 +1343,16 @@ if barstate.islast and i_showDash
     table.cell(dash, 0, row, "GEX Delta-Adj", text_color = labelTxt, text_size = tSz)
     table.cell(dash, 1, row, f_dashNum(st_GEX_DA), text_color = gexDaClr, text_size = tSz)
 
-    // Row: Integrity & Stability
+    // Row: Concentration & Stability
     row := row+1
     integClr = st_Integrity < 0.6 ? color.yellow : color.white
     stabClr  = st_Stability > 0.6 ? color.orange : color.white
-    table.cell(dash, 0, row, "Integrity | Stability", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 0, row, "Concentration | Stability", text_color = labelTxt, text_size = tSz)
     table.cell(dash, 1, row, str.tostring(st_Integrity * 100, "0") + "% | " + str.tostring(st_Stability * 100, "0") + "%", text_color = st_Integrity < 0.6 ? integClr : stabClr, text_size = tSz)
+
+    row := row+1
+    table.cell(dash, 0, row, "Wall Scope", text_color = labelTxt, text_size = tSz)
+    table.cell(dash, 1, row, st_WallScope, text_color = color.silver, text_size = tSz)
 
     // --- Institutional Flows (Greeks) ---
     row := row+1
@@ -1312,9 +1366,28 @@ if barstate.islast and i_showDash
     table.cell(dash, 1, row, f_dashNum(st_Vanna) + " | " + f_dashNum(st_Charm), text_color = vannaClr, text_size = tSz)
     
     row := row+1
-    table.cell(dash, 0, row, "SPEED", text_color = labelTxt, text_size = tSz)
-    speedClr = math.abs(st_Speed) > 10.0 ? color.orange : color.gray
-    table.cell(dash, 1, row, f_dashNum(st_Speed), text_color = speedClr, text_size = tSz)
+    table.cell(dash, 0, row, "Hedge Flow ±25", text_color = labelTxt, text_size = tSz)
+    hfClr = math.abs(st_HFlowUp25) > math.abs(st_HFlowDn25) ? color.lime : color.red
+    table.cell(dash, 1, row, f_dashNum(st_HFlowDn25) + " / " + f_dashNum(st_HFlowUp25), text_color = hfClr, text_size = tSz)
+
+    row := row+1
+    table.cell(dash, 0, row, "OI Velocity", text_color = labelTxt, text_size = tSz)
+    oiVelTxt = "CW " + st_OIVelCWStatus + " " + str.tostring(st_OIVelCWRate, "+#.0") + "/m | " + "PW " + st_OIVelPWStatus + " " + str.tostring(st_OIVelPWRate, "+#.0") + "/m | " + "PIN " + st_OIVelPINStatus + " " + str.tostring(st_OIVelPINRate, "+#.0") + "/m"
+    buildMax = math.max(st_OIVelCWStatus == "BUILD" ? math.abs(st_OIVelCWRate) : 0.0, math.max(st_OIVelPWStatus == "BUILD" ? math.abs(st_OIVelPWRate) : 0.0, st_OIVelPINStatus == "BUILD" ? math.abs(st_OIVelPINRate) : 0.0))
+    decayMax = math.max(st_OIVelCWStatus == "DECAY" ? math.abs(st_OIVelCWRate) : 0.0, math.max(st_OIVelPWStatus == "DECAY" ? math.abs(st_OIVelPWRate) : 0.0, st_OIVelPINStatus == "DECAY" ? math.abs(st_OIVelPINRate) : 0.0))
+    domBuild = buildMax >= decayMax and buildMax > 0
+    domDecay = decayMax > buildMax and decayMax > 0
+    domMag = domBuild ? buildMax : domDecay ? decayMax : math.max(math.abs(st_OIVelCWRate), math.max(math.abs(st_OIVelPWRate), math.abs(st_OIVelPINRate)))
+    oiVelClr = color.silver
+    if st_OIVelCWStatus == "N/A" and st_OIVelPWStatus == "N/A" and st_OIVelPINStatus == "N/A"
+        oiVelClr := color.gray
+    else if domBuild
+        oiVelClr := domMag >= 2500 ? color.lime : domMag >= 600 ? color.new(color.lime, 0) : color.new(color.yellow, 0)
+    else if domDecay
+        oiVelClr := domMag >= 2500 ? color.red : domMag >= 600 ? color.new(color.red, 0) : color.new(color.orange, 0)
+    else
+        oiVelClr := domMag >= 600 ? color.yellow : color.silver
+    table.cell(dash, 1, row, oiVelTxt, text_color = oiVelClr, text_size = tSz)
 
     // --- IV & Skew row ---
     row := row+1
@@ -1402,4 +1475,4 @@ if barstate.islast and i_showDash
         table.cell(dash, 1, row, st_Note, text_color = color.white, text_size = tSz, text_halign = text.align_left)
 
 if barstate.islast and not i_showDash and not na(dash)
-    table.clear(dash, 0, 0, 1, 29)
+    table.clear(dash, 0, 0, 1, 35)

@@ -60,6 +60,10 @@ try:
         call_gamma_total=0,
         put_gamma_total=0,
         net_vanna_exposure=0,
+        wall_scope="FRONT_WEEK_WEIGHTED",
+        wall_dte_min=0,
+        wall_dte_max=14,
+        concentration_score=0.0,
         # Enhanced analytics (required)
         call_volume_centroid=None,
         put_volume_centroid=None,

@@ -52,6 +52,9 @@ class TickerSnapshot:
     atm_iv: float | None = None
     iv_change: float = 0
     spot: float = 0
+    call_wall_oi: int = 0
+    put_wall_oi: int = 0
+    pin_strike_oi: int = 0
 
 
 @dataclass
@@ -156,6 +159,9 @@ def build_current_state(
             atm_iv=getattr(tl, 'atm_iv', None),
             iv_change=iv_change,
             spot=spot,
+            call_wall_oi=getattr(tl, 'call_wall_oi', 0),
+            put_wall_oi=getattr(tl, 'put_wall_oi', 0),
+            pin_strike_oi=getattr(tl, 'pin_strike_oi', 0),
         )
 
     # Cash-space levels (secondary — stored for completeness)
@@ -181,6 +187,9 @@ def build_current_state(
                 atm_iv=getattr(levels, 'atm_iv', None),
                 iv_change=getattr(levels, 'iv_change', 0.0),
                 spot=levels.spot,
+                call_wall_oi=getattr(levels, 'call_wall_oi', 0),
+                put_wall_oi=getattr(levels, 'put_wall_oi', 0),
+                pin_strike_oi=getattr(levels, 'pin_strike_oi', 0),
             )
 
     return state

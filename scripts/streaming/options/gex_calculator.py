@@ -241,13 +241,27 @@ class DealerLevels:
     call_gamma_total: float             # Aggregate call-side gamma (for regime decomposition)
     put_gamma_total: float              # Aggregate put-side gamma
     net_vanna_exposure: float           # Signed net vanna: negative -> IV↓ = bearish pressure
+    wall_scope: str                     # Explicit wall-construction scope descriptor
+    wall_dte_min: int                   # Lower DTE bound used for wall construction
+    wall_dte_max: int                   # Upper DTE bound used for wall construction
+    concentration_score: float          # Bounded [0,1] concentration metric
+    call_wall_oi: int = 0               # OI resting at call wall strike (all contracts)
+    put_wall_oi: int = 0                # OI resting at put wall strike (all contracts)
+    pin_strike_oi: int = 0              # Combined call+put OI at pin strike
 
     # ── Enhanced analytics (from ezoptionsschwab integration) ─────────────
-    call_volume_centroid: float | None  # Volume-weighted avg call strike (VWAP-of-strikes)
-    put_volume_centroid: float | None   # Volume-weighted avg put strike
-    total_gex_delta_adj: float          # Delta-adjusted GEX: |delta|-weighted gamma exposure
-    net_speed_exposure: float           # Rate of gamma change per $1 spot move (3rd order)
-    max_gex_strike: float | None        # Strike with the absolute maximum net GEX
+    call_volume_centroid: float | None = None  # Volume-weighted avg call strike (VWAP-of-strikes)
+    put_volume_centroid: float | None = None   # Volume-weighted avg put strike
+    total_gex_delta_adj: float = 0.0           # Delta-adjusted GEX: |delta|-weighted gamma exposure
+    net_speed_exposure: float = 0.0            # Backward-compat only (deprecated for briefing)
+    hedge_flow_up_10: float = 0.0
+    hedge_flow_up_25: float = 0.0
+    hedge_flow_up_50: float = 0.0
+    hedge_flow_dn_10: float = 0.0
+    hedge_flow_dn_25: float = 0.0
+    hedge_flow_dn_50: float = 0.0
+    hourly_flow_curve: list[dict[str, float | str]] = field(default_factory=list)
+    max_gex_strike: float | None = None # Strike with the absolute maximum net GEX
     atm_iv: float | None = None         # ATM implied volatility (decimal, e.g. 0.20 = 20%)
     iv_change: float = 0.0             # Daily change in IV (delta from previous run)
 
@@ -289,6 +303,10 @@ def _best_contract_per_strike(contracts: list[OptionContract]) -> dict[float, Op
 
 def _safe_div(num: float, den: float) -> float:
     return num / den if den else 0.0
+
+
+def _normal_cdf(x: float) -> float:
+    return 0.5 * math.erfc(-x / math.sqrt(2.0))
 
 
 def _build_strike_gex(calls: list[OptionContract], puts: list[OptionContract], spot: float) -> list[StrikeGEX]:
@@ -548,8 +566,18 @@ def _find_gamma_flip_zone(strikes: list[StrikeGEX], spot: float, min_oi: int) ->
     crossing_idx: int | None = None
     
     if crossings:
-        # Pick the crossing strike closest to spot.
-        crossing_idx = min(crossings, key=lambda i: abs(strikes[i].strike - spot))
+        # Structural crossing selection by tape regime:
+        # long-gamma tape -> nearest crossing below spot,
+        # short-gamma tape -> nearest crossing above spot.
+        tape_is_long_gamma = strikes[-1].cumulative_gex >= 0
+        below = [i for i in crossings if strikes[i].strike <= spot]
+        above = [i for i in crossings if strikes[i].strike >= spot]
+        if tape_is_long_gamma and below:
+            crossing_idx = max(below, key=lambda i: strikes[i].strike)
+        elif (not tape_is_long_gamma) and above:
+            crossing_idx = min(above, key=lambda i: strikes[i].strike)
+        else:
+            crossing_idx = min(crossings, key=lambda i: abs(strikes[i].strike - spot))
         
         # Interpolate between crossing_idx-1 and crossing_idx
         idx = crossing_idx
@@ -592,6 +620,115 @@ def _find_hedge_wall(strikes: list[StrikeGEX], spot: float) -> float | None:
     if not downside:
         return None
     return min(downside, key=lambda row: row.net_gex).strike
+
+
+def _net_delta_notional(
+    calls: list[OptionContract],
+    puts: list[OptionContract],
+    eval_spot: float,
+) -> float:
+    """Approximate net dealer-delta notional at a given spot using BSM deltas."""
+    if eval_spot <= 0:
+        return 0.0
+
+    tz_et = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz_et)
+    total = 0.0
+
+    for c in calls:
+        try:
+            exp_dt = datetime.combine(c.expiry, time(16, 0), tzinfo=tz_et)
+            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
+            iv = max(c.iv, 0.01)
+            d1, _, _ = _bsm_d1d2(eval_spot, c.strike, t, iv)
+            if d1 is None:
+                continue
+            delta = _normal_cdf(d1)
+            total += delta * c.open_interest * CONTRACT_MULTIPLIER * eval_spot
+        except Exception:
+            continue
+
+    for p in puts:
+        try:
+            exp_dt = datetime.combine(p.expiry, time(16, 0), tzinfo=tz_et)
+            t = max((exp_dt - now_et).total_seconds() / (365 * 24 * 3600), 1e-5)
+            iv = max(p.iv, 0.01)
+            d1, _, _ = _bsm_d1d2(eval_spot, p.strike, t, iv)
+            if d1 is None:
+                continue
+            delta = _normal_cdf(d1) - 1.0
+            total += delta * p.open_interest * CONTRACT_MULTIPLIER * eval_spot
+        except Exception:
+            continue
+
+    return round(total, 2)
+
+
+def _expected_hedge_flow_scenarios(
+    calls: list[OptionContract],
+    puts: list[OptionContract],
+    spot: float,
+) -> dict[str, float]:
+    """
+    Compute dealer hedge-flow deltas for +/-10, +/-25, +/-50 point scenarios.
+
+    Positive value => dealers must buy notional; negative => dealers must sell.
+    """
+    base = _net_delta_notional(calls, puts, spot)
+
+    def _flow(shift: float) -> float:
+        shifted = _net_delta_notional(calls, puts, spot + shift)
+        return round(shifted - base, 2)
+
+    return {
+        "up_10": _flow(10.0),
+        "up_25": _flow(25.0),
+        "up_50": _flow(50.0),
+        "dn_10": _flow(-10.0),
+        "dn_25": _flow(-25.0),
+        "dn_50": _flow(-50.0),
+    }
+
+
+def _hourly_charm_vanna_curve(
+    vanna_exposure: float,
+    charm_call_node: float | None,
+    charm_put_node: float | None,
+) -> list[dict[str, float | str]]:
+    """Project a simple hourly pressure curve from current ET hour to close."""
+    tz_et = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz_et)
+    start_hour = max(now_et.hour, 10)
+    end_hour = 16
+
+    if start_hour >= end_hour:
+        return []
+
+    charm_net = (charm_call_node - charm_put_node) if (charm_call_node is not None and charm_put_node is not None) else 0.0
+    vanna_m = vanna_exposure / 1_000_000.0
+    charm_m = charm_net / 1_000_000.0
+    rows: list[dict[str, float | str]] = []
+
+    for hour in range(start_hour, end_hour):
+        # Weight rises into the close to reflect charm acceleration.
+        progress = (hour - start_hour + 1) / max(1, (end_hour - start_hour))
+        accel = 0.65 + 0.85 * progress
+        flow_m = round((0.25 * vanna_m + 0.75 * charm_m) * accel, 2)
+        rows.append({"window": f"{hour:02d}-{hour + 1:02d} ET", "flow_m": flow_m})
+
+    return rows
+
+
+def _filter_contracts_by_dte(contracts: list[OptionContract], dte_range: tuple[int, int]) -> list[OptionContract]:
+    min_dte, max_dte = dte_range
+    return [contract for contract in contracts if min_dte <= contract.dte <= max_dte]
+
+
+def _oi_at_strike(contracts: list[OptionContract], strike: float | None) -> int:
+    if strike is None:
+        return 0
+    target = float(strike)
+    return int(sum(c.open_interest for c in contracts if abs(c.strike - target) < 1e-9))
 
 
 def _atm_contract(calls: list[OptionContract], spot: float) -> OptionContract | None:
@@ -1104,7 +1241,14 @@ def _net_vanna_exposure(
     return round(call_vanna + put_vanna, 2)
 
 
-def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels:
+def calculate_dealer_levels(
+    chain: OptionChainData,
+    ticker: str,
+    *,
+    min_oi_floor: int = MIN_OI_THRESHOLD,
+    wall_scope: str = "FRONT_WEEK_WEIGHTED",
+    wall_dte_range: tuple[int, int] = (0, 14),
+) -> DealerLevels:
     spot = chain.spot_price
     if spot <= 0:
         raise ValueError(f"Spot price is zero for {ticker} — cannot calculate levels.")
@@ -1113,15 +1257,17 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
     total_gex = sum(row.net_gex for row in strikes)
     gex_regime = "POSITIVE" if total_gex >= 0 else "NEGATIVE"
 
-    call_wall, secondary_call_wall = _find_walls(chain.calls, MIN_OI_THRESHOLD, spot=spot, side="CALL")
-    put_wall, secondary_put_wall = _find_walls(chain.puts, MIN_OI_THRESHOLD, spot=spot, side="PUT")
+    wall_calls = _filter_contracts_by_dte(chain.calls, wall_dte_range)
+    wall_puts = _filter_contracts_by_dte(chain.puts, wall_dte_range)
+    call_wall, secondary_call_wall = _find_walls(wall_calls, min_oi_floor, spot=spot, side="CALL")
+    put_wall, secondary_put_wall = _find_walls(wall_puts, min_oi_floor, spot=spot, side="PUT")
     local_call_node, local_put_node = _find_local_nodes(strikes, spot)
 
     front_calls, front_puts = _find_front_dte_contracts(chain.calls, chain.puts)
-    call_wall_0dte, _ = _find_walls(front_calls, MIN_OI_THRESHOLD, spot=spot, side="CALL")
-    put_wall_0dte, _ = _find_walls(front_puts, MIN_OI_THRESHOLD, spot=spot, side="PUT")
+    call_wall_0dte, _ = _find_walls(front_calls, min_oi_floor, spot=spot, side="CALL")
+    put_wall_0dte, _ = _find_walls(front_puts, min_oi_floor, spot=spot, side="PUT")
 
-    gamma_flip_lower, gamma_flip_upper, zero_gamma = _find_gamma_flip_zone(strikes, spot, MIN_OI_THRESHOLD)
+    gamma_flip_lower, gamma_flip_upper, zero_gamma = _find_gamma_flip_zone(strikes, spot, min_oi_floor)
     hedge_wall = _find_hedge_wall(strikes, spot)
     max_pain = _find_max_pain(front_calls or chain.calls, front_puts or chain.puts)
 
@@ -1166,21 +1312,19 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
     # ── Delta-adjusted GEX ───────────────────────────────────────────────────
     total_gex_delta_adj = _delta_adjusted_gex(chain.calls, chain.puts, spot)
 
-    # ── Net Speed exposure ───────────────────────────────────────────────────
+    # ── Net Speed exposure retained for back-compat payloads only ───────────
     net_speed_exposure = _net_speed_exposure(chain.calls, chain.puts, spot)
+
+    # ── Day-trading hedge-flow scenarios (replaces speed in briefing) ───────
+    hedge_flow = _expected_hedge_flow_scenarios(chain.calls, chain.puts, spot)
 
     # NOTE: We intentionally leave None levels as None rather than defaulting
     # them to spot.  Collapsing everything to spot produces meaningless trade
     # plans ("short below spot, long above spot").  Downstream consumers
     # (discord_notifier, file_writer) already display "N/A" for None levels.
     #
-    # The only fallbacks that make structural sense:
-    #   - 0DTE walls fall back to all-expiry walls (same concept, wider DTE)
+    # The only fallback that makes structural sense:
     #   - hedge_wall falls back to put_wall (conceptually similar downside anchor)
-    if call_wall_0dte is None and call_wall is not None:
-        call_wall_0dte = call_wall
-    if put_wall_0dte is None and put_wall is not None:
-        put_wall_0dte = put_wall
     if hedge_wall is None and put_wall is not None:
         hedge_wall = put_wall
 
@@ -1191,14 +1335,24 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
     call_gamma_total = round(sum(row.call_gex for row in strikes), 2)
     put_gamma_total = round(sum(row.put_gex for row in strikes), 2)
     net_vanna = _net_vanna_exposure(chain.calls, chain.puts)
+    concentration_score = (
+        abs(total_gex_delta_adj) / (abs(total_gex_delta_adj) + abs(total_gex))
+        if (abs(total_gex_delta_adj) + abs(total_gex)) > 0
+        else 0.0
+    )
     
     # Strike with absolute maximum net GEX magnitude
     max_gex_strike = None
     if strikes:
         max_gex_strike = max(strikes, key=lambda x: abs(x.net_gex or 0)).strike
 
+    call_wall_oi = _oi_at_strike(chain.calls, call_wall)
+    put_wall_oi = _oi_at_strike(chain.puts, put_wall)
+    pin_strike_oi = _oi_at_strike(chain.calls, pin_strike) + _oi_at_strike(chain.puts, pin_strike)
+
     # ── Multi-Expiry Expected Moves ──────────────────────────────────────────
     expected_moves = _calculate_all_ems(chain)
+    hourly_flow_curve = _hourly_charm_vanna_curve(net_vanna, charm_call_node, charm_put_node)
 
     regime_label, directional_bias = _classify_regime(
         total_gex, separation, em_value, spot,
@@ -1285,12 +1439,26 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
         call_gamma_total=call_gamma_total,
         put_gamma_total=put_gamma_total,
         net_vanna_exposure=net_vanna,
+        wall_scope=wall_scope,
+        wall_dte_min=wall_dte_range[0],
+        wall_dte_max=wall_dte_range[1],
+        concentration_score=round(concentration_score, 4),
+        call_wall_oi=call_wall_oi,
+        put_wall_oi=put_wall_oi,
+        pin_strike_oi=pin_strike_oi,
         expected_moves=expected_moves,
         # ── Enhanced analytics ──
         call_volume_centroid=call_volume_centroid,
         put_volume_centroid=put_volume_centroid,
         total_gex_delta_adj=total_gex_delta_adj,
         net_speed_exposure=net_speed_exposure,
+        hedge_flow_up_10=hedge_flow["up_10"],
+        hedge_flow_up_25=hedge_flow["up_25"],
+        hedge_flow_up_50=hedge_flow["up_50"],
+        hedge_flow_dn_10=hedge_flow["dn_10"],
+        hedge_flow_dn_25=hedge_flow["dn_25"],
+        hedge_flow_dn_50=hedge_flow["dn_50"],
+        hourly_flow_curve=hourly_flow_curve,
         max_gex_strike=max_gex_strike,
         atm_iv=_atm_contract(chain.calls, spot).iv if chain.calls else None,
         strike_gex=strikes,
@@ -1374,11 +1542,25 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         call_gamma_total=levels.call_gamma_total,
         put_gamma_total=levels.put_gamma_total,
         net_vanna_exposure=levels.net_vanna_exposure,
+        wall_scope=levels.wall_scope,
+        wall_dte_min=levels.wall_dte_min,
+        wall_dte_max=levels.wall_dte_max,
+        concentration_score=levels.concentration_score,
+        call_wall_oi=levels.call_wall_oi,
+        put_wall_oi=levels.put_wall_oi,
+        pin_strike_oi=levels.pin_strike_oi,
         # ── Enhanced analytics: centroids are price levels -> scale; rest pass through ──
         call_volume_centroid=_scale(levels.call_volume_centroid),
         put_volume_centroid=_scale(levels.put_volume_centroid),
         total_gex_delta_adj=levels.total_gex_delta_adj,
         net_speed_exposure=levels.net_speed_exposure,
+        hedge_flow_up_10=levels.hedge_flow_up_10,
+        hedge_flow_up_25=levels.hedge_flow_up_25,
+        hedge_flow_up_50=levels.hedge_flow_up_50,
+        hedge_flow_dn_10=levels.hedge_flow_dn_10,
+        hedge_flow_dn_25=levels.hedge_flow_dn_25,
+        hedge_flow_dn_50=levels.hedge_flow_dn_50,
+        hourly_flow_curve=levels.hourly_flow_curve,
         max_gex_strike=_scale(levels.max_gex_strike),
         atm_iv=levels.atm_iv,  # dimensionless — no rescaling needed
         iv_change=levels.iv_change,

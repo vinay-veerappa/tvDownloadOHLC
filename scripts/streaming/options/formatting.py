@@ -9,7 +9,12 @@ defined once and stay consistent across all output channels.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
+from zoneinfo import ZoneInfo
+
+from .config import get_ticker_profile
+from .state_tracker import load_previous_state
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +73,21 @@ class HasLevels(Protocol):
     call_gamma_total: float
     put_gamma_total: float
     net_vanna_exposure: float
+    wall_scope: str
+    wall_dte_min: int
+    wall_dte_max: int
+    concentration_score: float
+    call_wall_oi: int
+    put_wall_oi: int
+    pin_strike_oi: int
     net_speed_exposure: float | None
+    hedge_flow_up_10: float
+    hedge_flow_up_25: float
+    hedge_flow_up_50: float
+    hedge_flow_dn_10: float
+    hedge_flow_dn_25: float
+    hedge_flow_dn_50: float
+    hourly_flow_curve: list[Any]
     total_gex_delta_adj: float | None
     expected_moves: list[Any]
     # Stability metrics
@@ -372,11 +391,16 @@ def copy_ready_line(tag: str, levels: Any) -> str:
     
     # Greeks as metadata for dashboard rows
     vanna = getattr(levels, "net_vanna_exposure", 0.0)
-    speed = getattr(levels, "net_speed_exposure", 0.0) or 0.0
     charm = (levels.charm_call_node - levels.charm_put_node) if (levels.charm_call_node and levels.charm_put_node) else 0.0
     parts.append(f"0:META_VANNA_{vanna:.2f}")
-    parts.append(f"0:META_SPEED_{speed:.2f}")
     parts.append(f"0:META_CHARM_{charm:.2f}")
+    parts.append("0:META_SPEED_0.00")
+    parts.append(f"0:META_HFLOW_UP10_{getattr(levels, 'hedge_flow_up_10', 0.0):.2f}")
+    parts.append(f"0:META_HFLOW_DN10_{getattr(levels, 'hedge_flow_dn_10', 0.0):.2f}")
+    parts.append(f"0:META_HFLOW_UP25_{getattr(levels, 'hedge_flow_up_25', 0.0):.2f}")
+    parts.append(f"0:META_HFLOW_DN25_{getattr(levels, 'hedge_flow_dn_25', 0.0):.2f}")
+    parts.append(f"0:META_HFLOW_UP50_{getattr(levels, 'hedge_flow_up_50', 0.0):.2f}")
+    parts.append(f"0:META_HFLOW_DN50_{getattr(levels, 'hedge_flow_dn_50', 0.0):.2f}")
     
     total_gex = getattr(levels, "total_gex", 0.0)
     gex_da = getattr(levels, "total_gex_delta_adj", 0.0) or 0.0
@@ -386,9 +410,22 @@ def copy_ready_line(tag: str, levels: Any) -> str:
     # Stability & Integrity
     gex_0dte = (getattr(levels, "call_gex_0dte", 0.0) or 0.0) + (getattr(levels, "put_gex_0dte", 0.0) or 0.0)
     stability = (abs(gex_0dte) / abs(total_gex)) if total_gex != 0 else 0.0
-    integrity = 1.0 - (abs(gex_da / total_gex)) if total_gex != 0 else 0.0
+    concentration = float(getattr(levels, "concentration_score", 0.0) or 0.0)
+    concentration = min(1.0, max(0.0, concentration))
     parts.append(f"0:META_STABILITY_{stability:.2f}")
-    parts.append(f"0:META_INTEGRITY_{integrity:.2f}")
+    parts.append(f"0:META_CONCENTRATION_{concentration:.2f}")
+    parts.append(f"0:META_INTEGRITY_{concentration:.2f}")
+    parts.append(f"0:META_WALL_SCOPE_{getattr(levels, 'wall_scope', 'UNSPECIFIED')}")
+    parts.append(f"0:META_OI_CALLWALL_{int(getattr(levels, 'call_wall_oi', 0) or 0)}")
+    parts.append(f"0:META_OI_PUTWALL_{int(getattr(levels, 'put_wall_oi', 0) or 0)}")
+    parts.append(f"0:META_OI_PIN_{int(getattr(levels, 'pin_strike_oi', 0) or 0)}")
+    oi_vel = _oi_velocity_snapshot(tag, levels)
+    parts.append(f"0:META_OI_VEL_CW_STATUS_{oi_vel['cw'][0]}")
+    parts.append(f"0:META_OI_VEL_PW_STATUS_{oi_vel['pw'][0]}")
+    parts.append(f"0:META_OI_VEL_PIN_STATUS_{oi_vel['pin'][0]}")
+    parts.append(f"0:META_OI_VEL_CW_RATE_{oi_vel['cw'][1]:.2f}")
+    parts.append(f"0:META_OI_VEL_PW_RATE_{oi_vel['pw'][1]:.2f}")
+    parts.append(f"0:META_OI_VEL_PIN_RATE_{oi_vel['pin'][1]:.2f}")
 
     # IV & Skew
     atm_iv = getattr(levels, "atm_iv", 0.0) or 0.0
@@ -461,19 +498,20 @@ def build_pine_note(levels: HasLevels) -> str:
     if abs(charm_net) > 5.0: 
          mods.append("⏳ Afternoon Drift" if charm_net > 0 else "⚡ Afternoon Weight")
 
-    # Speed / Volatility sensitivity (Hedging Velocity)
-    speed = getattr(levels, "net_speed_exposure", 0.0) or 0.0
-    if abs(speed) > 10.0:
-        mods.append("🏎️ Hedging Velocity High")
+    # Expected hedge flow stress (day-trading scenario sensitivity)
+    flow_25 = max(
+        abs(getattr(levels, "hedge_flow_up_25", 0.0) or 0.0),
+        abs(getattr(levels, "hedge_flow_dn_25", 0.0) or 0.0),
+    )
+    if flow_25 > 50_000_000:
+        mods.append("🏎️ Hedge Flow Sensitive")
 
-    # GEX DA Awareness (Structural Integrity)
-    gex_da = getattr(levels, "total_gex_delta_adj", 0.0) or 0.0
-    total_gex = getattr(levels, "total_gex", 0.0)
-    da_ratio = abs(gex_da / total_gex) if total_gex != 0 else 1.0
-    
-    if da_ratio < 0.6:
+    # Concentration-aware structure metric [0,1]
+    concentration = float(getattr(levels, "concentration_score", 0.0) or 0.0)
+    concentration = min(1.0, max(0.0, concentration))
+    if concentration < 0.35:
         mods.append("🕳️ Porous Structure")
-    elif da_ratio > 0.9:
+    elif concentration > 0.7:
         mods.append("🧱 Solid Integrity")
 
     # Liquidity Vacuum (Gap Risk)
@@ -493,6 +531,7 @@ def build_pine_note(levels: HasLevels) -> str:
     if skew > 0.05: mods.append("🛡️ Put Demand")
     elif skew < -0.05: mods.append("💎 Call Demand")
 
+    total_gex = getattr(levels, "total_gex", 0.0)
     # Stability (0DTE concentration)
     gex_0dte = (getattr(levels, "call_gex_0dte", 0.0) or 0.0) + (getattr(levels, "put_gex_0dte", 0.0) or 0.0)
     if total_gex != 0 and (abs(gex_0dte) / abs(total_gex)) > 0.5:
@@ -504,6 +543,145 @@ def build_pine_note(levels: HasLevels) -> str:
     # Proximity Check (Dynamic based on Spot)
     mod_str = f" | {' '.join(mods)}" if mods else ""
     return f"{mood} [{bias}] {base}{mod_str}"
+
+
+def _fmt_flow(value: float) -> str:
+    abs_m = abs(value) / 1_000_000.0
+    side = "Dealer Buy" if value >= 0 else "Dealer Sell"
+    return f"{side} ${abs_m:.1f}M"
+
+
+def _snapshot_delta_line(tag: str, levels: HasLevels) -> str:
+    tz = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz)
+    generated_at = now_et.strftime("%Y-%m-%d %H:%M ET")
+    previous = load_previous_state()
+    if previous is None:
+        return f"**SNAPSHOT:** {generated_at} (fresh) | Δ vs prior: N/A"
+
+    prev_key = tag
+    prev = previous.tickers.get(prev_key)
+    if prev is None:
+        prev = previous.tickers.get(tag.lstrip("/"))
+    if prev is None:
+        return f"**SNAPSHOT:** {generated_at} (fresh) | Δ vs prior: N/A"
+
+    try:
+        prev_ts = datetime.fromisoformat(previous.timestamp.replace("Z", "+00:00")).astimezone(tz)
+        age_min = max(0, int((now_et - prev_ts).total_seconds() // 60))
+    except Exception:
+        age_min = 0
+
+    cw_now = getattr(levels, "call_wall", None)
+    pw_now = getattr(levels, "put_wall", None)
+    pin_now = getattr(levels, "pin_strike", None)
+
+    def _delta(curr: float | None, prior: float | None) -> str:
+        if curr is None or prior is None:
+            return "N/A"
+        return f"{curr - prior:+.2f}"
+
+    return (
+        f"**SNAPSHOT:** {generated_at} ({age_min}m from prior) | "
+        f"ΔCallWall {_delta(cw_now, prev.call_wall)} | "
+        f"ΔPutWall {_delta(pw_now, prev.put_wall)} | "
+        f"ΔPin {_delta(pin_now, prev.pin_strike)}"
+    )
+
+
+def _profile_key_for_tag(tag: str) -> str:
+    clean = tag.lstrip("/").upper()
+    if clean == "ES":
+        return "SPX"
+    if clean == "NQ":
+        return "NDX"
+    if clean == "RTY":
+        return "IWM"
+    if clean == "YM":
+        return "DIA"
+    return clean
+
+
+def _oi_velocity_thresholds(profile: Any) -> tuple[float, float]:
+    canon = str(getattr(profile, "canonical_name", "")).upper()
+    index_family = {"SPX", "SPY", "NDX", "QQQ", "RUT", "RTY", "IWM", "DIA", "DJI"}
+    large_index = {"SPX", "SPY", "NDX", "QQQ"}
+
+    if canon in large_index:
+        abs_mult = 0.10
+        pct_mult = 1.00
+    elif canon in index_family:
+        abs_mult = 0.14
+        pct_mult = 1.15
+    elif getattr(profile, "futures_target", None) is not None:
+        abs_mult = 0.16
+        pct_mult = 1.20
+    else:
+        abs_mult = 0.22
+        pct_mult = 1.35
+
+    abs_threshold = max(10.0, float(profile.min_oi_floor) * abs_mult, float(profile.book_depth_contracts) * 0.01)
+    pct_threshold = max(0.001, float(profile.flow_significance_pct) / 60.0 * pct_mult)
+    return abs_threshold, pct_threshold
+
+
+def _oi_velocity_snapshot(tag: str, levels: HasLevels) -> dict[str, tuple[str, float]]:
+    previous = load_previous_state()
+    if previous is None:
+        return {"cw": ("N/A", 0.0), "pw": ("N/A", 0.0), "pin": ("N/A", 0.0)}
+
+    prev = previous.tickers.get(tag) or previous.tickers.get(tag.lstrip("/"))
+    if prev is None:
+        return {"cw": ("N/A", 0.0), "pw": ("N/A", 0.0), "pin": ("N/A", 0.0)}
+
+    tz = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz)
+    try:
+        prev_ts = datetime.fromisoformat(previous.timestamp.replace("Z", "+00:00")).astimezone(tz)
+        dt_min = max(1.0, (now_et - prev_ts).total_seconds() / 60.0)
+    except Exception:
+        dt_min = 1.0
+
+    profile = get_ticker_profile(_profile_key_for_tag(tag))
+    abs_threshold, pct_threshold = _oi_velocity_thresholds(profile)
+
+    def _label(curr: int, prior: int) -> tuple[str, float]:
+        delta = curr - prior
+        vel_abs = delta / dt_min
+        if prior > 0:
+            vel_pct = (delta / float(prior)) / dt_min
+            if vel_pct > pct_threshold and vel_abs > abs_threshold:
+                return "BUILD", vel_abs
+            if vel_pct < -pct_threshold and vel_abs < -abs_threshold:
+                return "DECAY", vel_abs
+            return "FLAT", vel_abs
+        if vel_abs > abs_threshold:
+            return "BUILD", vel_abs
+        if vel_abs < -abs_threshold:
+            return "DECAY", vel_abs
+        return "FLAT", vel_abs
+
+    return {
+        "cw": _label(int(getattr(levels, "call_wall_oi", 0) or 0), int(getattr(prev, "call_wall_oi", 0) or 0)),
+        "pw": _label(int(getattr(levels, "put_wall_oi", 0) or 0), int(getattr(prev, "put_wall_oi", 0) or 0)),
+        "pin": _label(int(getattr(levels, "pin_strike_oi", 0) or 0), int(getattr(prev, "pin_strike_oi", 0) or 0)),
+    }
+
+
+def _oi_velocity_line(tag: str, levels: HasLevels) -> str:
+    snap = _oi_velocity_snapshot(tag, levels)
+    if snap["cw"][0] == "N/A":
+        return "**OI VELOCITY:** No prior snapshot available."
+    cw_status, cw_vel = snap["cw"]
+    pw_status, pw_vel = snap["pw"]
+    pin_status, pin_vel = snap["pin"]
+
+    return (
+        "**OI VELOCITY:** "
+        f"CallWall {cw_status} ({cw_vel:+.1f}/min) | "
+        f"PutWall {pw_status} ({pw_vel:+.1f}/min) | "
+        f"Pin {pin_status} ({pin_vel:+.1f}/min)"
+    )
 
 
 def build_coaches_note(tag: str, levels: HasLevels) -> list[str]:
@@ -532,13 +710,29 @@ def build_coaches_note(tag: str, levels: HasLevels) -> list[str]:
     )
 
     parts: list[str] = [thesis]
+    parts.append(_snapshot_delta_line(tag, levels))
+    parts.append(_oi_velocity_line(tag, levels))
+
+    # 0DTE-first reporting: no silent fallback to wider-dated walls.
+    cw_0d = getattr(levels, "call_wall_0dte", None)
+    pw_0d = getattr(levels, "put_wall_0dte", None)
+    if cw_0d is not None or pw_0d is not None:
+        parts.append(
+            f"**0DTE WALLS:** Call {f(cw_0d)} | Put {f(pw_0d)} "
+            f"(scope: {getattr(levels, 'wall_scope', 'UNSPECIFIED')} {getattr(levels, 'wall_dte_min', 0)}-{getattr(levels, 'wall_dte_max', 0)}DTE)."
+        )
+    else:
+        parts.append(
+            "**0DTE WALLS:** No meaningful 0DTE concentration found in current chain. "
+            "Use wider walls only as secondary context, not primary intraday anchors."
+        )
 
     # 2. THE PIVOT
     # Priority: Gamma Flip (Tactical) > Zero Gamma (Structural) > Max Pain (Gravitational)
     pivots_of_interest = []
-    if levels.gamma_flip_lower: pivots_of_interest.append(("Gamma Flip (Dn)", levels.gamma_flip_lower, 0))
-    if levels.gamma_flip_upper: pivots_of_interest.append(("Gamma Flip (Up)", levels.gamma_flip_upper, 0))
-    if levels.zero_gamma: pivots_of_interest.append(("Zero Gamma", levels.zero_gamma, 1))
+    if levels.gamma_flip_lower: pivots_of_interest.append(("Gamma Regime Lower", levels.gamma_flip_lower, 0))
+    if levels.gamma_flip_upper: pivots_of_interest.append(("Gamma Regime Upper", levels.gamma_flip_upper, 0))
+    if levels.zero_gamma: pivots_of_interest.append(("Zero Gamma Pivot", levels.zero_gamma, 1))
     if levels.max_pain: pivots_of_interest.append(("Max Pain", levels.max_pain, 2))
     
     if ref_price and pivots_of_interest:
@@ -567,8 +761,9 @@ def build_coaches_note(tag: str, levels: HasLevels) -> list[str]:
             "outside the 0DTE walls. Target the 2.0σ Expected Move."
         )
     elif levels.regime_label == "COILED":
+        breakout_ref = levels.zero_gamma or levels.gamma_flip_upper or levels.gamma_flip_lower
         parts.append(
-            f"**TACTICAL DELTA:** Stay patient. If price clears {f(pivot)} with volume, join the breakout. "
+            f"**TACTICAL DELTA:** Stay patient. If price clears {f(breakout_ref)} with volume, join the breakout. "
             "Avoid 'chopping' in the mid-range as dealers rebalance their books."
         )
     elif levels.regime_label == "BATTLE_ZONE":
@@ -597,10 +792,22 @@ def build_coaches_note(tag: str, levels: HasLevels) -> list[str]:
         # Deeper insight: Charm is the change in Delta over time (Theta for Delta).
         g_mods.append(f"Charm ({c_dir}): Passive dealer flow from time-decay. This creates { 'afternoon upside drift' if charm_net > 0 else 'afternoon weight' } as we approach expiry.")
 
-    # Speed
-    speed = getattr(levels, "net_speed_exposure", 0.0) or 0.0
-    if abs(speed) > 10.0:
-        g_mods.append(f"High Hedging Velocity (Speed: {speed:+.1f}). Price will be 'jumpy' and gamma-sensitive near primary strikes.")
+    # Expected hedge flow scenarios
+    g_mods.append(
+        "Hedge Scenarios: "
+        f"+10pt {_fmt_flow(getattr(levels, 'hedge_flow_up_10', 0.0) or 0.0)} | "
+        f"-10pt {_fmt_flow(getattr(levels, 'hedge_flow_dn_10', 0.0) or 0.0)} | "
+        f"+25pt {_fmt_flow(getattr(levels, 'hedge_flow_up_25', 0.0) or 0.0)} | "
+        f"-25pt {_fmt_flow(getattr(levels, 'hedge_flow_dn_25', 0.0) or 0.0)}"
+    )
+
+    curve_rows = getattr(levels, "hourly_flow_curve", []) or []
+    if curve_rows:
+        curve_text = " / ".join(
+            f"{row.get('window')}: {_fmt_flow(float(row.get('flow_m', 0.0)) * 1_000_000.0)}"
+            for row in curve_rows[:4]
+        )
+        g_mods.append(f"Charm/Vanna Curve: {curve_text}")
 
     if g_mods:
         parts.append("**DEALER INVENTORY:** " + " | ".join(g_mods))
@@ -623,18 +830,18 @@ def build_coaches_note(tag: str, levels: HasLevels) -> list[str]:
         parts.append(f"**VOLATILITY DASH:** IV is {atm_iv:.1%} ({vol_st}). Skew is {skew_st} ({skew:+.1%}). {skew_logic} {iv_msg}")
 
     # 6. STRUCTURAL INTEGRITY
-    gex_da = getattr(levels, "total_gex_delta_adj", 0.0) or 0.0
     total_gex = getattr(levels, "total_gex", 0.0)
     gex_0dte = (getattr(levels, "call_gex_0dte", 0.0) or 0.0) + (getattr(levels, "put_gex_0dte", 0.0) or 0.0)
+    concentration = float(getattr(levels, "concentration_score", 0.0) or 0.0)
+    concentration = min(1.0, max(0.0, concentration))
     
     s_mods = []
     if total_gex != 0:
-        da_ratio = abs(gex_da / total_gex)
-        if da_ratio < 0.6: 
-            s_mods.append(f"🕳️ Porous Walls (DA: {da_ratio:.2f}) - Dealer support is thin; expect levels to be 'leaky'.")
-        elif da_ratio > 0.9: 
-            s_mods.append(f"🧱 Solid Structure (DA: {da_ratio:.2f}) - Institutional positioning is robust; walls should hold on first test.")
-        
+        if concentration < 0.35:
+            s_mods.append(f"🕳️ Porous Walls (Conc: {concentration:.2f}) - Dealer support is thin; expect levels to be 'leaky'.")
+        elif concentration > 0.70:
+            s_mods.append(f"🧱 Solid Structure (Conc: {concentration:.2f}) - Institutional positioning is robust; walls should hold on first test.")
+
         stability = abs(gex_0dte) / abs(total_gex)
         if stability > 0.6: 
             s_mods.append(f"⚠️ Fragile (0DTE Conc: {stability:.0%}) - Position is dominated by today's expiry; expect volatility as positions roll/expire.")
