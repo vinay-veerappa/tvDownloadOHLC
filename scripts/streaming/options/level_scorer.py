@@ -408,12 +408,12 @@ def _detect_structural_anchors(
             if c.strike in already_flagged:
                 continue
             zscore = (c.open_interest - mean_oi) / std_oi
-            if zscore < profile.oi_anomaly_zscore:
+            if zscore < profile.oi_node_zscore:
                 continue
             dte = (c.expiry - date.today()).days
             anchors.append(StructuralAnchor(
                 strike=c.strike,
-                label=f"Unknown OI Anomaly ({zscore:.1f}σ)",
+                label=f"OI Node ({zscore:.1f}σ)",
                 significance="SECONDARY",
                 side="CALL" if c.contract_type == "CALL" else "PUT",
                 open_interest=c.open_interest,

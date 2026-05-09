@@ -95,7 +95,7 @@ class TickerProfile:
     strike_relevance_pct: float = 0.12  # Only consider strikes within ±12% of spot
 
     # --- Structural Position Detection ---
-    oi_anomaly_zscore: float = 2.5      # Std devs above mean to flag as structural
+    oi_node_zscore: float = 2.5         # Std devs above mean to flag as structural
     known_programs: list[str] = field(default_factory=list)  # e.g., ["JHEQX"]
 
     # --- Time Sensitivity ---
@@ -163,9 +163,9 @@ VIEW_MODES: dict[str, ViewModeConfig] = {
 # ── Library of Ticker Profiles ─────────────────────────────────────
 
 TICKER_PROFILES: dict[str, TickerProfile] = {
-    "SPX": TickerProfile("SPX", "SPX", "/ES", "additive", book_depth_contracts=4500, flow_significance_pct=0.12, contract_value_per_point=50, min_oi_floor=500, strike_relevance_pct=0.12, oi_anomaly_zscore=2.8, known_programs=["JHEQX"]),
+    "SPX": TickerProfile("SPX", "SPX", "/ES", "additive", book_depth_contracts=4500, flow_significance_pct=0.12, contract_value_per_point=50, min_oi_floor=500, strike_relevance_pct=0.12, oi_node_zscore=2.8, known_programs=["JHEQX"]),
     "SPY": TickerProfile("SPY", "SPY", "/ES", "multiplicative", book_depth_contracts=25000, contract_value_per_point=100, min_oi_floor=500),
-    "NDX": TickerProfile("NDX", "NDX", "/NQ", "additive", book_depth_contracts=1200, flow_significance_pct=0.10, contract_value_per_point=20, min_oi_floor=200, strike_relevance_pct=0.12, oi_anomaly_zscore=2.5),
+    "NDX": TickerProfile("NDX", "NDX", "/NQ", "additive", book_depth_contracts=1200, flow_significance_pct=0.10, contract_value_per_point=20, min_oi_floor=200, strike_relevance_pct=0.12, oi_node_zscore=2.5),
     "QQQ": TickerProfile("QQQ", "QQQ", "/NQ", "multiplicative", book_depth_contracts=15000, contract_value_per_point=100, min_oi_floor=300),
     "IWM": TickerProfile("IWM", "IWM", "/RTY", "multiplicative", book_depth_contracts=800, flow_significance_pct=0.12, contract_value_per_point=100, min_oi_floor=200, strike_relevance_pct=0.12),
     "DIA": TickerProfile("DIA", "DIA", "/YM", "multiplicative", book_depth_contracts=600, flow_significance_pct=0.12, contract_value_per_point=100, min_oi_floor=100, strike_relevance_pct=0.10),

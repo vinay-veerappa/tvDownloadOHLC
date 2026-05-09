@@ -613,6 +613,8 @@ def _expected_move(
     calls: list[OptionContract], 
     puts: list[OptionContract], 
     spot: float,
+    dte: int,
+    is_futures: bool = False,
     *args, **kwargs
 ) -> tuple[float, float]:
     
@@ -621,25 +623,22 @@ def _expected_move(
     atm_put = _atm_contract(puts, spot)
     
     if not calls or not puts or atm_call is None or atm_put is None or atm_call.iv <= 0 or atm_put.iv <= 0:
-        return straddle * EM_STRADDLE_SCALAR if USE_STRADDLE_EM else 0.0, straddle
+        return 0.0, straddle
 
     blended_iv = (atm_call.iv + atm_put.iv) / 2.0
 
-    tz = ZoneInfo("America/New_York")
-    now = datetime.now(tz)
-    exp_dt = datetime.combine(atm_call.expiry, time(16, 0), tzinfo=tz)
+    # ThinkOrSwim Expected Move Formula (Calibrated 2026-05-09):
+    # EM = Price * IV * sqrt((0.637 * DTE + intercept) / 365)
+    # Intercept: 0.24 for equity, 0.69 for futures
+    intercept = 0.69 if is_futures else 0.24
     
-    minutes_remaining = (exp_dt - now).total_seconds() / 60.0
+    # Use calendar DTE as per TOS methodology
+    t_eff_yr = (0.637 * dte + intercept) / 365.0
     
-    if minutes_remaining <= 0:
+    if t_eff_yr <= 0:
         return 0.0, straddle
 
-    fractional_dte = minutes_remaining / (24.0 * 60.0)
-    years_to_expiry = fractional_dte / 365.0
-    
-    # ThinkOrSwim Expected Move Formula: Spot * IV * sqrt(DTE/365)
-    # Using ATM Blended Volatility as the closest proxy to Series Volatility
-    tos_expected_move = spot * blended_iv * math.sqrt(years_to_expiry)
+    tos_expected_move = spot * blended_iv * math.sqrt(t_eff_yr)
     
     return tos_expected_move, straddle
 
@@ -685,7 +684,8 @@ def _calculate_all_ems(chain: OptionChainData) -> list[ExpectedMove]:
         atm_put_iv  = atm_put.iv  if atm_put  else 0.0
         blended_iv  = (atm_call_iv + atm_put_iv) / 2.0 if (atm_call_iv > 0 and atm_put_iv > 0) else 0.0
 
-        move, straddle = _expected_move(calls, puts, spot)
+        is_futures = any(chain.ticker.startswith(f) for f in ["/ES", "/NQ", "/CL", "/GC", "ES", "NQ"])
+        move, straddle = _expected_move(calls, puts, spot, dte=dte, is_futures=is_futures)
 
         if move <= 0:
             log.info(
@@ -1421,42 +1421,37 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
         ],
     )
 
-def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_volatility: float) -> float:
+def calculate_tos_expected_move(spot_price: float, expiry_date_str: str, expiry_volatility: float, is_futures: bool = False) -> float:
     """
-    Calculates the Thinkorswim (TOS) Expected Move using precise fractional DTE
-    and the aggregate expiry volatility.
+    Calculates the Thinkorswim (TOS) Expected Move using the empirically
+    calibrated linear time-scaling model (2026-05-09).
     
     expiry_date_str: 'YYYY-MM-DD'
-    expiry_volatility: The volatility number from Schwab API at the expDateMap level.
+    expiry_volatility: The volatility number (percentage or decimal).
     """
     tz = ZoneInfo("America/New_York")
-    now = datetime.now(tz)
+    today = datetime.now(tz).date()
     
-    # 1. Calculate precise minutes to expiration (4:00 PM EST on expiry day)
     try:
-        # Extract just the date part if it comes in as 'YYYY-MM-DD:Days'
         clean_date_str = expiry_date_str.split(':')[0] 
         exp_date = datetime.strptime(clean_date_str, "%Y-%m-%d").date()
-        exp_dt = datetime.combine(exp_date, time(16, 0), tzinfo=tz)
-    except Exception as e:
-        # Fallback if date parsing fails
+    except Exception:
         return 0.0
     
-    delta = exp_dt - now
-    minutes_remaining = delta.total_seconds() / 60.0
-    
-    if minutes_remaining <= 0:
+    dte = (exp_date - today).days
+    if dte < 0:
         return 0.0
         
-    fractional_dte = minutes_remaining / (24 * 60)
-    years_to_expiry = fractional_dte / 365.0
-    
-    # 2. Convert Schwab API volatility to decimal (e.g., 29.5 -> 0.295)
-    # Schwab usually returns this as a whole number percentage.
     vol_decimal = expiry_volatility / 100.0 if expiry_volatility > 1.0 else expiry_volatility
     
-    # 3. The TOS Math
-    tos_expected_move = spot_price * vol_decimal * math.sqrt(years_to_expiry)
+    # EM = Price * IV * sqrt((0.637 * DTE + intercept) / 365)
+    intercept = 0.69 if is_futures else 0.24
+    t_eff_yr = (0.637 * dte + intercept) / 365.0
+    
+    if t_eff_yr <= 0:
+        return 0.0
+
+    return spot_price * vol_decimal * math.sqrt(t_eff_yr)
     
     # 4. Output to screen for verification
     #print("\n" + "="*50)
