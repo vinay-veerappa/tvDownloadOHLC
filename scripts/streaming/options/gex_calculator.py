@@ -1014,6 +1014,8 @@ def _classify_regime(
     put_gamma_total: float,
     call_gamma_total: float,
     net_vanna: float,
+    skew_premium: float | None = None,
+    total_gex_delta_adj: float | None = None,
 ) -> tuple[str, str]:
     """
     Combine GEX sign/magnitude, wall separation, and directional signals
@@ -1201,6 +1203,7 @@ def calculate_dealer_levels(chain: OptionChainData, ticker: str) -> DealerLevels
     regime_label, directional_bias = _classify_regime(
         total_gex, separation, em_value, spot,
         gamma_magnet, put_gamma_total, call_gamma_total, net_vanna,
+        skew_premium=skew_premium, total_gex_delta_adj=total_gex_delta_adj
     )
 
     log.info(

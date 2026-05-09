@@ -74,7 +74,15 @@ ACTIVE_TICKERS: list[str] = [
 # and the TRADING TARGET (what you actually trade).
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Any
+
+@dataclass
+class CalendarContext:
+    """Opex and cycle awareness."""
+    is_opex_week: bool = False
+    is_opex_day: bool = False
+    days_to_monthly_opex: int = 0
+    days_to_quarterly_opex: int = 0
 
 @dataclass
 class TickerProfile:

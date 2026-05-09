@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 from .options_fetcher import OptionChainData
-from .config import ViewModeConfig, INTRADAY_VIEW, MACRO_VIEW, TickerProfile
+from .config import ViewModeConfig, INTRADAY_VIEW, MACRO_VIEW, TickerProfile, CalendarContext
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 import math
@@ -51,13 +51,8 @@ class InflectionPoint(TaggedLevel):
     slope_magnitude: float = 0.0
     gamma_velocity: float = 0.0
 
-@dataclass
-class CalendarContext:
-    """Opex and cycle awareness."""
-    is_opex_week: bool = False
-    is_opex_day: bool = False
-    days_to_monthly_opex: int = 0
-    days_to_quarterly_opex: int = 0
+# (CalendarContext now imported from .config)
+
 
 @dataclass
 class ScoredLevels:
