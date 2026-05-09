@@ -467,6 +467,13 @@ f_compactTitle(string title) =>
         res := "EM- 85%"
     //log.info("Found "+ u)
     res
+
+
+f_isProtectedLevel(string title) =>
+    u = f_norm(title)
+    // These should remain visually distinct and should not be merged away.
+    str.contains(u, "GAMMA FLIP") or str.contains(u, "GF U") or str.contains(u, "GF L") or
+     str.contains(u, "GAMMA CLIFF") or str.contains(u, "GC U") or str.contains(u, "GC D")
     
 
 f_showLevel(string title, float price) =>
@@ -548,6 +555,10 @@ f_scoredColor(string filter_code, string sig_code, string label_text) =>
              str.contains(u, "VOID") ? i_colInflVoid :
              str.contains(u, "MAGNET") ? i_colInflMagnet :
              color.white
+    else if filter_code == "E"
+        // Explicit expected move tracks
+        is_hi = str.contains(u, "EM HI") or str.contains(u, "EM85 HI") or str.contains(u, "UPPER")
+        result := is_hi ? i_colUpperEM : i_colLowerEM
     result
 
 f_scoredStyle(string sig_code) =>
@@ -563,8 +574,18 @@ f_scoredWidth(string sig_code) =>
 f_scoredCompactLabel(string filter_code, string label_text) =>
     // Labels are already compact from the Python export.
     // Add a visual prefix based on filter type for quick scanning.
-    prefix = filter_code == "W" ? "▌" : filter_code == "A" ? "⚓" : filter_code == "I" ? "◆" : "•"
-    prefix + " " + label_text
+    prefix = filter_code == "W" ? "▌" : filter_code == "A" ? "⚓" : filter_code == "I" ? "◆" : filter_code == "E" ? "◈" : "•"
+    u = str.upper(label_text)
+    disp = label_text
+    if str.contains(u, "EM HI")
+        disp := str.replace(u, "EM HI", "EM+")
+    else if str.contains(u, "EM LO")
+        disp := str.replace(u, "EM LO", "EM-")
+    else if str.contains(u, "EM85 HI")
+        disp := str.replace(u, "EM85 HI", "EM85+")
+    else if str.contains(u, "EM85 LO")
+        disp := str.replace(u, "EM85 LO", "EM85-")
+    prefix + " " + disp
 
 
 f_assignLabelColumn(float level, array<float> cols, float gap, int maxC) =>
@@ -910,12 +931,16 @@ if can_calculate
                         stl = f_levelStyle(ti)
                         wid = f_levelWidth(ti)
                         txt = i_compactLabels ? f_compactTitle(ti) : ti
+                        canMergeCurrent = not f_isProtectedLevel(txt)
                         
                         merged = false
-                        if i_mergeSamePrice and array.size(aggPrices) > 0
+                        if i_mergeSamePrice and canMergeCurrent and array.size(aggPrices) > 0
                             for j = 0 to array.size(aggPrices) - 1
+                                existingTxt = array.get(aggTitles, j)
+                                // Never merge into a protected level slot.
+                                if f_isProtectedLevel(existingTxt)
+                                    continue
                                 if math.abs(array.get(aggPrices, j) - lv) <= i_mergeTolerance
-                                    existingTxt = array.get(aggTitles, j)
                                     // Append text if it's not already there
                                     if not str.contains(existingTxt, txt)
                                         array.set(aggTitles, j, existingTxt + " + " + txt)
@@ -945,17 +970,19 @@ if can_calculate
                         line ln = na
                         ln := line.new(sessionStartBar, a_lv, bar_index, a_lv, color=a_cl, width=a_wi, style=a_st)
                         array.push(allLines, ln)
+
+                        u_ti = f_norm(a_ti)
                         
                         // Capture EM lines for fills (from the merged output)
-                        if str.contains(a_ti, "EM+") or str.contains(a_ti, "Upper EM")
+                        if str.contains(u_ti, "EM+") or str.contains(u_ti, "UPPER EM")
                             line_emUp := ln
-                        if str.contains(a_ti, "EM-") or str.contains(a_ti, "Lower EM")
+                        if str.contains(u_ti, "EM-") or str.contains(u_ti, "LOWER EM")
                             line_emDn := ln
                         
                         // Capture EM lines for fills (from the merged output)
-                        if str.contains(a_ti, "GF U") or str.contains(a_ti, "Gamma Flip Upper")
+                        if str.contains(u_ti, "GF U") or str.contains(u_ti, "GAMMA FLIP UPPER")
                             line_gcUp := ln
-                        if str.contains(a_ti, "GF L") or str.contains(a_ti, "Flip Lower")
+                        if str.contains(u_ti, "GF L") or str.contains(u_ti, "GAMMA FLIP LOWER")
                             line_gcDn := ln
 
                         
@@ -1009,6 +1036,11 @@ if can_calculate
                 ln = line.new(sessionStartBar, s_lv, bar_index, s_lv, 
                     color=s_clr, width=s_wid, style=s_sty)
                 array.push(allLines, ln)
+
+                if str.contains(str.upper(s_lbl), "EM HI")
+                    line_emUp := ln
+                if str.contains(str.upper(s_lbl), "EM LO")
+                    line_emDn := ln
                 
                 if i_showLabels
                     mg = syminfo.mintick * i_minLabelGapTicks
@@ -1057,13 +1089,20 @@ if can_calculate
                     if str.contains(u_lbl, "CLIFF DN")
                         st_GCD := s_lv
 
+                // Expected move tracks from explicit EM filter
+                if s_flt == "E"
+                    if str.contains(u_lbl, "EM HI")
+                        st_EU := s_lv
+                    if str.contains(u_lbl, "EM LO")
+                        st_EL := s_lv
+
 
     
     // OPTIMIZATION: Apply linefills immediately after line creation
     if i_showEmFill and not na(line_emUp) and not na(line_emDn)
         linefill.new(line_emUp, line_emDn, i_colEmFill)
-    //if i_showEmFill and not na(line_emUp) and not na(line_emDn)
-    linefill.new(line_gcUp, line_gcDn, i_colGammaFlipFill)
+    if i_showGammaFlip and not na(line_gcUp) and not na(line_gcDn)
+        linefill.new(line_gcUp, line_gcDn, i_colGammaFlipFill)
     
 
 // ── OPTIMIZED Realtime Extension ──

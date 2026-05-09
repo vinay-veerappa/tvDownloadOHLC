@@ -186,6 +186,22 @@ f_nearest_above(float ref, float v1, float v2, float v3) =>
             b := v3
     na(b) ? f_pick(v1, v2, v3) : b
 
+f_is_em_upper(string title) =>
+    u = f_norm(title)
+    str.contains(u, "UPPER EM") or str.contains(u, "EM HI")
+
+f_is_em_lower(string title) =>
+    u = f_norm(title)
+    str.contains(u, "LOWER EM") or str.contains(u, "EM LO")
+
+f_is_em85_upper(string title) =>
+    u = f_norm(title)
+    str.contains(u, "UPPER 85% STRADDLE") or str.contains(u, "EM85 HI")
+
+f_is_em85_lower(string title) =>
+    u = f_norm(title)
+    str.contains(u, "LOWER 85% STRADDLE") or str.contains(u, "EM85 LO")
+
 f_best_short_trigger(float spot, float thr, float v1, float v2, float v3, float v4, float v5) =>
     float b = na
     if f_is_near(v1, spot, thr) and (na(b) or v1 > b)
@@ -272,6 +288,13 @@ f_parse_levels(string lineText, array<float> prices, array<string> titles) =>
                 if array.size(parts) >= 2
                     px := str.trim(array.get(parts, 0))
                     ti := str.trim(array.get(parts, 1))
+
+            // Support scored contract format: FILTER|SIG|LABEL
+            // Keep only LABEL for styling and dashboard classification.
+            if str.contains(ti, "|")
+                meta = str.split(ti, "|")
+                if array.size(meta) >= 3
+                    ti := str.trim(array.get(meta, 2))
             lv = str.tonumber(px)
             if not na(lv) and str.length(ti) > 0
                 array.push(prices, lv)
@@ -282,7 +305,7 @@ f_parse_levels(string lineText, array<float> prices, array<string> titles) =>
 // ═══════════════════════════════════════════════════════════════════════
 f_level_color(string title) =>
     u = f_norm(title)
-    str.contains(u, "UPPER EM") ? colUpperEM : str.contains(u, "LOWER EM") ? colLowerEM : u == "ZERO GAMMA" ? colZeroGamma :
+    f_is_em_upper(u) ? colUpperEM : f_is_em_lower(u) ? colLowerEM : f_is_em85_upper(u) ? colUpperEM : f_is_em85_lower(u) ? colLowerEM : u == "ZERO GAMMA" ? colZeroGamma :
      u == "GAMMA FLIP UPPER" or u == "GAMMA FLIP LOWER" ? colGammaFlip :
      u == "GAMMA CLIFF UP" ? colGammaCliffUp : u == "GAMMA CLIFF DOWN" ? colGammaCliffDown :
      u == "MAX PAIN" ? colMaxPain : u == "HEDGE WALL" ? colHedge :
@@ -297,20 +320,32 @@ f_level_style(string title) =>
 f_level_width(string title) =>
     u = f_norm(title)
     isEm = str.contains(u, "EM")
-    isPrimaryEm = u == "UPPER EM" or u == "LOWER EM"
+    isPrimaryEm = f_is_em_upper(u) or f_is_em_lower(u)
     str.contains(u, "0DTE") or str.contains(u, "LOCAL") or str.contains(u, "GAMMA FLIP") or str.contains(u, "GAMMA CLIFF") or str.contains(u, "DEX") or u == "GAMMA MAGNET" or u == "PIN STRIKE" or (isEm and not isPrimaryEm) ? lineWidthSecondary : lineWidthPrimary
 f_compact_title(string title) =>
     u = f_norm(title)
     res = title
-    if str.contains(u, "UPPER EM")
+    if f_is_em_upper(u)
         res := str.replace(u, "UPPER EM", "EM+")
         // Remove year for brevity if date present (e.g. 2026-03-23 -> 03-23)
         if str.startswith(res, "20") and str.substring(res, 4, 5) == "-"
             res := str.substring(res, 5)
-    else if str.contains(u, "LOWER EM")
+        if str.contains(res, "EM HI")
+            res := str.replace(res, "EM HI", "EM+")
+    else if f_is_em_lower(u)
         res := str.replace(u, "LOWER EM", "EM-")
         if str.startswith(res, "20") and str.substring(res, 4, 5) == "-"
             res := str.substring(res, 5)
+        if str.contains(res, "EM LO")
+            res := str.replace(res, "EM LO", "EM-")
+    else if f_is_em85_upper(u)
+        res := str.replace(u, "UPPER 85% STRADDLE", "EM85+")
+        if str.contains(res, "EM85 HI")
+            res := str.replace(res, "EM85 HI", "EM85+")
+    else if f_is_em85_lower(u)
+        res := str.replace(u, "LOWER 85% STRADDLE", "EM85-")
+        if str.contains(res, "EM85 LO")
+            res := str.replace(res, "EM85 LO", "EM85-")
     else if u == "ABSOLUTE CALL WALL"
         res := "CALL ABS"
     else if u == "LOCAL CALL NODE"
@@ -617,10 +652,10 @@ if needsDraw
                         array.push(uS, sk)
 
                 tn = f_norm(ti)
-                if tn == "UPPER EM"
+                if f_is_em_upper(tn)
                     eUP := lv
                     pEU := lv
-                if tn == "LOWER EM"
+                if f_is_em_lower(tn)
                     eLP := lv
                     pEL := lv
                 if tn == "ZERO GAMMA"

@@ -43,6 +43,12 @@ from .gex_calculator import DealerLevels
 from .level_scorer import ScoredLevels, MechanicalWall, StructuralAnchor, InflectionPoint
 
 log = logging.getLogger(__name__)
+
+# Baseline front-EM percent used to scale duplicate suppression tolerance.
+# Example: if front EM is 4% and baseline is 2%, tolerance scales 2x.
+_FRONT_EM_BASELINE_PCT: float = 0.02
+_FRONT_EM_SCALE_MIN: float = 0.6
+_FRONT_EM_SCALE_MAX: float = 2.0
  
  
 def _sidecar_path(path: Path, suffix: str) -> Path:
@@ -90,6 +96,44 @@ def _get_strength(tl):
     if isinstance(tl, InflectionPoint):
         return round(tl.slope_magnitude, 4)
     return 0.0
+
+
+def _front_em_pct(scored: Any) -> float | None:
+    """Estimate front expected-move percent from scored.expected_moves."""
+    ems = [em for em in getattr(scored, "expected_moves", []) if getattr(em, "dte", None) is not None]
+    if not ems:
+        return None
+    front = min(ems, key=lambda em: em.dte)
+    em_value = float(getattr(front, "em_value", 0.0) or 0.0)
+    em_upper = float(getattr(front, "em_upper", 0.0) or 0.0)
+    em_lower = float(getattr(front, "em_lower", 0.0) or 0.0)
+    center = (em_upper + em_lower) / 2.0
+    if em_value <= 0.0 or abs(center) < 1e-9:
+        return None
+    return abs(em_value) / abs(center)
+
+
+def _scaled_duplicate_tolerance(
+    ticker: str,
+    scored: Any,
+    near_duplicate_tolerance: float | None,
+) -> float:
+    """Return ticker tolerance scaled by front expected-move percent."""
+    base = (
+        near_duplicate_tolerance
+        if near_duplicate_tolerance is not None
+        else NEAR_DUPLICATE_TOLERANCE_BY_TICKER.get(ticker, DEFAULT_NEAR_DUPLICATE_TOLERANCE)
+    )
+    if base <= 0:
+        return base
+
+    em_pct = _front_em_pct(scored)
+    if em_pct is None:
+        return base
+
+    ratio = em_pct / _FRONT_EM_BASELINE_PCT if _FRONT_EM_BASELINE_PCT > 0 else 1.0
+    scale = max(_FRONT_EM_SCALE_MIN, min(_FRONT_EM_SCALE_MAX, ratio))
+    return base * scale
 
 def _is_rth() -> bool:
     """Return True if current time falls within Regular Trading Hours (9:30–16:00 ET, Mon-Fri)."""
@@ -891,10 +935,10 @@ def write_scored_levels_txt(
         from .config import SCORED_LEVELS_TXT
         path = SCORED_LEVELS_TXT
 
-    tolerance = (
-        near_duplicate_tolerance
-        if near_duplicate_tolerance is not None
-        else NEAR_DUPLICATE_TOLERANCE_BY_TICKER.get(ticker, DEFAULT_NEAR_DUPLICATE_TOLERANCE)
+    tolerance = _scaled_duplicate_tolerance(
+        ticker=ticker,
+        scored=scored,
+        near_duplicate_tolerance=near_duplicate_tolerance,
     )
  
     tokens = _build_scored_tokens(
@@ -966,13 +1010,28 @@ def _build_scored_tokens(
             emitted_strikes.append(strike)
 
     for tl in scored.tagged_levels:
+        is_kept_context_inflection = False
         if tl.significance == "CONTEXT":
-            continue
+            # Keep directional inflections in compact payloads so Pine can render
+            # Gamma Flip zone and Gamma Cliff rails. Drop other context noise.
+            is_kept_context_inflection = (
+                isinstance(tl, InflectionPoint)
+                and (
+                    str(getattr(tl, "inflection_type", "")).upper() == "CLIFF"
+                    or "gamma_flip" in str(getattr(tl, "field_name", "")).lower()
+                )
+            )
+            if not is_kept_context_inflection:
+                continue
 
         if isinstance(tl, StructuralAnchor) and tl.days_to_expiry > max_visible_dte_days:
             continue
 
-        if near_duplicate_tolerance > 0 and any(abs(tl.strike - existing) <= near_duplicate_tolerance for existing in emitted_strikes):
+        if (
+            near_duplicate_tolerance > 0
+            and not is_kept_context_inflection
+            and any(abs(tl.strike - existing) <= near_duplicate_tolerance for existing in emitted_strikes)
+        ):
             continue
 
         sig = {"PRIMARY": "P", "SECONDARY": "S"}.get(tl.significance, "C")
@@ -1002,13 +1061,21 @@ def _build_scored_tokens(
             label = f"{prog} {side_char} {dte_str}{rel}".strip()
         elif isinstance(tl, InflectionPoint):
             filt = "I"
-            type_map = {
-                "FLIP": "ZERO GEX" if "zero" in tl.field_name.lower() else "FLIP",
-                "MAGNET": "MAGNET",
-                "CLIFF": f"CLIFF {'UP' if 'up' in tl.field_name.lower() else 'DN'}",
-                "VOID": f"VOID {'LO' if 'lower' in tl.field_name.lower() else 'HI'}",
-            }
-            label = type_map.get(tl.inflection_type, tl.label[:10])
+            field_l = tl.field_name.lower()
+            if "zero" in field_l:
+                label = "ZERO GEX"
+            elif "gamma_flip_upper" in field_l:
+                label = "FLIP UP"
+            elif "gamma_flip_lower" in field_l:
+                label = "FLIP DN"
+            elif str(tl.inflection_type).upper() == "CLIFF":
+                label = f"CLIFF {'UP' if 'up' in field_l else 'DN'}"
+            elif str(tl.inflection_type).upper() == "MAGNET":
+                label = "MAGNET"
+            elif str(tl.inflection_type).upper() == "VOID":
+                label = f"VOID {'LO' if 'lower' in field_l else 'HI'}"
+            else:
+                label = tl.label[:10]
         else:
             filt = "X"
             label = tl.label[:12]
@@ -1025,10 +1092,10 @@ def build_scored_levels_line(
     max_visible_dte_days: int = MAX_VISIBLE_DTE_DAYS,
     near_duplicate_tolerance: float | None = None,
 ) -> str | None:
-    tolerance = (
-        near_duplicate_tolerance
-        if near_duplicate_tolerance is not None
-        else NEAR_DUPLICATE_TOLERANCE_BY_TICKER.get(ticker, DEFAULT_NEAR_DUPLICATE_TOLERANCE)
+    tolerance = _scaled_duplicate_tolerance(
+        ticker=ticker,
+        scored=scored,
+        near_duplicate_tolerance=near_duplicate_tolerance,
     )
 
     tokens = _build_scored_tokens(

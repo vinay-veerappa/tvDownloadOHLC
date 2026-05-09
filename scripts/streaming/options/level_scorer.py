@@ -448,6 +448,16 @@ def _find_inflection_points(
             field_name="gamma_flip_upper"
         ))
 
+    if hasattr(levels, "gamma_flip_lower") and levels.gamma_flip_lower is not None and lo <= levels.gamma_flip_lower <= hi:
+        pts.append(InflectionPoint(
+            strike=levels.gamma_flip_lower,
+            label="Gamma Flip Low",
+            significance="CONTEXT",
+            side="NEUTRAL",
+            inflection_type="FLIP",
+            field_name="gamma_flip_lower"
+        ))
+
     if hasattr(levels, "gamma_magnet") and levels.gamma_magnet is not None and lo <= levels.gamma_magnet <= hi:
         pts.append(InflectionPoint(
             strike=levels.gamma_magnet,
@@ -533,7 +543,15 @@ def score_levels(
     mask = view_mode.significance_mask
     
     for l in (anchors + walls + inflection):
-        if l.significance not in mask:
+        is_flip_cliff_context = (
+            isinstance(l, InflectionPoint)
+            and l.significance == "CONTEXT"
+            and (
+                str(getattr(l, "inflection_type", "")).upper() == "CLIFF"
+                or "gamma_flip" in str(getattr(l, "field_name", "")).lower()
+            )
+        )
+        if l.significance not in mask and not is_flip_cliff_context:
             continue
         
         # Round strike for dedup

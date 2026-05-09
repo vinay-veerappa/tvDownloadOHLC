@@ -4,8 +4,9 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from scripts.streaming.options import discord_notifier, file_writer
-from scripts.streaming.options.level_scorer import StructuralAnchor, MechanicalWall
+from scripts.streaming.options import discord_notifier, file_writer, level_scorer
+from scripts.streaming.options.config import INTRADAY_VIEW
+from scripts.streaming.options.level_scorer import StructuralAnchor, MechanicalWall, InflectionPoint
 
 
 def test_sidecar_path_is_deterministic() -> None:
@@ -121,6 +122,254 @@ def test_write_scored_levels_suppresses_near_duplicates(tmp_path: Path) -> None:
 
     assert "100.00" in text
     assert "100.30" not in text
+
+
+def test_write_scored_levels_em_scaled_tolerance_low_em_keeps_neighbor(tmp_path: Path) -> None:
+    scored = SimpleNamespace(
+        tagged_levels=[
+            MechanicalWall(
+                strike=100.00,
+                label="Wall 1",
+                significance="PRIMARY",
+                side="CALL",
+                field_name="call_wall",
+                pct_of_book=0.2,
+            ),
+            MechanicalWall(
+                strike=100.40,
+                label="Wall 2",
+                significance="SECONDARY",
+                side="CALL",
+                field_name="secondary_call_wall",
+                pct_of_book=0.1,
+            ),
+        ],
+        expected_moves=[
+            SimpleNamespace(dte=1, em_value=0.55, em_upper=110.55, em_lower=109.45),
+        ],
+    )
+
+    out = tmp_path / "scored_low_em.txt"
+    # For SPY base tolerance is 0.5. Low EM scales down (clamped min 0.6 => 0.3), so 0.4 gap should remain.
+    file_writer.write_scored_levels_txt("SPY", scored, path=out)
+    text = out.read_text(encoding="utf-8")
+
+    assert "100.00" in text
+    assert "100.40" in text
+
+
+def test_write_scored_levels_em_scaled_tolerance_high_em_suppresses_neighbor(tmp_path: Path) -> None:
+    scored = SimpleNamespace(
+        tagged_levels=[
+            MechanicalWall(
+                strike=100.00,
+                label="Wall 1",
+                significance="PRIMARY",
+                side="CALL",
+                field_name="call_wall",
+                pct_of_book=0.2,
+            ),
+            MechanicalWall(
+                strike=100.60,
+                label="Wall 2",
+                significance="SECONDARY",
+                side="CALL",
+                field_name="secondary_call_wall",
+                pct_of_book=0.1,
+            ),
+        ],
+        expected_moves=[
+            SimpleNamespace(dte=1, em_value=3.3, em_upper=113.3, em_lower=106.7),
+        ],
+    )
+
+    out = tmp_path / "scored_high_em.txt"
+    # For SPY base tolerance is 0.5. High EM scales to 0.75, so 0.6 gap is suppressed.
+    file_writer.write_scored_levels_txt("SPY", scored, path=out)
+    text = out.read_text(encoding="utf-8")
+
+    assert "100.00" in text
+    assert "100.60" not in text
+
+
+def test_write_scored_levels_keeps_flip_cliff_context_inflections(tmp_path: Path) -> None:
+    scored = SimpleNamespace(
+        tagged_levels=[
+            InflectionPoint(
+                strike=101.0,
+                label="Gamma Flip High",
+                significance="CONTEXT",
+                side="NEUTRAL",
+                inflection_type="FLIP",
+                field_name="gamma_flip_upper",
+            ),
+            InflectionPoint(
+                strike=99.0,
+                label="Gamma Flip Low",
+                significance="CONTEXT",
+                side="NEUTRAL",
+                inflection_type="FLIP",
+                field_name="gamma_flip_lower",
+            ),
+            InflectionPoint(
+                strike=102.5,
+                label="Gamma Cliff Up",
+                significance="CONTEXT",
+                side="CALL",
+                inflection_type="CLIFF",
+                field_name="gamma_cliff_up",
+            ),
+            InflectionPoint(
+                strike=97.0,
+                label="Gamma Cliff Down",
+                significance="CONTEXT",
+                side="PUT",
+                inflection_type="CLIFF",
+                field_name="gamma_cliff_down",
+            ),
+            InflectionPoint(
+                strike=100.0,
+                label="Gamma Magnet",
+                significance="CONTEXT",
+                side="NEUTRAL",
+                inflection_type="MAGNET",
+                field_name="gamma_magnet",
+            ),
+        ],
+        expected_moves=[],
+    )
+
+    out = tmp_path / "scored_flip_cliff.txt"
+    file_writer.write_scored_levels_txt("SPY", scored, path=out)
+    text = out.read_text(encoding="utf-8")
+
+    assert "FLIP UP" in text
+    assert "FLIP DN" in text
+    assert "CLIFF UP" in text
+    assert "CLIFF DN" in text
+    assert "MAGNET" not in text
+
+
+def test_write_scored_levels_keeps_flip_cliff_even_when_near_duplicates(tmp_path: Path) -> None:
+    scored = SimpleNamespace(
+        tagged_levels=[
+            InflectionPoint(
+                strike=100.00,
+                label="Zero Gamma",
+                significance="SECONDARY",
+                side="NEUTRAL",
+                inflection_type="ZERO",
+                field_name="zero_gamma",
+            ),
+            InflectionPoint(
+                strike=100.10,
+                label="Gamma Flip High",
+                significance="CONTEXT",
+                side="NEUTRAL",
+                inflection_type="FLIP",
+                field_name="gamma_flip_upper",
+            ),
+            InflectionPoint(
+                strike=99.90,
+                label="Gamma Flip Low",
+                significance="CONTEXT",
+                side="NEUTRAL",
+                inflection_type="FLIP",
+                field_name="gamma_flip_lower",
+            ),
+            InflectionPoint(
+                strike=100.20,
+                label="Gamma Cliff Up",
+                significance="CONTEXT",
+                side="CALL",
+                inflection_type="CLIFF",
+                field_name="gamma_cliff_up",
+            ),
+            InflectionPoint(
+                strike=99.80,
+                label="Gamma Cliff Down",
+                significance="CONTEXT",
+                side="PUT",
+                inflection_type="CLIFF",
+                field_name="gamma_cliff_down",
+            ),
+        ],
+        expected_moves=[],
+    )
+
+    out = tmp_path / "scored_flip_cliff_near_dupes.txt"
+    file_writer.write_scored_levels_txt(
+        "SPY",
+        scored,
+        path=out,
+        near_duplicate_tolerance=0.5,
+    )
+    text = out.read_text(encoding="utf-8")
+
+    assert "ZERO GEX" in text
+    assert "FLIP UP" in text
+    assert "FLIP DN" in text
+    assert "CLIFF UP" in text
+    assert "CLIFF DN" in text
+
+
+def test_score_levels_keeps_flip_cliff_context_when_intraday_mask_excludes_context(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(level_scorer, "_score_mechanical_walls", lambda *args, **kwargs: [])
+    monkeypatch.setattr(level_scorer, "_detect_structural_anchors", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        level_scorer,
+        "_find_inflection_points",
+        lambda *args, **kwargs: [
+            InflectionPoint(
+                strike=100.10,
+                label="Gamma Flip High",
+                significance="CONTEXT",
+                side="NEUTRAL",
+                inflection_type="FLIP",
+                field_name="gamma_flip_upper",
+            ),
+            InflectionPoint(
+                strike=99.90,
+                label="Gamma Flip Low",
+                significance="CONTEXT",
+                side="NEUTRAL",
+                inflection_type="FLIP",
+                field_name="gamma_flip_lower",
+            ),
+            InflectionPoint(
+                strike=100.20,
+                label="Gamma Cliff Up",
+                significance="CONTEXT",
+                side="CALL",
+                inflection_type="CLIFF",
+                field_name="gamma_cliff_up",
+            ),
+            InflectionPoint(
+                strike=100.00,
+                label="Gamma Magnet",
+                significance="CONTEXT",
+                side="NEUTRAL",
+                inflection_type="MAGNET",
+                field_name="gamma_magnet",
+            ),
+        ],
+    )
+
+    scored = level_scorer.score_levels(
+        levels=SimpleNamespace(spot=100.0, directional_bias="NEUTRAL", gex_regime="POSITIVE"),
+        chain=SimpleNamespace(),
+        ticker="SPY",
+        profile=SimpleNamespace(),
+        view_mode=INTRADAY_VIEW,
+    )
+    fields = {tl.field_name for tl in scored.tagged_levels}
+
+    assert "gamma_flip_upper" in fields
+    assert "gamma_flip_lower" in fields
+    assert "gamma_cliff_up" in fields
+    assert "gamma_magnet" not in fields
 
 
 def test_discord_output_prefers_attachment_mode(monkeypatch) -> None:
