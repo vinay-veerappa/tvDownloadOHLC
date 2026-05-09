@@ -1,0 +1,474 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+from scripts.streaming.options import discord_notifier, file_writer
+from scripts.streaming.options.level_scorer import StructuralAnchor, MechanicalWall
+
+
+def test_sidecar_path_is_deterministic() -> None:
+    base = file_writer.DAILY_LEVELS_TXT
+
+    versioned = file_writer._sidecar_path(base, "versioned")
+    snapshot = file_writer._sidecar_path(base, "pulse")
+
+    assert versioned.name.endswith("_versioned.txt")
+    assert snapshot.name.endswith("_pulse.txt")
+    assert "20" not in versioned.name
+    assert "20" not in snapshot.name
+
+
+def test_copy_block_payloads_are_raw_and_chunked(monkeypatch) -> None:
+    monkeypatch.setattr(discord_notifier, "futures_tag", lambda symbol: symbol)
+    monkeypatch.setattr(
+        discord_notifier,
+        "copy_ready_line",
+        lambda ticker, levels: f"{ticker}:RAW:{getattr(levels, 'marker', 'x')}",
+    )
+
+    translated = [SimpleNamespace(futures_symbol="ES", marker="a")]
+    cash_levels = [SimpleNamespace(ticker=f"T{i}", marker="b" * 500) for i in range(5)]
+
+    payloads = discord_notifier._copy_block_payloads(translated, "RUN", cash_levels=cash_levels)
+
+    assert payloads
+    assert all("```" not in payload["content"] for payload in payloads)
+    assert all("Dealer Levels" not in payload["content"] for payload in payloads)
+    assert all(payload["content"].strip() for payload in payloads)
+    assert "ES:RAW:a" in payloads[0]["content"]
+    assert any("T4:RAW" in payload["content"] for payload in payloads)
+
+
+def test_copy_attachment_payload_is_text_file() -> None:
+    payload, files = discord_notifier._copy_attachment_payload(["SPY:1:A|P|L", "QQQ:2:W|S|L"], "RUN")
+
+    assert "attached as text file" in payload["content"]
+    assert "file" in files
+    name, data, mime = files["file"]
+    assert name.endswith(".txt")
+    assert b"SPY:1:A|P|L" in data
+    assert mime == "text/plain"
+
+
+def test_write_scored_levels_respects_max_visible_dte(tmp_path: Path) -> None:
+    scored = SimpleNamespace(
+        tagged_levels=[
+            StructuralAnchor(
+                strike=100.0,
+                label="Anchor Near",
+                significance="PRIMARY",
+                side="CALL",
+                matched_program="",
+                oi_zscore=2.0,
+                days_to_expiry=5,
+            ),
+            StructuralAnchor(
+                strike=110.0,
+                label="Anchor Far",
+                significance="PRIMARY",
+                side="PUT",
+                matched_program="",
+                oi_zscore=2.0,
+                days_to_expiry=30,
+            ),
+            MechanicalWall(
+                strike=120.0,
+                label="Wall",
+                significance="PRIMARY",
+                side="CALL",
+                field_name="call_wall",
+                pct_of_book=0.2,
+            ),
+        ]
+    )
+
+    out = tmp_path / "scored.txt"
+    file_writer.write_scored_levels_txt("SPY", scored, path=out, max_visible_dte_days=7)
+    text = out.read_text(encoding="utf-8")
+
+    assert "100.00" in text
+    assert "120.00" in text
+    assert "110.00" not in text
+
+
+def test_write_scored_levels_suppresses_near_duplicates(tmp_path: Path) -> None:
+    scored = SimpleNamespace(
+        tagged_levels=[
+            MechanicalWall(
+                strike=100.00,
+                label="Wall 1",
+                significance="PRIMARY",
+                side="CALL",
+                field_name="call_wall",
+                pct_of_book=0.2,
+            ),
+            MechanicalWall(
+                strike=100.30,
+                label="Wall 2",
+                significance="SECONDARY",
+                side="CALL",
+                field_name="secondary_call_wall",
+                pct_of_book=0.1,
+            ),
+        ]
+    )
+
+    out = tmp_path / "scored_dupes.txt"
+    file_writer.write_scored_levels_txt("SPY", scored, path=out, near_duplicate_tolerance=0.5)
+    text = out.read_text(encoding="utf-8")
+
+    assert "100.00" in text
+    assert "100.30" not in text
+
+
+def test_discord_output_prefers_attachment_mode(monkeypatch) -> None:
+    calls: list[tuple[dict, dict | None]] = []
+
+    monkeypatch.setattr(discord_notifier, "_load_webhook_url", lambda *args, **kwargs: "https://example.invalid")
+    monkeypatch.setattr(discord_notifier, "futures_tag", lambda symbol: symbol)
+    monkeypatch.setattr(discord_notifier, "copy_ready_line", lambda ticker, levels: f"{ticker}:1:A|P|TEST")
+    monkeypatch.setattr(discord_notifier, "_build_embed", lambda *args, **kwargs: {"title": "ok"})
+    monkeypatch.setattr(discord_notifier, "_build_coaches_note_payloads", lambda *args, **kwargs: [])
+    monkeypatch.setattr(discord_notifier, "_post_payload", lambda url, payload, files=None: calls.append((payload, files)))
+    monkeypatch.setattr(discord_notifier, "ENABLE_DISCORD_COPY_ATTACHMENT", True)
+
+    translated = [SimpleNamespace(futures_symbol="ES", cash_ticker="SPY")]
+    discord_notifier.send_discord_update(translated, run_label="RUN")
+
+    assert calls
+    assert any(files is not None for _, files in calls)
+    attachment_payload, attachment_files = next((p, f) for p, f in calls if f is not None)
+    assert "attached as text file" in attachment_payload["content"]
+    assert "file" in attachment_files
+
+
+def test_discord_output_falls_back_to_raw_lines(monkeypatch) -> None:
+    calls: list[tuple[dict, dict | None]] = []
+
+    monkeypatch.setattr(discord_notifier, "_load_webhook_url", lambda *args, **kwargs: "https://example.invalid")
+    monkeypatch.setattr(discord_notifier, "futures_tag", lambda symbol: symbol)
+    monkeypatch.setattr(discord_notifier, "copy_ready_line", lambda ticker, levels: f"{ticker}:1:A|P|TEST")
+    monkeypatch.setattr(discord_notifier, "_build_embed", lambda *args, **kwargs: {"title": "ok"})
+    monkeypatch.setattr(discord_notifier, "_build_coaches_note_payloads", lambda *args, **kwargs: [])
+    monkeypatch.setattr(discord_notifier, "_post_payload", lambda url, payload, files=None: calls.append((payload, files)))
+    monkeypatch.setattr(discord_notifier, "ENABLE_DISCORD_COPY_ATTACHMENT", False)
+
+    translated = [SimpleNamespace(futures_symbol="ES", cash_ticker="SPY")]
+    discord_notifier.send_discord_update(translated, run_label="RUN")
+
+    assert calls
+    first_payload, first_files = calls[0]
+    assert first_files is None
+    assert first_payload["content"].startswith("ES:1:A|P|TEST")
+
+
+def test_discord_output_prefers_scored_unified_lines(monkeypatch) -> None:
+    calls: list[tuple[dict, dict | None]] = []
+
+    monkeypatch.setattr(discord_notifier, "_load_webhook_url", lambda *args, **kwargs: "https://example.invalid")
+    monkeypatch.setattr(discord_notifier, "_build_embed", lambda *args, **kwargs: {"title": "ok"})
+    monkeypatch.setattr(discord_notifier, "_build_coaches_note_payloads", lambda *args, **kwargs: [])
+    monkeypatch.setattr(discord_notifier, "_post_payload", lambda url, payload, files=None: calls.append((payload, files)))
+    monkeypatch.setattr(discord_notifier, "ENABLE_DISCORD_COPY_ATTACHMENT", False)
+    monkeypatch.setattr(discord_notifier, "build_scored_levels_line", lambda ticker, scored: f"{ticker}:100.00:A|P|UNIFIED")
+
+    translated = [SimpleNamespace(futures_symbol="ES", cash_ticker="SPY")]
+    scored_levels = [SimpleNamespace(ticker="SPY")]
+    discord_notifier.send_discord_update(translated, run_label="RUN", scored_levels=scored_levels)
+
+    assert calls
+    first_payload, _ = calls[0]
+    assert first_payload["content"].startswith("SPY:100.00:A|P|UNIFIED")
+
+
+def test_write_unified_levels_txt_writes_stable_lines(tmp_path: Path) -> None:
+    scored_levels = [
+        SimpleNamespace(ticker="QQQ", tagged_levels=[]),
+        SimpleNamespace(ticker="SPY", tagged_levels=[]),
+    ]
+
+    # Force deterministic token composition for this test.
+    original = file_writer._compose_unified_tokens_for_ticker
+    file_writer._compose_unified_tokens_for_ticker = lambda *args, **kwargs: ["100.00:A|P|U"]
+    try:
+        out = tmp_path / "unified_levels.txt"
+        file_writer.write_unified_levels_txt(scored_levels, path=out)
+        text = out.read_text(encoding="utf-8")
+    finally:
+        file_writer._compose_unified_tokens_for_ticker = original
+
+    assert text.splitlines() == ["QQQ:100.00:A|P|U", "SPY:100.00:A|P|U"]
+
+
+def test_write_unified_levels_json_matches_unified_txt_lines(tmp_path: Path) -> None:
+    scored_levels = [
+        SimpleNamespace(ticker="QQQ", tagged_levels=[]),
+        SimpleNamespace(ticker="SPY", tagged_levels=[]),
+    ]
+
+    original = file_writer._compose_unified_tokens_for_ticker
+    file_writer._compose_unified_tokens_for_ticker = lambda *args, **kwargs: ["100.00:A|P|U"]
+    try:
+        txt_out = tmp_path / "unified_levels.txt"
+        json_out = tmp_path / "unified_levels.json"
+        file_writer.write_unified_levels_txt(scored_levels, path=txt_out)
+        file_writer.write_unified_levels_json(scored_levels, path=json_out)
+        txt_lines = [ln for ln in txt_out.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        parsed = json.loads(json_out.read_text(encoding="utf-8"))
+    finally:
+        file_writer._compose_unified_tokens_for_ticker = original
+
+    assert [row["line"] for row in parsed["tickers"]] == txt_lines
+
+
+def test_parse_unified_line_extracts_token_fields() -> None:
+    line = "SPY:736.04:I|S|ZERO GEX, 725.00:A|S|OI NODE 3.0σ P 6d"
+    parsed = file_writer._parse_unified_line(line)
+
+    assert parsed["ticker"] == "SPY"
+    assert parsed["token_count"] == 2
+    assert parsed["tokens"][0]["strike"] == 736.04
+    assert parsed["tokens"][0]["filter"] == "I"
+    assert parsed["tokens"][0]["significance"] == "S"
+    assert parsed["tokens"][0]["label"] == "ZERO GEX"
+
+
+def test_unified_payload_fingerprint_reports_sha_and_lines(tmp_path: Path) -> None:
+    payload = tmp_path / "unified_levels.txt"
+    payload.write_text("SPY:100.00:A|P|ONE\nQQQ:200.00:W|S|TWO\n", encoding="utf-8")
+
+    fp = file_writer.unified_payload_fingerprint(payload)
+
+    assert fp["exists"] is True
+    assert fp["bytes"] > 0
+    assert fp["lines"] == 2
+    assert len(fp["sha256"]) == 64
+
+
+def test_unified_macro_extensions_dedupe_and_tagging(tmp_path: Path) -> None:
+    intraday = SimpleNamespace(
+        ticker="SPY",
+        tagged_levels=[
+            MechanicalWall(
+                strike=100.0,
+                label="Wall A",
+                significance="PRIMARY",
+                side="CALL",
+                field_name="call_wall",
+                pct_of_book=0.2,
+            )
+        ],
+    )
+    macro = SimpleNamespace(
+        ticker="SPY",
+        tagged_levels=[
+            MechanicalWall(
+                strike=100.0,
+                label="Wall Dup",
+                significance="PRIMARY",
+                side="CALL",
+                field_name="call_wall",
+                pct_of_book=0.2,
+            ),
+            MechanicalWall(
+                strike=108.0,
+                label="Wall Ext",
+                significance="PRIMARY",
+                side="CALL",
+                field_name="call_wall",
+                pct_of_book=0.2,
+            ),
+        ],
+    )
+
+    out = tmp_path / "unified_levels.txt"
+    file_writer.write_unified_levels_txt(
+        [intraday],
+        path=out,
+        macro_scored_levels=[macro],
+        macro_spot_by_ticker={"SPY": 100.0},
+        macro_extension_band_pct=0.10,
+        show_far_macro=False,
+    )
+    line = out.read_text(encoding="utf-8").strip()
+
+    assert line.count("100.00") == 1
+    assert "108.00" in line
+    assert "[MEXT]" in line
+
+
+def test_unified_macro_far_levels_hidden_unless_enabled(tmp_path: Path) -> None:
+    intraday = SimpleNamespace(
+        ticker="SPY",
+        tagged_levels=[
+            MechanicalWall(
+                strike=100.0,
+                label="Wall A",
+                significance="PRIMARY",
+                side="CALL",
+                field_name="call_wall",
+                pct_of_book=0.2,
+            )
+        ],
+    )
+    macro = SimpleNamespace(
+        ticker="SPY",
+        tagged_levels=[
+            MechanicalWall(
+                strike=125.0,
+                label="Wall Far",
+                significance="PRIMARY",
+                side="CALL",
+                field_name="call_wall",
+                pct_of_book=0.2,
+            )
+        ],
+    )
+
+    hidden = tmp_path / "unified_hidden.txt"
+    shown = tmp_path / "unified_shown.txt"
+
+    file_writer.write_unified_levels_txt(
+        [intraday],
+        path=hidden,
+        macro_scored_levels=[macro],
+        macro_spot_by_ticker={"SPY": 100.0},
+        macro_extension_band_pct=0.10,
+        show_far_macro=False,
+    )
+    file_writer.write_unified_levels_txt(
+        [intraday],
+        path=shown,
+        macro_scored_levels=[macro],
+        macro_spot_by_ticker={"SPY": 100.0},
+        macro_extension_band_pct=0.10,
+        show_far_macro=True,
+    )
+
+    hidden_line = hidden.read_text(encoding="utf-8").strip()
+    shown_line = shown.read_text(encoding="utf-8").strip()
+
+    assert "125.00" not in hidden_line
+    assert "125.00" in shown_line
+    assert "[FAR]" in shown_line
+
+
+def test_discord_output_uses_unified_file_content_when_present(monkeypatch, tmp_path: Path) -> None:
+    calls: list[tuple[dict, dict | None]] = []
+
+    monkeypatch.setattr(discord_notifier, "_load_webhook_url", lambda *args, **kwargs: "https://example.invalid")
+    monkeypatch.setattr(discord_notifier, "_build_embed", lambda *args, **kwargs: {"title": "ok"})
+    monkeypatch.setattr(discord_notifier, "_build_coaches_note_payloads", lambda *args, **kwargs: [])
+    monkeypatch.setattr(discord_notifier, "_post_payload", lambda url, payload, files=None: calls.append((payload, files)))
+    monkeypatch.setattr(discord_notifier, "ENABLE_DISCORD_COPY_ATTACHMENT", False)
+    monkeypatch.setattr(discord_notifier, "build_scored_levels_line", lambda ticker, scored: f"{ticker}:100.00:A|P|UNIFIED")
+
+    unified = tmp_path / "unified_levels.txt"
+    unified.write_text("SPY:200.00:W|P|FILE\nQQQ:300.00:A|S|FILE\n", encoding="utf-8")
+
+    translated = [SimpleNamespace(futures_symbol="ES", cash_ticker="SPY")]
+    scored_levels = [SimpleNamespace(ticker="SPY")]
+    discord_notifier.send_discord_update(
+        translated,
+        run_label="RUN",
+        scored_levels=scored_levels,
+        unified_copy_path=unified,
+    )
+
+    assert calls
+    first_payload, _ = calls[0]
+    assert first_payload["content"].startswith("SPY:200.00:W|P|FILE")
+
+
+def test_discord_output_uses_webhook_key_override(monkeypatch) -> None:
+    calls: list[tuple[str, dict, dict | None]] = []
+
+    monkeypatch.setattr(discord_notifier, "ENABLE_DISCORD_COPY_ATTACHMENT", False)
+    monkeypatch.setattr(discord_notifier, "build_scored_levels_line", lambda ticker, scored: f"{ticker}:100.00:A|P|UNIFIED")
+    monkeypatch.setattr(discord_notifier, "_build_embed", lambda *args, **kwargs: {"title": "ok"})
+    monkeypatch.setattr(discord_notifier, "_build_coaches_note_payloads", lambda *args, **kwargs: [])
+    monkeypatch.setattr(discord_notifier, "_load_webhook_url", lambda key: f"https://example.invalid/{key}")
+    monkeypatch.setattr(discord_notifier, "_post_payload", lambda url, payload, files=None: calls.append((url, payload, files)))
+
+    translated = [SimpleNamespace(futures_symbol="ES", cash_ticker="SPY")]
+    scored_levels = [SimpleNamespace(ticker="SPY")]
+
+    discord_notifier.send_discord_update(
+        translated_levels=translated,
+        run_label="RUN",
+        scored_levels=scored_levels,
+        webhook_key="test_channel",
+    )
+
+    assert calls
+    assert all(url.endswith("/test_channel") for url, _, _ in calls)
+
+
+def test_discord_attachment_failure_falls_back_to_raw_chunks(monkeypatch) -> None:
+    calls: list[tuple[dict, dict | None]] = []
+
+    monkeypatch.setattr(discord_notifier, "_load_webhook_url", lambda *args, **kwargs: "https://example.invalid")
+    monkeypatch.setattr(discord_notifier, "_build_embed", lambda *args, **kwargs: {"title": "ok"})
+    monkeypatch.setattr(discord_notifier, "_build_coaches_note_payloads", lambda *args, **kwargs: [])
+    monkeypatch.setattr(discord_notifier, "ENABLE_DISCORD_COPY_ATTACHMENT", True)
+
+    def fake_post(url, payload, files=None):
+        calls.append((payload, files))
+        if files is not None:
+            return False
+        return True
+
+    monkeypatch.setattr(discord_notifier, "_post_payload", fake_post)
+
+    translated = [SimpleNamespace(futures_symbol="ES", cash_ticker="SPY")]
+    scored_levels = [SimpleNamespace(ticker="SPY", tagged_levels=[])]
+    monkeypatch.setattr(discord_notifier, "build_scored_levels_line", lambda ticker, scored: f"{ticker}:100.00:A|P|UNIFIED")
+
+    discord_notifier.send_discord_update(translated, run_label="RUN", scored_levels=scored_levels)
+
+    assert calls
+    assert calls[0][1] is not None
+    assert any(files is None and payload.get("content", "").startswith("SPY:100.00") for payload, files in calls[1:])
+
+
+def test_discord_empty_unified_file_falls_back_to_scored_lines(monkeypatch, tmp_path: Path) -> None:
+    calls: list[tuple[dict, dict | None]] = []
+
+    monkeypatch.setattr(discord_notifier, "_load_webhook_url", lambda *args, **kwargs: "https://example.invalid")
+    monkeypatch.setattr(discord_notifier, "_build_embed", lambda *args, **kwargs: {"title": "ok"})
+    monkeypatch.setattr(discord_notifier, "_build_coaches_note_payloads", lambda *args, **kwargs: [])
+    monkeypatch.setattr(discord_notifier, "_post_payload", lambda url, payload, files=None: calls.append((payload, files)))
+    monkeypatch.setattr(discord_notifier, "ENABLE_DISCORD_COPY_ATTACHMENT", False)
+    monkeypatch.setattr(discord_notifier, "build_scored_levels_line", lambda ticker, scored: f"{ticker}:111.00:A|P|FALLBACK")
+
+    unified = tmp_path / "unified_levels.txt"
+    unified.write_text("\n\n", encoding="utf-8")
+
+    translated = [SimpleNamespace(futures_symbol="ES", cash_ticker="SPY")]
+    scored_levels = [SimpleNamespace(ticker="SPY", tagged_levels=[])]
+
+    discord_notifier.send_discord_update(
+        translated,
+        run_label="RUN",
+        scored_levels=scored_levels,
+        unified_copy_path=unified,
+    )
+
+    assert calls
+    first_payload, _ = calls[0]
+    assert first_payload["content"].startswith("SPY:111.00:A|P|FALLBACK")
+
+
+def test_discord_invalid_webhook_key_raises_keyerror(monkeypatch) -> None:
+    monkeypatch.setattr(discord_notifier, "_load_webhook_url", lambda key=None: (_ for _ in ()).throw(KeyError("missing key")))
+
+    translated = [SimpleNamespace(futures_symbol="ES", cash_ticker="SPY")]
+
+    try:
+        discord_notifier.send_discord_update(translated, run_label="RUN", webhook_key="does_not_exist")
+    except KeyError as exc:
+        assert "missing key" in str(exc)
+    else:
+        raise AssertionError("Expected KeyError for invalid webhook key")

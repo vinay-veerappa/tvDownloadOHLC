@@ -374,6 +374,8 @@ MACRO_LEVELS_TXT: Path = DATA_DIR / "macro_levels.txt"
 MACRO_QUANT_JSON: Path = DATA_DIR / "macro_quant.json"
 SCORED_LEVELS_TXT: Path = DATA_DIR / "scored_levels.txt"
 SCORED_MACRO_LEVELS_TXT: Path = DATA_DIR / "scored_macro_levels.txt"
+UNIFIED_LEVELS_TXT: Path = DATA_DIR / "unified_levels.txt"
+UNIFIED_LEVELS_JSON: Path = DATA_DIR / "unified_levels.json"
 BASIS_ANCHORS_JSON: Path = DATA_DIR / "basis_anchors.json"
 
 # ---------------------------------------------------------------------------
@@ -401,10 +403,37 @@ DISCORD_WEBHOOKS_PATH: Path = REPO_ROOT / "discord_webhooks.json"
 DISCORD_TARGET_KEY: str = "option-levels"
 DISCORD_MACRO_KEY: str = "macro-alerts"
 ENABLE_DISCORD_UPDATES: bool = False
+ENABLE_DISCORD_COPY_ATTACHMENT: bool = os.environ.get("ENABLE_DISCORD_COPY_ATTACHMENT", "1").lower() not in {"0", "false", "no"}
+DISCORD_COPY_ATTACHMENT_FILENAME: str = os.environ.get("DISCORD_COPY_ATTACHMENT_FILENAME", "dealer_levels_payload.txt")
+ENABLE_UNIFIED_CONTRACT_OUTPUTS: bool = os.environ.get("ENABLE_UNIFIED_CONTRACT_OUTPUTS", "1").lower() not in {"0", "false", "no"}
+ENABLE_UNIFIED_MACRO_EXTENSIONS: bool = os.environ.get("ENABLE_UNIFIED_MACRO_EXTENSIONS", "1").lower() not in {"0", "false", "no"}
+SHOW_FAR_MACRO_LEVELS: bool = os.environ.get("SHOW_FAR_MACRO_LEVELS", "0").lower() in {"1", "true", "yes"}
+MACRO_EXTENSION_BAND_PCT: float = float(os.environ.get("MACRO_EXTENSION_BAND_PCT", "0.10"))
 
 # Embed accent colours (Discord integer format: 0xRRGGBB).
 DISCORD_COLOR_POSITIVE: int = 0x00C853   # green  — positive GEX regime
 DISCORD_COLOR_NEGATIVE: int = 0xD50000   # red    — negative GEX regime
+
+# Default visibility clamp for scored structural anchors in copy-ready exports.
+MAX_VISIBLE_DTE_DAYS: int = int(os.environ.get("MAX_VISIBLE_DTE_DAYS", "7"))
+
+# Near-duplicate suppression in scored export (price units).
+DEFAULT_NEAR_DUPLICATE_TOLERANCE: float = float(os.environ.get("DEFAULT_NEAR_DUPLICATE_TOLERANCE", "0.0"))
+NEAR_DUPLICATE_TOLERANCE_BY_TICKER: dict[str, float] = {
+    "SPX": 5.0,
+    "NDX": 10.0,
+    "SPY": 0.5,
+    "QQQ": 0.5,
+    "IWM": 0.5,
+    "DIA": 0.5,
+    "AAPL": 1.0,
+    "NVDA": 1.0,
+    "TSLA": 1.0,
+    "MSFT": 1.0,
+    "AMZN": 1.0,
+    "GOOGL": 1.0,
+    "AVGO": 1.0,
+}
 
 # ---------------------------------------------------------------------------
 # Scheduler

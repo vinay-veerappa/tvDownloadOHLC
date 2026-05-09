@@ -75,10 +75,20 @@ from .config import (
     get_ticker_profile,
     SCORED_LEVELS_TXT,
     SCORED_MACRO_LEVELS_TXT,
-    BASIS_ANCHORS_JSON
+    BASIS_ANCHORS_JSON,
+    UNIFIED_LEVELS_TXT,
+    UNIFIED_LEVELS_JSON,
+    ENABLE_UNIFIED_CONTRACT_OUTPUTS,
 )
 from .discord_notifier import send_discord_update, send_regime_change_alert
-from .file_writer import write_levels, _is_rth, write_scored_levels_txt
+from .file_writer import (
+    write_levels,
+    _is_rth,
+    write_scored_levels_txt,
+    write_unified_levels_txt,
+    write_unified_levels_json,
+    unified_payload_fingerprint,
+)
 from .futures_translator import translate_to_futures
 from .gex_calculator import (
     DealerLevels,
@@ -183,6 +193,7 @@ def run_pipeline(
     run_label: str = "",
     enable_discord: bool = ENABLE_DISCORD_UPDATES,
     full_discord: bool = False,
+    discord_target_key: str | None = None,
     versioned: bool = False,
     reset_anchors: bool = False,
     snapshot_suffix: str | None = None,
@@ -435,9 +446,47 @@ def run_pipeline(
             scored_levels=list(scored_macro_by_ticker.values()),
             json_path=MACRO_LEVELS_JSON,
             txt_path=DATA_DIR / "macro_levels.txt",
+            txt_mode="macro",
             versioned=versioned,
             snapshot_suffix=snapshot_suffix,
         )
+
+        if ENABLE_UNIFIED_CONTRACT_OUTPUTS:
+            write_unified_levels_txt(
+                list(scored_intraday_by_ticker.values()),
+                path=UNIFIED_LEVELS_TXT,
+                versioned=versioned,
+                snapshot_suffix=snapshot_suffix,
+                macro_scored_levels=list(scored_macro_by_ticker.values()),
+                macro_spot_by_ticker={k: v.spot for k, v in macro_levels_by_ticker.items()},
+            )
+            write_unified_levels_json(
+                list(scored_intraday_by_ticker.values()),
+                path=UNIFIED_LEVELS_JSON,
+                versioned=versioned,
+                snapshot_suffix=snapshot_suffix,
+                macro_scored_levels=list(scored_macro_by_ticker.values()),
+                macro_spot_by_ticker={k: v.spot for k, v in macro_levels_by_ticker.items()},
+            )
+
+            txt_fp = unified_payload_fingerprint(UNIFIED_LEVELS_TXT)
+            json_fp = unified_payload_fingerprint(UNIFIED_LEVELS_JSON)
+            log.info(
+                "Unified TXT fingerprint | exists=%s bytes=%d lines=%d sha256=%s",
+                txt_fp["exists"],
+                txt_fp["bytes"],
+                txt_fp["lines"],
+                txt_fp["sha256"],
+            )
+            log.info(
+                "Unified JSON fingerprint | exists=%s bytes=%d lines=%d sha256=%s",
+                json_fp["exists"],
+                json_fp["bytes"],
+                json_fp["lines"],
+                json_fp["sha256"],
+            )
+        else:
+            log.info("Unified contract outputs disabled by config flag.")
     except Exception as exc:
         log.error("File write failed: %s", exc)
 
@@ -471,6 +520,8 @@ def run_pipeline(
                 run_label,
                 cash_levels=list(cash_levels_by_ticker.values()),
                 scored_levels=list(scored_intraday_by_ticker.values()),
+                unified_copy_path=UNIFIED_LEVELS_TXT if ENABLE_UNIFIED_CONTRACT_OUTPUTS else None,
+                webhook_key=discord_target_key,
                 include_cash_embeds=full_discord,
             )
         except Exception as exc:
@@ -769,6 +820,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Enable Discord webhook updates for this run (disabled by default).",
     )
     parser.add_argument(
+        "--discord-key",
+        metavar="KEY",
+        default="",
+        help="Override discord_webhooks.json key for dealer-level updates (for example: test_channel).",
+    )
+    parser.add_argument(
         "--no-discord",
         action="store_true",
         help="Force-disable Discord webhook updates for this run.",
@@ -831,6 +888,7 @@ def main() -> None:
             run_label=args.label,
             enable_discord=enable_discord,
             full_discord=args.full_discord,
+            discord_target_key=(args.discord_key or None),
             versioned=args.versioned,
         )
 

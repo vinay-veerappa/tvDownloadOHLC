@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -23,6 +24,8 @@ from .config import (
     DISCORD_MACRO_KEY,
     DISCORD_COLOR_POSITIVE,
     DISCORD_COLOR_NEGATIVE,
+    ENABLE_DISCORD_COPY_ATTACHMENT,
+    DISCORD_COPY_ATTACHMENT_FILENAME,
 )
 from .formatting import (
     build_coaches_note,
@@ -36,6 +39,7 @@ from .formatting import (
 )
 from .futures_translator import TranslatedLevels
 from .gex_calculator import DealerLevels
+from .file_writer import build_scored_levels_line
 from .level_scorer import (
     ScoredLevels, 
     TaggedLevel, 
@@ -89,37 +93,45 @@ def _copy_block_payloads(
     run_label: str,
     cash_levels: list[DealerLevels] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build one or more Discord payloads containing the copy-ready strings."""
+    """Build one or more Discord payloads containing raw copy-ready strings."""
     lines = [copy_ready_line(futures_tag(tl.futures_symbol), tl) for tl in translated_levels]
     if cash_levels:
         # Add cash levels that weren't already included as futures translations
         # (or include all if the user explicitly wants indices too)
         lines.extend(copy_ready_line(levels.ticker, levels) for levels in cash_levels)
 
-    header = f"**Dealer Levels — {run_label}**\nCopy directly into TradingView indicator input:\n"
-    
+    return _chunk_copy_lines(lines)
+
+
+def _chunk_copy_lines(lines: list[str]) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     current_lines: list[str] = []
-    current_len = len(header) + 10 # buffer for code block backticks
+    current_len = 0
     
     for line in lines:
-        if current_len + len(line) + 1 > _DISCORD_MAX_CONTENT:
-            # Seal this batch
-            payloads.append({
-                "content": header + "```\n" + "\n".join(current_lines) + "\n```"
-            })
+        if current_lines and current_len + len(line) + 1 > _DISCORD_MAX_CONTENT:
+            payloads.append({"content": "\n".join(current_lines)})
             current_lines = [line]
-            current_len = len(header) + 10 + len(line)
+            current_len = len(line)
         else:
             current_lines.append(line)
             current_len += len(line) + 1
             
     if current_lines:
-        payloads.append({
-            "content": header + "```\n" + "\n".join(current_lines) + "\n```"
-        })
-        
+        payloads.append({"content": "\n".join(current_lines)})
+
     return payloads
+
+
+def _copy_attachment_payload(lines: list[str], run_label: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    content = "\n".join(lines)
+    payload = {
+        "content": f"Dealer Levels raw payload ({run_label}) attached as text file."
+    }
+    files = {
+        "file": (DISCORD_COPY_ATTACHMENT_FILENAME, content.encode("utf-8"), "text/plain")
+    }
+    return payload, files
 
 
 def _build_scored_fields(scored: ScoredLevels) -> list[dict[str, Any]]:
@@ -270,7 +282,7 @@ def _build_coaches_note_payloads(
     return payloads
 
 
-def _post_payload(url: str, payload: dict[str, Any], files: dict[str, Any] | None = None) -> None:
+def _post_payload(url: str, payload: dict[str, Any], files: dict[str, Any] | None = None) -> bool:
     """POST a Discord webhook payload (JSON or multipart) with error handling."""
     try:
         if files:
@@ -290,16 +302,20 @@ def _post_payload(url: str, payload: dict[str, Any], files: dict[str, Any] | Non
                 len(payload.get("embeds", [])),
                 "with file" if files else "no file"
             )
+            return True
         else:
             log.warning(
                 "Discord webhook returned HTTP %s: %s",
                 resp.status_code,
                 resp.text[:300],
             )
+            return False
     except requests.exceptions.Timeout:
         log.error("Discord webhook timed out.")
+        return False
     except requests.exceptions.RequestException as exc:
         log.error("Discord webhook request failed: %s", exc)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +405,9 @@ def send_discord_update(
     run_label: str = "",
     cash_levels: list[DealerLevels] | None = None,
     scored_levels: list[ScoredLevels] | None = None,
+    unified_copy_path: Path | None = None,
     webhook_url: str | None = None,
+    webhook_key: str | None = None,
     include_cash_embeds: bool = False,
 ) -> None:
     """
@@ -405,12 +423,40 @@ def send_discord_update(
         include_cash_embeds,
     )
 
-    url = webhook_url or _load_webhook_url()
+    url = webhook_url or _load_webhook_url(webhook_key or DISCORD_TARGET_KEY)
 
     # 1. Copy Blocks (Always include everything specified)
     if translated_levels or cash_levels:
-        for payload in _copy_block_payloads(translated_levels, run_label, cash_levels=cash_levels):
-            _post_payload(url, payload)
+        lines: list[str] = []
+
+        if unified_copy_path and unified_copy_path.exists():
+            file_lines = [ln.strip() for ln in unified_copy_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+            if file_lines:
+                lines = file_lines
+
+        if not lines:
+            scored_lookup = {s.ticker: s for s in (scored_levels or [])}
+            if scored_lookup:
+                for ticker, scored in scored_lookup.items():
+                    line = build_scored_levels_line(ticker, scored)
+                    if line:
+                        lines.append(line)
+
+        if not lines:
+            lines = [copy_ready_line(futures_tag(tl.futures_symbol), tl) for tl in translated_levels]
+            if cash_levels:
+                lines.extend(copy_ready_line(levels.ticker, levels) for levels in cash_levels)
+
+        if ENABLE_DISCORD_COPY_ATTACHMENT and lines:
+            payload, files = _copy_attachment_payload(lines, run_label)
+            sent = _post_payload(url, payload, files=files)
+            if sent is False:
+                log.warning("Attachment send failed, falling back to raw line chunks.")
+                for fallback_payload in _chunk_copy_lines(lines):
+                    _post_payload(url, fallback_payload)
+        else:
+            for payload in _chunk_copy_lines(lines):
+                _post_payload(url, payload)
 
     # 2. Detailed Embeds & Notes
     # If include_cash_embeds is False, we only show detailed cards for the indices we translate.

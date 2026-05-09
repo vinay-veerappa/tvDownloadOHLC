@@ -6,6 +6,7 @@ and interpretation text for alerts / pre-open planning.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -18,7 +19,16 @@ from .config import (
     GEX_PROFILES_JSON, 
     LIVE_TREND_JSON,
     MACRO_LEVELS_TXT,
-    MACRO_QUANT_JSON
+    MACRO_QUANT_JSON,
+    MAX_VISIBLE_DTE_DAYS,
+    DEFAULT_NEAR_DUPLICATE_TOLERANCE,
+    NEAR_DUPLICATE_TOLERANCE_BY_TICKER,
+    UNIFIED_LEVELS_TXT,
+    UNIFIED_LEVELS_JSON,
+    SCORED_LEVELS_TXT,
+    ENABLE_UNIFIED_MACRO_EXTENSIONS,
+    SHOW_FAR_MACRO_LEVELS,
+    MACRO_EXTENSION_BAND_PCT,
 )
 from .formatting import (
     build_coaches_note,
@@ -31,12 +41,14 @@ from .formatting import (
 from .futures_translator import TranslatedLevels
 from .gex_calculator import DealerLevels
 from .level_scorer import ScoredLevels, MechanicalWall, StructuralAnchor, InflectionPoint
-from .config import SCORED_LEVELS_TXT
-from .level_scorer import ScoredLevels, MechanicalWall, StructuralAnchor, InflectionPoint
 
 log = logging.getLogger(__name__)
  
  
+def _sidecar_path(path: Path, suffix: str) -> Path:
+    return path.with_name(f"{path.stem}_{suffix}{path.suffix}")
+
+
 def _upsert_ticker_line(path: Path, ticker: str, new_line: str) -> None:
     """
     Replaces or appends a line for a specific ticker in a TXT file.
@@ -311,6 +323,7 @@ def write_levels(
     scored_levels: list[ScoredLevels] | None = None,
     json_path: Path = DAILY_LEVELS_JSON,
     txt_path: Path = DAILY_LEVELS_TXT,
+    txt_mode: str = "daily",
     versioned: bool = False,
     snapshot_suffix: str | None = None,
 ) -> None:
@@ -499,13 +512,12 @@ def write_levels(
     log.info("JSON written -> %s  (%d levels)", json_path, len(all_entries))
 
     if versioned:
-        ts = datetime.now().strftime("%Y%m%d_%H%M")
-        v_json_path = json_path.with_name(f"{json_path.stem}_{ts}{json_path.suffix}")
+        v_json_path = _sidecar_path(json_path, "versioned")
         v_json_path.write_text(json_data, encoding="utf-8")
         log.info("Versioned JSON written -> %s", v_json_path)
 
     if snapshot_suffix:
-        s_json_path = json_path.with_name(f"{json_path.stem}_{snapshot_suffix}{json_path.suffix}")
+        s_json_path = _sidecar_path(json_path, snapshot_suffix)
         s_json_path.write_text(json_data, encoding="utf-8")
         log.info("Snapshot JSON written -> %s (overwrites daily)", s_json_path)
 
@@ -591,13 +603,12 @@ def write_levels(
     log.info("GEX Profiles written -> %s", GEX_PROFILES_JSON)
 
     if versioned:
-        ts = datetime.now().strftime("%Y%m%d_%H%M")
-        v_profiles_path = GEX_PROFILES_JSON.with_name(f"{GEX_PROFILES_JSON.stem}_{ts}{GEX_PROFILES_JSON.suffix}")
+        v_profiles_path = _sidecar_path(GEX_PROFILES_JSON, "versioned")
         v_profiles_path.write_text(profiles_data, encoding="utf-8")
         log.info("Versioned GEX Profiles written -> %s", v_profiles_path)
 
     if snapshot_suffix:
-        s_profiles_path = GEX_PROFILES_JSON.with_name(f"{GEX_PROFILES_JSON.stem}_{snapshot_suffix}{GEX_PROFILES_JSON.suffix}")
+        s_profiles_path = _sidecar_path(GEX_PROFILES_JSON, snapshot_suffix)
         s_profiles_path.write_text(profiles_data, encoding="utf-8")
         log.info("Snapshot GEX Profiles written -> %s", s_profiles_path)
 
@@ -647,37 +658,70 @@ def write_levels(
         log.debug("Skipping live_trend.json update — outside RTH.")
 
     # ── TXT output ─────────────────────────────────────────────────────────
-    lines: list[str] = [
-        f"Dealer Levels — {run_label}",
-        "=" * 60,
-        "",
-        "Formatted Strings (copy-ready)",
-        "",
-    ]
+    if txt_mode == "macro":
+        lines: list[str] = [
+            f"Macro Dealer Levels — {run_label}",
+            "=" * 60,
+            "",
+            "Formatted Strings (copy-ready)",
+            "",
+        ]
 
-    for tl in translated_levels:
-        lines.append(copy_ready_line(cash_tag(tl.futures_symbol), tl))
+        for tl in translated_levels:
+            lines.append(copy_ready_line(cash_tag(tl.futures_symbol), tl))
 
-    if cash_levels:
-        lines.append("")
-        for levels in cash_levels:
-            lines.append(copy_ready_line(levels.ticker, levels))
+        if cash_levels:
+            lines.append("")
+            for levels in cash_levels:
+                lines.append(copy_ready_line(levels.ticker, levels))
 
-    lines.extend(["", "Interpretation / Pre-Open Plan", ""])
-    for tl in translated_levels:
-        tag = cash_tag(tl.futures_symbol)
-        lines.extend(build_plan(tag, tl, extended=True))
-        lines.append("")
+        # Concise macro-specific section. Keep this focused on structural levels.
+        lines.extend(["", "Macro Tagged Levels (PRIMARY/SECONDARY)", ""])
+        for sl in scored_levels or []:
+            lines.append(f"{sl.ticker} [{sl.view_mode}]  Regime={sl.regime}  Bias={sl.bias}")
+            emitted = 0
+            for tl in sl.tagged_levels:
+                if tl.significance == "CONTEXT":
+                    continue
+                lines.append(
+                    f"  - {tl.strike:.2f} | {tl.significance} | {tl.side} | {tl.label}"
+                )
+                emitted += 1
+            if emitted == 0:
+                lines.append("  - no primary/secondary levels")
+            lines.append("")
+    else:
+        lines = [
+            f"Dealer Levels — {run_label}",
+            "=" * 60,
+            "",
+            "Formatted Strings (copy-ready)",
+            "",
+        ]
 
-    lines.extend(["", "Coach's Briefing", "─" * 60, ""])
-    for tl in translated_levels:
-        tag = futures_tag(tl.futures_symbol)
-        lines.extend(build_coaches_note(tag, tl))  # now returns list[str]
-        lines.append("")
+        for tl in translated_levels:
+            lines.append(copy_ready_line(cash_tag(tl.futures_symbol), tl))
 
-    lines.extend(["Detailed Summary", ""])
-    for tl in translated_levels:
-        lines.extend(_detailed_block(tl))
+        if cash_levels:
+            lines.append("")
+            for levels in cash_levels:
+                lines.append(copy_ready_line(levels.ticker, levels))
+
+        lines.extend(["", "Interpretation / Pre-Open Plan", ""])
+        for tl in translated_levels:
+            tag = cash_tag(tl.futures_symbol)
+            lines.extend(build_plan(tag, tl, extended=True))
+            lines.append("")
+
+        lines.extend(["", "Coach's Briefing", "─" * 60, ""])
+        for tl in translated_levels:
+            tag = futures_tag(tl.futures_symbol)
+            lines.extend(build_coaches_note(tag, tl))  # now returns list[str]
+            lines.append("")
+
+        lines.extend(["Detailed Summary", ""])
+        for tl in translated_levels:
+            lines.extend(_detailed_block(tl))
 
     txt_path.parent.mkdir(parents=True, exist_ok=True)
     txt_data = "\n".join(lines)
@@ -685,13 +729,12 @@ def write_levels(
     log.info("TXT written  -> %s", txt_path)
 
     if versioned:
-        ts = datetime.now().strftime("%Y%m%d_%H%M")
-        v_txt_path = txt_path.with_name(f"{txt_path.stem}_{ts}{txt_path.suffix}")
+        v_txt_path = _sidecar_path(txt_path, "versioned")
         v_txt_path.write_text(txt_data, encoding="utf-8")
         log.info("Versioned TXT written -> %s", v_txt_path)
 
     if snapshot_suffix:
-        s_txt_path = txt_path.with_name(f"{txt_path.stem}_{snapshot_suffix}{txt_path.suffix}")
+        s_txt_path = _sidecar_path(txt_path, snapshot_suffix)
         s_txt_path.write_text(txt_data, encoding="utf-8")
         log.info("Snapshot TXT written -> %s", s_txt_path)
 
@@ -757,8 +800,7 @@ def write_macro_levels(
     _upsert_ticker_line(path, ticker, final_string)
 
     if versioned:
-        ts = datetime.now().strftime("%Y%m%d_%H%M")
-        v_path = path.with_name(f"{path.stem}_{ts}{path.suffix}")
+        v_path = _sidecar_path(path, "versioned")
         _upsert_ticker_line(v_path, ticker, final_string)
         
     log.info("Macro Levels written to %s (versioned=%s)", path, versioned)
@@ -804,8 +846,7 @@ def write_quant_json(
     log.info("Quant JSON updated for %s -> %s", ticker, path)
 
     if versioned:
-        ts = datetime.now().strftime("%Y%m%d_%H%M")
-        v_path = path.with_name(f"{path.stem}_{ts}{path.suffix}")
+        v_path = _sidecar_path(path, "versioned")
         # Note: if multiple tickers call this with versioned=True in one run, 
         # we'd want to read the versioned file first. 
         # But for simplicity, if it's the same run, the versioned file name should be identical.
@@ -824,6 +865,8 @@ def write_scored_levels_txt(
     path: Path | None = None,
     versioned: bool = False,
     snapshot_suffix: str | None = None,
+    max_visible_dte_days: int = MAX_VISIBLE_DTE_DAYS,
+    near_duplicate_tolerance: float | None = None,
 ) -> None:
     """
     Export ScoredLevels as Pine Script-compatible TXT.
@@ -836,7 +879,7 @@ def write_scored_levels_txt(
       SIG:    P = PRIMARY, S = SECONDARY, C = CONTEXT
       LABEL:  Human-readable, compact. Includes filter-specific metrics:
               - Walls:   "CW 18%BK" or "PW 22%BK" or "0D CW" or "HW"
-              - Anchors: "JHEQX C 14d" or "UNK 3.2σ P 45d" 
+              - Anchors: "JHEQX C 14d" or "OI NODE 3.2σ P 45d" 
               - Inflect: "ZERO GEX" or "CLIFF UP" or "VOID LOW" or "MAGNET"
     
     Only PRIMARY and SECONDARY levels are exported (CONTEXT stays in JSON for dashboard).
@@ -847,66 +890,18 @@ def write_scored_levels_txt(
     if path is None:
         from .config import SCORED_LEVELS_TXT
         path = SCORED_LEVELS_TXT
+
+    tolerance = (
+        near_duplicate_tolerance
+        if near_duplicate_tolerance is not None
+        else NEAR_DUPLICATE_TOLERANCE_BY_TICKER.get(ticker, DEFAULT_NEAR_DUPLICATE_TOLERANCE)
+    )
  
-    tokens: list[str] = []
- 
-    for tl in scored.tagged_levels:
-        # Skip CONTEXT — too noisy for chart
-        if tl.significance == "CONTEXT":
-            continue
- 
-        sig = {"PRIMARY": "P", "SECONDARY": "S"}.get(tl.significance, "C")
- 
-        if isinstance(tl, MechanicalWall):
-            filt = "W"
-            # Build compact wall label
-            # Map field_name to short prefix
-            prefix_map = {
-                "call_wall":     "CW",
-                "put_wall":      "PW",
-                "call_wall_0dte": "0D CW",
-                "put_wall_0dte":  "0D PW",
-                "hedge_wall":    "HW",
-                "local_call_node": "LOC C",
-                "local_put_node":  "LOC P",
-                "max_gex_strike":  "MAX GEX",
-            }
-            short = prefix_map.get(tl.field_name, tl.label[:8])
-            # Append book depth % if available
-            if tl.pct_of_book > 0:
-                label = f"{short} {tl.pct_of_book * 100:.0f}%BK"
-            else:
-                label = short
- 
-        elif isinstance(tl, StructuralAnchor):
-            filt = "A"
-            prog = tl.matched_program if tl.matched_program else "UNK"
-            if prog == "UNK" and tl.oi_zscore > 0:
-                prog = f"UNK {tl.oi_zscore:.1f}σ"
-            side_char = tl.side[0] if tl.side else "N"
-            dte_str = f"{tl.days_to_expiry}d" if tl.days_to_expiry > 0 else ""
-            # Include relevance for ACTIVE/CRITICAL
-            rel = ""
-            if tl.relevance in ("ACTIVE", "CRITICAL"):
-                rel = f" [{tl.relevance[:4]}]"
-            label = f"{prog} {side_char} {dte_str}{rel}".strip()
- 
-        elif isinstance(tl, InflectionPoint):
-            filt = "I"
-            # Map inflection types to compact labels
-            type_map = {
-                "FLIP":   "ZERO GEX" if "zero" in tl.field_name.lower() else "FLIP",
-                "MAGNET": "MAGNET",
-                "CLIFF":  f"CLIFF {'UP' if 'up' in tl.field_name.lower() else 'DN'}",
-                "VOID":   f"VOID {'LO' if 'lower' in tl.field_name.lower() else 'HI'}",
-            }
-            label = type_map.get(tl.inflection_type, tl.label[:10])
- 
-        else:
-            filt = "X"
-            label = tl.label[:12]
- 
-        tokens.append(f"{tl.strike:.2f}:{filt}|{sig}|{label}")
+    tokens = _build_scored_tokens(
+        scored,
+        max_visible_dte_days=max_visible_dte_days,
+        near_duplicate_tolerance=tolerance,
+    )
  
     if not tokens:
         log.info("No scored levels to write for %s", ticker)
@@ -921,15 +916,344 @@ def write_scored_levels_txt(
     _upsert_ticker_line(path, ticker, final_string)
  
     if versioned:
-        ts = datetime.now().strftime("%Y%m%d_%H%M")
-        v_path = path.with_name(f"{path.stem}_{ts}{path.suffix}")
+        v_path = _sidecar_path(path, "versioned")
         _upsert_ticker_line(v_path, ticker, final_string)
         log.info("Versioned scored levels TXT written -> %s", v_path)
 
     if snapshot_suffix:
-        s_path = path.with_name(f"{path.stem}_{snapshot_suffix}{path.suffix}")
+        s_path = _sidecar_path(path, snapshot_suffix)
         _upsert_ticker_line(s_path, ticker, final_string)
         log.info("Snapshot scored levels TXT written -> %s", s_path)
 
     log.info("Scored levels TXT appended for %s -> %s (%d levels)", ticker, path, len(tokens))
+
+
+def _build_scored_tokens(
+    scored: Any,
+    max_visible_dte_days: int,
+    near_duplicate_tolerance: float,
+) -> list[str]:
+    from .level_scorer import MechanicalWall, StructuralAnchor, InflectionPoint
+
+    emitted_strikes: list[float] = []
+    tokens: list[str] = []
+
+    for tl in scored.tagged_levels:
+        if tl.significance == "CONTEXT":
+            continue
+
+        if isinstance(tl, StructuralAnchor) and tl.days_to_expiry > max_visible_dte_days:
+            continue
+
+        if near_duplicate_tolerance > 0 and any(abs(tl.strike - existing) <= near_duplicate_tolerance for existing in emitted_strikes):
+            continue
+
+        sig = {"PRIMARY": "P", "SECONDARY": "S"}.get(tl.significance, "C")
+
+        if isinstance(tl, MechanicalWall):
+            filt = "W"
+            prefix_map = {
+                "call_wall": "CW",
+                "put_wall": "PW",
+                "call_wall_0dte": "0D CW",
+                "put_wall_0dte": "0D PW",
+                "hedge_wall": "HW",
+                "local_call_node": "LOC C",
+                "local_put_node": "LOC P",
+                "max_gex_strike": "MAX GEX",
+            }
+            short = prefix_map.get(tl.field_name, tl.label[:8])
+            label = f"{short} {tl.pct_of_book * 100:.0f}%BK" if tl.pct_of_book > 0 else short
+        elif isinstance(tl, StructuralAnchor):
+            filt = "A"
+            prog = tl.matched_program if tl.matched_program else "OI NODE"
+            if not tl.matched_program and tl.oi_zscore > 0:
+                prog = f"OI NODE {tl.oi_zscore:.1f}σ"
+            side_char = tl.side[0] if tl.side else "N"
+            dte_str = f"{tl.days_to_expiry}d" if tl.days_to_expiry > 0 else ""
+            rel = f" [{tl.relevance[:4]}]" if tl.relevance in ("ACTIVE", "CRITICAL") else ""
+            label = f"{prog} {side_char} {dte_str}{rel}".strip()
+        elif isinstance(tl, InflectionPoint):
+            filt = "I"
+            type_map = {
+                "FLIP": "ZERO GEX" if "zero" in tl.field_name.lower() else "FLIP",
+                "MAGNET": "MAGNET",
+                "CLIFF": f"CLIFF {'UP' if 'up' in tl.field_name.lower() else 'DN'}",
+                "VOID": f"VOID {'LO' if 'lower' in tl.field_name.lower() else 'HI'}",
+            }
+            label = type_map.get(tl.inflection_type, tl.label[:10])
+        else:
+            filt = "X"
+            label = tl.label[:12]
+
+        tokens.append(f"{tl.strike:.2f}:{filt}|{sig}|{label}")
+        emitted_strikes.append(tl.strike)
+
+    return tokens
+
+
+def build_scored_levels_line(
+    ticker: str,
+    scored: Any,
+    max_visible_dte_days: int = MAX_VISIBLE_DTE_DAYS,
+    near_duplicate_tolerance: float | None = None,
+) -> str | None:
+    tolerance = (
+        near_duplicate_tolerance
+        if near_duplicate_tolerance is not None
+        else NEAR_DUPLICATE_TOLERANCE_BY_TICKER.get(ticker, DEFAULT_NEAR_DUPLICATE_TOLERANCE)
+    )
+
+    tokens = _build_scored_tokens(
+        scored,
+        max_visible_dte_days=max_visible_dte_days,
+        near_duplicate_tolerance=tolerance,
+    )
+    if not tokens:
+        return None
+    tokens[0] = f"{ticker}:{tokens[0]}"
+    return ", ".join(tokens)
+
+
+def _parse_scored_token(token: str) -> tuple[float, str, str, str] | None:
+    strike_str, sep, meta = token.partition(":")
+    if not sep:
+        return None
+    parts = meta.split("|", 2)
+    if len(parts) != 3:
+        return None
+    try:
+        strike = round(float(strike_str), 2)
+    except ValueError:
+        return None
+    filt, sig, label = parts
+    return strike, filt, sig, label
+
+
+def _format_scored_token(strike: float, filt: str, sig: str, label: str) -> str:
+    return f"{strike:.2f}:{filt}|{sig}|{label}"
+
+
+def _compose_unified_tokens_for_ticker(
+    ticker: str,
+    scored: Any,
+    *,
+    max_visible_dte_days: int,
+    near_duplicate_tolerance: float,
+    macro_scored: Any | None = None,
+    macro_spot: float | None = None,
+    enable_macro_extensions: bool = ENABLE_UNIFIED_MACRO_EXTENSIONS,
+    show_far_macro: bool = SHOW_FAR_MACRO_LEVELS,
+    macro_extension_band_pct: float = MACRO_EXTENSION_BAND_PCT,
+) -> list[str]:
+    base_tokens = _build_scored_tokens(
+        scored,
+        max_visible_dte_days=max_visible_dte_days,
+        near_duplicate_tolerance=near_duplicate_tolerance,
+    )
+    if not base_tokens:
+        return []
+
+    owner_strikes: set[float] = set()
+    merged_tokens: list[str] = []
+    for token in base_tokens:
+        parsed = _parse_scored_token(token)
+        if not parsed:
+            continue
+        strike, filt, sig, label = parsed
+        owner_strikes.add(strike)
+        merged_tokens.append(_format_scored_token(strike, filt, sig, label))
+
+    if enable_macro_extensions and macro_scored is not None:
+        macro_tokens = _build_scored_tokens(
+            macro_scored,
+            max_visible_dte_days=max_visible_dte_days,
+            near_duplicate_tolerance=near_duplicate_tolerance,
+        )
+        for token in macro_tokens:
+            parsed = _parse_scored_token(token)
+            if not parsed:
+                continue
+            strike, filt, sig, label = parsed
+            if strike in owner_strikes:
+                continue
+
+            if macro_spot and macro_spot > 0:
+                dist_pct = abs(strike - macro_spot) / macro_spot
+                if dist_pct > macro_extension_band_pct:
+                    if not show_far_macro:
+                        continue
+                    label = f"{label} [FAR]"
+                else:
+                    label = f"{label} [MEXT]"
+            else:
+                label = f"{label} [MEXT]"
+
+            owner_strikes.add(strike)
+            merged_tokens.append(_format_scored_token(strike, filt, sig, label))
+
+    return merged_tokens
+
+
+def write_unified_levels_txt(
+    scored_levels: list[Any],
+    path: Path = UNIFIED_LEVELS_TXT,
+    versioned: bool = False,
+    snapshot_suffix: str | None = None,
+    max_visible_dte_days: int = MAX_VISIBLE_DTE_DAYS,
+    macro_scored_levels: list[Any] | None = None,
+    macro_spot_by_ticker: dict[str, float] | None = None,
+    enable_macro_extensions: bool = ENABLE_UNIFIED_MACRO_EXTENSIONS,
+    show_far_macro: bool = SHOW_FAR_MACRO_LEVELS,
+    macro_extension_band_pct: float = MACRO_EXTENSION_BAND_PCT,
+) -> None:
+    scored_lookup = {s.ticker: s for s in scored_levels}
+    macro_lookup = {s.ticker: s for s in (macro_scored_levels or [])}
+    lines: list[str] = []
+    for ticker in sorted(scored_lookup.keys()):
+        tolerance = NEAR_DUPLICATE_TOLERANCE_BY_TICKER.get(ticker, DEFAULT_NEAR_DUPLICATE_TOLERANCE)
+        tokens = _compose_unified_tokens_for_ticker(
+            ticker,
+            scored_lookup[ticker],
+            max_visible_dte_days=max_visible_dte_days,
+            near_duplicate_tolerance=tolerance,
+            macro_scored=macro_lookup.get(ticker),
+            macro_spot=(macro_spot_by_ticker or {}).get(ticker),
+            enable_macro_extensions=enable_macro_extensions,
+            show_far_macro=show_far_macro,
+            macro_extension_band_pct=macro_extension_band_pct,
+        )
+        if not tokens:
+            continue
+        tokens[0] = f"{ticker}:{tokens[0]}"
+        lines.append(", ".join(tokens))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "\n".join(lines)
+    path.write_text(text + ("\n" if text else ""), encoding="utf-8")
+    log.info("Unified levels TXT written -> %s (%d tickers)", path, len(lines))
+
+    if versioned:
+        v_path = _sidecar_path(path, "versioned")
+        v_path.write_text(text + ("\n" if text else ""), encoding="utf-8")
+        log.info("Versioned unified levels TXT written -> %s", v_path)
+
+    if snapshot_suffix:
+        s_path = _sidecar_path(path, snapshot_suffix)
+        s_path.write_text(text + ("\n" if text else ""), encoding="utf-8")
+        log.info("Snapshot unified levels TXT written -> %s", s_path)
+
+
+def _parse_unified_line(line: str) -> dict[str, Any]:
+    tokens = [chunk.strip() for chunk in line.split(",") if chunk.strip()]
+    if not tokens:
+        return {"ticker": "", "line": line, "token_count": 0, "tokens": []}
+
+    first = tokens[0]
+    first_parts = first.split(":", 2)
+    if len(first_parts) != 3:
+        return {"ticker": "", "line": line, "token_count": len(tokens), "tokens": []}
+
+    ticker = first_parts[0].strip()
+    normalized: list[str] = [f"{first_parts[1]}:{first_parts[2]}"] + tokens[1:]
+    parsed_tokens: list[dict[str, Any]] = []
+
+    for token in normalized:
+        strike_part, _, meta = token.partition(":")
+        if not _:
+            continue
+        parts = meta.split("|", 2)
+        if len(parts) != 3:
+            continue
+        filt, sig, label = parts
+        try:
+            strike = round(float(strike_part), 2)
+        except ValueError:
+            continue
+        parsed_tokens.append(
+            {
+                "strike": strike,
+                "filter": filt,
+                "significance": sig,
+                "label": label,
+                "raw": token,
+            }
+        )
+
+    return {
+        "ticker": ticker,
+        "line": line,
+        "token_count": len(parsed_tokens),
+        "tokens": parsed_tokens,
+    }
+
+
+def write_unified_levels_json(
+    scored_levels: list[Any],
+    path: Path = UNIFIED_LEVELS_JSON,
+    versioned: bool = False,
+    snapshot_suffix: str | None = None,
+    max_visible_dte_days: int = MAX_VISIBLE_DTE_DAYS,
+    macro_scored_levels: list[Any] | None = None,
+    macro_spot_by_ticker: dict[str, float] | None = None,
+    enable_macro_extensions: bool = ENABLE_UNIFIED_MACRO_EXTENSIONS,
+    show_far_macro: bool = SHOW_FAR_MACRO_LEVELS,
+    macro_extension_band_pct: float = MACRO_EXTENSION_BAND_PCT,
+) -> None:
+    scored_lookup = {s.ticker: s for s in scored_levels}
+    macro_lookup = {s.ticker: s for s in (macro_scored_levels or [])}
+    lines: list[str] = []
+    for ticker in sorted(scored_lookup.keys()):
+        tolerance = NEAR_DUPLICATE_TOLERANCE_BY_TICKER.get(ticker, DEFAULT_NEAR_DUPLICATE_TOLERANCE)
+        tokens = _compose_unified_tokens_for_ticker(
+            ticker,
+            scored_lookup[ticker],
+            max_visible_dte_days=max_visible_dte_days,
+            near_duplicate_tolerance=tolerance,
+            macro_scored=macro_lookup.get(ticker),
+            macro_spot=(macro_spot_by_ticker or {}).get(ticker),
+            enable_macro_extensions=enable_macro_extensions,
+            show_far_macro=show_far_macro,
+            macro_extension_band_pct=macro_extension_band_pct,
+        )
+        if not tokens:
+            continue
+        tokens[0] = f"{ticker}:{tokens[0]}"
+        lines.append(", ".join(tokens))
+
+    rows = [_parse_unified_line(line) for line in lines]
+    doc = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source": "scored_levels",
+        "tickers": rows,
+    }
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    json_data = json.dumps(doc, indent=2)
+    path.write_text(json_data, encoding="utf-8")
+    log.info("Unified levels JSON written -> %s (%d tickers)", path, len(rows))
+
+    if versioned:
+        v_path = _sidecar_path(path, "versioned")
+        v_path.write_text(json_data, encoding="utf-8")
+        log.info("Versioned unified levels JSON written -> %s", v_path)
+
+    if snapshot_suffix:
+        s_path = _sidecar_path(path, snapshot_suffix)
+        s_path.write_text(json_data, encoding="utf-8")
+        log.info("Snapshot unified levels JSON written -> %s", s_path)
+
+
+def unified_payload_fingerprint(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"exists": False, "bytes": 0, "sha256": "", "lines": 0}
+
+    data = path.read_bytes()
+    line_count = sum(1 for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip())
+    return {
+        "exists": True,
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "lines": line_count,
+    }
  
