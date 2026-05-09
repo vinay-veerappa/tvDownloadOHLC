@@ -1042,6 +1042,12 @@ if can_calculate
                 if str.contains(str.upper(s_lbl), "EM LO")
                     line_emDn := ln
                 
+                // Capture FLIP lines from scored levels for linefill
+                if str.contains(str.upper(s_lbl), "FLIP UP")
+                    line_gcUp := ln
+                if str.contains(str.upper(s_lbl), "FLIP DN")
+                    line_gcDn := ln
+                
                 if i_showLabels
                     mg = syminfo.mintick * i_minLabelGapTicks
                     lc = f_assignLabelColumn(s_lv, colLastPrices, mg, i_maxLabelCols)
