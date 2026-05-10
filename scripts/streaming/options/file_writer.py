@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -86,6 +87,35 @@ def _upsert_ticker_line(path: Path, ticker: str, new_line: str) -> None:
     final_content = "\n".join(l for l in new_lines if l.strip()) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(final_content, encoding="utf-8")
+
+
+def _snapshot_month_bucket(snapshot_suffix: str) -> str:
+    match = re.match(r"^(\d{8})_\d{4}$", snapshot_suffix)
+    if match:
+        date_part = match.group(1)
+        return f"{date_part[:4]}-{date_part[4:6]}"
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def _snapshot_history_path(path: Path, snapshot_suffix: str) -> Path:
+    month_bucket = _snapshot_month_bucket(snapshot_suffix)
+    return path.parent / "history" / month_bucket / f"{path.stem}_{snapshot_suffix}{path.suffix}"
+
+
+def _current_path(path: Path) -> Path:
+    return path.parent / "current" / path.name
+
+
+def _sync_current_txt(path: Path, text: str) -> Path:
+    current_path = _current_path(path)
+    current_path.parent.mkdir(parents=True, exist_ok=True)
+    current_path.write_text(text, encoding="utf-8")
+    return current_path
+
+
+def _snapshot_hhmm(snapshot_suffix: str) -> str | None:
+    match = re.match(r"^(?:\d{8}_)?(\d{4})$", snapshot_suffix)
+    return match.group(1) if match else None
  
 
 def _get_strength(tl):
@@ -803,6 +833,8 @@ def write_levels(
     txt_data = "\n".join(lines)
     txt_path.write_text(txt_data, encoding="utf-8")
     log.info("TXT written  -> %s", txt_path)
+    current_txt_path = _sync_current_txt(txt_path, txt_data)
+    log.info("Current TXT mirror written -> %s", current_txt_path)
 
     if versioned:
         v_txt_path = _sidecar_path(txt_path, "versioned")
@@ -810,7 +842,8 @@ def write_levels(
         log.info("Versioned TXT written -> %s", v_txt_path)
 
     if snapshot_suffix:
-        s_txt_path = _sidecar_path(txt_path, snapshot_suffix)
+        s_txt_path = _snapshot_history_path(txt_path, snapshot_suffix)
+        s_txt_path.parent.mkdir(parents=True, exist_ok=True)
         s_txt_path.write_text(txt_data, encoding="utf-8")
         log.info("Snapshot TXT written -> %s", s_txt_path)
 
@@ -938,11 +971,14 @@ def write_quant_json(
 def write_scored_levels_txt(
     ticker: str,
     scored: Any,  # ScoredLevels
+    metadata_levels: Any | None = None,
     path: Path | None = None,
     versioned: bool = False,
     snapshot_suffix: str | None = None,
     max_visible_dte_days: int = MAX_VISIBLE_DTE_DAYS,
     near_duplicate_tolerance: float | None = None,
+    include_structural_tokens: bool = True,
+    include_meta_tokens: bool = True,
 ) -> None:
     """
     Export ScoredLevels as Pine Script-compatible TXT.
@@ -960,9 +996,6 @@ def write_scored_levels_txt(
     
     Only PRIMARY and SECONDARY levels are exported (CONTEXT stays in JSON for dashboard).
     """
-    # Import here to avoid circular deps at module level
-    from .level_scorer import MechanicalWall, StructuralAnchor, InflectionPoint
- 
     if path is None:
         from .config import SCORED_LEVELS_TXT
         path = SCORED_LEVELS_TXT
@@ -982,6 +1015,19 @@ def write_scored_levels_txt(
     if not tokens:
         log.info("No scored levels to write for %s", ticker)
         return
+
+    source_levels = metadata_levels if metadata_levels is not None else scored
+    seen_tokens = set(tokens)
+
+    if include_structural_tokens:
+        for token in _extract_structural_tokens_from_copy_line(ticker, source_levels):
+            if token in seen_tokens:
+                continue
+            tokens.append(token)
+            seen_tokens.add(token)
+
+    if include_meta_tokens:
+        tokens.extend(_extract_meta_tokens_from_copy_line(ticker, source_levels))
  
     # First token gets ticker prefix (matching existing Pine parser convention)
     tokens[0] = f"{ticker}:{tokens[0]}"
@@ -990,6 +1036,10 @@ def write_scored_levels_txt(
  
     # Use robust upsert to prevent data loss for other tickers in partial runs
     _upsert_ticker_line(path, ticker, final_string)
+
+    # Keep a stable current-day mirror for user workflows.
+    current_path = _current_path(path)
+    _upsert_ticker_line(current_path, ticker, final_string)
  
     if versioned:
         v_path = _sidecar_path(path, "versioned")
@@ -997,7 +1047,8 @@ def write_scored_levels_txt(
         log.info("Versioned scored levels TXT written -> %s", v_path)
 
     if snapshot_suffix:
-        s_path = _sidecar_path(path, snapshot_suffix)
+        s_path = _snapshot_history_path(path, snapshot_suffix)
+        s_path.parent.mkdir(parents=True, exist_ok=True)
         _upsert_ticker_line(s_path, ticker, final_string)
         log.info("Snapshot scored levels TXT written -> %s", s_path)
 
@@ -1342,6 +1393,8 @@ def write_unified_levels_txt(
     text = "\n".join(lines)
     path.write_text(text + ("\n" if text else ""), encoding="utf-8")
     log.info("Unified levels TXT written -> %s (%d tickers)", path, len(lines))
+    current_path = _sync_current_txt(path, text + ("\n" if text else ""))
+    log.info("Current unified TXT mirror written -> %s", current_path)
 
     if versioned:
         v_path = _sidecar_path(path, "versioned")
@@ -1349,9 +1402,18 @@ def write_unified_levels_txt(
         log.info("Versioned unified levels TXT written -> %s", v_path)
 
     if snapshot_suffix:
-        s_path = _sidecar_path(path, snapshot_suffix)
+        s_path = _snapshot_history_path(path, snapshot_suffix)
+        s_path.parent.mkdir(parents=True, exist_ok=True)
         s_path.write_text(text + ("\n" if text else ""), encoding="utf-8")
         log.info("Snapshot unified levels TXT written -> %s", s_path)
+
+        hhmm = _snapshot_hhmm(snapshot_suffix)
+        if hhmm in {"0930", "1615"}:
+            alias_name = f"{path.stem}_{'open' if hhmm == '0930' else 'close'}{path.suffix}"
+            alias_path = path.parent / "current" / alias_name
+            alias_path.parent.mkdir(parents=True, exist_ok=True)
+            alias_path.write_text(text + ("\n" if text else ""), encoding="utf-8")
+            log.info("Current unified session alias written -> %s", alias_path)
 
 
 def _parse_unified_line(line: str) -> dict[str, Any]:

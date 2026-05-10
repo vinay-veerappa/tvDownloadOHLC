@@ -81,6 +81,7 @@ from .config import (
     UNIFIED_LEVELS_TXT,
     UNIFIED_LEVELS_JSON,
     ENABLE_UNIFIED_CONTRACT_OUTPUTS,
+    ENABLE_SCORED_CONTRACT_OUTPUTS,
 )
 from .discord_notifier import send_discord_update, send_regime_change_alert
 from .file_writer import (
@@ -308,6 +309,11 @@ def _discord_window_allowed(
 
     label = (run_label or "")
     return ("09:30" in label) or ("16:15" in label)
+
+
+def _build_snapshot_suffix(now_ny: datetime, time_str: str) -> str:
+    """Build a date-qualified snapshot suffix (YYYYMMDD_HHMM)."""
+    return f"{now_ny.strftime('%Y%m%d')}_{time_str.replace(':', '')}"
 
 
 # ---------------------------------------------------------------------------
@@ -550,8 +556,22 @@ def run_pipeline(
             scored_macro = score_levels(levels_macro, chain, ticker, profile, MACRO_VIEW)
             scored_macro_by_ticker[ticker] = scored_macro
 
-            write_scored_levels_txt(ticker, scored_intraday, versioned=versioned, snapshot_suffix=snapshot_suffix)
-            write_scored_levels_txt(ticker, scored_macro, path=SCORED_MACRO_LEVELS_TXT, versioned=versioned, snapshot_suffix=snapshot_suffix)
+            if ENABLE_SCORED_CONTRACT_OUTPUTS:
+                write_scored_levels_txt(
+                    ticker,
+                    scored_intraday,
+                    metadata_levels=levels_intraday,
+                    versioned=versioned,
+                    snapshot_suffix=snapshot_suffix,
+                )
+                write_scored_levels_txt(
+                    ticker,
+                    scored_macro,
+                    metadata_levels=levels_macro,
+                    path=SCORED_MACRO_LEVELS_TXT,
+                    versioned=versioned,
+                    snapshot_suffix=snapshot_suffix,
+                )
 
             # 7. Write per-ticker snapshot to DB
             if _is_rth():
@@ -678,6 +698,9 @@ def run_pipeline(
             )
         else:
             log.info("Unified contract outputs disabled by config flag.")
+
+        if not ENABLE_SCORED_CONTRACT_OUTPUTS:
+            log.info("Scored contract outputs disabled by config flag; unified feed is default.")
     except Exception as exc:
         log.error("File write failed: %s", exc)
 
@@ -823,6 +846,7 @@ def run_loop(enable_discord: bool = False) -> None:
 
         is_pulse_cycle = False
         pulse_suffix = None
+        pulse_time_str = None
         current_time_str = ny_now.strftime("%H:%M") # "08:30"
         for s_time in snapshot_targets:
             # If we are AT or PAST a snapshot time today, and haven't run it yet
@@ -830,7 +854,8 @@ def run_loop(enable_discord: bool = False) -> None:
                 # On weekdays, trigger the pulse
                 if ny_now.weekday() < 5:
                     is_pulse_cycle = True
-                    pulse_suffix = s_time.replace(":", "") # "0830"
+                    pulse_time_str = s_time
+                    pulse_suffix = _build_snapshot_suffix(ny_now, s_time)
                     last_pulse_date[s_time] = today_str
                     log.info("SCHEDULED PULSE DETECTED: %s snapshot triggered.", s_time)
                     break
@@ -876,7 +901,7 @@ def run_loop(enable_discord: bool = False) -> None:
 
             try:
                 # During the 09:30 pulse, we force an anchor reset
-                should_reset_anchors = (is_pulse_cycle and pulse_suffix == "0930")
+                should_reset_anchors = (is_pulse_cycle and pulse_time_str == "09:30")
                 
                 run_pipeline(
                     run_label=run_label, 
@@ -952,7 +977,7 @@ def run_scheduled(enable_discord: bool = ENABLE_DISCORD_UPDATES) -> None:
                 is_pulse = t_str in ("09:30", "16:00")
                 # Reset anchors only at 09:30 open
                 do_reset = (t_str == "09:30")
-                suffix = t_str.replace(":", "")
+                suffix = _build_snapshot_suffix(datetime.now(tz), t_str)
                 run_pipeline(lbl, enable_discord=enable_discord, versioned=is_pulse, reset_anchors=do_reset, snapshot_suffix=suffix)
             else:
                 log.info("Non-trading day — skipping %s run.", lbl)

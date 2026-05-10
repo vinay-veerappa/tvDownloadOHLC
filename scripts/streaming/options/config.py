@@ -406,6 +406,7 @@ ENABLE_DISCORD_UPDATES: bool = False
 ENABLE_DISCORD_COPY_ATTACHMENT: bool = os.environ.get("ENABLE_DISCORD_COPY_ATTACHMENT", "1").lower() not in {"0", "false", "no"}
 DISCORD_COPY_ATTACHMENT_FILENAME: str = os.environ.get("DISCORD_COPY_ATTACHMENT_FILENAME", "dealer_levels_payload.txt")
 ENABLE_UNIFIED_CONTRACT_OUTPUTS: bool = os.environ.get("ENABLE_UNIFIED_CONTRACT_OUTPUTS", "1").lower() not in {"0", "false", "no"}
+ENABLE_SCORED_CONTRACT_OUTPUTS: bool = os.environ.get("ENABLE_SCORED_CONTRACT_OUTPUTS", "0").lower() in {"1", "true", "yes"}
 ENABLE_UNIFIED_MACRO_EXTENSIONS: bool = os.environ.get("ENABLE_UNIFIED_MACRO_EXTENSIONS", "1").lower() not in {"0", "false", "no"}
 SHOW_FAR_MACRO_LEVELS: bool = os.environ.get("SHOW_FAR_MACRO_LEVELS", "0").lower() in {"1", "true", "yes"}
 MACRO_EXTENSION_BAND_PCT: float = float(os.environ.get("MACRO_EXTENSION_BAND_PCT", "0.10"))

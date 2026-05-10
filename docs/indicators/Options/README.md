@@ -14,6 +14,22 @@ Primary outputs:
 - `data/options/unified_levels.txt`
 - `data/options/unified_levels.json`
 
+Text output organization:
+- Canonical TXT remains in place (for compatibility):
+	- `data/options/unified_levels.txt`
+	- `data/options/daily_levels.txt`
+	- `data/options/macro_levels.txt`
+- Current-day mirrors are written to:
+	- `data/options/current/`
+- Snapshot TXT files are written to monthly history buckets:
+	- `data/options/history/YYYY-MM/`
+	- Example: `data/options/history/2026-05/unified_levels_20260510_0930.txt`
+- Unified session aliases are maintained in current:
+	- `data/options/current/unified_levels_open.txt` (09:30)
+	- `data/options/current/unified_levels_close.txt` (16:15)
+
+JSON outputs remain canonical in `data/options/` so web/API consumers are not impacted.
+
 ## Current Spec Highlights (2026-05)
 
 ### 1. Expected Move + EM85
