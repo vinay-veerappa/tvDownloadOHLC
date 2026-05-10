@@ -53,6 +53,7 @@ log = logging.getLogger(__name__)
 # Max embeds Discord accepts per webhook call.
 _DISCORD_MAX_EMBEDS = 10
 _DISCORD_MAX_CONTENT = 2000
+_DISCORD_SAFE_EMBED_BATCH_CHARS = 5600
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +133,133 @@ def _copy_attachment_payload(lines: list[str], run_label: str) -> tuple[dict[str
         "file": (DISCORD_COPY_ATTACHMENT_FILENAME, content.encode("utf-8"), "text/plain")
     }
     return payload, files
+
+
+def _truncate_text(value: str, max_len: int) -> str:
+    if len(value) <= max_len:
+        return value
+    if max_len <= 3:
+        return value[:max_len]
+    return value[: max_len - 3] + "..."
+
+
+def _embed_char_count(embed: dict[str, Any]) -> int:
+    total = 0
+    total += len(str(embed.get("title", "")))
+    total += len(str(embed.get("description", "")))
+
+    footer = embed.get("footer") or {}
+    if isinstance(footer, dict):
+        total += len(str(footer.get("text", "")))
+
+    author = embed.get("author") or {}
+    if isinstance(author, dict):
+        total += len(str(author.get("name", "")))
+
+    for field in embed.get("fields", []) or []:
+        if not isinstance(field, dict):
+            continue
+        total += len(str(field.get("name", "")))
+        total += len(str(field.get("value", "")))
+    return total
+
+
+def _compact_embed(embed: dict[str, Any], max_chars: int = _DISCORD_SAFE_EMBED_BATCH_CHARS) -> dict[str, Any]:
+    """Trim an embed down to Discord-safe limits while preserving key context."""
+    compact: dict[str, Any] = dict(embed)
+
+    title = str(compact.get("title", ""))
+    if title:
+        compact["title"] = _truncate_text(title, 256)
+
+    description = str(compact.get("description", ""))
+    if description:
+        compact["description"] = _truncate_text(description, 4096)
+
+    footer = compact.get("footer")
+    if isinstance(footer, dict) and "text" in footer:
+        footer = dict(footer)
+        footer["text"] = _truncate_text(str(footer.get("text", "")), 2048)
+        compact["footer"] = footer
+
+    fields = compact.get("fields", []) or []
+    normalized_fields: list[dict[str, Any]] = []
+    for field in fields[:25]:
+        if not isinstance(field, dict):
+            continue
+        normalized_fields.append(
+            {
+                "name": _truncate_text(str(field.get("name", "\u200b")), 256),
+                "value": _truncate_text(str(field.get("value", "\u200b")), 1024),
+                "inline": bool(field.get("inline", False)),
+            }
+        )
+    compact["fields"] = normalized_fields
+
+    while _embed_char_count(compact) > max_chars and compact.get("fields"):
+        fields = compact.get("fields", [])
+        if not fields:
+            break
+        if len(fields) > 1:
+            fields.pop()
+        else:
+            fields[0]["value"] = _truncate_text(str(fields[0].get("value", "")), 512)
+            if _embed_char_count(compact) > max_chars:
+                fields[0]["value"] = _truncate_text(str(fields[0].get("value", "")), 256)
+                break
+        compact["fields"] = fields
+
+    return compact
+
+
+def _embed_to_content(embed: dict[str, Any]) -> str:
+    """Convert a rejected embed into a plain-text fallback payload."""
+    parts: list[str] = []
+    title = str(embed.get("title", "")).strip()
+    if title:
+        parts.append(f"**{title}**")
+
+    for field in embed.get("fields", []) or []:
+        if not isinstance(field, dict):
+            continue
+        name = str(field.get("name", "")).strip()
+        value = str(field.get("value", "")).strip()
+        if not name and not value:
+            continue
+        if name == "\u200b":
+            parts.append(value)
+        else:
+            parts.append(f"**{name}:** {value}")
+
+    content = "\n".join(parts)
+    return _truncate_text(content, _DISCORD_MAX_CONTENT)
+
+
+def _embed_batches(embeds: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Split embeds by both max count and total character budget."""
+    batches: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    current_chars = 0
+
+    for raw_embed in embeds:
+        embed = _compact_embed(raw_embed)
+        embed_chars = _embed_char_count(embed)
+
+        should_flush = bool(current) and (
+            len(current) >= _DISCORD_MAX_EMBEDS
+            or current_chars + embed_chars > _DISCORD_SAFE_EMBED_BATCH_CHARS
+        )
+        if should_flush:
+            batches.append(current)
+            current = []
+            current_chars = 0
+
+        current.append(embed)
+        current_chars += embed_chars
+
+    if current:
+        batches.append(current)
+    return batches
 
 
 def _build_scored_fields(scored: ScoredLevels) -> list[dict[str, Any]]:
@@ -294,7 +422,12 @@ def _build_coaches_note_payloads(
     return payloads
 
 
-def _post_payload(url: str, payload: dict[str, Any], files: dict[str, Any] | None = None) -> bool:
+def _post_payload(
+    url: str,
+    payload: dict[str, Any],
+    files: dict[str, Any] | None = None,
+    allow_embed_fallback: bool = True,
+) -> bool:
     """POST a Discord webhook payload (JSON or multipart) with error handling."""
     try:
         if files:
@@ -315,6 +448,31 @@ def _post_payload(url: str, payload: dict[str, Any], files: dict[str, Any] | Non
                 "with file" if files else "no file"
             )
             return True
+        if (
+            allow_embed_fallback
+            and resp.status_code == 400
+            and payload.get("embeds")
+            and not files
+        ):
+            embeds = payload.get("embeds", []) or []
+            log.warning(
+                "Discord rejected embed payload (HTTP 400). Falling back to text summaries for %d embed(s).",
+                len(embeds),
+            )
+            all_sent = True
+            for embed in embeds:
+                content = _embed_to_content(embed)
+                if not content:
+                    all_sent = False
+                    continue
+                sent = _post_payload(
+                    url,
+                    {"content": content},
+                    files=None,
+                    allow_embed_fallback=False,
+                )
+                all_sent = all_sent and sent
+            return all_sent
         else:
             log.warning(
                 "Discord webhook returned HTTP %s: %s",
@@ -486,9 +644,8 @@ def send_discord_update(
     scored_lookup = {s.ticker: s for s in (scored_levels or [])}
     embeds = [_build_embed(t, run_label, scored=scored_lookup.get(t.cash_ticker if hasattr(t, 'cash_ticker') else t.ticker)) for t in targets]
 
-    # Batch and post embeds
-    for batch_start in range(0, len(embeds), _DISCORD_MAX_EMBEDS):
-        batch = embeds[batch_start : batch_start + _DISCORD_MAX_EMBEDS]
+    # Batch and post embeds using both count and char-size constraints.
+    for batch in _embed_batches(embeds):
         _post_payload(url, {"embeds": batch})
 
     # Coach's briefing
