@@ -383,6 +383,20 @@ def copy_ready_line(tag: str, levels: Any) -> str:
             parts.append(f"{fmt_copy(em.straddle_85_upper)}:{prefix}Upper 85% Straddle")
             parts.append(f"{fmt_copy(em.straddle_85_lower)}:{prefix}Lower 85% Straddle")
 
+    weekly_upper = getattr(levels, "weekly_scope_upper", None)
+    weekly_lower = getattr(levels, "weekly_scope_lower", None)
+    weekly_85_upper = getattr(levels, "weekly_scope_85_upper", None)
+    weekly_85_lower = getattr(levels, "weekly_scope_85_lower", None)
+    weekly_expiry = getattr(levels, "weekly_scope_expiry", None)
+    if weekly_upper is not None and weekly_lower is not None:
+        parts.append(f"{fmt_copy(weekly_upper)}:Weekly Scope Upper EM")
+        parts.append(f"{fmt_copy(weekly_lower)}:Weekly Scope Lower EM")
+        if weekly_85_upper is not None and weekly_85_upper > 0:
+            parts.append(f"{fmt_copy(weekly_85_upper)}:Weekly Scope Upper 85% Straddle")
+            parts.append(f"{fmt_copy(weekly_85_lower)}:Weekly Scope Lower 85% Straddle")
+        if weekly_expiry:
+            parts.append(f"0:META_WEEKLY_SCOPE_EXPIRY_{weekly_expiry}")
+
     # ── METADATA for Pine Script ──
     regime = getattr(levels, "regime_label", "NEUTRAL")
     bias = getattr(levels, "directional_bias", "NEUTRAL")

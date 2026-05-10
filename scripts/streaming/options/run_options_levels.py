@@ -35,8 +35,10 @@ import sys
 import json
 import time
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, date
+from pathlib import Path
 from zoneinfo import ZoneInfo
+from typing import Any
 
 from .config import (
     ACTIVE_TICKERS,
@@ -115,6 +117,18 @@ from .formatting import (
 
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Persistent storage map (run-to-run state)
+# ---------------------------------------------------------------------------
+# 1) BASIS_ANCHORS_JSON (config): daily translation anchors captured near open
+#    and reused for futures translation consistency.
+# 2) WEEKLY_SCOPE_CACHE_JSON: Friday EOD weekly expected-move scope snapshot
+#    (including EM85 bounds), reused Mon-Fri until expiry rollover.
+# 3) pipeline_state.json (via state_tracker): previous vs current regime state
+#    for change detection and alerting.
+# ---------------------------------------------------------------------------
+WEEKLY_SCOPE_CACHE_JSON = REPO_ROOT / "data" / "options" / "weekly_em_scope.json"
+
 
 # ---------------------------------------------------------------------------
 # Logging setup — deferred to _setup_logging() so it only runs when the
@@ -184,6 +198,105 @@ def save_basis_anchors(anchors: dict[str, dict]) -> None:
         log.error("Failed to save basis anchors: %s", e)
 
 
+def _load_weekly_scope_cache(path: Path = WEEKLY_SCOPE_CACHE_JSON) -> dict[str, dict[str, Any]]:
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return raw if isinstance(raw, dict) else {}
+    except Exception as exc:
+        log.warning("Failed to load weekly scope cache %s: %s", path.name, exc)
+        return {}
+
+
+def _save_weekly_scope_cache(cache: dict[str, dict[str, Any]], path: Path = WEEKLY_SCOPE_CACHE_JSON) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2)
+    except Exception as exc:
+        log.warning("Failed to save weekly scope cache %s: %s", path.name, exc)
+
+
+def _parse_iso_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _is_eod_snapshot(run_label: str, now_ny: datetime) -> bool:
+    label = (run_label or "").upper()
+    if "EOD" in label or "16:00" in run_label or "16:15" in run_label:
+        return True
+    return now_ny.hour >= 16
+
+
+def _select_weekly_scope_candidate(levels: DealerLevels, today_ny: date):
+    candidates = []
+    for em in getattr(levels, "expected_moves", []):
+        expiry = _parse_iso_date(getattr(em, "expiry", None))
+        if expiry is None or expiry <= today_ny or expiry.weekday() != 4:
+            continue
+        dte = (expiry - today_ny).days
+        if 4 <= dte <= 10:
+            candidates.append((abs(dte - 7), dte, em, expiry))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    _, _, em, expiry = candidates[0]
+    return em, expiry
+
+
+def _attach_weekly_scope(levels: Any, record: dict[str, Any] | None) -> None:
+    attrs = (
+        "weekly_scope_upper",
+        "weekly_scope_lower",
+        "weekly_scope_85_upper",
+        "weekly_scope_85_lower",
+        "weekly_scope_expiry",
+        "weekly_scope_source",
+        "weekly_scope_captured_on",
+    )
+    if not record:
+        for attr in attrs:
+            setattr(levels, attr, None)
+        return
+
+    setattr(levels, "weekly_scope_upper", record.get("em_upper"))
+    setattr(levels, "weekly_scope_lower", record.get("em_lower"))
+    setattr(levels, "weekly_scope_85_upper", record.get("straddle_85_upper"))
+    setattr(levels, "weekly_scope_85_lower", record.get("straddle_85_lower"))
+    setattr(levels, "weekly_scope_expiry", record.get("expiry"))
+    setattr(levels, "weekly_scope_source", record.get("source"))
+    setattr(levels, "weekly_scope_captured_on", record.get("captured_on"))
+
+
+def _translate_weekly_scope_record(record: dict[str, Any], translated_levels: Any) -> dict[str, Any]:
+    ratio = getattr(translated_levels, "translation_ratio", None)
+    spread = getattr(translated_levels, "translation_spread", None)
+    mode = getattr(translated_levels, "translation_mode", "")
+
+    def _shift(value: float | None) -> float | None:
+        if value is None:
+            return None
+        if mode == "multiplicative" and ratio:
+            return round(value * ratio, 2)
+        if spread is not None:
+            return round(value + spread, 2)
+        return round(value, 2)
+
+    translated = dict(record)
+    translated["em_upper"] = _shift(record.get("em_upper"))
+    translated["em_lower"] = _shift(record.get("em_lower"))
+    translated["straddle_85_upper"] = _shift(record.get("straddle_85_upper"))
+    translated["straddle_85_lower"] = _shift(record.get("straddle_85_lower"))
+    return translated
+
+
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
@@ -233,6 +346,11 @@ def run_pipeline(
     # --- Load existing anchors ----------------------------------------------
     all_anchors = load_basis_anchors()
     new_anchors_captured = False
+    weekly_scope_cache = _load_weekly_scope_cache()
+    weekly_scope_cache_updated = False
+    now_ny = datetime.now(ZoneInfo(SCHEDULE_TIMEZONE))
+    today_ny = now_ny.date()
+    is_eod_run = _is_eod_snapshot(run_label, now_ny)
 
 
     # --- Process each ticker --------------------------------------------------
@@ -367,6 +485,45 @@ def run_pipeline(
 
                 log.info("Rescaled %s-derived levels into %s space.", source_ticker, ticker)
 
+            weekly_scope_record = None
+            if is_eod_run and today_ny.weekday() == 4:
+                weekly_candidate = _select_weekly_scope_candidate(levels_macro, today_ny)
+                if weekly_candidate is None:
+                    weekly_candidate = _select_weekly_scope_candidate(levels_intraday, today_ny)
+                if weekly_candidate is not None:
+                    weekly_em, weekly_expiry = weekly_candidate
+                    weekly_scope_record = {
+                        "expiry": weekly_expiry.strftime("%Y-%m-%d"),
+                        "captured_on": today_ny.strftime("%Y-%m-%d"),
+                        "source": "FRIDAY_EOD_CAPTURE",
+                        "em_upper": round(float(weekly_em.em_upper), 2),
+                        "em_lower": round(float(weekly_em.em_lower), 2),
+                        "straddle_85_upper": round(float(getattr(weekly_em, "straddle_85_upper", 0.0) or 0.0), 2),
+                        "straddle_85_lower": round(float(getattr(weekly_em, "straddle_85_lower", 0.0) or 0.0), 2),
+                    }
+                    if weekly_scope_cache.get(ticker) != weekly_scope_record:
+                        weekly_scope_cache[ticker] = weekly_scope_record
+                        weekly_scope_cache_updated = True
+                        log.info(
+                            "Captured Friday weekly scope for %s -> %s [%.2f, %.2f]",
+                            ticker,
+                            weekly_scope_record["expiry"],
+                            weekly_scope_record["em_lower"],
+                            weekly_scope_record["em_upper"],
+                        )
+
+            if weekly_scope_record is None:
+                candidate_record = weekly_scope_cache.get(ticker)
+                expiry = _parse_iso_date(candidate_record.get("expiry") if candidate_record else None)
+                if candidate_record and expiry and expiry >= today_ny:
+                    weekly_scope_record = candidate_record
+                elif ticker in weekly_scope_cache:
+                    del weekly_scope_cache[ticker]
+                    weekly_scope_cache_updated = True
+
+            _attach_weekly_scope(levels_intraday, weekly_scope_record)
+            _attach_weekly_scope(levels_macro, weekly_scope_record)
+
             cash_levels_by_ticker[ticker] = levels_intraday 
             macro_levels_by_ticker[ticker] = levels_macro
 
@@ -397,6 +554,10 @@ def run_pipeline(
                 # 6. Translate levels into futures price space
                 tl_intraday = translate_to_futures(levels_intraday, fut, anchor_basis=anchor_basis, anchor_ratio=anchor_ratio)
                 tl_macro = translate_to_futures(levels_macro, fut, anchor_basis=anchor_basis, anchor_ratio=anchor_ratio)
+
+                if weekly_scope_record is not None:
+                    _attach_weekly_scope(tl_intraday, _translate_weekly_scope_record(weekly_scope_record, tl_intraday))
+                    _attach_weekly_scope(tl_macro, _translate_weekly_scope_record(weekly_scope_record, tl_macro))
                 
                 translated_levels.append(tl_intraday)
                 translated_macro_levels.append(tl_macro)
@@ -422,6 +583,8 @@ def run_pipeline(
     # --- Save anchors if updated --------------------------------------------
     if new_anchors_captured:
         save_basis_anchors(all_anchors)
+    if weekly_scope_cache_updated:
+        _save_weekly_scope_cache(weekly_scope_cache)
 
     if not translated_levels and not cash_levels_by_ticker:
         log.error("No levels were computed — all outputs skipped.")

@@ -244,7 +244,9 @@ def translate_to_futures(
                 em_value=round(em.em_value * ratio, 2) if use_scale else em.em_value,
                 em_upper=_shift(em.em_upper),
                 em_lower=_shift(em.em_lower),
-                straddle=round(em.straddle * ratio, 2) if use_scale else em.straddle
+                straddle=round(em.straddle * ratio, 2) if use_scale else em.straddle,
+                straddle_85_upper=_shift(em.straddle_85_upper) or 0.0,
+                straddle_85_lower=_shift(em.straddle_85_lower) or 0.0,
             )
             for em in levels.expected_moves
         ],

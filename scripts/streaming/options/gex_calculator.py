@@ -1600,7 +1600,9 @@ def rescale_levels_to_target_spot(levels: DealerLevels, target_ticker: str, targ
                 em_value=round(em.em_value * scale, 2),
                 em_upper=round(em.em_upper * scale, 2),
                 em_lower=round(em.em_lower * scale, 2),
-                straddle=round(em.straddle * scale, 2)
+                straddle=round(em.straddle * scale, 2),
+                straddle_85_upper=round(em.straddle_85_upper * scale, 2) if em.straddle_85_upper else 0.0,
+                straddle_85_lower=round(em.straddle_85_lower * scale, 2) if em.straddle_85_lower else 0.0,
             )
             for em in levels.expected_moves
         ],

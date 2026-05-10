@@ -375,6 +375,19 @@ def _build_embed(levels: HasLevels, run_label: str, scored: ScoredLevels | None 
         {"name": "🧠 Execution Plan",          "value": "\n".join(build_plan(tag, levels, extended=False)), "inline": False},
     ])
 
+    weekly_scope_upper = getattr(levels, "weekly_scope_upper", None)
+    weekly_scope_lower = getattr(levels, "weekly_scope_lower", None)
+    weekly_scope_expiry = getattr(levels, "weekly_scope_expiry", None)
+    if weekly_scope_upper is not None and weekly_scope_lower is not None:
+        expiry_suffix = f" → {weekly_scope_expiry}" if weekly_scope_expiry else ""
+        fields.append(
+            {
+                "name": f"🗓️ Weekly Scope ({tag}){expiry_suffix}",
+                "value": f"{fmt(weekly_scope_lower)} ↔ {fmt(weekly_scope_upper)}",
+                "inline": False,
+            }
+        )
+
     if scored:
         fields.append({"name": "\u200b", "value": "── **THREE-FILTER ANALYSIS** ──", "inline": False})
         fields.extend(_build_scored_fields(scored))

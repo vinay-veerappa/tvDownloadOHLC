@@ -1,59 +1,82 @@
 # Options Tactical Dashboard & Indicators
 
 ## Overview
-This suite provides real-time visibility into dealer positioning, gamma exposure (GEX), and institutional flow for SPX, NDX, and major ETFs.
+The Options stack delivers intraday and macro dealer-level structure for index and ETF families, then fans it out to Discord, file outputs, and Pine overlays.
 
-## 1. Options Tactical Command (Web Dashboard)
-The primary interface for active day trading. Accessible at `/options-live`.
+Primary pipeline entrypoint:
+- `scripts/streaming/options/run_options_levels.py`
 
-### Core Features
-- **Neon Tactical UI**: High-density monitoring with glassmorphism and real-time pulse alerts.
-- **Volatility Skew Monitoring**: Real-time "Fear Premium" tracking (25D Skew) to detect institutional tail-risk hedging.
-- **Cumulative IV Shift**: Tracks total implied volatility expansion/contraction since market open.
-- **Dynamic Charting**: Toggle between Net GEX, Call/Put Walls, Volume Profiles, and OI Profiles.
-- **Vertical Price Ladder**: DOM-style vertical mapping of reaction zones aligned with live price.
-- **Coach's Briefing**: AI-generated narrative translation of the current market structure.
-- **Advanced Telemetry**: Includes Call/Put Centroids, Vanna/Charm nodes, and Pin Concentration.
+Primary outputs:
+- `data/options/daily_levels.json`
+- `data/options/intraday_levels.json`
+- `data/options/macro_levels.json`
+- `data/options/daily_levels.txt`
+- `data/options/unified_levels.txt`
+- `data/options/unified_levels.json`
 
----
+## Current Spec Highlights (2026-05)
 
-## 2. TradingView Indicators
-For users who prefer to trade directly off TradingView charts.
+### 1. Expected Move + EM85
+- Multi-expiry expected moves are generated per ticker (`expected_moves`).
+- EM85 bounds (`straddle_85_upper`, `straddle_85_lower`) are propagated through:
+	- ETF fallback rescale (`rescale_levels_to_target_spot`)
+	- Cash-to-futures translation (`translate_to_futures`)
+- Discord and copy-ready outputs include EM85 fields when present.
 
-### `scripts/indicators/options/DealerLevels.pine`
-Paste one or more formatted lines into a single text box and it auto-selects the line matching the current chart symbol.
+### 2. Weekly EOD Scope Persistence
+- Friday EOD captures the weekly scope candidate (next Friday target window).
+- Persisted cache file:
+	- `data/options/weekly_em_scope.json`
+- Mon-Fri runs reuse the cached scope until expiry rollover.
+- Weekly scope is attached to both cash and translated futures payloads.
 
-**Key Features:**
-- Exact ticker matching and family-based routing (SPX/SPY/ES).
-- Overnight futures session-aware reset logic.
-- Customizable line styles, EM fills, and label overlap management.
-- Compact mode for clean high-density charts.
+### 3. Persistent State
+- Basis anchors (open/basis translation consistency):
+	- `data/options/basis_anchors.json`
+- Regime/state diff tracking:
+	- `data/options/pipeline_state.json`
 
----
+### 4. Discord Delivery Hardening
+- Embed payloads are compacted and batched by size budget.
+- On embed rejection, fallback to text-first payload is attempted.
+- Discord failures do not block output file generation.
 
-## 3. Data Pipeline (`run_options_levels.py`)
-The engine that powers both the Dashboard and the Pine indicators.
+### 5. Operational Level Semantics (Canonical)
+- EM/EM85:
+	- `EM HI/LO` defines expected range envelope.
+	- `EM85 HI/LO` is the tighter straddle-derived confidence envelope.
+- Core structural levels:
+	- `ZERO GEX` is the primary pivot.
+	- `CW/PW` are top resistance and support walls.
+	- `FLIP UP/DN` and `CLIFF UP/DN` define regime transition and acceleration boundaries.
+- Tactical levels:
+	- `0D CW/PW`, `LOC C/P`, `DEX C/P` are short-horizon reaction and flow nodes.
+- Weekly scope:
+	- Friday EOD snapshot is carried Mon-Fri and emitted as `Weekly Scope` fields/metadata.
 
-### Modes of Operation
-- **Scheduled**: Runs at key intervals (e.g., 08:30, 11:00 ET).
-- **Loop**: Continuous priority scanner (60s tick for Tier 1 tickers).
-- **Manual**: Trigger on-demand via the Web UI "Refresh" button.
+## Modes of Operation
+- Manual one-shot run
+- `--schedule` scheduler mode
+- `--loop` priority loop mode
 
-### Calculation Logic
-Calculations are performed in `gex_calculator.py` using Black-Scholes Greeks and proprietary centroid algorithms. Results are normalized to cash-index space even when using ETF or futures sources.
+## Key Config Surfaces
+Defined in `scripts/streaming/options/config.py`:
+- Active and priority ticker sets
+- ETF fallback mappings
+- Index-to-futures mappings
+- Scheduler times and timezone
+- Discord defaults and output toggles
 
----
+## Pine Consumption
+Recommended TradingView paste sources:
+- `data/options/unified_levels.txt` (scored-first)
+- `data/options/daily_levels.txt` (legacy-rich output)
+- `data/options/macro_levels.txt` (macro context)
 
-## 4. Output Archetypes
-- **`daily_levels.json`**: Unified state for the Web Dashboard.
-- **`daily_levels.txt`**: Human-readable summary and copy-ready Pine strings.
-- **`gex_profiles.json`**: High-resolution strike-level data (Gamma, Volume, OI).
-- **`live_trend.json`**: Historical intraday trace for trend analysis.
+## Core Documentation Set
+- `README.md` (this file): source of truth for runtime behavior and outputs.
+- `DESIGN.md`: architecture and component responsibilities.
+- `REQUIREMENTS.md`: normative functional/non-functional requirements and acceptance checks.
 
----
-
-## 5. Setup & Configuration
-All settings are managed in `scripts/streaming/options/config.py`. Key constants include:
-- `PRIMARY_INDEX_TICKERS`: Tickers monitored by the priority scanner.
-- `ETF_FALLBACK`: Mapping for index-to-etf data sourcing.
-- `INDEX_TO_FUTURES`: Mapping for basis-translation (e.g., SPX -> ES).
+## Notes
+Point-in-time analysis/report documents (dated files) are stored in `docs/indicators/Options/archive/` as historical references and are not part of the normative runtime spec.
