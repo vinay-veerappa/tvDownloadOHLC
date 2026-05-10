@@ -128,6 +128,7 @@ log = logging.getLogger(__name__)
 #    for change detection and alerting.
 # ---------------------------------------------------------------------------
 WEEKLY_SCOPE_CACHE_JSON = REPO_ROOT / "data" / "options" / "weekly_em_scope.json"
+DISCORD_ALLOWED_SNAPSHOT_SUFFIXES = {"0930", "1615"}
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +296,18 @@ def _translate_weekly_scope_record(record: dict[str, Any], translated_levels: An
     translated["straddle_85_upper"] = _shift(record.get("straddle_85_upper"))
     translated["straddle_85_lower"] = _shift(record.get("straddle_85_lower"))
     return translated
+
+
+def _discord_window_allowed(
+    run_label: str,
+    snapshot_suffix: str | None,
+    now_ny: datetime | None = None,
+) -> bool:
+    if snapshot_suffix and snapshot_suffix in DISCORD_ALLOWED_SNAPSHOT_SUFFIXES:
+        return True
+
+    label = (run_label or "")
+    return ("09:30" in label) or ("16:15" in label)
 
 
 # ---------------------------------------------------------------------------
@@ -690,8 +703,14 @@ def run_pipeline(
         log.error("State tracking failed: %s", exc)
         changes = []
 
-    # --- Send Discord notification (optional) -------------------------------
-    if enable_discord:
+    # --- Send Discord notification (optional + time-gated) ------------------
+    should_send_discord = enable_discord and _discord_window_allowed(
+        run_label=run_label,
+        snapshot_suffix=snapshot_suffix,
+        now_ny=now_ny,
+    )
+
+    if should_send_discord:
         try:
             send_discord_update(
                 translated_levels,
@@ -714,7 +733,10 @@ def run_pipeline(
             except Exception as exc:
                 log.error("Regime change alert failed: %s", exc)
     else:
-        log.info("Discord updates are disabled for this run.")
+        if not enable_discord:
+            log.info("Discord updates are disabled for this run.")
+        else:
+            log.info("Discord updates skipped (outside allowed windows: 09:30, 16:15 ET).")
 
     log.info("Pipeline complete  |  %s", run_label)
 

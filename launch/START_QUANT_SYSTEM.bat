@@ -39,7 +39,7 @@ start "WEB_DASHBOARD" cmd /k "cd web && npm run dev"
 
 :: 6. [NEW] Start Spoke: Dealer Options Pipeline (GEX)
 echo 🚀 Starting Dealer Options Pipeline...
-start "OPTIONS_GEX" cmd /k "python -m scripts.streaming.options.run_options_levels --loop"
+start "OPTIONS_GEX" cmd /k "python -m scripts.streaming.options.run_options_levels --loop --discord"
 
 :: 7. [NEW] Start Spoke: Weekly Macro HTF Pipeline (Manual/Optional)
 :: echo 🚀 Starting Macro HTF Pipeline...
