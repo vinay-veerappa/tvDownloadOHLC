@@ -1,0 +1,1237 @@
+//@version=6
+indicator("Candle Science Engine", overlay=true, max_bars_back=5000)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DATA STRUCTURES
+// ═══════════════════════════════════════════════════════════════════════════
+type Triplet
+    float c1h
+    float c1l
+    float c1o
+    float c1c
+    float c2h
+    float c2l
+    float c2o
+    float c2c
+    float c3h
+    float c3l
+    float c3o
+    float c3c
+
+type DistResult
+    array<float> bounds
+    array<int> counts
+    int n
+    float median
+    float zone_lo
+    float zone_hi
+    float zone_pct
+
+// ═══════════════════════════════════════════════════════════════════════════
+// V18 CHANGES:
+// 1. Importance-ordered presets (Minimal/Standard/Detailed/Full).
+//    Manual mode is a separate filter mode with 16 explicit dropdowns.
+//    Real-time + Full preset adds dynamic C3-known-break dimensions
+//    (C3H/C2H and C3L/C2L, active only when the live bar breaks).
+// 2. Probability-adaptive projections: candle & zones auto-switch between
+//    MFE (when break is likely) and MAE (when containment is likely),
+//    gated by user-configurable Auto Switch Threshold.
+// 3. Projected candle wicks anchored to C3O (not C2H/C2L) to keep
+//    geometry valid when historical % medians would otherwise place
+//    the wick inside the body.
+// 4. Dual projected candles: bull and bear outcomes drawn side-by-side
+//    with opacity scaled by empirical probability. Directional C3-close
+//    medians (Bull C3C, Bear C3C) drive each candle's body.
+// 5. Wick-collapse detection with pattern-table indicator ("ⓘ at open")
+//    when projection geometry produces zero-length wicks.
+// 6. Pine v6 `active` parameter gates preset selector vs manual dropdowns
+//    based on Filter Mode to prevent editing irrelevant controls.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// === INPUTS ===
+grp_general = "═══ GENERAL ═══"
+min_samples = input.int(1, "Minimum Samples", minval=1, group=grp_general)
+analysis_mode = input.string("Real-time (C3 Forming)", "Analysis Mode", options=["Real-time (C3 Forming)", "Historical (C3 Not Yet Open)"], group=grp_general)
+filter_mode = input.string("Manual", "Filter Mode", options=["Auto-Detect", "Manual"], group=grp_general, tooltip="Auto-Detect uses the Preset selector to determine which dimensions to match. Manual ignores presets and uses the 16 dropdowns below; each defaults to 'Any' (no filtering).")
+
+grp_c3_hist = "═══ HISTORICAL MODE ═══"
+c3_open_zone = input.string("In C2 Body", "Hypothetical C3 Open", options=["Above C2 High", "Between C2 High & Body Top", "In C2 Body", "Between C2 Body Bottom & Low", "Below C2 Low"], group=grp_c3_hist)
+
+
+// === AUTO-DETECT (simplified) ===
+grp_auto = "═══ AUTO-DETECT ═══"
+auto_preset = input.string("Standard", "Pattern Preset", options=["Minimal", "Standard", "Detailed", "Full"], group=grp_auto, active=filter_mode == "Auto-Detect", tooltip="Importance-ordered presets:\n\nMinimal (6d): C3 Open position + C1/C2 direction\nStandard (12d): + swing structure + C1-open relationships\nDetailed (14d): + C2 close/open vs C1 close\nFull (16d historical / up to 18d real-time): + C2C in C1 range + dynamic C3 break dimensions")
+
+// Resolve preset into booleans
+is_minimal = auto_preset == "Minimal"
+is_standard = auto_preset == "Standard"
+is_detailed = auto_preset == "Detailed"
+is_full = auto_preset == "Full"
+
+// Preset definitions (importance-ordered):
+// Minimal  (6d):  C3O × 4 + C1 dir + C2 dir
+// Standard (12d): + C2H/C1H, C2L/C1L (swing structure)
+//                 + C2H/C1O, C2L/C1O, C2C/C1O, C2O/C1O (C1-open relationships)
+// Detailed (14d): + C2C/C1C, C2O/C1C
+// Full (16d):     + C2C/C1H, C2C/C1L
+//                 + Real-time only: C3H/C2H (if broken), C3L/C2L (if broken)
+auto_c1_dir  = is_minimal or is_standard or is_detailed or is_full
+auto_c2_dir  = is_minimal or is_standard or is_detailed or is_full
+auto_c2h_c1h = is_standard or is_detailed or is_full
+auto_c2h_c1o = is_standard or is_detailed or is_full
+auto_c2l_c1l = is_standard or is_detailed or is_full
+auto_c2l_c1o = is_standard or is_detailed or is_full
+auto_c2c_c1h = is_full
+auto_c2c_c1l = is_full
+auto_c2c_c1c = is_detailed or is_full
+auto_c2c_c1o = is_standard or is_detailed or is_full
+auto_c2o_c1c = is_detailed or is_full
+auto_c2o_c1o = is_standard or is_detailed or is_full
+auto_c3o_c2h = is_minimal or is_standard or is_detailed or is_full
+auto_c3o_c2l = is_minimal or is_standard or is_detailed or is_full
+auto_c3o_c2c = is_minimal or is_standard or is_detailed or is_full
+auto_c3o_c2o = is_minimal or is_standard or is_detailed or is_full
+
+// === MANUAL FILTERS ===
+grp_manual = "═══ MANUAL FILTERS ═══"
+f_c1_dir   = input.string("Any", "C1 Direction", options=["Any", "Bull", "Bear"], group=grp_manual, active=filter_mode == "Manual")
+f_c2_dir   = input.string("Any", "C2 Direction", options=["Any", "Bull", "Bear"], group=grp_manual, active=filter_mode == "Manual")
+f_c2h_c1h  = input.string("Any", "C2H vs C1H", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c2h_c1o  = input.string("Any", "C2H vs C1O", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c2l_c1l  = input.string("Any", "C2L vs C1L", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c2l_c1o  = input.string("Any", "C2L vs C1O", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c2c_c1h  = input.string("Any", "C2C vs C1H", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c2c_c1l  = input.string("Any", "C2C vs C1L", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c2c_c1c  = input.string("Any", "C2C vs C1C", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c2c_c1o  = input.string("Any", "C2C vs C1O", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c2o_c1c  = input.string("Any", "C2O vs C1C", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c2o_c1o  = input.string("Any", "C2O vs C1O", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c3o_c2h  = input.string("Any", "C3O vs C2H", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c3o_c2l  = input.string("Any", "C3O vs C2L", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c3o_c2c  = input.string("Any", "C3O vs C2C", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+f_c3o_c2o  = input.string("Any", "C3O vs C2O", options=["Any", "Above", "Below"], group=grp_manual, active=filter_mode == "Manual")
+
+
+// === DISPLAY SETTINGS ===
+grp_main_table = "═══ MAIN TABLE ═══"
+show_main_table    = input.bool(true, "Show Statistics Table", group=grp_main_table)
+main_table_position = input.string("Top Right", "Position", options=["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group=grp_main_table)
+main_table_size    = input.string("Normal", "Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_main_table)
+
+grp_filter_table = "═══ PATTERN TABLE ═══"
+show_filter_table    = input.bool(false, "Show Detected Pattern", group=grp_filter_table)
+filter_table_position = input.string("Bottom Left", "Position", options=["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group=grp_filter_table)
+filter_table_size    = input.string("Small", "Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_filter_table)
+
+grp_dist_table = "═══ DISTRIBUTION TABLE ═══"
+show_dist_table    = input.bool(true, "Show Distribution", group=grp_dist_table)
+dist_table_position = input.string("Bottom Right", "Position", options=["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group=grp_dist_table)
+dist_table_size    = input.string("Normal", "Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_dist_table)
+num_buckets        = input.int(5, "Number of Buckets", minval=3, maxval=8, group=grp_dist_table)
+trim_pct           = input.int(5, "Trim Percentile (%)", minval=0, maxval=20, group=grp_dist_table)
+auto_zone_threshold = input.int(50, "Auto-Zone Threshold (%)", minval=30, maxval=80, group=grp_dist_table)
+use_auto_zone      = input.bool(true, "Enable Auto-Zone", group=grp_dist_table)
+
+grp_dist_show = "═══ DISTRIBUTION TOGGLES ═══"
+show_mfe_from_c2h    = input.bool(true,  "MFE from C2H (C3H↑C2H)", group=grp_dist_show)
+show_mae_from_c2h    = input.bool(false, "MAE from C2H (C3L↓C2H)", group=grp_dist_show)
+show_mfe_from_c2l    = input.bool(true,  "MFE from C2L (C3L↓C2L)", group=grp_dist_show)
+show_mae_from_c2l    = input.bool(false, "MAE from C2L (C3H↑C2L)", group=grp_dist_show)
+show_mfe_up_from_c2c = input.bool(false, "MFE↑ from C2C (C3H↑C2C)", group=grp_dist_show)
+show_mfe_dn_from_c2c = input.bool(false, "MFE↓ from C2C (C3L↓C2C)", group=grp_dist_show)
+show_mfe_up_from_c2o = input.bool(false, "MFE↑ from C2O (C3H↑C2O)", group=grp_dist_show)
+show_mfe_dn_from_c2o = input.bool(false, "MFE↓ from C2O (C3L↓C2O)", group=grp_dist_show)
+
+grp_candle = "═══ PROJECTED CANDLE ═══"
+show_projected_candle = input.bool(true, "Show Projected Candle", group=grp_candle)
+candle_width  = input.int(1, "Width", minval=1, maxval=10, group=grp_candle)
+candle_offset = input.int(5, "Offset", minval=1, maxval=20, group=grp_candle)
+bull_color    = input.color(color.new(color.teal, 30), "Bull Color", group=grp_candle)
+bear_color    = input.color(color.new(color.maroon, 30), "Bear Color", group=grp_candle)
+
+grp_zones = "═══ PROBABILITY ZONES ═══"
+show_zones       = input.bool(true, "Show Zones", group=grp_zones)
+show_high_zone   = input.bool(true, "Show Upside Zone", group=grp_zones)
+show_low_zone    = input.bool(true, "Show Downside Zone", group=grp_zones)
+show_high_median = input.bool(true, "Show High Median", group=grp_zones)
+show_low_median  = input.bool(true, "Show Low Median", group=grp_zones)
+high_zone_color  = input.color(color.new(color.teal, 75), "Upside Color", group=grp_zones)
+low_zone_color   = input.color(color.new(color.maroon, 75), "Downside Color", group=grp_zones)
+
+grp_proj = "═══ PROJECTION MODE ═══"
+proj_high_mode = input.string("Auto", "High Projection", options=["Auto", "MFE (Break C2H)", "MAE (Stay below C2H)"], group=grp_proj,tooltip="Auto: uses MFE when P(C3H>C2H) meets the Auto Switch Threshold below (default 50%), MAE otherwise. MFE projects how far C3 typically pushes above C2H; MAE projects how close C3H gets to C2H when it doesn't break.")
+proj_low_mode  = input.string("Auto", "Low Projection", options=["Auto", "MFE (Break C2L)", "MAE (Stay above C2L)"], group=grp_proj, tooltip="Auto: uses MFE when P(C3L<C2L) meets the Auto Switch Threshold below (default 50%), MAE otherwise. MFE projects how far C3 typically pushes below C2L; MAE projects how close C3L gets to C2L when it doesn't break.")
+proj_auto_threshold = input.int(50, "Auto Switch Threshold %", minval=30, maxval=70, group=grp_proj, tooltip="When probability exceeds this, use MFE; below it, use MAE")
+
+grp_ref_lines = "═══ REFERENCE LINES ═══"
+show_c2_high  = input.bool(true, "C2 High", group=grp_ref_lines)
+show_c2_low   = input.bool(true, "C2 Low", group=grp_ref_lines)
+show_c2_open  = input.bool(false, "C2 Open", group=grp_ref_lines)
+show_c2_close = input.bool(true, "C2 Close", group=grp_ref_lines)
+
+grp_labels = "═══ LABELS ═══"
+label_size   = input.string("Normal", "Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_labels)
+label_offset = input.int(8, "Offset", minval=1, maxval=50, group=grp_labels)
+line_length  = input.int(6, "Line Length", minval=1, maxval=50, group=grp_labels)
+mfe_decimals = input.int(2, "MFE Decimals", minval=1, maxval=4, group=grp_labels)
+
+// === HELPER FUNCTIONS ===
+get_table_position(string pos) =>
+    switch pos
+        "Top Left" => position.top_left
+        "Top Center" => position.top_center
+        "Top Right" => position.top_right
+        "Middle Left" => position.middle_left
+        "Middle Center" => position.middle_center
+        "Middle Right" => position.middle_right
+        "Bottom Left" => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        => position.bottom_right
+
+get_text_size(string sz) =>
+    switch sz
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        => size.large
+
+fmt(float val, int dec) =>
+    switch dec
+        1 => str.tostring(val, "#.0")
+        2 => str.tostring(val, "#.00")
+        3 => str.tostring(val, "#.000")
+        => str.tostring(val, "#.0000")
+
+make_bar(int cnt, int max_cnt) =>
+    bar_len = max_cnt > 0 ? math.min(8, int(float(cnt) / float(max_cnt) * 8.0)) : 0
+    switch bar_len
+        1 => "█"
+        2 => "██"
+        3 => "███"
+        4 => "████"
+        5 => "█████"
+        6 => "██████"
+        7 => "███████"
+        8 => "████████"
+        => ""
+
+get_dir(float o, float c) => c >= o ? "bull" : "bear"
+
+main_pos  = get_table_position(main_table_position)
+main_sz   = get_text_size(main_table_size)
+filter_pos = get_table_position(filter_table_position)
+filter_sz = get_text_size(filter_table_size)
+dist_pos  = get_table_position(dist_table_position)
+dist_sz   = get_text_size(dist_table_size)
+lbl_sz    = get_text_size(label_size)
+
+is_auto = filter_mode == "Auto-Detect"
+
+// === CURRENT CANDLES ===
+is_rt = analysis_mode == "Real-time (C3 Forming)"
+int c1_off = is_rt ? 2 : 1
+int c2_off = is_rt ? 1 : 0
+
+float cur_c1h = high[c1_off], float cur_c1l = low[c1_off], float cur_c1o = open[c1_off], float cur_c1c = close[c1_off]
+float cur_c2h = high[c2_off], float cur_c2l = low[c2_off], float cur_c2o = open[c2_off], float cur_c2c = close[c2_off]
+
+string cur_c1d = get_dir(cur_c1o, cur_c1c)
+string cur_c2d = get_dir(cur_c2o, cur_c2c)
+
+float c2h_ref = cur_c2h
+float c2l_ref = cur_c2l
+float c2o_ref = cur_c2o
+float c2c_ref = cur_c2c
+float c2_top = math.max(c2o_ref, c2c_ref)
+float c2_bot = math.min(c2o_ref, c2c_ref)
+int c2_bar = bar_index - c2_off
+
+get_c3o_price() =>
+    if is_rt
+        open
+    else
+        switch c3_open_zone
+            "Above C2 High" => c2h_ref + (c2h_ref - c2l_ref) * 0.1
+            "Between C2 High & Body Top" => (c2h_ref + c2_top) / 2
+            "In C2 Body" => (c2_top + c2_bot) / 2
+            "Between C2 Body Bottom & Low" => (c2_bot + c2l_ref) / 2
+            => c2l_ref - (c2h_ref - c2l_ref) * 0.1
+
+float c3o_price = get_c3o_price()
+
+// Auto-detect current relationships
+bool cur_c2h_gt_c1h = cur_c2h > cur_c1h
+bool cur_c2h_gt_c1o = cur_c2h > cur_c1o
+bool cur_c2l_gt_c1l = cur_c2l > cur_c1l
+bool cur_c2l_gt_c1o = cur_c2l > cur_c1o
+bool cur_c2c_gt_c1h = cur_c2c > cur_c1h
+bool cur_c2c_gt_c1l = cur_c2c > cur_c1l
+bool cur_c2c_gt_c1c = cur_c2c > cur_c1c
+bool cur_c2c_gt_c1o = cur_c2c > cur_c1o
+bool cur_c2o_gt_c1c = cur_c2o > cur_c1c
+bool cur_c2o_gt_c1o = cur_c2o > cur_c1o
+bool cur_c3o_gt_c2h = c3o_price > c2h_ref
+bool cur_c3o_gt_c2l = c3o_price > c2l_ref
+bool cur_c3o_gt_c2c = c3o_price > c2c_ref
+bool cur_c3o_gt_c2o = c3o_price > c2o_ref
+
+// Real-time C3 known-break dimensions (Full preset only, dynamic activation)
+// Single source of truth — depends on is_rt, c2h_ref, c2l_ref defined above
+bool c3h_broke_c2h = is_rt and (high > c2h_ref)
+bool c3l_broke_c2l = is_rt and (low < c2l_ref)
+bool auto_c3h_c2h = is_auto and is_full and c3h_broke_c2h
+bool auto_c3l_c2l = is_auto and is_full and c3l_broke_c2l
+
+// Aliases for filter-matching code below
+bool cur_c3h_gt_c2h = c3h_broke_c2h
+bool cur_c3l_lt_c2l = c3l_broke_c2l
+
+// === FILTER MATCHING FUNCTIONS ===
+passes_dir_check(bool is_auto_mode, bool auto_enabled, string cur_dir, string hist_dir, string manual_filter) =>
+    if is_auto_mode
+        not auto_enabled or (hist_dir == cur_dir)
+    else
+        manual_filter == "Any" or (manual_filter == "Bull" and hist_dir == "bull") or (manual_filter == "Bear" and hist_dir == "bear")
+
+passes_rel_check(bool is_auto_mode, bool auto_enabled, bool cur_is_above, bool hist_is_above, string manual_filter) =>
+    if is_auto_mode
+        not auto_enabled or (hist_is_above == cur_is_above)
+    else
+        manual_filter == "Any" or (manual_filter == "Above" and hist_is_above) or (manual_filter == "Below" and not hist_is_above)
+
+// === DATA STORAGE ===
+var array<Triplet> hist = array.new<Triplet>()
+var int last_collected_bar = -1
+
+var int total_filtered = 0
+var int c3_bull_count = 0
+var int c3_high_above_c2h = 0
+var int c3_low_below_c2l = 0
+var int c3_close_above_c2h = 0
+var int c3_close_above_c2l = 0
+var int c3_close_above_c2c = 0
+var int c3_close_above_c2o = 0
+
+var array<float> arr_c3h_vs_c2h = array.new<float>()
+var array<float> arr_c3l_vs_c2h = array.new<float>()
+var array<float> arr_c3l_vs_c2l = array.new<float>()
+var array<float> arr_c3h_vs_c2l = array.new<float>()
+var array<float> arr_c3h_vs_c2c = array.new<float>()
+var array<float> arr_c3l_vs_c2c = array.new<float>()
+var array<float> arr_c3h_vs_c2o = array.new<float>()
+var array<float> arr_c3l_vs_c2o = array.new<float>()
+var array<float> arr_c3_body = array.new<float>()
+
+// Conditional arrays for MAE projection (C3H when it DOESN'T break C2H, etc.)
+var array<float> arr_c3h_vs_c2h_contained = array.new<float>()  // C3H-C2H when C3H<=C2H (negative/zero)
+var array<float> arr_c3l_vs_c2l_contained = array.new<float>()  // C3L-C2L when C3L>=C2L (positive/zero)
+var array<float> arr_c3h_minus_c3o_break = array.new<float>()
+var array<float> arr_c3h_minus_c3o_contained = array.new<float>()
+var array<float> arr_c3l_minus_c3o_break = array.new<float>()
+var array<float> arr_c3l_minus_c3o_contained = array.new<float>()
+
+// C3 Close relative to C2C (for projected close)
+var array<float> arr_c3c_vs_c2c = array.new<float>()
+var array<float> arr_c3c_vs_c2c_bull = array.new<float>()
+var array<float> arr_c3c_vs_c2c_bear = array.new<float>()
+
+// === COLLECT HISTORICAL TRIPLETS ===
+if bar_index >= 4 and last_collected_bar != bar_index
+    last_collected_bar := bar_index
+    hist.push(Triplet.new(
+         high[3], low[3], open[3], close[3],
+         high[2], low[2], open[2], close[2],
+         high[1], low[1], open[1], close[1]))
+
+// === SCAN & FILTER ON LAST BAR ===
+if barstate.islast
+    total_filtered := 0
+    c3_bull_count := 0
+    c3_high_above_c2h := 0
+    c3_low_below_c2l := 0
+    c3_close_above_c2h := 0
+    c3_close_above_c2l := 0
+    c3_close_above_c2c := 0
+    c3_close_above_c2o := 0
+    arr_c3h_vs_c2h.clear(), arr_c3l_vs_c2h.clear()
+    arr_c3l_vs_c2l.clear(), arr_c3h_vs_c2l.clear()
+    arr_c3h_vs_c2c.clear(), arr_c3l_vs_c2c.clear()
+    arr_c3h_vs_c2o.clear(), arr_c3l_vs_c2o.clear()
+    arr_c3_body.clear()
+    arr_c3h_vs_c2h_contained.clear()
+    arr_c3l_vs_c2l_contained.clear()
+    arr_c3h_minus_c3o_break.clear()
+    arr_c3h_minus_c3o_contained.clear()
+    arr_c3l_minus_c3o_break.clear()
+    arr_c3l_minus_c3o_contained.clear()
+    arr_c3c_vs_c2c.clear()
+    arr_c3c_vs_c2c_bull.clear()
+    arr_c3c_vs_c2c_bear.clear()
+    
+    if hist.size() > 0
+        for idx = 0 to hist.size() - 1
+            Triplet t = hist.get(idx)
+            float c1h = t.c1h, float c1l = t.c1l
+            float c1o = t.c1o, float c1c = t.c1c
+            float c2h = t.c2h, float c2l = t.c2l
+            float c2o = t.c2o, float c2c = t.c2c
+            
+            float c3o = t.c3o, float c3h = t.c3h, float c3l = t.c3l, float c3c = t.c3c
+            
+            string c1d = get_dir(c1o, c1c)
+            string c2d = get_dir(c2o, c2c)
+            
+            bool h_c2h_gt_c1h = c2h > c1h, bool h_c2h_gt_c1o = c2h > c1o
+            bool h_c2l_gt_c1l = c2l > c1l, bool h_c2l_gt_c1o = c2l > c1o
+            bool h_c2c_gt_c1h = c2c > c1h, bool h_c2c_gt_c1l = c2c > c1l
+            bool h_c2c_gt_c1c = c2c > c1c, bool h_c2c_gt_c1o = c2c > c1o
+            bool h_c2o_gt_c1c = c2o > c1c, bool h_c2o_gt_c1o = c2o > c1o
+            bool h_c3o_gt_c2h = c3o > c2h, bool h_c3o_gt_c2l = c3o > c2l
+            bool h_c3o_gt_c2c = c3o > c2c, bool h_c3o_gt_c2o = c3o > c2o
+            bool h_c3h_gt_c2h = t.c3h > t.c2h
+            bool h_c3l_lt_c2l = t.c3l < t.c2l
+            
+            bool p1 = passes_dir_check(is_auto, auto_c1_dir, cur_c1d, c1d, f_c1_dir)
+            bool p2 = passes_dir_check(is_auto, auto_c2_dir, cur_c2d, c2d, f_c2_dir)
+            bool p3 = passes_rel_check(is_auto, auto_c2h_c1h, cur_c2h_gt_c1h, h_c2h_gt_c1h, f_c2h_c1h)
+            bool p4 = passes_rel_check(is_auto, auto_c2h_c1o, cur_c2h_gt_c1o, h_c2h_gt_c1o, f_c2h_c1o)
+            bool p5 = passes_rel_check(is_auto, auto_c2l_c1l, cur_c2l_gt_c1l, h_c2l_gt_c1l, f_c2l_c1l)
+            bool p6 = passes_rel_check(is_auto, auto_c2l_c1o, cur_c2l_gt_c1o, h_c2l_gt_c1o, f_c2l_c1o)
+            bool p7 = passes_rel_check(is_auto, auto_c2c_c1h, cur_c2c_gt_c1h, h_c2c_gt_c1h, f_c2c_c1h)
+            bool p8 = passes_rel_check(is_auto, auto_c2c_c1l, cur_c2c_gt_c1l, h_c2c_gt_c1l, f_c2c_c1l)
+            bool p9 = passes_rel_check(is_auto, auto_c2c_c1c, cur_c2c_gt_c1c, h_c2c_gt_c1c, f_c2c_c1c)
+            bool p10 = passes_rel_check(is_auto, auto_c2c_c1o, cur_c2c_gt_c1o, h_c2c_gt_c1o, f_c2c_c1o)
+            bool p11 = passes_rel_check(is_auto, auto_c2o_c1c, cur_c2o_gt_c1c, h_c2o_gt_c1c, f_c2o_c1c)
+            bool p12 = passes_rel_check(is_auto, auto_c2o_c1o, cur_c2o_gt_c1o, h_c2o_gt_c1o, f_c2o_c1o)
+            bool p13 = passes_rel_check(is_auto, auto_c3o_c2h, cur_c3o_gt_c2h, h_c3o_gt_c2h, f_c3o_c2h)
+            bool p14 = passes_rel_check(is_auto, auto_c3o_c2l, cur_c3o_gt_c2l, h_c3o_gt_c2l, f_c3o_c2l)
+            bool p15 = passes_rel_check(is_auto, auto_c3o_c2c, cur_c3o_gt_c2c, h_c3o_gt_c2c, f_c3o_c2c)
+            bool p16 = passes_rel_check(is_auto, auto_c3o_c2o, cur_c3o_gt_c2o, h_c3o_gt_c2o, f_c3o_c2o)
+            bool p17 = passes_rel_check(true, auto_c3h_c2h, cur_c3h_gt_c2h, h_c3h_gt_c2h, "Any")
+            bool p18 = passes_rel_check(true, auto_c3l_c2l, cur_c3l_lt_c2l, h_c3l_lt_c2l, "Any")
+            
+            bool passes_all = p1 and p2 and p3 and p4 and p5 and p6 and p7 and p8 and p9 and p10 and p11 and p12 and p13 and p14 and p15 and p16 and p17 and p18
+            
+            if passes_all
+                total_filtered += 1
+                if c3c >= c3o
+                    c3_bull_count += 1
+                if c3h > c2h
+                    c3_high_above_c2h += 1
+                if c3l < c2l
+                    c3_low_below_c2l += 1
+                if c3c > c2h
+                    c3_close_above_c2h += 1
+                if c3c > c2l
+                    c3_close_above_c2l += 1
+                if c3c > c2c
+                    c3_close_above_c2c += 1
+                if c3c > c2o
+                    c3_close_above_c2o += 1
+                
+                float ref = c2c != 0 ? c2c : 1.0
+                float h_vs_c2h = (c3h - c2h) / ref * 100
+                float l_vs_c2l = (c3l - c2l) / ref * 100
+                
+                arr_c3h_vs_c2h.push(h_vs_c2h)
+                arr_c3l_vs_c2h.push((c3l - c2h) / ref * 100)
+                arr_c3l_vs_c2l.push(l_vs_c2l)
+                arr_c3h_vs_c2l.push((c3h - c2l) / ref * 100)
+                arr_c3h_vs_c2c.push((c3h - c2c) / ref * 100)
+                arr_c3l_vs_c2c.push((c3l - c2c) / ref * 100)
+                arr_c3h_vs_c2o.push((c3h - c2o) / ref * 100)
+                arr_c3l_vs_c2o.push((c3l - c2o) / ref * 100)
+                arr_c3_body.push((c3c - c3o) / ref * 100)
+                float c3c_vs_c2c_val = (c3c - c2c) / ref * 100
+                arr_c3c_vs_c2c.push(c3c_vs_c2c_val)
+                if c3c >= c3o
+                    arr_c3c_vs_c2c_bull.push(c3c_vs_c2c_val)
+                else
+                    arr_c3c_vs_c2c_bear.push(c3c_vs_c2c_val)
+                
+                // Conditional: C3H when contained below C2H
+                if c3h <= c2h
+                    arr_c3h_vs_c2h_contained.push(h_vs_c2h)
+                // Conditional: C3L when contained above C2L
+                if c3l >= c2l
+                    arr_c3l_vs_c2l_contained.push(l_vs_c2l)
+
+                float h_minus_o = (c3h - c3o) / ref * 100
+                float l_minus_o = (c3l - c3o) / ref * 100
+                if c3h > c2h
+                    arr_c3h_minus_c3o_break.push(h_minus_o)
+                else
+                    arr_c3h_minus_c3o_contained.push(h_minus_o)
+                if c3l < c2l
+                    arr_c3l_minus_c3o_break.push(l_minus_o)
+                else
+                    arr_c3l_minus_c3o_contained.push(l_minus_o)
+
+// === PROBABILITIES ===
+float tf = float(total_filtered)
+float p_bull = tf > 0 ? float(c3_bull_count) / tf * 100.0 : na
+float p_bear = not na(p_bull) ? 100.0 - p_bull : na
+float p_high_gt_c2h = tf > 0 ? float(c3_high_above_c2h) / tf * 100.0 : na
+float p_high_lt_c2h = not na(p_high_gt_c2h) ? 100.0 - p_high_gt_c2h : na
+float p_low_lt_c2l = tf > 0 ? float(c3_low_below_c2l) / tf * 100.0 : na
+float p_low_gt_c2l = not na(p_low_lt_c2l) ? 100.0 - p_low_lt_c2l : na
+float p_close_gt_c2h = tf > 0 ? float(c3_close_above_c2h) / tf * 100.0 : na
+float p_close_gt_c2l = tf > 0 ? float(c3_close_above_c2l) / tf * 100.0 : na
+float p_close_gt_c2c = tf > 0 ? float(c3_close_above_c2c) / tf * 100.0 : na
+float p_close_gt_c2o = tf > 0 ? float(c3_close_above_c2o) / tf * 100.0 : na
+
+// === PERCENTILE FUNCTIONS ===
+pct_interp_sorted(array<float> sorted, float p) =>
+    float r = na
+    int n = sorted.size()
+    if n == 1
+        r := sorted.get(0)
+    else if n > 1
+        float rank = (p / 100.0) * (n - 1)
+        int lo = int(math.floor(rank))
+        int hi = int(math.ceil(rank))
+        lo := math.max(0, math.min(lo, n - 1))
+        hi := math.max(0, math.min(hi, n - 1))
+        r := lo == hi ? sorted.get(lo) : sorted.get(lo) + (sorted.get(hi) - sorted.get(lo)) * (rank - lo)
+    r
+
+pct_interp(array<float> arr, float p) =>
+    float r = na
+    if arr.size() > 0
+        sorted = arr.copy()
+        sorted.sort(order.ascending)
+        int n = sorted.size()
+        if n == 1
+            r := sorted.get(0)
+        else
+            float rank = (p / 100.0) * (n - 1)
+            int lo = int(math.floor(rank))
+            int hi = int(math.ceil(rank))
+            lo := math.max(0, math.min(lo, n - 1))
+            hi := math.max(0, math.min(hi, n - 1))
+            r := lo == hi ? sorted.get(lo) : sorted.get(lo) + (sorted.get(hi) - sorted.get(lo)) * (rank - lo)
+    r
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DISTRIBUTION ENGINE
+// ═══════════════════════════════════════════════════════════════════════════
+build_dist(array<float> src, string filter_sign) =>
+    DistResult result = DistResult.new(
+         array.new<float>(), array.new<int>(), 0, na, na, na, na)
+    
+    filtered = array.new<float>()
+    if src.size() > 0
+        for i = 0 to src.size() - 1
+            v = src.get(i)
+            if filter_sign == "pos" and v > 0
+                filtered.push(v)
+            else if filter_sign == "neg" and v < 0
+                filtered.push(v)
+            else if filter_sign == "all"
+                filtered.push(v)
+    
+    result.n := filtered.size()
+    
+    if result.n >= 2
+        result.median := pct_interp(filtered, 50)
+        
+        float lo_trim = na
+        float hi_trim = na
+        
+        if filter_sign == "neg"
+            hi_trim := trim_pct > 0 ? pct_interp(filtered, trim_pct) : filtered.min()
+            lo_trim := trim_pct > 0 ? pct_interp(filtered, 100 - trim_pct) : filtered.max()
+        else
+            lo_trim := trim_pct > 0 ? pct_interp(filtered, trim_pct) : filtered.min()
+            hi_trim := trim_pct > 0 ? pct_interp(filtered, 100 - trim_pct) : filtered.max()
+        
+        if filter_sign == "neg"
+            if lo_trim > hi_trim
+                bucket_size = (lo_trim - hi_trim) / num_buckets
+                for i = 0 to num_buckets - 1
+                    b_hi = i == 0 ? lo_trim + 0.0001 : lo_trim - (i * bucket_size)
+                    b_lo = i == 0 ? lo_trim - bucket_size : (i == num_buckets - 1 ? hi_trim - 0.0001 : lo_trim - ((i + 1) * bucket_size))
+                    result.bounds.push(b_lo)
+                    result.bounds.push(b_hi)
+                    cnt = 0
+                    for j = 0 to filtered.size() - 1
+                        v = filtered.get(j)
+                        if v >= b_lo and v < b_hi
+                            cnt += 1
+                    result.counts.push(cnt)
+        else
+            if hi_trim > lo_trim
+                bucket_size = (hi_trim - lo_trim) / num_buckets
+                for i = 0 to num_buckets - 1
+                    b_lo = lo_trim + (i * bucket_size)
+                    b_hi = i == num_buckets - 1 ? hi_trim + 0.0001 : lo_trim + ((i + 1) * bucket_size)
+                    result.bounds.push(b_lo)
+                    result.bounds.push(b_hi)
+                    cnt = 0
+                    for j = 0 to filtered.size() - 1
+                        v = filtered.get(j)
+                        if v >= b_lo and v < b_hi
+                            cnt += 1
+                    result.counts.push(cnt)
+        
+        if result.counts.size() > 0
+            target_n = int(float(result.n) * float(auto_zone_threshold) / 100.0)
+            best_span = 1000
+            for s = 0 to result.counts.size() - 1
+                cumulative = 0
+                for e = s to result.counts.size() - 1
+                    cumulative += result.counts.get(e)
+                    span = e - s + 1
+                    if cumulative >= target_n and span < best_span
+                        best_span := span
+                        if filter_sign == "neg"
+                            result.zone_lo := result.bounds.get(e * 2)
+                            result.zone_hi := result.bounds.get(s * 2 + 1)
+                        else
+                            result.zone_lo := result.bounds.get(s * 2)
+                            result.zone_hi := result.bounds.get(e * 2 + 1)
+                        result.zone_pct := result.n > 0 ? float(cumulative) / float(result.n) * 100.0 : 0.0
+                        break
+    else if result.n == 1
+        result.median := filtered.get(0)
+    
+    result
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMPUTED DISTRIBUTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+var DistResult dist_mfe_c2h = na
+var DistResult dist_mae_c2h = na
+var DistResult dist_mfe_c2l = na
+var DistResult dist_mae_c2l = na
+var DistResult dist_mfe_up_c2c = na
+var DistResult dist_mfe_dn_c2c = na
+var DistResult dist_mfe_up_c2o = na
+var DistResult dist_mfe_dn_c2o = na
+var DistResult dist_c3h_break_from_o = na
+var DistResult dist_c3h_cont_from_o = na
+var DistResult dist_c3l_break_from_o = na
+var DistResult dist_c3l_cont_from_o = na
+
+// Contained distributions for MAE-based projection
+var DistResult dist_c3h_contained = na  // C3H relative to C2H when C3H stayed below C2H
+var DistResult dist_c3l_contained = na  // C3L relative to C2L when C3L stayed above C2L
+
+var float med_body = na
+var float med_c3c_vs_c2c = na
+var float med_c3c_vs_c2c_bull = na
+var float med_c3c_vs_c2c_bear = na
+var DistResult active_h_dist = na
+var DistResult active_l_dist = na
+var float proj_h = na
+var float proj_l = na
+//var float proj_c = na
+var float proj_c_bull = na
+var float proj_c_bear = na
+//var float b_top = na
+//var float b_bot = na
+var float b_top_bull = na
+var float b_bot_bull = na
+var float b_top_bear = na
+var float b_bot_bear = na
+var float wick_epsilon = na
+var bool proj_bull = true
+//var bool act_bull = true
+var bool act_bull_bull = true
+var bool act_bull_bear = true
+
+if barstate.islast and total_filtered >= min_samples
+    dist_mfe_c2h    := build_dist(arr_c3h_vs_c2h, "pos")
+    dist_mae_c2h    := build_dist(arr_c3l_vs_c2h, "neg")
+    dist_mfe_c2l    := build_dist(arr_c3l_vs_c2l, "neg")
+    dist_mae_c2l    := build_dist(arr_c3h_vs_c2l, "pos")
+    dist_mfe_up_c2c := build_dist(arr_c3h_vs_c2c, "pos")
+    dist_mfe_dn_c2c := build_dist(arr_c3l_vs_c2c, "neg")
+    dist_mfe_up_c2o := build_dist(arr_c3h_vs_c2o, "pos")
+    dist_mfe_dn_c2o := build_dist(arr_c3l_vs_c2o, "neg")
+    dist_c3h_break_from_o := build_dist(arr_c3h_minus_c3o_break, "all")
+    dist_c3h_cont_from_o := build_dist(arr_c3h_minus_c3o_contained, "all")
+    dist_c3l_break_from_o := build_dist(arr_c3l_minus_c3o_break, "all")
+    dist_c3l_cont_from_o := build_dist(arr_c3l_minus_c3o_contained, "all")
+    
+    // Contained distributions (all values, since they're already filtered during collection)
+    dist_c3h_contained := build_dist(arr_c3h_vs_c2h_contained, "all")
+    dist_c3l_contained := build_dist(arr_c3l_vs_c2l_contained, "all")
+    
+    med_body := arr_c3_body.size() > 0 ? pct_interp(arr_c3_body, 50) : na
+    med_c3c_vs_c2c := arr_c3c_vs_c2c.size() > 0 ? pct_interp(arr_c3c_vs_c2c, 50) : na
+    med_c3c_vs_c2c_bull := arr_c3c_vs_c2c_bull.size() > 0 ? pct_interp(arr_c3c_vs_c2c_bull, 50) : na
+    med_c3c_vs_c2c_bear := arr_c3c_vs_c2c_bear.size() > 0 ? pct_interp(arr_c3c_vs_c2c_bear, 50) : na
+
+// === Determine projection mode with fallbacks and geometric guards ===
+bool use_mfe_high = switch proj_high_mode
+    "MFE (Break C2H)" => true
+    "MAE (Stay below C2H)" => false
+    => not na(p_high_gt_c2h) ? p_high_gt_c2h >= proj_auto_threshold : true
+
+bool use_mfe_low = switch proj_low_mode
+    "MFE (Break C2L)" => true
+    "MAE (Stay above C2L)" => false
+    => not na(p_low_lt_c2l) ? p_low_lt_c2l >= proj_auto_threshold : true
+
+bool mode_high_fallback = false
+bool mode_low_fallback = false
+var bool high_wick_collapsed = false
+var bool low_wick_collapsed = false
+
+// Bug 3: Fallback when MAE samples are too sparse
+if not use_mfe_high and (not na(dist_c3h_contained) ? dist_c3h_contained.n < min_samples : true)
+    use_mfe_high := true
+    mode_high_fallback := true
+
+if not use_mfe_low and (not na(dist_c3l_contained) ? dist_c3l_contained.n < min_samples : true)
+    use_mfe_low := true
+    mode_low_fallback := true
+
+// Bug 4: Geometric guard — if C3O has already crossed the level, MAE is impossible
+if not use_mfe_high and c3o_price > c2h_ref
+    use_mfe_high := true
+    mode_high_fallback := true
+
+if not use_mfe_low and c3o_price < c2l_ref
+    use_mfe_low := true
+    mode_low_fallback := true
+
+
+if barstate.islast and total_filtered >= min_samples and show_projected_candle
+    high_wick_collapsed := false
+    low_wick_collapsed := false
+
+    active_h_dist := use_mfe_high ? dist_c3h_break_from_o : dist_c3h_cont_from_o
+    active_l_dist := use_mfe_low ? dist_c3l_break_from_o : dist_c3l_cont_from_o
+
+
+    // Determine projected direction from empirical probability, not from proj_c (avoids circular dependency)
+    proj_bull := not na(p_bull) and p_bull >= 50.0
+
+    // HIGH WICK — anchored to C3O instead of C2H
+    float h_med_from_o = not na(active_h_dist) ? active_h_dist.median : na
+    proj_h := not na(h_med_from_o) ? c3o_price + (c2c_ref * h_med_from_o / 100) : c3o_price
+    proj_h := math.max(proj_h, c3o_price)
+
+    // LOW WICK — anchored to C3O instead of C2L
+    float l_med_from_o = not na(active_l_dist) ? active_l_dist.median : na
+    proj_l := not na(l_med_from_o) ? c3o_price + (c2c_ref * l_med_from_o / 100) : c3o_price
+    proj_l := math.min(proj_l, c3o_price)
+
+    // Directional projected closes — one per outcome
+    proj_c_bull := na
+    if not na(med_c3c_vs_c2c_bull)
+        proj_c_bull := c2c_ref + (c2c_ref * med_c3c_vs_c2c_bull / 100)
+    else if not na(med_c3c_vs_c2c)
+        proj_c_bull := c2c_ref + (c2c_ref * med_c3c_vs_c2c / 100)
+    else
+        proj_c_bull := c3o_price
+    proj_c_bull := math.max(proj_l, math.min(proj_h, proj_c_bull))
+
+    proj_c_bear := na
+    if not na(med_c3c_vs_c2c_bear)
+        proj_c_bear := c2c_ref + (c2c_ref * med_c3c_vs_c2c_bear / 100)
+    else if not na(med_c3c_vs_c2c)
+        proj_c_bear := c2c_ref + (c2c_ref * med_c3c_vs_c2c / 100)
+    else
+        proj_c_bear := c3o_price
+    proj_c_bear := math.max(proj_l, math.min(proj_h, proj_c_bear))
+
+    // Keep proj_c as dominant projection for backward compatibility
+    //proj_c := proj_bull ? proj_c_bull : proj_c_bear
+
+    act_bull_bull := proj_c_bull >= c3o_price
+    b_top_bull := math.max(c3o_price, proj_c_bull)
+    b_bot_bull := math.min(c3o_price, proj_c_bull)
+
+    act_bull_bear := proj_c_bear >= c3o_price
+    b_top_bear := math.max(c3o_price, proj_c_bear)
+    b_bot_bear := math.min(c3o_price, proj_c_bear)
+
+    // Keep dominant aliases
+    //act_bull := proj_bull ? act_bull_bull : act_bull_bear
+   // b_top := proj_bull ? b_top_bull : b_top_bear
+    //b_bot := proj_bull ? b_bot_bull : b_bot_bear
+
+    // Detect wick-collapse conditions across both bodies
+    float wick_top = math.max(b_top_bull, b_top_bear)
+    float wick_bot = math.min(b_bot_bull, b_bot_bear)
+    wick_epsilon := c2c_ref * 0.00001
+    high_wick_collapsed := math.abs(proj_h - wick_top) < wick_epsilon
+    low_wick_collapsed := math.abs(proj_l - wick_bot) < wick_epsilon
+else
+    high_wick_collapsed := false
+    low_wick_collapsed := false
+
+// === PATTERN TABLE ===
+var table filter_tbl = table.new(filter_pos, 4, 25, bgcolor=color.new(color.black, 85), border_width=1)
+
+// Count active dimensions for display
+int dim_count = 0
+if is_auto
+    dim_count += auto_c1_dir ? 1 : 0
+    dim_count += auto_c2_dir ? 1 : 0
+    dim_count += auto_c2h_c1h ? 1 : 0
+    dim_count += auto_c2h_c1o ? 1 : 0
+    dim_count += auto_c2l_c1l ? 1 : 0
+    dim_count += auto_c2l_c1o ? 1 : 0
+    dim_count += auto_c2c_c1h ? 1 : 0
+    dim_count += auto_c2c_c1l ? 1 : 0
+    dim_count += auto_c2c_c1c ? 1 : 0
+    dim_count += auto_c2c_c1o ? 1 : 0
+    dim_count += auto_c2o_c1c ? 1 : 0
+    dim_count += auto_c2o_c1o ? 1 : 0
+    dim_count += auto_c3o_c2h ? 1 : 0
+    dim_count += auto_c3o_c2l ? 1 : 0
+    dim_count += auto_c3o_c2c ? 1 : 0
+    dim_count += auto_c3o_c2o ? 1 : 0
+    dim_count += auto_c3h_c2h ? 1 : 0
+    dim_count += auto_c3l_c2l ? 1 : 0
+
+if show_filter_table and barstate.islast
+    filter_tbl.delete()
+    filter_tbl := table.new(filter_pos, 4, 25, bgcolor=color.new(color.black, 85), border_width=1)
+    
+    row = 0
+    if is_auto
+        preset_lbl = auto_preset
+        string break_suffix = ""
+        if c3h_broke_c2h
+            break_suffix := break_suffix + " ↑C2H"
+        if c3l_broke_c2l
+            break_suffix := break_suffix + " ↓C2L"
+        string preset_display = "🔍 " + preset_lbl + " (" + str.tostring(dim_count) + "d)" + break_suffix
+        filter_tbl.cell(0, row, preset_display, text_color=color.lime, text_size=filter_sz)
+    else
+        filter_tbl.cell(0, row, "⚙️ MANUAL", text_color=color.orange, text_size=filter_sz)
+    row += 1
+    
+    c1_active = is_auto ? auto_c1_dir : f_c1_dir != "Any"
+    filter_tbl.cell(0, row, "C1", text_color=color.gray, text_size=filter_sz)
+    filter_tbl.cell(1, row, cur_c1d == "bull" ? "▲ Bull" : "▼ Bear", text_color=cur_c1d == "bull" ? color.green : color.red, text_size=filter_sz)
+    filter_tbl.cell(2, row, c1_active ? "●" : "○", text_color=c1_active ? color.lime : color.gray, text_size=filter_sz)
+    row += 1
+    
+    c2_active = is_auto ? auto_c2_dir : f_c2_dir != "Any"
+    filter_tbl.cell(0, row, "C2", text_color=color.gray, text_size=filter_sz)
+    filter_tbl.cell(1, row, cur_c2d == "bull" ? "▲ Bull" : "▼ Bear", text_color=cur_c2d == "bull" ? color.green : color.red, text_size=filter_sz)
+    filter_tbl.cell(2, row, c2_active ? "●" : "○", text_color=c2_active ? color.lime : color.gray, text_size=filter_sz)
+    row += 1
+    
+    filter_tbl.cell(0, row, "── Structure ──", text_color=color.aqua, text_size=filter_sz)
+    row += 1
+    
+    hh_active = is_auto ? auto_c2h_c1h : f_c2h_c1h != "Any"
+    filter_tbl.cell(0, row, "C2H/C1H", text_color=color.gray, text_size=filter_sz)
+    filter_tbl.cell(1, row, cur_c2h_gt_c1h ? "HH" : "LH", text_color=cur_c2h_gt_c1h ? color.green : color.red, text_size=filter_sz)
+    filter_tbl.cell(2, row, hh_active ? "●" : "○", text_color=hh_active ? color.lime : color.gray, text_size=filter_sz)
+    row += 1
+    
+    hl_active = is_auto ? auto_c2l_c1l : f_c2l_c1l != "Any"
+    filter_tbl.cell(0, row, "C2L/C1L", text_color=color.gray, text_size=filter_sz)
+    filter_tbl.cell(1, row, cur_c2l_gt_c1l ? "HL" : "LL", text_color=cur_c2l_gt_c1l ? color.green : color.red, text_size=filter_sz)
+    filter_tbl.cell(2, row, hl_active ? "●" : "○", text_color=hl_active ? color.lime : color.gray, text_size=filter_sz)
+    row += 1
+    
+    filter_tbl.cell(0, row, "── C3 Open ──", text_color=color.orange, text_size=filter_sz)
+    row += 1
+    
+    c3o_active = is_auto ? auto_c3o_c2o : f_c3o_c2o != "Any"
+    filter_tbl.cell(0, row, "C3O/C2O", text_color=color.gray, text_size=filter_sz)
+    filter_tbl.cell(1, row, cur_c3o_gt_c2o ? "Above" : "Below", text_color=cur_c3o_gt_c2o ? color.green : color.red, text_size=filter_sz)
+    filter_tbl.cell(2, row, c3o_active ? "●" : "○", text_color=c3o_active ? color.lime : color.gray, text_size=filter_sz)
+    row += 1
+    
+    // Projection mode indicator
+    filter_tbl.cell(0, row, "── Projection ──", text_color=color.yellow, text_size=filter_sz)
+    row += 1
+    h_mode_txt = use_mfe_high ? "MFE ↑C2H" : "MAE ≤C2H"
+    h_mode_fallback_txt = mode_high_fallback ? " (→MFE)" : ""
+    l_mode_txt = use_mfe_low ? "MFE ↓C2L" : "MAE ≥C2L"
+    l_mode_fallback_txt = mode_low_fallback ? " (→MFE)" : ""
+    filter_tbl.cell(0, row, "High", text_color=color.gray, text_size=filter_sz)
+    filter_tbl.cell(1, row, h_mode_txt + h_mode_fallback_txt, text_color=mode_high_fallback ? color.yellow : (use_mfe_high ? color.teal : color.orange), text_size=filter_sz)
+    row += 1
+    filter_tbl.cell(0, row, "Low", text_color=color.gray, text_size=filter_sz)
+    filter_tbl.cell(1, row, l_mode_txt + l_mode_fallback_txt, text_color=mode_low_fallback ? color.yellow : (use_mfe_low ? color.maroon : color.orange), text_size=filter_sz)
+    row += 1
+    if high_wick_collapsed or low_wick_collapsed
+        string collapse_note = ""
+        if high_wick_collapsed and low_wick_collapsed
+            collapse_note := "Both wicks at body"
+        else if high_wick_collapsed
+            collapse_note := "High at open"
+        else
+            collapse_note := "Low at open"
+        filter_tbl.cell(0, row, "ⓘ " + collapse_note, text_color=color.gray, text_size=filter_sz)
+        row += 1
+    
+    filter_tbl.cell(0, row, "────────────", text_color=color.gray, text_size=filter_sz)
+    row += 1
+    
+    rc = total_filtered >= 50 ? color.green : total_filtered >= 20 ? color.yellow : color.orange
+    filter_tbl.cell(0, row, "Matches", text_color=color.white, text_size=filter_sz)
+    filter_tbl.cell(1, row, str.tostring(total_filtered), text_color=rc, text_size=filter_sz)
+    if not is_auto
+        bool all_any = f_c1_dir == "Any" and f_c2_dir == "Any" and
+                       f_c2h_c1h == "Any" and f_c2h_c1o == "Any" and
+                       f_c2l_c1l == "Any" and f_c2l_c1o == "Any" and
+                       f_c2c_c1h == "Any" and f_c2c_c1l == "Any" and
+                       f_c2c_c1c == "Any" and f_c2c_c1o == "Any" and
+                       f_c2o_c1c == "Any" and f_c2o_c1o == "Any" and
+                       f_c3o_c2h == "Any" and f_c3o_c2l == "Any" and
+                       f_c3o_c2c == "Any" and f_c3o_c2o == "Any"
+        if all_any
+            row += 1
+            filter_tbl.cell(0, row, "⚠ All Any — full dataset", text_color=color.yellow, text_size=filter_sz)
+
+// === MAIN TABLE ===
+var table main_tbl = table.new(main_pos, 4, 30, bgcolor=color.new(color.black, 85), border_width=1)
+
+if show_main_table and barstate.islast
+    main_tbl.delete()
+    main_tbl := table.new(main_pos, 4, 30, bgcolor=color.new(color.black, 85), border_width=1)
+    row = 0
+    
+    main_tbl.cell(0, row, is_rt ? "⚡ REAL-TIME" : "📊 HISTORICAL", text_color=is_rt ? color.lime : color.orange, text_size=main_sz)
+    row += 1
+    
+    if total_filtered >= min_samples
+        rc = total_filtered >= 50 ? color.green : total_filtered >= 20 ? color.yellow : color.orange
+        main_tbl.cell(0, row, "n=" + str.tostring(total_filtered), text_color=rc, text_size=main_sz)
+        row += 1
+        
+        main_tbl.cell(0, row, "═══ Direction ═══", text_color=color.white, text_size=main_sz)
+        row += 1
+        main_tbl.cell(0, row, "Bull " + str.tostring(p_bull, "#") + "%", text_color=color.green, text_size=main_sz)
+        main_tbl.cell(1, row, "Bear " + str.tostring(p_bear, "#") + "%", text_color=color.red, text_size=main_sz)
+        row += 1
+        
+        // --- C3H vs C2H ---
+        main_tbl.cell(0, row, "═══ C3H vs C2H ═══", text_color=color.teal, text_size=main_sz)
+        row += 1
+        main_tbl.cell(0, row, "Above " + str.tostring(p_high_gt_c2h, "#") + "%", text_color=color.green, text_size=main_sz)
+        main_tbl.cell(1, row, "Below " + str.tostring(p_high_lt_c2h, "#") + "%", text_color=color.red, text_size=main_sz)
+        row += 1
+        
+        // Active distribution for percentile display
+        float h_med = not na(active_h_dist) ? active_h_dist.median : na
+        string h_sign = not na(h_med) and h_med >= 0 ? "+" : ""
+        color h_clr = use_mfe_high ? color.yellow : color.orange
+        string h_lbl = use_mfe_high ? "MFE" : "MAE"
+        
+        // Compute P30/P70/P90 from the active distribution's source array
+        array<float> h_src = use_mfe_high ? arr_c3h_minus_c3o_break : arr_c3h_minus_c3o_contained
+        string h_filter = "all"
+        
+        // Filter to matching sign
+        array<float> h_filtered = array.new<float>()
+        if h_src.size() > 0
+            for i = 0 to h_src.size() - 1
+                float v = h_src.get(i)
+                if h_filter == "pos" and v > 0
+                    h_filtered.push(v)
+                else if h_filter == "all"
+                    h_filtered.push(v)
+        
+        // Sort once, then use pct_interp_sorted for efficiency
+        float h_p30 = na, float h_p70 = na, float h_p90 = na
+        if h_filtered.size() > 0
+            h_sorted = h_filtered.copy()
+            h_sorted.sort(order.ascending)
+            h_p30 := pct_interp_sorted(h_sorted, 30)
+            h_p70 := pct_interp_sorted(h_sorted, 70)
+            h_p90 := pct_interp_sorted(h_sorted, 90)
+        
+        main_tbl.cell(0, row, h_lbl + " " + h_sign + (na(h_med) ? "—" : fmt(h_med, mfe_decimals)) + "%", text_color=h_clr, text_size=main_sz)
+        row += 1
+        // P30 / P70 / P90 row
+        if not na(h_p30)
+            main_tbl.cell(0, row, "P30 " + h_sign + fmt(h_p30, mfe_decimals), text_color=color.gray, text_size=main_sz)
+            main_tbl.cell(1, row, "P70 " + h_sign + fmt(h_p70, mfe_decimals), text_color=color.gray, text_size=main_sz)
+            main_tbl.cell(2, row, "P90 " + h_sign + fmt(h_p90, mfe_decimals), text_color=color.gray, text_size=main_sz)
+            row += 1
+        
+        // --- C3L vs C2L ---
+        main_tbl.cell(0, row, "═══ C3L vs C2L ═══", text_color=color.maroon, text_size=main_sz)
+        row += 1
+        main_tbl.cell(0, row, "Above " + str.tostring(p_low_gt_c2l, "#") + "%", text_color=color.green, text_size=main_sz)
+        main_tbl.cell(1, row, "Below " + str.tostring(p_low_lt_c2l, "#") + "%", text_color=color.red, text_size=main_sz)
+        row += 1
+        
+        float l_med = not na(active_l_dist) ? active_l_dist.median : na
+        string l_sign = not na(l_med) and l_med >= 0 ? "+" : ""
+        color l_clr = use_mfe_low ? color.yellow : color.orange
+        string l_lbl = use_mfe_low ? "MFE" : "MAE"
+        
+        array<float> l_src = use_mfe_low ? arr_c3l_minus_c3o_break : arr_c3l_minus_c3o_contained
+        string l_filter = "all"
+        
+        array<float> l_filtered = array.new<float>()
+        if l_src.size() > 0
+            for i = 0 to l_src.size() - 1
+                float v = l_src.get(i)
+                if l_filter == "neg" and v < 0
+                    l_filtered.push(v)
+                else if l_filter == "all"
+                    l_filtered.push(v)
+        
+        // Sort once, then use pct_interp_sorted for efficiency
+        float l_p30 = na, float l_p70 = na, float l_p90 = na
+        if l_filtered.size() > 0
+            l_sorted = l_filtered.copy()
+            l_sorted.sort(order.ascending)
+            l_p30 := pct_interp_sorted(l_sorted, 30)
+            l_p70 := pct_interp_sorted(l_sorted, 70)
+            l_p90 := pct_interp_sorted(l_sorted, 90)
+        
+        main_tbl.cell(0, row, l_lbl + " " + l_sign + (na(l_med) ? "—" : fmt(l_med, mfe_decimals)) + "%", text_color=l_clr, text_size=main_sz)
+        row += 1
+        if not na(l_p30)
+            main_tbl.cell(0, row, "P30 " + fmt(l_p30, mfe_decimals), text_color=color.gray, text_size=main_sz)
+            main_tbl.cell(1, row, "P70 " + fmt(l_p70, mfe_decimals), text_color=color.gray, text_size=main_sz)
+            main_tbl.cell(2, row, "P90 " + fmt(l_p90, mfe_decimals), text_color=color.gray, text_size=main_sz)
+            row += 1
+        
+        // --- C3 Close ---
+        main_tbl.cell(0, row, "═══ C3 Close ═══", text_color=color.yellow, text_size=main_sz)
+        row += 1
+        main_tbl.cell(0, row, ">C2H " + str.tostring(p_close_gt_c2h, "#") + "%", text_color=not na(p_close_gt_c2h) and p_close_gt_c2h >= 50 ? color.green : color.red, text_size=main_sz)
+        main_tbl.cell(1, row, ">C2O " + str.tostring(p_close_gt_c2o, "#") + "%", text_color=not na(p_close_gt_c2o) and p_close_gt_c2o >= 50 ? color.green : color.red, text_size=main_sz)
+        row += 1
+        main_tbl.cell(0, row, ">C2C " + str.tostring(p_close_gt_c2c, "#") + "%", text_color=not na(p_close_gt_c2c) and p_close_gt_c2c >= 50 ? color.green : color.red, text_size=main_sz)
+        main_tbl.cell(1, row, ">C2L " + str.tostring(p_close_gt_c2l, "#") + "%", text_color=not na(p_close_gt_c2l) and p_close_gt_c2l >= 50 ? color.green : color.red, text_size=main_sz)
+        row += 1
+        
+        string bull_str = na(med_c3c_vs_c2c_bull) ? "—" : (med_c3c_vs_c2c_bull >= 0 ? "+" : "") + fmt(med_c3c_vs_c2c_bull, mfe_decimals)
+        string bear_str = na(med_c3c_vs_c2c_bear) ? "—" : (med_c3c_vs_c2c_bear >= 0 ? "+" : "") + fmt(med_c3c_vs_c2c_bear, mfe_decimals)
+        main_tbl.cell(0, row, "Bull C3C " + bull_str + "%", text_color=color.green, text_size=main_sz)
+        main_tbl.cell(1, row, "Bear C3C " + bear_str + "%", text_color=color.red, text_size=main_sz)
+        row += 1
+        
+        // Body
+        main_tbl.cell(0, row, "═══ Body ═══", text_color=color.purple, text_size=main_sz)
+        row += 1
+        bs = (not na(med_body) and med_body > 0) ? "+" : ""
+        main_tbl.cell(0, row, "Med " + bs + (na(med_body) ? "—" : fmt(med_body, mfe_decimals)) + "%", text_color=med_body >= 0 ? color.green : color.red, text_size=main_sz)
+    else
+        main_tbl.cell(0, row, "Need " + str.tostring(min_samples) + " samples", text_color=color.orange, text_size=main_sz)
+
+// === DISTRIBUTION TABLE ===
+var table dist_tbl = table.new(dist_pos, 5, 120, bgcolor=color.new(color.black, 85), border_width=1)
+
+render_dist_section(table tbl, int start_row, DistResult dist, string title, string sign, color title_clr, color base_clr, color zone_clr) =>
+    int row = start_row
+    
+    med_str = na(dist.median) ? "—" : (sign == "pos" ? "+" : "") + fmt(dist.median, mfe_decimals) + "%"
+    tbl.cell(0, row, title + " n=" + str.tostring(dist.n), text_color=title_clr, text_size=dist_sz)
+    tbl.cell(3, row, "Med " + med_str, text_color=color.yellow, text_size=dist_sz)
+    row += 1
+    
+    max_cnt = 1
+    if dist.counts.size() > 0
+        for i = 0 to dist.counts.size() - 1
+            if dist.counts.get(i) > max_cnt
+                max_cnt := dist.counts.get(i)
+    
+    if dist.counts.size() > 0
+        for i = 0 to dist.counts.size() - 1
+            b_lo = dist.bounds.get(i * 2)
+            b_hi = dist.bounds.get(i * 2 + 1)
+            cnt = dist.counts.get(i)
+            pct = dist.n > 0 ? float(cnt) / float(dist.n) * 100.0 : 0.0
+            
+            in_zone = use_auto_zone and not na(dist.zone_lo)
+            if sign == "neg"
+                in_zone := in_zone and b_lo >= dist.zone_lo - 0.001 and b_hi <= dist.zone_hi
+            else
+                in_zone := in_zone and b_lo >= dist.zone_lo and b_hi <= dist.zone_hi + 0.001
+            
+            clr = in_zone ? zone_clr : base_clr
+            
+            if sign == "neg"
+                tbl.cell(0, row, fmt(b_hi, mfe_decimals) + "→" + fmt(b_lo, mfe_decimals), text_color=clr, text_size=dist_sz)
+            else
+                tbl.cell(0, row, "+" + fmt(b_lo, mfe_decimals) + "→+" + fmt(b_hi, mfe_decimals), text_color=clr, text_size=dist_sz)
+            tbl.cell(1, row, str.tostring(cnt), text_color=clr, text_size=dist_sz)
+            tbl.cell(2, row, str.tostring(pct, "#") + "%", text_color=clr, text_size=dist_sz)
+            tbl.cell(3, row, make_bar(cnt, max_cnt), text_color=clr, text_size=dist_sz)
+            row += 1
+    
+    if use_auto_zone and not na(dist.zone_lo)
+        if sign == "neg"
+            tbl.cell(0, row, "Zone " + fmt(dist.zone_hi, mfe_decimals) + "→" + fmt(dist.zone_lo, mfe_decimals), text_color=zone_clr, text_size=dist_sz)
+        else
+            tbl.cell(0, row, "Zone +" + fmt(dist.zone_lo, mfe_decimals) + "→+" + fmt(dist.zone_hi, mfe_decimals), text_color=zone_clr, text_size=dist_sz)
+        tbl.cell(2, row, str.tostring(dist.zone_pct, "#") + "%", text_color=zone_clr, text_size=dist_sz)
+        row += 1
+    
+    row
+
+if show_dist_table and barstate.islast and total_filtered >= min_samples
+    dist_tbl.delete()
+    dist_tbl := table.new(dist_pos, 5, 120, bgcolor=color.new(color.black, 85), border_width=1)
+    
+    int row = 0
+    
+    if show_mfe_from_c2h and not na(dist_mfe_c2h) and dist_mfe_c2h.n >= 2
+        row := render_dist_section(dist_tbl, row, dist_mfe_c2h, "▲ MFE C3H↑C2H", "pos", color.teal, color.teal, color.lime)
+        dist_tbl.cell(0, row, "════════════════", text_color=color.gray, text_size=dist_sz)
+        row += 1
+    
+    if show_mae_from_c2h and not na(dist_mae_c2h) and dist_mae_c2h.n >= 2
+        row := render_dist_section(dist_tbl, row, dist_mae_c2h, "▼ MAE C3L↓C2H", "neg", color.orange, color.orange, #FF6600)
+        dist_tbl.cell(0, row, "════════════════", text_color=color.gray, text_size=dist_sz)
+        row += 1
+    
+    if show_mfe_from_c2l and not na(dist_mfe_c2l) and dist_mfe_c2l.n >= 2
+        row := render_dist_section(dist_tbl, row, dist_mfe_c2l, "▼ MFE C3L↓C2L", "neg", color.maroon, color.maroon, color.fuchsia)
+        dist_tbl.cell(0, row, "════════════════", text_color=color.gray, text_size=dist_sz)
+        row += 1
+    
+    if show_mae_from_c2l and not na(dist_mae_c2l) and dist_mae_c2l.n >= 2
+        row := render_dist_section(dist_tbl, row, dist_mae_c2l, "▲ MAE C3H↑C2L", "pos", color.purple, color.purple, #CC44FF)
+        dist_tbl.cell(0, row, "════════════════", text_color=color.gray, text_size=dist_sz)
+        row += 1
+    
+    if show_mfe_up_from_c2c and not na(dist_mfe_up_c2c) and dist_mfe_up_c2c.n >= 2
+        row := render_dist_section(dist_tbl, row, dist_mfe_up_c2c, "▲ MFE C3H↑C2C", "pos", color.green, color.green, color.lime)
+        dist_tbl.cell(0, row, "════════════════", text_color=color.gray, text_size=dist_sz)
+        row += 1
+    
+    if show_mfe_dn_from_c2c and not na(dist_mfe_dn_c2c) and dist_mfe_dn_c2c.n >= 2
+        row := render_dist_section(dist_tbl, row, dist_mfe_dn_c2c, "▼ MFE C3L↓C2C", "neg", color.red, color.red, color.fuchsia)
+        dist_tbl.cell(0, row, "════════════════", text_color=color.gray, text_size=dist_sz)
+        row += 1
+    
+    if show_mfe_up_from_c2o and not na(dist_mfe_up_c2o) and dist_mfe_up_c2o.n >= 2
+        row := render_dist_section(dist_tbl, row, dist_mfe_up_c2o, "▲ MFE C3H↑C2O", "pos", color.aqua, color.aqua, color.lime)
+        dist_tbl.cell(0, row, "════════════════", text_color=color.gray, text_size=dist_sz)
+        row += 1
+    
+    if show_mfe_dn_from_c2o and not na(dist_mfe_dn_c2o) and dist_mfe_dn_c2o.n >= 2
+        row := render_dist_section(dist_tbl, row, dist_mfe_dn_c2o, "▼ MFE C3L↓C2O", "neg", #FF4466, #FF4466, color.fuchsia)
+
+// === PROJECTED CANDLE ===
+var box candle_body = na
+var box candle_body_bear = na
+var line candle_wick_h = na
+var line candle_wick_l = na
+var label candle_lbl = na
+var label candle_lbl_bear = na
+
+if barstate.islast and total_filtered >= min_samples and show_projected_candle
+    candle_body.delete()
+    candle_body_bear.delete()
+    candle_wick_h.delete()
+    candle_wick_l.delete()
+    candle_lbl.delete()
+    candle_lbl_bear.delete()
+
+    float p_bull_safe = na(p_bull) ? 50.0 : p_bull
+    int bull_extra_transp = math.round((100.0 - p_bull_safe) * 0.5)
+    int bear_extra_transp = math.round(p_bull_safe * 0.5)
+    color bull_clr_dyn = color.new(bull_color, math.min(95, 30 + bull_extra_transp))
+    color bear_clr_dyn = color.new(bear_color, math.min(95, 30 + bear_extra_transp))
+
+    int cx_bull = c2_bar + candle_offset
+    int cx_bear = c2_bar + candle_offset + (2 * candle_width) + 2
+
+    candle_body := box.new(cx_bull - candle_width, b_top_bull, cx_bull + candle_width, b_bot_bull, border_color=bull_clr_dyn, bgcolor=bull_clr_dyn)
+    candle_body_bear := box.new(cx_bear - candle_width, b_top_bear, cx_bear + candle_width, b_bot_bear, border_color=bear_clr_dyn, bgcolor=bear_clr_dyn)
+
+    int cx_wick = int(math.round((cx_bull + cx_bear) / 2.0))
+    float wick_top = math.max(b_top_bull, b_top_bear)
+    float wick_bot = math.min(b_bot_bull, b_bot_bear)
+
+    if not high_wick_collapsed
+        candle_wick_h := line.new(cx_wick, wick_top, cx_wick, proj_h, color=color.gray, width=1)
+
+    if not low_wick_collapsed
+        candle_wick_l := line.new(cx_wick, wick_bot, cx_wick, proj_l, color=color.gray, width=1)
+
+    string lbl_bull = "▲ " + str.tostring(p_bull_safe, "#") + "%"
+    string lbl_bear = "▼ " + str.tostring(100.0 - p_bull_safe, "#") + "%"
+
+    candle_lbl := label.new(cx_bull, proj_h, lbl_bull, style=label.style_label_down, color=color.new(bull_clr_dyn, 70), textcolor=color.teal, size=lbl_sz)
+    candle_lbl_bear := label.new(cx_bear, proj_h, lbl_bear, style=label.style_label_down, color=color.new(bear_clr_dyn, 70), textcolor=color.maroon, size=lbl_sz)
+
+// Returns [zone box, median line, zone label, median label]
+render_proj_zone(int ls, int le, int lb, float ref_price, DistResult mfe_dist, DistResult cont_dist, bool use_mfe, bool show_zone, bool show_median, bool is_high_side, color mfe_color, color mae_color, color zone_bg) =>
+    DistResult active = use_mfe ? mfe_dist : cont_dist
+    float zlo = not na(active) ? active.zone_lo : na
+    float zhi = not na(active) ? active.zone_hi : na
+    float zpct = not na(active) ? active.zone_pct : na
+    float med = not na(active) ? active.median : na
+
+    color base_color = use_mfe ? mfe_color : mae_color
+    string label_prefix = use_mfe ? "MFE " : "MAE "
+    color box_bg = use_mfe ? zone_bg : color.new(color.orange, 80)
+    color box_border = use_mfe ? color.new(base_color, 50) : color.new(color.orange, 50)
+
+    box b = na
+    line ln = na
+    label lbz = na
+    label lbm = na
+
+    if show_zone and use_auto_zone and not na(zlo) and not na(zhi)
+        float p_lo = ref_price + (c2c_ref * zlo / 100)
+        float p_hi = ref_price + (c2c_ref * zhi / 100)
+        b := box.new(ls, math.min(p_lo, p_hi), le, math.max(p_lo, p_hi), bgcolor=box_bg, border_color=box_border, border_style=line.style_dotted)
+        float label_y = is_high_side ? math.max(p_lo, p_hi) : math.min(p_lo, p_hi)
+        lbz := label.new(lb, label_y, label_prefix + str.tostring(zpct, "#") + "%", style=label.style_label_left, color=color.new(base_color, 80), textcolor=base_color, size=lbl_sz)
+
+    if show_median and not na(med)
+        float p_med = ref_price + (c2c_ref * med / 100)
+        ln := line.new(ls, p_med, le, p_med, color=base_color, style=line.style_solid, width=2)
+        string actual_sign = med >= 0 ? "+" : ""
+        lbm := label.new(lb, p_med, "Med " + actual_sign + fmt(med, mfe_decimals) + "%", style=label.style_label_left, color=color.new(base_color, 80), textcolor=base_color, size=lbl_sz)
+
+    [b, ln, lbz, lbm]
+
+// === REFERENCE LINES AND ZONES ===
+var line ln_c2h = na, var line ln_c2l = na, var line ln_c2o = na, var line ln_c2c = na
+var label lb_c2h = na, var label lb_c2l = na, var label lb_c2o = na, var label lb_c2c = na
+var box zone_high = na, var box zone_low = na
+var line ln_high_med = na, var line ln_low_med = na
+var label lb_high_med = na, var label lb_low_med = na
+var label lb_high_zone = na, var label lb_low_zone = na
+
+if barstate.islast and total_filtered >= min_samples
+    ln_c2h.delete(), ln_c2l.delete(), ln_c2o.delete(), ln_c2c.delete()
+    lb_c2h.delete(), lb_c2l.delete(), lb_c2o.delete(), lb_c2c.delete()
+    zone_high.delete(), zone_low.delete()
+    ln_high_med.delete(), ln_low_med.delete()
+    lb_high_med.delete(), lb_low_med.delete()
+    lb_high_zone.delete(), lb_low_zone.delete()
+    
+    ls = c2_bar
+    le = bar_index + line_length
+    lb = bar_index + label_offset
+    
+    if show_c2_high
+        ln_c2h := line.new(ls, c2h_ref, le, c2h_ref, color=color.new(color.white, 60), style=line.style_dotted)
+        lb_c2h := label.new(ls - 1, c2h_ref, "C2H", style=label.style_label_right, color=color.new(color.white, 90), textcolor=color.white, size=lbl_sz)
+    if show_c2_low
+        ln_c2l := line.new(ls, c2l_ref, le, c2l_ref, color=color.new(color.white, 60), style=line.style_dotted)
+        lb_c2l := label.new(ls - 1, c2l_ref, "C2L", style=label.style_label_right, color=color.new(color.white, 90), textcolor=color.white, size=lbl_sz)
+    if show_c2_open
+        ln_c2o := line.new(ls, c2o_ref, le, c2o_ref, color=color.new(color.blue, 60), style=line.style_dotted)
+        lb_c2o := label.new(ls - 1, c2o_ref, "C2O", style=label.style_label_right, color=color.new(color.blue, 90), textcolor=color.blue, size=lbl_sz)
+    if show_c2_close
+        ln_c2c := line.new(ls, c2c_ref, le, c2c_ref, color=color.new(color.yellow, 60), style=line.style_dashed)
+        lb_c2c := label.new(ls - 1, c2c_ref, "C2C", style=label.style_label_right, color=color.new(color.yellow, 90), textcolor=color.yellow, size=lbl_sz)
+    
+    if show_zones
+        [b_h, ln_h, lbz_h, lbm_h] = render_proj_zone(ls, le, lb, c2h_ref, dist_mfe_c2h, dist_c3h_contained, use_mfe_high, show_high_zone, show_high_median, true, color.teal, color.orange, high_zone_color)
+        zone_high := b_h
+        ln_high_med := ln_h
+        lb_high_zone := lbz_h
+        lb_high_med := lbm_h
+
+        [b_l, ln_l, lbz_l, lbm_l] = render_proj_zone(ls, le, lb, c2l_ref, dist_mfe_c2l, dist_c3l_contained, use_mfe_low, show_low_zone, show_low_median, false, color.maroon, color.orange, low_zone_color)
+        zone_low := b_l
+        ln_low_med := ln_l
+        lb_low_zone := lbz_l
+        lb_low_med := lbm_l
