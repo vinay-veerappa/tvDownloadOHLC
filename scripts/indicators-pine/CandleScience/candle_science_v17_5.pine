@@ -755,11 +755,9 @@ if barstate.islast and total_filtered >= min_samples and show_projected_candle
     //b_bot := proj_bull ? b_bot_bull : b_bot_bear
 
     // Detect wick-collapse conditions across both bodies
-    float wick_top = math.max(b_top_bull, b_top_bear)
-    float wick_bot = math.min(b_bot_bull, b_bot_bear)
-    wick_epsilon := c2c_ref * 0.00001
-    high_wick_collapsed := math.abs(proj_h - wick_top) < wick_epsilon
-    low_wick_collapsed := math.abs(proj_l - wick_bot) < wick_epsilon
+    wick_epsilon := c2c_ref * 0.000001
+    high_wick_collapsed := (proj_h - b_top_bull < wick_epsilon) and (proj_h - b_top_bear < wick_epsilon)
+    low_wick_collapsed := (b_bot_bull - proj_l < wick_epsilon) and (b_bot_bear - proj_l < wick_epsilon)
 else
     high_wick_collapsed := false
     low_wick_collapsed := false
@@ -1120,6 +1118,8 @@ var line candle_wick_h = na
 var line candle_wick_l = na
 var label candle_lbl = na
 var label candle_lbl_bear = na
+var line candle_wick_h_bear = na
+var line candle_wick_l_bear = na
 
 if barstate.islast and total_filtered >= min_samples and show_projected_candle
     candle_body.delete()
@@ -1128,6 +1128,8 @@ if barstate.islast and total_filtered >= min_samples and show_projected_candle
     candle_wick_l.delete()
     candle_lbl.delete()
     candle_lbl_bear.delete()
+    candle_wick_h_bear.delete()
+    candle_wick_l_bear.delete()
 
     float p_bull_safe = na(p_bull) ? 50.0 : p_bull
     int bull_extra_transp = math.round((100.0 - p_bull_safe) * 0.5)
@@ -1141,15 +1143,15 @@ if barstate.islast and total_filtered >= min_samples and show_projected_candle
     candle_body := box.new(cx_bull - candle_width, b_top_bull, cx_bull + candle_width, b_bot_bull, border_color=bull_clr_dyn, bgcolor=bull_clr_dyn)
     candle_body_bear := box.new(cx_bear - candle_width, b_top_bear, cx_bear + candle_width, b_bot_bear, border_color=bear_clr_dyn, bgcolor=bear_clr_dyn)
 
-    int cx_wick = int(math.round((cx_bull + cx_bear) / 2.0))
-    float wick_top = math.max(b_top_bull, b_top_bear)
-    float wick_bot = math.min(b_bot_bull, b_bot_bear)
-
-    if not high_wick_collapsed
-        candle_wick_h := line.new(cx_wick, wick_top, cx_wick, proj_h, color=color.gray, width=1)
-
-    if not low_wick_collapsed
-        candle_wick_l := line.new(cx_wick, wick_bot, cx_wick, proj_l, color=color.gray, width=1)
+    // Per-candle wicks — each candle gets its own wicks attached to its own body
+    if proj_h - b_top_bull > wick_epsilon
+        candle_wick_h := line.new(cx_bull, b_top_bull, cx_bull, proj_h, color=color.gray, width=1)
+    if b_bot_bull - proj_l > wick_epsilon
+        candle_wick_l := line.new(cx_bull, b_bot_bull, cx_bull, proj_l, color=color.gray, width=1)
+    if proj_h - b_top_bear > wick_epsilon
+        candle_wick_h_bear := line.new(cx_bear, b_top_bear, cx_bear, proj_h, color=color.gray, width=1)
+    if b_bot_bear - proj_l > wick_epsilon
+        candle_wick_l_bear := line.new(cx_bear, b_bot_bear, cx_bear, proj_l, color=color.gray, width=1)
 
     string lbl_bull = "▲ " + str.tostring(p_bull_safe, "#") + "%"
     string lbl_bear = "▼ " + str.tostring(100.0 - p_bull_safe, "#") + "%"

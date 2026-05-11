@@ -714,10 +714,17 @@ if can_calculate
                     sR = array.get(sPrices, 0)
                     if math.abs(sR) > syminfo.mintick
                         fs = etfConvRatio
+                        if na(fs)
+                            // Fallback allows first-load conversion before the next RTH open/close snapshot.
+                            fs := f_computeEtfToFuturesRatio(syminfo.main_tickerid, equity_ref, true)
+                            if not na(fs)
+                                f_dbg("[conv] using fallback live ratio=" + str.tostring(fs, "#.######") + ", etf=" + equity_ref)
                         if not na(fs) and math.abs(fs - 1.0) > 0.001 
                             for k = 0 to array.size(sPrices) - 1
                                 array.set(sPrices, k, array.get(sPrices, k) * fs)
-                            f_dbg("[conv] applied cached ratio=" + str.tostring(fs, "#.######") + " from " + etfConvSnapshot)
+                            etfConversion := true
+                            srcTag = na(etfConvRatio) ? "fallback_live" : etfConvSnapshot
+                            f_dbg("[conv] applied ratio=" + str.tostring(fs, "#.######") + " from " + srcTag)
                         else if na(fs)
                             f_dbg("[conv] skipped scaling: ratio not captured yet (mode=" + i_convCaptureMode + ")")
             
