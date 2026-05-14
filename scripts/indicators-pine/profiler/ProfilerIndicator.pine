@@ -758,17 +758,11 @@ if barstate.islast
             f_draw_lev(p12_h, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "P12H", true, lp1, tp1)
             f_draw_lev(p12_l, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "P12L", true, lp2, tp2)
             f_draw_lev(p12_m, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "P12M", true, lp3, tp3)
-            if not na(ny_p12_h) and not na(ny_p12_l)
-                ny_p12_m = (ny_p12_h + ny_p12_l) / 2
-                [lp4, tp4] = f_hr_parts_v3("NY P12H",    tgt_idx, 11)
-                [lp5, tp5] = f_hr_parts_v3("NY P12M",    tgt_idx, 12)
-                [lp6, tp6] = f_hr_parts_v3("NY P12L",    tgt_idx, 13)
-                f_draw_lev(ny_p12_h, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "NY P12H", true, lp4, tp4)
-                f_draw_lev(ny_p12_l, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "NY P12L", true, lp5, tp5)
-                f_draw_lev(ny_p12_m, t_0600, t_proj, c_p12_eff, get_style(s_p12), w_p12, "NY P12M", true, lp6, tp6)
-        f_draw_lev(prev_ny_p12_h, t_start_d, t_proj, color.new(c_p12_eff, 30), get_style(s_p12), w_p12, "Prev NY P12H", true, "", "")
-        f_draw_lev(prev_ny_p12_l, t_start_d, t_proj, color.new(c_p12_eff, 30), get_style(s_p12), w_p12, "Prev NY P12L", true, "", "")
-        f_draw_lev(prev_ny_p12_m, t_start_d, t_proj, color.new(c_p12_eff, 30), get_style(s_p12), w_p12, "Prev NY P12M", true, "", "")
+            
+        if tgt_idx <= 1
+            f_draw_lev(prev_ny_p12_h, t_start_d, t_proj, color.new(c_p12_eff, 30), get_style(s_p12), w_p12, "Prev NY P12H", true, "", "")
+            f_draw_lev(prev_ny_p12_l, t_start_d, t_proj, color.new(c_p12_eff, 30), get_style(s_p12), w_p12, "Prev NY P12L", true, "", "")
+            f_draw_lev(prev_ny_p12_m, t_start_d, t_proj, color.new(c_p12_eff, 30), get_style(s_p12), w_p12, "Prev NY P12M", true, "", "")
 
 // ————— CORE LOGIC —————
 f_calc_status(s_sess, h, l, c_st) =>
