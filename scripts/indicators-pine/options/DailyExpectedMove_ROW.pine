@@ -1,0 +1,816 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © vveerappa
+
+
+//@version=6
+indicator("ROW Expected Move", "ROW Expected Move", overlay=true, max_bars_back = 500)
+import RicardoSantos/FunctionWeekofmonth/1
+// { consts
+var C_CONTRACT_SIDE_CALL = "C"
+var C_CONTRACT_SIDE_PUT = "P"
+var C_GROUP_NAME_COLORS = 'Colors'
+var C_GROUP_NAME_EXTRAS = 'Extras'
+// } consts
+
+// { inputs
+//var dataWindowStartInput = input.time(timestamp('25 June 2025 12:00 +0000'), 'Start', "Data Window")
+var useClose    = input.bool(true,"Use Close iso Open to anchor the EM")
+var iLiveBarOnlyRequests = input.bool(true, "Limit security requests to live bar")
+var iFriHoliday    = input.bool(false,"Friday Holiday")   // Need to check if it works differently when Monday is a holiday
+var iMonHoliday    = input.bool(false,"Monday Holiday")   // Need to check if it works differently when Monday is a holiday
+var iTable    = input.bool(false,"Display Table")
+var useTOSFormula = input.bool(true, "Use TOS Formula (auto DTE-aware multiplier)")
+var skewVal = input.float(defval = 1.08, title = "Manual Skew Override (when TOS Formula is off)", minval=0.5, maxval=2.0, step=0.01)
+var iPrevFriHoliday    = input.bool(false,"PrevFriday Holiday")   // Need to check if it works differently when Monday is a holiday
+
+//// Use Fib Levels (From Fadi)
+
+type FibLevels
+    bool        show
+    int         padding
+    bool        useLog
+    bool        use_background
+    int         fill_percent
+    bool        show_level
+    bool        show_price
+    string      label_size
+
+    bool        fib1
+    float       fib1_level
+    color       fib1_color
+    string      fib1_style
+    int         fib1_size
+    bool        fib2
+    float       fib2_level
+    color       fib2_color
+    string      fib2_style
+    int         fib2_size
+    bool        fib3
+    float       fib3_level
+    color       fib3_color
+    string      fib3_style
+    int         fib3_size
+    bool        fib4
+    float       fib4_level
+    color       fib4_color
+    string      fib4_style
+    int         fib4_size
+    bool        fib5
+    float       fib5_level
+    color       fib5_color
+    string      fib5_style
+    int         fib5_size
+    bool        fib6
+    float       fib6_level
+    color       fib6_color
+    string      fib6_style
+    int         fib6_size
+    bool        fib7
+    float       fib7_level
+    color       fib7_color
+    string      fib7_style
+    int         fib7_size
+    bool        fib8
+    float       fib8_level
+    color       fib8_color
+    string      fib8_style
+    int         fib8_size
+    bool        fib9
+    float       fib9_level
+    color       fib9_color
+    string      fib9_style
+    int         fib9_size
+
+type fib
+    float       level
+    float       price
+    color       color
+    string      style
+    int         size
+    line        ln
+    label       lbl
+    linefill    fl
+
+type DailyEM
+    array<fib>  fibs
+    float       price
+    float       EM
+    int         time
+    int         time_last
+
+mirror = true
+settings_general                            = 'General Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+settings_fibs                               = 'StdDev Fib Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+settings_override                           = 'Overrides ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+var FibLevels fiblevels                     = FibLevels.new()
+//fiblevels.useLog                            := input.bool(true, 'Use Log scale for calculations', group = settings_general)
+fiblevels.fib1                              := input.bool(true, '', group = settings_fibs, inline = '1')
+fiblevels.fib1_level                        := input.float(0, '', group = settings_fibs, inline = '1')
+fiblevels.fib1_color                        := input.color(color.red, '', group = settings_fibs, inline = '1')
+fiblevels.fib1_style                        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '1')
+fiblevels.fib1_size                         := input.int(1, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '1')
+fiblevels.fib2                              := input.bool(true, '', group = settings_fibs, inline = '2')
+fiblevels.fib2_level                        := input.float(0.5, '', group = settings_fibs, inline = '2')
+fiblevels.fib2_color                        := input.color(color.black, '', group = settings_fibs, inline = '2')
+fiblevels.fib2_style                        := input.string('····', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '2')
+fiblevels.fib2_size                         := input.int(1, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '2')
+fiblevels.fib3                              := input.bool(true, '', group = settings_fibs, inline = '3')
+fiblevels.fib3_level                        := input.float(1, '', group = settings_fibs, inline = '3')
+fiblevels.fib3_color                        := input.color(color.black, '', group = settings_fibs, inline = '3')
+fiblevels.fib3_style                        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '3')
+fiblevels.fib3_size                         := input.int(2, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '3')
+fiblevels.fib4                              := input.bool(true, '', group = settings_fibs, inline = '4')
+fiblevels.fib4_level                        := input.float(1.5, '', group = settings_fibs, inline = '4')
+fiblevels.fib4_color                        := input.color(color.black, '', group = settings_fibs, inline = '4')
+fiblevels.fib4_style                        := input.string('····', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '4')
+fiblevels.fib4_size                         := input.int(1, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '4')
+fiblevels.fib5                              := input.bool(true, '', group = settings_fibs, inline = '5')
+fiblevels.fib5_level                        := input.float(2, '', group = settings_fibs, inline = '5')
+fiblevels.fib5_color                        := input.color(color.black, '', group = settings_fibs, inline = '5')
+fiblevels.fib5_style                        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '5')
+fiblevels.fib5_size                         := input.int(2, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '5')
+fiblevels.fib6                              := input.bool(false, '', group = settings_fibs, inline = '6')
+fiblevels.fib6_level                        := input.float(2.5, '', group = settings_fibs, inline = '6')
+fiblevels.fib6_color                        := input.color(color.black, '', group = settings_fibs, inline = '6')
+fiblevels.fib6_style                        := input.string('····', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '6')
+fiblevels.fib6_size                         := input.int(1, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '6')
+fiblevels.fib7                              := input.bool(false, '', group = settings_fibs, inline = '7')
+fiblevels.fib7_level                        := input.float(3, '', group = settings_fibs, inline = '7')
+fiblevels.fib7_color                        := input.color(color.black, '', group = settings_fibs, inline = '7')
+fiblevels.fib7_style                        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '7')
+fiblevels.fib7_size                         := input.int(2, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '7')
+fiblevels.fib8                              := input.bool(false, '', group = settings_fibs, inline = '8')
+fiblevels.fib8_level                        := input.float(3.5, '', group = settings_fibs, inline = '8')
+fiblevels.fib8_color                        := input.color(color.black, '', group = settings_fibs, inline = '8')
+fiblevels.fib8_style                        := input.string('····', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '8')
+fiblevels.fib8_size                         := input.int(1, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '8')
+fiblevels.fib9                              := input.bool(false, '', group = settings_fibs, inline = '9')
+fiblevels.fib9_level                        := input.float(4, '', group = settings_fibs, inline = '9')
+fiblevels.fib9_color                        := input.color(color.black, '', group = settings_fibs, inline = '9')
+fiblevels.fib9_style                        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '9')
+fiblevels.fib9_size                         := input.int(2, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '9')
+
+fiblevels.use_background                    := input.bool(false, "Background transparency    ", group = settings_fibs, inline = 'fill')
+fiblevels.fill_percent                      := input.int(99, '', options = [99, 97, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50], group = settings_fibs, inline = 'fill')
+fiblevels.padding                           := input.int(25, 'Fib levels padding', group = settings_fibs)
+fiblevels.label_size                        := input.string(size.small, 'Label size', [size.tiny, size.small, size.normal, size.large, size.huge], group = settings_fibs)
+fiblevels.show_level                        := input.bool(true, 'Level value', group = settings_fibs)
+fiblevels.show_price                        := input.bool(true, 'Price value', group = settings_fibs)
+
+
+color color_transparent = #00000000
+var BI_OFFSET = 25
+
+var array<DailyEM> daily  = array.new<DailyEM>()
+
+// } inputs
+
+var tf =     timeframe.period //"1D"
+// types 
+
+//Stores the options data chain discrepanies
+//can also store the specific symbol to return as well
+
+type OptionsData
+    string symbol
+    string optionsSymbol
+    float   strike
+    bool    weekly
+
+
+type TargetDate
+	int year
+	int month
+	int day
+	int dayOfWeek // Store day of week (1=Sun, 7=Sat) for easy matching
+
+var array<TargetDate> targetDates = na
+
+lineStyle(string style) =>
+    out = switch style
+        '----' => line.style_dashed
+        '····' => line.style_dotted
+        => line.style_solid
+    out
+
+formatLabelText(TargetDate dateInfo, string levelType, float levelValue) =>
+    dayStr = switch dateInfo.dayOfWeek
+        dayofweek.monday => "Mon"
+        dayofweek.tuesday => "Tue"
+        dayofweek.wednesday => "Wed"
+        dayofweek.thursday => "Thu"
+        dayofweek.friday => "Fri"
+        => "" // Should not happen for target dates
+    dateStr = str.format("{0,number,00}/{1,number,00}", dateInfo.month, dateInfo.day)
+    valueStr = str.tostring(levelValue, format.mintick)
+    str.format("{0} {1} EM {2} {3}", dayStr, dateStr, levelType, valueStr)
+
+
+
+
+method swap(array<fib> this, int i, int j) =>
+    temp = this.get(i)
+    this.set(i, this.get(j))
+    this.set(j, temp)
+
+method sort(array<fib> this) =>
+    size = this.size()
+    for i = 0 to size - 2
+        for j = 0 to size - 2 - i
+            if this.get(j).level > this.get(j + 1).level
+                this.swap(j, j + 1)
+
+getFibLevel(float level, float _price, color _color, string _style, int _size) =>
+    fib f           = fib.new()
+    f.level         := level
+    f.color         := _color
+    f.price         := _price
+    f.style         := _style
+    f.size          := _size
+    f.ln            := line.new(na, _price, na, _price, color=_color, style=lineStyle(f.style), xloc=xloc.bar_time, width = f.size)
+    f.lbl           := label.new(na, f.price, '', style = label.style_label_left, textcolor =  _color, color = color_transparent, size=fiblevels.label_size, xloc=xloc.bar_time)
+    f
+method calcFibs(DailyEM this, float price, float stdDev) =>
+    if this.fibs.size() == 0
+        if fiblevels.fib1
+            this.fibs.push(getFibLevel(fiblevels.fib1_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib1_level))) : price+(stdDev*fiblevels.fib1_level), fiblevels.fib1_color, fiblevels.fib1_style, fiblevels.fib1_size))
+            if mirror and fiblevels.fib1_level != 0
+                this.fibs.push(getFibLevel(-1*fiblevels.fib1_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib1_level)))) : price+(-1*(stdDev*fiblevels.fib1_level)), fiblevels.fib1_color, fiblevels.fib1_style, fiblevels.fib1_size))      
+        if fiblevels.fib2
+            this.fibs.push(getFibLevel(fiblevels.fib2_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib2_level))) : price+(stdDev*fiblevels.fib2_level), fiblevels.fib2_color, fiblevels.fib2_style, fiblevels.fib2_size))
+            if mirror and fiblevels.fib2_level != 0
+                this.fibs.push(getFibLevel(-1*fiblevels.fib2_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib2_level)))) : price+(-1*(stdDev*fiblevels.fib2_level)), fiblevels.fib2_color, fiblevels.fib2_style, fiblevels.fib2_size))
+
+        if fiblevels.fib3
+            this.fibs.push(getFibLevel(fiblevels.fib3_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib3_level))) : price+(stdDev*fiblevels.fib3_level), fiblevels.fib3_color, fiblevels.fib3_style, fiblevels.fib3_size))
+            if mirror and fiblevels.fib3_level != 0
+                this.fibs.push(getFibLevel(-1*fiblevels.fib3_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib3_level)))) : price+(-1*(stdDev*fiblevels.fib3_level)), fiblevels.fib3_color, fiblevels.fib3_style, fiblevels.fib3_size))
+
+        if fiblevels.fib4
+            this.fibs.push(getFibLevel(fiblevels.fib4_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib4_level))) : price+(stdDev*fiblevels.fib4_level), fiblevels.fib4_color, fiblevels.fib4_style, fiblevels.fib4_size))
+            if mirror and fiblevels.fib4_level != 0
+                this.fibs.push(getFibLevel(-1*fiblevels.fib4_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib4_level)))) : price+(-1*(stdDev*fiblevels.fib4_level)), fiblevels.fib4_color, fiblevels.fib4_style, fiblevels.fib4_size))
+
+        if fiblevels.fib5
+            this.fibs.push(getFibLevel(fiblevels.fib5_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib5_level))) : price+(stdDev*fiblevels.fib5_level), fiblevels.fib5_color, fiblevels.fib5_style, fiblevels.fib5_size))
+            if mirror and fiblevels.fib5_level != 0
+                this.fibs.push(getFibLevel(-1*fiblevels.fib5_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib5_level)))) : price+(-1*(stdDev*fiblevels.fib5_level)), fiblevels.fib5_color, fiblevels.fib5_style, fiblevels.fib5_size))
+
+        if fiblevels.fib6
+            this.fibs.push(getFibLevel(fiblevels.fib6_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib6_level))) : price+(stdDev*fiblevels.fib6_level), fiblevels.fib6_color, fiblevels.fib6_style, fiblevels.fib6_size))
+            if mirror and fiblevels.fib6_level != 0
+                this.fibs.push(getFibLevel(-1*fiblevels.fib6_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib6_level)))) : price+(-1*(stdDev*fiblevels.fib6_level)), fiblevels.fib6_color, fiblevels.fib6_style, fiblevels.fib6_size))
+
+        if fiblevels.fib7
+            this.fibs.push(getFibLevel(fiblevels.fib7_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib7_level))) : price+(stdDev*fiblevels.fib7_level), fiblevels.fib7_color, fiblevels.fib7_style, fiblevels.fib7_size))
+            if mirror and fiblevels.fib7_level != 0
+                this.fibs.push(getFibLevel(-1*fiblevels.fib7_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib7_level)))) : price+(-1*(stdDev*fiblevels.fib7_level)), fiblevels.fib7_color, fiblevels.fib7_style, fiblevels.fib7_size))
+
+        if fiblevels.fib8
+            this.fibs.push(getFibLevel(fiblevels.fib8_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib8_level))) : price+(stdDev*fiblevels.fib8_level), fiblevels.fib8_color, fiblevels.fib8_style, fiblevels.fib8_size))
+            if mirror and fiblevels.fib8_level != 0
+                this.fibs.push(getFibLevel(-1*fiblevels.fib8_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib8_level)))) : price+(-1*(stdDev*fiblevels.fib8_level)), fiblevels.fib8_color, fiblevels.fib8_style, fiblevels.fib8_size))
+
+        if fiblevels.fib9
+            this.fibs.push(getFibLevel(fiblevels.fib9_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib9_level))) : price+(stdDev*fiblevels.fib9_level), fiblevels.fib9_color, fiblevels.fib9_style, fiblevels.fib9_size))
+            if mirror and fiblevels.fib9_level != 0
+                this.fibs.push(getFibLevel(-1*fiblevels.fib9_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib9_level)))) : price+(-1*(stdDev*fiblevels.fib9_level)), fiblevels.fib9_color, fiblevels.fib9_style, fiblevels.fib9_size))
+    //this.fibs.sort()
+    this
+
+method fibAlert(DailyEM this) =>
+    for f in this.fibs
+        if f.level < 0 and ta.crossunder(low, f.price)
+            alert('Price crossed below StDev ' + str.tostring(f.level) + ' [' + syminfo.ticker + ']')
+            break
+        if f.level > 1 and ta.crossover(high, f.level)
+            alert('Price crossed above below StDev ' + str.tostring(f.level) + ' [' + syminfo.ticker + ']')
+            break
+
+method drawFibs(DailyEM this, int idx) =>
+    if this.fibs.size() > 0
+        tDate = array.get(targetDates, idx)
+        for i=0 to this.fibs.size()-1
+            fib f = this.fibs.get(i)
+            string txt          = ''
+            string space_s      = ''
+            string space_e      = ''
+            int visibleStart    = this.time == time ? time - (BI_OFFSET * (time - time[1])) : this.time
+            int    padded       = this.time_last+(fiblevels.padding*(time-time[1]))
+        
+            if fiblevels.show_level 
+                txt := i == 0? str.tostring(f.level) + (useClose?"  PD Close ": "  RTH Open ") : formatLabelText(tDate, useClose?"EM Close ": "EM Open ", f.level) //useClose?"EM Close "+ str.tostring(f.level): "EM Open "+ str.tostring(f.level) 
+                space_s := ' ('
+                space_e := ')'
+
+            if fiblevels.show_price
+                txt := txt + space_s + str.format('{0,number,#,###.00}', f.price) + space_e
+            //log.info(txt + "Idx = " + str.tostring(idx))
+
+            f.ln.set_color(f.color)
+            f.lbl.set_xy(padded, f.price)
+            if true //idx == 0
+                f.ln.set_xy1(visibleStart, f.price)
+                f.ln.set_xy2(padded, f.price)
+                f.lbl.set_text(txt)
+                if fiblevels.use_background 
+                    fib pf = this.fibs.get(i-1)
+                    f.fl := linefill.new(pf.ln, f.ln, color.new(f.color, fiblevels.fill_percent))
+            else
+                f.ln.set_x1(visibleStart)
+                f.ln.set_x2(this.time_last+(time-time[1]))
+                f.lbl.set_x(this.time_last)
+    this
+
+
+
+// Don't need this for a one off
+method delete(array<fib> this) =>
+    for f in this
+        f.ln.delete()
+        f.lbl.delete()
+        f.fl.delete()
+
+method add(array<DailyEM> this, float price, int _time, float ExpectedMove) =>
+    DailyEM d     = DailyEM.new()
+    d.price     := price
+    d.EM        := ExpectedMove
+    d.time      := _time
+    d.time_last := _time
+    d.fibs      := array.new<fib>()
+    d.calcFibs(price, ExpectedMove)
+    this.push(d) // add to end of the array and not beginning
+
+    if this.size() > 5  // Max days until friday
+        DailyEM temp = this.pop()
+        temp.fibs.delete()
+
+method update(array<DailyEM> this, int _time) =>
+    if this.size() > 0
+        for [i, day] in daily
+            //DailyEM f = this.first()
+            day.time_last := _time
+
+varip bool done = false
+var float factor = 0
+var float day_open = 0
+var int   day_time = 0
+
+
+/// END Fadi Fibs Code
+
+
+
+// { funcs
+roundToNearest(float value, float nearest) => math.round(value / nearest) * nearest
+
+f_custom_round(n) =>
+    // Calculate nearest multiple of 10
+    nearest_10 = math.round(n / 10) * 10
+    // Calculate nearest multiple of 25
+    nearest_25 = math.round(n / 25) * 25
+    // Calculate distances
+    dist_to_10 = math.abs(n - nearest_10)
+    dist_to_25 = math.abs(n - nearest_25)
+    // If nearest_25 is a multiple of 100, prefer nearest_10
+    result = nearest_25 % 100 == 0 ? nearest_10 : dist_to_25 < dist_to_10 ? nearest_25 : nearest_10
+    result
+
+
+// Function to format the date YYMMDD
+format_date(year, month, day) =>
+    year_str = str.tostring(year % 100)
+    month_str = month < 10 ? '0' + str.tostring(month) : str.tostring(month)
+    day_str = day < 10 ? '0' + str.tostring(day) : str.tostring(day)
+    year_str + month_str + day_str
+
+// Function to get days in month
+days_in_month(y, m) =>
+    m == 2 ? y % 4 == 0 and y % 100 != 0 or y % 400 == 0 ? 29 : 28 : m == 4 or m == 6 or m == 9 or m == 11 ? 30 : 31
+
+// Function to add days to a date, handles month/year rollovers
+add_days(y, m, d, numDays) =>
+    currentTimestamp = timenow // Use timenow for date calculations independent of bar time
+    targetTimestamp = timestamp(y, m, d, 0, 0, 0) + numDays * 86400 * 1000 // Add days in milliseconds
+    [year(targetTimestamp), month(targetTimestamp), dayofmonth(targetTimestamp)]
+
+getDoWforStock() =>
+   // Find the next Friday
+    expiry_day = dayofmonth
+    days_until_friday = 6 - dayofweek // Calculate days until Friday (0-6, Mon-Sun)
+    if days_until_friday == 0
+        days_until_friday := 7 // If it's Friday, use next Friday
+    expiry_day := dayofmonth + days_until_friday + (iMonHoliday?1:0)
+    expiry_day
+
+// --- NEW: Function to get the Mon-Fri dates for the relevant week ---
+getWeekTradingDays(currentTime) =>
+    currentDow = dayofweek(currentTime) // 1=Sun, 2=Mon, ..., 7=Sat
+    int h = hour(currentTime, "America/New_York")
+    int mn = minute(currentTime, "America/New_York")
+
+    // Determine days to subtract to get to the *previous* Sunday (start of week boundary)
+    daysToSubtract =  currentDow - 1
+
+    // If today is Fri AFTER 16:15, Sat, or Sun, we want *next* week's dates
+    startOffset = (currentDow == dayofweek.friday and (h > 16 or (h == 16 and mn >= 15))) or (currentDow == dayofweek.saturday) ? 7 : 0
+
+    // Calculate timestamp for the Sunday *before* the target week starts
+    startSundayTs = timestamp(year(currentTime), month(currentTime), dayofmonth(currentTime), 0, 0, 0) - daysToSubtract * 86400 * 1000
+
+    // Calculate the 5 target dates (Mon-Fri) relative to that Sunday
+    dates = array.new<TargetDate>(5)
+    for i = 1 to 5 by 1 // 1=Mon offset, 5=Fri offset
+        dayOffset = startOffset + i
+        targetTs = startSundayTs + dayOffset * 86400 * 1000
+        targetY = year(targetTs)
+        targetM = month(targetTs)
+        targetD = dayofmonth(targetTs)
+        targetDow = dayofweek(targetTs)
+        array.set(dates, i - 1, TargetDate.new(targetY, targetM, targetD, targetDow))
+
+    dates // Return array of TargetDate objects
+
+
+getContractCost(_sym, _useClose) => 
+    request.security((_sym), _useClose ? "1D" : tf, _useClose ? close : open, ignore_invalid_symbol=true, lookahead=barmerge.lookahead_on)
+
+
+getContractSym(_underlyingSym, _strike, _side,OptionsData current_symbol_options) =>
+    
+    // Determine the expiration date
+    expiry_year = year
+    expiry_month = month
+    expiry_day = useClose?  dayofmonth + 1 : dayofmonth // Default to next day
+
+    optionChainSymbol = current_symbol_options.optionsSymbol
+
+    //if (dayofweek == dayofweek.thursday or dayofweek == dayofweek.monday ) and iFriHoliday  /// Not sure of this. If its Thu and current week friday is a holiday then it should go to monday, not sure why I also put nonday in the same calculation.
+    //    expiry_day := dayofmonth + 4
+    if dayofweek == dayofweek.friday and useClose
+        expiry_day := dayofmonth + 3 + (iMonHoliday?1:0) // Monday's date
+
+    if syminfo.type ==  "stock" or syminfo.type ==  "dr"  or str.contains(optionChainSymbol,"DIA" )  or str.contains(optionChainSymbol,"BOIL" ) // These are weekly expiry and not 0DTE  or str.contains(syminfo.ticker,"NDX" )  NDX is not weekly expiry...
+        // Calculate the date of the next Friday
+        days_until_friday = 6 - dayofweek // Calculate days until Friday (0-6, Mon-Sun)
+        if days_until_friday < 0
+            days_until_friday := days_until_friday + 7 // Adjust for Sunday (0)
+        if days_until_friday == 0
+            days_until_friday := 7 // If it's Friday, use next Friday
+        expiry_day := dayofmonth + days_until_friday  - (iFriHoliday?1:0)  // This may not work unless it is a friday holdiay. Do we care about monday?
+
+        // Handle month and year rollovers
+        max_days = days_in_month(expiry_year, expiry_month)
+        if expiry_day > max_days
+            expiry_month := month + 1
+            expiry_day := expiry_day - max_days
+            if expiry_month > 12
+                expiry_month := 1
+                expiry_year := year + 1
+
+    strike =  str.contains(syminfo.ticker,"NDX" ) ?f_custom_round(_strike) :roundToNearest(_strike, current_symbol_options.strike)
+                                                                                                        // This part is still iffy. If it is 2.5 then U use that, there is no 0
+    optionChainSymbol  + format_date(expiry_year, expiry_month, expiry_day) + _side + str.tostring(strike, '#') + (syminfo.type ==  "stock"?".0": ".0")
+
+getAtmContracts(_underlyingSym, _strike,OptionsData current_symbol_options) =>
+    [getContractSym(_underlyingSym, _strike, C_CONTRACT_SIDE_CALL,current_symbol_options), getContractSym(_underlyingSym, _strike, C_CONTRACT_SIDE_PUT,current_symbol_options)]
+
+// --- MODIFIED: Takes explicit target date ---
+getContractSym_New(_strike, _side, OptionsData current_symbol_options, int expYear, int expMonth, int expDay) =>
+    optionChainSymbol = current_symbol_options.optionsSymbol
+    calculated_strike = _strike
+
+    // Round strike based on specific rules if needed (e.g., NDX)
+    if str.contains(current_symbol_options.symbol, 'NDX')
+        calculated_strike := f_custom_round(_strike)
+        calculated_strike
+    else
+        calculated_strike := roundToNearest(_strike, current_symbol_options.strike)
+        calculated_strike
+
+    strike_str = str.tostring(calculated_strike)
+    needs_decimal_zero = true //(syminfo.type == "stock" or syminfo.type == "index" or str.contains(optionChainSymbol, "SPX") or str.contains(optionChainSymbol, "NDX")) ? true:false
+
+    if not str.contains(strike_str, '.') and needs_decimal_zero
+        strike_str := strike_str + '.0'
+        strike_str
+
+    // Construct the symbol using the provided expiration date
+    optionChainSymbol + format_date(expYear, expMonth, expDay) + _side + strike_str
+
+// --- NEW: Function to calculate EM for a specific day ---
+calculateDailyEM(int targetY, int targetM, int targetD, float anchorPrice, float centerStrike, OptionsData current_symbol_options) =>
+    callSym = getContractSym_New(centerStrike, C_CONTRACT_SIDE_CALL, current_symbol_options, targetY, targetM, targetD)
+    putSym = getContractSym_New(centerStrike, C_CONTRACT_SIDE_PUT, current_symbol_options, targetY, targetM, targetD)
+
+    // Fetch option costs (use close price near the start of *our current* calculation period)
+    // False indicates fetching option price, not anchor
+    callCost = getContractCost(callSym, false)
+    putCost = getContractCost(putSym, false)
+    //callCost = 100
+    //putCost = 120
+
+    float emValue = na
+    if not na(callCost) and not na(putCost)
+        emValue := callCost + putCost
+        log.info(str.format('EM Calc for {0}-{1}-{2}: Call={3}({4}), Put={5}({6}), EM={7}', str.tostring(targetY), str.tostring(targetM), str.tostring(targetD), callSym, str.tostring(callCost), putSym, str.tostring(putCost), str.tostring(emValue)))
+    else
+        log.warning(str.format('Failed EM Calc for {0}-{1}-{2}: CallSym={3}, PutSym={4}. Costs: C={5}, P={6}', str.tostring(targetY), str.tostring(targetM), str.tostring(targetD), callSym, putSym, str.tostring(callCost), str.tostring(putCost)))
+
+    math.round_to_mintick(emValue) // Return EM or na, rounded
+
+
+// } funcs
+
+// { logic
+
+// Global storage for weekly EM data and target dates
+var float currentDayEM = na
+
+
+var underlyingSym = syminfo.ticker
+var anchorOpen = useClose? close:open
+var centerStrike = 0.0
+var todayExpAtmCallSym = ""
+var todayExpAtmPutSym = ""
+var todayExpAtmCallCost = 0.0
+var todayExpAtmPutCost = 0.0
+var todayEM = 0.0
+var OptionsData current_symbol_options = OptionsData.new("",syminfo.ticker,1,false)
+
+var bi = bar_index
+
+//  Useful function from tradingcode.net:
+
+//  IsSessionStart() returns 'true' when the current bar is the first one
+//  inside the specified session, adjusted to the given time zone (optional).
+//  Returns 'false' for other bars inside the session, bars outside the
+//  session, and when the time frame is 1 day or higher.
+IsSessionStart(sessionTime, sessionTimeZone = syminfo.timezone) =>
+    inSess = not na(time(timeframe.period, sessionTime, sessionTimeZone))
+    inSess and not inSess[1]
+
+
+newDay = useClose? not na(time("", "1559-1600", "America/New_York")) :not na(time("", "0930-0931", "America/New_York"))  
+newDayIndex =  useClose? not na(time("", "1600-1601", "America/New_York")) :not na(time("", "0930-0931", "America/New_York"))  
+// Calculate the components for the previous trading day.
+// Calculate the offset in days
+
+// Get the current day of the week
+current_day = dayofweek(timenow)
+days_to_subtract = switch current_day
+    dayofweek.saturday  => 1 // On Saturday, subtract 1 day to get Friday
+    dayofweek.sunday    => 2 // On Sunday, subtract 2 days to get Friday
+    dayofweek.monday    => 3 // On Monday, subtract 3 days to get Friday
+    dayofweek.tuesday    => 4 // On Monday, subtract 3 days to get Friday
+    dayofweek.wednesday    => 5 // On Monday, subtract 3 days to get Friday
+    dayofweek.thursday    => 6 // On Monday, subtract 3 days to get Friday
+    //dayofweek.friday    => 7 // On Monday, subtract 3 days to get Friday
+    => 1 // For Tuesday-Friday, just subtract 1 day
+if iPrevFriHoliday 
+    days_to_subtract := days_to_subtract+1   // If Friday is a holiday or short day
+
+ms_in_day = 86400000 // Milliseconds in a day
+// Calculate the timestamp
+prev_day_timestamp = timenow - (days_to_subtract * ms_in_day)
+dataWindowStartInput = prev_day_timestamp
+//if IsSessionStart('0930-0931', "America/New_York") and useClose == false
+//    anchorOpen := open
+
+//if IsSessionStart('1559-1600', "America/New_York") and useClose == true  and syminfo.type ==  "stock"
+  //  anchorOpen := close
+
+
+var useETFConv = false
+
+var  ratio = 0.0 
+
+
+// TOS Expected Move from straddle price (no IV input needed).
+// Derivation: Brenner-Subrahmanyam ATM straddle ≈ Price × IV × √(2×DTE/(365π))
+// Combined with calibrated EM = Price × IV × √((0.637×DTE + intercept)/365),
+// the IV cancels: EM = Straddle × √(π × (0.637×DTE + intercept) / (2×DTE))
+//
+// Validated 2026-05-09 against SPY/NVDA (eq) and /ES/NQ (fut). Match: <0.1%.
+f_tos_em_from_straddle(straddle, dte, asset_class) =>
+    a = asset_class == "futures"   ?  1.090 :
+         asset_class == "stock"     ?  1.074 :
+                                      1.106  // equity_etf default
+    b = asset_class == "futures"   ? -0.114 :
+         asset_class == "stock"     ?  0.145 :
+                                      0.135  // equity_etf default
+    multiplier = a + b / dte
+    straddle * multiplier
+
+f_center_strike(spot, strike_width) =>
+    math.round(spot / strike_width) * strike_width
+
+
+if barstate.isfirst
+    current_symbol_options.symbol := syminfo.ticker
+    current_symbol_options.optionsSymbol := syminfo.ticker
+    if (close > 200  and syminfo.type ==  "stock")  // this will cover a large set of stocks but is still not a good way to do this
+        current_symbol_options.strike := 5
+
+    current_symbol_options.optionsSymbol :=  syminfo.ticker
+    if str.contains(syminfo.ticker,"NQ" )       // Now I can use the same calculations for DIA-> YM and IWN -> RTY  . Need to test this out. 
+        underlyingSym := "QQQ"
+        current_symbol_options.optionsSymbol := "QQQ"
+        current_symbol_options.strike := 1
+        useETFConv := true
+    if str.contains(syminfo.ticker,"ES" )  or str.contains(syminfo.ticker,"SPX" )
+        underlyingSym := "SPX"
+        current_symbol_options.optionsSymbol := "SPXW"
+        current_symbol_options.strike := 5
+    if str.contains(syminfo.ticker,"NDX" )   /// NDX strike value changes between 10 and 25
+        current_symbol_options.strike := 25
+
+    if str.contains(syminfo.ticker,"TSLA" ) or str.contains(syminfo.ticker,"VIX" ) or str.contains(syminfo.ticker,"NVDA" ) or str.contains(syminfo.ticker,"PLTR" )
+        current_symbol_options.strike := 2.5
+    if str.contains(syminfo.ticker,"AAPL" ) or str.contains(syminfo.ticker,"NFLX" ) or str.contains(syminfo.ticker,"AMZN" )  or str.contains(syminfo.ticker,"COIN" )  or str.contains(syminfo.ticker,"BA" ) or str.contains(syminfo.ticker,"QCOM" )  or str.contains(syminfo.ticker,"GOOG" )
+        current_symbol_options.strike := 5
+    if str.contains(syminfo.ticker,"NIO" ) or str.contains(syminfo.ticker,"BILI" ) //or str.contains(syminfo.ticker,"BIDU" )  or str.contains(syminfo.ticker,"UNG" )  or str.contains(syminfo.ticker,"BOIL" )
+        current_symbol_options.strike := 0.5
+    if str.contains(syminfo.ticker,"NDX" )       // Now I can use the same calculations for DIA-> YM and IWN -> RTY  . Need to test this out. 
+        underlyingSym := "NDX"
+        current_symbol_options.optionsSymbol := "NDXP"
+    if str.contains(syminfo.ticker, 'YM')  
+        current_symbol_options.optionsSymbol := 'DIA'
+        current_symbol_options.strike := 1
+        current_symbol_options.symbol := 'DIA'
+        useETFConv := true
+        underlyingSym := 'DIA'
+        underlyingSym
+    if str.contains(syminfo.ticker, 'RTY') or str.contains(syminfo.ticker, 'M2K')  
+        current_symbol_options.optionsSymbol := 'IWM'
+        current_symbol_options.strike := 1
+        current_symbol_options.symbol := 'IWM'
+        useETFConv := true
+        underlyingSym := 'IWM'
+        underlyingSym
+
+//if  newDay
+   // log.info("lastbarvalue " + str.tostring(request.security(syminfo.ticker, "1D" , useClose? close[0]:open, ignore_invalid_symbol=true)))
+var todayEMHigh = 0.0
+var todayEMLow = 0.0
+targetDates := getWeekTradingDays(time)
+
+TargetDate d0 = array.get(targetDates, 0)
+TargetDate d1 = array.get(targetDates, 1)
+TargetDate d2 = array.get(targetDates, 2)
+TargetDate d3 = array.get(targetDates, 3)
+TargetDate d4 = array.get(targetDates, 4)
+
+bool do_calc = not iLiveBarOnlyRequests or barstate.islast
+
+float anchorOpenRaw = request.security(underlyingSym, "1D", useClose ? close[1] : open, ignore_invalid_symbol=true)
+float proxyAnchor = request.security(syminfo.tickerid, "1D", useClose ? close[1] : open, ignore_invalid_symbol=true)
+float stableRatio = useETFConv and not na(anchorOpenRaw) and anchorOpenRaw != 0 ? proxyAnchor / anchorOpenRaw : 1.0
+float centerStrikeStable = math.round(anchorOpenRaw, 0)
+
+string s0_C = do_calc ? getContractSym_New(centerStrikeStable, C_CONTRACT_SIDE_CALL, current_symbol_options, d0.year, d0.month, d0.day) : ""
+string s0_P = do_calc ? getContractSym_New(centerStrikeStable, C_CONTRACT_SIDE_PUT, current_symbol_options, d0.year, d0.month, d0.day) : ""
+string s1_C = do_calc ? getContractSym_New(centerStrikeStable, C_CONTRACT_SIDE_CALL, current_symbol_options, d1.year, d1.month, d1.day) : ""
+string s1_P = do_calc ? getContractSym_New(centerStrikeStable, C_CONTRACT_SIDE_PUT, current_symbol_options, d1.year, d1.month, d1.day) : ""
+string s2_C = do_calc ? getContractSym_New(centerStrikeStable, C_CONTRACT_SIDE_CALL, current_symbol_options, d2.year, d2.month, d2.day) : ""
+string s2_P = do_calc ? getContractSym_New(centerStrikeStable, C_CONTRACT_SIDE_PUT, current_symbol_options, d2.year, d2.month, d2.day) : ""
+string s3_C = do_calc ? getContractSym_New(centerStrikeStable, C_CONTRACT_SIDE_CALL, current_symbol_options, d3.year, d3.month, d3.day) : ""
+string s3_P = do_calc ? getContractSym_New(centerStrikeStable, C_CONTRACT_SIDE_PUT, current_symbol_options, d3.year, d3.month, d3.day) : ""
+string s4_C = do_calc ? getContractSym_New(centerStrikeStable, C_CONTRACT_SIDE_CALL, current_symbol_options, d4.year, d4.month, d4.day) : ""
+string s4_P = do_calc ? getContractSym_New(centerStrikeStable, C_CONTRACT_SIDE_PUT, current_symbol_options, d4.year, d4.month, d4.day) : ""
+
+float c0_C = request.security(s0_C != "" ? s0_C : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c0_P = request.security(s0_P != "" ? s0_P : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c1_C = request.security(s1_C != "" ? s1_C : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c1_P = request.security(s1_P != "" ? s1_P : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c2_C = request.security(s2_C != "" ? s2_C : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c2_P = request.security(s2_P != "" ? s2_P : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c3_C = request.security(s3_C != "" ? s3_C : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c3_P = request.security(s3_P != "" ? s3_P : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c4_C = request.security(s4_C != "" ? s4_C : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c4_P = request.security(s4_P != "" ? s4_P : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+
+if do_calc and (time > dataWindowStartInput)
+    bi := bar_index
+    currentDayEM := na
+    for existingDay in daily
+        existingDay.fibs.delete()
+    daily.clear()
+
+    float anchorOpenStable = anchorOpenRaw
+    if useETFConv
+        anchorOpenStable := math.round_to_mintick(proxyAnchor)
+    else if syminfo.type == "futures"
+        anchorOpenStable := math.round_to_mintick(anchorOpenRaw)
+
+    float raw0 = c0_C + c0_P
+    float em0 = na
+    int ts0 = timestamp(d0.year, d0.month, d0.day, 16, 0, 0)
+    float dte0 = math.max(1.0, math.ceil((ts0 - time) / 86400000.0))
+    if not na(raw0)
+        em0 := useTOSFormula ? f_tos_em_from_straddle(raw0, dte0, syminfo.type) : raw0 * skewVal
+        if useETFConv
+            em0 := em0 * stableRatio
+    daily.add(anchorOpenStable, time, math.round_to_mintick(nz(em0)))
+
+    float raw1 = c1_C + c1_P
+    float em1 = na
+    int ts1 = timestamp(d1.year, d1.month, d1.day, 16, 0, 0)
+    float dte1 = math.max(1.0, math.ceil((ts1 - time) / 86400000.0))
+    if not na(raw1)
+        em1 := useTOSFormula ? f_tos_em_from_straddle(raw1, dte1, syminfo.type) : raw1 * skewVal
+        if useETFConv
+            em1 := em1 * stableRatio
+    daily.add(anchorOpenStable, time, math.round_to_mintick(nz(em1)))
+
+    float raw2 = c2_C + c2_P
+    float em2 = na
+    int ts2 = timestamp(d2.year, d2.month, d2.day, 16, 0, 0)
+    float dte2 = math.max(1.0, math.ceil((ts2 - time) / 86400000.0))
+    if not na(raw2)
+        em2 := useTOSFormula ? f_tos_em_from_straddle(raw2, dte2, syminfo.type) : raw2 * skewVal
+        if useETFConv
+            em2 := em2 * stableRatio
+    daily.add(anchorOpenStable, time, math.round_to_mintick(nz(em2)))
+
+    float raw3 = c3_C + c3_P
+    float em3 = na
+    int ts3 = timestamp(d3.year, d3.month, d3.day, 16, 0, 0)
+    float dte3 = math.max(1.0, math.ceil((ts3 - time) / 86400000.0))
+    if not na(raw3)
+        em3 := useTOSFormula ? f_tos_em_from_straddle(raw3, dte3, syminfo.type) : raw3 * skewVal
+        if useETFConv
+            em3 := em3 * stableRatio
+    daily.add(anchorOpenStable, time, math.round_to_mintick(nz(em3)))
+
+    float raw4 = c4_C + c4_P
+    float em4 = na
+    int ts4 = timestamp(d4.year, d4.month, d4.day, 16, 0, 0)
+    float dte4 = math.max(1.0, math.ceil((ts4 - time) / 86400000.0))
+    if not na(raw4)
+        em4 := useTOSFormula ? f_tos_em_from_straddle(raw4, dte4, syminfo.type) : raw4 * skewVal
+        if useETFConv
+            em4 := em4 * stableRatio
+    daily.add(anchorOpenStable, time, math.round_to_mintick(nz(em4)))
+
+
+if barstate.islast //and todayEM > 0.0
+    daily.update(time)
+    for [i, day] in daily
+        emVal = array.get(daily, i).EM
+        if not na(emVal) 
+            day.drawFibs(i)
+    //daily.first().fibAlert()  // this will not work
+
+
+// } logic
+//log.info("New Open " + str.tostring(anchorOpen))
+// { 
+
+
+//@variable A `table` showing strings representing bar times in three preset time zones and a custom time zone. 
+var table displayTable = table.new(
+     position.bottom_right, columns = 6, rows = 3, border_color = chart.fg_color, border_width = 2
+ )
+
+//@function Initializes three `displayTable` cells on the `row` that show the `title`, `text1`, and `text2` strings. 
+// tableRow(int row, string title, string text1, string text2, string text3,color titleColor = #9b27b066, color infoColor = na) =>
+//     displayTable.cell(0, row, title, bgcolor = titleColor, text_color = chart.fg_color)
+//     displayTable.cell(1, row, text1, bgcolor = infoColor,  text_color = chart.fg_color)
+//     displayTable.cell(2, row, text2, bgcolor = infoColor,  text_color = chart.fg_color)
+//     displayTable.cell(3, row, text3, bgcolor = infoColor,  text_color = chart.fg_color)
+
+
+if barstate.islast and iTable and not na(targetDates) // Only display if calculation ran
+
+    table.clear(displayTable, 0, 0, 5, 2) // Correct - specify full range (cols 0-5, rows 0-2)
+
+    // Header Row
+    displayTable.cell(0, 0, 'Day:', bgcolor = color.gray, text_color = color.white, width = 4)
+    displayTable.cell(1, 0, 'Mon', bgcolor = color.gray, text_color = color.white)
+    displayTable.cell(2, 0, 'Tue', bgcolor = color.gray, text_color = color.white)
+    displayTable.cell(3, 0, 'Wed', bgcolor = color.gray, text_color = color.white)
+    displayTable.cell(4, 0, 'Thu', bgcolor = color.gray, text_color = color.white)
+    displayTable.cell(5, 0, 'Fri', bgcolor = color.gray, text_color = color.white)
+
+    // Date Row
+    displayTable.cell(0, 1, 'Date:', bgcolor = color.gray, text_color = color.white, width = 4)
+    for i = 0 to 4 by 1
+        tDate = array.get(targetDates, i)
+        dateStr = str.format('{0,number,00}/{1,number,00}', tDate.month, tDate.day)
+        // Highlight today's date column
+        bgColor = tDate.year == year and tDate.month == month and tDate.day == dayofmonth ? color.new(color.yellow, 70) : na
+        displayTable.cell(i + 1, 1, dateStr, bgcolor = bgColor, text_color = color.black)
+
+    // EM Row
+    displayTable.cell(0, 2, 'Exp.Move:', bgcolor = color.gray, text_color = color.white, width = 4)
+    for i = 0 to 4 by 1
+        emVal = array.get(daily, i).EM
+        emStr = na(emVal) ? 'N/A' : str.tostring(emVal, format.mintick)
+        // Highlight today's EM column
+        tDate = array.get(targetDates, i)
+        bgColor = tDate.year == year and tDate.month == month and tDate.day == dayofmonth ? color.new(color.yellow, 70) : na
+        displayTable.cell(i + 1, 2, emStr, bgcolor = bgColor, text_color = color.black)
+
+
+

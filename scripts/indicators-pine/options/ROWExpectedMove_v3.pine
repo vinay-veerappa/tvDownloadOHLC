@@ -1,0 +1,540 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © vveerappa
+// v2.0 — Direct CME futures options + TOS-calibrated EM formula
+
+//@version=6
+indicator("ROW Expected Move v2", "ROW EM v2", overlay=true, max_bars_back=500)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CONSTANTS & INPUTS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var C_CALL = "C"
+var C_PUT  = "P"
+
+settings_em = 'Expected Move ━━━━━━━━━━━━━━━━━━━━━'
+var useClose        = input.bool(true, "Use Close (not Open) to anchor EM", group=settings_em)
+var emMultiplier    = input.float(defval=1.06, title="EM Multiplier (auto-set per instrument)", minval=0.5, maxval=2.0, step=0.001, group=settings_em)
+var emMultAuto      = input.bool(true, "Auto-set multiplier per instrument", group=settings_em)
+var iFriHoliday     = input.bool(false, "Friday Holiday", group=settings_em)
+var iMonHoliday     = input.bool(false, "Monday Holiday", group=settings_em)
+var iPrevFriHoliday = input.bool(false, "Previous Friday Holiday", group=settings_em)
+var iTable          = input.bool(true, "Display Table", group=settings_em)
+
+settings_futures = 'Futures Options ━━━━━━━━━━━━━━━━━━━━━'
+var useFuturesOpts  = input.bool(true, "Use direct CME futures options (NQ/ES)", group=settings_futures)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TYPES
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+type FibLevels
+    int         padding
+    bool        use_background
+    int         fill_percent
+    bool        show_level
+    bool        show_price
+    string      label_size
+    bool        fib1
+    float       fib1_level
+    color       fib1_color
+    string      fib1_style
+    int         fib1_size
+    bool        fib2
+    float       fib2_level
+    color       fib2_color
+    string      fib2_style
+    int         fib2_size
+    bool        fib3
+    float       fib3_level
+    color       fib3_color
+    string      fib3_style
+    int         fib3_size
+    bool        fib4
+    float       fib4_level
+    color       fib4_color
+    string      fib4_style
+    int         fib4_size
+    bool        fib5
+    float       fib5_level
+    color       fib5_color
+    string      fib5_style
+    int         fib5_size
+
+type fib
+    float       level
+    float       price
+    color       color
+    string      style
+    int         size
+    line        ln
+    label       lbl
+    linefill    fl
+
+type DailyEM
+    array<fib>  fibs
+    float       price
+    float       EM
+    int         time
+    int         time_last
+
+type TargetDate
+    int year
+    int month
+    int day
+    int dayOfWeek
+
+type OptionsData
+    string symbol
+    string optionsSymbol
+    float  strike
+    bool   isFuturesOpt
+
+var array<TargetDate> targetDates = array.new<TargetDate>()
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// FIB INPUTS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+mirror = true
+settings_fibs = 'StdDev Fib Settings ━━━━━━━━━━━━━━━━━━━━━'
+var FibLevels fiblevels = FibLevels.new()
+fiblevels.fib1          := input.bool(true, '', group=settings_fibs, inline='1')
+fiblevels.fib1_level    := input.float(0, '', group=settings_fibs, inline='1')
+fiblevels.fib1_color    := input.color(color.red, '', group=settings_fibs, inline='1')
+fiblevels.fib1_style    := input.string('⎯⎯⎯', '', options=['⎯⎯⎯','----','····'], group=settings_fibs, inline='1')
+fiblevels.fib1_size     := input.int(1, '', options=[1,2,3,4], group=settings_fibs, inline='1')
+fiblevels.fib2          := input.bool(true, '', group=settings_fibs, inline='2')
+fiblevels.fib2_level    := input.float(0.5, '', group=settings_fibs, inline='2')
+fiblevels.fib2_color    := input.color(color.black, '', group=settings_fibs, inline='2')
+fiblevels.fib2_style    := input.string('····', '', options=['⎯⎯⎯','----','····'], group=settings_fibs, inline='2')
+fiblevels.fib2_size     := input.int(1, '', options=[1,2,3,4], group=settings_fibs, inline='2')
+fiblevels.fib3          := input.bool(true, '', group=settings_fibs, inline='3')
+fiblevels.fib3_level    := input.float(1, '', group=settings_fibs, inline='3')
+fiblevels.fib3_color    := input.color(color.black, '', group=settings_fibs, inline='3')
+fiblevels.fib3_style    := input.string('⎯⎯⎯', '', options=['⎯⎯⎯','----','····'], group=settings_fibs, inline='3')
+fiblevels.fib3_size     := input.int(2, '', options=[1,2,3,4], group=settings_fibs, inline='3')
+fiblevels.fib4          := input.bool(true, '', group=settings_fibs, inline='4')
+fiblevels.fib4_level    := input.float(1.5, '', group=settings_fibs, inline='4')
+fiblevels.fib4_color    := input.color(color.black, '', group=settings_fibs, inline='4')
+fiblevels.fib4_style    := input.string('····', '', options=['⎯⎯⎯','----','····'], group=settings_fibs, inline='4')
+fiblevels.fib4_size     := input.int(1, '', options=[1,2,3,4], group=settings_fibs, inline='4')
+fiblevels.fib5          := input.bool(true, '', group=settings_fibs, inline='5')
+fiblevels.fib5_level    := input.float(2, '', group=settings_fibs, inline='5')
+fiblevels.fib5_color    := input.color(color.black, '', group=settings_fibs, inline='5')
+fiblevels.fib5_style    := input.string('⎯⎯⎯', '', options=['⎯⎯⎯','----','····'], group=settings_fibs, inline='5')
+fiblevels.fib5_size     := input.int(2, '', options=[1,2,3,4], group=settings_fibs, inline='5')
+
+fiblevels.use_background := input.bool(false, "Background transparency    ", group=settings_fibs, inline='fill')
+fiblevels.fill_percent   := input.int(99, '', options=[99,97,95,90,85,80,75,70,65,60,55,50], group=settings_fibs, inline='fill')
+fiblevels.padding        := input.int(25, 'Fib levels padding', group=settings_fibs)
+fiblevels.label_size     := input.string(size.small, 'Label size', [size.tiny,size.small,size.normal,size.large,size.huge], group=settings_fibs)
+fiblevels.show_level     := input.bool(true, 'Level value', group=settings_fibs)
+fiblevels.show_price     := input.bool(true, 'Price value', group=settings_fibs)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GLOBALS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+color color_transparent = #00000000
+var array<DailyEM> daily = array.new<DailyEM>()
+var underlyingSym = syminfo.ticker
+var OptionsData current_symbol_options = OptionsData.new("", syminfo.ticker, 1, false)
+var useETFConv = false
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// UTILITY FUNCTIONS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+roundToNearest(float value, float nearest) => math.round(value / nearest) * nearest
+
+f_custom_round(n) =>
+    nearest_10 = math.round(n / 10) * 10
+    nearest_25 = math.round(n / 25) * 25
+    dist_to_10 = math.abs(n - nearest_10)
+    dist_to_25 = math.abs(n - nearest_25)
+    nearest_25 % 100 == 0 ? nearest_10 : dist_to_25 < dist_to_10 ? nearest_25 : nearest_10
+
+format_date(year, month, day) =>
+    str.tostring(year % 100) + (month < 10 ? '0' : '') + str.tostring(month) + (day < 10 ? '0' : '') + str.tostring(day)
+
+lineStyle(string style) =>
+    switch style
+        '----' => line.style_dashed
+        '····' => line.style_dotted
+        => line.style_solid
+
+formatLabelText(TargetDate dateInfo, string levelType, float levelValue) =>
+    dayStr = switch dateInfo.dayOfWeek
+        dayofweek.monday => "Mon"
+        dayofweek.tuesday => "Tue"
+        dayofweek.wednesday => "Wed"
+        dayofweek.thursday => "Thu"
+        dayofweek.friday => "Fri"
+        => ""
+    str.format("{0} {1,number,00}/{2,number,00} EM {3} {4}", dayStr, dateInfo.month, dateInfo.day, levelType, str.tostring(levelValue, format.mintick))
+
+weekOfMonth(int d) => int(math.floor((d - 1) / 7)) + 1
+
+getTargetDate(int idx) =>
+    // 1. Force all time checks into New York time to prevent local timezone bugs
+    int y = year(timenow, "America/New_York")
+    int m = month(timenow, "America/New_York")
+    int d = dayofmonth(timenow, "America/New_York")
+    int currentDow = dayofweek(timenow, "America/New_York")
+    int h = hour(timenow, "America/New_York")
+    int mn = minute(timenow, "America/New_York")
+
+    int daysToSub = currentDow - 1
+    
+    // 2. Roll to next week ONLY if it's Friday AFTER 16:15 NY time, or Saturday. 
+    // (Sunday is considered the start of the new week, so it naturally handles itself).
+    bool isWeekendRoll = (currentDow == dayofweek.friday and (h > 16 or (h == 16 and mn >= 15))) or (currentDow == dayofweek.saturday)
+    int startOff = isWeekendRoll ? 7 : 0
+    
+    // 3. Use 12:00 PM (noon) to safely avoid Daylight Saving Time midnight timezone shifts
+    int sunTs = timestamp("America/New_York", y, m, d, 12, 0, 0) - (daysToSub * 86400000)
+    int tTs = sunTs + (startOff + idx + 1) * 86400000
+    
+    TargetDate.new(year(tTs, "America/New_York"), month(tTs, "America/New_York"), dayofmonth(tTs, "America/New_York"), dayofweek(tTs, "America/New_York"))
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SYMBOL BUILDERS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+buildFuturesOptSym(float _strike, string _side, int expYear, int expMonth, int expDay) =>
+    int expTs = timestamp(expYear, expMonth, expDay, 12, 0, 0)
+    int expDow = dayofweek(expTs)
+    int wom = weekOfMonth(expDay)
+    float rounded = roundToNearest(_strike, current_symbol_options.strike)
+    string strikeStr = str.tostring(math.round(rounded))
+    string dateStr = format_date(expYear, expMonth, expDay)
+    string root = ""
+
+    string dayLetter = switch expDow
+        dayofweek.monday    => "A"
+        dayofweek.tuesday   => "B"
+        dayofweek.wednesday => "C"
+        dayofweek.thursday  => "D"
+        => ""
+
+    bool isNQ = str.contains(syminfo.ticker, "NQ")
+
+    if expDow == dayofweek.friday
+        root := isNQ ? "QN" + str.tostring(wom) : "EW" + str.tostring(wom)
+    else
+        root := isNQ ? "Q" + str.tostring(wom) + dayLetter : "E" + str.tostring(wom) + dayLetter
+
+    root + dateStr + _side + strikeStr
+
+buildEquityOptSym(float _strike, string _side, OptionsData opts, int expYear, int expMonth, int expDay) =>
+    float calc_strike = str.contains(opts.symbol, 'NDX') ? f_custom_round(_strike) : roundToNearest(_strike, opts.strike)
+    string strike_str = str.tostring(calc_strike)
+    if not str.contains(strike_str, '.')
+        strike_str := strike_str + '.0'
+    int ey = expYear
+    int em = expMonth
+    int ed = expDay
+    
+    if syminfo.type == "stock" or syminfo.type == "dr" or str.contains(opts.optionsSymbol, "DIA") or str.contains(opts.optionsSymbol, "BOIL")
+        int expTs = timestamp(expYear, expMonth, expDay, 12, 0, 0)
+        int expDow = dayofweek(expTs)
+        if expDow != dayofweek.friday
+            int daysToFri = 6 - expDow
+            if daysToFri <= 0
+                daysToFri += 7
+            int friTs = expTs + daysToFri * 86400 * 1000
+            ey := year(friTs)
+            em := month(friTs)
+            ed := dayofmonth(friTs)
+    opts.optionsSymbol + format_date(ey, em, ed) + _side + strike_str
+
+getContractSym(float _strike, string _side, OptionsData opts, int expYear, int expMonth, int expDay) =>
+    opts.isFuturesOpt ? buildFuturesOptSym(_strike, _side, expYear, expMonth, expDay) : buildEquityOptSym(_strike, _side, opts, expYear, expMonth, expDay)
+
+buildFuturesOptSymMonthlyFri(float _strike, string _side, int expYear, int expMonth, int expDay) =>
+    float rounded = roundToNearest(_strike, current_symbol_options.strike)
+    string strikeStr = str.tostring(math.round(rounded))
+    string dateStr = format_date(expYear, expMonth, expDay)
+    bool isNQ = str.contains(syminfo.ticker, "NQ")
+    string root = isNQ ? "QNE" : "EW"
+    root + dateStr + _side + strikeStr
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// FIB DRAWING METHODS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+getFibLevel(float level, float _price, color _color, string _style, int _size) =>
+    fib f   = fib.new()
+    f.level := level
+    f.color := _color
+    f.price := _price
+    f.style := _style
+    f.size  := _size
+    f.ln    := line.new(na, _price, na, _price, color=_color, style=lineStyle(f.style), xloc=xloc.bar_time, width=f.size)
+    f.lbl   := label.new(na, f.price, '', style=label.style_label_left, textcolor=_color, color=color_transparent, size=fiblevels.label_size, xloc=xloc.bar_time)
+    f
+
+addFibPair(array<fib> fibs, bool enabled, float level, float price, float stdDev, color _color, string _style, int _size) =>
+    if enabled
+        fibs.push(getFibLevel(level, price + stdDev * level, _color, _style, _size))
+        if mirror and level != 0
+            fibs.push(getFibLevel(-level, price - stdDev * level, _color, _style, _size))
+
+method calcFibs(DailyEM this, float price, float stdDev) =>
+    if this.fibs.size() == 0
+        addFibPair(this.fibs, fiblevels.fib1, fiblevels.fib1_level, price, stdDev, fiblevels.fib1_color, fiblevels.fib1_style, fiblevels.fib1_size)
+        addFibPair(this.fibs, fiblevels.fib2, fiblevels.fib2_level, price, stdDev, fiblevels.fib2_color, fiblevels.fib2_style, fiblevels.fib2_size)
+        addFibPair(this.fibs, fiblevels.fib3, fiblevels.fib3_level, price, stdDev, fiblevels.fib3_color, fiblevels.fib3_style, fiblevels.fib3_size)
+        addFibPair(this.fibs, fiblevels.fib4, fiblevels.fib4_level, price, stdDev, fiblevels.fib4_color, fiblevels.fib4_style, fiblevels.fib4_size)
+        addFibPair(this.fibs, fiblevels.fib5, fiblevels.fib5_level, price, stdDev, fiblevels.fib5_color, fiblevels.fib5_style, fiblevels.fib5_size)
+    this
+
+method drawFibs(DailyEM this, int idx) =>
+    if this.fibs.size() > 0
+        tDate = array.get(targetDates, idx)
+        for i = 0 to this.fibs.size() - 1
+            fib f = this.fibs.get(i)
+            int padded = this.time_last + fiblevels.padding * (time - time[1])
+            string txt = ''
+            string sp_s = ''
+            string sp_e = ''
+            if fiblevels.show_level
+                txt := i == 0 ? str.tostring(f.level) + (useClose ? "  PD Close " : "  RTH Open ") : formatLabelText(tDate, useClose ? "EM Close " : "EM Open ", f.level)
+                sp_s := ' ('
+                sp_e := ')'
+            if fiblevels.show_price
+                txt += sp_s + str.format('{0,number,#,###.00}', f.price) + sp_e
+            f.ln.set_color(f.color)
+            f.lbl.set_xy(padded, f.price)
+            f.ln.set_xy1(this.time, f.price)
+            f.ln.set_xy2(padded, f.price)
+            f.lbl.set_text(txt)
+            if fiblevels.use_background and i > 0
+                f.fl := linefill.new(this.fibs.get(i - 1).ln, f.ln, color.new(f.color, fiblevels.fill_percent))
+    this
+
+method delete(array<fib> this) =>
+    for f in this
+        f.ln.delete()
+        f.lbl.delete()
+        f.fl.delete()
+
+method add(array<DailyEM> this, float price, int _time, float ExpectedMove) =>
+    DailyEM d   = DailyEM.new()
+    d.price     := price
+    d.EM        := ExpectedMove
+    d.time      := _time
+    d.time_last := _time
+    d.fibs      := array.new<fib>()
+    d.calcFibs(price, ExpectedMove)
+    this.push(d)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// INSTRUMENT CONFIG
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+if barstate.isfirst
+    current_symbol_options.symbol := syminfo.ticker
+    current_symbol_options.optionsSymbol := syminfo.ticker
+    current_symbol_options.isFuturesOpt := false
+    if close > 200 and syminfo.type == "stock"
+        current_symbol_options.strike := 5
+
+    if str.contains(syminfo.ticker, "NQ")
+        if useFuturesOpts
+            underlyingSym := syminfo.ticker
+            current_symbol_options.strike := 5      
+            current_symbol_options.isFuturesOpt := true
+            useETFConv := false
+        else
+            underlyingSym := "NASDAQ:QQQ"
+            current_symbol_options.optionsSymbol := "QQQ"
+            current_symbol_options.strike := 1
+            useETFConv := true
+
+    if str.contains(syminfo.ticker, "ES")
+        if useFuturesOpts
+            underlyingSym := syminfo.ticker
+            current_symbol_options.strike := 5
+            current_symbol_options.isFuturesOpt := true
+            useETFConv := false
+        else
+            underlyingSym := "AMEX:SPY"
+            current_symbol_options.optionsSymbol := "SPY"
+            current_symbol_options.strike := 1
+
+    if str.contains(syminfo.ticker, "SPX")
+        underlyingSym := "CBOE:SPX"
+        current_symbol_options.optionsSymbol := "SPXW"
+        current_symbol_options.strike := 5
+
+    if str.contains(syminfo.ticker, "NDX")
+        underlyingSym := "NDX"
+        current_symbol_options.optionsSymbol := "NDXP"
+        current_symbol_options.strike := 25
+
+    if str.contains(syminfo.ticker, 'YM')
+        current_symbol_options.optionsSymbol := 'DIA'
+        current_symbol_options.strike := 1
+        current_symbol_options.symbol := 'DIA'
+        useETFConv := true
+        underlyingSym := 'AMEX:DIA'
+
+    if str.contains(syminfo.ticker, 'RTY') or str.contains(syminfo.ticker, 'M2K')
+        current_symbol_options.optionsSymbol := 'IWM'
+        current_symbol_options.strike := 1
+        current_symbol_options.symbol := 'IWM'
+        useETFConv := true
+        underlyingSym := 'AMEX:IWM'
+
+    if emMultAuto
+        if current_symbol_options.isFuturesOpt
+            if str.contains(syminfo.ticker, "NQ")
+                emMultiplier := 1.06
+            else if str.contains(syminfo.ticker, "ES")
+                emMultiplier := 1.15
+        else if useETFConv
+            if str.contains(underlyingSym, "QQQ")
+                emMultiplier := 1.054
+            else if str.contains(underlyingSym, "DIA") or str.contains(underlyingSym, "IWM")
+                emMultiplier := 1.06
+        else
+            if str.contains(current_symbol_options.optionsSymbol, "SPXW")
+                emMultiplier := 1.079
+            else
+                emMultiplier := 1.06
+
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// THE UNROLLED DATA REQUESTS (Limit safe, no loops)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 1. Get Target Dates
+TargetDate d0 = getTargetDate(0)
+TargetDate d1 = getTargetDate(1)
+TargetDate d2 = getTargetDate(2)
+TargetDate d3 = getTargetDate(3)
+TargetDate d4 = getTargetDate(4) // Always Friday
+
+// THE BLINDFOLD: Prevents the 40-call limit error by hiding strings on historical bars
+bool do_calc = barstate.islast
+
+// 2. Fetch Global Anchors (Underlying assets DO have a close[1])
+float anchorOpenRaw = request.security(current_symbol_options.isFuturesOpt ? syminfo.ticker : underlyingSym, "1D", useClose ? close[1] : open, ignore_invalid_symbol=true)
+float proxyAnchor   = request.security(syminfo.ticker, "1D", useClose ? close[1] : open, ignore_invalid_symbol=true)
+float ratio         = useETFConv ? (proxyAnchor / anchorOpenRaw) : 1.0
+
+float centerStrike  = current_symbol_options.isFuturesOpt ? roundToNearest(anchorOpenRaw, current_symbol_options.strike) : math.round(anchorOpenRaw / current_symbol_options.strike) * current_symbol_options.strike
+
+// 3. Build Safe Symbol Strings ONLY on the live edge
+string s0_C = do_calc ? getContractSym(centerStrike, C_CALL, current_symbol_options, d0.year, d0.month, d0.day) : ""
+string s0_P = do_calc ? getContractSym(centerStrike, C_PUT,  current_symbol_options, d0.year, d0.month, d0.day) : ""
+string s1_C = do_calc ? getContractSym(centerStrike, C_CALL, current_symbol_options, d1.year, d1.month, d1.day) : ""
+string s1_P = do_calc ? getContractSym(centerStrike, C_PUT,  current_symbol_options, d1.year, d1.month, d1.day) : ""
+string s2_C = do_calc ? getContractSym(centerStrike, C_CALL, current_symbol_options, d2.year, d2.month, d2.day) : ""
+string s2_P = do_calc ? getContractSym(centerStrike, C_PUT,  current_symbol_options, d2.year, d2.month, d2.day) : ""
+string s3_C = do_calc ? getContractSym(centerStrike, C_CALL, current_symbol_options, d3.year, d3.month, d3.day) : ""
+string s3_P = do_calc ? getContractSym(centerStrike, C_PUT,  current_symbol_options, d3.year, d3.month, d3.day) : ""
+string s4_C = do_calc ? getContractSym(centerStrike, C_CALL, current_symbol_options, d4.year, d4.month, d4.day) : ""
+string s4_P = do_calc ? getContractSym(centerStrike, C_PUT,  current_symbol_options, d4.year, d4.month, d4.day) : ""
+
+// Friday Fallbacks
+string s4_C_M = (do_calc and current_symbol_options.isFuturesOpt) ? buildFuturesOptSymMonthlyFri(centerStrike, C_CALL, d4.year, d4.month, d4.day) : ""
+string s4_P_M = (do_calc and current_symbol_options.isFuturesOpt) ? buildFuturesOptSymMonthlyFri(centerStrike, C_PUT,  d4.year, d4.month, d4.day) : ""
+
+// 4. Request Exact Pricing (Options use current `close` or `hl2`, NOT `close[1]` because 0DTEs didn't exist yesterday!)
+float c0_C = request.security(s0_C != "" ? s0_C : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c0_P = request.security(s0_P != "" ? s0_P : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c1_C = request.security(s1_C != "" ? s1_C : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c1_P = request.security(s1_P != "" ? s1_P : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c2_C = request.security(s2_C != "" ? s2_C : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c2_P = request.security(s2_P != "" ? s2_P : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c3_C = request.security(s3_C != "" ? s3_C : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c3_P = request.security(s3_P != "" ? s3_P : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c4_C = request.security(s4_C != "" ? s4_C : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c4_P = request.security(s4_P != "" ? s4_P : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+
+float c4_C_M = request.security(s4_C_M != "" ? s4_C_M : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+float c4_P_M = request.security(s4_P_M != "" ? s4_P_M : na, "1D", useClose ? hl2 : open, ignore_invalid_symbol=true)
+
+// 5. Final Calculation and Drawing on the Live Bar
+if barstate.islast
+    daily.clear()
+    targetDates.clear()
+    targetDates.push(d0)
+    targetDates.push(d1)
+    targetDates.push(d2)
+    targetDates.push(d3)
+    targetDates.push(d4)
+
+    float anchorFinal = syminfo.type == "futures" and not current_symbol_options.isFuturesOpt ? math.round_to_mintick(anchorOpenRaw) : anchorOpenRaw
+
+    float em0 = c0_C + c0_P
+    float calc0 = not na(em0) ? (useETFConv ? em0 * emMultiplier * ratio : em0 * emMultiplier) : na
+    daily.add(anchorFinal, time, math.round_to_mintick(nz(calc0)))
+
+    float em1 = c1_C + c1_P
+    float calc1 = not na(em1) ? (useETFConv ? em1 * emMultiplier * ratio : em1 * emMultiplier) : na
+    daily.add(anchorFinal, time, math.round_to_mintick(nz(calc1)))
+
+    float em2 = c2_C + c2_P
+    float calc2 = not na(em2) ? (useETFConv ? em2 * emMultiplier * ratio : em2 * emMultiplier) : na
+    daily.add(anchorFinal, time, math.round_to_mintick(nz(calc2)))
+
+    float em3 = c3_C + c3_P
+    float calc3 = not na(em3) ? (useETFConv ? em3 * emMultiplier * ratio : em3 * emMultiplier) : na
+    daily.add(anchorFinal, time, math.round_to_mintick(nz(calc3)))
+
+    float em4 = c4_C + c4_P
+    if na(em4) and current_symbol_options.isFuturesOpt
+        em4 := c4_C_M + c4_P_M
+    float calc4 = not na(em4) ? (useETFConv ? em4 * emMultiplier * ratio : em4 * emMultiplier) : na
+    daily.add(anchorFinal, time, math.round_to_mintick(nz(calc4)))
+
+    for [i, day] in daily
+        if not na(array.get(daily, i).EM) and array.get(daily, i).EM > 0
+            day.drawFibs(i)
+
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TABLE
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var table dispTbl = table.new(position.bottom_right, columns=6, rows=4, border_color=chart.fg_color, border_width=2)
+
+if barstate.islast and iTable and targetDates.size() > 0
+    table.clear(dispTbl, 0, 0, 5, 3)
+    dispTbl.cell(0, 0, 'Day:', bgcolor=color.gray, text_color=color.white, width=4)
+    dispTbl.cell(1, 0, 'Mon', bgcolor=color.gray, text_color=color.white)
+    dispTbl.cell(2, 0, 'Tue', bgcolor=color.gray, text_color=color.white)
+    dispTbl.cell(3, 0, 'Wed', bgcolor=color.gray, text_color=color.white)
+    dispTbl.cell(4, 0, 'Thu', bgcolor=color.gray, text_color=color.white)
+    dispTbl.cell(5, 0, 'Fri', bgcolor=color.gray, text_color=color.white)
+
+    dispTbl.cell(0, 1, 'Date:', bgcolor=color.gray, text_color=color.white, width=4)
+    for i = 0 to 4
+        tDate = array.get(targetDates, i)
+        bg = tDate.year == year(timenow, "America/New_York") and tDate.month == month(timenow, "America/New_York") and tDate.day == dayofmonth(timenow, "America/New_York") ? color.new(color.yellow, 70) : na
+        dispTbl.cell(i + 1, 1, str.format('{0,number,00}/{1,number,00}', tDate.month, tDate.day), bgcolor=bg, text_color=color.black)
+
+    dispTbl.cell(0, 2, 'Exp.Move:', bgcolor=color.gray, text_color=color.white, width=4)
+    for i = 0 to 4
+        emVal = array.get(daily, i).EM
+        tDate = array.get(targetDates, i)
+        bg = tDate.year == year(timenow, "America/New_York") and tDate.month == month(timenow, "America/New_York") and tDate.day == dayofmonth(timenow, "America/New_York") ? color.new(color.yellow, 70) : na
+        dispTbl.cell(i + 1, 2, na(emVal) or emVal == 0 ? 'N/A' : str.tostring(emVal, format.mintick), bgcolor=bg, text_color=color.black)
+
+    string modeStr = current_symbol_options.isFuturesOpt ? "CME Direct" : useETFConv ? "ETF x" + str.tostring(ratio, '#.##') : "Index"
+    dispTbl.cell(0, 3, 'Mode:', bgcolor=color.gray, text_color=color.white, width=4)
+    dispTbl.cell(1, 3, modeStr, bgcolor=na, text_color=color.black)
+    dispTbl.cell(2, 3, 'x' + str.tostring(emMultiplier, '#.###'), bgcolor=na, text_color=color.black)
+    if current_symbol_options.isFuturesOpt
+        dispTbl.cell(3, 3, 'CME Auto', bgcolor=na, text_color=color.black)
+
+// 5. Final Calculation and Drawing on the Live Bar
+if barstate.islast
+    // --- DEBUG LOGGING ---
+    log.info("==== OPTION DEBUG LOGS ====")
+    log.info("Anchor: " + str.tostring(anchorOpenRaw) + " | Center Strike: " + str.tostring(centerStrike))
+    log.info("Mon: " + s0_C + " : " + str.tostring(c0_C) + " | " + s0_P + " : " + str.tostring(c0_P))
+    log.info("Tue: " + s1_C + " : " + str.tostring(c1_C) + " | " + s1_P + " : " + str.tostring(c1_P))
+    log.info("Wed: " + s2_C + " : " + str.tostring(c2_C) + " | " + s2_P + " : " + str.tostring(c2_P))
+    log.info("Thu: " + s3_C + " : " + str.tostring(c3_C) + " | " + s3_P + " : " + str.tostring(c3_P))
+    log.info("Fri (W): " + s4_C + " : " + str.tostring(c4_C) + " | " + s4_P + " : " + str.tostring(c4_P))
+    if current_symbol_options.isFuturesOpt
+        log.info("Fri (M): " + s4_C_M + " : " + str.tostring(c4_C_M) + " | " + s4_P_M + " : " + str.tostring(c4_P_M))
+    // ---------------------
+
+    daily.clear()

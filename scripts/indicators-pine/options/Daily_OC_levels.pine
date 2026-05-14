@@ -1,0 +1,556 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © vveerappa
+
+//@version=6
+indicator("Daily Expected Move", "DailyEM O/C", overlay=true, max_bars_back = 500)
+
+// { consts
+var C_CONTRACT_SIDE_CALL = "C"
+var C_CONTRACT_SIDE_PUT = "P"
+var C_GROUP_NAME_COLORS = 'Colors'
+var C_GROUP_NAME_EXTRAS = 'Extras'
+// } consts
+
+// { inputs
+var bool useClose   = true 
+var iFriHoliday     = input.bool(false,"Friday Holiday")   
+var iMonHoliday     = input.bool(false,"Monday Holiday")   
+var iTable          = input.bool(false,"Display Table")
+var iDisplayOpen    = input.bool(true,"Display Open")   
+var iDisplayClose   = input.bool(false,"Display Close")   
+
+//// Use Fib Levels (From Fadi)
+type FibLevels
+    bool        show
+    int         padding
+    bool        useLog
+    bool        use_background
+    int         fill_percent
+    bool        show_level
+    bool        show_price
+    string      label_size
+
+    bool        fib1
+    float       fib1_level
+    color       fib1_color
+    string      fib1_style
+    int         fib1_size
+    bool        fib2
+    float       fib2_level
+    color       fib2_color
+    string      fib2_style
+    int         fib2_size
+    bool        fib3
+    float       fib3_level
+    color       fib3_color
+    string      fib3_style
+    int         fib3_size
+    bool        fib4
+    float       fib4_level
+    color       fib4_color
+    string      fib4_style
+    int         fib4_size
+    bool        fib5
+    float       fib5_level
+    color       fib5_color
+    string      fib5_style
+    int         fib5_size
+    bool        fib6
+    float       fib6_level
+    color       fib6_color
+    string      fib6_style
+    int         fib6_size
+    bool        fib7
+    float       fib7_level
+    color       fib7_color
+    string      fib7_style
+    int         fib7_size
+    bool        fib8
+    float       fib8_level
+    color       fib8_color
+    string      fib8_style
+    int         fib8_size
+    bool        fib9
+    float       fib9_level
+    color       fib9_color
+    string      fib9_style
+    int         fib9_size
+
+type fib
+    float       level
+    float       price
+    color       color
+    string      style
+    int         size
+    line        ln
+    label       lbl
+    linefill    fl
+
+type DailyEM
+    array<fib>  fibs
+    float       price
+    float       EM
+    int         time
+    int         time_last
+    string      txt
+
+mirror = true
+settings_general                            = 'General Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+settings_fibs                               = 'StdDev Fib Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+settings_override                           = 'Overrides ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+var FibLevels fiblevels                     = FibLevels.new()
+
+fiblevels.fib1                              := input.bool(true, '', group = settings_fibs, inline = '1')
+fiblevels.fib1_level                        := input.float(0, '', group = settings_fibs, inline = '1')
+fiblevels.fib1_color                        := input.color(color.red, '', group = settings_fibs, inline = '1')
+fiblevels.fib1_style                        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '1')
+fiblevels.fib1_size                         := input.int(1, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '1')
+fiblevels.fib2                              := input.bool(true, '', group = settings_fibs, inline = '2')
+fiblevels.fib2_level                        := input.float(0.5, '', group = settings_fibs, inline = '2')
+fiblevels.fib2_color                        := input.color(color.black, '', group = settings_fibs, inline = '2')
+fiblevels.fib2_style                        := input.string('····', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '2')
+fiblevels.fib2_size                         := input.int(1, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '2')
+fiblevels.fib3                              := input.bool(true, '', group = settings_fibs, inline = '3')
+fiblevels.fib3_level                        := input.float(1, '', group = settings_fibs, inline = '3')
+fiblevels.fib3_color                        := input.color(color.black, '', group = settings_fibs, inline = '3')
+fiblevels.fib3_style                        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '3')
+fiblevels.fib3_size                         := input.int(2, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '3')
+fiblevels.fib4                              := input.bool(true, '', group = settings_fibs, inline = '4')
+fiblevels.fib4_level                        := input.float(1.5, '', group = settings_fibs, inline = '4')
+fiblevels.fib4_color                        := input.color(color.black, '', group = settings_fibs, inline = '4')
+fiblevels.fib4_style                        := input.string('····', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '4')
+fiblevels.fib4_size                         := input.int(1, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '4')
+fiblevels.fib5                              := input.bool(true, '', group = settings_fibs, inline = '5')
+fiblevels.fib5_level                        := input.float(2, '', group = settings_fibs, inline = '5')
+fiblevels.fib5_color                        := input.color(color.black, '', group = settings_fibs, inline = '5')
+fiblevels.fib5_style                        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '5')
+fiblevels.fib5_size                         := input.int(2, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '5')
+fiblevels.fib6                              := input.bool(false, '', group = settings_fibs, inline = '6')
+fiblevels.fib6_level                        := input.float(2.5, '', group = settings_fibs, inline = '6')
+fiblevels.fib6_color                        := input.color(color.black, '', group = settings_fibs, inline = '6')
+fiblevels.fib6_style                        := input.string('····', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '6')
+fiblevels.fib6_size                         := input.int(1, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '6')
+fiblevels.fib7                              := input.bool(false, '', group = settings_fibs, inline = '7')
+fiblevels.fib7_level                        := input.float(3, '', group = settings_fibs, inline = '7')
+fiblevels.fib7_color                        := input.color(color.black, '', group = settings_fibs, inline = '7')
+fiblevels.fib7_style                        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '7')
+fiblevels.fib7_size                         := input.int(2, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '7')
+fiblevels.fib8                              := input.bool(false, '', group = settings_fibs, inline = '8')
+fiblevels.fib8_level                        := input.float(3.5, '', group = settings_fibs, inline = '8')
+fiblevels.fib8_color                        := input.color(color.black, '', group = settings_fibs, inline = '8')
+fiblevels.fib8_style                        := input.string('····', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '8')
+fiblevels.fib8_size                         := input.int(1, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '8')
+fiblevels.fib9                              := input.bool(false, '', group = settings_fibs, inline = '9')
+fiblevels.fib9_level                        := input.float(4, '', group = settings_fibs, inline = '9')
+fiblevels.fib9_color                        := input.color(color.black, '', group = settings_fibs, inline = '9')
+fiblevels.fib9_style                        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group = settings_fibs, inline = '9')
+fiblevels.fib9_size                         := input.int(2, '', options = [1, 2, 3, 4], group = settings_fibs, inline = '9')
+
+fiblevels.use_background                    := input.bool(false, "Background transparency    ", group = settings_fibs, inline = 'fill')
+fiblevels.fill_percent                      := input.int(99, '', options = [99, 97, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50], group = settings_fibs, inline = 'fill')
+fiblevels.padding                           := input.int(25, 'Fib levels padding', group = settings_fibs)
+fiblevels.label_size                        := input.string(size.small, 'Label size', [size.tiny, size.small, size.normal, size.large, size.huge], group = settings_fibs)
+fiblevels.show_level                        := input.bool(true, 'Level value', group = settings_fibs)
+fiblevels.show_price                        := input.bool(true, 'Price value', group = settings_fibs)
+
+color color_transparent = #00000000
+
+var array<DailyEM> daily      = array.new<DailyEM>()
+var array<DailyEM> dailyClose = array.new<DailyEM>()
+
+// } inputs
+
+lineStyle(string style) =>
+    out = switch style
+        '----' => line.style_dashed
+        '····' => line.style_dotted
+        => line.style_solid
+    out
+
+method swap(array<fib> this, int i, int j) =>
+    temp = this.get(i)
+    this.set(i, this.get(j))
+    this.set(j, temp)
+
+method sort(array<fib> this) =>
+    size = this.size()
+    for i = 0 to size - 2
+        for j = 0 to size - 2 - i
+            if this.get(j).level > this.get(j + 1).level
+                this.swap(j, j + 1)
+
+getFibLevel(float level, float _price, color _color, string _style, int _size) =>
+    fib f           = fib.new()
+    f.level         := level
+    f.color         := _color
+    f.price         := _price
+    f.style         := _style
+    f.size          := _size
+    f.ln            := line.new(na, _price, na, _price, color=_color, style=lineStyle(f.style), xloc=xloc.bar_time, width = f.size)
+    f.lbl           := label.new(na, f.price, '', style = label.style_label_left, textcolor =  _color, color = color_transparent, size=fiblevels.label_size, xloc=xloc.bar_time)
+    f
+
+method calcFibs(DailyEM this, float price, float stdDev) =>
+    if this.fibs.size() == 0
+        if fiblevels.fib1
+            this.fibs.unshift(getFibLevel(fiblevels.fib1_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib1_level))) : price+(stdDev*fiblevels.fib1_level), fiblevels.fib1_color, fiblevels.fib1_style, fiblevels.fib1_size))
+            if mirror and fiblevels.fib1_level != 0
+                this.fibs.unshift(getFibLevel(-1*fiblevels.fib1_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib1_level)))) : price+(-1*(stdDev*fiblevels.fib1_level)), fiblevels.fib1_color, fiblevels.fib1_style, fiblevels.fib1_size))      
+        if fiblevels.fib2
+            this.fibs.unshift(getFibLevel(fiblevels.fib2_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib2_level))) : price+(stdDev*fiblevels.fib2_level), fiblevels.fib2_color, fiblevels.fib2_style, fiblevels.fib2_size))
+            if mirror and fiblevels.fib2_level != 0
+                this.fibs.unshift(getFibLevel(-1*fiblevels.fib2_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib2_level)))) : price+(-1*(stdDev*fiblevels.fib2_level)), fiblevels.fib2_color, fiblevels.fib2_style, fiblevels.fib2_size))
+        if fiblevels.fib3
+            this.fibs.unshift(getFibLevel(fiblevels.fib3_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib3_level))) : price+(stdDev*fiblevels.fib3_level), fiblevels.fib3_color, fiblevels.fib3_style, fiblevels.fib3_size))
+            if mirror and fiblevels.fib3_level != 0
+                this.fibs.unshift(getFibLevel(-1*fiblevels.fib3_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib3_level)))) : price+(-1*(stdDev*fiblevels.fib3_level)), fiblevels.fib3_color, fiblevels.fib3_style, fiblevels.fib3_size))
+        if fiblevels.fib4
+            this.fibs.unshift(getFibLevel(fiblevels.fib4_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib4_level))) : price+(stdDev*fiblevels.fib4_level), fiblevels.fib4_color, fiblevels.fib4_style, fiblevels.fib4_size))
+            if mirror and fiblevels.fib4_level != 0
+                this.fibs.unshift(getFibLevel(-1*fiblevels.fib4_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib4_level)))) : price+(-1*(stdDev*fiblevels.fib4_level)), fiblevels.fib4_color, fiblevels.fib4_style, fiblevels.fib4_size))
+        if fiblevels.fib5
+            this.fibs.unshift(getFibLevel(fiblevels.fib5_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib5_level))) : price+(stdDev*fiblevels.fib5_level), fiblevels.fib5_color, fiblevels.fib5_style, fiblevels.fib5_size))
+            if mirror and fiblevels.fib5_level != 0
+                this.fibs.unshift(getFibLevel(-1*fiblevels.fib5_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib5_level)))) : price+(-1*(stdDev*fiblevels.fib5_level)), fiblevels.fib5_color, fiblevels.fib5_style, fiblevels.fib5_size))
+        if fiblevels.fib6
+            this.fibs.unshift(getFibLevel(fiblevels.fib6_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib6_level))) : price+(stdDev*fiblevels.fib6_level), fiblevels.fib6_color, fiblevels.fib6_style, fiblevels.fib6_size))
+            if mirror and fiblevels.fib6_level != 0
+                this.fibs.unshift(getFibLevel(-1*fiblevels.fib6_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib6_level)))) : price+(-1*(stdDev*fiblevels.fib6_level)), fiblevels.fib6_color, fiblevels.fib6_style, fiblevels.fib6_size))
+        if fiblevels.fib7
+            this.fibs.unshift(getFibLevel(fiblevels.fib7_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib7_level))) : price+(stdDev*fiblevels.fib7_level), fiblevels.fib7_color, fiblevels.fib7_style, fiblevels.fib7_size))
+            if mirror and fiblevels.fib7_level != 0
+                this.fibs.unshift(getFibLevel(-1*fiblevels.fib7_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib7_level)))) : price+(-1*(stdDev*fiblevels.fib7_level)), fiblevels.fib7_color, fiblevels.fib7_style, fiblevels.fib7_size))
+        if fiblevels.fib8
+            this.fibs.unshift(getFibLevel(fiblevels.fib8_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib8_level))) : price+(stdDev*fiblevels.fib8_level), fiblevels.fib8_color, fiblevels.fib8_style, fiblevels.fib8_size))
+            if mirror and fiblevels.fib8_level != 0
+                this.fibs.unshift(getFibLevel(-1*fiblevels.fib8_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib8_level)))) : price+(-1*(stdDev*fiblevels.fib8_level)), fiblevels.fib8_color, fiblevels.fib8_style, fiblevels.fib8_size))
+        if fiblevels.fib9
+            this.fibs.unshift(getFibLevel(fiblevels.fib9_level, fiblevels.useLog ? math.exp(math.log(price+(stdDev*fiblevels.fib9_level))) : price+(stdDev*fiblevels.fib9_level), fiblevels.fib9_color, fiblevels.fib9_style, fiblevels.fib9_size))
+            if mirror and fiblevels.fib9_level != 0
+                this.fibs.unshift(getFibLevel(-1*fiblevels.fib9_level, fiblevels.useLog ? math.exp(math.log(price+(-1*(stdDev*fiblevels.fib9_level)))) : price+(-1*(stdDev*fiblevels.fib9_level)), fiblevels.fib9_color, fiblevels.fib9_style, fiblevels.fib9_size))
+    this.fibs.sort()
+    this
+
+method fibAlert(DailyEM this) =>
+    for f in this.fibs
+        if f.level < 0 and ta.crossunder(low, f.price)
+            alert('Price crossed below StDev ' + str.tostring(f.level) + ' [' + syminfo.ticker + ']')
+            break
+        if f.level > 1 and ta.crossover(high, f.level)
+            alert('Price crossed above below StDev ' + str.tostring(f.level) + ' [' + syminfo.ticker + ']')
+            break
+
+method drawFibs(DailyEM this, int idx) =>
+    if this.fibs.size() > 0
+        for i=0 to this.fibs.size()-1
+            fib f = this.fibs.get(i)
+            string txt          = ''
+            string space_s      = ' '
+            string space_e      = ''
+            int    padded       = this.time_last+(fiblevels.padding*(time-time[1]))
+        
+            if fiblevels.show_level 
+                txt :=  this.txt+ space_s + str.tostring(f.level) 
+                space_s := ' ('
+                space_e := ')'
+
+            if fiblevels.show_price
+                txt := txt + space_s + str.format('{0,number,#,###.00}', f.price) + space_e
+
+            f.ln.set_color(f.color)
+            f.lbl.set_xy(padded, f.price)
+            if idx == 0
+                f.ln.set_xy1(this.time, f.price)
+                f.ln.set_xy2(padded, f.price)
+                f.lbl.set_text(txt)
+                if fiblevels.use_background 
+                    fib pf = this.fibs.get(i-1)
+                    f.fl := linefill.new(pf.ln, f.ln, color.new(f.color, fiblevels.fill_percent))
+            else
+                f.ln.set_x1(this.time)
+                f.ln.set_x2(this.time_last+(time-time[1]))
+                f.lbl.set_x(this.time_last)
+    this
+
+method delete(array<fib> this) =>
+    for f in this
+        f.ln.delete()
+        f.lbl.delete()
+        f.fl.delete()
+
+method add(array<DailyEM> this, float price, int _time, float stdDev) =>
+    DailyEM d     = DailyEM.new()
+    d.price     := price
+    d.EM     := stdDev
+    d.time      := _time
+    d.time_last := _time
+    d.fibs      := array.new<fib>()
+    d.txt       := useClose?"EM Close": "EM Open"
+    d.calcFibs(price, stdDev)
+    this.unshift(d)
+
+    if this.size() > 1
+        DailyEM temp = this.pop()
+        temp.fibs.delete()
+
+method update(array<DailyEM> this, int _time) =>
+    if this.size() > 0
+        DailyEM f = this.first()
+        f.time_last := _time
+
+/// END Fadi Fibs Code
+
+var tf = timeframe.period
+
+type OptionsData
+    string symbol
+    string optionsSymbol
+    float  strike
+    bool   weekly
+
+// { funcs
+roundToNearest(float value, float nearest) => math.round(value / nearest) * nearest
+
+f_custom_round(n) =>
+    nearest_10 = math.round(n / 10) * 10
+    nearest_25 = math.round(n / 25) * 25
+    dist_to_10 = math.abs(n - nearest_10)
+    dist_to_25 = math.abs(n - nearest_25)
+    result = nearest_25 % 100 == 0 ? nearest_10 : dist_to_25 < dist_to_10 ? nearest_25 : nearest_10
+    result
+
+getContractCost(_sym, _isClose) => 
+    // Fetch both open and close simultaneously using a tuple on the current timeframe.
+    // This perfectly dodges the mutable variable hoisting bug and "1D" forming bar issues.
+    [o, c] = request.security(_sym,  timeframe.period, [open, close], ignore_invalid_symbol=true,lookahead =  barmerge.lookahead_off)
+    
+    // Return the correct value based on the flag
+    _isClose ? c : o
+
+getContractSym(_underlyingSym, _strike, _side, OptionsData current_symbol_options) =>
+    int ms_per_day = 86400000
+    
+    // 1. Determine target trading session (Today for Open, Next Day for Close)
+    int days_to_next_session = 1
+    
+    // Skip weekends, and handle your manual holiday inputs
+    if dayofweek(time) == dayofweek.friday
+        days_to_next_session := iMonHoliday ? 4 : 3 
+    else if dayofweek(time) == dayofweek.thursday and iFriHoliday
+        days_to_next_session := iMonHoliday ? 5 : 4 
+        
+    int target_trade_time = useClose ? time + (days_to_next_session * ms_per_day) : time
+    
+    // 2. Identify 0DTE vs Weekly based on ticker
+    string opt_sym = current_symbol_options.optionsSymbol
+    bool is_0dte = str.contains(opt_sym, "SPX") or str.contains(opt_sym, "NDX") or str.contains(opt_sym, "QQQ") or str.contains(opt_sym, "SPY") or str.contains(opt_sym, "IWM") or str.contains(opt_sym, "DIA")
+    
+    int expiration_time = target_trade_time
+    
+    // 3. Roll Weekly options forward to the upcoming Friday
+    if not is_0dte
+        int current_dow = dayofweek(target_trade_time)
+        int days_to_friday = dayofweek.friday - current_dow
+        
+        if days_to_friday < 0 
+            days_to_friday := days_to_friday + 7 
+            
+        // Shift expiration to Thursday if Friday is a holiday
+        if iFriHoliday and days_to_friday == 0
+            days_to_friday := -1
+            
+        expiration_time := target_trade_time + (days_to_friday * ms_per_day)
+
+    // 4. Extract parts
+    int exp_year  = year(expiration_time) % 100 
+    int exp_month = month(expiration_time)      
+    int exp_day   = dayofmonth(expiration_time) 
+    
+    // 5. Format YYMMDD string with built-in leading zeros
+    string date_str = str.format("{0,number,00}{1,number,00}{2,number,00}", exp_year, exp_month, exp_day)
+    
+    // 6. Format Strike
+    float strike = str.contains(syminfo.ticker, "NDX") ? f_custom_round(_strike) : roundToNearest(_strike, current_symbol_options.strike)
+    
+    // 7. Build Final Ticker String
+    opt_sym + date_str + _side + str.tostring(strike, '#') + ".0"
+
+getAtmContracts(_underlyingSym, _strike,OptionsData current_symbol_options) =>
+    [getContractSym(_underlyingSym, _strike, C_CONTRACT_SIDE_CALL,current_symbol_options), getContractSym(_underlyingSym, _strike, C_CONTRACT_SIDE_PUT,current_symbol_options)]
+// } funcs
+
+
+// { logic
+bool is_recent = time >= (timenow - (86400000 * 4)) // Keeping 4 days to allow for long weekends
+
+// Define the underlying equity ticker based on your futures contract
+var string equity_ref = str.contains(syminfo.ticker, "NQ")  ? "QQQ" : 
+                         str.contains(syminfo.ticker, "ES")  ? "SPY" : 
+                         str.contains(syminfo.ticker, "YM")  ? "DIA" : 
+                         str.contains(syminfo.ticker, "RTY") ? "IWM" : 
+                         str.contains(syminfo.ticker, "SPX") ? "AMEX:SPY" : syminfo.ticker
+
+// Request the exact RTH session states from the underlying equity index
+[eq_open, eq_close] = request.security(equity_ref, timeframe.period, [session.isfirstbar_regular, session.islastbar_regular], gaps = barmerge.gaps_on)
+
+var bool can_calculate = false
+var int last_open_time = 0
+var int last_close_time = 0
+
+// Trigger Open logic matching the exact equity open
+if is_recent and eq_open and time != last_open_time
+    last_open_time := time
+    can_calculate  := true
+    useClose       := false
+    label.new(bar_index, high, "Open", color=color.green, textcolor=color.white, style=label.style_label_down)
+
+// Trigger Close logic matching the exact equity close
+if is_recent and eq_close and time != last_close_time
+    last_close_time := time
+    can_calculate   := true
+    useClose        := true
+    label.new(bar_index, high, "Close", color=color.green, textcolor=color.white, style=label.style_label_down)
+
+var useETFConv = false
+var ratio = 0.0 
+var underlyingSym = syminfo.ticker
+var anchorOpen = useClose ? close : open
+var centerStrike = 0.0
+var todayExpAtmCallSym = ""
+var todayExpAtmPutSym = ""
+var todayExpAtmCallCost = 0.0
+var todayExpAtmPutCost = 0.0
+var todayEM = 0.0
+var OptionsData current_symbol_options = OptionsData.new("", syminfo.ticker, 1, false)
+
+if barstate.isfirst
+    current_symbol_options.symbol := syminfo.ticker
+    current_symbol_options.optionsSymbol := syminfo.ticker
+    
+    if (close > 200 and syminfo.type == "stock")  
+        current_symbol_options.strike := 5
+
+    current_symbol_options.optionsSymbol := syminfo.ticker
+    
+    if str.contains(syminfo.ticker,"NQ")       
+        underlyingSym := "QQQ"
+        current_symbol_options.optionsSymbol := "QQQ"
+        current_symbol_options.strike := 1
+        useETFConv := true
+        
+    if str.contains(syminfo.ticker,"ES") 
+        underlyingSym := "SPY"
+        current_symbol_options.optionsSymbol := "SPY"
+        current_symbol_options.strike := 1
+        useETFConv := true
+        
+    if str.contains(syminfo.ticker,"NDX")   
+        current_symbol_options.strike := 25
+
+    if str.contains(syminfo.ticker,"TSLA") or str.contains(syminfo.ticker,"VIX") 
+        current_symbol_options.strike := 2.5
+        
+    if str.contains(syminfo.ticker,"AAPL") or str.contains(syminfo.ticker,"NFLX") or str.contains(syminfo.ticker,"AMZN") or str.contains(syminfo.ticker,"COIN") or str.contains(syminfo.ticker,"BA") or str.contains(syminfo.ticker,"QCOM") or str.contains(syminfo.ticker,"GOOG")
+        current_symbol_options.strike := 5
+        
+    if str.contains(syminfo.ticker,"NIO") or str.contains(syminfo.ticker,"BILI") 
+        current_symbol_options.strike := 0.5
+        
+    if str.contains(syminfo.ticker,"NDX")       
+        underlyingSym := "NDX"
+        current_symbol_options.optionsSymbol := "NDXP"
+
+    if str.contains(syminfo.ticker,"SPX")
+        underlyingSym := "SPX"
+        current_symbol_options.optionsSymbol := "SPXW"
+        current_symbol_options.strike := 5
+        //useETFConv := true
+        
+    if str.contains(syminfo.ticker, 'YM')  
+        current_symbol_options.optionsSymbol := 'DIA'
+        current_symbol_options.strike := 1
+        current_symbol_options.symbol := 'DIA'
+        useETFConv := true
+        underlyingSym := 'DIA'
+        
+    if str.contains(syminfo.ticker, 'RTY') or str.contains(syminfo.ticker, 'M2K')  
+        current_symbol_options.optionsSymbol := 'IWM'
+        current_symbol_options.strike := 1
+        current_symbol_options.symbol := 'IWM'
+        useETFConv := true
+        underlyingSym := 'IWM'
+
+if can_calculate
+    can_calculate := false
+    todayExpAtmCallCost := na
+    todayExpAtmPutCost := na
+    ratio := 0.0 
+
+    anchorOpen := getContractCost(underlyingSym, useClose) 
+
+    if useETFConv
+        float future_contract_price_fetched = 0.0
+        // Fetch futures price (continuous front-month contract)
+        future_contract_price_fetched := getContractCost(syminfo.ticker, true)
+        // Calculate dynamic underlying ratio
+        ratio := future_contract_price_fetched / anchorOpen
+
+    // 2. Mathematically snap to the exact nearest ATM strike
+    centerStrike := math.round(anchorOpen / current_symbol_options.strike) * current_symbol_options.strike
+    log.info("New Session Price: " + str.tostring(anchorOpen) + " | Snapped Strike: " + str.tostring(centerStrike))
+
+    // 3. Fetch the contracts exactly ONCE.
+    [atmCall, atmPut] = getAtmContracts(current_symbol_options.optionsSymbol, centerStrike, current_symbol_options)
+    
+    todayExpAtmCallSym := atmCall
+    todayExpAtmPutSym  := atmPut
+    
+    log.info("Requesting Contracts: " + todayExpAtmCallSym + " & " + todayExpAtmPutSym)
+    
+    // 4. Get the option pricing
+    todayExpAtmCallCost := getContractCost(todayExpAtmCallSym, useClose)
+    todayExpAtmPutCost  := getContractCost(todayExpAtmPutSym, useClose)
+
+    log.info("Option Pricing: C=" + str.tostring(todayExpAtmCallCost) + " | P=" + str.tostring(todayExpAtmPutCost))
+
+    if syminfo.type == "futures"
+        anchorOpen := math.round_to_mintick(anchorOpen + (getContractCost(syminfo.ticker, useClose) - anchorOpen))
+
+    if not na(todayExpAtmCallCost) and not na(todayExpAtmPutCost)
+        todayEM := useETFConv ? math.round_to_mintick((todayExpAtmCallCost + todayExpAtmPutCost) * ratio) : math.round_to_mintick(todayExpAtmCallCost + todayExpAtmPutCost)
+
+        if useClose 
+            dailyClose.add(anchorOpen, time, math.round_to_mintick((todayEM))) 
+        else
+            daily.add(anchorOpen, time, math.round_to_mintick((todayEM)))
+
+if barstate.islast and todayEM > 0.0
+    if daily.size() > 0 and iDisplayOpen
+        daily.update(time)
+        daily.first().drawFibs(0)
+        daily.first().fibAlert()
+    if dailyClose.size()  > 0 and iDisplayClose
+        dailyClose.update(time)
+        dailyClose.first().drawFibs(0)
+        dailyClose.first().fibAlert()
+// } logic
+
+
+// { Table 
+var table displayTable = table.new(
+     position.bottom_right, columns = 4, rows = 3, border_color = chart.fg_color, border_width = 2
+ )
+
+tableRow(int row, string title, string text1, string text2, string text3,color titleColor = #9b27b066, color infoColor = na) =>
+    displayTable.cell(0, row, title, bgcolor = titleColor, text_color = chart.fg_color)
+    displayTable.cell(1, row, text1, bgcolor = infoColor,  text_color = chart.fg_color)
+    displayTable.cell(2, row, text2, bgcolor = infoColor,  text_color = chart.fg_color)
+    displayTable.cell(3, row, text3, bgcolor = infoColor,  text_color = chart.fg_color)
+
+if barstate.islast and iTable
+    tableRow(0, "STRIKE", "EM","EM High", "EM Low", na, #9b27b066)
+    if dailyClose.size() > 0
+        tableRow(1, str.tostring(centerStrike),str.tostring(dailyClose.first().EM),str.tostring((dailyClose.first().price+dailyClose.first().EM)),str.tostring((dailyClose.first().price-dailyClose.first().EM)), na, #9b27b066)
+    if daily.size() > 0
+        tableRow(1, str.tostring(centerStrike),str.tostring(daily.first().EM),str.tostring((daily.first().price+daily.first().EM)),str.tostring((daily.first().price-daily.first().EM)), na, #9b27b066)
+// } Table

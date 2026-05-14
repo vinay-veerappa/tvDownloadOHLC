@@ -458,7 +458,7 @@ WEEKEND_T1_INTERVAL: int = 3600 * 4 # 4 hours
 WEEKEND_T2_INTERVAL: int = 3600 * 4 # 4 hours
 
 # (Session Rollover: 16:00 ET)
-NY_SESSION_ROLLOVER_TIME: time = time(16, 0)
+NY_SESSION_ROLLOVER_TIME: time = time(16, 15)
 
 # --- Loop Control ---
 MANUAL_TRIGGER_FILENAME: str = "manual_trigger.json"
