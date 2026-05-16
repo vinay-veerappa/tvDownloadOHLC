@@ -1,0 +1,200 @@
+{
+  "windows": {
+    "ny_am": "09:30-12:00",
+    "ny_pm": "12:05-16:00",
+    "ny_full": "08:00-16:00",
+    "rth_full_day": "09:30-16:00"
+  },
+  "table": [
+    {
+      "session": "rth_full_day",
+      "n_primary": 4729,
+      "inverse_rate": 0.5153309367731022,
+      "inverse_rate_ci95_low": 0.5010800987003133,
+      "inverse_rate_ci95_high": 0.5295568869110371,
+      "p_value": 0.02985515959054184,
+      "cramers_v": 0.031584681235495515,
+      "p_down_given_bullish": 0.5100775193798449,
+      "p_up_given_bearish": 0.5216379711493718
+    },
+    {
+      "session": "ny_am_0930_1200",
+      "n_primary": 4723,
+      "inverse_rate": 0.513444844378573,
+      "inverse_rate_ci95_low": 0.4991849428707352,
+      "inverse_rate_ci95_high": 0.5276828920911979,
+      "p_value": 0.10634573669400106,
+      "cramers_v": 0.023497412636007714,
+      "p_down_given_bullish": 0.5055292259083728,
+      "p_up_given_bearish": 0.5180282975810132
+    },
+    {
+      "session": "ny_pm_1205_1600",
+      "n_primary": 4722,
+      "inverse_rate": 0.5137653536637018,
+      "inverse_rate_ci95_low": 0.4995039303636035,
+      "inverse_rate_ci95_high": 0.5280043974652429,
+      "p_value": 0.40625635918880204,
+      "cramers_v": 0.012132164746345493,
+      "p_down_given_bullish": 0.501151189562548,
+      "p_up_given_bearish": 0.5110576923076923
+    },
+    {
+      "session": "ny_full_0800_1600",
+      "n_primary": 4725,
+      "inverse_rate": 0.5138624338624339,
+      "inverse_rate_ci95_low": 0.49960553613714725,
+      "inverse_rate_ci95_high": 0.5280968085554726,
+      "p_value": 0.9787234829204976,
+      "cramers_v": 0.0003879815271902931,
+      "p_down_given_bullish": 0.49505733491498616,
+      "p_up_given_bearish": 0.5045537340619308
+    }
+  ],
+  "detail": {
+    "rth_full_day": {
+      "summary": {
+        "n_primary": 4729,
+        "inverse_successes": 2437,
+        "inverse_rate": 0.5153309367731022,
+        "inverse_rate_ci95_low": 0.5010800987003133,
+        "inverse_rate_ci95_high": 0.5295568869110371,
+        "p_down_given_bullish": 0.5100775193798449,
+        "p_up_given_bearish": 0.5216379711493718,
+        "chi2": 4.717612987688641,
+        "p_value": 0.02985515959054184,
+        "cramers_v": 0.031584681235495515
+      },
+      "confusion": [
+        {
+          "day_bias": "bullish",
+          "anchor": "down",
+          "count": 1316
+        },
+        {
+          "day_bias": "bullish",
+          "anchor": "up",
+          "count": 1264
+        },
+        {
+          "day_bias": "bearish",
+          "anchor": "down",
+          "count": 1028
+        },
+        {
+          "day_bias": "bearish",
+          "anchor": "up",
+          "count": 1121
+        }
+      ]
+    },
+    "ny_am_0930_1200": {
+      "summary": {
+        "n_primary": 4723,
+        "inverse_successes": 2425,
+        "inverse_rate": 0.513444844378573,
+        "inverse_rate_ci95_low": 0.4991849428707352,
+        "inverse_rate_ci95_high": 0.5276828920911979,
+        "p_down_given_bullish": 0.5055292259083728,
+        "p_up_given_bearish": 0.5180282975810132,
+        "chi2": 2.607702435971527,
+        "p_value": 0.10634573669400106,
+        "cramers_v": 0.023497412636007714
+      },
+      "confusion": [
+        {
+          "day_bias": "bullish",
+          "anchor": "down",
+          "count": 1280
+        },
+        {
+          "day_bias": "bullish",
+          "anchor": "up",
+          "count": 1252
+        },
+        {
+          "day_bias": "bearish",
+          "anchor": "down",
+          "count": 1056
+        },
+        {
+          "day_bias": "bearish",
+          "anchor": "up",
+          "count": 1135
+        }
+      ]
+    },
+    "ny_pm_1205_1600": {
+      "summary": {
+        "n_primary": 4722,
+        "inverse_successes": 2426,
+        "inverse_rate": 0.5137653536637018,
+        "inverse_rate_ci95_low": 0.4995039303636035,
+        "inverse_rate_ci95_high": 0.5280043974652429,
+        "p_down_given_bullish": 0.501151189562548,
+        "p_up_given_bearish": 0.5110576923076923,
+        "chi2": 0.689729628832547,
+        "p_value": 0.40625635918880204,
+        "cramers_v": 0.012132164746345493
+      },
+      "confusion": [
+        {
+          "day_bias": "bullish",
+          "anchor": "down",
+          "count": 1306
+        },
+        {
+          "day_bias": "bullish",
+          "anchor": "up",
+          "count": 1300
+        },
+        {
+          "day_bias": "bearish",
+          "anchor": "down",
+          "count": 1017
+        },
+        {
+          "day_bias": "bearish",
+          "anchor": "up",
+          "count": 1063
+        }
+      ]
+    },
+    "ny_full_0800_1600": {
+      "summary": {
+        "n_primary": 4725,
+        "inverse_successes": 2428,
+        "inverse_rate": 0.5138624338624339,
+        "inverse_rate_ci95_low": 0.49960553613714725,
+        "inverse_rate_ci95_high": 0.5280968085554726,
+        "p_down_given_bullish": 0.49505733491498616,
+        "p_up_given_bearish": 0.5045537340619308,
+        "chi2": 0.00071125266920831,
+        "p_value": 0.9787234829204976,
+        "cramers_v": 0.0003879815271902931
+      },
+      "confusion": [
+        {
+          "day_bias": "bullish",
+          "anchor": "down",
+          "count": 1252
+        },
+        {
+          "day_bias": "bullish",
+          "anchor": "up",
+          "count": 1277
+        },
+        {
+          "day_bias": "bearish",
+          "anchor": "down",
+          "count": 1088
+        },
+        {
+          "day_bias": "bearish",
+          "anchor": "up",
+          "count": 1108
+        }
+      ]
+    }
+  }
+}

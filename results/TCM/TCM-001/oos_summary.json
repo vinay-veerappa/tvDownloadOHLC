@@ -1,0 +1,10 @@
+{
+  "split_index": 3310,
+  "train_days": 3310,
+  "test_days": 1419,
+  "test_inverse_rate": 0.5433403805496829,
+  "train_start": "2006-01-09",
+  "train_end": "2020-06-26",
+  "test_start": "2020-06-29",
+  "test_end": "2026-01-23"
+}

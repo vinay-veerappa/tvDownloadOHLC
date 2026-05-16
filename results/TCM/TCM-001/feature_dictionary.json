@@ -1,0 +1,16 @@
+{
+  "trade_date": "Trading date in ET",
+  "anchor_open": "08:15 ET 5m candle open",
+  "anchor_close": "08:15 ET 5m candle close",
+  "anchor_sign": "Anchor candle sign: -1 down, 0 doji, 1 up",
+  "rth_open": "First RTH 5m open at 09:30 ET",
+  "rth_close": "Last RTH 5m close in 09:30-16:00 ET",
+  "rth_high": "Max RTH high",
+  "rth_low": "Min RTH low",
+  "bias_sign": "Day bias sign from RTH close-open: -1,0,1",
+  "rth_range_pct": "(rth_high-rth_low)/rth_open * 100",
+  "inverse_match": "True when anchor is inverse to bullish/bearish bias",
+  "bias_sign_ny_am": "NY AM bias sign from 08:00-11:55 close-open",
+  "bias_sign_ny_pm": "NY PM bias sign from 12:00-16:00 close-open",
+  "bias_sign_ny_full": "NY Full bias sign from 08:00-16:00 close-open"
+}
