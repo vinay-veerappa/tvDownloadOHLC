@@ -125,3 +125,55 @@ class LegQuoteService:
             leg_details=leg_details,
             underlying_px=spot
         )
+
+    async def get_trade_mtm(self, trade: Any) -> Any:
+        """
+        Legacy/runner helper that maps calculate_mtm to the expected structure in engine.py:
+        - underlying_px
+        - net_value_per_contract
+        - unrealized_pnl
+        - leg_prices_json
+        - net_value
+        - leg_details
+        """
+        import json
+        
+        mtm = await self.calculate_mtm(trade)
+        
+        # Calculate quantity (defaults to 1.0 to avoid division by zero)
+        qty = float(trade.quantity) if trade.quantity else 1.0
+        
+        # Calculate net_value_per_contract (cost per contract)
+        # Note: net_value is already multiplied by quantity * 100 for options.
+        # We divide by (qty * 100.0) to get the per-contract premium.
+        # If it's a stock holding, we divide by qty.
+        is_stock = any(leg.optionType.upper() == "STOCK" for leg in trade.legs)
+        multiplier = qty if is_stock else (qty * 100.0)
+        net_value_per_contract = mtm.net_value / multiplier if multiplier > 0 else mtm.net_value
+        
+        # Build leg_prices_json
+        # Format: JSON string mapping symbol -> mark
+        leg_prices = {}
+        for sym, details in mtm.leg_details.items():
+            leg_prices[sym] = details["mark"]
+        leg_prices_json = json.dumps(leg_prices)
+        
+        # Create a dynamic object (or a class instance) that matches engine.py expectation
+        class MtmResult:
+            def __init__(self, underlying_px, net_value_per_contract, unrealized_pnl, leg_prices_json, net_value, leg_details):
+                self.underlying_px = underlying_px
+                self.net_value_per_contract = net_value_per_contract
+                self.unrealized_pnl = unrealized_pnl
+                self.leg_prices_json = leg_prices_json
+                self.net_value = net_value
+                self.leg_details = leg_details
+                
+        return MtmResult(
+            underlying_px=mtm.underlying_px,
+            net_value_per_contract=net_value_per_contract,
+            unrealized_pnl=mtm.unrealized_pnl,
+            leg_prices_json=leg_prices_json,
+            net_value=mtm.net_value,
+            leg_details=mtm.leg_details
+        )
+

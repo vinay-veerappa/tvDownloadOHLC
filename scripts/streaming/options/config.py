@@ -298,6 +298,7 @@ SCHWAB_INDEX_PREFIX: dict[str, str] = {
     "NDXP": "$NDXP",
     "DJX":  "$DJX",
     "RUT":  "$RUT",
+    "VIX":  "$VIX.X",
 }
 
 # Tickers that typically have very dense chains and may cause buffer overflows 

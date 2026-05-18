@@ -3,6 +3,7 @@ import logging
 import os
 import signal
 import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 from datetime import datetime
 import pytz
 from dotenv import load_dotenv

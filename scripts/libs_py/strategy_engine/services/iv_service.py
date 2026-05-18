@@ -151,3 +151,52 @@ class IvService:
                 return iv
 
         return None
+
+    async def get_volatility_metrics(self, ticker: str) -> Dict[str, Any]:
+        """
+        Retrieves current ATM IV, HV, and calculates IV Rank for a ticker.
+        Returns:
+            Dict[str, Any]: {"iv": float, "hv": float, "iv_rank": float}
+        """
+        ticker = ticker.upper()
+        
+        # 1. Fetch current IV (atm)
+        iv = await self.get_current_iv(ticker)
+        if iv is None:
+            iv = 0.0
+            
+        # 2. Fetch historical volatility
+        hv = await self.get_historical_volatility(ticker)
+        if hv is None:
+            hv = 0.0
+            
+        # 3. Fetch 52w IV high and low from Dolt volatility_history to calculate IV Rank
+        query_ticker = PROXY_MAPPINGS.get(ticker, ticker)
+        
+        iv_rank = 0.0
+        try:
+            sql = f"SELECT iv_year_high, iv_year_low FROM volatility_history WHERE act_symbol = '{query_ticker}' ORDER BY date DESC LIMIT 1"
+            cmd = ["dolt", "sql", "-q", sql, "-r", "csv"]
+            
+            cwd = os.path.abspath(self.dolt_dir)
+            if os.path.exists(cwd):
+                res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=True)
+                reader = csv.DictReader(io.StringIO(res.stdout.strip()))
+                for row in reader:
+                    iv_high = float(row["iv_year_high"]) if row.get("iv_year_high") and row["iv_year_high"] != "NULL" else None
+                    iv_low = float(row["iv_year_low"]) if row.get("iv_year_low") and row["iv_year_low"] != "NULL" else None
+                    
+                    if iv_high is not None and iv_low is not None and iv_high != iv_low:
+                        # calculate rank
+                        iv_rank = 100.0 * (iv - iv_low) / (iv_high - iv_low)
+                        # Clamp rank between 0 and 100
+                        iv_rank = max(0.0, min(100.0, iv_rank))
+                    break
+        except Exception as e:
+            logger.error(f"Error querying Dolt IV high/low for {ticker} (using proxy {query_ticker}): {e}")
+            
+        return {
+            "iv": iv,
+            "hv": hv,
+            "iv_rank": iv_rank
+        }

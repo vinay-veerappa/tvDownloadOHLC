@@ -189,7 +189,7 @@ class PaperExecutor:
                         
                         # Get stock cost basis before removal to compute equity P&L
                         holding = await self.holdings.get_holding(trade.ticker)
-                        stock_cost_basis = holding.costBasis if holding else strike
+                        stock_cost_basis = holding.cost_basis if holding else strike
                         
                         # Remove shares from Holdings
                         await self.holdings.remove_shares(trade.ticker, shares_to_sell, now)

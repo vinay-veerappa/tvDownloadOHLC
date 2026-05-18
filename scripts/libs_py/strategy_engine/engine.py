@@ -67,16 +67,16 @@ class Engine:
         # 2. Instantiate and wire Services
         # In a real environment, we'd pass active calculators/fetchers to the services.
         # Here we initialize them with the prisma client and standard parameters.
-        broker = BrokerService(options_fetcher=None) # internal mock/direct Schwab API
-        regime = RegimeService(prisma_client=self.db)
-        em = ExpectedMoveService(prisma_client=self.db)
-        iv = IvService(prisma_client=self.db, dolt_adapter=None) # direct EOD fallbacks
+        broker = BrokerService() # internal mock/direct Schwab API
+        regime = RegimeService(db=self.db)
+        em = ExpectedMoveService(db=self.db)
+        iv = IvService(db=self.db) # direct EOD fallbacks
         ict = IctService()
         calendar = CalendarService(prisma_client=self.db)
         earnings = EarningsService(prisma_client=self.db)
         holdings = HoldingService(prisma_client=self.db)
         sizing = SizingService(prisma_client=self.db)
-        leg_quote = LegQuoteService(broker=broker)
+        leg_quote = LegQuoteService(broker_service=broker)
 
         self.services = {
             "prisma": self.db,
@@ -115,17 +115,21 @@ class Engine:
                         logger.error(f"Engine: Unknown strategy code '{strategy_code}'")
                         continue
 
+                    # Look up Account to get account_id
+                    account = await self.db.account.find_first(where={"name": comb_name})
+                    account_id = account.id if account else "unknown"
+
                     params = StrategyParams(
                         research_strategy_id=research_strat.id,
-                        strategy_category=strategy_code,
+                        name=comb_name,
+                        category=strategy_code,
                         underlying=ticker,
-                        variant_name=variant_name,
-                        parameters=variant_params or {}
+                        account_id=account_id,
+                        params=variant_params or {},
+                        enabled=True
                     )
 
                     strategy_instance = strat_class(
-                        name=comb_name,
-                        underlying=ticker,
                         params=params,
                         services=self.services
                     )

@@ -231,7 +231,7 @@ class WheelStrategy(Strategy):
                     "target_delta": short_delta,
                     "actual_delta": contract.delta,
                     "mid_premium": mid_premium,
-                    "stock_cost_basis": holding.costBasis
+                    "stock_cost_basis": holding.cost_basis
                 },
                 notes=f"Selling Covered Call {ticker} at {strike} (DTE {target_dte_actual})"
             )

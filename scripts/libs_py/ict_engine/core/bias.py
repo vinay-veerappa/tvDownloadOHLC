@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from .validation import validate_ohlc
-from .pa import detect_structure_breaks
+from .structure import detect_structure_breaks
 
 @validate_ohlc(input_type="ohlc")
 def detect_bias_mmxm_simple(ohlc_1h: pd.DataFrame) -> pd.DataFrame:

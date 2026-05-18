@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from typing import Optional
 from .validation import validate_ohlc
 
 @validate_ohlc(input_type="ohlc")
@@ -54,4 +55,22 @@ def quarterly_cycles(ohlc: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "quarter": 0, # 1, 2, 3, 4
         "cycle_open": np.nan
+    }, index=ohlc.index)
+
+@validate_ohlc(input_type="ohlc")
+def detect_po3(ohlc: pd.DataFrame, session_mask: Optional[pd.Series] = None) -> pd.DataFrame:
+    """
+    Power of 3 (PO3) model: Accumulation, Manipulation, Distribution.
+    Returns:
+        pd.DataFrame with columns:
+            phase: str ("ACCUMULATION", "MANIPULATION", "DISTRIBUTION", "NONE")
+            opening_price: float
+    """
+    n = len(ohlc)
+    phases = np.full(n, "NONE", dtype=object)
+    opening_prices = np.full(n, np.nan, dtype=float)
+    
+    return pd.DataFrame({
+        "phase": phases,
+        "opening_price": opening_prices
     }, index=ohlc.index)

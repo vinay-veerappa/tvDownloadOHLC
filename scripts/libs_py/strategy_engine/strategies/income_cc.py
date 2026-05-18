@@ -48,7 +48,7 @@ class IncomeCcStrategy(Strategy):
 
         # ─── Special staging check for RIVN ───
         if ticker == "RIVN":
-            acquired_at = holding.acquiredAt
+            acquired_at = holding.acquired_at
             if isinstance(acquired_at, str):
                 acquired_at = datetime.fromisoformat(acquired_at.replace("Z", "+00:00"))
             
@@ -56,7 +56,7 @@ class IncomeCcStrategy(Strategy):
             days_held = (now.replace(tzinfo=pytz.utc) - acquired_at.replace(tzinfo=pytz.utc)).days
             if days_held < 28:
                 await self._log_near_miss(
-                    ticker, holding.costBasis, "rivn_staging_active", 
+                    ticker, holding.cost_basis, "rivn_staging_active", 
                     float(days_held), 28.0, 
                     {"days_held": days_held, "acquiredAt": str(acquired_at)}
                 )
@@ -129,11 +129,11 @@ class IncomeCcStrategy(Strategy):
         strike = contract.strike
 
         # Enforce strike >= stock cost basis to prevent selling at a capital loss
-        if strike < holding.costBasis:
-            logger.info(f"{self.name}: Best delta strike {strike} is below cost basis {holding.costBasis}. Adjusting to nearest strike >= cost basis.")
+        if strike < holding.cost_basis:
+            logger.info(f"{self.name}: Best delta strike {strike} is below cost basis {holding.cost_basis}. Adjusting to nearest strike >= cost basis.")
             # Search for the next available strike >= cost basis
             contracts = chain.calls
-            valid_contracts = [c for c in contracts if c.strike >= holding.costBasis]
+            valid_contracts = [c for c in contracts if c.strike >= holding.cost_basis]
             if valid_contracts:
                 # Find the one closest to the cost basis
                 contract = min(valid_contracts, key=lambda c: c.strike)
@@ -142,8 +142,8 @@ class IncomeCcStrategy(Strategy):
                 # No strike available above cost basis, skip
                 await self._log_near_miss(
                     ticker, spot, "no_strike_above_cost_basis", 
-                    strike, holding.costBasis, 
-                    {"cost_basis": holding.costBasis}
+                    strike, holding.cost_basis, 
+                    {"cost_basis": holding.cost_basis}
                 )
                 return []
 
@@ -169,7 +169,7 @@ class IncomeCcStrategy(Strategy):
 
         entry_features = {
             "spot": spot,
-            "stock_cost_basis": holding.costBasis,
+            "stock_cost_basis": holding.cost_basis,
             "target_delta": target_delta,
             "actual_delta": contract.delta,
             "iv_rank": iv_rank,
