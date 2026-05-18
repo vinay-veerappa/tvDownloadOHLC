@@ -97,6 +97,8 @@ model Trade {
   tradeEvents      TradeEvent[]
   tradePlan        TradePlan?
   tags             Tag[]            @relation("TagToTrade")
+  legs             TradeLeg[]
+  snapshots        QuoteSnapshot[]
 }
 
 model Journal {
@@ -454,3 +456,107 @@ model MacroSnapshot {
   @@unique([ticker, tradingDate])
   @@index([ticker])
 }
+
+model TradeLeg {
+  id          String   @id @default(cuid())
+  tradeId     String
+  trade       Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  symbol      String                       // OCC option symbol or stock ticker
+  legIndex    Int                          // 0, 1, 2, 3 for ordering within trade
+  optionType  String                       // "CALL" | "PUT" | "STOCK"
+  side        String                       // "LONG" | "SHORT"
+  strike      Float?                       // null for STOCK
+  expiry      DateTime?                    // null for STOCK
+  quantity    Int                          // contracts or shares
+
+  openPrice   Float
+  openBid     Float?
+  openAsk     Float?
+  openIv      Float?
+  openDelta   Float?
+  openGamma   Float?
+  openTheta   Float?
+  openVega    Float?
+
+  closePrice  Float?
+  closeBid    Float?
+  closeAsk    Float?
+  closeIv     Float?
+  closeDelta  Float?
+  closeGamma  Float?
+  closeTheta  Float?
+  closeVega   Float?
+
+  legPnl      Float?
+  assigned    Boolean  @default(false)
+  expiredOtm  Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tradeId])
+  @@index([symbol])
+}
+
+model QuoteSnapshot {
+  id              String   @id @default(cuid())
+  tradeId         String
+  trade           Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  takenAt         DateTime @default(now())
+  underlyingPx    Float
+  netValue        Float                    // cost-to-close right now
+  unrealizedPnl   Float
+
+  legPrices       String                   // JSON: {symbol: {bid, ask, mid, iv, delta, ...}}
+
+  vix             Float?
+  gexRegime       String?
+  zeroGamma       Float?
+
+  @@index([tradeId, takenAt])
+}
+
+model SignalNearMiss {
+  id                 String   @id @default(cuid())
+  researchStrategyId String                // links to ResearchStrategy.id
+
+  evaluatedAt        DateTime @default(now())
+  ticker             String
+  underlyingPx       Float
+
+  failingFilter      String                // e.g. "iv_rank_below_threshold"
+  filterValue        Float?
+  filterThreshold    Float?
+
+  context            String                // JSON of all filter values
+
+  @@index([researchStrategyId, evaluatedAt])
+  @@index([failingFilter])
+}
+
+model Holding {
+  id          String   @id @default(cuid())
+  ticker      String   @unique
+  shares      Int
+  costBasis   Float
+  acquiredAt  DateTime
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model EarningsCalendar {
+  id              String   @id @default(cuid())
+  ticker          String
+  earningsDate    DateTime
+  beforeMarket    Boolean                  // BMO = true, AMC = false
+  confirmed       Boolean  @default(false)
+  source          String   @default("yfinance")
+  fetchedAt       DateTime @default(now())
+
+  @@unique([ticker, earningsDate])
+  @@index([earningsDate])
+}
+
