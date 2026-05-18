@@ -1,0 +1,67 @@
+# config.yaml
+default_initial_balance: 25000.0
+account_group_name: "Strategy Engine Silos"
+
+approved_tickers:
+  - SPY
+  - SPX
+  - QQQ
+  - IWM
+  - NVDA
+  - TSLA
+  - AAPL
+  - GOOGL
+  - MSFT
+  - AMZN
+  - RIVN
+
+holdings:
+  GOOGL: { shares: 300, cost_basis: 150.0, acquired_at: "2026-01-15T09:30:00Z" }
+  TSLA: { shares: 200, cost_basis: 180.0, acquired_at: "2026-02-10T09:30:00Z" }
+  RIVN: { shares: 1000, cost_basis: 10.0, acquired_at: "2026-03-01T09:30:00Z" } # staged
+
+blackout_buffers:
+  High: { pre_minutes: 120, post_minutes: 60 }
+  Medium: { pre_minutes: 30, post_minutes: 30 }
+  Low: { pre_minutes: 0, post_minutes: 0 }
+
+strategies:
+  WHEEL:
+    tickers: [NVDA, TSLA, AAPL, GOOGL, MSFT, AMZN]
+    variants:
+      "30D_45DTE": { short_delta: 0.30, dte: 45, min_iv_rank: 30 }
+      "20D_45DTE": { short_delta: 0.20, dte: 45, min_iv_rank: 30 }
+      "30D_7DTE":  { short_delta: 0.30, dte: 7,  min_iv_rank: 25 }
+
+  ZERO_DTE_PCS:
+    tickers: [SPY, SPX]
+    variants:
+      "10D_5W": { short_delta: 0.10, width: 5.0, require_positive_gamma: true, require_ict: false }
+      "16D_5W": { short_delta: 0.16, width: 5.0, require_positive_gamma: true, require_ict: false }
+      "10D_5W_NOGEX": { short_delta: 0.10, width: 5.0, require_positive_gamma: false, require_ict: false }
+      "10D_5W_ICT": { short_delta: 0.10, width: 5.0, require_positive_gamma: true, require_ict: true }
+
+  LONG_DTE_CREDIT:
+    tickers: [SPY, NVDA, TSLA, IWM]
+    variants:
+      "16D_45DTE": { short_delta: 0.16, width_pct: 0.02, dte: 45, min_iv_rank: 35 }
+
+  MEAN_REVERSION_EM:
+    tickers: [SPY, SPX]
+    variants:
+      "1SD_TOUCH": { entry_window: ["10:30", "14:30"], max_vix: 20, require_positive_gamma: true }
+
+  WALL_BREAK:
+    tickers: [SPY, SPX]
+    variants:
+      "BREAKOUT_DEBIT": { entry_window: ["10:00", "15:00"], max_vix: 22, wall_proximity_pct: 0.003 }
+
+  INCOME_CC:
+    tickers: [GOOGL, TSLA, RIVN]
+    variants:
+      "TIER": {} # Parameterized dynamically inside the IncomeCcStrategy class tiers
+
+  EARNINGS_STRANGLE:
+    tickers: [NVDA, TSLA, AAPL, GOOGL]
+    variants:
+      "30D_5D_BEFORE": { days_before: 5, target_delta: 0.30, max_debit: 5.0, max_iv_percentile: 50 }
