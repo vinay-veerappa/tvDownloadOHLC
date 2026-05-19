@@ -178,7 +178,7 @@ strategies:
 # ── Discord Integration ──────────────────────────────────────────────────────
 discord:
   enabled: true
-  channel: "test_channel"
+  channel: "options-backtest"
   events:
     trade_entry: true
     trade_exit: true

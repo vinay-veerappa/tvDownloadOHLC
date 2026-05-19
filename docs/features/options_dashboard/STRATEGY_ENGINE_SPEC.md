@@ -5,6 +5,8 @@
 **Date:** 2026-05-17
 **Author context:** Built on top of the existing TCM Trading System infrastructure (GEX/DEX engine, ICT vectorized library, Prisma SQLite store, Dolt volatility history, Schwab API integration).
 
+**Implementation notes:** See `HANDOFF.md`, `HANDOFF_v2.md`, and `HANDOFF_v3.md` for implementation reality, incident history, and post-spec operational updates.
+
 ---
 
 ## Table of Contents

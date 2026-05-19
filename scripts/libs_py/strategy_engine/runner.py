@@ -54,7 +54,7 @@ INDEX_TICKERS: Set[str] = {"SPY", "SPX", "QQQ", "IWM"}
 STOCK_TICKERS: Set[str] = {"NVDA", "TSLA", "AAPL", "GOOGL", "MSFT", "AMZN", "RIVN"}
 
 # Daily-only strategy codes that should only run once per day at 10:00 ET
-DAILY_STRATEGY_CODES: Set[str] = {"WHEEL", "EARNINGS_STRANGLE"}
+DAILY_STRATEGY_CODES: Set[str] = {"WHEEL", "EARNINGS_STRANGLE", "INCOME_CC","LONG_DTE_CREDIT"}
 
 
 class Runner:

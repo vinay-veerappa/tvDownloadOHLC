@@ -65,9 +65,6 @@ def _sanitize_payload(data: Any) -> Any:
     return data
 
 
-_prisma_instance: Prisma | None = None
-
-
 def _ensure_database_url() -> None:
     if os.getenv("DATABASE_URL"):
         return
@@ -79,15 +76,13 @@ def _ensure_database_url() -> None:
 
 
 async def _get_prisma() -> Prisma:
-    """Lazy initialization of Prisma client."""
-    global _prisma_instance
+    """Return a connected Prisma client bound to the current event loop."""
     if Prisma is None:
         raise RuntimeError("Prisma client is not available")
-    if _prisma_instance is None:
-        _ensure_database_url()
-        _prisma_instance = Prisma()
-        await _prisma_instance.connect()
-    return _prisma_instance
+    _ensure_database_url()
+    db = Prisma()
+    await db.connect()
+    return db
 
 
 def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> bool:
@@ -131,10 +126,13 @@ def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> 
     payload = _sanitize_payload(payload)
 
     # Prefer direct Prisma writes so this path has no runtime Node dependency.
+    # If direct write fails, fall through to API fallback instead of returning
+    # early with False.
     try:
-        return asyncio.run(_write_snapshot_direct(payload))
-    except Exception:
-        pass
+        if asyncio.run(_write_snapshot_direct(payload)):
+            return True
+    except Exception as e:
+        log.warning("Direct DB snapshot path raised for %s: %r", ticker, e)
 
     # Optional fallback to API route for environments without python prisma.
     try:
@@ -159,6 +157,7 @@ def write_snapshot(levels: DealerLevels, ticker_override: str | None = None) -> 
 
 async def _write_snapshot_direct(payload: dict[str, Any]) -> bool:
     """Write GexSnapshot directly to the database via Prisma."""
+    db: Prisma | None = None
     try:
         db = await _get_prisma()
         await db.gexsnapshot.create(data={
@@ -185,8 +184,16 @@ async def _write_snapshot_direct(payload: dict[str, Any]) -> bool:
         log.info("GexSnapshot written DIRECTLY to DB (Offline Mode) for %s", payload["ticker"])
         return True
     except Exception as e:
-        log.warning("Direct DB write failed for %s: %s", payload["ticker"], e)
+        log.warning(
+            "Direct DB write failed for %s: %r\n%s",
+            payload["ticker"],
+            e,
+            traceback.format_exc(),
+        )
         return False
+    finally:
+        if db is not None and db.is_connected():
+            await db.disconnect()
 
 
 def write_macro_snapshot(
@@ -222,10 +229,12 @@ def write_macro_snapshot(
     payload = _sanitize_payload(payload)
 
     # Prefer direct Prisma writes so this path has no runtime Node dependency.
+    # If direct write fails, continue to API fallback.
     try:
-        return asyncio.run(_write_macro_snapshot_direct(payload))
-    except Exception:
-        pass
+        if asyncio.run(_write_macro_snapshot_direct(payload)):
+            return True
+    except Exception as e:
+        log.warning("Direct Macro DB path raised for %s: %r", ticker, e)
 
     # Optional fallback to API route for environments without python prisma.
     try:
@@ -250,6 +259,7 @@ def write_macro_snapshot(
 
 async def _write_macro_snapshot_direct(payload: dict[str, Any]) -> bool:
     """Write MacroSnapshot directly to the database via Prisma."""
+    db: Prisma | None = None
     try:
         db = await _get_prisma()
         
@@ -294,8 +304,16 @@ async def _write_macro_snapshot_direct(payload: dict[str, Any]) -> bool:
         log.info("Macro HTF snapshot written DIRECTLY to DB (Offline Mode) for %s", payload["ticker"])
         return True
     except Exception as e:
-        log.warning("Direct Macro DB write failed for %s: %s", payload["ticker"], e)
+        log.warning(
+            "Direct Macro DB write failed for %s: %r\n%s",
+            payload["ticker"],
+            e,
+            traceback.format_exc(),
+        )
         return False
+    finally:
+        if db is not None and db.is_connected():
+            await db.disconnect()
 
 
 def _trading_date_str(dt: datetime) -> str:
