@@ -7,6 +7,12 @@ from scripts.libs_py.strategy_engine.strategies.base import Strategy, Signal, Le
 
 logger = logging.getLogger(__name__)
 
+def _safe_mid(contract) -> float:
+    """Reliable mid-price; fall back to last when only one side is quoted (D7)."""
+    if contract.bid and contract.bid > 0 and contract.ask and contract.ask > 0:
+        return (contract.bid + contract.ask) / 2.0
+    return contract.last or contract.bid or contract.ask or 0.0
+
 class ZeroDtePcsStrategy(Strategy):
     """
     Intraday 0DTE Put Credit Spreads (PCS).
@@ -148,8 +154,8 @@ class ZeroDtePcsStrategy(Strategy):
             logger.warning(f"{self.name}: No long PUT contract found near strike {long_strike}")
             return []
 
-        short_mid = (short_contract.bid + short_contract.ask) / 2.0 or short_contract.last
-        long_mid = (long_contract.bid + long_contract.ask) / 2.0 or long_contract.last
+        short_mid = _safe_mid(short_contract)
+        long_mid = _safe_mid(long_contract)
         net_credit = short_mid - long_mid
 
         if net_credit <= 0.05:

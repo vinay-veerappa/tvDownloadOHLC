@@ -128,12 +128,18 @@ class Strategy(ABC):
     # M7: Centralised exit-rule reader — strategies call self._exit_rules instead of hardcoding
     @property
     def _exit_rules(self) -> Dict[str, Any]:
-        """Return exit-rule params sourced from config.yaml variant params with safe defaults."""
+        """
+        Return exit-rule params sourced from config.yaml variant params with safe defaults.
+
+        Defaults are tuned for CREDIT spreads. DEBIT strategies (e.g. wall_break) must
+        use stop_loss_pct. Wheel-style "no stop" strategies should override stop_loss_mult to 99.0.
+        """
         return {
-            "profit_target_pct":        float(self.p.get("profit_target_pct", 0.50)),
-            "stop_loss_mult":           float(self.p.get("stop_loss_mult", 2.0)),
-            "roll_at_dte":              self.p.get("roll_at_dte"),           # None = no DTE roll
-            "time_stop_dte":            self.p.get("time_stop_dte"),         # None = no DTE hard stop
+            "profit_target_pct":         float(self.p.get("profit_target_pct", 0.50)),
+            "stop_loss_mult":            float(self.p.get("stop_loss_mult", 2.0)),    # CREDIT
+            "stop_loss_pct":             float(self.p.get("stop_loss_pct", 0.50)),    # DEBIT
+            "roll_at_dte":               self.p.get("roll_at_dte"),
+            "time_stop_dte":             self.p.get("time_stop_dte"),
             "flat_before_close_minutes": int(self.p.get("flat_before_close_minutes", 30)),
         }
 
@@ -197,27 +203,14 @@ class Strategy(ABC):
         current_mtm: Any,
         target_pct: float = 0.5,
     ) -> Optional[ManageAction]:
-        """Standard profit target for credit and debit trades."""
-        # For credit trades, unrealized_pnl represents current paper profit (open_credit - current_cost_to_close)
-        # Entry price is net credit/debit per share (positive number).
+        """unrealized_pnl is already direction-correct (LegQuoteService handles CREDIT vs DEBIT)."""
         entry_price = trade.entryPrice or 0.0
         if entry_price <= 0.0:
             return None
-
-        # Check profit target based on trade direction
         qty = trade.quantity
-        multiplier = 100.0
-        pnl_per_share = current_mtm["unrealized_pnl"] / (qty * multiplier)
-
-        if trade.direction == "CREDIT":
-            # If unrealized P&L is >= target_pct of entry price
-            if pnl_per_share >= entry_price * target_pct:
-                return ManageAction(close=True, reason="TARGET")
-        elif trade.direction == "DEBIT":
-            # If unrealized P&L is >= target_pct of entry price
-            if pnl_per_share >= entry_price * target_pct:
-                return ManageAction(close=True, reason="TARGET")
-
+        pnl_per_share = current_mtm["unrealized_pnl"] / (qty * 100.0)
+        if pnl_per_share >= entry_price * target_pct:
+            return ManageAction(close=True, reason="TARGET")
         return None
 
     async def _check_stop_loss(
@@ -227,27 +220,52 @@ class Strategy(ABC):
         stop_mult: float = 2.0,
         stop_pct: Optional[float] = None,
     ) -> Optional[ManageAction]:
-        """Standard stop loss for credit and debit trades."""
+        """Back-compat: routes by trade.direction. Prefer the direction-specific helpers below."""
+        if trade.direction == "CREDIT":
+            return await self._check_stop_loss_credit(trade, current_mtm, stop_mult=stop_mult)
+        elif trade.direction == "DEBIT":
+            return await self._check_stop_loss_debit(
+                trade, current_mtm,
+                stop_pct=(stop_pct if stop_pct is not None else 0.5),
+            )
+        return None
+
+    async def _check_stop_loss_credit(
+        self,
+        trade: Any,
+        current_mtm: Any,
+        stop_mult: float = 2.0,
+    ) -> Optional[ManageAction]:
+        """CREDIT stop: exit when cost-to-close >= stop_mult × credit received."""
         entry_price = trade.entryPrice or 0.0
         if entry_price <= 0.0:
             return None
-
         qty = trade.quantity
-        multiplier = 100.0
-        net_per_share = current_mtm["net_value"] / (qty * multiplier)
+        net_per_share = current_mtm["net_value"] / (qty * 100.0)
+        if net_per_share >= entry_price * stop_mult:
+            return ManageAction(close=True, reason="STOP")
+        return None
 
-        if trade.direction == "CREDIT":
-            # Credit stop mult: e.g. 2.0x means cost to close >= 2 * credit (loss of 1 * credit)
-            # Or if net value to close >= entryPrice * stop_mult
-            if net_per_share >= entry_price * stop_mult:
-                return ManageAction(close=True, reason="STOP")
-        elif trade.direction == "DEBIT":
-            # For debit trade, stop is usually stop_pct (e.g. 0.5 means losing 50% of the debit paid)
-            # Or if net value to close falls to <= entryPrice * (1 - stop_pct)
-            pct = stop_pct if stop_pct is not None else 0.5
-            if net_per_share <= entry_price * (1.0 - pct):
-                return ManageAction(close=True, reason="STOP")
+    async def _check_stop_loss_debit(
+        self,
+        trade: Any,
+        current_mtm: Any,
+        stop_pct: float = 0.5,
+    ) -> Optional[ManageAction]:
+        """DEBIT stop: exit when current value <= (1 - stop_pct) × debit paid.
 
+        Sign convention: LegQuoteService.net_value is cost-to-close (positive = pay to close).
+        For a long debit spread, closing returns money, so net_value is typically NEGATIVE.
+        Current value per share = -net_per_share.
+        """
+        entry_price = trade.entryPrice or 0.0
+        if entry_price <= 0.0:
+            return None
+        qty = trade.quantity
+        net_per_share = current_mtm["net_value"] / (qty * 100.0)
+        current_value_per_share = -net_per_share
+        if current_value_per_share <= entry_price * (1.0 - stop_pct):
+            return ManageAction(close=True, reason="STOP")
         return None
 
     async def _check_time_stop(

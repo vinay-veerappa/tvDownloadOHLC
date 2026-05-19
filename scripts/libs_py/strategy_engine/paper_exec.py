@@ -111,6 +111,12 @@ class PaperExecutor:
 
             # 6. Create TradeLeg records
             for idx, leg in enumerate(signal.legs):
+                effective_mid = leg.mid if leg.mid is not None else (
+                    (leg.bid + leg.ask) / 2.0 if (leg.bid and leg.ask) else 0.0
+                )
+                opening_price = (effective_mid - slippage) if leg.side == "SHORT" else (effective_mid + slippage)
+
+
                 # Ensure expiry is a datetime if it's a date
                 expiry_dt = None
                 if leg.expiry:
@@ -129,7 +135,7 @@ class PaperExecutor:
                         "strike": float(leg.strike) if leg.strike else None,
                         "expiry": expiry_dt,
                         "quantity": int(leg.quantity),
-                        "openPrice": float(leg.mid) - slippage if leg.side == "SHORT" else float(leg.mid) + slippage,
+                        "openPrice": opening_price,
                         "openBid": float(leg.bid) if leg.bid else None,
                         "openAsk": float(leg.ask) if leg.ask else None,
                         "openIv": float(leg.iv) if leg.iv else None,
@@ -181,7 +187,7 @@ class PaperExecutor:
                 spot_price = None
                 try:
                     quote = await self.broker.get_stock_quote(trade_full.ticker)
-                    spot_price = quote.get("mid") or quote.get("last")
+                    spot_price = quote.get("last")
                 except Exception as e:
                     logger.warning(f"PaperExecutor: Could not fetch spot price for ITM verification on assignment: {e}")
                 

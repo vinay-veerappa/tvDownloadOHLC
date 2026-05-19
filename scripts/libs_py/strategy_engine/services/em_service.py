@@ -128,13 +128,34 @@ class ExpectedMoveService:
     # Public spec-compliant API
     # ------------------------------------------------------------------
 
-    async def get_today_em(self, ticker: str) -> Optional[ExpectedMoveBands]:
+    # ─── Spec §4.3 interface — temporary thin wrappers ───
+
+    async def get_today_em(self, ticker: str) -> Optional[dict]:
+        """Today's expected move bands for ticker.
+
+        TODO(D4): Spec §4.3 calls for a richer ExpectedMoveBands shape with 365-day and
+        252-day annualisations plus straddle_price. For now this forwards to
+        get_expected_move_bands so callers get the same dict keys
+        ('upper_1sd', 'lower_1sd', etc.).
         """
-        Today's expected move bands for ticker.
-        Priority: ExpectedMove with calculationDate=today → RthExpectedMove → None.
-        Spec §4.3
+        return await self.get_expected_move_bands(ticker, spot_price=0.0, session_open=None)
+
+    async def get_em_distance_in_sd(
+        self,
+        ticker: str,
+        current_spot: float,
+    ) -> Optional[float]:
+        """How many SDs is current_spot from the EM basis price?
+
+        Returns (current_spot - basis_price) / em_value. Positive = above basis.
+
+        NOTE: Per spec §4.3 the basis should be the session OPEN. Current impl uses
+        whichever basis the EM record provides (typically the snapshot price).
         """
-        return await self._fetch_em_bands(ticker)
+        bands = await self.get_expected_move_bands(ticker, spot_price=current_spot, session_open=None)
+        if not bands or bands.get("em_value", 0.0) <= 0.0:
+            return None
+        return (current_spot - bands["basis_price"]) / bands["em_value"]
 
     async def get_historical_em_hit_rate(
         self,

@@ -148,18 +148,20 @@ class WallBreakStrategy(Strategy):
             em_bands = None
 
         if em_bands:
-            if is_bullish_breakout and spot > em_bands.upper_boundary_1sd:
+            upper_1sd = em_bands["upper_1sd"]
+            lower_1sd = em_bands["lower_1sd"]
+            if is_bullish_breakout and spot > upper_1sd:
                 await self._log_near_miss(
                     ticker, spot, "dex_overextended_bullish",
-                    float(spot), float(em_bands.upper_boundary_1sd),
-                    {"upper_boundary_1sd": em_bands.upper_boundary_1sd}
+                    float(spot), float(upper_1sd),
+                    {"upper_1sd": upper_1sd}
                 )
                 return []
-            elif is_bearish_breakout and spot < em_bands.lower_boundary_1sd:
+            elif is_bearish_breakout and spot < lower_1sd:
                 await self._log_near_miss(
                     ticker, spot, "dex_overextended_bearish",
-                    float(spot), float(em_bands.lower_boundary_1sd),
-                    {"lower_boundary_1sd": em_bands.lower_boundary_1sd}
+                    float(spot), float(lower_1sd),
+                    {"lower_1sd": lower_1sd}
                 )
                 return []
 
@@ -333,7 +335,7 @@ class WallBreakStrategy(Strategy):
             return pt_action
 
         # 2. Stop Loss: for DEBIT spread stop_pct = stop_loss_mult interpreted as fraction
-        sl_action = await self._check_stop_loss(trade, current_mtm, stop_pct=ex["stop_loss_mult"])
+        sl_action = await self._check_stop_loss_debit(trade, current_mtm, stop_pct=ex["stop_loss_pct"])
         if sl_action:
             return sl_action
 

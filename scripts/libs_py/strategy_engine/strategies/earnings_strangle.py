@@ -17,48 +17,51 @@ def _safe_mid(contract) -> float:
 
 class EarningsStrangleStrategy(Strategy):
     """
-    Systematic Earnings Short Strangle Strategy.
-    Sells Call and Put options 1 to 5 days before an earnings announcement to capture the post-earnings IV crush.
-    Tastytrade Rules:
-    - Sell ~0.10 Delta Put and Call.
-    - Expiry: First weekly expiration covering the earnings date.
-    - IV Rank >= 30.
-    - Management: Close immediately the morning after the earnings announcement (IV crush capture) or at 30% profit.
+    Long Earnings Strangle Strategy (spec §8.7).
+    BUYS Call + Put strangles 5 days before earnings to capture the pre-earnings IV ramp.
+    Closes the day BEFORE earnings to avoid event/gap risk entirely.
+
+    Rules:
+    - Enter 5 days before earnings announcement (configurable via days_before).
+    - Find call at +0.30 delta and put at -0.30 delta on the first expiry covering earnings.
+    - IV percentile must be LOW (<=50): we want room for IV to expand, not contract.
+    - Total debit <= max_debit AND debit <= 2% of underlying spot.
+    - Exit: 30 min before close on the day BEFORE earnings (HARD RULE — never hold through).
+    - Profit target: +50% of debit. Stop: -30% of debit.
     """
+   
     async def scan(self, now: datetime) -> List[Signal]:
         ticker = self.underlying
-        min_iv_rank = self.p.get("min_iv_rank", 30)
-        short_delta = self.p.get("short_delta", self.p.get("target_delta", 0.10))
+        days_before = self.p.get("days_before", 5)
+        target_delta = self.p.get("target_delta", 0.30)
+        max_debit_abs = self.p.get("max_debit", 5.0)            # absolute cap, dollars per contract
+        max_debit_pct = self.p.get("max_debit_pct_of_spot", 0.02)  # 2% of spot
+        max_iv_percentile = self.p.get("max_iv_percentile", 50.0)
 
-        # Retrieve Prisma database client
         prisma = self.s["prisma"]
         account = await prisma.account.find_first(where={"name": self.name})
         if not account:
             logger.error(f"{self.name}: Silo account not found.")
             return []
 
-        # Check if we have active trades in this account
+        # One-at-a-time policy
         active_trades = await prisma.trade.find_many(
-            where={
-                "accountId": account.id,
-                "status": "OPEN",
-                "ticker": ticker
-            }
+            where={"accountId": account.id, "status": "OPEN", "ticker": ticker}
         )
         if active_trades:
             return []
 
-        # ─── Filter 1: Earnings Date Check (Must be within 1 to 5 days) ───
+        # ─── Filter 1: Earnings exactly `days_before` days away (1 to days_before window) ───
         earnings_days = await self.s["earnings"].days_to_earnings(ticker)
-        if earnings_days is None or earnings_days < 1 or earnings_days > 5:
+        if earnings_days is None or earnings_days < 1 or earnings_days > days_before:
             await self._log_near_miss(
-                ticker, 0.0, "earnings_not_in_range", 
-                float(earnings_days) if earnings_days is not None else -1.0, 5.0, 
-                {"earnings_days": earnings_days}
+                ticker, 0.0, "earnings_not_in_entry_window",
+                float(earnings_days) if earnings_days is not None else -1.0, float(days_before),
+                {"earnings_days": earnings_days, "window": [1, days_before]}
             )
             return []
 
-        # Fetch Spot Price
+        # Spot
         try:
             spot_quote = await self.s["broker"].get_stock_quote(ticker)
             spot = spot_quote["last"]
@@ -66,23 +69,25 @@ class EarningsStrangleStrategy(Strategy):
             logger.error(f"{self.name}: Failed to fetch stock quote: {e}")
             return []
 
-        # ─── Filter 2: Blackout economic calendar ───
+        # ─── Filter 2: Blackout ───
         if await self.s["calendar"].is_blackout_window(now):
             await self._log_near_miss(ticker, spot, "blackout_window_active", None, None, {"now": str(now)})
             return []
 
-        # ─── Filter 3: IV Rank Check ───
+        # ─── Filter 3: IV percentile must be LOW (we're BUYING — want room for IV to expand) ───
         iv_data = await self.s["iv"].get_volatility_metrics(ticker)
-        iv_rank = iv_data.get("iv_rank", 0.0)
-        if iv_rank < min_iv_rank:
+        # NOTE: get_volatility_metrics currently returns iv_rank not iv_percentile. Using iv_rank as proxy.
+        # TODO(D3): use real iv_percentile once IvService exposes it.
+        iv_proxy = iv_data.get("iv_rank", 0.0)
+        if iv_proxy > max_iv_percentile:
             await self._log_near_miss(
-                ticker, spot, "iv_rank_below_threshold", 
-                float(iv_rank), float(min_iv_rank), 
-                {"iv_rank": iv_rank}
+                ticker, spot, "iv_too_high_for_long_strangle",
+                float(iv_proxy), float(max_iv_percentile),
+                {"iv_rank_proxy": iv_proxy, "rationale": "buying IV requires LOW iv_percentile"}
             )
             return []
 
-        # ─── Expiry Selection (First expiry strictly >= earnings date) ───
+        # ─── Expiry: first expiry strictly AFTER earnings ───
         expiries = await self.s["broker"].get_expiries(ticker)
         if not expiries:
             return []
@@ -90,17 +95,16 @@ class EarningsStrangleStrategy(Strategy):
         earnings_date = now.date() + timedelta(days=int(earnings_days))
         best_expiry_str = None
         best_dte = 9999
-
         for exp_str in expiries:
             exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
-            if exp_date >= earnings_date:
+            if exp_date > earnings_date:    # strictly after — expiry must survive the event
                 dte = (exp_date - now.date()).days
                 if dte < best_dte:
                     best_dte = dte
                     best_expiry_str = exp_str
 
         if not best_expiry_str:
-            logger.warning(f"{self.name}: No suitable expiry found covering earnings date {earnings_date}")
+            logger.warning(f"{self.name}: No expiry found AFTER earnings date {earnings_date}")
             return []
 
         expiry_date = datetime.strptime(best_expiry_str, "%Y-%m-%d").date()
@@ -110,102 +114,77 @@ class EarningsStrangleStrategy(Strategy):
         if not chain:
             return []
 
-        # Find Short Put (matching -0.10 delta)
-        short_put = self.s["broker"].find_strike_by_delta(chain, -short_delta, "PUT")
-        if not short_put:
-            logger.warning(f"{self.name}: Short PUT contract not found matching delta {-short_delta}")
+        # Strike selection — same as before
+        long_put = self.s["broker"].find_strike_by_delta(chain, -target_delta, "PUT")
+        long_call = self.s["broker"].find_strike_by_delta(chain, target_delta, "CALL")
+        if not long_put or not long_call:
+            logger.warning(f"{self.name}: Could not find strikes near ±{target_delta} delta")
             return []
 
-        # Find Short Call (matching 0.10 delta)
-        short_call = self.s["broker"].find_strike_by_delta(chain, short_delta, "CALL")
-        if not short_call:
-            logger.warning(f"{self.name}: Short CALL contract not found matching delta {short_delta}")
-            return []
+        put_mid = _safe_mid(long_put)
+        call_mid = _safe_mid(long_call)
+        net_debit = put_mid + call_mid
 
-        # ─── D7: use _safe_mid ───
-        put_mid = _safe_mid(short_put)
-        call_mid = _safe_mid(short_call)
-        net_credit = put_mid + call_mid
-
-        if net_credit <= 0.10:
+        # ─── Filter 4: debit <= absolute cap ───
+        if net_debit > max_debit_abs:
             await self._log_near_miss(
-                ticker, spot, "credit_below_minimum",
-                net_credit, 0.10,
+                ticker, spot, "debit_above_absolute_cap",
+                net_debit, max_debit_abs,
                 {"put_mid": put_mid, "call_mid": call_mid}
             )
             return []
 
-        # C14: Reject if net_credit < max_debit_pct * spot (strangle should generate meaningful premium)
-        # Spec §9.3: net credit must exceed 2% of the underlying spot price
-        max_debit_pct = self.p.get("max_debit_pct", 0.02)
-        min_credit_required = spot * max_debit_pct
-        if net_credit < min_credit_required:
+        # ─── Filter 5: debit <= 2% of spot (spec §8.7 #8) ───
+        debit_pct_of_spot = net_debit / spot if spot > 0 else 999.0
+        if debit_pct_of_spot > max_debit_pct:
             await self._log_near_miss(
-                ticker, spot, "credit_below_pct_threshold",
-                net_credit, min_credit_required,
-                {"net_credit": net_credit, "min_credit_required": min_credit_required, "max_debit_pct": max_debit_pct}
+                ticker, spot, "debit_above_pct_of_spot",
+                float(debit_pct_of_spot), float(max_debit_pct),
+                {"net_debit": net_debit, "spot": spot}
             )
             return []
 
-        # Strangle Margin/Capital Sizing:
-        # Standard margin for short strangle is roughly 10% of underlying strikes.
-        max_capital = (short_put.strike + short_call.strike) * 100.0 * 0.10
-        max_risk = spot * 100.0 * 0.20 # assume 20% move risk cap
+        # Sizing: max loss = full debit
+        max_risk = net_debit * 100.0
+        max_capital = net_debit * 100.0
 
         qty = await self.s["sizing"].calculate_size(
             account.id,
             max_risk_per_contract=max_risk,
             max_capital_per_contract=max_capital,
             max_risk_pct=0.02,
-            max_allocation_pct=0.10
+            max_allocation_pct=0.10,
         )
-
         if qty <= 0:
             return []
 
         put_leg = LegSpec(
-            option_type="PUT",
-            side="SHORT",
-            strike=short_put.strike,
-            expiry=expiry_date,
-            quantity=qty,
-            symbol=short_put.symbol,
-            mid=put_mid,
-            bid=short_put.bid,
-            ask=short_put.ask,
-            iv=short_put.iv,
-            delta=short_put.delta,
-            gamma=short_put.gamma,
-            theta=short_put.theta,
-            vega=short_put.vega
+            option_type="PUT", side="LONG",       # BUYING
+            strike=long_put.strike, expiry=expiry_date, quantity=qty,
+            symbol=long_put.symbol, mid=put_mid,
+            bid=long_put.bid, ask=long_put.ask, iv=long_put.iv,
+            delta=long_put.delta, gamma=long_put.gamma, theta=long_put.theta, vega=long_put.vega,
         )
-
         call_leg = LegSpec(
-            option_type="CALL",
-            side="SHORT",
-            strike=short_call.strike,
-            expiry=expiry_date,
-            quantity=qty,
-            symbol=short_call.symbol,
-            mid=call_mid,
-            bid=short_call.bid,
-            ask=short_call.ask,
-            iv=short_call.iv,
-            delta=short_call.delta,
-            gamma=short_call.gamma,
-            theta=short_call.theta,
-            vega=short_call.vega
+            option_type="CALL", side="LONG",      # BUYING
+            strike=long_call.strike, expiry=expiry_date, quantity=qty,
+            symbol=long_call.symbol, mid=call_mid,
+            bid=long_call.bid, ask=long_call.ask, iv=long_call.iv,
+            delta=long_call.delta, gamma=long_call.gamma, theta=long_call.theta, vega=long_call.vega,
         )
 
         entry_features = {
             "spot": spot,
             "days_to_earnings": earnings_days,
             "earnings_date": str(earnings_date),
-            "iv_rank": iv_rank,
-            "put_strike": short_put.strike,
-            "call_strike": short_call.strike,
-            "net_credit": net_credit,
-            "actual_dte": target_dte_actual
+            "iv_rank_at_entry": iv_proxy,
+            "put_strike": long_put.strike,
+            "call_strike": long_call.strike,
+            "put_iv_at_entry": long_put.iv,
+            "call_iv_at_entry": long_call.iv,
+            "net_debit": net_debit,
+            "debit_pct_of_spot": debit_pct_of_spot,
+            "actual_dte": target_dte_actual,
         }
 
         signal = Signal(
@@ -215,43 +194,55 @@ class EarningsStrangleStrategy(Strategy):
             legs=[put_leg, call_leg],
             max_risk_per_contract=max_risk,
             max_capital_per_contract=max_capital,
-            profit_target_pct=self._exit_rules["profit_target_pct"],  # C15+M7: spec says 50%
-            stop_loss_mult=self._exit_rules["stop_loss_mult"],         # M7
+            profit_target_pct=self._exit_rules["profit_target_pct"],   # default 0.50 = +50% of debit
+            stop_loss_mult=self._exit_rules["stop_loss_mult"],          # unused for DEBIT (manage uses stop_loss_pct)
             entry_features=entry_features,
-            notes=f"Selling pre-earnings strangle {short_put.strike}/{short_call.strike} for ${net_credit:.2f} credit"
+            notes=f"BUYING pre-earnings strangle {long_put.strike}P/{long_call.strike}C for ${net_debit:.2f} debit",
         )
         return [signal]
 
     async def manage(self, trade: Any, current_mtm: Any, now: datetime) -> ManageAction:
-        ex = self._exit_rules  # M7
+        """
+        Exit priority:
+        1. HARD RULE: day before earnings + 30 min before close → FORCE CLOSE (never hold through event).
+        2. Profit target: +50% of debit paid (long position appreciated).
+        3. Stop loss: -30% of debit (theta + IV stagnation eroding position).
+        4. Expiration fallback.
+        """
+        ex = self._exit_rules
         ticker = trade.ticker.upper()
 
-        # 1. Profit Target check (C15: 50% per spec)
+        # ─── 1. HARD pre-earnings exit ───
+        earnings_days = await self.s["earnings"].days_to_earnings(ticker)
+        if earnings_days is not None and earnings_days <= 1:
+            tz_et = pytz.timezone("America/New_York")
+            now_et = now.astimezone(tz_et)
+            # Within 30 minutes of market close on the day BEFORE earnings
+            minutes_to_close = (16 - now_et.hour) * 60 - now_et.minute
+            if earnings_days == 1 and minutes_to_close <= 30:
+                logger.info(f"{self.name}: Day before earnings, <=30 min to close. FORCE CLOSE to avoid event risk.")
+                return ManageAction(close=True, reason="PRE_EARNINGS")
+            # If earnings_days is 0 (rare — earnings today), close immediately at any time
+            if earnings_days <= 0:
+                logger.warning(f"{self.name}: Earnings already today/passed and we're still in — closing now.")
+                return ManageAction(close=True, reason="PRE_EARNINGS_LATE")
+
+        # ─── 2. Profit target (use DEBIT helper) ───
         pt_action = await self._check_profit_target(trade, current_mtm, target_pct=ex["profit_target_pct"])
         if pt_action:
             return pt_action
 
-        # 2. Stop Loss check
-        sl_action = await self._check_stop_loss(trade, current_mtm, stop_mult=ex["stop_loss_mult"])
+        # ─── 3. Stop loss (DEBIT — uses stop_loss_pct, default 0.30 per spec §8.7) ───
+        stop_pct = float(self.p.get("stop_loss_pct", 0.30))
+        sl_action = await self._check_stop_loss_debit(trade, current_mtm, stop_pct=stop_pct)
         if sl_action:
             return sl_action
 
-        # 3. Post-Earnings crush check:
-        # Check if the earnings event has passed. If so, close immediately to capture the crush.
-        earnings_days = await self.s["earnings"].days_to_earnings(ticker)
-        if earnings_days is not None and earnings_days <= 0:
-            tz_et = pytz.timezone("America/New_York")
-            now_et = now.astimezone(tz_et)
-            # Ensure market is open (post 9:30 AM ET)
-            if now_et.hour > 9 or (now_et.hour == 9 and now_et.minute >= 30):
-                logger.info(f"{self.name}: Earnings announcement has passed. Closing position to lock in IV crush.")
-                return ManageAction(close=True, reason="EARNINGS_CRUSH_CAPTURE")
-
-        # Expiration check
+        # ─── 4. Expiration ───
         leg = trade.legs[0]
         expiry_date = leg.expiry.date() if isinstance(leg.expiry, datetime) else leg.expiry
         if (expiry_date - now.date()).days <= 0:
-            logger.info(f"{self.name}: Strangle reached expiration date. Flatting position.")
+            logger.info(f"{self.name}: Strangle reached expiration. Closing.")
             return ManageAction(close=True, reason="EOD")
 
         return ManageAction(close=False)

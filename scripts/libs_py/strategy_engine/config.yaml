@@ -169,8 +169,8 @@ strategies:
         enabled: true
         days_before: 5
         target_delta: 0.30
-        max_debit_pct: 0.02       # C14: debit must be ≤ 2% of spot (was only absolute cap)
-        max_debit: 5.0            # absolute cap retained
-        max_iv_percentile: 50
-        profit_target_pct: 0.50  # C15: spec says 50%, was 30%
-        stop_loss_mult: 2.0
+        max_debit: 5.0
+        max_debit_pct_of_spot: 0.02
+        max_iv_percentile: 50.0
+        profit_target_pct: 0.50
+        stop_loss_pct: 0.30

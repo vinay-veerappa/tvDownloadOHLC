@@ -174,7 +174,8 @@ class RegimeService:
                 logger.warning(f"RegimeService: Stale data for {ticker} ({regime.age_seconds:.0f}s old). Returning None.")
                 return None
         return regime
-
+    
+    
     async def get_regime_history(
         self,
         ticker: str,
