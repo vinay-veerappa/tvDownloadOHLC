@@ -291,6 +291,14 @@ ETF_FALLBACK: dict[str, str] = {
 }
 
 # Schwab API requires a leading "$" for cash CBOE indices.
+# NOTE: VIX ($VIX) is mapped here so the symbol reaches Schwab correctly, but
+# Schwab's quote endpoint does NOT reliably return spot-price data for VIX —
+# it returns an empty quote payload even when the symbol is accepted.  This is
+# a known Schwab API limitation for non-tradeable cash indices.
+# The workaround is in BrokerService.get_stock_quote(): when Schwab returns no
+# data for VIX, it falls back to Yahoo Finance (^VIX via yfinance) before
+# raising.  Do not remove that fallback or this comment without first verifying
+# that Schwab has started populating the VIX quote field.
 SCHWAB_INDEX_PREFIX: dict[str, str] = {
     "SPX":  "$SPX",
     "SPXW": "$SPXW",
@@ -298,7 +306,7 @@ SCHWAB_INDEX_PREFIX: dict[str, str] = {
     "NDXP": "$NDXP",
     "DJX":  "$DJX",
     "RUT":  "$RUT",
-    "VIX":  "$VIX.X",
+    "VIX":  "$VIX",  # spot quote always falls back to yfinance — see BrokerService
 }
 
 # Tickers that typically have very dense chains and may cause buffer overflows 

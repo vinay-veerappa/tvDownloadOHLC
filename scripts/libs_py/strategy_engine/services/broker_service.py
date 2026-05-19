@@ -59,6 +59,71 @@ class BrokerService:
         self._option_chains_cache.clear()
         self._expiries_cache.clear()
 
+    async def _fetch_vix_yfinance_quote(self) -> Optional[dict]:
+        """
+        Fetch VIX spot price from Yahoo Finance (^VIX) as a fallback.
+
+        WHY THIS EXISTS:
+        Schwab's quote endpoint accepts the $VIX symbol but consistently returns
+        an empty quote payload — it treats VIX as a non-tradeable cash index and
+        does not populate bid/ask/last fields.  This is a confirmed Schwab API
+        limitation as of 2026-05; there is no server-side workaround within the
+        Schwab API.  Yahoo Finance reliably serves the VIX spot price via ^VIX
+        using the same yfinance library that is already a project dependency.
+
+        The result is cached under both 'VIX' and '$VIX.X' keys so all callers
+        share the same fetched value within the stock_ttl window.
+        """
+        try:
+            import yfinance as yf
+        except Exception:
+            return None
+
+        now = time.time()
+
+        def _load_quote() -> Optional[dict]:
+            try:
+                ticker = yf.Ticker("^VIX")
+                last = None
+                open_p = None
+
+                try:
+                    fast_info = getattr(ticker, "fast_info", None)
+                    if fast_info:
+                        last = fast_info.get("lastPrice")
+                        open_p = fast_info.get("openPrice")
+                except Exception:
+                    pass
+
+                if last is None or open_p is None:
+                    hist = ticker.history(period="2d", interval="1d", auto_adjust=False)
+                    if not hist.empty:
+                        last = float(hist["Close"].iloc[-1])
+                        if open_p is None:
+                            open_p = float(hist["Open"].iloc[-1])
+
+                if last is None:
+                    return None
+
+                last_val = float(last)
+                open_val = float(open_p) if open_p is not None else last_val
+                return {
+                    "symbol": "VIX",
+                    "last": last_val,
+                    "bid": last_val,
+                    "ask": last_val,
+                    "open": open_val,
+                    "timestamp": now,
+                }
+            except Exception:
+                return None
+
+        quote = await asyncio.to_thread(_load_quote)
+        if quote:
+            self._stock_quotes_cache["VIX"] = (quote, now)
+            self._stock_quotes_cache["$VIX.X"] = (quote, now)
+        return quote
+
     async def get_stock_quote(self, ticker: str) -> dict:
         """
         Gets the latest quote for a stock or future index.
@@ -93,7 +158,12 @@ class BrokerService:
                 logger.error(f"Error fetching futures quote for {ticker}: {e}")
                 
         # Handle index or equity quotes
-        api_sym = SCHWAB_INDEX_PREFIX.get(ticker, ticker)
+        normalized_ticker = ticker
+        if normalized_ticker.endswith(".X"):
+            normalized_ticker = normalized_ticker[:-2]
+        if normalized_ticker.startswith("$"):
+            normalized_ticker = normalized_ticker[1:]
+        api_sym = SCHWAB_INDEX_PREFIX.get(normalized_ticker, ticker)
         try:
             params = {"symbols": [api_sym]}
             # Make request via hub request in thread
@@ -118,10 +188,21 @@ class BrokerService:
                 }
                 self._stock_quotes_cache[ticker] = (quote, now)
                 return quote
+
+            if normalized_ticker == "VIX":
+                vix_quote = await self._fetch_vix_yfinance_quote()
+                if vix_quote:
+                    self._stock_quotes_cache[ticker] = (vix_quote, now)
+                    return vix_quote
             else:
                 raise ValueError(f"No quote data returned for {api_sym}")
         except Exception as e:
             logger.error(f"Error fetching stock quote for {ticker} (api: {api_sym}): {e}")
+            if normalized_ticker == "VIX":
+                vix_quote = await self._fetch_vix_yfinance_quote()
+                if vix_quote:
+                    self._stock_quotes_cache[ticker] = (vix_quote, now)
+                    return vix_quote
             # Try fallback to last known cache if available, even if stale
             if ticker in self._stock_quotes_cache:
                 return self._stock_quotes_cache[ticker][0]
@@ -233,7 +314,12 @@ class BrokerService:
                 return expiries
                 
         try:
-            api_sym = SCHWAB_INDEX_PREFIX.get(ticker, ticker)
+            normalized_ticker = ticker
+            if normalized_ticker.endswith(".X"):
+                normalized_ticker = normalized_ticker[:-2]
+            if normalized_ticker.startswith("$"):
+                normalized_ticker = normalized_ticker[1:]
+            api_sym = SCHWAB_INDEX_PREFIX.get(normalized_ticker, ticker)
             params = {
                 "symbol": api_sym,
                 "strikeCount": 1
