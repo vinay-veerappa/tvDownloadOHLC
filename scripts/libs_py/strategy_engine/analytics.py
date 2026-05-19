@@ -184,6 +184,8 @@ class AnalyticsService:
         """
         Weekly rollup. Generates a comprehensive summary markdown rundown report 
         collating all silo metrics and near-miss statistics. Saves to DB and a local physical file.
+        Now upgraded to include cross-strategy rankings, P&L correlation matrix, and
+        on-demand feature win-rate breakdown (C3 + C4).
         """
         logger.info(f"Analytics: Generating Weekly Rundown Report...")
         
@@ -209,7 +211,17 @@ class AnalyticsService:
             key = nm.failingFilter
             near_miss_counts[key] = near_miss_counts.get(key, 0) + 1
 
-        # 3. Build Markdown content
+        # 3. Fetch all closed trades for cross-strategy analysis
+        all_closed_trades = await self.db.trade.find_many(
+            where={"status": "CLOSED"},
+            include={"snapshots": True}
+        )
+        
+        trades_by_silo = {}
+        for account in accounts:
+            trades_by_silo[account.name] = [t for t in all_closed_trades if t.accountId == account.id]
+
+        # 4. Build Markdown content
         date_str = now.strftime("%Y-%m-%d")
         md = []
         md.append(f"# Weekly Strategy Engine Rundown — {date_str}\n")
@@ -254,6 +266,45 @@ class AnalyticsService:
         for s in silo_rows:
             md.append(f"| {s['name']} | ${s['initial']:,.2f} | ${s['current']:,.2f} | {s['pnl']:+,.2f} | {s['win_rate']:.1f}% | {s['trades']} | **{s['grade']}** |")
 
+        # ─── 2.1 Cross-Strategy Correlation Matrix (C3) ───
+        md.append("\n### 2.1 P&L Correlation Matrix (30-Day Outlook)\n")
+        md.append("Measures the level of alignment or divergence between different strategy silos based on daily returns. Aim for low/negative correlations to maintain portfolio diversification:\n")
+        
+        silo_names = [s["name"] for s in silo_rows]
+        if len(silo_names) >= 2:
+            matrix = self._compute_correlation_matrix(silo_names, trades_by_silo)
+            
+            header = "| Strategy | " + " | ".join(silo_names) + " |"
+            divider = "|:---| " + " | ".join([":---:" for _ in silo_names]) + " |"
+            md.append(header)
+            md.append(divider)
+            
+            for s1 in silo_names:
+                row_str = f"| **{s1}** | "
+                row_vals = []
+                for s2 in silo_names:
+                    val = matrix[s1][s2]
+                    row_vals.append(f"{val:+.2f}")
+                row_str += " | ".join(row_vals) + " |"
+                md.append(row_str)
+        else:
+            md.append("*Insufficient active silos to calculate correlation matrix.*")
+
+        # ─── 2.2 Feature Breakdown & Win-Rate Buckets (C4) ───
+        md.append("\n### 2.2 Feature Importance & Regime Breakdown\n")
+        md.append("Provides a dynamic granular breakdown of strategy performance based on market context and entry signals captured in trade metadata:\n")
+        md.append("| Context Feature Bucket | Trades | Wins | Losses | Win Rate | Net P&L |")
+        md.append("|:---|:---:|:---:|:---:|:---:|:---|")
+        
+        buckets = self._generate_feature_breakdown(all_closed_trades)
+        for b_name, b_data in buckets.items():
+            tot = b_data["total"]
+            wins = b_data["wins"]
+            losses = tot - wins
+            wr = (wins / tot * 100.0) if tot > 0 else 0.0
+            pnl_val = b_data["pnl"]
+            md.append(f"| {b_name} | {tot} | {wins} | {losses} | {wr:.1f}% | {pnl_val:+,.2f} |")
+
         md.append("\n## 3. Near-Miss Filter Insights\n")
         md.append("The following filters prevented the most trade entries in the past 7 days. These values highlight how strategies are interacting with current volatility regimes:\n")
         md.append("| Failing Filter | Frequency | Actionable Suggestion |")
@@ -264,7 +315,10 @@ class AnalyticsService:
             "earnings_not_in_range": "Systematic earnings window is quiet; no major announcements scheduled.",
             "blackout_window_active": "Calendar blocks successful; system avoided key macroeconomic volatility.",
             "gex_boundary_blocked": "Spot was too far from optimal GEX Walls to trigger wall break debit spreads.",
-            "expected_move_not_reached": "Spot price remained within daily EM bounds. No mean reversion trades triggered."
+            "expected_move_not_reached": "Spot price remained within daily EM bounds. No mean reversion trades triggered.",
+            "volume_below_threshold": "Breakout option volume was too low to ensure proper liquidity/slippage containment.",
+            "dex_overextended_bullish": "Spot breached the Call Wall but exceeded today's 1SD Upper expected boundary.",
+            "dex_overextended_bearish": "Spot breached the Put Wall but exceeded today's 1SD Lower expected boundary."
         }
 
         if near_miss_counts:
@@ -312,6 +366,132 @@ class AnalyticsService:
             f.write(markdown_text)
 
         logger.info(f"Analytics: Weekly Rundown saved to database and {filepath}")
+
+    def _compute_correlation_matrix(self, silo_names, trades_by_silo):
+        """
+        Computes Pearson correlation matrix based on daily P&L of each silo over the last 30 days.
+        """
+        import numpy as np
+        # Get last 30 days
+        now = datetime.now(pytz.utc)
+        start_date = now - timedelta(days=30)
+        
+        # Build date list
+        dates = [(start_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(31)]
+        
+        # Populate daily P&L series for each silo
+        silo_pnl_series = {}
+        for name in silo_names:
+            series = {d: 0.0 for d in dates}
+            for t in trades_by_silo.get(name, []):
+                exit_date = t.exitDate or t.createdAt
+                if exit_date:
+                    date_str = exit_date.strftime("%Y-%m-%d")
+                    if date_str in series:
+                        series[date_str] += float(t.pnl or 0.0)
+            silo_pnl_series[name] = [series[d] for d in dates]
+            
+        # Compute correlations
+        matrix = {}
+        for s1 in silo_names:
+            matrix[s1] = {}
+            for s2 in silo_names:
+                v1 = silo_pnl_series[s1]
+                v2 = silo_pnl_series[s2]
+                if s1 == s2:
+                    matrix[s1][s2] = 1.0
+                elif np.std(v1) == 0 or np.std(v2) == 0:
+                    matrix[s1][s2] = 0.0
+                else:
+                    corr = np.corrcoef(v1, v2)[0, 1]
+                    matrix[s1][s2] = float(corr) if not np.isnan(corr) else 0.0
+        return matrix
+
+    def _generate_feature_breakdown(self, trades):
+        """
+        Groups trades by features stored in metadata (like vix, iv_rank, etc.)
+        and computes win rate and trade count for each bucket.
+        """
+        buckets = {
+            "VIX Low (<=15)": {"wins": 0, "total": 0, "pnl": 0.0},
+            "VIX Moderate (15-20)": {"wins": 0, "total": 0, "pnl": 0.0},
+            "VIX High (>20)": {"wins": 0, "total": 0, "pnl": 0.0},
+            "IV Rank Low (<=30)": {"wins": 0, "total": 0, "pnl": 0.0},
+            "IV Rank High (>30)": {"wins": 0, "total": 0, "pnl": 0.0},
+            "Breakout (Bullish)": {"wins": 0, "total": 0, "pnl": 0.0},
+            "Breakout (Bearish)": {"wins": 0, "total": 0, "pnl": 0.0},
+        }
+
+        for t in trades:
+            meta = {}
+            if t.metadata:
+                if isinstance(t.metadata, str):
+                    try:
+                        meta = json.loads(t.metadata)
+                    except Exception:
+                        pass
+                elif isinstance(t.metadata, dict):
+                    meta = t.metadata
+            
+            pnl = float(t.pnl or 0.0)
+            is_win = pnl > 0
+            
+            # VIX Buckets
+            vix = meta.get("vix")
+            if vix is not None:
+                try:
+                    vix_val = float(vix)
+                    if vix_val <= 15:
+                        buckets["VIX Low (<=15)"]["total"] += 1
+                        buckets["VIX Low (<=15)"]["pnl"] += pnl
+                        if is_win:
+                            buckets["VIX Low (<=15)"]["wins"] += 1
+                    elif vix_val <= 20:
+                        buckets["VIX Moderate (15-20)"]["total"] += 1
+                        buckets["VIX Moderate (15-20)"]["pnl"] += pnl
+                        if is_win:
+                            buckets["VIX Moderate (15-20)"]["wins"] += 1
+                    else:
+                        buckets["VIX High (>20)"]["total"] += 1
+                        buckets["VIX High (>20)"]["pnl"] += pnl
+                        if is_win:
+                            buckets["VIX High (>20)"]["wins"] += 1
+                except (ValueError, TypeError):
+                    pass
+            
+            # IV Rank Buckets
+            ivr = meta.get("iv_rank")
+            if ivr is not None:
+                try:
+                    ivr_val = float(ivr)
+                    if ivr_val <= 30:
+                        buckets["IV Rank Low (<=30)"]["total"] += 1
+                        buckets["IV Rank Low (<=30)"]["pnl"] += pnl
+                        if is_win:
+                            buckets["IV Rank Low (<=30)"]["wins"] += 1
+                    else:
+                        buckets["IV Rank High (>30)"]["total"] += 1
+                        buckets["IV Rank High (>30)"]["pnl"] += pnl
+                        if is_win:
+                            buckets["IV Rank High (>30)"]["wins"] += 1
+                except (ValueError, TypeError):
+                    pass
+
+            # Breakout Type Buckets
+            is_bull = meta.get("is_bullish_breakout")
+            is_bear = meta.get("is_bearish_breakout")
+            if is_bull:
+                buckets["Breakout (Bullish)"]["total"] += 1
+                buckets["Breakout (Bullish)"]["pnl"] += pnl
+                if is_win:
+                    buckets["Breakout (Bullish)"]["wins"] += 1
+            if is_bear:
+                buckets["Breakout (Bearish)"]["total"] += 1
+                buckets["Breakout (Bearish)"]["pnl"] += pnl
+                if is_win:
+                    buckets["Breakout (Bearish)"]["wins"] += 1
+
+        return buckets
 
     def _assign_grade(self, win_rate: float, profit_factor: float, total_trades: int) -> str:
         """Assigns a visual grade based on trading metrics."""

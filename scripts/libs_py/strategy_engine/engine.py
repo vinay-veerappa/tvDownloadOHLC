@@ -210,10 +210,7 @@ class Engine:
         logger.info(f"Engine: Starting management tick [{cadence}] at {now}")
 
         # Fetch all open trades
-        open_trades = await self.db.trade.find_many(
-            where={"status": "OPEN"},
-            include={"legs": True, "account": True}
-        )
+        open_trades = await self.executor.list_open_trades()
 
         for trade in open_trades:
             try:

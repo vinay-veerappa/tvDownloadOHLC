@@ -140,6 +140,29 @@ class WallBreakStrategy(Strategy):
             )
             return []
 
+        # ─── DEX Confirmation (C13) ───
+        try:
+            em_bands = await self.s["em"].get_today_em(ticker)
+        except Exception as e:
+            logger.error(f"{self.name}: ExpectedMoveService error: {e}")
+            em_bands = None
+
+        if em_bands:
+            if is_bullish_breakout and spot > em_bands.upper_boundary_1sd:
+                await self._log_near_miss(
+                    ticker, spot, "dex_overextended_bullish",
+                    float(spot), float(em_bands.upper_boundary_1sd),
+                    {"upper_boundary_1sd": em_bands.upper_boundary_1sd}
+                )
+                return []
+            elif is_bearish_breakout and spot < em_bands.lower_boundary_1sd:
+                await self._log_near_miss(
+                    ticker, spot, "dex_overextended_bearish",
+                    float(spot), float(em_bands.lower_boundary_1sd),
+                    {"lower_boundary_1sd": em_bands.lower_boundary_1sd}
+                )
+                return []
+
         # ─── 0DTE Expiry selection ───
         expiries = await self.s["broker"].get_expiries(ticker)
         today_str = now_et.strftime("%Y-%m-%d")
@@ -156,6 +179,18 @@ class WallBreakStrategy(Strategy):
             # Long strike is at Call Wall
             long_contract = self.s["broker"].find_strike_nearest(chain, call_wall, "CALL")
             if not long_contract:
+                return []
+
+            # Volume Filter (C13)
+            calls = chain.calls
+            avg_call_volume = sum(c.volume for c in calls) / len(calls) if calls else 0
+            volume_multiple = self.p.get("volume_multiple", 1.5)
+            if avg_call_volume > 0 and long_contract.volume < volume_multiple * avg_call_volume:
+                await self._log_near_miss(
+                    ticker, spot, "volume_below_threshold",
+                    float(long_contract.volume), float(volume_multiple * avg_call_volume),
+                    {"contract_volume": long_contract.volume, "avg_call_volume": avg_call_volume, "volume_multiple": volume_multiple}
+                )
                 return []
 
             long_strike = long_contract.strike
@@ -177,6 +212,18 @@ class WallBreakStrategy(Strategy):
             # Long strike is at Put Wall
             long_contract = self.s["broker"].find_strike_nearest(chain, put_wall, "PUT")
             if not long_contract:
+                return []
+
+            # Volume Filter (C13)
+            puts = chain.puts
+            avg_put_volume = sum(p.volume for p in puts) / len(puts) if puts else 0
+            volume_multiple = self.p.get("volume_multiple", 1.5)
+            if avg_put_volume > 0 and long_contract.volume < volume_multiple * avg_put_volume:
+                await self._log_near_miss(
+                    ticker, spot, "volume_below_threshold",
+                    float(long_contract.volume), float(volume_multiple * avg_put_volume),
+                    {"contract_volume": long_contract.volume, "avg_put_volume": avg_put_volume, "volume_multiple": volume_multiple}
+                )
                 return []
 
             long_strike = long_contract.strike

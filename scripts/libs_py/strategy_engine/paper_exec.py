@@ -24,6 +24,15 @@ class PaperExecutor:
         self.broker = broker
         self.holdings = holdings
 
+    async def list_open_trades(self) -> List[Any]:
+        """
+        Lists all currently OPEN paper trades with their legs and accounts (C2).
+        """
+        return await self.db.trade.find_many(
+            where={"status": "OPEN"},
+            include={"legs": True, "account": True}
+        )
+
     def _get_slippage(self, ticker: str) -> float:
         """Returns standard per-share slippage from the Playbook (M9)."""
         if ticker in ["SPY", "SPX", "QQQ", "IWM"]:
